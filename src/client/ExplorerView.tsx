@@ -36,6 +36,14 @@ function baseName(path: string): string {
 /** How long the row's "copied" label stays after a successful write. */
 const COPIED_MS = 1200
 
+/** Auto-refresh cadence: the explorer polls the visible levels while open. */
+const AUTO_REFRESH_MS = 2000
+
+/** Stable per-level signature for change detection (server-sorted rows). */
+export function levelSignature(entries: FsEntry[] | undefined): string {
+  return (entries ?? []).map(entry => `${entry.isDir ? 'd' : 'f'}:${entry.name}:${entry.hidden ? 'h' : ''}`).join('\n')
+}
+
 export function ExplorerView(props: {
   sessionId: string
   cwd: string | undefined
@@ -77,6 +85,28 @@ export function ExplorerView(props: {
     loadDir(root)
     for (const dir of expanded) loadDir(dir)
   }, [cwd, expanded, refreshTick, loadDir])
+
+  useEffect(() => {
+    // Auto-refresh: while the explorer is mounted, poll the visible levels
+    // and re-render only when a level actually changed (name / type / hidden
+    // signature), so the tree tracks external edits without the manual
+    // refresh button and without setState churn on every poll.
+    const root = cwd
+    if (root === undefined) return
+    const dirs = () => [root, ...expanded]
+    const poll = (): void => {
+      for (const dir of dirs()) {
+        void api.fsTree({ sessionId, cwd }, dir).then((listing) => {
+          const current = dataRef.current[dir]
+          if (current === undefined || current.error !== undefined) return
+          if (levelSignature(current.entries) === levelSignature(listing.entries)) return
+          storeLevel(dir, { entries: listing.entries })
+        }).catch(() => {})
+      }
+    }
+    const timer = window.setInterval(poll, AUTO_REFRESH_MS)
+    return () => { window.clearInterval(timer) }
+  }, [cwd, expanded, sessionId, storeLevel])
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
   const copyPath = useCallback((text: string, path: string): void => {

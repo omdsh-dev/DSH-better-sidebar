@@ -79,6 +79,9 @@ interface ConfirmState {
  *  floods the panel at once (the end of the log is reached by paging). */
 const LOG_BATCH = 20
 
+/** Auto-refresh cadence: status + upstream are polled while the panel is open. */
+const AUTO_REFRESH_MS = 2000
+
 export function GitView(props: {
   scope: SessionScope
   onOpenFile: (path: string) => void
@@ -130,6 +133,32 @@ export function GitView(props: {
   }, [scope.sessionId, scope.cwd])
 
   useEffect(() => { void refresh() }, [refresh])
+
+  useEffect(() => {
+    // Lightweight auto-refresh: poll status + upstream (the cheap, local
+    // reads) so the badge and the staged/unstaged lists track external
+    // changes without the manual refresh button. The log and branch lists
+    // still update via the explicit refresh / load-more actions.
+    const timer = window.setInterval(() => {
+      if (status === null || !status.isRepo) return
+      void Promise.all([
+        api.gitStatus(scope),
+        api.gitUpstream(scope).catch(() => null),
+      ]).then(([nextStatus, nextUpstream]) => {
+        setStatus(current => current !== null && current.isRepo
+          && current.branch === nextStatus.branch
+          && current.entries.length === nextStatus.entries.length
+          && current.entries.every((entry, index) => entry.path === nextStatus.entries[index]?.path && entry.xy === nextStatus.entries[index]?.xy)
+          ? current : nextStatus)
+        setUpstream(current => current?.remote === nextUpstream?.remote
+          && current?.branch === nextUpstream?.branch
+          && current?.ahead === nextUpstream?.ahead
+          && current?.behind === nextUpstream?.behind
+          ? current : nextUpstream)
+      }).catch(() => {})
+    }, AUTO_REFRESH_MS)
+    return () => { window.clearInterval(timer) }
+  }, [scope.sessionId, scope.cwd, status])
 
   /** Append the next history page (lazy: only when the user asks for more). */
   const loadMoreLog = async (): Promise<void> => {
