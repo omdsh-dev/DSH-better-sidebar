@@ -1437,6 +1437,13 @@
   cursor: default;
 }
 
+.gitUpstream {
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+  margin-right: 4px;
+}
+
 .gitRow {
   display: flex;
   align-items: center;

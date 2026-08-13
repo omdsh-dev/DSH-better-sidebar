@@ -13,7 +13,7 @@ import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
   IconTrashOutline16, Input, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { GitLogEntry, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
+import type { GitLogEntry, GitStatusEntry, GitStatusResult, GitUpstreamInfo, SessionScope } from './api.ts'
 import { api } from './api.ts'
 import { relativeTo } from './paths.ts'
 import { relativeTime, t } from './locales.ts'
@@ -90,6 +90,7 @@ export function GitView(props: {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [branchNames, setBranchNames] = useState<string[]>([])
+  const [upstream, setUpstream] = useState<GitUpstreamInfo | null>(null)
   const [logEntries, setLogEntries] = useState<GitLogEntry[]>([])
   const [commitMsg, setCommitMsg] = useState('')
   const [busy, setBusy] = useState(false)
@@ -109,14 +110,16 @@ export function GitView(props: {
     setLoading(true)
     setError(null)
     try {
-      const [statusResult, branchResult, logResult] = await Promise.all([
+      const [statusResult, branchResult, logResult, upstreamResult] = await Promise.all([
         api.gitStatus(scope),
         api.gitBranch(scope).catch(() => ({ current: '', names: [] as string[] })),
         // The first history page only; the rest arrives via "load more".
         api.gitLog(scope, LOG_BATCH, 0).catch(() => [] as GitLogEntry[]),
+        api.gitUpstream(scope).catch(() => null),
       ])
       setStatus(statusResult)
       setBranchNames(branchResult.names)
+      setUpstream(upstreamResult)
       setLogEntries(logResult)
       setLogEnded(logResult.length < LOG_BATCH)
     } catch (reason) {
@@ -202,17 +205,71 @@ export function GitView(props: {
   }
 
   const checkout = async (branch: string): Promise<void> => {
-    if (branch === status?.branch || busy) return
+    if (busy || branch === '' || branch === status?.branch) return
     setBusy(true)
     setCommitError(null)
     try {
       await api.gitCheckout(scope, branch)
       await refresh()
     } catch (reason) {
-      setCommitError(`${t('checkoutError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+      setCommitError(reason instanceof Error ? reason.message : String(reason))
     } finally {
       setBusy(false)
     }
+  }
+
+  const fetchRemote = async (): Promise<void> => {
+    setBusy(true)
+    setCommitError(null)
+    try {
+      await api.gitFetch(scope)
+      await refresh()
+    } catch (reason) {
+      setCommitError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const pull = async (): Promise<void> => {
+    setBusy(true)
+    setCommitError(null)
+    try {
+      const { output } = await api.gitPull(scope)
+      setCommitError(output.trim() === '' ? null : output.trim())
+      await refresh()
+    } catch (reason) {
+      setCommitError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const push = async (force = false): Promise<void> => {
+    setBusy(true)
+    setCommitError(null)
+    try {
+      const { output } = await api.gitPush(scope, force)
+      setCommitError(output.trim() === '' ? null : output.trim())
+      await refresh()
+    } catch (reason) {
+      setCommitError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const confirmPush = (force = false): void => {
+    const branch = status?.branch ?? ''
+    const remote = upstream?.remote ?? ''
+    runConfirmed({
+      title: force ? t('pushForceTitle') : t('pushTitle'),
+      description: force
+        ? t('pushForceDetail', { branch, remote })
+        : t('pushDetail', { branch, remote }),
+      confirmLabel: t('push'),
+      onConfirm: () => push(force),
+    })
   }
 
   /** Run one destructive operation after the confirm modal, then refresh. */
@@ -298,6 +355,40 @@ export function GitView(props: {
           onClick={() => { void refresh() }}
         >
           <IconRefreshOutline16 />
+        </button>
+        {upstream !== null && (
+          <span className={css.gitUpstream} title={`${upstream.remote}/${upstream.branch}`}>
+            {upstream.behind > 0 && `↓${upstream.behind}`}
+            {upstream.ahead > 0 && `↑${upstream.ahead}`}
+            {upstream.behind === 0 && upstream.ahead === 0 && t('synced')}
+          </span>
+        )}
+        <button
+          type="button"
+          className={css.gitLink}
+          disabled={busy || (status !== null && !status.isRepo)}
+          title={t('fetch')}
+          onClick={() => { void fetchRemote() }}
+        >
+          {t('fetch')}
+        </button>
+        <button
+          type="button"
+          className={css.gitLink}
+          disabled={busy || upstream === null || (status !== null && !status.isRepo)}
+          title={t('pull')}
+          onClick={() => { void pull() }}
+        >
+          {t('pull')}
+        </button>
+        <button
+          type="button"
+          className={css.gitLink}
+          disabled={busy || upstream === null || (status !== null && !status.isRepo)}
+          title={t('push')}
+          onClick={() => { confirmPush() }}
+        >
+          {t('push')}
         </button>
       </div>
 

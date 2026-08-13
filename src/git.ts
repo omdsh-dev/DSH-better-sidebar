@@ -234,3 +234,62 @@ export async function revert(cwd: string, hash: string): Promise<void> {
 export async function cherryPick(cwd: string, hash: string): Promise<void> {
   await runGit(cwd, ['cherry-pick', hash])
 }
+
+/** Upstream tracking info of the current branch: remote, branch, ahead/behind counts. */
+export interface GitUpstreamInfo {
+  remote: string
+  /** The upstream branch name (without the remote prefix). */
+  branch: string
+  /** Commits locally ahead of the upstream (`HEAD...@{upstream}` left side). */
+  ahead: number
+  /** Commits the upstream has that the local branch does not (right side). */
+  behind: number
+}
+
+/**
+ * The current branch's upstream (`@{upstream}`), or null when the branch has
+ * none configured. Both reads run without touching the network, so this is
+ * safe to call on every status refresh.
+ */
+export async function upstreamInfo(cwd: string): Promise<GitUpstreamInfo | null> {
+  const [upstream, counts] = await Promise.all([
+    runGit(cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']).catch(() => ''),
+    runGit(cwd, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}']).catch(() => ''),
+  ])
+  const up = upstream.trim()
+  if (up === '') return null
+  const slash = up.indexOf('/')
+  const remote = slash >= 0 ? up.slice(0, slash) : up
+  const branch = slash >= 0 ? up.slice(slash + 1) : up
+  const [aheadRaw, behindRaw] = counts.trim().split(/\s+/)
+  return {
+    remote,
+    branch,
+    ahead: Number(aheadRaw) || 0,
+    behind: Number(behindRaw) || 0,
+  }
+}
+
+/** Fetch remote refs (`git fetch --all --prune`). Network op; rejects with GitCommandError. */
+export async function fetchRemote(cwd: string): Promise<void> {
+  await runGit(cwd, ['fetch', '--all', '--prune'])
+}
+
+/**
+ * Pull the current branch from its upstream (`git pull`, i.e. merge the
+ * upstream into HEAD). Returns the command output for display.
+ */
+export async function pull(cwd: string): Promise<string> {
+  return runGit(cwd, ['pull'])
+}
+
+/**
+ * Push the current branch to its upstream (`git push`). `force` uses
+ * `--force-with-lease` (never a bare `--force`): the server must still hold
+ * the ref we last saw, so we cannot clobber someone else's push.
+ */
+export async function push(cwd: string, force = false): Promise<string> {
+  const args = ['push']
+  if (force) args.push('--force-with-lease')
+  return runGit(cwd, args)
+}

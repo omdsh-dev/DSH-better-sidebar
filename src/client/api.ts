@@ -54,6 +54,13 @@ export interface GitLogEntry {
   refs: string
 }
 
+export interface GitUpstreamInfo {
+  remote: string
+  branch: string
+  ahead: number
+  behind: number
+}
+
 /** Text read result. */
 export interface FsTextResult { kind: 'text'; content: string; truncated: boolean }
 /** Binary read result (no content; images load through the media route).
@@ -143,6 +150,14 @@ export const api = {
   /** Full patch text of one commit (diff display for the history rows). */
   gitCommitDiff: (scope: SessionScope, hash: string, signal?: AbortSignal) =>
     call<{ diff: string }>('git.commit-diff', scopePayload(scope, { hash }), signal),
+  gitUpstream: (scope: SessionScope, signal?: AbortSignal) =>
+    call<GitUpstreamInfo | null>('git.upstream', scopePayload(scope, {}), signal),
+  gitFetch: (scope: SessionScope) =>
+    call<{ ok: true }>('git.fetch', scopePayload(scope, {})),
+  gitPull: (scope: SessionScope) =>
+    call<{ output: string }>('git.pull', scopePayload(scope, {})),
+  gitPush: (scope: SessionScope, force = false) =>
+    call<{ output: string }>('git.push', scopePayload(scope, { force })),
   /** Discard the worktree changes of one file (the index is untouched). */
   gitDiscard: (scope: SessionScope, path: string) =>
     call<{ ok: true }>('git.discard', scopePayload(scope, { path })),

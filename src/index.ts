@@ -294,6 +294,23 @@ function buildApi(
       const { cwd } = cwdOf(payload)
       return { diff: await git.commitDiff(cwd, requireString(payload, 'hash')) }
     },
+    'git.upstream': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      return git.upstreamInfo(cwd)
+    },
+    'git.fetch': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      await git.fetchRemote(cwd)
+      return { ok: true }
+    },
+    'git.pull': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      return { output: await git.pull(cwd) }
+    },
+    'git.push': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      return { output: await git.push(cwd, (payload as { force?: unknown }).force === true) }
+    },
     'git.discard': async (payload) => {
       const { cwd } = cwdOf(payload)
       await git.discard(cwd, await resolveGitPath(cwd, requireString(payload, 'path')))
