@@ -28,8 +28,8 @@
 # - pnpm 11 的 strict-dep-builds 会拦截 node-pty/protobufjs 的构建脚本并使
 #   `dsh plugin add` 非零退出（bundle 协调因此被跳过）。脚本会先把这两个
 #   构建许可写进 profile 的 pnpm-workspace.yaml（幂等），保证 CLI 一步成功。
-# - 老版本（<0.10.2）用手动挂载行，bundle 通道激活后需移除，否则双挂载
-#   （Node 半挂两次、页面两个侧边栏）。脚本会幂等移除 better-sidebar 挂载行。
+# - 安装后按实际包元数据选择挂载通道：有 dsh.bundle.patch 时校验 bundle
+#   自动注册并移除旧手动挂载；没有时幂等写入手动挂载（兼容旧发布版）。
 # - 回滚：dsh plugin --profile web remove dsh-better-sidebar，或把 profile 依赖
 #   改回 "dsh-better-sidebar": "link:<路径>" 再 pnpm install。
 # =============================================================================
@@ -82,6 +82,16 @@ dsh_cli() {
   fi
 }
 
+# 只识别插件的 insert 挂载块；普通 `- id: better-sidebar` 配置覆盖不是挂载。
+has_manual_mount() {
+  node -e '
+    const fs = require("fs");
+    const t = fs.readFileSync(process.argv[1], "utf8");
+    const mount = /^[ \t]*- insert:\s*\r?\n[ \t]+- id: better-sidebar\s*\r?\n[ \t]+name: ["'"'"']?dsh-better-sidebar["'"'"']?\s*$/m;
+    process.exit(mount.test(t) ? 0 : 1);
+  ' "$PATCH_YML"
+}
+
 [ -d "$PROFILE_DIR" ] || die "找不到 profile 目录：${PROFILE_DIR}（请先安装并运行过一次 dsh web）"
 [ -f "$WS_YML" ]      || die "找不到 ${WS_YML}（请先初始化 web profile）"
 
@@ -92,7 +102,7 @@ say "目标：$CLI plugin --profile web add $PKG@${SPEC}（profile: ${PROFILE_DI
 if [ "$DRY_RUN" = true ]; then
   say "[dry-run] 步骤 1：确保 $WS_YML 含 allowBuilds（node-pty/protobufjs: true）"
   say "[dry-run] 步骤 2：执行 $CLI plugin --profile web add $PKG@${SPEC}（安装 + bundle 自动注册）"
-  say "[dry-run] 步骤 3：幂等移除 $PATCH_YML 里旧的 better-sidebar 手动挂载行（避免双挂载）"
+  say "[dry-run] 步骤 3：按实际包元数据校验 bundle 注册，或兼容写入旧版手动挂载"
   if [ "$RESTART" = true ]; then say "[dry-run] 步骤 4：pm2 restart dsh-web"; else say "[dry-run] 步骤 4：提示用户手动重启 DSH"; fi
   exit 0
 fi
@@ -122,34 +132,65 @@ if ! $CLI plugin --profile web add "$PKG@$SPEC" 2>&1 | tail -n +1; then
   exit 1
 fi
 
-# 校验 bundle 已注册（挂载生效的判据）
-if ! node -e '
+INSTALLED_PKG_JSON="$PROFILE_DIR/node_modules/$PKG/package.json"
+[ -f "$INSTALLED_PKG_JSON" ] || die "安装命令完成，但找不到 $INSTALLED_PKG_JSON"
+[ -f "$PATCH_YML" ] || die "找不到 ${PATCH_YML}（请先初始化 web profile）"
+
+# 步骤 3：以实际安装包元数据为准选择挂载通道。main 可能领先 npm latest，
+# 因此不能按脚本自身版本或请求 spec 猜测 dsh.bundle.patch 是否已经发布。
+if node -e '
   const fs = require("fs");
   const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-  const bundles = p.dsh?.profile?.bundles ?? [];
-  process.exit(bundles.includes(process.argv[2]) ? 0 : 1);
-' "$PROFILE_DIR/package.json" "$PKG"; then
-  warn "dsh-better-sidebar 未出现在 dsh.profile.bundles 中——挂载未注册。"
-  warn "若上面的 pnpm 输出提示 ignored build scripts，请确认 $WS_YML 的 allowBuilds 后重跑本脚本。"
-  exit 1
-fi
-say "bundle 已注册：dsh.profile.bundles 包含 $PKG（下次启动自动挂载）"
-
-# 步骤 3：幂等移除旧的 manual 挂载行（避免与 bundle 双挂载）
-if grep -qE '^\s*- id: better-sidebar\b' "$PATCH_YML"; then
-  node -e '
+  process.exit(typeof p.dsh?.bundle?.patch === "string" ? 0 : 1);
+' "$INSTALLED_PKG_JSON"; then
+  if ! node -e '
     const fs = require("fs");
-    const p = process.argv[1];
-    let t = fs.readFileSync(p, "utf8");
-    // 移除 better-sidebar 的 insert 块（含其前的注释行）
-    t = t.replace(/(?:^[ \t]*#[^\n]*\n)*[ \t]*- insert:\n[ \t]+- id: better-sidebar\n[ \t]+name: '"'"'dsh-better-sidebar'"'"'\n?/g, "");
-    // 清理可能留下的空行堆积
-    t = t.replace(/\n{3,}/g, "\n\n");
-    fs.writeFileSync(p, t);
-  ' "$PATCH_YML"
-  say "已从 $PATCH_YML 移除旧的 better-sidebar 手动挂载行（bundle 通道接管挂载）"
+    const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const bundles = p.dsh?.profile?.bundles ?? [];
+    process.exit(bundles.includes(process.argv[2]) ? 0 : 1);
+  ' "$PROFILE_DIR/package.json" "$PKG"; then
+    warn "${PKG} 声明了 dsh.bundle.patch，但未出现在 dsh.profile.bundles 中——挂载未注册。"
+    warn "若上面的 pnpm 输出提示 ignored build scripts，请确认 $WS_YML 的 allowBuilds 后重跑本脚本。"
+    exit 1
+  fi
+  say "bundle 已注册：dsh.profile.bundles 包含 ${PKG}（下次启动自动挂载）"
+
+  # bundle 通道激活后移除旧手动挂载，避免双挂载。
+  if has_manual_mount; then
+    node -e '
+      const fs = require("fs");
+      const p = process.argv[1];
+      let t = fs.readFileSync(p, "utf8");
+      const mount = /(?:^[ \t]*#[^\n]*\n)*^[ \t]*- insert:\s*\r?\n[ \t]+- id: better-sidebar\s*\r?\n[ \t]+name: ["'"'"']?dsh-better-sidebar["'"'"']?\s*(?:\r?\n|$)/gm;
+      t = t.replace(mount, "");
+      t = t.replace(/\n{3,}/g, "\n\n");
+      if (t.trim() === "") t = "[]\n";
+      fs.writeFileSync(p, t);
+    ' "$PATCH_YML"
+    say "已从 $PATCH_YML 移除旧的 better-sidebar 手动挂载行（bundle 通道接管挂载）"
+  else
+    say "无旧手动挂载行，跳过"
+  fi
 else
-  say "无旧手动挂载行，跳过"
+  # 旧发布版没有 dsh.bundle.patch：保留 CLI 的依赖安装结果，回退到 profile
+  # 手动挂载。不能直接向初始 `[]` 后追加，否则会产生无效 YAML。
+  if has_manual_mount; then
+    say "旧版手动挂载已存在，跳过"
+  else
+    node -e '
+      const fs = require("fs");
+      const p = process.argv[1];
+      let t = fs.readFileSync(p, "utf8");
+      const content = t.split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith("#"));
+      if (content.length === 1 && content[0] === "[]") t = t.replace(/^[ \t]*\[\][ \t]*(?:\r?\n|$)/m, "");
+      if (t.length > 0 && !t.endsWith("\n")) t += "\n";
+      if (t.length > 0 && !t.endsWith("\n\n")) t += "\n";
+      t += "# dsh-better-sidebar mount (added by scripts/install.sh)\n";
+      t += "- insert:\n    - id: better-sidebar\n      name: '"'"'dsh-better-sidebar'"'"'\n";
+      fs.writeFileSync(p, t);
+    ' "$PATCH_YML"
+    say "已为不含 dsh.bundle.patch 的旧发布版写入手动挂载：$PATCH_YML"
+  fi
 fi
 
 say "安装完成：$PKG@$SPEC"
