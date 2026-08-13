@@ -35,33 +35,47 @@ https://github.com/user-attachments/assets/23187822-047e-45cc-b480-fe997bd55b86
 
 ## 🚀 Installation
 
-Prerequisites: DSH installed (`dsh web` works), Node.js ≥ 20, pnpm ≥ 10. `@deepseek-ai/*` packages are published to npm and resolved directly by `pnpm install` — no token needed. Send the following prompt **in full** to DSH and it will automatically clone, build, register and install:
+Prerequisites: DSH installed (`dsh web` works), Node.js ≥ 20, pnpm ≥ 10. The plugin is published to npm as **`dsh-better-sidebar@0.10.0`** (`@deepseek-ai/*` peers aligned with the host's actual versions `^0.1.0-rc.6` / `@deepseek-ai/cordis@^4.0.1`, single instance). Mounting still goes through the profile + `cordis.patch.yml`; the dependency source is the npm package:
 
 ```text
-Please install the dsh-better-sidebar plugin into my web profile (plugin = VSCode-style right sidebar, repo https://github.com/dsh-external/DSH-better-sidebar):
-
-1. Clone and build:
-   git clone https://github.com/dsh-external/DSH-better-sidebar.git ~/Code/DSH-better-sidebar
-   cd ~/Code/DSH-better-sidebar && pnpm install && pnpm build
-2. Register into the web profile:
-   a. Add "dsh-better-sidebar": "link:<absolute path of the cloned directory from step 1>" to the dependencies of ~/.dsh/profiles/web/package.json
-   b. Append to ~/.dsh/profiles/web/cordis.patch.yml:
-      - insert:
-          - id: better-sidebar
-            name: 'dsh-better-sidebar'
+1. In ~/.dsh/profiles/web/package.json dependencies add "dsh-better-sidebar": "^0.10.0"
+2. Append the mount line to ~/.dsh/profiles/web/cordis.patch.yml:
+   - insert:
+       - id: better-sidebar
+         name: 'dsh-better-sidebar'
 3. Run pnpm install in ~/.dsh/profiles/web
 4. Restart DSH and hard-refresh (Cmd/Ctrl+Shift+R) to verify
 ```
 
-> Installation = dependency registration (equivalent to `dsh plugin --profile web add link:<path>`) + one mount line. **It also works when DSH is started as an npm package (e.g. `npx -p @deepseek-ai/dsh@0.0.1-rc.1 dsh web`)** (verified since v0.4.3).
+> Installation = dependency registration + one mount line. **It also works when DSH is started as an npm package (e.g. `npx -p @deepseek-ai/dsh@0.1.0-rc.6 dsh web`)** (verified since v0.4.3).
+
+> Note: if the profile's pnpm rejects a too-fresh release via `minimumReleaseAge` (<24h old), it auto-appends a `minimumReleaseAgeExclude` entry to `~/.dsh/profiles/web/pnpm-workspace.yaml` — or add `dsh-better-sidebar@<version>` there manually.
 
 ### Updating
 
 ```text
-1. cd ~/Code/DSH-better-sidebar && git pull && pnpm install && pnpm build
-2. Verify the registration is still valid (only re-add if missing): the link: dependency in the profile's package.json + the cordis.patch.yml mount line
-3. Client-only changes (src/client/*) → hard refresh is enough; host changes (src/index.ts, src/config.ts, etc.) → restart DSH + hard refresh
+1. Bump the version range in ~/.dsh/profiles/web/package.json (e.g. "^0.10.1")
+2. Run pnpm install in ~/.dsh/profiles/web
+3. Restart DSH and hard-refresh (Cmd/Ctrl+Shift+R)
 ```
+
+<details>
+<summary><b>Install from source / develop (optional — alternative to the npm flow)</b></summary>
+
+To debug local changes or track the dev branch, point the dependency at a local clone and build it yourself:
+
+```text
+1. git clone https://github.com/omdsh-dev/DSH-better-sidebar.git ~/Code/DSH-better-sidebar
+   cd ~/Code/DSH-better-sidebar && pnpm install && pnpm build
+2. In ~/.dsh/profiles/web/package.json dependencies write "dsh-better-sidebar": "link:<absolute path of the clone>"
+3. Append the mount line to ~/.dsh/profiles/web/cordis.patch.yml (same as above)
+4. Run pnpm install in ~/.dsh/profiles/web
+5. Restart DSH and hard-refresh
+```
+
+Update: `git pull && pnpm install && pnpm build` → restart DSH (client-only changes can just hard-refresh). To switch back to the npm channel, restore `"dsh-better-sidebar": "^0.10.0"` and re-run `pnpm install`.
+
+</details>
 
 <details>
 <summary><b>Install via plugin-registry (optional — use either this or the main flow)</b></summary>
@@ -69,7 +83,7 @@ Please install the dsh-better-sidebar plugin into my web profile (plugin = VSCod
 Prerequisite: DSH with [plugin-registry](https://github.com/dsh-external/plugin-registry) integrated (`dsh registry` available). **Enabling both channels double-mounts** (the Node half loads twice, the page gets two sidebars).
 
 ```sh
-git clone https://github.com/dsh-external/DSH-better-sidebar.git && cd DSH-better-sidebar
+git clone https://github.com/omdsh-dev/DSH-better-sidebar.git && cd DSH-better-sidebar
 pnpm install && pnpm build
 node scripts/package-registry.mjs   # assemble the registry/ staging (manifest + artifacts + README, not committed)
 dsh registry install ./registry     # install (disabled by default)
@@ -110,7 +124,7 @@ Full integration docs (`TabDescriptor` / `FileViewerDescriptor` full fields, mat
 ## 🛠️ Development & Build
 
 ```sh
-pnpm install      # @deepseek-ai/* resolved from npm (^0.0.1-rc.1, published) — no token needed
+pnpm install      # @deepseek-ai/* resolved from npm (^0.1.0-rc.6, published) — no token needed
 pnpm typecheck    # tsc --noEmit
 pnpm build        # → lib/index.js + lib/invariant.js + lib/client.js + lib/client-registry.js + lib/types
 pnpm test         # vitest (includes manifest consistency guard; build first)

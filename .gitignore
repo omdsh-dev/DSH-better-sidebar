@@ -146,3 +146,6 @@ lib/
 # plugin-registry install staging (assembled by scripts/package-registry.mjs)
 registry/
 .npmrc
+
+# stray npm cache scratch dir
+.npm-cache-tmp/

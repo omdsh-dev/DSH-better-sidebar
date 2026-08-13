@@ -428,4 +428,18 @@ declare module 'cordis' {
   }
 }
 
+/**
+ * Dual cordis-scope augmentation: DSH's runtime (and the public packages)
+ * resolve against the vendored `@deepseek-ai/cordis` scope, which DSH's own
+ * packages already augment with `effect`/`on`/service members. This side only
+ * adds the sidebar service member so consumers importing `Context` from
+ * `@deepseek-ai/cordis` (instead of the public `cordis` above) still see
+ * `ctx.betterSidebar`.
+ */
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    betterSidebar: BetterSidebarService
+  }
+}
+
 export type { Context }
