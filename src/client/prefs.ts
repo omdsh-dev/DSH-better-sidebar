@@ -71,6 +71,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     browserInterceptLinks: typeof record.browserInterceptLinks === 'boolean'
       ? record.browserInterceptLinks
       : SIDEBAR_PREFS_DEFAULTS.browserInterceptLinks,
+    browserAllowedLoopback: typeof record.browserAllowedLoopback === 'string'
+      ? record.browserAllowedLoopback
+      : SIDEBAR_PREFS_DEFAULTS.browserAllowedLoopback,
     tabsEnabled: booleanMapOf(record.tabsEnabled),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
     pluginSettings: pluginSettingsMapOf(record.pluginSettings),

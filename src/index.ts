@@ -176,6 +176,26 @@ export interface SidebarSettingsFace {
   update(patch: Record<string, unknown>, expectedRevision?: number): Promise<{ value?: unknown; revision?: number }>
 }
 
+/**
+ * Parse the browser tab's `browserAllowedLoopback` allowlist into a matcher
+ * over host:port (same contract as the client-side helper in
+ * src/client/browser.ts — kept in sync). Bare hosts (`localhost`,
+ * `127.0.0.1`) match every port; `host:port` entries match exactly.
+ */
+function parseLoopbackAllowlist(allowlist: string): (host: string, port: string) => boolean {
+  const entries = allowlist.split(',').map(entry => entry.trim().toLowerCase()).filter(entry => entry !== '')
+  const exact = new Set(entries)
+  const hosts = new Set<string>()
+  for (const entry of entries) {
+    if (!entry.includes(':')) hosts.add(entry.replace(/^\[|\]$/g, ''))
+  }
+  return (host, port) => {
+    const key = `${host}:${port}`
+    if (exact.has(key) || exact.has(host)) return true
+    return port !== '' && hosts.has(host)
+  }
+}
+
 /** Build the API method table bound to the plugin context, pty manager, agent pty registry, and resolved config. */
 function buildApi(
   ctx: Context,
@@ -380,9 +400,16 @@ function buildApi(
         throw new SidebarError('bad-request', 'only http/https urls can be probed', 400)
       }
       // Mirror the browser tab's address-bar policy: loopback stays unreachable
-      // from the sidebar, so probing it would leak nothing the tab could use.
+      // from the sidebar (unless the user allowlisted it), so probing it would
+      // leak nothing the tab could use.
       if (isLoopbackHostname(parsed.hostname)) {
-        throw new SidebarError('bad-request', 'local addresses are not probed', 400)
+        const prefs = getSettings()?.get()?.value as SidebarPrefs | undefined
+        const allowlist = typeof prefs?.browserAllowedLoopback === 'string' ? prefs.browserAllowedLoopback : ''
+        const allowed = allowlist.trim() !== ''
+          && parseLoopbackAllowlist(allowlist)(parsed.hostname, parsed.port)
+        if (!allowed) {
+          throw new SidebarError('bad-request', 'local addresses are not probed', 400)
+        }
       }
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), 8000)
@@ -391,6 +418,17 @@ function buildApi(
         // Some servers answer HEAD with 405/501; retry once as GET (the
         // body is discarded — only the headers matter).
         if (response.status === 405 || response.status === 501) {
+          response = await fetch(parsed, { method: 'GET', redirect: 'follow', signal: controller.signal })
+        }
+        // Some servers (e.g. aliyun consoles) answer HEAD without the
+        // X-Frame-Options / CSP headers that only their GET response
+        // carries. Without those signals the embeddability check below
+        // would wrongly report the site as embeddable and the plain iframe
+        // would surface the browser's misleading "refused to connect".
+        // Retry once as GET when both signals are absent (body discarded).
+        const hasEmbedSignals = response.headers.get('content-security-policy') !== null
+          || response.headers.get('x-frame-options') !== null
+        if (!hasEmbedSignals && response.status !== 405 && response.status !== 501) {
           response = await fetch(parsed, { method: 'GET', redirect: 'follow', signal: controller.signal })
         }
         const csp = response.headers.get('content-security-policy')

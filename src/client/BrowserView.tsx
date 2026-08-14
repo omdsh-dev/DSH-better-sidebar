@@ -26,7 +26,7 @@ import {
   IconWarningOutline16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
-import { embeddabilityOf, normalizeBrowserUrl } from './browser.ts'
+import { embeddabilityOf, isAllowedLoopbackUrl, normalizeBrowserUrl } from './browser.ts'
 import { patchTab } from './state.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { t } from './locales.ts'
@@ -42,6 +42,26 @@ import css from './sidebar.module.css'
  */
 export const BROWSER_IFRAME_SANDBOX =
   'allow-scripts allow-forms allow-popups allow-downloads allow-modals allow-popups-to-escape-sandbox'
+
+/** allow-same-origin appended for explicitly allowlisted local addresses. */
+const BROWSER_IFRAME_SANDBOX_SAME_ORIGIN =
+  `${BROWSER_IFRAME_SANDBOX} allow-same-origin`
+
+/**
+ * The sandbox tokens for one URL: allowlisted loopback addresses (local dev
+ * servers the user explicitly trusts) additionally get `allow-same-origin`
+ * so Vite/module/HMR pipelines that need a real origin work; every other
+ * site keeps the opaque-origin sandbox. `allow-same-origin` does NOT give
+ * the page access to the GUI — it stays cross-origin to it and to every
+ * other site — but it does give it its OWN origin privileges (localStorage,
+ * fetch without CORS), so it is only granted for the explicit allowlist.
+ */
+export function iframeSandboxFor(url: string | undefined, allowedLoopback: string): string | undefined {
+  if (url === undefined) return undefined
+  return isAllowedLoopbackUrl(url, allowedLoopback)
+    ? BROWSER_IFRAME_SANDBOX_SAME_ORIGIN
+    : BROWSER_IFRAME_SANDBOX
+}
 
 export function BrowserView(props: TabComponentProps) {
   const { store, tab } = props
@@ -88,7 +108,7 @@ export function BrowserView(props: TabComponentProps) {
   }
 
   const navigateTo = (raw: string): void => {
-    const result = normalizeBrowserUrl(raw, window.location.origin)
+    const result = normalizeBrowserUrl(raw, window.location.origin, store.getPrefs().browserAllowedLoopback)
     if (result.kind === 'ok') {
       const next = result.url
       setUrl(next)
@@ -210,7 +230,7 @@ export function BrowserView(props: TabComponentProps) {
           key={`${reloadKey}:${noSandbox ? 'ns' : 'sb'}`}
           className={css.browserFrame}
           src={url}
-          sandbox={noSandbox ? undefined : BROWSER_IFRAME_SANDBOX}
+          sandbox={noSandbox ? undefined : iframeSandboxFor(url, store.getPrefs().browserAllowedLoopback)}
           referrerPolicy="no-referrer"
           allow=""
           title={url}

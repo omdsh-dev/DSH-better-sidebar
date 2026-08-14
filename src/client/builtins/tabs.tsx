@@ -199,6 +199,12 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
           key: 'browserInterceptLinks',
           title: () => t('settingsBrowserLinksTitle'),
           desc: () => t('settingsBrowserLinksDesc'),
+        }, {
+          key: 'browserAllowedLoopback',
+          type: 'text',
+          title: () => t('settingsBrowserLoopbackTitle'),
+          desc: () => t('settingsBrowserLoopbackDesc'),
+          placeholder: t('settingsBrowserLoopbackPlaceholder'),
         }],
       },
       createTab: (state) => ({
