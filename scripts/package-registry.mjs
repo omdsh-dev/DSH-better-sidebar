@@ -31,12 +31,6 @@ const files = [
   'lib/client-registry.js.map',
   // Lazy chunks: the client fetches these from the host's /sidebar/bundle
   // route on first use (see src/client/chunk-loader.ts / src/bundle-route.ts).
-  'lib/client-docx.js',
-  'lib/client-docx.js.map',
-  'lib/client-xlsx.js',
-  'lib/client-xlsx.js.map',
-  'lib/client-pptx.js',
-  'lib/client-pptx.js.map',
   'lib/client-terminal.js',
   'lib/client-terminal.js.map',
   'lib/client-editor.js',

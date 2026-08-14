@@ -36,3 +36,8 @@ jobs:
         run: pnpm test
       - name: Build
         run: pnpm build
+      # The consumer-facing declaration surface guard: a browser-only plugin
+      # (no @types/node, skipLibCheck: false) must type-check against the
+      # shipped lib/types. Runs AFTER build (it reads the built output).
+      - name: Check consumer type surface
+        run: pnpm check:consumer-types

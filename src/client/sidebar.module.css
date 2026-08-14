@@ -522,6 +522,21 @@
   white-space: nowrap;
 }
 
+/* One tab's descriptor badge (a count capped at 99+, or a short text). */
+.tabBadge {
+  flex: none;
+  min-width: 16px;
+  height: 15px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font: var(--dsw-font-xxxs-strong-11);
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-brand-primary);
+}
+
 .tabClose {
   display: inline-flex;
   align-items: center;
@@ -757,7 +772,7 @@
   overflow-wrap: anywhere;
 }
 
-/* Binary / download-only files (pptx, OLE .doc/.xls/.ppt, unknown binaries):
+/* Binary / download-only files (legacy OLE .doc/.xls/.ppt, unknown binaries):
    a centered notice plus a download link — the user always gets the file. */
 .editorBinary {
   flex: 1;
@@ -1093,62 +1108,6 @@
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-/* Word preview: the document scrolls independently while the zoom control
-   stays pinned to the bottom edge. */
-.editorDocx {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--dsw-alias-bg-base);
-}
-
-.editorDocxViewport {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: auto;
-  background: var(--dsw-alias-bg-base);
-}
-
-/* docx-preview renders into a wrapper div with .docx className; the host
-   above scrolls while the wrapper holds the page flow. */
-.editorDocxWrap {
-  flex: none;
-  padding: 16px;
-}
-
-.editorDocxZoom {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 4px 10px;
-  border-top: 1px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-layer-1);
-}
-
-.editorDocxZoomHint,
-.editorDocxZoomValue {
-  flex: none;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.editorDocxZoomValue {
-  width: 36px;
-  text-align: right;
-}
-
-.editorDocxZoomRange {
-  flex: 1;
-  min-width: 72px;
-  accent-color: var(--dsw-alias-brand-primary);
-  cursor: pointer;
-}
-
 .editorPdf {
   flex: 1;
   min-height: 0;
@@ -1205,94 +1164,6 @@
 
 :global(body[data-dsh-tab-dragging]) .editorPdfDragShield {
   pointer-events: auto !important;
-}
-
-.editorXlsx {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  background: var(--dsw-alias-bg-base);
-}
-
-.editorUniverHost {
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-}
-
-.editorOfficeOverlay {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  background: var(--dsw-alias-bg-base);
-}
-
-.editorPptx {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--dsw-alias-bg-base);
-}
-
-.editorPptxToolbar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-}
-
-.editorPptxToolbar .editorDownloadLink {
-  margin-left: auto;
-}
-
-.editorPptxButton {
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-secondary);
-  font: var(--dsw-font-xxs-strong-12);
-  cursor: pointer;
-}
-
-.editorPptxButton:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-.editorPptxButton:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.editorPptxPosition {
-  min-width: 64px;
-  text-align: center;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.editorPptxStage {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.editorPptxHost {
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
 }
 
 /* ── Terminal ──────────────────────────────────────────────────────────── */

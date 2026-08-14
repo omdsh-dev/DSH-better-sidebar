@@ -20,7 +20,7 @@ import { createElement } from 'react'
 import { createSidebarStore, type SidebarStore } from '../src/client/state.ts'
 import { createBetterSidebarService, type BetterSidebarService } from '../src/client/service.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
-import { FeatureSettingsRows, SideCardSection, type SideCardSectionProps } from '../src/client/SideCardSection.tsx'
+import { FeatureSettingsRows, mergePluginSetting, SideCardSection, type SideCardSectionProps } from '../src/client/SideCardSection.tsx'
 
 /** One tab + one viewer + the subagent-style nested toggle under a tab. */
 function mount(): { store: SidebarStore; service: BetterSidebarService } {
@@ -121,6 +121,20 @@ describe('SideCardSection declarative inventory', () => {
     expect(html.match(/aria-label="[^"]*Feature settings"/g)?.length).toBe(1)
   })
 
+  it('renders the two dashed "add plugin" cards (tab grid + viewer grid)', () => {
+    const { store, service } = mount()
+    const html = renderSection(store, service)
+    // The tab grid's dashed card (tab registration).
+    expect(html).toContain('Add tab plugins')
+    expect(html).toContain('Register a new sidebar page')
+    // The viewer grid's dashed card (file-previewer registration).
+    expect(html).toContain('Add preview plugins')
+    expect(html).toContain('Register a file-type preview')
+    // The add cards are plain buttons (open the modals), never switches:
+    // they carry no aria-pressed, so the pressed-card counts stay untouched.
+    expect(pressedCount(html, 'true')).toBe(3)
+  })
+
   it('a disabled feature renders pressed=false', () => {
     const { store, service } = mount()
     store.setPrefs({ ...store.getPrefs(), tabsEnabled: { subagent: false }, viewersEnabled: { image: false } })
@@ -217,5 +231,56 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
     expect(html).toContain('max="32"')
     expect(html).toContain('px')
     expect(html).not.toContain('type="checkbox"')
+  })
+})
+
+describe('mergePluginSetting (v0.12.0, codex review fix)', () => {
+  it('sequential merges are additive — a later write never drops an earlier key', () => {
+    // Simulates two same-tick updatePluginSetting calls: each merge spreads
+    // the map it was GIVEN, so building from the latest optimistic map
+    // preserves both keys (the pre-fix code spread the stale render-time
+    // prefs twice and the second write dropped the first key).
+    let map: Record<string, Record<string, unknown>> = {}
+    map = mergePluginSetting(map, 'my-plugin:db', 'pageSize', 25)
+    map = mergePluginSetting(map, 'my-plugin:db', 'theme', 'dark')
+    expect(map['my-plugin:db']).toEqual({ pageSize: 25, theme: 'dark' })
+    // A second descriptor's blob stays independent.
+    map = mergePluginSetting(map, 'other:view', 'refresh', true)
+    expect(map['my-plugin:db']).toEqual({ pageSize: 25, theme: 'dark' })
+    expect(map['other:view']).toEqual({ refresh: true })
+    // Overwriting one key keeps the sibling keys.
+    map = mergePluginSetting(map, 'my-plugin:db', 'pageSize', 50)
+    expect(map['my-plugin:db']).toEqual({ pageSize: 50, theme: 'dark' })
+  })
+})
+
+describe('FeatureSettingsRows valueSource (v0.12.0, independent CR fix)', () => {
+  it('plugin rows read from their OWN value source — a plugin key colliding with a host pref never reads the host value', () => {
+    const prefs = { ...SIDEBAR_PREFS_DEFAULTS, openByDefault: true }
+    const toggle = { key: 'openByDefault', title: 'My flag' }
+    // valueOf returns undefined (the plugin never wrote this key): the row
+    // must render UNCHECKED even though the host pref openByDefault is true.
+    let html = renderToString(createElement(FeatureSettingsRows, {
+      toggles: [toggle],
+      prefs,
+      onToggle: () => {},
+      valueSource: () => undefined,
+    }))
+    expect(html).not.toContain('checked=""')
+    // The plugin wrote `true` into its own blob: the row is checked.
+    html = renderToString(createElement(FeatureSettingsRows, {
+      toggles: [toggle],
+      prefs,
+      onToggle: () => {},
+      valueSource: () => true,
+    }))
+    expect(html).toContain('checked=""')
+    // Without valueOf the row falls back to the prefs face (host semantics).
+    html = renderToString(createElement(FeatureSettingsRows, {
+      toggles: [toggle],
+      prefs,
+      onToggle: () => {},
+    }))
+    expect(html).toContain('checked=""')
   })
 })

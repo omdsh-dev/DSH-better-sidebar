@@ -26,13 +26,17 @@ export type SidebarDiffRef =
   | { kind: 'commit'; hash: string; hashFull: string; subject: string }
 
 /** One open tab. `path` carries the file (editor) or is absent (explorer/git);
- *  `diff` carries the change a diff tab shows. */
+ *  `diff` carries the change a diff tab shows; `meta` (v0.12.0+) carries
+ *  plugin-owned JSON-serializable state, preserved across reloads. */
 export interface SidebarTab {
   id: string
   type: TabType
   title: string
   path?: string
   diff?: SidebarDiffRef
+  /** Plugin-owned state (v0.12.0+): MUST be JSON-serializable — it is
+   *  persisted with the layout and restored verbatim on reload. */
+  meta?: unknown
 }
 
 /** A tab group. */
@@ -432,14 +436,14 @@ export function activateTab(state: SidebarState, paneId: string, tabId: string):
   }
 }
 
-/** Update the display fields of one open tab (title / path) without
+/** Update the display fields of one open tab (title / path / meta) without
  *  re-opening it. The browser tab persists its current URL and hostname
  *  title through this reducer so a reload restores the visited page. A
  *  missing tab id is a no-op. The tab may live in either tree. */
 export function patchTab(
   state: SidebarState,
   tabId: string,
-  patch: { title?: string; path?: string },
+  patch: { title?: string; path?: string; meta?: unknown },
 ): SidebarState {
   let changed = false
   const walk = (node: SplitNode): SplitNode => {
@@ -451,6 +455,7 @@ export function patchTab(
           ...tab,
           ...(patch.title !== undefined ? { title: patch.title } : {}),
           ...(patch.path !== undefined ? { path: patch.path } : {}),
+          ...(patch.meta !== undefined ? { meta: patch.meta } : {}),
         }
       })
       return tabs === node.tabs ? node : { ...node, tabs }
@@ -886,11 +891,15 @@ function sanitizeNode(node: unknown, seen: Set<string>, reid: Map<string, string
       // accept any string type here — an unregistered type renders an
       // <OrphanedTab/> at view time and recovers if its plugin loads later.
       if (typeof candidate.type !== 'string') return undefined
+      // `meta` is plugin-owned JSON-serializable state (v0.12.0+): the
+      // persisted value already went through JSON.parse, so it is inherently
+      // serializable — carry it through verbatim (absent on older states).
       tabs.push({
         id: candidate.id,
         type: candidate.type,
         title: candidate.title,
         ...(typeof candidate.path === 'string' ? { path: candidate.path } : {}),
+        ...(candidate.meta !== undefined ? { meta: candidate.meta } : {}),
       })
     }
     const active = typeof record.active === 'string' ? record.active : null
@@ -929,7 +938,9 @@ export class SidebarStore {
     prefs: { ...SIDEBAR_PREFS_DEFAULTS },
   }
   private readonly listeners = new Set<() => void>()
-  private persistTimer: number | undefined
+  /** Per-session persist debounce timers (v0.12.0+: one per session, so a
+   *  targeted open never cancels another session's pending write). */
+  private readonly persistTimers = new Map<string, number>()
   /** User-facing side card prefs seeding brand-new session states (defaults until the settings RPC resolves). */
   private prefs: SidebarPrefs = { ...SIDEBAR_PREFS_DEFAULTS }
 
@@ -1014,21 +1025,67 @@ export class SidebarStore {
     const state = this.snapshot.state
     if (sessionId === undefined || state === undefined) return
     const next = reducer(state)
+    // A reducer returning the SAME reference means "no change": skip the
+    // persist + notify entirely — strict no-op paths (unknown tab ids,
+    // patchTab on a missing tab) must not churn the state or rewrite
+    // localStorage.
+    if (next === state) return
     this.bySession.set(sessionId, next)
     this.snapshot = { sessionId, state: next, prefs: this.prefs }
     this.schedulePersist(sessionId, next)
     this.notify()
   }
 
+  /**
+   * Apply a pure reducer to a TARGET session's state (not the active one),
+   * loading it on demand and persisting the result — WITHOUT switching the
+   * active snapshot or notifying (the UI must not follow along). Used by the
+   * service's targeted `openTab(seed, scope)`: the open lands in the target
+   * session's layout and is visible whenever the user switches to it.
+   */
+  reduceFor(sessionId: string, reducer: (state: SidebarState) => SidebarState): void {
+    // The uid counter is SHARED across sessions, and the ACTIVE session's
+    // safety requires it to never drop below the ids IT minted. Seeding it
+    // from the target's max may LOWER it (a cached target older than the
+    // active session): restoring the pre-call level afterwards keeps the
+    // active session's next mint collision-free — ids minted for the target
+    // only need to exceed the target's own max, which the seed guaranteed.
+    const counterBefore = nextIdCounter
+    let state = this.bySession.get(sessionId)
+    if (state === undefined) {
+      state = loadState(sessionId, this.prefs)
+      this.bySession.set(sessionId, state)
+    } else {
+      // Re-seed the uid counter past THIS session's persisted ids, exactly
+      // like setSession's cache-hit path.
+      nextIdCounter = maxCounterId(state)
+    }
+    const next = reducer(state)
+    // Same-reference result = no change: keep the counter restore (it may
+    // have been seeded down) but skip the write.
+    nextIdCounter = Math.max(nextIdCounter, counterBefore)
+    if (next === state) return
+    this.bySession.set(sessionId, next)
+    this.schedulePersist(sessionId, next)
+  }
+
   private schedulePersist(sessionId: string, state: SidebarState): void {
-    window.clearTimeout(this.persistTimer)
-    this.persistTimer = window.setTimeout(() => {
+    // Per-session debounce timers: one session's pending write must never
+    // cancel another's (targeted opens schedule writes for INACTIVE
+    // sessions while the active session may already have one pending —
+    // a shared timer would drop the earlier write and the reload would
+    // lose that session's layout).
+    const existing = this.persistTimers.get(sessionId)
+    if (existing !== undefined) window.clearTimeout(existing)
+    const timer = window.setTimeout(() => {
+      this.persistTimers.delete(sessionId)
       try {
         localStorage.setItem(`${STORAGE_PREFIX}:${sessionId}`, JSON.stringify(state))
       } catch {
         // Storage full or unavailable: layout memory is best-effort.
       }
     }, 200)
+    this.persistTimers.set(sessionId, timer)
   }
 
   private notify(): void {

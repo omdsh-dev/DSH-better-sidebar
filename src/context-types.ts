@@ -12,27 +12,60 @@
  * - conversation: client side ui-conversation's IConversation (composer
  *   draft), read lazily through `ctx.get` — cross-plugin service reads need
  *   an inject declaration, so the direct property is never typed here
- * - loader: @cordisjs/plugin-loader (entry options)
+ * - webRuntime: @deepseek-ai/dsh-web-app (bind-derived trusted hosts)
  * - slots: the client runtime SlotRegistry
  * - effect: the DSH-vendored cordis lifecycle helper
  * Drift from upstream is contained to this file.
+ *
+ * This file must stay FREE of Node.js types (`node:http`, `node:stream`,
+ * `Buffer`): it is part of the CLIENT-reachable declaration graph (the
+ * `Context` in `TabComponentProps` and the `declare module` augmentation),
+ * so a Node import here would leak into browser-only consumer builds. The
+ * webServer faces below are therefore structural mirrors with plain
+ * interfaces (the host casts to real Node types at the few boundaries that
+ * need them — e.g. the `ws` upgrade hook in src/index.ts).
  */
-import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { Duplex } from 'node:stream'
 import type { Context } from 'cordis'
 import type { BetterSidebarService } from './client/service.ts'
+
+/** The request face route handlers see (structural subset of node's
+ *  IncomingMessage: the URL/method/header reads and the async body
+ *  iteration `readJsonBody` uses). */
+export interface SidebarHttpRequest {
+  url?: string
+  method?: string
+  headers: Record<string, string | string[] | undefined>
+  [Symbol.asyncIterator](): AsyncIterator<string | Uint8Array>
+}
+
+/** The response face route handlers write to (structural subset of node's
+ *  ServerResponse: the status/header/body writes the routes use). */
+export interface SidebarHttpResponse {
+  statusCode: number
+  writeHead(status: number, headers?: Record<string, string>): void
+  end(body?: string | Uint8Array): void
+}
+
+/** The upgrade socket face (structural subset: the destroy the fences use). */
+export interface SidebarUpgradeSocket {
+  destroy(): void
+}
+
+/** The upgrade head bytes (Buffer at runtime; typed as bytes so no Node
+ *  global leaks into the declaration graph). */
+export type SidebarUpgradeHead = Uint8Array
 
 /** One named webserver route (mirror of the host-webserver WebRoute). */
 export interface SidebarWebRoute {
   kind: 'exact' | 'prefix'
   path: string
-  handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>
+  handler: (req: SidebarHttpRequest, res: SidebarHttpResponse) => void | Promise<void>
 }
 
 /** One exact-path HTTP upgrade registration (mirror of WebUpgradeRoute). */
 export interface SidebarWebUpgradeRoute {
   path: string
-  handler: (req: IncomingMessage, socket: Duplex, head: Buffer) => void | Promise<void>
+  handler: (req: SidebarHttpRequest, socket: SidebarUpgradeSocket, head: SidebarUpgradeHead) => void | Promise<void>
 }
 
 /** The webServer service face this plugin uses. */
@@ -59,14 +92,14 @@ export interface SidebarSessionStore {
   } | undefined
 }
 
-/** One loader entry's options slice (the connection row's resolved config). */
-export interface SidebarLoaderEntry {
-  options: { name: string; config?: unknown }
-}
-
-/** The loader face used to read the connection row's trustedHosts config. */
-export interface SidebarLoader {
-  entries(): Iterable<SidebarLoaderEntry>
+/**
+ * The web runtime service face (mirror of @deepseek-ai/dsh-web-app's
+ * WebRuntimeValues): the bind-derived trust list the /api gateway's fence
+ * accepts — LAN IP literals sampled when the server binds all interfaces,
+ * plus explicit `--trusted-host` authorities.
+ */
+export interface SidebarWebRuntime {
+  trustedHosts: readonly string[]
 }
 
 /** Registration options the sidebar passes to `ctx.slots.register` (subset of the real options). */
@@ -383,7 +416,7 @@ declare module 'cordis' {
     webServer: SidebarWebServer
     sessions: SidebarSessionStore & SidebarSessionsService
     connection: SidebarConnectionHandle
-    loader: SidebarLoader
+    webRuntime: SidebarWebRuntime
     slots: SidebarSlotsService
     workspaces: SidebarWorkspacesService
     settings: SidebarSettingsService

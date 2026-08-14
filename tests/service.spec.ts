@@ -20,8 +20,8 @@ if (g.localStorage === undefined) {
   }
 }
 
-import { createBetterSidebarService } from '../src/client/service.ts'
-import { createSidebarStore, allLeaves, openDiffTab } from '../src/client/state.ts'
+import { createBetterSidebarService, SIDEBAR_FEATURES, SIDEBAR_SERVICE_VERSION } from '../src/client/service.ts'
+import { createSidebarStore, allLeaves, makeDefaultState, openDiffTab, sanitizeState } from '../src/client/state.ts'
 
 describe('BetterSidebar service', () => {
   it('registerTab adds to the registry and dispose removes it', () => {
@@ -595,5 +595,391 @@ describe('service.openTab auto-expand for content opens', () => {
     const state = store.getSnapshot().state!
     expect(state.panelOpen).toBe(true)
     expect(allLeaves(state.splits).flatMap(l => l.tabs).filter(t => t.type === 'editor')).toHaveLength(1)
+  })
+})
+
+describe('version and feature detection (v0.12.0)', () => {
+  it('reports the plugin version in lockstep with package.json', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pkg = JSON.parse(require('node:fs').readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }
+    expect(SIDEBAR_SERVICE_VERSION).toBe(pkg.version)
+    expect(createBetterSidebarService(createSidebarStore()).version).toBe(SIDEBAR_SERVICE_VERSION)
+  })
+
+  it('advertises every v0.12.0 capability in the features list', () => {
+    const service = createBetterSidebarService(createSidebarStore())
+    for (const feature of SIDEBAR_FEATURES) {
+      expect(service.features).toContain(feature)
+    }
+  })
+})
+
+describe('state subscription (v0.12.0)', () => {
+  it('getSnapshot mirrors the store snapshot (sessionId/state/prefs)', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    store.setSession('s1')
+    const snapshot = service.getSnapshot()
+    expect(snapshot.sessionId).toBe('s1')
+    expect(snapshot.state).toBeDefined()
+    expect(snapshot.prefs.openByDefault).toBe(true)
+  })
+
+  it('subscribeState fires on state changes but NOT on registry changes', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    store.setSession('s1')
+    let calls = 0
+    const unsub = service.subscribeState(() => { calls++ })
+    service.registerTab({ id: 'explorer', title: 'Explorer', component: () => null })
+    service.openTab({ type: 'explorer', title: 'Explorer' })
+    expect(calls).toBe(1)
+    service.registerTab({ id: 'x', title: 'X', component: () => null })
+    expect(calls).toBe(1) // registry changes are the registry subscription's job
+    unsub()
+    service.openTab({ type: 'explorer', title: 'Explorer' })
+    expect(calls).toBe(1)
+  })
+})
+
+describe('updateTab (v0.12.0)', () => {
+  it('patches title / path / meta of an open tab', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'doc', title: 'Doc', component: () => null })
+    store.setSession('s1')
+    service.openTab({ type: 'doc', title: 'Doc', id: 'doc:1' })
+    service.updateTab('doc:1', { title: 'Compiling…', meta: { progress: 42 } })
+    const tab = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).find(t => t.id === 'doc:1')!
+    expect(tab.title).toBe('Compiling…')
+    expect(tab.meta).toEqual({ progress: 42 })
+    // A missing tab id is a no-op (does not throw).
+    service.updateTab('doc:missing', { title: 'X' })
+  })
+})
+
+describe('activateTab (v0.12.0)', () => {
+  it('activates a tab in either tree and fires onActivate with the session scope', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    const seen: Array<{ tab: string; sessionId: string }> = []
+    service.registerTab({
+      id: 'git',
+      title: 'Git',
+      single: true,
+      onActivate: (tab, scope) => { seen.push({ tab: tab.id, sessionId: scope.sessionId }) },
+      component: () => null,
+    })
+    store.setSession('s1')
+    // Land in the bottom tree by switching the active pane.
+    store.reduce(s => ({ ...s, activePane: (s.bottomSplits as { id: string }).id }))
+    service.openTab({ type: 'git', title: 'Git' })
+    const gitTab = allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(l => l.tabs).find(t => t.type === 'git')!
+    expect(gitTab).toBeDefined()
+    service.activateTab(gitTab.id)
+    expect(seen).toEqual([{ tab: gitTab.id, sessionId: 's1' }])
+    // The active pane followed the tab into the bottom tree.
+    expect(store.getSnapshot().state!.activePane).toBe(gitTab.id === '' ? null : allLeaves(store.getSnapshot().state!.bottomSplits).find(l => l.tabs.some(t => t.id === gitTab.id))!.id)
+  })
+})
+
+describe('targeted openTab (v0.12.0)', () => {
+  it('lands the open in the target session without switching the UI session', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'notes', title: 'Notes', component: () => null })
+    store.setSession('s1')
+    service.openTab({ type: 'notes', title: 'Notes', id: 'notes:1' }, { sessionId: 's2' })
+    // The UI snapshot still shows s1, untouched (its default explorer tab
+    // is the only one — no notes tab landed there).
+    const snapshot = store.getSnapshot()
+    expect(snapshot.sessionId).toBe('s1')
+    expect(allLeaves(snapshot.state!.splits).flatMap(l => l.tabs).filter(t => t.type === 'notes')).toHaveLength(0)
+    // Switching to s2 reveals the tab.
+    store.setSession('s2')
+    const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs)
+    expect(tabs.map(t => t.id)).toContain('notes:1')
+  })
+
+  it('a scope naming the active session behaves exactly like a plain open (notify included)', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'explorer', title: 'Explorer', component: () => null })
+    store.setSession('s1')
+    let calls = 0
+    store.subscribe(() => { calls++ })
+    service.openTab({ type: 'explorer', title: 'Explorer' }, { sessionId: 's1' })
+    expect(calls).toBe(1)
+    expect(store.getSnapshot().state!.splits).not.toBe(undefined)
+  })
+
+  it('dedupe runs against the TARGET session (opens there focus an existing tab of that session)', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'notes', title: 'Notes', single: true, component: () => null })
+    store.setSession('s1')
+    service.openTab({ type: 'notes', title: 'Notes' }, { sessionId: 's2' })
+    service.openTab({ type: 'notes', title: 'Notes' }, { sessionId: 's2' })
+    store.setSession('s2')
+    const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).filter(t => t.type === 'notes')
+    expect(tabs).toHaveLength(1)
+  })
+})
+
+describe('openFile (v0.12.0)', () => {
+  it('opens the file in the editor tab of the scope session with a basename title', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'editor', title: () => 'Editor', component: () => null })
+    store.setSession('s1')
+    service.openFile({ sessionId: 's1', cwd: '/p' }, '/p/src/main.ts')
+    const state = store.getSnapshot().state!
+    const tab = allLeaves(state.splits).flatMap(l => l.tabs).find(t => t.type === 'editor')
+    expect(tab?.title).toBe('main.ts')
+    expect(tab?.path).toBe('/p/src/main.ts')
+    // Windows separators are handled too.
+    service.openFile({ sessionId: 's1' }, 'C:\\x\\y\\spec.ts', 'custom title')
+    const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).filter(t => t.type === 'editor')
+    expect(tabs[tabs.length - 1]?.title).toBe('custom title')
+    expect(tabs[tabs.length - 1]?.path).toBe('C:\\x\\y\\spec.ts')
+  })
+})
+
+describe('tab lifecycle callbacks (v0.12.0)', () => {
+  /** A descriptor with recording callbacks, plus a count of onOpen/onActivate/onClose. */
+  const setup = () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    const events: string[] = []
+    service.registerTab({
+      id: 'life',
+      title: 'Life',
+      single: true,
+      onOpen: () => { events.push('open') },
+      onActivate: () => { events.push('activate') },
+      onClose: () => { events.push('close') },
+      component: () => null,
+    })
+    return { store, service, events }
+  }
+
+  it('onOpen fires on creation; a dedupe-focus fires onActivate instead', () => {
+    const { store, service, events } = setup()
+    store.setSession('s1')
+    service.openTab({ type: 'life', title: 'Life' })
+    expect(events).toEqual(['open'])
+    service.openTab({ type: 'life', title: 'Life' })
+    expect(events).toEqual(['open', 'activate'])
+  })
+
+  it('onClose fires when closeTab closes the tab', () => {
+    const { store, service, events } = setup()
+    store.setSession('s1')
+    service.openTab({ type: 'life', title: 'Life' })
+    const tab = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).find(t => t.type === 'life')!
+    events.length = 0
+    service.closeTab(tab.id)
+    expect(events).toEqual(['close'])
+    // Closing a missing tab fires nothing.
+    events.length = 0
+    service.closeTab('nope')
+    expect(events).toEqual([])
+  })
+
+  it('lifecycle callbacks receive the session scope (cwd included when given)', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    let seen: { sessionId: string; cwd?: string } | undefined
+    service.registerTab({
+      id: 'scoped',
+      title: 'Scoped',
+      onOpen: (_tab, scope) => { seen = scope },
+      component: () => null,
+    })
+    store.setSession('s1')
+    service.openTab({ type: 'scoped', title: 'Scoped' }, { sessionId: 's1', cwd: '/work' })
+    expect(seen).toEqual({ sessionId: 's1', cwd: '/work' })
+  })
+
+  it('a throwing callback is swallowed and never breaks the open', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({
+      id: 'boom',
+      title: 'Boom',
+      onOpen: () => { throw new Error('plugin bug') },
+      onClose: () => { throw new Error('plugin bug') },
+      component: () => null,
+    })
+    store.setSession('s1')
+    expect(() => service.openTab({ type: 'boom', title: 'Boom' })).not.toThrow()
+    const tab = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).find(t => t.type === 'boom')!
+    expect(() => service.closeTab(tab.id)).not.toThrow()
+  })
+
+  it('a disabled tab type still refuses to open and fires no callbacks', () => {
+    const { store, service, events } = setup()
+    store.setSession('s1')
+    store.setPrefs({ ...store.getPrefs(), tabsEnabled: { life: false } })
+    service.openTab({ type: 'life', title: 'Life' })
+    expect(events).toEqual([])
+    expect(allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).filter(t => t.type === 'life')).toHaveLength(0)
+  })
+})
+
+describe('tab meta (v0.12.0)', () => {
+  it('a seed meta rides onto the minted tab and survives a reload round-trip', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'db', title: 'DB', component: () => null })
+    store.setSession('s1')
+    service.openTab({ type: 'db', title: 'DB', id: 'db:1', meta: { table: 'users', page: 3 } })
+    const tab = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).find(t => t.id === 'db:1')!
+    expect(tab.meta).toEqual({ table: 'users', page: 3 })
+    // Reload round-trip: the persisted shape sanitizes back with meta intact.
+    const sanitized = sanitizeState(JSON.parse(JSON.stringify(store.getSnapshot().state!)))
+    const restored = allLeaves(sanitized!.splits).flatMap(l => l.tabs).find(t => t.id === 'db:1')!
+    expect(restored.meta).toEqual({ table: 'users', page: 3 })
+  })
+
+  it('older persisted tabs (no meta) sanitize unchanged', () => {
+    const state = makeDefaultState(400, true, true)
+    const sanitized = sanitizeState(JSON.parse(JSON.stringify(state)))
+    const tabs = allLeaves(sanitized!.splits).flatMap(l => l.tabs)
+    expect(tabs[0]?.meta).toBeUndefined()
+  })
+})
+
+describe('lifecycle classification vs dedupe (codex review fixes)', () => {
+  it('a key-dedupe focus with a NEW id fires onActivate with the REAL tab (no phantom onOpen)', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    const events: Array<{ kind: string; tabId?: string }> = []
+    service.registerTab({
+      id: 'doc',
+      title: 'Doc',
+      // Dedupe by PATH like the editor builtin — the focused tab's id
+      // differs from the newly requested id.
+      dedupeKey: (tab) => tab.path ?? '',
+      onOpen: (tab) => { events.push({ kind: 'open', tabId: tab.id }) },
+      onActivate: (tab) => { events.push({ kind: 'activate', tabId: tab.id }) },
+      component: () => null,
+    })
+    store.setSession('s1')
+    service.openTab({ type: 'doc', title: 'Doc', id: 'doc:1', path: '/a.md' })
+    expect(events).toEqual([{ kind: 'open', tabId: 'doc:1' }])
+    // Same path, NEW id: the existing tab is focused — onActivate must
+    // carry the EXISTING tab, and onOpen must NOT fire with doc:2.
+    service.openTab({ type: 'doc', title: 'Doc', id: 'doc:2', path: '/a.md' })
+    expect(events).toEqual([
+      { kind: 'open', tabId: 'doc:1' },
+      { kind: 'activate', tabId: 'doc:1' },
+    ])
+    const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).filter(t => t.type === 'doc')
+    expect(tabs.map(t => t.id)).toEqual(['doc:1'])
+  })
+
+  it('an id safety-net focus (same id) fires onActivate, not onOpen', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    const events: string[] = []
+    service.registerTab({
+      id: 'multi',
+      title: 'Multi',
+      onOpen: () => { events.push('open') },
+      onActivate: () => { events.push('activate') },
+      component: () => null,
+    })
+    store.setSession('s1')
+    service.openTab({ type: 'multi', title: 'Multi', id: 'm:1' })
+    expect(events).toEqual(['open'])
+    service.openTab({ type: 'multi', title: 'Multi', id: 'm:1' })
+    expect(events).toEqual(['open', 'activate'])
+  })
+})
+
+describe('independent CR follow-up fixes', () => {
+  it('onOpen for a url-created tab receives the LANDED tab (path = url)', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    let seenPath: string | undefined
+    service.registerTab({
+      id: 'web',
+      title: 'Web',
+      onOpen: (tab) => { seenPath = tab.path },
+      component: () => null,
+    })
+    store.setSession('s1')
+    service.openTab({ type: 'web', title: 'example.com', url: 'https://example.com/x' })
+    expect(seenPath).toBe('https://example.com/x')
+  })
+
+  it('a url seed NEVER overwrites the path of a dedupe-focused tab', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({
+      id: 'web',
+      title: 'Web',
+      dedupeKey: () => 'web',
+      component: () => null,
+    })
+    store.setSession('s1')
+    service.openTab({ type: 'web', title: 'first', url: 'https://a.example' })
+    service.openTab({ type: 'web', title: 'second', url: 'https://b.example' })
+    const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).filter(t => t.type === 'web')
+    expect(tabs).toHaveLength(1)
+    // The focused tab keeps its ORIGINAL url — the second open must not
+    // repoint it.
+    expect(tabs[0]!.path).toBe('https://a.example')
+  })
+
+  it('closing / activating an unknown tab id is a strict no-op (no notify)', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'x', title: 'X', component: () => null })
+    store.setSession('s1')
+    let calls = 0
+    store.subscribe(() => { calls++ })
+    service.closeTab('does-not-exist')
+    service.activateTab('does-not-exist')
+    expect(calls).toBe(0)
+  })
+
+  it('a targeted open into an INACTIVE session never auto-expands its panels', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'editor', title: 'Editor', component: () => null })
+    store.setSession('s1')
+    // The target session starts collapsed.
+    store.reduceFor('s2', s => ({ ...s, panelOpen: false, bottomOpen: false }))
+    service.openTab({ type: 'editor', title: 'main.ts', path: '/p/main.ts' }, { sessionId: 's2' })
+    // Nothing is in sight for the user — the open must not expand s2.
+    store.setSession('s2')
+    expect(store.getSnapshot().state?.panelOpen).toBe(false)
+    expect(store.getSnapshot().state?.bottomOpen).toBe(false)
+    expect(allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).some(t => t.type === 'editor')).toBe(true)
+  })
+
+  it('closeTab/activateTab accept an optional scope that rides to the callback', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    const seen: Array<{ kind: string; cwd?: string }> = []
+    service.registerTab({
+      id: 'life',
+      title: 'Life',
+      single: true,
+      onActivate: (_tab, scope) => { seen.push({ kind: 'activate', cwd: scope.cwd }) },
+      onClose: (_tab, scope) => { seen.push({ kind: 'close', cwd: scope.cwd }) },
+      component: () => null,
+    })
+    store.setSession('s1')
+    service.openTab({ type: 'life', title: 'Life' })
+    const tab = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).find(t => t.type === 'life')!
+    service.activateTab(tab.id, { sessionId: 's1', cwd: '/work' })
+    service.closeTab(tab.id, { sessionId: 's1', cwd: '/work' })
+    expect(seen).toEqual([
+      { kind: 'activate', cwd: '/work' },
+      { kind: 'close', cwd: '/work' },
+    ])
   })
 })

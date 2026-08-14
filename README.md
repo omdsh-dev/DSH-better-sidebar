@@ -26,7 +26,7 @@ https://github.com/user-attachments/assets/23187822-047e-45cc-b480-fe997bd55b86
 
 - **🗂️ 资源管理器**：懒加载目录树（根 = 会话 cwd），点击打开、`@文件` 引用、右键复制路径
 - **📝 编辑与预览**：CodeMirror 6 编辑（Ctrl/Cmd+S 原子保存，切 Tab 不丢草稿）；图片 / Markdown / HTML / PDF / Word / Excel / PPT 内联预览（HTML 走沙箱 iframe）
-- **⚡ 客户端懒加载**：启动只拉 ~325KB 核心，Office / 终端 / 编辑器等重依赖用到才按需拉取（详见 `docs/plans/2026-08-12-lazy-chunks-design.md`）
+- **⚡ 客户端懒加载**：启动只拉 ~325KB 核心，终端 / 编辑器等重依赖用到才按需拉取（详见 `docs/plans/2026-08-12-lazy-chunks-design.md`）
 - **🌐 浏览器**：多开内嵌网页 tab，后退/前进/刷新；内容运行在沙箱 iframe（无法访问界面数据与本地文件，拒绝本机地址），可临时解锁（红色警示）；被站点拒绝嵌入时显示原因；外链默认在侧边栏打开
 - **💻 终端**：xterm.js + node-pty 真实 shell、断线重连回放；可选为模型注入 `terminal_*` 工具；支持自定义字体（字体族 + 9–32px 字号，实时生效）
 - **🌿 Git 面板**：真 diff + VSCode 式 diff tab、历史、右键暂存/提交/还原等
@@ -36,7 +36,8 @@ https://github.com/user-attachments/assets/23187822-047e-45cc-b480-fe997bd55b86
 - **🔧 分栏工作台**：拖 Tab 拆分/合并（可跨面板）、分隔线调比例；右上角按钮一键折叠/展开面板
 - **🔁 会话隔离**：布局 / Tab / 面板状态按会话持久化，陈旧状态自动净化；「产出文件」在侧边栏打开
 - **⚙️ 声明式设置**：设置页「侧边卡片」按注册表渲染开关网格，逐项独立开/关；二级设置（自动展开、终端工具、沙箱等）经齿轮弹窗编辑
-- **🔌 服务化**：暴露 `ctx.betterSidebar`，其他插件可注册 tab 与文件预览器（内置 7 tab + 9 viewer 同走一服务，见 [AGENTS.md](./AGENTS.md)）
+- **🔌 服务化（基座）**：暴露 `ctx.betterSidebar`，其他插件可注册 tab 与文件预览器（内置 7 tab + 9 viewer 同走一服务）；v0.12.0 起支持角标/生命周期回调/状态订阅/定向打开/插件自有设置（见 [AGENTS.md](./AGENTS.md) 与 [外部插件接入指南](./docs/external-plugin-guide.md)）
+- **➕ 添加插件**：设置页「侧边卡片」两个网格（侧边栏内容 / 文件预览）末尾的虚线卡片分别打开 Tab / 预览插件弹窗：声明扩展点、「在 GitHub 上浏览更多插件」按钮、推荐插件目录（「跳转」直达仓库、「复制」安装命令到剪贴板）；弹窗不打开终端、无失败路径，不阻塞启动与侧边栏
 - **🌏 多语言**：界面文案跟随 DSH 语言（zh/en）实时切换，无需刷新
 
 ## 🚀 安装
@@ -62,10 +63,10 @@ irm https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/
 
 ```sh
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.sh | bash -s 0.10.3 --restart
+curl -fsSL https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.sh | bash -s 0.11.0 --restart
 
 # Windows PowerShell
-& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1'))) -Version 0.10.3 -Restart
+& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1'))) -Version 0.11.0 -Restart
 ```
 
 不确定的话，可先加 `--dry-run`（PowerShell 用 `-DryRun`）预览步骤再执行。
@@ -91,7 +92,7 @@ minimumReleaseAgeExclude:
   - dsh-better-sidebar
 EOF
 
-# ③ 安装并自动挂载（不带 @版本 = npm 的 latest；固定版本写 dsh-better-sidebar@0.10.3）
+# ③ 安装并自动挂载（不带 @版本 = npm 的 latest；固定版本写 dsh-better-sidebar@0.11.0）
 npx -y --package @deepseek-ai/dsh dsh plugin --profile web add dsh-better-sidebar
 ```
 
@@ -122,7 +123,7 @@ npx -y --package @deepseek-ai/dsh dsh plugin --profile web add dsh-better-sideba
 3. 执行 `dsh plugin --profile web add dsh-better-sidebar`：登记依赖 → 识别包内 `dsh.bundle.patch` → 自动注册进 `dsh.profile.bundles` 挂载；
 4. 清理旧版残留的手动挂载行，避免「双挂载」（页面出现两个侧边栏）。
 
-`curl | bash` / `irm | iex` 会执行远程代码——脚本已随仓库开源（`scripts/install.sh` / `scripts/install.ps1`），可先下载审阅。插件以 npm 包 `dsh-better-sidebar@0.10.3` 发布，通过 `dsh.bundle.patch`（随包的 `cordis.patch.yml`）由官方 CLI 自动挂载，**不修改 DSH 源码**。
+`curl | bash` / `irm | iex` 会执行远程代码——脚本已随仓库开源（`scripts/install.sh` / `scripts/install.ps1`），可先下载审阅。插件以 npm 包 `dsh-better-sidebar@0.11.0` 发布，通过 `dsh.bundle.patch`（随包的 `cordis.patch.yml`）由官方 CLI 自动挂载，**不修改 DSH 源码**。
 
 </details>
 
@@ -168,7 +169,7 @@ dsh plugin --profile web add dsh-better-sidebar
 5. 硬刷新浏览器（Cmd/Ctrl+Shift+R）即可看到效果（client 改动无需重启 DSH；host 半改动才需重启）
 ```
 
-更新：`git pull && pnpm install && pnpm build` → 硬刷新浏览器即可（client 改动热加载生效，无需重启 DSH；host 半改动才需重启）。切回 npm 通道时，把依赖改回 `"dsh-better-sidebar": "^0.10.3"` 再 `pnpm install`。
+更新：`git pull && pnpm install && pnpm build` → 硬刷新浏览器即可（client 改动热加载生效，无需重启 DSH；host 半改动才需重启）。切回 npm 通道时，把依赖改回 `"dsh-better-sidebar": "^0.11.0"` 再 `pnpm install`。
 
 </details>
 
@@ -217,7 +218,20 @@ export function apply(ctx: Context) {
 }
 ```
 
-完整接入文档（`TabDescriptor` / `FileViewerDescriptor` 全字段、匹配算法、HMR 陷阱、声明式设置）：见 [`AGENTS.md`](./AGENTS.md)。
+v0.12.0 起补齐基座能力：类型导出完整（消费者可直接命名 `SidebarTab`/`SidebarState` 等，client 声明图零 Node 依赖）、`version`/`features` 能力探测、`getSnapshot`/`subscribeState` 状态订阅、tab 角标 `badge`、`onOpen`/`onActivate`/`onClose` 生命周期回调、`updateTab`/`activateTab`/`openFile`、定向 `openTab(seed, scope)`、`SidebarTab.meta` 跨刷新持久化、设置 seam 开放（`settings.pluginToggles` / `settings.render`，值存 `pluginSettings[id]`）。
+
+完整接入文档：
+- **[`AGENTS.md`](./AGENTS.md)**——仓库内维护的接入文档（全字段、匹配算法、HMR 陷阱、声明式设置、版本探测）；
+- **[`docs/external-plugin-guide.md`](./docs/external-plugin-guide.md)**——面向外部插件开发者的接入指南（含完整最小示例）。
+
+### ➕ 添加插件（推荐插件目录）
+
+设置页「侧边卡片」→「侧边栏内容」网格末尾的**虚线卡片**打开「添加 Tab 插件」弹窗、「文件预览」网格末尾的**虚线卡片**打开「添加预览插件」弹窗：各自声明对应扩展点可由插件扩展（`ctx.betterSidebar` 服务）、提供「**在 GitHub 上浏览更多插件**」按钮（新标签页打开 [GitHub topic `dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar)）、并展示对应 kind 的推荐插件目录（名字 / 仓库链接 / 简介 / 安装脚本）。每个条目两个按钮：
+
+- **跳转**：新标签页直达插件仓库；
+- **复制**：把安装命令（`cd ~/.dsh && dsh plugin --profile web add <包名>`）写入剪贴板，按钮闪现「已复制」——粘贴到 DSH 所在环境的终端执行即可。弹窗保持打开、不打开终端、无失败路径。
+
+**收录新插件**：按扩展点把一条 `PluginEntry`（`id` = npm 包名、`name`、`url`、`description`（i18n 友好，可在 `src/client/locales.ts` 加 `pluginXxxDesc` 键）、`install` = 完整安装命令）追加到 [`src/client/plugins-tabs.ts`](./src/client/plugins-tabs.ts)（Tab 注册）或 [`src/client/plugins-viewers.ts`](./src/client/plugins-viewers.ts)（文件预览注册），并把仓库打上 `dsh-better-sidebar` topic；数据完整性由 `tests/plugin-list.spec.ts` 守护。
 
 ## 🛠️ 开发与构建
 
@@ -241,7 +255,7 @@ pnpm watch        # tsdown --watch
 
 - Git 无 push/pull/fetch；无文件 watcher（手动刷新）；工具行内文件打开按钮不可拦截
 - 终端 Tab 拖到另一分栏会重挂载（shell 重开）
-- `.xlsx` 预览不保留单元格样式（SheetJS 社区版限制）；Office/PPTX 预览内联进 client bundle（约 23MB），首次加载较慢
+- Office 三件套预览（.docx/.xlsx/.pptx）已移至「推荐插件」（Office 预览插件，见设置页「添加插件」弹窗）；未安装时此类文件走代码/下载查看兜底
 - 浏览器沙箱无登录态/第三方 Cookie 受限，部分站点登录需走弹窗；被 `X-Frame-Options`/`frame-ancestors` 拒绝嵌入的站点（如 arxiv.org）显示原因面板（含「在浏览器中打开」）；iframe 内部跳转不进后退栈
 - HTML 预览渲染的是已保存文件（不反映未保存草稿）
 - 移动端（<768px）无底部面板：进入窄屏时其标签页一次性并入右侧栏（迁移后回桌面仍保留在右侧栏），桌面端的底部面板只在宽视口下可用；移动端底部首展自动开终端不触发

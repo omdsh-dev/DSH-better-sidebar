@@ -32,7 +32,7 @@ import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
-  BOTTOM_MIN, PANEL_MIN, agentUuidOf, closeTab, firstLeaf, isAgentTabId, leafWithTab, mapLeaf, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
+  BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, isAgentTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
   reconcileAgentTerminals,
   resizeSplitIn, setBottomHeight, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
@@ -554,9 +554,17 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       // TerminalView on unmount), and the agent-pty.close HTTP route is the
       // fallback when the WS is down.
       const current = store.getSnapshot().state
-      const leaf = current === undefined ? undefined : leafWithTab(current.splits, tabId)
+      // Terminal tabs may live in EITHER tree (the bottom panel hosts them
+      // too) — the pty-release lookup covers both, or the HTTP fallback is
+      // skipped for a bottom-panel terminal whose WS frame never arrived.
+      const leaf = current === undefined
+        ? undefined
+        : leafWithTab(current.splits, tabId) ?? leafWithTab(current.bottomSplits, tabId)
       const tab = leaf?.tabs.find(candidate => candidate.id === tabId)
-      store.reduce(s => closeTab(s, paneId, tabId))
+      // Route through the service: the tab-bar close is the canonical close
+      // path (finds the pane itself, fires descriptor.onClose); the session
+      // scope (with its cwd) rides to the callback.
+      ctx.betterSidebar?.closeTab(tabId, sessionId === undefined ? undefined : { sessionId, cwd })
       if (tab?.type === 'terminal') {
         if (isAgentTabId(tabId)) {
           const uuid = agentUuidOf(tabId)
@@ -567,13 +575,10 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       }
     },
     activateTab: (paneId, tabId) => {
-      store.reduce(s => ({
-        ...s,
-        activePane: paneId,
-        splits: mapLeaf(s.splits, paneId, (leaf) => {
-          if (leaf.tabs.some(tab => tab.id === tabId)) leaf.active = tabId
-        }),
-      }))
+      // Route through the service: same reducer (finds the pane in EITHER
+      // tree, sets the active pane) and fires descriptor.onActivate; the
+      // session scope (with its cwd) rides to the callback.
+      ctx.betterSidebar?.activateTab(tabId, sessionId === undefined ? undefined : { sessionId, cwd })
     },
     focusPane: (paneId) => { store.reduce(s => ({ ...s, activePane: paneId })) },
     moveTabToEdge: (payload: TabDragPayload, toPane: string, zone: DropZone) => {
@@ -632,7 +637,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     const descriptor = service?.getTab(optionId)
     if (descriptor === undefined) return
     const title = typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title
-    service.openTab({ type: optionId, title })
+    // The session scope rides along: lifecycle callbacks receive it (and
+    // the open stays in the current session, as before).
+    service.openTab({ type: optionId, title }, { sessionId, cwd })
   }
 
   /**
@@ -646,6 +653,26 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     const descriptor = ctx.betterSidebar?.getTab(tab.type)
     if (descriptor === undefined) return null
     return typeof descriptor.icon === 'function' ? descriptor.icon(14) : descriptor.icon
+  }
+
+  /**
+   * The tab badge from the tab-type registry: a count (99+ capped) or a
+   * short text pill. A throwing badge is swallowed (no pill) — the tab
+   * strip must never break because a plugin's badge computation failed.
+   */
+  const tabBadgeOf = (tab: SidebarTab): ReactNode => {
+    const descriptor = ctx.betterSidebar?.getTab(tab.type)
+    if (descriptor?.badge === undefined) return null
+    let value: string | number | null | undefined
+    try {
+      value = descriptor.badge(ctx, { sessionId, cwd }, state)
+    } catch (error) {
+      console.error('[dsh-better-sidebar] tab badge error:', error)
+      return null
+    }
+    if (value === null || value === undefined || value === '') return null
+    const text = typeof value === 'number' ? (value > 99 ? '99+' : String(value)) : String(value)
+    return <span className={css.tabBadge}>{text}</span>
   }
 
   /**
@@ -758,6 +785,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             onNewTab={onNewTab}
             renderTab={renderTab}
             getTabIcon={tabIconOf}
+            getTabBadge={tabBadgeOf}
           />
         </div>
       </div>
@@ -837,6 +865,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             onNewTab={onNewTab}
             renderTab={(tab, active, paneId) => renderTab(tab, active, paneId, true)}
             getTabIcon={tabIconOf}
+            getTabBadge={tabBadgeOf}
           />
         </div>
       </div>

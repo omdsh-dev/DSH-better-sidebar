@@ -117,6 +117,15 @@ export interface SidebarPrefs {
    * dropped on read, so the default applies.
    */
   shortcuts: Record<string, string>
+  /**
+   * Plugin-owned settings blobs (v0.12.0+), keyed by descriptor id: each
+   * registered tab/viewer that declares `settings.pluginToggles` (or writes
+   * through `settings.render`'s `updatePluginSetting`) persists its values
+   * here — an open map, so third-party keys need no host PrefsSchema field.
+   * Values are JSON-serializable (the row controls produce strings /
+   * numbers / booleans; custom panels are responsible for their own).
+   */
+  pluginSettings: Record<string, Record<string, unknown>>
 }
 
 /** Range contract of {@link SidebarPrefs.defaultWidthPercent}. */
@@ -147,6 +156,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   tabsEnabled: {},
   viewersEnabled: {},
   shortcuts: {},
+  pluginSettings: {},
 }
 
 /** Clamp one width percent into the contract range (shared by schema and client reads). */

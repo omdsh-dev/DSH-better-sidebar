@@ -75,7 +75,25 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     tabsEnabled: booleanMapOf(record.tabsEnabled),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
     shortcuts: normalizeShortcutMap(record.shortcuts),
+    pluginSettings: pluginSettingsMapOf(record.pluginSettings),
   }
+}
+
+/**
+ * Validate the plugin-owned settings map (v0.12.0+): `{ descriptorId: { key:
+ * value } }`, nested open maps. Any non-object value (or a malformed whole)
+ * falls back to the empty map — the schema defaults already guard the wire
+ * shape, this is the client's second line.
+ */
+function pluginSettingsMapOf(value: unknown): Record<string, Record<string, unknown>> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
+  const out: Record<string, Record<string, unknown>> = {}
+  for (const [id, blob] of Object.entries(value as Record<string, unknown>)) {
+    if (blob !== null && typeof blob === 'object' && !Array.isArray(blob)) {
+      out[id] = blob as Record<string, unknown>
+    }
+  }
+  return out
 }
 
 /**

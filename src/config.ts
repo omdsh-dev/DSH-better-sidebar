@@ -104,4 +104,9 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   // canonical chord strings ('Mod+B'); absent keys mean the default chord.
   // Non-string values fail validation.
   shortcuts: z.dict(z.string()).default({}),
+  // Plugin-owned settings blobs (v0.12.0+) are an OPEN nested map: any
+  // descriptor id may carry any JSON-serializable values. This is the
+  // "settings seam" opening — without it the seam would drop third-party
+  // keys as unknown schema fields.
+  pluginSettings: z.dict(z.dict(z.any())).default({}),
 })

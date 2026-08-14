@@ -31,6 +31,9 @@ export function EditorHost(props: { ctx: Context; store: SidebarStore; scope: Se
 
   useEffect(() => {
     let cancelled = false
+    // Aborts the matched viewer's `load` when the editor tears down (tab
+    // closed, path changed, session switched) or re-matches the viewer.
+    const controller = new AbortController()
     setLoad({ status: 'loading' })
     const mediaUrlOf = (): string => mediaUrl(scope, path)
     const apply = (action: EditorLoadAction): void => {
@@ -50,7 +53,7 @@ export function EditorHost(props: { ctx: Context; store: SidebarStore; scope: Se
           })
           return
         case 'customLoad':
-          void action.viewer.load?.(path, scope).then((data) => {
+          void action.viewer.load?.(path, scope, controller.signal).then((data) => {
             if (cancelled) return
             setLoad({ status: 'ready', viewer: action.viewer, customData: data })
           }).catch((error: unknown) => {
@@ -77,7 +80,7 @@ export function EditorHost(props: { ctx: Context; store: SidebarStore; scope: Se
       }
     }
     apply(planFirstMatch(ctx.betterSidebar?.matchFileViewer(path), mediaUrlOf))
-    return () => { cancelled = true }
+    return () => { cancelled = true; controller.abort() }
   }, [scope.sessionId, scope.cwd, path, ctx])
 
   return (
