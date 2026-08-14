@@ -93,6 +93,38 @@ export interface SidebarPrefs {
    */
   browserInterceptLinks: boolean
   /**
+   * GitHub inbox filter: show review requests (reason `review_requested`).
+   * On by default; toggled from the GitHub tab's chips or its settings row.
+   */
+  githubShowReviewRequested: boolean
+  /**
+   * GitHub inbox filter: show activity on the user's own pull requests
+   * (review verdicts, new comments — reason `author` on PR threads).
+   */
+  githubShowPrActivity: boolean
+  /**
+   * GitHub inbox filter: show comments and mentions (reasons `comment`,
+   * `mention`, `team_mention`, and `author` on issue threads).
+   */
+  githubShowComments: boolean
+  /**
+   * GitHub inbox filter: show CI status notifications (reason
+   * `ci_activity`). OFF by default — failed-workflow noise stays hidden
+   * until the user opts in.
+   */
+  githubShowCi: boolean
+  /**
+   * GitHub inbox filter: show everything that fits no other category
+   * (assign, subscribed, security alerts, state changes, manual
+   * subscriptions, …).
+   */
+  githubShowOther: boolean
+  /**
+   * How often the GitHub tab store polls the inbox snapshot (seconds,
+   * 60–300; GitHub's own polling floor is 60).
+   */
+  githubPollSeconds: number
+  /**
    * Per-tab enable switches, keyed by tab descriptor id (`'explorer'`,
    * `'my-plugin:db'`). An ABSENT key means enabled — only an explicit
    * `false` disables a tab type (hidden from the + menu, `openTab` refuses,
@@ -130,6 +162,11 @@ export const TERMINAL_FONT_SIZE_MIN = 9
 export const TERMINAL_FONT_SIZE_MAX = 32
 export const TERMINAL_FONT_SIZE_DEFAULT = 13
 
+/** Range contract of {@link SidebarPrefs.githubPollSeconds} (GitHub's polling floor). */
+export const GITHUB_POLL_SECONDS_MIN = 60
+export const GITHUB_POLL_SECONDS_MAX = 300
+export const GITHUB_POLL_SECONDS_DEFAULT = 60
+
 /** Fallback prefs used whenever the settings document is unreachable or malformed. */
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   openByDefault: true,
@@ -145,6 +182,12 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   htmlViewerDefaultUnsafe: false,
   browserNoSandbox: false,
   browserInterceptLinks: true,
+  githubShowReviewRequested: true,
+  githubShowPrActivity: true,
+  githubShowComments: true,
+  githubShowCi: false,
+  githubShowOther: true,
+  githubPollSeconds: GITHUB_POLL_SECONDS_DEFAULT,
   tabsEnabled: {},
   viewersEnabled: {},
   pluginSettings: {},
@@ -158,4 +201,9 @@ export function clampWidthPercent(value: number): number {
 /** Clamp one terminal font size into the contract range (shared by schema and client reads). */
 export function clampTerminalFontSize(value: number): number {
   return Math.min(TERMINAL_FONT_SIZE_MAX, Math.max(TERMINAL_FONT_SIZE_MIN, Math.round(value)))
+}
+
+/** Clamp one GitHub poll interval into the contract range (shared by schema and client reads). */
+export function clampGithubPollSeconds(value: number): number {
+  return Math.min(GITHUB_POLL_SECONDS_MAX, Math.max(GITHUB_POLL_SECONDS_MIN, Math.round(value)))
 }

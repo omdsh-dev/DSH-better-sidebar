@@ -39,6 +39,8 @@ import { defaultShell, ensureSpawnHelper, PtyManager } from './pty-manager.ts'
 import { AgentPtyRegistry, clampDims, type AgentTerminalHandle } from './agent-pty.ts'
 import { registerTools } from './tools.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
+import { GithubInboxService } from './github.ts'
+import { buildGithubApi, type SidebarGithubRoutes } from './github-routes.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 
 export { Config }
@@ -176,13 +178,14 @@ export interface SidebarSettingsFace {
   update(patch: Record<string, unknown>, expectedRevision?: number): Promise<{ value?: unknown; revision?: number }>
 }
 
-/** Build the API method table bound to the plugin context, pty manager, agent pty registry, and resolved config. */
+/** Build the API method table bound to the plugin context, pty manager, agent pty registry, resolved config, and the GitHub inbox service. */
 function buildApi(
   ctx: Context,
   ptyManager: PtyManager,
   agentPtyRegistry: AgentPtyRegistry,
   resolved: ResolvedSidebarConfig,
   getSettings: () => SidebarSettingsFace | undefined,
+  github: GithubInboxService,
 ): Record<string, ApiMethod> {
   const cwdOf = (payload: unknown): { sessionId: string; cwd: string } => {
     const sessionId = requireString(payload, 'sessionId')
@@ -196,6 +199,11 @@ function buildApi(
   // job_output cursor is never consumed) and kill (the registry's stock
   // API). A deployment without the jobs registry downgrades kill to a 503.
   const jobsApi: SidebarJobsRoutes = buildJobsApi(ctx, resolved.readLimit)
+  // The GitHub inbox: state is request-driven (each client poll becomes a
+  // conditional GET behind the freshness window), mutations update the
+  // cache optimistically. Account-global — the shared sessionId stamp is
+  // ignored by every github.* method.
+  const githubApi: SidebarGithubRoutes = buildGithubApi(github)
   return {
     'session.cwd': (payload) => {
       const { sessionId, cwd } = cwdOf(payload)
@@ -333,6 +341,15 @@ function buildApi(
     // exists. Kill is fenced to the owning session by the jobs registry.
     'jobs.output': (payload) => jobsApi.output(payload),
     'jobs.kill': (payload) => jobsApi.kill(payload),
+    'github.state': (payload) => githubApi.state(payload),
+    'github.thread': (payload) => githubApi.thread(payload),
+    'github.markRead': (payload) => githubApi.markRead(payload),
+    'github.markDone': (payload) => githubApi.markDone(payload),
+    'github.markAllRead': () => githubApi.markAllRead({}),
+    'github.review': (payload) => githubApi.review(payload),
+    'github.comment': (payload) => githubApi.comment(payload),
+    'github.mergeStatus': (payload) => githubApi.mergeStatus(payload),
+    'github.merge': (payload) => githubApi.merge(payload),
     // The side card preferences. The settings service is optional in the
     // composition; while absent the routes report undefined and the client
     // keeps the schema defaults. Writes are revision-guarded: a stale editor
@@ -426,6 +443,18 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // restore it before any terminal can spawn (idempotent).
   ensureSpawnHelper()
   const resolved = resolveSidebarConfig(config)
+  // The GitHub inbox service: token resolution chain + request-driven
+  // conditional cache. One instance per host half; the routes below are
+  // its only caller. The resolved sidebar config carries the github knobs
+  // flat — map them onto the service's own vocabulary explicitly.
+  const github = new GithubInboxService({
+    token: resolved.githubToken,
+    apiBase: resolved.githubApiBase,
+    webBase: resolved.githubWebBase,
+    pollFloorSeconds: resolved.githubPollFloorSeconds,
+    perPage: resolved.githubPerPage,
+    allowMerge: resolved.githubAllowMerge,
+  })
   // The web runtime's bind-derived trust list (boot-sampled LAN literals
   // plus --trusted-host authorities) — the authoritative source the /api
   // gateway fence derives its list from. Read per request from the live
@@ -496,7 +525,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   })
 
   // ── JSON API ────────────────────────────────────────────────────────────
-  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace)
+  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace, github)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',

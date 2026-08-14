@@ -7,7 +7,24 @@
  * request). Failures surface as {@link SidebarApiError} with the wire code.
  */
 import { encodeHtmlUrl } from '../html-route.ts'
+import type {
+  GithubMergeMethod,
+  GithubMergeStatus,
+  GithubReviewEvent,
+  GithubStateResult,
+  GithubThread,
+  GithubThreadDetail,
+} from '../github-shared.ts'
 import type { BrowserProbeResult } from './browser.ts'
+
+export type {
+  GithubMergeMethod,
+  GithubMergeStatus,
+  GithubReviewEvent,
+  GithubStateResult,
+  GithubThread,
+  GithubThreadDetail,
+} from '../github-shared.ts'
 
 /** One wire failure. */
 export class SidebarApiError extends Error {
@@ -186,6 +203,36 @@ export const api = {
    *  check; see the host's browser.probe route). */
   browserProbe: (url: string, signal?: AbortSignal) =>
     call<BrowserProbeResult>('browser.probe', { url }, signal),
+  /**
+   * The GitHub inbox snapshot. Account-global (no session scope); `force`
+   * bypasses the host's freshness window for the manual refresh button.
+   */
+  githubState: (force?: boolean, signal?: AbortSignal) =>
+    call<GithubStateResult>('github.state', { force: force === true }, signal),
+  /** One thread's detail plus its latest comment body. */
+  githubThread: (id: string, signal?: AbortSignal) =>
+    call<GithubThreadDetail>('github.thread', { id }, signal),
+  /** Mark one thread read. */
+  githubMarkRead: (id: string) =>
+    call<{ ok: true }>('github.markRead', { id }),
+  /** Mark one thread done (GitHub's archive). */
+  githubMarkDone: (id: string) =>
+    call<{ ok: true }>('github.markDone', { id }),
+  /** Mark every unread thread read. */
+  githubMarkAllRead: () =>
+    call<{ ok: true }>('github.markAllRead', {}),
+  /** Submit one PR review event (APPROVE / REQUEST_CHANGES / COMMENT). */
+  githubReview: (repo: string, pr: number, event: GithubReviewEvent, body?: string) =>
+    call<{ ok: true }>('github.review', { repo, pr, event, ...(body !== undefined && body !== '' ? { body } : {}) }),
+  /** Post a general comment on an issue or PR. */
+  githubComment: (repo: string, issue: number, body: string) =>
+    call<{ ok: true }>('github.comment', { repo, issue, body }),
+  /** Mergeability plus head check runs for the merge panel. */
+  githubMergeStatus: (repo: string, pr: number, signal?: AbortSignal) =>
+    call<GithubMergeStatus>('github.mergeStatus', { repo, pr }, signal),
+  /** Merge one PR with the chosen method (merge / squash / rebase). */
+  githubMerge: (repo: string, pr: number, method: GithubMergeMethod) =>
+    call<{ ok: true }>('github.merge', { repo, pr, method }),
 }
 
 /** Absolute URL of the media route for one path (images only). */

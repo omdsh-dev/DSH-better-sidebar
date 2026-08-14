@@ -29,7 +29,9 @@ function clientGraphFiles(): string[] {
     }
   }
   walk(join(ROOT, 'src', 'client'))
-  for (const extra of ['src/context-types.ts', 'src/html-route.ts', 'src/prefs-shared.ts']) {
+  // github-shared.ts is imported by the client bundle (api.ts) and must
+  // stay node-free like the client graph it serves.
+  for (const extra of ['src/context-types.ts', 'src/html-route.ts', 'src/prefs-shared.ts', 'src/github-shared.ts']) {
     files.push(join(ROOT, extra))
   }
   return files

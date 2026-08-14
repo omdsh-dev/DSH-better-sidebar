@@ -108,3 +108,15 @@ export const IconGlobeOutline16 = ({ size = 16, className }: IconProps) => (
     <path d="M1.5 8h13M8 1.5c-2.4 1.8-2.4 11.2 0 13M8 1.5c2.4 1.8 2.4 11.2 0 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
   </svg>
 )
+
+/**
+ * GitHub tab glyph: an inbox tray in the app's outline style (1.5px stroke,
+ * currentColor) — a rounded frame with the tray notch and the stacked-items
+ * line across it.
+ */
+export const IconInboxOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M2.5 9.5h2.4c.55 0 1.05.3 1.32.78l.14.24c.26.45.76.73 1.29.73h.7c.53 0 1.03-.28 1.29-.73l.14-.24c.27-.48.77-.78 1.32-.78h2.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+)

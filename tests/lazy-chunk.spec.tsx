@@ -18,6 +18,7 @@ import { builtinViewers } from '../src/client/builtins/viewers.tsx'
 import { registerChunkForTests, resetChunks } from '../src/client/chunk-loader.ts'
 import { lazyChunkComponent } from '../src/client/lazy-chunk.tsx'
 import type { Context } from '../src/context-types.ts'
+import type { GithubInboxStore } from '../src/client/github-inbox.ts'
 import type { FileViewerProps, TabComponentProps } from '../src/client/service.ts'
 import css from '../src/client/sidebar.module.css'
 
@@ -109,7 +110,7 @@ describe('built-in descriptor contract (render-prop functions)', () => {
   })
 
   it('the terminal tab component keeps the same contract', () => {
-    const tabs = builtinTabs({} as Context)
+    const tabs = builtinTabs({} as Context, {} as GithubInboxStore)
     const terminal = tabs.find(tab => tab.id === 'terminal')
     expect(terminal).toBeDefined()
     // The descriptor reads tab.id (the tabId mapping); a real tab is part of
@@ -156,7 +157,7 @@ describe('built-in descriptor contract (render-prop functions)', () => {
         return createElement('div', { 'data-testid': 'terminal-tabid' }, props.tabId)
       }) as unknown as ComponentType<Record<string, never>>,
     }))
-    const tabs = builtinTabs({} as Context)
+    const tabs = builtinTabs({} as Context, {} as GithubInboxStore)
     const terminal = tabs.find(tab => tab.id === 'terminal')!
     const props = {
       ctx: {},
@@ -178,7 +179,7 @@ describe('built-in descriptor contract (render-prop functions)', () => {
       calls += 1
       return { TerminalView: Marker }
     })
-    const tabs = builtinTabs({} as Context)
+    const tabs = builtinTabs({} as Context, {} as GithubInboxStore)
     const terminal = tabs.find(tab => tab.id === 'terminal')!
     const props = { tab: { id: 'terminal:1', type: 'terminal', title: '终端 1' } } as unknown as TabComponentProps
     const { container: first, unmount: unmountFirst } = mount(createElement(terminal.component, props))

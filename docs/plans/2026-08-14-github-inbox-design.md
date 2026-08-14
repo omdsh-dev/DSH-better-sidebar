@@ -1,7 +1,7 @@
 # GitHub 收件箱提醒设计（内置 GitHub tab）
 
 **日期**：2026-08-14
-**状态**：待审阅
+**状态**：已实施（含实施偏差记录：subject.url 为 REST 地址 → 新增 htmlUrl 推导；badge 桥经 updateTab meta 触发 tab 栏重渲染；Merge 按钮随 state.allowMerge 显隐；轮询下限 60s；GHES 带 /api/v3 基路径时评论 URL 绝对化 + 同源守卫；CheckSuite 无 URL 时打开按钮禁用；网络错误无缓存时不显示空收件箱；host 显式按 updated_at 降序；Link 头分页（≤5 页）；githubWebBase 显式覆盖 GHES 子路径；线程 id 数字校验；详情竞态以 expandedRef 丢弃过期响应；本地变更版本号丢弃变更前发出的轮询结果）
 **作者**：用户 + AI agent
 **当前版本**：v0.12.0（main `cba7e77`）
 **目标版本**：v0.13.0
@@ -74,7 +74,8 @@ interface GithubThread {
   reason: string        // GitHub 原始 reason
   repo: string          // 'owner/name'
   title: string         // subject.title（review verdict 也在这里）
-  url: string           // subject.url（PR/issue 页面）
+  url: string           // subject.url（REST API 地址，用于编号解析与详情）
+  htmlUrl: string       // 人类可读网页地址（host 由 apiBase 推导；打开动作用它）
   type: string          // subject.type: 'PullRequest' | 'Issue' | …
   updatedAt: string     // ISO 8601
   latestCommentUrl?: string
@@ -85,6 +86,7 @@ type GithubCategory = 'reviewRequested' | 'prActivity' | 'comments' | 'ci' | 'ot
 interface GithubStateResult {
   configured: boolean   // token 是否解析成功
   ghAvailable?: boolean  // gh 二进制是否可用（未配置时驱动引导文案的路径推荐）
+  allowMerge: boolean    // 部署是否开启 githubAllowMerge（client 据此显隐 Merge 按钮）
   error?: { code: string; message: string }  // 未配置 / 401/403 / 网络
   threads: GithubThread[]
   fetchedAt?: string
@@ -142,14 +144,14 @@ interface GithubStateResult {
 | `githubShowComments` | boolean | `true` |
 | `githubShowCi` | boolean | **`false`** |
 | `githubShowOther` | boolean | `true` |
-| `githubPollSeconds` | number（30–300） | `60` |
+| `githubPollSeconds` | number（60–300，GitHub 轮询下限即 60） | `60` |
 
 ### 5.3 client 半
 
 **`src/client/github-inbox.ts`**：分类/过滤/计数/verdict 纯函数 + `GithubInboxStore` 工厂（`useSyncExternalStore` 适配；由 `builtinTabs(ctx)` 在注册时创建一次——遵守「production 只建一处」规则，badge 与 view 闭包共享）。
 
 - store 持有 `{state: GithubStateResult | null}`；创建时订阅 `service.subscribeState()` 同步 prefs 快照（badge 计算过滤需要）。
-- **轮询器归 store 所有**（不归 view）：tick 间隔 `githubPollSeconds`；`document.hidden` 时跳过；`configured === false` 时降为 5 分钟探测一次；fiber dispose 时清除。这样**tab 从未打开过，角标也保持鲜活**。
+- **轮询器归 store 所有**（不归 view）：tick 间隔 `githubPollSeconds`；`document.hidden` 时跳过；`configured === false` 时降为 5 分钟探测一次；fiber dispose 时清除。这样**tab 打开后（即使切到其他 tab、非激活），角标保持鲜活**。角标只渲染在已打开的 tab 上（+ 菜单无角标位）：badge hook 首次渲染时惰性武装轮询，未打开过的 GitHub tab 无角标可渲染、也不轮询；页面刷新后已持久化的 tab 会在 badge 首帧重新武装。
 - `badge(ctx, scope, state)`：`countUnread(filterThreads(store.threads, store.prefs))`，0 → `null`（隐藏），99+ 封顶；抛错被宿主吞掉。
 
 **`src/client/builtins/tabs.tsx`** 新增注册（表 §3.4 增加一行）：

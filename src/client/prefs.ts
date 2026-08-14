@@ -10,13 +10,14 @@
  */
 import type { api } from './api.ts'
 import {
+  clampGithubPollSeconds,
   clampTerminalFontSize,
   clampWidthPercent,
   SIDEBAR_PREFS_DEFAULTS,
   type SidebarPrefs,
 } from '../prefs-shared.ts'
 
-export { SIDEBAR_PREFS_DEFAULTS, clampTerminalFontSize, clampWidthPercent }
+export { SIDEBAR_PREFS_DEFAULTS, clampGithubPollSeconds, clampTerminalFontSize, clampWidthPercent }
 export type { SidebarPrefs }
 
 /** The settings wire face the preferences need (a subset of the plugin api). */
@@ -71,6 +72,24 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     browserInterceptLinks: typeof record.browserInterceptLinks === 'boolean'
       ? record.browserInterceptLinks
       : SIDEBAR_PREFS_DEFAULTS.browserInterceptLinks,
+    githubShowReviewRequested: typeof record.githubShowReviewRequested === 'boolean'
+      ? record.githubShowReviewRequested
+      : SIDEBAR_PREFS_DEFAULTS.githubShowReviewRequested,
+    githubShowPrActivity: typeof record.githubShowPrActivity === 'boolean'
+      ? record.githubShowPrActivity
+      : SIDEBAR_PREFS_DEFAULTS.githubShowPrActivity,
+    githubShowComments: typeof record.githubShowComments === 'boolean'
+      ? record.githubShowComments
+      : SIDEBAR_PREFS_DEFAULTS.githubShowComments,
+    githubShowCi: typeof record.githubShowCi === 'boolean'
+      ? record.githubShowCi
+      : SIDEBAR_PREFS_DEFAULTS.githubShowCi,
+    githubShowOther: typeof record.githubShowOther === 'boolean'
+      ? record.githubShowOther
+      : SIDEBAR_PREFS_DEFAULTS.githubShowOther,
+    githubPollSeconds: typeof record.githubPollSeconds === 'number' && Number.isFinite(record.githubPollSeconds)
+      ? clampGithubPollSeconds(record.githubPollSeconds)
+      : SIDEBAR_PREFS_DEFAULTS.githubPollSeconds,
     tabsEnabled: booleanMapOf(record.tabsEnabled),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
     pluginSettings: pluginSettingsMapOf(record.pluginSettings),

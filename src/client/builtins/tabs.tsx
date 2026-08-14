@@ -1,10 +1,12 @@
 /**
- * The 7 built-in tab descriptors: the plugin registers its own pages
- * (explorer / git / terminal / browser / subagent / editor / diff) through
- * the same {@link BetterSidebarService} external plugins use — eating its
- * own dogfood. The terminal descriptor owns its quota (`TERMINAL_LIMIT`)
- * and mints `terminal:<n>` ids through `createTab`; the browser mints
- * `browser:<n>` the same way (no quota).
+ * The 8 built-in tab descriptors: the plugin registers its own pages
+ * (explorer / git / github / terminal / browser / subagent / editor / diff)
+ * through the same {@link BetterSidebarService} external plugins use —
+ * eating its own dogfood. The terminal descriptor owns its quota
+ * (`TERMINAL_LIMIT`) and mints `terminal:<n>` ids through `createTab`; the
+ * browser mints `browser:<n>` the same way (no quota). The GitHub
+ * descriptor shares the inbox store with its badge hook — the store is
+ * created once by the builtins aggregator and passed in.
  */
 import { IconBranchOutline16, IconCodeOutline16, IconFolderOpen16, IconThinkOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
@@ -18,8 +20,10 @@ import { GitView } from '../GitView.tsx'
 import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
 import { BrowserView } from '../BrowserView.tsx'
-import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16 } from '../icons.tsx'
-import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
+import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16, IconInboxOutline16 } from '../icons.tsx'
+import { GitHubInboxView } from '../GitHubInboxView.tsx'
+import type { GithubInboxStore } from '../github-inbox.ts'
+import { GITHUB_POLL_SECONDS_MAX, GITHUB_POLL_SECONDS_MIN, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
 import type { ComponentType } from 'react'
 import type { SessionScope } from '../api.ts'
 import type { SidebarStore } from '../state.ts'
@@ -59,8 +63,8 @@ function uiTerminalCount(state: SidebarState): number {
     .filter(tab => tab.type === 'terminal' && !isAgentTabId(tab.id)).length
 }
 
-/** The 7 built-in tab descriptors. */
-export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
+/** The 8 built-in tab descriptors. */
+export function builtinTabs(ctx: Context, githubStore: GithubInboxStore): readonly TabDescriptor[] {
   return [
     {
       id: 'editor',
@@ -102,6 +106,57 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
           onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}
           onOpenDiff={onOpenDiff ?? (() => { /* no-op */ })}
         />
+      ),
+    },
+    {
+      id: 'github',
+      title: () => t('github'),
+      icon: (size: number) => <IconInboxOutline16 size={size} />,
+      order: 25,
+      single: true,
+      // The badge pill arms the store's polling on its first render, so the
+      // unread count stays live while the tab is open but inactive (the
+      // badge only renders on open tabs — a never-opened tab has no pill).
+      badge: () => {
+        githubStore.ensurePolling()
+        return githubStore.badgeValue()
+      },
+      // Declarative settings: the five category filters plus the poll
+      // interval render under this card in the Side card settings page.
+      // The same prefs keys drive the tab's filter chips.
+      settings: {
+        toggles: [{
+          key: 'githubShowReviewRequested',
+          title: () => t('githubChipReviewRequested'),
+          desc: () => t('githubChipReviewRequestedDesc'),
+        }, {
+          key: 'githubShowPrActivity',
+          title: () => t('githubChipPrActivity'),
+          desc: () => t('githubChipPrActivityDesc'),
+        }, {
+          key: 'githubShowComments',
+          title: () => t('githubChipComments'),
+          desc: () => t('githubChipCommentsDesc'),
+        }, {
+          key: 'githubShowCi',
+          title: () => t('githubChipCi'),
+          desc: () => t('githubChipCiDesc'),
+        }, {
+          key: 'githubShowOther',
+          title: () => t('githubChipOther'),
+          desc: () => t('githubChipOtherDesc'),
+        }, {
+          key: 'githubPollSeconds',
+          type: 'number',
+          title: () => t('githubPollSecondsTitle'),
+          desc: () => t('githubPollSecondsDesc'),
+          min: GITHUB_POLL_SECONDS_MIN,
+          max: GITHUB_POLL_SECONDS_MAX,
+          unit: t('githubPollSecondsSuffix'),
+        }],
+      },
+      component: ({ ctx, store, scope }) => (
+        <GitHubInboxView githubStore={githubStore} sidebarStore={store} ctx={ctx} scope={scope} />
       ),
     },
     {

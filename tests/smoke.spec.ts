@@ -524,6 +524,12 @@ describe('side card settings routes', () => {
         htmlViewerDefaultUnsafe: false,
         browserNoSandbox: false,
         browserInterceptLinks: true,
+        githubShowReviewRequested: true,
+        githubShowPrActivity: true,
+        githubShowComments: true,
+        githubShowCi: false,
+        githubShowOther: true,
+        githubPollSeconds: 60,
         // The enable-switch maps default to {} (everything on).
         tabsEnabled: {},
         viewersEnabled: {},

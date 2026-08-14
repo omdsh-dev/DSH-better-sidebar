@@ -18,6 +18,12 @@ export type SidebarErrorCode =
   | 'job-error'
   | 'settings-rejected'
   | 'settings-conflict'
+  | 'github-auth'
+  | 'github-not-found'
+  | 'github-rejected'
+  | 'github-forbidden'
+  | 'github-unavailable'
+  | 'github-error'
   | 'internal'
 
 /** One API failure with its wire code and HTTP status. */

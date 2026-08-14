@@ -7,6 +7,9 @@
 
 import z from 'schemastery'
 import {
+  GITHUB_POLL_SECONDS_DEFAULT,
+  GITHUB_POLL_SECONDS_MAX,
+  GITHUB_POLL_SECONDS_MIN,
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
   TERMINAL_FONT_SIZE_DEFAULT,
@@ -17,8 +20,16 @@ import {
   WIDTH_PERCENT_MIN,
   type SidebarPrefs,
 } from './prefs-shared.ts'
+import {
+  GITHUB_API_BASE_DEFAULT,
+  GITHUB_PER_PAGE_MAX,
+  GITHUB_POLL_FLOOR_MIN,
+} from './github.ts'
 
 export {
+  GITHUB_POLL_SECONDS_DEFAULT,
+  GITHUB_POLL_SECONDS_MAX,
+  GITHUB_POLL_SECONDS_MIN,
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
   TERMINAL_FONT_SIZE_DEFAULT,
@@ -42,6 +53,37 @@ export interface SidebarConfig {
   terminalsPerSession?: number
   /** How long a disconnected terminal process survives awaiting a reconnect. */
   reconnectGraceMs?: number
+  /**
+   * Explicit GitHub personal access token for the built-in GitHub tab.
+   * Prefer the gh CLI login or the GITHUB_TOKEN / GH_TOKEN environment
+   * variables (the resolution chain tries those when this stays unset);
+   * set it only when neither works for the deployment. The token never
+   * leaves the host process.
+   */
+  githubToken?: string
+  /** GitHub REST base URL (override for GitHub Enterprise Server). */
+  githubApiBase?: string
+  /**
+   * The human web origin the GitHub tab derives thread links from. Defaults
+   * to github.com for the public API base, or the api base minus a trailing
+   * /api/v3; set it explicitly for GHES deployments that serve the web UI
+   * from a different origin/path than the API base implies.
+   */
+  githubWebBase?: string
+  /**
+   * Floor of the effective GitHub poll interval in seconds. The host also
+   * honors GitHub's own X-Poll-Interval (which grows under load), so the
+   * real cadence is never below the larger of the two.
+   */
+  githubPollFloorSeconds?: number
+  /** Inbox threads fetched per poll (GitHub caps at 50). */
+  githubPerPage?: number
+  /**
+   * Whether the Merge action is available in the GitHub tab. OFF by
+   * default: merging is irreversible, so a deployment opts in explicitly
+   * and the tab still shows CI status plus a confirmation before merging.
+   */
+  githubAllowMerge?: boolean
 }
 
 /** Schemastery schema for the plugin configuration. */
@@ -51,6 +93,12 @@ export const Config: z<SidebarConfig> = z.object({
   listLimit: z.number().step(1).min(1).default(1000),
   terminalsPerSession: z.number().step(1).min(1).default(3),
   reconnectGraceMs: z.number().step(1).min(0).default(30_000),
+  githubToken: z.string().default(''),
+  githubApiBase: z.string().default(GITHUB_API_BASE_DEFAULT),
+  githubWebBase: z.string().default(''),
+  githubPollFloorSeconds: z.number().step(1).min(GITHUB_POLL_FLOOR_MIN).default(GITHUB_POLL_FLOOR_MIN),
+  githubPerPage: z.number().step(1).min(1).max(GITHUB_PER_PAGE_MAX).default(GITHUB_PER_PAGE_MAX),
+  githubAllowMerge: z.boolean().default(false),
 })
 
 /** Fully defaulted sidebar host settings. */
@@ -60,6 +108,12 @@ export interface ResolvedSidebarConfig {
   listLimit: number
   terminalsPerSession: number
   reconnectGraceMs: number
+  githubToken?: string
+  githubApiBase: string
+  githubWebBase?: string
+  githubPollFloorSeconds: number
+  githubPerPage: number
+  githubAllowMerge: boolean
 }
 
 /**
@@ -75,6 +129,12 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
     listLimit: config?.listLimit ?? 1000,
     terminalsPerSession: config?.terminalsPerSession ?? 3,
     reconnectGraceMs: config?.reconnectGraceMs ?? 30_000,
+    ...(config?.githubToken !== undefined && config.githubToken !== '' ? { githubToken: config.githubToken } : {}),
+    githubApiBase: config?.githubApiBase ?? GITHUB_API_BASE_DEFAULT,
+    ...(config?.githubWebBase !== undefined && config.githubWebBase !== '' ? { githubWebBase: config.githubWebBase } : {}),
+    githubPollFloorSeconds: config?.githubPollFloorSeconds ?? GITHUB_POLL_FLOOR_MIN,
+    githubPerPage: config?.githubPerPage ?? GITHUB_PER_PAGE_MAX,
+    githubAllowMerge: config?.githubAllowMerge ?? false,
   }
 }
 
@@ -95,6 +155,12 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   htmlViewerDefaultUnsafe: z.boolean().default(false),
   browserNoSandbox: z.boolean().default(false),
   browserInterceptLinks: z.boolean().default(true),
+  githubShowReviewRequested: z.boolean().default(true),
+  githubShowPrActivity: z.boolean().default(true),
+  githubShowComments: z.boolean().default(true),
+  githubShowCi: z.boolean().default(false),
+  githubShowOther: z.boolean().default(true),
+  githubPollSeconds: z.number().step(1).min(GITHUB_POLL_SECONDS_MIN).max(GITHUB_POLL_SECONDS_MAX).default(GITHUB_POLL_SECONDS_DEFAULT),
   // Per-feature enable switches are OPEN maps (any tab/viewer id, built-in or
   // external): an absent key means enabled, so old documents resolve to {}
   // (everything on) with no migration. Non-boolean values fail validation.

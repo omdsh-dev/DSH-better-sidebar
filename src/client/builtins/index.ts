@@ -8,6 +8,8 @@
  */
 import type { Context } from '../../context-types.ts'
 import type { BetterSidebarService } from '../service.ts'
+import { api } from '../api.ts'
+import { createGithubInboxStore } from '../github-inbox.ts'
 import { builtinTabs } from './tabs.tsx'
 import { builtinViewers } from './viewers.tsx'
 
@@ -18,8 +20,13 @@ import { builtinViewers } from './viewers.tsx'
  * (EditorHost reads `ctx.betterSidebar` for file-viewer matching).
  */
 export function registerBuiltins(ctx: Context, service: BetterSidebarService): () => void {
+  // The GitHub inbox store is created here — once per activation — and
+  // shared by the GitHub tab's badge hook and its view. Its polling timer
+  // starts lazily on the first badge render, so a disabled GitHub tab never
+  // polls; the disposer below stops the timer on fiber disposal (HMR-safe).
+  const githubStore = createGithubInboxStore(api, service)
   const disposers: (() => void)[] = []
-  for (const tab of builtinTabs(ctx)) {
+  for (const tab of builtinTabs(ctx, githubStore)) {
     disposers.push(service.registerTab(tab))
   }
   for (const viewer of builtinViewers()) {
@@ -29,5 +36,6 @@ export function registerBuiltins(ctx: Context, service: BetterSidebarService): (
     for (const d of disposers) {
       try { d() } catch { /* already disposed */ }
     }
+    githubStore.dispose()
   }
 }

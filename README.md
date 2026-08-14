@@ -41,7 +41,7 @@ https://github.com/user-attachments/assets/23187822-047e-45cc-b480-fe997bd55b86
 - **🔧 分栏工作台**：拖 Tab 拆分/合并（可跨面板）、分隔线调比例；右上角按钮一键折叠/展开面板
 - **🔁 会话隔离**：布局 / Tab / 面板状态按会话持久化，陈旧状态自动净化；「产出文件」在侧边栏打开
 - **⚙️ 声明式设置**：设置页「侧边卡片」按注册表渲染开关网格，逐项独立开/关；二级设置（自动展开、终端工具、沙箱等）经齿轮弹窗编辑
-- **🔌 服务化（基座）**：暴露 `ctx.betterSidebar`，其他插件可注册 tab 与文件预览器（内置 7 tab + 9 viewer 同走一服务）；v0.12.0 起支持角标/生命周期回调/状态订阅/定向打开/插件自有设置（见 [AGENTS.md](./AGENTS.md) 与 [外部插件接入指南](./docs/external-plugin-guide.md)）
+- **🔌 服务化（基座）**：暴露 `ctx.betterSidebar`，其他插件可注册 tab 与文件预览器（内置 8 tab + 9 viewer 同走一服务）；v0.12.0 起支持角标/生命周期回调/状态订阅/定向打开/插件自有设置（见 [AGENTS.md](./AGENTS.md) 与 [外部插件接入指南](./docs/external-plugin-guide.md)）
 - **➕ 添加插件**：设置页「侧边卡片」两个网格（侧边栏内容 / 文件预览）末尾的虚线卡片分别打开 Tab / 预览插件弹窗：声明扩展点、「在 GitHub 上浏览更多插件」按钮、推荐插件目录（「跳转」直达仓库、「复制」安装命令到剪贴板）；弹窗不打开终端、无失败路径，不阻塞启动与侧边栏
 - **🌏 多语言**：界面文案跟随 DSH 语言（zh/en）实时切换，无需刷新
 
@@ -208,7 +208,7 @@ dsh registry enable dsh-external/dsh-better-sidebar
 
 ## 🔌 服务化：注册 tab 与文件预览器
 
-从 v0.4.0 起暴露 `ctx.betterSidebar` 服务，其他插件可注册侧边栏页面与文件预览器（内置 7 tab + 9 viewer 也走同一服务，吃自己的狗粮）：
+从 v0.4.0 起暴露 `ctx.betterSidebar` 服务，其他插件可注册侧边栏页面与文件预览器（内置 8 tab + 9 viewer 也走同一服务，吃自己的狗粮）：
 
 ```ts
 import type {} from 'dsh-better-sidebar'  // 触发 ctx.betterSidebar 类型合并

@@ -41,7 +41,7 @@ https://github.com/user-attachments/assets/23187822-047e-45cc-b480-fe997bd55b86
 - **🔧 Split-pane Workbench**: drag tabs to split/merge panes (cross-panel supported), divider to adjust ratios; one-click collapse/expand both panels from the top-right buttons
 - **🔁 Session Isolation**: layout / tabs / panel states persisted per session, stale state auto-purged; "produced files" open in the sidebar
 - **⚙️ Declarative Settings**: the "Side Cards" settings section renders a registry-driven toggle grid, each item independently switchable; secondary settings (auto-expand, terminal tools, sandbox, etc.) edited in a native dialog via the gear button
-- **🔌 Service API**: exposes `ctx.betterSidebar` — other plugins can register tabs and file viewers (the 7 built-in tabs + 9 viewers share the same service, see [AGENTS.md](./AGENTS.md) and the [external plugin guide](./docs/external-plugin-guide.md))
+- **🔌 Service API**: exposes `ctx.betterSidebar` — other plugins can register tabs and file viewers (the 8 built-in tabs + 9 viewers share the same service, see [AGENTS.md](./AGENTS.md) and the [external plugin guide](./docs/external-plugin-guide.md))
 - **➕ Add Plugins**: dashed cards at the end of both settings grids ("Sidebar content" / "File viewers") open tab / previewer plugin modals: the extension point declaration, a "Browse more plugins on GitHub" BUTTON, and the recommended plugin catalog ("Open" jumps to the repo, "Copy" puts the install command on the clipboard); no terminal is opened, nothing can fail — never blocking startup or the sidebar
 - **🌏 i18n**: UI text follows DSH's language setting (zh/en) with live switching, no refresh needed
 
@@ -208,7 +208,7 @@ Update: `git pull && pnpm install && pnpm build` → `node scripts/package-regis
 
 ## 🔌 Service: register tabs & file viewers
 
-Since v0.4.0 the plugin exposes the `ctx.betterSidebar` service — other plugins can register sidebar pages and file viewers (the 7 built-in tabs + 9 viewers go through the same service, eating our own dog food):
+Since v0.4.0 the plugin exposes the `ctx.betterSidebar` service — other plugins can register sidebar pages and file viewers (the 8 built-in tabs + 9 viewers go through the same service, eating our own dog food):
 
 ```ts
 import type {} from 'dsh-better-sidebar'  // triggers the ctx.betterSidebar type merge

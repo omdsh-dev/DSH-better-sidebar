@@ -1,5 +1,5 @@
 /**
- * Built-in registration tests: the plugin registers 7 tabs and 6 file
+ * Built-in registration tests: the plugin registers 8 tabs and 6 file
  * viewers through the same service external plugins use (dogfooding);
  * the catch-all `code` viewer, the NUL-sniffing `binary-download` viewer,
  * and the html sandbox settings pin the registry's behavior. (Office
@@ -24,10 +24,10 @@ function setup(): { service: ReturnType<typeof createBetterSidebarService>; stor
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 7 built-in tabs', () => {
+  it('registers the 8 built-in tabs', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['browser', 'diff', 'editor', 'explorer', 'git', 'subagent', 'terminal'],
+      ['browser', 'diff', 'editor', 'explorer', 'git', 'github', 'subagent', 'terminal'],
     )
   })
 
@@ -38,9 +38,33 @@ describe('built-in tab registrations', () => {
 
   it('single-instance tabs use the single sugar', () => {
     const { service } = setup()
-    for (const id of ['explorer', 'git', 'subagent']) {
+    for (const id of ['explorer', 'git', 'github', 'subagent']) {
       expect(service.getTab(id)?.single).toBe(true)
     }
+  })
+
+  it('the github tab declares its category filters and poll-interval settings', () => {
+    const { service } = setup()
+    const toggles = service.getTab('github')?.settings?.toggles ?? []
+    expect(toggles.map(t => t.key)).toEqual([
+      'githubShowReviewRequested', 'githubShowPrActivity', 'githubShowComments', 'githubShowCi', 'githubShowOther', 'githubPollSeconds',
+    ])
+    // The five filters are plain switches; the poll row is a bounded number
+    // input sharing the prefs-shared 30–300 contract.
+    for (const toggle of toggles.slice(0, 5)) {
+      expect(toggle.type ?? 'switch').toBe('switch')
+      expect(toggle.title).toBeDefined()
+      expect(toggle.desc).toBeDefined()
+    }
+    expect(toggles[5]?.type).toBe('number')
+    expect(toggles[5]?.min).toBe(60)
+    expect(toggles[5]?.max).toBe(300)
+    expect(toggles[5]?.unit).toBeDefined()
+  })
+
+  it('the github tab is the first builtin with a badge hook (unread pill)', () => {
+    const { service } = setup()
+    expect(service.getTab('github')?.badge).toBeDefined()
   })
 
   it('the subagent tab declares its auto-open related settings', () => {
