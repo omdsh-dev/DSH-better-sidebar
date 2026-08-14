@@ -24,6 +24,9 @@ export interface SidebarFsListing {
   truncated: boolean
 }
 
+/** macOS Finder metadata files never shown as explorer rows. */
+const FINDER_JUNK = new Set(['.DS_Store', '.localized'])
+
 /** Directory-first, case-insensitive name ordering (VSCode explorer order). */
 export function compareEntries(a: SidebarFsEntry, b: SidebarFsEntry): number {
   if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
@@ -48,6 +51,9 @@ export async function listDirectory(path: string, maxEntries = 1000): Promise<Si
   let overflow = 0
   try {
     for await (const dirent of level) {
+      // Finder metadata rows (.DS_Store, .localized) are never useful:
+      // skip them instead of showing dimmed binary junk in the tree.
+      if (FINDER_JUNK.has(dirent.name)) continue
       if (rows.length >= maxEntries) {
         overflow += 1
         continue

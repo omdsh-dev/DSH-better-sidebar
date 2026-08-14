@@ -199,6 +199,24 @@ function buildApi(
     const clientCwd = typeof record?.cwd === 'string' && record.cwd !== '' ? record.cwd : undefined
     return { sessionId, cwd: sessionCwdOf(ctx, sessionId, clientCwd) }
   }
+  // ── File-management helpers (explorer mkdir/create/rename/move/remove) ──
+  /** Refuse paths outside the session working directory (403). */
+  const requireWithin = (cwd: string, path: string): string => {
+    if (!isWithin(cwd, path)) {
+      throw new SidebarError('fs-error', 'path outside the session working directory', 403)
+    }
+    return path
+  }
+  /** One file/folder name: a single path segment, never an escape. */
+  const requireSegment = (name: string): string => {
+    if (name === '' || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
+      throw new SidebarError('bad-request', `invalid name "${name}"`, 400)
+    }
+    return name
+  }
+  /** Wrap one node:fs failure as a SidebarError with a human prefix. */
+  const fsError = (what: string, error: unknown): SidebarError =>
+    new SidebarError('fs-error', `${what}: ${error instanceof Error ? error.message : String(error)}`, 400)
   // Background jobs: the LIST rides the harness's `session/jobs` push
   // mirror, so these routes only replay output the model has read (from the
   // session's own event log — no DSH source is touched, the model's
@@ -237,6 +255,67 @@ function buildApi(
       } catch (error) {
         await rm(tmp, { force: true }).catch(() => {})
         throw new SidebarError('fs-error', `cannot write "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+      }
+      return { ok: true }
+    },
+    'fs.mkdir': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const parent = requireWithin(cwd, requireAbsolute(requireString(payload, 'parent')))
+      const name = requireSegment(requireString(payload, 'name'))
+      try {
+        await mkdir(join(parent, name))
+      } catch (error) {
+        throw fsError(`cannot create folder "${name}" in "${parent}"`, error)
+      }
+      return { ok: true }
+    },
+    'fs.create': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const parent = requireWithin(cwd, requireAbsolute(requireString(payload, 'parent')))
+      const name = requireSegment(requireString(payload, 'name'))
+      try {
+        await writeFile(join(parent, name), '', { flag: 'wx' })
+      } catch (error) {
+        throw fsError(`cannot create file "${name}" in "${parent}"`, error)
+      }
+      return { ok: true }
+    },
+    'fs.rename': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const path = requireWithin(cwd, requireAbsolute(requireString(payload, 'path')))
+      const name = requireSegment(requireString(payload, 'name'))
+      try {
+        await rename(path, join(dirname(path), name))
+      } catch (error) {
+        throw fsError(`cannot rename "${path}" to "${name}"`, error)
+      }
+      return { ok: true }
+    },
+    'fs.move': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const path = requireWithin(cwd, requireAbsolute(requireString(payload, 'path')))
+      const targetDir = requireWithin(cwd, requireAbsolute(requireString(payload, 'targetDir')))
+      const info = await stat(targetDir).catch((error: unknown) => {
+        throw fsError(`cannot stat "${targetDir}"`, error)
+      })
+      if (!info.isDirectory()) throw new SidebarError('fs-error', `"${targetDir}" is not a directory`, 400)
+      const dest = join(targetDir, basename(path))
+      if (dest === path) return { ok: true }
+      try {
+        await rename(path, dest)
+      } catch (error) {
+        throw fsError(`cannot move "${path}" into "${targetDir}"`, error)
+      }
+      return { ok: true }
+    },
+    'fs.remove': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const path = requireWithin(cwd, requireAbsolute(requireString(payload, 'path')))
+      if (path === cwd) throw new SidebarError('fs-error', 'the session working directory cannot be removed', 400)
+      try {
+        await rm(path, { recursive: true, force: false })
+      } catch (error) {
+        throw fsError(`cannot remove "${path}"`, error)
       }
       return { ok: true }
     },
