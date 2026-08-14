@@ -16,7 +16,7 @@ import { defaultShell, PtyManager } from '../src/pty-manager.ts'
 import type { SidebarWebRoute, SidebarWebUpgradeRoute } from '../src/context-types.ts'
 
 interface FakeContext {
-  loader: { entries: () => never[] }
+  webRuntime: { trustedHosts: readonly string[] }
   webServer: {
     register: (route: SidebarWebRoute) => () => void
     registerUpgrade: (route: SidebarWebUpgradeRoute) => () => void
@@ -42,7 +42,7 @@ describe('host plugin smoke', () => {
     const upgrades: SidebarWebUpgradeRoute[] = []
     const effects: Array<() => void | (() => void)> = []
     const ctx: FakeContext = {
-      loader: { entries: () => [] },
+      webRuntime: { trustedHosts: [] },
       webServer: {
         register: (route) => { routes.push(route); return () => {} },
         registerUpgrade: (route) => { upgrades.push(route); return () => {} },
@@ -308,7 +308,7 @@ describe('session cwd resolution over the API route', () => {
   const mount = (overrides: CtxOverrides = {}): SidebarWebRoute => {
     const routes: SidebarWebRoute[] = []
     const ctx = {
-      loader: { entries: () => [] },
+      webRuntime: { trustedHosts: [] },
       webServer: {
         register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
@@ -458,7 +458,7 @@ describe('side card settings routes', () => {
   const mountWithSettings = (settings?: unknown): SidebarWebRoute => {
     const routes: SidebarWebRoute[] = []
     const ctx = {
-      loader: { entries: () => [] },
+      webRuntime: { trustedHosts: [] },
       webServer: {
         register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
@@ -648,7 +648,7 @@ describe('agent terminal tool gating', () => {
       async update() {},
     }
     const ctx = {
-      loader: { entries: () => [] },
+      webRuntime: { trustedHosts: [] },
       webServer: {
         register: (route: SidebarWebRoute) => { void route; return () => {} },
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },

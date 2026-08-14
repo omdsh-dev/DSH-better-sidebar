@@ -17,7 +17,7 @@ describe('dsh-better-sidebar plugin export shape', () => {
     const unwrapped = loader.unwrapExports(sidebar) as Record<string, unknown>
     expect(unwrapped).toBe(sidebar)
     expect(unwrapped.name).toBe('dsh-better-sidebar')
-    expect(unwrapped.inject).toEqual(['webServer', 'sessions', 'loader', 'tools'])
+    expect(unwrapped.inject).toEqual(['webServer', 'sessions', 'webRuntime', 'tools'])
     expect(unwrapped.Config).toBeDefined()
     expect(typeof unwrapped.apply).toBe('function')
   })

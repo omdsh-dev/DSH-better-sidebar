@@ -12,7 +12,7 @@
  * - conversation: client side ui-conversation's IConversation (composer
  *   draft), read lazily through `ctx.get` — cross-plugin service reads need
  *   an inject declaration, so the direct property is never typed here
- * - loader: @cordisjs/plugin-loader (entry options)
+ * - webRuntime: @deepseek-ai/dsh-web-app (bind-derived trusted hosts)
  * - slots: the client runtime SlotRegistry
  * - effect: the DSH-vendored cordis lifecycle helper
  * Drift from upstream is contained to this file.
@@ -100,6 +100,16 @@ export interface SidebarLoaderEntry {
 /** The loader face used to read the connection row's trustedHosts config. */
 export interface SidebarLoader {
   entries(): Iterable<SidebarLoaderEntry>
+}
+
+/**
+ * The web runtime service face (mirror of @deepseek-ai/dsh-web-app's
+ * WebRuntimeValues): the bind-derived trust list the /api gateway's fence
+ * accepts — LAN IP literals sampled when the server binds all interfaces,
+ * plus explicit `--trusted-host` authorities.
+ */
+export interface SidebarWebRuntime {
+  trustedHosts: readonly string[]
 }
 
 /** Registration options the sidebar passes to `ctx.slots.register` (subset of the real options). */
@@ -416,7 +426,7 @@ declare module 'cordis' {
     webServer: SidebarWebServer
     sessions: SidebarSessionStore & SidebarSessionsService
     connection: SidebarConnectionHandle
-    loader: SidebarLoader
+    webRuntime: SidebarWebRuntime
     slots: SidebarSlotsService
     workspaces: SidebarWorkspacesService
     settings: SidebarSettingsService

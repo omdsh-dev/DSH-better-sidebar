@@ -4,9 +4,9 @@
  * preview route, the /sidebar/bundle lazy-chunk route (client code splits),
  * and the terminal WebSocket upgrade. Every route passes the same
  * browser-trust fence as the /api gateway — Host-header loopback or the
- * connection row's `trustedHosts` (the `dsh web` launcher derives LAN IP
- * literals per boot) — with the trustedHosts read live from the connection
- * loader row so the fence never drifts from the deployment's.
+ * web runtime's `trustedHosts` (LAN IP literals derived per boot plus
+ * `--trusted-host` authorities) — read live per request so the fence never
+ * drifts from the deployment's.
  *
  * All operations are conversation-scoped: requests carry a sessionId, the
  * session's authoritative cwd comes from the session store, and terminal
@@ -59,8 +59,8 @@ export type {
 /** Plugin identity for cordis.yml rows. */
 export const name = 'dsh-better-sidebar'
 
-/** Services required before mounting: the webserver routes, the session store, the loader's connection row, and the tool registry. */
-export const inject = ['webServer', 'sessions', 'loader', 'tools']
+/** Services required before mounting: the webserver routes, the session store, the web runtime's trusted hosts, and the tool registry. */
+export const inject = ['webServer', 'sessions', 'webRuntime', 'tools']
 
 /** Content types for the media route, by extension. */
 const MEDIA_TYPES: Record<string, string> = {
@@ -81,17 +81,6 @@ const MEDIA_TYPES: Record<string, string> = {
 /** Content type served by /sidebar/file (binary-safe fallback for unknowns). */
 export function mediaTypeForPath(path: string): string {
   return MEDIA_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream'
-}
-
-/** The connection row's resolved trustedHosts (live read; the /api fence's own list). */
-function trustedHostsOf(ctx: Context): string[] {
-  for (const entry of ctx.loader.entries()) {
-    if (entry.options.name === 'connection') {
-      const config = entry.options.config as { trustedHosts?: string[] } | undefined
-      return config?.trustedHosts ?? []
-    }
-  }
-  return []
 }
 
 /**
@@ -426,7 +415,7 @@ function buildApi(
 
 /**
  * Plugin body: mount the fenced routes and the pty lifecycle.
- * @param ctx - host plugin context (webServer, sessions, loader).
+ * @param ctx - host plugin context (webServer, sessions, webRuntime).
  * @param config - deployment-provided limits; the Loader validates against
  * {@link Config} and fills defaults, direct callers get them from
  * {@link resolveSidebarConfig}.
@@ -436,8 +425,10 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // restore it before any terminal can spawn (idempotent).
   ensureSpawnHelper()
   const resolved = resolveSidebarConfig(config)
-  const trustedHosts = trustedHostsOf(ctx)
-  const fence = (req: SidebarHttpRequest): boolean => isTrustedApiRequest(req, trustedHosts)
+  // The web runtime's bind-derived trust list (LAN literals plus
+  // --trusted-host authorities) — the same list the /api gateway fence
+  // accepts. Read per request so config reloads apply without a restart.
+  const fence = (req: SidebarHttpRequest): boolean => isTrustedApiRequest(req, ctx.webRuntime.trustedHosts)
   const ptyManager = new PtyManager(defaultShell(), resolved.terminalsPerSession)
   // The agent-owned terminal registry: parallel to the UI-tab ptyManager,
   // keyed by uuid (the model's opaque handle) instead of `${sessionId}:${tabId}`,
