@@ -27,6 +27,7 @@ import {
   type SidebarPrefs,
 } from './config.ts'
 import { isWithin, parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import { openInFileManager, openWithDefaultApp } from './open-external.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
 import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
@@ -238,6 +239,26 @@ function buildApi(
         await rm(tmp, { force: true }).catch(() => {})
         throw new SidebarError('fs-error', `cannot write "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
       }
+      return { ok: true }
+    },
+    // Reveal/open a path in the OS file manager ("在资源管理器中打开"): a
+    // directory opens in place, a file is revealed (selected) in its folder.
+    // Paths resolve through resolveGitPath so git-status rows (repo-root
+    // relative names) work exactly like fs.read.
+    'fs.open-in-explorer': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const path = await resolveGitPath(cwd, requireString(payload, 'path'))
+      const info = await stat(path).catch((error: unknown) => {
+        throw new SidebarError('fs-error', `cannot open "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+      })
+      await openInFileManager(path, info.isDirectory())
+      return { ok: true }
+    },
+    // Open a path with the OS default application ("使用默认应用打开").
+    'fs.open-default': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const path = await resolveGitPath(cwd, requireString(payload, 'path'))
+      await openWithDefaultApp(path)
       return { ok: true }
     },
     'git.status': async (payload) => {

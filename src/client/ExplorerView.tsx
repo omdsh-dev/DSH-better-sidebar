@@ -14,7 +14,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNo
 import clsx from 'clsx'
 import {
   IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
-  IconRefreshOutline16, Menu, writeClipboard,
+  IconFolderOpenOutline16, IconRefreshOutline16, IconRightUpOutline16, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
 import { relativeTo } from './paths.ts'
@@ -53,6 +53,8 @@ export function ExplorerView(props: {
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
   const [rowMenu, setRowMenu] = useState<{ path: string; isDir: boolean; x: number; y: number } | null>(null)
+  /** Transient error from a failed "open in file manager / default app" action. */
+  const [openError, setOpenError] = useState<string | null>(null)
 
   const storeLevel = useCallback((path: string, level: LevelData) => {
     dataRef.current = { ...dataRef.current, [path]: level }
@@ -125,6 +127,17 @@ export function ExplorerView(props: {
     document.body.appendChild(anchor)
     anchor.click()
     anchor.remove()
+  }
+
+  /** Reveal/open a row in the OS file manager, or open it with the default app. */
+  const openExternal = async (action: 'explorer' | 'default', path: string): Promise<void> => {
+    try {
+      if (action === 'explorer') await api.fsOpenInExplorer({ sessionId, cwd }, path)
+      else await api.fsOpenDefault({ sessionId, cwd }, path)
+      setOpenError(null)
+    } catch (error) {
+      setOpenError(error instanceof Error ? error.message : String(error))
+    }
   }
 
   const root = cwd
@@ -213,6 +226,9 @@ export function ExplorerView(props: {
         </button>
       </div>
       <div className={css.explorerBody}>
+        {openError !== null && (
+          <div className={clsx(css.explorerRow, css.explorerError)} style={{ paddingLeft: 6 }}>{openError}</div>
+        )}
         {root === undefined ? (
           <div className={css.explorerEmpty}>{t('noSession')}</div>
         ) : (
@@ -253,6 +269,22 @@ export function ExplorerView(props: {
         open={rowMenu !== null}
         onClose={() => { setRowMenu(null) }}
         items={[
+          // Open in the OS file manager: directories open in place, files are
+          // revealed (selected) in their folder; files also open with the
+          // default application.
+          ...(rowMenu === null
+            ? []
+            : [
+                {
+                  id: 'open-explorer',
+                  label: rowMenu.isDir ? t('openInExplorer') : t('revealInExplorer'),
+                  icon: <IconFolderOpenOutline16 size={14} />,
+                },
+                ...(rowMenu.isDir
+                  ? []
+                  : [{ id: 'open-default', label: t('openWithDefaultApp'), icon: <IconRightUpOutline16 size={14} /> }]),
+                { type: 'separator' as const, id: 'sep-open' },
+              ]),
           // Download applies to files only (the host route refuses directories).
           ...(rowMenu?.isDir === false
             ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutline16 size={14} /> }]
@@ -264,6 +296,14 @@ export function ExplorerView(props: {
           const target = rowMenu
           if (target === null) return
           setRowMenu(null)
+          if (id === 'open-explorer') {
+            void openExternal('explorer', target.path)
+            return
+          }
+          if (id === 'open-default') {
+            void openExternal('default', target.path)
+            return
+          }
           if (id === 'download') {
             downloadFile(target.path)
             return

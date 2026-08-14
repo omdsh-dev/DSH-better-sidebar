@@ -10,8 +10,8 @@
  */
 import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from 'react'
 import {
-  Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
-  IconTrashOutline16, Input, Menu, Modal, writeClipboard,
+  Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconFolderOpenOutline16,
+  IconRefreshOutline16, IconRightUpOutline16, IconTrashOutline16, Input, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GitLogEntry, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
 import { api } from './api.ts'
@@ -102,6 +102,8 @@ export function GitView(props: {
   const [fileMenu, setFileMenu] = useState<{ entry: GitStatusEntry; staged: boolean; x: number; y: number } | null>(null)
   /** The open history-row context menu. */
   const [historyMenu, setHistoryMenu] = useState<{ entry: GitLogEntry; x: number; y: number } | null>(null)
+  /** Transient error from a failed "open in file manager / default app" action. */
+  const [actionError, setActionError] = useState<string | null>(null)
   /** The pending destructive action awaiting confirmation. */
   const [confirm, setConfirm] = useState<ConfirmState | null>(null)
 
@@ -236,6 +238,17 @@ export function GitView(props: {
     void writeClipboard(text)
   }
 
+  /** Reveal/open a changed file in the OS file manager, or open it with the default app. */
+  const openExternal = async (action: 'explorer' | 'default', path: string): Promise<void> => {
+    try {
+      if (action === 'explorer') await api.fsOpenInExplorer(scope, path)
+      else await api.fsOpenDefault(scope, path)
+      setActionError(null)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const openFileMenu = (event: MouseEvent, entry: GitStatusEntry, staged: boolean): void => {
     event.preventDefault()
     event.stopPropagation()
@@ -303,6 +316,7 @@ export function GitView(props: {
 
       {loading && <div className={css.gitPlaceholder}>{t('loading')}</div>}
       {!loading && error !== null && <div className={css.gitError}>{error}</div>}
+      {actionError !== null && <div className={css.gitError}>{actionError}</div>}
       {!loading && status !== null && !status.isRepo && (
         <div className={css.gitPlaceholder}>{t('notRepo')}</div>
       )}
@@ -407,6 +421,9 @@ export function GitView(props: {
             onClose={() => { setFileMenu(null) }}
             items={[
               { id: 'open', label: t('openEditor'), icon: <IconCodeOutline16 size={14} /> },
+              { id: 'open-explorer', label: t('revealInExplorer'), icon: <IconFolderOpenOutline16 size={14} /> },
+              { id: 'open-default', label: t('openWithDefaultApp'), icon: <IconRightUpOutline16 size={14} /> },
+              { type: 'separator', id: 'sep-open' },
               fileMenu?.staged === true
                 ? { id: 'stage', label: t('unstage'), icon: <IconTrashOutline16 size={14} /> }
                 : { id: 'stage', label: t('stage'), icon: <IconBranchOutline16 size={14} /> },
@@ -423,6 +440,14 @@ export function GitView(props: {
               setFileMenu(null)
               if (id === 'open') {
                 onOpenFile(target.entry.path)
+                return
+              }
+              if (id === 'open-explorer') {
+                void openExternal('explorer', target.entry.path)
+                return
+              }
+              if (id === 'open-default') {
+                void openExternal('default', target.entry.path)
                 return
               }
               if (id === 'stage') {

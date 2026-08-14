@@ -120,6 +120,13 @@ export const api = {
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
+  /** Reveal/open a path in the OS file manager (directories open in place,
+   *  files are revealed/selected in their folder). */
+  fsOpenInExplorer: (scope: SessionScope, path: string) =>
+    call<{ ok: true }>('fs.open-in-explorer', scopePayload(scope, { path })),
+  /** Open a path with the OS default application. */
+  fsOpenDefault: (scope: SessionScope, path: string) =>
+    call<{ ok: true }>('fs.open-default', scopePayload(scope, { path })),
   gitStatus: (scope: SessionScope, signal?: AbortSignal) =>
     call<GitStatusResult>('git.status', scopePayload(scope, {}), signal),
   gitDiff: (scope: SessionScope, path: string | undefined, staged: boolean, signal?: AbortSignal) =>
