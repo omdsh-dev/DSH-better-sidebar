@@ -87,6 +87,7 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
           onToggle={onToggleDir ?? (() => { /* no-op */ })}
           onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}
           onReferenceFile={onReferenceFile ?? (() => { /* no-op */ })}
+          store={store}
         />
       ),
     },

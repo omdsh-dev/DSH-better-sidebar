@@ -602,16 +602,16 @@
   padding: 2px 6px 8px;
 }
 
-/* One tree row: the app's session-row cell (34px, radius 8, inset, hover
-   fill, 22px indent step, 14px ink) with a mount fade so expanding a
-   directory reveals its children gently (stable keys keep existing rows from
-   replaying it). */
+/* One tree row: a compact cell (20px, radius 8, inset, hover fill, 16px
+   indent step, 14px ink) so large trees stay browsable at a glance, with a
+   mount fade so expanding a directory reveals its children gently (stable
+   keys keep existing rows from replaying it). */
 .explorerRow {
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
-  height: 34px;
+  height: 20px;
   padding: 0 8px;
   border: none;
   background: transparent;
@@ -621,7 +621,28 @@
   cursor: pointer;
   white-space: nowrap;
   border-radius: 8px;
+  position: relative;
   animation: dsh-row-in 150ms var(--ds-ease-in-out);
+}
+
+/* Indent guides: one vertical line per tree level, painted by ExplorerView
+   through inline CSS vars (normal at every level, accent at the currently
+   open file's depth). A ::before keeps the lines under the row content and
+   free of the hover/active background fills. */
+.explorerRow::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: var(--bs-guide-img, none);
+  background-size: 1px 100%;
+  background-repeat: no-repeat;
+  background-position: var(--bs-guide-pos, 0 0);
+  pointer-events: none;
+}
+
+/* The row of the currently open file (matches the open editor tab). */
+.explorerActive {
+  background: var(--dsw-alias-interactive-bg-active);
 }
 
 .explorerRow:hover {

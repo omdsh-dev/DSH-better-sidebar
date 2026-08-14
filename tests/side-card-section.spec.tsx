@@ -93,10 +93,12 @@ describe('SideCardSection declarative inventory', () => {
   it('renders the section intro and group headings with inventory counts', () => {
     const { store, service } = mount()
     const html = renderSection(store, service)
-    expect(html).toContain('Manage what the side card shows and how it behaves')
-    // Group headings carry the inventory count badge (2 tabs, 1 viewer).
-    expect(html).toContain('>Sidebar content</span><span')
-    expect(html).toContain('>File viewers</span><span')
+    // The intro follows the runtime language (zh/en).
+    expect(html).toMatch(/Manage what the side card shows and how it behaves|管理侧边卡片的显示内容与默认行为/)
+    // Group headings carry the inventory count badge (2 tabs, 1 viewer);
+    // the headings follow the runtime language (zh/en).
+    expect(html).toMatch(/>Sidebar content|侧边栏内容<\/span><span/)
+    expect(html).toMatch(/>File viewers|文件预览<\/span><span/)
     expect(html).toContain('>2</span>')
     expect(html).toContain('>1</span>')
   })
