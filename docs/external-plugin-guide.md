@@ -616,3 +616,16 @@ better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"）：
 - **`docs/plans/2026-08-11-service-registry-design.md`** / **`docs/plans/2026-08-11-declarative-sidebar-settings-design.md`**：设计文档（§17 含实施偏差记录，以现状为准）
 
 调试时直接读这些文件即可看到所有 API 的真实用法。
+
+---
+
+## 11. 真实接入案例
+
+第一个通过 `ctx.betterSidebar` 接入的三方插件：[dsh-sentinel](https://github.com/fuhefei/dsh-sentinel) —— 条件驱动的 agent 唤醒系统（文件/进程/端口/HTTP/命令/webhook 传感器，条件达成自动唤醒休眠会话）。
+
+- **接入方式**：可选软依赖——client half 本地重述最小服务契约（`registerTab`），未安装 better-sidebar 时注册静默跳过，插件原有表面不受影响；
+- **注册内容**：`dsh-sentinel:watches` tab（order 60，单实例）：全服务器监控表 + 最近触发历史；
+- **类型处理**：未 value-import `dsh-better-sidebar`，构建零耦合；与 §2 的 `import type {}` 方案可互换；
+- **实测**：v0.3.0 起，真实 web profile 验证通过。
+
+更多插件接入后欢迎在此登记（一句话 + 链接）。
