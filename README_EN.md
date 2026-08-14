@@ -53,7 +53,10 @@ curl -fsSL https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/s
 **Windows (PowerShell 5.1+ / pwsh)**:
 
 ```powershell
-irm https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1 | iex
+$script = (
+  irm 'https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1'
+).TrimStart([char]0xFEFF)
+& ([scriptblock]::Create($script))
 ```
 
 Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R) to see the sidebar (DSH hot-reloads client changes; only host-half updates need a restart).
@@ -66,7 +69,10 @@ Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R) to see the sidebar (DSH hot
 curl -fsSL https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.sh | bash -s 0.10.3 --restart
 
 # Windows PowerShell
-& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1'))) -Version 0.10.3 -Restart
+$script = (
+  irm 'https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1'
+).TrimStart([char]0xFEFF)
+& ([scriptblock]::Create($script)) -Version 0.10.3 -Restart
 ```
 
 Not sure? Add `--dry-run` (`-DryRun` in PowerShell) to preview before running.
@@ -123,7 +129,7 @@ The one-click script does four things, all idempotent (safe to re-run):
 3. Runs `dsh plugin --profile web add dsh-better-sidebar`: registers the dependency → detects `dsh.bundle.patch` → auto-appends the plugin to `dsh.profile.bundles`;
 4. Removes any leftover hand-written mount line to avoid double-mounting (two sidebars on the page).
 
-`curl | bash` / `irm | iex` executes remote code — the scripts are open source in the repo (`scripts/install.sh` / `scripts/install.ps1`); download and review them first if you prefer. The plugin ships as npm package `dsh-better-sidebar@0.10.3` and mounts via `dsh.bundle.patch` (the shipped `cordis.patch.yml`), so the DSH source is never modified.
+The one-click commands above download and execute remote code. The scripts are open source in the repo (`scripts/install.sh` / `scripts/install.ps1`), so you can download and review them first. The PowerShell entry point removes the UTF-8 BOM before creating the ScriptBlock, which keeps parameter binding correct in both Windows PowerShell 5.1 and pwsh. The plugin ships as npm package `dsh-better-sidebar@0.10.3` and mounts via `dsh.bundle.patch` (the shipped `cordis.patch.yml`), so the DSH source is never modified.
 
 </details>
 

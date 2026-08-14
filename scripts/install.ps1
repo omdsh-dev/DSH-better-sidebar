@@ -11,9 +11,11 @@
 #
 # 用法（任选其一）：
 #   # 默认最新版
-#   irm https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1 | iex
+#   $script = (irm 'https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1').TrimStart([char]0xFEFF)
+#   & ([scriptblock]::Create($script))
 #   # 指定版本 / 装完重启
-#   & ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1'))) -Version 0.10.2 -Restart
+#   $script = (irm 'https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1').TrimStart([char]0xFEFF)
+#   & ([scriptblock]::Create($script)) -Version 0.10.2 -Restart
 #   # 本地保存后运行
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Version 0.10.2 -DryRun
 #
@@ -91,6 +93,21 @@ function Get-DshCli {
 # 前置校验
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   Die '未找到 node（DSH 运行需要 Node.js >= 20），请先安装 Node.js 并加入 PATH。'
+}
+if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
+  Die '未找到 pnpm；安装脚本需要 pnpm >= 10。请先安装或升级 pnpm 并加入 PATH。'
+}
+$pnpmVersion = (& pnpm --version 2>$null | Select-Object -Last 1)
+if ($LASTEXITCODE -ne 0 -or -not $pnpmVersion) {
+  Die '无法读取 pnpm 版本；安装脚本需要 pnpm >= 10。'
+}
+$pnpmVersionText = ([string]$pnpmVersion).Trim()
+$pnpmMajor = 0
+if (-not [int]::TryParse(($pnpmVersionText -split '\.')[0], [ref]$pnpmMajor)) {
+  Die "无法解析 pnpm 版本（输出：$pnpmVersionText）；安装脚本需要 pnpm >= 10。"
+}
+if ($pnpmMajor -lt 10) {
+  Die "安装脚本需要 pnpm >= 10；当前版本为 $pnpmVersionText。请升级 pnpm 后重试。"
 }
 if (-not (Test-Path $PROFILE_DIR)) {
   Die "找不到 profile 目录：$PROFILE_DIR（请先安装并运行过一次 dsh web）"
