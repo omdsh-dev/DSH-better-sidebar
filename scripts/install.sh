@@ -164,7 +164,7 @@ if (t !== before) fs.writeFileSync(p, t);
 console.log(t === before ? "unchanged" : "updated");
 ' "$WS_YML")"
 [ "$WS_RESULT" = "updated" ] \
-  && say "已确保 $WS_YML：allowBuilds（node-pty/protobufjs: true）+ minimumReleaseAgeExclude（${PKG}）" \
+  && say "已确保 ${WS_YML}：allowBuilds（node-pty/protobufjs: true）+ minimumReleaseAgeExclude（${PKG}）" \
   || say "workspace 设置已就绪，跳过"
 
 # 步骤 2：官方 CLI 安装 + bundle 自动注册（含挂载）

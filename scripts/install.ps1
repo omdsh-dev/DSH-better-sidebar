@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # dsh-better-sidebar 一键安装脚本（官方 CLI 方式，Windows PowerShell 5.1+ / pwsh）
 #
 # 通过 DSH 官方插件命令安装 npm 包并自动挂载：
@@ -118,7 +118,7 @@ if ($DryRun) {
 # 步骤 1：预写 workspace 设置（幂等），保证 pnpm 不拦截构建、放行本插件新版本
 $wsScript = @'
 const fs = require("fs");
-const p = process.argv[1];
+const p = process.argv[2];
 let t = fs.readFileSync(p, "utf8");
 const before = t;
 t = t.replace(/^(\s*)(node-pty|protobufjs):.*$/gm, "$1$2: true");
@@ -141,8 +141,14 @@ if (!/^\s*-\s+dsh-better-sidebar\s*$/m.test(t)) {
 if (t !== before) fs.writeFileSync(p, t);
 console.log(t === before ? "unchanged" : "updated");
 '@
-$wsOut = node -e $wsScript "$WS_YML" 2>&1
+# PowerShell 5.1 把含内嵌双引号的多行 JS 作为参数传给 `node -e` 时，引号会被
+# Windows 命令行解析吞掉，导致 JS 语法错误（Expected ',', got ':'）。
+# 改用临时文件方式，兼容 PS 5.1 与 pwsh 7。
+$wsJs = Join-Path $env:TEMP ("dshbs-ws-" + [guid]::NewGuid().ToString("N") + ".js")
+Set-Content -LiteralPath $wsJs -Value $wsScript -Encoding UTF8
+$wsOut = node $wsJs "$WS_YML" 2>&1
 $wsCode = $LASTEXITCODE
+Remove-Item -LiteralPath $wsJs -Force -ErrorAction SilentlyContinue
 $wsResult = (($wsOut | Out-String)).Trim()
 if ($wsCode -ne 0) { Die "处理 $WS_YML 失败（node 退出码 $wsCode）：$wsResult" }
 if ($wsResult -eq 'updated') {
@@ -181,7 +187,7 @@ Say "bundle 已注册：dsh.profile.bundles 包含 $PKG（下次启动自动挂�
 # 步骤 4：幂等移除旧的 manual 挂载行（避免与 bundle 双挂载）
 $mountScript = @'
 const fs = require("fs");
-const p = process.argv[1];
+const p = process.argv[2];
 const lines = fs.readFileSync(p, "utf8").split("\n");
 const out = [];
 let i = 0;
@@ -213,8 +219,11 @@ if (!removed) {
   console.log("removed");
 }
 '@
-$mountOut = node -e $mountScript "$PATCH_YML" 2>&1
+$mountJs = Join-Path $env:TEMP ("dshbs-mount-" + [guid]::NewGuid().ToString("N") + ".js")
+Set-Content -LiteralPath $mountJs -Value $mountScript -Encoding UTF8
+$mountOut = node $mountJs "$PATCH_YML" 2>&1
 $mountCode = $LASTEXITCODE
+Remove-Item -LiteralPath $mountJs -Force -ErrorAction SilentlyContinue
 $mountResult = (($mountOut | Out-String)).Trim()
 if ($mountCode -ne 0) { Die "处理 $PATCH_YML 失败（node 退出码 $mountCode）：$mountResult" }
 if ($mountResult -eq 'removed') {

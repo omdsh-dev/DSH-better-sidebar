@@ -16,22 +16,28 @@ https://github.com/user-attachments/assets/23187822-047e-45cc-b480-fe997bd55b86
 
 <img width="2630" height="1794" alt="6c4293e1bec2e935031bf0e986d6ec65" src="https://github.com/user-attachments/assets/dfdb875e-a1a8-4d4b-8340-353736b1708f" />
 
+## 🆕 最近更新
+
+- **终端自定义字体**：设置页终端卡片新增字体族 + 9–32px 字号设置，实时生效
+- **侧边卡片设置页重构**：分组容器卡片、计数徽标、自定义开关、加宽设置弹窗
+- **修复**：WKWebView 下底部面板展开后终端空白（xterm 零尺寸容器初始化崩溃，[#25](https://github.com/omdsh-dev/DSH-better-sidebar/issues/25)）
+
 ## ✨ 功能一览
 
-- **🗂️ 资源管理器**：懒加载目录树（根 = 会话 cwd）、点击在侧边栏打开、行尾 `@文件` 引用到输入框、右键复制路径
-- **📝 编辑与预览**：CodeMirror 6 多语言高亮 + Ctrl/Cmd+S 原子保存；图片 / Markdown（预览/编辑切换）/ HTML（沙箱 iframe 预览，相对资源可加载）/ PDF / Word / Excel / PPT 内联预览，切换 Tab 不丢草稿
-- **⚡ 客户端懒加载**：Office / 终端 / 代码编辑器等重依赖按需分块加载——启动只拉 ~325KB 核心，打开 .xlsx 才拉 Univer（~20MB）、打开 .docx 只拉 docx 预览器、打开终端才拉 xterm；首次打开短暂 loading 后即用（详见 `docs/plans/2026-08-12-lazy-chunks-design.md`）
-- **🌐 浏览器**：内嵌网页浏览 tab（多开），后退/前进/刷新 +「在浏览器中打开」；页面在**沙箱 iframe** 中运行（不透明源：无法访问界面数据与本地文件，拒绝 localhost 等本机地址），界面实时显示沙箱状态、可临时解锁（关闭时红色警示）；被站点拒绝嵌入（X-Frame-Options）时显示原因面板；聊天/界面里的 http(s) 外链默认在侧边栏打开（侧边栏折叠时自动展开面板）
-- **💻 终端**：xterm.js + node-pty 真实 shell（每会话 3 个 UI 上限）、Tab 保活重连回放；可选为模型注入 8 个 `terminal_*` 工具
-- **🌿 Git 面板**：真 diff + VSCode 式 diff tab、懒加载历史、右键暂存/放弃/提交/还原/捡取
-- **🧩 后台任务页**：主会话完整 agent 拓扑、点击直达执行记录、实时工具调用轮询、新子代理自动展开；**同页显示后台任务**（当前树全部后台任务，bash/pwsh 类型徽标 + 退出码，点击查看实时输出——自动跟随底部、非消费 peek，不干扰模型的 `job_output`；两击确认可强制终止）
-- **🪟 底部面板**：独立的第二个工作台（与右侧栏同类的标签页），只挤占中间 Agent 输出区、不覆盖左右侧边栏；**首次展开自动开一个新终端**（终端卡片二级设置可关）；右上角 x 一键折叠
-- **📱 移动端**：视口 < 768px（真正的移动端宽度，不对齐宿主 1024 断点）时只显示右侧栏——进入窄屏时底部面板的标签页**直接并入右侧栏标签条**，右上角只剩一枚开关，面板为全宽抽屉；新会话默认收起，聊天里点文件/外链自动展开，不挤压对话区
-- **🔧 分栏工作台**：拖 Tab 拆分/合并分栏（可**跨面板拖 Tab**）、分隔线调比例；右上角持久按钮簇（底栏 + 侧拉 glyph）折叠/展开两个面板；两面板共享拐角双向拖动调节尺寸，拖动 rAF 直写 DOM 保持流畅
-- **🔁 会话隔离**：布局/分栏/Tab/两面板状态按会话持久化（localStorage），陈旧状态自动净化；聊天「产出文件」改在侧边栏打开（面板折叠时自动展开）
-- **⚙️ 声明式设置**：设置页「侧边卡片」分区按注册表渲染功能清单（小卡片网格，高亮 = 启用），每项可独立开/关；二级设置（子代理自动展开、终端工具、底部面板首展自动开终端、沙箱开关等）经齿轮按钮在原生弹窗中编辑
-- **🔌 服务化**：暴露 `ctx.betterSidebar` 服务，其他插件可注册侧边栏 tab 与文件预览器（内置 7 tab + 9 viewer 也走同一服务，详见 [AGENTS.md](./AGENTS.md)）
-- **🌏 多语言**：界面文案跟随 DSH 的语言设置（zh/en）实时切换——Host 偏好优先于浏览器语言，词典注册进 DSH 的 i18n 命名空间；切换语言无需刷新
+- **🗂️ 资源管理器**：懒加载目录树（根 = 会话 cwd），点击打开、`@文件` 引用、右键复制路径
+- **📝 编辑与预览**：CodeMirror 6 编辑（Ctrl/Cmd+S 原子保存，切 Tab 不丢草稿）；图片 / Markdown / HTML / PDF / Word / Excel / PPT 内联预览（HTML 走沙箱 iframe）
+- **⚡ 客户端懒加载**：启动只拉 ~325KB 核心，Office / 终端 / 编辑器等重依赖用到才按需拉取（详见 `docs/plans/2026-08-12-lazy-chunks-design.md`）
+- **🌐 浏览器**：多开内嵌网页 tab，后退/前进/刷新；内容运行在沙箱 iframe（无法访问界面数据与本地文件，拒绝本机地址），可临时解锁（红色警示）；被站点拒绝嵌入时显示原因；外链默认在侧边栏打开
+- **💻 终端**：xterm.js + node-pty 真实 shell、断线重连回放；可选为模型注入 `terminal_*` 工具；支持自定义字体（字体族 + 9–32px 字号，实时生效）
+- **🌿 Git 面板**：真 diff + VSCode 式 diff tab、历史、右键暂存/提交/还原等
+- **🧩 后台任务页**：主会话 agent 拓扑、点击直达执行记录；同页显示后台任务（类型徽标 + 退出码、实时输出 peek、可强制终止）
+- **🪟 底部面板**：第二个独立工作台，只挤占中间输出区；首次展开自动开终端（可关）
+- **📱 移动端**：窄屏（<768px）自动合并为全宽抽屉，底部面板标签页并入右侧栏；点文件/外链自动展开
+- **🔧 分栏工作台**：拖 Tab 拆分/合并（可跨面板）、分隔线调比例；右上角按钮一键折叠/展开面板
+- **🔁 会话隔离**：布局 / Tab / 面板状态按会话持久化，陈旧状态自动净化；「产出文件」在侧边栏打开
+- **⚙️ 声明式设置**：设置页「侧边卡片」按注册表渲染开关网格，逐项独立开/关；二级设置（自动展开、终端工具、沙箱等）经齿轮弹窗编辑
+- **🔌 服务化**：暴露 `ctx.betterSidebar`，其他插件可注册 tab 与文件预览器（内置 7 tab + 9 viewer 同走一服务，见 [AGENTS.md](./AGENTS.md)）
+- **🌏 多语言**：界面文案跟随 DSH 语言（zh/en）实时切换，无需刷新
 
 ## 🚀 安装
 
@@ -49,7 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/s
 irm https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1 | iex
 ```
 
-装完**重启 DSH 并硬刷新**（Cmd/Ctrl+Shift+R）即可看到侧边栏。
+装完**硬刷新浏览器**（Cmd/Ctrl+Shift+R）即可看到侧边栏（DSH 对 client 改动热加载，无需重启；仅 host 半更新时需要重启）。
 
 <details>
 <summary><b>指定版本 / 装完自动重启（可选）</b></summary>
@@ -127,7 +133,7 @@ npx -y --package @deepseek-ai/dsh dsh plugin --profile web add dsh-better-sideba
 dsh plugin --profile web add dsh-better-sidebar
 ```
 
-或重跑一次一键脚本；也可把 `~/.dsh/profiles/web/package.json` 里的版本号改高后 `pnpm install`。改完**重启 DSH 并硬刷新**（Cmd/Ctrl+Shift+R）。
+或重跑一次一键脚本；也可把 `~/.dsh/profiles/web/package.json` 里的版本号改高后 `pnpm install`。改完**硬刷新浏览器**（Cmd/Ctrl+Shift+R）即可（client 改动无需重启 DSH）。
 
 </details>
 
@@ -159,10 +165,10 @@ dsh plugin --profile web add dsh-better-sidebar
        - id: better-sidebar
          name: 'dsh-better-sidebar'
 4. 在 ~/.dsh/profiles/web 执行 pnpm install
-5. 重启 DSH 并硬刷新
+5. 硬刷新浏览器（Cmd/Ctrl+Shift+R）即可看到效果（client 改动无需重启 DSH；host 半改动才需重启）
 ```
 
-更新：`git pull && pnpm install && pnpm build` → 重启 DSH（仅 client 改动可硬刷新）。切回 npm 通道时，把依赖改回 `"dsh-better-sidebar": "^0.10.3"` 再 `pnpm install`。
+更新：`git pull && pnpm install && pnpm build` → 硬刷新浏览器即可（client 改动热加载生效，无需重启 DSH；host 半改动才需重启）。切回 npm 通道时，把依赖改回 `"dsh-better-sidebar": "^0.10.3"` 再 `pnpm install`。
 
 </details>
 
@@ -240,3 +246,7 @@ pnpm watch        # tsdown --watch
 ## 🖥️ 平台支持
 
 Windows / Linux / macOS 三平台适配（macOS 日常验证；其余经单元测试覆盖）；`node-pty` 优先预编译二进制，失败需编译工具链（Windows VS Build Tools / Linux make+g+++python3 / macOS Xcode CLT）。
+
+## 🔗 友情链接
+
+- [dsh-tianshu-tui](https://github.com/huiliyi37/dsh-tianshu-tui)：DeepSeek Harness 交互式终端 UI 插件（渲染核心由自研 harness agent Tianshu-Tui 演进而来），在官方基础上增加 TDD 与证据门等工作流

@@ -5,9 +5,11 @@
  * copy. The toggles are CARDS in a responsive grid: the card's main area is
  * the switch, the visual state IS the state (highlighted = enabled),
  * announced via `aria-pressed`, and the check badge sits at the far right.
- * Features that declare related settings carry a gear corner button whose
- * popup rows (native checkboxes) are tested through the extracted
- * FeatureSettingsRows component (the Modal portal renders only while open).
+ * The general rows follow the DSH settings-row recipe with custom SWITCHES
+ * (real checkboxes driving a styled track). Features that declare related
+ * settings carry a gear corner button whose popup rows (switch controls)
+ * are tested through the extracted FeatureSettingsRows component (the Modal
+ * portal renders only while open).
  *
  * Rendered with renderToString (mount effects — the settings RPC sync — do
  * not run in SSR; the initial store prefs are the render input).
@@ -78,12 +80,25 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('>explorer<')
     expect(html).toContain('data-icon="subagent"')
     expect(html).toContain('>Subagents<')
-    // Default prefs: openByDefault + interceptOpenPath + both tabs + the
-    // image viewer are all enabled → 5 cards pressed, none pressed=false.
+    // Default prefs: openByDefault + interceptOpenPath switches checked, and
+    // both tabs + the image viewer cards pressed (3 aria-pressed cards).
     // The nested auto-open toggle is NOT an inline card (it lives in the popup).
-    expect(pressedCount(html, 'true')).toBe(5)
+    expect(pressedCount(html, 'true')).toBe(3)
     expect(pressedCount(html, 'false')).toBe(0)
+    // The general toggles are custom switches (real checkboxes, checked).
+    expect(html.match(/checked=""/g)?.length).toBe(2)
     expect(html).not.toContain('Auto-open Subagents')
+  })
+
+  it('renders the section intro and group headings with inventory counts', () => {
+    const { store, service } = mount()
+    const html = renderSection(store, service)
+    expect(html).toContain('Manage what the side card shows and how it behaves')
+    // Group headings carry the inventory count badge (2 tabs, 1 viewer).
+    expect(html).toContain('>Sidebar content</span><span')
+    expect(html).toContain('>File viewers</span><span')
+    expect(html).toContain('>2</span>')
+    expect(html).toContain('>1</span>')
   })
 
   it('renders one small card per registered viewer: icon + title + exts', () => {
@@ -111,8 +126,9 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('>Subagents<')
     expect(html).toContain('>Image<')
     expect(pressedCount(html, 'false')).toBe(2)
-    // openByDefault + interceptOpenPath + the explorer stay pressed.
-    expect(pressedCount(html, 'true')).toBe(3)
+    // The explorer card stays pressed; the general switches stay checked.
+    expect(pressedCount(html, 'true')).toBe(1)
+    expect(html.match(/checked=""/g)?.length).toBe(2)
   })
 
   it('hides the gear of a disabled feature (its related settings are dormant)', () => {
@@ -134,7 +150,7 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
     desc: () => 'Expand on new subagent',
   }]
 
-  it('renders one native checkbox row per declared toggle with its current value', () => {
+  it('renders one switch row per declared toggle with its current value', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
       toggles,
       prefs,
@@ -142,7 +158,9 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
     }))
     expect(html).toContain('Auto-open Subagents')
     expect(html).toContain('Expand on new subagent')
-    // The checkbox reflects the prefs value (false here → unchecked).
+    // The row's switch is a real checkbox (aria-label = the toggle title)
+    // reflecting the prefs value (false here → unchecked).
+    expect(html).toContain('aria-label="Auto-open Subagents"')
     expect(html).not.toContain('checked=""')
   })
 
@@ -153,5 +171,48 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
       onToggle: () => {},
     }))
     expect(html).toContain('checked=""')
+  })
+
+  it('renders a text row as an input seeded with the pref value (empty = theme default)', () => {
+    const html = renderToString(createElement(FeatureSettingsRows, {
+      toggles: [{
+        key: 'terminalFontFamily',
+        type: 'text',
+        title: () => 'Font family',
+        desc: () => 'CSS stack',
+        placeholder: '"JetBrains Mono", monospace',
+      }],
+      prefs: { ...prefs, terminalFontFamily: '"JetBrains Mono", monospace' },
+      onToggle: () => {},
+      onCommit: () => '',
+    }))
+    expect(html).toContain('Font family')
+    expect(html).toContain('placeholder="&quot;JetBrains Mono&quot;, monospace"')
+    // The input carries the pref value (no switch for text rows).
+    expect(html).toContain('value="&quot;JetBrains Mono&quot;, monospace"')
+    expect(html).not.toContain('type="checkbox"')
+  })
+
+  it('renders a number row with the pref value, the declared bounds and a unit suffix', () => {
+    const html = renderToString(createElement(FeatureSettingsRows, {
+      toggles: [{
+        key: 'terminalFontSize',
+        type: 'number',
+        title: () => 'Font size',
+        min: 9,
+        max: 32,
+        unit: 'px',
+      }],
+      prefs: { ...prefs, terminalFontSize: 18 },
+      onToggle: () => {},
+      onCommit: () => '18',
+    }))
+    expect(html).toContain('Font size')
+    expect(html).toContain('type="number"')
+    expect(html).toContain('value="18"')
+    expect(html).toContain('min="9"')
+    expect(html).toContain('max="32"')
+    expect(html).toContain('px')
+    expect(html).not.toContain('type="checkbox"')
   })
 })

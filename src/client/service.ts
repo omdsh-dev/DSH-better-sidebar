@@ -28,9 +28,15 @@ import {
 import { isNarrowWidth } from './breakpoints.ts'
 import type { SessionScope } from './api.ts'
 
-/** One declarative boolean setting of a tab/viewer, rendered as a nested
- *  switch row in the Side card settings page (e.g. the Subagent page's
- *  "auto-open when a subagent appears"). */
+/** The row control a declarative setting renders as in the settings popup. */
+export type SidebarSettingToggleType = 'switch' | 'text' | 'number'
+
+/** One declarative setting of a tab/viewer, rendered as a nested row in the
+ *  Side card settings page (e.g. the Subagent page's "auto-open when a
+ *  subagent appears" switch, or the terminal's custom font rows). `type`
+ *  selects the control: 'switch' (default) renders the custom switch,
+ *  'text' a free-form input committed on blur/Enter, 'number' a numeric
+ *  input clamped to `min`/`max`. */
 export interface SidebarSettingToggle {
   /** The SidebarPrefs field this toggle reads and writes ('autoOpenSubagent'). */
   key: string
@@ -38,15 +44,26 @@ export interface SidebarSettingToggle {
   title: string | (() => string)
   /** Row description (i18n friendly). */
   desc?: string | (() => string)
+  /** Row control type; defaults to 'switch' (backward compatible). */
+  type?: SidebarSettingToggleType
+  /** Lower bound for `type: 'number'` rows (clamped on commit). */
+  min?: number
+  /** Upper bound for `type: 'number'` rows (clamped on commit). */
+  max?: number
+  /** Input placeholder for `type: 'text'` rows. */
+  placeholder?: string
+  /** Unit suffix rendered after the input (e.g. 'px' for a size row). */
+  unit?: string
 }
 
 /** Declarative settings of one registered tab or file viewer. */
 export interface SidebarSettingsDeclaration {
   /**
-   * Extra boolean toggles rendered under the feature's own row in the
+   * Extra settings rows rendered under the feature's own row in the
    * settings page (only while the feature is enabled). Keys must be fields
    * of the host's PrefsSchema (built-ins: 'autoOpenSubagent',
-   * 'agentTerminalTools'); unknown keys are dropped by the settings seam.
+   * 'agentTerminalTools', 'terminalFontFamily'); unknown keys are dropped
+   * by the settings seam.
    */
   toggles?: readonly SidebarSettingToggle[]
 }

@@ -1204,6 +1204,8 @@ describe('side card preferences', () => {
         autoOpenJobs: true,
         agentTerminalTools: true,
         bottomPanelAutoTerminal: true,
+        terminalFontFamily: '',
+        terminalFontSize: 13,
         interceptOpenPath: true,
         htmlViewerNoSandbox: false,
         htmlViewerDefaultUnsafe: false,
@@ -1223,6 +1225,8 @@ describe('side card preferences', () => {
         autoOpenJobs: true,
         agentTerminalTools: false,
         bottomPanelAutoTerminal: true,
+        terminalFontFamily: '',
+        terminalFontSize: 13,
         interceptOpenPath: true,
         htmlViewerNoSandbox: false,
         htmlViewerDefaultUnsafe: false,
@@ -1242,6 +1246,8 @@ describe('side card preferences', () => {
         autoOpenJobs: true,
         agentTerminalTools: false,
         bottomPanelAutoTerminal: true,
+        terminalFontFamily: '',
+        terminalFontSize: 13,
         interceptOpenPath: true,
         htmlViewerNoSandbox: false,
         htmlViewerDefaultUnsafe: false,
@@ -1276,6 +1282,22 @@ describe('side card preferences', () => {
     expect((await loadPrefs(wire({ interceptOpenPath: true }))).interceptOpenPath).toBe(true)
   })
 
+  it('resolves the terminal font prefs (family passthrough, size clamp)', async () => {
+    // Absent → theme default (empty family) + default size.
+    expect((await loadPrefs(wire({}))).terminalFontFamily).toBe('')
+    expect((await loadPrefs(wire({}))).terminalFontSize).toBe(13)
+    // A custom family survives verbatim; a malformed one falls back.
+    expect((await loadPrefs(wire({ terminalFontFamily: '"JetBrains Mono", monospace' }))).terminalFontFamily)
+      .toBe('"JetBrains Mono", monospace')
+    expect((await loadPrefs(wire({ terminalFontFamily: 42 }))).terminalFontFamily).toBe('')
+    // The size clamps into 9–32 (rounded); non-numbers fall back.
+    expect((await loadPrefs(wire({ terminalFontSize: 5 }))).terminalFontSize).toBe(9)
+    expect((await loadPrefs(wire({ terminalFontSize: 40 }))).terminalFontSize).toBe(32)
+    expect((await loadPrefs(wire({ terminalFontSize: 15.6 }))).terminalFontSize).toBe(16)
+    expect((await loadPrefs(wire({ terminalFontSize: 'big' }))).terminalFontSize).toBe(13)
+    expect((await loadPrefs(wire({ terminalFontSize: 18 }))).terminalFontSize).toBe(18)
+  })
+
   it('validates the per-tab / per-viewer enable maps (absent keys mean enabled)', async () => {
     // A non-object map falls back to {} (everything enabled).
     expect((await loadPrefs(wire({ tabsEnabled: 'nope' }))).tabsEnabled).toEqual({})
@@ -1293,9 +1315,9 @@ describe('side card preferences', () => {
     const store = createSidebarStore()
     // Node environment: no window → the width falls back to PANEL_DEFAULT,
     // while the open flag still follows the preference.
-    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: {}, viewersEnabled: {} })
+    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: {}, viewersEnabled: {} })
     store.setSession('fresh-session')
-    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: {}, viewersEnabled: {} })
+    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: {}, viewersEnabled: {} })
     const snapshot = store.getSnapshot()
     expect(snapshot.sessionId).toBe('fresh-session')
     expect(snapshot.state?.panelOpen).toBe(false)
@@ -1331,7 +1353,7 @@ describe('side card preferences', () => {
 
   it('skips the default explorer tab when the explorer type is disabled', () => {
     const store = createSidebarStore()
-    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: { explorer: false }, viewersEnabled: {} })
+    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: { explorer: false }, viewersEnabled: {} })
     store.setSession('no-explorer')
     const state = store.getSnapshot().state!
     const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs)
@@ -1339,7 +1361,7 @@ describe('side card preferences', () => {
     expect(state.splits.kind).toBe('leaf')
     // Re-enabling seeds the explorer tab again.
     const openStore = createSidebarStore()
-    openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: {}, viewersEnabled: {} })
+    openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: {}, viewersEnabled: {} })
     openStore.setSession('with-explorer')
     const openTabs = allLeaves(openStore.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
     expect(openTabs.map(tab => tab.type)).toEqual(['explorer'])

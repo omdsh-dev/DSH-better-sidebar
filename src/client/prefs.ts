@@ -10,12 +10,13 @@
  */
 import type { api } from './api.ts'
 import {
+  clampTerminalFontSize,
   clampWidthPercent,
   SIDEBAR_PREFS_DEFAULTS,
   type SidebarPrefs,
 } from '../prefs-shared.ts'
 
-export { SIDEBAR_PREFS_DEFAULTS, clampWidthPercent }
+export { SIDEBAR_PREFS_DEFAULTS, clampTerminalFontSize, clampWidthPercent }
 export type { SidebarPrefs }
 
 /** The settings wire face the preferences need (a subset of the plugin api). */
@@ -49,6 +50,12 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     bottomPanelAutoTerminal: typeof record.bottomPanelAutoTerminal === 'boolean'
       ? record.bottomPanelAutoTerminal
       : SIDEBAR_PREFS_DEFAULTS.bottomPanelAutoTerminal,
+    terminalFontFamily: typeof record.terminalFontFamily === 'string'
+      ? record.terminalFontFamily
+      : SIDEBAR_PREFS_DEFAULTS.terminalFontFamily,
+    terminalFontSize: typeof record.terminalFontSize === 'number' && Number.isFinite(record.terminalFontSize)
+      ? clampTerminalFontSize(record.terminalFontSize)
+      : SIDEBAR_PREFS_DEFAULTS.terminalFontSize,
     interceptOpenPath: typeof record.interceptOpenPath === 'boolean'
       ? record.interceptOpenPath
       : SIDEBAR_PREFS_DEFAULTS.interceptOpenPath,

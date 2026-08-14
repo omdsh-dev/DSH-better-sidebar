@@ -16,22 +16,29 @@ https://github.com/user-attachments/assets/23187822-047e-45cc-b480-fe997bd55b86
 
 <img width="2630" height="1794" alt="6c4293e1bec2e935031bf0e986d6ec65" src="https://github.com/user-attachments/assets/dfdb875e-a1a8-4d4b-8340-353736b1708f" />
 
+## 🆕 Recent Updates
+
+- **Custom terminal fonts**: font-family + 9–32px size settings on the terminal card, applied live
+- **Side card settings redesign**: grouped container cards, count badges, custom toggles, wider settings dialog
+- **Fix**: blank terminal after expanding the bottom panel on WKWebView (xterm initialized in a zero-size container, [#25](https://github.com/omdsh-dev/DSH-better-sidebar/issues/25))
+- **Docs**: client changes take effect on a hard refresh — no DSH restart needed
+
 ## ✨ Features
 
-- **🗂️ File Explorer**: lazy-loading directory tree (root = session cwd), click to open in the sidebar, `@file` reference at end of line into the input box, right-click to copy path
-- **📝 Edit & Preview**: CodeMirror 6 multi-language highlighting + Ctrl/Cmd+S atomic save; inline preview for images / Markdown (preview/edit toggle) / HTML (sandboxed iframe preview, relative resources loadable) / PDF / Word / Excel / PPT; drafts survive tab switches
-- **⚡ Client-side Lazy Loading**: heavy dependencies (Office / terminal / code editor) are chunked and loaded on demand — only ~325KB core is fetched at startup; Univer (~20MB) is fetched only when opening .xlsx, the docx viewer only when opening .docx, xterm only when opening a terminal; brief loading on first open, then instant (see `docs/plans/2026-08-12-lazy-chunks-design.md`)
-- **🌐 Browser**: embedded web browsing tabs (multiple), back/forward/refresh + "Open in browser"; pages run in a **sandboxed iframe** (opaque origin: cannot access UI data or local files, rejects localhost and other local addresses); the UI shows sandbox status live and can be temporarily unlocked (red warning when off); sites that refuse embedding (X-Frame-Options) show a reason panel; http(s) links in chat/UI open in the sidebar by default (panel auto-expands when collapsed)
-- **💻 Terminal**: xterm.js + node-pty real shell (max 3 UI instances per session), tab keep-alive with reconnect/replay; optionally injects 8 `terminal_*` tools for the model
-- **🌿 Git Panel**: real diff + VSCode-style diff tabs, lazy-loaded history, right-click to stage/discard/commit/revert/pick
-- **🧩 Background Tasks**: full agent topology of the main session, click-through to execution records, live tool-call polling, auto-expand for new subagents; background tasks shown on the same page (all background tasks in the current tree, bash/pwsh type badges + exit codes, click to view live output — auto-follows the bottom, non-consuming peek that doesn't disturb the model's `job_output`; double-click confirm to force-kill)
-- **🪟 Bottom Panel**: an independent second workbench (same kind of tabs as the right sidebar) that only squeezes the middle Agent output area without covering the left/right sidebars; auto-opens a new terminal on first expand (can be disabled in the terminal card's secondary settings); one-click collapse via the top-right x
-- **📱 Mobile**: at viewport < 768px (true mobile width, not the host's 1024 breakpoint) only the right sidebar shows — when entering narrow screens, bottom-panel tabs merge directly into the right sidebar's tab bar, leaving a single toggle at top-right and a full-width drawer panel; new sessions start collapsed; files/external links in chat auto-expand without squeezing the conversation area
-- **🔧 Split-pane Workbench**: drag tabs to split/merge panes (cross-panel dragging supported), divider to adjust ratios; persistent button cluster at top-right (bottom bar + side pull glyph) to collapse/expand both panels; the two panels share a corner double-direction drag to resize, rAF direct-DOM writes keep it smooth
-- **🔁 Session Isolation**: layout/panes/tabs/panel states persisted per session (localStorage), stale state auto-purged; chat "produced files" open in the sidebar (auto-expands panels when collapsed)
-- **⚙️ Declarative Settings**: the "Side Cards" section of the settings page renders a registry-driven feature list (small card grid, highlighted = enabled), each toggleable independently; secondary settings (auto-expand subagents, terminal tools, auto-open terminal on first bottom-panel expand, sandbox switches, etc.) are edited in a native dialog via the gear button
-- **🔌 Service API**: exposes the `ctx.betterSidebar` service — other plugins can register sidebar tabs and file viewers (the 7 built-in tabs + 9 viewers go through the same service, see [AGENTS.md](./AGENTS.md))
-- **🌏 i18n**: UI text follows DSH's language setting (zh/en) with live switching — Host preference takes priority over browser language, dictionaries registered into DSH's i18n namespace; no refresh needed
+- **🗂️ File Explorer**: lazy-loading directory tree (root = session cwd), click to open, `@file` reference, right-click to copy path
+- **📝 Edit & Preview**: CodeMirror 6 editing (Ctrl/Cmd+S atomic save, drafts survive tab switches); inline preview for images / Markdown / HTML / PDF / Word / Excel / PPT (HTML in a sandboxed iframe)
+- **⚡ Client-side Lazy Loading**: only ~325KB core at startup; heavy deps (Office / terminal / editor) load on demand (see `docs/plans/2026-08-12-lazy-chunks-design.md`)
+- **🌐 Browser**: multiple embedded web tabs, back/forward/refresh; pages run in a sandboxed iframe (no access to UI data or local files, rejects local addresses), temporarily unlockable (red warning); sites refusing embedding show a reason panel; external links open in the sidebar by default
+- **💻 Terminal**: xterm.js + node-pty real shell, reconnect with transcript replay; optionally injects `terminal_*` tools for the model; custom font (family + 9–32px size, applied live)
+- **🌿 Git Panel**: real diff + VSCode-style diff tabs, history, right-click to stage/commit/revert etc.
+- **🧩 Background Tasks**: main-session agent topology with click-through to execution records; background tasks on the same page (type badges + exit codes, live-output peek, force-kill)
+- **🪟 Bottom Panel**: an independent second workbench that only squeezes the center output area; auto-opens a terminal on first expand (toggleable)
+- **📱 Mobile**: narrow viewports (<768px) merge into a full-width drawer with the bottom panel's tabs folded into the sidebar; files/links auto-expand the panel
+- **🔧 Split-pane Workbench**: drag tabs to split/merge panes (cross-panel supported), divider to adjust ratios; one-click collapse/expand both panels from the top-right buttons
+- **🔁 Session Isolation**: layout / tabs / panel states persisted per session, stale state auto-purged; "produced files" open in the sidebar
+- **⚙️ Declarative Settings**: the "Side Cards" settings section renders a registry-driven toggle grid, each item independently switchable; secondary settings (auto-expand, terminal tools, sandbox, etc.) edited in a native dialog via the gear button
+- **🔌 Service API**: exposes `ctx.betterSidebar` — other plugins can register tabs and file viewers (the 7 built-in tabs + 9 viewers share the same service, see [AGENTS.md](./AGENTS.md))
+- **🌏 i18n**: UI text follows DSH's language setting (zh/en) with live switching, no refresh needed
 
 ## 🚀 Installation
 
@@ -49,7 +56,7 @@ curl -fsSL https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/s
 irm https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1 | iex
 ```
 
-Then **restart DSH and hard-refresh** (Cmd/Ctrl+Shift+R) to see the sidebar.
+Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R) to see the sidebar (DSH hot-reloads client changes; only host-half updates need a restart).
 
 <details>
 <summary><b>Pin a version / auto-restart (optional)</b></summary>
@@ -127,7 +134,7 @@ The one-click script does four things, all idempotent (safe to re-run):
 dsh plugin --profile web add dsh-better-sidebar
 ```
 
-or re-run the one-click script; or bump the version in `~/.dsh/profiles/web/package.json` (e.g. `"^0.10.3"`) and run `pnpm install`. Then restart DSH and hard-refresh (Cmd/Ctrl+Shift+R).
+or re-run the one-click script; or bump the version in `~/.dsh/profiles/web/package.json` (e.g. `"^0.10.3"`) and run `pnpm install`. Then hard-refresh the browser (Cmd/Ctrl+Shift+R) — client changes do not need a DSH restart.
 
 </details>
 
@@ -162,7 +169,7 @@ To debug local changes or track the dev branch, point the dependency at a local 
 5. Restart DSH and hard-refresh
 ```
 
-Update: `git pull && pnpm install && pnpm build` → restart DSH (client-only changes can just hard-refresh). To switch back to the npm channel, restore `"dsh-better-sidebar": "^0.10.3"` and re-run `pnpm install`.
+Update: `git pull && pnpm install && pnpm build` → just hard-refresh the browser (client changes hot-reload; only host-half changes need a DSH restart). To switch back to the npm channel, restore `"dsh-better-sidebar": "^0.10.3"` and re-run `pnpm install`.
 
 </details>
 
@@ -240,3 +247,7 @@ pnpm watch        # tsdown --watch
 ## 🖥️ Platform Support
 
 Windows / Linux / macOS (macOS validated daily; the rest covered by unit tests); `node-pty` prefers prebuilt binaries, otherwise a build toolchain is required (Windows VS Build Tools / Linux make+g+++python3 / macOS Xcode CLT).
+
+## 🔗 Friends
+
+- [dsh-tianshu-tui](https://github.com/huiliyi37/dsh-tianshu-tui): an interactive terminal UI plugin for DeepSeek Harness (its rendering core evolved from the self-developed harness agent Tianshu-Tui), adding TDD and evidence-gate workflows on top of the official harness

@@ -47,10 +47,22 @@ describe('built-in tab registrations', () => {
     expect(toggles.map(t => t.key)).toEqual(['autoOpenSubagent', 'autoOpenJobs'])
   })
 
-  it('the terminal tab declares the model terminal-tools related setting', () => {
+  it('the terminal tab declares the model terminal-tools, auto-terminal and custom-font settings', () => {
     const { service } = setup()
     const toggles = service.getTab('terminal')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual(['agentTerminalTools', 'bottomPanelAutoTerminal'])
+    expect(toggles.map(t => t.key)).toEqual(['agentTerminalTools', 'bottomPanelAutoTerminal', 'terminalFontFamily', 'terminalFontSize'])
+    // The font rows are text/number inputs (not switches), with the size
+    // row bounded by the shared 9–32 contract.
+    expect(toggles[2]?.type).toBe('text')
+    expect(toggles[2]?.title).toBeDefined()
+    expect(toggles[2]?.placeholder).toBeDefined()
+    expect(toggles[3]?.type).toBe('number')
+    expect(toggles[3]?.min).toBe(9)
+    expect(toggles[3]?.max).toBe(32)
+    expect(toggles[3]?.unit).toBe('px')
+    // The first two rows stay plain boolean switches.
+    expect(toggles[0]?.type ?? 'switch').toBe('switch')
+    expect(toggles[1]?.type ?? 'switch').toBe('switch')
   })
 
   it('the browser tab declares its sandbox and link-takeover related settings', () => {

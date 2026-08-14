@@ -598,7 +598,7 @@ function parseCsv(text: string): string[][] { /* ... */ }
 1. `~/.dsh/profiles/web/package.json` 的 `dependencies` 加 `"my-plugin": "link:<你的插件路径>"`；
 2. `~/.dsh/profiles/web/cordis.patch.yml` 追加挂载行（`- insert: - id: my-plugin / name: 'my-plugin'`）；
 3. 在 profile 目录 `pnpm install`；
-4. 重启 `dsh web` + 浏览器硬刷新（Cmd/Ctrl+Shift+R）。
+4. 浏览器硬刷新（Cmd/Ctrl+Shift+R）即可看到效果（DSH 对 client 改动热加载，无需重启 `dsh web`；仅 host 半改动需要重启）。
 
 ---
 

@@ -127,15 +127,27 @@ interface TabDescriptor {
   createTab?: (state: SidebarState) => { tab: SidebarTab; patch?: Partial<SidebarState> } | null
   /**
    * 声明式设置（v0.4.1+）：每个注册的 tab 都会在 Side card 设置页获得一行
-   * 开关（图标 + 标题 + 类型 id），`settings.toggles` 在其行下追加嵌套开关，
-   * 绑定 SidebarPrefs 字段。嵌套开关仅父级启用时显示。
+   * 开关（图标 + 标题 + 类型 id），`settings.toggles` 在其行下追加嵌套设置行，
+   * 绑定 SidebarPrefs 字段。嵌套设置仅父级启用时显示（v0.11.0 起行控件不限于
+   * 布尔开关：`type: 'switch' | 'text' | 'number'`，缺省 'switch'；text/number
+   * 行 blur/Enter 提交，number 行按 min/max 钳制，unit 渲染单位后缀）。
    */
   settings?: {
     toggles?: readonly {
-      /** SidebarPrefs 字段名（内置键：'autoOpenSubagent' / 'agentTerminalTools' / 'htmlViewerNoSandbox' / 'htmlViewerDefaultUnsafe' / 'browserNoSandbox' / 'browserInterceptLinks'） */
+      /** SidebarPrefs 字段名（内置键：'autoOpenSubagent' / 'agentTerminalTools' / 'terminalFontFamily' / 'htmlViewerNoSandbox' / 'htmlViewerDefaultUnsafe' / 'browserNoSandbox' / 'browserInterceptLinks'） */
       key: string
       title: string | (() => string)
       desc?: string | (() => string)
+      /** 行控件类型；缺省 'switch'（向后兼容）。 */
+      type?: 'switch' | 'text' | 'number'
+      /** number 行的提交钳制下限。 */
+      min?: number
+      /** number 行的提交钳制上限。 */
+      max?: number
+      /** text 行的输入占位符。 */
+      placeholder?: string
+      /** 输入框后的单位后缀（如 'px'）。 */
+      unit?: string
     }[]
   }
   /** 渲染函数 */
@@ -384,7 +396,7 @@ interface BetterSidebarService {
 }
 ```
 
-> **声明式设置（v0.4.1+）**：每个注册的 tab/viewer 自动出现在 DSH 设置页「侧边卡片」分区的清单里——响应式网格中的**小卡片**（图标 + 标题 + 类型 id + **高亮 = 启用**，勾选徽标钉在卡片最右端，viewer 卡片还显示扩展名），开关持久化到 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，缺省 = 启用）。关闭语义：tab 从 `+` 菜单消失、`openTab` 拒绝新开、子代理自动展开 / agent 终端自动补 tab 等派生流程停止，**已打开的 tab 保留**；viewer 被 `matchFileViewer` 跳过，文件落到下一个匹配。`settings.toggles` 声明的相关设置（如子代理的 `autoOpenSubagent`）通过卡片右下角的齿轮按钮在**原生弹窗**中编辑（复选框行），父级卡片关闭时齿轮隐藏；**key 必须是宿主 PrefsSchema 的字段**（内置键：`autoOpenSubagent` / `agentTerminalTools` / `htmlViewerNoSandbox` / `htmlViewerDefaultUnsafe` / `browserNoSandbox` / `browserInterceptLinks`），外部插件的自定义键会被 settings seam 丢弃。
+> **声明式设置（v0.4.1+）**：每个注册的 tab/viewer 自动出现在 DSH 设置页「侧边卡片」分区的清单里——响应式网格中的**小卡片**（图标 + 标题 + 类型 id + **高亮 = 启用**，勾选徽标钉在卡片最右端，viewer 卡片还显示扩展名），开关持久化到 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，缺省 = 启用）。关闭语义：tab 从 `+` 菜单消失、`openTab` 拒绝新开、子代理自动展开 / agent 终端自动补 tab 等派生流程停止，**已打开的 tab 保留**；viewer 被 `matchFileViewer` 跳过，文件落到下一个匹配。`settings.toggles` 声明的相关设置（如子代理的 `autoOpenSubagent`、终端的 `terminalFontFamily`/`terminalFontSize`）通过卡片右下角的齿轮按钮在**原生弹窗**中编辑——`type: 'switch'` 行是复选框，`type: 'text'`/`'number'` 行是输入框（v0.11.0+）——父级卡片关闭时齿轮隐藏；**key 必须是宿主 PrefsSchema 的字段**（内置键：`autoOpenSubagent` / `agentTerminalTools` / `terminalFontFamily` / `terminalFontSize` / `htmlViewerNoSandbox` / `htmlViewerDefaultUnsafe` / `browserNoSandbox` / `browserInterceptLinks`），外部插件的自定义键会被 settings seam 丢弃。
 
 ---
 
@@ -484,7 +496,7 @@ function CsvGrid(props: { rows: string[][]; path: string }): React.ReactNode { /
 function parseCsv(text: string): string[][] { /* ... */ }
 ```
 
-**注册到 profile**：在 `~/.dsh/profiles/web/package.json` 的 `dependencies` 加 `"my-plugin": "link:<你的插件路径>"`，在 `cordis.patch.yml` 加挂载行，`pnpm install`，重启 `dsh web` + 浏览器硬刷新。
+**注册到 profile**：在 `~/.dsh/profiles/web/package.json` 的 `dependencies` 加 `"my-plugin": "link:<你的插件路径>"`，在 `cordis.patch.yml` 加挂载行，`pnpm install`，浏览器硬刷新即可（DSH 对 client 改动热加载，无需重启 `dsh web`；仅 host 半改动需要重启）。
 
 ---
 
@@ -494,7 +506,7 @@ better-sidebar 自己的内置 tab 和 viewer 就是参考实现（"吃狗粮"�
 
 - **`src/client/builtins/`**：7 个内置 tab（explorer/git/subagent/terminal/browser/editor/diff）+ 9 个内置 viewer（image/pdf/docx/xlsx/pptx/markdown/html/code/binary-download）的注册代码（tabs.tsx / viewers.tsx / index.ts）
 - **`src/client/service.ts`**：`BetterSidebarService` 接口 + `createBetterSidebarService` 工厂实现
-- **`src/client/SideCardSection.tsx`**：声明式设置页（注册表驱动清单 + `settings.toggles` 嵌套开关 + 开关持久化）
+- **`src/client/SideCardSection.tsx`**：声明式设置页（注册表驱动清单 + `settings.toggles` 嵌套设置行：switch/text/number + 持久化）
 - **`tests/service.spec.ts`**：注册表生命周期 / 匹配算法 / dedupe / createTab / 启用态 gating 测试
 - **`tests/builtins.spec.ts`**：内置注册清单断言（7 tab + 9 viewer + 声明式元数据）
 - **`docs/plans/2026-08-11-service-registry-design.md`** / **`docs/plans/2026-08-11-declarative-sidebar-settings-design.md`**：设计文档（含实施偏差记录）
