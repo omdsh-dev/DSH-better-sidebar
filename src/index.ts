@@ -4,9 +4,10 @@
  * preview route, the /sidebar/bundle lazy-chunk route (client code splits),
  * and the terminal WebSocket upgrade. Every route passes the same
  * browser-trust fence as the /api gateway — Host-header loopback or the
- * web runtime's `trustedHosts` (LAN IP literals derived per boot plus
- * `--trusted-host` authorities) — read live per request so the fence never
- * drifts from the deployment's.
+ * web runtime's `trustedHosts` (LAN IP literals sampled at boot plus
+ * `--trusted-host` authorities), read per request from the live service
+ * value so the fence tracks the same trust source the /api gateway derives
+ * its list from.
  *
  * All operations are conversation-scoped: requests carry a sessionId, the
  * session's authoritative cwd comes from the session store, and terminal
@@ -425,9 +426,10 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // restore it before any terminal can spawn (idempotent).
   ensureSpawnHelper()
   const resolved = resolveSidebarConfig(config)
-  // The web runtime's bind-derived trust list (LAN literals plus
-  // --trusted-host authorities) — the same list the /api gateway fence
-  // accepts. Read per request so config reloads apply without a restart.
+  // The web runtime's bind-derived trust list (boot-sampled LAN literals
+  // plus --trusted-host authorities) — the authoritative source the /api
+  // gateway fence derives its list from. Read per request from the live
+  // service value; a replaced list takes effect without a plugin restart.
   const fence = (req: SidebarHttpRequest): boolean => isTrustedApiRequest(req, ctx.webRuntime.trustedHosts)
   const ptyManager = new PtyManager(defaultShell(), resolved.terminalsPerSession)
   // The agent-owned terminal registry: parallel to the UI-tab ptyManager,

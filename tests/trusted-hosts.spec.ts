@@ -95,7 +95,7 @@ function remoteDomainRequest(): IncomingMessage {
     host: 'example.com',
     'sec-fetch-site': 'same-origin',
     origin: 'https://example.com',
-  })
+  }, '{"sessionId":"test-session"}')
 }
 
 /** A LAN-IP request with the browser markers a same-origin fetch sends. */
@@ -104,7 +104,7 @@ function lanRequest(): IncomingMessage {
     host: '192.0.2.1:3080',
     'sec-fetch-site': 'same-origin',
     origin: 'http://192.0.2.1:3080',
-  })
+  }, '{"sessionId":"test-session"}')
 }
 
 describe('remote-access trust (webRuntime.trustedHosts)', () => {
@@ -113,7 +113,7 @@ describe('remote-access trust (webRuntime.trustedHosts)', () => {
     try {
       const res = fakeRes()
       await api(remoteDomainRequest(), res as unknown as ServerResponse)
-      expect(res.status).not.toBe(403)
+      expect(res.status).toBe(200)
     } finally {
       cleanup()
     }
@@ -124,7 +124,7 @@ describe('remote-access trust (webRuntime.trustedHosts)', () => {
     try {
       const res = fakeRes()
       await api(lanRequest(), res as unknown as ServerResponse)
-      expect(res.status).not.toBe(403)
+      expect(res.status).toBe(200)
     } finally {
       cleanup()
     }
@@ -140,8 +140,8 @@ describe('remote-access trust (webRuntime.trustedHosts)', () => {
       await api(req('POST', '/sidebar/api/session.cwd', {
         host: '127.0.0.1:3080',
         'sec-fetch-site': 'same-origin',
-      }), loopback as unknown as ServerResponse)
-      expect(loopback.status).not.toBe(403)
+      }, '{"sessionId":"test-session"}'), loopback as unknown as ServerResponse)
+      expect(loopback.status).toBe(200)
     } finally {
       cleanup()
     }
@@ -151,11 +151,13 @@ describe('remote-access trust (webRuntime.trustedHosts)', () => {
     const { api, cleanup } = mount(['example.com'])
     try {
       const res = fakeRes()
+      // Same-origin origin: only the explicit cross-site marker can reject —
+      // this pins the marker branch (a mismatched origin would also 403).
       await api(req('POST', '/sidebar/api/session.cwd', {
         host: 'example.com',
         'sec-fetch-site': 'cross-site',
-        origin: 'https://evil.example.net',
-      }), res as unknown as ServerResponse)
+        origin: 'https://example.com',
+      }, '{"sessionId":"test-session"}'), res as unknown as ServerResponse)
       expect(res.status).toBe(403)
     } finally {
       cleanup()
@@ -173,7 +175,7 @@ describe('remote-access trust (webRuntime.trustedHosts)', () => {
       setTrustedHosts(['example.com'])
       const after = fakeRes()
       await api(remoteDomainRequest(), after as unknown as ServerResponse)
-      expect(after.status).not.toBe(403)
+      expect(after.status).toBe(200)
     } finally {
       cleanup()
     }

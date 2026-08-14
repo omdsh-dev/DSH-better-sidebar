@@ -92,16 +92,6 @@ export interface SidebarSessionStore {
   } | undefined
 }
 
-/** One loader entry's options slice (the connection row's resolved config). */
-export interface SidebarLoaderEntry {
-  options: { name: string; config?: unknown }
-}
-
-/** The loader face used to read the connection row's trustedHosts config. */
-export interface SidebarLoader {
-  entries(): Iterable<SidebarLoaderEntry>
-}
-
 /**
  * The web runtime service face (mirror of @deepseek-ai/dsh-web-app's
  * WebRuntimeValues): the bind-derived trust list the /api gateway's fence
