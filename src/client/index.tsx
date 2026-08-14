@@ -20,6 +20,7 @@ import { RenderBoundary } from './RenderBoundary.tsx'
 import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
+import { registerSidebarToggleShortcut } from './shortcuts.ts'
 import { loadPrefs } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
@@ -191,6 +192,23 @@ export function apply(ctx: Context): void {
         }
       },
       'dsh-better-sidebar: IME composition guard',
+    )
+
+    // The sidebar open/close shortcut (Ctrl/Cmd+B by default, configurable in
+    // the Side card settings): a document-level listener that flips the right
+    // panel. It yields to IME composition, to handlers that already claimed
+    // the event, and to the sidebar terminal (the chord keeps its shell
+    // meaning there) — see registerSidebarToggleShortcut.
+    ctx.effect(
+      () => {
+        try {
+          return registerSidebarToggleShortcut(sidebarStore)
+        } catch (error) {
+          fail('shortcut', error)
+          return undefined
+        }
+      },
+      'dsh-better-sidebar: sidebar toggle shortcut',
     )
 
     // The "Side card" settings section: appears in the DSH Settings shell

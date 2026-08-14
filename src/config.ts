@@ -100,4 +100,8 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   // (everything on) with no migration. Non-boolean values fail validation.
   tabsEnabled: z.dict(z.boolean()).default({}),
   viewersEnabled: z.dict(z.boolean()).default({}),
+  // Per-shortcut chord overrides: an OPEN map (any shortcut id), values are
+  // canonical chord strings ('Mod+B'); absent keys mean the default chord.
+  // Non-string values fail validation.
+  shortcuts: z.dict(z.string()).default({}),
 })

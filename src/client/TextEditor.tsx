@@ -12,7 +12,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
-import { EditorState } from '@codemirror/state'
+import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -24,6 +24,7 @@ import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { appendToDraft } from './conversation-draft.ts'
 import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
 import { t } from './locales.ts'
+import { chordOf, chordToCodeMirrorKey, displayChord } from './shortcuts.ts'
 import type { FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
 
@@ -58,6 +59,13 @@ export function TextEditor(props: FileViewerProps) {
   const savingRef = useRef(false)
   /** The theme compartment of the current view (reconfigured on scheme flip). */
   const themeCompRef = useRef<CmThemeCompartment | null>(null)
+  /** The save-keymap compartment (reconfigured when the chord changes). */
+  const saveKeymapCompartmentRef = useRef<Compartment | null>(null)
+  /** The configured save chord (default 'Mod+S'; live from the side card prefs). */
+  const [saveChord, setSaveChord] = useState(() => chordOf(props.store, 'saveEditor'))
+  useEffect(() => props.store.subscribe(() => {
+    setSaveChord(chordOf(props.store, 'saveEditor'))
+  }), [props.store])
   /** The app's resolved color scheme; the editor re-themes in place on flips. */
   const [dark, setDark] = useState(() => isDarkScheme())
   /** The floating "add to conversation" popup (viewport-anchored; null = hidden). */
@@ -115,6 +123,8 @@ export function TextEditor(props: FileViewerProps) {
     const language = languageForPath(path)
     const themeComp = new CmThemeCompartment()
     themeCompRef.current = themeComp
+    const saveKeymapCompartment = new Compartment()
+    saveKeymapCompartmentRef.current = saveKeymapCompartment
     const state = EditorState.create({
       doc: content,
       extensions: [
@@ -132,15 +142,7 @@ export function TextEditor(props: FileViewerProps) {
             setDirty(true)
           }
         }),
-        keymap.of([
-          {
-            key: 'Mod-s',
-            preventDefault: true,
-            run: () => { save(); return true },
-          },
-          ...defaultKeymap,
-          ...historyKeymap,
-        ]),
+        saveKeymapCompartment.of(buildSaveKeymap(saveChord)),
         // Selection popup (the catch-all code viewer only): a non-empty
         // selection anchors the floating "add to conversation" button above
         // its head. Scrolling (geometry/viewport change) or losing focus
@@ -192,6 +194,7 @@ export function TextEditor(props: FileViewerProps) {
       view.destroy()
       viewRef.current = null
       themeCompRef.current = null
+      saveKeymapCompartmentRef.current = null
     }
     // The keymap's save() reads live refs; scope/path are stable for a
     // tab's lifetime, and the dark flip is handled by the reconfigure
@@ -230,6 +233,30 @@ export function TextEditor(props: FileViewerProps) {
       setSaveState('failed')
     })
   }
+
+  /**
+   * The editor keymap: the configured save chord first, then the standard
+   * bindings. A malformed/unknown chord falls back to the default 'Mod-s'.
+   */
+  const buildSaveKeymap = (chord: string) => keymap.of([
+    {
+      key: chordToCodeMirrorKey(chord) ?? 'Mod-s',
+      preventDefault: true,
+      run: () => { save(); return true },
+    },
+    ...defaultKeymap,
+    ...historyKeymap,
+  ])
+
+  // A chord change (side card settings) rebinds save in place: only the
+  // keymap compartment reconfigures, so the document, undo history and
+  // scroll position survive (same pattern as the scheme flip below).
+  useEffect(() => {
+    const view = viewRef.current
+    const compartment = saveKeymapCompartmentRef.current
+    if (view === null || compartment === null) return
+    view.dispatch({ effects: compartment.reconfigure(buildSaveKeymap(saveChord)) })
+  }, [saveChord])
 
   const markdown = viewerId === 'markdown'
   const html = viewerId === 'html'
@@ -305,7 +332,7 @@ export function TextEditor(props: FileViewerProps) {
             type="button"
             className={css.iconButton}
             aria-label={t('save')}
-            title={`${t('save')} (Ctrl/Cmd+S)`}
+            title={`${t('save')} (${displayChord(saveChord)})`}
             onClick={save}
           >
             <IconCheckOutline16 />

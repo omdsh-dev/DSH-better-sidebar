@@ -1169,6 +1169,7 @@ describe('side card preferences', () => {
         browserInterceptLinks: true,
         tabsEnabled: {},
         viewersEnabled: {},
+        shortcuts: {},
       })
   })
 
@@ -1190,6 +1191,7 @@ describe('side card preferences', () => {
         browserInterceptLinks: true,
         tabsEnabled: {},
         viewersEnabled: {},
+        shortcuts: {},
       })
   })
 
@@ -1211,6 +1213,7 @@ describe('side card preferences', () => {
         browserInterceptLinks: true,
         tabsEnabled: {},
         viewersEnabled: {},
+        shortcuts: {},
       })
     expect((await loadPrefs(wire({ openByDefault: true, defaultWidthPercent: 40, autoOpenSubagent: 1 }))).autoOpenSubagent)
       .toBe(true)
@@ -1254,6 +1257,30 @@ describe('side card preferences', () => {
     expect((await loadPrefs(wire({ terminalFontSize: 18 }))).terminalFontSize).toBe(18)
   })
 
+  it('validates the shortcuts map (canonical chords survive, malformed entries drop)', async () => {
+    // A non-object map falls back to {} (all defaults).
+    expect((await loadPrefs(wire({ shortcuts: 'nope' }))).shortcuts).toEqual({})
+    expect((await loadPrefs(wire({ shortcuts: [1] }))).shortcuts).toEqual({})
+    // Chords are canonicalized; malformed values and non-strings are dropped.
+    const parsed = await loadPrefs(wire({
+      shortcuts: {
+        toggleSidebar: 'ctrl+b',
+        saveEditor: 'Mod+Enter',
+        commitGit: 'b',
+        shiftOnly: 'Shift+B',
+        broken: 'Ctrl+?',
+        number: 42,
+      },
+    }))
+    expect(parsed.shortcuts).toEqual({
+      toggleSidebar: 'Ctrl+B',
+      saveEditor: 'Mod+Enter',
+    })
+    // Object special keys are not shortcut ids (no pollution, just hygiene).
+    expect((await loadPrefs(wire({ shortcuts: { '__proto__': 'Ctrl+B', constructor: 'Mod+S' } }))).shortcuts)
+      .toEqual({})
+  })
+
   it('validates the per-tab / per-viewer enable maps (absent keys mean enabled)', async () => {
     // A non-object map falls back to {} (everything enabled).
     expect((await loadPrefs(wire({ tabsEnabled: 'nope' }))).tabsEnabled).toEqual({})
@@ -1271,9 +1298,9 @@ describe('side card preferences', () => {
     const store = createSidebarStore()
     // Node environment: no window → the width falls back to PANEL_DEFAULT,
     // while the open flag still follows the preference.
-    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: {}, viewersEnabled: {} })
+    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: {}, viewersEnabled: {}, shortcuts: {} })
     store.setSession('fresh-session')
-    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: {}, viewersEnabled: {} })
+    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: {}, viewersEnabled: {}, shortcuts: {} })
     const snapshot = store.getSnapshot()
     expect(snapshot.sessionId).toBe('fresh-session')
     expect(snapshot.state?.panelOpen).toBe(false)
@@ -1309,7 +1336,7 @@ describe('side card preferences', () => {
 
   it('skips the default explorer tab when the explorer type is disabled', () => {
     const store = createSidebarStore()
-    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: { explorer: false }, viewersEnabled: {} })
+    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: { explorer: false }, viewersEnabled: {}, shortcuts: {} })
     store.setSession('no-explorer')
     const state = store.getSnapshot().state!
     const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs)
@@ -1317,7 +1344,7 @@ describe('side card preferences', () => {
     expect(state.splits.kind).toBe('leaf')
     // Re-enabling seeds the explorer tab again.
     const openStore = createSidebarStore()
-    openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: {}, viewersEnabled: {} })
+    openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: {}, viewersEnabled: {}, shortcuts: {} })
     openStore.setSession('with-explorer')
     const openTabs = allLeaves(openStore.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
     expect(openTabs.map(tab => tab.type)).toEqual(['explorer'])

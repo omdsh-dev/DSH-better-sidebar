@@ -109,6 +109,14 @@ export interface SidebarPrefs {
    * next matching viewer (or the download button when none match).
    */
   viewersEnabled: Record<string, boolean>
+  /**
+   * Per-shortcut chord overrides, keyed by shortcut id (`'toggleSidebar'`,
+   * `'saveEditor'`, `'commitGit'`). An ABSENT key means the shortcut's
+   * default chord; a present key is a canonical chord string such as
+   * `'Mod+B'` (Mod = Cmd on macOS, Ctrl elsewhere). Malformed entries are
+   * dropped on read, so the default applies.
+   */
+  shortcuts: Record<string, string>
 }
 
 /** Range contract of {@link SidebarPrefs.defaultWidthPercent}. */
@@ -138,6 +146,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   browserInterceptLinks: true,
   tabsEnabled: {},
   viewersEnabled: {},
+  shortcuts: {},
 }
 
 /** Clamp one width percent into the contract range (shared by schema and client reads). */

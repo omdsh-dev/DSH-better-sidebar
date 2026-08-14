@@ -84,7 +84,9 @@ describe('SideCardSection declarative inventory', () => {
     // both tabs + the image viewer cards pressed (3 aria-pressed cards).
     // The nested auto-open toggle is NOT an inline card (it lives in the popup).
     expect(pressedCount(html, 'true')).toBe(3)
-    expect(pressedCount(html, 'false')).toBe(0)
+    // The three shortcut-recorder buttons also expose their armed state as
+    // aria-pressed=false; none of the feature cards are off.
+    expect(pressedCount(html, 'false')).toBe(3)
     // The general toggles are custom switches (real checkboxes, checked).
     expect(html.match(/checked=""/g)?.length).toBe(2)
     expect(html).not.toContain('Auto-open Subagents')
@@ -125,7 +127,8 @@ describe('SideCardSection declarative inventory', () => {
     const html = renderSection(store, service)
     expect(html).toContain('>Subagents<')
     expect(html).toContain('>Image<')
-    expect(pressedCount(html, 'false')).toBe(2)
+    // Two disabled feature cards + three idle shortcut recorders.
+    expect(pressedCount(html, 'false')).toBe(5)
     // The explorer card stays pressed; the general switches stay checked.
     expect(pressedCount(html, 'true')).toBe(1)
     expect(html.match(/checked=""/g)?.length).toBe(2)
