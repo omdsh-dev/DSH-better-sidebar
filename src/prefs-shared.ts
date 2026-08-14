@@ -93,6 +93,15 @@ export interface SidebarPrefs {
    */
   browserInterceptLinks: boolean
   /**
+   * Whether image / PDF / HTML previews and downloads work for files
+   * OUTSIDE the session cwd (under directories the user rooted the explorer
+   * at — the host remembers the roots fs.resolve confirmed for the
+   * session). On by default; turning it off restores the strict
+   * cwd-only fence on the media and HTML routes. Text file opens are
+   * unaffected (fs.read always resolves absolute paths).
+   */
+  explorerOutsideCwdPreview: boolean
+  /**
    * Per-tab enable switches, keyed by tab descriptor id (`'explorer'`,
    * `'my-plugin:db'`). An ABSENT key means enabled — only an explicit
    * `false` disables a tab type (hidden from the + menu, `openTab` refuses,
@@ -145,6 +154,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   htmlViewerDefaultUnsafe: false,
   browserNoSandbox: false,
   browserInterceptLinks: true,
+  explorerOutsideCwdPreview: true,
   tabsEnabled: {},
   viewersEnabled: {},
   pluginSettings: {},

@@ -71,6 +71,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     browserInterceptLinks: typeof record.browserInterceptLinks === 'boolean'
       ? record.browserInterceptLinks
       : SIDEBAR_PREFS_DEFAULTS.browserInterceptLinks,
+    explorerOutsideCwdPreview: typeof record.explorerOutsideCwdPreview === 'boolean'
+      ? record.explorerOutsideCwdPreview
+      : SIDEBAR_PREFS_DEFAULTS.explorerOutsideCwdPreview,
     tabsEnabled: booleanMapOf(record.tabsEnabled),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
     pluginSettings: pluginSettingsMapOf(record.pluginSettings),

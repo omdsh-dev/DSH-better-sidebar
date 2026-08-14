@@ -156,7 +156,7 @@ interface TabDescriptor {
    */
   settings?: {
     toggles?: readonly {
-      /** SidebarPrefs 字段名（内置键：'autoOpenSubagent' / 'agentTerminalTools' / 'terminalFontFamily' / 'htmlViewerNoSandbox' / 'htmlViewerDefaultUnsafe' / 'browserNoSandbox' / 'browserInterceptLinks'） */
+      /** SidebarPrefs 字段名（内置键：'autoOpenSubagent' / 'agentTerminalTools' / 'terminalFontFamily' / 'htmlViewerNoSandbox' / 'htmlViewerDefaultUnsafe' / 'browserNoSandbox' / 'browserInterceptLinks' / 'explorerOutsideCwdPreview'） */
       key: string
       title: string | (() => string)
       desc?: string | (() => string)

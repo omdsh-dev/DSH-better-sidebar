@@ -183,6 +183,7 @@ function buildApi(
   agentPtyRegistry: AgentPtyRegistry,
   resolved: ResolvedSidebarConfig,
   getSettings: () => SidebarSettingsFace | undefined,
+  approveRoot: (sessionId: string, root: string) => void,
 ): Record<string, ApiMethod> {
   const cwdOf = (payload: unknown): { sessionId: string; cwd: string } => {
     const sessionId = requireString(payload, 'sessionId')
@@ -206,6 +207,27 @@ function buildApi(
       const record = payload as { path?: unknown }
       const target = record.path === undefined ? cwd : requireAbsolute(requireString(payload, 'path'))
       return listDirectory(target, resolved.listLimit)
+    },
+    // Resolve one explorer-root input: an absolute path passes through,
+    // a relative one joins the current root (the explorer's `base`). A
+    // directory is its own root; a file roots at its parent directory.
+    // The confirmed root joins the session's approved set, which the media
+    // and HTML routes consult when serving files outside the session cwd.
+    'fs.resolve': async (payload) => {
+      const { sessionId, cwd } = cwdOf(payload)
+      const record = payload as { path?: unknown; base?: unknown }
+      const base = typeof record.base === 'string' && record.base !== '' ? requireAbsolute(record.base) : cwd
+      const raw = requireString(payload, 'path')
+      const path = isAbsolute(raw) ? requireAbsolute(raw) : requireAbsolute(join(base, raw))
+      const info = await stat(path).catch((error: unknown) => {
+        throw new SidebarError('fs-error', `cannot resolve "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+      })
+      if (!info.isDirectory() && !info.isFile()) {
+        throw new SidebarError('fs-error', `"${path}" is neither a file nor a directory`, 400)
+      }
+      const root = info.isDirectory() ? path : dirname(path)
+      approveRoot(sessionId, root)
+      return { path, root, isDir: info.isDirectory() }
     },
     'fs.read': async (payload) => {
       const { cwd } = cwdOf(payload)
@@ -431,6 +453,34 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // gateway fence derives its list from. Read per request from the live
   // service value; a replaced list takes effect without a plugin restart.
   const fence = (req: SidebarHttpRequest): boolean => isTrustedApiRequest(req, ctx.webRuntime.trustedHosts)
+  // Explorer roots the user confirmed through fs.resolve, per session: the
+  // media and HTML routes may serve files under them (outside the cwd) while
+  // the explorerOutsideCwdPreview pref is on. Capped so a long-lived session
+  // never accumulates unbounded directory grants.
+  const APPROVED_ROOTS_LIMIT = 16
+  const approvedRoots = new Map<string, string[]>()
+  const approveRoot = (sessionId: string, root: string): void => {
+    const next = (approvedRoots.get(sessionId) ?? []).filter(item => item !== root)
+    next.push(root)
+    approvedRoots.set(
+      sessionId,
+      next.length > APPROVED_ROOTS_LIMIT ? next.slice(next.length - APPROVED_ROOTS_LIMIT) : next,
+    )
+  }
+  /** Whether the media/html routes may serve `path` for a session: always the
+   *  session cwd; outside it only under fs.resolve-approved roots and only
+   *  while the explorerOutsideCwdPreview pref is on (default). The trust fence
+   *  still gates who may call these routes — this keeps their byte-serving
+   *  surface to directories the user deliberately browsed. */
+  const isPathServable = (sessionId: string, cwd: string, path: string): boolean => {
+    if (isWithin(cwd, path)) return true
+    // The settings service validates the namespace against PrefsSchema, so the
+    // value is SidebarPrefs whenever the face is filled; an absent/malformed
+    // value falls through to the default-ON branch (`=== false` never fires).
+    const prefs = settingsFace?.get().value as SidebarPrefs | undefined
+    if (prefs?.explorerOutsideCwdPreview === false) return false
+    return (approvedRoots.get(sessionId) ?? []).some(root => isWithin(root, path))
+  }
   const ptyManager = new PtyManager(defaultShell(), resolved.terminalsPerSession)
   // The agent-owned terminal registry: parallel to the UI-tab ptyManager,
   // keyed by uuid (the model's opaque handle) instead of `${sessionId}:${tabId}`,
@@ -496,7 +546,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   })
 
   // ── JSON API ────────────────────────────────────────────────────────────
-  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace)
+  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace, approveRoot)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -556,12 +606,12 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
         const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
         const path = requireAbsolute(raw)
-        if (!isWithin(cwd, path)) {
-          // Only files under the session cwd are served as media (the editor
-          // opens images from the explorer; produced files go through read).
+        if (!isPathServable(sessionId, cwd, path)) {
+          // Only files under the session cwd (or under an fs.resolve-approved
+          // explorer root while the pref allows) are served as media.
           // isWithin (not a raw startsWith) so case-mismatched Windows paths
           // and mixed separators cannot be misclassified.
-          throw new SidebarError('fs-error', 'media path outside the session working directory', 403)
+          throw new SidebarError('fs-error', 'media path outside the session\'s allowed directories', 403)
         }
         const info = await stat(path)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
@@ -617,12 +667,12 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const { sessionId, path } = decoded.ref
         // The session's authoritative cwd (client cwd cannot ride in the URL
         // — the path encoding has no query; a detached first request falls
-        // back to the process cwd and is normally refused by isWithin, same
-        // semantics as the media route's fallback).
+        // back to the process cwd and is normally refused by the gate below,
+        // same semantics as the media route's fallback).
         const cwd = sessionCwdOf(ctx, sessionId)
         const absolute = requireAbsolute(path)
-        if (!isWithin(cwd, absolute)) {
-          throw new SidebarError('fs-error', 'html path outside the session working directory', 403)
+        if (!isPathServable(sessionId, cwd, absolute)) {
+          throw new SidebarError('fs-error', 'html path outside the session\'s allowed directories', 403)
         }
         const info = await stat(absolute)
         if (!info.isFile() || info.size > resolved.mediaLimit) {

@@ -610,6 +610,61 @@
   white-space: nowrap;
 }
 
+/* The clickable root label (click → the path input takes its place). */
+.explorerRootButton {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  cursor: pointer;
+}
+
+.explorerRootButton:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The root path input: same row as the refresh button, Enter resolves. */
+.explorerRootInput {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-14);
+  outline: none;
+}
+
+.explorerRootInput:focus {
+  border-color: var(--dsw-alias-border-l2);
+}
+
+/* Dimmed while a resolve is in flight (readonly, never disabled — see
+   ExplorerView's blur note). */
+.explorerRootInput[readonly] {
+  opacity: 0.6;
+}
+
+/* The resolve failure strip below the header. */
+.explorerRootError {
+  flex: none;
+  padding: 4px 12px 8px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-state-error-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .explorerBody {
   flex: 1;
   min-height: 0;

@@ -4,19 +4,26 @@
  * directories sort first, hidden entries render dimmed, and the expansion
  * set lives in the per-session state. Clicking a file opens an editor tab.
  *
+ * The header root label is editable: clicking it opens a path input
+ * pre-filled with the root; submitting a directory roots the tree at it,
+ * submitting a file roots at its parent directory (the host resolves both
+ * through fs.resolve, relative inputs join the current root). The override
+ * lives in the per-session state, so each conversation keeps its own root.
+ *
  * Row actions: hovering a row reveals an @-reference button on the far
  * right (appends `@<relative path>` to the composer draft), and right-click
  * opens a context menu to copy the relative or absolute path (with a brief
  * "copied" label replacing the button after a successful write); file rows
  * also offer a download action (the host serves raw bytes, binary-safe).
  */
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
   IconRefreshOutline16, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
+import { setExplorerRoot, type SidebarStore } from './state.ts'
 import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
@@ -39,13 +46,14 @@ const COPIED_MS = 1200
 export function ExplorerView(props: {
   sessionId: string
   cwd: string | undefined
+  store: SidebarStore
   expanded: string[]
   onToggle: (path: string) => void
   onOpenFile: (path: string) => void
   /** Insert `@<relative path>` into the composer draft. */
   onReferenceFile: (path: string) => void
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onReferenceFile } = props
+  const { sessionId, cwd, store, expanded, onToggle, onOpenFile, onReferenceFile } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   const [refreshTick, setRefreshTick] = useState(0)
@@ -53,6 +61,25 @@ export function ExplorerView(props: {
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
   const [rowMenu, setRowMenu] = useState<{ path: string; isDir: boolean; x: number; y: number } | null>(null)
+
+  // The explorer root: the per-session override wins, else the session cwd.
+  const snapshot = useSyncExternalStore(
+    useCallback((callback: () => void) => store.subscribe(callback), [store]),
+    useCallback(() => store.getSnapshot(), [store]),
+  )
+  const root = snapshot.state?.explorerRoot ?? cwd
+
+  // Root editing state: the header label turns into an input pre-filled with
+  // the full root path (Enter resolves, Escape/blur cancels).
+  const [editingRoot, setEditingRoot] = useState(false)
+  const [rootDraft, setRootDraft] = useState('')
+  const [resolvingRoot, setResolvingRoot] = useState(false)
+  /** The last resolve failure (kept visible until the next edit/submit). */
+  const [rootError, setRootError] = useState<string | null>(null)
+
+  const applyRoot = useCallback((path: string): void => {
+    store.reduce(state => setExplorerRoot(state, path))
+  }, [store])
 
   const storeLevel = useCallback((path: string, level: LevelData) => {
     dataRef.current = { ...dataRef.current, [path]: level }
@@ -69,14 +96,22 @@ export function ExplorerView(props: {
     })
   }, [sessionId, cwd, storeLevel])
 
+  // The root of the previous load: switching roots (the override or the
+  // session cwd) wipes the level cache, so re-entering a directory refetches
+  // fresh rows instead of replaying stale ones.
+  const lastRootRef = useRef<string | undefined>(undefined)
   useEffect(() => {
     // Load the visible set; already-loaded levels (kept in the cache) are
-    // not refetched. Only the refresh button wipes the cache.
-    const root = cwd
+    // not refetched. Only a root switch or the refresh button wipes it.
     if (root === undefined) return
+    if (lastRootRef.current !== root) {
+      lastRootRef.current = root
+      dataRef.current = {}
+      setData({})
+    }
     loadDir(root)
     for (const dir of expanded) loadDir(dir)
-  }, [cwd, expanded, refreshTick, loadDir])
+  }, [root, expanded, refreshTick, loadDir])
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
   const copyPath = useCallback((text: string, path: string): void => {
@@ -88,6 +123,43 @@ export function ExplorerView(props: {
       }, COPIED_MS)
     })
   }, [])
+
+  /** Enter edit mode: the input opens pre-filled with the full root path. */
+  const beginRootEdit = (): void => {
+    if (root === undefined) return
+    setRootDraft(root)
+    setRootError(null)
+    setEditingRoot(true)
+  }
+
+  /** Leave edit mode without changing the root (Escape / blur). */
+  const cancelRootEdit = (): void => {
+    setEditingRoot(false)
+    setResolvingRoot(false)
+  }
+
+  /** Resolve the draft against the host: a directory roots at itself, a file
+   *  at its parent directory. On success the override replaces the root; on
+   *  failure the input stays open with the error shown below the header. */
+  const submitRoot = (): void => {
+    if (root === undefined || resolvingRoot) return
+    const text = rootDraft.trim()
+    if (text === '') {
+      cancelRootEdit()
+      return
+    }
+    setResolvingRoot(true)
+    api.fsResolve({ sessionId, cwd }, text, root).then((result) => {
+      setResolvingRoot(false)
+      setEditingRoot(false)
+      setRootError(null)
+      // A same-root submit never collapses the tree (the reducer no-ops).
+      if (result.root !== root) applyRoot(result.root)
+    }).catch((error: unknown) => {
+      setResolvingRoot(false)
+      setRootError(error instanceof Error ? error.message : String(error))
+    })
+  }
 
   /** The row's trailing actions: the @-reference button, or the copied label. */
   const rowActions = (entry: FsEntry): ReactNode => {
@@ -126,8 +198,6 @@ export function ExplorerView(props: {
     anchor.click()
     anchor.remove()
   }
-
-  const root = cwd
 
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
@@ -197,7 +267,43 @@ export function ExplorerView(props: {
   return (
     <div className={css.explorer}>
       <div className={css.explorerHeader}>
-        <span className={css.explorerRoot} title={root}>{root === undefined ? t('noSession') : baseName(root)}</span>
+        {root === undefined ? (
+          <span className={css.explorerRoot}>{t('noSession')}</span>
+        ) : editingRoot ? (
+          /* Readonly while a resolve is in flight: disabling a focused input
+             fires blur (the HTML focus-fixup rule), which would cancel the
+             edit in a real browser before the error can keep it open. */
+          <input
+            className={css.explorerRootInput}
+            value={rootDraft}
+            readOnly={resolvingRoot}
+            aria-busy={resolvingRoot || undefined}
+            aria-label={t('explorerRootEditLabel')}
+            autoFocus
+            onFocus={(event) => { event.currentTarget.select() }}
+            onChange={(event) => { setRootDraft(event.target.value) }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                submitRoot()
+              } else if (event.key === 'Escape') {
+                event.preventDefault()
+                cancelRootEdit()
+              }
+            }}
+            onBlur={() => { if (!resolvingRoot) cancelRootEdit() }}
+          />
+        ) : (
+          <button
+            type="button"
+            className={css.explorerRootButton}
+            title={`${root}\n${t('explorerRootEditHint')}`}
+            aria-label={t('explorerRootEditLabel')}
+            onClick={beginRootEdit}
+          >
+            {baseName(root)}
+          </button>
+        )}
         <button
           type="button"
           className={css.iconButton}
@@ -212,6 +318,9 @@ export function ExplorerView(props: {
           <IconRefreshOutline16 />
         </button>
       </div>
+      {rootError !== null && (
+        <div className={css.explorerRootError} role="alert">{rootError}</div>
+      )}
       <div className={css.explorerBody}>
         {root === undefined ? (
           <div className={css.explorerEmpty}>{t('noSession')}</div>

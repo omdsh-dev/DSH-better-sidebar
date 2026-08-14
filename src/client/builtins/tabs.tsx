@@ -79,10 +79,20 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       icon: (size: number) => <IconFolderOpen16 size={size} />,
       order: 10,
       single: true,
+      // Declarative settings: the outside-cwd preview/download allowance
+      // renders under this row in the Side card settings page.
+      settings: {
+        toggles: [{
+          key: 'explorerOutsideCwdPreview',
+          title: () => t('settingsExplorerOutsideCwdTitle'),
+          desc: () => t('settingsExplorerOutsideCwdDesc'),
+        }],
+      },
       component: ({ ctx, store, scope, expanded, onToggleDir, onReferenceFile }) => (
         <ExplorerView
           sessionId={scope.sessionId}
           cwd={scope.cwd}
+          store={store}
           expanded={expanded ?? []}
           onToggle={onToggleDir ?? (() => { /* no-op */ })}
           onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}

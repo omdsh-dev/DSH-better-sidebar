@@ -49,6 +49,15 @@ describe('built-in tab registrations', () => {
     expect(toggles.map(t => t.key)).toEqual(['autoOpenSubagent', 'autoOpenJobs'])
   })
 
+  it('the explorer tab declares its outside-cwd preview allowance setting', () => {
+    const { service } = setup()
+    const toggles = service.getTab('explorer')?.settings?.toggles ?? []
+    expect(toggles.map(t => t.key)).toEqual(['explorerOutsideCwdPreview'])
+    expect(toggles[0]?.title).toBeDefined()
+    expect(toggles[0]?.desc).toBeDefined()
+    expect(toggles[0]?.type ?? 'switch').toBe('switch')
+  })
+
   it('the terminal tab declares the model terminal-tools, auto-terminal and custom-font settings', () => {
     const { service } = setup()
     const toggles = service.getTab('terminal')?.settings?.toggles ?? []

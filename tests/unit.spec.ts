@@ -4,7 +4,7 @@ import { parseLogLines, parsePorcelainZ } from '../src/git.ts'
 import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
 import {
   activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, createSidebarStore, defaultWidthFor, insertLeafAt, makeDefaultState,
-  migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab, openTabInActivePane, patchTab, reconcileAgentTerminals, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight, splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded, togglePanel,
+  migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab, openTabInActivePane, patchTab, reconcileAgentTerminals, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight, setExplorerRoot, splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded, togglePanel,
   type SidebarState, type SidebarTab, type SplitNode,
 } from '../src/client/state.ts'
 import { loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
@@ -451,6 +451,34 @@ describe('sidebar state', () => {
     const tabId = leaf.tabs[0]!.id
     const after = activateTab(s, leaf.id, tabId)
     expect((after.splits as { active: string | null }).active).toBe(tabId)
+  })
+
+  it('setExplorerRoot stores the override and resets the expansion set', () => {
+    let s = state()
+    s = toggleExpanded(s, '/p/a')
+    const next = setExplorerRoot(s, '/other/root')
+    expect(next.explorerRoot).toBe('/other/root')
+    expect(next.expanded).toEqual([])
+    // A same-root set is a strict no-op (the explorer never collapses the
+    // tree when the user re-submits the unchanged root).
+    expect(setExplorerRoot(next, '/other/root')).toBe(next)
+  })
+
+  it('sanitizeState carries a valid explorerRoot and drops a malformed one', () => {
+    const base = JSON.parse(JSON.stringify(state())) as unknown
+    expect(sanitizeState(base)?.explorerRoot).toBeUndefined()
+    const withRoot = sanitizeState({ ...(base as Record<string, unknown>), explorerRoot: '/custom' })
+    expect(withRoot?.explorerRoot).toBe('/custom')
+    const junk = sanitizeState({ ...(base as Record<string, unknown>), explorerRoot: 42 })
+    expect(junk?.explorerRoot).toBeUndefined()
+    const empty = sanitizeState({ ...(base as Record<string, unknown>), explorerRoot: '' })
+    expect(empty?.explorerRoot).toBeUndefined()
+    // A relative value would fail every fs.tree call after restore: dropped.
+    const relative = sanitizeState({ ...(base as Record<string, unknown>), explorerRoot: 'relative/path' })
+    expect(relative?.explorerRoot).toBeUndefined()
+    // Windows drive roots pass (mirror of the host's requireAbsolute).
+    const win = sanitizeState({ ...(base as Record<string, unknown>), explorerRoot: 'C:\\work' })
+    expect(win?.explorerRoot).toBe('C:\\work')
   })
 
   it('patchTab updates the title and path of one open tab (browser persistence)', () => {
@@ -1144,6 +1172,7 @@ describe('side card preferences', () => {
         htmlViewerDefaultUnsafe: false,
         browserNoSandbox: false,
         browserInterceptLinks: true,
+        explorerOutsideCwdPreview: true,
         tabsEnabled: {},
         viewersEnabled: {},
         pluginSettings: {},
@@ -1166,6 +1195,7 @@ describe('side card preferences', () => {
         htmlViewerDefaultUnsafe: false,
         browserNoSandbox: false,
         browserInterceptLinks: true,
+        explorerOutsideCwdPreview: true,
         tabsEnabled: {},
         viewersEnabled: {},
         pluginSettings: {},
@@ -1188,6 +1218,7 @@ describe('side card preferences', () => {
         htmlViewerDefaultUnsafe: false,
         browserNoSandbox: false,
         browserInterceptLinks: true,
+        explorerOutsideCwdPreview: true,
         tabsEnabled: {},
         viewersEnabled: {},
         pluginSettings: {},
@@ -1216,6 +1247,15 @@ describe('side card preferences', () => {
     // Explicit booleans survive verbatim.
     expect((await loadPrefs(wire({ interceptOpenPath: false }))).interceptOpenPath).toBe(false)
     expect((await loadPrefs(wire({ interceptOpenPath: true }))).interceptOpenPath).toBe(true)
+  })
+
+  it('defaults explorerOutsideCwdPreview to true; only an explicit false restores the cwd fence', async () => {
+    // Absent or malformed → on (outside-cwd previews are allowed by default).
+    expect((await loadPrefs(wire({}))).explorerOutsideCwdPreview).toBe(true)
+    expect((await loadPrefs(wire({ explorerOutsideCwdPreview: 'yes' }))).explorerOutsideCwdPreview).toBe(true)
+    // Explicit booleans survive verbatim.
+    expect((await loadPrefs(wire({ explorerOutsideCwdPreview: false }))).explorerOutsideCwdPreview).toBe(false)
+    expect((await loadPrefs(wire({ explorerOutsideCwdPreview: true }))).explorerOutsideCwdPreview).toBe(true)
   })
 
   it('resolves the terminal font prefs (family passthrough, size clamp)', async () => {
@@ -1251,9 +1291,9 @@ describe('side card preferences', () => {
     const store = createSidebarStore()
     // Node environment: no window → the width falls back to PANEL_DEFAULT,
     // while the open flag still follows the preference.
-    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, explorerOutsideCwdPreview: true, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     store.setSession('fresh-session')
-    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, explorerOutsideCwdPreview: true, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     const snapshot = store.getSnapshot()
     expect(snapshot.sessionId).toBe('fresh-session')
     expect(snapshot.state?.panelOpen).toBe(false)
@@ -1289,7 +1329,7 @@ describe('side card preferences', () => {
 
   it('skips the default explorer tab when the explorer type is disabled', () => {
     const store = createSidebarStore()
-    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: { explorer: false }, viewersEnabled: {}, pluginSettings: {} })
+    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, explorerOutsideCwdPreview: true, tabsEnabled: { explorer: false }, viewersEnabled: {}, pluginSettings: {} })
     store.setSession('no-explorer')
     const state = store.getSnapshot().state!
     const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs)
@@ -1297,7 +1337,7 @@ describe('side card preferences', () => {
     expect(state.splits.kind).toBe('leaf')
     // Re-enabling seeds the explorer tab again.
     const openStore = createSidebarStore()
-    openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, explorerOutsideCwdPreview: true, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     openStore.setSession('with-explorer')
     const openTabs = allLeaves(openStore.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
     expect(openTabs.map(tab => tab.type)).toEqual(['explorer'])

@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { apply, mediaTypeForPath } from '../src/index.ts'
+import { SIDEBAR_PREFS_DEFAULTS, SIDEBAR_PREFS_NS } from '../src/config.ts'
+import { encodeHtmlUrl } from '../src/html-route.ts'
 import * as git from '../src/git.ts'
 import { listDirectory } from '../src/fs-tree.ts'
 import { defaultShell, PtyManager } from '../src/pty-manager.ts'
@@ -524,6 +526,7 @@ describe('side card settings routes', () => {
         htmlViewerDefaultUnsafe: false,
         browserNoSandbox: false,
         browserInterceptLinks: true,
+        explorerOutsideCwdPreview: true,
         // The enable-switch maps default to {} (everything on).
         tabsEnabled: {},
         viewersEnabled: {},
@@ -685,4 +688,332 @@ describe('agent terminal tool gating', () => {
   })
 
 
+})
+
+describe('fs.resolve over the API route', () => {
+  interface CtxOverrides {
+    sessions?: { get: (id: string) => { header: { cwd?: string } } | undefined }
+  }
+
+  const mount = (overrides: CtxOverrides = {}): SidebarWebRoute => {
+    const routes: SidebarWebRoute[] = []
+    const ctx = {
+      webRuntime: { trustedHosts: [] },
+      webServer: {
+        register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
+        registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
+      },
+      sessions: overrides.sessions ?? { get: () => undefined },
+      tools: { register: () => () => {} },
+      effect: (fn: () => void | (() => void)) => { fn() },
+      inject: () => () => {},
+      get: () => undefined,
+    }
+    apply(ctx as never)
+    return routes.find(route => route.path === '/sidebar/api')!
+  }
+
+  const invoke = async (
+    route: SidebarWebRoute,
+    payload: Record<string, unknown>,
+  ): Promise<{ ok: boolean; value?: { path: string; root: string; isDir: boolean }; error?: { code: string; message: string } }> => {
+    const body = Buffer.from(JSON.stringify(payload))
+    const req = {
+      method: 'POST',
+      url: '/sidebar/api/fs.resolve',
+      headers: { host: '127.0.0.1:3080' },
+      [Symbol.asyncIterator]: async function* () { yield body },
+    } as never
+    const out: { status: number; body: string } = { status: 200, body: '' }
+    const res = {
+      writeHead: (status: number) => { out.status = status },
+      end: (chunk: unknown) => { out.body += String(chunk ?? '') },
+    } as never
+    await route.handler(req, res)
+    return JSON.parse(out.body) as {
+      ok: boolean
+      value?: { path: string; root: string; isDir: boolean }
+      error?: { code: string; message: string }
+    }
+  }
+
+  it('roots a directory at itself', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-resolve-'))
+    try {
+      const route = mount()
+      const result = await invoke(route, { sessionId: 's1', path: dir })
+      expect(result.ok).toBe(true)
+      expect(result.value?.isDir).toBe(true)
+      expect(result.value?.root).toBe(resolvePath(dir))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('roots a file at its parent directory', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-resolve-'))
+    try {
+      const file = join(dir, 'note.txt')
+      writeFileSync(file, 'hello')
+      const route = mount()
+      const result = await invoke(route, { sessionId: 's1', path: file })
+      expect(result.ok).toBe(true)
+      expect(result.value?.isDir).toBe(false)
+      expect(result.value?.path).toBe(resolvePath(file))
+      expect(result.value?.root).toBe(resolvePath(dir))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves a relative input against the current explorer root (base)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-resolve-'))
+    try {
+      writeFileSync(join(dir, 'child.txt'), 'x')
+      const route = mount()
+      const result = await invoke(route, { sessionId: 's1', base: dir, path: 'child.txt' })
+      expect(result.ok).toBe(true)
+      expect(result.value?.root).toBe(resolvePath(dir))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('fails for a missing path', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-resolve-'))
+    try {
+      const route = mount()
+      const result = await invoke(route, { sessionId: 's1', path: join(dir, 'missing') })
+      expect(result.ok).toBe(false)
+      expect(result.error?.code).toBe('fs-error')
+      expect(result.error?.message).toMatch(/cannot resolve/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a non-absolute base', async () => {
+    const route = mount()
+    const result = await invoke(route, { sessionId: 's1', path: '/x', base: 'relative' })
+    expect(result.ok).toBe(false)
+    expect(result.error?.code).toBe('fs-error')
+  })
+})
+
+describe('outside-cwd media allowance (approved roots + pref gate)', () => {
+  interface CtxOverrides {
+    sessions?: { get: (id: string) => { header: { cwd?: string } } | undefined }
+    initialPrefs?: Record<string, unknown>
+    /** A deployment without the settings service (inject never fires). */
+    noSettings?: boolean
+  }
+
+  /** Mount the host with a fake settings service (register/describe/update). */
+  const makeMount = (overrides: CtxOverrides = {}) => {
+    const routes: SidebarWebRoute[] = []
+    let doc: Record<string, unknown> = { ...SIDEBAR_PREFS_DEFAULTS, ...overrides.initialPrefs }
+    let revision = 1
+    const ns = settingsNamespace(SIDEBAR_PREFS_NS)
+    const settingsSctx = {
+      settings: {
+        register: () => ({
+          get: () => doc,
+          watch: () => () => {},
+        }),
+        describe: () => [{ ns, value: doc, revision }],
+        update: async (_ns: unknown, patch: Record<string, unknown>, expectedRevision?: number) => {
+          if (expectedRevision !== undefined && expectedRevision !== revision) {
+            throw new SettingsConflictError(ns, expectedRevision, revision)
+          }
+          doc = { ...doc, ...patch }
+          revision += 1
+        },
+      },
+    }
+    const ctx = {
+      webRuntime: { trustedHosts: [] },
+      webServer: {
+        register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
+        registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
+      },
+      sessions: overrides.sessions ?? { get: () => undefined },
+      tools: { register: () => () => {} },
+      effect: (fn: () => void | (() => void)) => { fn() },
+      inject: overrides.noSettings === true
+        ? () => () => {}
+        : (deps: readonly string[], callback: (sctx: unknown) => void) => {
+            if (deps.includes('settings')) callback(settingsSctx)
+            return () => {}
+          },
+      get: () => undefined,
+    }
+    apply(ctx as never)
+    return {
+      api: routes.find(route => route.path === '/sidebar/api')!,
+      media: routes.find(route => route.path === '/sidebar/file')!,
+      html: routes.find(route => route.path === '/sidebar/html')!,
+    }
+  }
+
+  /** POST one JSON API method. */
+  const invoke = async (
+    api: SidebarWebRoute,
+    method: string,
+    payload: Record<string, unknown>,
+  ): Promise<{ ok: boolean; error?: { code: string; message: string } }> => {
+    const body = Buffer.from(JSON.stringify(payload))
+    const req = {
+      method: 'POST',
+      url: `/sidebar/api/${method}`,
+      headers: { host: '127.0.0.1:3080' },
+      [Symbol.asyncIterator]: async function* () { yield body },
+    } as never
+    const out: { status: number; body: string } = { status: 200, body: '' }
+    const res = {
+      writeHead: (status: number) => { out.status = status },
+      end: (chunk: unknown) => { out.body += String(chunk ?? '') },
+    } as never
+    await api.handler(req, res)
+    return JSON.parse(out.body) as { ok: boolean; error?: { code: string; message: string } }
+  }
+
+  /** GET one media/html route. */
+  const get = async (route: SidebarWebRoute, url: string): Promise<{ status: number; body: string }> => {
+    const req = { method: 'GET', url, headers: { host: '127.0.0.1:3080' } } as never
+    const out: { status: number; body: string } = { status: 0, body: '' }
+    const res = {
+      writeHead: (status: number) => { out.status = status },
+      end: (chunk: unknown) => { out.body += String(chunk ?? '') },
+    } as never
+    await route.handler(req, res)
+    return out
+  }
+
+  it('serves media under an fs.resolve-approved root outside the cwd; 403 elsewhere', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-media-'))
+    const other = mkdtempSync(join(tmpdir(), 'dsh-sidebar-media-other-'))
+    try {
+      const file = join(dir, 'pix.png')
+      writeFileSync(file, 'PNGDATA')
+      const outside = join(other, 'nope.png')
+      writeFileSync(outside, 'NOPE')
+      const { api, media } = makeMount()
+      // Unapproved → 403 (the strict cwd fence).
+      expect((await get(media, `/sidebar/file?sessionId=s1&path=${file}`)).status).toBe(403)
+      // fs.resolve confirms the root for the session; now the same file serves.
+      const resolved = await invoke(api, 'fs.resolve', { sessionId: 's1', path: dir })
+      expect(resolved.ok).toBe(true)
+      const served = await get(media, `/sidebar/file?sessionId=s1&path=${file}`)
+      expect(served.status).toBe(200)
+      expect(served.body).toBe('PNGDATA')
+      // A different unapproved directory stays refused.
+      expect((await get(media, `/sidebar/file?sessionId=s1&path=${outside}`)).status).toBe(403)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+      rmSync(other, { recursive: true, force: true })
+    }
+  })
+
+  it('a file input approves its parent directory (media serves through it)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-media-'))
+    try {
+      const file = join(dir, 'pix.png')
+      writeFileSync(file, 'PNGDATA')
+      const { api, media } = makeMount()
+      const resolved = await invoke(api, 'fs.resolve', { sessionId: 's1', path: file })
+      expect(resolved.ok).toBe(true)
+      const served = await get(media, `/sidebar/file?sessionId=s1&path=${file}`)
+      expect(served.status).toBe(200)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('the explorerOutsideCwdPreview pref off restores the strict cwd fence live', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-media-'))
+    try {
+      const file = join(dir, 'pix.png')
+      writeFileSync(file, 'PNGDATA')
+      const { api, media } = makeMount()
+      await invoke(api, 'fs.resolve', { sessionId: 's1', path: dir })
+      expect((await get(media, `/sidebar/file?sessionId=s1&path=${file}`)).status).toBe(200)
+      // Turning the pref off mid-session re-fences the route immediately.
+      const off = await invoke(api, 'settings.update', { patch: { explorerOutsideCwdPreview: false } })
+      expect(off.ok).toBe(true)
+      expect((await get(media, `/sidebar/file?sessionId=s1&path=${file}`)).status).toBe(403)
+      // ...and back on restores the allowance.
+      await invoke(api, 'settings.update', { patch: { explorerOutsideCwdPreview: true } })
+      expect((await get(media, `/sidebar/file?sessionId=s1&path=${file}`)).status).toBe(200)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('the HTML route honors the same approved roots', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-media-'))
+    try {
+      const file = join(dir, 'page.html')
+      writeFileSync(file, '<html>hi</html>')
+      const { api, html } = makeMount()
+      const url = encodeHtmlUrl('s1', file)
+      expect((await get(html, url)).status).toBe(403)
+      await invoke(api, 'fs.resolve', { sessionId: 's1', path: dir })
+      const served = await get(html, url)
+      expect(served.status).toBe(200)
+      expect(served.body).toContain('<html>hi</html>')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps serving files inside the session cwd while the pref is off', async () => {
+    const { api, media } = makeMount()
+    await invoke(api, 'settings.update', { patch: { explorerOutsideCwdPreview: false } })
+    const served = await get(media, `/sidebar/file?sessionId=s1&path=${join(process.cwd(), 'package.json')}`)
+    expect(served.status).toBe(200)
+  })
+
+  it('caps approved roots per session at 16; re-approval refreshes recency', async () => {
+    const dirs = Array.from({ length: 17 }, () => mkdtempSync(join(tmpdir(), 'dsh-sidebar-media-cap-')))
+    try {
+      const files = dirs.map((dir, index) => {
+        const file = join(dir, 'pix.png')
+        writeFileSync(file, `PNG-${index}`)
+        return file
+      })
+      const { api, media } = makeMount()
+      // Approve roots 1..16 (recency order) — all servable.
+      for (const dir of dirs.slice(0, 16)) {
+        await invoke(api, 'fs.resolve', { sessionId: 's1', path: dir })
+      }
+      expect((await get(media, `/sidebar/file?sessionId=s1&path=${files[0]}`)).status).toBe(200)
+      expect((await get(media, `/sidebar/file?sessionId=s1&path=${files[15]}`)).status).toBe(200)
+      // Re-approve root 5 (moves it to newest WITHOUT growing the list),
+      // then approve root 17: each approval adds at most one entry, so the
+      // cap evicts exactly the oldest root (1); the re-approved root 5
+      // survives (a grow-on-reapprove bug would have evicted 1 HERE, and
+      // the next approval would have evicted 2 instead).
+      await invoke(api, 'fs.resolve', { sessionId: 's1', path: dirs[4] })
+      await invoke(api, 'fs.resolve', { sessionId: 's1', path: dirs[16] })
+      expect((await get(media, `/sidebar/file?sessionId=s1&path=${files[0]}`)).status).toBe(403)
+      expect((await get(media, `/sidebar/file?sessionId=s1&path=${files[1]}`)).status).toBe(200)
+      expect((await get(media, `/sidebar/file?sessionId=s1&path=${files[4]}`)).status).toBe(200)
+      expect((await get(media, `/sidebar/file?sessionId=s1&path=${files[16]}`)).status).toBe(200)
+    } finally {
+      for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('defaults to ON when the deployment has no settings service', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-media-'))
+    try {
+      const file = join(dir, 'pix.png')
+      writeFileSync(file, 'PNGDATA')
+      const { api, media } = makeMount({ noSettings: true })
+      await invoke(api, 'fs.resolve', { sessionId: 's1', path: dir })
+      expect((await get(media, `/sidebar/file?sessionId=s1&path=${file}`)).status).toBe(200)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })

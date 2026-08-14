@@ -19,7 +19,7 @@
 
 ## ✨ 功能一览
 
-- **🗂️ 文件工作台**：资源管理器（懒加载目录树）+ CodeMirror 编辑器；图片 / Markdown / HTML / PDF / Office 内联预览
+- **🗂️ 文件工作台**：资源管理器（懒加载目录树，点击顶部路径可输入任意路径切换根目录）+ CodeMirror 编辑器；图片 / Markdown / HTML / PDF / Office 内联预览；会话 cwd 之外的预览与下载默认允许（限在资源管理器中确认过的根目录内，可在侧边卡片设置中关闭）
 - **🌐 内嵌浏览器**：多开网页 tab，后退 / 前进 / 刷新；内容运行在沙箱 iframe，外链默认在侧边栏打开
 - **💻 真实终端**：xterm.js + node-pty 真实 shell，断线重连回放；可选为模型注入 `terminal_*` 工具
 - **🌿 Git 面板**：真 diff + VSCode 式 diff tab、历史、右键暂存 / 提交 / 还原

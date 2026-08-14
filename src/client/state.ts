@@ -72,6 +72,8 @@ export interface SidebarState {
   nextBrowser: number
   /** Explorer expansion set (absolute directory paths). */
   expanded: string[]
+  /** Explorer root override (absolute directory path; absent = the session cwd). */
+  explorerRoot?: string
   /** The right sidebar's split tree (the original workbench). */
   splits: SplitNode
   /** Whether the bottom panel (a second, independent workbench) is open. */
@@ -635,6 +637,15 @@ export function toggleExpanded(state: SidebarState, path: string): SidebarState 
   return { ...state, expanded }
 }
 
+/** Set the explorer's root override. The expansion set belongs to the
+ *  PREVIOUS root's tree, so switching roots resets it (the new root starts
+ *  collapsed, VSCode-style). The explorer only calls this when the resolved
+ *  root differs from the current one, so a same-root submit never collapses. */
+export function setExplorerRoot(state: SidebarState, root: string): SidebarState {
+  if (state.explorerRoot === root) return state
+  return { ...state, explorerRoot: root, expanded: [] }
+}
+
 /** Adjust one split divider: `i` is the left/top child index, delta in fractions. */
 export function resizeSplit(node: SplitNode, splitId: string, index: number, delta: number): SplitNode {
   if (node.kind === 'leaf') return node
@@ -836,6 +847,16 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     nextTerminal: record.nextTerminal,
     nextBrowser,
     expanded: record.expanded as string[],
+    // The explorer root override arrived in a later build: a missing or
+    // malformed value on an OLDER persisted state simply stays absent (the
+    // explorer roots at the session cwd), like nextBrowser. The shape check
+    // mirrors the host's requireAbsolute (POSIX or Windows drive root).
+    ...(
+      typeof record.explorerRoot === 'string'
+        && (record.explorerRoot.startsWith('/') || /^[A-Za-z]:[\\/]/.test(record.explorerRoot))
+        ? { explorerRoot: record.explorerRoot }
+        : {}
+    ),
     splits,
     bottomOpen,
     bottomHeight,

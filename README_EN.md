@@ -19,7 +19,7 @@
 
 ## ✨ Features
 
-- **🗂️ File Workbench**: file explorer (lazy-loading tree) + CodeMirror editor; inline preview for images / Markdown / HTML / PDF / Office
+- **🗂️ File Workbench**: file explorer (lazy-loading tree; click the path at the top to enter a new root) + CodeMirror editor; inline preview for images / Markdown / HTML / PDF / Office; previews and downloads outside the session cwd are allowed by default (only under roots confirmed in the explorer; turn off in the Side card settings)
 - **🌐 Embedded Browser**: multiple web tabs with back / forward / refresh; content runs in a sandboxed iframe; external links open in the sidebar by default
 - **💻 Real Terminal**: xterm.js + node-pty real shell, reconnect with transcript replay; optionally injects `terminal_*` tools for the model
 - **🌿 Git Panel**: real diff + VSCode-style diff tabs, history, right-click to stage / commit / revert
