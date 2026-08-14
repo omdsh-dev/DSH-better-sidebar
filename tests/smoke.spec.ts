@@ -522,6 +522,8 @@ describe('side card settings routes', () => {
         htmlViewerDefaultUnsafe: false,
         browserNoSandbox: false,
         browserInterceptLinks: true,
+        // The explorer excludes default to [] (nothing hidden).
+        explorerExclude: [],
         // The enable-switch maps default to {} (everything on).
         tabsEnabled: {},
         viewersEnabled: {},

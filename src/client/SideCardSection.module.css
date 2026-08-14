@@ -240,6 +240,40 @@
   border-bottom: none;
 }
 
+/* One declarative TEXT row: title/desc stacked above a multi-line input
+   (vertical layout, unlike the horizontal checkbox row). */
+.textRow {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+/* The multi-line pattern input: monospace, compact, DSH text tokens. */
+.textSetting {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12px;
+  line-height: 18px;
+  resize: vertical;
+}
+
+.textSetting:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 1px;
+}
+
+.textSetting::placeholder {
+  color: var(--dsw-alias-label-tertiary);
+}
+
 .control {
   flex: none;
   display: flex;

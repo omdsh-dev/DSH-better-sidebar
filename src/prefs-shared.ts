@@ -81,6 +81,13 @@ export interface SidebarPrefs {
    */
   browserInterceptLinks: boolean
   /**
+   * Explorer exclude patterns (issue #18): entries whose NAME matches a
+   * pattern (single `*` wildcard, case-insensitive) are hidden from the
+   * explorer tree. Empty by default — no filtering, identical to previous
+   * behavior. See src/exclude-patterns.ts for the matching rules.
+   */
+  explorerExclude: string[]
+  /**
    * Per-tab enable switches, keyed by tab descriptor id (`'explorer'`,
    * `'my-plugin:db'`). An ABSENT key means enabled — only an explicit
    * `false` disables a tab type (hidden from the + menu, `openTab` refuses,
@@ -117,6 +124,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   htmlViewerDefaultUnsafe: false,
   browserNoSandbox: false,
   browserInterceptLinks: true,
+  explorerExclude: [],
   tabsEnabled: {},
   viewersEnabled: {},
 }

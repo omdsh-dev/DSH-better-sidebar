@@ -16,9 +16,10 @@
  * A card's on/off state is its VISUAL STATE: enabled = highlighted (brand
  * border + tinted fill + a check badge pinned to the card's far right),
  * disabled = neutral and dimmed. Features that declare `settings.toggles`
- * carry a gear corner button that opens a native Modal with the related
- * settings as native checkbox rows (e.g. the Subagent page's "auto-open
- * when a subagent appears", the Terminal page's model terminal tools).
+ * / `settings.texts` carry a gear corner button that opens a native Modal
+ * with the related settings as native checkbox rows (e.g. the Subagent
+ * page's "auto-open when a subagent appears") and/or multi-line text rows
+ * (e.g. the Explorer page's exclude patterns).
  *
  * Writes ride the plugin's own fenced settings route (the host calls the
  * settings seam in-process — the DSH settings RPC domain does not serve
@@ -29,7 +30,7 @@
  * shows the wire error inline — a broken settings surface never crashes the
  * shell.
  */
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   IconCheckOutline16,
   IconCodeOutline16,
@@ -55,6 +56,7 @@ import type { SidebarStore } from './state.ts'
 import type {
   BetterSidebarService,
   FileViewerDescriptor,
+  SidebarSettingText,
   SidebarSettingToggle,
   TabDescriptor,
 } from './service.ts'
@@ -105,17 +107,89 @@ function prefBool(prefs: SidebarPrefs, key: string): boolean {
   return (prefs as unknown as Record<string, boolean>)[key] === true
 }
 
+/** Read one string-array pref by declarative key (missing/non-array = []). */
+function prefStrings(prefs: SidebarPrefs, key: string): string[] {
+  const value = (prefs as unknown as Record<string, unknown>)[key]
+  return Array.isArray(value) ? value : []
+}
+
+/**
+ * One declarative TEXT row: a multi-line input (one value per line) that
+ * commits on blur — the explorer exclude patterns. Draft stays local while
+ * typing; the external value (prefs round-trip) re-syncs the draft only
+ * when the committed array actually changes, so in-progress edits are
+ * never clobbered by re-renders.
+ */
+export function TextSettingRow(props: {
+  text: SidebarSettingText
+  prefs: SidebarPrefs
+  onCommit: (text: SidebarSettingText, lines: string[]) => void
+}) {
+  const { text, prefs, onCommit } = props
+  const title = textOf(text.title)
+  const value = prefStrings(prefs, text.key)
+  const serialized = useMemo(() => value.join('\n'), [value])
+  const [draft, setDraft] = useState(serialized)
+  useEffect(() => { setDraft(serialized) }, [serialized])
+  /** Normalize: trim, drop blanks, dedupe preserving order. */
+  const normalized = (): string[] => {
+    const lines: string[] = []
+    for (const line of draft.split('\n')) {
+      const trimmed = line.trim()
+      if (trimmed === '' || lines.includes(trimmed)) continue
+      lines.push(trimmed)
+    }
+    return lines
+  }
+  /** Commit only when the edit actually changed the patterns (blur on a
+   *  pristine box writes nothing). */
+  const commit = (): void => {
+    const lines = normalized()
+    if (lines.length === value.length && lines.every((line, i) => line === value[i])) return
+    onCommit(text, lines)
+  }
+  return (
+    <div className={css.textRow} key={text.key}>
+      <span className={css.rowText}>
+        <span className={css.title}>{title}</span>
+        {textOf(text.desc) !== '' && <span className={css.desc}>{textOf(text.desc)}</span>}
+      </span>
+      <textarea
+        className={css.textSetting}
+        rows={3}
+        spellCheck={false}
+        value={draft}
+        placeholder={textOf(text.placeholder)}
+        aria-label={title}
+        onChange={event => { setDraft(event.currentTarget.value) }}
+        onBlur={commit}
+        onKeyDown={event => {
+          // Ctrl/Cmd+Enter commits without leaving the box; plain Enter
+          // starts a new pattern line.
+          if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+            event.preventDefault()
+            event.currentTarget.blur()
+          }
+        }}
+      />
+    </div>
+  )
+}
+
 /**
  * The body of a feature's secondary settings popup: one native checkbox row
- * per declared toggle. Extracted so the rows are testable without opening
- * the Modal (the Modal portal renders only while open).
+ * per declared toggle, then one multi-line text row per declared text.
+ * Extracted so the rows are testable without opening the Modal (the Modal
+ * portal renders only while open).
  */
 export function FeatureSettingsRows(props: {
   toggles: readonly SidebarSettingToggle[]
+  texts: readonly SidebarSettingText[]
   prefs: SidebarPrefs
   onToggle: (toggle: SidebarSettingToggle, next: boolean) => void
+  onCommitText: (text: SidebarSettingText, lines: string[]) => void
 }) {
-  const { toggles, prefs, onToggle } = props
+  const { toggles, texts, prefs, onToggle, onCommitText } = props
   return (
     <div className={css.popupRows}>
       {toggles.map(toggle => {
@@ -136,6 +210,9 @@ export function FeatureSettingsRows(props: {
           </label>
         )
       })}
+      {texts.map(text => (
+        <TextSettingRow key={text.key} text={text} prefs={prefs} onCommit={onCommitText} />
+      ))}
     </div>
   )
 }
@@ -244,6 +321,14 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
   /** Flip one declaratively-declared toggle (a SidebarPrefs boolean field). */
   const onToggleSetting = (toggle: SidebarSettingToggle, next: boolean): void => {
     togglePref({ [toggle.key]: next })
+  }
+
+  /** Commit one declaratively-declared text setting (a SidebarPrefs string-array field). */
+  const onCommitTextSetting = (text: SidebarSettingText, lines: string[]): void => {
+    const previous = prefs
+    setPrefs({ ...previous, [text.key]: lines } as SidebarPrefs)
+    setError(null)
+    void commit({ [text.key]: lines }).then(outcome => applyOutcome(previous, outcome))
   }
 
   const commitWidth = (): void => {
@@ -372,7 +457,8 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
               // The settings gear only while the feature is enabled: its
               // related settings are dormant while the feature is off.
               onOpenSettings: prefs.tabsEnabled[tab.id] !== false
-                && (tab.settings?.toggles?.length ?? 0) > 0
+                && ((tab.settings?.toggles?.length ?? 0) > 0
+                  || (tab.settings?.texts?.length ?? 0) > 0)
                 ? () => { setSettingsFor(tab) }
                 : undefined,
             })}
@@ -410,8 +496,10 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
         >
           <FeatureSettingsRows
             toggles={settingsFor.settings?.toggles ?? []}
+            texts={settingsFor.settings?.texts ?? []}
             prefs={prefs}
             onToggle={onToggleSetting}
+            onCommitText={onCommitTextSetting}
           />
         </Modal>
       )}

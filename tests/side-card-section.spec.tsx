@@ -29,6 +29,14 @@ function mount(): { store: SidebarStore; service: BetterSidebarService } {
     title: () => 'Explorer',
     icon: () => createElement('svg', { 'data-icon': 'explorer' }),
     order: 10,
+    settings: {
+      texts: [{
+        key: 'explorerExclude',
+        title: () => 'Exclude patterns',
+        desc: () => 'Hidden from the tree; one per line',
+        placeholder: () => 'e.g. *.meta',
+      }],
+    },
     component: () => null,
   })
   service.registerTab({
@@ -98,10 +106,10 @@ describe('SideCardSection declarative inventory', () => {
   it('renders the gear corner button on features that declare related settings', () => {
     const { store, service } = mount()
     const html = renderSection(store, service)
-    // Subagents declares a toggle → its card carries the settings gear
-    // (aria-label = "<title> Feature settings"); Explorer and Image declare
-    // none → no gear.
-    expect(html.match(/aria-label="[^"]*Feature settings"/g)?.length).toBe(1)
+    // Subagents declares a toggle and Explorer declares a text row → both
+    // cards carry the settings gear (aria-label = "<title> Feature settings");
+    // Image declares none → no gear.
+    expect(html.match(/aria-label="[^"]*Feature settings"/g)?.length).toBe(2)
   })
 
   it('a disabled feature renders pressed=false', () => {
@@ -119,7 +127,10 @@ describe('SideCardSection declarative inventory', () => {
     const { store, service } = mount()
     store.setPrefs({ ...store.getPrefs(), tabsEnabled: { subagent: false } })
     const html = renderSection(store, service)
-    expect(html).not.toContain('Feature settings')
+    // The disabled Subagents card loses its gear; the enabled Explorer card
+    // (text row) keeps its own.
+    expect(html).not.toContain('Subagents Feature settings')
+    expect(html).toContain('Explorer Feature settings')
   })
 })
 
@@ -137,8 +148,10 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
   it('renders one native checkbox row per declared toggle with its current value', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
       toggles,
+      texts: [],
       prefs,
       onToggle: () => {},
+      onCommitText: () => {},
     }))
     expect(html).toContain('Auto-open Subagents')
     expect(html).toContain('Expand on new subagent')
@@ -149,9 +162,31 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
   it('checks the row when the pref is on', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
       toggles,
+      texts: [],
       prefs: { ...prefs, autoOpenSubagent: true },
       onToggle: () => {},
+      onCommitText: () => {},
     }))
     expect(html).toContain('checked=""')
+  })
+
+  it('renders a text row per declared text with title, desc, placeholder, and the joined value', () => {
+    const html = renderToString(createElement(FeatureSettingsRows, {
+      toggles: [],
+      texts: [{
+        key: 'explorerExclude',
+        title: () => 'Exclude patterns',
+        desc: () => 'Hidden from the tree; one per line',
+        placeholder: () => 'e.g. *.meta',
+      }],
+      prefs: { ...prefs, explorerExclude: ['*.meta', 'node_modules'] },
+      onToggle: () => {},
+      onCommitText: () => {},
+    }))
+    expect(html).toContain('Exclude patterns')
+    expect(html).toContain('Hidden from the tree; one per line')
+    expect(html).toContain('placeholder="e.g. *.meta"')
+    // The textarea value is the patterns joined by newlines.
+    expect(html).toContain('*.meta\nnode_modules')
   })
 })
