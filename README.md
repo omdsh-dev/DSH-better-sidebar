@@ -19,7 +19,7 @@
 
 ## ✨ 功能一览
 
-- **🗂️ 文件工作台**：资源管理器（懒加载目录树）+ CodeMirror 编辑器；图片 / Markdown / HTML / PDF / Office 内联预览
+- **🗂️ 文件工作台**：资源管理器（懒加载目录树；软链接按目标类型展示——目录软链接可展开、失效链接标红）+ CodeMirror 编辑器；图片 / Markdown / HTML / PDF / Office 内联预览
 - **🌐 内嵌浏览器**：多开网页 tab，后退 / 前进 / 刷新；内容运行在沙箱 iframe，外链默认在侧边栏打开
 - **💻 真实终端**：xterm.js + node-pty 真实 shell，断线重连回放；可选为模型注入 `terminal_*` 工具
 - **🌿 Git 面板**：真 diff + VSCode 式 diff tab、历史、右键暂存 / 提交 / 还原
@@ -29,19 +29,6 @@
 - **⚙️ 声明式设置**：设置页「侧边卡片」逐项独立开关，二级设置经齿轮弹窗
 - **⚡ 按需加载**：启动只拉 ~325KB 核心，终端 / 编辑器等重依赖用到才按需拉取（[设计文档](docs/plans/2026-08-12-lazy-chunks-design.md)）
 - **🌏 多语言**：界面文案跟随 DSH 语言（zh / en）实时切换
-
-> 🔌 **核心理念**：服务优先——内置的 7 tab + 6 viewer 与第三方插件通过同一套 `ctx.betterSidebar` API 注册，能力完全对等；官方不再内置、可由生态提供的功能，交由生态插件实现。接入文档见下方「🔌 服务化」与 [外部插件接入指南](./docs/external-plugin-guide.md)。
-
-## 🆕 最近更新
-
-<small>v0.12.1</small>
-
-| 功能 | 说明 | 截图 |
-|---|---|---|
-| 🔌 服务化基座 | 完整类型导出 + `version`/`features` 能力探测、状态订阅（`getSnapshot`/`subscribeState`）、tab 角标、`onOpen`/`onActivate`/`onClose` 生命周期回调、`updateTab`/`activateTab`/`openFile`、定向打开、`meta` 跨刷新持久化、插件自有设置（`pluginToggles`/`render`） | <a href="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0"><img width="800" alt="服务化基座截图" src="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0" /></a> |
-| ➕ 添加插件 | 设置页「推荐插件目录」+ 一键复制安装命令；内置 Office 预览迁至推荐插件 | <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="800" alt="添加插件截图" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a> |
-| 🖱️ 标签页滚轮 | 标签页栏支持鼠标滚轮横向滚动 | |
-| 🐛 修复 | 远程访问 403（信任栅栏改用 `trustedHosts`）、侧边栏崩溃 [#31](https://github.com/omdsh-dev/DSH-better-sidebar/issues/31)、Windows 下 HTML 预览盘符路径 | |
 
 ## 🚀 安装
 

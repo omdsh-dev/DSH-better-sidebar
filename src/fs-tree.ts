@@ -2,10 +2,12 @@
  * Single-level directory listing for the sidebar explorer. Streams the level
  * with opendir, sorts directories first then names (case-insensitive), and
  * marks POSIX-hidden entries (dot-prefixed) for dimmed display. Symlinks are
- * reported as files without probing their target — the explorer shows what
- * dirent says, keeping the read cheap for arbitrarily large levels.
+ * stat'ed once to expose their target kind — a symlink to a directory
+ * expands like a directory — and dangling links are flagged broken. The
+ * probe runs only for entries that are actually symlinks, so levels without
+ * links stay as cheap as before.
  */
-import { opendir } from 'node:fs/promises'
+import { opendir, stat } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { SidebarError } from './wire.ts'
 
@@ -15,6 +17,10 @@ export interface SidebarFsEntry {
   path: string
   isDir: boolean
   hidden: boolean
+  /** Whether the row is a symlink; `isDir` then describes the link's target. */
+  isSymlink: boolean
+  /** For symlinks: the target is missing or unreadable (stat failed). */
+  broken: boolean
 }
 
 /** One listed level. */
@@ -52,12 +58,22 @@ export async function listDirectory(path: string, maxEntries = 1000): Promise<Si
         overflow += 1
         continue
       }
+      // Platform join: on Windows the level path uses '\' — a hardcoded '/'
+      // would leak mixed separators into every row's path.
+      const fullPath = join(path, dirent.name)
+      const isSymlink = dirent.isSymbolicLink()
+      // Probe the link's target once so a symlinked directory renders as an
+      // expandable directory row. stat follows the chain; any failure
+      // (missing target, ELOOP, permission) leaves the row as a broken
+      // file-shaped link the editor will refuse to read. Non-symlink entries
+      // skip the syscall entirely — dirent already classified them.
+      const info = isSymlink ? await stat(fullPath).catch(() => undefined) : undefined
       rows.push({
         name: dirent.name,
-        // Platform join: on Windows the level path uses '\' — a hardcoded '/'
-        // would leak mixed separators into every row's path.
-        path: join(path, dirent.name),
-        isDir: dirent.isDirectory(),
+        path: fullPath,
+        isDir: info !== undefined ? info.isDirectory() : dirent.isDirectory(),
+        isSymlink,
+        broken: isSymlink && info === undefined,
         hidden: dirent.name.startsWith('.'),
       })
     }

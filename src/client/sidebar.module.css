@@ -651,6 +651,18 @@
   opacity: 0.45;
 }
 
+/* The link badge on symlink rows (folder and file rows alike). */
+.explorerSymlink {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* A symlink whose target is missing: error ink on the name (the row stays
+   clickable — the editor surfaces the read failure). */
+.explorerBroken .explorerName {
+  color: var(--dsw-alias-state-error-primary);
+}
+
 .explorerName {
   overflow: hidden;
   text-overflow: ellipsis;

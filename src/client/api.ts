@@ -25,6 +25,10 @@ export interface FsEntry {
   path: string
   isDir: boolean
   hidden: boolean
+  /** Whether the row is a symlink; `isDir` then describes the link's target. */
+  isSymlink: boolean
+  /** For symlinks: the target is missing or unreadable (stat failed). */
+  broken: boolean
 }
 
 /** Git status entry (host git shape). */

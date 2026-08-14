@@ -3,6 +3,8 @@
  * working directory. Levels load on expansion (one API call per directory),
  * directories sort first, hidden entries render dimmed, and the expansion
  * set lives in the per-session state. Clicking a file opens an editor tab.
+ * Symlink rows carry a link badge; a symlink to a directory expands like a
+ * directory, and a dangling link renders with error ink.
  *
  * Row actions: hovering a row reveals an @-reference button on the far
  * right (appends `@<relative path>` to the composer draft), and right-click
@@ -14,7 +16,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNo
 import clsx from 'clsx'
 import {
   IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
-  IconRefreshOutline16, Menu, writeClipboard,
+  IconLinkOutline16, IconRefreshOutline16, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
 import { relativeTo } from './paths.ts'
@@ -163,6 +165,7 @@ export function ExplorerView(props: {
             >
               {isOpen ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />}
               <span className={css.explorerName}>{entry.name}</span>
+              {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
               {rowActions(entry)}
             </div>
             {isOpen && renderLevel(entry.path, depth + 1)}
@@ -174,9 +177,9 @@ export function ExplorerView(props: {
           key={entry.path}
           role="button"
           tabIndex={0}
-          className={clsx(css.explorerRow, entry.hidden && css.explorerHidden)}
+          className={clsx(css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken)}
           style={{ paddingLeft: depth * 22 + 6 }}
-          title={entry.path}
+          title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
           onClick={() => { onOpenFile(entry.path) }}
           onKeyDown={(event) => {
             if (event.key === 'Enter' || event.key === ' ') {
@@ -188,6 +191,7 @@ export function ExplorerView(props: {
         >
           <IconCodeOutline16 size={14} />
           <span className={css.explorerName}>{entry.name}</span>
+          {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
           {rowActions(entry)}
         </div>
       )

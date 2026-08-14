@@ -27,10 +27,10 @@ import type { SidebarHistoryEntry, SidebarSessionList, SidebarSubagentCatalog } 
 describe('fs-tree', () => {
   it('sorts directories first, then names case-insensitively', () => {
     const rows = [
-      { name: 'b.txt', path: '/x/b.txt', isDir: false, hidden: false },
-      { name: 'A', path: '/x/A', isDir: true, hidden: false },
-      { name: 'a.txt', path: '/x/a.txt', isDir: false, hidden: false },
-      { name: '.hidden', path: '/x/.hidden', isDir: false, hidden: true },
+      { name: 'b.txt', path: '/x/b.txt', isDir: false, hidden: false, isSymlink: false, broken: false },
+      { name: 'A', path: '/x/A', isDir: true, hidden: false, isSymlink: false, broken: false },
+      { name: 'a.txt', path: '/x/a.txt', isDir: false, hidden: false, isSymlink: false, broken: false },
+      { name: '.hidden', path: '/x/.hidden', isDir: false, hidden: true, isSymlink: false, broken: false },
     ]
     expect(rows.sort(compareEntries).map(row => row.name)).toEqual(['A', '.hidden', 'a.txt', 'b.txt'])
   })
