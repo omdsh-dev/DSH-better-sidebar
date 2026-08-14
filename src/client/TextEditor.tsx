@@ -46,6 +46,257 @@ interface SelectionPopup {
  */
 export const HTML_IFRAME_SANDBOX = 'allow-scripts allow-popups allow-downloads allow-modals'
 
+// ── Mermaid 渲染支持 ──────────────────────────────────────────────────────
+// 从 CDN 懒加载 mermaid 库，并将 markdown 预览中的 ```mermaid 代码块
+// 渲染为 SVG 图片。mermaid 库较大（~1MB），仅在首次遇到 mermaid 块时加载。
+let mermaidLoadPromise: Promise<unknown> | null = null
+let mermaidStyleInjected = false
+
+/**
+ * 注入 CSS：
+ * 1. 修复 mermaid 文本被遮挡的问题（DSH GUI 全局 line-height 约 1.75 级联到
+ *    foreignObject，导致文本行高大于 mermaid 计算的 foreignObject 高度）。
+ * 2. mermaid 预览图可点击放大的样式。
+ * 3. 放大弹窗的样式。
+ */
+function injectMermaidStyle(): void {
+  if (mermaidStyleInjected) return
+  mermaidStyleInjected = true
+  const style = document.createElement('style')
+  style.textContent = [
+    '.md-code-block svg foreignObject { overflow: visible; }',
+    '.md-code-block svg .nodeLabel,',
+    '.md-code-block svg foreignObject div {',
+    '  line-height: 1.4 !important;',
+    '  font-size: 14px !important;',
+    '}',
+    '.md-code-block svg .edgeLabel .label {',
+    '  line-height: 1.4 !important;',
+    '}',
+    // mermaid 预览图可点击，提示用户可放大
+    '.md-code-block svg { cursor: zoom-in; transition: opacity 0.2s; }',
+    '.md-code-block svg:hover { opacity: 0.85; }',
+    // mermaid 放大弹窗
+    '.bs-mermaid-modal {',
+    '  position: fixed; inset: 0; z-index: 99999;',
+    '  background: rgba(0, 0, 0, 0.75);',
+    '  display: flex; flex-direction: column;',
+    '  align-items: center; justify-content: center;',
+    '}',
+    '.bs-mermaid-modal-toolbar {',
+    '  position: absolute; top: 16px; right: 16px;',
+    '  display: flex; gap: 8px; z-index: 10;',
+    '}',
+    '.bs-mermaid-modal-toolbar button {',
+    '  width: 36px; height: 36px; border-radius: 8px;',
+    '  border: 1px solid rgba(255,255,255,0.3);',
+    '  background: rgba(255,255,255,0.15);',
+    '  color: #fff; font-size: 18px; cursor: pointer;',
+    '  display: flex; align-items: center; justify-content: center;',
+    '  backdrop-filter: blur(4px);',
+    '}',
+    '.bs-mermaid-modal-toolbar button:hover {',
+    '  background: rgba(255,255,255,0.3);',
+    '}',
+    '.bs-mermaid-modal-stage {',
+    '  width: 90vw; height: 80vh;',
+    '  overflow: hidden; position: relative;',
+    '  display: flex; align-items: center; justify-content: center;',
+    '}',
+    '.bs-mermaid-modal-stage svg {',
+    '  max-width: none; max-height: none;',
+    '  cursor: grab; transform-origin: center center;',
+    '  user-select: none; -webkit-user-drag: none;',
+    '  background: rgb(249, 250, 251);',
+    '  padding: 16px; border-radius: 12px;',
+    '}',
+    '.bs-mermaid-modal-stage svg:active { cursor: grabbing; }',
+    '.bs-mermaid-modal-hint {',
+    '  position: absolute; bottom: 16px; left: 50%;',
+    '  transform: translateX(-50%);',
+    '  color: rgba(255,255,255,0.7); font-size: 12px;',
+    '  pointer-events: none;',
+    '}',
+  ].join('\n')
+  document.head.appendChild(style)
+}
+
+function loadMermaid(): Promise<unknown> {
+  if (mermaidLoadPromise) return mermaidLoadPromise
+  if ((globalThis as { mermaid?: unknown }).mermaid) {
+    injectMermaidStyle()
+    return Promise.resolve((globalThis as { mermaid: unknown }).mermaid)
+  }
+  mermaidLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src = 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js'
+    script.async = true
+    script.onload = () => {
+      injectMermaidStyle()
+      resolve((globalThis as { mermaid: unknown }).mermaid)
+    }
+    script.onerror = () => {
+      mermaidLoadPromise = null
+      reject(new Error('failed to load mermaid'))
+    }
+    document.head.appendChild(script)
+  })
+  return mermaidLoadPromise
+}
+
+/**
+ * 打开 mermaid 放大弹窗，支持滚轮缩放、拖拽平移、按钮缩放/重置、Esc 关闭。
+ */
+function openMermaidModal(svgElement: SVGSVGElement): void {
+  // 克隆 SVG，避免修改原预览图
+  const svg = svgElement.cloneNode(true) as SVGSVGElement
+  svg.removeAttribute('style')
+  svg.removeAttribute('width')
+  svg.removeAttribute('height')
+
+  const overlay = document.createElement('div')
+  overlay.className = 'bs-mermaid-modal'
+
+  const toolbar = document.createElement('div')
+  toolbar.className = 'bs-mermaid-modal-toolbar'
+
+  const zoomInBtn = document.createElement('button')
+  zoomInBtn.textContent = '+'
+  zoomInBtn.title = '放大'
+  const zoomOutBtn = document.createElement('button')
+  zoomOutBtn.textContent = '−'
+  zoomOutBtn.title = '缩小'
+  const resetBtn = document.createElement('button')
+  resetBtn.textContent = '⟳'
+  resetBtn.title = '重置'
+  const closeBtn = document.createElement('button')
+  closeBtn.textContent = '✕'
+  closeBtn.title = '关闭'
+
+  toolbar.append(zoomOutBtn, zoomInBtn, resetBtn, closeBtn)
+
+  const stage = document.createElement('div')
+  stage.className = 'bs-mermaid-modal-stage'
+  stage.appendChild(svg)
+
+  const hint = document.createElement('div')
+  hint.className = 'bs-mermaid-modal-hint'
+  hint.textContent = '滚轮缩放 · 拖拽平移 · Esc 关闭'
+
+  overlay.append(toolbar, stage, hint)
+  document.body.appendChild(overlay)
+
+  // 缩放与平移状态
+  let scale = 1
+  let tx = 0
+  let ty = 0
+  const MIN_SCALE = 0.2
+  const MAX_SCALE = 8
+
+  function applyTransform(): void {
+    svg.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`
+  }
+
+  function zoom(delta: number, centerX?: number, centerY?: number): void {
+    const rect = stage.getBoundingClientRect()
+    const cx = centerX ?? rect.width / 2
+    const cy = centerY ?? rect.height / 2
+    const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * delta))
+    // svg 通过 flex 居中于 stage，其中心位于 (rect.width/2, rect.height/2)。
+    // 缩放时以鼠标位置为不动点，推导平移量：
+    //   鼠标点在 svg 局部坐标中为 ((cx - sx - tx)/scale, (cy - sy - ty)/scale)
+    //   缩放后该点在 stage 中位置不变，解出新的 tx/ty。
+    const sx = rect.width / 2
+    const sy = rect.height / 2
+    const ratio = newScale / scale
+    tx = cx - sx - (cx - sx - tx) * ratio
+    ty = cy - sy - (cy - sy - ty) * ratio
+    scale = newScale
+    applyTransform()
+  }
+
+  zoomInBtn.onclick = () => zoom(1.2)
+  zoomOutBtn.onclick = () => zoom(1 / 1.2)
+  resetBtn.onclick = () => { scale = 1; tx = 0; ty = 0; applyTransform() }
+
+  function close(): void {
+    overlay.remove()
+    document.removeEventListener('keydown', onKey)
+  }
+  closeBtn.onclick = close
+  overlay.onclick = (e) => { if (e.target === overlay) close() }
+
+  function onKey(e: KeyboardEvent): void {
+    if (e.key === 'Escape') close()
+    else if (e.key === '+' || e.key === '=') zoom(1.2)
+    else if (e.key === '-') zoom(1 / 1.2)
+    else if (e.key === '0') { scale = 1; tx = 0; ty = 0; applyTransform() }
+  }
+  document.addEventListener('keydown', onKey)
+
+  // 滚轮缩放
+  stage.addEventListener('wheel', (e) => {
+    e.preventDefault()
+    const rect = stage.getBoundingClientRect()
+    zoom(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX - rect.left, e.clientY - rect.top)
+  }, { passive: false })
+
+  // 拖拽平移
+  let dragging = false
+  let startX = 0
+  let startY = 0
+  svg.addEventListener('mousedown', (e) => {
+    dragging = true
+    startX = e.clientX - tx
+    startY = e.clientY - ty
+    e.preventDefault()
+  })
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return
+    tx = e.clientX - startX
+    ty = e.clientY - startY
+    applyTransform()
+  })
+  window.addEventListener('mouseup', () => { dragging = false })
+}
+
+/** 渲染容器内所有 mermaid 代码块为 SVG。 */
+async function renderMermaidInContainer(container: HTMLElement | null, dark: boolean): Promise<void> {
+  if (container === null) return
+  const blocks = container.querySelectorAll('.md-code-block')
+  if (blocks.length === 0) return
+  let mermaid: { initialize: (opts: Record<string, unknown>) => void; render: (id: string, code: string) => Promise<{ svg: string }> }
+  try {
+    mermaid = (await loadMermaid()) as typeof mermaid
+  } catch {
+    return // 加载失败，保留原始代码块
+  }
+  mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: dark ? 'dark' : 'default' })
+  for (const block of Array.from(blocks)) {
+    // CSS modules 会对类名进行 hash（如 _infostring_178r4_42），
+    // 因此用 [class*="infostring"] 匹配包含 infostring 的类名。
+    const infostring = block.querySelector('[class*="infostring"]')
+    if (infostring === null || infostring.textContent?.trim() !== 'mermaid') continue
+    if ((block as HTMLElement).dataset.mermaidRendered === 'true') continue
+    const codeEl = block.querySelector('pre code, pre')
+    if (codeEl === null) continue
+    const code = codeEl.textContent ?? ''
+    try {
+      const id = `bs-mermaid-${Math.random().toString(36).slice(2, 10)}`
+      const { svg } = await mermaid.render(id, code)
+      block.innerHTML = svg
+      ;(block as HTMLElement).dataset.mermaidRendered = 'true'
+      // 点击 SVG 打开放大弹窗
+      const svgEl = block.querySelector('svg')
+      if (svgEl !== null) {
+        svgEl.addEventListener('click', () => openMermaidModal(svgEl as SVGSVGElement))
+      }
+    } catch (err) {
+      console.error('[better-sidebar] mermaid render failed:', err)
+    }
+  }
+}
+
 export function TextEditor(props: FileViewerProps) {
   const { ctx, scope, path, viewerId, content, truncated } = props
   const [mode, setMode] = useState<ViewMode>('preview')
@@ -214,6 +465,15 @@ export function TextEditor(props: FileViewerProps) {
     hidePopup()
     if (mode === 'edit') viewRef.current?.requestMeasure()
   }, [mode])
+
+  // Mermaid 渲染：在 markdown 预览模式下，将 ```mermaid 代码块渲染为 SVG 图片。
+  // 依赖 content/draft 以在内容变化时重新渲染；依赖 mode 以在切换到预览时触发。
+  useEffect(() => {
+    if (mode !== 'preview' || viewerId !== 'markdown') return
+    const container = mdRef.current
+    if (container === null) return
+    void renderMermaidInContainer(container, dark)
+  }, [mode, viewerId, content, draft, dark])
 
   const save = (): void => {
     const view = viewRef.current
