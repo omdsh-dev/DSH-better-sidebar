@@ -194,12 +194,15 @@ Update: `git pull && pnpm install && pnpm build` → `node scripts/package-regis
 
 | Action | Keys |
 |---|---|
+| Toggle sidebar | `Ctrl/Cmd + B` |
 | Save edits | `Ctrl/Cmd + S` |
-| Git commit | `Ctrl + Enter` |
+| Git commit | `Ctrl/Cmd + Enter` |
 | Close tab | Middle mouse button |
 | Split / merge panes | Drag tab to pane edge / middle |
 | Reference file to input | Hover the `@file` button at end of line |
 | Copy file path | Right-click row → copy relative/absolute path |
+
+The first three shortcuts can be rebound in Settings → Side card → Keyboard shortcuts: select the key field and press the new combination to save it (include `Ctrl`, `Cmd`, or `Alt`, optionally with `Shift`; `Esc` cancels recording; browser- or OS-reserved combinations may not be recordable).
 
 ## 🔌 Service: register tabs & file viewers
 

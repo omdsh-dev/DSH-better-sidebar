@@ -193,12 +193,15 @@ dsh registry enable dsh-external/dsh-better-sidebar
 
 | 操作 | 按键 |
 |---|---|
+| 开/关侧边栏 | `Ctrl/Cmd + B` |
 | 保存编辑 | `Ctrl/Cmd + S` |
-| Git 提交 | `Ctrl + Enter` |
+| Git 提交 | `Ctrl/Cmd + Enter` |
 | 关闭 Tab | 鼠标中键 |
 | 拆分/合并分栏 | 拖 Tab 到分栏边缘 / 中间 |
 | 引用文件到输入框 | 悬浮行尾 `@文件` 按钮 |
 | 复制文件路径 | 右键行 → 复制相对/绝对地址 |
+
+前三个快捷键可在「设置 → Side card → 快捷键」中修改：选择右侧按键框，再直接按下新的组合键即可保存（必须包含 `Ctrl`、`Cmd` 或 `Alt`，可叠加 `Shift`；`Esc` 取消录制；浏览器或系统保留的组合键可能无法录制）。
 
 ## 🔌 服务化：注册 tab 与文件预览器
 
