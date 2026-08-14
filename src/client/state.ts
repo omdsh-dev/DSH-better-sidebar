@@ -141,12 +141,37 @@ function maxCounterId(parsed: unknown): number {
  * true); the store seeds new sessions from the user's side card prefs.
  * `seedExplorer` places the default explorer tab — the store passes false
  * when the user disabled the explorer tab type in settings, so a fresh
- * session starts with an empty pane instead of a tab they turned off. */
-export function makeDefaultState(width = PANEL_DEFAULT, panelOpen = true, seedExplorer = true): SidebarState {
+ * session starts with an empty pane instead of a tab they turned off.
+ * `seedSidePane` (with `seedExplorer`) adds an empty editor pane BESIDE the
+ * explorer, VSCode-style: the tree keeps a dedicated left pane and the first
+ * file open lands directly in the empty side instead of splitting on first
+ * use. */
+export function makeDefaultState(
+  width = PANEL_DEFAULT,
+  panelOpen = true,
+  seedExplorer = true,
+  seedSidePane = true,
+): SidebarState {
   const leaf: SidebarLeaf = { kind: 'leaf', id: uid('pane'), tabs: [], active: null }
   if (seedExplorer) {
     leaf.tabs = [{ id: uid('tab'), type: 'explorer', title: 'Explorer' }]
     leaf.active = leaf.tabs[0]!.id
+  }
+  // VSCode-style default layout: the explorer pane gets an empty side pane
+  // (its welcome cards offer the openable types on first use), and newly
+  // opened tabs land in the empty side by default.
+  let splits: SplitNode = leaf
+  let activePane = leaf.id
+  if (seedSidePane && seedExplorer) {
+    const side: SidebarLeaf = { kind: 'leaf', id: uid('pane'), tabs: [], active: null }
+    splits = {
+      kind: 'split',
+      id: uid('split'),
+      dir: 'row',
+      sizes: [0.5, 0.5],
+      children: [leaf, side],
+    }
+    activePane = side.id
   }
   // The bottom panel starts closed with an empty pane (its welcome cards
   // offer the openable types on first use).
@@ -154,11 +179,11 @@ export function makeDefaultState(width = PANEL_DEFAULT, panelOpen = true, seedEx
   return {
     panelOpen,
     width,
-    activePane: leaf.id,
+    activePane,
     nextTerminal: 1,
     nextBrowser: 1,
     expanded: [],
-    splits: leaf,
+    splits,
     bottomOpen: false,
     bottomHeight: BOTTOM_DEFAULT,
     bottomOpenedOnce: false,
@@ -475,6 +500,17 @@ export function patchTab(
  * The active pane may live in EITHER tree (pane ids are globally unique):
  * a stale id that survives in neither tree falls back to the right tree's
  * first pane instead of swallowing the open.
+ *
+ * VSCode-style explorer placement: no tab other than the `explorer` itself
+ * ever lands in a pane holding the `explorer` — the file tree stays put
+ * while files, git, terminals, browsers and subagent pages open beside it.
+ * When the active pane holds the explorer, the tab lands in another
+ * explorer-free pane of the SAME tree; when every pane of that tree holds
+ * the explorer (or it is the only pane), the active pane is split with the
+ * tab in a fresh leaf on the right — the explorer keeps the left side,
+ * exactly like VSCode's explorer + editor layout. Opening the EXPLORER
+ * itself is mirrored: when it ends up as the tree's only pane, an empty
+ * editor pane is split beside it, so the tree never stands alone.
  */
 export function openTabInActivePane(state: SidebarState, tab: SidebarTab): SidebarState {
   let targetId = state.activePane ?? firstLeaf(state.splits).id
@@ -489,6 +525,54 @@ export function openTabInActivePane(state: SidebarState, tab: SidebarTab): Sideb
   for (const leaf of allLeaves(state.splits).concat(allLeaves(state.bottomSplits))) {
     const existing = leaf.tabs.find(candidate => candidate.id === tab.id)
     if (existing !== undefined) return activateTab(state, leaf.id, existing.id)
+  }
+  if (tab.type === 'explorer') {
+    // Land the freshly opened explorer, then make sure the tree is never the
+    // only pane: split an empty editor pane beside it (VSCode-style).
+    const landed: SidebarState = {
+      ...state,
+      activePane: targetId,
+      [targetKey]: mapLeaf(state[targetKey], targetId, (leaf) => {
+        leaf.tabs = [...leaf.tabs, tab]
+        leaf.active = tab.id
+      }),
+    }
+    const leaves = allLeaves(landed[targetKey])
+    if (leaves.length === 1) {
+      return {
+        ...landed,
+        [targetKey]: splitLeafAt(landed[targetKey], leaves[0]!.id, 'row'),
+        activePane: leaves[0]!.id,
+      }
+    }
+    return landed
+  }
+  // VSCode-style explorer placement: never land ANY tab (files, git,
+  // terminal, browser, subagent, diff) in the explorer's own pane — the
+  // tree must stay visible while everything else opens beside it. This
+  // check runs before the normal landing below.
+  const activeLeaf = allLeaves(state[targetKey]).find(leaf => leaf.id === targetId)
+  const activeHoldsExplorer = activeLeaf !== undefined
+    && activeLeaf.tabs.some(candidate => candidate.type === 'explorer')
+  if (activeHoldsExplorer) {
+    // Prefer an existing explorer-free pane in the same tree (the panel
+    // that is currently open) so the tab never reuses the tree's pane.
+    const sibling = allLeaves(state[targetKey])
+      .find(leaf => leaf.id !== targetId && !leaf.tabs.some(candidate => candidate.type === 'explorer'))
+    if (sibling !== undefined) {
+      return {
+        ...state,
+        activePane: sibling.id,
+        [targetKey]: mapLeaf(state[targetKey], sibling.id, (leaf) => {
+          leaf.tabs = [...leaf.tabs, tab]
+          leaf.active = tab.id
+        }),
+      }
+    }
+    // Every pane of the tree holds the explorer (or it is the only pane):
+    // split it with the tab in a fresh leaf on the right.
+    const result = insertLeafAt(state[targetKey], targetId, 'row', tab, false)
+    return { ...state, [targetKey]: result.node, activePane: result.leafId }
   }
   return {
     ...state,

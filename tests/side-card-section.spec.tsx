@@ -100,8 +100,8 @@ describe('SideCardSection declarative inventory', () => {
     const html = renderSection(store, service)
     // Subagents declares a toggle → its card carries the settings gear
     // (aria-label = "<title> Feature settings"); Explorer and Image declare
-    // none → no gear.
-    expect(html.match(/aria-label="[^"]*Feature settings"/g)?.length).toBe(1)
+    // none → no gear. The label follows the runtime language (zh/en).
+    expect(html.match(/aria-label="[^"]*(Feature settings|功能设置)"/g)?.length).toBe(1)
   })
 
   it('a disabled feature renders pressed=false', () => {

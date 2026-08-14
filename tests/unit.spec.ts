@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { resolve } from 'node:path'
 import { compareEntries, isWithin, parentOf, rootLabel, requireAbsolute } from '../src/fs-tree.ts'
 import { parseLogLines, parsePorcelainZ } from '../src/git.ts'
 import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
@@ -53,8 +54,9 @@ describe('fs-tree', () => {
   })
 
   it('accepts absolute paths and rejects relative ones', () => {
-    // resolve() is platform-native: '/a/b' roots to the current drive on win32.
-    expect(requireAbsolute('/a/b')).toBe(process.platform === 'win32' ? '\\a\\b' : '/a/b')
+    // resolve() is platform-native: '/a/b' roots to the current drive on
+    // win32, so the expectation follows the platform resolver itself.
+    expect(requireAbsolute('/a/b')).toBe(resolve('/a/b'))
     if (process.platform === 'win32') {
       expect(requireAbsolute('C:/proj')).toBe('C:\\proj')
     }
@@ -215,28 +217,38 @@ describe('git parsing', () => {
 })
 
 describe('sidebar state', () => {
-  const state = (): SidebarState => makeDefaultState()
+  // Reducer fixtures use the legacy single-pane default layout (the new
+  // VSCode-style [explorer | empty] default is covered by its own tests).
+  const state = (): SidebarState => makeDefaultState(undefined, undefined, undefined, false)
 
   it('opens tabs into the active pane and dedupes by id (safety net)', () => {
     let s = state()
     const gitTab = { id: 'git', type: 'git' as const, title: 'Git' }
     s = openTabInActivePane(s, gitTab)
-    expect(s.splits.kind).toBe('leaf')
-    expect((s.splits as { tabs: unknown[] }).tabs).toHaveLength(2)
+    // VSCode rule: the explorer keeps its own pane; the new tab lands in a
+    // fresh leaf on the right.
+    expect(s.splits.kind).toBe('split')
+    const split = s.splits as { dir: string; children: { tabs: SidebarTab[] }[] }
+    expect(split.dir).toBe('row')
+    expect(split.children[0]!.tabs.map(t => t.type)).toEqual(['explorer'])
+    expect(split.children[1]!.tabs.map(t => t.id)).toEqual(['git'])
     // Reopening with the SAME id focuses the existing tab instead of duplicating.
     const after = openTabInActivePane(s, { id: 'git', type: 'git' as const, title: 'Git' })
-    expect((after.splits as { tabs: unknown[] }).tabs).toHaveLength(2)
-    // A different id opens a new tab (type-level dedupe is the service's job).
+    expect((after.splits as { children: { tabs: unknown[] }[] }).children[1]!.tabs).toHaveLength(1)
+    // A different id opens a new tab (type-level dedupe is the service's job);
+    // the git pane is the active one, so it joins that leaf.
     const after2 = openTabInActivePane(s, { id: 'git2', type: 'git' as const, title: 'Git' })
-    expect((after2.splits as { tabs: unknown[] }).tabs).toHaveLength(3)
+    expect((after2.splits as { children: { tabs: { id: string }[] }[] }).children[1]!.tabs.map(t => t.id)).toEqual(['git', 'git2'])
   })
 
   it('opens multiple editors with distinct ids (path-level dedupe is the service descriptor\'s job)', () => {
     let s = state()
-    const firstId = (s.splits as { tabs: { id: string }[] }).tabs[0]!.id
     s = openTabInActivePane(s, { id: 'e1', type: 'editor', title: 'a.ts', path: '/p/a.ts' })
     const after = openTabInActivePane(s, { id: 'e2', type: 'editor', title: 'a.ts', path: '/p/a.ts' })
-    expect((after.splits as { tabs: { id: string }[] }).tabs.map(t => t.id)).toEqual([firstId, 'e1', 'e2'])
+    // The explorer keeps the left leaf; both editors stack in the right leaf.
+    const split = after.splits as { children: { tabs: { id: string; type: string }[] }[] }
+    expect(split.children[0]!.tabs.map(t => t.type)).toEqual(['explorer'])
+    expect(split.children[1]!.tabs.map(t => t.id)).toEqual(['e1', 'e2'])
   })
 
   const diffTab = (id: string): SidebarTab => ({
@@ -250,16 +262,22 @@ describe('sidebar state', () => {
     const s = state()
     const gitTab = { id: 'git', type: 'git' as const, title: 'Git' }
     const withGit = openTabInActivePane(s, gitTab)
-    const sourcePane = (withGit.splits as { kind: 'leaf'; id: string }).id
+    // The explorer kept the left leaf; git lives in the right leaf.
+    const outer = withGit.splits as { children: { kind: string; id: string; tabs?: SidebarTab[] }[] }
+    const sourcePane = outer.children[1]!.id
     const after = openDiffTab(withGit, sourcePane, diffTab('diff:w:u:src/a.ts'))
     expect(after.splits.kind).toBe('split')
-    const split = after.splits as { dir: string; children: { kind: string; tabs?: SidebarTab[]; id: string }[] }
-    expect(split.dir).toBe('col')
+    const split = after.splits as { dir: string; children: { kind: string; dir?: string; children?: { kind: string; tabs?: SidebarTab[]; id: string }[]; tabs?: SidebarTab[]; id: string }[] }
+    expect(split.dir).toBe('row')
     expect(split.children).toHaveLength(2)
-    // The source stays on TOP (first child), the diff lands in the new bottom leaf.
-    expect(split.children[0]!.id).toBe(sourcePane)
-    expect(split.children[1]!.tabs?.map(tab => tab.id)).toEqual(['diff:w:u:src/a.ts'])
-    expect(after.activePane).toBe(split.children[1]!.id)
+    // The explorer leaf stays on the left; the git pane splits below with
+    // the diff in the fresh bottom leaf.
+    expect(split.children[0]!.tabs?.map(tab => tab.type)).toEqual(['explorer'])
+    const gitSplit = split.children[1]! as { kind: 'split'; dir: string; children: { kind: string; tabs?: SidebarTab[]; id: string }[] }
+    expect(gitSplit.dir).toBe('col')
+    expect(gitSplit.children[0]!.id).toBe(sourcePane)
+    expect(gitSplit.children[1]!.tabs?.map(tab => tab.id)).toEqual(['diff:w:u:src/a.ts'])
+    expect(after.activePane).toBe(gitSplit.children[1]!.id)
   })
 
   it('reopening the same diff focuses its existing tab', () => {
@@ -280,13 +298,15 @@ describe('sidebar state', () => {
     const s = state()
     const gitTab = { id: 'git', type: 'git' as const, title: 'Git' }
     const withGit = openTabInActivePane(s, gitTab)
-    const sourcePane = (withGit.splits as { kind: 'leaf'; id: string }).id
+    const outer = withGit.splits as { children: { id: string }[] }
+    const sourcePane = outer.children[1]!.id
     const first = openDiffTab(withGit, sourcePane, diffTab('diff:w:u:src/a.ts'))
     const second = openDiffTab(first, sourcePane, diffTab('diff:c:abc1234def5678abc1234def5678abc1234def5678'))
-    // Still one split: the second diff joins the bottom leaf instead of splitting again.
+    // Still one split per level: the second diff joins the bottom leaf.
     expect(second.splits.kind).toBe('split')
-    const split = second.splits as { children: { kind: string; tabs?: SidebarTab[] }[] }
-    const diffLeaves = split.children.filter(child => child.tabs?.some(tab => tab.type === 'diff'))
+    const split = second.splits as { children: { kind: string; children?: { tabs?: SidebarTab[] }[] }[] }
+    const gitSplit = split.children[1]! as { children: { tabs?: SidebarTab[] }[] }
+    const diffLeaves = gitSplit.children.filter(child => child.tabs?.some(tab => tab.type === 'diff'))
     expect(diffLeaves).toHaveLength(1)
     expect(diffLeaves[0]!.tabs?.map(tab => tab.id)).toEqual([
       'diff:w:u:src/a.ts',
@@ -297,8 +317,12 @@ describe('sidebar state', () => {
   it('openDiffTab degrades to a regular open when the source pane is gone', () => {
     const s = state()
     const after = openDiffTab(s, 'pane:gone', diffTab('diff:w:u:src/a.ts'))
-    expect(after.splits.kind).toBe('leaf')
-    expect((after.splits as { tabs: SidebarTab[] }).tabs.map(tab => tab.id)).toContain('diff:w:u:src/a.ts')
+    // The VSCode rule applies to the fallback open too: the diff lands in a
+    // fresh right leaf instead of the explorer's own pane.
+    expect(after.splits.kind).toBe('split')
+    const split = after.splits as { children: { tabs: SidebarTab[] }[] }
+    expect(split.children[0]!.tabs.map(tab => tab.type)).toEqual(['explorer'])
+    expect(split.children[1]!.tabs.map(tab => tab.id)).toContain('diff:w:u:src/a.ts')
   })
 
   it('sanitize drops diff tabs (ephemeral, like VSCode diff editors)', () => {
@@ -345,11 +369,11 @@ describe('sidebar state', () => {
   it('dedupes the single-instance subagent tab (focuses instead of duplicating)', () => {
     let s = state()
     s = openTabInActivePane(s, { id: 'subagent', type: 'subagent', title: 'Subagents' })
-    expect((s.splits as { tabs: unknown[] }).tabs).toHaveLength(2)
+    const split = s.splits as { children: { tabs: { type: string }[] }[] }
+    expect(split.children[1]!.tabs.map(t => t.type)).toEqual(['subagent'])
     // Reopening (e.g. the auto-activation effect) focuses the existing tab.
     const after = openTabInActivePane(s, { id: 'subagent', type: 'subagent', title: 'Subagents' })
-    expect((after.splits as { tabs: unknown[] }).tabs).toHaveLength(2)
-    const tabs = (after.splits as { tabs: { type: string; id: string }[] }).tabs
+    const tabs = (after.splits as { children: { tabs: { type: string; id: string }[] }[] }).children.flatMap(c => c.tabs)
     expect(tabs.filter(tab => tab.type === 'subagent')).toHaveLength(1)
   })
 
@@ -379,13 +403,19 @@ describe('sidebar state', () => {
     const tabId = paneA.tabs[0]!.id
     // 先给 paneB 一个 tab，然后拖 paneA 的 tab 到 paneB 的 right 边缘。
     s = openTabInActivePane(s, { id: 't2', type: 'terminal', title: 'T2' })
-    s = moveTabToEdge(s, paneA.id, tabId, paneB.id, 'right')
+    // Re-resolve the pane references from the NEW state (mapLeaf copies).
+    const afterOpen = s.splits as Extract<SplitNode, { kind: 'split' }>
+    const paneA2 = afterOpen.children[0] as { id: string; tabs: { id: string }[] }
+    const paneB2 = afterOpen.children[1] as { id: string; tabs: { id: string }[] }
+    // The VSCode rule routes the terminal into paneB — never the explorer pane.
+    expect(paneB2.tabs.map(t => t.id)).toEqual(['t2'])
+    expect(paneA2.tabs.map(t => t.id)).toEqual([tabId])
+    s = moveTabToEdge(s, paneA2.id, tabId, paneB2.id, 'right')
     const after = s.splits as Extract<SplitNode, { kind: 'split' }>
-    // paneB 现在是 split(row) [旧leaf, 新leaf(tabId)]；其父 split 仍存在。
-    const bSplit = after.children.find(child => child.kind === 'split') as Extract<SplitNode, { kind: 'split' }> | undefined
-    expect(bSplit).toBeDefined()
-    expect(bSplit!.dir).toBe('row')
-    const newLeaf = bSplit!.children[1] as { tabs: { id: string }[] }
+    // paneA 空了被移除，树退化为 row[t2-leaf, 新leaf(explorer)]。
+    expect(after.kind).toBe('split')
+    expect(after.dir).toBe('row')
+    const newLeaf = after.children[1] as { tabs: { id: string }[] }
     expect(newLeaf.tabs.map(t => t.id)).toContain(tabId)
   })
 
@@ -405,12 +435,18 @@ describe('sidebar state', () => {
   it('dragging a tab back onto its own pane center reorders it', () => {
     let s = state()
     s = openTabInActivePane(s, { id: 't2', type: 'terminal', title: 'T2' })
-    const leaf = s.splits as { id: string; tabs: { id: string }[] }
+    // A second terminal joins the right leaf (the active pane), so the leaf
+    // carries two tabs before the reorder.
+    s = openTabInActivePane(s, { id: 't3', type: 'terminal', title: 'T3' })
+    const split = s.splits as { children: { id: string; tabs: { id: string }[] }[] }
+    // The terminals live in the right leaf (the explorer kept the left one).
+    const leaf = split.children[1]!
     const first = leaf.tabs[0]!.id
     s = moveTabToEdge(s, leaf.id, first, leaf.id, 'center')
-    const after = s.splits as { tabs: { id: string }[] }
-    expect(after.tabs[after.tabs.length - 1]!.id).toBe(first)
-    expect(after.tabs).toHaveLength(2)
+    const after = s.splits as { children: { tabs: { id: string }[] }[] }
+    const tLeaf = after.children[1]!
+    expect(tLeaf.tabs[tLeaf.tabs.length - 1]!.id).toBe(first)
+    expect(tLeaf.tabs).toHaveLength(2)
   })
 
   it('closing the last tab removes the pane (promotes the sibling)', () => {
@@ -456,18 +492,19 @@ describe('sidebar state', () => {
 
   it('patchTab updates the title and path of one open tab (browser persistence)', () => {
     let s = state()
-    const leaf = s.splits as { id: string; tabs: { id: string; type: string; title: string; path?: string }[] }
     s = openTabInActivePane(s, { id: 'browser:1', type: 'browser', title: 'Browser' })
     const browserId = 'browser:1'
     s = patchTab(s, browserId, { path: 'https://example.com/', title: 'example.com' })
-    const tab = (s.splits as { tabs: { id: string; title: string; path?: string }[] }).tabs.find(t => t.id === browserId)
+    // Re-resolve the tree from the NEW state (patchTab copies leaves).
+    const patched = s.splits as { children: { tabs: { id: string; type: string; title: string; path?: string }[] }[] }
+    const tab = patched.children[1]!.tabs.find(t => t.id === browserId)
     expect(tab).toMatchObject({ title: 'example.com', path: 'https://example.com/' })
     // A partial patch leaves the other field untouched.
     s = patchTab(s, browserId, { title: 'example.org' })
-    const again = (s.splits as { tabs: { id: string; title: string; path?: string }[] }).tabs.find(t => t.id === browserId)
+    const again = (s.splits as { children: { tabs: { id: string; title: string; path?: string }[] }[] }).children[1]!.tabs.find(t => t.id === browserId)
     expect(again).toMatchObject({ title: 'example.org', path: 'https://example.com/' })
-    // Other tabs are untouched.
-    expect(leaf.tabs[0]).toBeDefined()
+    // The explorer leaf is untouched.
+    expect(patched.children[0]!.tabs[0]).toBeDefined()
   })
 
   it('patchTab is a no-op for a missing tab id', () => {
@@ -607,7 +644,12 @@ describe('sidebar state', () => {
     expect(migrated.activePane).toBe((migrated.splits as { id: string }).id)
     // A tab opened after the migration lands in the VISIBLE right tree.
     const landed = openTabInActivePane(migrated, { id: 'git', type: 'git' as const, title: 'Git' })
-    expect((landed.splits as { tabs: SidebarTab[] }).tabs.map(t => t.type)).toContain('git')
+    // The VSCode rule applies to the landing too: git opens in a fresh right
+    // leaf while the explorer keeps its own.
+    expect(landed.splits.kind).toBe('split')
+    const split = landed.splits as { children: { tabs: SidebarTab[] }[] }
+    expect(split.children[0]!.tabs.map(t => t.type)).toEqual(['explorer'])
+    expect(split.children[1]!.tabs.map(t => t.type)).toContain('git')
   })
 
   it('openTabInActivePane lands in the bottom tree when the active pane lives there', () => {
@@ -631,7 +673,12 @@ describe('sidebar state', () => {
     s = toggleBottomPanel(s)
     s = { ...s, activePane: 'pane:gone' }
     const after = openTabInActivePane(s, { id: 'git', type: 'git' as const, title: 'Git' })
-    expect((after.splits as { tabs: SidebarTab[] }).tabs.map(t => t.type)).toContain('git')
+    // The stale fallback lands in the right tree's first leaf (the explorer
+    // pane); the VSCode rule then routes git into a fresh right leaf.
+    expect(after.splits.kind).toBe('split')
+    const split = after.splits as { children: { tabs: SidebarTab[] }[] }
+    expect(split.children[0]!.tabs.map(t => t.type)).toEqual(['explorer'])
+    expect(split.children[1]!.tabs.map(t => t.type)).toContain('git')
   })
 
   it('closeTab routes to the bottom tree', () => {
@@ -849,11 +896,12 @@ describe('agent terminal reconciliation', () => {
 describe('pty helpers', () => {
   it('falls back from an empty SHELL to a usable shell', () => {
     const previous = process.env.SHELL
+    const fallback = process.platform === 'win32' ? 'powershell.exe' : '/bin/bash'
     try {
       process.env.SHELL = ''
-      expect(defaultShell()).toBe('/bin/bash')
+      expect(defaultShell()).toBe(fallback)
       delete process.env.SHELL
-      expect(defaultShell()).toBe('/bin/bash')
+      expect(defaultShell()).toBe(fallback)
     } finally {
       if (previous === undefined) delete process.env.SHELL
       else process.env.SHELL = previous
@@ -940,11 +988,12 @@ describe('persisted state sanitization', () => {
 
   it('accepts a subagent tab as a known type', () => {
     const raw = JSON.parse(JSON.stringify(makeDefaultState(400)))
-    raw.splits.tabs.push({ id: 'tab:9', type: 'subagent', title: 'Subagents' })
-    raw.splits.active = 'tab:9'
+    const leaf = allLeaves(raw.splits)[0]!
+    leaf.tabs.push({ id: 'tab:9', type: 'subagent', title: 'Subagents' })
+    leaf.active = 'tab:9'
     const clean = sanitizeState(raw)
     expect(clean).toBeDefined()
-    const tabs = (clean!.splits as { tabs: { type: string }[] }).tabs
+    const tabs = allLeaves(clean!.splits).flatMap(l => l.tabs)
     expect(tabs.some(tab => tab.type === 'subagent')).toBe(true)
   })
 
@@ -968,15 +1017,13 @@ describe('persisted state sanitization', () => {
     // they render as <OrphanedTab/> at view time and recover if the plugin
     // loads later. Only diff tabs are dropped (ephemeral).
     const withExternalTab = JSON.parse(JSON.stringify(makeDefaultState(400)))
-    withExternalTab.splits.tabs[0].type = 'my-plugin:db'
+    allLeaves(withExternalTab.splits)[0]!.tabs[0]!.type = 'my-plugin:db'
     const externalClean = sanitizeState(withExternalTab)
     expect(externalClean).toBeDefined()
-    if (externalClean !== undefined && externalClean.splits.kind === 'leaf') {
-      expect(externalClean.splits.tabs[0]!.type).toBe('my-plugin:db')
-    }
+    expect(allLeaves(externalClean!.splits).flatMap(l => l.tabs).some(t => t.type === 'my-plugin:db')).toBe(true)
     // An active id that no tab carries is rejected.
     const withBadActive = JSON.parse(JSON.stringify(makeDefaultState(400)))
-    withBadActive.splits.active = 'ghost-tab'
+    allLeaves(withBadActive.splits)[0]!.active = 'ghost-tab'
     expect(sanitizeState(withBadActive)).toBeUndefined()
   })
 
@@ -1011,10 +1058,14 @@ describe('persisted state sanitization', () => {
   })
 
   it('falls back from a stale active pane instead of dropping the open', () => {
+    // New default layout: [explorer | empty], activePane = the empty side.
     let s = makeDefaultState()
+    const leaves = allLeaves(s.splits)
+    expect(leaves).toHaveLength(2)
+    const explorerTab = leaves[0]!.tabs.find(tab => tab.type === 'explorer')!.id
+    s = closeTab(s, leaves[0]!.id, explorerTab)
+    // The explorer pane collapsed; the tree is the empty side pane now.
     const paneA = allLeaves(s.splits)[0]!.id
-    const explorerTab = allLeaves(s.splits)[0]!.tabs.find(tab => tab.type === 'explorer')!.id
-    s = closeTab(s, paneA, explorerTab)
     s = openTabInActivePane(s, { id: 'editor:/a.ts', type: 'editor', title: 'a.ts', path: '/a.ts' })
     const split = insertLeafAt(s.splits, paneA, 'col', { id: 'terminal:1', type: 'terminal', title: 'Terminal 1' }, false)
     s = { ...s, splits: split.node, activePane: paneA }
@@ -1307,6 +1358,37 @@ describe('side card preferences', () => {
     // The seedExplorer flag controls the default explorer tab.
     expect(makeDefaultState(400, true, false).splits.kind).toBe('leaf')
     expect((makeDefaultState(400, true, false).splits as { tabs: unknown[] }).tabs).toHaveLength(0)
+  })
+
+  it('makeDefaultState seeds the VSCode-style [explorer | empty] layout', () => {
+    const def = makeDefaultState()
+    expect(def.splits.kind).toBe('split')
+    const split = def.splits as { dir: string; children: { tabs: { type: string }[] }[] }
+    expect(split.dir).toBe('row')
+    // The explorer keeps a dedicated left pane; the right pane is empty.
+    expect(split.children[0]!.tabs.map(t => t.type)).toEqual(['explorer'])
+    expect(split.children[1]!.tabs).toHaveLength(0)
+    // Newly opened tabs land in the empty side by default.
+    const leaves = allLeaves(def.splits)
+    expect(def.activePane).toBe(leaves[1]!.id)
+    // seedSidePane=false restores the legacy single-pane layout.
+    const legacy = makeDefaultState(400, true, true, false)
+    expect(legacy.splits.kind).toBe('leaf')
+    expect((legacy.splits as { tabs: unknown[] }).tabs).toHaveLength(1)
+  })
+
+  it('opening the explorer never leaves it as the only pane', () => {
+    // A legacy single-pane state (or an explorer disabled at seed time):
+    // opening the tree splits an empty editor pane beside it.
+    let s = makeDefaultState(400, true, false)
+    s = openTabInActivePane(s, { id: 'explorer', type: 'explorer', title: 'Explorer' })
+    expect(s.splits.kind).toBe('split')
+    const split = s.splits as { dir: string; children: { tabs: SidebarTab[] }[] }
+    expect(split.dir).toBe('row')
+    expect(split.children[0]!.tabs.map(t => t.type)).toEqual(['explorer'])
+    expect(split.children[1]!.tabs).toHaveLength(0)
+    // The explorer pane is the active one (the user just opened the tree).
+    expect(s.activePane).toBe(allLeaves(s.splits)[0]!.id)
   })
 })
 
