@@ -723,6 +723,44 @@ export function reconcileAgentTerminals(
 
 const STORAGE_PREFIX = 'dsh-sidebar:v1'
 
+/**
+ * Cross-session panel width: the last dragged width, shared by EVERY
+ * conversation (the panel width is a layout preference, not per-session
+ * content). Written on every persist, read at session load and on
+ * cache-hit session switches, so a drag in one conversation carries to all
+ * the others (last drag wins).
+ */
+const GLOBAL_WIDTH_KEY = 'dsh-sidebar:v1:width'
+
+/** Clamp one width to the contract and the current viewport (mirror of {@link setWidth}). */
+function clampWidth(width: number): number {
+  const max = typeof window !== 'undefined' ? Math.max(PANEL_MIN, window.innerWidth) : PANEL_MAX
+  return Math.min(max, Math.max(PANEL_MIN, Math.round(width)))
+}
+
+/** Read the cross-session panel width (undefined when never dragged). */
+function readGlobalWidth(): number | undefined {
+  try {
+    const raw = localStorage.getItem(GLOBAL_WIDTH_KEY)
+    if (raw !== null) {
+      const parsed = Number(raw)
+      if (Number.isFinite(parsed) && parsed > 0) return clampWidth(parsed)
+    }
+  } catch {
+    // Storage unavailable: fall back to the per-session behavior.
+  }
+  return undefined
+}
+
+/** Persist the cross-session panel width (best-effort, like the session states). */
+function writeGlobalWidth(width: number): void {
+  try {
+    localStorage.setItem(GLOBAL_WIDTH_KEY, String(width))
+  } catch {
+    // Storage full or unavailable: layout memory is best-effort.
+  }
+}
+
 /** Immutable snapshot handed to React (replaced only on real changes). */
 export interface SidebarSnapshot {
   sessionId: string | undefined
@@ -743,6 +781,10 @@ export function defaultWidthFor(viewport: number, percent: number): number {
 }
 
 function loadState(sessionId: string, prefs: SidebarPrefs): SidebarState {
+  // The panel width is a cross-session preference: the last dragged width
+  // wins over a session's own persisted value, so switching conversations
+  // keeps the width the user chose anywhere.
+  const globalWidth = readGlobalWidth()
   try {
     const raw = localStorage.getItem(`${STORAGE_PREFIX}:${sessionId}`)
     if (raw !== null) {
@@ -751,7 +793,9 @@ function loadState(sessionId: string, prefs: SidebarPrefs): SidebarState {
       // sanitize re-ids any duplicates the pre-seeding counter left behind.
       nextIdCounter = maxCounterId(parsed)
       const sanitized = sanitizeState(parsed)
-      if (sanitized !== undefined) return sanitized
+      if (sanitized !== undefined) {
+        return globalWidth === undefined ? sanitized : { ...sanitized, width: globalWidth }
+      }
     }
   } catch {
     // Corrupt or unavailable storage: fall through to the default.
@@ -767,9 +811,9 @@ function loadState(sessionId: string, prefs: SidebarPrefs): SidebarState {
   // first seeding is affected: once the user expands the drawer,
   // `panelOpen: true` persists like any other state.
   const viewport = typeof window !== 'undefined' ? window.innerWidth : undefined
-  const width = viewport === undefined
+  const width = globalWidth ?? (viewport === undefined
     ? PANEL_DEFAULT
-    : defaultWidthFor(viewport, prefs.defaultWidthPercent)
+    : defaultWidthFor(viewport, prefs.defaultWidthPercent))
   const openByDefault = prefs.openByDefault && (viewport === undefined || !isNarrowWidth(viewport))
   return makeDefaultState(width, openByDefault, prefs.tabsEnabled['explorer'] !== false)
 }
@@ -965,6 +1009,13 @@ export class SidebarStore {
         // counter below THIS session's persisted ids — re-seed so fresh
         // pane/split ids can never collide with its tree.
         nextIdCounter = maxCounterId(state)
+        // The panel width is cross-session: adopt the latest dragged width
+        // (a cached session keeps its own layout otherwise).
+        const globalWidth = readGlobalWidth()
+        if (globalWidth !== undefined && state.width !== globalWidth) {
+          state = { ...state, width: globalWidth }
+          this.bySession.set(sessionId, state)
+        }
       }
       this.snapshot = { sessionId, state, prefs: this.prefs }
     }
@@ -1021,6 +1072,9 @@ export class SidebarStore {
   }
 
   private schedulePersist(sessionId: string, state: SidebarState): void {
+    // Keep the cross-session width in sync: any width change (drag, fullscreen
+    // toggle) becomes the shared width for every conversation.
+    writeGlobalWidth(state.width)
     window.clearTimeout(this.persistTimer)
     this.persistTimer = window.setTimeout(() => {
       try {

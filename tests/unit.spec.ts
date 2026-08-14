@@ -4,7 +4,7 @@ import { parseLogLines, parsePorcelainZ } from '../src/git.ts'
 import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
 import {
   activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, createSidebarStore, defaultWidthFor, insertLeafAt, makeDefaultState,
-  migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab, openTabInActivePane, patchTab, reconcileAgentTerminals, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight, splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded, togglePanel,
+  migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab, openTabInActivePane, patchTab, reconcileAgentTerminals, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight, setWidth, splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded, togglePanel,
   type SidebarState, type SidebarTab, type SplitNode,
 } from '../src/client/state.ts'
 import { loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
@@ -1275,6 +1275,41 @@ describe('side card preferences', () => {
     const openStore = createSidebarStore()
     openStore.setSession('another-fresh')
     expect(openStore.getSnapshot().state?.panelOpen).toBe(true)
+  })
+
+  it('shares the panel width across sessions (last drag wins)', () => {
+    // A real localStorage stub so the cross-session width actually persists
+    // (the default no-op mock would silently drop the write).
+    const storage = new Map<string, string>()
+    const savedWindow = (globalThis as Record<string, unknown>).window
+    const savedStorage = (globalThis as Record<string, unknown>).localStorage
+    ;(globalThis as Record<string, unknown>).window = {
+      innerWidth: 1280,
+      clearTimeout: () => {},
+      setTimeout: () => 0,
+    }
+    ;(globalThis as Record<string, unknown>).localStorage = {
+      getItem: (k: string) => storage.get(k) ?? null,
+      setItem: (k: string, v: string) => { storage.set(k, String(v)) },
+      removeItem: (k: string) => { storage.delete(k) },
+      key: () => null,
+      get length() { return storage.size },
+    }
+    try {
+      const store = createSidebarStore()
+      store.setSession('A')
+      store.reduce(s => setWidth(s, 500))
+      // A fresh session adopts the width dragged in A, not its own default.
+      store.setSession('B')
+      expect(store.getSnapshot().state?.width).toBe(500)
+      // A later drag in B carries back to the cached session A.
+      store.reduce(s => setWidth(s, 600))
+      store.setSession('A')
+      expect(store.getSnapshot().state?.width).toBe(600)
+    } finally {
+      ;(globalThis as Record<string, unknown>).window = savedWindow
+      ;(globalThis as Record<string, unknown>).localStorage = savedStorage
+    }
   })
 
   it('seeds a brand-new session COLLAPSED on narrow viewports (the panel is a full-screen drawer there)', () => {
