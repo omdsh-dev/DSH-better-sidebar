@@ -18,7 +18,7 @@ https://github.com/user-attachments/assets/23187822-047e-45cc-b480-fe997bd55b86
 
 ## ✨ Features
 
-- **🗂️ File Explorer**: lazy-loading directory tree (root = session cwd), click to open in the sidebar, `@file` reference at end of line into the input box, right-click to copy path
+- **🗂️ File Explorer**: lazy-loading directory tree (root = session cwd), click to open in the sidebar, `@file` reference at end of line into the input box, right-click to copy path; supports hiding files/directories by pattern (the "Exclude patterns" setting, e.g. `*.meta`, `node_modules`; single `*` wildcard, case-insensitive)
 - **📝 Edit & Preview**: CodeMirror 6 multi-language highlighting + Ctrl/Cmd+S atomic save; inline preview for images / Markdown (preview/edit toggle) / HTML (sandboxed iframe preview, relative resources loadable) / PDF / Word / Excel / PPT; drafts survive tab switches
 - **⚡ Client-side Lazy Loading**: heavy dependencies (Office / terminal / code editor) are chunked and loaded on demand — only ~325KB core is fetched at startup; Univer (~20MB) is fetched only when opening .xlsx, the docx viewer only when opening .docx, xterm only when opening a terminal; brief loading on first open, then instant (see `docs/plans/2026-08-12-lazy-chunks-design.md`)
 - **🌐 Browser**: embedded web browsing tabs (multiple), back/forward/refresh + "Open in browser"; pages run in a **sandboxed iframe** (opaque origin: cannot access UI data or local files, rejects localhost and other local addresses); the UI shows sandbox status live and can be temporarily unlocked (red warning when off); sites that refuse embedding (X-Frame-Options) show a reason panel; http(s) links in chat/UI open in the sidebar by default (panel auto-expands when collapsed)
@@ -231,6 +231,7 @@ pnpm watch        # tsdown --watch
 ## ⚠️ Known Limitations
 
 - Git has no push/pull/fetch; no file watcher (manual refresh); tool inline file-open buttons cannot be intercepted
+- Explorer excludes are a display-layer filter: the truncation counter of very large directories (>1000 entries per level) may undercount after filtering
 - Dragging a terminal tab to another pane remounts it (shell restarts)
 - `.xlsx` preview does not preserve cell styles (SheetJS community-edition limitation); Office/PPTX preview is inlined into the client bundle (~23MB), slower on first load
 - Browser sandbox has no login state / third-party cookies are restricted; some sites need popup login; sites that refuse embedding via `X-Frame-Options`/`frame-ancestors` (e.g. arxiv.org) show a reason panel (with "Open in browser"); in-iframe navigation does not enter the back stack
