@@ -10,11 +10,15 @@
  */
 import { useEffect, useState } from 'react'
 import { createElement } from 'react'
+import {
+  IconCopyOutline16, IconEllipsisOutline16, IconFolderOpenOutline16, IconRightUpOutline16, Menu, writeClipboard,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { api, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
 import { t } from './locales.ts'
+import { relativeTo } from './paths.ts'
 import type { FileViewerDescriptor } from './service.ts'
 import type { SidebarStore } from './state.ts'
 import css from './sidebar.module.css'
@@ -28,6 +32,10 @@ type EditorLoad =
 export function EditorHost(props: { ctx: Context; store: SidebarStore; scope: SessionScope; path: string; title: string }) {
   const { ctx, store, scope, path, title } = props
   const [load, setLoad] = useState<EditorLoad>({ status: 'loading' })
+  /** The "⋯" header menu open state (file actions: copy paths / open externally). */
+  const [menuOpen, setMenuOpen] = useState(false)
+  /** Transient error from a failed "open in file manager / default app" action. */
+  const [actionError, setActionError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -80,11 +88,67 @@ export function EditorHost(props: { ctx: Context; store: SidebarStore; scope: Se
     return () => { cancelled = true }
   }, [scope.sessionId, scope.cwd, path, ctx])
 
+  /** Reveal/open this file in the OS file manager, or open it with the default app. */
+  const openExternal = async (action: 'explorer' | 'default'): Promise<void> => {
+    try {
+      if (action === 'explorer') await api.fsOpenInExplorer(scope, path)
+      else await api.fsOpenDefault(scope, path)
+      setActionError(null)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   return (
     <div className={css.editor}>
       <div className={css.editorHeader}>
         <span className={css.editorTitle} title={path}>{title}</span>
+        <Menu
+          open={menuOpen}
+          onClose={() => { setMenuOpen(false) }}
+          align="end"
+          items={[
+            { id: 'copy-relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={14} /> },
+            { id: 'copy-absolute', label: t('copyAbsolute'), icon: <IconCopyOutline16 size={14} /> },
+            { type: 'separator', id: 'sep-open' },
+            { id: 'open-explorer', label: t('revealInExplorer'), icon: <IconFolderOpenOutline16 size={14} /> },
+            { id: 'open-default', label: t('openWithDefaultApp'), icon: <IconRightUpOutline16 size={14} /> },
+          ]}
+          onSelect={(id) => {
+            setMenuOpen(false)
+            if (id === 'copy-relative') {
+              void writeClipboard(relativeTo(scope.cwd ?? '', path))
+              return
+            }
+            if (id === 'copy-absolute') {
+              void writeClipboard(path)
+              return
+            }
+            if (id === 'open-explorer') {
+              void openExternal('explorer')
+              return
+            }
+            if (id === 'open-default') {
+              void openExternal('default')
+            }
+          }}
+          anchor={(
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={t('moreActions')}
+              title={t('moreActions')}
+              onClick={(event) => {
+                event.stopPropagation()
+                setMenuOpen(open => !open)
+              }}
+            >
+              <IconEllipsisOutline16 />
+            </button>
+          )}
+        />
       </div>
+      {actionError !== null && <div className={css.editorError}>{actionError}</div>}
       {load.status === 'loading' && <div className={css.editorPlaceholder}>{t('loading')}</div>}
       {load.status === 'error' && <div className={css.editorError}>{load.message}</div>}
       {load.status === 'binary' && <BinaryDownload scope={scope} path={path} />}
