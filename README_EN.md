@@ -18,10 +18,14 @@ https://github.com/user-attachments/assets/23187822-047e-45cc-b480-fe997bd55b86
 
 ## 🆕 Recent Updates
 
-- **Custom terminal fonts**: font-family + 9–32px size settings on the terminal card, applied live
-- **Side card settings redesign**: grouped container cards, count badges, custom toggles, wider settings dialog
-- **Fix**: blank terminal after expanding the bottom panel on WKWebView (xterm initialized in a zero-size container, [#25](https://github.com/omdsh-dev/DSH-better-sidebar/issues/25))
-- **Docs**: client changes take effect on a hard refresh — no DSH restart needed
+<small>v0.12.0</small>
+
+| Feature | Description | Screenshot |
+|---|---|---|
+| 🔌 Service API base | Complete type exports + `version`/`features` capability detection, state subscription (`getSnapshot`/`subscribeState`), tab `badge`, `onOpen`/`onActivate`/`onClose` lifecycle callbacks, `updateTab`/`activateTab`/`openFile`, targeted open, `meta` persisted across reloads, plugin-owned settings (`pluginToggles`/`render`) | |
+| ➕ Add Plugins | Recommended plugin catalog in settings + one-click copy install command; built-in Office preview moved to the recommended plugin | |
+| 🖱️ Tab-bar scroll | Mouse-wheel horizontal scrolling on the tab bar | |
+| 🐛 Fixes | Remote access 403 (trust fence now uses `trustedHosts`), sidebar crash [#31](https://github.com/omdsh-dev/DSH-better-sidebar/issues/31), Windows HTML-preview drive-path | |
 
 ## ✨ Features
 
@@ -64,10 +68,10 @@ Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R) to see the sidebar (DSH hot
 
 ```sh
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.sh | bash -s 0.11.0 --restart
+curl -fsSL https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.sh | bash -s 0.12.0 --restart
 
 # Windows PowerShell
-& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1'))) -Version 0.11.0 -Restart
+& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1'))) -Version 0.12.0 -Restart
 ```
 
 Not sure? Add `--dry-run` (`-DryRun` in PowerShell) to preview before running.
@@ -93,7 +97,7 @@ minimumReleaseAgeExclude:
   - dsh-better-sidebar
 EOF
 
-# ③ Install and auto-mount (no @version = npm's latest; pin with dsh-better-sidebar@0.11.0)
+# ③ Install and auto-mount (no @version = npm's latest; pin with dsh-better-sidebar@0.12.0)
 npx -y --package @deepseek-ai/dsh dsh plugin --profile web add dsh-better-sidebar
 ```
 
@@ -124,7 +128,7 @@ The one-click script does four things, all idempotent (safe to re-run):
 3. Runs `dsh plugin --profile web add dsh-better-sidebar`: registers the dependency → detects `dsh.bundle.patch` → auto-appends the plugin to `dsh.profile.bundles`;
 4. Removes any leftover hand-written mount line to avoid double-mounting (two sidebars on the page).
 
-`curl | bash` / `irm | iex` executes remote code — the scripts are open source in the repo (`scripts/install.sh` / `scripts/install.ps1`); download and review them first if you prefer. The plugin ships as npm package `dsh-better-sidebar@0.11.0` and mounts via `dsh.bundle.patch` (the shipped `cordis.patch.yml`), so the DSH source is never modified.
+`curl | bash` / `irm | iex` executes remote code — the scripts are open source in the repo (`scripts/install.sh` / `scripts/install.ps1`); download and review them first if you prefer. The plugin ships as npm package `dsh-better-sidebar@0.12.0` and mounts via `dsh.bundle.patch` (the shipped `cordis.patch.yml`), so the DSH source is never modified.
 
 </details>
 
@@ -135,7 +139,7 @@ The one-click script does four things, all idempotent (safe to re-run):
 dsh plugin --profile web add dsh-better-sidebar
 ```
 
-or re-run the one-click script; or bump the version in `~/.dsh/profiles/web/package.json` (e.g. `"^0.11.0"`) and run `pnpm install`. Then hard-refresh the browser (Cmd/Ctrl+Shift+R) — client changes do not need a DSH restart.
+or re-run the one-click script; or bump the version in `~/.dsh/profiles/web/package.json` (e.g. `"^0.12.0"`) and run `pnpm install`. Then hard-refresh the browser (Cmd/Ctrl+Shift+R) — client changes do not need a DSH restart.
 
 </details>
 
@@ -170,7 +174,7 @@ To debug local changes or track the dev branch, point the dependency at a local 
 5. Restart DSH and hard-refresh
 ```
 
-Update: `git pull && pnpm install && pnpm build` → just hard-refresh the browser (client changes hot-reload; only host-half changes need a DSH restart). To switch back to the npm channel, restore `"dsh-better-sidebar": "^0.11.0"` and re-run `pnpm install`.
+Update: `git pull && pnpm install && pnpm build` → just hard-refresh the browser (client changes hot-reload; only host-half changes need a DSH restart). To switch back to the npm channel, restore `"dsh-better-sidebar": "^0.12.0"` and re-run `pnpm install`.
 
 </details>
 
@@ -219,7 +223,7 @@ export function apply(ctx: Context) {
 }
 ```
 
-v0.12.0+ base capabilities: complete type exports (consumers can name `SidebarTab`/`SidebarState` etc.; the client declaration graph is Node-free), `version`/`features` capability detection, `getSnapshot`/`subscribeState` state subscription, tab `badge`, `onOpen`/`onActivate`/`onClose` lifecycle callbacks, `updateTab`/`activateTab`/`openFile`, targeted `openTab(seed, scope)`, `SidebarTab.meta` persisted across reloads, and an opened settings seam (`settings.pluginToggles` / `settings.render`, stored in `pluginSettings[id]`).
+v0.12.0+ base capabilities (complete type exports, capability detection, state subscription, tab badge, lifecycle callbacks, targeted open, plugin-owned settings, etc.) — see the integration docs below.
 
 Full integration docs:
 - **[`AGENTS.md`](./AGENTS.md)** — the in-repo integration doc (full fields, matching algorithm, HMR pitfalls, declarative settings, version detection);
@@ -227,12 +231,9 @@ Full integration docs:
 
 ### ➕ Add Plugins (recommended plugin catalog)
 
-The dashed card at the end of the "Sidebar content" grid in the "Side Cards" settings section opens the **Add tab plugins** modal; the one at the end of the "File viewers" grid opens the **Add preview plugins** modal. Each declares that its extension point is open to plugins (via the `ctx.betterSidebar` service), offers a "**Browse more plugins on GitHub**" button (opens the [GitHub topic `dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar) in a new tab), and lists the recommended catalog of its kind (name / repo URL / description / install script). Each entry has two buttons:
+The dashed cards at the end of the "Sidebar content" / "File viewers" grids in the "Side Cards" settings section open the **Add tab plugins** / **Add preview plugins** modals: each declares its open extension point, offers a "**Browse more plugins on GitHub**" button (the [GitHub topic `dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar)), and lists the recommended catalog (name / repo / description / install script) — "**Open**" jumps to the repo, "**Copy**" writes the install command to the clipboard.
 
-- **Open**: jumps to the plugin repo in a new browser tab;
-- **Copy**: writes the install command (`cd ~/.dsh && dsh plugin --profile web add <package>`) to the clipboard with a transient "Copied" feedback — paste and run it in a terminal where your DSH profile lives. The modal stays open; nothing is opened, nothing can fail.
-
-**Curating a new plugin**: append a `PluginEntry` to [`src/client/plugins-tabs.ts`](./src/client/plugins-tabs.ts) (tab registrations) or [`src/client/plugins-viewers.ts`](./src/client/plugins-viewers.ts) (file-previewer registrations) — `id` = npm package name, `name`, `url`, `description` (i18n-friendly; add a `pluginXxxDesc` key in `src/client/locales.ts` if needed), `install` = the full install command — and tag your repo with the `dsh-better-sidebar` topic; data integrity is guarded by `tests/plugin-list.spec.ts`.
+**Curating a new plugin**: append a `PluginEntry` to [`src/client/plugins-tabs.ts`](./src/client/plugins-tabs.ts) (tab registrations) or [`src/client/plugins-viewers.ts`](./src/client/plugins-viewers.ts) (file-previewer registrations) and tag your repo with the `dsh-better-sidebar` topic; data integrity is guarded by `tests/plugin-list.spec.ts`.
 
 ## 🛠️ Development & Build
 
