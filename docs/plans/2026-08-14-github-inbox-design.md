@@ -22,6 +22,7 @@
 - 不做实时推送（webhook / SSE）——轮询即可，KISS。
 - 不引入 GitHub GraphQL（REST Notifications 端点足够）。
 - 不引入 Agent 侧的 GitHub 工具（那是 agent 的事，本 tab 是人的操作面）。
+- 不接 DSH 的 credentials 服务（避免可选依赖耦合；若后续需要统一凭据管理，可作为解析链的新一级加入）。
 - 不改 DeepSeek Harness 源码。
 
 ## 3. 现状回顾（证据）
@@ -83,6 +84,7 @@ type GithubCategory = 'reviewRequested' | 'prActivity' | 'comments' | 'ci' | 'ot
 
 interface GithubStateResult {
   configured: boolean   // token 是否解析成功
+  ghAvailable?: boolean  // gh 二进制是否可用（未配置时驱动引导文案的路径推荐）
   error?: { code: string; message: string }  // 未配置 / 401/403 / 网络
   threads: GithubThread[]
   fetchedAt?: string
@@ -107,11 +109,11 @@ interface GithubStateResult {
 
 **`src/github.ts`**：
 
-- `resolveToken(config)` 解析链（结果缓存 5 分钟，失败缓存 30s）：
-  1. `Config.githubToken`
-  2. `gh auth token` 子进程（`execFile`，`gh` 不存在/失败 → 下一级）
-  3. `GH_TOKEN` / `GITHUB_TOKEN` 环境变量
-  4. `undefined` → `configured: false`
+- `resolveToken(config)` 解析链（**不依赖 gh**：任何一级缺失都静默落到下一级；未安装 gh 时 Config/env 两条路照常可用）：
+  1. `Config.githubToken` —— 零依赖基线，显式配置直接短路，不再探测后续来源
+  2. `gh auth token` 子进程（`execFile`）：二进制缺失（ENOENT）按**进程生命周期**缓存「gh 不可用」，不做重复 spawn；登录态有效时 token 缓存 5 分钟；未登录/超时等可恢复失败缓存 30s
+  3. `GH_TOKEN` / `GITHUB_TOKEN` 环境变量 —— 无 gh 部署的主路径
+  4. 全部未命中 → `configured: false` + `ghAvailable` 标志
 - `GitHubClient`（注入 base + token）：
   - `fetchInbox(lastModified?)`：`GET {base}/notifications`（`per_page=50`）带 `If-Modified-Since`；304 → `{notModified: true}`；否则返回线程列表 + 新 `Last-Modified` + `X-Poll-Interval`。线程按 `updated_at` 降序、截断到 `githubPerPage`。
   - `fetchThreadDetail(id)`：线程详情 + `latest_comment_url` 正文（供展开渲染，失败时正文缺省）。
@@ -168,7 +170,7 @@ interface GithubStateResult {
 **`src/client/GitHubInboxView.tsx`**（新组件）：
 
 - **顶栏**：标题 + 未读汇总、刷新、全部已读、过滤 chips 行（5 个勾选，点击即写 prefs——与 Side card 齿轮弹窗**同键同源**）。
-- **状态行**：未配置 → 「在 cordis.patch.yml 配 `githubToken`，或本机 `gh auth login` / 设 `GH_TOKEN`」引导文案；`github-auth` → 只读降级提示；网络错误 → 保留上次快照 + 警告行。
+- **状态行**：未配置 → 按 `ghAvailable` 展示引导（gh 可用：推荐本机 `gh auth login`；gh 不可用：推荐 cordis.patch.yml 配 `githubToken` 或设 `GH_TOKEN` 环境变量）；`github-auth` → 只读降级提示；网络错误 → 保留上次快照 + 警告行。
 - **列表**：按 repo 分组（`updated_at` 降序），每行 = 类别图标 + 未读圆点 + 标题 + 分类标签（prActivity 附加 ✅/⛔️ verdict 标签）+ repo · 相对时间；点击展开。
 - **展开详情**：`api.githubThread(id)` 拉正文，`MarkdownText` 渲染（必须传 `codeLabels={{ copyLabel: t('copy'), copiedLabel: t('copied') }}`）；动作行：
   - ✅ 已读 / 🗑 Done（乐观更新 + 列表移除）
@@ -211,7 +213,7 @@ interface GithubStateResult {
 | 风险 | 应对 |
 |---|---|
 | reason 语义漂移（官方确认） | 分类为展示级；verdict 由标题关键词辅助识别，文案不承诺事件级精确 |
-| `gh auth token` 子进程开销 | 5 分钟成功缓存 / 30s 失败缓存；env/Config 可完全绕过 |
+| `gh auth token` 子进程开销 | 5 分钟成功缓存 / 30s 失败缓存 / 二进制缺失按进程生命周期缓存；env/Config 可完全绕过 |
 | 高负载时 `X-Poll-Interval` 增大 | host 折算 `max(pollSeconds, X-Poll-Interval)` 下发，client 遵守 |
 | 多标签页并发轮询 | host 条件请求 304 短路，成本≈0 |
 | Merge 不可逆 | `githubAllowMerge` 默认关 + CI 状态前置展示 + 显式确认 + 422 文案透传 |
