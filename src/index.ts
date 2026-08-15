@@ -13,6 +13,7 @@
  * session's authoritative cwd comes from the session store, and terminal
  * processes are keyed by session.
  */
+import { spawn } from 'node:child_process'
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
@@ -77,6 +78,29 @@ const MEDIA_TYPES: Record<string, string> = {
   '.pdf': 'application/pdf',
   '.html': 'text/html',
   '.htm': 'text/html',
+}
+
+/**
+ * Reveal a file or directory in the OS file manager: Finder on macOS
+ * (`open -R`), Explorer on Windows (`explorer /select,`), and the default
+ * file manager on Linux (`xdg-open` on the parent directory).
+ */
+function revealPath(path: string): Promise<{ ok: true }> {
+  const [cmd, args] = process.platform === 'win32'
+    ? ['explorer', ['/select,', path]] as const
+    : process.platform === 'darwin'
+      ? ['open', ['-R', path]] as const
+      : ['xdg-open', [dirname(path)]] as const
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: 'ignore' })
+    child.on('error', (error) => {
+      reject(new SidebarError('fs-error', `cannot reveal "${path}": ${error.message}`, 400))
+    })
+    child.on('exit', (code) => {
+      if (code === 0) resolve({ ok: true })
+      else reject(new SidebarError('fs-error', `cannot reveal "${path}" (exit code ${code})`, 400))
+    })
+  })
 }
 
 /** Content type served by /sidebar/file (binary-safe fallback for unknowns). */
@@ -230,6 +254,11 @@ function buildApi(
         throw new SidebarError('fs-error', `cannot write "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
       }
       return { ok: true }
+    },
+    'fs.reveal': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const path = requireAbsolute(requireString(payload, 'path'))
+      return revealPath(path)
     },
     'git.status': async (payload) => {
       const { cwd } = cwdOf(payload)
