@@ -193,17 +193,92 @@ export class PtyManager {
 }
 
 /**
- * The interactive shell for this platform, resolved like a terminal
- * emulator: an explicit `$SHELL` on the dsh process wins (deployment
- * override), then the account's login shell from passwd, then `/bin/bash`.
- * The passwd step matters because service managers and container inits
- * often start dsh without `SHELL`, and the tab should still open the
- * user's login shell (e.g. zsh) instead of silently degrading to bash.
- * Windows short-circuits to `powershell.exe` before any resolution.
+ * Inputs for {@link defaultShell} resolution. Every field is optional and
+ * defaults to the live process, which keeps the no-argument call sites
+ * working while tests (and exotic embedders) can pin the platform, the
+ * environment, and the existence probe independently — the Windows chain
+ * never executes on the ubuntu CI runners, so it is only testable through
+ * these injection points.
  */
-export function defaultShell(): string {
-  if (process.platform === 'win32') return 'powershell.exe'
-  const envShell = process.env.SHELL
+export interface ShellResolutionOptions {
+  /** Platform override (defaults to `process.platform`). */
+  platform?: NodeJS.Platform
+  /** Environment override; the resolver only reads SHELL, DSH_SIDEBAR_SHELL, PATH, ProgramFiles, LOCALAPPDATA. */
+  env?: NodeJS.ProcessEnv
+  /** Explicitly configured shell (the `shell` config field); wins over every automatic source. Empty means unset. */
+  explicit?: string
+  /** File-existence probe override (defaults to `existsSync`). */
+  exists?: (path: string) => boolean
+}
+
+/**
+ * Candidate directories that may contain a `pwsh.exe` on Windows: PATH
+ * entries first, then the well-known machine/user install locations
+ * (including preview channels and per-user MSI/portable layouts). The
+ * machine-scope search reads both `ProgramW6432` and `ProgramFiles` so a
+ * 32-bit Node process — whose `ProgramFiles` points at `(x86)` — still
+ * finds a 64-bit PowerShell 7 install. De-duped while preserving priority
+ * order.
+ */
+function windowsPwshCandidateDirs(env: NodeJS.ProcessEnv): string[] {
+  const dirs: string[] = []
+  const pathEntries = env.PATH
+  if (pathEntries !== undefined) {
+    // The win32 branch always uses the Windows PATH separator; hardcoding it
+    // keeps the function testable from POSIX runners without a delimiter
+    // injection point.
+    for (const entry of pathEntries.split(';')) {
+      const trimmed = entry.trim()
+      if (trimmed !== '') dirs.push(trimmed)
+    }
+  }
+  for (const programFiles of [env.ProgramW6432, env.ProgramFiles]) {
+    if (programFiles === undefined || programFiles.trim() === '') continue
+    dirs.push(join(programFiles, 'PowerShell', '7'))
+    dirs.push(join(programFiles, 'PowerShell', '7-preview'))
+  }
+  const localAppData = env.LOCALAPPDATA
+  if (localAppData !== undefined && localAppData.trim() !== '') {
+    dirs.push(join(localAppData, 'Microsoft', 'PowerShell', '7'))
+    dirs.push(join(localAppData, 'Microsoft', 'PowerShell', '7-preview'))
+    dirs.push(join(localAppData, 'Programs', 'PowerShell', '7'))
+    dirs.push(join(localAppData, 'Programs', 'PowerShell', '7-preview'))
+  }
+  return [...new Set(dirs)]
+}
+
+/**
+ * The interactive shell for this platform, resolved like a terminal
+ * emulator: an explicitly configured shell (the `shell` config field) wins,
+ * then `$SHELL` on POSIX (deployment override), then the account's login
+ * shell from passwd, then `/bin/bash`. The passwd step matters because
+ * service managers and container inits often start dsh without `SHELL`, and
+ * the tab should still open the user's login shell (e.g. zsh) instead of
+ * silently degrading to bash.
+ *
+ * Windows previously short-circuited to `powershell.exe` (the inbox 5.1)
+ * before any resolution, so PowerShell 7 users always got a legacy shell
+ * without `??`/`?.`/ternary and with poor ANSI/UTF-8 defaults. The Windows
+ * chain is now: explicit shell → `DSH_SIDEBAR_SHELL` env override → first
+ * `pwsh.exe` found on PATH or in a known install directory → the 5.1
+ * fallback (machines without PowerShell 7 keep working).
+ */
+export function defaultShell(options: ShellResolutionOptions = {}): string {
+  const platform = options.platform ?? process.platform
+  const env = options.env ?? process.env
+  const exists = options.exists ?? existsSync
+  const explicit = options.explicit
+  if (explicit !== undefined && explicit.trim() !== '') return explicit.trim()
+  if (platform === 'win32') {
+    const envShell = env.DSH_SIDEBAR_SHELL
+    if (envShell !== undefined && envShell.trim() !== '') return envShell.trim()
+    for (const dir of windowsPwshCandidateDirs(env)) {
+      const candidate = join(dir, 'pwsh.exe')
+      if (exists(candidate)) return candidate
+    }
+    return 'powershell.exe'
+  }
+  const envShell = env.SHELL
   if (envShell !== undefined && envShell.trim() !== '') return envShell
   // userInfo() throws when the uid has no passwd entry (rare chroots);
   // without a login shell there is nothing better than the bash default.

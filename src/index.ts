@@ -426,18 +426,23 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // restore it before any terminal can spawn (idempotent).
   ensureSpawnHelper()
   const resolved = resolveSidebarConfig(config)
+  // One shell resolution feeds BOTH terminal surfaces: the UI tabs and the
+  // model-facing terminal_* tools. They must stay in lockstep, otherwise a
+  // configured shell fixes one surface and silently leaves the other on the
+  // platform default.
+  const terminalShell = defaultShell({ explicit: resolved.shell })
   // The web runtime's bind-derived trust list (boot-sampled LAN literals
   // plus --trusted-host authorities) — the authoritative source the /api
   // gateway fence derives its list from. Read per request from the live
   // service value; a replaced list takes effect without a plugin restart.
   const fence = (req: SidebarHttpRequest): boolean => isTrustedApiRequest(req, ctx.webRuntime.trustedHosts)
-  const ptyManager = new PtyManager(defaultShell(), resolved.terminalsPerSession)
+  const ptyManager = new PtyManager(terminalShell, resolved.terminalsPerSession)
   // The agent-owned terminal registry: parallel to the UI-tab ptyManager,
   // keyed by uuid (the model's opaque handle) instead of `${sessionId}:${tabId}`,
   // uncapped, and torn down with the plugin. The model creates terminals here
   // through the terminal_create tool; the sidebar view attaches through the
   // same /sidebar/ws/terminal upgrade with ?uuid=... instead of ?tab=...
-  const agentPtyRegistry = new AgentPtyRegistry(defaultShell())
+  const agentPtyRegistry = new AgentPtyRegistry(terminalShell)
 
   // ── User-facing "Side card" preferences ──────────────────────────────────
   // Register the namespace with the settings provider so the Settings page

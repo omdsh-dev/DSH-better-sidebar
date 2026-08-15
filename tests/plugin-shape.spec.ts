@@ -34,6 +34,13 @@ describe('dsh-better-sidebar plugin export shape', () => {
     expect(resolved.listLimit).toBe(1000)
     expect(resolved.terminalsPerSession).toBe(3)
     expect(resolved.reconnectGraceMs).toBe(30_000)
+    // The terminal shell config defaults to auto-resolution (empty shell =
+    // the platform chain in defaultShell()).
+    expect(resolved.shell).toBe('')
+    const configured = (schema as unknown as {
+      (input: Record<string, unknown> | undefined): Record<string, unknown>
+    })({ shell: 'pwsh.exe' })
+    expect(configured.shell).toBe('pwsh.exe')
   })
 
   it('registers the side card preferences schema with the documented defaults', async () => {

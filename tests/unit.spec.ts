@@ -31,6 +31,7 @@ import { wrapOpenPath, type OpenPathInterceptDeps, type OpenPathService } from '
 import { registerOpenPathInterception } from '../src/client/intercept.tsx'
 import type { Context } from '../src/context-types.ts'
 import { defaultShell, ensureSpawnHelper } from '../src/pty-manager.ts'
+import { resolveSidebarConfig } from '../src/config.ts'
 import {
   collectBranchIds, countSubagentDescendants, detectNewDirectSubagent, directSubagentCount, rootAncestor,
 } from '../src/client/subagent-detect.ts'
@@ -859,25 +860,57 @@ describe('agent terminal reconciliation', () => {
 })
 
 describe('pty helpers', () => {
-  it('prefers an explicit SHELL, then falls back to the account login shell', () => {
-    if (process.platform === 'win32') {
-      // defaultShell() short-circuits to powershell.exe before env/passwd
-      // resolution on Windows; the POSIX fallback chain is asserted below.
-      expect(defaultShell()).toBe('powershell.exe')
-      return
-    }
-    const previous = process.env.SHELL
-    try {
-      process.env.SHELL = '/explicit/zsh'
-      expect(defaultShell()).toBe('/explicit/zsh')
-      process.env.SHELL = '   '
-      expect(defaultShell()).toBe('/usr/bin/zsh')
-      delete process.env.SHELL
-      expect(defaultShell()).toBe('/usr/bin/zsh')
-    } finally {
-      if (previous === undefined) delete process.env.SHELL
-      else process.env.SHELL = previous
-    }
+  it('prefers an explicit shell, then SHELL, then the account login shell on POSIX', () => {
+    // The platform is injected so this chain also runs (and is asserted) on
+    // non-POSIX developer machines. The userInfo mock at the top of the file
+    // pins the passwd login shell to /usr/bin/zsh.
+    expect(defaultShell({ platform: 'linux', env: { SHELL: '/explicit/zsh' } })).toBe('/explicit/zsh')
+    expect(defaultShell({ platform: 'linux', env: { SHELL: '   ' } })).toBe('/usr/bin/zsh')
+    expect(defaultShell({ platform: 'linux', env: {} })).toBe('/usr/bin/zsh')
+  })
+
+  it('Windows: explicit shell wins, then DSH_SIDEBAR_SHELL, then a probed pwsh.exe, then powershell.exe 5.1', () => {
+    // The explicit shell (the `shell` config field) beats every automatic
+    // source, and whitespace-only values count as unset.
+    expect(defaultShell({ platform: 'win32', explicit: 'C:\\Tools\\pwsh.exe', env: { DSH_SIDEBAR_SHELL: 'pwsh.exe' } }))
+      .toBe('C:\\Tools\\pwsh.exe')
+    expect(defaultShell({ platform: 'win32', explicit: '   ', env: { DSH_SIDEBAR_SHELL: 'pwsh.exe' } }))
+      .toBe('pwsh.exe')
+
+    // PATH is probed entry by entry; the first directory containing pwsh.exe
+    // wins and the returned value is the full resolved path. The candidate is
+    // normalized to forward slashes before comparing so the assertion holds
+    // under BOTH join() implementations: on the ubuntu runners node:path is
+    // POSIX and joins 'C:\\other' + 'pwsh.exe' as 'C:\\other/pwsh.exe'.
+    const fromPath = defaultShell({
+      platform: 'win32',
+      env: { PATH: 'C:\\tools;C:\\other' },
+      exists: path => path.replaceAll('\\', '/') === 'C:/other/pwsh.exe',
+    })
+    expect(fromPath.replaceAll('\\', '/')).toBe('C:/other/pwsh.exe')
+
+    // PATH misses fall through to the known install directories. On 32-bit
+    // Node, ProgramW6432 is the real 64-bit Program Files and is preferred.
+    const fromProgramW6432 = defaultShell({
+      platform: 'win32',
+      env: { ProgramW6432: 'C:\\PF64' },
+      exists: path => path.replaceAll('\\', '/') === 'C:/PF64/PowerShell/7/pwsh.exe',
+    })
+    expect(fromProgramW6432.replaceAll('\\', '/')).toBe('C:/PF64/PowerShell/7/pwsh.exe')
+    const fromProgramFiles = defaultShell({
+      platform: 'win32',
+      env: { ProgramFiles: 'C:\\PF', LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' },
+      exists: path => path.replaceAll('\\', '/') === 'C:/PF/PowerShell/7/pwsh.exe',
+    })
+    expect(fromProgramFiles.replaceAll('\\', '/')).toBe('C:/PF/PowerShell/7/pwsh.exe')
+
+    // Nothing installed: keep the inbox 5.1 fallback instead of breaking.
+    expect(defaultShell({ platform: 'win32', env: {}, exists: () => false })).toBe('powershell.exe')
+  })
+
+  it('trims the configured shell and defaults it to auto for old documents', () => {
+    expect(resolveSidebarConfig(undefined).shell).toBe('')
+    expect(resolveSidebarConfig({ shell: '  pwsh.exe  ' }).shell).toBe('pwsh.exe')
   })
 
   it('restores the spawn-helper executable bit idempotently', () => {
