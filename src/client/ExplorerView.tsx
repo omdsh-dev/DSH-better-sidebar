@@ -10,15 +10,17 @@
  * "copied" label replacing the button after a successful write); file rows
  * also offer a download action (the host serves raw bytes, binary-safe).
  */
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
   IconRefreshOutline16, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
+import { compileExcludePatterns } from '../exclude-patterns.ts'
 import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
+import type { SidebarStore } from './state.ts'
 import css from './sidebar.module.css'
 
 interface LevelData {
@@ -39,16 +41,28 @@ const COPIED_MS = 1200
 export function ExplorerView(props: {
   sessionId: string
   cwd: string | undefined
+  /** The shared store: the explorer excludes read from `store.getPrefs()`
+   *  and re-render live when the settings change (issue #18). */
+  store: SidebarStore
   expanded: string[]
   onToggle: (path: string) => void
   onOpenFile: (path: string) => void
   /** Insert `@<relative path>` into the composer draft. */
   onReferenceFile: (path: string) => void
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onReferenceFile } = props
+  const { sessionId, cwd, store, expanded, onToggle, onOpenFile, onReferenceFile } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   const [refreshTick, setRefreshTick] = useState(0)
+  // Live exclude patterns: follow the shared prefs so a settings-page edit
+  // hides/show rows without reopening or manual refresh.
+  const [exclude, setExclude] = useState<string[]>(() => store.getPrefs().explorerExclude)
+  useEffect(() => store.subscribe(() => {
+    setExclude(store.getPrefs().explorerExclude)
+  }), [store])
+  // Precompiled matcher: the regexes are built once per pattern list, not
+  // per row per render (large levels × many patterns stay cheap).
+  const excluded = useMemo(() => compileExcludePatterns(exclude), [exclude])
   /** The row whose path was just copied ("copied" label replaces its button). */
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
@@ -142,7 +156,9 @@ export function ExplorerView(props: {
       )
     }
     const entries = level.entries ?? []
-    return entries.map(entry => {
+    // Hide entries whose NAME matches an exclude pattern (directories and
+    // files alike, case-insensitive single-`*` wildcards — issue #18).
+    return entries.filter(entry => !excluded(entry.name)).map(entry => {
       if (entry.isDir) {
         const isOpen = expanded.includes(entry.path)
         return (

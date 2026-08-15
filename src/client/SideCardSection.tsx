@@ -23,11 +23,12 @@
  * A card's on/off state is its VISUAL STATE: enabled = highlighted (brand
  * border + tinted fill + a circular check badge pinned to the card's far
  * right), disabled = neutral and dimmed. Features that declare
- * `settings.toggles` carry a gear corner button that opens a native Modal
- * (wider than the primitive default) with the related settings as
- * title/desc + custom-switch rows and a Done footer. The toggles
- * themselves are custom switches: a real checkbox (native semantics and
- * focus) driving a styled track/thumb.
+ * `settings.toggles` / `settings.texts` carry a gear corner button that
+ * opens a native Modal (wider than the primitive default) with the related
+ * settings as title/desc + custom-switch rows, free-form / number input
+ * rows, and/or multi-line text rows (e.g. the Explorer page's exclude
+ * patterns) and a Done footer. The toggles themselves are custom switches:
+ * a real checkbox (native semantics and focus) driving a styled track/thumb.
  *
  * Writes ride the plugin's own fenced settings route (the host calls the
  * settings seam in-process — the DSH settings RPC domain does not serve
@@ -38,7 +39,7 @@
  * shows the wire error inline — a broken settings surface never crashes the
  * shell.
  */
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   IconCheckOutline16,
   IconPlusOutline16,
@@ -65,6 +66,7 @@ import type {
   BetterSidebarService,
   FileViewerDescriptor,
   SidebarSettingsRenderProps,
+  SidebarSettingText,
   SidebarSettingToggle,
   TabDescriptor,
 } from './service.ts'
@@ -115,6 +117,7 @@ function hasSettings(feature: TabDescriptor | FileViewerDescriptor): boolean {
   const settings = feature.settings
   return settings !== undefined && (
     (settings.toggles?.length ?? 0) > 0
+    || (settings.texts?.length ?? 0) > 0
     || (settings.pluginToggles?.length ?? 0) > 0
     || settings.render !== undefined
   )
@@ -123,6 +126,75 @@ function hasSettings(feature: TabDescriptor | FileViewerDescriptor): boolean {
 /** A feature's display name (viewers fall back to their id). */
 function featureNameOf(feature: TabDescriptor | FileViewerDescriptor): string {
   return textOf('title' in feature ? feature.title : undefined) || feature.id
+}
+
+/** Read one string-array pref by declarative key (missing/non-array = []). */
+function prefStrings(prefs: SidebarPrefs, key: string): string[] {
+  const value = (prefs as unknown as Record<string, unknown>)[key]
+  return Array.isArray(value) ? value : []
+}
+
+/**
+ * One declarative TEXT row: a multi-line input (one value per line) that
+ * commits on blur — the explorer exclude patterns. Draft stays local while
+ * typing; the external value (prefs round-trip) re-syncs the draft only
+ * when the committed array actually changes, so in-progress edits are
+ * never clobbered by re-renders.
+ */
+export function TextSettingRow(props: {
+  text: SidebarSettingText
+  prefs: SidebarPrefs
+  onCommit: (text: SidebarSettingText, lines: string[]) => void
+}) {
+  const { text, prefs, onCommit } = props
+  const title = textOf(text.title)
+  const value = prefStrings(prefs, text.key)
+  const serialized = useMemo(() => value.join('\n'), [value])
+  const [draft, setDraft] = useState(serialized)
+  useEffect(() => { setDraft(serialized) }, [serialized])
+  /** Normalize: trim, drop blanks, dedupe preserving order. */
+  const normalized = (): string[] => {
+    const lines: string[] = []
+    for (const line of draft.split('\n')) {
+      const trimmed = line.trim()
+      if (trimmed === '' || lines.includes(trimmed)) continue
+      lines.push(trimmed)
+    }
+    return lines
+  }
+  /** Commit only when the edit actually changed the patterns (blur on a
+   *  pristine box writes nothing). */
+  const commit = (): void => {
+    const lines = normalized()
+    if (lines.length === value.length && lines.every((line, i) => line === value[i])) return
+    onCommit(text, lines)
+  }
+  return (
+    <div className={css.textRow} key={text.key}>
+      <span className={css.rowText}>
+        <span className={css.title}>{title}</span>
+        {textOf(text.desc) !== '' && <span className={css.desc}>{textOf(text.desc)}</span>}
+      </span>
+      <textarea
+        className={css.textSetting}
+        rows={3}
+        spellCheck={false}
+        value={draft}
+        placeholder={textOf(text.placeholder)}
+        aria-label={title}
+        onChange={event => { setDraft(event.currentTarget.value) }}
+        onBlur={commit}
+        onKeyDown={event => {
+          // Ctrl/Cmd+Enter commits without leaving the box; plain Enter
+          // starts a new pattern line.
+          if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+            event.preventDefault()
+            event.currentTarget.blur()
+          }
+        }}
+      />
+    </div>
+  )
 }
 
 /**
@@ -196,11 +268,17 @@ function Switch(props: {
  * The body of a feature's secondary settings popup: one row (title/desc +
  * control) per declared setting. Switches render the custom switch; text and
  * number rows render a free-form / numeric input committed on blur/Enter
- * (clamped to the declared min/max). Extracted so the rows are testable
- * without opening the Modal (the Modal portal renders only while open).
+ * (clamped to the declared min/max); multi-line TEXT settings
+ * (`settings.texts`, e.g. the explorer exclude patterns) render a textarea
+ * with one value per line, committed on blur. Extracted so the rows are
+ * testable without opening the Modal (the Modal portal renders only while
+ * open).
  */
 export function FeatureSettingsRows(props: {
   toggles: readonly SidebarSettingToggle[]
+  /** Multi-line TEXT rows (`settings.texts`); optional — plugin-only rows
+   *  callers omit them. */
+  texts?: readonly SidebarSettingText[]
   prefs: SidebarPrefs
   onToggle: (toggle: SidebarSettingToggle, next: boolean) => void
   /** Commit one text/number row; returns the canonical value the row should
@@ -213,8 +291,10 @@ export function FeatureSettingsRows(props: {
    *  a host pref of the same name. (Named `valueSource`, not `valueOf`:
    *  the latter collides with the inherited Object.prototype.valueOf.) */
   valueSource?: (key: string) => unknown
+  /** Commit one multi-line text setting (a SidebarPrefs string-array field). */
+  onCommitText?: (text: SidebarSettingText, lines: string[]) => void
 }) {
-  const { toggles, prefs, onToggle, onCommit, valueSource } = props
+  const { toggles, texts, prefs, onToggle, onCommit, valueSource, onCommitText } = props
   const read = valueSource ?? ((key: string): unknown => (prefs as unknown as Record<string, unknown>)[key])
   return (
     <div className={css.popupRows}>
@@ -249,6 +329,9 @@ export function FeatureSettingsRows(props: {
           />
         )
       })}
+      {texts?.map(text => (
+        <TextSettingRow key={text.key} text={text} prefs={prefs} onCommit={onCommitText ?? (() => { /* no-op */ })} />
+      ))}
     </div>
   )
 }
@@ -305,9 +388,11 @@ function TypedRow(props: {
  * - `settings.render` (custom panel) when declared — rendered with the
  *   shared store/service, the live prefs, the descriptor's own plugin
  *   settings blob, a persistence helper, and a close callback;
- * - otherwise the host-prefs `toggles` rows, then the plugin-owned
- *   `pluginToggles` rows (their values live in `pluginSettings[feature.id]`,
- *   projected onto the prefs face so the shared row renderer reads them).
+ * - otherwise the host-prefs `toggles` rows, then the host-prefs multi-line
+ *   `texts` rows (string-array fields, e.g. the explorer exclude patterns),
+ *   then the plugin-owned `pluginToggles` rows (their values live in
+ *   `pluginSettings[feature.id]`, read through an explicit value source so
+ *   the shared row renderer never confuses them with host prefs).
  */
 export function SettingsBody(props: {
   feature: TabDescriptor | FileViewerDescriptor
@@ -316,12 +401,13 @@ export function SettingsBody(props: {
   service: BetterSidebarService
   onToggle: (toggle: SidebarSettingToggle, next: boolean) => void
   onCommit: (toggle: SidebarSettingToggle, raw: string) => string
+  onCommitText: (text: SidebarSettingText, lines: string[]) => void
   onPluginToggle: (toggle: SidebarSettingToggle, next: boolean) => void
   onPluginCommit: (toggle: SidebarSettingToggle, raw: string) => string
   onPluginWrite: (key: string, value: unknown) => void
   onClose: () => void
 }) {
-  const { feature, prefs, store, service, onToggle, onCommit, onPluginToggle, onPluginCommit, onPluginWrite, onClose } = props
+  const { feature, prefs, store, service, onToggle, onCommit, onCommitText, onPluginToggle, onPluginCommit, onPluginWrite, onClose } = props
   const render = feature.settings?.render
   if (render !== undefined) {
     return (
@@ -339,8 +425,9 @@ export function SettingsBody(props: {
     )
   }
   const toggles = feature.settings?.toggles ?? []
+  const texts = feature.settings?.texts ?? []
   const pluginToggles = feature.settings?.pluginToggles ?? []
-  if (toggles.length === 0 && pluginToggles.length === 0) return null
+  if (toggles.length === 0 && texts.length === 0 && pluginToggles.length === 0) return null
   // Plugin rows read their values from the descriptor's OWN blob through
   // an explicit value source — no projection onto the prefs face, so a
   // plugin key can never collide with (or silently read) a host pref of
@@ -348,14 +435,14 @@ export function SettingsBody(props: {
   const pluginBlob = prefs.pluginSettings[feature.id] ?? {}
   return (
     <div className={css.popupRows}>
-      {toggles.length > 0 && (
-        <FeatureSettingsRows
-          toggles={toggles}
-          prefs={prefs}
-          onToggle={onToggle}
-          onCommit={onCommit}
-        />
-      )}
+      <FeatureSettingsRows
+        toggles={toggles}
+        texts={texts}
+        prefs={prefs}
+        onToggle={onToggle}
+        onCommit={onCommit}
+        onCommitText={onCommitText}
+      />
       {pluginToggles.length > 0 && (
         <FeatureSettingsRows
           toggles={pluginToggles}
@@ -538,6 +625,11 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     return raw
   }
 
+  /** Commit one declaratively-declared text setting (a SidebarPrefs string-array field). */
+  const onCommitTextSetting = (text: SidebarSettingText, lines: string[]): void => {
+    applyPref({ [text.key]: lines })
+  }
+
   const commitWidth = (): void => {
     const parsed = Number(widthDraft)
     if (!Number.isFinite(parsed)) {
@@ -663,8 +755,9 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
       </div>
 
       {/* 侧边栏内容: one small card per registered tab type in a responsive
-          grid; features declaring `settings.toggles` open their settings in
-          the popup (gear corner button) instead of nested inline rows. */}
+          grid; features declaring `settings.toggles` / `settings.texts` open
+          their settings in the popup (gear corner button) instead of nested
+          inline rows. */}
       <div className={css.group}>
         <div className={css.groupHeading}>
           <span>{t('settingsTabsTitle')}</span>
@@ -773,6 +866,7 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
             prefs={prefs}
             onToggle={onToggleSetting}
             onCommit={onCommitSetting}
+            onCommitText={onCommitTextSetting}
             onPluginToggle={(toggle, next) => { onPluginToggle(settingsFor.id, toggle, next) }}
             onPluginCommit={(toggle, raw) => onPluginCommitSetting(settingsFor.id, toggle, raw)}
             onPluginWrite={(key, value) => { applyPluginSetting(settingsFor.id, key, value) }}

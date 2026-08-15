@@ -71,10 +71,28 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     browserInterceptLinks: typeof record.browserInterceptLinks === 'boolean'
       ? record.browserInterceptLinks
       : SIDEBAR_PREFS_DEFAULTS.browserInterceptLinks,
+    explorerExclude: stringArrayOf(record.explorerExclude),
     tabsEnabled: booleanMapOf(record.tabsEnabled),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
     pluginSettings: pluginSettingsMapOf(record.pluginSettings),
   }
+}
+
+/**
+ * Validate one string-list preference (the explorer exclude patterns). Only
+ * non-empty trimmed strings survive; duplicates are dropped preserving
+ * first-seen order; a non-array (or a malformed array) falls back to [].
+ */
+function stringArrayOf(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const out: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const trimmed = item.trim()
+    if (trimmed === '' || out.includes(trimmed)) continue
+    out.push(trimmed)
+  }
+  return out
 }
 
 /**

@@ -88,6 +88,20 @@ export interface SidebarSettingsRenderProps {
   close(): void
 }
 
+/** One declarative TEXT setting of a tab/viewer, rendered as a nested
+ *  multi-line input row in the Side card settings page (one value per line,
+ *  committed on blur — e.g. the explorer's exclude patterns). */
+export interface SidebarSettingText {
+  /** The SidebarPrefs string-array field this text reads and writes ('explorerExclude'). */
+  key: string
+  /** Row title (i18n friendly: string or () => string). */
+  title: string | (() => string)
+  /** Row description (i18n friendly). */
+  desc?: string | (() => string)
+  /** Placeholder for the empty box (i18n friendly). */
+  placeholder?: string | (() => string)
+}
+
 /** Declarative settings of one registered tab or file viewer. */
 export interface SidebarSettingsDeclaration {
   /**
@@ -98,6 +112,13 @@ export interface SidebarSettingsDeclaration {
    * by the settings seam.
    */
   toggles?: readonly SidebarSettingToggle[]
+  /**
+   * Extra text rows (multi-line inputs) rendered under the feature's own
+   * row in the settings page. Keys must be string-array fields of the
+   * host's PrefsSchema (built-ins: 'explorerExclude'); unknown keys are
+   * dropped by the settings seam.
+   */
+  texts?: readonly SidebarSettingText[]
   /**
    * Plugin-owned settings rows (v0.12.0+): same row controls as `toggles`
    * (switch/text/number), but the keys are plugin-local and persisted in

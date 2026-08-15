@@ -79,10 +79,21 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       icon: (size: number) => <IconFolderOpen16 size={size} />,
       order: 10,
       single: true,
+      // Declarative settings: the exclude-patterns text row renders under
+      // this row in the Side card settings page (issue #18).
+      settings: {
+        texts: [{
+          key: 'explorerExclude',
+          title: () => t('settingsExplorerExcludeTitle'),
+          desc: () => t('settingsExplorerExcludeDesc'),
+          placeholder: () => t('settingsExplorerExcludePlaceholder'),
+        }],
+      },
       component: ({ ctx, store, scope, expanded, onToggleDir, onReferenceFile }) => (
         <ExplorerView
           sessionId={scope.sessionId}
           cwd={scope.cwd}
+          store={store}
           expanded={expanded ?? []}
           onToggle={onToggleDir ?? (() => { /* no-op */ })}
           onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}

@@ -19,7 +19,7 @@
 
 ## ✨ Features
 
-- **🗂️ File Workbench**: file explorer (lazy-loading tree) + CodeMirror editor; inline preview for images / Markdown / HTML / PDF / Office
+- **🗂️ File Workbench**: file explorer (lazy-loading tree, with pattern-based file/directory exclusion — the "Exclude patterns" setting, e.g. `*.meta`, `node_modules`; single `*` wildcard, case-insensitive) + CodeMirror editor; inline preview for images / Markdown / HTML / PDF / Office
 - **🌐 Embedded Browser**: multiple web tabs with back / forward / refresh; content runs in a sandboxed iframe; external links open in the sidebar by default
 - **💻 Real Terminal**: xterm.js + node-pty real shell, reconnect with transcript replay; optionally injects `terminal_*` tools for the model
 - **🌿 Git Panel**: real diff + VSCode-style diff tabs, history, right-click to stage / commit / revert
@@ -251,6 +251,7 @@ pnpm watch        # tsdown --watch
 ## ⚠️ Known Limitations
 
 - Git has no push/pull/fetch; no file watcher (manual refresh); tool inline file-open buttons cannot be intercepted
+- Explorer excludes are a display-layer filter: the truncation counter of very large directories (>1000 entries per level) may undercount after filtering
 - Dragging a terminal tab to another pane remounts it (shell restarts)
 - Office-suite preview (.docx/.xlsx/.pptx) moved to the recommended office plugin (see the "Add plugins" modals in settings); without it these files fall through to the code/download fallbacks
 - Browser sandbox has no login state / third-party cookies are restricted; some sites need popup login; sites that refuse embedding via `X-Frame-Options`/`frame-ancestors` (e.g. arxiv.org) show a reason panel (with "Open in browser"); in-iframe navigation does not enter the back stack

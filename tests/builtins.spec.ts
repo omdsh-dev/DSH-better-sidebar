@@ -49,6 +49,12 @@ describe('built-in tab registrations', () => {
     expect(toggles.map(t => t.key)).toEqual(['autoOpenSubagent', 'autoOpenJobs'])
   })
 
+  it('the explorer tab declares its exclude-patterns text setting', () => {
+    const { service } = setup()
+    const texts = service.getTab('explorer')?.settings?.texts ?? []
+    expect(texts.map(t => t.key)).toEqual(['explorerExclude'])
+  })
+
   it('the terminal tab declares the model terminal-tools, auto-terminal and custom-font settings', () => {
     const { service } = setup()
     const toggles = service.getTab('terminal')?.settings?.toggles ?? []

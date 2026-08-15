@@ -19,7 +19,7 @@
 
 ## ✨ 功能一览
 
-- **🗂️ 文件工作台**：资源管理器（懒加载目录树）+ CodeMirror 编辑器；图片 / Markdown / HTML / PDF / Office 内联预览
+- **🗂️ 文件工作台**：资源管理器（懒加载目录树，支持按模式排除文件/目录——设置页「排除模式」可配，如 `*.meta`、`node_modules`，单个 `*` 通配、大小写不敏感）+ CodeMirror 编辑器；图片 / Markdown / HTML / PDF / Office 内联预览
 - **🌐 内嵌浏览器**：多开网页 tab，后退 / 前进 / 刷新；内容运行在沙箱 iframe，外链默认在侧边栏打开
 - **💻 真实终端**：xterm.js + node-pty 真实 shell，断线重连回放；可选为模型注入 `terminal_*` 工具
 - **🌿 Git 面板**：真 diff + VSCode 式 diff tab、历史、右键暂存 / 提交 / 还原
@@ -251,6 +251,7 @@ pnpm watch        # tsdown --watch
 ## ⚠️ 已知限制
 
 - Git 无 push/pull/fetch；无文件 watcher（手动刷新）；工具行内文件打开按钮不可拦截
+- 资源管理器排除是显示层过滤：超大目录（单层 >1000 项）的截断计数在过滤后可能偏少
 - 终端 Tab 拖到另一分栏会重挂载（shell 重开）
 - Office 三件套预览（.docx/.xlsx/.pptx）已移至「推荐插件」（Office 预览插件，见设置页「添加插件」弹窗）；未安装时此类文件走代码/下载查看兜底
 - 浏览器沙箱无登录态/第三方 Cookie 受限，部分站点登录需走弹窗；被 `X-Frame-Options`/`frame-ancestors` 拒绝嵌入的站点（如 arxiv.org）显示原因面板（含「在浏览器中打开」）；iframe 内部跳转不进后退栈
