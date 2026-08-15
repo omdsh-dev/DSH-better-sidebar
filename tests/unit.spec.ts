@@ -56,6 +56,8 @@ describe('fs-tree', () => {
     expect(requireAbsolute('/a/b')).toBe(process.platform === 'win32' ? '\\a\\b' : '/a/b')
     if (process.platform === 'win32') {
       expect(requireAbsolute('C:/proj')).toBe('C:\\proj')
+      // UNC paths are absolute on win32 (Node's isAbsolute accepts \\server\share).
+      expect(requireAbsolute('\\\\server\\share\\proj')).toBe('\\\\server\\share\\proj')
     }
     expect(() => requireAbsolute('a/b')).toThrow(/not an absolute path/)
     expect(() => requireAbsolute('../a')).toThrow(/not an absolute path/)
@@ -1063,6 +1065,9 @@ describe('path helpers', () => {
     expect(resolveSidebarPath('C:\\work\\proj', 'src/a.ts')).toBe('C:\\work\\proj\\src/a.ts')
     expect(resolveSidebarPath('C:\\work\\proj', 'C:\\abs\\x.ts')).toBe('C:\\abs\\x.ts')
     expect(resolveSidebarPath('C:\\work\\proj\\', 'C:\\abs\\x.ts')).toBe('C:\\abs\\x.ts')
+    // UNC paths are absolute on Windows: relative paths join, absolute ones pass through.
+    expect(resolveSidebarPath('\\\\server\\share\\proj', 'src/a.ts')).toBe('\\\\server\\share\\proj\\src/a.ts')
+    expect(resolveSidebarPath('\\\\server\\share\\proj', '\\\\server\\share\\abs\\x.ts')).toBe('\\\\server\\share\\abs\\x.ts')
   })
 })
 

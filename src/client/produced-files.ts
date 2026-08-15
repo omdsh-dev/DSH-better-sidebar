@@ -78,7 +78,7 @@ export function selectProducedFiles(owner: unknown): readonly string[] | null {
 
 /** Resolve a (possibly relative) path against the session cwd for the sidebar. */
 export function resolveSidebarPath(cwd: string | undefined, path: string): string {
-  const absolute = path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
+  const absolute = path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith('\\\\')
   if (absolute) return path
   const base = cwd ?? ''
   if (base === '') return path
