@@ -3,10 +3,11 @@
  * preferences through the plugin's own fenced settings route, mounts the
  * right sidebar portal (inside an error boundary so a rendering failure
  * shows an error strip instead of a blank panel), registers the turn-tail
- * interception, and contributes the Side card settings section to the DSH
- * Settings shell. Requires the runtime's slots and sessions services; the
- * bundle itself is a module-table consumer only (react + ui-primitives +
- * xterm, all provided or inlined).
+ * interception, seats the panel toggles in the session header utilities
+ * row, and contributes the Side card settings section to the DSH Settings
+ * shell. Requires the runtime's slots and sessions services; the bundle
+ * itself is a module-table consumer only (react + ui-primitives + xterm,
+ * all provided or inlined).
  */
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -17,6 +18,7 @@ import { resetChunks } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
+import { registerHeaderToggle } from './ToggleCluster.tsx'
 import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
@@ -211,6 +213,14 @@ export function apply(ctx: Context): void {
         }
       },
       'dsh-better-sidebar: IME composition guard',
+    )
+
+    // The panel toggles sit in the session header's utilities row (same
+    // seat as Session log) so they share the title-row baseline. The slot
+    // is a child of conversation.session.header; inject waits for it.
+    ctx.effect(
+      () => registerHeaderToggle(ctx, sidebarStore),
+      'dsh-better-sidebar: header toggle',
     )
 
     // The "Side card" settings section: appears in the DSH Settings shell

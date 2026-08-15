@@ -10,26 +10,39 @@
 
 /* ── Shell ─────────────────────────────────────────────────────────────── */
 
-/* The persistent expand/collapse cluster at the top-right corner: two rail
-   controls side by side (bottom panel's glyph LEFT of the right panel's).
-   Always pinned to the viewport corner — inside the right panel's top-right
-   while it is open, sitting flush in the 34px tab strip (28px buttons at
-   top: 3) whose right end it really squeezes. */
+/* The expand/collapse cluster: two rail controls side by side (bottom
+   panel's glyph LEFT of the right panel's). Shared by the header-utilities
+   seat (in flow) and the floating hero fallback. */
 .toggleCluster {
+  display: flex;
+  flex-direction: row;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Hero / no-session fallback: pinned to the viewport corner. Hidden once
+   the header-hosted copy mounts (it sets data-dsh-sidebar-in-header). */
+.toggleClusterFixed {
   position: fixed;
   top: 3px;
   right: 10px;
   z-index: 55;
-  display: flex;
-  flex-direction: row;
-  gap: 4px;
+}
+
+:global(body[data-dsh-sidebar-in-header]) .toggleClusterFixed {
+  display: none;
 }
 
 /* The tab strip of the OPEN right panel reserves the cluster's width at its
-   right end, so the tabs and the + menu genuinely yield space to the cluster
-   (never hiding under it). */
+   right end while the floating copy is the live affordance. The header seat
+   lives in the conversation column, so the reservation drops. */
 .panel:not(.panelHidden) .tabBar {
   padding-right: 72px;
+}
+
+:global(body[data-dsh-sidebar-in-header]) .panel:not(.panelHidden) .tabBar {
+  padding-right: 0;
 }
 
 /* The closed-state affordance is the native rail icon control: a plain
@@ -1793,6 +1806,10 @@
      yield space to the one remaining control. */
   .panel:not(.panelHidden) .tabBar {
     padding-right: 40px;
+  }
+
+  :global(body[data-dsh-sidebar-in-header]) .panel:not(.panelHidden) .tabBar {
+    padding-right: 0;
   }
 
   /* Narrower tabs: a phone-width drawer fits more open tabs before the
