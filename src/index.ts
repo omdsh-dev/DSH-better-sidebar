@@ -86,11 +86,23 @@ const MEDIA_TYPES: Record<string, string> = {
  * file manager on Linux (`xdg-open` on the parent directory).
  */
 function revealPath(path: string): Promise<{ ok: true }> {
-  const [cmd, args] = process.platform === 'win32'
-    ? ['explorer', ['/select,', path]] as const
-    : process.platform === 'darwin'
-      ? ['open', ['-R', path]] as const
-      : ['xdg-open', [dirname(path)]] as const
+  if (process.platform === 'win32') {
+    // explorer.exe expects the whole `/select,<path>` selector as ONE
+    // argument (a space between them makes it open a folder instead of
+    // selecting the file), and it does not reliably report success through
+    // its exit code — so resolve once spawned, reject only if the process
+    // cannot start.
+    return new Promise((resolve, reject) => {
+      const child = spawn('explorer', [`/select,${path}`], { stdio: 'ignore' })
+      child.on('error', (error) => {
+        reject(new SidebarError('fs-error', `cannot reveal "${path}": ${error.message}`, 400))
+      })
+      child.on('spawn', () => resolve({ ok: true }))
+    })
+  }
+  const [cmd, args] = process.platform === 'darwin'
+    ? ['open', ['-R', path]] as const
+    : ['xdg-open', [dirname(path)]] as const
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: 'ignore' })
     child.on('error', (error) => {
