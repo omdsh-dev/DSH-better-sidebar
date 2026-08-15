@@ -198,6 +198,8 @@ dsh registry enable dsh-external/dsh-better-sidebar
 
 | 操作 | 按键 |
 |---|---|
+| 唤起/收起侧边栏 | `Ctrl/Cmd + B`（可在设置中修改） |
+| 唤起/收起底部面板（终端） | `Ctrl/Cmd + T`（可在设置中修改；窄窗口下切换合并侧边栏） |
 | 保存编辑 | `Ctrl/Cmd + S` |
 | Git 提交 | `Ctrl + Enter` |
 | 关闭 Tab | 鼠标中键 |

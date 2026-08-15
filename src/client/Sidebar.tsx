@@ -47,6 +47,7 @@ import { OrphanedTab } from './OrphanedTab.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { detectNewDirectSubagent } from './subagent-detect.ts'
 import { detectNewJob } from './subagent-jobs.ts'
+import { isMacPlatform, shortcutLabel } from './shortcut-combo.ts'
 import { t } from './locales.ts'
 import { api, type SessionScope } from './api.ts'
 import css from './sidebar.module.css'
@@ -668,6 +669,13 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     service.openTab({ type: optionId, title }, { sessionId, cwd })
   }
 
+  // The configured shortcut hint for one toggle button's tooltip (` · ⌘B`);
+  // empty when the shortcut is disabled.
+  const shortcutHintOf = (combo: string): string => {
+    const label = shortcutLabel(combo, isMacPlatform())
+    return label === '' ? '' : ` · ${label}`
+  }
+
   /**
    * The explorer's @-reference button: append `@<relative path>` to the
    * session's composer draft (space-separated). Resolves the session-scope
@@ -740,7 +748,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           there is no bottom panel, so its toggle button is not offered.
         */}
         {!narrow && (
-          <Tooltip label={state.bottomOpen ? t('collapseBottomPanel') : t('expandBottomPanel')} side="bottom" delayMs={500}>
+          <Tooltip
+            label={`${state.bottomOpen ? t('collapseBottomPanel') : t('expandBottomPanel')}${shortcutHintOf(snapshot.prefs.shortcutTerminal)}`}
+            side="bottom"
+            delayMs={500}
+          >
             <button
               type="button"
               className={css.toggleButton}
@@ -751,7 +763,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             </button>
           </Tooltip>
         )}
-        <Tooltip label={state.panelOpen ? t('collapse') : t('expand')} side="bottom" delayMs={500}>
+        <Tooltip label={`${state.panelOpen ? t('collapse') : t('expand')}${shortcutHintOf(snapshot.prefs.shortcutPanel)}`} side="bottom" delayMs={500}>
           <button
             type="button"
             className={css.toggleButton}

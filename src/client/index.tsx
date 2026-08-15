@@ -20,6 +20,7 @@ import { RenderBoundary } from './RenderBoundary.tsx'
 import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
+import { registerPanelShortcuts } from './shortcuts.ts'
 import { loadPrefs } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
@@ -211,6 +212,22 @@ export function apply(ctx: Context): void {
         }
       },
       'dsh-better-sidebar: IME composition guard',
+    )
+
+    // Panel-toggle shortcuts (Cmd/Ctrl+B for the right sidebar, Cmd/Ctrl+T
+    // for the bottom terminal panel; both rebindable in the Side card
+    // settings): a document-level capture listener reading the prefs LIVE,
+    // so a settings commit re-binds instantly without re-registration.
+    ctx.effect(
+      () => {
+        try {
+          return registerPanelShortcuts(sidebarStore)
+        } catch (error) {
+          fail('shortcuts', error)
+          return undefined
+        }
+      },
+      'dsh-better-sidebar: panel keyboard shortcuts',
     )
 
     // The "Side card" settings section: appears in the DSH Settings shell

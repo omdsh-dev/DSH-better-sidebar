@@ -151,6 +151,22 @@ export interface SidebarPrefs {
    * numbers / booleans; custom panels are responsible for their own).
    */
   pluginSettings: Record<string, Record<string, unknown>>
+  /**
+   * Keyboard shortcut that toggles the right sidebar panel, in canonical
+   * combo form (`mod+b`, `ctrl+shift+p`, `alt+escape`, …). `mod` means Cmd
+   * on macOS and Ctrl elsewhere; the combo requires at least one of
+   * mod/meta/ctrl/alt. An empty string disables the shortcut. Configured
+   * through the Side card settings' shortcut rows (key-capture controls).
+   */
+  shortcutPanel: string
+  /**
+   * Keyboard shortcut that toggles the bottom panel (the terminal
+   * workbench), same combo vocabulary as {@link SidebarPrefs.shortcutPanel}
+   * (`mod+t` by default). On narrow viewports the bottom panel does not
+   * exist (the workbenches merge into one drawer), so this shortcut toggles
+   * the merged drawer there instead.
+   */
+  shortcutTerminal: string
 }
 
 /** Range contract of {@link SidebarPrefs.defaultWidthPercent}. */
@@ -167,6 +183,11 @@ export const TERMINAL_FONT_SIZE_DEFAULT = 13
 export const TITLE_BAR_STRIP_MIN = 0
 export const TITLE_BAR_STRIP_MAX = 120
 export const TITLE_BAR_STRIP_DEFAULT = 40
+
+/** Default of {@link SidebarPrefs.shortcutPanel} (`mod` = Cmd on macOS, Ctrl elsewhere). */
+export const SHORTCUT_PANEL_DEFAULT = 'mod+b'
+/** Default of {@link SidebarPrefs.shortcutTerminal} (the bottom terminal panel). */
+export const SHORTCUT_TERMINAL_DEFAULT = 'mod+t'
 
 /** Fallback prefs used whenever the settings document is unreachable or malformed. */
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
@@ -190,6 +211,8 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   tabsEnabled: {},
   viewersEnabled: {},
   pluginSettings: {},
+  shortcutPanel: SHORTCUT_PANEL_DEFAULT,
+  shortcutTerminal: SHORTCUT_TERMINAL_DEFAULT,
 }
 
 /** Clamp one width percent into the contract range (shared by schema and client reads). */

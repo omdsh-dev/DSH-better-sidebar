@@ -16,6 +16,7 @@ import {
   SIDEBAR_PREFS_DEFAULTS,
   type SidebarPrefs,
 } from '../prefs-shared.ts'
+import { normalizeShortcut } from './shortcut-combo.ts'
 
 export { SIDEBAR_PREFS_DEFAULTS, clampTerminalFontSize, clampTitleBarStrip, clampWidthPercent }
 export type { SidebarPrefs }
@@ -87,6 +88,16 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     tabsEnabled: booleanMapOf(record.tabsEnabled),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
     pluginSettings: pluginSettingsMapOf(record.pluginSettings),
+    // Shortcut strings are normalized to the canonical combo form; anything
+    // malformed (a wrong type, a bare key, an unknown token) reads as ''
+    // (disabled) — a hand-edited document must never leave a listener armed
+    // with a combo that could fire while typing.
+    shortcutPanel: typeof record.shortcutPanel === 'string'
+      ? normalizeShortcut(record.shortcutPanel)
+      : SIDEBAR_PREFS_DEFAULTS.shortcutPanel,
+    shortcutTerminal: typeof record.shortcutTerminal === 'string'
+      ? normalizeShortcut(record.shortcutTerminal)
+      : SIDEBAR_PREFS_DEFAULTS.shortcutTerminal,
   }
 }
 
