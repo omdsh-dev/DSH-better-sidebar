@@ -25,6 +25,17 @@
   gap: 4px;
 }
 
+/* Desktop (frameless window): the cluster sits inside the app's
+   center-column titlebar drag strip (-webkit-app-region: drag, the top
+   40px band of the conversation column). Without no-drag, Electron
+   swallows the clicks for window dragging and the expand/collapse buttons
+   never fire — mark the cluster and its buttons no-drag so the toggles
+   receive the click (mirrors the official sidebar/header no-drag rules). */
+html[data-dsh-desktop=true] .toggleCluster,
+html[data-dsh-desktop=true] .toggleButton {
+  -webkit-app-region: no-drag;
+}
+
 /* The tab strip of the OPEN right panel reserves the cluster's width at its
    right end, so the tabs and the + menu genuinely yield space to the cluster
    (never hiding under it). */
