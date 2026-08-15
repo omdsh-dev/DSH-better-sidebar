@@ -24,6 +24,16 @@
   transition: margin-right var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
+/* Left-dock mode (fork addition): the whole app shell shifts RIGHT instead
+   of left — the panel occupies the left strip, #root's left margin makes
+   room, and the conversation (plus session list and details) move right,
+   exactly like a VSCode panel docked on the left. */
+body[data-dsh-sidebar-left] #root {
+  margin-right: 0;
+  margin-left: var(--dsh-sidebar-width, 0px);
+  transition: margin-left var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
 /* The AppFrame's grid items are sidebarCol, centerCol, detailsCol (children
    1-3 of #root > div[data-slot="root"] > div) — nth-child(2) is the center
    column. A stretched grid item shrinks by its margins, so the conversation
@@ -44,6 +54,13 @@
    the panel open state. */
 body[data-dsh-sidebar-collapsed] [data-slot="conversation.session.header"] > header {
   padding-right: 78px;
+}
+
+/* Left-dock mirror: the collapsed cluster pins top-LEFT, so the session
+   header's left padding yields instead. */
+body[data-dsh-sidebar-left][data-dsh-sidebar-collapsed] [data-slot="conversation.session.header"] > header {
+  padding-right: 0;
+  padding-left: 78px;
 }
 
 body[data-dsh-sidebar-dragging] #root,

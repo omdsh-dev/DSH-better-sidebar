@@ -87,6 +87,24 @@ export interface SidebarState {
   /** The bottom panel's own split tree (panes/tabs live only in ONE tree;
    *  tabs never cross panels — the two panels only share panel-size drags). */
   bottomSplits: SplitNode
+  /** Whether the whole workbench is detached into a free-floating window
+   *  (fork addition): the right and bottom panels render inside one
+   *  position-fixed shell at (floatX, floatY) sized (floatWidth,
+   *  floatHeight) instead of being anchored to the viewport edges. */
+  floating: boolean
+  /** Floating window top-left X in px. */
+  floatX: number
+  /** Floating window top-left Y in px. */
+  floatY: number
+  /** Floating window width in px. */
+  floatWidth: number
+  /** Floating window height in px. */
+  floatHeight: number
+  /** Which viewport edge the DOCKED workbench anchors to (fork addition):
+   *  'right' mirrors the upstream layout (panel at right, conversation
+   *  squeezed from the right); 'left' mirrors it (panel at left, the whole
+   *  app shell — session list, conversation, details — shifts right). */
+  dockSide: 'left' | 'right'
 }
 
 export const PANEL_MIN = 280
@@ -167,6 +185,15 @@ export function makeDefaultState(width = PANEL_DEFAULT, panelOpen = true, seedEx
     bottomHeight: BOTTOM_DEFAULT,
     bottomOpenedOnce: false,
     bottomSplits: bottomLeaf,
+    // Floating mode defaults: docked, at the top-right where the docked
+    // panel would sit, sized from the panel width (the shell remembers its
+    // own size, so toggling floating never touches the docked width).
+    floating: false,
+    floatX: 0,
+    floatY: 0,
+    floatWidth: width,
+    floatHeight: 480,
+    dockSide: 'right',
   }
 }
 
@@ -627,6 +654,65 @@ export function setBottomHeight(state: SidebarState, height: number): SidebarSta
   return { ...state, bottomHeight: Math.min(max, Math.max(BOTTOM_MIN, Math.round(height))) }
 }
 
+/** Toggle the whole workbench between docked and free-floating. Entering
+ * floating seeds the shell from the docked geometry (positioned at the
+ * top-right, where the docked panel sits) and forces the panel open so the
+ * floating workbench is live; leaving restores the docked layout untouched —
+ * the floating fields are kept for the next toggle. */
+export function toggleFloating(state: SidebarState): SidebarState {
+  if (state.floating) return { ...state, floating: false }
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : Infinity
+  const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : Infinity
+  const width = Math.min(state.floatWidth, viewportWidth)
+  const height = Math.min(state.floatHeight, viewportHeight)
+  return {
+    ...state,
+    floating: true,
+    panelOpen: true,
+    floatX: Math.max(0, viewportWidth - width - 24),
+    floatY: 24,
+    floatWidth: width,
+    floatHeight: height,
+  }
+}
+
+/** Switch the DOCKED workbench between the left and right viewport edges.
+ * Setting the same side is a no-op. Allowed while floating so the edge-drop
+ * docking gesture (drag the floating window to an edge and release) can set
+ * the target side and exit floating in one flow; the 切换停靠侧 cluster
+ * button that calls this is only rendered in docked mode. */
+export function setDockSide(state: SidebarState, side: 'left' | 'right'): SidebarState {
+  if (state.dockSide === side) return state
+  return { ...state, dockSide: side }
+}
+
+/** Set the floating window position (clamped to keep it on screen). */
+export function setFloatPos(state: SidebarState, x: number, y: number): SidebarState {
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : Infinity
+  const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : Infinity
+  return {
+    ...state,
+    floatX: Math.max(0, Math.min(Math.round(x), Math.max(0, viewportWidth - state.floatWidth))),
+    floatY: Math.max(0, Math.min(Math.round(y), Math.max(0, viewportHeight - state.floatHeight))),
+  }
+}
+
+/** Set the floating window size (clamped to the contract range and the
+ * viewport, so a stale persisted size can never push it off screen). */
+export function setFloatSize(state: SidebarState, width: number, height: number): SidebarState {
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : Infinity
+  const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : Infinity
+  const floatWidth = Math.min(viewportWidth, Math.max(PANEL_MIN, Math.round(width)))
+  const floatHeight = Math.min(viewportHeight, Math.max(BOTTOM_MIN, Math.round(height)))
+  return {
+    ...state,
+    floatWidth,
+    floatHeight,
+    floatX: Math.max(0, Math.min(state.floatX, Math.max(0, viewportWidth - floatWidth))),
+    floatY: Math.max(0, Math.min(state.floatY, Math.max(0, viewportHeight - floatHeight))),
+  }
+}
+
 /** Toggle a directory in the explorer expansion set. */
 export function toggleExpanded(state: SidebarState, path: string): SidebarState {
   const expanded = state.expanded.includes(path)
@@ -827,6 +913,27 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
   const bottomSplits = sanitizeNode(record.bottomSplits, seen, reid)
     ?? { kind: 'leaf' as const, id: uid('pane'), tabs: [], active: null }
   const maxWidth = typeof window !== 'undefined' ? window.innerWidth : Infinity
+  // Floating-mode fields arrived in the fork; a missing or malformed value on
+  // an OLDER persisted state defaults to docked so existing layouts keep
+  // loading, like the bottom-panel fields.
+  const floating = record.floating === true
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : Infinity
+  const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : Infinity
+  const rawFloatWidth = typeof record.floatWidth === 'number' && Number.isFinite(record.floatWidth)
+    ? record.floatWidth
+    : record.width
+  const floatWidth = Math.min(viewportWidth, Math.max(PANEL_MIN, Math.round(rawFloatWidth)))
+  const floatHeight = Math.min(viewportHeight, Math.max(BOTTOM_MIN, Math.round(
+    typeof record.floatHeight === 'number' && Number.isFinite(record.floatHeight)
+      ? record.floatHeight
+      : 480,
+  )))
+  const floatX = typeof record.floatX === 'number' && Number.isFinite(record.floatX)
+    ? Math.max(0, Math.min(record.floatX, Math.max(0, viewportWidth - floatWidth)))
+    : Math.max(0, viewportWidth - floatWidth - 24)
+  const floatY = typeof record.floatY === 'number' && Number.isFinite(record.floatY)
+    ? Math.max(0, Math.min(record.floatY, Math.max(0, viewportHeight - floatHeight)))
+    : 24
   return {
     panelOpen: record.panelOpen,
     width: Math.max(PANEL_MIN, Math.min(record.width, maxWidth)),
@@ -844,6 +951,14 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     // auto-terminal exactly once after the upgrade.
     bottomOpenedOnce: record.bottomOpenedOnce === true,
     bottomSplits,
+    floating,
+    floatX,
+    floatY,
+    floatWidth,
+    floatHeight,
+    // Dock side arrived in the fork; missing/malformed defaults to the
+    // upstream behavior (right).
+    dockSide: record.dockSide === 'left' ? 'left' : 'right',
   }
 }
 

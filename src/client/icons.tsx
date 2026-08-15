@@ -31,6 +31,30 @@ export const IconPanelBottomOutline16 = ({ size = 16, className }: IconProps) =>
 )
 
 /**
+ * Floating-window toggle glyph (fork addition, the "浮窗" button): a frame
+ * with a small detached square in its bottom-right corner, in the app's
+ * outline style — the classic "pop out" affordance.
+ */
+export const IconFloatingOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1.5" y="2" width="9.5" height="8" rx="2" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="6.5" y="7" width="8" height="7" rx="2" stroke="currentColor" strokeWidth="1.5" />
+  </svg>
+)
+
+/**
+ * Dock-side toggle glyph (fork addition, the "切换停靠侧" button): a frame
+ * with the filled strip moved to the LEFT edge — the mirror of
+ * IconPanelRightOutline16, hinting the panel can sit on either side.
+ */
+export const IconPanelLeftOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1.5" y="2" width="13" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="2.75" y="3.25" width="2.75" height="9.5" rx="1" fill="currentColor" stroke="none" />
+  </svg>
+)
+
+/**
  * Terminal glyph in the app's outline style (1.5px stroke, currentColor):
  * a rounded frame with a prompt chevron and underscore cursor.
  */

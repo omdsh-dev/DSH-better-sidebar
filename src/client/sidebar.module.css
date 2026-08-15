@@ -25,11 +25,20 @@
   gap: 4px;
 }
 
-/* The tab strip of the OPEN right panel reserves the cluster's width at its
-   right end, so the tabs and the + menu genuinely yield space to the cluster
-   (never hiding under it). */
+/* The tab strip of the OPEN panel reserves the cluster's width at the side
+   it is pinned to, so the tabs and the + menu genuinely yield space to the
+   cluster (never hiding under it). The cluster is 4 buttons wide now
+   (bottom + right panel + floating + move-side): 4×28px + 3×4px gap = 124px,
+   plus the 10px pin offset — 140px clears it with a small gap. */
 .panel:not(.panelHidden) .tabBar {
-  padding-right: 72px;
+  padding-right: 140px;
+}
+
+/* Left-dock mirror: the cluster sits at the top-LEFT, so the tab strip
+   reserves the width at its LEFT end instead. */
+:global(body[data-dsh-sidebar-left]) .panel:not(.panelHidden) .tabBar {
+  padding-right: 0;
+  padding-left: 140px;
 }
 
 /* The closed-state affordance is the native rail icon control: a plain
@@ -81,6 +90,34 @@
   transition:
     transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
     width var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+/* Left-dock mode (fork addition): anchor the docked panel to the LEFT edge,
+   mirroring the right layout — border on the far side, slide in from the
+   left. The body attribute is toggled by the Sidebar shell from dockSide. */
+:global(body[data-dsh-sidebar-left]) .panel {
+  left: 0;
+  right: auto;
+  border-left: none;
+  border-right: 1px solid var(--dsw-alias-border-l2);
+}
+
+:global(body[data-dsh-sidebar-left]) .panelHidden {
+  transform: translateX(-102%);
+}
+
+/* The left-docked panel's width drag: the right edge strip (mirror of the
+   right-docked left-edge strip). */
+:global(body[data-dsh-sidebar-left]) .panelResize {
+  left: auto;
+  right: -4px;
+  cursor: col-resize;
+}
+
+/* The left-docked toggle cluster pins to the top-LEFT corner. */
+:global(body[data-dsh-sidebar-left]) .toggleCluster {
+  right: auto;
+  left: 10px;
 }
 
 /* Collapsed: slid off-screen, interactive nothing, hidden after the slide. */
@@ -248,6 +285,114 @@
 .cornerHandle:hover,
 .cornerHandle[data-dragging] {
   background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+/* ── Floating window (fork addition) ──────────────────────────────────── */
+
+/* Detached mode: instead of the viewport-anchored right/bottom panels, the
+   whole workbench renders inside one position-fixed shell the user drags by
+   its title bar and resizes from the corner. Same surface tokens as the
+   docked panels, plus a hairline border so the window reads as a window
+   when it floats over the app shell (no shadow — the repo styling policy
+   forbids them). */
+.floatingShell {
+  position: fixed;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  background: var(--dsw-specific-sidebar-fill);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* The window's title bar doubles as the drag handle: grabbing anywhere on
+   it moves the shell. A narrow grip strip (⠿) hints the affordance. */
+.floatingTitleBar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 6px 0 10px;
+  background: var(--dsw-alias-bg-layer-1);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.floatingTitleBar:active {
+  cursor: grabbing;
+}
+
+.floatingTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--dsw-font-xxs-strong-12);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.floatingGrip {
+  flex: none;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  letter-spacing: 1px;
+}
+
+.floatingBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The bottom panel's workbench inside the floating shell: a flex section
+   below the right workbench, split by the same hairline. */
+.floatingBottom {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--dsw-specific-sidebar-fill);
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+/* The corner resize handle of the floating window (se draws both axes). */
+.floatingResize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  z-index: 4;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.floatingResize::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 6px;
+  height: 6px;
+  border-right: 1px solid var(--dsw-alias-label-tertiary);
+  border-bottom: 1px solid var(--dsw-alias-label-tertiary);
+}
+
+.floatingResize:hover {
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+/* Edge-snap feedback (fork addition): while dragging the floating window,
+   a shell flush against the left or right edge glows with the dock accent —
+   the "release to dock here" hint. */
+.floatingShell[data-snapped] {
+  border-color: var(--dsw-alias-interactive-bg-hover-accent);
 }
 
 /* Icon button: the app's own icon-button pattern (ui-workspace) — a 28px
@@ -1810,12 +1955,17 @@
    switches (which panels render, the migration) are JS-driven via
    useNarrowViewport; this block only adapts the pure style details. */
 @media (max-width: 767px) {
-  /* The toggle cluster holds a single button on narrow viewports (the
-     bottom panel button is not rendered), so the open panel's tab strip
-     reserves 40px instead of the desktop 72px — the tabs and + menu still
-     yield space to the one remaining control. */
+  /* The toggle cluster holds fewer buttons on narrow viewports (the bottom
+     panel and move-side buttons are not rendered), so the open panel's tab
+     strip reserves 70px instead of the desktop 140px — the tabs and + menu
+     still yield space to the remaining controls (right panel + floating). */
   .panel:not(.panelHidden) .tabBar {
-    padding-right: 40px;
+    padding-right: 70px;
+  }
+
+  :global(body[data-dsh-sidebar-left]) .panel:not(.panelHidden) .tabBar {
+    padding-right: 0;
+    padding-left: 70px;
   }
 
   /* Narrower tabs: a phone-width drawer fits more open tabs before the

@@ -34,10 +34,10 @@ import { appendToDraft } from './conversation-draft.ts'
 import {
   BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, isAgentTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
   reconcileAgentTerminals,
-  resizeSplitIn, setBottomHeight, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
+  resizeSplitIn, setBottomHeight, setDockSide, setFloatPos, setFloatSize, setWidth, toggleBottomPanel, toggleExpanded, toggleFloating, togglePanel,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
 } from './state.ts'
-import { IconPanelBottomOutline16, IconPanelRightOutline16 } from './icons.tsx'
+import { IconFloatingOutline16, IconPanelBottomOutline16, IconPanelLeftOutline16, IconPanelRightOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useNarrowViewport } from './breakpoints.ts'
 import type { NewTabOption } from './TabBar.tsx'
@@ -166,6 +166,16 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     else document.body.removeAttribute('data-dsh-sidebar-collapsed')
     return () => { document.body.removeAttribute('data-dsh-sidebar-collapsed') }
   }, [collapsed])
+
+  // Left-dock body attribute (fork addition): layout.css and
+  // sidebar.module.css mirror every right-docked rule (panel anchoring, the
+  // margin push, the resize strip, the toggle cluster) under this flag.
+  const dockLeft = state !== undefined && !state.floating && state.dockSide === 'left'
+  useEffect(() => {
+    if (dockLeft) document.body.setAttribute('data-dsh-sidebar-left', '')
+    else document.body.removeAttribute('data-dsh-sidebar-left')
+    return () => { document.body.removeAttribute('data-dsh-sidebar-left') }
+  }, [dockLeft])
 
   // Position compatibility mode (titleBarCompat pref): Windows frameless
   // windows draw the native title bar (minimize/maximize/close) at the
@@ -471,6 +481,16 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   const [draggingCorner, setDraggingCorner] = useState(false)
   const anyDragging = draggingWidth || draggingBottom || draggingCorner
 
+  // Floating-window drags: the title bar moves the shell, the corner handle
+  // resizes it. Same write-direct-to-DOM pattern as the docked drags: the
+  // store is committed once on pointer up (clamping + persistence), and the
+  // live geometry writes straight to the shell element.
+  const floatRef = useRef<HTMLDivElement | null>(null)
+  const floatMove = useRef({ startX: 0, startY: 0, startFloatX: 0, startFloatY: 0, snap: null as 'left' | 'right' | null })
+  const [draggingFloat, setDraggingFloat] = useState(false)
+  const floatResize = useRef({ startX: 0, startY: 0, startFloatWidth: 0, startFloatHeight: 0 })
+  const [draggingFloatResize, setDraggingFloatResize] = useState(false)
+
   // Pause center-column measurement while dragging, and re-measure once the
   // drag settles at its committed size. The store commit lands on release and
   // the final width equals the last drag width, so no ResizeObserver event
@@ -494,15 +514,24 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   const applyDrag = (width: number, height: number): void => {
     panelRef.current?.style.setProperty('width', `${width}px`)
     bottomRef.current?.style.setProperty('height', `${height}px`)
-    // centerRect.right is the center column's right edge at the committed
-    // width (innerWidth - state.width - detailsWidth), so this equals
-    // `width + detailsWidth` — derived from the measured column, keeping the
-    // drag write-only (no React re-render mid-drag).
-    bottomRef.current?.style.setProperty('right', `${(window.innerWidth - centerRect.right) + (width - (state?.width ?? 0))}px`)
+    if (state?.dockSide === 'left') {
+      // Left-dock: the whole shell shifts right with the panel width, so the
+      // bottom panel's LEFT edge follows the panel's right edge. Derived from
+      // the measured center column like the right-dock mirror.
+      bottomRef.current?.style.setProperty('left', `${(centerRect.left - (state?.width ?? 0)) + width}px`)
+    } else {
+      // centerRect.right is the center column's right edge at the committed
+      // width (innerWidth - state.width - detailsWidth), so this equals
+      // `width + detailsWidth` — derived from the measured column, keeping the
+      // drag write-only (no React re-render mid-drag).
+      bottomRef.current?.style.setProperty('right', `${(window.innerWidth - centerRect.right) + (width - (state?.width ?? 0))}px`)
+    }
     document.documentElement.style.setProperty('--dsh-sidebar-width', `${width}px`)
     document.documentElement.style.setProperty('--dsh-sidebar-height', `${height}px`)
     if (cornerRef.current !== null) {
-      cornerRef.current.style.left = `${window.innerWidth - width - 6}px`
+      cornerRef.current.style.left = state?.dockSide === 'left'
+        ? `${width - 6}px`
+        : `${window.innerWidth - width - 6}px`
       cornerRef.current.style.top = `${window.innerHeight - height - 6}px`
     }
   }
@@ -542,12 +571,15 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // so a stale persisted size (e.g. fullscreen on a bigger window) can never
   // crush the app shell to zero. Dragging disables the layout transition.
   // On NARROW viewports the drawer FLOATS over the app shell — no push, the
-  // conversation keeps the full width behind the drawer.
+  // conversation keeps the full width behind the drawer. A FLOATING window
+  // also floats over the app (it is detached from the edge), so its mode
+  // disables the push entirely.
   useEffect(() => {
-    const width = !narrow && snapshot.state?.panelOpen === true
+    const floating = snapshot.state?.floating === true
+    const width = !floating && !narrow && snapshot.state?.panelOpen === true
       ? Math.min(snapshot.state.width, window.innerWidth)
       : 0
-    const height = !narrow && snapshot.state?.bottomOpen === true
+    const height = !floating && !narrow && snapshot.state?.bottomOpen === true
       ? Math.min(snapshot.state.bottomHeight, window.innerHeight)
       : 0
     document.documentElement.style.setProperty('--dsh-sidebar-width', `${width}px`)
@@ -724,6 +756,177 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     />
   )
 
+  // Floating mode (fork addition): the whole workbench — right panel and, when
+  // open, the bottom panel — renders inside one position-fixed shell the user
+  // drags by its title bar and resizes from the corner. The shell reuses the
+  // exact workbench machinery of the docked panels (same store, actions, tab
+  // registry), so every tab, split and viewer behaves identically; only the
+  // geometry is free. `visible` stays derived from panelOpen/bottomOpen so
+  // live views pause exactly like the docked panels.
+  if (state.floating) {
+    const bottomSectionHeight = state.bottomOpen
+      ? Math.min(state.bottomHeight, Math.round(state.floatHeight * 0.45))
+      : 0
+    return (
+      <div
+        ref={floatRef}
+        className={css.floatingShell}
+        style={{
+          left: state.floatX,
+          top: state.floatY,
+          width: state.floatWidth,
+          height: state.floatHeight,
+        }}
+        data-dragging={(draggingFloat || draggingFloatResize) || undefined}
+        data-snapped={draggingFloat ? (floatMove.current.snap ?? undefined) : undefined}
+      >
+        {/* Title bar = drag handle. Grab anywhere on it to move the shell;
+            the grip glyph at the left hints the affordance. Dragging near
+            the viewport's left or right edge SNAPS the shell flush to that
+            edge; releasing while snapped DOCKs the workbench on that side
+            (VSCode panel behavior). */}
+        <div
+          className={css.floatingTitleBar}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return
+            event.preventDefault()
+            event.currentTarget.setPointerCapture(event.pointerId)
+            floatMove.current = {
+              startX: event.clientX,
+              startY: event.clientY,
+              startFloatX: state.floatX,
+              startFloatY: state.floatY,
+              snap: null,
+            }
+            setDraggingFloat(true)
+          }}
+          onPointerMove={(event) => {
+            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+            const { startX, startY, startFloatX, startFloatY } = floatMove.current
+            const rawX = startFloatX + (event.clientX - startX)
+            const rawY = startFloatY + (event.clientY - startY)
+            const w = state.floatWidth
+            const h = state.floatHeight
+            const vw = window.innerWidth
+            const vh = window.innerHeight
+            // Snap threshold: within 24px of an edge the shell sticks to it.
+            const snapLeft = rawX <= 24
+            const snapRight = rawX + w >= vw - 24
+            const snapTop = rawY <= 24
+            const snapBottom = rawY + h >= vh - 24
+            const x = snapLeft ? 0 : snapRight ? vw - w : Math.max(0, Math.min(rawX, vw - w))
+            const y = snapTop ? 0 : snapBottom ? vh - h : Math.max(0, Math.min(rawY, vh - h))
+            // Horizontal snap wins over vertical: an edge-drop docks left/right.
+            floatMove.current.snap = snapLeft ? 'left' : snapRight ? 'right' : null
+            floatRef.current?.style.setProperty('left', `${x}px`)
+            floatRef.current?.style.setProperty('top', `${y}px`)
+          }}
+          onPointerUp={(event) => {
+            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+            event.currentTarget.releasePointerCapture(event.pointerId)
+            const { startX, startY, startFloatX, startFloatY, snap } = floatMove.current
+            setDraggingFloat(false)
+            if (snap !== null) {
+              // Released against an edge: dock on that side, keeping the
+              // floating window's width as the docked width.
+              const dockedWidth = Math.min(state.floatWidth, window.innerWidth)
+              store.reduce(s => toggleFloating(setWidth(setDockSide(s, snap), dockedWidth)))
+              return
+            }
+            const w = state.floatWidth
+            const h = state.floatHeight
+            const vw = window.innerWidth
+            const vh = window.innerHeight
+            const rawX = startFloatX + (event.clientX - startX)
+            const rawY = startFloatY + (event.clientY - startY)
+            const x = Math.max(0, Math.min(rawX, vw - w))
+            const y = Math.max(0, Math.min(rawY, vh - h))
+            store.reduce(s => setFloatPos(s, x, y))
+          }}
+        >
+          <span className={css.floatingGrip} aria-hidden>⠿</span>
+          <span className={css.floatingTitle}>{t('floating')}</span>
+          <Tooltip label={state.bottomOpen ? t('collapseBottomPanel') : t('expandBottomPanel')} side="bottom" delayMs={500}>
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={state.bottomOpen ? t('collapseBottomPanel') : t('expandBottomPanel')}
+              onClick={() => { store.reduce(toggleBottomPanel) }}
+            >
+              <IconPanelBottomOutline16 />
+            </button>
+          </Tooltip>
+          <Tooltip label={t('dock')} side="bottom" delayMs={500}>
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={t('dock')}
+              onClick={() => { store.reduce(toggleFloating) }}
+            >
+              <IconPanelRightOutline16 />
+            </button>
+          </Tooltip>
+        </div>
+        <div className={css.floatingBody}>
+          <Workbench
+            state={state}
+            newTabOptions={buildNewTabOptions(state, ctx, { sessionId, cwd })}
+            actions={actions}
+            onNewTab={onNewTab}
+            renderTab={renderTab}
+            getTabIcon={tabIconOf}
+            getTabBadge={tabBadgeOf}
+          />
+          {state.bottomOpen && (
+            <div className={css.floatingBottom} style={{ height: bottomSectionHeight }}>
+              <Workbench
+                state={state}
+                tree={state.bottomSplits}
+                newTabOptions={buildNewTabOptions(state, ctx, { sessionId, cwd })}
+                actions={actions}
+                onNewTab={onNewTab}
+                renderTab={(tab, active, paneId) => renderTab(tab, active, paneId, true)}
+                getTabIcon={tabIconOf}
+                getTabBadge={tabBadgeOf}
+              />
+            </div>
+          )}
+        </div>
+        {/* Corner resize handle (se draws width + height together). */}
+        <div
+          className={css.floatingResize}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return
+            event.preventDefault()
+            event.currentTarget.setPointerCapture(event.pointerId)
+            floatResize.current = {
+              startX: event.clientX,
+              startY: event.clientY,
+              startFloatWidth: state.floatWidth,
+              startFloatHeight: state.floatHeight,
+            }
+            setDraggingFloatResize(true)
+          }}
+          onPointerMove={(event) => {
+            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+            const { startX, startY, startFloatWidth, startFloatHeight } = floatResize.current
+            const width = startFloatWidth + (event.clientX - startX)
+            const height = startFloatHeight + (event.clientY - startY)
+            floatRef.current?.style.setProperty('width', `${Math.max(PANEL_MIN, width)}px`)
+            floatRef.current?.style.setProperty('height', `${Math.max(BOTTOM_MIN, height)}px`)
+          }}
+          onPointerUp={(event) => {
+            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+            event.currentTarget.releasePointerCapture(event.pointerId)
+            const { startX, startY, startFloatWidth, startFloatHeight } = floatResize.current
+            setDraggingFloatResize(false)
+            store.reduce(s => setFloatSize(s, startFloatWidth + (event.clientX - startX), startFloatHeight + (event.clientY - startY)))
+          }}
+        />
+      </div>
+    )
+  }
+
   return (
     <>
       {/*
@@ -761,6 +964,31 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             <IconPanelRightOutline16 />
           </button>
         </Tooltip>
+        {/* Fork addition: detach the whole workbench into a floating window. */}
+        <Tooltip label={t('floating')} side="bottom" delayMs={500}>
+          <button
+            type="button"
+            className={css.toggleButton}
+            aria-label={t('floating')}
+            onClick={() => { store.reduce(toggleFloating) }}
+          >
+            <IconFloatingOutline16 />
+          </button>
+        </Tooltip>
+        {/* Fork addition: switch the docked panel between the left and right
+            edges (no-op while floating — the floating window is position-free). */}
+        {!narrow && (
+          <Tooltip label={t('moveSide')} side="bottom" delayMs={500}>
+            <button
+              type="button"
+              className={css.toggleButton}
+              aria-label={t('moveSide')}
+              onClick={() => { store.reduce(s => setDockSide(s, s.dockSide === 'left' ? 'right' : 'left')) }}
+            >
+              <IconPanelLeftOutline16 />
+            </button>
+          </Tooltip>
+        )}
       </div>
       {/*
         The right panel stays mounted while collapsed (hidden off-screen) so
@@ -789,7 +1017,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
               onPointerMove={(event) => {
                 if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
                 const { startX, startWidth } = widthDrag.current
-                const width = clampWidth(startWidth + (startX - event.clientX))
+                // Right-dock drags the left edge (delta = startX - x);
+                // left-dock drags the right edge (delta = x - startX).
+                const width = state.dockSide === 'left'
+                  ? clampWidth(startWidth + (event.clientX - startX))
+                  : clampWidth(startWidth + (startX - event.clientX))
                 const height = state.bottomOpen ? Math.min(state.bottomHeight, window.innerHeight) : 0
                 scheduleDrag(width, height)
               }}
@@ -798,7 +1030,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
                 event.currentTarget.releasePointerCapture(event.pointerId)
                 const { startX, startWidth } = widthDrag.current
                 stopDragScheduling()
-                store.reduce(s => setWidth(s, startWidth + (startX - event.clientX)))
+                store.reduce(s => setWidth(s, state.dockSide === 'left'
+                  ? startWidth + (event.clientX - startX)
+                  : startWidth + (startX - event.clientX)))
                 setDraggingWidth(false)
               }}
             />
@@ -908,7 +1142,10 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           ref={cornerRef}
           className={css.cornerHandle}
           style={{
-            left: window.innerWidth - state.width - 6,
+            // Left-dock: the corner sits at the panel's RIGHT edge.
+            left: state.dockSide === 'left'
+              ? state.width - 6
+              : window.innerWidth - state.width - 6,
             top: window.innerHeight - state.bottomHeight - 6,
           }}
           data-dragging={draggingCorner || undefined}
@@ -926,7 +1163,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           onPointerMove={(event) => {
             if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
             const { startX, startY, startWidth, startHeight } = cornerDrag.current
-            const width = clampWidth(startWidth + (startX - event.clientX))
+            const width = state.dockSide === 'left'
+              ? clampWidth(startWidth + (event.clientX - startX))
+              : clampWidth(startWidth + (startX - event.clientX))
             const height = clampHeight(startHeight + (startY - event.clientY))
             scheduleDrag(width, height)
           }}
@@ -935,7 +1174,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             event.currentTarget.releasePointerCapture(event.pointerId)
             const { startX, startY, startWidth, startHeight } = cornerDrag.current
             stopDragScheduling()
-            store.reduce(s => setBottomHeight(setWidth(s, startWidth + (startX - event.clientX)), startHeight + (startY - event.clientY)))
+            store.reduce(s => setBottomHeight(setWidth(s, state.dockSide === 'left'
+              ? startWidth + (event.clientX - startX)
+              : startWidth + (startX - event.clientX)), startHeight + (startY - event.clientY)))
             setDraggingCorner(false)
           }}
         />
