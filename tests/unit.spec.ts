@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { compareEntries, isWithin, parentOf, rootLabel, requireAbsolute } from '../src/fs-tree.ts'
 import { parseLogLines, parsePorcelainZ } from '../src/git.ts'
 import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
@@ -10,7 +10,6 @@ import {
 import { loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import { extOf, languageKeyForExt } from '../src/client/lang.ts'
-import { officeKindForExt } from '../src/client/office-types.ts'
 import { isPdfExt } from '../src/client/pdf-types.ts'
 import { isImageExt } from '../src/client/image-types.ts'
 import { relativeTo } from '../src/client/paths.ts'
@@ -861,19 +860,26 @@ describe('pty helpers', () => {
   })
 
   it('restores the spawn-helper executable bit idempotently', () => {
-    // On non-Windows the helper must exist and be executable after the fix.
-    if (process.platform === 'win32') return
+    // node-pty's spawn-helper is a macOS-only artifact: binding.gyp builds
+    // the executable only for OS=="mac", and no other platform ships one to
+    // restore (linux uses forkpty directly). Skip elsewhere.
+    if (process.platform !== 'darwin') return
     ensureSpawnHelper()
     ensureSpawnHelper()
-    const { existsSync } = require('node:fs') as typeof import('node:fs')
+    const { existsSync, statSync } = require('node:fs') as typeof import('node:fs')
     const { dirname, join } = require('node:path') as typeof import('node:path')
     const { createRequire } = require('node:module') as typeof import('node:module')
     const entry = createRequire(import.meta.url).resolve('node-pty')
     const root = dirname(dirname(entry))
-    const helper = join(root, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper')
-    expect(existsSync(helper)).toBe(true)
-    const { statSync } = require('node:fs') as typeof import('node:fs')
-    expect((statSync(helper).mode & 0o111) !== 0).toBe(true)
+    // Prebuilt (tarball) or node-gyp-compiled (build/Release): mirror
+    // ensureSpawnHelper's candidate list — either location is acceptable.
+    const candidates = [
+      join(root, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'),
+      join(root, 'build', 'Release', 'spawn-helper'),
+    ]
+    const helper = candidates.find(existsSync)
+    expect(helper).toBeTruthy()
+    expect((statSync(helper!).mode & 0o111) !== 0).toBe(true)
   })
 })
 
@@ -1081,28 +1087,6 @@ describe('editor language mapping', () => {
   })
 })
 
-describe('office preview kind', () => {
-  it('routes docx/xlsx to their renderers', () => {
-    expect(officeKindForExt('.docx')).toBe('docx')
-    expect(officeKindForExt('.xlsx')).toBe('xlsx')
-  })
-
-  it('routes pptx to its renderer and legacy OLE formats to download-only', () => {
-    expect(officeKindForExt('.pptx')).toBe('pptx')
-    expect(officeKindForExt('.doc')).toBe('download-only')
-    expect(officeKindForExt('.xls')).toBe('download-only')
-    expect(officeKindForExt('.ppt')).toBe('download-only')
-  })
-
-  it('returns null for non-Office extensions and empty input', () => {
-    expect(officeKindForExt('.txt')).toBeNull()
-    expect(officeKindForExt('.md')).toBeNull()
-    expect(officeKindForExt('.png')).toBeNull()
-    expect(officeKindForExt('.pdf')).toBeNull()
-    expect(officeKindForExt('')).toBeNull()
-  })
-})
-
 describe('pdf preview kind', () => {
   it('routes only .pdf to the browser-native preview', () => {
     expect(isPdfExt('.pdf')).toBe(true)
@@ -1153,6 +1137,8 @@ describe('side card preferences', () => {
         autoOpenJobs: true,
         agentTerminalTools: true,
         bottomPanelAutoTerminal: true,
+        terminalFontFamily: '',
+        terminalFontSize: 13,
         interceptOpenPath: true,
         htmlViewerNoSandbox: false,
         htmlViewerDefaultUnsafe: false,
@@ -1161,6 +1147,7 @@ describe('side card preferences', () => {
         explorerExclude: [],
         tabsEnabled: {},
         viewersEnabled: {},
+        pluginSettings: {},
       })
   })
 
@@ -1173,6 +1160,8 @@ describe('side card preferences', () => {
         autoOpenJobs: true,
         agentTerminalTools: false,
         bottomPanelAutoTerminal: true,
+        terminalFontFamily: '',
+        terminalFontSize: 13,
         interceptOpenPath: true,
         htmlViewerNoSandbox: false,
         htmlViewerDefaultUnsafe: false,
@@ -1181,6 +1170,7 @@ describe('side card preferences', () => {
         explorerExclude: [],
         tabsEnabled: {},
         viewersEnabled: {},
+        pluginSettings: {},
       })
   })
 
@@ -1193,6 +1183,8 @@ describe('side card preferences', () => {
         autoOpenJobs: true,
         agentTerminalTools: false,
         bottomPanelAutoTerminal: true,
+        terminalFontFamily: '',
+        terminalFontSize: 13,
         interceptOpenPath: true,
         htmlViewerNoSandbox: false,
         htmlViewerDefaultUnsafe: false,
@@ -1201,6 +1193,7 @@ describe('side card preferences', () => {
         explorerExclude: [],
         tabsEnabled: {},
         viewersEnabled: {},
+        pluginSettings: {},
       })
     expect((await loadPrefs(wire({ openByDefault: true, defaultWidthPercent: 40, autoOpenSubagent: 1 }))).autoOpenSubagent)
       .toBe(true)
@@ -1226,6 +1219,22 @@ describe('side card preferences', () => {
     // Explicit booleans survive verbatim.
     expect((await loadPrefs(wire({ interceptOpenPath: false }))).interceptOpenPath).toBe(false)
     expect((await loadPrefs(wire({ interceptOpenPath: true }))).interceptOpenPath).toBe(true)
+  })
+
+  it('resolves the terminal font prefs (family passthrough, size clamp)', async () => {
+    // Absent → theme default (empty family) + default size.
+    expect((await loadPrefs(wire({}))).terminalFontFamily).toBe('')
+    expect((await loadPrefs(wire({}))).terminalFontSize).toBe(13)
+    // A custom family survives verbatim; a malformed one falls back.
+    expect((await loadPrefs(wire({ terminalFontFamily: '"JetBrains Mono", monospace' }))).terminalFontFamily)
+      .toBe('"JetBrains Mono", monospace')
+    expect((await loadPrefs(wire({ terminalFontFamily: 42 }))).terminalFontFamily).toBe('')
+    // The size clamps into 9–32 (rounded); non-numbers fall back.
+    expect((await loadPrefs(wire({ terminalFontSize: 5 }))).terminalFontSize).toBe(9)
+    expect((await loadPrefs(wire({ terminalFontSize: 40 }))).terminalFontSize).toBe(32)
+    expect((await loadPrefs(wire({ terminalFontSize: 15.6 }))).terminalFontSize).toBe(16)
+    expect((await loadPrefs(wire({ terminalFontSize: 'big' }))).terminalFontSize).toBe(13)
+    expect((await loadPrefs(wire({ terminalFontSize: 18 }))).terminalFontSize).toBe(18)
   })
 
   it('validates the per-tab / per-viewer enable maps (absent keys mean enabled)', async () => {
@@ -1258,9 +1267,9 @@ describe('side card preferences', () => {
     const store = createSidebarStore()
     // Node environment: no window → the width falls back to PANEL_DEFAULT,
     // while the open flag still follows the preference.
-    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, explorerExclude: [], tabsEnabled: {}, viewersEnabled: {} })
+    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, explorerExclude: [], tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     store.setSession('fresh-session')
-    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, explorerExclude: [], tabsEnabled: {}, viewersEnabled: {} })
+    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, explorerExclude: [], tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     const snapshot = store.getSnapshot()
     expect(snapshot.sessionId).toBe('fresh-session')
     expect(snapshot.state?.panelOpen).toBe(false)
@@ -1296,7 +1305,7 @@ describe('side card preferences', () => {
 
   it('skips the default explorer tab when the explorer type is disabled', () => {
     const store = createSidebarStore()
-    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, explorerExclude: [], tabsEnabled: { explorer: false }, viewersEnabled: {} })
+    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, explorerExclude: [], tabsEnabled: { explorer: false }, viewersEnabled: {}, pluginSettings: {} })
     store.setSession('no-explorer')
     const state = store.getSnapshot().state!
     const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs)
@@ -1304,7 +1313,7 @@ describe('side card preferences', () => {
     expect(state.splits.kind).toBe('leaf')
     // Re-enabling seeds the explorer tab again.
     const openStore = createSidebarStore()
-    openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, explorerExclude: [], tabsEnabled: {}, viewersEnabled: {} })
+    openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, explorerExclude: [], tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     openStore.setSession('with-explorer')
     const openTabs = allLeaves(openStore.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
     expect(openTabs.map(tab => tab.type)).toEqual(['explorer'])
@@ -1633,4 +1642,116 @@ describe('open-path interception wiring', () => {
     restore()
     expect(ctx.workspaces.openPath).toBe(original)
   })
+})
+
+describe('v0.12.0 store additions', () => {
+  // These blocks exercise store reduce/reduceFor (which schedule the
+  // localStorage persist through window timers) and sanitizeState (which
+  // reads window.innerHeight). Stub the browser globals ONLY inside this
+  // scope so the earlier describes keep their window-less environment.
+  beforeEach(() => {
+    const g = globalThis as Record<string, unknown>
+    g.window = { clearTimeout: () => {}, setTimeout: () => 0, innerWidth: 1024, innerHeight: 800 }
+    g.localStorage = { getItem: () => null, setItem: () => {} }
+  })
+  afterEach(() => {
+    const g = globalThis as Record<string, unknown>
+    delete g.window
+    delete g.localStorage
+  })
+
+describe('store.reduceFor (targeted opens, v0.12.0)', () => {
+  it('mutates the target session, persists it, and leaves the active snapshot untouched', () => {
+    const store = createSidebarStore()
+    store.setSession('s1')
+    let calls = 0
+    store.subscribe(() => { calls++ })
+    store.reduceFor('s2', (state) => ({ ...state, expanded: ['/x'] }))
+    // No notify, no snapshot switch.
+    expect(calls).toBe(0)
+    expect(store.getSnapshot().sessionId).toBe('s1')
+    // The target session's state updated and loads back on switch.
+    store.setSession('s2')
+    expect(store.getSnapshot().state?.expanded).toEqual(['/x'])
+  })
+
+  it('loads a fresh state for a never-visited target session', () => {
+    const store = createSidebarStore()
+    store.setSession('s1')
+    store.reduceFor('brand-new', (state) => ({ ...state, panelOpen: false }))
+    store.setSession('brand-new')
+    expect(store.getSnapshot().state?.panelOpen).toBe(false)
+    expect(store.getSnapshot().state?.splits).toBeDefined()
+  })
+
+  it('reduceFor never lowers the shared uid counter below the active session needs (no pane-id collision)', () => {
+    const store = createSidebarStore()
+    // Session 'b' is cached FIRST with a LOW id range (pane:1 / tab:2).
+    store.setSession('b')
+    // Session 'a' then loads and its operations raise the shared counter
+    // well above b's max (default pane, plus fresh pane ids from splits).
+    store.setSession('a')
+    store.reduce(s => splitPane(s, 'row'))
+    const before = allLeaves(store.getSnapshot().state!.splits).map(leaf => leaf.id).sort()
+    // A targeted reduce into the OLD, low-id session must not lower the
+    // counter: the next split in the ACTIVE session would otherwise mint
+    // an id that already exists (mapLeaf visits both leaves → corruption).
+    store.reduceFor('b', (state) => state)
+    store.reduce(s => splitPane(s, 'row'))
+    const after = allLeaves(store.getSnapshot().state!.splits).map(leaf => leaf.id)
+    expect(new Set(after).size).toBe(after.length)
+    // The active session's pre-existing pane ids all survived untouched.
+    for (const id of before) expect(after).toContain(id)
+  })
+
+  it('persists each session independently (per-session debounce timers)', () => {
+    const g = globalThis as Record<string, unknown>
+    let seq = 0
+    const timers = new Map<number, () => void>()
+    const writes: string[] = []
+    g.window = {
+      clearTimeout: (id: number) => { timers.delete(id) },
+      setTimeout: (fn: () => void) => { const id = ++seq; timers.set(id, fn); return id },
+      innerWidth: 1024,
+      innerHeight: 800,
+    }
+    g.localStorage = {
+      getItem: () => null,
+      setItem: (key: string) => { writes.push(key) },
+    }
+    try {
+      const store = createSidebarStore()
+      store.setSession('a')
+      store.reduce(s => ({ ...s, expanded: ['/a'] })) // schedules persist(a)
+      store.reduceFor('b', s => ({ ...s, expanded: ['/b'] })) // schedules persist(b)
+      // A shared timer would have cancelled persist(a) — with per-session
+      // timers BOTH writes are pending and both land when they fire.
+      expect(timers.size).toBe(2)
+      for (const [, fn] of [...timers]) fn()
+      expect(writes).toEqual(['dsh-sidebar:v1:a', 'dsh-sidebar:v1:b'])
+    } finally {
+      delete g.window
+      delete g.localStorage
+    }
+  })
+})
+
+describe('tab meta persistence (v0.12.0)', () => {
+  it('sanitizeState carries plugin meta through a reload round-trip', () => {
+    const store = createSidebarStore()
+    store.setSession('s1')
+    store.reduce(s => ({
+      ...s,
+      splits: {
+        kind: 'leaf' as const,
+        id: 'pane:1',
+        tabs: [{ id: 'tab:1', type: 'db', title: 'DB', meta: { q: [1, 2], n: 0 } }],
+        active: 'tab:1',
+      },
+    }))
+    const sanitized = sanitizeState(JSON.parse(JSON.stringify(store.getSnapshot().state!)))
+    const tabs = allLeaves(sanitized!.splits).flatMap(leaf => leaf.tabs)
+    expect(tabs[0]?.meta).toEqual({ q: [1, 2], n: 0 })
+  })
+})
 })

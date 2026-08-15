@@ -4,9 +4,10 @@
  * preview route, the /sidebar/bundle lazy-chunk route (client code splits),
  * and the terminal WebSocket upgrade. Every route passes the same
  * browser-trust fence as the /api gateway — Host-header loopback or the
- * connection row's `trustedHosts` (the `dsh web` launcher derives LAN IP
- * literals per boot) — with the trustedHosts read live from the connection
- * loader row so the fence never drifts from the deployment's.
+ * web runtime's `trustedHosts` (LAN IP literals sampled at boot plus
+ * `--trusted-host` authorities), read per request from the live service
+ * value so the fence tracks the same trust source the /api gateway derives
+ * its list from.
  *
  * All operations are conversation-scoped: requests carry a sessionId, the
  * session's authoritative cwd comes from the session store, and terminal
@@ -15,8 +16,9 @@
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
+import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
-import type { Context } from './context-types.ts'
+import type { Context, SidebarHttpRequest } from './context-types.ts'
 import {
   Config,
   PrefsSchema,
@@ -58,8 +60,8 @@ export type {
 /** Plugin identity for cordis.yml rows. */
 export const name = 'dsh-better-sidebar'
 
-/** Services required before mounting: the webserver routes, the session store, the loader's connection row, and the tool registry. */
-export const inject = ['webServer', 'sessions', 'loader', 'tools']
+/** Services required before mounting: the webserver routes, the session store, the web runtime's trusted hosts, and the tool registry. */
+export const inject = ['webServer', 'sessions', 'webRuntime', 'tools']
 
 /** Content types for the media route, by extension. */
 const MEDIA_TYPES: Record<string, string> = {
@@ -80,17 +82,6 @@ const MEDIA_TYPES: Record<string, string> = {
 /** Content type served by /sidebar/file (binary-safe fallback for unknowns). */
 export function mediaTypeForPath(path: string): string {
   return MEDIA_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream'
-}
-
-/** The connection row's resolved trustedHosts (live read; the /api fence's own list). */
-function trustedHostsOf(ctx: Context): string[] {
-  for (const entry of ctx.loader.entries()) {
-    if (entry.options.name === 'connection') {
-      const config = entry.options.config as { trustedHosts?: string[] } | undefined
-      return config?.trustedHosts ?? []
-    }
-  }
-  return []
 }
 
 /**
@@ -425,7 +416,7 @@ function buildApi(
 
 /**
  * Plugin body: mount the fenced routes and the pty lifecycle.
- * @param ctx - host plugin context (webServer, sessions, loader).
+ * @param ctx - host plugin context (webServer, sessions, webRuntime).
  * @param config - deployment-provided limits; the Loader validates against
  * {@link Config} and fills defaults, direct callers get them from
  * {@link resolveSidebarConfig}.
@@ -435,8 +426,11 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // restore it before any terminal can spawn (idempotent).
   ensureSpawnHelper()
   const resolved = resolveSidebarConfig(config)
-  const trustedHosts = trustedHostsOf(ctx)
-  const fence = (req: IncomingMessage): boolean => isTrustedApiRequest(req, trustedHosts)
+  // The web runtime's bind-derived trust list (boot-sampled LAN literals
+  // plus --trusted-host authorities) — the authoritative source the /api
+  // gateway fence derives its list from. Read per request from the live
+  // service value; a replaced list takes effect without a plugin restart.
+  const fence = (req: SidebarHttpRequest): boolean => isTrustedApiRequest(req, ctx.webRuntime.trustedHosts)
   const ptyManager = new PtyManager(defaultShell(), resolved.terminalsPerSession)
   // The agent-owned terminal registry: parallel to the UI-tab ptyManager,
   // keyed by uuid (the model's opaque handle) instead of `${sessionId}:${tabId}`,
@@ -669,7 +663,9 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         socket.destroy()
         return
       }
-      wss.handleUpgrade(req, socket, head, (ws) => {
+      // The structural request/socket/head faces satisfy the shared fence;
+      // the `ws` package wants the real Node types — cast at this boundary.
+      wss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
         void attachTerminal(ctx, ptyManager, agentPtyRegistry, ws, req, resolved)
       })
     },
@@ -691,7 +687,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         socket.destroy()
         return
       }
-      agentListWss.handleUpgrade(req, socket, head, (ws) => {
+      agentListWss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
         void attachAgentList(agentPtyRegistry, ws, req)
       })
     },
@@ -710,7 +706,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
 async function attachAgentList(
   registry: AgentPtyRegistry,
   ws: WebSocket,
-  req: IncomingMessage,
+  req: SidebarHttpRequest,
 ): Promise<void> {
   try {
     const url = new URL(req.url ?? '/', 'http://dsh.internal')
@@ -750,7 +746,7 @@ async function attachTerminal(
   ptyManager: PtyManager,
   agentPtyRegistry: AgentPtyRegistry,
   ws: WebSocket,
-  req: IncomingMessage,
+  req: SidebarHttpRequest,
   resolved: ResolvedSidebarConfig,
 ): Promise<void> {
   try {

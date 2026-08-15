@@ -10,12 +10,13 @@
  */
 import type { api } from './api.ts'
 import {
+  clampTerminalFontSize,
   clampWidthPercent,
   SIDEBAR_PREFS_DEFAULTS,
   type SidebarPrefs,
 } from '../prefs-shared.ts'
 
-export { SIDEBAR_PREFS_DEFAULTS, clampWidthPercent }
+export { SIDEBAR_PREFS_DEFAULTS, clampTerminalFontSize, clampWidthPercent }
 export type { SidebarPrefs }
 
 /** The settings wire face the preferences need (a subset of the plugin api). */
@@ -49,6 +50,12 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     bottomPanelAutoTerminal: typeof record.bottomPanelAutoTerminal === 'boolean'
       ? record.bottomPanelAutoTerminal
       : SIDEBAR_PREFS_DEFAULTS.bottomPanelAutoTerminal,
+    terminalFontFamily: typeof record.terminalFontFamily === 'string'
+      ? record.terminalFontFamily
+      : SIDEBAR_PREFS_DEFAULTS.terminalFontFamily,
+    terminalFontSize: typeof record.terminalFontSize === 'number' && Number.isFinite(record.terminalFontSize)
+      ? clampTerminalFontSize(record.terminalFontSize)
+      : SIDEBAR_PREFS_DEFAULTS.terminalFontSize,
     interceptOpenPath: typeof record.interceptOpenPath === 'boolean'
       ? record.interceptOpenPath
       : SIDEBAR_PREFS_DEFAULTS.interceptOpenPath,
@@ -67,6 +74,7 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     explorerExclude: stringArrayOf(record.explorerExclude),
     tabsEnabled: booleanMapOf(record.tabsEnabled),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
+    pluginSettings: pluginSettingsMapOf(record.pluginSettings),
   }
 }
 
@@ -83,6 +91,23 @@ function stringArrayOf(value: unknown): string[] {
     const trimmed = item.trim()
     if (trimmed === '' || out.includes(trimmed)) continue
     out.push(trimmed)
+  }
+  return out
+}
+
+/**
+ * Validate the plugin-owned settings map (v0.12.0+): `{ descriptorId: { key:
+ * value } }`, nested open maps. Any non-object value (or a malformed whole)
+ * falls back to the empty map — the schema defaults already guard the wire
+ * shape, this is the client's second line.
+ */
+function pluginSettingsMapOf(value: unknown): Record<string, Record<string, unknown>> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
+  const out: Record<string, Record<string, unknown>> = {}
+  for (const [id, blob] of Object.entries(value as Record<string, unknown>)) {
+    if (blob !== null && typeof blob === 'object' && !Array.isArray(blob)) {
+      out[id] = blob as Record<string, unknown>
+    }
   }
   return out
 }

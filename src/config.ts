@@ -9,6 +9,9 @@ import z from 'schemastery'
 import {
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
+  TERMINAL_FONT_SIZE_DEFAULT,
+  TERMINAL_FONT_SIZE_MAX,
+  TERMINAL_FONT_SIZE_MIN,
   WIDTH_PERCENT_DEFAULT,
   WIDTH_PERCENT_MAX,
   WIDTH_PERCENT_MIN,
@@ -18,6 +21,9 @@ import {
 export {
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
+  TERMINAL_FONT_SIZE_DEFAULT,
+  TERMINAL_FONT_SIZE_MAX,
+  TERMINAL_FONT_SIZE_MIN,
   WIDTH_PERCENT_DEFAULT,
   WIDTH_PERCENT_MAX,
   WIDTH_PERCENT_MIN,
@@ -82,6 +88,8 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   autoOpenJobs: z.boolean().default(true),
   agentTerminalTools: z.boolean().default(false),
   bottomPanelAutoTerminal: z.boolean().default(true),
+  terminalFontFamily: z.string().default(''),
+  terminalFontSize: z.number().step(1).min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX).default(TERMINAL_FONT_SIZE_DEFAULT),
   interceptOpenPath: z.boolean().default(true),
   htmlViewerNoSandbox: z.boolean().default(false),
   htmlViewerDefaultUnsafe: z.boolean().default(false),
@@ -95,4 +103,9 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   // (everything on) with no migration. Non-boolean values fail validation.
   tabsEnabled: z.dict(z.boolean()).default({}),
   viewersEnabled: z.dict(z.boolean()).default({}),
+  // Plugin-owned settings blobs (v0.12.0+) are an OPEN nested map: any
+  // descriptor id may carry any JSON-serializable values. This is the
+  // "settings seam" opening — without it the seam would drop third-party
+  // keys as unknown schema fields.
+  pluginSettings: z.dict(z.dict(z.any())).default({}),
 })

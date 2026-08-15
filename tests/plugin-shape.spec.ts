@@ -17,7 +17,7 @@ describe('dsh-better-sidebar plugin export shape', () => {
     const unwrapped = loader.unwrapExports(sidebar) as Record<string, unknown>
     expect(unwrapped).toBe(sidebar)
     expect(unwrapped.name).toBe('dsh-better-sidebar')
-    expect(unwrapped.inject).toEqual(['webServer', 'sessions', 'loader', 'tools'])
+    expect(unwrapped.inject).toEqual(['webServer', 'sessions', 'webRuntime', 'tools'])
     expect(unwrapped.Config).toBeDefined()
     expect(typeof unwrapped.apply).toBe('function')
   })
@@ -50,6 +50,10 @@ describe('dsh-better-sidebar plugin export shape', () => {
     // The terminal tools default OFF (the feature is dormant until the user
     // enables it in the side card settings).
     expect(resolved.agentTerminalTools).toBe(false)
+    // The terminal font customizations default to the theme (empty family)
+    // and 13px.
+    expect(resolved.terminalFontFamily).toBe('')
+    expect(resolved.terminalFontSize).toBe(13)
     // The enable-switch maps resolve to {} (everything on) for old documents.
     expect(resolved.tabsEnabled).toEqual({})
     expect(resolved.viewersEnabled).toEqual({})
@@ -59,6 +63,6 @@ describe('dsh-better-sidebar plugin export shape', () => {
     const overridden = (PrefsSchema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
     })({ openByDefault: false, defaultWidthPercent: 45 })
-    expect(overridden).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, explorerExclude: [], tabsEnabled: {}, viewersEnabled: {} })
+    expect(overridden).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, explorerExclude: [], tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
   })
 })

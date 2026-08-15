@@ -66,5 +66,14 @@ export function decodeHtmlUrl(pathname: string): HtmlDecodeResult {
   if (sessionId === undefined || sessionId === '' || pathSegments.length === 0 || pathSegments.some(segment => segment === '')) {
     return { ok: false, status: 400, message: 'sessionId and file path are required' }
   }
-  return { ok: true, ref: { sessionId, path: `/${pathSegments.join('/')}` } }
+  // A Windows drive segment ('D:') is the FIRST path segment of an encoded
+  // drive path. Rejoining it with a leading slash would yield '/D:/work/...'
+  // which node's path.resolve() mangles into 'D:\D:\work\...' on Windows —
+  // the html route's isWithin(cwd) fence would then reject every drive path.
+  // Keep the drive form slash-free so requireAbsolute() resolves it verbatim.
+  const first = pathSegments[0] ?? ''
+  const path = /^[A-Za-z]:$/.test(first)
+    ? pathSegments.join('/')
+    : `/${pathSegments.join('/')}`
+  return { ok: true, ref: { sessionId, path } }
 }

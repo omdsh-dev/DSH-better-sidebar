@@ -5,9 +5,11 @@
  * copy. The toggles are CARDS in a responsive grid: the card's main area is
  * the switch, the visual state IS the state (highlighted = enabled),
  * announced via `aria-pressed`, and the check badge sits at the far right.
- * Features that declare related settings carry a gear corner button whose
- * popup rows (native checkboxes) are tested through the extracted
- * FeatureSettingsRows component (the Modal portal renders only while open).
+ * The general rows follow the DSH settings-row recipe with custom SWITCHES
+ * (real checkboxes driving a styled track). Features that declare related
+ * settings carry a gear corner button whose popup rows (switch controls)
+ * are tested through the extracted FeatureSettingsRows component (the Modal
+ * portal renders only while open).
  *
  * Rendered with renderToString (mount effects — the settings RPC sync — do
  * not run in SSR; the initial store prefs are the render input).
@@ -18,7 +20,7 @@ import { createElement } from 'react'
 import { createSidebarStore, type SidebarStore } from '../src/client/state.ts'
 import { createBetterSidebarService, type BetterSidebarService } from '../src/client/service.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
-import { FeatureSettingsRows, SideCardSection, type SideCardSectionProps } from '../src/client/SideCardSection.tsx'
+import { FeatureSettingsRows, mergePluginSetting, SideCardSection, type SideCardSectionProps } from '../src/client/SideCardSection.tsx'
 
 /** One tab + one viewer + the subagent-style nested toggle under a tab. */
 function mount(): { store: SidebarStore; service: BetterSidebarService } {
@@ -86,12 +88,25 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('>explorer<')
     expect(html).toContain('data-icon="subagent"')
     expect(html).toContain('>Subagents<')
-    // Default prefs: openByDefault + interceptOpenPath + both tabs + the
-    // image viewer are all enabled → 5 cards pressed, none pressed=false.
+    // Default prefs: openByDefault + interceptOpenPath switches checked, and
+    // both tabs + the image viewer cards pressed (3 aria-pressed cards).
     // The nested auto-open toggle is NOT an inline card (it lives in the popup).
-    expect(pressedCount(html, 'true')).toBe(5)
+    expect(pressedCount(html, 'true')).toBe(3)
     expect(pressedCount(html, 'false')).toBe(0)
+    // The general toggles are custom switches (real checkboxes, checked).
+    expect(html.match(/checked=""/g)?.length).toBe(2)
     expect(html).not.toContain('Auto-open Subagents')
+  })
+
+  it('renders the section intro and group headings with inventory counts', () => {
+    const { store, service } = mount()
+    const html = renderSection(store, service)
+    expect(html).toContain('Manage what the side card shows and how it behaves')
+    // Group headings carry the inventory count badge (2 tabs, 1 viewer).
+    expect(html).toContain('>Sidebar content</span><span')
+    expect(html).toContain('>File viewers</span><span')
+    expect(html).toContain('>2</span>')
+    expect(html).toContain('>1</span>')
   })
 
   it('renders one small card per registered viewer: icon + title + exts', () => {
@@ -112,6 +127,20 @@ describe('SideCardSection declarative inventory', () => {
     expect(html.match(/aria-label="[^"]*Feature settings"/g)?.length).toBe(2)
   })
 
+  it('renders the two dashed "add plugin" cards (tab grid + viewer grid)', () => {
+    const { store, service } = mount()
+    const html = renderSection(store, service)
+    // The tab grid's dashed card (tab registration).
+    expect(html).toContain('Add tab plugins')
+    expect(html).toContain('Register a new sidebar page')
+    // The viewer grid's dashed card (file-previewer registration).
+    expect(html).toContain('Add preview plugins')
+    expect(html).toContain('Register a file-type preview')
+    // The add cards are plain buttons (open the modals), never switches:
+    // they carry no aria-pressed, so the pressed-card counts stay untouched.
+    expect(pressedCount(html, 'true')).toBe(3)
+  })
+
   it('a disabled feature renders pressed=false', () => {
     const { store, service } = mount()
     store.setPrefs({ ...store.getPrefs(), tabsEnabled: { subagent: false }, viewersEnabled: { image: false } })
@@ -119,8 +148,9 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('>Subagents<')
     expect(html).toContain('>Image<')
     expect(pressedCount(html, 'false')).toBe(2)
-    // openByDefault + interceptOpenPath + the explorer stay pressed.
-    expect(pressedCount(html, 'true')).toBe(3)
+    // The explorer card stays pressed; the general switches stay checked.
+    expect(pressedCount(html, 'true')).toBe(1)
+    expect(html.match(/checked=""/g)?.length).toBe(2)
   })
 
   it('hides the gear of a disabled feature (its related settings are dormant)', () => {
@@ -145,7 +175,7 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
     desc: () => 'Expand on new subagent',
   }]
 
-  it('renders one native checkbox row per declared toggle with its current value', () => {
+  it('renders one switch row per declared toggle with its current value', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
       toggles,
       texts: [],
@@ -155,7 +185,9 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
     }))
     expect(html).toContain('Auto-open Subagents')
     expect(html).toContain('Expand on new subagent')
-    // The checkbox reflects the prefs value (false here → unchecked).
+    // The row's switch is a real checkbox (aria-label = the toggle title)
+    // reflecting the prefs value (false here → unchecked).
+    expect(html).toContain('aria-label="Auto-open Subagents"')
     expect(html).not.toContain('checked=""')
   })
 
@@ -188,5 +220,99 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
     expect(html).toContain('placeholder="e.g. *.meta"')
     // The textarea value is the patterns joined by newlines.
     expect(html).toContain('*.meta\nnode_modules')
+  })
+
+  it('renders a text row as an input seeded with the pref value (empty = theme default)', () => {
+    const html = renderToString(createElement(FeatureSettingsRows, {
+      toggles: [{
+        key: 'terminalFontFamily',
+        type: 'text',
+        title: () => 'Font family',
+        desc: () => 'CSS stack',
+        placeholder: '"JetBrains Mono", monospace',
+      }],
+      prefs: { ...prefs, terminalFontFamily: '"JetBrains Mono", monospace' },
+      onToggle: () => {},
+      onCommit: () => '',
+    }))
+    expect(html).toContain('Font family')
+    expect(html).toContain('placeholder="&quot;JetBrains Mono&quot;, monospace"')
+    // The input carries the pref value (no switch for text rows).
+    expect(html).toContain('value="&quot;JetBrains Mono&quot;, monospace"')
+    expect(html).not.toContain('type="checkbox"')
+  })
+
+  it('renders a number row with the pref value, the declared bounds and a unit suffix', () => {
+    const html = renderToString(createElement(FeatureSettingsRows, {
+      toggles: [{
+        key: 'terminalFontSize',
+        type: 'number',
+        title: () => 'Font size',
+        min: 9,
+        max: 32,
+        unit: 'px',
+      }],
+      prefs: { ...prefs, terminalFontSize: 18 },
+      onToggle: () => {},
+      onCommit: () => '18',
+    }))
+    expect(html).toContain('Font size')
+    expect(html).toContain('type="number"')
+    expect(html).toContain('value="18"')
+    expect(html).toContain('min="9"')
+    expect(html).toContain('max="32"')
+    expect(html).toContain('px')
+    expect(html).not.toContain('type="checkbox"')
+  })
+})
+
+describe('mergePluginSetting (v0.12.0, codex review fix)', () => {
+  it('sequential merges are additive — a later write never drops an earlier key', () => {
+    // Simulates two same-tick updatePluginSetting calls: each merge spreads
+    // the map it was GIVEN, so building from the latest optimistic map
+    // preserves both keys (the pre-fix code spread the stale render-time
+    // prefs twice and the second write dropped the first key).
+    let map: Record<string, Record<string, unknown>> = {}
+    map = mergePluginSetting(map, 'my-plugin:db', 'pageSize', 25)
+    map = mergePluginSetting(map, 'my-plugin:db', 'theme', 'dark')
+    expect(map['my-plugin:db']).toEqual({ pageSize: 25, theme: 'dark' })
+    // A second descriptor's blob stays independent.
+    map = mergePluginSetting(map, 'other:view', 'refresh', true)
+    expect(map['my-plugin:db']).toEqual({ pageSize: 25, theme: 'dark' })
+    expect(map['other:view']).toEqual({ refresh: true })
+    // Overwriting one key keeps the sibling keys.
+    map = mergePluginSetting(map, 'my-plugin:db', 'pageSize', 50)
+    expect(map['my-plugin:db']).toEqual({ pageSize: 50, theme: 'dark' })
+  })
+})
+
+describe('FeatureSettingsRows valueSource (v0.12.0, independent CR fix)', () => {
+  it('plugin rows read from their OWN value source — a plugin key colliding with a host pref never reads the host value', () => {
+    const prefs = { ...SIDEBAR_PREFS_DEFAULTS, openByDefault: true }
+    const toggle = { key: 'openByDefault', title: 'My flag' }
+    // valueOf returns undefined (the plugin never wrote this key): the row
+    // must render UNCHECKED even though the host pref openByDefault is true.
+    let html = renderToString(createElement(FeatureSettingsRows, {
+      toggles: [toggle],
+      prefs,
+      onToggle: () => {},
+      valueSource: () => undefined,
+    }))
+    expect(html).not.toContain('checked=""')
+    // The plugin wrote `true` into its own blob: the row is checked.
+    html = renderToString(createElement(FeatureSettingsRows, {
+      toggles: [toggle],
+      prefs,
+      onToggle: () => {},
+      valueSource: () => true,
+    }))
+    expect(html).toContain('checked=""')
+    // Without valueOf the row falls back to the prefs face (host semantics).
+    html = renderToString(createElement(FeatureSettingsRows, {
+      toggles: [toggle],
+      prefs,
+      onToggle: () => {},
+    }))
+    expect(html).toContain('checked=""')
   })
 })

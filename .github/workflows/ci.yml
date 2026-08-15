@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel a superseded PR run (it is on a stale commit); never cancel a
+# push run — it is already producing the post-merge signal. The mount job
+# boots a real DSH + Chromium, so the savings matter there most.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Tests run git log against this repository and need the full history.
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      # The plugin's git revert/cherry-pick spawn git without setting an
+      # identity (deliberate, see tests/smoke.spec.ts) and rely on ambient
+      # config; the runner has none by default.
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.name "dsh-better-sidebar-ci"
+          git config --global user.email "ci@dsh.invalid"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Test
+        run: pnpm test
+      - name: Build
+        run: pnpm build
+      # The consumer-facing declaration surface guard: a browser-only plugin
+      # (no @types/node, skipLibCheck: false) must type-check against the
+      # shipped lib/types. Runs AFTER build (it reads the built output).
+      - name: Check consumer type surface
+        run: pnpm check:consumer-types
+
+  # Pack the plugin as an npm tarball, mount it into a REAL DSH instance
+  # through the official `dsh plugin --profile web add` channel, and render
+  # the DSH web UI headlessly (Playwright Chromium) to prove the plugin
+  # mounts without crashing the shell. Drives `pnpm test:mount`, which boots
+  # a keyless `dsh web` against a scratch profile and sweeps every built-in
+  # sidebar tab. No API key needed — the whole lane is deterministic.
+  plugin-mount:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # CI runs must never report to the production telemetry endpoint baked
+    # into the DSH composition (same guard DSH's own CI uses).
+    env:
+      DSH_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Pin the DSH CLI the lane mounts into; the profile's bundle stack
+      # (dsh-base / dsh-web-app) resolves from this installation. Keep in
+      # step with the plugin's @deepseek-ai/* peer range when bumping.
+      - name: Install dsh CLI (pinned)
+        run: npm install -g @deepseek-ai/dsh@0.1.0-rc.6
+
+      # lib/ is gitignored; the tarball is produced from this build.
+      - name: Build and pack the npm tarball
+        run: pnpm build && pnpm pack
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Mount + headless-render smoke
+        run: pnpm test:mount
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore

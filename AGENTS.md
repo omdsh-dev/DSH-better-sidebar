@@ -12,6 +12,16 @@ better-sidebar 从 v0.4.0 起暴露 `ctx.betterSidebar` 服务（Cordis context 
 - **挂载只走 `cordis.patch.yml` + profile 机制**（`~/.dsh/profiles/<profile>/`），插件永远作为独立包被 profile 引用，不反向侵入 DSH。
 - 需要 harness 没有的能力时，用 DSH **现成的只读/公开 API** 或插件自有路由实现（参考 §7 的 `jobs.output` 事件回放：读会话事件日志而非动注册表）；如果确实做不到，先向用户说明取舍，而不是直接改 DSH。
 
+### CI 挂载冒烟（`plugin-mount` job / `pnpm test:mount`）
+
+仓库的 CI 有一条「npm 打包 → 真实挂载 → 无头渲染」门禁（`.github/workflows/ci.yml` 的 `plugin-mount` job），证明**打包产物**在真实 DSH 上挂载后无头渲染不会 crash：
+
+1. `pnpm build && pnpm pack` 产出 tarball（与发布产物一致）。
+2. `scripts/e2e-mount.sh` 用官方 CLI 把它装进一个**全新 scratch profile**（`dsh plugin --profile web add file:<tarball>`，触发 `dsh.profile.bundles` 协调），然后启动真实 `dsh web`（keyless，`--port 0`）。
+3. `tests/e2e/mount.e2e.ts`（Playwright Chromium）加载页面，断言外壳与 `[data-dsh-better-sidebar]` 挂载、无 `dsh-better-sidebar:` 错误条、无 pageerror/插件 console 错误，并通过「+ 菜单」逐个打开内置 tab（含终端懒加载 chunk）深扫，再经 Explorer 打开 seed 文件强制加载 editor 懒加载 chunk（`client-editor.js`）——缺失的内置 tab 或 chunk 都会使门禁变红。
+
+本地跑：`pnpm build && pnpm pack && pnpm exec playwright install chromium && pnpm test:mount`（需 PATH 上有 `dsh` 或可经 npx 拉取）。DSH CLI 版本在 CI 钉住 `@deepseek-ai/dsh@0.1.0-rc.6`（与插件 peer 范围同步）。`tests/e2e` 的 spec 命名 `*.e2e.ts` + vitest `exclude` 双保险与 vitest 隔离；**改动 vitest `exclude` 时必须保留默认排除项**（`exclude` 会整体替换默认值）。
+
 ---
 
 ## 1. 服务定位
@@ -86,7 +96,16 @@ export function apply(ctx: Context): void {
 import type { TabDescriptor, FileViewerDescriptor, BetterSidebarService } from 'dsh-better-sidebar'
 ```
 
-类型定义在 `lib/types/client/service.d.ts`，通过 `package.json` 的 `./client/service`（别名 `./client/api`）exports 子路径暴露。
+类型定义在 `lib/types/client/service.d.ts`，通过 `package.json` 的 `./client/service`（别名 `./client/api`）exports 子路径暴露。v0.12.0 起服务模块还 re-export 了完整的状态词汇表，消费者可以直接命名（不再只能靠推断）：
+
+```ts
+import type {
+  SidebarTab, SidebarState, SidebarStore, SidebarSnapshot, SidebarDiffRef, TabType,
+  SessionScope, SidebarPrefs, OpenTabSeed, SidebarSettingsRenderProps,
+} from 'dsh-better-sidebar/client/service'
+```
+
+> 💡 **类型合并触发路径**：`import type {} from 'dsh-better-sidebar/client/service'` 同样会加载 `Context` 的 augmentation（`declare module 'cordis'` 在 context-types.d.ts 中，service 声明会拉入它）——纯浏览器侧插件建议走 `client/service` 路径，避免拉进宿主半的 Node 类型图（主入口 `dsh-better-sidebar` 的声明面含宿主代码，宿主消费者本就处于 Node 环境）。client 可达声明图（`client/*` + context-types + html-route + prefs-shared）自 v0.12.0 起**零 Node 依赖**（`scripts/check-consumer-types.sh` 守护），无 `@types/node`、`skipLibCheck: false` 也能编译。
 
 ---
 
@@ -118,7 +137,7 @@ interface TabDescriptor {
    * 返回 undefined 表示不去重（每次都新开，但同 id 会被 id 安全网聚焦）。
    * 内置策略：explorer/git/subagent 用 single: true；editor 用 tab => tab.path；diff 用 tab => tab.id。
    */
-  dedupeKey?: (tab: SidebarTab) => string | undefined
+  dedupeKey?: (tab: SidebarTab) => string | undefined  // 必须保持纯函数：每次 open 会求值两次，抛错会向外传播
   /**
    * 自定义 tab 创建（minting SidebarTab + 状态 patch）。
    * 返回 null 拒绝创建。terminal 用它生成 terminal:<n> id 并递增 nextTerminal。
@@ -127,17 +146,32 @@ interface TabDescriptor {
   createTab?: (state: SidebarState) => { tab: SidebarTab; patch?: Partial<SidebarState> } | null
   /**
    * 声明式设置（v0.4.1+）：每个注册的 tab 都会在 Side card 设置页获得一行
-   * 开关（图标 + 标题 + 类型 id），`settings.toggles` 在其行下追加嵌套开关、
+   * 开关（图标 + 标题 + 类型 id），`settings.toggles` 在其行下追加嵌套设置行，
    * `settings.texts` 追加多行文本输入行（每行一个值，失焦提交到
-   * SidebarPrefs 的字符串数组字段），均绑定 SidebarPrefs 字段。嵌套行仅
-   * 父级启用时显示（齿轮按钮在父级卡片上）。
+   * SidebarPrefs 的字符串数组字段），均绑定 SidebarPrefs 字段。嵌套设置仅
+   * 父级启用时显示（齿轮按钮在父级卡片上）。v0.11.0 起行控件不限于
+   * 布尔开关：`type: 'switch' | 'text' | 'number'`，缺省 'switch'；text/number
+   * 行 blur/Enter 提交，number 行按 min/max 钳制，unit 渲染单位后缀）。
+   * v0.12.0 起增加两个插件自有扩展（详见 §5 声明式设置）：
+   * `pluginToggles`（插件自有 key，持久化在 pluginSettings[id]，无需宿主 schema 字段）
+   * 与 `render`（自定义设置面板，替代行列表）。
    */
   settings?: {
     toggles?: readonly {
-      /** SidebarPrefs 字段名（内置键：'autoOpenSubagent' / 'agentTerminalTools' / 'htmlViewerNoSandbox' / 'htmlViewerDefaultUnsafe' / 'browserNoSandbox' / 'browserInterceptLinks'） */
+      /** SidebarPrefs 字段名（内置键：'autoOpenSubagent' / 'agentTerminalTools' / 'terminalFontFamily' / 'htmlViewerNoSandbox' / 'htmlViewerDefaultUnsafe' / 'browserNoSandbox' / 'browserInterceptLinks'） */
       key: string
       title: string | (() => string)
       desc?: string | (() => string)
+      /** 行控件类型；缺省 'switch'（向后兼容）。 */
+      type?: 'switch' | 'text' | 'number'
+      /** number 行的提交钳制下限。 */
+      min?: number
+      /** number 行的提交钳制上限。 */
+      max?: number
+      /** text 行的输入占位符。 */
+      placeholder?: string
+      /** 输入框后的单位后缀（如 'px'）。 */
+      unit?: string
     }[]
     texts?: readonly {
       /** SidebarPrefs 字符串数组字段名（内置键：'explorerExclude'） */
@@ -146,7 +180,51 @@ interface TabDescriptor {
       desc?: string | (() => string)
       placeholder?: string | (() => string)
     }[]
+    /** 插件自有设置行（v0.12.0+）：形状同 toggles，但 key 是插件局部的，
+     *  持久化在 `pluginSettings[<descriptor id>]`——不需要宿主 PrefsSchema 字段。 */
+    pluginToggles?: readonly {
+      key: string
+      title: string | (() => string)
+      desc?: string | (() => string)
+      type?: 'switch' | 'text' | 'number'
+      min?: number
+      max?: number
+      placeholder?: string
+      unit?: string
+    }[]
+    /** 自定义设置面板（v0.12.0+）：给出时齿轮弹窗渲染它而非行列表。
+     *  props 含 store/service/prefs、本 descriptor 的 pluginSettings blob、
+     *  updatePluginSetting(key, value) 与 close()。抛错会被吞掉并显示内联错误。 */
+    render?: (props: {
+      store: SidebarStore
+      service: BetterSidebarService
+      prefs: SidebarPrefs
+      pluginSettings: Record<string, unknown>
+      updatePluginSetting: (key: string, value: unknown) => void
+      close: () => void
+    }) => ReactNode
   }
+  /**
+   * tab 角标（v0.12.0+）：tab 图标旁的小圆角 pill。number 渲染计数（99+ 封顶），
+   * string 原样文本，null/undefined 不显示。每次 tab 栏渲染都会调用——保持廉价；
+   * 抛错会被吞掉（不显示角标，不影响渲染）。
+   */
+  badge?: (ctx: Context, scope: SessionScope, state: SidebarState) => string | number | null | undefined
+  /**
+   * 生命周期回调（v0.12.0+），只由 SERVICE 路径触发：
+   * - onOpen：openTab 真正**新建** tab 后（dedupe/id 安全网聚焦**不算**打开）；
+   * - onActivate：tab 被聚焦时（dedupe 聚焦、id 安全网聚焦、tab 栏点击激活）；
+   * - onClose：closeTab 关闭 tab 后。
+   * 内置专属流程（diff 拆分放置、agent 终端 reconcile）直接改 state，不触发回调——
+   * 但它们只作用于内置类型（diff/terminal），外部插件的 tab 永远走 service 路径。
+   * 回调抛错只 console.error，绝不打断打开/关闭流程。openTab 的回调 scope
+   * 携带调用者传入的 { sessionId, cwd? }（+ 菜单路径带 cwd；无 scope 的自动
+   * 打开路径只有 sessionId）；closeTab/activateTab 的回调 scope 只在显式传入
+   * scope 参数时带 cwd。
+   */
+  onOpen?: (tab: SidebarTab, scope: SessionScope) => void
+  onActivate?: (tab: SidebarTab, scope: SessionScope) => void
+  onClose?: (tab: SidebarTab, scope: SessionScope) => void
   /** 渲染函数 */
   component: (props: TabComponentProps) => ReactNode
 }
@@ -211,7 +289,8 @@ ctx.effect(() =>
     title: 'Commits',
     icon: <CommitIcon />,
     order: 70,
-    available: (state) => hasGitRepo(state),  // 返回 false 时 + 菜单显示为 disabled
+    available: (ctx, scope, state) => hasGitRepo(state),  // 三参 (ctx, scope, state)；返回 false 时 + 菜单显示为 disabled
+    // 注意：available 只影响 + 菜单的 disabled 状态，不会拒绝 openTab（只有设置页的禁用开关会）。
     dedupeKey: () => 'my-plugin:commits',
     component: ({ scope }) => <CommitsView sessionId={scope.sessionId} />,
   })
@@ -254,8 +333,9 @@ interface FileViewerDescriptor {
   fetchStrategy: 'none' | 'fsRead' | 'mediaUrl' | 'custom' | 'binary-download'
   /** 内容嗅探（覆盖 exts）：head 字节可用时，第一个 detect 返回 true 的 viewer 命中 */
   detect?: (path: string, head: Uint8Array) => boolean
-  /** fetchStrategy='custom' 时的加载函数 */
-  load?: (path: string, scope: SessionScope) => Promise<unknown>
+  /** fetchStrategy='custom' 时的加载函数；v0.12.0+ 第三参 signal 在 viewer
+   *  卸载/重匹配时中止（忽略 signal 的 load 也照常工作） */
+  load?: (path: string, scope: SessionScope, signal?: AbortSignal) => Promise<unknown>
   /** 声明式设置（v0.4.1+）：形状同 TabDescriptor.settings */
   settings?: { toggles?: readonly { key: string; title: string | (() => string); desc?: string | (() => string) }[]; texts?: readonly { key: string; title: string | (() => string); desc?: string | (() => string); placeholder?: string | (() => string) }[] }
   /** 渲染函数 */
@@ -286,7 +366,7 @@ interface FileViewerProps {
 |---|---|---|---|
 | `none` | 不需要字节 | （无） | 自渲染（如纯 UI） |
 | `fsRead` | `/sidebar/api` 的 `fs.read` | `content`, `truncated` | 文本类（CSV/JSON/XML） |
-| `mediaUrl` | `/sidebar/file` 媒体路由 URL | `mediaUrl` | 图片/PDF/Office（viewer 自己 fetch 字节） |
+| `mediaUrl` | `/sidebar/file` 媒体路由 URL | `mediaUrl` | 图片/PDF（viewer 自己 fetch 字节） |
 | `custom` | viewer 的 `load()` 函数 | `customData` | 自定义协议（如远程拉取） |
 | `binary-download` | 不预览，显示下载按钮 | （无） | 无客户端渲染器的二进制格式 |
 
@@ -301,7 +381,7 @@ interface FileViewerProps {
 
 > **head 字节从哪来**：第一次匹配（纯扩展名）没有 head。`fsRead` 策略读取后若文件为二进制，host 的 `fs.read` 响应会带 `head` 字段（base64，前 4KB），编辑器会用它对 `detect` viewer **重匹配一次**——所以 detect 型 viewer 的实际触发场景是"扩展名匹配落空/二进制文件"。文本文件的 detect 嗅探不在内置流程内（用 `exts` 或 `custom` 策略替代）。
 
-> **内置 viewer**（不可重复注册，全部 9 个）：image(0) / pdf(0) / docx(0) / xlsx(0) / pptx(0) / markdown(0, fsRead) / html(0, fsRead, 沙箱 iframe 预览) / code(-100, catch-all, fsRead) / binary-download(-50, exts doc/xls/ppt + NUL detect)。
+> **内置 viewer**（不可重复注册，全部 6 个）：image(0) / pdf(0) / markdown(0, fsRead) / html(0, fsRead, 沙箱 iframe 预览) / code(-100, catch-all, fsRead) / binary-download(-50, exts doc/xls/ppt + NUL detect)。Office 三件套预览（.docx/.xlsx/.pptx）**不再内置**——已迁至推荐插件（设置页「添加插件」→ 文件预览弹窗里的 Office 预览插件），该插件以相同 id 经 `ctx.betterSidebar.registerFileViewer` 注册。
 > code 是兜底 viewer：任何其他 viewer 未认领的文件都会落到 code（CodeMirror 文本编辑）；二进制文件经 head 重匹配被 binary-download 的 NUL detect 认领（下载按钮）。外部 viewer 注册同扩展名 + 更高 priority 即可覆盖。
 
 ### 4.5 注册示例
@@ -378,22 +458,61 @@ interface BetterSidebarService {
    * 打开一个 tab（+ 菜单和外部触发都用它；走 descriptor.dedupeKey 去重）。
    * title 可选：给出时优先于 descriptor.title（editor 显示文件名）；
    * 有 createTab 的 descriptor（terminal）会忽略 title/path/id。
-   * url 可选：落地后把 tab 的 path 预填为 URL（侧边栏浏览器导航种子，
-   * 通常配合 hostname title；对 createTab 铸造的 tab 同样生效）。
+   * url 可选：把**新建** tab 的 path 预填为 URL（侧边栏浏览器导航种子，
+   * 通常配合 hostname title；对 createTab 铸造的 tab 同样生效）。聚焦既有
+   * tab 时 url 不会覆写其 path。
    * 被设置禁用的类型是 no-op（console.warn 提示）。
+   * scope（v0.12.0+）定向到指定 session：给出且非当前 session 时，打开落在
+   * 该 session 的侧边栏状态里（没有则按 prefs 新建），不切换 UI 的激活 session；
+   * 定向打开**不自动展开**目标 session 的面板（用户看不见，展开无意义）；
+   * 缺省或指向当前 session 时行为与之前完全一致。注意：available 不拦截 openTab。
    * 内容型打开（带 path/url seed）必须落在视野内：承载落点 pane 的面板
    * 折叠时自动展开（右侧面板；落点 pane 在底部树则展开底部面板；窄视口
    * 展开合并抽屉）；类型型打开（+ 菜单、agent 终端自动补 tab）不展开。
    */
-  openTab(seed: { type: string; title?: string; path?: string; diff?: SidebarTab['diff']; id?: string; url?: string }): void
-  /** 关闭一个 tab */
-  closeTab(tabId: string): void
+  openTab(seed: OpenTabSeed, scope?: SessionScope): void
+  /** 关闭一个 tab（未知 id 严格 no-op，无状态搅动）；scope（v0.12.0+）
+   *  随回调传递（含可选 cwd），缺省为 { sessionId: 当前 } */
+  closeTab(tabId: string, scope?: SessionScope): void
   /** 订阅注册表变化（register/dispose 时触发） */
   subscribe(listener: () => void): () => void
+  // ── v0.12.0+ ──────────────────────────────────────────────────────────
+  /** 插件版本（如 '0.12.0'；与 package.json 同步，测试守护） */
+  readonly version: string
+  /** 单调能力清单（只增不删）：'badge' | 'tabLifecycle' | 'updateTab' |
+   *  'openFile' | 'targetedOpen' | 'stateSubscription' | 'tabMeta' |
+   *  'pluginSettings'——消费插件用 `features.includes('xxx')` 按能力 gate。 */
+  readonly features: readonly string[]
+  /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs。
+   *  session 未激活时 state/sessionId 为 undefined。 */
+  getSnapshot(): SidebarSnapshot
+  /** 订阅快照变化（会话切换/状态变更/prefs 写入）；返回 disposer */
+  subscribeState(listener: () => void): () => void
+  /** 更新一个已打开 tab 的显示字段（title/path/meta）；tab 不存在时 no-op */
+  updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void
+  /** 激活一个已打开的 tab（tab 栏点击路径；触发 descriptor.onActivate；
+   *  未知 id 严格 no-op）；scope（v0.12.0+）随回调传递，同 closeTab */
+  activateTab(tabId: string, scope?: SessionScope): void
+  /** 在 scope.sessionId 的侧边栏编辑器打开一个文件（title 缺省为文件名；
+   *  id 按路径派生，与内置 open-path 拦截一致，不同文件可并排打开） */
+  openFile(scope: SessionScope, path: string, title?: string): void
+}
+
+/** openTab 的 seed（v0.12.0 起导出命名类型） */
+interface OpenTabSeed {
+  type: string
+  title?: string
+  path?: string
+  diff?: SidebarTab['diff']
+  id?: string
+  url?: string
+  /** JSON 可序列化的自定义状态，随 tab 持久化（刷新后原样恢复）；
+   *  updateTab/seed 传 undefined 表示「不改」，传 null 可显式清除 */
+  meta?: unknown
 }
 ```
 
-> **声明式设置（v0.4.1+）**：每个注册的 tab/viewer 自动出现在 DSH 设置页「侧边卡片」分区的清单里——响应式网格中的**小卡片**（图标 + 标题 + 类型 id + **高亮 = 启用**，勾选徽标钉在卡片最右端，viewer 卡片还显示扩展名），开关持久化到 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，缺省 = 启用）。关闭语义：tab 从 `+` 菜单消失、`openTab` 拒绝新开、子代理自动展开 / agent 终端自动补 tab 等派生流程停止，**已打开的 tab 保留**；viewer 被 `matchFileViewer` 跳过，文件落到下一个匹配。`settings.toggles` 声明的相关设置（如子代理的 `autoOpenSubagent`）通过卡片右下角的齿轮按钮在**原生弹窗**中编辑（复选框行），`settings.texts` 声明的文本设置（如资源管理器的 `explorerExclude`）在同一弹窗中渲染**多行文本输入**（每行一个值，失焦提交），父级卡片关闭时齿轮隐藏；**key 必须是宿主 PrefsSchema 的字段**（内置 toggles 键：`autoOpenSubagent` / `agentTerminalTools` / `htmlViewerNoSandbox` / `htmlViewerDefaultUnsafe` / `browserNoSandbox` / `browserInterceptLinks`；内置 texts 键：`explorerExclude`），外部插件的自定义键会被 settings seam 丢弃。
+> **声明式设置（v0.4.1+）**：每个注册的 tab/viewer 自动出现在 DSH 设置页「侧边卡片」分区的清单里——响应式网格中的**小卡片**（图标 + 标题 + 类型 id + **高亮 = 启用**，勾选徽标钉在卡片最右端，viewer 卡片还显示扩展名），开关持久化到 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，缺省 = 启用）。关闭语义：tab 从 `+` 菜单消失、`openTab` 拒绝新开、子代理自动展开 / agent 终端自动补 tab 等派生流程停止，**已打开的 tab 保留**；viewer 被 `matchFileViewer` 跳过，文件落到下一个匹配。`settings.toggles` 声明的相关设置（如子代理的 `autoOpenSubagent`、终端的 `terminalFontFamily`/`terminalFontSize`）通过卡片右下角的齿轮按钮在**原生弹窗**中编辑——`type: 'switch'` 行是复选框，`type: 'text'`/`'number'` 行是输入框（v0.11.0+）；`settings.texts` 声明的文本设置（如资源管理器的 `explorerExclude`）在同一弹窗中渲染**多行文本输入**（每行一个值，失焦提交到 SidebarPrefs 的字符串数组字段）——父级卡片关闭时齿轮隐藏；`settings.toggles` / `settings.texts` 的 **key 必须是宿主 PrefsSchema 的字段**（内置 toggles 键：`autoOpenSubagent` / `agentTerminalTools` / `terminalFontFamily` / `terminalFontSize` / `htmlViewerNoSandbox` / `htmlViewerDefaultUnsafe` / `browserNoSandbox` / `browserInterceptLinks`；内置 texts 键：`explorerExclude`）。**v0.12.0 起设置 seam 已开放**：外部插件用 `settings.pluginToggles`（同款行控件，key 插件局部）或 `settings.render`（自定义面板）声明自己的设置，值持久化在 prefs 文档的 `pluginSettings[<descriptor id>]`（开放 map，宿主 schema 已有字段，无需注册）——齿轮弹窗对 tab 与 viewer 都可用（viewer 卡片 v0.12.0 起也有齿轮）。
 
 ---
 
@@ -417,7 +536,7 @@ interface BetterSidebarService {
 | **portal 限制** | 整面板 slot 由 ui-layout 独占，外部 tab 只能进入 better-sidebar 的 portal 内部，无法全屏替换 |
 | **id 冲突** | `registerTab` / `registerFileViewer` 对重复 id 抛错；建议用包前缀（`my-plugin:xxx`） |
 | **i18n 跟随** | 侧边栏界面文案跟随 DSH 的 `ctx.locale`（`@deepseek-ai/dsh-client-locale`）：词典注册在 `betterSidebar` 命名空间，语言偏好（Host-backed `locale.preference`）与浏览器语言不一致时以 DSH 为准并实时切换；locale 服务缺失时回退浏览器语言。插件自身的 `t()`（`src/client/locales.ts`）由 `apply()` 挂接服务；消费插件**不要**依赖此内部函数——标题等字段传字符串或 `() => string` 即可（i18n 友好）。⚠️ 渲染 DSH 的 `MarkdownText` 时必须传 `codeLabels={{ copyLabel: t('copy'), copiedLabel: t('copied') }}`——该组件 cordis-free，漏传则代码块复制按钮回退硬编码中文 |
-| **懒加载 chunk** | 内置重依赖（Univer/xterm/CodeMirror/pptx/docx）在独立 bundle（`lib/client-<name>.js`）中，经 `/sidebar/bundle` 路由按需下发；每个脚本把 factory 赋到插件自有全局注册表 `globalThis.__dshChunks__[<name>]`，由 `src/client/chunk-loader.ts` 用自定义 require（externals 经 `__DSH_MODULES__` seed 分支解析）物化——**不经过** `__ModuleLoader__` 注册；**核心 bundle 禁止静态 import `src/client/chunks/*`**（会把库拖回启动路径）；对消费插件透明——懒加载只作用于内置 descriptor，`component` 契约（`(props) => ReactNode` 纯渲染函数）不变 |
+| **懒加载 chunk** | 内置重依赖（xterm/CodeMirror）在独立 bundle（`lib/client-<name>.js`）中，经 `/sidebar/bundle` 路由按需下发；每个脚本把 factory 赋到插件自有全局注册表 `globalThis.__dshChunks__[<name>]`，由 `src/client/chunk-loader.ts` 用自定义 require（externals 经 `__DSH_MODULES__` seed 分支解析）物化——**不经过** `__ModuleLoader__` 注册；**核心 bundle 禁止静态 import `src/client/chunks/*`**（会把库拖回启动路径）；对消费插件透明——懒加载只作用于内置 descriptor，`component` 契约（`(props) => ReactNode` 纯渲染函数）不变 |
 
 ---
 
@@ -493,7 +612,7 @@ function CsvGrid(props: { rows: string[][]; path: string }): React.ReactNode { /
 function parseCsv(text: string): string[][] { /* ... */ }
 ```
 
-**注册到 profile**：在 `~/.dsh/profiles/web/package.json` 的 `dependencies` 加 `"my-plugin": "link:<你的插件路径>"`，在 `cordis.patch.yml` 加挂载行，`pnpm install`，重启 `dsh web` + 浏览器硬刷新。
+**注册到 profile**：在 `~/.dsh/profiles/web/package.json` 的 `dependencies` 加 `"my-plugin": "link:<你的插件路径>"`，在 `cordis.patch.yml` 加挂载行，`pnpm install`，浏览器硬刷新即可（DSH 对 client 改动热加载，无需重启 `dsh web`；仅 host 半改动需要重启）。
 
 ---
 
@@ -501,11 +620,12 @@ function parseCsv(text: string): string[][] { /* ... */ }
 
 better-sidebar 自己的内置 tab 和 viewer 就是参考实现（"吃狗粮"）：
 
-- **`src/client/builtins/`**：7 个内置 tab（explorer/git/subagent/terminal/browser/editor/diff）+ 9 个内置 viewer（image/pdf/docx/xlsx/pptx/markdown/html/code/binary-download）的注册代码（tabs.tsx / viewers.tsx / index.ts）
+- **`src/client/builtins/`**：7 个内置 tab（explorer/git/subagent/terminal/browser/editor/diff）+ 6 个内置 viewer（image/pdf/markdown/html/code/binary-download）的注册代码（tabs.tsx / viewers.tsx / index.ts；Office 预览已迁至推荐插件，见 plugins-viewers.ts）
 - **`src/client/service.ts`**：`BetterSidebarService` 接口 + `createBetterSidebarService` 工厂实现
-- **`src/client/SideCardSection.tsx`**：声明式设置页（注册表驱动清单 + `settings.toggles` 嵌套开关 + 开关持久化）
+- **`src/client/SideCardSection.tsx`**：声明式设置页（注册表驱动清单 + `settings.toggles` 嵌套设置行：switch/text/number + 持久化）
 - **`tests/service.spec.ts`**：注册表生命周期 / 匹配算法 / dedupe / createTab / 启用态 gating 测试
-- **`tests/builtins.spec.ts`**：内置注册清单断言（7 tab + 9 viewer + 声明式元数据）
-- **`docs/plans/2026-08-11-service-registry-design.md`** / **`docs/plans/2026-08-11-declarative-sidebar-settings-design.md`**：设计文档（含实施偏差记录）
+- **`tests/builtins.spec.ts`**：内置注册清单断言（7 tab + 6 viewer + 声明式元数据）
+- **`src/client/plugins-tabs.ts`** / **`src/client/plugins-viewers.ts`**：推荐插件目录（名字/url/简介/安装脚本，分别对应 Tab 注册与文件预览注册），在设置页两个「添加插件」弹窗展示（共享类型在 `plugins-shared.ts`）；插件作者可按扩展点加一条数据（弹窗内「跳转」直达仓库、「复制」把安装命令写入剪贴板，粘贴到 DSH 所在环境的终端执行）——数据完整性由 `tests/plugin-list.spec.ts` 守护
+- **`docs/plans/2026-08-11-service-registry-design.md`** / **`docs/plans/2026-08-11-declarative-sidebar-settings-design.md`** / **`docs/plans/2026-08-14-add-plugins-modal-design.md`**：设计文档（含实施偏差记录）
 
 调试时直接读这些文件即可看到所有 API 的真实用法。

@@ -34,6 +34,18 @@ export interface SidebarPrefs {
    */
   agentTerminalTools: boolean
   /**
+   * Custom terminal font-family stack (a CSS font-family value, e.g.
+   * `'JetBrains Mono', monospace`). Empty string follows the app's theme
+   * monospace font (`--ds-font-family-code`). Applied live to every
+   * terminal tab; configured under the terminal card's secondary settings.
+   */
+  terminalFontFamily: string
+  /**
+   * Custom terminal font size in px (9–32). Applied live to every terminal
+   * tab; configured under the terminal card's secondary settings.
+   */
+  terminalFontSize: number
+  /**
    * Whether expanding the bottom panel for the FIRST time in a session tries
    * to open a fresh terminal tab there (the terminal quota/type still gates
    * the attempt). On by default; the switch lives under the terminal tab's
@@ -104,12 +116,26 @@ export interface SidebarPrefs {
    * next matching viewer (or the download button when none match).
    */
   viewersEnabled: Record<string, boolean>
+  /**
+   * Plugin-owned settings blobs (v0.12.0+), keyed by descriptor id: each
+   * registered tab/viewer that declares `settings.pluginToggles` (or writes
+   * through `settings.render`'s `updatePluginSetting`) persists its values
+   * here — an open map, so third-party keys need no host PrefsSchema field.
+   * Values are JSON-serializable (the row controls produce strings /
+   * numbers / booleans; custom panels are responsible for their own).
+   */
+  pluginSettings: Record<string, Record<string, unknown>>
 }
 
 /** Range contract of {@link SidebarPrefs.defaultWidthPercent}. */
 export const WIDTH_PERCENT_MIN = 20
 export const WIDTH_PERCENT_MAX = 60
 export const WIDTH_PERCENT_DEFAULT = 30
+
+/** Range contract of {@link SidebarPrefs.terminalFontSize}. */
+export const TERMINAL_FONT_SIZE_MIN = 9
+export const TERMINAL_FONT_SIZE_MAX = 32
+export const TERMINAL_FONT_SIZE_DEFAULT = 13
 
 /** Fallback prefs used whenever the settings document is unreachable or malformed. */
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
@@ -119,6 +145,8 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   autoOpenJobs: true,
   agentTerminalTools: false,
   bottomPanelAutoTerminal: true,
+  terminalFontFamily: '',
+  terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
   interceptOpenPath: true,
   htmlViewerNoSandbox: false,
   htmlViewerDefaultUnsafe: false,
@@ -127,9 +155,15 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   explorerExclude: [],
   tabsEnabled: {},
   viewersEnabled: {},
+  pluginSettings: {},
 }
 
 /** Clamp one width percent into the contract range (shared by schema and client reads). */
 export function clampWidthPercent(value: number): number {
   return Math.min(WIDTH_PERCENT_MAX, Math.max(WIDTH_PERCENT_MIN, Math.round(value)))
+}
+
+/** Clamp one terminal font size into the contract range (shared by schema and client reads). */
+export function clampTerminalFontSize(value: number): number {
+  return Math.min(TERMINAL_FONT_SIZE_MAX, Math.max(TERMINAL_FONT_SIZE_MIN, Math.round(value)))
 }

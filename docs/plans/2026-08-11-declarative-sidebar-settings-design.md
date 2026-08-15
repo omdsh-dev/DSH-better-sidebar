@@ -135,3 +135,14 @@ isViewerEnabled(id: string): boolean
 4. **清单排序**：tabs 按 `hidden` 置后 + `order` 升序（editor/diff 殿后）；viewers 按 priority 降序（code 兜底最后）。
 5. **开关改为卡片点击（v0.4.1 追加）**：清单项与嵌套相关设置、`openByDefault` 全部从"复选框行"改为**可点击卡片**——`<button aria-pressed>`，整卡即开关，视觉状态即状态（启用 = 品牌描边 + 交互选中填充 + `IconCheckOutline16` 勾选徽标；禁用 = 中性 hairline + 文字降级）。嵌套相关设置渲染为更小的缩进卡片；宽度输入保持原生设置行（它是数值不是开关）。设置导航齿轮图标为宿主 shell 硬编码（`navIcon` 按 section id 映射，无插件注入点），用户选择不改宿主，保持现状。
 6. **小卡片响应式网格 + 二级设置弹窗（v0.4.1 再追加）**：清单项改为**小卡片**，置于 `repeat(auto-fill, minmax(148px, 1fr))` 响应式网格（一行自适应多个，随宽度换行）；卡片结构 = 顶行（图标 + 标题省略 + **勾选徽标钉在最右端**）+ 类型/扩展名描述行（省略号截断，`title` 属性给出完整值）。声明了 `settings.toggles` 的卡片右下角渲染**齿轮角标按钮**（`IconSettingsOutline16`，仅父级启用时显示），点击打开**原生 `Modal` 弹窗**，内含 DSH 原生设置行（标题/描述 + 品牌强调原生复选框 + hairline 分隔，末行去分隔线）——二级设置不再内嵌于网格。实现细节：Modal 采用条件挂载（`settingsFor !== null && <Modal open …>`），因为 Modal 原语无条件调用 hooks，常闭挂载在测试的 dual-react（react 18.2 server / 18.3 bundled）分裂环境下会崩；弹窗行体抽成 `FeatureSettingsRows` 供 renderToString 直测。
+
+---
+
+## 8. v0.12.0 设置 seam 开放记录（2026-08-14，feat/plugin-api-v012）
+
+设计正文「key 必须是宿主 PrefsSchema 的字段」的限制在 v0.12.0 被打开（纯增量，`toggles` 的宿主 key 语义不变）：
+
+- **持久化**：`SidebarPrefs` 增加 `pluginSettings: Record<string, Record<string, unknown>>`（开放嵌套 map，schema `z.dict(z.dict(z.any())).default({})`，按 descriptor id 分桶）——外部插件的自有设置不再需要宿主 schema 字段、不再被 settings seam 丢弃。`parsePrefs` 增加 `pluginSettingsMapOf` 校验（非对象整体回退 `{}`）。
+- **声明**：`SidebarSettingsDeclaration` 增加 `pluginToggles`（声明式行，控件同 toggles 的 switch/text/number，值须 JSON 可序列化）与 `render?: (props: SidebarSettingsRenderProps) => ReactNode`（自定义面板：store/service/prefs/pluginSettings/updatePluginSetting/close；抛错被吞并显示内联错误）。
+- **渲染**：齿轮弹窗体抽为 `SettingsBody`（`render` 存在时优先，否则 toggles 行 + pluginToggles 行，后者把 pluginSettings 投影到 prefs 面复用 `FeatureSettingsRows`）；`settingsFor` 状态从 `TabDescriptor | null` 扩为 `TabDescriptor | FileViewerDescriptor | null`——viewer 卡片 v0.12.0 起同样有齿轮设置弹窗（§4.6 原仅 tab）。
+- **向后兼容**：旧设置文档无 `pluginSettings` 字段 → schema default `{}`；`toggles` 行为与 v0.11.0 完全一致。

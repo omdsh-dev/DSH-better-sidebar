@@ -67,11 +67,11 @@ describe('lazyChunkComponent', () => {
 
   it('shows the failure reason with a retry that recovers', async () => {
     let fail = true
-    registerChunkForTests('docx', async () => {
+    registerChunkForTests('editor', async () => {
       if (fail) throw new Error('boom')
-      return { DocxView: Marker }
+      return { TextEditor: Marker }
     })
-    const Wrapper = lazyChunkComponent<Record<string, never>>('docx', (mod) => mod.DocxView as ComponentType<Record<string, never>> | undefined)
+    const Wrapper = lazyChunkComponent<Record<string, never>>('editor', (mod) => mod.TextEditor as ComponentType<Record<string, never>> | undefined)
     const { container, unmount } = mount(createElement(Wrapper, {}))
     await act(async () => {})
     expect(container.textContent).toContain('boom')
@@ -87,8 +87,8 @@ describe('lazyChunkComponent', () => {
 
   it('props flow through to the chunk component', async () => {
     const Recorder = (props: { label: string }): ReactNode => createElement('div', { 'data-testid': 'rec', 'data-label': props.label })
-    registerChunkForTests('pptx', async () => ({ PptxView: Recorder }))
-    const Wrapper = lazyChunkComponent<{ label: string }>('pptx', (mod) => mod.PptxView as ComponentType<{ label: string }> | undefined)
+    registerChunkForTests('terminal', async () => ({ TerminalView: Recorder }))
+    const Wrapper = lazyChunkComponent<{ label: string }>('terminal', (mod) => mod.TerminalView as ComponentType<{ label: string }> | undefined)
     const { container, unmount } = mount(createElement(Wrapper, { label: 'hello' }))
     await act(async () => {})
     expect(container.querySelector('[data-testid="rec"]')?.getAttribute('data-label')).toBe('hello')
@@ -99,7 +99,7 @@ describe('lazyChunkComponent', () => {
 describe('built-in descriptor contract (render-prop functions)', () => {
   it('every heavy built-in viewer component is callable as a plain function without a chunk (returns an element)', () => {
     const viewers = builtinViewers()
-    for (const id of ['docx', 'xlsx', 'pptx', 'markdown', 'html', 'code']) {
+    for (const id of ['markdown', 'html', 'code']) {
       const descriptor = viewers.find(viewer => viewer.id === id)
       expect(descriptor, id).toBeDefined()
       // No chunk registered: calling must not throw — it returns the lazy

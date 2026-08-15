@@ -1,37 +1,47 @@
 # dsh-better-sidebar
 
-<!-- Hero (HTML layout) -->
+<!-- Hero -->
 <div align="center">
-  <b style="font-size: 1.15em;">One plugin, one complete workbench</b><br /><br />
-  <code>File management</code> <code>Edit &amp; preview</code> <code>Embedded browser</code> <code>Real terminal</code> <code>Git panel</code> <code>Background tasks</code><br /><br />
-  <b>Dual workbench: right sidebar + bottom panel</b>, all in one plugin.<br />
-  <small>Tabs are freely draggable; third-party plugins can register new tab pages and file viewers</small>
+  <b style="font-size: 1.15em;">A service-oriented sidebar framework, and a complete workbench out of the box</b><br /><br />
+  <code>File management</code> <code>Edit &amp; preview</code> <code>Embedded browser</code> <code>Real terminal</code> <code>Git panel</code> <code>Background tasks</code> <code>Plugin integration</code><br /><br />
+  <b>A dual workbench (right sidebar + bottom panel)</b> that opens its <code>ctx.betterSidebar</code> service to every plugin —<br />
+  register new sidebar pages and file viewers via <code>registerTab</code> / <code>registerFileViewer</code>.
 </div>
 
 <div align="center">
   🌏 <a href="./README.md">中文</a> · <a href="./README_EN.md"><b>English</b></a>
 </div>
 
-https://github.com/user-attachments/assets/23187822-047e-45cc-b480-fe997bd55b86
-
-<img width="2630" height="1794" alt="6c4293e1bec2e935031bf0e986d6ec65" src="https://github.com/user-attachments/assets/dfdb875e-a1a8-4d4b-8340-353736b1708f" />
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/23187822-047e-45cc-b480-fe997bd55b86" muted autoplay loop playsinline controls width="100%"></video>
+  <img alt="dsh-better-sidebar workbench" src="https://github.com/user-attachments/assets/dfdb875e-a1a8-4d4b-8340-353736b1708f" />
+</div>
 
 ## ✨ Features
 
-- **🗂️ File Explorer**: lazy-loading directory tree (root = session cwd), click to open in the sidebar, `@file` reference at end of line into the input box, right-click to copy path; supports hiding files/directories by pattern (the "Exclude patterns" setting, e.g. `*.meta`, `node_modules`; single `*` wildcard, case-insensitive)
-- **📝 Edit & Preview**: CodeMirror 6 multi-language highlighting + Ctrl/Cmd+S atomic save; inline preview for images / Markdown (preview/edit toggle) / HTML (sandboxed iframe preview, relative resources loadable) / PDF / Word / Excel / PPT; drafts survive tab switches
-- **⚡ Client-side Lazy Loading**: heavy dependencies (Office / terminal / code editor) are chunked and loaded on demand — only ~325KB core is fetched at startup; Univer (~20MB) is fetched only when opening .xlsx, the docx viewer only when opening .docx, xterm only when opening a terminal; brief loading on first open, then instant (see `docs/plans/2026-08-12-lazy-chunks-design.md`)
-- **🌐 Browser**: embedded web browsing tabs (multiple), back/forward/refresh + "Open in browser"; pages run in a **sandboxed iframe** (opaque origin: cannot access UI data or local files, rejects localhost and other local addresses); the UI shows sandbox status live and can be temporarily unlocked (red warning when off); sites that refuse embedding (X-Frame-Options) show a reason panel; http(s) links in chat/UI open in the sidebar by default (panel auto-expands when collapsed)
-- **💻 Terminal**: xterm.js + node-pty real shell (max 3 UI instances per session), tab keep-alive with reconnect/replay; optionally injects 8 `terminal_*` tools for the model
-- **🌿 Git Panel**: real diff + VSCode-style diff tabs, lazy-loaded history, right-click to stage/discard/commit/revert/pick
-- **🧩 Background Tasks**: full agent topology of the main session, click-through to execution records, live tool-call polling, auto-expand for new subagents; background tasks shown on the same page (all background tasks in the current tree, bash/pwsh type badges + exit codes, click to view live output — auto-follows the bottom, non-consuming peek that doesn't disturb the model's `job_output`; double-click confirm to force-kill)
-- **🪟 Bottom Panel**: an independent second workbench (same kind of tabs as the right sidebar) that only squeezes the middle Agent output area without covering the left/right sidebars; auto-opens a new terminal on first expand (can be disabled in the terminal card's secondary settings); one-click collapse via the top-right x
-- **📱 Mobile**: at viewport < 768px (true mobile width, not the host's 1024 breakpoint) only the right sidebar shows — when entering narrow screens, bottom-panel tabs merge directly into the right sidebar's tab bar, leaving a single toggle at top-right and a full-width drawer panel; new sessions start collapsed; files/external links in chat auto-expand without squeezing the conversation area
-- **🔧 Split-pane Workbench**: drag tabs to split/merge panes (cross-panel dragging supported), divider to adjust ratios; persistent button cluster at top-right (bottom bar + side pull glyph) to collapse/expand both panels; the two panels share a corner double-direction drag to resize, rAF direct-DOM writes keep it smooth
-- **🔁 Session Isolation**: layout/panes/tabs/panel states persisted per session (localStorage), stale state auto-purged; chat "produced files" open in the sidebar (auto-expands panels when collapsed)
-- **⚙️ Declarative Settings**: the "Side Cards" section of the settings page renders a registry-driven feature list (small card grid, highlighted = enabled), each toggleable independently; secondary settings (auto-expand subagents, terminal tools, auto-open terminal on first bottom-panel expand, sandbox switches, etc.) are edited in a native dialog via the gear button
-- **🔌 Service API**: exposes the `ctx.betterSidebar` service — other plugins can register sidebar tabs and file viewers (the 7 built-in tabs + 9 viewers go through the same service, see [AGENTS.md](./AGENTS.md))
-- **🌏 i18n**: UI text follows DSH's language setting (zh/en) with live switching — Host preference takes priority over browser language, dictionaries registered into DSH's i18n namespace; no refresh needed
+- **🗂️ File Workbench**: file explorer (lazy-loading tree, with pattern-based file/directory exclusion — the "Exclude patterns" setting, e.g. `*.meta`, `node_modules`; single `*` wildcard, case-insensitive) + CodeMirror editor; inline preview for images / Markdown / HTML / PDF / Office
+- **🌐 Embedded Browser**: multiple web tabs with back / forward / refresh; content runs in a sandboxed iframe; external links open in the sidebar by default
+- **💻 Real Terminal**: xterm.js + node-pty real shell, reconnect with transcript replay; optionally injects `terminal_*` tools for the model
+- **🌿 Git Panel**: real diff + VSCode-style diff tabs, history, right-click to stage / commit / revert
+- **🧩 Background Tasks**: agent topology + background tasks (exit codes / live output / force-kill)
+- **🪟 Dual Workbench**: right sidebar + bottom panel; drag tabs to split / merge panes (cross-panel), mobile auto-merges into a full-width drawer
+- **🔁 Session Isolation**: layout / tabs / panels persisted per session, stale state auto-purged
+- **⚙️ Declarative Settings**: per-item toggles in the "Side Cards" settings section, secondary settings via the gear dialog
+- **⚡ On-demand Loading**: only ~325KB core at startup; heavy deps (terminal / editor) load on demand ([design](docs/plans/2026-08-12-lazy-chunks-design.md))
+- **🌏 i18n**: UI text follows DSH's language (zh / en) with live switching
+
+> 🔌 **Core principle**: service-first — the 7 built-in tabs + 6 viewers register through the same `ctx.betterSidebar` API as third-party plugins, with fully equal capabilities; anything the ecosystem can provide better is delegated to ecosystem plugins. See the "🔌 Service" section below and the [external plugin guide](./docs/external-plugin-guide.md).
+
+## 🆕 Recent Updates
+
+<small>v0.12.1</small>
+
+| Feature | Description | Screenshot |
+|---|---|---|
+| 🔌 Service API base | Complete type exports + `version`/`features` capability detection, state subscription (`getSnapshot`/`subscribeState`), tab `badge`, `onOpen`/`onActivate`/`onClose` lifecycle callbacks, `updateTab`/`activateTab`/`openFile`, targeted open, `meta` persisted across reloads, plugin-owned settings (`pluginToggles`/`render`) | <a href="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0"><img width="480" alt="Service API base screenshot" src="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0" /></a> |
+| ➕ Add Plugins | Recommended plugin catalog in settings + one-click copy install command; built-in Office preview moved to the recommended plugin | <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="480" alt="Add Plugins screenshot" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a> |
+| 🖱️ Tab-bar scroll | Mouse-wheel horizontal scrolling on the tab bar | |
+| 🐛 Fixes | Remote access 403 (trust fence now uses `trustedHosts`), sidebar crash [#31](https://github.com/omdsh-dev/DSH-better-sidebar/issues/31), Windows HTML-preview drive-path | |
 
 ## 🚀 Installation
 
@@ -49,17 +59,17 @@ curl -fsSL https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/s
 irm https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1 | iex
 ```
 
-Then **restart DSH and hard-refresh** (Cmd/Ctrl+Shift+R) to see the sidebar.
+Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R) to see the sidebar (DSH hot-reloads client changes; only host-half updates need a restart).
 
 <details>
 <summary><b>Pin a version / auto-restart (optional)</b></summary>
 
 ```sh
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.sh | bash -s 0.10.3 --restart
+curl -fsSL https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.sh | bash -s 0.12.1 --restart
 
 # Windows PowerShell
-& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1'))) -Version 0.10.3 -Restart
+& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1'))) -Version 0.12.1 -Restart
 ```
 
 Not sure? Add `--dry-run` (`-DryRun` in PowerShell) to preview before running.
@@ -85,7 +95,7 @@ minimumReleaseAgeExclude:
   - dsh-better-sidebar
 EOF
 
-# ③ Install and auto-mount (no @version = npm's latest; pin with dsh-better-sidebar@0.10.3)
+# ③ Install and auto-mount (no @version = npm's latest; pin with dsh-better-sidebar@0.12.1)
 npx -y --package @deepseek-ai/dsh dsh plugin --profile web add dsh-better-sidebar
 ```
 
@@ -116,7 +126,7 @@ The one-click script does four things, all idempotent (safe to re-run):
 3. Runs `dsh plugin --profile web add dsh-better-sidebar`: registers the dependency → detects `dsh.bundle.patch` → auto-appends the plugin to `dsh.profile.bundles`;
 4. Removes any leftover hand-written mount line to avoid double-mounting (two sidebars on the page).
 
-`curl | bash` / `irm | iex` executes remote code — the scripts are open source in the repo (`scripts/install.sh` / `scripts/install.ps1`); download and review them first if you prefer. The plugin ships as npm package `dsh-better-sidebar@0.10.3` and mounts via `dsh.bundle.patch` (the shipped `cordis.patch.yml`), so the DSH source is never modified.
+`curl | bash` / `irm | iex` executes remote code — the scripts are open source in the repo (`scripts/install.sh` / `scripts/install.ps1`); download and review them first if you prefer. The plugin ships as npm package `dsh-better-sidebar@0.12.1` and mounts via `dsh.bundle.patch` (the shipped `cordis.patch.yml`), so the DSH source is never modified.
 
 </details>
 
@@ -127,7 +137,7 @@ The one-click script does four things, all idempotent (safe to re-run):
 dsh plugin --profile web add dsh-better-sidebar
 ```
 
-or re-run the one-click script; or bump the version in `~/.dsh/profiles/web/package.json` (e.g. `"^0.10.3"`) and run `pnpm install`. Then restart DSH and hard-refresh (Cmd/Ctrl+Shift+R).
+or re-run the one-click script; or bump the version in `~/.dsh/profiles/web/package.json` (e.g. `"^0.12.1"`) and run `pnpm install`. Then hard-refresh the browser (Cmd/Ctrl+Shift+R) — client changes do not need a DSH restart.
 
 </details>
 
@@ -162,7 +172,7 @@ To debug local changes or track the dev branch, point the dependency at a local 
 5. Restart DSH and hard-refresh
 ```
 
-Update: `git pull && pnpm install && pnpm build` → restart DSH (client-only changes can just hard-refresh). To switch back to the npm channel, restore `"dsh-better-sidebar": "^0.10.3"` and re-run `pnpm install`.
+Update: `git pull && pnpm install && pnpm build` → just hard-refresh the browser (client changes hot-reload; only host-half changes need a DSH restart). To switch back to the npm channel, restore `"dsh-better-sidebar": "^0.12.1"` and re-run `pnpm install`.
 
 </details>
 
@@ -196,7 +206,7 @@ Update: `git pull && pnpm install && pnpm build` → `node scripts/package-regis
 
 ## 🔌 Service: register tabs & file viewers
 
-Since v0.4.0 the plugin exposes the `ctx.betterSidebar` service — other plugins can register sidebar pages and file viewers (the 7 built-in tabs + 9 viewers go through the same service, eating our own dog food):
+Since v0.4.0 the plugin exposes the `ctx.betterSidebar` service — other plugins can register sidebar pages and file viewers (the 7 built-in tabs + 6 viewers register through the same service):
 
 ```ts
 import type {} from 'dsh-better-sidebar'  // triggers the ctx.betterSidebar type merge
@@ -208,7 +218,17 @@ export function apply(ctx: Context) {
 }
 ```
 
-Full integration docs (`TabDescriptor` / `FileViewerDescriptor` full fields, matching algorithm, HMR pitfalls, declarative settings): see [`AGENTS.md`](./AGENTS.md).
+v0.12.1+ base capabilities (complete type exports, capability detection, state subscription, tab badge, lifecycle callbacks, targeted open, plugin-owned settings, etc.) — see the integration docs below.
+
+Full integration docs:
+- **[`AGENTS.md`](./AGENTS.md)** — the in-repo integration doc (full fields, matching algorithm, HMR pitfalls, declarative settings, version detection);
+- **[`docs/external-plugin-guide.md`](./docs/external-plugin-guide.md)** — the external-plugin guide (with a complete minimal example).
+
+### ➕ Add Plugins (recommended plugin catalog)
+
+The dashed cards at the end of the "Sidebar content" / "File viewers" grids in the "Side Cards" settings section open the **Add tab plugins** / **Add preview plugins** modals: each declares its open extension point, offers a "**Browse more plugins on GitHub**" button (the [GitHub topic `dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar)), and lists the recommended catalog (name / repo / description / install script) — "**Open**" jumps to the repo, "**Copy**" writes the install command to the clipboard.
+
+**Curating a new plugin**: append a `PluginEntry` to [`src/client/plugins-tabs.ts`](./src/client/plugins-tabs.ts) (tab registrations) or [`src/client/plugins-viewers.ts`](./src/client/plugins-viewers.ts) (file-previewer registrations) and tag your repo with the `dsh-better-sidebar` topic; data integrity is guarded by `tests/plugin-list.spec.ts`.
 
 ## 🛠️ Development & Build
 
@@ -233,7 +253,7 @@ pnpm watch        # tsdown --watch
 - Git has no push/pull/fetch; no file watcher (manual refresh); tool inline file-open buttons cannot be intercepted
 - Explorer excludes are a display-layer filter: the truncation counter of very large directories (>1000 entries per level) may undercount after filtering
 - Dragging a terminal tab to another pane remounts it (shell restarts)
-- `.xlsx` preview does not preserve cell styles (SheetJS community-edition limitation); Office/PPTX preview is inlined into the client bundle (~23MB), slower on first load
+- Office-suite preview (.docx/.xlsx/.pptx) moved to the recommended office plugin (see the "Add plugins" modals in settings); without it these files fall through to the code/download fallbacks
 - Browser sandbox has no login state / third-party cookies are restricted; some sites need popup login; sites that refuse embedding via `X-Frame-Options`/`frame-ancestors` (e.g. arxiv.org) show a reason panel (with "Open in browser"); in-iframe navigation does not enter the back stack
 - HTML preview renders the saved file (not unsaved drafts)
 - No bottom panel on mobile (<768px): on narrow screens its tabs merge into the right sidebar once (after migrating back to desktop they stay in the right sidebar); the desktop bottom panel is only available on wide viewports; auto-open terminal on first bottom-panel expand does not trigger on mobile
@@ -241,3 +261,9 @@ pnpm watch        # tsdown --watch
 ## 🖥️ Platform Support
 
 Windows / Linux / macOS (macOS validated daily; the rest covered by unit tests); `node-pty` prefers prebuilt binaries, otherwise a build toolchain is required (Windows VS Build Tools / Linux make+g+++python3 / macOS Xcode CLT).
+
+## 🔗 Friends
+
+- [dsh-tianshu-tui](https://github.com/huiliyi37/dsh-tianshu-tui): an interactive terminal UI plugin for DeepSeek Harness (its rendering core evolved from the self-developed harness agent Tianshu-Tui), adding TDD and evidence-gate workflows on top of the official harness
+- [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI): a Claude Code-style fullscreen interactive TUI plugin — pixel-whale top bar, live working-status row, streaming thought expansion, double-Esc rollback, context progress bar + TPS meter; one-command npm install
+- [dshfind Plugin Market](https://dshfind.com/zh/plugins): a third-party plugin marketplace — a listing of public repos under the GitHub topic `dsh-plugin`, with stars, contributors and growth data synced daily

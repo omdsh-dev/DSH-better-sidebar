@@ -5,7 +5,7 @@
  * terminal). Tabs are draggable; dropping onto another tab inserts before it,
  * dropping on the strip background appends to this pane.
  */
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   IconCloseFill14, IconPlusOutline16, Menu,
@@ -63,12 +63,36 @@ export function TabBar(props: {
   onDropTab: (payload: TabDragPayload, before: string | null) => void
   /** Icon resolver for tab labels (reads from the tab descriptor registry). */
   getTabIcon?: (tab: SidebarTab) => ReactNode
+  /** Badge resolver for tab labels (reads the descriptor's `badge`; the
+   *  resolver returns the rendered pill or null). */
+  getTabBadge?: (tab: SidebarTab) => ReactNode
 }) {
   const {
-    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon,
+    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const listRef = useRef<HTMLDivElement>(null)
+
+  // Wheel over the strip scrolls the tab row horizontally (a plain mouse
+  // wheel emits deltaY, which overflow-x alone never consumes). Bound as a
+  // native NON-passive listener: React registers onWheel passively at the
+  // root, where preventDefault() is a no-op. Modifier keys keep their native
+  // meaning (shift = horizontal scroll, ctrl/cmd = zoom), and a strip that
+  // does not overflow leaves the event alone so the page scrolls normally.
+  useEffect(() => {
+    const el = listRef.current
+    if (el === null) return
+    const onWheel = (event: WheelEvent): void => {
+      if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return
+      if (el.scrollWidth <= el.clientWidth) return
+      event.preventDefault()
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? el.clientWidth : 1
+      el.scrollLeft += (event.deltaX + event.deltaY) * unit
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => { el.removeEventListener('wheel', onWheel) }
+  }, [])
 
   useEffect(() => {
     const clear = (): void => { setTabDragging(false); setDragOver(false) }
@@ -104,7 +128,7 @@ export function TabBar(props: {
         if (payload !== null) onDropTab(payload, null)
       }}
     >
-      <div className={css.tabList}>
+      <div ref={listRef} className={css.tabList}>
         {tabs.map(tab => (
           <div
             key={tab.id}
@@ -136,6 +160,7 @@ export function TabBar(props: {
             }}
           >
             {getTabIcon?.(tab) ?? null}
+            {getTabBadge?.(tab) ?? null}
             <span className={css.tabTitle}>{tab.title}</span>
             <button
               type="button"

@@ -414,3 +414,19 @@ export function apply(ctx: Context): void {
 ### 17.10 测试
 
 新增 `tests/builtins.spec.ts`（内置注册清单）、`tests/orphaned-tab.spec.tsx`（sanitize 保留未注册类型 + 占位渲染）、`tests/editor-load.spec.ts`（策略分发纯函数）；`tests/browser-globals.ts` 为拉入 xterm/CodeMirror 的 spec 提供模块求值期浏览器全局 mock。`matchFileViewer` 相关断言按 17.3 语义重写。
+
+---
+
+## 18. v0.12.0 基座化扩展记录（2026-08-14，feat/plugin-api-v012）
+
+§5 的服务接口在 v0.12.0 做了**纯增量**扩展（无任何签名删除 / 语义变更，向上兼容），全部记录于此，文档以本节为准：
+
+- **类型导出补齐**：`./client/service` 入口 re-export 公共状态词汇——`SidebarTab` / `SidebarState` / `SidebarStore` / `SidebarSnapshot` / `SidebarDiffRef` / `TabType` / `SessionScope` / `SidebarPrefs` / `OpenTabSeed` / `SidebarSettingsRenderProps`。此前消费者无法命名这些类型（TS2459），只能靠推断。
+- **client 声明图零 Node 依赖**：`context-types.ts` 的 `SidebarWebRoute` / `SidebarWebUpgradeRoute` 改用结构镜像类型（`SidebarHttpRequest` / `SidebarHttpResponse` / `SidebarUpgradeSocket` / `SidebarUpgradeHead`），宿主在 ws 边界显式转型（`src/index.ts` 两处）。外部消费插件无需 `@types/node`、`skipLibCheck: false` 也能编译（`scripts/check-consumer-types.sh` 双层校验守护）。
+- **新服务方法**：`version` / `features`（单调能力清单，只增不删）；`getSnapshot` / `subscribeState`（状态订阅，委托 store）；`updateTab(tabId, patch)`（title/path/meta）；`activateTab(tabId)`（跨树激活，tab 栏点击路径）；`openFile(scope, path, title?)`（editor 打开，id 按路径派生与内置拦截一致）；`openTab(seed, scope?)`（定向到指定 session：`SidebarStore.reduceFor` 加载/变更/持久化目标 session 而不切换 snapshot，UI 不扰动；scope 指向当前 session 时走原 reduce 路径保证 notify）。
+- **新 descriptor 字段**：`badge`（tab 角标：number 计数 99+ 封顶 / string 文本 / null 不显示，每次 tab 栏渲染调用，抛错吞掉）；`onOpen` / `onActivate` / `onClose`（生命周期回调，service 路径派发——dedupe/id 安全网聚焦触发 onActivate 而非 onOpen；内置 diff 拆分与 agent 终端 reconcile 直接改 state 不触发，但只作用于内置类型；回调抛错只 console.error）；`SidebarTab.meta`（JSON 可序列化自定义状态，`sanitizeNode` 宽松保留，跨刷新原样恢复）。
+- **设置 seam 开放**：`PrefsSchema` 增加 `pluginSettings: z.dict(z.dict(z.any())).default({})` 开放嵌套 map；`settings.pluginToggles`（插件自有声明式行）与 `settings.render`（自定义面板，props 见 §5）替代「自定义 key 被 seam 丢弃」的限制；viewer 卡片 v0.12.0 起同样有齿轮设置弹窗。
+- **`FileViewerDescriptor.load` 第三参 `signal?: AbortSignal`**：EditorHost 在卸载/重匹配时 abort（忽略 signal 的 load 照常工作）。
+- 测试：`tests/consumer-types.ts`（消费面编译门）、`tests/api-surface.spec.ts`（client 图零 node 依赖守护 + 能力常量）、`tests/service.spec.ts` 新增生命周期 / 定向打开 / updateTab / activateTab / openFile / meta 持久化用例、`tests/unit.spec.ts` 新增 `reduceFor` 与 sanitize meta 用例。
+
+实现偏差：§5.1 的 `openTab(seed)` 单参签名保留为 `openTab(seed, scope?)` 的可选参数（非破坏）；`SidebarSnapshot` 类型 re-export 自 `./client/service` 而非新建独立文件。

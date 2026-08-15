@@ -19,6 +19,7 @@ import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
 import { BrowserView } from '../BrowserView.tsx'
 import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16 } from '../icons.tsx'
+import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
 import type { ComponentType } from 'react'
 import type { SessionScope } from '../api.ts'
 import type { SidebarStore } from '../state.ts'
@@ -148,10 +149,11 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       icon: (size: number) => <IconTerminalOutline16 size={size} />,
       order: 40,
       available: (_ctx, _scope, state) => uiTerminalCount(state) < TERMINAL_LIMIT,
-      // Declarative settings: the model-facing terminal tools switch and the
-      // bottom-panel first-expansion auto-terminal switch render under this
-      // row in the Side card settings page (the Terminal page's own related
-      // settings; the host gates the toolset on the tools one independently).
+      // Declarative settings: the model-facing terminal tools switch, the
+      // bottom-panel first-expansion auto-terminal switch, and the custom
+      // font family/size rows render under this card in the Side card
+      // settings page (the host gates the toolset on the tools one
+      // independently; the font rows apply live to every terminal).
       settings: {
         toggles: [{
           key: 'agentTerminalTools',
@@ -161,6 +163,20 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
           key: 'bottomPanelAutoTerminal',
           title: () => t('settingsBottomTerminalTitle'),
           desc: () => t('settingsBottomTerminalDesc'),
+        }, {
+          key: 'terminalFontFamily',
+          type: 'text',
+          title: () => t('settingsFontFamilyTitle'),
+          desc: () => t('settingsFontFamilyDesc'),
+          placeholder: t('settingsFontFamilyPlaceholder'),
+        }, {
+          key: 'terminalFontSize',
+          type: 'number',
+          title: () => t('settingsFontSizeTitle'),
+          desc: () => t('settingsFontSizeDesc'),
+          min: TERMINAL_FONT_SIZE_MIN,
+          max: TERMINAL_FONT_SIZE_MAX,
+          unit: 'px',
         }],
       },
       createTab: (state) => {

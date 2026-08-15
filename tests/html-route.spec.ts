@@ -6,6 +6,7 @@
  * the session scope intact (the WHY of the path-encoding design).
  */
 import { describe, expect, it } from 'vitest'
+import { resolve } from 'node:path'
 import { decodeHtmlUrl, encodeHtmlUrl } from '../src/html-route.ts'
 
 describe('encodeHtmlUrl', () => {
@@ -38,11 +39,25 @@ describe('decodeHtmlUrl', () => {
     })
   })
 
-  it('decodes a Windows round-trip', () => {
+  it('decodes a Windows round-trip (drive path WITHOUT a leading slash, so node resolve() keeps the drive)', () => {
     const url = encodeHtmlUrl('sess-1', 'C:\\Users\\me\\a.html')
     expect(decodeHtmlUrl(url)).toEqual({
       ok: true,
-      ref: { sessionId: 'sess-1', path: '/C:/Users/me/a.html' },
+      ref: { sessionId: 'sess-1', path: 'C:/Users/me/a.html' },
+    })
+    // The host runs requireAbsolute() over the decoded path: with the old
+    // '/C:/...' form node's resolve() produced 'C:\C:\Users\...' (drive
+    // doubled) on Windows and the isWithin(cwd) fence rejected every drive
+    // path. The slash-free form must resolve back to the original path.
+    if (process.platform === 'win32') {
+      expect(resolve('C:/Users/me/a.html')).toBe('C:\\Users\\me\\a.html')
+    }
+  })
+
+  it('decodes a lowercase-drive Windows path without a leading slash', () => {
+    expect(decodeHtmlUrl('/sidebar/html/s/d%3A/work/x.html')).toEqual({
+      ok: true,
+      ref: { sessionId: 's', path: 'd:/work/x.html' },
     })
   })
 
