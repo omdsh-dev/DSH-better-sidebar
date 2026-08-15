@@ -28,6 +28,14 @@ describe('encodeHtmlUrl', () => {
   it('ignores leading/trailing slashes (files only)', () => {
     expect(encodeHtmlUrl('s', '/a//b/x.html')).toBe('/sidebar/html/s/a/b/x.html')
   })
+
+  it('encodes a Windows UNC path with the // marker after the sessionId', () => {
+    expect(encodeHtmlUrl('sess-1', '\\\\server\\share\\proj\\a.html'))
+      .toBe('/sidebar/html/sess-1//server/share/proj/a.html')
+    // Forward-slash UNC input produces the same marker form.
+    expect(encodeHtmlUrl('sess-1', '//server/share/proj/a.html'))
+      .toBe('/sidebar/html/sess-1//server/share/proj/a.html')
+  })
 })
 
 describe('decodeHtmlUrl', () => {
@@ -59,6 +67,24 @@ describe('decodeHtmlUrl', () => {
       ok: true,
       ref: { sessionId: 's', path: 'd:/work/x.html' },
     })
+  })
+
+  it('decodes a UNC round-trip back to the network path', () => {
+    const url = encodeHtmlUrl('sess-1', '\\\\server\\share\\proj\\a.html')
+    expect(decodeHtmlUrl(url)).toEqual({
+      ok: true,
+      ref: { sessionId: 'sess-1', path: '\\\\server\\share\\proj\\a.html' },
+    })
+    // The host runs requireAbsolute() + isWithin(cwd) over the decoded path:
+    // the UNC form must survive both (resolve keeps the prefix verbatim).
+    if (process.platform === 'win32') {
+      expect(resolve('\\\\server\\share\\proj\\a.html')).toBe('\\\\server\\share\\proj\\a.html')
+    }
+  })
+
+  it('refuses a marker-only UNC URL and stray double slashes (400)', () => {
+    expect(decodeHtmlUrl('/sidebar/html/s//').ok).toBe(false)
+    expect(decodeHtmlUrl('/sidebar/html/s//server//x.html').ok).toBe(false)
   })
 
   it('decodes special characters round-trip', () => {
@@ -121,5 +147,17 @@ describe('relative asset resolution stays in-route', () => {
     const doc = `http://h${encodeHtmlUrl('s', '/a/b/index.html')}`
     expect(new URL('img/x.png', doc).pathname).toBe('/sidebar/html/s/a/b/img/x.png')
     expect(new URL('../c.css', doc).pathname).toBe('/sidebar/html/s/a/c.css')
+  })
+
+  it('relative assets of a UNC document stay inside the same route', () => {
+    // The WHATWG URL preserves the '//' marker during relative resolution,
+    // so ./style.css lands back on the route with the UNC prefix intact.
+    const doc = `http://h${encodeHtmlUrl('s', '\\\\server\\share\\proj\\index.html')}`
+    expect(new URL('./style.css', doc).pathname)
+      .toBe('/sidebar/html/s//server/share/proj/style.css')
+    expect(decodeHtmlUrl(new URL('./style.css', doc).pathname)).toEqual({
+      ok: true,
+      ref: { sessionId: 's', path: '\\\\server\\share\\proj\\style.css' },
+    })
   })
 })

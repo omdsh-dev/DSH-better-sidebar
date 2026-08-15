@@ -6,7 +6,7 @@
  * dirent says, keeping the read cheap for arbitrarily large levels.
  */
 import { opendir } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { SidebarError } from './wire.ts'
 
 /** One explorer row. */
@@ -82,7 +82,10 @@ export function parentOf(path: string): string | undefined {
 
 /** Normalize a caller-supplied path to an absolute, resolved path or throw fs-error. */
 export function requireAbsolute(path: string): string {
-  if (!path.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(path)) {
+  // path.isAbsolute() is the OS's own notion of absolute: drive letters
+  // (C:\...), POSIX roots (/...), and — on Windows — UNC network shares
+  // (\\server\share\...), which the previous hand-rolled check missed.
+  if (!isAbsolute(path)) {
     throw new SidebarError('fs-error', `"${path}" is not an absolute path`, 400)
   }
   return resolve(path)

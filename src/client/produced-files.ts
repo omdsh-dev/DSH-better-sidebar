@@ -78,7 +78,13 @@ export function selectProducedFiles(owner: unknown): readonly string[] | null {
 
 /** Resolve a (possibly relative) path against the session cwd for the sidebar. */
 export function resolveSidebarPath(cwd: string | undefined, path: string): string {
-  const absolute = path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
+  // Portable absolute check (no node:path in the client bundle): POSIX roots,
+  // Windows drive letters, and Windows UNC network shares (\\server\share\...,
+  // forward-slash //server/share/... included). A produced UNC path must not
+  // be mistaken for relative — joining it onto the cwd would corrupt it.
+  const absolute = path.startsWith('/')
+    || /^[A-Za-z]:[\\/]/.test(path)
+    || /^[\\/]{2}[^\\/]/.test(path)
   if (absolute) return path
   const base = cwd ?? ''
   if (base === '') return path

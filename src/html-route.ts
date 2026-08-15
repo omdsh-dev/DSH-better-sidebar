@@ -13,6 +13,10 @@
  *   /sidebar/html/S/Users/me/proj/index.html
  *     + ./style.css → /sidebar/html/S/Users/me/proj/style.css
  *   Windows: C:\Users\me\a.html → /sidebar/html/S/C%3A/Users/me/a.html
+ *   Windows UNC: \\server\share\proj\a.html
+ *     → /sidebar/html/S//server/share/proj/a.html  ('//' right after the
+ *       sessionId marks the UNC prefix; the WHATWG URL keeps '//' intact so
+ *       relative assets still resolve inside the same route)
  *
  * This module is intentionally dependency-free (no node imports, no wire
  * helpers) so the client bundle can import `encodeHtmlUrl` without tripping
@@ -37,8 +41,13 @@ export const HTML_ROUTE_PREFIX = '/sidebar/html/'
 
 /** Build the route URL for one absolute file path (client + tests). */
 export function encodeHtmlUrl(sessionId: string, path: string): string {
+  // A Windows UNC share (\\server\share\...) must survive the round-trip:
+  // the decoder rebuilds it from a '//' marker right after the sessionId,
+  // which the plain segment list can never produce (empty segments are
+  // filtered here, so the marker is unambiguous).
+  const unc = /^[\\/]{2}[^\\/]/.test(path)
   const segments = path.split(/[\\/]+/).filter(segment => segment !== '')
-  return `${HTML_ROUTE_PREFIX}${encodeURIComponent(sessionId)}/${segments.map(encodeURIComponent).join('/')}`
+  return `${HTML_ROUTE_PREFIX}${encodeURIComponent(sessionId)}/${unc ? '/' : ''}${segments.map(encodeURIComponent).join('/')}`
 }
 
 /**
@@ -53,7 +62,7 @@ export function decodeHtmlUrl(pathname: string): HtmlDecodeResult {
     return { ok: false, status: 404, message: 'not an html route' }
   }
   const rest = pathname.slice(HTML_ROUTE_PREFIX.length)
-  if (rest === '' || rest.includes('//')) {
+  if (rest === '') {
     return { ok: false, status: 400, message: 'invalid html route path' }
   }
   let segments: string[]
@@ -63,17 +72,32 @@ export function decodeHtmlUrl(pathname: string): HtmlDecodeResult {
     return { ok: false, status: 400, message: 'malformed URL encoding' }
   }
   const [sessionId, ...pathSegments] = segments
-  if (sessionId === undefined || sessionId === '' || pathSegments.length === 0 || pathSegments.some(segment => segment === '')) {
+  if (sessionId === undefined || sessionId === '') {
     return { ok: false, status: 400, message: 'sessionId and file path are required' }
   }
-  // A Windows drive segment ('D:') is the FIRST path segment of an encoded
-  // drive path. Rejoining it with a leading slash would yield '/D:/work/...'
-  // which node's path.resolve() mangles into 'D:\D:\work\...' on Windows —
-  // the html route's isWithin(cwd) fence would then reject every drive path.
-  // Keep the drive form slash-free so requireAbsolute() resolves it verbatim.
-  const first = pathSegments[0] ?? ''
-  const path = /^[A-Za-z]:$/.test(first)
-    ? pathSegments.join('/')
-    : `/${pathSegments.join('/')}`
+  // An empty FIRST path segment is the UNC marker (encodeHtmlUrl emits
+  // '<sid>//server/share/...' for \\server\share\...); the encoder filters
+  // empty segments everywhere else, so an empty segment can only be the
+  // marker or a malformed URL — both handled here.
+  const unc = pathSegments[0] === ''
+  const tail = unc ? pathSegments.slice(1) : pathSegments
+  if (tail.length === 0 || tail.some(segment => segment === '')) {
+    return { ok: false, status: 400, message: 'sessionId and file path are required' }
+  }
+  let path: string
+  if (unc) {
+    // Rebuild the UNC form \\server\share\... so requireAbsolute() +
+    // isWithin(cwd) see the same path the explorer works with.
+    path = `\\\\${tail.join('\\')}`
+  } else if (/^[A-Za-z]:$/.test(tail[0] ?? '')) {
+    // A Windows drive segment ('D:') is the FIRST path segment of an encoded
+    // drive path. Rejoining it with a leading slash would yield '/D:/work/...'
+    // which node's path.resolve() mangles into 'D:\D:\work\...' on Windows —
+    // the html route's isWithin(cwd) fence would then reject every drive path.
+    // Keep the drive form slash-free so requireAbsolute() resolves it verbatim.
+    path = tail.join('/')
+  } else {
+    path = `/${tail.join('/')}`
+  }
   return { ok: true, ref: { sessionId, path } }
 }

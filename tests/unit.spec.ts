@@ -13,6 +13,7 @@ vi.mock('node:os', async (importOriginal) => {
   }
 })
 import { compareEntries, isWithin, parentOf, rootLabel, requireAbsolute } from '../src/fs-tree.ts'
+import { resolve } from 'node:path'
 import { parseLogLines, parsePorcelainZ } from '../src/git.ts'
 import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
 import {
@@ -65,10 +66,18 @@ describe('fs-tree', () => {
   })
 
   it('accepts absolute paths and rejects relative ones', () => {
-    // resolve() is platform-native: '/a/b' roots to the current drive on win32.
-    expect(requireAbsolute('/a/b')).toBe(process.platform === 'win32' ? '\\a\\b' : '/a/b')
+    // resolve() is platform-native: '/a/b' is absolute on every platform and
+    // resolves against the current drive root on win32 (drive-letter prefixed
+    // — never a bare '\a\b').
+    expect(requireAbsolute('/a/b')).toBe(resolve('/a/b'))
     if (process.platform === 'win32') {
       expect(requireAbsolute('C:/proj')).toBe('C:\\proj')
+      // UNC network shares are absolute on Windows; resolve() keeps the prefix
+      // verbatim (both backslash and forward-slash forms normalize to '\\').
+      expect(requireAbsolute('\\\\server\\share\\proj')).toBe('\\\\server\\share\\proj')
+      expect(requireAbsolute('//server/share/proj')).toBe('\\\\server\\share\\proj')
+      // Drive-relative paths ('C:proj') are NOT absolute.
+      expect(() => requireAbsolute('C:proj')).toThrow(/not an absolute path/)
     }
     expect(() => requireAbsolute('a/b')).toThrow(/not an absolute path/)
     expect(() => requireAbsolute('../a')).toThrow(/not an absolute path/)
@@ -90,6 +99,11 @@ describe('fs-tree', () => {
     // Windows drive-root containment.
     expect(isWithin('C:\\', 'C:\\Users\\me\\a.png', 'win32')).toBe(true)
     expect(isWithin('c:\\users', 'C:/USERS/me/b.png', 'win32')).toBe(true)
+    // UNC network-share containment: the '//' share prefix must not defeat
+    // the prefix test, and a sibling share must stay outside.
+    expect(isWithin('\\\\server\\share\\proj', '\\\\server\\share\\proj\\src\\a.ts', 'win32')).toBe(true)
+    expect(isWithin('\\\\server\\share\\proj', '\\\\server\\share\\proj2\\a.ts', 'win32')).toBe(false)
+    expect(isWithin('\\\\server\\share\\proj', '\\\\other\\share\\a.ts', 'win32')).toBe(false)
   })
 })
 
@@ -1084,6 +1098,16 @@ describe('path helpers', () => {
     expect(resolveSidebarPath('C:\\work\\proj', 'src/a.ts')).toBe('C:\\work\\proj\\src/a.ts')
     expect(resolveSidebarPath('C:\\work\\proj', 'C:\\abs\\x.ts')).toBe('C:\\abs\\x.ts')
     expect(resolveSidebarPath('C:\\work\\proj\\', 'C:\\abs\\x.ts')).toBe('C:\\abs\\x.ts')
+  })
+
+  it('keeps UNC produced paths absolute instead of joining them onto the cwd', () => {
+    expect(resolveSidebarPath('C:\\work\\proj', '\\\\server\\share\\abs\\x.ts'))
+      .toBe('\\\\server\\share\\abs\\x.ts')
+    expect(resolveSidebarPath('C:\\work\\proj', '//server/share/abs/x.ts'))
+      .toBe('//server/share/abs/x.ts')
+    // A relative path under a UNC cwd joins with backslashes.
+    expect(resolveSidebarPath('\\\\server\\share\\proj', 'src/a.ts'))
+      .toBe('\\\\server\\share\\proj\\src/a.ts')
   })
 })
 
