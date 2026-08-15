@@ -865,6 +865,8 @@ describe('pty helpers', () => {
     // non-POSIX developer machines. The userInfo mock at the top of the file
     // pins the passwd login shell to /usr/bin/zsh.
     expect(defaultShell({ platform: 'linux', env: { SHELL: '/explicit/zsh' } })).toBe('/explicit/zsh')
+    // Surrounding whitespace must not leak into the spawned executable path.
+    expect(defaultShell({ platform: 'linux', env: { SHELL: '  /explicit/zsh  ' } })).toBe('/explicit/zsh')
     expect(defaultShell({ platform: 'linux', env: { SHELL: '   ' } })).toBe('/usr/bin/zsh')
     expect(defaultShell({ platform: 'linux', env: {} })).toBe('/usr/bin/zsh')
   })

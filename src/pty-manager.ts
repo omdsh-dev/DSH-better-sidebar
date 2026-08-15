@@ -203,7 +203,7 @@ export class PtyManager {
 export interface ShellResolutionOptions {
   /** Platform override (defaults to `process.platform`). */
   platform?: NodeJS.Platform
-  /** Environment override; the resolver only reads SHELL, DSH_SIDEBAR_SHELL, PATH, ProgramFiles, LOCALAPPDATA. */
+  /** Environment override; the resolver only reads SHELL, DSH_SIDEBAR_SHELL, PATH, ProgramW6432, ProgramFiles, LOCALAPPDATA. */
   env?: NodeJS.ProcessEnv
   /** Explicitly configured shell (the `shell` config field); wins over every automatic source. Empty means unset. */
   explicit?: string
@@ -279,7 +279,7 @@ export function defaultShell(options: ShellResolutionOptions = {}): string {
     return 'powershell.exe'
   }
   const envShell = env.SHELL
-  if (envShell !== undefined && envShell.trim() !== '') return envShell
+  if (envShell !== undefined && envShell.trim() !== '') return envShell.trim()
   // userInfo() throws when the uid has no passwd entry (rare chroots);
   // without a login shell there is nothing better than the bash default.
   try {
