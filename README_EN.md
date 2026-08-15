@@ -198,6 +198,8 @@ Update: `git pull && pnpm install && pnpm build` → `node scripts/package-regis
 
 | Action | Keys |
 |---|---|
+| Toggle sidebar | `Ctrl/Cmd + B` (rebindable in settings) |
+| Toggle bottom panel (terminal) | `Ctrl/Cmd + T` (rebindable in settings; on narrow windows it toggles the merged sidebar) |
 | Save edits | `Ctrl/Cmd + S` |
 | Git commit | `Ctrl + Enter` |
 | Close tab | Middle mouse button |

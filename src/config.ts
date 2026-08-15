@@ -7,6 +7,8 @@
 
 import z from 'schemastery'
 import {
+  SHORTCUT_PANEL_DEFAULT,
+  SHORTCUT_TERMINAL_DEFAULT,
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
   TERMINAL_FONT_SIZE_DEFAULT,
@@ -22,6 +24,8 @@ import {
 } from './prefs-shared.ts'
 
 export {
+  SHORTCUT_PANEL_DEFAULT,
+  SHORTCUT_TERMINAL_DEFAULT,
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
   TERMINAL_FONT_SIZE_DEFAULT,
@@ -115,4 +119,10 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   // "settings seam" opening — without it the seam would drop third-party
   // keys as unknown schema fields.
   pluginSettings: z.dict(z.dict(z.any())).default({}),
+  // Panel-toggle shortcuts (v0.12.3+): canonical combo strings or '' (disabled).
+  // The schema accepts any string; the client normalizes malformed values to
+  // '' on read, so a hand-edited document degrades to "disabled" instead of
+  // failing the whole namespace.
+  shortcutPanel: z.string().default(SHORTCUT_PANEL_DEFAULT),
+  shortcutTerminal: z.string().default(SHORTCUT_TERMINAL_DEFAULT),
 })

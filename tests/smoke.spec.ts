@@ -561,6 +561,9 @@ describe('side card settings routes', () => {
         viewersEnabled: {},
         // The plugin-owned settings map defaults to {} too.
         pluginSettings: {},
+        // The panel-toggle shortcuts default to mod+b / mod+t.
+        shortcutPanel: 'mod+b',
+        shortcutTerminal: 'mod+t',
       },
       revision: 0,
     })

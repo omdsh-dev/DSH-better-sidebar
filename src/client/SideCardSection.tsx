@@ -61,6 +61,7 @@ import {
 import { api } from './api.ts'
 import { parsePrefs } from './prefs.ts'
 import { AddPluginModal, type PluginKind } from './add-plugin-modal.tsx'
+import { KeyCaptureInput } from './KeyCaptureInput.tsx'
 import { t } from './locales.ts'
 import type { SidebarStore } from './state.ts'
 import type {
@@ -663,6 +664,36 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
             checked={prefs.interceptOpenPath}
             onChange={(next) => { applyPref({ interceptOpenPath: next }) }}
           />
+        </div>
+        {/* Panel-toggle shortcuts: key-capture controls (click, then press the
+            new chord; Backspace/Delete disables). Both ride the prefs doc
+            like every other Side card value — the global listener reads them
+            live, so a capture re-binds instantly. */}
+        <div className={css.row}>
+          <span className={css.rowText}>
+            <span className={css.title}>{t('settingsShortcutPanelTitle')}</span>
+            <span className={css.desc}>{t('settingsShortcutPanelDesc')}</span>
+          </span>
+          <span className={css.control}>
+            <KeyCaptureInput
+              value={prefs.shortcutPanel}
+              ariaLabel={t('settingsShortcutPanelTitle')}
+              onChange={(combo) => { applyPref({ shortcutPanel: combo }) }}
+            />
+          </span>
+        </div>
+        <div className={css.row}>
+          <span className={css.rowText}>
+            <span className={css.title}>{t('settingsShortcutTerminalTitle')}</span>
+            <span className={css.desc}>{t('settingsShortcutTerminalDesc')}</span>
+          </span>
+          <span className={css.control}>
+            <KeyCaptureInput
+              value={prefs.shortcutTerminal}
+              ariaLabel={t('settingsShortcutTerminalTitle')}
+              onChange={(combo) => { applyPref({ shortcutTerminal: combo }) }}
+            />
+          </span>
         </div>
         <div className={css.row}>
           <span className={css.rowText}>
