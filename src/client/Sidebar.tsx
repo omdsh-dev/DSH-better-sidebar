@@ -6,11 +6,12 @@
  * bottom panel squeezes ONLY the center column (the agent output area): it
  * spans from the app shell's own left sidebar to the right panel's left
  * edge, so neither sidebar gives up any position (the right panel keeps its
- * full height). A persistent two-button cluster at the top-right corner
- * toggles each panel; the right panel's width drags from its left edge, the
- * bottom panel's height from its top edge, and the shared corner drags both
- * at once. The whole layout lives in the per-session store, so switching
- * conversations swaps the sidebar.
+ * full height). The right panel owns a dedicated control row below the
+ * native caption band; the closed state keeps a matching fallback affordance.
+ * The right panel's width drags from its left edge, the bottom panel's height
+ * from its top edge, and the shared corner drags both at once. The whole
+ * layout lives in the per-session store, so switching conversations swaps
+ * the sidebar.
  *
  * The shell binds the workbench actions to the store and dispatches tab
  * content to the views. New tabs come from the + menu (explorer / git /
@@ -674,6 +675,33 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     return <span className={css.tabBadge}>{text}</span>
   }
 
+  /** The panel controls live after the + button while the right panel is
+   * open. A fixed fallback below is kept only for the closed state. */
+  const panelToggleActions = (
+    <>
+      <Tooltip label={state.bottomOpen ? t('collapseBottomPanel') : t('expandBottomPanel')} side="bottom" delayMs={500}>
+        <button
+          type="button"
+          className={css.toggleButton}
+          aria-label={state.bottomOpen ? t('collapseBottomPanel') : t('expandBottomPanel')}
+          onClick={() => { store.reduce(toggleBottomPanel) }}
+        >
+          <IconPanelBottomOutline16 />
+        </button>
+      </Tooltip>
+      <Tooltip label={state.panelOpen ? t('collapse') : t('expand')} side="bottom" delayMs={500}>
+        <button
+          type="button"
+          className={css.toggleButton}
+          aria-label={state.panelOpen ? t('collapse') : t('expand')}
+          onClick={() => { store.reduce(togglePanel) }}
+        >
+          <IconPanelRightOutline16 />
+        </button>
+      </Tooltip>
+    </>
+  )
+
   /**
    * Render one tab's content. `active` (from the workbench) tells whether
    * this tab is the active one in its pane; combined with the panel's
@@ -699,42 +727,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   return (
     <>
-      {/*
-        The persistent toggle cluster at the top-right corner: the bottom
-        panel's button (bottom glyph) LEFT of the right panel's (side glyph).
-        Always pinned to the viewport corner — inside the right panel's
-        top-right while it is open, sitting flush in the tab strip whose
-        right end it really squeezes (the strip reserves its width via CSS),
-        so the tabs genuinely yield space to it.
-      */}
-      <div className={css.toggleCluster}>
-        {/*
-          Narrow viewports merge the two workbenches into the one drawer —
-          there is no bottom panel, so its toggle button is not offered.
-        */}
-        {!narrow && (
-          <Tooltip label={state.bottomOpen ? t('collapseBottomPanel') : t('expandBottomPanel')} side="bottom" delayMs={500}>
-            <button
-              type="button"
-              className={css.toggleButton}
-              aria-label={state.bottomOpen ? t('collapseBottomPanel') : t('expandBottomPanel')}
-              onClick={() => { store.reduce(toggleBottomPanel) }}
-            >
-              <IconPanelBottomOutline16 />
-            </button>
-          </Tooltip>
-        )}
-        <Tooltip label={state.panelOpen ? t('collapse') : t('expand')} side="bottom" delayMs={500}>
-          <button
-            type="button"
-            className={css.toggleButton}
-            aria-label={state.panelOpen ? t('collapse') : t('expand')}
-            onClick={() => { store.reduce(togglePanel) }}
-          >
-            <IconPanelRightOutline16 />
-          </button>
-        </Tooltip>
-      </div>
+      {/* When the right panel is closed its tab strip is hidden, so retain a
+          small fallback affordance for reopening it. */}
+      {!state.panelOpen && (
+        <div className={css.toggleCluster}>{panelToggleActions}</div>
+      )}
       {/*
         The right panel stays mounted while collapsed (hidden off-screen) so
         the slide in/out can animate; visibility hides it after the slide
@@ -776,6 +773,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
               }}
             />
           )}
+        <div className={css.panelTopbar}>
+          <div className={css.panelControls}>
+            {state.panelOpen ? panelToggleActions : null}
+          </div>
+        </div>
         <div className={css.panelBody}>
           <Workbench
             state={state}

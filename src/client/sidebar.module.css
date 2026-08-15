@@ -10,11 +10,8 @@
 
 /* ── Shell ─────────────────────────────────────────────────────────────── */
 
-/* The persistent expand/collapse cluster at the top-right corner: two rail
-   controls side by side (bottom panel's glyph LEFT of the right panel's).
-   Always pinned to the viewport corner — inside the right panel's top-right
-   while it is open, sitting flush in the 34px tab strip (28px buttons at
-   top: 3) whose right end it really squeezes. */
+/* The fallback expand/collapse cluster used only while the right panel is
+   closed (when its tab strip is not mounted on screen). */
 .toggleCluster {
   position: fixed;
   top: 3px;
@@ -25,11 +22,11 @@
   gap: 4px;
 }
 
-/* The tab strip of the OPEN right panel reserves the cluster's width at its
-   right end, so the tabs and the + menu genuinely yield space to the cluster
-   (never hiding under it). */
-.panel:not(.panelHidden) .tabBar {
-  padding-right: 72px;
+/* Electron's native caption buttons occupy the first title-bar band. Keep
+   the closed-state fallback below that band instead of competing for the
+   same hit targets. */
+:global(html[data-dsh-desktop='true']) .toggleCluster {
+  top: var(--dsh-desktop-titlebar-inset, 40px);
 }
 
 /* The closed-state affordance is the native rail icon control: a plain
@@ -112,6 +109,35 @@
 
 .panelResizeActive {
   background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+/* A dedicated control row keeps the two panel toggles available regardless
+   of which tab is active. On desktop it starts below the native caption band;
+   the workbench begins after it, so neither expanded content nor tabs can
+   cover the hit targets. */
+.panelTopbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+  box-sizing: border-box;
+}
+
+.panelControls {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+:global(html[data-dsh-desktop='true']) .panelTopbar {
+  height: calc(var(--dsh-desktop-titlebar-inset, 40px) + 34px);
+  padding-top: var(--dsh-desktop-titlebar-inset, 40px);
+  align-items: flex-end;
 }
 
 .panelBody {
@@ -1787,14 +1813,6 @@
    switches (which panels render, the migration) are JS-driven via
    useNarrowViewport; this block only adapts the pure style details. */
 @media (max-width: 767px) {
-  /* The toggle cluster holds a single button on narrow viewports (the
-     bottom panel button is not rendered), so the open panel's tab strip
-     reserves 40px instead of the desktop 72px — the tabs and + menu still
-     yield space to the one remaining control. */
-  .panel:not(.panelHidden) .tabBar {
-    padding-right: 40px;
-  }
-
   /* Narrower tabs: a phone-width drawer fits more open tabs before the
      strip scrolls. */
   .tab {
