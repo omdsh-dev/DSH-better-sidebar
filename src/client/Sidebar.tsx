@@ -177,7 +177,15 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // snapshot's prefs, so flipping the setting re-renders and re-applies
   // immediately; the cleanup removes both on unmount/boundary swap so a
   // crashed sidebar never leaves them behind.
-  const titleBarCompat = snapshot.prefs.titleBarCompat
+  //
+  // Auto-enable in desktop windows: the DeepSeek Harness desktop shell marks
+  // itself with a `dsh-desktop-platform` URL query parameter (win32/darwin/
+  // linux). Frameless desktop windows draw the native caption buttons over
+  // the web content, so the compat strip is effectively required there; the
+  // OR keeps the pref working for plain-browser users who want the same
+  // reserved strip.
+  const isDesktopWindow = new URLSearchParams(window.location.search).has('dsh-desktop-platform')
+  const titleBarCompat = snapshot.prefs.titleBarCompat || isDesktopWindow
   const titleBarStrip = snapshot.prefs.titleBarStripPx
   useEffect(() => {
     const root = document.documentElement
