@@ -33,4 +33,12 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     // the install line installs the prerequisite first, then the plugin.
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/ChenRuoT/dsh-sidebar-qa.git',
   },
+  {
+    id: 'dsh-turn-review',
+    name: 'dsh-turn-review 本轮审查',
+    url: 'https://github.com/yq04/dsh-turn-review',
+    description: () => t('pluginTurnReviewDesc'),
+    // Needs dsh-better-sidebar (optional peer) for the tab; no model tools.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/yq04/dsh-turn-review.git',
+  },
 ]
