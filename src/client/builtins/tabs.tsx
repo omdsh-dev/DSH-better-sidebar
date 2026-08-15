@@ -99,6 +99,7 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       component: ({ ctx, store, scope, onOpenDiff }) => (
         <GitView
           scope={scope}
+          store={store}
           onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}
           onOpenDiff={onOpenDiff ?? (() => { /* no-op */ })}
         />

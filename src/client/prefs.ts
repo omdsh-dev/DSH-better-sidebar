@@ -15,6 +15,7 @@ import {
   SIDEBAR_PREFS_DEFAULTS,
   type SidebarPrefs,
 } from '../prefs-shared.ts'
+import { normalizeShortcutMap } from './shortcuts.ts'
 
 export { SIDEBAR_PREFS_DEFAULTS, clampTerminalFontSize, clampWidthPercent }
 export type { SidebarPrefs }
@@ -73,6 +74,7 @@ export function parsePrefs(value: unknown): SidebarPrefs {
       : SIDEBAR_PREFS_DEFAULTS.browserInterceptLinks,
     tabsEnabled: booleanMapOf(record.tabsEnabled),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
+    shortcuts: normalizeShortcutMap(record.shortcuts),
     pluginSettings: pluginSettingsMapOf(record.pluginSettings),
   }
 }

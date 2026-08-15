@@ -110,6 +110,14 @@ export interface SidebarPrefs {
    */
   viewersEnabled: Record<string, boolean>
   /**
+   * Per-shortcut chord overrides, keyed by shortcut id (`'toggleSidebar'`,
+   * `'saveEditor'`, `'commitGit'`). An ABSENT key means the shortcut's
+   * default chord; a present key is a canonical chord string such as
+   * `'Mod+B'` (Mod = Cmd on macOS, Ctrl elsewhere). Malformed entries are
+   * dropped on read, so the default applies.
+   */
+  shortcuts: Record<string, string>
+  /**
    * Plugin-owned settings blobs (v0.12.0+), keyed by descriptor id: each
    * registered tab/viewer that declares `settings.pluginToggles` (or writes
    * through `settings.render`'s `updatePluginSetting`) persists its values
@@ -147,6 +155,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   browserInterceptLinks: true,
   tabsEnabled: {},
   viewersEnabled: {},
+  shortcuts: {},
   pluginSettings: {},
 }
 

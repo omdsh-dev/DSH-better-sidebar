@@ -38,7 +38,7 @@
  * shows the wire error inline — a broken settings surface never crashes the
  * shell.
  */
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import {
   IconCheckOutline16,
   IconPlusOutline16,
@@ -60,6 +60,7 @@ import { api } from './api.ts'
 import { parsePrefs } from './prefs.ts'
 import { AddPluginModal, type PluginKind } from './add-plugin-modal.tsx'
 import { t } from './locales.ts'
+import { captureShortcutEvent, displayChord, SHORTCUT_DEFS } from './shortcuts.ts'
 import type { SidebarStore } from './state.ts'
 import type {
   BetterSidebarService,
@@ -78,6 +79,16 @@ export interface SideCardSectionInjected {
 
 /** Full section props: the runtime share plus the injected face. */
 export type SideCardSectionProps = PropsRuntime<'settings.section'> & SideCardSectionInjected
+
+/** A preference update may be static or derived from the latest successful
+ * store value when its serialized write reaches the head of the queue. */
+type PrefPatch = Record<string, unknown>
+type PrefPatchInput = PrefPatch | ((current: SidebarPrefs) => PrefPatch)
+
+/** Resolve one static/derived patch against a validated preference snapshot. */
+function resolvePrefPatch(input: PrefPatchInput, current: SidebarPrefs): PrefPatch {
+  return typeof input === 'function' ? input(current) : input
+}
 
 /** Map one wire failure to the inline message (the conflict gets friendly copy). */
 function messageOf(error: unknown): string {
@@ -301,6 +312,110 @@ function TypedRow(props: {
 }
 
 /**
+ * One configurable-shortcut row: activate the button, then press the desired
+ * chord. Modifier-only keydowns show a live preview; a valid final key commits
+ * immediately. Escape, Tab, click-away, and unsupported/bare keys never alter
+ * the stored chord. Captured keydowns stop here so the shortcut currently being
+ * edited cannot also trigger its app/browser action.
+ */
+export function ShortcutRow(props: {
+  title: string
+  value: string
+  onCommit: (chord: string) => void
+}) {
+  const { title, value, onCommit } = props
+  const [recording, setRecording] = useState(false)
+  const [preview, setPreview] = useState('')
+  const [feedback, setFeedback] = useState<'modifier-required' | 'unsupported-key' | null>(null)
+  const descId = useId()
+
+  const cancelRecording = (): void => {
+    setRecording(false)
+    setPreview('')
+    setFeedback(null)
+  }
+
+  const desc = feedback === 'modifier-required'
+    ? t('settingsShortcutModifierRequired')
+    : feedback === 'unsupported-key'
+      ? t('settingsShortcutUnsupported')
+      : recording
+        ? t('settingsShortcutRecording')
+        : t('settingsShortcutDesc')
+
+  return (
+    <div className={clsx(css.row, css.shortcutRow)}>
+      <span className={css.rowText}>
+        <span className={css.title}>{title}</span>
+        <span
+          id={descId}
+          className={clsx(css.desc, feedback !== null && css.shortcutError)}
+          aria-live="polite"
+        >
+          {desc}
+        </span>
+      </span>
+      <span className={css.control}>
+        <button
+          type="button"
+          className={clsx(css.shortcutRecorder, recording && css.shortcutRecorderActive)}
+          aria-label={t('settingsShortcutRecordAria', { shortcut: title })}
+          aria-describedby={descId}
+          aria-pressed={recording}
+          aria-invalid={feedback !== null ? true : undefined}
+          onClick={() => {
+            if (recording) cancelRecording()
+            else {
+              setRecording(true)
+              setPreview('')
+              setFeedback(null)
+            }
+          }}
+          onBlur={cancelRecording}
+          onKeyDown={event => {
+            if (!recording) return
+            const noModifiers = !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey
+            // A bare Tab cancels and keeps its native focus-navigation action;
+            // the recorder must never become a keyboard trap.
+            if (event.key === 'Tab' && noModifiers) {
+              cancelRecording()
+              return
+            }
+            event.preventDefault()
+            event.stopPropagation()
+            if (event.repeat) return
+            if (event.key === 'Escape' && noModifiers) {
+              cancelRecording()
+              return
+            }
+            const captured = captureShortcutEvent(event)
+            if (captured.kind === 'modifier') {
+              setPreview(captured.preview)
+              setFeedback(null)
+              return
+            }
+            if (captured.kind === 'invalid') {
+              setPreview('')
+              setFeedback(captured.reason)
+              return
+            }
+            setPreview('')
+            setFeedback(null)
+            setRecording(false)
+            onCommit(captured.chord)
+          }}
+        >
+          {recording && <span className={css.shortcutRecordingDot} aria-hidden="true" />}
+          <span className={css.shortcutValue}>
+            {recording ? (preview || t('settingsShortcutPressKeys')) : displayChord(value)}
+          </span>
+        </button>
+      </span>
+    </div>
+  )
+}
+
+/**
  * The secondary settings popup body of one feature (tab or viewer):
  * - `settings.render` (custom panel) when declared — rendered with the
  *   shared store/service, the live prefs, the descriptor's own plugin
@@ -406,6 +521,10 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
   // The settings document revision (guards concurrent writes). A ref: commits
   // read the freshest value at execution time, no re-render needed.
   const revisionRef = useRef<number | undefined>(undefined)
+  // The last authoritative settings value accepted from the route. Unlike
+  // rendered `prefs`, this never contains optimistic edits, so queued writes
+  // can safely derive from it and failed writes can always roll back to it.
+  const committedPrefsRef = useRef<SidebarPrefs>(store.getPrefs())
   // Whether the user already wrote since mount: the mount read must not
   // clobber a newer optimistic edit (the window is milliseconds, but a slow
   // route must never silently revert a just-made change).
@@ -423,22 +542,28 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
       revisionRef.current = view.revision
       if (dirtyRef.current) return
       const next = parsePrefs(view.value)
+      committedPrefsRef.current = next
+      store.setPrefs(next)
       setPrefs(next)
       setWidthDraft(String(next.defaultWidthPercent))
     }).catch(() => { /* the store's defaults stay authoritative */ })
     return () => { cancelled = true }
   }, [])
 
-  /** Persist one patch through the settings route (serialized, revision-guarded). */
-  const commit = (patch: Record<string, unknown>): Promise<{ ok: boolean; prefs: SidebarPrefs }> => {
+  /** Persist one patch through the settings route (serialized, revision-guarded).
+   *  Derived patches resolve only when their write runs, after every earlier
+   *  successful write has refreshed the committed baseline. */
+  const commit = (patchInput: PrefPatchInput): Promise<{ ok: boolean; prefs: SidebarPrefs }> => {
     dirtyRef.current = true
     const run = inFlightRef.current.then(async () => {
+      const patch = resolvePrefPatch(patchInput, committedPrefsRef.current)
       const view = await api.settingsUpdate(
         { ...patch },
         revisionRef.current,
       )
       const next = parsePrefs(view.value)
       revisionRef.current = view.revision
+      committedPrefsRef.current = next
       store.setPrefs(next)
       return next
     })
@@ -448,26 +573,29 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
       (next) => ({ ok: true, prefs: next }),
       (caught) => {
         setError(messageOf(caught))
-        return { ok: false, prefs }
+        // Another optimistic edit may already be queued, so the per-render
+        // `prefs` snapshot is not a safe rollback target. The committed ref
+        // advances only after an accepted mount read or successful write.
+        return { ok: false, prefs: committedPrefsRef.current }
       },
     )
   }
 
-  /** Settle one commit: success adopts the server values, failure reverts. */
-  const applyOutcome = (previous: SidebarPrefs, outcome: { ok: boolean; prefs: SidebarPrefs }): void => {
-    const settled = outcome.ok ? outcome.prefs : previous
-    setPrefs(settled)
-    setWidthDraft(String(settled.defaultWidthPercent))
+  /** Settle one commit from its server-success or authoritative rollback value. */
+  const applyOutcome = (outcome: { ok: boolean; prefs: SidebarPrefs }): void => {
+    setPrefs(outcome.prefs)
+    setWidthDraft(String(outcome.prefs.defaultWidthPercent))
   }
 
   /** Optimistically apply one pref patch, then commit (revert on failure). */
-  const applyPref = (patch: Record<string, unknown>): void => {
+  const applyPref = (patchInput: PrefPatchInput): void => {
     const previous = optimisticRef.current
+    const patch = resolvePrefPatch(patchInput, previous)
     const next = { ...previous, ...patch } as SidebarPrefs
     optimisticRef.current = next
     setPrefs(next)
     setError(null)
-    void commit(patch).then(outcome => applyOutcome(previous, outcome))
+    void commit(patchInput).then(applyOutcome)
   }
 
   const onToggle = (next: boolean): void => {
@@ -511,6 +639,13 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     return raw
   }
 
+  /** Commit one shortcut chord (canonicalized) into the shortcuts map. The
+   *  factory re-merges when its queued write begins, so a preceding pending
+   *  shortcut write is preserved on success and omitted if it failed. */
+  const onCommitShortcut = (id: string, chord: string): void => {
+    applyPref(current => ({ shortcuts: { ...current.shortcuts, [id]: chord } }))
+  }
+
   /** Persist one plugin-owned setting of one descriptor (merged into the pluginSettings blob). */
   const applyPluginSetting = (descriptorId: string, key: string, value: unknown): void => {
     applyPref({ pluginSettings: mergePluginSetting(optimisticRef.current.pluginSettings, descriptorId, key, value) })
@@ -549,7 +684,7 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     setPrefs({ ...previous, defaultWidthPercent: clamped })
     setWidthDraft(String(clamped))
     setError(null)
-    void commit({ defaultWidthPercent: clamped }).then(outcome => applyOutcome(previous, outcome))
+    void commit({ defaultWidthPercent: clamped }).then(applyOutcome)
   }
 
   /**
@@ -660,6 +795,21 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
             onChange={(next) => { applyPref({ interceptOpenPath: next }) }}
           />
         </div>
+      </div>
+
+      {/* 快捷键: one recorder row per plugin keyboard shortcut. Activating the
+          button captures the next modifier-plus-key chord and commits it
+          immediately; the stored/default chord is resolved for display. */}
+      <div className={css.group}>
+        <div className={css.groupHeading}>{t('settingsShortcutsTitle')}</div>
+        {SHORTCUT_DEFS.map(def => (
+          <ShortcutRow
+            key={`${def.id}:${prefs.shortcuts[def.id] ?? def.defaultChord}`}
+            title={t(def.titleKey)}
+            value={prefs.shortcuts[def.id] ?? def.defaultChord}
+            onCommit={(chord) => { onCommitShortcut(def.id, chord) }}
+          />
+        ))}
       </div>
 
       {/* 侧边栏内容: one small card per registered tab type in a responsive

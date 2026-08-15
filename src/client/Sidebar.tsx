@@ -49,6 +49,7 @@ import { detectNewDirectSubagent } from './subagent-detect.ts'
 import { detectNewJob } from './subagent-jobs.ts'
 import { t } from './locales.ts'
 import { api, type SessionScope } from './api.ts'
+import { chordOf, displayChord } from './shortcuts.ts'
 import css from './sidebar.module.css'
 
 /** How many consecutive reconnect failures stop the agent-terminals push loop
@@ -724,7 +725,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             </button>
           </Tooltip>
         )}
-        <Tooltip label={state.panelOpen ? t('collapse') : t('expand')} side="bottom" delayMs={500}>
+        <Tooltip label={`${state.panelOpen ? t('collapse') : t('expand')} (${displayChord(chordOf(store, 'toggleSidebar'))})`} side="bottom" delayMs={500}>
           <button
             type="button"
             className={css.toggleButton}

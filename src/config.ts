@@ -100,6 +100,10 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   // (everything on) with no migration. Non-boolean values fail validation.
   tabsEnabled: z.dict(z.boolean()).default({}),
   viewersEnabled: z.dict(z.boolean()).default({}),
+  // Per-shortcut chord overrides: an OPEN map (any shortcut id), values are
+  // canonical chord strings ('Mod+B'); absent keys mean the default chord.
+  // Non-string values fail validation.
+  shortcuts: z.dict(z.string()).default({}),
   // Plugin-owned settings blobs (v0.12.0+) are an OPEN nested map: any
   // descriptor id may carry any JSON-serializable values. This is the
   // "settings seam" opening — without it the seam would drop third-party

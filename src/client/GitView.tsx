@@ -17,7 +17,8 @@ import type { GitLogEntry, GitStatusEntry, GitStatusResult, SessionScope } from 
 import { api } from './api.ts'
 import { relativeTo } from './paths.ts'
 import { relativeTime, t } from './locales.ts'
-import type { SidebarTab } from './state.ts'
+import { chordMatchesEvent, chordOf, displayChord } from './shortcuts.ts'
+import type { SidebarStore, SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
 
 /** The XY status letters a row badge shows (X = index, Y = worktree). */
@@ -81,11 +82,13 @@ const LOG_BATCH = 20
 
 export function GitView(props: {
   scope: SessionScope
+  /** The shared store: the commit chord reads the live side card prefs. */
+  store: SidebarStore
   onOpenFile: (path: string) => void
   /** Open a diff tab (the shell places it below the git pane on first use). */
   onOpenDiff: (tab: SidebarTab) => void
 }) {
-  const { scope, onOpenFile, onOpenDiff } = props
+  const { scope, store, onOpenFile, onOpenDiff } = props
   const [status, setStatus] = useState<GitStatusResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -337,12 +340,17 @@ export function GitView(props: {
           <div className={css.gitCommit}>
             <Input
               className={css.gitCommitInput}
-              placeholder={t('commitPlaceholder')}
+              placeholder={`${t('commitPlaceholder')} (${displayChord(chordOf(store, 'commitGit'))})`}
               value={commitMsg}
               disabled={busy}
               onChange={(event) => { setCommitMsg(event.target.value); setCommitError(null) }}
               onKeyDown={(event) => {
-                if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
+                if (chordMatchesEvent(chordOf(store, 'commitGit'), event)) {
+                  // The chord is user-configurable: never let it also reach a
+                  // browser default (e.g. save-page on Mod+S, close-tab on Mod+W).
+                  event.preventDefault()
+                  void commit()
+                }
               }}
             />
             <button
