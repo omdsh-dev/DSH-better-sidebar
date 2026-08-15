@@ -67,7 +67,8 @@
     "cordis.patch.yml",
     "README.md",
     "README_EN.md",
-    "LICENSE"
+    "LICENSE",
+    "lib/client-mermaid.js"
   ],
   "scripts": {
     "build": "rm -rf lib && tsc -p tsconfig.build.json && tsdown",
@@ -131,6 +132,7 @@
     "@lezer/highlight": "^1.2.3",
     "@xterm/addon-fit": "^0.10.0",
     "clsx": "^2.1.1",
+    "mermaid": "^11.16.1",
     "node-pty": "^1.1.0",
     "rxjs": "^7.8.2",
     "schemastery": "^3.18.0",

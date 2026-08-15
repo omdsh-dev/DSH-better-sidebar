@@ -9,20 +9,24 @@
  * The toolbar (mode toggle / dirty dot / save / status) renders as its own
  * row below the host's title bar, VSCode-style.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ComponentType } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { EditorState } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
-import { api, htmlUrl } from './api.ts'
+import { api, htmlUrl, mediaUrl } from './api.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { appendToDraft } from './conversation-draft.ts'
 import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
+import { lazyChunkComponent } from './lazy-chunk.tsx'
+import { splitMermaidBlocks, type MermaidBlocksProps } from './mermaid-blocks.ts'
+import { resolveLocalPath, rewriteLocalImages } from './md-image-rewrite.ts'
 import { t } from './locales.ts'
 import type { FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
@@ -36,6 +40,16 @@ interface SelectionPopup {
   left: number
   top: number
 }
+
+/**
+ * The chunk-resident markdown preview renderer (mermaid lazy chunk): renders
+ * the interleaved md/mermaid block stream once the source contains at least
+ * one mermaid fence. Module-level `pick` keeps the load effect stable.
+ */
+const LazyMermaidBlocks = lazyChunkComponent<MermaidBlocksProps>(
+  'mermaid',
+  (mod) => mod.MermaidBlocks as ComponentType<MermaidBlocksProps> | undefined,
+)
 
 /**
  * The sandbox tokens of the HTML preview iframe. NO allow-same-origin (the
@@ -233,6 +247,31 @@ export function TextEditor(props: FileViewerProps) {
 
   const markdown = viewerId === 'markdown'
   const html = viewerId === 'html'
+  /** The markdown source the preview renders (draft wins over saved content). */
+  const mdText = draft ?? content ?? ''
+  /** Preview source with local image refs rewritten to absolute media-route
+   *  URLs (the DSH renderer only renders absolute HTTP(S) images; relative
+   *  ones would degrade to alt text). Resolved against the file's directory
+   *  and served through the sidebar's own /sidebar/file route. */
+  const mdPreviewText = useMemo(() => {
+    if (!markdown) return mdText
+    const baseDir = path.slice(0, path.lastIndexOf('/') + 1)
+    return rewriteLocalImages(mdText, (dest) => {
+      const origin = typeof location !== 'undefined' ? location.origin : ''
+      return origin + mediaUrl(scope, resolveLocalPath(baseDir, dest))
+    })
+  }, [markdown, mdText, path, scope])
+  /** md/mermaid block split for the preview (mermaid fences lift out). Split
+   *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
+  const mdBlocks = useMemo(
+    () => (markdown && mode === 'preview' ? splitMermaidBlocks(mdPreviewText) : []),
+    [markdown, mode, mdPreviewText],
+  )
+  const hasMermaid = useMemo(
+    () => mdBlocks.some(block => block.kind === 'mermaid'),
+    [mdBlocks],
+  )
+  const codeLabels = { copyLabel: t('copy'), copiedLabel: t('copied') }
 
   /**
    * Selection popup for the markdown preview: a mouse-up inside the preview
@@ -259,7 +298,7 @@ export function TextEditor(props: FileViewerProps) {
       return
     }
     const rect = sel.getRangeAt(0).getBoundingClientRect()
-    const lines = linesOfSelection(draft ?? content ?? '', text)
+    const lines = linesOfSelection(mdText, text)
     showPopup(
       buildSelectionInsert(path, scope.cwd, lines ?? undefined, text),
       rect.left + rect.width / 2,
@@ -333,11 +372,13 @@ export function TextEditor(props: FileViewerProps) {
               dictionary: the DSH MarkdownText/CodeBlock are cordis-free and
               fall back to hardcoded Chinese otherwise (same pattern as the
               chat's AssistantMarkdown). Render-time t() keeps them following
-              the active locale on live switches. */}
-          <MarkdownText
-            text={draft ?? content ?? ''}
-            codeLabels={{ copyLabel: t('copy'), copiedLabel: t('copied') }}
-          />
+              the active locale on live switches. Mermaid fences hand the
+              whole block stream to the mermaid lazy chunk (interleaved
+              md/diagram rendering, source order preserved); files without
+              one render exactly as before. */}
+          {hasMermaid
+            ? <LazyMermaidBlocks blocks={mdBlocks} codeLabels={codeLabels} />
+            : <MarkdownText text={mdPreviewText} codeLabels={codeLabels} />}
         </div>
       )}
       {html && mode === 'preview' && (

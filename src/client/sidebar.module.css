@@ -1105,6 +1105,83 @@
   font: var(--dsw-font-xs-13);
 }
 
+/* ── Mermaid diagram block (markdown preview, mermaid lazy chunk) ────────
+   Mirrors the md-code-block chrome the DSH CodeBlock renders, so a diagram
+   reads as a peer of the surrounding fences: hairline border, layer-2
+   header with the info string + copy action, layer-1 body. The SVG body is
+   static (no bindFunctions) and sanitized (no foreignObject/@attrs), so it
+   carries no event surface beyond the copy button. */
+
+.mermaidWrap {
+  margin: 6px 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  overflow: hidden;
+}
+
+.mermaidHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.mermaidInfo {
+  font: var(--dsw-font-xxxs-strong-11);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mermaidCopy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  cursor: pointer;
+}
+
+.mermaidCopy:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.mermaidBody {
+  display: flex;
+  justify-content: center;
+  padding: 10px;
+  overflow: auto;
+}
+
+.mermaidBody :global(svg) {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaidError {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxxs-11);
+}
+
+/* The diagram source shown under a render error (helps fixing the fence). */
+.mermaidCode {
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  font: var(--dsw-font-xxxs-11);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 /* The floating "add to conversation" button anchored above a text
    selection in the preview/code viewers. Portalled to document.body and
    position:fixed, so the editor's overflow clips cannot crop it; flat

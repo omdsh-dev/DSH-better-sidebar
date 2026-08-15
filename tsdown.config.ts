@@ -204,7 +204,11 @@ function chunkBundle(name: string): UserConfig {
       },
     },
     noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
-    plugins: [purityGatePlugin(), makeCssPlugin('dsh-better-sidebar')],
+    plugins: [
+      purityGatePlugin(),
+      makeCssPlugin('dsh-better-sidebar'),
+      ...(name === 'mermaid' ? [mermaidChunkAliases()] : []),
+    ],
     outputOptions: {
       entryFileNames: `client-${name}.js`,
       sourcemapPathTransform: browserSourcePath,
@@ -218,6 +222,29 @@ function chunkBundle(name: string): UserConfig {
 
 /** A rolldown plugin as tsdown's config accepts it (contextual `this` for load/resolveId). */
 type BuildPlugin = NonNullable<UserConfig['plugins']>
+
+/**
+ * Mermaid-chunk-only alias: pin uuid's BROWSER entry. The mermaid core
+ * (mindmap definition) imports the bare `uuid` specifier, which rolldown
+ * resolves to uuid's node entry — its dist-node modules import
+ * `node:crypto` and trip the client purity gate. The browser entry
+ * (uuid/dist/index.js, Web Crypto based) carries no Node builtins, so alias
+ * the specifier there instead of special-casing the gate. Resolved relative
+ * to mermaid's own dependency tree (pnpm/npm layout agnostic).
+ */
+function mermaidChunkAliases(): BuildPlugin {
+  const uuidBrowserEntry = resolvePath(
+    dirname(require.resolve('uuid/package.json', { paths: [dirname(require.resolve('mermaid/package.json'))] })),
+    'dist/index.js',
+  )
+  return {
+    name: 'dsh-mermaid-uuid-browser-alias',
+    resolveId(source: string) {
+      if (source === 'uuid') return uuidBrowserEntry
+      return null
+    },
+  }
+}
 
 /** The shared client-bundle purity gate (see the clientBundle doc). */
 function purityGatePlugin(): BuildPlugin {
@@ -287,7 +314,7 @@ function makeCssPlugin(pluginId: string): BuildPlugin {
 }
 
 /** The lazy chunk names (keep in sync with src/bundle-route.ts CHUNK_NAMES). */
-const CHUNKS = ['terminal', 'editor']
+const CHUNKS = ['terminal', 'editor', 'mermaid']
 
 export default [
   {
