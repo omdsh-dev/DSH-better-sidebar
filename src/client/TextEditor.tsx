@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { EditorState, Compartment, type Extension } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers, highlightActiveLine, ViewPlugin, Decoration, type DecorationSet } from '@codemirror/view'
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap, indentMore, indentLess } from '@codemirror/commands'
 import { search, searchKeymap, highlightSelectionMatches, selectNextOccurrence } from '@codemirror/search'
 import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
 import { bracketMatching, indentOnInput, indentUnit, foldGutter, foldKeymap, foldService, syntaxTree, ensureSyntaxTree } from '@codemirror/language'
@@ -456,8 +456,22 @@ export function TextEditor(props: FileViewerProps) {
           ...searchKeymap,
           ...closeBracketsKeymap,
           ...completionKeymap,
-          // Tab indents (multi-line: whole selection); Shift-Tab dedents.
-          indentWithTab,
+          // VSCode-style Tab: with no selection it inserts indentation
+          // (tabSize spaces — matching the editor's tab-size pref) at the
+          // cursor; with a selection it indents the selected lines.
+          // Shift-Tab always dedents.
+          {
+            key: 'Tab',
+            run: (view) => {
+              if (view.state.selection.ranges.some((range) => !range.empty)) {
+                return indentMore(view)
+              }
+              const indent = ' '.repeat(view.state.tabSize)
+              view.dispatch(view.state.replaceSelection(indent))
+              return true
+            },
+            shift: (view) => indentLess(view),
+          },
           // Multi-cursor: Ctrl+D selects the next occurrence of the current
           // selection (repeat to extend; Ctrl+U from defaultKeymap retreats).
           {
