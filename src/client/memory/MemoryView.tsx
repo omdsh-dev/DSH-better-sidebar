@@ -30,7 +30,7 @@ const NAV: { id: MemView; icon: ReactNode; key: CopyKey }[] = [
 ]
 
 export function MemoryView(props: TabComponentProps) {
-  const { visible } = props
+  const { visible, scope } = props
   const [view, setView] = useState<MemView>('overview')
 
   return (
@@ -49,10 +49,10 @@ export function MemoryView(props: TabComponentProps) {
           </button>
         ))}
       </div>
-      {view === 'overview' && <Overview visible={visible} />}
-      {view === 'files' && <Files />}
+      {view === 'overview' && <Overview visible={visible} scope={scope} />}
+      {view === 'files' && <Files visible={visible} scope={scope} />}
       {view === 'models' && <Models />}
-      {view === 'runs' && <Runs visible={visible} />}
+      {view === 'runs' && <Runs visible={visible} scope={scope} />}
       {view === 'settings' && <Settings />}
     </div>
   )

@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react'
 import {
   IconFolderOpenOutline16, IconRefreshOutline16, IconSettingsOutline16,
-  StateDot,
+  Button, StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { memoryApi, formatTime, type MemoryOverview } from './api.ts'
 import { isZh, t } from '../locales.ts'
@@ -85,9 +85,9 @@ export function Settings() {
               onChange={(e) => setNewRoot(e.target.value)}
               placeholder={t('memRootPlaceholder')}
             />
-          </div>
-          <div className={css.memRow}>
-            <button type="button" className={shellCss.iconButton} disabled={busy} onClick={saveRoot} title={t('memSaveRoot')}><IconSettingsOutline16 /></button>
+            <Button variant="primary" size="sm" disabled={busy} onClick={saveRoot} title={t('memSaveRoot')}>
+              {t('memSaveRoot')}
+            </Button>
           </div>
           <label className={css.memCheckRow}>
             <input type="checkbox" checked={copyData} onChange={(e) => setCopyData(e.target.checked)} />
@@ -118,9 +118,9 @@ export function Settings() {
                 <div className={css.memRow}>
                   <StateDot state="warning" size={10} className={css.memDot} />
                   <span className={css.memHint} style={{ flex: 1 }}>{t('memMigDetected', { n: legacy })}</span>
-                  <button type="button" className={shellCss.iconButton} disabled={busy} onClick={migrateNow} title={t('memMigrateNow')}>
-                    <IconRefreshOutline16 />
-                  </button>
+                  <Button variant="primary" size="sm" disabled={busy} onClick={migrateNow} title={t('memMigrateNow')}>
+                    {t('memMigrateNow')}
+                  </Button>
                 </div>
               )
               : (

@@ -5,10 +5,11 @@
  */
 import { useEffect, useState } from 'react'
 import {
-  IconRefreshOutline16, IconSparkle16, StateDot,
+  Button, IconRefreshOutline16, IconSparkle16, IconThinkOutline16, StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { memoryApi, formatDur, formatTime, type MemoryRun } from './api.ts'
 import { isZh, t } from '../locales.ts'
+import type { SessionScope } from '../service.ts'
 import shellCss from '../sidebar.module.css'
 import css from '../memory.module.css'
 
@@ -28,8 +29,9 @@ function dotOf(status: string): React.ComponentProps<typeof StateDot>['state'] {
   return 'error'
 }
 
-export function Runs(props: { visible: boolean }) {
-  const { visible } = props
+export function Runs(props: { visible: boolean; scope?: SessionScope }) {
+  const { visible, scope } = props
+  const sessionId = scope?.sessionId
   const [runs, setRuns] = useState<MemoryRun[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [log, setLog] = useState<string[] | null>(null)
@@ -61,8 +63,18 @@ export function Runs(props: { visible: boolean }) {
 
   const runClean = (): void => {
     setBusy(true)
-    memoryApi.clean().then((r) => {
+    memoryApi.clean(sessionId).then((r) => {
       setHint(t('memCleanStarted', { id: r.runId }))
+      load()
+    }).catch((e: unknown) => {
+      setHint(`❌ ${e instanceof Error ? e.message : String(e)}`)
+    }).finally(() => setBusy(false))
+  }
+
+  const runConsolidate = (): void => {
+    setBusy(true)
+    memoryApi.consolidate(sessionId).then((r) => {
+      setHint(t('memConsolidateStarted', { id: r.runId }))
       load()
     }).catch((e: unknown) => {
       setHint(`❌ ${e instanceof Error ? e.message : String(e)}`)
@@ -79,7 +91,12 @@ export function Runs(props: { visible: boolean }) {
         <button type="button" className={css.memIconBtn} title={t('memRefresh')} onClick={load}>
           <IconRefreshOutline16 />
         </button>
-        <button type="button" className={shellCss.iconButton} disabled={busy} onClick={runClean} title={t('memRunClean')}><IconSparkle16 /></button>
+        <Button variant="primary" size="sm" disabled={busy} onClick={runConsolidate} title={t('memRunConsolidate')} icon={<IconThinkOutline16 />}>
+          {t('memRunConsolidate')}
+        </Button>
+        <Button variant="primary" size="sm" disabled={busy} onClick={runClean} title={t('memRunClean')} icon={<IconSparkle16 />}>
+          {t('memRunClean')}
+        </Button>
       </div>
       <div className={css.memBody}>
         {runs.length === 0 && <div className={css.memEmpty}>{t('memNoRuns')}</div>}

@@ -70,16 +70,16 @@ async function memoryFetch<T>(path: string, options?: RequestInit): Promise<T> {
   return data
 }
 
-/** The memory console API surface (plugin-global; no session scope). */
+/** The memory console API surface (session-scoped when sessionId given). */
 export const memoryApi = {
-  overview: (signal?: AbortSignal) =>
-    memoryFetch<MemoryOverview>('overview', { cache: 'no-store', signal }),
+  overview: (sessionId?: string, signal?: AbortSignal) =>
+    memoryFetch<MemoryOverview>(`overview${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`, { cache: 'no-store', signal }),
   models: (signal?: AbortSignal) =>
     memoryFetch<{ configured: { extractor: string; cleaner: string }; providers: MemoryModelProvider[] }>('models', { cache: 'no-store', signal }),
   runs: (signal?: AbortSignal) =>
     memoryFetch<{ runs: MemoryRun[] }>('runs', { cache: 'no-store', signal }),
-  files: (signal?: AbortSignal) =>
-    memoryFetch<MemoryFiles>('files', { cache: 'no-store', signal }),
+  files: (sessionId?: string, signal?: AbortSignal) =>
+    memoryFetch<MemoryFiles>(`files${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`, { cache: 'no-store', signal }),
   file: (path: string, signal?: AbortSignal) =>
     memoryFetch<MemoryFileContent>(`file?path=${encodeURIComponent(path)}`, { cache: 'no-store', signal }),
   saveFile: (path: string, content: string) =>
@@ -94,8 +94,10 @@ export const memoryApi = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ kind, value }),
     }),
-  clean: () =>
-    memoryFetch<{ ok: true; runId: string }>('clean', { method: 'POST' }),
+  clean: (sessionId?: string) =>
+    memoryFetch<{ ok: true; runId: string }>(`clean${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`, { method: 'POST' }),
+  consolidate: (sessionId?: string) =>
+    memoryFetch<{ ok: true; runId: string }>(`consolidate${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`, { method: 'POST' }),
   migrate: () =>
     memoryFetch<{ copiedItems: number; from: string }>('migrate', { method: 'POST' }),
   saveRoot: (root: string, copyData: boolean) =>

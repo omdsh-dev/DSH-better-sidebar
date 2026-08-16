@@ -7,11 +7,13 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import {
   IconAgentPresetOutline16, IconDataOutline16, IconFolderOpenOutline16,
-  IconRefreshOutline16, IconSparkle16, IconThinkOutline16, StateDot,
+  IconRefreshOutline16, IconSparkle16, IconThinkOutline16,
+  Button, StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { IconGlobeOutline16 } from '../icons.tsx'
 import { memoryApi, formatTime, type MemoryOverview } from './api.ts'
 import { isZh, t } from '../locales.ts'
+import type { SessionScope } from '../service.ts'
 import shellCss from '../sidebar.module.css'
 import css from '../memory.module.css'
 
@@ -32,14 +34,15 @@ function filesLabel(n: number): string { return `${n} ${t('memUnitFiles')}` }
 function entriesLabel(n: number): string { return `${n} ${t('memUnitEntries')}` }
 function skillLabel(n: number): string { return `+ ${n} ${t('memUnitSkills')}` }
 
-export function Overview(props: { visible: boolean }) {
-  const { visible } = props
+export function Overview(props: { visible: boolean; scope?: SessionScope }) {
+  const { visible, scope } = props
+  const sessionId = scope?.sessionId
   const [data, setData] = useState<MemoryOverview | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [migrating, setMigrating] = useState(false)
 
   const load = (): void => {
-    memoryApi.overview().then((d) => { setData(d); setError(null) }).catch((e: unknown) => {
+    memoryApi.overview(sessionId).then((d) => { setData(d); setError(null) }).catch((e: unknown) => {
       setError(e instanceof Error ? e.message : String(e))
     })
   }
@@ -50,7 +53,7 @@ export function Overview(props: { visible: boolean }) {
     const timer = setInterval(load, 5000)
     return () => clearInterval(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible])
+  }, [visible, sessionId])
 
   if (error !== null && data === null) {
     return <div className={css.memError}>{t('memOverviewFailed')}: {error}</div>
@@ -94,9 +97,9 @@ export function Overview(props: { visible: boolean }) {
         <div className={css.memBanner}>
           <StateDot state="warning" size={10} className={css.memDot} />
           <span className={css.memBannerText}>{t('memMigDetected', { n: d.legacy })}</span>
-          <button
-            type="button"
-            className={shellCss.iconButton}
+          <Button
+            variant="primary"
+            size="sm"
             disabled={migrating}
             onClick={() => {
               setMigrating(true)
@@ -106,8 +109,8 @@ export function Overview(props: { visible: boolean }) {
             }}
             title={t('memMigrateNow')}
           >
-            <IconRefreshOutline16 />
-          </button>
+            {t('memMigrateNow')}
+          </Button>
         </div>
       )}
       {d.migrated && (

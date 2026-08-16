@@ -4,7 +4,7 @@
  * DSH settings-row recipe (label + control + hint).
  */
 import { useEffect, useState } from 'react'
-import { IconCheckOutline16, IconSparkle16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconCheckOutline16, IconSparkle16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { memoryApi, type MemoryModelProvider } from './api.ts'
 import { t } from '../locales.ts'
 import shellCss from '../sidebar.module.css'
@@ -75,7 +75,9 @@ export function Models() {
             </select>
           </div>
           <div className={css.memRow}>
-            <button type="button" className={shellCss.iconButton} disabled={busy} onClick={save} title={t('memSaveModels')}><IconCheckOutline16 /></button>
+            <Button variant="primary" size="sm" disabled={busy} onClick={save} title={t('memSaveModels')} icon={<IconCheckOutline16 />}>
+              {t('memSaveModels')}
+            </Button>
             <span className={css.memHint}>{result}</span>
           </div>
           <div className={css.memRow}>
