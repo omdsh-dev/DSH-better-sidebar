@@ -65,14 +65,43 @@ export function producedForClosing(nodes: readonly unknown[], seq: number): read
 
 /**
  * Claim the turn-tail chain only when the closing turn produced files.
- * @param owner - the turn-tail owner currency ({nodes, seq}).
+ *
+ * The authoritative source is the engine Turn data — the same value
+ * ui-deliverables reads (`owner.turn.data.get('deliverables')`): a
+ * `{ produced: [{ seq, path }, ...] }` record accumulated per Turn. The
+ * node-based replica below stays as a fallback for compositions that do not
+ * publish it.
+ * @param owner - the turn-tail owner currency ({turn, seq, openFile}).
  * @returns produced paths as the matched value, or null to decline.
  */
 export function selectProducedFiles(owner: unknown): readonly string[] | null {
-  const record = owner as { nodes?: unknown; seq?: unknown } | null
+  const record = owner as {
+    turn?: { data?: { get?: (key: string) => unknown } }
+    nodes?: unknown
+    seq?: unknown
+  } | null
   if (record === null || typeof record !== 'object') return null
-  if (!Array.isArray(record.nodes) || typeof record.seq !== 'number') return null
-  const paths = producedForClosing(record.nodes, record.seq)
+  const seq = typeof record.seq === 'number' ? record.seq : Number.POSITIVE_INFINITY
+  const data = record.turn?.data?.get?.('deliverables') as
+    | { produced?: unknown }
+    | null
+    | undefined
+  if (data !== null && typeof data === 'object' && Array.isArray(data.produced)) {
+    const paths: string[] = []
+    const seen = new Set<string>()
+    for (const item of data.produced) {
+      if (item === null || typeof item !== 'object') continue
+      const produced = item as { path?: unknown; seq?: unknown }
+      if (typeof produced.path !== 'string' || produced.path === '') continue
+      if (typeof produced.seq === 'number' && produced.seq > seq) continue
+      if (seen.has(produced.path)) continue
+      seen.add(produced.path)
+      paths.push(produced.path)
+    }
+    return paths.length === 0 ? null : paths
+  }
+  if (!Array.isArray(record.nodes)) return null
+  const paths = producedForClosing(record.nodes, seq)
   return paths.length === 0 ? null : paths
 }
 

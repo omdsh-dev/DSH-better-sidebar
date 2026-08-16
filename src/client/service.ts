@@ -125,6 +125,8 @@ export interface TabComponentProps {
   visible: boolean
   /** The explorer's expanded directory set (ExplorerView). */
   expanded?: string[]
+  /** The explorer's reveal-highlight set (ExplorerView; "Show in folder" targets). */
+  revealed?: string[]
   onToggleDir?: (path: string) => void
   onReferenceFile?: (path: string) => void
   onOpenFile?: (path: string) => void

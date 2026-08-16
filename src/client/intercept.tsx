@@ -8,7 +8,7 @@
  */
 import { IconCodeOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
-import type { SidebarStore } from './state.ts'
+import { revealPaths, type SidebarStore } from './state.ts'
 import { t } from './locales.ts'
 import { resolveSidebarPath, selectProducedFiles } from './produced-files.ts'
 import { wrapOpenPath } from './openpath-intercept.ts'
@@ -25,12 +25,42 @@ export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: st
   ctx.betterSidebar?.openTab({ type: 'editor', title, path: absolute, id: `editor:${absolute}` })
 }
 
+/**
+ * The produced files the turn-tail selector last matched for the visible
+ * session. The "Show in folder" gesture carries no file path of its own
+ * (`'.'`), so the reveal highlights exactly these rows when available.
+ */
+let lastProduced: readonly string[] = []
+
+/**
+ * Reveal the produced files in the sidebar explorer: expand their parent
+ * directories, highlight the rows, and focus the explorer tab (expanding the
+ * hosting panel when it is collapsed). Unknown files fall back to revealing
+ * the workspace root itself.
+ */
+export function revealInExplorer(
+  ctx: Context,
+  store: SidebarStore,
+  sessionId: string,
+  files: readonly string[],
+): void {
+  const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
+  const cwd = summary?.cwd
+  const targets = files.length > 0 ? files : cwd === undefined ? [] : [cwd]
+  store.reduce(state => revealPaths(state, cwd, targets))
+  // A content open (path seed) lands in sight: the single-instance explorer
+  // tab is focused and its hosting panel expands.
+  ctx.betterSidebar?.openTab({ type: 'explorer', title: t('explorer'), path: cwd ?? '' })
+}
+
 /** The intercepted produced-files row (visual twin of the deliverables chips). */
 export function SidebarProducedFiles(props: {
   matched: readonly string[]
   openInSidebar: (path: string) => void
+  /** Reveal the produced files in the explorer ("Show in folder" twin). */
+  onShowInFolder: (files: readonly string[]) => void
 }) {
-  const { matched, openInSidebar } = props
+  const { matched, openInSidebar, onShowInFolder } = props
   const shown = matched.slice(0, 6)
   const hidden = matched.length - shown.length
   return (
@@ -53,6 +83,16 @@ export function SidebarProducedFiles(props: {
         )
       })}
       {hidden > 0 && <span className={css.producedMore}>+{hidden}</span>}
+      {hidden > 0 && (
+        <button
+          type="button"
+          className={css.producedMore}
+          style={{ cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2 }}
+          onClick={() => { onShowInFolder(matched) }}
+        >
+          {t('showInFolder')}
+        </button>
+      )}
     </div>
   )
 }
@@ -79,12 +119,15 @@ export function registerTurnTailInterception(ctx: Context, store: SidebarStore):
     // deliverables behavior instead of offering chips that cannot open.
     select: (owner) => {
       if (store.getPrefs().tabsEnabled['editor'] === false) return null
-      return selectProducedFiles(owner)
+      const matched = selectProducedFiles(owner)
+      if (matched !== null) lastProduced = matched
+      return matched
     },
     priority: -1,
     registrant: 'dsh-better-sidebar',
     inject: (sessionId: string) => ({
       openInSidebar: (path: string) => { openSidebarFile(ctx, store, sessionId, path) },
+      onShowInFolder: (files: readonly string[]) => { revealInExplorer(ctx, store, sessionId, files) },
     }),
   }, SidebarProducedFiles))
 }
@@ -93,9 +136,11 @@ export function registerTurnTailInterception(ctx: Context, store: SidebarStore):
  * Register the chat file-open interception: wraps `ctx.workspaces.openPath`
  * — the single funnel every chat-side file open goes through (tool-row path
  * links, the produced-files row, prose mentions) — so opens land in the
- * sidebar editor instead of the Host OS. Gated by BOTH the `interceptOpenPath`
- * pref and the editor tab's enable switch; declined opens fall through to
- * the original method. Returns the disposer restoring the original (HMR-safe).
+ * sidebar editor instead of the Host OS. The folder-reveal gesture ("Show in
+ * folder" passes `'.'`) is the one exception: it is routed to the explorer.
+ * Gated by BOTH the `interceptOpenPath` pref and the editor tab's enable
+ * switch; declined opens fall through to the original method. Returns the
+ * disposer restoring the original (HMR-safe).
  */
 export function registerOpenPathInterception(ctx: Context, store: SidebarStore): () => void {
   return wrapOpenPath(ctx.workspaces, {
@@ -103,5 +148,6 @@ export function registerOpenPathInterception(ctx: Context, store: SidebarStore):
       && store.getPrefs().tabsEnabled['editor'] !== false,
     currentSessionId: () => ctx.sessions.list.getSnapshot().current,
     openInSidebar: (path, sessionId) => { openSidebarFile(ctx, store, sessionId, path) },
+    revealInExplorer: (_path, sessionId) => { revealInExplorer(ctx, store, sessionId, lastProduced) },
   })
 }

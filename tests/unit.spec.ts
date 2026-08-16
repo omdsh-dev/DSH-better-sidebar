@@ -986,6 +986,29 @@ describe('produced-files derivation', () => {
     expect(selectProducedFiles(null)).toBeNull()
   })
 
+  it('selector reads the engine Turn data first (the same source ui-deliverables uses)', () => {
+    // The real owner currency is { turn, seq, openFile } — `turn.data` carries
+    // the deliverables `{ produced: [{ seq, path }, ...] }` record. The node
+    // replica remains a fallback for compositions that do not publish it.
+    const engineOwner = (produced: Array<{ seq: number; path: string }>, seq: number): unknown => ({
+      turn: { data: { get: (key: string) => key === 'deliverables' ? { produced } : undefined } },
+      seq,
+    })
+    expect(selectProducedFiles(engineOwner([{ seq: 1, path: 'a.ts' }, { seq: 2, path: 'b.ts' }], 2)))
+      .toEqual(['a.ts', 'b.ts'])
+    // A settlement AFTER the closing seq is excluded.
+    expect(selectProducedFiles(engineOwner([{ seq: 1, path: 'a.ts' }, { seq: 5, path: 'late.ts' }], 2)))
+      .toEqual(['a.ts'])
+    // No produced files → decline, even though the engine record exists.
+    expect(selectProducedFiles(engineOwner([], 2))).toBeNull()
+    // An engine record without a produced list falls back to the node replica.
+    expect(selectProducedFiles({
+      turn: { data: { get: () => ({}) } },
+      nodes: [diffResult('a.ts'), { kind: 'assistant', seq: 1, turn: 1 }],
+      seq: 1,
+    })).toEqual(['a.ts'])
+  })
+
   it('resolves relative paths against the session cwd', () => {
     expect(resolveSidebarPath('/work/proj', 'src/a.ts')).toBe('/work/proj/src/a.ts')
     expect(resolveSidebarPath('/work/proj', '/abs/x.ts')).toBe('/abs/x.ts')
@@ -1615,13 +1638,17 @@ describe('open-path interception', () => {
 
   const deps = (overrides: Partial<OpenPathInterceptDeps> = {}): OpenPathInterceptDeps & {
     sidebar: string[]
+    revealed: string[]
   } => {
     const sidebar: string[] = []
+    const revealed: string[] = []
     return {
       sidebar,
+      revealed,
       takeoverEnabled: () => true,
       currentSessionId: () => 's1',
       openInSidebar: (path, sessionId) => { sidebar.push(`${sessionId}:${path}`) },
+      revealInExplorer: (path, sessionId) => { revealed.push(`${sessionId}:${path}`) },
       ...overrides,
     }
   }
@@ -1668,6 +1695,23 @@ describe('open-path interception', () => {
     restore()
   })
 
+  it('routes the "Show in folder" gesture (a directory) to the explorer, not the editor', async () => {
+    const ws = service()
+    const d = deps()
+    const restore = wrapOpenPath(ws, d)
+    // The stock produced-files row passes '.' — the chat view resolves it to
+    // "<cwd>/." — a directory has no editor content, so it must reveal in the
+    // explorer instead of opening a bogus editor tab.
+    for (const gesture of ['/w/.', '/w/./', '.', './']) {
+      await ws.openPath(gesture)
+    }
+    // A real file path still routes to the sidebar editor.
+    await ws.openPath('/w/src/a.ts')
+    expect(d.sidebar).toEqual(['s1:/w/src/a.ts'])
+    expect(d.revealed).toEqual(['s1:/w/.', 's1:/w/./', 's1:.', 's1:./'])
+    restore()
+  })
+
   it('restores the original method on dispose (HMR-safe)', async () => {
     const ws = service()
     const d = deps()
@@ -1692,6 +1736,20 @@ describe('open-path interception', () => {
 })
 
 describe('open-path interception wiring', () => {
+  // The folder-reveal arm writes the reveal set through store.reduce, whose
+  // per-session persist scheduling touches window timers (see the v0.12.0
+  // store additions describe for the same stub pattern).
+  beforeEach(() => {
+    const g = globalThis as Record<string, unknown>
+    g.window = { clearTimeout: () => {}, setTimeout: () => 0, innerWidth: 1024, innerHeight: 800 }
+    g.localStorage = { getItem: () => null, setItem: () => {} }
+  })
+  afterEach(() => {
+    const g = globalThis as Record<string, unknown>
+    delete g.window
+    delete g.localStorage
+  })
+
   it('registerOpenPathInterception routes chat opens into the editor tab and restores on dispose', async () => {
     // A realistic client-context fake: the sessions list feed (current + cwd),
     // the workspaces funnel, and the sidebar service the editor goes through.
@@ -1705,6 +1763,7 @@ describe('open-path interception wiring', () => {
       betterSidebar: { openTab: (seed: unknown) => { opened.push(seed as Record<string, unknown>) } },
     } as unknown as Context
     const store = createSidebarStore()
+    store.setSession('s1')
     const original = ctx.workspaces.openPath
     const restore = registerOpenPathInterception(ctx, store)
 
@@ -1718,13 +1777,24 @@ describe('open-path interception wiring', () => {
       id: 'editor:/w/src/a.ts',
     }])
 
+    // The "Show in folder" gesture ('.' — the workspace root, resolved to
+    // "<cwd>/." by the chat view) reveals in the explorer tab instead of
+    // opening a bogus editor tab for a directory. With no cached produced
+    // files the reveal falls back to the workspace root itself.
+    await ctx.workspaces.openPath('/w/.')
+    const explorerSeed = opened.find(seed => seed.type === 'explorer') as Record<string, unknown> | undefined
+    expect(explorerSeed).toBeDefined()
+    expect(explorerSeed?.path).toBe('/w')
+    expect(store.getSnapshot().state?.revealed).toEqual(['/w'])
+
     // The interceptOpenPath pref off → the original funnel runs untouched.
     store.setPrefs({ ...store.getPrefs(), interceptOpenPath: false })
     const calls: string[] = []
     ctx.workspaces.openPath = async (path: string) => { calls.push(path) }
     await ctx.workspaces.openPath('/w/src/b.ts')
     expect(calls).toEqual(['/w/src/b.ts'])
-    expect(opened).toHaveLength(1)
+    // The editor seed plus the folder-reveal explorer seed from above.
+    expect(opened).toHaveLength(2)
 
     // The editor tab disabled → falls through too (an editor that cannot
     // open must not swallow opens).

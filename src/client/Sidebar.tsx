@@ -61,6 +61,7 @@ function TabContent(props: {
   sessionId: string
   cwd: string | undefined
   expanded: string[]
+  revealed: string[]
   onToggleDir: (path: string) => void
   onReferenceFile: (path: string) => void
   ctx: Context
@@ -72,7 +73,7 @@ function TabContent(props: {
   /** Open a diff tab from the git panel (placement handled by the store). */
   onOpenDiff: (tab: SidebarTab) => void
 }) {
-  const { tab, sessionId, cwd, expanded, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff } = props
+  const { tab, sessionId, cwd, expanded, revealed, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff } = props
   const scope = { sessionId, cwd }
   const descriptor = ctx.betterSidebar?.getTab(tab.type)
   if (descriptor === undefined) {
@@ -90,7 +91,7 @@ function TabContent(props: {
     RenderBoundary,
     { className: css.tabBoundaryError },
     createElement(descriptor.component, {
-      ctx, store, scope, tab, visible, expanded,
+      ctx, store, scope, tab, visible, expanded, revealed,
       onToggleDir, onReferenceFile, onOpenDiff, onSubagentJump,
     }),
   )
@@ -713,6 +714,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       sessionId={sessionId}
       cwd={cwd}
       expanded={state.expanded}
+      revealed={state.revealed ?? []}
       onToggleDir={(path) => { store.reduce(s => toggleExpanded(s, path)) }}
       onReferenceFile={referenceInChat}
       ctx={ctx}

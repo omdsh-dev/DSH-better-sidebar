@@ -40,14 +40,17 @@ export function ExplorerView(props: {
   sessionId: string
   cwd: string | undefined
   expanded: string[]
+  /** Absolute paths to highlight ("Show in folder" reveal target rows). */
+  revealed: string[]
   onToggle: (path: string) => void
   onOpenFile: (path: string) => void
   /** Insert `@<relative path>` into the composer draft. */
   onReferenceFile: (path: string) => void
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onReferenceFile } = props
+  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onReferenceFile } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
+  const bodyRef = useRef<HTMLDivElement>(null)
   const [refreshTick, setRefreshTick] = useState(0)
   /** The row whose path was just copied ("copied" label replaces its button). */
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
@@ -77,6 +80,15 @@ export function ExplorerView(props: {
     loadDir(root)
     for (const dir of expanded) loadDir(dir)
   }, [cwd, expanded, refreshTick, loadDir])
+
+  const revealedKey = revealed.join('\u0000')
+  useEffect(() => {
+    if (revealedKey === '') return
+    const el = bodyRef.current?.querySelector('[data-revealed="true"]')
+    // block:"nearest" keeps an already-visible row from jumping; a level that
+    // loads AFTER the reveal re-runs this and scrolls then.
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [revealedKey, data])
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
   const copyPath = useCallback((text: string, path: string): void => {
@@ -145,13 +157,18 @@ export function ExplorerView(props: {
     return entries.map(entry => {
       if (entry.isDir) {
         const isOpen = expanded.includes(entry.path)
+        const isRevealed = revealed.includes(entry.path)
         return (
           <div key={entry.path}>
             <div
               role="button"
               tabIndex={0}
               className={clsx(css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden)}
-              style={{ paddingLeft: depth * 22 + 6 }}
+              style={{
+                paddingLeft: depth * 22 + 6,
+                ...(isRevealed ? { background: 'var(--dsw-alias-interactive-bg-active)' } : {}),
+              }}
+              data-revealed={isRevealed || undefined}
               onClick={() => { onToggle(entry.path) }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
@@ -169,13 +186,18 @@ export function ExplorerView(props: {
           </div>
         )
       }
+      const isRevealed = revealed.includes(entry.path)
       return (
         <div
           key={entry.path}
           role="button"
           tabIndex={0}
           className={clsx(css.explorerRow, entry.hidden && css.explorerHidden)}
-          style={{ paddingLeft: depth * 22 + 6 }}
+          style={{
+            paddingLeft: depth * 22 + 6,
+            ...(isRevealed ? { background: 'var(--dsw-alias-interactive-bg-active)' } : {}),
+          }}
+          data-revealed={isRevealed || undefined}
           title={entry.path}
           onClick={() => { onOpenFile(entry.path) }}
           onKeyDown={(event) => {
@@ -212,14 +234,18 @@ export function ExplorerView(props: {
           <IconRefreshOutline16 size={14} />
         </button>
       </div>
-      <div className={css.explorerBody}>
+      <div ref={bodyRef} className={css.explorerBody}>
         {root === undefined ? (
           <div className={css.explorerEmpty}>{t('noSession')}</div>
         ) : (
           <>
             <div
               className={css.explorerRow}
-              style={{ paddingLeft: 6 }}
+              style={{
+                paddingLeft: 6,
+                ...(revealed.includes(root) ? { background: 'var(--dsw-alias-interactive-bg-active)' } : {}),
+              }}
+              data-revealed={revealed.includes(root) || undefined}
               onContextMenu={(event) => { openRowMenu(event, root, true) }}
             >
               <IconFolderOpen16 size={14} />

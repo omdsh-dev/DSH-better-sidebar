@@ -72,6 +72,12 @@ export interface SidebarState {
   nextBrowser: number
   /** Explorer expansion set (absolute directory paths). */
   expanded: string[]
+  /**
+   * Explorer rows highlighted by a "Show in folder" reveal (absolute paths).
+   * Transient by design: sanitizeState never restores it, so a reload starts
+   * unhighlighted.
+   */
+  revealed: string[]
   /** The right sidebar's split tree (the original workbench). */
   splits: SplitNode
   /** Whether the bottom panel (a second, independent workbench) is open. */
@@ -162,6 +168,7 @@ export function makeDefaultState(width = PANEL_DEFAULT, panelOpen = true, seedEx
     nextTerminal: 1,
     nextBrowser: 1,
     expanded: [],
+    revealed: [],
     splits: leaf,
     bottomOpen: false,
     bottomHeight: BOTTOM_DEFAULT,
@@ -635,6 +642,33 @@ export function toggleExpanded(state: SidebarState, path: string): SidebarState 
   return { ...state, expanded }
 }
 
+/**
+ * Reveal files in the explorer: expand every ancestor directory between the
+ * explorer root and each file (so the lazy tree actually shows the row) and
+ * record the paths for highlighting. The reveal set is transient —
+ * sanitizeState never restores it, so a reload starts unhighlighted.
+ * @param state - current sidebar state.
+ * @param cwd - the explorer's root (session working directory).
+ * @param files - absolute paths to highlight (parent dirs are expanded).
+ * @returns the next state, or the same reference when nothing is revealed.
+ */
+export function revealPaths(state: SidebarState, cwd: string | undefined, files: readonly string[]): SidebarState {
+  const expanded = new Set(state.expanded)
+  const revealed: string[] = []
+  const rootParts = (cwd ?? '').split(/[\\/]+/).filter(part => part !== '')
+  for (const file of files) {
+    if (typeof file !== 'string' || file === '') continue
+    revealed.push(file)
+    const parts = file.split(/[\\/]+/).filter(part => part !== '' && part !== '.')
+    const separator = file.includes('\\') ? '\\' : '/'
+    for (let i = rootParts.length; i < parts.length - 1; i++) {
+      expanded.add(parts.slice(0, i + 1).join(separator))
+    }
+  }
+  if (revealed.length === 0) return state
+  return { ...state, expanded: [...expanded], revealed }
+}
+
 /** Adjust one split divider: `i` is the left/top child index, delta in fractions. */
 export function resizeSplit(node: SplitNode, splitId: string, index: number, delta: number): SplitNode {
   if (node.kind === 'leaf') return node
@@ -836,6 +870,7 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     nextTerminal: record.nextTerminal,
     nextBrowser,
     expanded: record.expanded as string[],
+    revealed: [],
     splits,
     bottomOpen,
     bottomHeight,

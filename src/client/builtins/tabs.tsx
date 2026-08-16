@@ -79,11 +79,12 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       icon: (size: number) => <IconFolderOpen16 size={size} />,
       order: 10,
       single: true,
-      component: ({ ctx, store, scope, expanded, onToggleDir, onReferenceFile }) => (
+      component: ({ ctx, store, scope, expanded, revealed, onToggleDir, onReferenceFile }) => (
         <ExplorerView
           sessionId={scope.sessionId}
           cwd={scope.cwd}
           expanded={expanded ?? []}
+          revealed={revealed ?? []}
           onToggle={onToggleDir ?? (() => { /* no-op */ })}
           onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}
           onReferenceFile={onReferenceFile ?? (() => { /* no-op */ })}
