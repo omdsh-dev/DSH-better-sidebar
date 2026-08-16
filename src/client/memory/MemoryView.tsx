@@ -12,7 +12,6 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TabComponentProps } from '../service.ts'
 import { t, type CopyKey } from '../locales.ts'
-import shellCss from '../sidebar.module.css'
 import css from '../memory.module.css'
 import { Overview } from './Overview.tsx'
 import { Files } from './Files.tsx'
@@ -36,17 +35,17 @@ export function MemoryView(props: TabComponentProps) {
 
   return (
     <div className={css.memRoot}>
-      <div className={shellCss.tabBar}>
+      <div className={css.memNav}>
         {NAV.map((n) => (
           <button
             key={n.id}
             type="button"
-            className={shellCss.tab + (view === n.id ? ' ' + shellCss.tabActive : '')}
+            className={css.memNavTab + (view === n.id ? ' ' + css.memNavTabActive : '')}
             onClick={() => setView(n.id)}
             title={t(n.key)}
           >
             <span style={{ display: 'inline-flex', alignItems: 'center' }}>{n.icon}</span>
-            <span className={shellCss.tabTitle}>{t(n.key)}</span>
+            <span>{t(n.key)}</span>
           </button>
         ))}
       </div>

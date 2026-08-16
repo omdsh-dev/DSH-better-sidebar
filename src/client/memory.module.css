@@ -59,6 +59,40 @@
   cursor: default;
 }
 
+/* ── modern nav bar (no border dividers — bottom underline only) ─────────── */
+.memNav {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.memNavTab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.memNavTab:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.memNavTabActive {
+  color: var(--dsw-alias-label-primary);
+  border-bottom-color: var(--dsw-alias-button-primary-fill);
+}
+
 .memBody {
   flex: 1;
   min-height: 0;
@@ -66,7 +100,7 @@
   padding: 2px 6px 8px;
 }
 
-/* ── overview stat cards (subagent row recipe) ──────────────────────────── */
+/* ── overview stat cards (borderless recipe: bg tint + hover fill) ────────── */
 .memCard {
   display: flex;
   align-items: flex-start;
@@ -75,12 +109,12 @@
   width: 100%;
   min-height: 48px;
   padding: 7px 8px 7px 11px;
-  border: none;
   border-radius: 8px;
-  background: transparent;
+  background: var(--dsw-alias-bg-layer-1);
   font: var(--dsw-font-s-14);
   color: var(--dsw-alias-label-primary);
   text-align: left;
+  transition: background 120ms ease;
 }
 
 .memCard:hover {
