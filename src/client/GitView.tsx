@@ -143,16 +143,15 @@ export function GitView(props: {
   useEffect(() => { void refresh() }, [refresh])
 
   /**
-   * Lightweight status poller used by the auto-refresh timer — fetches ONLY
-   * status + branch (never the history log, which stays lazy), so external
-   * worktree changes surface on screen within ~AUTO_REFRESH_MS without a
-   * manual refresh. Skips while a panel action is in flight (busy/loading);
-   * stale in-flight responses are aborted on unmount/hide or the next tick.
+   * Lightweight status poller body — fetches ONLY status + branch (never the
+   * history log, which stays lazy), so external worktree changes surface on
+   * screen without a manual refresh. Skips while a panel action is in flight
+   * (busy/loading). Uses a per-poll AbortController so hide/unmount can cancel
+   * an in-flight request; the caller is a serial chain, so at most one poll is
+   * ever running (no per-tick cancellation that would starve a slow repo).
    */
   const pollStatus = useCallback(async (): Promise<void> => {
     if (busy || loading) return
-    // Abort any prior in-flight poll so responses never land out of order.
-    pollAbortRef.current?.abort()
     const controller = new AbortController()
     pollAbortRef.current = controller
     try {
@@ -173,14 +172,27 @@ export function GitView(props: {
     }
   }, [scope.sessionId, scope.cwd, busy, loading])
 
-  // Auto-refresh loop: only while this tab is the visible/active one AND the
-  // panel is open. When hidden, abandon the timer AND abort any in-flight poll
-  // (pausing a visible-tab concern). Polling stops entirely when no session.
+  // Auto-refresh loop — a SERIAL setTimeout chain: poll, wait for it to
+  // settle, then schedule the next tick. Only the last in-flight poll is ever
+  // aborted (on hide/unmount), never a running one, so a slow `git.status`
+  // (large / network filesystem) simply means the next poll waits longer
+  // instead of being cut off and re-issued — status always converges and no
+  // host git process is wasted on aborted requests. Runs only while this tab
+  // is the visible/active one AND the panel is open AND a session is current.
   useEffect(() => {
     if (!visible || scope.sessionId === '') return
-    const timer = window.setInterval(() => { void pollStatus() }, AUTO_REFRESH_MS)
+    let disposed = false
+    let timer: number | undefined
+    const tick = async (): Promise<void> => {
+      if (disposed) return
+      await pollStatus()
+      if (disposed) return
+      timer = window.setTimeout(() => { void tick() }, AUTO_REFRESH_MS)
+    }
+    timer = window.setTimeout(() => { void tick() }, AUTO_REFRESH_MS)
     return () => {
-      window.clearInterval(timer)
+      disposed = true
+      if (timer !== undefined) window.clearTimeout(timer)
       pollAbortRef.current?.abort()
       pollAbortRef.current = null
     }
