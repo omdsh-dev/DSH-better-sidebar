@@ -230,6 +230,12 @@ export function TextEditor(props: FileViewerProps) {
     prefsCompRef.current = prefsComp
     const prefs = ctx.betterSidebar?.getSnapshot()?.prefs
     const prefsExtension = buildPrefsExtensions(prefs)
+    // Fold-gutter press state: the press sequence counter and the seq/line
+    // of the last fold-press, so the pointerup re-check can re-fold a fold
+    // cleared by the release without disturbing a later intentional unfold.
+    let pressSeq = 0
+    let foldPress = 0
+    let pressedLine = 0
     const state = EditorState.create({
       doc: content,
       extensions: [
@@ -262,9 +268,18 @@ export function TextEditor(props: FileViewerProps) {
         // run. Preventing the pointerdown default also stops the click from
         // being synthesized at all, so the built-in click handler cannot
         // double-toggle the fold.
+        //
+        // Because a release can still clear the fold right after the press
+        // (a synthesized click landing on the now-unfold marker, or a
+        // selection transaction whose head sits inside the folded range),
+        // the pointerup handler re-checks the fold a tick later and re-folds
+        // if it was cleared. The pressSeq token guards the re-check: it only
+        // acts when no newer press intervened, so an intentional unfold
+        // (a later click on the now-unfold marker) is never re-folded.
         foldGutter({
           domEventHandlers: {
             pointerdown: (view, line) => {
+              pressSeq++
               const folded = findFoldRange(view.state, line.from, line.to)
               if (folded !== null) {
                 view.dispatch({ effects: unfoldEffect.of(folded) })
@@ -272,9 +287,27 @@ export function TextEditor(props: FileViewerProps) {
               }
               const range = foldable(view.state, line.from, line.to)
               if (range !== null) {
+                foldPress = pressSeq
+                pressedLine = line.from
                 view.dispatch({ effects: foldEffect.of(range) })
                 return true
               }
+              return false
+            },
+            pointerup: (view, line) => {
+              const seq = foldPress
+              if (seq === 0) return false
+              foldPress = 0
+              const lineFrom = pressedLine
+              window.setTimeout(() => {
+                if (viewRef.current !== view) return
+                if (pressSeq !== seq) return
+                const folded = findFoldRange(view.state, lineFrom, lineFrom + 1)
+                if (folded === null) {
+                  const range = foldable(view.state, lineFrom, lineFrom + 1)
+                  if (range !== null) view.dispatch({ effects: foldEffect.of(range) })
+                }
+              }, 120)
               return false
             },
           },
