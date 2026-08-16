@@ -24,6 +24,9 @@
 | 多标签页 + 拆分面板 | ✅（workbench 拖拽分栏） |
 | 深色/浅色主题跟随 | ✅ |
 | Markdown 预览/编辑切换 | ✅ |
+| 文件大纲（符号列表） | ✅ 工具栏按钮 → 函数/类/方法/标题，点击跳转 |
+| 代码折叠（gutter + 快捷键） | ✅ 折叠服务 + 内置 gutter 点击（根因已修） |
+| 尾部空格高亮 | ✅ 行尾空白红色高亮 |
 
 ---
 
@@ -52,9 +55,9 @@
 
 ### P1 — 代码导航与编辑效率
 
-5. **文件内符号/大纲（Ctrl+Shift+O）**
-   - VSCode：跳到函数/类/变量定义。
-   - CodeMirror：语言包提供语法树（`@codemirror/language` 的 `syntaxTree`），可以做一个轻量大纲（按函数名/类名列出，点击跳转）。不引入 LSP，纯语法树够用。
+5. **文件内符号/大纲（Ctrl+Shift+O）** ✅ 已实现（工具栏大纲按钮）
+   - 现状：工具栏「大纲」按钮 → 下拉面板列出函数/类/方法（JS/TS 语法树）+ Markdown 标题，缩进按嵌套层级（标题按级别），点击跳转。
+   - CodeMirror：`syntaxTree` + `ensureSyntaxTree`（强制完整解析，50ms 兜底），无 LSP。
 
 6. **多光标（Ctrl+D 选下一个相同词 / Alt+Click）**
    - VSCode：Ctrl+D 加选下一个、Ctrl+U 回退、Alt+Click 任意光标。
