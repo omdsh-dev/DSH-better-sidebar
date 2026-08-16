@@ -36,6 +36,11 @@ function baseName(path: string): string {
 /** How long the row's "copied" label stays after a successful write. */
 const COPIED_MS = 1200
 
+/** Reconnect backoff for the passive fs-events socket. */
+const FS_RETRY_BASE_MS = 1000
+const FS_RETRY_MAX_MS = 30_000
+const FS_RETRY_STABLE_MS = 10_000
+
 export function ExplorerView(props: {
   sessionId: string
   cwd: string | undefined
@@ -46,9 +51,16 @@ export function ExplorerView(props: {
   onReferenceFile: (path: string) => void
 }) {
   const { sessionId, cwd, expanded, onToggle, onOpenFile, onReferenceFile } = props
+  const expandedKey = expanded.join('\0')
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
-  const [refreshTick, setRefreshTick] = useState(0)
+  /** Latest request generation per directory; stale responses never win. */
+  const requestVersionRef = useRef(new Map<string, number>())
+  /** Directories visible during the previous render (collapsed levels can go stale). */
+  const visibleDirsRef = useRef<{ cwd: string | undefined; expanded: Set<string> }>({
+    cwd: undefined,
+    expanded: new Set(),
+  })
   /** The row whose path was just copied ("copied" label replaces its button). */
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
@@ -59,24 +71,108 @@ export function ExplorerView(props: {
     setData(dataRef.current)
   }, [])
 
-  const loadDir = useCallback((dir: string) => {
-    if (dataRef.current[dir] !== undefined) return
-    storeLevel(dir, {})
+  const loadDir = useCallback((dir: string, force = false) => {
+    const previous = dataRef.current[dir]
+    if (!force && previous !== undefined) return
+    const version = (requestVersionRef.current.get(dir) ?? 0) + 1
+    requestVersionRef.current.set(dir, version)
+    // Initial loads show the loading row. Refreshes keep the previous listing
+    // mounted and swap the new entries in atomically, avoiding tree flicker.
+    if (previous === undefined) storeLevel(dir, {})
     api.fsTree({ sessionId, cwd }, dir).then((listing) => {
+      if (requestVersionRef.current.get(dir) !== version) return
       storeLevel(dir, { entries: listing.entries })
     }).catch((error: unknown) => {
+      if (requestVersionRef.current.get(dir) !== version) return
+      // A passive refresh failure must not replace a usable tree with an error.
+      if (previous?.entries !== undefined) return
       storeLevel(dir, { error: error instanceof Error ? error.message : String(error) })
     })
   }, [sessionId, cwd, storeLevel])
 
   useEffect(() => {
-    // Load the visible set; already-loaded levels (kept in the cache) are
-    // not refetched. Only the refresh button wipes the cache.
     const root = cwd
     if (root === undefined) return
+    const previous = visibleDirsRef.current.cwd === root
+      ? visibleDirsRef.current.expanded
+      : new Set<string>()
     loadDir(root)
-    for (const dir of expanded) loadDir(dir)
-  }, [cwd, expanded, refreshTick, loadDir])
+    // A directory can change while collapsed because it is intentionally not
+    // watched then. Re-expansion therefore performs one background revalidate.
+    for (const dir of expanded) loadDir(dir, !previous.has(dir))
+    visibleDirsRef.current = { cwd: root, expanded: new Set(expanded) }
+  }, [cwd, expandedKey, loadDir])
+
+  /** Revalidate the visible tree without clearing any rendered rows. */
+  const refreshVisible = useCallback(() => {
+    if (cwd === undefined) return
+    loadDir(cwd, true)
+    for (const dir of expanded) loadDir(dir, true)
+  }, [cwd, expandedKey, loadDir])
+
+  /**
+   * Passive file-tree refresh: subscribe to host fs.watch events for the
+   * visible/expanded directories. The host pushes `{type:'change', path}`
+   * when a watched directory's contents change; we revalidate that level in
+   * the background and atomically swap the result. No polling or blank state.
+   */
+  useEffect(() => {
+    if (cwd === undefined) return
+    let socket: WebSocket | null = null
+    let retry: number | undefined
+    let stable: number | undefined
+    let closed = false
+    let failures = 0
+    let openedOnce = false
+    const connect = (): void => {
+      if (closed) return
+      const url = new URL('/sidebar/ws/fs-events', location.origin)
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+      url.search = new URLSearchParams({ sessionId, cwd }).toString()
+      socket = new WebSocket(url.toString())
+      socket.onopen = () => {
+        window.clearTimeout(stable)
+        stable = window.setTimeout(() => { failures = 0 }, FS_RETRY_STABLE_MS)
+        const dirs = [cwd, ...expanded]
+        for (const dir of dirs) {
+          if (socket?.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'watch', path: dir }))
+          }
+        }
+        // Changes can happen during a broken connection. A reconnect closes
+        // that blind spot with one no-flicker revalidation of visible levels.
+        if (openedOnce) refreshVisible()
+        openedOnce = true
+      }
+      socket.onmessage = (event) => {
+        if (typeof event.data !== 'string') return
+        try {
+          const msg = JSON.parse(event.data) as { type?: unknown; path?: unknown }
+          if (msg?.type !== 'change' || typeof msg.path !== 'string') return
+          const changed = msg.path
+          if (dataRef.current[changed] === undefined && cwd !== changed && !expanded.includes(changed)) return
+          loadDir(changed, true)
+        } catch {
+          // Malformed push: ignore (the next real change will refresh).
+        }
+      }
+      socket.onclose = () => {
+        if (closed) return
+        window.clearTimeout(stable)
+        failures += 1
+        const delay = Math.min(FS_RETRY_BASE_MS * (2 ** Math.min(failures - 1, 5)), FS_RETRY_MAX_MS)
+        retry = window.setTimeout(connect, delay)
+      }
+      socket.onerror = () => { socket?.close() }
+    }
+    connect()
+    return () => {
+      closed = true
+      window.clearTimeout(retry)
+      window.clearTimeout(stable)
+      socket?.close()
+    }
+  }, [sessionId, cwd, expandedKey, loadDir, refreshVisible])
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
   const copyPath = useCallback((text: string, path: string): void => {
@@ -203,11 +299,7 @@ export function ExplorerView(props: {
           className={css.iconButton}
           aria-label={t('refresh')}
           title={t('refresh')}
-          onClick={() => {
-            dataRef.current = {}
-            setData({})
-            setRefreshTick(tick => tick + 1)
-          }}
+          onClick={refreshVisible}
         >
           <IconRefreshOutline16 size={14} />
         </button>
