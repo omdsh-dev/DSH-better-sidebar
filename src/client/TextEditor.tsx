@@ -237,6 +237,40 @@ interface SelectionPopup {
   left: number
   top: number
 }
+
+/** Identifier characters used for word-based completion. */
+const WORD_RE = /[\w$]+/g
+
+/**
+ * Word-based completion (VSCode's word-based suggestions): any identifier
+ * that appears elsewhere in the document is a candidate, ranked by how
+ * often it appears. This is the third completion layer — after the
+ * language's own source and the reserved-word list — so code picks up
+ * document vocabulary (function names, property names, imports) that the
+ * keyword table cannot know.
+ */
+function wordCompletion(context: CompletionContext): CompletionResult | null {
+  const word = context.matchBefore(/[\w$]*/)
+  if (word === null || word.from === word.to) return null
+  const prefix = word.text
+  const frequencies = new Map<string, number>()
+  WORD_RE.lastIndex = 0
+  const docText = context.state.doc.toString()
+  let match: RegExpExecArray | null
+  while ((match = WORD_RE.exec(docText)) !== null) {
+    const candidate = match[0]
+    // Skip the just-typed word itself (an exact match has nothing to add)
+    // and words that don't share the prefix.
+    if (candidate === prefix || !candidate.startsWith(prefix)) continue
+    frequencies.set(candidate, (frequencies.get(candidate) ?? 0) + 1)
+  }
+  if (frequencies.size === 0) return null
+  const options: Completion[] = [...frequencies.entries()]
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+    .slice(0, 100)
+    .map(([label]) => ({ label }))
+  return { from: word.from, options }
+}
 /**
  * The sandbox tokens of the HTML preview iframe. NO allow-same-origin (the
  * preview must stay in an opaque origin — with the route's own origin it
@@ -426,38 +460,38 @@ export function TextEditor(props: FileViewerProps) {
         // step through matches) and Ctrl+G go-to-line via the default keymaps.
         search({ top: true }),
         highlightSelectionMatches(),
-        // Autocomplete: Ctrl+Space lists candidates. The language packages
-        // ship few sources (JS has scope completion; most others have none),
-        // so for languages with a keyword table the sources are combined:
-        // the language's own results first, then the reserved-word list,
-        // deduplicated by label so e.g. the JS import variants don't repeat.
+        // Autocomplete: Ctrl+Space lists candidates. Up to three layers are
+        // combined: the language's own completions (e.g. JS scope
+        // completion), the reserved-word list (for languages that have
+        // one), and word-based completion over the document — deduplicated
+        // by label so e.g. the JS import variants don't repeat. The
+        // override is always active so word completion works in any file.
         autocompletion({
           activateOnTyping: true,
           defaultKeymap: true,
-          ...(keywords === undefined ? {} : {
-            override: [
-              (context: CompletionContext): CompletionResult | null => {
-                const seen = new Set<string>()
-                const options: Completion[] = []
-                let from = context.pos
-                const collect = (result: CompletionResult | Promise<CompletionResult | null> | null): void => {
-                  if (result === null || typeof result !== 'object' || !('options' in result)) return
-                  from = result.from
-                  for (const option of result.options) {
-                    if (!seen.has(option.label)) {
-                      seen.add(option.label)
-                      options.push(option)
-                    }
+          override: [
+            (context: CompletionContext): CompletionResult | null => {
+              const seen = new Set<string>()
+              const options: Completion[] = []
+              let from = context.pos
+              const collect = (result: CompletionResult | Promise<CompletionResult | null> | null): void => {
+                if (result === null || typeof result !== 'object' || !('options' in result)) return
+                from = result.from
+                for (const option of result.options) {
+                  if (!seen.has(option.label)) {
+                    seen.add(option.label)
+                    options.push(option)
                   }
                 }
-                for (const source of context.state.languageDataAt('autocomplete', context.pos) as Array<(c: CompletionContext) => CompletionResult | Promise<CompletionResult | null> | null>) {
-                  collect(source(context))
-                }
-                collect(completeFromList(keywords)(context))
-                return options.length === 0 ? null : { from, options }
-              },
-            ],
-          }),
+              }
+              for (const source of context.state.languageDataAt('autocomplete', context.pos) as Array<(c: CompletionContext) => CompletionResult | Promise<CompletionResult | null> | null>) {
+                collect(source(context))
+              }
+              if (keywords !== undefined) collect(completeFromList(keywords)(context))
+              collect(wordCompletion(context))
+              return options.length === 0 ? null : { from, options }
+            },
+          ],
         }),
         keymap.of([
           {
