@@ -66,12 +66,16 @@ export function TabBar(props: {
   /** Badge resolver for tab labels (reads the descriptor's `badge`; the
    *  resolver returns the rendered pill or null). */
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /** Title resolver: the localized descriptor title to prefer over the
+   *  stored `tab.title` (pinned bars and freshly-added tabs carry a neutral
+   *  placeholder until the descriptor resolves the user-facing label). */
+  getTabTitle?: (tab: SidebarTab) => string | undefined
   /** Marks a tab as PINNED (front-fixed explorer/git/subagent): not
    *  draggable and no close affordance (drag/close disabled). Optional. */
   pinned?: (tab: SidebarTab) => boolean
 }) {
   const {
-    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge, pinned,
+    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge, getTabTitle, pinned,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -134,11 +138,12 @@ export function TabBar(props: {
       <div ref={listRef} className={css.tabList}>
         {tabs.map(tab => {
           const isPinned = pinned?.(tab) === true
+          const label = getTabTitle?.(tab) ?? tab.title
           return (
             <div
               key={tab.id}
               className={clsx(css.tab, active === tab.id && css.tabActive)}
-              title={tab.title}
+              title={label}
               draggable={!isPinned}
               onDragStart={(event) => {
                 if (isPinned) return
@@ -168,7 +173,7 @@ export function TabBar(props: {
             >
               {getTabIcon?.(tab) ?? null}
               {getTabBadge?.(tab) ?? null}
-              <span className={css.tabTitle}>{tab.title}</span>
+              <span className={css.tabTitle}>{label}</span>
               {!isPinned && (
                 <button
                   type="button"

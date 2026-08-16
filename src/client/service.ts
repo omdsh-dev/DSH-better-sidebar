@@ -22,7 +22,7 @@
 import type { ReactNode } from 'react'
 import type { Context } from '../context-types.ts'
 import {
-  activateTab as activateTabReducer, allLeaves, closeTab as closeTabReducer, leafWithTab,
+  activateTab as activateTabReducer, allLeaves, closeTab as closeTabReducer, isPinnedType, leafWithTab,
   openTabInActivePane, patchTab, tabOpenIn, togglePanel, treeOf,
   type SidebarSnapshot, type SidebarState, type SidebarStore, type SidebarTab,
 } from './state.ts'
@@ -672,6 +672,17 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
 
   const closeTab = (tabId: string, scope?: SessionScope): void => {
     let closed: SidebarTab | undefined
+    // The pinned Explorer/Git/Subagent tabs in the RIGHT panel are not
+    // closable through the service (the UI hides their close button) — this
+    // guard makes the public close path a strict no-op for them, so closing
+    // never tears down and re-mounts the same bar. (Internal reconciles that
+    // close via the raw reducer, e.g. agent terminals, are unaffected.)
+    const cur = store.getSnapshot().state
+    if (cur !== undefined) {
+      const inRight = leafWithTab(cur.splits, tabId)
+      const tab = inRight?.tabs.find(t => t.id === tabId)
+      if (tab !== undefined && isPinnedType(tab.type)) return
+    }
     store.reduce((state) => {
       // Unknown tab ids are a strict no-op: no state churn, no notify, no
       // pointless localStorage rewrite (mirrors updateTab's short-circuit).

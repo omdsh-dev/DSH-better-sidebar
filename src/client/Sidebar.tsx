@@ -106,6 +106,10 @@ function buildNewTabOptions(state: SidebarState, ctx: Context, scope: SessionSco
   if (service === undefined) return []
   return service.getTabs()
     .filter(d => !d.hidden && service.isTabEnabled(d.id))
+    // The pinned Explorer/Git/Subagent bars are always visible and fixed —
+    // listing them in the + menu is redundant (opening them would only focus
+    // the existing pinned bar). Only floating types are offered.
+    .filter(d => !isPinnedType(d.id))
     .sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
     .map(d => ({
       id: d.id,
@@ -702,6 +706,17 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }
 
   /**
+   * The localized tab title from the tab-type registry. Pinned bars and any
+   * tab carry the descriptor's (i18n) title; the stored `tab.title` is only a
+   * fallback when no descriptor offers one (external/unregistered types).
+   */
+  const tabTitleOf = (tab: SidebarTab): string | undefined => {
+    const descriptor = ctx.betterSidebar?.getTab(tab.type)
+    if (descriptor?.title === undefined) return undefined
+    return typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title
+  }
+
+  /**
    * Render one tab's content. `active` (from the workbench) tells whether
    * this tab is the active one in its pane; combined with the panel's
    * open/closed state it gates live views (the Subagent topology pauses its
@@ -812,6 +827,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={renderTab}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            getTabTitle={tabTitleOf}
             pinned={(tab) => isPinnedType(tab.type)}
           />
         </div>
@@ -893,6 +909,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={(tab, active, paneId) => renderTab(tab, active, paneId, true)}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            getTabTitle={tabTitleOf}
           />
         </div>
       </div>

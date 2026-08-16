@@ -251,8 +251,10 @@ export function isPinnedType(type: string): boolean {
   return PINNED_TYPES.includes(type as (typeof PINNED_TYPES)[number])
 }
 
-/** A human title for a pinned tab type (kept cheap; the descriptor title wins
- *  at render time via the registry anyway). */
+/** A human title for a pinned tab type when one has none stored yet. The
+ *  pinned bars are almost always long-lived tabs that already carry their
+ *  (localized) descriptor title from when they were first opened; this is only
+ *  a fallback for the brief补齐 of a missing bar. */
 function titleForType(type: string): string {
   if (type === 'explorer') return 'Explorer'
   if (type === 'git') return 'Source Control'
@@ -260,58 +262,77 @@ function titleForType(type: string): string {
 }
 
 /**
- * Reconcile the RIGHT panel's first pane so the pinned types occupy its first
- * three tab positions (in fixed order), reusing any existing instance of a
- * pinned type already present in that pane (its content — expansions, state —
- * is thus preserved) and adding fresh tabs for any that are missing. The
- * remaining tabs keep their relative order appended after the pinned group.
+ * Collect every pinned-type tab instance across the whole RIGHT tree (all
+ * leaves), in breadth-first pane order, deduped by type (first occurrence
+ * wins — it is the one whose content/expansion we keep).
+ */
+function collectPinnedInstances(root: SplitNode): Map<string, SidebarTab> {
+  const seen = new Map<string, SidebarTab>()
+  for (const leaf of allLeaves(root)) {
+    for (const tab of leaf.tabs) {
+      if (isPinnedType(tab.type) && !seen.has(tab.type)) seen.set(tab.type, tab)
+    }
+  }
+  return seen
+}
+
+/**
+ * Reconcile the entire RIGHT panel so exactly ONE set of pinned tabs exists,
+ * occupying the first tab positions of the FIRST leaf (in fixed order, reusing
+ * the collected instances so their per-session content is preserved) and
+ * appearing in NO other pane. Missing pinned bars are added; disabled ones
+ * (per `tabsEnabled`) are skipped. Non-pinned tabs keep their relative order,
+ * appended after the pinned group in the first leaf and unchanged in any other
+ * pane.
  *
- * Idempotent and safe to call on every committed state: this is the "keep the
- * same three panels everywhere" invariant for the right panel. The LEFT/bottom
- * panel is untouched (pinned is a right-panel rule). The active tab stays on
- * whatever tab was active; if the active pointer referred to a reordered tab
- * it is resolved to the same tab after the move.
+ * Idempotent and safe to call on every committed state — this is the "same
+ * three panels everywhere" invariant for the right panel. The bottom panel is
+ * untouched (pinned is a right-panel rule).
  */
 export function ensurePinnedTabs(state: SidebarState, tabsEnabled: Record<string, boolean> = {}): SidebarState {
   const root = state.splits
-  // Work on the FIRST leaf of the right tree (the primary pane). A split root
-  // keeps its structure; only the first pane is reconciled.
-  const target = firstLeaf(root)
-  const pinnedById = new Map<string, SidebarTab>()
-  const rest: SidebarTab[] = []
-  for (const tab of target.tabs) {
-    if (isPinnedType(tab.type) && !pinnedById.has(tab.type)) {
-      pinnedById.set(tab.type, tab) // keep the existing instance/content
-    } else {
-      rest.push(tab)
-    }
-  }
+  const pinnedByType = collectPinnedInstances(root)
+  // Build the pinned group for the first leaf: enabled types, in fixed order,
+  // reusing collected instances or fabricating a fresh bar.
   const ordered: SidebarTab[] = []
   for (const type of PINNED_TYPES) {
-    // A pinned type the user disabled in settings does NOT show (the rest of
-    // the fixed bars still do). An absent key means enabled.
     if (tabsEnabled[type] === false) continue
-    const existing = pinnedById.get(type)
-    if (existing !== undefined) {
-      ordered.push(existing)
-    } else {
-      ordered.push({ id: uid('tab'), type, title: titleForType(type) })
+    const existing = pinnedByType.get(type)
+    ordered.push(existing ?? { id: uid('tab'), type, title: titleForType(type) })
+  }
+
+  // Walk the tree: first leaf gets [pinned group + its non-pinned tabs]; every
+  // other leaf drops its pinned tabs (they already live in the first leaf).
+  const first = firstLeaf(root)
+  const restFirst: SidebarTab[] = []
+  const newTree = mapLeaf(root, first.id, leaf => {
+    for (const tab of leaf.tabs) {
+      if (isPinnedType(tab.type)) continue // pinned go to the ordered group
+      restFirst.push(tab)
     }
-  }
-  const nextTabs = [...ordered, ...rest]
-  // No change when already reconciled.
-  if (nextTabs.length === target.tabs.length && nextTabs.every((t, i) => t === target.tabs[i])) {
-    return state
-  }
-  let active = target.active
-  if (active !== null && !nextTabs.some(t => t.id === active)) active = null
-  return {
-    ...state,
-    splits: mapLeaf(root, target.id, leaf => {
-      leaf.tabs = nextTabs
-      leaf.active = active
-    }),
-  }
+    leaf.tabs = [...ordered, ...restFirst]
+    // Active fallback: keep the previously active tab if it survived; else the
+    // existing active if it is now one of the pinned/first leaf tabs; else the
+    // last remaining tab (or null when the pane is genuinely empty).
+    const keepActive = (leaf.active !== null && leaf.tabs.some(t => t.id === leaf.active)) ? leaf.active : null
+    leaf.active = keepActive ?? (leaf.tabs.length > 0 ? leaf.tabs[leaf.tabs.length - 1]!.id : null)
+  })
+  // Strip pinned tabs (with their id) from every NON-first leaf.
+  const stripped = mapAllLeaves(newTree, (leaf) => {
+    if (leaf.id === first.id) return leaf
+    if (!leaf.tabs.some(t => isPinnedType(t.type))) return leaf
+    const kept = leaf.tabs.filter(t => !isPinnedType(t.type))
+    const active = (leaf.active !== null && kept.some(t => t.id === leaf.active)) ? leaf.active
+      : (kept.length > 0 ? kept[kept.length - 1]!.id : null)
+    return { ...leaf, tabs: kept, active }
+  })
+  return { ...state, splits: stripped }
+}
+
+/** Apply `visit` to every leaf of a tree, returning a new tree. */
+function mapAllLeaves(node: SplitNode, visit: (leaf: SidebarLeaf) => SidebarLeaf): SplitNode {
+  if (node.kind === 'leaf') return visit(node)
+  return { ...node, children: node.children.map(child => mapAllLeaves(child, visit)) }
 }
 
 /** Whether a tree node (or any descendant) carries the given pane/split id. */
