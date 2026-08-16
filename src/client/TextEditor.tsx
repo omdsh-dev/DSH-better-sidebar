@@ -17,7 +17,7 @@ import { EditorView as CodeMirrorView, keymap, lineNumbers, highlightActiveLine 
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { search, searchKeymap, highlightSelectionMatches, selectNextOccurrence } from '@codemirror/search'
 import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
-import { bracketMatching, indentOnInput, indentUnit, foldGutter, foldKeymap, foldService, foldEffect, unfoldEffect, foldable, foldedRanges, syntaxTree } from '@codemirror/language'
+import { bracketMatching, indentOnInput, indentUnit, foldGutter, foldKeymap, foldService, syntaxTree } from '@codemirror/language'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, htmlUrl } from './api.ts'
@@ -118,15 +118,6 @@ function indentFoldService(state: EditorState, lineStart: number): { from: numbe
     }
   }
   return lastDeeperTo < 0 ? null : { from: line.to, to: lastDeeperTo }
-}
-
-/** The folded range covering the given line range, if one exists. */
-function findFoldRange(state: EditorState, from: number, to: number): { from: number; to: number } | null {
-  let found: { from: number; to: number } | null = null
-  foldedRanges(state).between(from, to, (a, b) => {
-    if (found === null || found.from > a) found = { from: a, to: b }
-  })
-  return found
 }
 
 /** The floating "add to conversation" action: payload + viewport anchor. */
@@ -230,12 +221,6 @@ export function TextEditor(props: FileViewerProps) {
     prefsCompRef.current = prefsComp
     const prefs = ctx.betterSidebar?.getSnapshot()?.prefs
     const prefsExtension = buildPrefsExtensions(prefs)
-    // Fold-gutter press state: the press sequence counter and the seq/line
-    // of the last fold-press, so the pointerup re-check can re-fold a fold
-    // cleared by the release without disturbing a later intentional unfold.
-    let pressSeq = 0
-    let foldPress = 0
-    let pressedLine = 0
     const state = EditorState.create({
       doc: content,
       extensions: [
@@ -260,58 +245,11 @@ export function TextEditor(props: FileViewerProps) {
         // registered by the language extension above and wins for headings;
         // plain text falls back to the indent service.
         //
-        // The arrows fold on pointerdown rather than click: the prefs
-        // compartment reconfigure on the first interaction rebuilds the
-        // gutters between pointerdown and mouseup, so the browser never
-        // synthesizes a click on the gutter (the pointerdown target node is
-        // gone by mouseup time) and the built-in click handler would never
-        // run. Preventing the pointerdown default also stops the click from
-        // being synthesized at all, so the built-in click handler cannot
-        // double-toggle the fold.
-        //
-        // Because a release can still clear the fold right after the press
-        // (a synthesized click landing on the now-unfold marker, or a
-        // selection transaction whose head sits inside the folded range),
-        // the pointerup handler re-checks the fold a tick later and re-folds
-        // if it was cleared. The pressSeq token guards the re-check: it only
-        // acts when no newer press intervened, so an intentional unfold
-        // (a later click on the now-unfold marker) is never re-folded.
-        foldGutter({
-          domEventHandlers: {
-            pointerdown: (view, line) => {
-              pressSeq++
-              const folded = findFoldRange(view.state, line.from, line.to)
-              if (folded !== null) {
-                view.dispatch({ effects: unfoldEffect.of(folded) })
-                return true
-              }
-              const range = foldable(view.state, line.from, line.to)
-              if (range !== null) {
-                foldPress = pressSeq
-                pressedLine = line.from
-                view.dispatch({ effects: foldEffect.of(range) })
-                return true
-              }
-              return false
-            },
-            pointerup: (view, line) => {
-              const seq = foldPress
-              if (seq === 0) return false
-              foldPress = 0
-              const lineFrom = pressedLine
-              window.setTimeout(() => {
-                if (viewRef.current !== view) return
-                if (pressSeq !== seq) return
-                const folded = findFoldRange(view.state, lineFrom, lineFrom + 1)
-                if (folded === null) {
-                  const range = foldable(view.state, lineFrom, lineFrom + 1)
-                  if (range !== null) view.dispatch({ effects: foldEffect.of(range) })
-                }
-              }, 120)
-              return false
-            },
-          },
-        }),
+        // The gutter's built-in click handler works here: the prefs
+        // reconfigure is gated on the prefs actually changing (see the prefs
+        // effect), so the gutters are NOT rebuilt between pointerdown and
+        // mouseup and the browser synthesizes the click normally.
+        foldGutter(),
         foldService.of(syntaxFoldService),
         foldService.of(indentFoldService),
         CodeMirrorView.updateListener.of((update) => {
@@ -465,16 +403,23 @@ export function TextEditor(props: FileViewerProps) {
   // Side card pref changes: reconfigure the prefs compartment in place so
   // font / tab width / wrapping / line numbers apply without losing the
   // document, undo history or scroll position. The store notifies on every
-  // snapshot change (session switch, prefs writes); the reconfigure is cheap
-  // and idempotent, so listening to all of them is fine.
+  // snapshot change (session switch, prefs writes, panel state), so the
+  // reconfigure is gated on the prefs actually changing: rebuilding the
+  // extension set (lineNumbers, the font theme) re-creates the gutters,
+  // which makes the browser skip click synthesis on the fold gutter for
+  // clicks that land while the rebuild is happening.
   useEffect(() => {
     const view = viewRef.current
     const prefsComp = prefsCompRef.current
     if (view === null || prefsComp === null) return
+    let lastPrefsKey = ''
     const applyPrefs = (): void => {
       const prefs = ctx.betterSidebar?.getSnapshot()?.prefs
-      view.dispatch({ effects: prefsComp.reconfigure(buildPrefsExtensions(prefs)) })
       autoSaveModeRef.current = prefs?.editorAutoSave ?? 'off'
+      const key = JSON.stringify(prefs)
+      if (key === lastPrefsKey) return
+      lastPrefsKey = key
+      view.dispatch({ effects: prefsComp.reconfigure(buildPrefsExtensions(prefs)) })
     }
     applyPrefs()
     return ctx.betterSidebar?.subscribeState(applyPrefs)
