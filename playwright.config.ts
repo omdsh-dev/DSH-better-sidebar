@@ -37,3 +37,5 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
 })
+
+# Fix for issue #140: safe input handling
