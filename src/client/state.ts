@@ -237,6 +237,83 @@ export function makeDefaultState(width = PANEL_DEFAULT, panelOpen = true, seedEx
   }
 }
 
+/**
+ * The PINNED tab types always shown first in the RIGHT panel of every session
+ * (Explorer / Git / Subagent). They cannot be closed or reordered out of their
+ * pinned front positions — they are the "keep the same panels everywhere"
+ * skeleton. Everything else (editor / terminal / browser / external) floats
+ * per session as today.
+ */
+export const PINNED_TYPES: readonly TabType[] = ['explorer', 'git', 'subagent']
+
+/** Whether a tab type is one of the pinned front tabs. */
+export function isPinnedType(type: string): boolean {
+  return PINNED_TYPES.includes(type as (typeof PINNED_TYPES)[number])
+}
+
+/** A human title for a pinned tab type (kept cheap; the descriptor title wins
+ *  at render time via the registry anyway). */
+function titleForType(type: string): string {
+  if (type === 'explorer') return 'Explorer'
+  if (type === 'git') return 'Source Control'
+  return 'Subagents'
+}
+
+/**
+ * Reconcile the RIGHT panel's first pane so the pinned types occupy its first
+ * three tab positions (in fixed order), reusing any existing instance of a
+ * pinned type already present in that pane (its content — expansions, state —
+ * is thus preserved) and adding fresh tabs for any that are missing. The
+ * remaining tabs keep their relative order appended after the pinned group.
+ *
+ * Idempotent and safe to call on every committed state: this is the "keep the
+ * same three panels everywhere" invariant for the right panel. The LEFT/bottom
+ * panel is untouched (pinned is a right-panel rule). The active tab stays on
+ * whatever tab was active; if the active pointer referred to a reordered tab
+ * it is resolved to the same tab after the move.
+ */
+export function ensurePinnedTabs(state: SidebarState, tabsEnabled: Record<string, boolean> = {}): SidebarState {
+  const root = state.splits
+  // Work on the FIRST leaf of the right tree (the primary pane). A split root
+  // keeps its structure; only the first pane is reconciled.
+  const target = firstLeaf(root)
+  const pinnedById = new Map<string, SidebarTab>()
+  const rest: SidebarTab[] = []
+  for (const tab of target.tabs) {
+    if (isPinnedType(tab.type) && !pinnedById.has(tab.type)) {
+      pinnedById.set(tab.type, tab) // keep the existing instance/content
+    } else {
+      rest.push(tab)
+    }
+  }
+  const ordered: SidebarTab[] = []
+  for (const type of PINNED_TYPES) {
+    // A pinned type the user disabled in settings does NOT show (the rest of
+    // the fixed bars still do). An absent key means enabled.
+    if (tabsEnabled[type] === false) continue
+    const existing = pinnedById.get(type)
+    if (existing !== undefined) {
+      ordered.push(existing)
+    } else {
+      ordered.push({ id: uid('tab'), type, title: titleForType(type) })
+    }
+  }
+  const nextTabs = [...ordered, ...rest]
+  // No change when already reconciled.
+  if (nextTabs.length === target.tabs.length && nextTabs.every((t, i) => t === target.tabs[i])) {
+    return state
+  }
+  let active = target.active
+  if (active !== null && !nextTabs.some(t => t.id === active)) active = null
+  return {
+    ...state,
+    splits: mapLeaf(root, target.id, leaf => {
+      leaf.tabs = nextTabs
+      leaf.active = active
+    }),
+  }
+}
+
 /** Whether a tree node (or any descendant) carries the given pane/split id. */
 function treeHasId(node: SplitNode, id: string): boolean {
   if (node.id === id) return true
@@ -1123,6 +1200,11 @@ export class SidebarStore {
    *  content to the session's cache, update the active snapshot, and schedule
    *  the session content persist. */
   private commitActive(sessionId: string, next: SidebarState): void {
+    // Keep the pinned Explorer/Git/Subagent tabs at the front of the right
+    // panel for every session — this is the "same three panels everywhere"
+    // invariant. Apply after every active-session mutation so a reducer can
+    // never permanently remove/reorder them.
+    next = ensurePinnedTabs(next, this.prefs.tabsEnabled)
     const { layout, content } = splitState(next)
     const oldLayout = this.ensureGlobalLayout()
     if (layout.panelOpen !== oldLayout.panelOpen
@@ -1140,8 +1222,9 @@ export class SidebarStore {
 
   /** Route a TARGET session's content-only mutation without touching the
    *  active snapshot or the global layout (targeted opens never change
-   *  geometry). */
+   *  geometry). The pinned tabs are also kept present for the target. */
   private commitTarget(sessionId: string, next: SidebarState): void {
+    next = ensurePinnedTabs(next, this.prefs.tabsEnabled)
     const { content } = splitState(next)
     this.bySession.set(sessionId, content)
     this.schedulePersistContent(sessionId, content)
@@ -1163,9 +1246,16 @@ export class SidebarStore {
     // reverse. A persisted layout (any real drag/toggle) is never clobbered.
     if (this.globalLayout !== undefined && !this.globalLayoutPersisted) {
       this.globalLayout = makeDefaultLayout(this.prefs)
-      if (this.snapshot.sessionId !== undefined && this.snapshot.state !== undefined) {
-        const content = splitState(this.snapshot.state).content
-        this.snapshot = { ...this.snapshot, state: synthState(this.globalLayout, content) }
+    }
+    // Re-synthesize the active snapshot (the global layout may have been
+    // re-seeded above) and re-apply the pinned bars against the (possibly
+    // changed) enable toggles, so disabling a pinned type drops its bar
+    // immediately and re-enabling restores it.
+    if (this.snapshot.sessionId !== undefined && this.snapshot.state !== undefined) {
+      const content = splitState(this.snapshot.state).content
+      this.snapshot = {
+        ...this.snapshot,
+        state: ensurePinnedTabs(synthState(this.ensureGlobalLayout(), content), this.prefs.tabsEnabled),
       }
     }
     this.snapshot = { ...this.snapshot, prefs: this.prefs }
@@ -1194,9 +1284,10 @@ export class SidebarStore {
         nextIdCounter = maxCounterId(content)
       }
       // Reassemble the full state from the SHARED layout + this session's
-      // content: the panel geometry is identical across sessions.
+      // content: the panel geometry is identical across sessions. Keep the
+      // pinned Explorer/Git/Subagent front tabs present on (re)entry too.
       const layout = this.ensureGlobalLayout()
-      this.snapshot = { sessionId, state: synthState(layout, content), prefs: this.prefs }
+      this.snapshot = { sessionId, state: ensurePinnedTabs(synthState(layout, content), this.prefs.tabsEnabled), prefs: this.prefs }
     }
     this.notify()
   }

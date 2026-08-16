@@ -32,7 +32,7 @@ import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
-  BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, isAgentTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
+  BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, isAgentTabId, isPinnedType, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
   reconcileAgentTerminals,
   resizeSplitIn, setBottomHeight, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
@@ -812,6 +812,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={renderTab}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            pinned={(tab) => isPinnedType(tab.type)}
           />
         </div>
       </div>

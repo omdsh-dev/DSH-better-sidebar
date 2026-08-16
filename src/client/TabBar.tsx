@@ -66,9 +66,12 @@ export function TabBar(props: {
   /** Badge resolver for tab labels (reads the descriptor's `badge`; the
    *  resolver returns the rendered pill or null). */
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /** Marks a tab as PINNED (front-fixed explorer/git/subagent): not
+   *  draggable and no close affordance (drag/close disabled). Optional. */
+  pinned?: (tab: SidebarTab) => boolean
 }) {
   const {
-    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge,
+    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge, pinned,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -129,52 +132,59 @@ export function TabBar(props: {
       }}
     >
       <div ref={listRef} className={css.tabList}>
-        {tabs.map(tab => (
-          <div
-            key={tab.id}
-            className={clsx(css.tab, active === tab.id && css.tabActive)}
-            title={tab.title}
-            draggable
-            onDragStart={(event) => {
-              setTabDragging(true)
-              event.dataTransfer.setData(TAB_DRAG_TYPE, serializeDrag({ tabId: tab.id, paneId }))
-              event.dataTransfer.effectAllowed = 'move'
-            }}
-            onDragEnd={() => { setTabDragging(false); setDragOver(false) }}
-            onDragOver={(event) => { event.preventDefault(); event.stopPropagation() }}
-            onDrop={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              setTabDragging(false)
-              const raw = event.dataTransfer.getData(TAB_DRAG_TYPE)
-              const payload = parseDrag(raw)
-              if (payload !== null) onDropTab(payload, tab.id)
-            }}
-            onClick={() => { onActivate(tab.id) }}
-            onAuxClick={(event) => {
-              // Middle-click closes the tab (and suppresses autoscroll).
-              if (event.button === 1) {
+        {tabs.map(tab => {
+          const isPinned = pinned?.(tab) === true
+          return (
+            <div
+              key={tab.id}
+              className={clsx(css.tab, active === tab.id && css.tabActive)}
+              title={tab.title}
+              draggable={!isPinned}
+              onDragStart={(event) => {
+                if (isPinned) return
+                setTabDragging(true)
+                event.dataTransfer.setData(TAB_DRAG_TYPE, serializeDrag({ tabId: tab.id, paneId }))
+                event.dataTransfer.effectAllowed = 'move'
+              }}
+              onDragEnd={() => { setTabDragging(false); setDragOver(false) }}
+              onDragOver={(event) => { event.preventDefault(); event.stopPropagation() }}
+              onDrop={(event) => {
                 event.preventDefault()
-                onClose(tab.id)
-              }
-            }}
-          >
-            {getTabIcon?.(tab) ?? null}
-            {getTabBadge?.(tab) ?? null}
-            <span className={css.tabTitle}>{tab.title}</span>
-            <button
-              type="button"
-              className={css.tabClose}
-              aria-label={t('close')}
-              onClick={(event) => {
                 event.stopPropagation()
-                onClose(tab.id)
+                setTabDragging(false)
+                const raw = event.dataTransfer.getData(TAB_DRAG_TYPE)
+                const payload = parseDrag(raw)
+                if (payload !== null) onDropTab(payload, tab.id)
+              }}
+              onClick={() => { onActivate(tab.id) }}
+              onAuxClick={(event) => {
+                // Middle-click closes the tab (and suppresses autoscroll);
+                // pinned tabs are never closable.
+                if (event.button === 1) {
+                  event.preventDefault()
+                  if (!isPinned) onClose(tab.id)
+                }
               }}
             >
-              <IconCloseFill14 />
-            </button>
-          </div>
-        ))}
+              {getTabIcon?.(tab) ?? null}
+              {getTabBadge?.(tab) ?? null}
+              <span className={css.tabTitle}>{tab.title}</span>
+              {!isPinned && (
+                <button
+                  type="button"
+                  className={css.tabClose}
+                  aria-label={t('close')}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onClose(tab.id)
+                  }}
+                >
+                  <IconCloseFill14 />
+                </button>
+              )}
+            </div>
+          )
+        })}
         {/*
           The + sits immediately after the rightmost tab (sticky at the
           right edge of the scrollport when the tabs overflow, so it stays

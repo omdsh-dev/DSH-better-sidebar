@@ -124,8 +124,10 @@ function LeafView(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /** Marks a tab as pinned (non-draggable / non-closable); right panel only. */
+  pinned?: (tab: SidebarTab) => boolean
 }) {
-  const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, pinned } = props
   const [dropZone, setDropZone] = useState<DropZone | null>(null)
   const activeTab = leaf.tabs.find(tab => tab.id === leaf.active) ?? leaf.tabs[leaf.tabs.length - 1]
 
@@ -180,6 +182,7 @@ function LeafView(props: {
         newTabOptions={newTabOptions}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        pinned={pinned}
         onDropTab={(payload, before) => {
           if (before === null) actions.moveTabToEdge(payload, leaf.id, 'center')
           else actions.moveTabBefore(payload, leaf.id, before)
@@ -220,8 +223,10 @@ function NodeView(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /** Marks a tab as pinned (non-draggable / non-closable); right panel only. */
+  pinned?: (tab: SidebarTab) => boolean
 }) {
-  const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, pinned } = props
   if (node.kind === 'leaf') {
     return (
       <LeafView
@@ -232,6 +237,7 @@ function NodeView(props: {
         renderTab={renderTab}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        pinned={pinned}
       />
     )
   }
@@ -259,6 +265,7 @@ function NodeView(props: {
               renderTab={renderTab}
               getTabIcon={getTabIcon}
               getTabBadge={getTabBadge}
+              pinned={pinned}
             />
           </div>
         </Fragment>
@@ -280,8 +287,10 @@ export function Workbench(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /** Marks a tab as pinned (non-draggable / non-closable); right panel only. */
+  pinned?: (tab: SidebarTab) => boolean
 }) {
-  const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, pinned } = props
   return (
     <div className={css.workbench}>
       <NodeView
@@ -293,6 +302,7 @@ export function Workbench(props: {
         renderTab={renderTab}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        pinned={pinned}
       />
     </div>
   )

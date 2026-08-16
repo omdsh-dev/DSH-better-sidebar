@@ -1359,20 +1359,22 @@ describe('side card preferences', () => {
     }
   })
 
-  it('skips the default explorer tab when the explorer type is disabled', () => {
+  it('skips a disabled pinned type but still seeds the other pinned bars', () => {
     const store = createSidebarStore()
     store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: { explorer: false }, viewersEnabled: {}, pluginSettings: {} })
     store.setSession('no-explorer')
     const state = store.getSnapshot().state!
     const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs)
-    expect(tabs).toHaveLength(0)
+    // Explorer is a pinned bar disabled in settings → absent; the other two
+    // pinned bars (git/subagent) are still seeded.
+    expect(tabs.map(tab => tab.type).sort()).toEqual(['git', 'subagent'])
     expect(state.splits.kind).toBe('leaf')
-    // Re-enabling seeds the explorer tab again.
+    // Re-enabling seeds the explorer pinned bar again (all three present).
     const openStore = createSidebarStore()
     openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     openStore.setSession('with-explorer')
     const openTabs = allLeaves(openStore.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
-    expect(openTabs.map(tab => tab.type)).toEqual(['explorer'])
+    expect(openTabs.map(tab => tab.type)).toEqual(['explorer', 'git', 'subagent'])
   })
 
   it('derives the default width from the window percent with clamps', () => {
@@ -1849,7 +1851,8 @@ describe('tab meta persistence (v0.12.0)', () => {
     }))
     const sanitized = sanitizeState(JSON.parse(JSON.stringify(store.getSnapshot().state!)))
     const tabs = allLeaves(sanitized!.splits).flatMap(leaf => leaf.tabs)
-    expect(tabs[0]?.meta).toEqual({ q: [1, 2], n: 0 })
+    const db = tabs.find(t => t.type === 'db')
+    expect(db?.meta).toEqual({ q: [1, 2], n: 0 })
   })
 })
 })
