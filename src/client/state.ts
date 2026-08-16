@@ -1073,6 +1073,12 @@ export class SidebarStore {
    *  geometry. Lazy: unset until the first session is selected (or the first
    *  geometry mutation), so the seed uses whatever prefs are current then. */
   private globalLayout: GlobalSidebarLayout | undefined
+  /** Whether {@link globalLayout} has been written to localStorage. Until it
+   *  is, it is only a prefs-derived DEFAULT, so {@link setPrefs} may re-seed
+   *  it when the real prefs resolve — a prefs-async race (a plugin opening a
+   *  targeted session before `loadPrefs` settles) must not freeze the schema
+   *  defaults as the global geometry for the whole run. */
+  private globalLayoutPersisted = false
   private snapshot: SidebarSnapshot = {
     sessionId: undefined,
     state: undefined,
@@ -1090,6 +1096,8 @@ export class SidebarStore {
   private ensureGlobalLayout(): GlobalSidebarLayout {
     if (this.globalLayout === undefined) {
       this.globalLayout = loadLayout(this.prefs)
+      this.globalLayoutPersisted = typeof localStorage !== 'undefined'
+        && localStorage.getItem(`${STORAGE_PREFIX}:global`) !== null
     }
     return this.globalLayout
   }
@@ -1099,6 +1107,7 @@ export class SidebarStore {
    *  key needs no per-session isolation). */
   private persistGlobalLayout(layout: GlobalSidebarLayout): void {
     this.globalLayout = layout
+    this.globalLayoutPersisted = true
     try {
       localStorage.setItem(`${STORAGE_PREFIX}:global`, JSON.stringify(layout))
     } catch {
@@ -1142,6 +1151,19 @@ export class SidebarStore {
    */
   setPrefs(prefs: SidebarPrefs): void {
     this.prefs = { ...prefs }
+    // If the global layout was seeded from the schema DEFAULTS before the
+    // real prefs resolved (e.g. an external plugin opened a targeted session
+    // while `loadPrefs` was still in flight) and was never persisted, re-seed
+    // it from the now-current prefs — the user's `openByDefault` /
+    // `defaultWidthPercent` must win over the premature default, not the
+    // reverse. A persisted layout (any real drag/toggle) is never clobbered.
+    if (this.globalLayout !== undefined && !this.globalLayoutPersisted) {
+      this.globalLayout = makeDefaultLayout(this.prefs)
+      if (this.snapshot.sessionId !== undefined && this.snapshot.state !== undefined) {
+        const content = splitState(this.snapshot.state).content
+        this.snapshot = { ...this.snapshot, state: synthState(this.globalLayout, content) }
+      }
+    }
     this.snapshot = { ...this.snapshot, prefs: this.prefs }
     this.notify()
   }

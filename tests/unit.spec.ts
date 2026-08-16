@@ -1743,6 +1743,20 @@ describe('store.reduceFor (targeted opens, v0.12.0)', () => {
     expect(store.getSnapshot().state?.splits).toBeDefined()
   })
 
+  it('setPrefs re-seeds a prefs-derived layout that was seeded before prefs resolved (async race)', () => {
+    const store = createSidebarStore()
+    // Simulate a plugin opening a targeted session while loadPrefs is still in
+    // flight: the layout gets seeded from the schema DEFAULTS (window 1024 →
+    // default width percent 30 → 307, openByDefault true).
+    store.reduceFor('plug', (state) => ({ ...state, expanded: ['/p'] }))
+    // The real prefs then resolve (openByDefault OFF, width percent 60).
+    store.setPrefs({ ...store.getPrefs(), openByDefault: false, defaultWidthPercent: 60 })
+    store.setSession('plug')
+    // The user's resolved prefs win over the premature default seed.
+    expect(store.getSnapshot().state?.panelOpen).toBe(false)
+    expect(store.getSnapshot().state?.width).toBe(Math.round(1024 * 60 / 100))
+  })
+
   it('reduceFor never lowers the shared uid counter below the active session needs (no pane-id collision)', () => {
     const store = createSidebarStore()
     // Session 'b' is cached FIRST with a LOW id range (pane:1 / tab:2).
