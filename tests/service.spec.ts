@@ -105,11 +105,20 @@ describe('enable switches (declarative settings)', () => {
 
   it('openTab refuses a disabled tab type (no tab lands, no createTab)', () => {
     const { store, service } = setup()
-    store.setPrefs({ ...store.getPrefs(), tabsEnabled: { explorer: false } })
+    service.registerTab({ id: 'my:tab', title: 'MyTab', component: () => null })
+    store.setPrefs({ ...store.getPrefs(), tabsEnabled: { 'my:tab': false } })
     store.setSession('s1')
-    service.openTab({ type: 'explorer', title: 'Explorer' })
+    // The disabled floating type must not land anywhere.
+    service.openTab({ type: 'my:tab', title: 'MyTab' })
     const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs)
-    expect(tabs).toHaveLength(0)
+    expect(tabs.some(t => t.type === 'my:tab')).toBe(false)
+    // A pinned type disabled in settings is likewise absent (the other pinned
+    // bars still show): with explorer disabled, only git + subagent remain.
+    store.setPrefs({ ...store.getPrefs(), tabsEnabled: { 'my:tab': false, explorer: false } })
+    const tabTypes = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).map(t => t.type)
+    expect(tabTypes).not.toContain('explorer')
+    expect(tabTypes).toContain('git')
+    expect(tabTypes).toContain('subagent')
   })
 
   it('matchFileViewer skips a disabled viewer (files fall through)', () => {
@@ -468,13 +477,13 @@ describe('service.openTab across the two panels', () => {
   it('openTab lands in the bottom tree when the active pane lives there', () => {
     const store = createSidebarStore()
     const service = createBetterSidebarService(store)
-    service.registerTab({ id: 'git', title: 'Git', component: () => null })
+    service.registerTab({ id: 'terminal', title: 'Terminal', component: () => null })
     store.setSession('s1')
     store.reduce(s => ({ ...s, activePane: (s.bottomSplits as { id: string }).id }))
-    service.openTab({ type: 'git', title: 'Git' })
+    service.openTab({ type: 'terminal', title: 'Terminal' })
     const state = store.getSnapshot().state!
-    expect(allLeaves(state.bottomSplits).flatMap(l => l.tabs).some(t => t.type === 'git')).toBe(true)
-    expect(allLeaves(state.splits).flatMap(l => l.tabs).some(t => t.type === 'git')).toBe(false)
+    expect(allLeaves(state.bottomSplits).flatMap(l => l.tabs).some(t => t.type === 'terminal')).toBe(true)
+    expect(allLeaves(state.splits).flatMap(l => l.tabs).some(t => t.type === 'terminal')).toBe(false)
   })
 
   it('dedupeKey focuses an existing instance in the OTHER tree (single-instance across panels)', () => {
@@ -713,8 +722,8 @@ describe('activateTab (v0.12.0)', () => {
     const service = createBetterSidebarService(store)
     const seen: Array<{ tab: string; sessionId: string }> = []
     service.registerTab({
-      id: 'git',
-      title: 'Git',
+      id: 'singleton',
+      title: 'Singleton',
       single: true,
       onActivate: (tab, scope) => { seen.push({ tab: tab.id, sessionId: scope.sessionId }) },
       component: () => null,
@@ -722,13 +731,13 @@ describe('activateTab (v0.12.0)', () => {
     store.setSession('s1')
     // Land in the bottom tree by switching the active pane.
     store.reduce(s => ({ ...s, activePane: (s.bottomSplits as { id: string }).id }))
-    service.openTab({ type: 'git', title: 'Git' })
-    const gitTab = allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(l => l.tabs).find(t => t.type === 'git')!
-    expect(gitTab).toBeDefined()
-    service.activateTab(gitTab.id)
-    expect(seen).toEqual([{ tab: gitTab.id, sessionId: 's1' }])
+    service.openTab({ type: 'singleton', title: 'Singleton' })
+    const singletonTab = allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(l => l.tabs).find(t => t.type === 'singleton')!
+    expect(singletonTab).toBeDefined()
+    service.activateTab(singletonTab.id)
+    expect(seen).toEqual([{ tab: singletonTab.id, sessionId: 's1' }])
     // The active pane followed the tab into the bottom tree.
-    expect(store.getSnapshot().state!.activePane).toBe(gitTab.id === '' ? null : allLeaves(store.getSnapshot().state!.bottomSplits).find(l => l.tabs.some(t => t.id === gitTab.id))!.id)
+    expect(store.getSnapshot().state!.activePane).toBe(allLeaves(store.getSnapshot().state!.bottomSplits).find(l => l.tabs.some(t => t.id === singletonTab.id))!.id)
   })
 })
 

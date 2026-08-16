@@ -46,8 +46,10 @@ const SEEDED_FILE = 'hello.txt'
  */
 const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 
-/** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const BUILTIN_TABS = ['Explorer', 'Source Control', 'Tasks', 'Terminal', 'Browser']
+/** FLOATING built-in tab titles the +-menu sweep drives (en-US copy;
+ *  follows DSH locale). The pinned Explorer / Source Control / Tasks bars are
+ *  always visible and no longer offered by the + menu. */
+const FLOATING_BUILTIN_TABS = ['Terminal', 'Browser']
 
 let api: APIRequestContext
 
@@ -149,16 +151,15 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     expect(strips, 'a dsh-better-sidebar error strip is present in the sidebar').toBe(0)
   }
 
-  // Sweep every built-in tab through the "+" menu (the sidebar's own open-tab
-  // affordance, reachable from any pane state). Each open may fetch a lazy
-  // chunk (/sidebar/bundle/client-terminal.js / client-editor.js) and mount a
-  // real viewer — the highest-risk crash surfaces. The pinned plugin must
-  // offer every listed built-in: a missing or renamed descriptor is a real
-  // regression and fails the lane loudly instead of silently narrowing the
-  // sweep. A failure anywhere surfaces as a pageerror or a console error,
-  // both of which the next assertion sees.
+  // Sweep every FLOATING built-in tab through the "+" menu. The pinned
+  // Explorer / Source Control / Tasks bars are always visible and are NOT
+  // offered by the + menu (a fixed panel needs no way to re-open). Each open
+  // may fetch a lazy chunk (/sidebar/bundle/client-terminal.js /
+  // client-editor.js) and mount a real viewer — the highest-risk crash
+  // surfaces. The pinned plugin must offer every listed built-in: a missing
+  // or renamed descriptor is a real regression and fails the lane loudly.
   const newTabButton = sidebar.getByRole('button', { name: 'New tab' }).first()
-  for (const title of BUILTIN_TABS) {
+  for (const title of FLOATING_BUILTIN_TABS) {
     await newTabButton.click()
     const item = page.getByRole('menuitem', { name: title }).first()
     await expect(item, `built-in tab "${title}" is not offered by the + menu — descriptor removed or its label changed`).toHaveCount(1)
@@ -171,12 +172,10 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
 
   // The editor tab is hidden from the + menu — its CodeMirror chunk
   // (client-editor.js) only loads when a file is opened. Exercise that path
-  // explicitly: reopen Explorer, open the seeded file, and require the chunk
-  // round-trip, so a missing/corrupt editor chunk fails the lane.
-  await newTabButton.click()
-  const explorerItem = page.getByRole('menuitem', { name: 'Explorer' }).first()
-  await expect(explorerItem, 'Explorer must be re-openable for the editor-chunk probe').toHaveCount(1)
-  await explorerItem.click()
+  // explicitly: activate the always-pinned Explorer bar, open the seeded
+  // file, and require the chunk round-trip, so a missing/corrupt editor chunk
+  // fails the lane.
+  await sidebar.getByTitle('Explorer').first().click()
   const editorChunk = page.waitForResponse(
     (response) => response.url().includes('/sidebar/bundle/editor.js'),
     { timeout: 30_000 },

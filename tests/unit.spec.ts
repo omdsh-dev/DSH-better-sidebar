@@ -16,9 +16,9 @@ import { compareEntries, isWithin, parentOf, rootLabel, requireAbsolute } from '
 import { parseLogLines, parsePorcelainZ } from '../src/git.ts'
 import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
 import {
-  activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, createSidebarStore, defaultWidthFor, insertLeafAt, makeDefaultState,
+  activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, createSidebarStore, defaultWidthFor, ensurePinnedTabs, insertLeafAt, isPinnedType, makeDefaultState, mapLeaf,
   migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab, openTabInActivePane, patchTab, reconcileAgentTerminals, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight, splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded, togglePanel,
-  type SidebarState, type SidebarTab, type SplitNode,
+  type SidebarState, type SidebarTab, type SidebarLeaf, type SplitNode,
 } from '../src/client/state.ts'
 import { loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
@@ -1055,6 +1055,115 @@ describe('persisted state sanitization', () => {
   })
 })
 
+describe('pinned front tabs (explorer/git/subagent)', () => {
+  it('isPinnedType only marks the built-in three', () => {
+    expect(isPinnedType('explorer')).toBe(true)
+    expect(isPinnedType('git')).toBe(true)
+    expect(isPinnedType('subagent')).toBe(true)
+    expect(isPinnedType('editor')).toBe(false)
+    expect(isPinnedType('terminal')).toBe(false)
+    expect(isPinnedType('my:plugin')).toBe(false)
+  })
+
+  it('ensurePinnedTabs prepends the three enabled bars and is idempotent (same reference)', () => {
+    let s = makeDefaultState(400) // seeds only explorer
+    s = ensurePinnedTabs(s, {})
+    const types = allLeaves(s.splits).flatMap(l => l.tabs).map(t => t.type)
+    expect(types.slice(0, 3)).toEqual(['explorer', 'git', 'subagent'])
+    // Already-normalized: returns the SAME reference (reference-equality no-op).
+    expect(ensurePinnedTabs(s, {})).toBe(s)
+  })
+
+  it('skips a disabled pinned bar but keeps the others', () => {
+    let s = makeDefaultState(400)
+    s = ensurePinnedTabs(s, { explorer: false })
+    const types = allLeaves(s.splits).flatMap(l => l.tabs).map(t => t.type)
+    expect(types.slice(0, 2)).toEqual(['git', 'subagent'])
+    expect(types).not.toContain('explorer')
+  })
+
+  it('a left-edge split of a floating tab stays split with pinned first (no collapse, no empty pane)', () => {
+    // Start normalized: one leaf [explorer, git, subagent].
+    let s = ensurePinnedTabs(makeDefaultState(400), {})
+    const homeId = allLeaves(s.splits)[0]!.id
+    // Add a terminal to the home pane, then split it to the LEFT edge: the new
+    // terminal pane becomes the first leaf, home (pinned) sits second.
+    s = { ...s, splits: mapLeaf(s.splits, homeId, (leaf) => { leaf.tabs = [...leaf.tabs, { id: 'terminal:1', type: 'terminal', title: 'Terminal 1' }]; leaf.active = 'terminal:1' }) }
+    const src = allLeaves(s.splits).find(l => l.tabs.some(t => t.type === 'terminal'))!
+    s = moveTabToEdge(s, src.id, 'terminal:1', homeId, 'left')
+    // Re-ensure: pinned must stay in the FIRST pane, and the terminal must
+    // remain isolated in a separate non-empty pane (edge-split preserved).
+    s = ensurePinnedTabs(s, {})
+    const leaves = allLeaves(s.splits)
+    expect(leaves.length).toBeGreaterThanOrEqual(2)
+    expect(leaves[0]!.tabs.filter(t => isPinnedType(t.type)).map(t => t.type)).toEqual(['explorer', 'git', 'subagent'])
+    expect(leaves.some(l => l.tabs.some(t => t.type === 'terminal'))).toBe(true)
+    // No stranded empty pane.
+    expect(leaves.every(l => l.tabs.length > 0)).toBe(true)
+  })
+
+  it("keeps a user's empty pane (never pruned) and fixes a stale activePane", () => {
+    // A right tree with TWO panes: home [explorer] and a user-kept EMPTY pane
+    // (a welcome pane the user left empty), with activePane pointing at the
+    // ... bottom tree (must be preserved).
+    let s = ensurePinnedTabs(makeDefaultState(400), {})
+    const homeId = allLeaves(s.splits)[0]!.id
+    const emptyLeaf: SidebarLeaf = { kind: 'leaf', id: 'pane:u1', tabs: [], active: null }
+    s = { ...s, splits: { kind: 'split', id: 'split:u', dir: 'row', sizes: [0.5, 0.5], children: [emptyLeaf, s.splits] } }
+    const bottomLeaf = s.bottomSplits
+    expect(allLeaves(s.splits).some(l => l.id === 'pane:u1')).toBe(true)
+    s = ensurePinnedTabs(s, {})
+    // The user's empty pane is NOT pruned (it never held pinned).
+    expect(allLeaves(s.splits).some(l => l.id === 'pane:u1')).toBe(true)
+    // Bottom tree untouched.
+    expect(s.bottomSplits).toBe(bottomLeaf)
+  })
+
+  it('cleans pinned-only panes in a NESTED non-home split and fixes a stale activePane', () => {
+    // An OLD layout: home=[explorer], plus a nested split [git-only, subagent-only]
+    // in a non-home branch, and the user then opened some editor pinned... no —
+    // instead: home=[explorer], nested [git, subagent] panes, and a user empty
+    // pane; activePane points at one of the pinned-only panes.
+    const homeLeaf: SidebarLeaf = { kind: 'leaf', id: 'pane:h', tabs: [{ id: 'tab:explorer', type: 'explorer', title: 'Explorer' }], active: 'tab:explorer' }
+    const gitLeaf: SidebarLeaf = { kind: 'leaf', id: 'pane:g', tabs: [{ id: 'tab:git', type: 'git', title: 'Git' }], active: 'tab:git' }
+    const subLeaf: SidebarLeaf = { kind: 'leaf', id: 'pane:s', tabs: [{ id: 'tab:sub', type: 'subagent', title: 'Subagents' }], active: 'tab:sub' }
+    const userEmpty: SidebarLeaf = { kind: 'leaf', id: 'pane:empty', tabs: [], active: null }
+    // root = row( home, split( row(git, sub), userEmpty ) ) — pinned live in a
+    // nested non-home branch; userEmpty is a genuine empty pane.
+    const nested: SplitNode = { kind: 'split', id: 'split:n', dir: 'col', sizes: [0.5, 0.5], children: [{ kind: 'split', id: 'split:gs', dir: 'row', sizes: [0.5, 0.5], children: [gitLeaf, subLeaf] }, userEmpty] }
+    const root: SplitNode = { kind: 'split', id: 'split:root', dir: 'col', sizes: [0.5, 0.5], children: [homeLeaf, nested] }
+    const base = { ...makeDefaultState(400), splits: root, activePane: 'pane:g' }
+    const s = ensurePinnedTabs(base as SidebarState, {})
+    // The per-type pinned bars each appear EXACTLY once, consolidated in the
+    // first (home) pane.
+    const leaves = allLeaves(s.splits)
+    const pinnedCount = (type: string) => leaves.flatMap(l => l.tabs).filter(t => t.type === type).length
+    expect(pinnedCount('explorer')).toBe(1)
+    expect(pinnedCount('git')).toBe(1)
+    expect(pinnedCount('subagent')).toBe(1)
+    expect(leaves[0]!.tabs.filter(t => isPinnedType(t.type)).map(t => t.type)).toEqual(['explorer', 'git', 'subagent'])
+    // Pinned-only duplicate panes (git/sub panes) were pruned; the USER empty
+    // pane is preserved.
+    expect(allLeaves(s.splits).some(l => l.id === 'pane:empty')).toBe(true)
+    expect(leaves.some(l => l.id === 'pane:g' && l.tabs.length > 0)).toBe(false)
+    expect(leaves.some(l => l.id === 'pane:s' && l.tabs.length > 0)).toBe(false)
+    // activePane pointed at the pruned pane: fell back to a surviving first pane.
+    expect(s.activePane).toBe(leaves[0]!.id)
+    // STRUCTURAL VALIDITY: no split may be left with <2 children or mismatched
+    // sizes, and a reload round-trip must sanitize cleanly (an illegal empty
+    // split would make sanitizeNode reject the whole session).
+    const assertSplitInvariants = (node: SplitNode): void => {
+      if (node.kind === 'split') {
+        expect(node.children.length).toBeGreaterThanOrEqual(2)
+        expect(node.sizes.length).toBe(node.children.length)
+        node.children.forEach(assertSplitInvariants)
+      }
+    }
+    assertSplitInvariants(s.splits)
+    expect(sanitizeState(JSON.parse(JSON.stringify(s)))).toBeDefined()
+  })
+})
+
 describe('path helpers', () => {
   it('derives relative paths under the cwd (and "." for the cwd itself)', () => {
     expect(relativeTo('/Users/me/code', '/Users/me/code/src/main.ts')).toBe('src/main.ts')
@@ -1359,20 +1468,22 @@ describe('side card preferences', () => {
     }
   })
 
-  it('skips the default explorer tab when the explorer type is disabled', () => {
+  it('skips a disabled pinned type but still seeds the other pinned bars', () => {
     const store = createSidebarStore()
     store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: { explorer: false }, viewersEnabled: {}, pluginSettings: {} })
     store.setSession('no-explorer')
     const state = store.getSnapshot().state!
     const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs)
-    expect(tabs).toHaveLength(0)
+    // Explorer is a pinned bar disabled in settings → absent; the other two
+    // pinned bars (git/subagent) are still seeded.
+    expect(tabs.map(tab => tab.type).sort()).toEqual(['git', 'subagent'])
     expect(state.splits.kind).toBe('leaf')
-    // Re-enabling seeds the explorer tab again.
+    // Re-enabling seeds the explorer pinned bar again (all three present).
     const openStore = createSidebarStore()
     openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     openStore.setSession('with-explorer')
     const openTabs = allLeaves(openStore.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
-    expect(openTabs.map(tab => tab.type)).toEqual(['explorer'])
+    expect(openTabs.map(tab => tab.type)).toEqual(['explorer', 'git', 'subagent'])
   })
 
   it('derives the default width from the window percent with clamps', () => {
@@ -1849,7 +1960,8 @@ describe('tab meta persistence (v0.12.0)', () => {
     }))
     const sanitized = sanitizeState(JSON.parse(JSON.stringify(store.getSnapshot().state!)))
     const tabs = allLeaves(sanitized!.splits).flatMap(leaf => leaf.tabs)
-    expect(tabs[0]?.meta).toEqual({ q: [1, 2], n: 0 })
+    const db = tabs.find(t => t.type === 'db')
+    expect(db?.meta).toEqual({ q: [1, 2], n: 0 })
   })
 })
 })

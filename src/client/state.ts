@@ -237,6 +237,195 @@ export function makeDefaultState(width = PANEL_DEFAULT, panelOpen = true, seedEx
   }
 }
 
+/**
+ * The PINNED tab types always shown first in the RIGHT panel of every session
+ * (Explorer / Git / Subagent). They cannot be closed or reordered out of their
+ * pinned front positions — they are the "keep the same panels everywhere"
+ * skeleton. Everything else (editor / terminal / browser / external) floats
+ * per session as today.
+ */
+export const PINNED_TYPES: readonly TabType[] = ['explorer', 'git', 'subagent']
+
+/** Whether a tab type is one of the pinned front tabs. */
+export function isPinnedType(type: string): boolean {
+  return PINNED_TYPES.includes(type as (typeof PINNED_TYPES)[number])
+}
+
+/** A human title for a pinned tab type when one has none stored yet. The
+ *  pinned bars are almost always long-lived tabs that already carry their
+ *  (localized) descriptor title from when they were first opened; this is only
+ *  a fallback for the brief补齐 of a missing bar. */
+function titleForType(type: string): string {
+  if (type === 'explorer') return 'Explorer'
+  if (type === 'git') return 'Source Control'
+  return 'Subagents'
+}
+
+/**
+ * Collect every pinned-type tab instance across the whole RIGHT tree (all
+ * leaves), in breadth-first pane order, deduped by type (first occurrence
+ * wins — it is the one whose content/expansion we keep).
+ */
+function collectPinnedInstances(root: SplitNode): Map<string, SidebarTab> {
+  const seen = new Map<string, SidebarTab>()
+  for (const leaf of allLeaves(root)) {
+    for (const tab of leaf.tabs) {
+      if (isPinnedType(tab.type) && !seen.has(tab.type)) seen.set(tab.type, tab)
+    }
+  }
+  return seen
+}
+
+/**
+ * Reconcile the entire RIGHT panel so exactly ONE set of pinned tabs exists,
+ * occupying the first tab positions of the FIRST leaf (in fixed order, reusing
+ * the collected instances so their per-session content is preserved) and
+ * appearing in NO other pane. Missing pinned bars are added; disabled ones
+ * (per `tabsEnabled`) are skipped. Non-pinned tabs keep their relative order,
+ * appended after the pinned group in the first leaf and unchanged in any other
+ * pane.
+ *
+ * Idempotent and safe to call on every committed state — this is the "same
+ * three panels everywhere" invariant for the right panel. The bottom panel is
+ * untouched (pinned is a right-panel rule).
+ */
+export function ensurePinnedTabs(state: SidebarState, tabsEnabled: Record<string, boolean> = {}): SidebarState {
+  const root = state.splits
+  const pinnedByType = collectPinnedInstances(root)
+  // Build the pinned group for the first leaf: enabled types, in fixed order,
+  // reusing collected instances or fabricating a fresh bar.
+  const ordered: SidebarTab[] = []
+  for (const type of PINNED_TYPES) {
+    if (tabsEnabled[type] === false) continue
+    const existing = pinnedByType.get(type)
+    ordered.push(existing ?? { id: uid('tab'), type, title: titleForType(type) })
+  }
+
+  // Already-reconciled short-circuit: return the SAME reference so callers can
+  // rely on reference equality for "no change". That holds when the first leaf
+  // already leads with exactly the enabled pinned group (in order, no extra
+  // pinned in other leaves), and its active pointer is valid — or the pane is
+  // genuinely empty (active null is then fine).
+  const first = firstLeaf(root)
+  const firstId = first.id
+  const firstNonPinned = first.tabs.filter(t => !isPinnedType(t.type))
+  const firstHead = first.tabs.slice(0, ordered.length)
+  const otherLeafHasPinned = allLeaves(root).some(leaf => leaf.id !== firstId && leaf.tabs.some(t => isPinnedType(t.type)))
+  const sameHead = ordered.length === firstHead.length
+    && firstHead.every((t, i) => t.type === ordered[i]!.type && (!isPinnedType(t.type) || t.id === ordered[i]!.id))
+  const noNonPinnedConfused = firstNonPinned.length === first.tabs.length - ordered.length
+  const activeValid = first.tabs.length === 0
+    ? first.active === null
+    : (first.active !== null && first.tabs.some(t => t.id === first.active))
+  if (sameHead && noNonPinnedConfused && !otherLeafHasPinned && activeValid) {
+    return state
+  }
+
+  // Identify the HOME leaf — the pane that should carry the pinned group. If
+  // the pinned instances already live somewhere, that pane is the natural home
+  // (a fresh edge-split puts the floating tab in a new FIRST leaf; the pinned
+  // pane then sits second — pinning there keeps the user's split intact and
+  // the dragged tab isolated). Otherwise home is the first leaf.
+  let homeId = firstId
+  for (const leaf of allLeaves(root)) {
+    if (leaf.tabs.some(t => isPinnedType(t.type))) { homeId = leaf.id; break }
+  }
+  const home = leafWithId(root, homeId) ?? first
+
+  // Build the pinned group (reusing collected instances) into the home leaf.
+  const homeNonPinned: SidebarTab[] = home.tabs.filter(t => !isPinnedType(t.type))
+  let rebuild = mapLeaf(root, homeId, leaf => {
+    leaf.tabs = [...ordered, ...homeNonPinned]
+    // Active fallback: only a truly empty pane may render active null.
+    const kept = [...ordered, ...homeNonPinned]
+    const keep = (leaf.active !== null && kept.some(t => t.id === leaf.active)) ? leaf.active : null
+    leaf.active = keep ?? (kept.length > 0 ? kept[kept.length - 1]!.id : null)
+  })
+  // A NON-home leaf that held pinned (a stray duplicate from a prior state, or
+  // a pane from before this invariant) has them stripped. Record which panes
+  // this empties so we can drop exactly those — the user's own panes (with no
+  // pinned) are never touched.
+  const emptiedById = new Set<string>() // pane ids emptied by pinned-stripping
+  rebuild = mapAllLeaves(rebuild, (leaf) => {
+    if (leaf.id === homeId) return leaf
+    if (!leaf.tabs.some(t => isPinnedType(t.type))) return leaf
+    const kept = leaf.tabs.filter(t => !isPinnedType(t.type))
+    if (kept.length === 0) emptiedById.add(leaf.id)
+    const a = (leaf.active !== null && kept.some(t => t.id === leaf.active)) ? leaf.active
+      : (kept.length > 0 ? kept[kept.length - 1]!.id : null)
+    return { ...leaf, tabs: kept, active: a }
+  })
+  // Re-root so the HOME leaf is the panel's first (left-most) pane — this keeps
+  // pinned at the front WITHOUT collapsing a user's edge-split (the dragged
+  // floating pane remains a separate non-empty leaf). Duplicate panes emptied
+  // by pinned-stripping are dropped; user panes are untouched.
+  let finalTree = rotateHomeFirst(rebuild, homeId, emptiedById) ?? rebuild
+  // If the drop removed the pane activePane pointed at, fall back to the (kept)
+  // first pane; preserve a valid bottom-tree activePane.
+  let activePane = state.activePane
+  const activePaneValid = activePane !== null
+    && (treeHasId(finalTree, activePane) || treeHasId(state.bottomSplits, activePane))
+  if (!activePaneValid) {
+    activePane = firstLeaf(finalTree).id
+  }
+  return { ...state, splits: finalTree, activePane }
+}
+
+/** Find a leaf in the tree by id (or null). */
+function leafWithId(node: SplitNode, id: string): SidebarLeaf | null {
+  if (node.kind === 'leaf') return node.id === id ? node : null
+  for (const child of node.children) {
+    const found = leafWithId(child, id)
+    if (found !== null) return found
+  }
+  return null
+}
+
+/** Whether a tree (anywhere) carries the given leaf id. */
+function containsLeaf(node: SplitNode, id: string): boolean {
+  if (node.kind === 'leaf') return node.id === id
+  return node.children.some(child => containsLeaf(child, id))
+}
+
+/**
+ * Re-arrange a split tree so the leaf `homeId` becomes the FIRST (left-most)
+ * pane, and REMOVE every pane in `emptiedById` (duplicate-pinned panes that
+ * ended empty after the pinned strip) — recursing into ALL branches. Returns
+ * `null` when a branch ends up with no panes (the parent then drops it), and
+ * promotes a single remaining child regardless of leaf/split. User panes not
+ * in `emptiedById` are never touched even when empty. The home pane is never
+ * emptied, so the returned tree always contains it.
+ */
+function rotateHomeFirst(node: SplitNode, homeId: string, emptiedById: Set<string>): SplitNode | null {
+  if (node.kind === 'leaf') return node
+  // Recurse into EVERY child so emptied duplicate-pinned leaves are removed in
+  // any nested branch; an emptied child branch comes back null and is dropped.
+  const children = node.children
+    .map(child => child.kind === 'split'
+      ? rotateHomeFirst(child, homeId, emptiedById)
+      : (child.id !== homeId && child.tabs.length === 0 && emptiedById.has(child.id) ? null : child))
+    .filter((child): child is SplitNode => child !== null)
+  if (children.length === 0) return null
+  if (children.length === 1) return children[0]!
+  // Bring the home-bearing branch to the front (recursively if nested).
+  const asTree = node
+  const idx = children.findIndex(child => containsLeaf(child, homeId))
+  if (idx >= 0) {
+    const front = children[idx]!
+    const reordered = [front, ...children.slice(0, idx), ...children.slice(idx + 1)]
+    return { ...asTree, sizes: asTree.sizes.length === reordered.length ? asTree.sizes : reordered.map(() => 1 / reordered.length), children: reordered }
+  }
+  return { ...asTree, sizes: children.length === asTree.sizes.length ? asTree.sizes : children.map(() => 1 / children.length), children }
+}
+
+/**
+ * Apply `visit` to every leaf of a tree, returning a new tree.
+ */
+function mapAllLeaves(node: SplitNode, visit: (leaf: SidebarLeaf) => SidebarLeaf): SplitNode {
+  if (node.kind === 'leaf') return visit(node)
+  return { ...node, children: node.children.map(child => mapAllLeaves(child, visit)) }
+}
+
 /** Whether a tree node (or any descendant) carries the given pane/split id. */
 function treeHasId(node: SplitNode, id: string): boolean {
   if (node.id === id) return true
@@ -1123,6 +1312,11 @@ export class SidebarStore {
    *  content to the session's cache, update the active snapshot, and schedule
    *  the session content persist. */
   private commitActive(sessionId: string, next: SidebarState): void {
+    // Keep the pinned Explorer/Git/Subagent tabs at the front of the right
+    // panel for every session — this is the "same three panels everywhere"
+    // invariant. Apply after every active-session mutation so a reducer can
+    // never permanently remove/reorder them.
+    next = ensurePinnedTabs(next, this.prefs.tabsEnabled)
     const { layout, content } = splitState(next)
     const oldLayout = this.ensureGlobalLayout()
     if (layout.panelOpen !== oldLayout.panelOpen
@@ -1140,8 +1334,9 @@ export class SidebarStore {
 
   /** Route a TARGET session's content-only mutation without touching the
    *  active snapshot or the global layout (targeted opens never change
-   *  geometry). */
+   *  geometry). The pinned tabs are also kept present for the target. */
   private commitTarget(sessionId: string, next: SidebarState): void {
+    next = ensurePinnedTabs(next, this.prefs.tabsEnabled)
     const { content } = splitState(next)
     this.bySession.set(sessionId, content)
     this.schedulePersistContent(sessionId, content)
@@ -1163,9 +1358,16 @@ export class SidebarStore {
     // reverse. A persisted layout (any real drag/toggle) is never clobbered.
     if (this.globalLayout !== undefined && !this.globalLayoutPersisted) {
       this.globalLayout = makeDefaultLayout(this.prefs)
-      if (this.snapshot.sessionId !== undefined && this.snapshot.state !== undefined) {
-        const content = splitState(this.snapshot.state).content
-        this.snapshot = { ...this.snapshot, state: synthState(this.globalLayout, content) }
+    }
+    // Re-synthesize the active snapshot (the global layout may have been
+    // re-seeded above) and re-apply the pinned bars against the (possibly
+    // changed) enable toggles, so disabling a pinned type drops its bar
+    // immediately and re-enabling restores it.
+    if (this.snapshot.sessionId !== undefined && this.snapshot.state !== undefined) {
+      const content = splitState(this.snapshot.state).content
+      this.snapshot = {
+        ...this.snapshot,
+        state: ensurePinnedTabs(synthState(this.ensureGlobalLayout(), content), this.prefs.tabsEnabled),
       }
     }
     this.snapshot = { ...this.snapshot, prefs: this.prefs }
@@ -1194,9 +1396,10 @@ export class SidebarStore {
         nextIdCounter = maxCounterId(content)
       }
       // Reassemble the full state from the SHARED layout + this session's
-      // content: the panel geometry is identical across sessions.
+      // content: the panel geometry is identical across sessions. Keep the
+      // pinned Explorer/Git/Subagent front tabs present on (re)entry too.
       const layout = this.ensureGlobalLayout()
-      this.snapshot = { sessionId, state: synthState(layout, content), prefs: this.prefs }
+      this.snapshot = { sessionId, state: ensurePinnedTabs(synthState(layout, content), this.prefs.tabsEnabled), prefs: this.prefs }
     }
     this.notify()
   }

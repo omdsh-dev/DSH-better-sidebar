@@ -32,7 +32,7 @@ import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
-  BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, isAgentTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
+  BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, isAgentTabId, isPinnedType, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
   reconcileAgentTerminals,
   resizeSplitIn, setBottomHeight, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
@@ -106,6 +106,10 @@ function buildNewTabOptions(state: SidebarState, ctx: Context, scope: SessionSco
   if (service === undefined) return []
   return service.getTabs()
     .filter(d => !d.hidden && service.isTabEnabled(d.id))
+    // The pinned Explorer/Git/Subagent bars are always visible and fixed —
+    // listing them in the + menu is redundant (opening them would only focus
+    // the existing pinned bar). Only floating types are offered.
+    .filter(d => !isPinnedType(d.id))
     .sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
     .map(d => ({
       id: d.id,
@@ -702,6 +706,21 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }
 
   /**
+   * The localized tab title for a PINNED bar. Only the pinned
+   * Explorer / Git / Subagent bars resolve their title from the descriptor
+   * (i18n) — every other tab keeps its stored instance title (terminals show
+   * "Terminal 1/2", the editor its file name, the browser its page title, and
+   * external multi-instance plugins their own), which `tabTitleOf === undefined`
+   * leaves untouched.
+   */
+  const tabTitleOf = (tab: SidebarTab): string | undefined => {
+    if (!isPinnedType(tab.type)) return undefined
+    const descriptor = ctx.betterSidebar?.getTab(tab.type)
+    if (descriptor?.title === undefined) return undefined
+    return typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title
+  }
+
+  /**
    * Render one tab's content. `active` (from the workbench) tells whether
    * this tab is the active one in its pane; combined with the panel's
    * open/closed state it gates live views (the Subagent topology pauses its
@@ -812,6 +831,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={renderTab}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            getTabTitle={tabTitleOf}
+            pinned={(tab) => isPinnedType(tab.type)}
           />
         </div>
       </div>
@@ -892,6 +913,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={(tab, active, paneId) => renderTab(tab, active, paneId, true)}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            getTabTitle={tabTitleOf}
           />
         </div>
       </div>
