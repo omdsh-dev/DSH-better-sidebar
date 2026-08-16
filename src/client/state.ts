@@ -728,6 +728,37 @@ export function reconcileAgentTerminals(
 
 const STORAGE_PREFIX = 'dsh-sidebar:v1'
 
+/**
+ * Global (cross-session) panel width: when the user drags the sidebar in one
+ * conversation, the width is shared by every conversation so switching never
+ * makes the panel jump. Kept OUT of the per-session persisted layout (which
+ * historically stored its own width) under a dedicated key, so a width drag
+ * in one session propagates to all sessions without rewriting each layout.
+ */
+const GLOBAL_WIDTH_KEY = 'dsh-sidebar:width:v1'
+
+/** Read the globally shared panel width (clamped to the contract floor);
+ *  `undefined` when never set (the first active session seeds it). */
+function readGlobalWidth(): number | undefined {
+  try {
+    const raw = localStorage.getItem(GLOBAL_WIDTH_KEY)
+    if (raw === null) return undefined
+    const n = Number(raw)
+    return Number.isFinite(n) ? Math.max(PANEL_MIN, Math.round(n)) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Persist the globally shared panel width (best-effort). */
+function writeGlobalWidth(width: number): void {
+  try {
+    localStorage.setItem(GLOBAL_WIDTH_KEY, String(width))
+  } catch {
+    // Storage full or unavailable: the width memory is best-effort.
+  }
+}
+
 /** Immutable snapshot handed to React (replaced only on real changes). */
 export interface SidebarSnapshot {
   sessionId: string | undefined
@@ -943,6 +974,11 @@ export class SidebarStore {
   private readonly persistTimers = new Map<string, number>()
   /** User-facing side card prefs seeding brand-new session states (defaults until the settings RPC resolves). */
   private prefs: SidebarPrefs = { ...SIDEBAR_PREFS_DEFAULTS }
+  /** The globally shared panel width: read once from storage (persisted by a
+   *  previous reload) and lazily adopted from the first active session when
+   *  no persisted value exists yet. Written on every width drag and applied
+   *  to every session. */
+  private globalWidth: number | undefined = readGlobalWidth()
 
   /**
    * Replace the side card prefs (the settings RPC result / settings page
@@ -977,6 +1013,13 @@ export class SidebarStore {
         // pane/split ids can never collide with its tree.
         nextIdCounter = maxCounterId(state)
       }
+      // Global width: the panel width is SHARED across sessions. The first
+      // session to become active seeds the shared value (from its own
+      // default/persisted width); later sessions are forced to it so
+      // switching never makes the panel jump. Cached entries get the same
+      // treatment, keeping the switch consistent even after a drag.
+      state = this.withWidth(state)
+      if (state !== this.bySession.get(sessionId)) this.bySession.set(sessionId, state)
       this.snapshot = { sessionId, state, prefs: this.prefs }
     }
     this.notify()
@@ -997,7 +1040,9 @@ export class SidebarStore {
     const state = this.snapshot.state
     if (sessionId === undefined || state === undefined) return
     const draft = structuredClone(state)
+    const widthBefore = draft.width
     mutator(draft)
+    if (draft.width !== widthBefore) this.propagateWidth(sessionId, draft.width)
     this.bySession.set(sessionId, draft)
     this.snapshot = { sessionId, state: draft, prefs: this.prefs }
     this.schedulePersist(sessionId, draft)
@@ -1030,6 +1075,9 @@ export class SidebarStore {
     // patchTab on a missing tab) must not churn the state or rewrite
     // localStorage.
     if (next === state) return
+    // A width change (the width drag / shared corner commit) is GLOBAL: push
+    // it to every session so switching never makes the panel jump.
+    if (next.width !== state.width) this.propagateWidth(sessionId, next.width)
     this.bySession.set(sessionId, next)
     this.snapshot = { sessionId, state: next, prefs: this.prefs }
     this.schedulePersist(sessionId, next)
@@ -1065,8 +1113,45 @@ export class SidebarStore {
     // have been seeded down) but skip the write.
     nextIdCounter = Math.max(nextIdCounter, counterBefore)
     if (next === state) return
+    // A width change is global even from a targeted open.
+    if (next.width !== state.width) this.propagateWidth(sessionId, next.width)
     this.bySession.set(sessionId, next)
     this.schedulePersist(sessionId, next)
+  }
+
+  /**
+   * Apply the globally shared width to a session's state. When no shared
+   * value exists yet, ADOPT the session's current width as the global
+   * default (persisted under the global key). Otherwise force `state.width`
+   * to the shared value (clamped to the viewport so a stale fullscreen
+   * width can never crush the app shell).
+   */
+  private withWidth(state: SidebarState): SidebarState {
+    const max = typeof window !== 'undefined' ? Math.max(PANEL_MIN, window.innerWidth) : PANEL_MAX
+    const clamp = (w: number): number => Math.min(max, Math.max(PANEL_MIN, Math.round(w)))
+    if (this.globalWidth === undefined) {
+      this.globalWidth = clamp(state.width)
+      writeGlobalWidth(this.globalWidth)
+      return state.width === this.globalWidth ? state : { ...state, width: this.globalWidth }
+    }
+    const w = clamp(this.globalWidth)
+    return state.width === w ? state : { ...state, width: w }
+  }
+
+  /**
+   * React to a session's width changing (through setWidth / the corner
+   * drag): the new width becomes the GLOBAL width — persisted under the
+   * global key and pushed into every other cached session so a later switch
+   * is instantly consistent (no per-session jump).
+   */
+  private propagateWidth(sessionId: string, width: number): void {
+    const max = typeof window !== 'undefined' ? Math.max(PANEL_MIN, window.innerWidth) : PANEL_MAX
+    const w = Math.min(max, Math.max(PANEL_MIN, Math.round(width)))
+    this.globalWidth = w
+    writeGlobalWidth(w)
+    for (const [id, s] of this.bySession) {
+      if (id !== sessionId && s.width !== w) this.bySession.set(id, { ...s, width: w })
+    }
   }
 
   private schedulePersist(sessionId: string, state: SidebarState): void {
