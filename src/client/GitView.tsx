@@ -8,7 +8,7 @@
  * revert, cherry-pick, copy paths/hashes). Refresh is manual + on mount/
  * focus (no file watcher — KISS).
  */
-import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
   IconTrashOutline16, Input, Menu, Modal, writeClipboard,
@@ -79,13 +79,23 @@ interface ConfirmState {
  *  floods the panel at once (the end of the log is reached by paging). */
 const LOG_BATCH = 20
 
+/** Auto-refresh interval while the git tab is the visible one (ms). The
+ *  status list must stay trustworthy without a manual refresh, but a fast
+ *  hammer on every keystroke elsewhere is unnecessary — 5s is a good
+ *  "near-real-time while on screen" cadence. Only STATUS + branch refresh on
+ *  the timer; the history log stays lazy (paged on demand / after actions). */
+const AUTO_REFRESH_MS = 5_000
+
 export function GitView(props: {
   scope: SessionScope
+  /** Whether this tab is the active one AND the panel is open (the shell
+   *  passes `visible`; polling pauses when the user is looking elsewhere). */
+  visible: boolean
   onOpenFile: (path: string) => void
   /** Open a diff tab (the shell places it below the git pane on first use). */
   onOpenDiff: (tab: SidebarTab) => void
 }) {
-  const { scope, onOpenFile, onOpenDiff } = props
+  const { scope, visible, onOpenFile, onOpenDiff } = props
   const [status, setStatus] = useState<GitStatusResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -97,6 +107,8 @@ export function GitView(props: {
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
+  /** In-flight auto-refresh abort handle (cancelled on unmount/hide). */
+  const pollAbortRef = useRef<AbortController | null>(null)
 
   /** The open file-row context menu (cursor position for the portaled Menu). */
   const [fileMenu, setFileMenu] = useState<{ entry: GitStatusEntry; staged: boolean; x: number; y: number } | null>(null)
@@ -105,6 +117,8 @@ export function GitView(props: {
   /** The pending destructive action awaiting confirmation. */
   const [confirm, setConfirm] = useState<ConfirmState | null>(null)
 
+  /** Full refresh (mount / manual / after an in-panel action): status, branch
+   *  and the first history page. */
   const refresh = useCallback(async (): Promise<void> => {
     setLoading(true)
     setError(null)
@@ -127,6 +141,63 @@ export function GitView(props: {
   }, [scope.sessionId, scope.cwd])
 
   useEffect(() => { void refresh() }, [refresh])
+
+  /**
+   * Lightweight status poller body — fetches ONLY status + branch (never the
+   * history log, which stays lazy), so external worktree changes surface on
+   * screen without a manual refresh. Skips while a panel action is in flight
+   * (busy/loading). Uses a per-poll AbortController so hide/unmount can cancel
+   * an in-flight request; the caller is a serial chain, so at most one poll is
+   * ever running (no per-tick cancellation that would starve a slow repo).
+   */
+  const pollStatus = useCallback(async (): Promise<void> => {
+    if (busy || loading) return
+    const controller = new AbortController()
+    pollAbortRef.current = controller
+    try {
+      const [statusResult, branchResult] = await Promise.all([
+        api.gitStatus(scope, controller.signal),
+        api.gitBranch(scope, controller.signal).catch(() => ({ current: '', names: [] as string[] })),
+      ])
+      if (controller.signal.aborted) return
+      setStatus(statusResult)
+      setBranchNames(branchResult.names)
+      setError(null)
+    } catch (reason) {
+      // Aborted polls are expected on hide/unmount — never surface them.
+      if (controller.signal.aborted) return
+      setError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      if (pollAbortRef.current === controller) pollAbortRef.current = null
+    }
+  }, [scope.sessionId, scope.cwd, busy, loading])
+
+  // Auto-refresh loop — a SERIAL setTimeout chain: poll, wait for it to
+  // settle, then schedule the next tick. Only the last in-flight poll is ever
+  // aborted (on hide/unmount), never a running one, so a slow `git.status`
+  // (large / network filesystem) simply means the next poll waits longer
+  // instead of being cut off and re-issued — status always converges and no
+  // host git process is wasted on aborted requests. Runs only while this tab
+  // is the visible/active one AND the panel is open AND a session is current.
+  useEffect(() => {
+    if (!visible || scope.sessionId === '') return
+    let disposed = false
+    let timer: number | undefined
+    const tick = async (): Promise<void> => {
+      if (disposed) return
+      await pollStatus()
+      if (disposed) return
+      timer = window.setTimeout(() => { void tick() }, AUTO_REFRESH_MS)
+    }
+    timer = window.setTimeout(() => { void tick() }, AUTO_REFRESH_MS)
+    return () => {
+      disposed = true
+      if (timer !== undefined) window.clearTimeout(timer)
+      pollAbortRef.current?.abort()
+      pollAbortRef.current = null
+    }
+  }, [visible, scope.sessionId, pollStatus])
+
 
   /** Append the next history page (lazy: only when the user asks for more). */
   const loadMoreLog = async (): Promise<void> => {
