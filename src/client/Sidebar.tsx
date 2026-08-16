@@ -706,11 +706,15 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }
 
   /**
-   * The localized tab title from the tab-type registry. Pinned bars and any
-   * tab carry the descriptor's (i18n) title; the stored `tab.title` is only a
-   * fallback when no descriptor offers one (external/unregistered types).
+   * The localized tab title for a PINNED bar. Only the pinned
+   * Explorer / Git / Subagent bars resolve their title from the descriptor
+   * (i18n) — every other tab keeps its stored instance title (terminals show
+   * "Terminal 1/2", the editor its file name, the browser its page title, and
+   * external multi-instance plugins their own), which `tabTitleOf === undefined`
+   * leaves untouched.
    */
   const tabTitleOf = (tab: SidebarTab): string | undefined => {
+    if (!isPinnedType(tab.type)) return undefined
     const descriptor = ctx.betterSidebar?.getTab(tab.type)
     if (descriptor?.title === undefined) return undefined
     return typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title

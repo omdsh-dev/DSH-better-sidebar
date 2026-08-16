@@ -301,9 +301,23 @@ export function ensurePinnedTabs(state: SidebarState, tabsEnabled: Record<string
     ordered.push(existing ?? { id: uid('tab'), type, title: titleForType(type) })
   }
 
+  // Already-reconciled short-circuit: return the SAME reference so callers can
+  // rely on reference equality for "no change". That holds when the first leaf
+  // already leads with exactly the enabled pinned group (in order, no extra
+  // pinned in other leaves), and its active pointer is valid.
+  const first = firstLeaf(root)
+  const firstNonPinned = first.tabs.filter(t => !isPinnedType(t.type))
+  const firstHead = first.tabs.slice(0, ordered.length)
+  const otherLeafHasPinned = allLeaves(root).some(leaf => leaf.id !== first.id && leaf.tabs.some(t => isPinnedType(t.type)))
+  const sameHead = ordered.length === firstHead.length
+    && firstHead.every((t, i) => t.type === ordered[i]!.type && (!isPinnedType(t.type) || t.id === ordered[i]!.id))
+  const activeValid = first.active === null || first.tabs.some(t => t.id === first.active)
+  if (sameHead && firstNonPinned.length === first.tabs.length - ordered.length && !otherLeafHasPinned && activeValid) {
+    return state
+  }
+
   // Walk the tree: first leaf gets [pinned group + its non-pinned tabs]; every
   // other leaf drops its pinned tabs (they already live in the first leaf).
-  const first = firstLeaf(root)
   const restFirst: SidebarTab[] = []
   const newTree = mapLeaf(root, first.id, leaf => {
     for (const tab of leaf.tabs) {
@@ -326,10 +340,23 @@ export function ensurePinnedTabs(state: SidebarState, tabsEnabled: Record<string
       : (kept.length > 0 ? kept[kept.length - 1]!.id : null)
     return { ...leaf, tabs: kept, active }
   })
-  return { ...state, splits: stripped }
+  // A non-first pane whose ONLY tabs were pinned is now empty (e.g. dragging a
+  // floating tab to the pinned pane's edge reorders it to the front, moving the
+  // pinned group along and vacating the old pane). Drop those stranded empty
+  // panes so the panel never shows a dead empty split.
+  let pruned = stripped
+  for (const leaf of allLeaves(stripped)) {
+    if (leaf.id === first.id) continue
+    if (leaf.tabs.length === 0 && allLeaves(stripped).length > 1) {
+      pruned = removeLeafAt(pruned, leaf.id)
+    }
+  }
+  return { ...state, splits: pruned }
 }
 
-/** Apply `visit` to every leaf of a tree, returning a new tree. */
+/**
+ * Apply `visit` to every leaf of a tree, returning a new tree.
+ */
 function mapAllLeaves(node: SplitNode, visit: (leaf: SidebarLeaf) => SidebarLeaf): SplitNode {
   if (node.kind === 'leaf') return visit(node)
   return { ...node, children: node.children.map(child => mapAllLeaves(child, visit)) }
