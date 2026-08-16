@@ -36,6 +36,9 @@ function baseName(path: string): string {
 /** How long the row's "copied" label stays after a successful write. */
 const COPIED_MS = 1200
 
+/** Whether the client runs on macOS — drives the reveal-in-file-manager label. */
+const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Macintosh')
+
 export function ExplorerView(props: {
   sessionId: string
   cwd: string | undefined
@@ -253,6 +256,7 @@ export function ExplorerView(props: {
         open={rowMenu !== null}
         onClose={() => { setRowMenu(null) }}
         items={[
+          { id: 'reveal', label: t(isMac ? 'revealInFinder' : 'revealInFileManager'), icon: <IconFolderOpen16 size={14} /> },
           // Download applies to files only (the host route refuses directories).
           ...(rowMenu?.isDir === false
             ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutline16 size={14} /> }]
@@ -264,6 +268,10 @@ export function ExplorerView(props: {
           const target = rowMenu
           if (target === null) return
           setRowMenu(null)
+          if (id === 'reveal') {
+            void api.fsReveal({ sessionId, cwd }, target.path)
+            return
+          }
           if (id === 'download') {
             downloadFile(target.path)
             return
