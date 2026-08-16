@@ -74,9 +74,6 @@ importers:
       '@lezer/highlight':
         specifier: ^1.2.3
         version: 1.2.3
-      '@xterm/addon-fit':
-        specifier: ^0.10.0
-        version: 0.10.0(@xterm/xterm@5.4.0)
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -92,9 +89,6 @@ importers:
       ws:
         specifier: ^8.18.0
         version: 8.21.3
-      xterm:
-        specifier: ^5.3.0
-        version: 5.3.0
     devDependencies:
       '@cordisjs/plugin-loader':
         specifier: ^1.0.0-rc.5
@@ -159,6 +153,12 @@ importers:
       '@types/ws':
         specifier: ^8.5.10
         version: 8.18.1
+      '@xterm/addon-fit':
+        specifier: ^0.10.0
+        version: 0.10.0(@xterm/xterm@5.5.0)
+      '@xterm/xterm':
+        specifier: ^5.5.0
+        version: 5.5.0
       cordis:
         specifier: ^4.0.0-rc.7
         version: 4.0.0-rc.8(@cordisjs/plugin-loader@1.0.0-rc.5)
@@ -1191,8 +1191,8 @@ packages:
     peerDependencies:
       '@xterm/xterm': ^5.0.0
 
-  '@xterm/xterm@5.4.0':
-    resolution: {integrity: sha512-GlyzcZZ7LJjhFevthHtikhiDIl8lnTSgol6eTM4aoSNLcuXu3OEhnbqdCVIjtIil3jjabf3gDtb1S8FGahsuEw==}
+  '@xterm/xterm@5.5.0':
+    resolution: {integrity: sha512-hqJHYaQb5OptNunnyAnkHyM8aCjZ1MEIDTQu1iIbbTD/xops91NB5yq1ZK/dC2JDbVWtF23zUtl9JE2NqwT87A==}
 
   '@yuku-codegen/binding-android-arm64@0.8.5':
     resolution: {integrity: sha512-+oEBxK35kdbskhxozjZhI8N6qrMOfphpIkXnqBj6N2DC08rdkg10MUMRNKZLBNU6uNyoYiLcLyCE6aFV2sfMKw==}
@@ -2165,10 +2165,6 @@ packages:
 
   xmlchars@2.2.0:
     resolution: {integrity: sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==}
-
-  xterm@5.3.0:
-    resolution: {integrity: sha512-8QqjlekLUFTrU6x7xck1MsPzPA571K5zNqWm0M0oroYEWVOptZ0+ubQSkQ3uxIEhcIHRujJy6emDWX4A7qyFzg==}
-    deprecated: This package is now deprecated. Move to @xterm/xterm instead.
 
   yuku-ast@0.8.5:
     resolution: {integrity: sha512-Ez2CI2BnPK/if0tVI7jB9UUDSNibcChjJDEPEKuWPJNRkbvzSoAQrSqpKtdzl8qTPp4ftVb87f/jx5HIKOieQw==}
@@ -3390,11 +3386,11 @@ snapshots:
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.1
 
-  '@xterm/addon-fit@0.10.0(@xterm/xterm@5.4.0)':
+  '@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0)':
     dependencies:
-      '@xterm/xterm': 5.4.0
+      '@xterm/xterm': 5.5.0
 
-  '@xterm/xterm@5.4.0': {}
+  '@xterm/xterm@5.5.0': {}
 
   '@yuku-codegen/binding-android-arm64@0.8.5':
     optional: true
@@ -4384,8 +4380,6 @@ snapshots:
   xml-name-validator@5.0.0: {}
 
   xmlchars@2.2.0: {}
-
-  xterm@5.3.0: {}
 
   yuku-ast@0.8.5:
     dependencies:

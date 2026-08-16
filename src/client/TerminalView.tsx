@@ -20,9 +20,9 @@
  *   reconnect grace.
  */
 import { useEffect, useRef, useState } from 'react'
-import { Terminal, type ITheme } from 'xterm'
+import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import 'xterm/css/xterm.css'
+import '@xterm/xterm/css/xterm.css'
 import { t } from './locales.ts'
 import { openWhenSized } from './open-when-sized.ts'
 import type { SessionScope } from './api.ts'
