@@ -1,12 +1,17 @@
 /**
  * Memory files: the memory vault tree (core / notebook / global / project
- * groups, collapsible) plus a Markdown preview / edit pane with a section
- * navigator. Reads and writes through the hpptools-memory file routes.
+ * groups, collapsible — rows reuse the explorer row chrome) plus a Markdown
+ * preview / edit pane with a section navigator. Reads and writes through the
+ * hpptools-memory file routes.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  IconBrowseOutline16, IconCheckOutline16, IconCloseOutline16, IconEditOutline16,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import { memoryApi, type MemoryFiles } from './api.ts'
 import { t } from '../locales.ts'
-import css from '../sidebar.module.css'
+import shellCss from '../sidebar.module.css'
+import css from '../memory.module.css'
 
 type Mode = 'preview' | 'edit' | 'previewing'
 
@@ -24,11 +29,11 @@ function readCollapsed(): string[] | null {
   return null
 }
 
-function fileIcon(rel: string, name: string): string {
+function fileIcon(rel: string): string {
   if (rel === 'core-prompt.md') return '🧠'
   if (rel === 'rules.md') return '📏'
   if (rel === 'subagent-model.txt') return '🤖'
-  if (name === 'notebook.md') return '📓'
+  if (rel.includes('notebook.md')) return '📓'
   if (rel.startsWith('personal/')) return '🌐'
   if (rel.includes('/projects/')) return '📁'
   return '📄'
@@ -46,7 +51,7 @@ function inlineMd(text: string): string {
   s = s.replace(/`([^`]+)`/g, '<code>$1</code>')
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
   s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>')
-  s = s.replace(/\[\[([^\]]+)\]\]/g, '<span class="' + css.memWl + '">[[$1]]</span>')
+  s = s.replace(/\[\[([^\]]+)\]\]/g, `<span class="${css.memWl}">[[$1]]</span>`)
   s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
   return s
 }
@@ -59,7 +64,7 @@ function renderMarkdown(md: string): string {
   const codeBuf: string[] = []
   const flushCode = (): void => {
     if (inCode) {
-      out.push(`<pre class="${css.memCodeBlock}"><code>${escapeHtml(codeBuf.join('\n'))}</code></pre>`)
+      out.push(`<pre><code>${escapeHtml(codeBuf.join('\n'))}</code></pre>`)
       codeBuf.length = 0
       inCode = false
     }
@@ -165,30 +170,30 @@ export function Files() {
   return (
     <div className={css.memFiles}>
       <div className={css.memTree}>
-        {files === null && <div className={css.memHint}>{t('memLoading')}</div>}
+        {files === null && <div className={css.memEmpty}>{t('memLoading')}</div>}
         {files?.groups.map((g) => {
           const isCollapsed = collapsed !== null ? collapsed.includes(g.id) : defaultCollapsed(g.id)
           return (
-            <div key={g.id} className={css.memTreeGroup}>
-              <button type="button" className={css.memTreeHead} onClick={() => toggleGroup(g.id)}>
-                <span className={css.memTreeArrow}>{isCollapsed ? '▸' : '▾'}</span>
-                <span className={css.memTreeLabel}>{g.label}</span>
+            <div key={g.id}>
+              <button type="button" className={css.memTreeGroupHead} onClick={() => toggleGroup(g.id)}>
+                <span style={{ width: 10, flex: 'none', fontSize: 9 }}>{isCollapsed ? '▸' : '▾'}</span>
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.label}</span>
                 {g.files.length > 0 && <span className={css.memTreeCount}>{g.files.length}</span>}
               </button>
               {!isCollapsed && (
                 <div>
                   {g.files.length === 0
-                    ? <div className={css.memTreeEmpty}>{t('memEmptyGroup')}</div>
+                    ? <div className={css.memEmpty}>{t('memEmptyGroup')}</div>
                     : g.files.map((f) => (
                       <button
                         key={f.rel}
                         type="button"
-                        className={css.memTreeItem + (current?.rel === f.rel ? ' ' + css.memTreeItemActive : '')}
+                        className={shellCss.explorerRow + (current?.rel === f.rel ? ' ' + css.memTreeItemActive : '')}
                         title={f.rel}
                         onClick={() => selectFile(f.rel)}
                       >
-                        <span>{fileIcon(f.rel, f.name)}</span>
-                        <span className={css.memTreeName}>{f.name}</span>
+                        <span style={{ flex: 'none' }}>{fileIcon(f.rel)}</span>
+                        <span className={shellCss.explorerName} style={{ flex: 1 }}>{f.name}</span>
                         {f.entries > 0 && <span className={css.memTreeCount}>{f.entries}</span>}
                       </button>
                     ))}
@@ -200,40 +205,40 @@ export function Files() {
       </div>
 
       <div className={css.memFilePane}>
-        <header className={css.memFileHead}>
-          <span className={css.memFileName}>{current?.rel ?? ''}</span>
+        <div className={css.memFileHead}>
+          <span className={css.memFileTitle}>{current?.rel ?? ''}</span>
           <span style={{ flex: 1 }} />
           {current !== null && (
             <>
               {mode === 'preview'
                 ? (
-                  <button type="button" className={css.memBtn} onClick={() => { setDraft(current.content); setMode('edit') }}>
-                    ✏️ {t('memEdit')}
+                  <button type="button" className={css.memIconBtn} title={t('memEdit')} onClick={() => { setDraft(current.content); setMode('edit') }}>
+                    <IconEditOutline16 />
                   </button>
                 )
                 : (
-                  <button type="button" className={css.memBtn} onClick={() => setMode('previewing')}>
-                    👁 {t('memPreview')}
+                  <button type="button" className={css.memIconBtn} title={t('memPreview')} onClick={() => setMode('previewing')}>
+                    <IconBrowseOutline16 />
                   </button>
                 )}
               {mode !== 'preview' && (
                 <>
-                  <button type="button" className={css.memBtnPrimary} disabled={busy} onClick={saveFile}>
-                    💾 {t('memSave')}
+                  <button type="button" className={css.memTextBtnPrimary} disabled={busy} onClick={saveFile}>
+                    <IconCheckOutline16 /> {t('memSave')}
                   </button>
-                  <button type="button" className={css.memBtn} onClick={() => { setMode('preview'); setDraft(current.content) }}>
-                    {t('memCancel')}
+                  <button type="button" className={css.memIconBtn} title={t('memCancel')} onClick={() => { setMode('preview'); setDraft(current.content) }}>
+                    <IconCloseOutline16 />
                   </button>
                 </>
               )}
             </>
           )}
-        </header>
+        </div>
 
         <div className={css.memFileBody}>
           <div className={css.memFileContent} ref={contentRef}>
             {current === null
-              ? <div className={css.memHint}>{t('memSelectHint')}</div>
+              ? <div className={css.memEmpty}>{t('memSelectHint')}</div>
               : mode === 'edit'
                 ? <textarea value={draft} onChange={(e) => setDraft(e.target.value)} className={css.memTextarea} />
                 : (

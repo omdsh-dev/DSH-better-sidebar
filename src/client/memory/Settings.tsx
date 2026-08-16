@@ -1,11 +1,16 @@
 /**
  * Memory settings: storage root (restart-required), Pi migration status, and
- * opening the store folder in the system file manager.
+ * opening the store folder in the system file manager. Rows follow the DSH
+ * settings-row recipe.
  */
 import { useEffect, useState } from 'react'
+import {
+  IconFolderOpenOutline16, IconRefreshOutline16, IconSettingsOutline16,
+  StateDot,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import { memoryApi, formatTime, type MemoryOverview } from './api.ts'
 import { isZh, t } from '../locales.ts'
-import css from '../sidebar.module.css'
+import css from '../memory.module.css'
 
 export function Settings() {
   const [root, setRoot] = useState<string | null>(null)
@@ -57,57 +62,86 @@ export function Settings() {
   const zh = isZh()
 
   return (
-    <div className={css.memScroll}>
-      <div className={css.memGroup}>
-        <h2 className={css.memGroupHead}>{t('memStorageTitle')}</h2>
-        <div className={css.memSetRow}>
-          <label className={css.memLabel}>{t('memCurrentPath')}</label>
-          <span className={css.memMono}>{root ?? '—'}</span>
-        </div>
-        <div className={css.memSetRow}>
-          <label className={css.memLabel}>{t('memNewPath')}</label>
-          <input
-            className={css.memInput}
-            value={newRoot}
-            onChange={(e) => setNewRoot(e.target.value)}
-            placeholder={t('memRootPlaceholder')}
-          />
-          <button type="button" className={css.memBtnPrimary} disabled={busy} onClick={saveRoot}>
-            {t('memSaveRoot')}
-          </button>
-        </div>
-        <label className={css.memCheckRow}>
-          <input type="checkbox" checked={copyData} onChange={(e) => setCopyData(e.target.checked)} />
-          <span>{t('memCopyData')}</span>
-        </label>
-        <div className={css.memHint}>{t('memRootHint')}</div>
-        {result !== null && <div className={css.memHint} style={{ marginTop: 8 }}>{result}</div>}
+    <div className={css.memRoot}>
+      <div className={css.memHeader}>
+        <span className={css.memTitle}>{t('memNavSettings')}</span>
+        <button type="button" className={css.memIconBtn} title={t('memRefresh')} onClick={load}>
+          <IconRefreshOutline16 />
+        </button>
       </div>
+      <div className={css.memBody}>
+        <div className={css.memGroup}>
+          <h4 className={css.memGroupHead}>{t('memStorageTitle')}</h4>
+          <div className={css.memRow}>
+            <span className={css.memLabel}>{t('memCurrentPath')}</span>
+            <span className={css.memMono}>{root ?? '—'}</span>
+          </div>
+          <div className={css.memRow}>
+            <span className={css.memLabel}>{t('memNewPath')}</span>
+            <input
+              className={css.memInput}
+              value={newRoot}
+              onChange={(e) => setNewRoot(e.target.value)}
+              placeholder={t('memRootPlaceholder')}
+            />
+          </div>
+          <div className={css.memRow}>
+            <button type="button" className={css.memTextBtnPrimary} disabled={busy} onClick={saveRoot}>
+              <IconSettingsOutline16 /> {t('memSaveRoot')}
+            </button>
+          </div>
+          <label className={css.memCheckRow}>
+            <input type="checkbox" checked={copyData} onChange={(e) => setCopyData(e.target.checked)} />
+            <span>{t('memCopyData')}</span>
+          </label>
+          <div className={css.memRow}>
+            <span className={css.memHint}>{t('memRootHint')}</span>
+          </div>
+          {result !== null && (
+            <div className={css.memRow}>
+              <span className={css.memHint}>{result}</span>
+            </div>
+          )}
+        </div>
 
-      <div className={css.memGroup}>
-        <h2 className={css.memGroupHead}>{t('memMigrationTitle')}</h2>
-        {migrated !== null
-          ? <div className={css.memHint}>{t('memMigrated', { from: migrated.from, n: migrated.copiedItems, at: formatTime(migrated.at, zh) })}</div>
-          : legacy !== null
+        <div className={css.memGroup}>
+          <h4 className={css.memGroupHead}>{t('memMigrationTitle')}</h4>
+          {migrated !== null
             ? (
               <div className={css.memRow}>
-                <span className={css.memHint}>{t('memMigDetected', { n: legacy })}</span>
-                <button type="button" className={css.memBtnPrimary} disabled={busy} onClick={migrateNow}>
-                  {t('memMigrateNow')}
-                </button>
+                <span className={css.memHint}>
+                  {t('memMigrated', { from: migrated.from, n: migrated.copiedItems, at: formatTime(migrated.at, zh) })}
+                </span>
               </div>
             )
-            : <div className={css.memHint}>{t('memMigrateNone')}</div>}
-      </div>
+            : legacy !== null
+              ? (
+                <div className={css.memRow}>
+                  <StateDot state="warning" size={10} className={css.memDot} />
+                  <span className={css.memHint} style={{ flex: 1 }}>{t('memMigDetected', { n: legacy })}</span>
+                  <button type="button" className={css.memTextBtnPrimary} disabled={busy} onClick={migrateNow}>
+                    {t('memMigrateNow')}
+                  </button>
+                </div>
+              )
+              : (
+                <div className={css.memRow}>
+                  <span className={css.memHint}>{t('memMigrateNone')}</span>
+                </div>
+              )}
+        </div>
 
-      <div className={css.memGroup}>
-        <h2 className={css.memGroupHead}>{t('memObsidianTitle')}</h2>
-        <div className={css.memHint} style={{ marginBottom: 8 }}>{t('memObsidianHintText')}</div>
-        <div className={css.memRow}>
-          <button type="button" className={css.memBtnPrimary} onClick={openFolder}>
-            📂 {t('memOpenFolder')}
-          </button>
-          {root !== null && <span className={css.memMono}>{root}</span>}
+        <div className={css.memGroup}>
+          <h4 className={css.memGroupHead}>{t('memObsidianTitle')}</h4>
+          <div className={css.memRow}>
+            <span className={css.memHint}>{t('memObsidianHintText')}</span>
+          </div>
+          <div className={css.memRow}>
+            <button type="button" className={css.memTextBtn} onClick={openFolder}>
+              <IconFolderOpenOutline16 /> {t('memOpenFolder')}
+            </button>
+            {root !== null && <span className={css.memMono} style={{ flex: 1 }}>{root}</span>}
+          </div>
         </div>
       </div>
     </div>

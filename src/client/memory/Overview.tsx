@@ -1,20 +1,28 @@
 /**
- * Memory overview: a Side-card-style grid of memory stats (current project /
- * all projects / global / last cleanup / active runs / model config) plus the
- * Pi-migration banner. Polls every 5s while visible.
+ * Memory overview: header + stat cards (subagent-row recipe: icon chip +
+ * value + label) for current project / all projects / global / last cleanup /
+ * active runs / model config, plus the Pi-migration banner. Polls every 5s
+ * while visible.
  */
 import { useEffect, useState, type ReactNode } from 'react'
+import {
+  IconAgentPresetOutline16, IconDataOutline16, IconFolderOpenOutline16,
+  IconRefreshOutline16, IconSparkle16, IconThinkOutline16, StateDot,
+} from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconGlobeOutline16 } from '../icons.tsx'
 import { memoryApi, formatTime, type MemoryOverview } from './api.ts'
 import { isZh, t } from '../locales.ts'
-import css from '../sidebar.module.css'
+import css from '../memory.module.css'
 
-function Card(props: { icon: string; label: string; value: ReactNode; sub?: string; hot?: boolean }) {
-  const { icon, label, value, sub, hot } = props
+function Card(props: { icon: ReactNode; value: ReactNode; label: string; hot?: boolean }) {
+  const { icon, value, label, hot } = props
   return (
     <div className={css.memCard + (hot === true ? ' ' + css.memCardHot : '')}>
-      <div className={css.memCardK}><span className={css.memCardIcon}>{icon}</span><span>{label}</span></div>
-      <div className={css.memCardV}>{value}</div>
-      {sub !== undefined && <div className={css.memCardS}>{sub}</div>}
+      <span className={css.memCardIcon}>{icon}</span>
+      <span className={css.memCardContent}>
+        <span className={css.memCardValue}>{value}</span>
+        <span className={css.memCardLabel}>{label}</span>
+      </span>
     </div>
   )
 }
@@ -46,7 +54,16 @@ export function Overview(props: { visible: boolean }) {
   if (error !== null && data === null) {
     return <div className={css.memError}>{t('memOverviewFailed')}: {error}</div>
   }
-  if (data === null) return <div className={css.memHint}>{t('memLoading')}</div>
+  if (data === null) {
+    return (
+      <div className={css.memRoot}>
+        <div className={css.memHeader}>
+          <span className={css.memTitle}>{t('memNavOverview')}</span>
+        </div>
+        <div className={css.memEmpty}>{t('memLoading')}</div>
+      </div>
+    )
+  }
 
   const d = data
   const ps = d.projectSummary
@@ -62,20 +79,23 @@ export function Overview(props: { visible: boolean }) {
     ? formatTime(d.lastMaintenance.lastRun, isZh()) + (d.lastMaintenance.project ? `（${d.lastMaintenance.project}）` : '')
     : t('memNeverCleaned')
 
-  const runValue = d.activeRuns > 0
-    ? <span className={css.memBadgeRun}><span className={css.memDot} />{d.activeRuns} {t('memUnitCount')} {t('memRunning')}</span>
-    : `0 ${t('memUnitCount')}`
-
   return (
-    <div className={css.memScroll}>
+    <div className={css.memRoot}>
+      <div className={css.memHeader}>
+        <span className={css.memTitle}>{t('memNavOverview')}</span>
+        {d.projects.length > 0 && <span className={css.memCount}>{d.projects.length} · {d.activeRuns} {t('memRunning')}</span>}
+        <button type="button" className={css.memIconBtn} title={t('memRefresh')} onClick={load}>
+          <IconRefreshOutline16 />
+        </button>
+      </div>
+
       {d.legacy && (
         <div className={css.memBanner}>
-          <span className={css.memBannerText}>
-            {t('memMigDetected', { n: d.legacy })}
-          </span>
+          <StateDot state="warning" size={10} className={css.memDot} />
+          <span className={css.memBannerText}>{t('memMigDetected', { n: d.legacy })}</span>
           <button
             type="button"
-            className={css.memBtnPrimary}
+            className={css.memTextBtnPrimary}
             disabled={migrating}
             onClick={() => {
               setMigrating(true)
@@ -89,23 +109,30 @@ export function Overview(props: { visible: boolean }) {
         </div>
       )}
       {d.migrated && (
-        <div className={css.memBannerMuted}>
-          {t('memMigrated', { from: d.migrated.from, n: d.migrated.copiedItems, at: formatTime(d.migrated.at, isZh()) })}
+        <div className={css.memBanner + ' ' + css.memBannerMuted}>
+          <span className={css.memBannerText}>
+            {t('memMigrated', { from: d.migrated.from, n: d.migrated.copiedItems, at: formatTime(d.migrated.at, isZh()) })}
+          </span>
         </div>
       )}
-      <div className={css.memCards}>
+
+      <div className={css.memBody}>
+        <Card icon={<IconDataOutline16 />} value={cm} label={`${t('memCardCurProject')}${cur ? ` · ${cur.name}` : ''}`} />
+        <Card icon={<IconFolderOpenOutline16 />} value={pm} label={t('memCardAllProjects')} />
+        <Card icon={<IconGlobeOutline16 />} value={gm} label={t('memCardGlobal')} />
+        <Card icon={<IconSparkle16 />} value={lm} label={t('memCardMaintenance')} />
         <Card
-          icon="📁" label={t('memCardCurProject')} value={cm}
-          sub={cur ? `${cur.name} → ${t('memCardCurSub')}` : t('memCardCurSub')}
+          icon={<IconThinkOutline16 />}
+          value={d.activeRuns > 0
+            ? <><StateDot state="ongoing" size={8} className={css.memDot} /> {d.activeRuns} {t('memUnitCount')} {t('memRunning')}</>
+            : `0 ${t('memUnitCount')}`}
+          label={t('memCardActiveRuns')}
+          hot={d.activeRuns > 0}
         />
-        <Card icon="🗂️" label={t('memCardAllProjects')} value={pm} sub={t('memCardAllSub')} />
-        <Card icon="🌐" label={t('memCardGlobal')} value={gm} sub={t('memCardPersonalDir')} />
-        <Card icon="🧹" label={t('memCardMaintenance')} value={lm} sub={t('memCardMaintenanceDir')} />
-        <Card icon="🔄" label={t('memCardActiveRuns')} value={runValue} hot={d.activeRuns > 0} />
-        <Card icon="🧠" label={t('memCardExtractor')} value={d.configured.extractor} sub={t('memCardExtractorSub')} />
-        <Card icon="🐙" label={t('memCardCleaner')} value={d.configured.cleaner} sub={t('memCardCleanerSub')} />
+        <Card icon={<IconAgentPresetOutline16 />} value={d.configured.extractor} label={t('memCardExtractor')} />
+        <Card icon={<IconAgentPresetOutline16 />} value={d.configured.cleaner} label={t('memCardCleaner')} />
+        <div className={css.memHint} style={{ padding: '6px 12px' }}>{d.root}</div>
       </div>
-      <div className={css.memHint} style={{ marginTop: 10 }}>{d.root}</div>
     </div>
   )
 }

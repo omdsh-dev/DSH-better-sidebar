@@ -1,15 +1,16 @@
 /**
  * Memory models: extractor / hippocampus subagent model pickers fed by the
- * DSH configured providers (hpptools-memory models route).
+ * DSH configured providers (hpptools-memory models route). Rows follow the
+ * DSH settings-row recipe (label + control + hint).
  */
 import { useEffect, useState } from 'react'
+import { IconCheckOutline16, IconSparkle16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { memoryApi, type MemoryModelProvider } from './api.ts'
 import { t } from '../locales.ts'
-import css from '../sidebar.module.css'
+import css from '../memory.module.css'
 
 export function Models() {
   const [providers, setProviders] = useState<MemoryModelProvider[]>([])
-  const [configured, setConfigured] = useState<{ extractor: string; cleaner: string }>({ extractor: '(default)', cleaner: '(default)' })
   const [extractor, setExtractor] = useState('(default)')
   const [cleaner, setCleaner] = useState('(default)')
   const [result, setResult] = useState<string | null>(null)
@@ -20,7 +21,6 @@ export function Models() {
     memoryApi.models().then((d) => {
       if (cancelled) return
       setProviders(d.providers)
-      setConfigured(d.configured)
       setExtractor(d.configured.extractor)
       setCleaner(d.configured.cleaner)
       setResult(t('memModelsLoaded', { n: d.providers.length }))
@@ -35,7 +35,7 @@ export function Models() {
     for (const p of providers) {
       for (const m of p.models) {
         const v = `${p.id}/${m.id}`
-        out.push(<option key={v} value={v}>{m.name || m.id}（{p.name}）</option>)
+        out.push(<option key={v} value={v}>{m.name || m.id} · {p.name}</option>)
       }
     }
     return out
@@ -47,7 +47,6 @@ export function Models() {
       memoryApi.setModel('extractor', extractor),
       memoryApi.setModel('cleaner', cleaner),
     ]).then(([r1, r2]) => {
-      setConfigured({ extractor: r1.value, cleaner: r2.value })
       setResult(t('memModelsSaved', { a: r1.value, b: r2.value }))
     }).catch((e: unknown) => {
       setResult(`❌ ${e instanceof Error ? e.message : String(e)}`)
@@ -55,28 +54,35 @@ export function Models() {
   }
 
   return (
-    <div className={css.memScroll}>
-      <div className={css.memGroup}>
-        <h2 className={css.memGroupHead}>{t('memSubagentModels')}</h2>
-        <div className={css.memSetRow}>
-          <label className={css.memLabel}>{t('memExtractorModel')}</label>
-          <select className={css.memSelect} value={extractor} onChange={(e) => setExtractor(e.target.value)}>
-            {options()}
-          </select>
+    <div className={css.memRoot}>
+      <div className={css.memHeader}>
+        <span className={css.memTitle}>{t('memSubagentModels')}</span>
+        <span className={css.memCount}><IconSparkle16 /></span>
+      </div>
+      <div className={css.memBody}>
+        <div className={css.memGroup}>
+          <div className={css.memRow}>
+            <span className={css.memLabel}>{t('memExtractorModel')}</span>
+            <select className={css.memSelect} value={extractor} onChange={(e) => setExtractor(e.target.value)}>
+              {options()}
+            </select>
+          </div>
+          <div className={css.memRow}>
+            <span className={css.memLabel}>{t('memCleanerModel')}</span>
+            <select className={css.memSelect} value={cleaner} onChange={(e) => setCleaner(e.target.value)}>
+              {options()}
+            </select>
+          </div>
+          <div className={css.memRow}>
+            <button type="button" className={css.memTextBtnPrimary} disabled={busy} onClick={save}>
+              <IconCheckOutline16 /> {t('memSaveModels')}
+            </button>
+            <span className={css.memHint}>{result}</span>
+          </div>
+          <div className={css.memRow}>
+            <span className={css.memHint}>{t('memModelSourceHint')}</span>
+          </div>
         </div>
-        <div className={css.memSetRow}>
-          <label className={css.memLabel}>{t('memCleanerModel')}</label>
-          <select className={css.memSelect} value={cleaner} onChange={(e) => setCleaner(e.target.value)}>
-            {options()}
-          </select>
-        </div>
-        <div className={css.memSetRow}>
-          <button type="button" className={css.memBtnPrimary} disabled={busy} onClick={save}>
-            {t('memSaveModels')}
-          </button>
-          <span className={css.memHint}>{result}</span>
-        </div>
-        <div className={css.memHint}>{t('memModelSourceHint')}</div>
       </div>
     </div>
   )

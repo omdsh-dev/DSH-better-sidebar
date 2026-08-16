@@ -6,7 +6,7 @@
  * and mints `terminal:<n>` ids through `createTab`; the browser mints
  * `browser:<n>` the same way (no quota).
  */
-import { IconBranchOutline16, IconCodeOutline16, IconFolderOpen16, IconThinkOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconBranchOutline16, IconCodeOutline16, IconDataOutline16, IconFolderOpen16, IconThinkOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
 import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
@@ -136,7 +136,7 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
     {
       id: 'memory',
       title: () => t('memTab'),
-      icon: (size: number) => <span style={{ fontSize: size }}>🧠</span>,
+      icon: (size: number) => <IconDataOutline16 size={size} />,
       order: 25,
       single: true,
       component: (props) => <MemoryView {...props} />,

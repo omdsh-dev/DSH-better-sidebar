@@ -1,11 +1,31 @@
 /**
- * Memory runs: recent subagent run table with live activity log and the
+ * Memory runs: recent subagent run rows (StateDot + kind + time + status
+ * badge, subagent-row recipe) with an expandable activity log and the
  * one-click hippocampus cleanup trigger. Polls every 3s while visible.
  */
 import { useEffect, useState } from 'react'
+import {
+  IconRefreshOutline16, IconSparkle16, StateDot,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import { memoryApi, formatDur, formatTime, type MemoryRun } from './api.ts'
 import { isZh, t } from '../locales.ts'
-import css from '../sidebar.module.css'
+import css from '../memory.module.css'
+
+function badgeOf(status: string): React.ReactNode {
+  if (status === 'running') {
+    return <span className={css.memBadge + ' ' + css.memBadgeRunning}>{t('memBadgeRunning')}</span>
+  }
+  if (status === 'done') {
+    return <span className={css.memBadge + ' ' + css.memBadgeOk}>{t('memBadgeDone')}</span>
+  }
+  return <span className={css.memBadge + ' ' + css.memBadgeErr}>{status || t('memBadgeFailed')}</span>
+}
+
+function dotOf(status: string): React.ComponentProps<typeof StateDot>['state'] {
+  if (status === 'running') return 'ongoing'
+  if (status === 'done') return 'done'
+  return 'error'
+}
 
 export function Runs(props: { visible: boolean }) {
   const { visible } = props
@@ -51,50 +71,41 @@ export function Runs(props: { visible: boolean }) {
   const zh = isZh()
 
   return (
-    <div className={css.memScroll}>
-      <div className={css.memRow}>
-        <span className={css.memHint}>{hint}</span>
-        <span style={{ flex: 1 }} />
-        <button type="button" className={css.memBtn} disabled={busy} onClick={runClean}>
-          🧹 {t('memRunClean')}
+    <div className={css.memRoot}>
+      <div className={css.memHeader}>
+        <span className={css.memTitle}>{t('memNavRuns')}</span>
+        <span className={css.memCount}>{runs.length} · {runs.filter((r) => r.status === 'running').length} {t('memRunning')}</span>
+        <button type="button" className={css.memIconBtn} title={t('memRefresh')} onClick={load}>
+          <IconRefreshOutline16 />
+        </button>
+        <button type="button" className={css.memTextBtn} disabled={busy} onClick={runClean}>
+          <IconSparkle16 /> {t('memRunClean')}
         </button>
       </div>
-      <table className={css.memTable}>
-        <thead>
-          <tr>
-            <th>{t('memColStarted')}</th><th>{t('memColKind')}</th>
-            <th>{t('memColStatus')}</th><th>{t('memColDur')}</th><th>{t('memColReason')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {runs.length === 0 && (
-            <tr><td colSpan={5} className={css.memEmptyRow}>{t('memNoRuns')}</td></tr>
-          )}
-          {runs.map((r) => {
-            const badge = r.status === 'running'
-              ? <span className={css.memBadgeRun}><span className={css.memDot} />{t('memBadgeRunning')}</span>
-              : r.status === 'done'
-                ? <span className={css.memBadgeOk}>✅ {t('memBadgeDone')}</span>
-                : <span className={css.memBadgeErr}>❌ {r.status || t('memBadgeFailed')}</span>
-            return (
-              <tr
-                key={r.id}
-                className={css.memRunRow + (r.id === selected ? ' ' + css.memRunRowActive : '')}
-                onClick={() => openLog(r)}
-              >
-                <td>{formatTime(r.startedAt, zh)}</td>
-                <td>{r.kind}</td>
-                <td>{badge}</td>
-                <td>{formatDur(r.startedAt, r.endedAt)}</td>
-                <td>{r.stopReason ?? '—'}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-      {log !== null && (
-        <pre className={css.memLog}>{log.join('\n')}</pre>
-      )}
+      <div className={css.memBody}>
+        {runs.length === 0 && <div className={css.memEmpty}>{t('memNoRuns')}</div>}
+        {runs.map((r) => (
+          <div
+            key={r.id}
+            role="button"
+            tabIndex={0}
+            className={css.memRunRow + (r.id === selected ? ' ' + css.memRunRowActive : '')}
+            onClick={() => openLog(r)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openLog(r) }}
+          >
+            <StateDot state={dotOf(r.status)} className={css.memDot} />
+            <span className={css.memRunContent}>
+              <span className={css.memRunKind}>{r.kind}</span>
+              <span className={css.memRunSecondary}>
+                {formatTime(r.startedAt, zh)} · {formatDur(r.startedAt, r.endedAt)}{r.stopReason ? ` · ${r.stopReason}` : ''}
+              </span>
+            </span>
+            {badgeOf(r.status)}
+          </div>
+        ))}
+        <div className={css.memHint} style={{ padding: '4px 12px' }}>{hint}</div>
+        {log !== null && <pre className={css.memLog}>{log.join('\n')}</pre>}
+      </div>
     </div>
   )
 }

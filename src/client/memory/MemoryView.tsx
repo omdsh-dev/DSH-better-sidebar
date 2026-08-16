@@ -1,13 +1,19 @@
 /**
  * The memory console tab: five internal views (Overview / Files / Models /
- * Runs / Settings) behind a compact tab strip. Registered as the built-in
- * `memory` tab — the sidebar shell (drag tabs, split panes, width, layout
- * persistence) is provided by dsh-better-sidebar itself.
+ * Runs / Settings) behind a compact tab strip reusing the sidebar's own
+ * tabBar chrome. Registered as the built-in `memory` tab — the sidebar shell
+ * (drag tabs, split panes, width, layout persistence) is provided by
+ * dsh-better-sidebar itself.
  */
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
+import {
+  IconDataOutline16, IconFolderOpenOutline16, IconSettingsOutline16,
+  IconSparkle16, IconThinkOutline16,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TabComponentProps } from '../service.ts'
 import { t, type CopyKey } from '../locales.ts'
-import css from '../sidebar.module.css'
+import shellCss from '../sidebar.module.css'
+import css from '../memory.module.css'
 import { Overview } from './Overview.tsx'
 import { Files } from './Files.tsx'
 import { Models } from './Models.tsx'
@@ -16,12 +22,12 @@ import { Settings } from './Settings.tsx'
 
 type MemView = 'overview' | 'files' | 'models' | 'runs' | 'settings'
 
-const NAV: { id: MemView; icon: string; key: CopyKey }[] = [
-  { id: 'overview', icon: '📊', key: 'memNavOverview' },
-  { id: 'files', icon: '📄', key: 'memNavFiles' },
-  { id: 'models', icon: '⚙️', key: 'memNavModels' },
-  { id: 'runs', icon: '🔄', key: 'memNavRuns' },
-  { id: 'settings', icon: '🛠️', key: 'memNavSettings' },
+const NAV: { id: MemView; icon: ReactNode; key: CopyKey }[] = [
+  { id: 'overview', icon: <IconDataOutline16 />, key: 'memNavOverview' },
+  { id: 'files', icon: <IconFolderOpenOutline16 />, key: 'memNavFiles' },
+  { id: 'models', icon: <IconSparkle16 />, key: 'memNavModels' },
+  { id: 'runs', icon: <IconThinkOutline16 />, key: 'memNavRuns' },
+  { id: 'settings', icon: <IconSettingsOutline16 />, key: 'memNavSettings' },
 ]
 
 export function MemoryView(props: TabComponentProps) {
@@ -30,16 +36,17 @@ export function MemoryView(props: TabComponentProps) {
 
   return (
     <div className={css.memRoot}>
-      <div className={css.tabBar}>
+      <div className={shellCss.tabBar}>
         {NAV.map((n) => (
           <button
             key={n.id}
             type="button"
-            className={css.tab + (view === n.id ? ' ' + css.tabActive : '')}
+            className={shellCss.tab + (view === n.id ? ' ' + shellCss.tabActive : '')}
             onClick={() => setView(n.id)}
+            title={t(n.key)}
           >
-            <span className={css.memNavIcon}>{n.icon}</span>
-            <span className={css.tabTitle}>{t(n.key)}</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center' }}>{n.icon}</span>
+            <span className={shellCss.tabTitle}>{t(n.key)}</span>
           </button>
         ))}
       </div>
