@@ -17,7 +17,7 @@ import { parseLogLines, parsePorcelainZ } from '../src/git.ts'
 import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
 import {
   activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, createSidebarStore, defaultWidthFor, insertLeafAt, makeDefaultState,
-  migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab, openTabInActivePane, patchTab, reconcileAgentTerminals, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight, splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded, togglePanel,
+  migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab, openTabInActivePane, patchTab, reconcileAgentTerminals, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight, setWidth, splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded, togglePanel,
   type SidebarState, type SidebarTab, type SplitNode,
 } from '../src/client/state.ts'
 import { loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
@@ -1397,6 +1397,46 @@ describe('side card preferences', () => {
     }
   })
 
+  it('shares the panel width across sessions: a drag in one session is kept when switching', () => {
+    const g = globalThis as Record<string, unknown>
+    let seq = 0
+    const timers = new Map<number, () => void>()
+    const storeMap = new Map<string, string>()
+    g.window = {
+      clearTimeout: (id: number) => { timers.delete(id) },
+      setTimeout: (fn: () => void) => { const id = ++seq; timers.set(id, fn); return id },
+      innerWidth: 1024,
+      innerHeight: 800,
+    }
+    g.localStorage = {
+      getItem: (key: string) => storeMap.get(key) ?? null,
+      setItem: (key: string, value: string) => { storeMap.set(key, value) },
+    }
+    try {
+      const store = createSidebarStore()
+      // The first session seeds the shared width from its own default.
+      store.setSession('s1')
+      expect(store.getSnapshot().state?.width).toBe(307) // 30% of 1024
+      // Drag the width open in the FIRST session.
+      store.reduce(s => setWidth(s, 520))
+      expect(store.getSnapshot().state?.width).toBe(520)
+
+      // A second session, selected later, inherits the shared 520 — no jump.
+      store.setSession('s2')
+      expect(store.getSnapshot().state?.width).toBe(520)
+
+      // Switch BACK to the first session: still 520.
+      store.setSession('s1')
+      expect(store.getSnapshot().state?.width).toBe(520)
+
+      // The shared width persists under the global key (survives reload).
+      expect(storeMap.get('dsh-sidebar:width:v1')).toBe('520')
+    } finally {
+      delete g.window
+      delete g.localStorage
+    }
+  })
+
   it('skips the default explorer tab when the explorer type is disabled', () => {
     const store = createSidebarStore()
     store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: { explorer: false }, viewersEnabled: {}, pluginSettings: {} })
@@ -1819,10 +1859,13 @@ describe('store.reduceFor (targeted opens, v0.12.0)', () => {
       store.reduce(s => ({ ...s, expanded: ['/a'] })) // schedules persist(a)
       store.reduceFor('b', s => ({ ...s, expanded: ['/b'] })) // schedules persist(b)
       // A shared timer would have cancelled persist(a) — with per-session
-      // timers BOTH writes are pending and both land when they fire.
+      // timers BOTH writes are pending and both land when they fire. The
+      // leading write is the glob-wide width key (the first session seeds
+      // the shared width on selection) — the point here is that the two
+      // SESSION layouts are written independently.
       expect(timers.size).toBe(2)
       for (const [, fn] of [...timers]) fn()
-      expect(writes).toEqual(['dsh-sidebar:v1:a', 'dsh-sidebar:v1:b'])
+      expect(writes).toEqual(['dsh-sidebar:width:v1', 'dsh-sidebar:v1:a', 'dsh-sidebar:v1:b'])
     } finally {
       delete g.window
       delete g.localStorage
