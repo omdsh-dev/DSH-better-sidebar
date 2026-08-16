@@ -1,9 +1,12 @@
 /**
- * Per-session sidebar state: the panel geometry, the split-pane workbench
- * tree, open tabs, and the explorer expansion set. One state instance per
- * conversation id, persisted to localStorage under `dsh-sidebar:v1:<id>` so
- * a reload restores the exact layout of the session it belongs to — switching
- * conversations swaps the whole state (memory + isolation).
+ * Sidebar state split into a GLOBAL panel layout (width / panelOpen /
+ * bottomOpen / bottomHeight / bottomOpenedOnce, one localStorage record
+ * `dsh-sidebar:v1:global`) and per-conversation CONTENT (the split-pane
+ * workbench tree, open tabs, the explorer expansion set — one record per
+ * conversation id under `dsh-sidebar:v1:<id>`). The panel geometry is a
+ * property of the working surface, shared across every conversation, so
+ * switching sessions keeps the same panel size/open state; each session
+ * keeps its own tabs and expansions.
  *
  * The split tree is a recursive structure: a leaf holds a tab group, a split
  * divides the space row- or column-wise with fractional sizes. All tree
@@ -98,6 +101,70 @@ export const TAB_MAX_WIDTH = 160
 export const BOTTOM_MIN = 120
 export const BOTTOM_DEFAULT = 220
 
+/**
+ * The GLOBAL panel geometry, shared across every session (a single
+ * localStorage record, `dsh-sidebar:v1:global`). The panel's open state and
+ * sizes are a user preference about the working surface, not about the
+ * contents of any one conversation, so they live in ONE place instead of a
+ * per-session copy. Each session's persisted record therefore carries only
+ * its own CONTENT (tabs / panes / expansions); the store synthesizes the
+ * full {@link SidebarState} from this layout + the active session's content.
+ */
+export interface GlobalSidebarLayout {
+  panelOpen: boolean
+  /** Panel width in px (clamped to the contract range on load). */
+  width: number
+  bottomOpen: boolean
+  /** Bottom panel height in px (clamped to the contract range on load). */
+  bottomHeight: number
+  /**
+   * Whether the bottom panel has been expanded at least once GLOBALLY — the
+   * FIRST expansion tries to auto-open a terminal tab (gated on the
+   * bottomPanelAutoTerminal pref); later expansions never do. Global: one
+   * history for the shared panel, not per session.
+   */
+  bottomOpenedOnce: boolean
+}
+
+/** The per-session content of one sidebar state (everything except the
+ *  globally-shared geometry). Persisted per session under `dsh-sidebar:v1:<id>`. */
+export type SidebarContent = Pick<SidebarState,
+  | 'activePane'
+  | 'nextTerminal'
+  | 'nextBrowser'
+  | 'expanded'
+  | 'splits'
+  | 'bottomSplits'>
+
+/** Split a synthesized state back into its global layout and session content. */
+function splitState(state: SidebarState): { layout: GlobalSidebarLayout; content: SidebarContent } {
+  return {
+    layout: {
+      panelOpen: state.panelOpen,
+      width: state.width,
+      bottomOpen: state.bottomOpen,
+      bottomHeight: state.bottomHeight,
+      bottomOpenedOnce: state.bottomOpenedOnce,
+    },
+    content: {
+      activePane: state.activePane,
+      nextTerminal: state.nextTerminal,
+      nextBrowser: state.nextBrowser,
+      expanded: state.expanded,
+      splits: state.splits,
+      bottomSplits: state.bottomSplits,
+    },
+  }
+}
+
+/** Reassemble a full state from the global layout and one session's content. */
+function synthState(layout: GlobalSidebarLayout, content: SidebarContent): SidebarState {
+  return {
+    ...layout,
+    ...content,
+  }
+}
+
 let nextIdCounter = 0
 /** Unique pane/tab id within one state instance. */
 function uid(prefix: string): string {
@@ -114,7 +181,7 @@ function uid(prefix: string): string {
  * panes of the split. Seeding the counter past the persisted ids keeps
  * fresh ids disjoint.
  */
-function maxCounterId(parsed: unknown): number {
+function maxCounterId(record: { splits: SplitNode; bottomSplits: SplitNode }): number {
   let max = 0
   const consider = (id: unknown): void => {
     if (typeof id !== 'string') return
@@ -123,19 +190,19 @@ function maxCounterId(parsed: unknown): number {
   }
   const walk = (node: unknown): void => {
     if (node === null || typeof node !== 'object') return
-    const record = node as Record<string, unknown>
-    consider(record.id)
-    if (Array.isArray(record.tabs)) {
-      for (const tab of record.tabs) {
+    const rec = node as Record<string, unknown>
+    consider(rec.id)
+    if (Array.isArray(rec.tabs)) {
+      for (const tab of rec.tabs) {
         if (tab !== null && typeof tab === 'object') consider((tab as Record<string, unknown>).id)
       }
     }
-    if (Array.isArray(record.children)) {
-      for (const child of record.children) walk(child)
+    if (Array.isArray(rec.children)) {
+      for (const child of rec.children) walk(child)
     }
   }
-  walk((parsed as Record<string, unknown> | null)?.splits)
-  walk((parsed as Record<string, unknown> | null)?.bottomSplits)
+  walk(record.splits)
+  walk(record.bottomSplits)
   return max
 }
 
@@ -747,51 +814,18 @@ export function defaultWidthFor(viewport: number, percent: number): number {
   return Math.min(viewport, Math.max(PANEL_MIN, Math.round(viewport * percent / 100)))
 }
 
-function loadState(sessionId: string, prefs: SidebarPrefs): SidebarState {
-  try {
-    const raw = localStorage.getItem(`${STORAGE_PREFIX}:${sessionId}`)
-    if (raw !== null) {
-      const parsed = JSON.parse(raw) as unknown
-      // Seed the uid counter past the persisted ids (it resets on reload);
-      // sanitize re-ids any duplicates the pre-seeding counter left behind.
-      nextIdCounter = maxCounterId(parsed)
-      const sanitized = sanitizeState(parsed)
-      if (sanitized !== undefined) return sanitized
-    }
-  } catch {
-    // Corrupt or unavailable storage: fall through to the default.
-  }
-  // New sessions seed from the user's side card prefs: the width is the
-  // chosen percent of the window (clamped to the panel floor and the
-  // viewport so a huge percent can never crush the app shell), the panel
-  // starts open only when the preference says so, and the default explorer
-  // tab is skipped when the user disabled the explorer tab type. On a
-  // NARROW viewport a brand-new session starts collapsed instead — the
-  // panel is a full-screen drawer there, and auto-opening it on first
-  // paint would cover the conversation before the user asked. Only the
-  // first seeding is affected: once the user expands the drawer,
-  // `panelOpen: true` persists like any other state.
-  const viewport = typeof window !== 'undefined' ? window.innerWidth : undefined
-  const width = viewport === undefined
-    ? PANEL_DEFAULT
-    : defaultWidthFor(viewport, prefs.defaultWidthPercent)
-  const openByDefault = prefs.openByDefault && (viewport === undefined || !isNarrowWidth(viewport))
-  return makeDefaultState(width, openByDefault, prefs.tabsEnabled['explorer'] !== false)
-}
-
 /**
- * Structural validation of one persisted state. A malformed or stale shape
- * (older layouts, hand-edited storage) must fall back to the default instead
- * of crashing the panel on every reload; the restored width is also clamped
- * to the current viewport so a stale fullscreen width can never crush the
- * app shell (margin-right larger than the window) or cover the whole screen.
- * @returns a clean state, or undefined to fall back to the default.
+ * Structural validation of one persisted SESSION record's CONTENT. The
+ * session key (per conversation) now holds ONLY content — the geometry lives
+ * in the global layout record — but an OLDER per-session record carried the
+ * geometry fields too; this sanitizer ignores them (no migration, per the
+ * "global layout" design). A malformed shape falls back to the default
+ * instead of crashing the panel on reload.
+ * @returns a clean content block, or undefined to fall back to the default.
  */
-export function sanitizeState(parsed: unknown): SidebarState | undefined {
+export function sanitizeContent(parsed: unknown): SidebarContent | undefined {
   if (parsed === null || typeof parsed !== 'object') return undefined
   const record = parsed as Record<string, unknown>
-  if (typeof record.panelOpen !== 'boolean') return undefined
-  if (typeof record.width !== 'number' || !Number.isFinite(record.width)) return undefined
   if (typeof record.nextTerminal !== 'number' || !Number.isInteger(record.nextTerminal) || record.nextTerminal < 1) {
     return undefined
   }
@@ -811,25 +845,9 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
   const reid = new Map<string, string>()
   const splits = sanitizeNode(record.splits, seen, reid)
   if (splits === undefined) return undefined
-  // Bottom-panel fields arrived in a later build: a missing or malformed
-  // value on an OLDER persisted state defaults (closed / default height /
-  // empty pane) so existing layouts keep loading, like nextBrowser.
-  const bottomOpen = record.bottomOpen === true
-  // Cap the persisted height so the center column (the agent output area)
-  // keeps at least PANEL_MIN tall (a stale full-height bottom panel from an
-  // older build must never squeeze the conversation to zero).
-  const maxHeight = typeof window !== 'undefined' ? window.innerHeight : Infinity
-  const bottomCap = Math.max(BOTTOM_MIN, maxHeight - PANEL_MIN)
-  const rawHeight = typeof record.bottomHeight === 'number' && Number.isFinite(record.bottomHeight)
-    ? record.bottomHeight
-    : BOTTOM_DEFAULT
-  const bottomHeight = Math.min(bottomCap, Math.max(BOTTOM_MIN, Math.round(rawHeight)))
   const bottomSplits = sanitizeNode(record.bottomSplits, seen, reid)
     ?? { kind: 'leaf' as const, id: uid('pane'), tabs: [], active: null }
-  const maxWidth = typeof window !== 'undefined' ? window.innerWidth : Infinity
   return {
-    panelOpen: record.panelOpen,
-    width: Math.max(PANEL_MIN, Math.min(record.width, maxWidth)),
     // A stale duplicate pane id may have been re-ided; follow the rename so
     // new tabs still land in the pane the user was using.
     activePane: typeof record.activePane === 'string' ? (reid.get(record.activePane) ?? record.activePane) : null,
@@ -837,14 +855,131 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     nextBrowser,
     expanded: record.expanded as string[],
     splits,
-    bottomOpen,
-    bottomHeight,
-    // An older persisted state never expanded the bottom panel (the field
-    // arrived later): defaulting to false gives it the first-expansion
-    // auto-terminal exactly once after the upgrade.
-    bottomOpenedOnce: record.bottomOpenedOnce === true,
     bottomSplits,
   }
+}
+
+/**
+ * Structural validation of the GLOBAL layout record. A malformed or stale
+ * shape falls back to the default; the restored width/height are clamped to
+ * the contract range and to the current viewport (a stale fullscreen width
+ * must never crush the app shell or cover the whole screen).
+ * @returns a clean layout, or undefined to fall back to the default.
+ */
+export function sanitizeLayout(parsed: unknown): GlobalSidebarLayout | undefined {
+  if (parsed === null || typeof parsed !== 'object') return undefined
+  const record = parsed as Record<string, unknown>
+  if (typeof record.panelOpen !== 'boolean') return undefined
+  if (typeof record.width !== 'number' || !Number.isFinite(record.width)) return undefined
+  const maxWidth = typeof window !== 'undefined' ? window.innerWidth : Infinity
+  // Cap the bottom height so the center column (the agent output area) keeps
+  // at least PANEL_MIN tall (a stale full-height bottom panel from an older
+  // build must never squeeze the conversation to zero).
+  const maxHeight = typeof window !== 'undefined' ? window.innerHeight : Infinity
+  const bottomCap = Math.max(BOTTOM_MIN, maxHeight - PANEL_MIN)
+  const rawHeight = typeof record.bottomHeight === 'number' && Number.isFinite(record.bottomHeight)
+    ? record.bottomHeight
+    : BOTTOM_DEFAULT
+  return {
+    panelOpen: record.panelOpen,
+    width: Math.max(PANEL_MIN, Math.min(record.width, maxWidth)),
+    bottomOpen: record.bottomOpen === true,
+    bottomHeight: Math.min(bottomCap, Math.max(BOTTOM_MIN, Math.round(rawHeight))),
+    // An older state never expanded the bottom panel: defaulting to false
+    // gives it the first-expansion auto-terminal exactly once after upgrade.
+    bottomOpenedOnce: record.bottomOpenedOnce === true,
+  }
+}
+
+/** The default explorer CONTENT for a brand-new session (one empty pane,
+ *  explorer tab unless the user disabled the explorer type; counters at 1). */
+export function makeDefaultContent(seedExplorer: boolean): SidebarContent {
+  const state = makeDefaultState(0, true, seedExplorer)
+  return splitState(state).content
+}
+
+/** The DEFAULT global layout for a fresh install (no migrated values): the
+ *  width is the user's preferred percent of the window (clamped to the panel
+ *  floor and the viewport), the panel open per the preference, bottom closed
+ *  at the default height, and the bottom not yet opened once. On a NARROW
+ *  viewport a brand-new panel starts collapsed — it is a full-screen drawer
+ *  there, and auto-opening it on first paint would cover the conversation.
+ *  Only the first seeding is affected: once the user opens the drawer,
+ *  `panelOpen: true` persists in the global layout like any other value. */
+export function makeDefaultLayout(prefs: SidebarPrefs): GlobalSidebarLayout {
+  const viewport = typeof window !== 'undefined' ? window.innerWidth : undefined
+  const width = viewport === undefined
+    ? PANEL_DEFAULT
+    : defaultWidthFor(viewport, prefs.defaultWidthPercent)
+  const openByDefault = prefs.openByDefault && (viewport === undefined || !isNarrowWidth(viewport))
+  return {
+    panelOpen: openByDefault,
+    width,
+    bottomOpen: false,
+    bottomHeight: BOTTOM_DEFAULT,
+    bottomOpenedOnce: false,
+  }
+}
+
+/** Load one session's CONTENT from localStorage: the per-session key holds
+ *  only content; an OLDER record that also carried geometry is sanitized for
+ *  content only (its geometry is ignored — no migration). The uid counter is
+ *  re-seeded past the persisted ids exactly as before. Falls back to the
+ *  default content on corrupt/missing storage. */
+function loadContent(sessionId: string, prefs: SidebarPrefs): SidebarContent {
+  try {
+    const raw = localStorage.getItem(`${STORAGE_PREFIX}:${sessionId}`)
+    if (raw !== null) {
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      // Seed the uid counter past the persisted ids (it resets on reload);
+      // sanitize re-ids any duplicates the pre-seeding counter left behind.
+      const trees = parsed as unknown as { splits: SplitNode; bottomSplits: SplitNode }
+      nextIdCounter = maxCounterId(trees)
+      const sanitized = sanitizeContent(parsed)
+      if (sanitized !== undefined) return sanitized
+    }
+  } catch {
+    // Corrupt or unavailable storage: fall through to the default.
+  }
+  return makeDefaultContent(prefs.tabsEnabled['explorer'] !== false)
+}
+
+/** Load the GLOBAL layout from localStorage (one shared key), falling back to
+ *  the prefs-derived default for a fresh install (no migration of the old
+ *  per-session geometry). */
+function loadLayout(prefs: SidebarPrefs): GlobalSidebarLayout {
+  try {
+    const raw = localStorage.getItem(`${STORAGE_PREFIX}:global`)
+    if (raw !== null) {
+      const parsed = JSON.parse(raw) as unknown
+      const sanitized = sanitizeLayout(parsed)
+      if (sanitized !== undefined) return sanitized
+    }
+  } catch {
+    // Corrupt or unavailable storage: fall through to the default.
+  }
+  return makeDefaultLayout(prefs)
+}
+
+/**
+ * BACK-COMPAT shim: structural validation of one persisted session record as
+ * a full state. Retained for tests that round-trip a whole state; the store
+ * itself no longer uses it (geometry is route via {@link sanitizeLayout}).
+ * Content is sanitized as {@link sanitizeContent}; the geometry of the input
+ * is read for a caller that only has a full-state blob (kept so the shim
+ * still round-trips a state under the legacy shape), clamped as in the old
+ * sanitizer. @returns a clean state, or undefined to fall back to the default.
+ */
+export function sanitizeState(parsed: unknown): SidebarState | undefined {
+  if (parsed === null || typeof parsed !== 'object') return undefined
+  const record = parsed as Record<string, unknown>
+  if (typeof record.panelOpen !== 'boolean') return undefined
+  if (typeof record.width !== 'number' || !Number.isFinite(record.width)) return undefined
+  const content = sanitizeContent(parsed)
+  if (content === undefined) return undefined
+  const layout = sanitizeLayout(record)
+  if (layout === undefined) return undefined
+  return synthState(layout, content)
 }
 
 /**
@@ -929,9 +1064,15 @@ function sanitizeNode(node: unknown, seen: Set<string>, reid: Map<string, string
   return undefined
 }
 
-/** The session-scoped store: one state per conversation, localStorage-backed. */
+/** The session-scoped store: per-conversation CONTENT, one GLOBAL layout,
+ *  localStorage-backed. Every session shares the same panel geometry; each
+ *  session keeps its own tabs/panes/expansions. */
 export class SidebarStore {
-  private readonly bySession = new Map<string, SidebarState>()
+  private readonly bySession = new Map<string, SidebarContent>()
+  /** The shared global layout — a single source of truth for the panel
+   *  geometry. Lazy: unset until the first session is selected (or the first
+   *  geometry mutation), so the seed uses whatever prefs are current then. */
+  private globalLayout: GlobalSidebarLayout | undefined
   private snapshot: SidebarSnapshot = {
     sessionId: undefined,
     state: undefined,
@@ -943,6 +1084,55 @@ export class SidebarStore {
   private readonly persistTimers = new Map<string, number>()
   /** User-facing side card prefs seeding brand-new session states (defaults until the settings RPC resolves). */
   private prefs: SidebarPrefs = { ...SIDEBAR_PREFS_DEFAULTS }
+
+  /** Load (once) and cache the global layout, defaulting from the current
+   *  prefs on a fresh install (no migration of old per-session geometry). */
+  private ensureGlobalLayout(): GlobalSidebarLayout {
+    if (this.globalLayout === undefined) {
+      this.globalLayout = loadLayout(this.prefs)
+    }
+    return this.globalLayout
+  }
+
+  /** Persist the global layout immediately (geometry changes are infrequent
+   *  — drag release / toggle — so no debounce is warranted, and a single
+   *  key needs no per-session isolation). */
+  private persistGlobalLayout(layout: GlobalSidebarLayout): void {
+    this.globalLayout = layout
+    try {
+      localStorage.setItem(`${STORAGE_PREFIX}:global`, JSON.stringify(layout))
+    } catch {
+      // Storage full or unavailable: geometry memory is best-effort.
+    }
+  }
+
+  /** Commit a store mutation's result: route geometry to the global layout,
+   *  content to the session's cache, update the active snapshot, and schedule
+   *  the session content persist. */
+  private commitActive(sessionId: string, next: SidebarState): void {
+    const { layout, content } = splitState(next)
+    const oldLayout = this.ensureGlobalLayout()
+    if (layout.panelOpen !== oldLayout.panelOpen
+      || layout.width !== oldLayout.width
+      || layout.bottomOpen !== oldLayout.bottomOpen
+      || layout.bottomHeight !== oldLayout.bottomHeight
+      || layout.bottomOpenedOnce !== oldLayout.bottomOpenedOnce) {
+      this.persistGlobalLayout(layout)
+    }
+    this.bySession.set(sessionId, content)
+    this.snapshot = { sessionId, state: next, prefs: this.prefs }
+    this.schedulePersistContent(sessionId, content)
+    this.notify()
+  }
+
+  /** Route a TARGET session's content-only mutation without touching the
+   *  active snapshot or the global layout (targeted opens never change
+   *  geometry). */
+  private commitTarget(sessionId: string, next: SidebarState): void {
+    const { content } = splitState(next)
+    this.bySession.set(sessionId, content)
+    this.schedulePersistContent(sessionId, content)
+  }
 
   /**
    * Replace the side card prefs (the settings RPC result / settings page
@@ -967,17 +1157,20 @@ export class SidebarStore {
     if (sessionId === undefined) {
       this.snapshot = { sessionId: undefined, state: undefined, prefs: this.prefs }
     } else {
-      let state = this.bySession.get(sessionId)
-      if (state === undefined) {
-        state = loadState(sessionId, this.prefs)
-        this.bySession.set(sessionId, state)
+      let content = this.bySession.get(sessionId)
+      if (content === undefined) {
+        content = loadContent(sessionId, this.prefs)
+        this.bySession.set(sessionId, content)
       } else {
         // Cache hit: another session's load/ops may have left the uid
         // counter below THIS session's persisted ids — re-seed so fresh
         // pane/split ids can never collide with its tree.
-        nextIdCounter = maxCounterId(state)
+        nextIdCounter = maxCounterId(content)
       }
-      this.snapshot = { sessionId, state, prefs: this.prefs }
+      // Reassemble the full state from the SHARED layout + this session's
+      // content: the panel geometry is identical across sessions.
+      const layout = this.ensureGlobalLayout()
+      this.snapshot = { sessionId, state: synthState(layout, content), prefs: this.prefs }
     }
     this.notify()
   }
@@ -998,10 +1191,7 @@ export class SidebarStore {
     if (sessionId === undefined || state === undefined) return
     const draft = structuredClone(state)
     mutator(draft)
-    this.bySession.set(sessionId, draft)
-    this.snapshot = { sessionId, state: draft, prefs: this.prefs }
-    this.schedulePersist(sessionId, draft)
-    this.notify()
+    this.commitActive(sessionId, draft)
   }
 
   /**
@@ -1014,9 +1204,12 @@ export class SidebarStore {
    * one's tabs).
    */
   tabOpen(sessionId: string, tabId: string): boolean {
-    const state = this.bySession.get(sessionId)
-      ?? (this.snapshot.sessionId === sessionId ? this.snapshot.state : undefined)
-    return state !== undefined && tabOpenIn(state, tabId)
+    let content = this.bySession.get(sessionId)
+    if (content === undefined && this.snapshot.sessionId === sessionId && this.snapshot.state !== undefined) {
+      content = splitState(this.snapshot.state).content
+    }
+    if (content === undefined) return false
+    return tabOpenIn(synthState(this.ensureGlobalLayout(), content), tabId)
   }
 
   /** Apply a pure reducer (returns the next state). */
@@ -1030,10 +1223,7 @@ export class SidebarStore {
     // patchTab on a missing tab) must not churn the state or rewrite
     // localStorage.
     if (next === state) return
-    this.bySession.set(sessionId, next)
-    this.snapshot = { sessionId, state: next, prefs: this.prefs }
-    this.schedulePersist(sessionId, next)
-    this.notify()
+    this.commitActive(sessionId, next)
   }
 
   /**
@@ -1051,25 +1241,29 @@ export class SidebarStore {
     // active session's next mint collision-free — ids minted for the target
     // only need to exceed the target's own max, which the seed guaranteed.
     const counterBefore = nextIdCounter
-    let state = this.bySession.get(sessionId)
-    if (state === undefined) {
-      state = loadState(sessionId, this.prefs)
-      this.bySession.set(sessionId, state)
+    let content = this.bySession.get(sessionId)
+    if (content === undefined) {
+      content = loadContent(sessionId, this.prefs)
+      this.bySession.set(sessionId, content)
     } else {
       // Re-seed the uid counter past THIS session's persisted ids, exactly
       // like setSession's cache-hit path.
-      nextIdCounter = maxCounterId(state)
+      nextIdCounter = maxCounterId(content)
     }
-    const next = reducer(state)
+    // The reducer runs against the synthesized state (shared layout + target
+    // content) so content reads see the real geometry; its CONTENT lands in
+    // the target, while any geometry it returns (targeted opens never expand
+    // panels) is NOT written back here — the active UI owns the geometry.
+    const synthesized = synthState(this.ensureGlobalLayout(), content)
+    const next = reducer(synthesized)
     // Same-reference result = no change: keep the counter restore (it may
     // have been seeded down) but skip the write.
     nextIdCounter = Math.max(nextIdCounter, counterBefore)
-    if (next === state) return
-    this.bySession.set(sessionId, next)
-    this.schedulePersist(sessionId, next)
+    if (next === synthesized) return
+    this.commitTarget(sessionId, next)
   }
 
-  private schedulePersist(sessionId: string, state: SidebarState): void {
+  private schedulePersistContent(sessionId: string, content: SidebarContent): void {
     // Per-session debounce timers: one session's pending write must never
     // cancel another's (targeted opens schedule writes for INACTIVE
     // sessions while the active session may already have one pending —
@@ -1080,7 +1274,7 @@ export class SidebarStore {
     const timer = window.setTimeout(() => {
       this.persistTimers.delete(sessionId)
       try {
-        localStorage.setItem(`${STORAGE_PREFIX}:${sessionId}`, JSON.stringify(state))
+        localStorage.setItem(`${STORAGE_PREFIX}:${sessionId}`, JSON.stringify(content))
       } catch {
         // Storage full or unavailable: layout memory is best-effort.
       }

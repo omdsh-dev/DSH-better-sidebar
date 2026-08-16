@@ -999,10 +999,14 @@ describe('independent CR follow-up fixes', () => {
     const service = createBetterSidebarService(store)
     service.registerTab({ id: 'editor', title: 'Editor', component: () => null })
     store.setSession('s1')
-    // The target session starts collapsed.
-    store.reduceFor('s2', s => ({ ...s, panelOpen: false, bottomOpen: false }))
+    // The GLOBAL layout is collapsed (the shared panel geometry — the active
+    // session owns it; a targeted open into an inactive session must not
+    // expand anything the user cannot see). No localStorage is involved, so
+    // the in-memory shared layout is authoritative for this isolated store.
+    store.reduce(s => ({ ...s, panelOpen: false, bottomOpen: false }))
     service.openTab({ type: 'editor', title: 'main.ts', path: '/p/main.ts' }, { sessionId: 's2' })
-    // Nothing is in sight for the user — the open must not expand s2.
+    // Nothing is in sight for the user — the open must not touch the shared
+    // panel geometry (nor expand the right/bottom panels).
     store.setSession('s2')
     expect(store.getSnapshot().state?.panelOpen).toBe(false)
     expect(store.getSnapshot().state?.bottomOpen).toBe(false)

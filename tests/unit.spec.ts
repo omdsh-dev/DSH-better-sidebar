@@ -1734,9 +1734,12 @@ describe('store.reduceFor (targeted opens, v0.12.0)', () => {
   it('loads a fresh state for a never-visited target session', () => {
     const store = createSidebarStore()
     store.setSession('s1')
-    store.reduceFor('brand-new', (state) => ({ ...state, panelOpen: false }))
+    store.reduceFor('brand-new', (state) => ({ ...state, expanded: ['/x'] }))
     store.setSession('brand-new')
-    expect(store.getSnapshot().state?.panelOpen).toBe(false)
+    // The geometry is GLOBAL — reduceFor only mutates content, so the fresh
+    // target presents the shared layout (open by default) + its new content.
+    expect(store.getSnapshot().state?.panelOpen).toBe(true)
+    expect(store.getSnapshot().state?.expanded).toEqual(['/x'])
     expect(store.getSnapshot().state?.splits).toBeDefined()
   })
 
