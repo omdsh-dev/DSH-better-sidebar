@@ -14,6 +14,7 @@
  * processes are keyed by session.
  */
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { watch as fsWatch, type FSWatcher } from 'node:fs'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
@@ -123,6 +124,91 @@ async function resolveGitPath(cwd: string, raw: string): Promise<string> {
 
 /** How many leading bytes a binary read returns for client-side detect sniffing. */
 const READ_HEAD_LIMIT = 4096
+
+/** Debounce for batched fs.watch notifications per directory. */
+const FS_WATCH_DEBOUNCE_MS = 120
+
+/**
+ * Shared fs.watch hub for the explorer's passive refresh. Watchers are
+ * keyed by absolute directory and reference-counted per connected socket;
+ * a directory is watched only while at least one explorer view is watching
+ * it. Events are debounced per directory to avoid spamming the browser.
+ */
+class FsWatchHub {
+  private readonly watchers = new Map<string, {
+    watcher: FSWatcher
+    sockets: Set<WebSocket>
+    timer: ReturnType<typeof setTimeout> | null
+  }>()
+
+  watch(dir: string, socket: WebSocket): void {
+    const existing = this.watchers.get(dir)
+    if (existing !== undefined) {
+      existing.sockets.add(socket)
+      return
+    }
+    let watcher: FSWatcher
+    try {
+      watcher = fsWatch(dir, { persistent: false }, (eventType) => {
+        // Only directory-entry changes (create/delete/rename) alter the tree;
+        // file content edits don't need an explorer refresh.
+        if (eventType === 'rename') this.schedule(dir)
+      })
+    } catch {
+      return
+    }
+    watcher.on('error', () => {
+      this.notify(dir)
+      this.drop(dir)
+    })
+    this.watchers.set(dir, { watcher, sockets: new Set([socket]), timer: null })
+  }
+
+  unwatch(dir: string, socket: WebSocket): void {
+    const entry = this.watchers.get(dir)
+    if (entry === undefined) return
+    entry.sockets.delete(socket)
+    if (entry.sockets.size === 0) this.drop(dir)
+  }
+
+  removeSocket(socket: WebSocket): void {
+    for (const [dir, entry] of this.watchers) {
+      if (entry.sockets.delete(socket) && entry.sockets.size === 0) this.drop(dir)
+    }
+  }
+
+  dispose(): void {
+    for (const dir of [...this.watchers.keys()]) this.drop(dir)
+  }
+
+  private schedule(dir: string): void {
+    const entry = this.watchers.get(dir)
+    if (entry === undefined || entry.timer !== null) return
+    entry.timer = setTimeout(() => {
+      const current = this.watchers.get(dir)
+      if (current === undefined) return
+      current.timer = null
+      this.notify(dir)
+    }, FS_WATCH_DEBOUNCE_MS)
+  }
+
+  private notify(dir: string): void {
+    const entry = this.watchers.get(dir)
+    if (entry === undefined) return
+    const message = JSON.stringify({ type: 'change', path: dir })
+    for (const socket of [...entry.sockets]) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(message)
+    }
+  }
+
+  private drop(dir: string): void {
+    const entry = this.watchers.get(dir)
+    if (entry === undefined) return
+    if (entry.timer !== null) clearTimeout(entry.timer)
+    entry.watcher.close()
+    this.watchers.delete(dir)
+  }
+}
 
 /** Text read of a file with the size cap; binary detection via NUL probe.
  *  Binary reads also return the first {@link READ_HEAD_LIMIT} bytes (base64)
@@ -443,6 +529,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // through the terminal_create tool; the sidebar view attaches through the
   // same /sidebar/ws/terminal upgrade with ?uuid=... instead of ?tab=...
   const agentPtyRegistry = new AgentPtyRegistry(terminalShell)
+  const fsWatchHub = new FsWatchHub()
 
   // ── User-facing "Side card" preferences ──────────────────────────────────
   // Register the namespace with the settings provider so the Settings page
@@ -698,12 +785,33 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     },
   }), 'dsh-better-sidebar: agent-terminals push WebSocket')
 
+  // ── Explorer fs-events push WebSocket ───────────────────────────────────
+  // Passive file-tree refresh: the explorer subscribes to fs.watch events
+  // for the directories it currently shows. The host watches only those
+  // directories (reference-counted) and pushes a lightweight change notice;
+  // the client drops the cached listing for that directory and refetches.
+  const fsWatchWss = new WebSocketServer({ noServer: true })
+  ctx.effect(() => ctx.webServer.registerUpgrade({
+    path: '/sidebar/ws/fs-events',
+    handler: (req, socket, head) => {
+      if (!fence(req)) {
+        socket.destroy()
+        return
+      }
+      fsWatchWss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
+        void attachFsEvents(ctx, fsWatchHub, ws, req)
+      })
+    },
+  }), 'dsh-better-sidebar: fs-events push WebSocket')
+
   ctx.effect(() => () => {
     toolsDisposers?.()
     ptyManager.disposeAll()
     agentPtyRegistry.disposeAll()
     wss.close()
     agentListWss.close()
+    fsWatchWss.close()
+    fsWatchHub.dispose()
   }, 'dsh-better-sidebar: teardown')
 }
 
@@ -729,6 +837,41 @@ async function attachAgentList(
     const unsubscribe = registry.subscribe(send)
     ws.on('close', () => { unsubscribe() })
     ws.on('error', () => { unsubscribe() })
+  } catch (error) {
+    ws.close(1011, error instanceof Error ? error.message : String(error))
+  }
+}
+
+/** Subscribe an explorer socket to host fs.watch notifications for its cwd. */
+async function attachFsEvents(
+  ctx: Context,
+  hub: FsWatchHub,
+  ws: WebSocket,
+  req: SidebarHttpRequest,
+): Promise<void> {
+  try {
+    const url = new URL(req.url ?? '/', 'http://dsh.internal')
+    const sessionId = url.searchParams.get('sessionId')
+    if (sessionId === null) {
+      ws.close(1008, 'sessionId is required')
+      return
+    }
+    const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+    ws.on('message', (data) => {
+      try {
+        const msg = JSON.parse(String(data)) as { type?: unknown; path?: unknown }
+        if (typeof msg?.path !== 'string') return
+        const absolute = requireAbsolute(msg.path)
+        if (!isWithin(cwd, absolute)) return
+        if (msg.type === 'watch') hub.watch(absolute, ws)
+        else if (msg.type === 'unwatch') hub.unwatch(absolute, ws)
+      } catch {
+        // Malformed message: ignore.
+      }
+    })
+    const cleanup = (): void => { hub.removeSocket(ws) }
+    ws.on('close', cleanup)
+    ws.on('error', cleanup)
   } catch (error) {
     ws.close(1011, error instanceof Error ? error.message : String(error))
   }

@@ -36,6 +36,9 @@ function baseName(path: string): string {
 /** How long the row's "copied" label stays after a successful write. */
 const COPIED_MS = 1200
 
+/** How many consecutive fs-events reconnect failures stop the push loop. */
+const FS_FAILURE_LIMIT = 3
+
 export function ExplorerView(props: {
   sessionId: string
   cwd: string | undefined
@@ -77,6 +80,68 @@ export function ExplorerView(props: {
     loadDir(root)
     for (const dir of expanded) loadDir(dir)
   }, [cwd, expanded, refreshTick, loadDir])
+
+  /**
+   * Passive file-tree refresh: subscribe to host fs.watch events for the
+   * visible/expanded directories. The host pushes `{type:'change', path}`
+   * when a watched directory's contents change; we drop that directory from
+   * the local cache and let the loading effect above refetch it. No polling.
+   */
+  const expandedKey = expanded.join('\0')
+  useEffect(() => {
+    if (cwd === undefined) return
+    let socket: WebSocket | null = null
+    let retry: number | undefined
+    let closed = false
+    let failures = 0
+    const connect = (): void => {
+      if (closed) return
+      const url = new URL('/sidebar/ws/fs-events', location.origin)
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+      url.search = new URLSearchParams({ sessionId, cwd }).toString()
+      socket = new WebSocket(url.toString())
+      socket.onopen = () => {
+        failures = 0
+        const dirs = [cwd, ...expanded]
+        for (const dir of dirs) {
+          if (socket?.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'watch', path: dir }))
+          }
+        }
+      }
+      socket.onmessage = (event) => {
+        if (typeof event.data !== 'string') return
+        try {
+          const msg = JSON.parse(event.data) as { type?: unknown; path?: unknown }
+          if (msg?.type !== 'change' || typeof msg.path !== 'string') return
+          const changed = msg.path
+          if (dataRef.current[changed] === undefined && cwd !== changed && !expanded.includes(changed)) return
+          if (dataRef.current[changed] !== undefined) {
+            const next = { ...dataRef.current }
+            delete next[changed]
+            dataRef.current = next
+            setData(next)
+          }
+          setRefreshTick(tick => tick + 1)
+        } catch {
+          // Malformed push: ignore (the next real change will refresh).
+        }
+      }
+      socket.onclose = () => {
+        if (closed) return
+        failures += 1
+        if (failures >= FS_FAILURE_LIMIT) return
+        retry = window.setTimeout(connect, 2000)
+      }
+      socket.onerror = () => { socket?.close() }
+    }
+    connect()
+    return () => {
+      closed = true
+      window.clearTimeout(retry)
+      socket?.close()
+    }
+  }, [sessionId, cwd, expandedKey])
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
   const copyPath = useCallback((text: string, path: string): void => {
