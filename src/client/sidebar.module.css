@@ -38,6 +38,14 @@
   gap: 4px;
 }
 
+/* Electron drag regions ignore ordinary stacking. When the right panel is
+   closed, this fixed cluster sits over DSH's draggable conversation titlebar;
+   explicitly keep the cluster and its controls interactive. */
+:global(html[data-dsh-desktop='true']) .toggleCluster,
+:global(html[data-dsh-desktop='true']) .toggleButton {
+  -webkit-app-region: no-drag;
+}
+
 /* The tab strip of the OPEN right panel reserves the cluster's width at its
    right end, so the tabs and the + menu genuinely yield space to the cluster
    (never hiding under it). */
