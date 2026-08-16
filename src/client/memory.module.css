@@ -1,0 +1,667 @@
+/* Memory console page (Overview / Files / Models / Runs / Settings).
+   Chrome mirrors the built-in SubagentView / ExplorerView catalog rows
+   (48/34px rows, radius 8, hover fill, DSH font roles) so the panel reads
+   as native to the sidebar — no emoji, no ad-hoc sizes, DSH tokens only. */
+.memRoot {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── shared header: title + count + icon refresh (subagent header recipe) ── */
+.memHeader {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px 0 12px;
+}
+
+.memTitle {
+  flex: 1;
+  min-width: 0;
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memCount {
+  flex: none;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* 24px square icon control (subagent refresh recipe). */
+.memIconBtn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.memIconBtn:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.memIconBtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ── modern nav bar (no border dividers — bottom underline only) ─────────── */
+.memNav {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.memNavTab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.memNavTab:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.memNavTabActive {
+  color: var(--dsw-alias-label-primary);
+  border-bottom-color: var(--dsw-alias-button-primary-fill);
+}
+
+.memBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 6px 8px;
+}
+
+/* ── overview stat cards (borderless recipe: bg tint + hover fill) ────────── */
+.memCard {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 48px;
+  padding: 7px 8px 7px 11px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+  transition: background 120ms ease;
+}
+
+.memCard:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.memCardHot {
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 8%, transparent);
+}
+
+.memCardHot:hover {
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent);
+}
+
+/* 24px icon chip (mirror of the SideCard icon chip recipe). */
+.memCardIcon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-top: 2px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.memCardContent {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.memCardValue {
+  font: var(--dsw-font-s-strong-14);
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memCardLabel {
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── banners (migration / errors) ──────────────────────────────────────── */
+.memBanner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font: var(--dsw-font-xxxs-11);
+  line-height: 1.5;
+  color: var(--dsw-alias-state-warn-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-warn-primary) 35%, transparent);
+}
+
+.memBannerText {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.memBannerMuted {
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-1);
+  border-color: var(--dsw-alias-border-l1);
+}
+
+/* ── generic status / hint / mono ──────────────────────────────────────── */
+.memHint {
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+  line-height: 1.5;
+}
+
+.memMono {
+  font-family: var(--ds-font-family-code);
+  font-size: var(--dsw-font-xxxs-11-font-size);
+  line-height: var(--dsw-font-xxxs-11-line-height);
+  color: var(--dsw-alias-label-secondary);
+  word-break: break-all;
+}
+
+.memError {
+  flex: 1;
+  padding: 10px 14px;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.memEmpty {
+  padding: 14px 12px;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+  text-align: center;
+}
+
+/* ── files: tree + content pane ────────────────────────────────────────── */
+.memFiles {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+.memTree {
+  width: 178px;
+  min-width: 140px;
+  flex: none;
+  background: var(--dsw-alias-bg-layer-1);
+  border-right: 1px solid var(--dsw-alias-border-l1);
+  overflow-y: auto;
+  padding: 4px 0 8px;
+}
+
+/* Group heading (explorer header recipe: 11px caps, tertiary). */
+.memTreeGroupHead {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  height: 26px;
+  padding: 0 8px 0 12px;
+  border: none;
+  background: transparent;
+  font: var(--dsw-font-xxxs-strong-11);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.memTreeGroupHead:hover {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.memTreeCount {
+  flex: none;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Selected tree row (explorer rows reuse the shell row chrome; the active
+   state mirrors the workspace session-row selected recipe). */
+.memTreeItemActive,
+.memTreeItemActive:hover {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+/* Content pane. */
+.memFilePane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.memFileHead {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.memFileTitle {
+  flex: 1;
+  min-width: 0;
+  font: var(--dsw-font-s-strong-14);
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memFileBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.memFileContent {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+
+.memTextarea {
+  width: 100%;
+  height: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  border: none;
+  resize: none;
+  font-family: var(--ds-font-family-code);
+  font-size: var(--dsw-font-s-14-font-size);
+  line-height: var(--dsw-font-s-14-line-height);
+  outline: none;
+}
+
+/* Section navigator (right rail of the file pane). */
+.memEntryNav {
+  width: 150px;
+  min-width: 110px;
+  flex: none;
+  background: var(--dsw-alias-bg-layer-1);
+  border-left: 1px solid var(--dsw-alias-border-l1);
+  overflow-y: auto;
+  padding: 6px 4px;
+}
+
+.memEntryNavHead {
+  padding: 4px 8px 6px;
+  font: var(--dsw-font-xxxs-strong-11);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.memEntryItem {
+  display: block;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.memEntryItem:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.memEntrySup {
+  color: var(--dsw-alias-label-tertiary);
+  text-decoration: line-through;
+}
+
+.memStatus {
+  flex: none;
+  height: 26px;
+  padding: 0 12px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  font: var(--dsw-font-xxxs-11);
+  line-height: 25px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memStatusOk {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.memStatusErr {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* ── settings / models rows (DSH settings-row recipe) ──────────────────── */
+.memGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 12px;
+}
+
+.memGroup:first-child {
+  margin-top: 0;
+}
+
+.memGroupHead {
+  padding: 4px 12px 6px;
+  font: var(--dsw-font-xxxs-strong-11);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.memRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 12px;
+}
+
+.memRow + .memRow {
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.memRow .memHint {
+  flex: 1;
+  min-width: 0;
+}
+
+.memLabel {
+  flex: none;
+  width: 100px;
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-primary);
+}
+
+.memSelect {
+  flex: 1;
+  min-width: 0;
+  max-width: 260px;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+}
+
+.memSelect:focus {
+  outline: 1.5px solid var(--dsw-alias-button-primary-fill);
+  outline-offset: -1px;
+  border-color: var(--dsw-alias-button-primary-fill);
+}
+
+.memInput {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+}
+
+.memInput:focus {
+  outline: 1.5px solid var(--dsw-alias-button-primary-fill);
+  outline-offset: -1px;
+  border-color: var(--dsw-alias-button-primary-fill);
+}
+
+.memCheckRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 12px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+/* ── runs: subagent-row list + log ─────────────────────────────────────── */
+.memRunRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 48px;
+  padding: 7px 8px 7px 11px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.memRunRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.memRunRowActive,
+.memRunRowActive:hover {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.memRunContent {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.memRunKind {
+  font: var(--dsw-font-s-strong-14);
+  color: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memRunSecondary {
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memBadge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font: var(--dsw-font-xxxs-strong-11);
+}
+
+.memBadgeRunning {
+  color: var(--dsw-alias-state-warn-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent);
+}
+
+.memBadgeOk {
+  color: var(--dsw-alias-state-success-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent);
+}
+
+.memBadgeErr {
+  color: var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
+}
+
+.memDot {
+  margin-top: 4px;
+}
+
+.memLog {
+  margin: 4px 8px 8px;
+  padding: 8px 10px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  font-family: var(--ds-font-family-code);
+  font-size: var(--dsw-font-xxxs-11-font-size);
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary);
+  white-space: pre-wrap;
+  max-height: 220px;
+  overflow: auto;
+}
+
+/* Markdown preview: inherits the editor's markdown recipe when available. */
+.memMd {
+  padding: 10px 14px;
+  font: var(--dsw-font-s-14);
+  line-height: 1.7;
+  color: var(--dsw-alias-label-primary);
+}
+
+.memMd h1, .memMd h2, .memMd h3, .memMd h4 {
+  margin: 14px 0 7px;
+  line-height: 1.4;
+}
+
+.memMd h1 {
+  font-size: 18px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  padding-bottom: 5px;
+}
+
+.memMd h2 {
+  font-size: 15px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  padding-bottom: 3px;
+}
+
+.memMd h3 {
+  font-size: 13.5px;
+}
+
+.memMd p {
+  margin: 6px 0;
+}
+
+.memMd code {
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.memMd pre {
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  padding: 9px 11px;
+  overflow: auto;
+  margin: 8px 0;
+}
+
+.memMd pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.memMd ul, .memMd ol {
+  padding-left: 20px;
+  margin: 6px 0;
+}
+
+.memMd blockquote {
+  border-left: 3px solid var(--dsw-alias-button-primary-fill);
+  padding: 2px 10px;
+  color: var(--dsw-alias-label-secondary);
+  margin: 6px 0;
+}
+
+.memMd a {
+  color: var(--dsw-alias-button-primary-fill);
+}
+
+.memWl {
+  background: color-mix(in srgb, var(--dsw-alias-button-primary-fill) 12%, transparent);
+  color: var(--dsw-alias-button-primary-fill);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 11.5px;
+}
