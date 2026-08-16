@@ -16,13 +16,13 @@ import { EditorState, Compartment, type Extension } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers, highlightActiveLine, ViewPlugin, Decoration, type DecorationSet } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentMore, indentLess, cursorMatchingBracket } from '@codemirror/commands'
 import { search, searchKeymap, highlightSelectionMatches, selectNextOccurrence } from '@codemirror/search'
-import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
+import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, completeFromList, type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
 import { bracketMatching, indentOnInput, indentUnit, foldGutter, foldKeymap, foldService, syntaxTree, ensureSyntaxTree } from '@codemirror/language'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { IconListOutline16 } from './icons.tsx'
 import { api, htmlUrl } from './api.ts'
-import { languageForPath } from './lang.ts'
+import { languageForPath, languageKeyForExt, extOf, keywordsForLanguage } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
@@ -349,6 +349,8 @@ export function TextEditor(props: FileViewerProps) {
     const host = hostRef.current
     if (host === null) return
     const language = languageForPath(path)
+    const languageKey = languageKeyForExt(extOf(path))
+    const keywords = languageKey === null ? undefined : keywordsForLanguage(languageKey)
     const themeComp = new CmThemeCompartment()
     themeCompRef.current = themeComp
     // A compartment holding the user-configurable editor prefs (font family /
@@ -424,7 +426,39 @@ export function TextEditor(props: FileViewerProps) {
         // step through matches) and Ctrl+G go-to-line via the default keymaps.
         search({ top: true }),
         highlightSelectionMatches(),
-        autocompletion({ activateOnTyping: true, defaultKeymap: true }),
+        // Autocomplete: Ctrl+Space lists candidates. The language packages
+        // ship few sources (JS has scope completion; most others have none),
+        // so for languages with a keyword table the sources are combined:
+        // the language's own results first, then the reserved-word list,
+        // deduplicated by label so e.g. the JS import variants don't repeat.
+        autocompletion({
+          activateOnTyping: true,
+          defaultKeymap: true,
+          ...(keywords === undefined ? {} : {
+            override: [
+              (context: CompletionContext): CompletionResult | null => {
+                const seen = new Set<string>()
+                const options: Completion[] = []
+                let from = context.pos
+                const collect = (result: CompletionResult | Promise<CompletionResult | null> | null): void => {
+                  if (result === null || typeof result !== 'object' || !('options' in result)) return
+                  from = result.from
+                  for (const option of result.options) {
+                    if (!seen.has(option.label)) {
+                      seen.add(option.label)
+                      options.push(option)
+                    }
+                  }
+                }
+                for (const source of context.state.languageDataAt('autocomplete', context.pos) as Array<(c: CompletionContext) => CompletionResult | Promise<CompletionResult | null> | null>) {
+                  collect(source(context))
+                }
+                collect(completeFromList(keywords)(context))
+                return options.length === 0 ? null : { from, options }
+              },
+            ],
+          }),
+        }),
         keymap.of([
           {
             key: 'Mod-s',
