@@ -96,6 +96,9 @@
      with labels (#60/#105/#106). */
   background: var(--dsw-alias-bg-layer-1);
   border-left: 1px solid var(--dsw-alias-border-l2);
+  /* Panel opacity (panelOpacity pref): a JS-set variable, 1 by default, so
+     the panel fades while the app shell behind it stays solid. */
+  opacity: var(--dsh-sidebar-panel-opacity, 1);
   /* Expand/collapse slides the panel; fullscreen animates the width. */
   transition:
     transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
@@ -159,6 +162,8 @@
   flex-direction: column;
   background: var(--dsw-alias-bg-layer-1);
   border-top: 1px solid var(--dsw-alias-border-l2);
+  /* Panel opacity (panelOpacity pref): same variable as the right panel. */
+  opacity: var(--dsh-sidebar-panel-opacity, 1);
   /* Expand/collapse slides the panel; height drags animate the height. */
   transition:
     transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),

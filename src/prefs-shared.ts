@@ -16,6 +16,12 @@ export interface SidebarPrefs {
   /** Default panel width as a percent of the window width (20–60). */
   defaultWidthPercent: number
   /**
+   * Panel opacity as a percent (20–100): the right panel and the bottom
+   * panel fade to this value via `--dsh-sidebar-panel-opacity`. 100 is
+   * fully opaque (the default); lower values make the panels translucent.
+   */
+  panelOpacity: number
+  /**
    * Whether the sidebar auto-activates (opens the panel) and expands the
    * Subagent page when the current conversation spawns a new subagent.
    */
@@ -158,6 +164,11 @@ export const WIDTH_PERCENT_MIN = 20
 export const WIDTH_PERCENT_MAX = 60
 export const WIDTH_PERCENT_DEFAULT = 30
 
+/** Range contract of {@link SidebarPrefs.panelOpacity}. */
+export const PANEL_OPACITY_MIN = 20
+export const PANEL_OPACITY_MAX = 100
+export const PANEL_OPACITY_DEFAULT = 100
+
 /** Range contract of {@link SidebarPrefs.terminalFontSize}. */
 export const TERMINAL_FONT_SIZE_MIN = 9
 export const TERMINAL_FONT_SIZE_MAX = 32
@@ -172,6 +183,7 @@ export const TITLE_BAR_STRIP_DEFAULT = 40
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   openByDefault: true,
   defaultWidthPercent: WIDTH_PERCENT_DEFAULT,
+  panelOpacity: PANEL_OPACITY_DEFAULT,
   autoOpenSubagent: true,
   autoOpenJobs: true,
   agentTerminalTools: false,
@@ -195,6 +207,11 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
 /** Clamp one width percent into the contract range (shared by schema and client reads). */
 export function clampWidthPercent(value: number): number {
   return Math.min(WIDTH_PERCENT_MAX, Math.max(WIDTH_PERCENT_MIN, Math.round(value)))
+}
+
+/** Clamp one panel opacity percent into the contract range (shared by schema and client reads). */
+export function clampPanelOpacity(value: number): number {
+  return Math.min(PANEL_OPACITY_MAX, Math.max(PANEL_OPACITY_MIN, Math.round(value)))
 }
 
 /** Clamp one terminal font size into the contract range (shared by schema and client reads). */
