@@ -16,7 +16,7 @@ import { compareEntries, isWithin, parentOf, rootLabel, requireAbsolute } from '
 import { parseLogLines, parsePorcelainZ } from '../src/git.ts'
 import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
 import {
-  activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, createSidebarStore, defaultWidthFor, insertLeafAt, makeDefaultState,
+  activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, createSidebarStore, defaultWidthFor, ensurePinnedTabs, insertLeafAt, isPinnedType, makeDefaultState, mapLeaf,
   migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab, openTabInActivePane, patchTab, reconcileAgentTerminals, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight, splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded, togglePanel,
   type SidebarState, type SidebarTab, type SplitNode,
 } from '../src/client/state.ts'
@@ -1052,6 +1052,54 @@ describe('persisted state sanitization', () => {
     const owners = allLeaves(s.splits).filter(leaf => leaf.tabs.some(tab => tab.path === '/b.ts'))
     expect(owners).toHaveLength(1)
     expect(owners[0]!.tabs.some(tab => tab.type === 'terminal')).toBe(true)
+  })
+})
+
+describe('pinned front tabs (explorer/git/subagent)', () => {
+  it('isPinnedType only marks the built-in three', () => {
+    expect(isPinnedType('explorer')).toBe(true)
+    expect(isPinnedType('git')).toBe(true)
+    expect(isPinnedType('subagent')).toBe(true)
+    expect(isPinnedType('editor')).toBe(false)
+    expect(isPinnedType('terminal')).toBe(false)
+    expect(isPinnedType('my:plugin')).toBe(false)
+  })
+
+  it('ensurePinnedTabs prepends the three enabled bars and is idempotent (same reference)', () => {
+    let s = makeDefaultState(400) // seeds only explorer
+    s = ensurePinnedTabs(s, {})
+    const types = allLeaves(s.splits).flatMap(l => l.tabs).map(t => t.type)
+    expect(types.slice(0, 3)).toEqual(['explorer', 'git', 'subagent'])
+    // Already-normalized: returns the SAME reference (reference-equality no-op).
+    expect(ensurePinnedTabs(s, {})).toBe(s)
+  })
+
+  it('skips a disabled pinned bar but keeps the others', () => {
+    let s = makeDefaultState(400)
+    s = ensurePinnedTabs(s, { explorer: false })
+    const types = allLeaves(s.splits).flatMap(l => l.tabs).map(t => t.type)
+    expect(types.slice(0, 2)).toEqual(['git', 'subagent'])
+    expect(types).not.toContain('explorer')
+  })
+
+  it('a left-edge split of a floating tab stays split with pinned first (no collapse, no empty pane)', () => {
+    // Start normalized: one leaf [explorer, git, subagent].
+    let s = ensurePinnedTabs(makeDefaultState(400), {})
+    const homeId = allLeaves(s.splits)[0]!.id
+    // Add a terminal to the home pane, then split it to the LEFT edge: the new
+    // terminal pane becomes the first leaf, home (pinned) sits second.
+    s = { ...s, splits: mapLeaf(s.splits, homeId, (leaf) => { leaf.tabs = [...leaf.tabs, { id: 'terminal:1', type: 'terminal', title: 'Terminal 1' }]; leaf.active = 'terminal:1' }) }
+    const src = allLeaves(s.splits).find(l => l.tabs.some(t => t.type === 'terminal'))!
+    s = moveTabToEdge(s, src.id, 'terminal:1', homeId, 'left')
+    // Re-ensure: pinned must stay in the FIRST pane, and the terminal must
+    // remain isolated in a separate non-empty pane (edge-split preserved).
+    s = ensurePinnedTabs(s, {})
+    const leaves = allLeaves(s.splits)
+    expect(leaves.length).toBeGreaterThanOrEqual(2)
+    expect(leaves[0]!.tabs.filter(t => isPinnedType(t.type)).map(t => t.type)).toEqual(['explorer', 'git', 'subagent'])
+    expect(leaves.some(l => l.tabs.some(t => t.type === 'terminal'))).toBe(true)
+    // No stranded empty pane.
+    expect(leaves.every(l => l.tabs.length > 0)).toBe(true)
   })
 })
 

@@ -304,54 +304,114 @@ export function ensurePinnedTabs(state: SidebarState, tabsEnabled: Record<string
   // Already-reconciled short-circuit: return the SAME reference so callers can
   // rely on reference equality for "no change". That holds when the first leaf
   // already leads with exactly the enabled pinned group (in order, no extra
-  // pinned in other leaves), and its active pointer is valid.
+  // pinned in other leaves), and its active pointer is valid — or the pane is
+  // genuinely empty (active null is then fine).
   const first = firstLeaf(root)
+  const firstId = first.id
   const firstNonPinned = first.tabs.filter(t => !isPinnedType(t.type))
   const firstHead = first.tabs.slice(0, ordered.length)
-  const otherLeafHasPinned = allLeaves(root).some(leaf => leaf.id !== first.id && leaf.tabs.some(t => isPinnedType(t.type)))
+  const otherLeafHasPinned = allLeaves(root).some(leaf => leaf.id !== firstId && leaf.tabs.some(t => isPinnedType(t.type)))
   const sameHead = ordered.length === firstHead.length
     && firstHead.every((t, i) => t.type === ordered[i]!.type && (!isPinnedType(t.type) || t.id === ordered[i]!.id))
-  const activeValid = first.active === null || first.tabs.some(t => t.id === first.active)
-  if (sameHead && firstNonPinned.length === first.tabs.length - ordered.length && !otherLeafHasPinned && activeValid) {
+  const noNonPinnedConfused = firstNonPinned.length === first.tabs.length - ordered.length
+  const activeValid = first.tabs.length === 0
+    ? first.active === null
+    : (first.active !== null && first.tabs.some(t => t.id === first.active))
+  if (sameHead && noNonPinnedConfused && !otherLeafHasPinned && activeValid) {
     return state
   }
 
-  // Walk the tree: first leaf gets [pinned group + its non-pinned tabs]; every
-  // other leaf drops its pinned tabs (they already live in the first leaf).
-  const restFirst: SidebarTab[] = []
-  const newTree = mapLeaf(root, first.id, leaf => {
-    for (const tab of leaf.tabs) {
-      if (isPinnedType(tab.type)) continue // pinned go to the ordered group
-      restFirst.push(tab)
-    }
-    leaf.tabs = [...ordered, ...restFirst]
-    // Active fallback: keep the previously active tab if it survived; else the
-    // existing active if it is now one of the pinned/first leaf tabs; else the
-    // last remaining tab (or null when the pane is genuinely empty).
-    const keepActive = (leaf.active !== null && leaf.tabs.some(t => t.id === leaf.active)) ? leaf.active : null
-    leaf.active = keepActive ?? (leaf.tabs.length > 0 ? leaf.tabs[leaf.tabs.length - 1]!.id : null)
+  // Identify the HOME leaf — the pane that should carry the pinned group. If
+  // the pinned instances already live somewhere, that pane is the natural home
+  // (a fresh edge-split puts the floating tab in a new FIRST leaf; the pinned
+  // pane then sits second — pinning there keeps the user's split intact and
+  // the dragged tab isolated). Otherwise home is the first leaf.
+  let homeId = firstId
+  for (const leaf of allLeaves(root)) {
+    if (leaf.tabs.some(t => isPinnedType(t.type))) { homeId = leaf.id; break }
+  }
+  const home = leafWithId(root, homeId) ?? first
+
+  // Build the pinned group (reusing collected instances) into the home leaf.
+  const homeNonPinned: SidebarTab[] = home.tabs.filter(t => !isPinnedType(t.type))
+  let rebuild = mapLeaf(root, homeId, leaf => {
+    leaf.tabs = [...ordered, ...homeNonPinned]
+    // Active fallback: only a truly empty pane may render active null.
+    const kept = [...ordered, ...homeNonPinned]
+    const keep = (leaf.active !== null && kept.some(t => t.id === leaf.active)) ? leaf.active : null
+    leaf.active = keep ?? (kept.length > 0 ? kept[kept.length - 1]!.id : null)
   })
-  // Strip pinned tabs (with their id) from every NON-first leaf.
-  const stripped = mapAllLeaves(newTree, (leaf) => {
-    if (leaf.id === first.id) return leaf
+  // A NON-home leaf that held pinned (a stray duplicate from a prior state, or
+  // a pane from before this invariant) has them stripped. Record which panes
+  // this empties so we can drop exactly those — the user's own panes (with no
+  // pinned) are never touched.
+  const emptiedById = new Set<string>() // pane ids emptied by pinned-stripping
+  rebuild = mapAllLeaves(rebuild, (leaf) => {
+    if (leaf.id === homeId) return leaf
     if (!leaf.tabs.some(t => isPinnedType(t.type))) return leaf
     const kept = leaf.tabs.filter(t => !isPinnedType(t.type))
-    const active = (leaf.active !== null && kept.some(t => t.id === leaf.active)) ? leaf.active
+    if (kept.length === 0) emptiedById.add(leaf.id)
+    const a = (leaf.active !== null && kept.some(t => t.id === leaf.active)) ? leaf.active
       : (kept.length > 0 ? kept[kept.length - 1]!.id : null)
-    return { ...leaf, tabs: kept, active }
+    return { ...leaf, tabs: kept, active: a }
   })
-  // A non-first pane whose ONLY tabs were pinned is now empty (e.g. dragging a
-  // floating tab to the pinned pane's edge reorders it to the front, moving the
-  // pinned group along and vacating the old pane). Drop those stranded empty
-  // panes so the panel never shows a dead empty split.
-  let pruned = stripped
-  for (const leaf of allLeaves(stripped)) {
-    if (leaf.id === first.id) continue
-    if (leaf.tabs.length === 0 && allLeaves(stripped).length > 1) {
-      pruned = removeLeafAt(pruned, leaf.id)
-    }
+  // Re-root so the HOME leaf is the panel's first (left-most) pane — this keeps
+  // pinned at the front WITHOUT collapsing a user's edge-split (the dragged
+  // floating pane remains a separate non-empty leaf). Duplicate panes emptied
+  // by pinned-stripping are dropped; user panes are untouched.
+  let finalTree = rotateHomeFirst(rebuild, homeId, emptiedById)
+  // If the drop removed the pane activePane pointed at, fall back to the (kept)
+  // first pane; preserve a valid bottom-tree activePane.
+  let activePane = state.activePane
+  const activePaneValid = activePane !== null
+    && (treeHasId(finalTree, activePane) || treeHasId(state.bottomSplits, activePane))
+  if (!activePaneValid) {
+    activePane = firstLeaf(finalTree).id
   }
-  return { ...state, splits: pruned }
+  return { ...state, splits: finalTree, activePane }
+}
+
+/** Find a leaf in the tree by id (or null). */
+function leafWithId(node: SplitNode, id: string): SidebarLeaf | null {
+  if (node.kind === 'leaf') return node.id === id ? node : null
+  for (const child of node.children) {
+    const found = leafWithId(child, id)
+    if (found !== null) return found
+  }
+  return null
+}
+
+/** Whether a tree (anywhere) carries the given leaf id. */
+function containsLeaf(node: SplitNode, id: string): boolean {
+  if (node.kind === 'leaf') return node.id === id
+  return node.children.some(child => containsLeaf(child, id))
+}
+
+/**
+ * Re-arrange a split tree so the leaf `homeId` becomes the FIRST (left-most)
+ * pane, rotating top-level (and nested) children as needed. Only panes listed
+ * in `emptiedById` (duplicate pinned panes that ended empty after stripping)
+ * are dropped; a user's own empty/kept panes are untouched. A split left with
+ * a single child promotes that child. Non-home panes that still hold tabs stay
+ * — a user's edge-split is preserved, with the home (pinned) pane in front.
+ */
+function rotateHomeFirst(node: SplitNode, homeId: string, emptiedById: Set<string>): SplitNode {
+  if (node.kind === 'leaf') return node
+  const children = node.children
+  const idx = children.findIndex(child => containsLeaf(child, homeId))
+  if (idx < 0) return node
+  // Bring the home-bearing child to the front, preserving the rest's order.
+  const reordered: SplitNode[] = [...children.slice(idx), ...children.slice(0, idx)]
+  // Recurse into the now-front branch (it may be a nested split containing home).
+  const recursed = reordered.map((child, i) => i === 0 && child.kind === 'split' ? rotateHomeFirst(child, homeId, emptiedById) : child)
+  // Drop only the duplicate-pinned panes that were emptied by stripping.
+  const cleaned = recursed.filter(child => !(child.kind === 'leaf' && child.id !== homeId && child.tabs.length === 0 && emptiedById.has(child.id)))
+  if (cleaned.length === 1) return cleaned[0]!
+  return {
+    ...node,
+    sizes: node.sizes.length === cleaned.length ? node.sizes : cleaned.map(() => 1 / cleaned.length),
+    children: cleaned,
+  }
 }
 
 /**
