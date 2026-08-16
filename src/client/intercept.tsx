@@ -22,7 +22,7 @@ export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: st
   const title = at === -1 ? absolute : absolute.slice(at + 1)
   // Route through the sidebar service so the editor descriptor's dedupeKey
   // (per-path) applies; the id is path-derived so multiple editors coexist.
-  ctx.betterSidebar?.openTab({ type: 'editor', title, path: absolute, id: `editor:${absolute}` })
+  ctx.get('betterSidebar')?.openTab({ type: 'editor', title, path: absolute, id: `editor:${absolute}` })
 }
 
 /** The intercepted produced-files row (visual twin of the deliverables chips). */

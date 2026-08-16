@@ -1697,12 +1697,14 @@ describe('open-path interception wiring', () => {
     // the workspaces funnel, and the sidebar service the editor goes through.
     const opened: Array<Record<string, unknown>> = []
     const funnel = { openPath: async (): Promise<void> => {} }
+    const betterSidebar = { openTab: (seed: unknown) => { opened.push(seed as Record<string, unknown>) } }
     const ctx = {
       sessions: {
         list: { getSnapshot: () => ({ current: 's1', byId: { s1: { cwd: '/w' } } }) },
       },
       workspaces: funnel,
-      betterSidebar: { openTab: (seed: unknown) => { opened.push(seed as Record<string, unknown>) } },
+      get: (name: string) => name === 'betterSidebar' ? betterSidebar : undefined,
+      betterSidebar,
     } as unknown as Context
     const store = createSidebarStore()
     const original = ctx.workspaces.openPath

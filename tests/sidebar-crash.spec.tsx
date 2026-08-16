@@ -66,10 +66,9 @@ function mountSidebar(): MountedSidebar {
   const ctx = {
     locale: { subscribe: () => () => {}, getSnapshot: () => localeSnapshot },
     sessions: { list: { subscribe: () => () => {}, getSnapshot: () => sessionsSnapshot } },
-    betterSidebar: service,
   }
   const root: Root = createRoot(container)
-  act(() => { root.render(createElement(Sidebar, { ctx: ctx as never, store })) })
+  act(() => { root.render(createElement(Sidebar, { ctx: ctx as never, service, store })) })
   return {
     container,
     store,
@@ -84,6 +83,34 @@ function mountSidebar(): MountedSidebar {
 afterEach(() => {
   document.body.innerHTML = ''
   vi.unstubAllGlobals()
+})
+
+describe('service seat compatibility', () => {
+  it('renders without reading ctx.betterSidebar directly', () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    const container = document.createElement('div')
+    document.body.append(container)
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    store.setSession('s1')
+    const localeSnapshot = { active: 'en' }
+    const sessionsSnapshot = {
+      current: 's1', byId: { s1: { cwd: '/tmp' } },
+    }
+    const ctx = {
+      locale: { subscribe: () => () => {}, getSnapshot: () => localeSnapshot },
+      sessions: { list: { subscribe: () => () => {}, getSnapshot: () => sessionsSnapshot } },
+      get: (name: string) => name === 'betterSidebar' ? service : undefined,
+    }
+    Object.defineProperty(ctx, 'betterSidebar', {
+      get() { throw new Error('cannot get property "betterSidebar" without inject') },
+    })
+    const root: Root = createRoot(container)
+    act(() => { root.render(createElement(Sidebar, { ctx: ctx as never, service, store })) })
+    expect(container.textContent).not.toContain('without inject')
+    act(() => { root.unmount() })
+    container.remove()
+  })
 })
 
 describe('layout-push variable cleanup', () => {

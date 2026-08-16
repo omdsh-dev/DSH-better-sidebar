@@ -75,13 +75,17 @@ const producedOwner = (paths: string[]): unknown => ({
 const emptyOwner = (): unknown => ({ nodes: [{ kind: 'assistant', seq: 1, turn: 1 }], seq: 1 })
 
 /** The minimal client-context fake the registration (and its seats) touch. */
-const clientCtx = (slots: unknown): Context => ({
-  slots,
-  sessions: {
-    list: { getSnapshot: () => ({ current: 's1', byId: { s1: { id: 's1', cwd: '/w', displayTitle: 's1' } } }) },
-  },
-  betterSidebar: { openTab: vi.fn() },
-} as unknown as Context)
+const clientCtx = (slots: unknown): Context => {
+  const betterSidebar = { openTab: vi.fn() }
+  return {
+    slots,
+    sessions: {
+      list: { getSnapshot: () => ({ current: 's1', byId: { s1: { id: 's1', cwd: '/w', displayTitle: 's1' } } }) },
+    },
+    get: (name: string) => name === 'betterSidebar' ? betterSidebar : undefined,
+    betterSidebar,
+  } as unknown as Context
+}
 
 describe('turn-tail interception registration (issue #15)', () => {
   it('registers through slots.inject and lands once the slot is already declared', () => {
@@ -169,7 +173,7 @@ describe('turn-tail interception registration (issue #15)', () => {
     const seat = inject('s1')
     expect(seat.openInSidebar).toBeTypeOf('function')
     seat.openInSidebar('/w/src/a.ts')
-    expect(ctx.betterSidebar.openTab).toHaveBeenCalledWith({
+    expect(ctx.get('betterSidebar')!.openTab).toHaveBeenCalledWith({
       type: 'editor',
       title: 'a.ts',
       path: '/w/src/a.ts',

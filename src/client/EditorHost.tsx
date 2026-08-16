@@ -70,7 +70,7 @@ export function EditorHost(props: { ctx: Context; store: SidebarStore; scope: Se
               content: result.kind === 'text' ? result.content : '',
               truncated: result.truncated,
               head: result.kind === 'binary' ? result.head : undefined,
-            }, (head) => ctx.betterSidebar?.matchFileViewer(path, head), mediaUrlOf)
+            }, (head) => ctx.get('betterSidebar')?.matchFileViewer(path, head), mediaUrlOf)
             apply(outcome)
           }).catch((error: unknown) => {
             if (cancelled) return
@@ -79,7 +79,7 @@ export function EditorHost(props: { ctx: Context; store: SidebarStore; scope: Se
           return
       }
     }
-    apply(planFirstMatch(ctx.betterSidebar?.matchFileViewer(path), mediaUrlOf))
+    apply(planFirstMatch(ctx.get('betterSidebar')?.matchFileViewer(path), mediaUrlOf))
     return () => { cancelled = true; controller.abort() }
   }, [scope.sessionId, scope.cwd, path, ctx])
 

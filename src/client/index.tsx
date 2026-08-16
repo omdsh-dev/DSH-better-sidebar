@@ -115,7 +115,7 @@ export function apply(ctx: Context): void {
           host.setAttribute('data-dsh-better-sidebar', '')
           document.body.appendChild(host)
           root = createRoot(host)
-          root.render(createElement(RenderBoundary, { className: css.boundaryError }, createElement(Sidebar, { ctx, store: sidebarStore })))
+          root.render(createElement(RenderBoundary, { className: css.boundaryError }, createElement(Sidebar, { ctx, service, store: sidebarStore })))
         } catch (error) {
           fail('mount', error)
         }
@@ -182,7 +182,7 @@ export function apply(ctx: Context): void {
               let title: string | undefined
               try { title = new URL(url).hostname } catch { /* keep the default title */ }
               const type = urlTargetOf(new URL(url)) ?? 'browser'
-              ctx.betterSidebar?.openTab({ type, url, title })
+              service.openTab({ type, url, title })
             },
             selfOrigin: window.location.origin,
           })
