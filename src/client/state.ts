@@ -389,29 +389,33 @@ function containsLeaf(node: SplitNode, id: string): boolean {
 
 /**
  * Re-arrange a split tree so the leaf `homeId` becomes the FIRST (left-most)
- * pane, rotating top-level (and nested) children as needed. Only panes listed
- * in `emptiedById` (duplicate pinned panes that ended empty after stripping)
- * are dropped; a user's own empty/kept panes are untouched. A split left with
- * a single child promotes that child. Non-home panes that still hold tabs stay
- * — a user's edge-split is preserved, with the home (pinned) pane in front.
+ * pane, and REMOVE every pane in `emptiedById` (duplicate-pinned panes that
+ * ended empty after the pinned strip) — recursing into ALL branches, not just
+ * the home one, so an old nested layout whose pinned-only panes lived in a
+ * non-home subtree is also cleaned. User panes (not in `emptiedById`) are never
+ * touched, even when empty. A split left with a single child promotes that
+ * child. Non-home panes that still hold tabs stay — a user's edge-split is
+ * preserved, with the home (pinned) pane in front.
  */
 function rotateHomeFirst(node: SplitNode, homeId: string, emptiedById: Set<string>): SplitNode {
   if (node.kind === 'leaf') return node
-  const children = node.children
-  const idx = children.findIndex(child => containsLeaf(child, homeId))
-  if (idx < 0) return node
-  // Bring the home-bearing child to the front, preserving the rest's order.
-  const reordered: SplitNode[] = [...children.slice(idx), ...children.slice(0, idx)]
-  // Recurse into the now-front branch (it may be a nested split containing home).
-  const recursed = reordered.map((child, i) => i === 0 && child.kind === 'split' ? rotateHomeFirst(child, homeId, emptiedById) : child)
-  // Drop only the duplicate-pinned panes that were emptied by stripping.
-  const cleaned = recursed.filter(child => !(child.kind === 'leaf' && child.id !== homeId && child.tabs.length === 0 && emptiedById.has(child.id)))
-  if (cleaned.length === 1) return cleaned[0]!
-  return {
-    ...node,
-    sizes: node.sizes.length === cleaned.length ? node.sizes : cleaned.map(() => 1 / cleaned.length),
-    children: cleaned,
+  // 1) Recurse into EVERY child so emptied duplicate-pinned panes are removed
+  //    wherever they sat (nested splits included), not just on the home path.
+  let children = node.children.map(child => child.kind === 'split' ? rotateHomeFirst(child, homeId, emptiedById) : child)
+  // 2) Drop any direct emptied non-home leaf (and single-child promotes).
+  const kept: SplitNode[] = children.filter(child => !(child.kind === 'leaf' && child.id !== homeId && child.tabs.length === 0 && emptiedById.has(child.id)))
+  let promoted = kept.length === 1 && kept[0]!.kind === 'leaf' ? kept[0]! : { ...node, children: kept }
+  // 3) Bring the home-bearing branch to the front (recursively, if nested).
+  const asTree = promoted
+  if (asTree.kind === 'split') {
+    const idx = asTree.children.findIndex(child => containsLeaf(child, homeId))
+    if (idx >= 0) {
+      const front = asTree.children[idx]!.kind === 'split' ? rotateHomeFirst(asTree.children[idx]!, homeId, emptiedById) : asTree.children[idx]!
+      const reordered = [front, ...asTree.children.slice(0, idx), ...asTree.children.slice(idx + 1)]
+      return { ...asTree, sizes: asTree.sizes.length === reordered.length ? asTree.sizes : reordered.map(() => 1 / reordered.length), children: reordered }
+    }
   }
+  return promoted
 }
 
 /**

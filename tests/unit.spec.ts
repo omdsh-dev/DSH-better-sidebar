@@ -18,7 +18,7 @@ import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
 import {
   activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, createSidebarStore, defaultWidthFor, ensurePinnedTabs, insertLeafAt, isPinnedType, makeDefaultState, mapLeaf,
   migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab, openTabInActivePane, patchTab, reconcileAgentTerminals, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight, splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded, togglePanel,
-  type SidebarState, type SidebarTab, type SplitNode,
+  type SidebarState, type SidebarTab, type SidebarLeaf, type SplitNode,
 } from '../src/client/state.ts'
 import { loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
@@ -1100,6 +1100,55 @@ describe('pinned front tabs (explorer/git/subagent)', () => {
     expect(leaves.some(l => l.tabs.some(t => t.type === 'terminal'))).toBe(true)
     // No stranded empty pane.
     expect(leaves.every(l => l.tabs.length > 0)).toBe(true)
+  })
+
+  it("keeps a user's empty pane (never pruned) and fixes a stale activePane", () => {
+    // A right tree with TWO panes: home [explorer] and a user-kept EMPTY pane
+    // (a welcome pane the user left empty), with activePane pointing at the
+    // ... bottom tree (must be preserved).
+    let s = ensurePinnedTabs(makeDefaultState(400), {})
+    const homeId = allLeaves(s.splits)[0]!.id
+    const emptyLeaf: SidebarLeaf = { kind: 'leaf', id: 'pane:u1', tabs: [], active: null }
+    s = { ...s, splits: { kind: 'split', id: 'split:u', dir: 'row', sizes: [0.5, 0.5], children: [emptyLeaf, s.splits] } }
+    const bottomLeaf = s.bottomSplits
+    expect(allLeaves(s.splits).some(l => l.id === 'pane:u1')).toBe(true)
+    s = ensurePinnedTabs(s, {})
+    // The user's empty pane is NOT pruned (it never held pinned).
+    expect(allLeaves(s.splits).some(l => l.id === 'pane:u1')).toBe(true)
+    // Bottom tree untouched.
+    expect(s.bottomSplits).toBe(bottomLeaf)
+  })
+
+  it('cleans pinned-only panes in a NESTED non-home split and fixes a stale activePane', () => {
+    // An OLD layout: home=[explorer], plus a nested split [git-only, subagent-only]
+    // in a non-home branch, and the user then opened some editor pinned... no —
+    // instead: home=[explorer], nested [git, subagent] panes, and a user empty
+    // pane; activePane points at one of the pinned-only panes.
+    const homeLeaf: SidebarLeaf = { kind: 'leaf', id: 'pane:h', tabs: [{ id: 'tab:explorer', type: 'explorer', title: 'Explorer' }], active: 'tab:explorer' }
+    const gitLeaf: SidebarLeaf = { kind: 'leaf', id: 'pane:g', tabs: [{ id: 'tab:git', type: 'git', title: 'Git' }], active: 'tab:git' }
+    const subLeaf: SidebarLeaf = { kind: 'leaf', id: 'pane:s', tabs: [{ id: 'tab:sub', type: 'subagent', title: 'Subagents' }], active: 'tab:sub' }
+    const userEmpty: SidebarLeaf = { kind: 'leaf', id: 'pane:empty', tabs: [], active: null }
+    // root = row( home, split( row(git, sub), userEmpty ) ) — pinned live in a
+    // nested non-home branch; userEmpty is a genuine empty pane.
+    const nested: SplitNode = { kind: 'split', id: 'split:n', dir: 'col', sizes: [0.5, 0.5], children: [{ kind: 'split', id: 'split:gs', dir: 'row', sizes: [0.5, 0.5], children: [gitLeaf, subLeaf] }, userEmpty] }
+    const root: SplitNode = { kind: 'split', id: 'split:root', dir: 'col', sizes: [0.5, 0.5], children: [homeLeaf, nested] }
+    const base = { ...makeDefaultState(400), splits: root, activePane: 'pane:g' }
+    const s = ensurePinnedTabs(base as SidebarState, {})
+    // The per-type pinned bars each appear EXACTLY once, consolidated in the
+    // first (home) pane.
+    const leaves = allLeaves(s.splits)
+    const pinnedCount = (type: string) => leaves.flatMap(l => l.tabs).filter(t => t.type === type).length
+    expect(pinnedCount('explorer')).toBe(1)
+    expect(pinnedCount('git')).toBe(1)
+    expect(pinnedCount('subagent')).toBe(1)
+    expect(leaves[0]!.tabs.filter(t => isPinnedType(t.type)).map(t => t.type)).toEqual(['explorer', 'git', 'subagent'])
+    // Pinned-only duplicate panes (git/sub panes) were pruned; the USER empty
+    // pane is preserved.
+    expect(allLeaves(s.splits).some(l => l.id === 'pane:empty')).toBe(true)
+    expect(leaves.some(l => l.id === 'pane:g' && l.tabs.length > 0)).toBe(false)
+    expect(leaves.some(l => l.id === 'pane:s' && l.tabs.length > 0)).toBe(false)
+    // activePane pointed at the pruned pane: fell back to a surviving first pane.
+    expect(s.activePane).toBe(leaves[0]!.id)
   })
 })
 
