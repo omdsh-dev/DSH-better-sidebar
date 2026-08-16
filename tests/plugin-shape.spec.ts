@@ -54,9 +54,10 @@ describe('dsh-better-sidebar plugin export shape', () => {
     // and 13px.
     expect(resolved.terminalFontFamily).toBe('')
     expect(resolved.terminalFontSize).toBe(13)
-    // The position-compat mode defaults OFF (the normal layout is default),
-    // with the strip defaulting to 40px.
-    expect(resolved.titleBarCompat).toBe(false)
+    // The position-compat mode defaults ON (the sidebar's top-right toggle
+    // cluster must clear the native Windows caption buttons), with the strip
+    // defaulting to 40px.
+    expect(resolved.titleBarCompat).toBe(true)
     expect(resolved.titleBarStripPx).toBe(40)
     // The enable-switch maps resolve to {} (everything on) for old documents.
     expect(resolved.tabsEnabled).toEqual({})
@@ -67,6 +68,6 @@ describe('dsh-better-sidebar plugin export shape', () => {
     const overridden = (PrefsSchema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
     })({ openByDefault: false, defaultWidthPercent: 45 })
-    expect(overridden).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    expect(overridden).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, titleBarCompat: true, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
   })
 })

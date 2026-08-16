@@ -1161,7 +1161,7 @@ describe('side card preferences', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
-        titleBarCompat: false,
+        titleBarCompat: true,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
         htmlViewerDefaultUnsafe: false,
@@ -1187,7 +1187,7 @@ describe('side card preferences', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
-        titleBarCompat: false,
+        titleBarCompat: true,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
         htmlViewerDefaultUnsafe: false,
@@ -1213,7 +1213,7 @@ describe('side card preferences', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
-        titleBarCompat: false,
+        titleBarCompat: true,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
         htmlViewerDefaultUnsafe: false,
@@ -1251,11 +1251,12 @@ describe('side card preferences', () => {
     expect((await loadPrefs(wire({ interceptOpenPath: true }))).interceptOpenPath).toBe(true)
   })
 
-  it('defaults titleBarCompat to false; only an explicit true turns the position-compat mode on', async () => {
-    // Absent or malformed → off (the normal layout is the default).
-    expect((await loadPrefs(wire({}))).titleBarCompat).toBe(false)
-    expect((await loadPrefs(wire({ titleBarCompat: 'yes' }))).titleBarCompat).toBe(false)
-    expect((await loadPrefs(wire({ titleBarCompat: 1 }))).titleBarCompat).toBe(false)
+  it('defaults titleBarCompat to true; only an explicit false turns the position-compat mode off', async () => {
+    // Absent or malformed → on (the native Windows caption buttons must not
+    // overlap the sidebar's top-right toggle cluster).
+    expect((await loadPrefs(wire({}))).titleBarCompat).toBe(true)
+    expect((await loadPrefs(wire({ titleBarCompat: 'yes' }))).titleBarCompat).toBe(true)
+    expect((await loadPrefs(wire({ titleBarCompat: 1 }))).titleBarCompat).toBe(true)
     // Explicit booleans survive verbatim.
     expect((await loadPrefs(wire({ titleBarCompat: false }))).titleBarCompat).toBe(false)
     expect((await loadPrefs(wire({ titleBarCompat: true }))).titleBarCompat).toBe(true)

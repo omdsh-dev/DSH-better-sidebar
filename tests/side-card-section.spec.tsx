@@ -81,12 +81,13 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('data-icon="subagent"')
     expect(html).toContain('>Subagents<')
     // Default prefs: openByDefault + interceptOpenPath switches checked, and
-    // both tabs + the image viewer cards pressed (3 aria-pressed cards).
+    // the position-compat row too (titleBarCompat defaults on) — 3 checked
+    // general rows. Both tabs + the image viewer cards pressed (3 pressed).
     // The nested auto-open toggle is NOT an inline card (it lives in the popup).
     expect(pressedCount(html, 'true')).toBe(3)
     expect(pressedCount(html, 'false')).toBe(0)
     // The general toggles are custom switches (real checkboxes, checked).
-    expect(html.match(/checked=""/g)?.length).toBe(2)
+    expect(html.match(/checked=""/g)?.length).toBe(3)
     expect(html).not.toContain('Auto-open Subagents')
   })
 
@@ -113,10 +114,11 @@ describe('SideCardSection declarative inventory', () => {
   it('renders the gear corner button on features that declare related settings', () => {
     const { store, service } = mount()
     const html = renderSection(store, service)
-    // Subagents declares a toggle → its card carries the settings gear
-    // (aria-label = "<title> Feature settings"); Explorer and Image declare
-    // none → no gear.
-    expect(html.match(/aria-label="[^"]*Feature settings"/g)?.length).toBe(1)
+    // Subagents declares a toggle → its card carries the settings gear; the
+    // position-compat general row is on by default so the shift-distance gear
+    // shows too (aria-label = "<title> Feature settings"). Explorer and Image
+    // declare none → no gear.
+    expect(html.match(/aria-label="[^"]*Feature settings"/g)?.length).toBe(2)
   })
 
   it('renders the two dashed "add plugin" cards (tab grid + viewer grid)', () => {
@@ -142,7 +144,7 @@ describe('SideCardSection declarative inventory', () => {
     expect(pressedCount(html, 'false')).toBe(2)
     // The explorer card stays pressed; the general switches stay checked.
     expect(pressedCount(html, 'true')).toBe(1)
-    expect(html.match(/checked=""/g)?.length).toBe(2)
+    expect(html.match(/checked=""/g)?.length).toBe(3)
   })
 
   it('hides the gear of a disabled feature (its related settings are dormant)', () => {
@@ -152,26 +154,27 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).not.toContain('Feature settings')
   })
 
-  it('renders the position-compat mode general row: off by default, checked when the pref is on', () => {
+  it('renders the position-compat mode general row: on by default, unchecked when the pref is off', () => {
     const { store, service } = mount()
     let html = renderSection(store, service)
     // The general row renders its title and description.
     expect(html).toContain('Position compatibility mode')
     expect(html).toContain('Reserve space for the native Windows title bar')
     // Three general rows now: openByDefault + interceptOpenPath checked,
-    // the new titleBarCompat row UNCHECKED (default off) — the checked
-    // checkbox count stays at 2 while the total checkbox count is 3.
+    // and the titleBarCompat row CHECKED by default (the native Windows
+    // caption buttons must not overlap the sidebar's top-right cluster) —
+    // so all three checkboxes are checked.
     expect(html.match(/type="checkbox"/g)?.length).toBe(3)
-    expect(html.match(/checked=""/g)?.length).toBe(2)
-    // The row's gear (customize the shift distance) is dormant while the
-    // mode is off — the feature-card convention.
-    expect(html).not.toContain('Position compatibility mode Feature settings')
-
-    // When the pref is on, the new switch is checked and the gear appears.
-    store.setPrefs({ ...store.getPrefs(), titleBarCompat: true })
-    html = renderSection(store, service)
     expect(html.match(/checked=""/g)?.length).toBe(3)
+    // The row's gear (customize the shift distance) is visible while the
+    // mode is on.
     expect(html).toContain('aria-label="Position compatibility mode Feature settings"')
+
+    // When the pref is off, the switch unchecks and the gear disappears.
+    store.setPrefs({ ...store.getPrefs(), titleBarCompat: false })
+    html = renderSection(store, service)
+    expect(html.match(/checked=""/g)?.length).toBe(2)
+    expect(html).not.toContain('Position compatibility mode Feature settings')
   })
 })
 

@@ -65,7 +65,9 @@ export interface SidebarPrefs {
    * Windows title bar (drawn at the window's top-right corner over the web
    * content in frameless/hidden-title-bar windows). When on, the toggle
    * cluster drops below the strip and the right panel's content starts
-   * below it. Off by default — the sidebar layout is untouched.
+   * below it. On by default (the native caption buttons otherwise overlap
+   * the sidebar's top-right toggle cluster on Windows); a non-Windows
+   * user can turn it off in the Side card settings.
    */
   titleBarCompat: boolean
   /**
@@ -179,7 +181,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   terminalFontFamily: '',
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
   interceptOpenPath: true,
-  titleBarCompat: false,
+  titleBarCompat: true,
   titleBarStripPx: TITLE_BAR_STRIP_DEFAULT,
   htmlViewerNoSandbox: false,
   htmlViewerDefaultUnsafe: false,
