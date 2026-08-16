@@ -912,6 +912,59 @@
   color: var(--dsw-alias-state-error-primary);
 }
 
+/* File outline panel (VSCode-style symbol list) between the header and the
+   editor: a scrollable list of functions/classes/methods; each row is
+   indented by nesting depth and shows the definition line number. */
+.editorOutline {
+  flex: none;
+  max-height: 240px;
+  overflow: auto;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-surface-muted);
+}
+
+.editorOutlineEmpty {
+  padding: 10px 12px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.editorOutlineRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  padding-right: 10px;
+  border: none;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  text-align: left;
+  cursor: pointer;
+}
+
+.editorOutlineRow:hover {
+  background: var(--dsw-alias-fill-hover);
+}
+
+.editorOutlineLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+}
+
+.editorOutlineLine {
+  flex: none;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+}
+
 .dirtyDot {
   width: 7px;
   height: 7px;

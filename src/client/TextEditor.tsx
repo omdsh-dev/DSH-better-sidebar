@@ -17,9 +17,10 @@ import { EditorView as CodeMirrorView, keymap, lineNumbers, highlightActiveLine,
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { search, searchKeymap, highlightSelectionMatches, selectNextOccurrence } from '@codemirror/search'
 import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
-import { bracketMatching, indentOnInput, indentUnit, foldGutter, foldKeymap, foldService, syntaxTree } from '@codemirror/language'
+import { bracketMatching, indentOnInput, indentUnit, foldGutter, foldKeymap, foldService, syntaxTree, ensureSyntaxTree } from '@codemirror/language'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconListOutline16 } from './icons.tsx'
 import { api, htmlUrl } from './api.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
@@ -150,13 +151,92 @@ const trailingSpaceHighlighter = ViewPlugin.fromClass(class {
   }
 }, { decorations: (v: { decorations: DecorationSet }) => v.decorations })
 
+/** One outline entry: display text, 1-based line, nesting depth. */
+interface OutlineSymbol {
+  label: string
+  line: number
+  depth: number
+}
+
+/** Syntax-node types that count as file symbols (JS/TS family, plus Markdown headings). */
+const SYMBOL_TYPES = new Set(['FunctionDeclaration', 'ClassDeclaration', 'MethodDefinition'])
+
+/** Whether a node type is a symbol: the explicit set, or a Markdown ATX heading. */
+function isSymbolType(typeName: string): string | null {
+  if (SYMBOL_TYPES.has(typeName)) return typeName
+  const heading = /^ATXHeading([1-6])$/.exec(typeName)
+  return heading === null ? null : (heading[1] ?? null)
+}
+
+/** The syntax-node type exposed by syntaxTree (avoiding an @lezer/common import). */
+type SyntaxNodeLike = ReturnType<typeof syntaxTree>['topNode']
+
+/**
+ * Whether an export wraps a function that is NOT a standalone declaration
+ * (e.g. `export default defineConfig(({ env }) => …)`). Standalone
+ * FunctionDeclaration/ClassDeclaration children are matched on their own,
+ * so the export is only marked when it wraps an expression function.
+ */
+function hasShallowExportFunction(node: SyntaxNodeLike, depth: number): boolean {
+  if (depth > 3) return false
+  for (let child = node.firstChild; child !== null; child = child.nextSibling) {
+    const name = child.type.name
+    if (name === 'ArrowFunction' || name === 'FunctionExpression' || name === 'ClassExpression') return true
+    if (name === 'FunctionDeclaration' || name === 'ClassDeclaration') return false
+    if (hasShallowExportFunction(child, depth + 1)) return true
+  }
+  return false
+}
+
+/**
+ * Collect the file's symbols (functions, classes, methods) from the syntax
+ * tree, VSCode-outline style: each entry carries the definition line text,
+ * its 1-based line, and the nesting depth for indentation. Purely
+ * tree-based — no LSP. Non-code files (no parsed tree) yield an empty list.
+ */
+function collectOutlineSymbols(state: EditorState): OutlineSymbol[] {
+  const tree = syntaxTree(state)
+  if (tree.length === 0) return []
+  // The tree parses incrementally; force it to the document end (bounded
+  // wait) so a freshly opened large file still yields its full symbol list.
+  const full = ensureSyntaxTree(state, state.doc.length, 50)
+  const top = (full ?? tree).topNode
+  const symbols: OutlineSymbol[] = []
+  const visit = (node: SyntaxNodeLike | null, depth: number): void => {
+    if (node === null) return
+    const typeName = node.type.name
+    const symbolKind = isSymbolType(typeName)
+    let isSymbol = symbolKind !== null
+    if (typeName === 'VariableDefinition') {
+      const value = node.nextSibling
+      isSymbol = value !== null && (value.type.name === 'ArrowFunction' || value.type.name === 'FunctionExpression' || value.type.name === 'ClassExpression')
+    } else if (typeName === 'ExportDeclaration' || typeName === 'DefaultExportDeclaration') {
+      // export default defineConfig(({ env }) => …): the export wraps the
+      // function in a call expression, so match it by shape.
+      isSymbol = hasShallowExportFunction(node, 0)
+    }
+    if (isSymbol) {
+      const line = state.doc.lineAt(node.from)
+      let label = line.text.trim()
+      if (label.length > 56) label = `${label.slice(0, 52)}…`
+      // Markdown headings nest by level (H1 = top), everything else by tree depth.
+      const symbolDepth = symbolKind !== null && /^[1-6]$/.test(symbolKind) ? Number(symbolKind) - 1 : depth
+      symbols.push({ label, line: line.number, depth: symbolDepth })
+    }
+    for (let child = node.firstChild; child !== null; child = child.nextSibling) {
+      visit(child, isSymbol ? depth + 1 : depth)
+    }
+  }
+  visit(top, 0)
+  return symbols
+}
+
 /** The floating "add to conversation" action: payload + viewport anchor. */
 interface SelectionPopup {
   insert: string
   left: number
   top: number
 }
-
 /**
  * The sandbox tokens of the HTML preview iframe. NO allow-same-origin (the
  * preview must stay in an opaque origin — with the route's own origin it
@@ -175,6 +255,10 @@ export function TextEditor(props: FileViewerProps) {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
   /** Cursor position for the Ln/Col status (updated on selection/doc change). */
   const [cursorPos, setCursorPos] = useState<{ line: number; col: number } | null>(null)
+  /** Outline panel visibility (file symbols from the syntax tree). */
+  const [outlineOpen, setOutlineOpen] = useState(false)
+  /** The extracted symbols (null while closed); recomputed on each open. */
+  const [outlineSymbols, setOutlineSymbols] = useState<OutlineSymbol[] | null>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<CodeMirrorView | null>(null)
   const savingRef = useRef(false)
@@ -198,6 +282,30 @@ export function TextEditor(props: FileViewerProps) {
   const hidePopup = (): void => {
     popupRef.current = null
     setPopup(null)
+  }
+
+  /** Toggle the outline panel; symbols are extracted from the live editor. */
+  const toggleOutline = (): void => {
+    if (outlineOpen) {
+      setOutlineOpen(false)
+      return
+    }
+    const view = viewRef.current
+    setOutlineSymbols(view === null ? [] : collectOutlineSymbols(view.state))
+    setOutlineOpen(true)
+  }
+
+  /** Jump to a symbol's line, then close the panel. */
+  const jumpToSymbol = (line: number): void => {
+    const view = viewRef.current
+    if (view === null) return
+    const pos = view.state.doc.line(line).from
+    view.dispatch({
+      selection: { anchor: pos },
+      effects: CodeMirrorView.scrollIntoView(pos, { y: 'center' }),
+    })
+    view.focus()
+    setOutlineOpen(false)
   }
 
   /** Anchor the popup above the selection center; clamp inside the viewport. */
@@ -562,6 +670,17 @@ export function TextEditor(props: FileViewerProps) {
           <button
             type="button"
             className={css.iconButton}
+            aria-label={t('outline')}
+            title={t('outline')}
+            onClick={toggleOutline}
+          >
+            <IconListOutline16 />
+          </button>
+        )}
+        {editable && (
+          <button
+            type="button"
+            className={css.iconButton}
             aria-label={t('save')}
             title={`${t('save')} (Ctrl/Cmd+S)`}
             onClick={save}
@@ -577,6 +696,26 @@ export function TextEditor(props: FileViewerProps) {
         )}
         {saveLabel !== '' && <span className={clsx(css.editorStatus, saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>}
       </div>
+      {outlineOpen && (
+        <div className={css.editorOutline}>
+          {outlineSymbols === null || outlineSymbols.length === 0 ? (
+            <div className={css.editorOutlineEmpty}>{t('outlineEmpty')}</div>
+          ) : (
+            outlineSymbols.map((symbol, index) => (
+              <button
+                key={index}
+                type="button"
+                className={css.editorOutlineRow}
+                style={{ paddingLeft: `${8 + symbol.depth * 14}px` }}
+                onClick={() => jumpToSymbol(symbol.line)}
+              >
+                <span className={css.editorOutlineLabel}>{symbol.label}</span>
+                <span className={css.editorOutlineLine}>{symbol.line}</span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
       {editable && (
         <>
           {truncated === true && mode === 'edit' && <div className={css.editorBanner}>{t('truncation')}</div>}

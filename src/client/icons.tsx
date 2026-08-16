@@ -132,3 +132,13 @@ export const IconGlobeOutline16 = ({ size = 16, className }: IconProps) => (
     <path d="M1.5 8h13M8 1.5c-2.4 1.8-2.4 11.2 0 13M8 1.5c2.4 1.8 2.4 11.2 0 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
   </svg>
 )
+
+/** Outline glyph: a list of file symbols (functions/classes/methods). */
+export const IconListOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M3 3.5h10M3 8h10M3 12.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <circle cx="1.7" cy="3.5" r="0.9" fill="currentColor" />
+    <circle cx="1.7" cy="8" r="0.9" fill="currentColor" />
+    <circle cx="1.7" cy="12.5" r="0.9" fill="currentColor" />
+  </svg>
+)
