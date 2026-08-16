@@ -1734,10 +1734,52 @@ describe('store.reduceFor (targeted opens, v0.12.0)', () => {
   it('loads a fresh state for a never-visited target session', () => {
     const store = createSidebarStore()
     store.setSession('s1')
-    store.reduceFor('brand-new', (state) => ({ ...state, panelOpen: false }))
+    store.reduceFor('brand-new', (state) => ({ ...state, expanded: ['/x'] }))
     store.setSession('brand-new')
-    expect(store.getSnapshot().state?.panelOpen).toBe(false)
+    // The geometry is GLOBAL — reduceFor only mutates content, so the fresh
+    // target presents the shared layout (open by default) + its new content.
+    expect(store.getSnapshot().state?.panelOpen).toBe(true)
+    expect(store.getSnapshot().state?.expanded).toEqual(['/x'])
     expect(store.getSnapshot().state?.splits).toBeDefined()
+  })
+
+  it('setPrefs re-seeds a prefs-derived layout that was seeded before prefs resolved (async race)', () => {
+    const store = createSidebarStore()
+    // Simulate a plugin opening a targeted session while loadPrefs is still in
+    // flight: the layout gets seeded from the schema DEFAULTS (window 1024 →
+    // default width percent 30 → 307, openByDefault true).
+    store.reduceFor('plug', (state) => ({ ...state, expanded: ['/p'] }))
+    // The real prefs then resolve (openByDefault OFF, width percent 60).
+    store.setPrefs({ ...store.getPrefs(), openByDefault: false, defaultWidthPercent: 60 })
+    store.setSession('plug')
+    // The user's resolved prefs win over the premature default seed.
+    expect(store.getSnapshot().state?.panelOpen).toBe(false)
+    expect(store.getSnapshot().state?.width).toBe(Math.round(1024 * 60 / 100))
+  })
+
+  it('survives a GetItem SecurityError when seeding the global layout (no init crash)', () => {
+    const g = globalThis as Record<string, unknown>
+    const stubbed = { getItem: (): never => { throw new Error('SecurityError') }, setItem: () => {} }
+    g.localStorage = stubbed
+    const store = createSidebarStore()
+    // Targeted & active access both seed the layout; neither may throw.
+    expect(() => { store.reduceFor('plug', s => s) }).not.toThrow()
+    expect(() => { store.setSession('plug') }).not.toThrow()
+    // Falls back to the prefs default (openByDefault true, width default).
+    expect(store.getSnapshot().state?.panelOpen).toBe(true)
+  })
+
+  it('a corrupted global record counts as unpersisted so setPrefs can still re-seed', () => {
+    const g = globalThis as Record<string, unknown>
+    g.localStorage = { getItem: () => '{corrupt json', setItem: () => {} }
+    const store = createSidebarStore()
+    // Seeding reads the corrupted record → falls back to the default (and does
+    // NOT mark it persisted), so the later real prefs win.
+    store.reduceFor('plug', (state) => ({ ...state, expanded: ['/p'] }))
+    store.setPrefs({ ...store.getPrefs(), openByDefault: false, defaultWidthPercent: 60 })
+    store.setSession('plug')
+    expect(store.getSnapshot().state?.panelOpen).toBe(false)
+    expect(store.getSnapshot().state?.width).toBe(Math.round(1024 * 60 / 100))
   })
 
   it('reduceFor never lowers the shared uid counter below the active session needs (no pane-id collision)', () => {

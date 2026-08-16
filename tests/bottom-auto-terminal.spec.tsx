@@ -81,6 +81,10 @@ function mountSidebar(): MountedSidebar {
 
 afterEach(() => {
   document.body.innerHTML = ''
+  // The store persists its state (content + the global layout) to localStorage;
+  // without clearing it, the next test loads the previous test's geometry /
+  // once-flag and the first-expansion semantics leak across tests.
+  if (typeof localStorage !== 'undefined') localStorage.clear()
   vi.unstubAllGlobals()
 })
 
