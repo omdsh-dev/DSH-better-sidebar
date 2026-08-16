@@ -33,4 +33,14 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     // the install line installs the prerequisite first, then the plugin.
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/ChenRuoT/dsh-sidebar-qa.git',
   },
+  {
+    id: 'hpptools-memory',
+    name: 'hpptools-memory 记忆系统',
+    url: 'https://github.com/Hdaisen/hpptools-memory',
+    description: () => t('pluginHpptoolsMemoryDesc'),
+    // Backend plugin for the built-in memory tab — install it alongside
+    // dsh-better-sidebar to enable the full memory console (backend API +
+    // agent memory tools + consolidation/hippocampus subagents).
+    install: 'cd ~/.dsh && dsh plugin --profile web add hpptools-memory',
+  },
 ]
