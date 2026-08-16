@@ -946,19 +946,23 @@ function loadContent(sessionId: string, prefs: SidebarPrefs): SidebarContent {
 
 /** Load the GLOBAL layout from localStorage (one shared key), falling back to
  *  the prefs-derived default for a fresh install (no migration of the old
- *  per-session geometry). */
-function loadLayout(prefs: SidebarPrefs): GlobalSidebarLayout {
+ *  per-session geometry). Also reports whether a USABLE persisted record was
+ *  found: `persisted = true` only when a record exists AND parses AND passes
+ *  {@link sanitizeLayout} — a corrupted/throwaway record counts as unpersisted
+ *  so {@link SidebarStore#setPrefs} may still re-seed the default with the
+ *  user's real prefs. All storage access happens inside ONE protected read. */
+function loadLayout(prefs: SidebarPrefs): { layout: GlobalSidebarLayout; persisted: boolean } {
   try {
     const raw = localStorage.getItem(`${STORAGE_PREFIX}:global`)
     if (raw !== null) {
       const parsed = JSON.parse(raw) as unknown
       const sanitized = sanitizeLayout(parsed)
-      if (sanitized !== undefined) return sanitized
+      if (sanitized !== undefined) return { layout: sanitized, persisted: true }
     }
   } catch {
     // Corrupt or unavailable storage: fall through to the default.
   }
-  return makeDefaultLayout(prefs)
+  return { layout: makeDefaultLayout(prefs), persisted: false }
 }
 
 /**
@@ -1095,9 +1099,9 @@ export class SidebarStore {
    *  prefs on a fresh install (no migration of old per-session geometry). */
   private ensureGlobalLayout(): GlobalSidebarLayout {
     if (this.globalLayout === undefined) {
-      this.globalLayout = loadLayout(this.prefs)
-      this.globalLayoutPersisted = typeof localStorage !== 'undefined'
-        && localStorage.getItem(`${STORAGE_PREFIX}:global`) !== null
+      const { layout, persisted } = loadLayout(this.prefs)
+      this.globalLayout = layout
+      this.globalLayoutPersisted = persisted
     }
     return this.globalLayout
   }

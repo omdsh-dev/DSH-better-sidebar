@@ -1757,6 +1757,31 @@ describe('store.reduceFor (targeted opens, v0.12.0)', () => {
     expect(store.getSnapshot().state?.width).toBe(Math.round(1024 * 60 / 100))
   })
 
+  it('survives a GetItem SecurityError when seeding the global layout (no init crash)', () => {
+    const g = globalThis as Record<string, unknown>
+    const stubbed = { getItem: (): never => { throw new Error('SecurityError') }, setItem: () => {} }
+    g.localStorage = stubbed
+    const store = createSidebarStore()
+    // Targeted & active access both seed the layout; neither may throw.
+    expect(() => { store.reduceFor('plug', s => s) }).not.toThrow()
+    expect(() => { store.setSession('plug') }).not.toThrow()
+    // Falls back to the prefs default (openByDefault true, width default).
+    expect(store.getSnapshot().state?.panelOpen).toBe(true)
+  })
+
+  it('a corrupted global record counts as unpersisted so setPrefs can still re-seed', () => {
+    const g = globalThis as Record<string, unknown>
+    g.localStorage = { getItem: () => '{corrupt json', setItem: () => {} }
+    const store = createSidebarStore()
+    // Seeding reads the corrupted record → falls back to the default (and does
+    // NOT mark it persisted), so the later real prefs win.
+    store.reduceFor('plug', (state) => ({ ...state, expanded: ['/p'] }))
+    store.setPrefs({ ...store.getPrefs(), openByDefault: false, defaultWidthPercent: 60 })
+    store.setSession('plug')
+    expect(store.getSnapshot().state?.panelOpen).toBe(false)
+    expect(store.getSnapshot().state?.width).toBe(Math.round(1024 * 60 / 100))
+  })
+
   it('reduceFor never lowers the shared uid counter below the active session needs (no pane-id collision)', () => {
     const store = createSidebarStore()
     // Session 'b' is cached FIRST with a LOW id range (pane:1 / tab:2).
