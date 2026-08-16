@@ -16,7 +16,7 @@ import { EditorState, Compartment, type Extension } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers, highlightActiveLine, ViewPlugin, Decoration, type DecorationSet } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentMore, indentLess, cursorMatchingBracket } from '@codemirror/commands'
 import { search, searchKeymap, highlightSelectionMatches, selectNextOccurrence } from '@codemirror/search'
-import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, completeFromList, type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
+import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, completeFromList, acceptCompletion, completionStatus, type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
 import { bracketMatching, indentOnInput, indentUnit, foldGutter, foldKeymap, foldService, syntaxTree, ensureSyntaxTree } from '@codemirror/language'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -490,13 +490,17 @@ export function TextEditor(props: FileViewerProps) {
           ...searchKeymap,
           ...closeBracketsKeymap,
           ...completionKeymap,
-          // VSCode-style Tab: with no selection it inserts indentation
-          // (tabSize spaces — matching the editor's tab-size pref) at the
-          // cursor; with a selection it indents the selected lines.
-          // Shift-Tab always dedents.
+          // VSCode-style Tab: with the completion panel open it accepts the
+          // selected candidate (the default keymap only binds Enter); with
+          // no selection it inserts indentation (tabSize spaces — matching
+          // the editor's tab-size pref) at the cursor; with a selection it
+          // indents the selected lines. Shift-Tab always dedents.
           {
             key: 'Tab',
             run: (view) => {
+              if (completionStatus(view.state) === 'active') {
+                return acceptCompletion(view)
+              }
               if (view.state.selection.ranges.some((range) => !range.empty)) {
                 return indentMore(view)
               }
