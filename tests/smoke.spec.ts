@@ -567,7 +567,7 @@ describe('side card settings routes', () => {
     expect(read.value).toEqual({
       value: {
         openByDefault: true,
-        defaultWidthPercent: 30,
+        defaultWidthPercent: 20,
         autoOpenSubagent: true,
         autoOpenJobs: true,
         agentTerminalTools: false,
@@ -596,7 +596,7 @@ describe('side card settings routes', () => {
     expect(written.ok).toBe(true)
     const view = written.value as { value: { openByDefault: boolean; defaultWidthPercent: number }; revision: number }
     expect(view.value.openByDefault).toBe(false)
-    expect(view.value.defaultWidthPercent).toBe(30)
+    expect(view.value.defaultWidthPercent).toBe(20)
     expect(view.revision).toBe(1)
   })
 
