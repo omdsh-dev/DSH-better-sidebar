@@ -17,7 +17,7 @@ import { EditorView as CodeMirrorView, keymap, lineNumbers, highlightActiveLine 
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { search, searchKeymap, highlightSelectionMatches, selectNextOccurrence } from '@codemirror/search'
 import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
-import { bracketMatching, indentOnInput, indentUnit, foldGutter, foldKeymap } from '@codemirror/language'
+import { bracketMatching, indentOnInput, indentUnit, foldGutter, foldKeymap, foldService, foldEffect, unfoldEffect, foldable, foldedRanges, syntaxTree } from '@codemirror/language'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, htmlUrl } from './api.ts'
@@ -59,6 +59,74 @@ function buildPrefsExtensions(prefs: SidebarPrefs | undefined): Extension[] {
     EditorState.tabSize.of(prefs.editorTabSize),
     indentUnit.of(' '.repeat(prefs.editorTabSize)),
   ]
+}
+
+/**
+ * Fold service: syntax-aware folding for the JS/TS/HTML/CSS family. The
+ * language packages ship no fold service by default (markdown is the only
+ * one that does), so without this the fold gutter renders markers that do
+ * nothing when clicked. The arrow sits on the line containing the opening
+ * delimiter of the innermost multi-line node that starts on that line, and
+ * the returned range keeps the delimiters visible (VSCode-style
+ * `function foo() {…}`).
+ */
+function syntaxFoldService(state: EditorState, lineStart: number, lineEnd: number): { from: number; to: number } | null {
+  const tree = syntaxTree(state)
+  if (tree.length < lineEnd) return null
+  const lineNumber = state.doc.lineAt(lineStart).number
+  let node: ReturnType<typeof tree.resolveInner> | null = tree.resolveInner(lineEnd, 1)
+  while (node) {
+    if (node.type.isTop) break
+    if (node.to > lineEnd && node.to - node.from > 1) {
+      if (state.doc.lineAt(node.from).number === lineNumber) {
+        const first = node.firstChild
+        const last = node.lastChild
+        if (first !== null && last !== null && first.to - first.from === 1 && last.to - last.from === 1) {
+          const open = state.sliceDoc(first.from, first.to)
+          const close = state.sliceDoc(last.from, last.to)
+          const openDelim = open === '{' || open === '[' || open === '('
+          const closeDelim = (open === '{' && close === '}') || (open === '[' && close === ']') || (open === '(' && close === ')')
+          if (openDelim && closeDelim) return { from: first.to, to: last.from }
+        }
+      }
+    }
+    node = node.parent
+  }
+  return null
+}
+
+/**
+ * Fold service fallback: indent-based folding for documents without
+ * delimiter nodes (plain text outlines, YAML-like files). A line whose
+ * following non-blank lines are indented deeper folds down to the last
+ * deeper line. Runs after the syntax service, so brace-delimited code never
+ * reaches it.
+ */
+function indentFoldService(state: EditorState, lineStart: number): { from: number; to: number } | null {
+  const line = state.doc.lineAt(lineStart)
+  if (line.number >= state.doc.lines) return null
+  const indent = /^\s*/.exec(line.text)?.[0].length ?? 0
+  let lastDeeperTo = -1
+  for (let l = line.number + 1; l <= state.doc.lines; l++) {
+    const next = state.doc.line(l)
+    if (next.text.trim() === '') continue
+    const nextIndent = /^\s*/.exec(next.text)?.[0].length ?? 0
+    if (nextIndent > indent) {
+      lastDeeperTo = next.to
+    } else {
+      break
+    }
+  }
+  return lastDeeperTo < 0 ? null : { from: line.to, to: lastDeeperTo }
+}
+
+/** The folded range covering the given line range, if one exists. */
+function findFoldRange(state: EditorState, from: number, to: number): { from: number; to: number } | null {
+  let found: { from: number; to: number } | null = null
+  foldedRanges(state).between(from, to, (a, b) => {
+    if (found === null || found.from > a) found = { from: a, to: b }
+  })
+  return found
 }
 
 /** The floating "add to conversation" action: payload + viewport anchor. */
@@ -179,9 +247,40 @@ export function TextEditor(props: FileViewerProps) {
         indentOnInput(),
         highlightActiveLine(),
         // Code folding: a gutter with fold markers on collapsible blocks
-        // (functions, braces, indented blocks); plain text has no fold
-        // points, so the gutter shows nothing there (normal degradation).
-        foldGutter(),
+        // (functions, braces, indented blocks). The fold services make the
+        // markers actually fold — the language packages ship no fold service
+        // (markdown is the exception, its own service handles headings), so
+        // without them the arrows would do nothing. Markdown's service is
+        // registered by the language extension above and wins for headings;
+        // plain text falls back to the indent service.
+        //
+        // The arrows fold on pointerdown rather than click: the prefs
+        // compartment reconfigure on the first interaction rebuilds the
+        // gutters between pointerdown and mouseup, so the browser never
+        // synthesizes a click on the gutter (the pointerdown target node is
+        // gone by mouseup time) and the built-in click handler would never
+        // run. Preventing the pointerdown default also stops the click from
+        // being synthesized at all, so the built-in click handler cannot
+        // double-toggle the fold.
+        foldGutter({
+          domEventHandlers: {
+            pointerdown: (view, line) => {
+              const folded = findFoldRange(view.state, line.from, line.to)
+              if (folded !== null) {
+                view.dispatch({ effects: unfoldEffect.of(folded) })
+                return true
+              }
+              const range = foldable(view.state, line.from, line.to)
+              if (range !== null) {
+                view.dispatch({ effects: foldEffect.of(range) })
+                return true
+              }
+              return false
+            },
+          },
+        }),
+        foldService.of(syntaxFoldService),
+        foldService.of(indentFoldService),
         CodeMirrorView.updateListener.of((update) => {
           // Ln/Col status: recompute whenever the selection or document moves.
           if (update.selectionSet || update.docChanged) {
