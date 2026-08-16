@@ -24,11 +24,20 @@ function setup(): { service: ReturnType<typeof createBetterSidebarService>; stor
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 7 built-in tabs', () => {
+  it('registers the 8 built-in tabs', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['browser', 'diff', 'editor', 'explorer', 'git', 'subagent', 'terminal'],
+      ['browser', 'diff', 'editor', 'explorer', 'git', 'memory', 'subagent', 'terminal'],
     )
+  })
+
+  it('the memory tab is single-instance with a renderable component', () => {
+    const { service } = setup()
+    const tab = service.getTab('memory')
+    expect(tab?.single).toBe(true)
+    expect(tab?.hidden).not.toBe(true)
+    expect(tab?.component).toBeDefined()
+    expect(typeof tab?.title).toBe('function')
   })
 
   it('editor and diff are hidden from the + menu (opened by file-open / git view)', () => {

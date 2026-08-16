@@ -18,6 +18,7 @@ import { GitView } from '../GitView.tsx'
 import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
 import { BrowserView } from '../BrowserView.tsx'
+import { MemoryView } from '../memory/MemoryView.tsx'
 import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16 } from '../icons.tsx'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
 import type { ComponentType } from 'react'
@@ -131,6 +132,14 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
           onOpenChild={(address) => { onSubagentJump?.(address.childSessionId) }}
         />
       ),
+    },
+    {
+      id: 'memory',
+      title: () => t('memTab'),
+      icon: (size: number) => <span style={{ fontSize: size }}>🧠</span>,
+      order: 25,
+      single: true,
+      component: (props) => <MemoryView {...props} />,
     },
     {
       id: 'terminal',

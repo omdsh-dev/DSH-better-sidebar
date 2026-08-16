@@ -1,0 +1,273 @@
+/**
+ * Memory files: the memory vault tree (core / notebook / global / project
+ * groups, collapsible) plus a Markdown preview / edit pane with a section
+ * navigator. Reads and writes through the hpptools-memory file routes.
+ */
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { memoryApi, type MemoryFiles } from './api.ts'
+import { t } from '../locales.ts'
+import css from '../sidebar.module.css'
+
+type Mode = 'preview' | 'edit' | 'previewing'
+
+const COLLAPSED_KEY = 'hpptools-tree-collapsed'
+
+function defaultCollapsed(id: string): boolean {
+  return id === 'personal' || id.startsWith('project:')
+}
+
+function readCollapsed(): string[] | null {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_KEY)
+    if (raw) { const arr = JSON.parse(raw) as unknown; if (Array.isArray(arr)) return arr as string[] }
+  } catch { /* ignore */ }
+  return null
+}
+
+function fileIcon(rel: string, name: string): string {
+  if (rel === 'core-prompt.md') return '🧠'
+  if (rel === 'rules.md') return '📏'
+  if (rel === 'subagent-model.txt') return '🤖'
+  if (name === 'notebook.md') return '📓'
+  if (rel.startsWith('personal/')) return '🌐'
+  if (rel.includes('/projects/')) return '📁'
+  return '📄'
+}
+
+// ---- lightweight Markdown rendering (titles / code / bold / italic / links / lists / quotes / wikilinks) ----
+function escapeHtml(s: string): string {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string
+  ))
+}
+
+function inlineMd(text: string): string {
+  let s = escapeHtml(text)
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>')
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>')
+  s = s.replace(/\[\[([^\]]+)\]\]/g, '<span class="' + css.memWl + '">[[$1]]</span>')
+  s = s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+  return s
+}
+
+function renderMarkdown(md: string): string {
+  const lines = (md || '').split('\n')
+  const out: string[] = []
+  let inCode = false
+  let h2Seq = 0
+  const codeBuf: string[] = []
+  const flushCode = (): void => {
+    if (inCode) {
+      out.push(`<pre class="${css.memCodeBlock}"><code>${escapeHtml(codeBuf.join('\n'))}</code></pre>`)
+      codeBuf.length = 0
+      inCode = false
+    }
+  }
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (line.startsWith('```')) {
+      flushCode(); inCode = !inCode
+      continue
+    }
+    if (inCode) { codeBuf.push(raw); continue }
+    if (!line) { out.push(''); continue }
+    if (/^#{1,4}\s/.test(line)) {
+      const heading = line.match(/^(#{1,4})\s/)!
+      const level = heading[1]!.length
+      if (level === 2) {
+        h2Seq++
+        out.push(`<h2 data-sec="${h2Seq}">${inlineMd(line.replace(/^#{1,4}\s*/, ''))}</h2>`)
+      } else {
+        out.push(`<h${level}>${inlineMd(line.replace(/^#{1,4}\s*/, ''))}</h${level}>`)
+      }
+    } else if (/^---+$/.test(line)) {
+      out.push('<hr>')
+    } else if (/^>\s/.test(line)) {
+      out.push(`<blockquote>${inlineMd(line.replace(/^>\s?/, ''))}</blockquote>`)
+    } else if (/^[-*]\s+/.test(line)) {
+      out.push(`<li>${inlineMd(line.replace(/^[-*]\s+/, ''))}</li>`)
+    } else if (/^\d+[.)]\s+/.test(line)) {
+      out.push(`<li>${inlineMd(line.replace(/^\d+[.)]\s+/, ''))}</li>`)
+    } else {
+      out.push(`<p>${inlineMd(line)}</p>`)
+    }
+  }
+  flushCode()
+  return out.join('\n')
+}
+
+export function Files() {
+  const [files, setFiles] = useState<MemoryFiles | null>(null)
+  const [collapsed, setCollapsed] = useState<string[] | null>(readCollapsed())
+  const [current, setCurrent] = useState<{ rel: string; content: string } | null>(null)
+  const [mode, setMode] = useState<Mode>('preview')
+  const [draft, setDraft] = useState('')
+  const [status, setStatus] = useState<{ msg: string; kind?: string }>({ msg: t('memSelectHint') })
+  const [busy, setBusy] = useState(false)
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  const loadFiles = useCallback((): void => {
+    memoryApi.files().then(setFiles).catch((e: unknown) => {
+      setStatus({ msg: `❌ ${e instanceof Error ? e.message : String(e)}`, kind: 'err' })
+    })
+  }, [])
+
+  useEffect(() => { loadFiles() }, [loadFiles])
+
+  const toggleGroup = (id: string): void => {
+    const arr = collapsed ?? []
+    const next = arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id]
+    setCollapsed(next)
+    try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+  }
+
+  const selectFile = (rel: string): void => {
+    setBusy(true)
+    memoryApi.file(rel).then((d) => {
+      setCurrent({ rel, content: d.content })
+      setDraft(d.content)
+      setMode('preview')
+      setStatus({ msg: t('memLoaded', { n: d.content.split('\n').length }) })
+    }).catch((e: unknown) => {
+      setStatus({ msg: `❌ ${e instanceof Error ? e.message : String(e)}`, kind: 'err' })
+    }).finally(() => setBusy(false))
+  }
+
+  const saveFile = (): void => {
+    if (current === null) return
+    setBusy(true)
+    const ta = contentRef.current?.querySelector('textarea')
+    const content = mode === 'edit' ? (ta ? ta.value : draft) : draft
+    memoryApi.saveFile(current.rel, content).then(() => {
+      setCurrent({ ...current, content })
+      setDraft(content)
+      setMode('preview')
+      setStatus({ msg: t('memSaved', { path: current.rel }), kind: 'ok' })
+      loadFiles()
+    }).catch((e: unknown) => {
+      setStatus({ msg: `❌ ${e instanceof Error ? e.message : String(e)}`, kind: 'err' })
+    }).finally(() => setBusy(false))
+  }
+
+  // 条目导航（## 段）
+  const sections: { title: string; seq: number }[] = []
+  if (current !== null) {
+    let seq = 0
+    for (const line of current.content.split('\n')) {
+      if (line.startsWith('## ')) sections.push({ title: line.slice(3).trim(), seq: ++seq })
+    }
+  }
+
+  const src = mode === 'preview' ? (current?.content ?? '') : draft
+  const superseded = (title: string): boolean => /Superseded|被取代/.test(title)
+
+  return (
+    <div className={css.memFiles}>
+      <div className={css.memTree}>
+        {files === null && <div className={css.memHint}>{t('memLoading')}</div>}
+        {files?.groups.map((g) => {
+          const isCollapsed = collapsed !== null ? collapsed.includes(g.id) : defaultCollapsed(g.id)
+          return (
+            <div key={g.id} className={css.memTreeGroup}>
+              <button type="button" className={css.memTreeHead} onClick={() => toggleGroup(g.id)}>
+                <span className={css.memTreeArrow}>{isCollapsed ? '▸' : '▾'}</span>
+                <span className={css.memTreeLabel}>{g.label}</span>
+                {g.files.length > 0 && <span className={css.memTreeCount}>{g.files.length}</span>}
+              </button>
+              {!isCollapsed && (
+                <div>
+                  {g.files.length === 0
+                    ? <div className={css.memTreeEmpty}>{t('memEmptyGroup')}</div>
+                    : g.files.map((f) => (
+                      <button
+                        key={f.rel}
+                        type="button"
+                        className={css.memTreeItem + (current?.rel === f.rel ? ' ' + css.memTreeItemActive : '')}
+                        title={f.rel}
+                        onClick={() => selectFile(f.rel)}
+                      >
+                        <span>{fileIcon(f.rel, f.name)}</span>
+                        <span className={css.memTreeName}>{f.name}</span>
+                        {f.entries > 0 && <span className={css.memTreeCount}>{f.entries}</span>}
+                      </button>
+                    ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      <div className={css.memFilePane}>
+        <header className={css.memFileHead}>
+          <span className={css.memFileName}>{current?.rel ?? ''}</span>
+          <span style={{ flex: 1 }} />
+          {current !== null && (
+            <>
+              {mode === 'preview'
+                ? (
+                  <button type="button" className={css.memBtn} onClick={() => { setDraft(current.content); setMode('edit') }}>
+                    ✏️ {t('memEdit')}
+                  </button>
+                )
+                : (
+                  <button type="button" className={css.memBtn} onClick={() => setMode('previewing')}>
+                    👁 {t('memPreview')}
+                  </button>
+                )}
+              {mode !== 'preview' && (
+                <>
+                  <button type="button" className={css.memBtnPrimary} disabled={busy} onClick={saveFile}>
+                    💾 {t('memSave')}
+                  </button>
+                  <button type="button" className={css.memBtn} onClick={() => { setMode('preview'); setDraft(current.content) }}>
+                    {t('memCancel')}
+                  </button>
+                </>
+              )}
+            </>
+          )}
+        </header>
+
+        <div className={css.memFileBody}>
+          <div className={css.memFileContent} ref={contentRef}>
+            {current === null
+              ? <div className={css.memHint}>{t('memSelectHint')}</div>
+              : mode === 'edit'
+                ? <textarea value={draft} onChange={(e) => setDraft(e.target.value)} className={css.memTextarea} />
+                : (
+                  <div
+                    className={css.memMd}
+                    dangerouslySetInnerHTML={{ __html: renderMarkdown(src) }}
+                  />
+                )}
+          </div>
+          {current !== null && mode === 'preview' && sections.length >= 2 && (
+            <div className={css.memEntryNav}>
+              <h4 className={css.memEntryNavHead}>{t('memEntryNav')}</h4>
+              {sections.map((s) => (
+                <button
+                  key={s.seq}
+                  type="button"
+                  className={css.memEntryItem + (superseded(s.title) ? ' ' + css.memEntrySup : '')}
+                  title={s.title}
+                  onClick={() => {
+                    const el = contentRef.current?.querySelector(`h2[data-sec="${s.seq}"]`)
+                    el?.scrollIntoView({ block: 'center' })
+                  }}
+                >
+                  {s.title}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className={css.memStatus + (status.kind === 'ok' ? ' ' + css.memStatusOk : status.kind === 'err' ? ' ' + css.memStatusErr : '')}>
+          {status.msg}
+        </div>
+      </div>
+    </div>
+  )
+}
