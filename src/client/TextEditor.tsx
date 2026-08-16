@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { EditorState, Compartment, type Extension } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers, highlightActiveLine, ViewPlugin, Decoration, type DecorationSet } from '@codemirror/view'
-import { defaultKeymap, history, historyKeymap, indentMore, indentLess } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap, indentMore, indentLess, cursorMatchingBracket } from '@codemirror/commands'
 import { search, searchKeymap, highlightSelectionMatches, selectNextOccurrence } from '@codemirror/search'
 import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
 import { bracketMatching, indentOnInput, indentUnit, foldGutter, foldKeymap, foldService, syntaxTree, ensureSyntaxTree } from '@codemirror/language'
@@ -478,6 +478,12 @@ export function TextEditor(props: FileViewerProps) {
             key: 'Mod-d',
             preventDefault: true,
             run: selectNextOccurrence,
+          },
+          // Jump to the matching bracket (VSCode Ctrl+Shift+\); the bracket
+          // matching highlight comes from bracketMatching() above.
+          {
+            key: 'Ctrl-Shift-\\',
+            run: cursorMatchingBracket,
           },
           // Code folding keymap: Ctrl+Shift+[ folds, Ctrl+Shift+] unfolds,
           // Ctrl+Alt+[ / ] fold/unfold all.
