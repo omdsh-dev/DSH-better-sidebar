@@ -7,6 +7,12 @@
 
 import z from 'schemastery'
 import {
+  EDITOR_FONT_SIZE_DEFAULT,
+  EDITOR_FONT_SIZE_MAX,
+  EDITOR_FONT_SIZE_MIN,
+  EDITOR_TAB_SIZE_DEFAULT,
+  EDITOR_TAB_SIZE_MAX,
+  EDITOR_TAB_SIZE_MIN,
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
   TERMINAL_FONT_SIZE_DEFAULT,
@@ -96,6 +102,12 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   bottomPanelAutoTerminal: z.boolean().default(true),
   terminalFontFamily: z.string().default(''),
   terminalFontSize: z.number().step(1).min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX).default(TERMINAL_FONT_SIZE_DEFAULT),
+  editorFontFamily: z.string().default(''),
+  editorFontSize: z.number().step(1).min(EDITOR_FONT_SIZE_MIN).max(EDITOR_FONT_SIZE_MAX).default(EDITOR_FONT_SIZE_DEFAULT),
+  editorTabSize: z.number().step(1).min(EDITOR_TAB_SIZE_MIN).max(EDITOR_TAB_SIZE_MAX).default(EDITOR_TAB_SIZE_DEFAULT),
+  editorWordWrap: z.boolean().default(true),
+  editorShowLineNumbers: z.boolean().default(true),
+  editorAutoSave: z.union(['off', 'onBlur', 'afterDelay']).default('off'),
   interceptOpenPath: z.boolean().default(true),
   titleBarCompat: z.boolean().default(false),
   titleBarStripPx: z.number().step(1).min(TITLE_BAR_STRIP_MIN).max(TITLE_BAR_STRIP_MAX).default(TITLE_BAR_STRIP_DEFAULT),

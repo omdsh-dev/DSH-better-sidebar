@@ -31,6 +31,30 @@ export const IconPanelBottomOutline16 = ({ size = 16, className }: IconProps) =>
 )
 
 /**
+ * Floating-window toggle glyph (fork addition, the "浮窗" button): a frame
+ * with a small detached square in its bottom-right corner, in the app's
+ * outline style — the classic "pop out" affordance.
+ */
+export const IconFloatingOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1.5" y="2" width="9.5" height="8" rx="2" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="6.5" y="7" width="8" height="7" rx="2" stroke="currentColor" strokeWidth="1.5" />
+  </svg>
+)
+
+/**
+ * Dock-side toggle glyph (fork addition, the "切换停靠侧" button): a frame
+ * with the filled strip moved to the LEFT edge — the mirror of
+ * IconPanelRightOutline16, hinting the panel can sit on either side.
+ */
+export const IconPanelLeftOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1.5" y="2" width="13" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="2.75" y="3.25" width="2.75" height="9.5" rx="1" fill="currentColor" stroke="none" />
+  </svg>
+)
+
+/**
  * Terminal glyph in the app's outline style (1.5px stroke, currentColor):
  * a rounded frame with a prompt chevron and underscore cursor.
  */
@@ -106,5 +130,15 @@ export const IconGlobeOutline16 = ({ size = 16, className }: IconProps) => (
     <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.5" />
     <ellipse cx="8" cy="8" rx="2.8" ry="6.5" stroke="currentColor" strokeWidth="1.5" />
     <path d="M1.5 8h13M8 1.5c-2.4 1.8-2.4 11.2 0 13M8 1.5c2.4 1.8 2.4 11.2 0 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+)
+
+/** Outline glyph: a list of file symbols (functions/classes/methods). */
+export const IconListOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M3 3.5h10M3 8h10M3 12.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <circle cx="1.7" cy="3.5" r="0.9" fill="currentColor" />
+    <circle cx="1.7" cy="8" r="0.9" fill="currentColor" />
+    <circle cx="1.7" cy="12.5" r="0.9" fill="currentColor" />
   </svg>
 )

@@ -10,6 +10,8 @@
  */
 import type { api } from './api.ts'
 import {
+  clampEditorFontSize,
+  clampEditorTabSize,
   clampTerminalFontSize,
   clampTitleBarStrip,
   clampWidthPercent,
@@ -17,7 +19,7 @@ import {
   type SidebarPrefs,
 } from '../prefs-shared.ts'
 
-export { SIDEBAR_PREFS_DEFAULTS, clampTerminalFontSize, clampTitleBarStrip, clampWidthPercent }
+export { SIDEBAR_PREFS_DEFAULTS, clampEditorFontSize, clampEditorTabSize, clampTerminalFontSize, clampTitleBarStrip, clampWidthPercent }
 export type { SidebarPrefs }
 
 /** The settings wire face the preferences need (a subset of the plugin api). */
@@ -57,6 +59,24 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     terminalFontSize: typeof record.terminalFontSize === 'number' && Number.isFinite(record.terminalFontSize)
       ? clampTerminalFontSize(record.terminalFontSize)
       : SIDEBAR_PREFS_DEFAULTS.terminalFontSize,
+    editorFontFamily: typeof record.editorFontFamily === 'string'
+      ? record.editorFontFamily
+      : SIDEBAR_PREFS_DEFAULTS.editorFontFamily,
+    editorFontSize: typeof record.editorFontSize === 'number' && Number.isFinite(record.editorFontSize)
+      ? clampEditorFontSize(record.editorFontSize)
+      : SIDEBAR_PREFS_DEFAULTS.editorFontSize,
+    editorTabSize: typeof record.editorTabSize === 'number' && Number.isFinite(record.editorTabSize)
+      ? clampEditorTabSize(record.editorTabSize)
+      : SIDEBAR_PREFS_DEFAULTS.editorTabSize,
+    editorWordWrap: typeof record.editorWordWrap === 'boolean'
+      ? record.editorWordWrap
+      : SIDEBAR_PREFS_DEFAULTS.editorWordWrap,
+    editorShowLineNumbers: typeof record.editorShowLineNumbers === 'boolean'
+      ? record.editorShowLineNumbers
+      : SIDEBAR_PREFS_DEFAULTS.editorShowLineNumbers,
+    editorAutoSave: record.editorAutoSave === 'onBlur' || record.editorAutoSave === 'afterDelay'
+      ? record.editorAutoSave
+      : SIDEBAR_PREFS_DEFAULTS.editorAutoSave,
     interceptOpenPath: typeof record.interceptOpenPath === 'boolean'
       ? record.interceptOpenPath
       : SIDEBAR_PREFS_DEFAULTS.interceptOpenPath,
