@@ -23,8 +23,9 @@ import { toml } from '@codemirror/legacy-modes/mode/toml'
 import { nginx } from '@codemirror/legacy-modes/mode/nginx'
 import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile'
 import { properties } from '@codemirror/legacy-modes/mode/properties'
-import { csharp, kotlin } from '@codemirror/legacy-modes/mode/clike'
 import { swift } from '@codemirror/legacy-modes/mode/swift'
+import { kotlin, objectiveC, objectiveCpp, dart, csharp } from '@codemirror/legacy-modes/mode/clike'
+import { groovy } from '@codemirror/legacy-modes/mode/groovy'
 
 /** The lowercased file extension of a path ('' when none). */
 export function extOf(path: string): string {
@@ -63,6 +64,13 @@ export function languageKeyForExt(ext: string): string | null {
     case 'nginx': case 'conf': return 'nginx'
     case 'dockerfile': case 'docker': return 'dockerfile'
     case 'properties': case 'env': return 'properties'
+    case 'm': return 'objc'
+    case 'mm': return 'objcpp'
+    case 'dart': return 'dart'
+    case 'ets': return 'ts'
+    case 'xcconfig': return 'properties'
+    case 'plist': case 'entitlements': return 'xml'
+    case 'gradle': return 'groovy'
     default: return null
   }
 }
@@ -94,6 +102,10 @@ const FACTORIES: Record<string, () => Language | LanguageSupport> = {
   nginx: () => StreamLanguage.define(nginx),
   dockerfile: () => StreamLanguage.define(dockerFile),
   properties: () => StreamLanguage.define(properties),
+  objc: () => StreamLanguage.define(objectiveC),
+  objcpp: () => StreamLanguage.define(objectiveCpp),
+  dart: () => StreamLanguage.define(dart),
+  groovy: () => StreamLanguage.define(groovy),
 }
 
 /** The CodeMirror language support for a path, or null for plain text. */
