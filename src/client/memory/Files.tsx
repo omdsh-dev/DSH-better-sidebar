@@ -4,9 +4,10 @@
  * preview / edit pane with a section navigator. Reads and writes through the
  * hpptools-memory file routes.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  IconBrowseOutline16, IconCheckOutline16, IconCloseOutline16, IconEditOutline16,
+  IconBrowseOutline16, IconCheckOutline16, IconCloseOutline16, IconCodeOutline16,
+  IconEditOutline16, IconListPenOutline16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { memoryApi, type MemoryFiles } from './api.ts'
 import { t } from '../locales.ts'
@@ -29,14 +30,11 @@ function readCollapsed(): string[] | null {
   return null
 }
 
-function fileIcon(rel: string): string {
-  if (rel === 'core-prompt.md') return '🧠'
-  if (rel === 'rules.md') return '📏'
-  if (rel === 'subagent-model.txt') return '🤖'
-  if (rel.includes('notebook.md')) return '📓'
-  if (rel.startsWith('personal/')) return '🌐'
-  if (rel.includes('/projects/')) return '📁'
-  return '📄'
+/** DSH icon for a memory vault file (size 14, matching explorer row chrome). */
+function fileIcon(rel: string): ReactNode {
+  if (rel.endsWith('.md')) return <IconListPenOutline16 size={14} />
+  if (rel.endsWith('.txt')) return <IconCodeOutline16 size={14} />
+  return <IconCodeOutline16 size={14} />
 }
 
 // ---- lightweight Markdown rendering (titles / code / bold / italic / links / lists / quotes / wikilinks) ----
@@ -155,7 +153,7 @@ export function Files() {
     }).finally(() => setBusy(false))
   }
 
-  // 条目导航（## 段）
+  // section navigator (## headings)
   const sections: { title: string; seq: number }[] = []
   if (current !== null) {
     let seq = 0
@@ -192,7 +190,7 @@ export function Files() {
                         title={f.rel}
                         onClick={() => selectFile(f.rel)}
                       >
-                        <span style={{ flex: 'none' }}>{fileIcon(f.rel)}</span>
+                        <span style={{ flex: 'none', display: 'inline-flex', alignItems: 'center' }}>{fileIcon(f.rel)}</span>
                         <span className={shellCss.explorerName} style={{ flex: 1 }}>{f.name}</span>
                         {f.entries > 0 && <span className={css.memTreeCount}>{f.entries}</span>}
                       </button>
@@ -211,24 +209,13 @@ export function Files() {
           {current !== null && (
             <>
               {mode === 'preview'
-                ? (
-                  <button type="button" className={css.memIconBtn} title={t('memEdit')} onClick={() => { setDraft(current.content); setMode('edit') }}>
-                    <IconEditOutline16 />
-                  </button>
-                )
-                : (
-                  <button type="button" className={css.memIconBtn} title={t('memPreview')} onClick={() => setMode('previewing')}>
-                    <IconBrowseOutline16 />
-                  </button>
-                )}
+                ? <button type="button" className={shellCss.iconButton} title={t('memEdit')} onClick={() => { setDraft(current.content); setMode('edit') }}><IconEditOutline16 /></button>
+                : <button type="button" className={shellCss.iconButton} title={t('memPreview')} onClick={() => setMode('previewing')}><IconBrowseOutline16 /></button>
+              }
               {mode !== 'preview' && (
                 <>
-                  <button type="button" className={css.memTextBtnPrimary} disabled={busy} onClick={saveFile}>
-                    <IconCheckOutline16 /> {t('memSave')}
-                  </button>
-                  <button type="button" className={css.memIconBtn} title={t('memCancel')} onClick={() => { setMode('preview'); setDraft(current.content) }}>
-                    <IconCloseOutline16 />
-                  </button>
+                  <button type="button" className={shellCss.iconButton} disabled={busy} title={t('memSave')} onClick={saveFile} style={{ color: 'var(--dsw-alias-state-success-primary)' }}><IconCheckOutline16 /></button>
+                  <button type="button" className={shellCss.iconButton} title={t('memCancel')} onClick={() => { setMode('preview'); setDraft(current.content) }}><IconCloseOutline16 /></button>
                 </>
               )}
             </>
@@ -241,12 +228,8 @@ export function Files() {
               ? <div className={css.memEmpty}>{t('memSelectHint')}</div>
               : mode === 'edit'
                 ? <textarea value={draft} onChange={(e) => setDraft(e.target.value)} className={css.memTextarea} />
-                : (
-                  <div
-                    className={css.memMd}
-                    dangerouslySetInnerHTML={{ __html: renderMarkdown(src) }}
-                  />
-                )}
+                : <div className={css.memMd} dangerouslySetInnerHTML={{ __html: renderMarkdown(src) }} />
+            }
           </div>
           {current !== null && mode === 'preview' && sections.length >= 2 && (
             <div className={css.memEntryNav}>

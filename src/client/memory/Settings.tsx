@@ -10,6 +10,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { memoryApi, formatTime, type MemoryOverview } from './api.ts'
 import { isZh, t } from '../locales.ts'
+import shellCss from '../sidebar.module.css'
 import css from '../memory.module.css'
 
 export function Settings() {
@@ -86,9 +87,7 @@ export function Settings() {
             />
           </div>
           <div className={css.memRow}>
-            <button type="button" className={css.memTextBtnPrimary} disabled={busy} onClick={saveRoot}>
-              <IconSettingsOutline16 /> {t('memSaveRoot')}
-            </button>
+            <button type="button" className={shellCss.iconButton} disabled={busy} onClick={saveRoot} title={t('memSaveRoot')}><IconSettingsOutline16 /></button>
           </div>
           <label className={css.memCheckRow}>
             <input type="checkbox" checked={copyData} onChange={(e) => setCopyData(e.target.checked)} />
@@ -119,8 +118,8 @@ export function Settings() {
                 <div className={css.memRow}>
                   <StateDot state="warning" size={10} className={css.memDot} />
                   <span className={css.memHint} style={{ flex: 1 }}>{t('memMigDetected', { n: legacy })}</span>
-                  <button type="button" className={css.memTextBtnPrimary} disabled={busy} onClick={migrateNow}>
-                    {t('memMigrateNow')}
+                  <button type="button" className={shellCss.iconButton} disabled={busy} onClick={migrateNow} title={t('memMigrateNow')}>
+                    <IconRefreshOutline16 />
                   </button>
                 </div>
               )
@@ -137,9 +136,7 @@ export function Settings() {
             <span className={css.memHint}>{t('memObsidianHintText')}</span>
           </div>
           <div className={css.memRow}>
-            <button type="button" className={css.memTextBtn} onClick={openFolder}>
-              <IconFolderOpenOutline16 /> {t('memOpenFolder')}
-            </button>
+            <button type="button" className={shellCss.iconButton} onClick={openFolder} title={t('memOpenFolder')}><IconFolderOpenOutline16 /></button>
             {root !== null && <span className={css.memMono} style={{ flex: 1 }}>{root}</span>}
           </div>
         </div>

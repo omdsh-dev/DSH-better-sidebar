@@ -9,6 +9,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { memoryApi, formatDur, formatTime, type MemoryRun } from './api.ts'
 import { isZh, t } from '../locales.ts'
+import shellCss from '../sidebar.module.css'
 import css from '../memory.module.css'
 
 function badgeOf(status: string): React.ReactNode {
@@ -78,9 +79,7 @@ export function Runs(props: { visible: boolean }) {
         <button type="button" className={css.memIconBtn} title={t('memRefresh')} onClick={load}>
           <IconRefreshOutline16 />
         </button>
-        <button type="button" className={css.memTextBtn} disabled={busy} onClick={runClean}>
-          <IconSparkle16 /> {t('memRunClean')}
-        </button>
+        <button type="button" className={shellCss.iconButton} disabled={busy} onClick={runClean} title={t('memRunClean')}><IconSparkle16 /></button>
       </div>
       <div className={css.memBody}>
         {runs.length === 0 && <div className={css.memEmpty}>{t('memNoRuns')}</div>}

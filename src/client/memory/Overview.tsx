@@ -12,6 +12,7 @@ import {
 import { IconGlobeOutline16 } from '../icons.tsx'
 import { memoryApi, formatTime, type MemoryOverview } from './api.ts'
 import { isZh, t } from '../locales.ts'
+import shellCss from '../sidebar.module.css'
 import css from '../memory.module.css'
 
 function Card(props: { icon: ReactNode; value: ReactNode; label: string; hot?: boolean }) {
@@ -95,7 +96,7 @@ export function Overview(props: { visible: boolean }) {
           <span className={css.memBannerText}>{t('memMigDetected', { n: d.legacy })}</span>
           <button
             type="button"
-            className={css.memTextBtnPrimary}
+            className={shellCss.iconButton}
             disabled={migrating}
             onClick={() => {
               setMigrating(true)
@@ -103,8 +104,9 @@ export function Overview(props: { visible: boolean }) {
                 setError(e instanceof Error ? e.message : String(e))
               }).finally(() => setMigrating(false))
             }}
+            title={t('memMigrateNow')}
           >
-            {t('memMigrateNow')}
+            <IconRefreshOutline16 />
           </button>
         </div>
       )}

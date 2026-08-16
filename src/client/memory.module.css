@@ -59,42 +59,6 @@
   cursor: default;
 }
 
-/* A compact text button (row actions: edit/save/clean). */
-.memTextBtn {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 10px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2);
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-primary);
-  cursor: pointer;
-}
-
-.memTextBtn:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.memTextBtn:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.memTextBtnPrimary {
-  border-color: var(--dsw-alias-button-primary-fill);
-  background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-button-primary-ink);
-}
-
-.memTextBtnPrimary:hover:not(:disabled) {
-  background: var(--dsw-alias-button-primary-fill);
-  filter: brightness(1.12);
-}
-
 .memBody {
   flex: 1;
   min-height: 0;
