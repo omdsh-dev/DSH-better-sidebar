@@ -46,6 +46,25 @@ export interface SidebarPrefs {
    */
   terminalFontSize: number
   /**
+   * Editor font-family stack (a CSS font-family value). Empty string follows
+   * the app's theme monospace font. Applied live to every editor tab.
+   */
+  editorFontFamily: string
+  /** Editor font size in px (10–32). */
+  editorFontSize: number
+  /** Editor tab width in spaces (2–8). */
+  editorTabSize: number
+  /** Whether editor lines wrap by default. */
+  editorWordWrap: boolean
+  /** Whether the editor shows a line-number gutter. */
+  editorShowLineNumbers: boolean
+  /**
+   * Editor auto-save mode (fork addition): 'off' saves only on Ctrl+S,
+   * 'onBlur' saves when the editor loses focus, 'afterDelay' saves ~1s after
+   * the last edit.
+   */
+  editorAutoSave: 'off' | 'onBlur' | 'afterDelay'
+  /**
    * Whether expanding the bottom panel for the FIRST time in a session tries
    * to open a fresh terminal tab there (the terminal quota/type still gates
    * the attempt). On by default; the switch lives under the terminal tab's
@@ -168,6 +187,15 @@ export const TITLE_BAR_STRIP_MIN = 0
 export const TITLE_BAR_STRIP_MAX = 120
 export const TITLE_BAR_STRIP_DEFAULT = 40
 
+/** Editor font-size range (px). */
+export const EDITOR_FONT_SIZE_MIN = 10
+export const EDITOR_FONT_SIZE_MAX = 32
+export const EDITOR_FONT_SIZE_DEFAULT = 13
+/** Editor tab-width range (spaces). */
+export const EDITOR_TAB_SIZE_MIN = 2
+export const EDITOR_TAB_SIZE_MAX = 8
+export const EDITOR_TAB_SIZE_DEFAULT = 4
+
 /** Fallback prefs used whenever the settings document is unreachable or malformed. */
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   openByDefault: true,
@@ -187,6 +215,12 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   browserInterceptLinks: true,
   browserInterceptHttp: true,
   browserInterceptHttps: false,
+  editorFontFamily: '',
+  editorFontSize: EDITOR_FONT_SIZE_DEFAULT,
+  editorTabSize: EDITOR_TAB_SIZE_DEFAULT,
+  editorWordWrap: true,
+  editorShowLineNumbers: true,
+  editorAutoSave: 'off',
   tabsEnabled: {},
   viewersEnabled: {},
   pluginSettings: {},
@@ -205,4 +239,14 @@ export function clampTerminalFontSize(value: number): number {
 /** Clamp one title-bar strip height into the contract range (shared by schema and client reads). */
 export function clampTitleBarStrip(value: number): number {
   return Math.min(TITLE_BAR_STRIP_MAX, Math.max(TITLE_BAR_STRIP_MIN, Math.round(value)))
+}
+
+/** Clamp one editor font size into the contract range (shared by schema and client reads). */
+export function clampEditorFontSize(value: number): number {
+  return Math.min(EDITOR_FONT_SIZE_MAX, Math.max(EDITOR_FONT_SIZE_MIN, Math.round(value)))
+}
+
+/** Clamp one editor tab width into the contract range (shared by schema and client reads). */
+export function clampEditorTabSize(value: number): number {
+  return Math.min(EDITOR_TAB_SIZE_MAX, Math.max(EDITOR_TAB_SIZE_MIN, Math.round(value)))
 }

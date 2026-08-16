@@ -33,6 +33,7 @@ import {
   IconHtmlOutline16,
 } from '../icons.tsx'
 import type { ComponentType } from 'react'
+import { EDITOR_FONT_SIZE_MAX, EDITOR_FONT_SIZE_MIN, EDITOR_TAB_SIZE_MAX, EDITOR_TAB_SIZE_MIN } from '../../prefs-shared.ts'
 import type { FileViewerDescriptor, FileViewerProps } from '../service.ts'
 import { t } from '../locales.ts'
 import css from '../sidebar.module.css'
@@ -107,6 +108,49 @@ export function builtinViewers(): readonly FileViewerDescriptor[] {
       exts: [],
       priority: -100,
       fetchStrategy: 'fsRead',
+      // Declarative settings: the editor look-and-feel rows render under this
+      // viewer's row in the Side card settings page (font family/size, tab
+      // width, word wrap, line numbers, auto save — applied live to every
+      // editor tab via the prefs compartment in TextEditor).
+      settings: {
+        toggles: [{
+          key: 'editorFontFamily',
+          type: 'text',
+          title: () => t('settingsEditorFontFamilyTitle'),
+          desc: () => t('settingsEditorFontFamilyDesc'),
+          placeholder: t('settingsEditorFontFamilyPlaceholder'),
+        }, {
+          key: 'editorFontSize',
+          type: 'number',
+          title: () => t('settingsEditorFontSizeTitle'),
+          desc: () => t('settingsEditorFontSizeDesc'),
+          min: EDITOR_FONT_SIZE_MIN,
+          max: EDITOR_FONT_SIZE_MAX,
+          unit: 'px',
+        }, {
+          key: 'editorTabSize',
+          type: 'number',
+          title: () => t('settingsEditorTabSizeTitle'),
+          desc: () => t('settingsEditorTabSizeDesc'),
+          min: EDITOR_TAB_SIZE_MIN,
+          max: EDITOR_TAB_SIZE_MAX,
+          unit: t('settingsEditorTabSizeSuffix'),
+        }, {
+          key: 'editorWordWrap',
+          title: () => t('settingsEditorWordWrapTitle'),
+          desc: () => t('settingsEditorWordWrapDesc'),
+        }, {
+          key: 'editorShowLineNumbers',
+          title: () => t('settingsEditorLineNumbersTitle'),
+          desc: () => t('settingsEditorLineNumbersDesc'),
+        }, {
+          key: 'editorAutoSave',
+          type: 'text',
+          title: () => t('settingsEditorAutoSaveTitle'),
+          desc: () => t('settingsEditorAutoSaveDesc'),
+          placeholder: t('settingsEditorAutoSavePlaceholder'),
+        }],
+      },
       component: (props) => <LazyTextEditor {...props} />,
     },
     {

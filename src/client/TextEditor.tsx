@@ -12,9 +12,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
-import { EditorState } from '@codemirror/state'
-import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
+import { EditorState, Compartment, type Extension } from '@codemirror/state'
+import { EditorView as CodeMirrorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view'
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { search, searchKeymap, highlightSelectionMatches, selectNextOccurrence } from '@codemirror/search'
+import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
+import { bracketMatching, indentOnInput, indentUnit, foldGutter, foldKeymap } from '@codemirror/language'
+import type { SidebarPrefs } from '../prefs-shared.ts'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, htmlUrl } from './api.ts'
 import { languageForPath } from './lang.ts'
@@ -29,6 +33,33 @@ import css from './sidebar.module.css'
 
 /** Previewable files (rendered output vs source editing). */
 type ViewMode = 'preview' | 'edit'
+
+/**
+ * The editor extensions driven by the side card prefs (font, tab width, line
+ * wrapping, line-number gutter). Lives in a compartment so settings changes
+ * reconfigure the live editor; missing prefs fall back to the CodeMirror
+ * defaults (13px, 4-space tabs, wrapping on, line numbers on).
+ */
+function buildPrefsExtensions(prefs: SidebarPrefs | undefined): Extension[] {
+  if (prefs === undefined) {
+    return [
+      CodeMirrorView.theme({ '&': { fontSize: '13px' } }),
+      CodeMirrorView.lineWrapping,
+      lineNumbers(),
+      EditorState.tabSize.of(4),
+      indentUnit.of('    '),
+    ]
+  }
+  return [
+    prefs.editorFontFamily === ''
+      ? CodeMirrorView.theme({ '&': { fontSize: `${prefs.editorFontSize}px` } })
+      : CodeMirrorView.theme({ '&': { fontFamily: prefs.editorFontFamily, fontSize: `${prefs.editorFontSize}px` } }),
+    ...(prefs.editorWordWrap ? [CodeMirrorView.lineWrapping] : []),
+    ...(prefs.editorShowLineNumbers ? [lineNumbers()] : []),
+    EditorState.tabSize.of(prefs.editorTabSize),
+    indentUnit.of(' '.repeat(prefs.editorTabSize)),
+  ]
+}
 
 /** The floating "add to conversation" action: payload + viewport anchor. */
 interface SelectionPopup {
@@ -53,11 +84,19 @@ export function TextEditor(props: FileViewerProps) {
   const [draft, setDraft] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+  /** Cursor position for the Ln/Col status (updated on selection/doc change). */
+  const [cursorPos, setCursorPos] = useState<{ line: number; col: number } | null>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<CodeMirrorView | null>(null)
   const savingRef = useRef(false)
   /** The theme compartment of the current view (reconfigured on scheme flip). */
   const themeCompRef = useRef<CmThemeCompartment | null>(null)
+  /** The user-prefs compartment of the current view (reconfigured on settings change). */
+  const prefsCompRef = useRef<Compartment | null>(null)
+  /** Live auto-save mode (updated by the prefs effect; read by listeners). */
+  const autoSaveModeRef = useRef<'off' | 'onBlur' | 'afterDelay'>('off')
+  /** Pending afterDelay auto-save timer. */
+  const autoSaveTimerRef = useRef<number | null>(null)
   /** The app's resolved color scheme; the editor re-themes in place on flips. */
   const [dark, setDark] = useState(() => isDarkScheme())
   /** The floating "add to conversation" popup (viewport-anchored; null = hidden). */
@@ -115,31 +154,107 @@ export function TextEditor(props: FileViewerProps) {
     const language = languageForPath(path)
     const themeComp = new CmThemeCompartment()
     themeCompRef.current = themeComp
+    // A compartment holding the user-configurable editor prefs (font family /
+    // size, tab width, line wrapping, line-number gutter), so settings changes
+    // reconfigure the live view without recreating it (the document, undo
+    // history and scroll position survive).
+    const prefsComp = new Compartment()
+    prefsCompRef.current = prefsComp
+    const prefs = ctx.betterSidebar?.getSnapshot()?.prefs
+    const prefsExtension = buildPrefsExtensions(prefs)
     const state = EditorState.create({
       doc: content,
       extensions: [
-        CodeMirrorView.lineWrapping,
-        lineNumbers(),
+        prefsComp.of(prefsExtension),
         history(),
-        EditorState.tabSize.of(2),
         CodeMirrorView.contentAttributes.of({ spellcheck: 'false' }),
         cmSurfaceTheme,
         themeComp.of(dark),
         ...(language !== null ? [language] : []),
+        // VSCode-like editing aids: bracket matching, auto-close brackets,
+        // indent on Enter, active-line highlight, indentation guides, and
+        // a subtle highlight of the current search matches.
+        bracketMatching(),
+        closeBrackets(),
+        indentOnInput(),
+        highlightActiveLine(),
+        // Code folding: a gutter with fold markers on collapsible blocks
+        // (functions, braces, indented blocks); plain text has no fold
+        // points, so the gutter shows nothing there (normal degradation).
+        foldGutter(),
         CodeMirrorView.updateListener.of((update) => {
+          // Ln/Col status: recompute whenever the selection or document moves.
+          if (update.selectionSet || update.docChanged) {
+            const head = update.state.selection.main.head
+            const line = update.state.doc.lineAt(head)
+            setCursorPos({ line: line.number, col: head - line.from + 1 })
+          }
           if (update.docChanged) {
             setDraft(update.state.doc.toString())
             setDirty(true)
+            // afterDelay auto-save: debounce 1s after the last edit.
+            if (autoSaveModeRef.current === 'afterDelay') {
+              if (autoSaveTimerRef.current !== null) window.clearTimeout(autoSaveTimerRef.current)
+              autoSaveTimerRef.current = window.setTimeout(() => { save() }, 1000)
+            }
+          }
+          // onBlur auto-save: save the dirty editor when it loses focus.
+          if (update.focusChanged && !update.view.hasFocus && autoSaveModeRef.current === 'onBlur') {
+            if (autoSaveTimerRef.current !== null) {
+              window.clearTimeout(autoSaveTimerRef.current)
+              autoSaveTimerRef.current = null
+            }
+            save()
           }
         }),
+        // Find / replace (Mod-f opens the panel, Mod-h replace, Enter/Shift-Enter
+        // step through matches) and Ctrl+G go-to-line via the default keymaps.
+        search({ top: true }),
+        highlightSelectionMatches(),
+        autocompletion({ activateOnTyping: true, defaultKeymap: true }),
         keymap.of([
           {
             key: 'Mod-s',
             preventDefault: true,
             run: () => { save(); return true },
           },
+          // Go to line (Mod-g): prompt for a line number and jump.
+          {
+            key: 'Mod-g',
+            preventDefault: true,
+            run: () => {
+              const view = viewRef.current
+              if (view === null) return false
+              const doc = view.state.doc
+              const input = window.prompt(t('gotoLinePrompt'), '1')
+              if (input === null) return true
+              const line = Math.max(1, Math.min(Number.parseInt(input, 10) || 1, doc.lines))
+              const pos = doc.line(line).from
+              view.dispatch({
+                selection: { anchor: pos },
+                effects: CodeMirrorView.scrollIntoView(pos, { y: 'center' }),
+              })
+              view.focus()
+              return true
+            },
+          },
           ...defaultKeymap,
           ...historyKeymap,
+          ...searchKeymap,
+          ...closeBracketsKeymap,
+          ...completionKeymap,
+          // Tab indents (multi-line: whole selection); Shift-Tab dedents.
+          indentWithTab,
+          // Multi-cursor: Ctrl+D selects the next occurrence of the current
+          // selection (repeat to extend; Ctrl+U from defaultKeymap retreats).
+          {
+            key: 'Mod-d',
+            preventDefault: true,
+            run: selectNextOccurrence,
+          },
+          // Code folding keymap: Ctrl+Shift+[ folds, Ctrl+Shift+] unfolds,
+          // Ctrl+Alt+[ / ] fold/unfold all.
+          ...foldKeymap,
         ]),
         // Selection popup (the code and markdown editors): a non-empty
         // selection anchors the floating "add to conversation" button above
@@ -188,7 +303,15 @@ export function TextEditor(props: FileViewerProps) {
     })
     const view = new CodeMirrorView({ state, parent: host })
     viewRef.current = view
+    // Initialize the Ln/Col status from the initial cursor (position 0).
+    const head = view.state.selection.main.head
+    const line = view.state.doc.lineAt(head)
+    setCursorPos({ line: line.number, col: head - line.from + 1 })
     return () => {
+      if (autoSaveTimerRef.current !== null) {
+        window.clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = null
+      }
       view.destroy()
       viewRef.current = null
       themeCompRef.current = null
@@ -207,6 +330,24 @@ export function TextEditor(props: FileViewerProps) {
     view.dispatch({ effects: themeComp.reconfigure(dark) })
   }, [dark])
 
+  // Side card pref changes: reconfigure the prefs compartment in place so
+  // font / tab width / wrapping / line numbers apply without losing the
+  // document, undo history or scroll position. The store notifies on every
+  // snapshot change (session switch, prefs writes); the reconfigure is cheap
+  // and idempotent, so listening to all of them is fine.
+  useEffect(() => {
+    const view = viewRef.current
+    const prefsComp = prefsCompRef.current
+    if (view === null || prefsComp === null) return
+    const applyPrefs = (): void => {
+      const prefs = ctx.betterSidebar?.getSnapshot()?.prefs
+      view.dispatch({ effects: prefsComp.reconfigure(buildPrefsExtensions(prefs)) })
+      autoSaveModeRef.current = prefs?.editorAutoSave ?? 'off'
+    }
+    applyPrefs()
+    return ctx.betterSidebar?.subscribeState(applyPrefs)
+  }, [ctx])
+
   // The editor may have been display:none while previewing; re-measure when
   // it becomes visible again (CodeMirror sizes itself on reveal). A mode
   // flip also invalidates any anchored selection popup.
@@ -218,6 +359,11 @@ export function TextEditor(props: FileViewerProps) {
   const save = (): void => {
     const view = viewRef.current
     if (view === null || savingRef.current) return
+    // A save (manual or auto) supersedes any pending afterDelay write.
+    if (autoSaveTimerRef.current !== null) {
+      window.clearTimeout(autoSaveTimerRef.current)
+      autoSaveTimerRef.current = null
+    }
     savingRef.current = true
     setSaveState('saving')
     api.fsWrite(scope, path, view.state.doc.toString()).then(() => {
@@ -310,6 +456,12 @@ export function TextEditor(props: FileViewerProps) {
           >
             <IconCheckOutline16 />
           </button>
+        )}
+        {/* Ln/Col status: shown while actually editing. Plain code files are
+            always in edit mode (no preview toggle); markdown/html hide it
+            while previewing. */}
+        {cursorPos !== null && (mode === 'edit' || !(markdown || html)) && (
+          <span className={css.editorStatus}>Ln {cursorPos.line}, Col {cursorPos.col}</span>
         )}
         {saveLabel !== '' && <span className={clsx(css.editorStatus, saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>}
       </div>
