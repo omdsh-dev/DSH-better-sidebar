@@ -359,7 +359,7 @@ export function ensurePinnedTabs(state: SidebarState, tabsEnabled: Record<string
   // pinned at the front WITHOUT collapsing a user's edge-split (the dragged
   // floating pane remains a separate non-empty leaf). Duplicate panes emptied
   // by pinned-stripping are dropped; user panes are untouched.
-  let finalTree = rotateHomeFirst(rebuild, homeId, emptiedById)
+  let finalTree = rotateHomeFirst(rebuild, homeId, emptiedById) ?? rebuild
   // If the drop removed the pane activePane pointed at, fall back to the (kept)
   // first pane; preserve a valid bottom-tree activePane.
   let activePane = state.activePane
@@ -390,32 +390,32 @@ function containsLeaf(node: SplitNode, id: string): boolean {
 /**
  * Re-arrange a split tree so the leaf `homeId` becomes the FIRST (left-most)
  * pane, and REMOVE every pane in `emptiedById` (duplicate-pinned panes that
- * ended empty after the pinned strip) — recursing into ALL branches, not just
- * the home one, so an old nested layout whose pinned-only panes lived in a
- * non-home subtree is also cleaned. User panes (not in `emptiedById`) are never
- * touched, even when empty. A split left with a single child promotes that
- * child. Non-home panes that still hold tabs stay — a user's edge-split is
- * preserved, with the home (pinned) pane in front.
+ * ended empty after the pinned strip) — recursing into ALL branches. Returns
+ * `null` when a branch ends up with no panes (the parent then drops it), and
+ * promotes a single remaining child regardless of leaf/split. User panes not
+ * in `emptiedById` are never touched even when empty. The home pane is never
+ * emptied, so the returned tree always contains it.
  */
-function rotateHomeFirst(node: SplitNode, homeId: string, emptiedById: Set<string>): SplitNode {
+function rotateHomeFirst(node: SplitNode, homeId: string, emptiedById: Set<string>): SplitNode | null {
   if (node.kind === 'leaf') return node
-  // 1) Recurse into EVERY child so emptied duplicate-pinned panes are removed
-  //    wherever they sat (nested splits included), not just on the home path.
-  let children = node.children.map(child => child.kind === 'split' ? rotateHomeFirst(child, homeId, emptiedById) : child)
-  // 2) Drop any direct emptied non-home leaf (and single-child promotes).
-  const kept: SplitNode[] = children.filter(child => !(child.kind === 'leaf' && child.id !== homeId && child.tabs.length === 0 && emptiedById.has(child.id)))
-  let promoted = kept.length === 1 && kept[0]!.kind === 'leaf' ? kept[0]! : { ...node, children: kept }
-  // 3) Bring the home-bearing branch to the front (recursively, if nested).
-  const asTree = promoted
-  if (asTree.kind === 'split') {
-    const idx = asTree.children.findIndex(child => containsLeaf(child, homeId))
-    if (idx >= 0) {
-      const front = asTree.children[idx]!.kind === 'split' ? rotateHomeFirst(asTree.children[idx]!, homeId, emptiedById) : asTree.children[idx]!
-      const reordered = [front, ...asTree.children.slice(0, idx), ...asTree.children.slice(idx + 1)]
-      return { ...asTree, sizes: asTree.sizes.length === reordered.length ? asTree.sizes : reordered.map(() => 1 / reordered.length), children: reordered }
-    }
+  // Recurse into EVERY child so emptied duplicate-pinned leaves are removed in
+  // any nested branch; an emptied child branch comes back null and is dropped.
+  const children = node.children
+    .map(child => child.kind === 'split'
+      ? rotateHomeFirst(child, homeId, emptiedById)
+      : (child.id !== homeId && child.tabs.length === 0 && emptiedById.has(child.id) ? null : child))
+    .filter((child): child is SplitNode => child !== null)
+  if (children.length === 0) return null
+  if (children.length === 1) return children[0]!
+  // Bring the home-bearing branch to the front (recursively if nested).
+  const asTree = node
+  const idx = children.findIndex(child => containsLeaf(child, homeId))
+  if (idx >= 0) {
+    const front = children[idx]!
+    const reordered = [front, ...children.slice(0, idx), ...children.slice(idx + 1)]
+    return { ...asTree, sizes: asTree.sizes.length === reordered.length ? asTree.sizes : reordered.map(() => 1 / reordered.length), children: reordered }
   }
-  return promoted
+  return { ...asTree, sizes: children.length === asTree.sizes.length ? asTree.sizes : children.map(() => 1 / children.length), children }
 }
 
 /**

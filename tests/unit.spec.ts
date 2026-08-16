@@ -1149,6 +1149,18 @@ describe('pinned front tabs (explorer/git/subagent)', () => {
     expect(leaves.some(l => l.id === 'pane:s' && l.tabs.length > 0)).toBe(false)
     // activePane pointed at the pruned pane: fell back to a surviving first pane.
     expect(s.activePane).toBe(leaves[0]!.id)
+    // STRUCTURAL VALIDITY: no split may be left with <2 children or mismatched
+    // sizes, and a reload round-trip must sanitize cleanly (an illegal empty
+    // split would make sanitizeNode reject the whole session).
+    const assertSplitInvariants = (node: SplitNode): void => {
+      if (node.kind === 'split') {
+        expect(node.children.length).toBeGreaterThanOrEqual(2)
+        expect(node.sizes.length).toBe(node.children.length)
+        node.children.forEach(assertSplitInvariants)
+      }
+    }
+    assertSplitInvariants(s.splits)
+    expect(sanitizeState(JSON.parse(JSON.stringify(s)))).toBeDefined()
   })
 })
 
