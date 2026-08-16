@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { EditorState, Compartment, type Extension } from '@codemirror/state'
-import { EditorView as CodeMirrorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view'
+import { EditorView as CodeMirrorView, keymap, lineNumbers, highlightActiveLine, ViewPlugin, Decoration, type DecorationSet } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { search, searchKeymap, highlightSelectionMatches, selectNextOccurrence } from '@codemirror/search'
 import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
@@ -119,6 +119,36 @@ function indentFoldService(state: EditorState, lineStart: number): { from: numbe
   }
   return lastDeeperTo < 0 ? null : { from: line.to, to: lastDeeperTo }
 }
+
+/** VSCode-style highlight for whitespace at the end of non-blank lines. */
+const trailingSpaceMark = Decoration.mark({ class: 'cm-trailingSpace' })
+
+/** Rebuild the trailing-whitespace marks for the current document. */
+function buildTrailingSpaceMarks(state: EditorState): DecorationSet {
+  const ranges: Array<ReturnType<typeof trailingSpaceMark.range>> = []
+  for (let lineNo = 1; lineNo <= state.doc.lines; lineNo++) {
+    const line = state.doc.line(lineNo)
+    const match = /\s+$/.exec(line.text)
+    // match.index > 0 keeps fully-blank (indentation-only) lines unmarked.
+    if (match !== null && match.index > 0) {
+      ranges.push(trailingSpaceMark.range(line.from + match.index, line.to))
+    }
+  }
+  return Decoration.set(ranges)
+}
+
+/**
+ * A view plugin that shows trailing whitespace (VSCode's "trailing"
+ * indicator) so stray spaces are visible before a save. @codemirror/view
+ * does not ship this; the marks are rebuilt whenever the document changes.
+ */
+const trailingSpaceHighlighter = ViewPlugin.fromClass(class {
+  decorations: DecorationSet = Decoration.none
+
+  update(update: { docChanged: boolean; state: EditorState }) {
+    if (update.docChanged) this.decorations = buildTrailingSpaceMarks(update.state)
+  }
+}, { decorations: (v: { decorations: DecorationSet }) => v.decorations })
 
 /** The floating "add to conversation" action: payload + viewport anchor. */
 interface SelectionPopup {
@@ -231,12 +261,17 @@ export function TextEditor(props: FileViewerProps) {
         themeComp.of(dark),
         ...(language !== null ? [language] : []),
         // VSCode-like editing aids: bracket matching, auto-close brackets,
-        // indent on Enter, active-line highlight, indentation guides, and
-        // a subtle highlight of the current search matches.
+        // indent on Enter, active-line highlight, indentation guides, a
+        // subtle highlight of the current search matches, and trailing
+        // whitespace (shown so stray spaces are visible before a save).
         bracketMatching(),
         closeBrackets(),
         indentOnInput(),
         highlightActiveLine(),
+        trailingSpaceHighlighter,
+        CodeMirrorView.baseTheme({
+          '.cm-trailingSpace': { backgroundColor: 'rgba(255, 80, 80, 0.18)' },
+        }),
         // Code folding: a gutter with fold markers on collapsible blocks
         // (functions, braces, indented blocks). The fold services make the
         // markers actually fold — the language packages ship no fold service
