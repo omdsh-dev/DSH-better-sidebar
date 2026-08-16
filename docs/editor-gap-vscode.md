@@ -27,6 +27,8 @@
 | 文件大纲（符号列表） | ✅ 工具栏按钮 → 函数/类/方法/标题，点击跳转 |
 | 代码折叠（gutter + 快捷键） | ✅ 折叠服务 + 内置 gutter 点击（根因已修） |
 | 尾部空格高亮 | ✅ 行尾空白红色高亮 |
+| 括号跳转（Ctrl+Shift+\） | ✅ 跳转配对括号 |
+| 语言关键字补全（Ctrl+Space） | ✅ 12 种语言保留字 + 语言自带源合并 |
 
 ---
 
@@ -70,14 +72,14 @@
    - VSCode：折叠函数/块。
    - CodeMirror：`@codemirror/language` 的 `foldGutter()` + `foldCode`/`unfoldCode` 命令 —— 语言包语法树支持。中优先级，加 gutter 指示器。
 
-9. **括号高亮跳转 / 选中括号内容**
-   - `@codemirror/language` 的 `syntaxHighlighting` + `@codemirror/search` 的 `selectBracket`？CodeMirror 有 `matchingBrackets`（@codemirror/language）高亮配对括号 —— 补上。
+9. **括号高亮跳转 / 选中括号内容** ✅ 已实现
+   - `bracketMatching()` 高亮配对括号（已接入）+ `cursorMatchingBracket`（Ctrl+Shift+\）跳转配对括号（P1 完成）。
 
 ### P2 — 补全与智能
 
-10. **语言级自动补全源**
-    - 现状：`autocompletion()` 已启用，但**没有补全源**（completeFromList 都没接），所以 Ctrl+Space 目前不会出候选（只有语言包自带的，js/python 部分有）。
-    - 补：每个语言包如果有 `completeFromList`（如关键词）就接上；至少给常见语言加**关键字补全源**。真正的语义补全需要 LSP（见 P3）。
+10. **语言级自动补全源** ✅ 已实现（关键字补全）
+    - 现状：`autocompletion()` 框架已启用，之前无源；现为 12 种语言配了保留字表（js/ts/jsx/tsx、python、java、c/cpp、rust、go、php、sql、shell、dockerfile、nginx），与语言自带补全（如 JS 作用域补全）合并、按 label 去重。
+    - 补：`lang.ts` 的 `KEYWORDS_BY_LANGUAGE` + TextEditor 的 override 组合源。真正的语义补全需要 LSP（见 P3）。
 
 11. **LLM 辅助补全 / 续写**
     - VSCode：Copilot 风格。sidebar 编辑器是 CodeMirror，可做：
