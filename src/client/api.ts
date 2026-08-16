@@ -120,6 +120,21 @@ export const api = {
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
+  /** Create a folder under `parent` (one path segment). */
+  fsMkdir: (scope: SessionScope, parent: string, name: string) =>
+    call<{ ok: true }>('fs.mkdir', scopePayload(scope, { parent, name })),
+  /** Create an empty file under `parent` (one path segment; fails when it exists). */
+  fsCreate: (scope: SessionScope, parent: string, name: string) =>
+    call<{ ok: true }>('fs.create', scopePayload(scope, { parent, name })),
+  /** Rename a file or folder to a new name inside its current parent. */
+  fsRename: (scope: SessionScope, path: string, name: string) =>
+    call<{ ok: true }>('fs.rename', scopePayload(scope, { path, name })),
+  /** Move a file or folder into `targetDir` (keeps its name). */
+  fsMove: (scope: SessionScope, path: string, targetDir: string) =>
+    call<{ ok: true }>('fs.move', scopePayload(scope, { path, targetDir })),
+  /** Permanently remove a file or folder (recursive; refuses the session cwd). */
+  fsRemove: (scope: SessionScope, path: string) =>
+    call<{ ok: true }>('fs.remove', scopePayload(scope, { path })),
   gitStatus: (scope: SessionScope, signal?: AbortSignal) =>
     call<GitStatusResult>('git.status', scopePayload(scope, {}), signal),
   gitDiff: (scope: SessionScope, path: string | undefined, staged: boolean, signal?: AbortSignal) =>
