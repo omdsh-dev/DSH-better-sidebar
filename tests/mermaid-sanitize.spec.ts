@@ -40,6 +40,23 @@ describe('sanitizeSvg', () => {
     expect(out).not.toContain('@click')
   })
 
+  it('strips mixed-case event/link attributes (HTML parsing normalizes case)', () => {
+    const svg = [
+      '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">',
+      '<text oNload="alert(1)" OnClick="x()">t</text>',
+      '<a HREF="javascript:alert(1)" xlink:HREF="data:text/html,<script>1</script>">x</a>',
+      '<text @Click="y()">u</text>',
+      '</svg>',
+    ].join('')
+    const out = sanitizeSvg(svg)
+    expect(out).not.toContain('oNload')
+    expect(out).not.toContain('OnClick')
+    expect(out).not.toContain('@Click')
+    expect(out).not.toContain('HREF')
+    expect(out).not.toContain('xlink:HREF')
+    expect(out).not.toContain('javascript:')
+  })
+
   it('removes href and xlink:href regardless of scheme', () => {
     const svg = [
       '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">',

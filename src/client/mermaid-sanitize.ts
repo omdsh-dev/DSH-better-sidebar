@@ -17,7 +17,9 @@
  *   time (→ '') while lenient parsers keep them, so they are stripped
  *   explicitly instead of relying on the parser alone.
  * - `@*` / `on*` attributes: event-handler channels (Vue-style directives
- *   and native listeners).
+ *   and native listeners), matched case-insensitively — the output is
+ *   re-parsed as HTML whose parser normalizes attribute casing, so
+ *   `oNload`/`OnClick` must not survive either.
  * - ALL `href` / `xlink:href` attributes: the diagrams are static (no
  *   bindFunctions, no click navigation), so links carry no value — and an
  *   attacker-controlled URL (even an http(s) one) could otherwise navigate
@@ -61,11 +63,17 @@ export function sanitizeSvg(svg: string): string {
   doc.querySelectorAll('*').forEach((node) => {
     for (const attribute of [...node.attributes]) {
       const name = attribute.name
-      if (name.startsWith('@') || name.startsWith('on')) {
+      // XML attribute names preserve case; the string is later re-parsed as
+      // HTML (dangerouslySetInnerHTML), whose parser normalizes attribute
+      // casing — so a mixed-case `oNload`/`HREF` must be caught the same way
+      // as its lowercase form. Compare on the lowercased name, remove with
+      // the original.
+      const normalized = name.toLowerCase()
+      if (normalized.startsWith('@') || normalized.startsWith('on')) {
         node.removeAttribute(name)
         continue
       }
-      if (name === 'href' || name === 'xlink:href') {
+      if (normalized === 'href' || normalized === 'xlink:href') {
         node.removeAttribute(name)
       }
     }
