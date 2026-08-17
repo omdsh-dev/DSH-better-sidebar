@@ -1072,9 +1072,34 @@ async function attachFederatedTerminal(
   })
   let offset = 0
   let closed = false
+  let ready = false
+  const pending: string[] = []
+  const forward = (text: string): void => {
+    let control: { type?: unknown; cols?: unknown; rows?: unknown } | undefined
+    try { const value = JSON.parse(text) as unknown; if (value !== null && typeof value === 'object') control = value as never } catch {}
+    if (control?.type === 'close') { void call('terminal.terminate', { tab: tabId }); return }
+    if (control?.type === 'resize' && typeof control.cols === 'number' && typeof control.rows === 'number') {
+      void call('terminal.resize', { tab: tabId, cols: control.cols, rows: control.rows }); return
+    }
+    void call('terminal.input', { tab: tabId, data: text })
+  }
+  // Install listeners before the owner open RPC. Browser WebSocket `open`
+  // fires as soon as the upgrade completes, and xterm may send resize/input
+  // while the owner is still creating the PTY.
+  ws.on('message', raw => {
+    const text = raw.toString('utf8')
+    if (ready) forward(text)
+    else pending.push(text)
+  })
+  ws.on('close', () => {
+    closed = true
+    if (ready) void call('terminal.detach', { tab: tabId, graceMs: resolved.reconnectGraceMs })
+  })
   try {
     const opened = await call('terminal.open', { tab: tabId, cols: 80, rows: 24 })
     if (!opened.ok) { ws.close(1011, opened.error.message.slice(0, 120)); return }
+    ready = true
+    for (const text of pending.splice(0)) forward(text)
     offset = Number((opened.value as { base?: number }).base ?? 0)
     const pump = async (): Promise<void> => {
       while (!closed && ws.readyState === WebSocket.OPEN) {
@@ -1091,17 +1116,6 @@ async function attachFederatedTerminal(
       }
     }
     void pump()
-    ws.on('message', (raw) => {
-      const text = raw.toString('utf8')
-      let control: { type?: unknown; cols?: unknown; rows?: unknown } | undefined
-      try { const value = JSON.parse(text) as unknown; if (value !== null && typeof value === 'object') control = value as never } catch {}
-      if (control?.type === 'close') { void call('terminal.terminate', { tab: tabId }); return }
-      if (control?.type === 'resize' && typeof control.cols === 'number' && typeof control.rows === 'number') {
-        void call('terminal.resize', { tab: tabId, cols: control.cols, rows: control.rows }); return
-      }
-      void call('terminal.input', { tab: tabId, data: text })
-    })
-    ws.on('close', () => { closed = true; void call('terminal.detach', { tab: tabId, graceMs: resolved.reconnectGraceMs }) })
   } catch (error) {
     ws.close(1011, (error instanceof Error ? error.message : String(error)).slice(0, 120))
   }
