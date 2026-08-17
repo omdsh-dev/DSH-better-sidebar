@@ -771,6 +771,196 @@
   text-align: center;
 }
 
+/* The inline create/rename toolbar row pinned above the tree (mirror of the
+   reference workspace-explorer UX: target label + input + OK/Cancel). */
+.explorerToolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.explorerToolbarTarget {
+  flex: none;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.explorerInlineInput {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-state-business-primary);
+  border-radius: 6px;
+  outline: none;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xs-13);
+}
+
+.explorerToolbarBtn {
+  flex: none;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  cursor: pointer;
+}
+
+.explorerToolbarBtn:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.explorerToolbarBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.explorerToolbarError {
+  flex: none;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* The search toolbar + results list (replaces the tree while active). */
+.explorerSearchBar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.explorerSearchIcon {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.explorerSearchInput {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  outline: none;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xs-13);
+}
+
+.explorerSearchInput:focus {
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.explorerSearchClose {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.explorerSearchClose:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.explorerSearchNote {
+  padding: 12px 8px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.explorerSearchRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.explorerSearchRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.explorerSearchRowMain {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.explorerSearchName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-primary);
+}
+
+.explorerSearchRel {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.explorerMatch {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.explorerNotice {
+  margin-bottom: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+}
+
+.explorerConfirmPath {
+  margin: 4px 0 0;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+
 /* ── Editor ────────────────────────────────────────────────────────────── */
 
 .editor {

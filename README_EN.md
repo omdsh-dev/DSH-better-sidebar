@@ -21,7 +21,7 @@
 
 ## ✨ Features
 
-- **🗂️ File Workbench**: file explorer (lazy-loading tree; symlinks show their target kind — directory links expand, dangling links flagged) + CodeMirror editor; inline preview for images / Markdown / HTML / PDF / Office
+- **🗂️ File Workbench**: file explorer (lazy-loading tree; symlinks show their target kind — directory links expand, dangling links flagged) + CodeMirror editor; inline preview for images / Markdown / HTML / PDF / Office; right-click menu for new folder/file, rename, delete (confirmed, moved to the Trash), reveal in Finder, and recursive search by file name or content
 - **🌐 Embedded Browser**: multiple web tabs with back / forward / refresh; content runs in a sandboxed iframe; external links are routed by protocol by default — HTTP opens in the sidebar, HTTPS goes to the system browser (both adjustable in settings)
 - **💻 Real Terminal**: xterm.js + node-pty real shell, reconnect with transcript replay; optionally injects `terminal_*` tools for the model
 - **🌿 Git Panel**: real diff + VSCode-style diff tabs, history, right-click to stage / commit / revert
@@ -171,6 +171,9 @@ Update: `git pull && pnpm install && pnpm build` → `node scripts/package-regis
 | Split / merge panes | Drag tab to pane edge / middle |
 | Reference file to input | Hover the `@file` button at end of line |
 | Copy file path | Right-click row → copy relative/absolute path |
+| New / rename / delete | Right-click a row or empty area → New folder/file / Rename / Delete (confirmed, moved to the Trash) |
+| Reveal in Finder | Right-click a row → Reveal in Finder |
+| Search inside a folder | Right-click a row or empty area → Search (recursive, by file name or content) |
 
 ## 🔌 Service: register tabs & file viewers
 

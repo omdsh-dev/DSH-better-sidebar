@@ -3,9 +3,9 @@
  * exercises the real integrations — route registration, git against the
  * actual repository, and a real directory listing. Runs with `pnpm test`.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
@@ -471,6 +471,140 @@ describe('session cwd resolution over the API route', () => {
     const value = result as unknown as { ok: boolean; value?: { kind: string; content: string } }
     expect(value.value?.kind).toBe('text')
     expect(value.value?.content).toContain('runGit')
+  })
+})
+
+describe('explorer fs operations over the API route', () => {
+  /** A scratch workspace + trash dir per test, cleaned up afterwards. */
+  let work: string
+  let trash: string
+
+  beforeEach(() => {
+    work = mkdtempSync(join(tmpdir(), 'dsh-smoke-fsops-'))
+    trash = mkdtempSync(join(tmpdir(), 'dsh-smoke-trash-'))
+    process.env.DSH_SIDEBAR_TRASH_DIR = trash
+  })
+
+  afterEach(() => {
+    delete process.env.DSH_SIDEBAR_TRASH_DIR
+    rmSync(work, { recursive: true, force: true })
+    rmSync(trash, { recursive: true, force: true })
+  })
+
+  const mount = (): SidebarWebRoute => {
+    const routes: SidebarWebRoute[] = []
+    const ctx = {
+      webRuntime: { trustedHosts: [] },
+      webServer: {
+        register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
+        registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
+      },
+      sessions: { get: () => ({ header: { cwd: work } }) },
+      tools: { register: () => () => {} },
+      effect: (fn: () => void | (() => void)) => { fn() },
+      inject: () => () => {},
+      get: () => undefined,
+    }
+    apply(ctx as never)
+    return routes.find(route => route.path === '/sidebar/api')!
+  }
+
+  const invoke = async (route: SidebarWebRoute, method: string, payload: unknown): Promise<{
+    ok: boolean
+    value?: unknown
+    error?: { code?: string; message: string }
+  }> => {
+    const body = Buffer.from(JSON.stringify(payload))
+    const req = {
+      method: 'POST',
+      url: `/sidebar/api/${method}`,
+      headers: { host: '127.0.0.1:3080' },
+      [Symbol.asyncIterator]: async function* () { yield body },
+    } as never
+    const out: { status: number; body: string } = { status: 200, body: '' }
+    const res = {
+      writeHead: (status: number) => { out.status = status },
+      end: (chunk: unknown) => { out.body += String(chunk ?? '') },
+    } as never
+    await route.handler(req, res)
+    return JSON.parse(out.body) as { ok: boolean; value?: unknown; error?: { code?: string; message: string } }
+  }
+
+  it('fs.mkdir creates a directory visible to fs.tree', async () => {
+    const route = mount()
+    const target = join(work, 'created')
+    const created = await invoke(route, 'fs.mkdir', { sessionId: 's', path: target })
+    expect(created.ok).toBe(true)
+    expect(existsSync(target)).toBe(true)
+    const listing = await invoke(route, 'fs.tree', { sessionId: 's', path: work })
+    const value = listing as unknown as { ok: boolean; value?: { entries: { name: string; isDir: boolean }[] } }
+    expect(value.value?.entries.map(entry => entry.name)).toContain('created')
+  })
+
+  it('fs.mkdir reports an existing directory', async () => {
+    const route = mount()
+    const target = join(work, 'taken')
+    mkdirSync(target)
+    const result = await invoke(route, 'fs.mkdir', { sessionId: 's', path: target })
+    expect(result.ok).toBe(false)
+    expect(result.error?.message).toMatch(/目录已存在/)
+  })
+
+  it('fs.rename renames a file', async () => {
+    const route = mount()
+    writeFileSync(join(work, 'old.txt'), 'content')
+    const result = await invoke(route, 'fs.rename', { sessionId: 's', path: join(work, 'old.txt'), name: 'new.txt' })
+    expect(result.ok).toBe(true)
+    expect(readFileSync(join(work, 'new.txt'), 'utf8')).toBe('content')
+    expect(existsSync(join(work, 'old.txt'))).toBe(false)
+  })
+
+  it('fs.rename rejects a name collision without overwriting', async () => {
+    const route = mount()
+    writeFileSync(join(work, 'a.txt'), 'a')
+    writeFileSync(join(work, 'b.txt'), 'b')
+    const result = await invoke(route, 'fs.rename', { sessionId: 's', path: join(work, 'a.txt'), name: 'b.txt' })
+    expect(result.ok).toBe(false)
+    expect(result.error?.message).toMatch(/同名/)
+    // POSIX rename would silently REPLACE the destination — the pre-check
+    // must keep both files intact.
+    expect(readFileSync(join(work, 'a.txt'), 'utf8')).toBe('a')
+    expect(readFileSync(join(work, 'b.txt'), 'utf8')).toBe('b')
+  })
+
+  it('fs.remove moves the entry into the configured trash', async () => {
+    const route = mount()
+    writeFileSync(join(work, 'bye.txt'), 'data')
+    const result = await invoke(route, 'fs.remove', { sessionId: 's', path: join(work, 'bye.txt') })
+    const value = result as unknown as { ok: boolean; value?: { trashed: boolean } }
+    expect(value.ok).toBe(true)
+    expect(value.value?.trashed).toBe(true)
+    expect(existsSync(join(work, 'bye.txt'))).toBe(false)
+    expect(readFileSync(join(trash, 'bye.txt'), 'utf8')).toBe('data')
+  })
+
+  it('fs.search matches file names and contents recursively', async () => {
+    const route = mount()
+    mkdirSync(join(work, 'src'))
+    writeFileSync(join(work, 'src', 'greeting.txt'), 'hello needle world')
+    writeFileSync(join(work, 'NeedleName.md'), 'x')
+    const nameHit = await invoke(route, 'fs.search', { sessionId: 's', path: work, query: 'needlename' })
+    const nameValue = nameHit as unknown as { ok: boolean; value?: { results: { name: string }[] } }
+    expect(nameValue.value?.results.map(result => result.name)).toContain('NeedleName.md')
+    const contentHit = await invoke(route, 'fs.search', { sessionId: 's', path: work, query: 'needle' })
+    const contentValue = contentHit as unknown as {
+      ok: boolean
+      value?: { results: { name: string; matchLine: string }[] }
+    }
+    const hit = contentValue.value?.results.find(result => result.name === 'greeting.txt')
+    expect(hit?.matchLine).toBe('hello needle world')
+  })
+
+  it('fs.search refuses to walk outside an absolute root', async () => {
+    const route = mount()
+    const result = await invoke(route, 'fs.search', { sessionId: 's', path: 'relative/path', query: 'x' })
+    expect(result.ok).toBe(false)
+    expect(result.error?.code).toBe('fs-error')
   })
 })
 
