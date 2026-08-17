@@ -26,12 +26,17 @@ export function TreePanel(props: {
   onOpenFileNewTab?: (path: string) => void
   /** File context-menu "open to the side" (passed through to FileTree). */
   onOpenFileSide?: (path: string) => void
+  /** File context-menu "open with the default app" (passed through to FileTree). */
+  onOpenFileSystem?: (path: string) => void
   onReferenceFile: (path: string) => void
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, full } = props
+  const {
+    sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onOpenFileSystem,
+    onReferenceFile, full,
+  } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -90,6 +95,7 @@ export function TreePanel(props: {
           onOpenFile={onOpenFile}
           onOpenFileNewTab={onOpenFileNewTab}
           onOpenFileSide={onOpenFileSide}
+          onOpenFileSystem={onOpenFileSystem}
           onReferenceFile={onReferenceFile}
           refreshTick={refreshTick}
         />

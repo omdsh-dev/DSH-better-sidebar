@@ -8,7 +8,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  IconCloseFill14, IconPlusOutline16, Menu,
+  IconCloseFill14, IconCloseOutline16, IconCopyOutline16, IconPlusOutline16, IconRightUpOutline16,
+  Menu, writeClipboard, type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarTab } from './state.ts'
 import { t } from './locales.ts'
@@ -21,6 +22,14 @@ export interface NewTabOption {
   disabled?: boolean
   /** Leading icon (Menu row). */
   icon?: ReactNode
+}
+
+/** A tab's local file paths (the tab context menu's path entries). */
+export interface TabPathPayload {
+  /** The absolute filesystem path. */
+  absolute: string
+  /** The path relative to the session cwd (falls back to absolute). */
+  relative: string
 }
 
 /** Drag payload for tab moves (HTML5 DnD dataTransfer). */
@@ -66,11 +75,24 @@ export function TabBar(props: {
   /** Badge resolver for tab labels (reads the descriptor's `badge`; the
    *  resolver returns the rendered pill or null). */
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /** Context-menu "close tabs to the right" (absent → no entry). */
+  onCloseRight?: (tabId: string) => void
+  /** Context-menu "close tabs to the left" (absent → no entry). */
+  onCloseLeft?: (tabId: string) => void
+  /** Context-menu "close other tabs" (absent → no entry). */
+  onCloseOthers?: (tabId: string) => void
+  /** Per-tab path payload for the context menu's path entries (absent → no path entries). */
+  getTabPath?: (tab: SidebarTab) => TabPathPayload | null
+  /** Context-menu "open with the default app" (absent → no entry). */
+  onOpenFileSystem?: (path: string) => void
 }) {
   const {
     paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge,
+    onCloseRight, onCloseLeft, onCloseOthers, getTabPath, onOpenFileSystem,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
+  /** Open tab context menu: the right-clicked tab plus the cursor position. */
+  const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -105,6 +127,37 @@ export function TabBar(props: {
       window.removeEventListener('blur', clear)
     }
   }, [])
+
+  /** The right-clicked tab (plus its strip index and path payload) driving
+   *  the context menu below. */
+  const menuTab = tabMenu === null ? null : tabs.find(tab => tab.id === tabMenu.tabId) ?? null
+  const menuIndex = menuTab === null ? -1 : tabs.findIndex(tab => tab.id === menuTab.id)
+  const menuPath = menuTab === null ? null : (getTabPath?.(menuTab) ?? null)
+
+  /** The tab context menu entries: close group always; path group only for
+   *  tabs carrying a local file path. Range entries disable at the edges. */
+  const contextItems: MenuEntry[] = [
+    { id: 'close-this', label: t('closeThisTab'), icon: <IconCloseOutline16 size={14} /> },
+    ...(onCloseRight !== undefined
+      ? [{ id: 'close-right', label: t('closeRightTabs'), disabled: menuIndex < 0 || menuIndex >= tabs.length - 1 }]
+      : []),
+    ...(onCloseLeft !== undefined
+      ? [{ id: 'close-left', label: t('closeLeftTabs'), disabled: menuIndex <= 0 }]
+      : []),
+    ...(onCloseOthers !== undefined
+      ? [{ id: 'close-others', label: t('closeOtherTabs'), disabled: tabs.length <= 1 }]
+      : []),
+    ...(menuPath !== null
+      ? [
+          { type: 'separator', id: 'tab-menu-path-sep' } as const,
+          { id: 'copy-absolute', label: t('copyAbsolute'), icon: <IconCopyOutline16 size={14} /> },
+          { id: 'copy-relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={14} /> },
+          ...(onOpenFileSystem !== undefined
+            ? [{ id: 'open-system', label: t('openWithDefault'), icon: <IconRightUpOutline16 size={14} /> }]
+            : []),
+        ]
+      : []),
+  ]
 
   return (
     <div
@@ -158,6 +211,12 @@ export function TabBar(props: {
                 onClose(tab.id)
               }
             }}
+            onContextMenu={(event) => {
+              // Right-click opens the tab's context menu at the cursor.
+              event.preventDefault()
+              event.stopPropagation()
+              setTabMenu({ tabId: tab.id, x: event.clientX, y: event.clientY })
+            }}
           >
             {getTabIcon?.(tab) ?? null}
             {getTabBadge?.(tab) ?? null}
@@ -208,6 +267,51 @@ export function TabBar(props: {
           )}
         />
       </div>
+      {/*
+        The shared tab context menu, positioned at the right-click cursor
+        (portal so the strip's overflow clip cannot crop it).
+      */}
+      <Menu
+        open={tabMenu !== null}
+        onClose={() => { setTabMenu(null) }}
+        items={contextItems}
+        onSelect={(id) => {
+          const target = menuTab
+          if (target === null) return
+          setTabMenu(null)
+          if (id === 'close-this') {
+            onClose(target.id)
+            return
+          }
+          if (id === 'close-right') {
+            onCloseRight?.(target.id)
+            return
+          }
+          if (id === 'close-left') {
+            onCloseLeft?.(target.id)
+            return
+          }
+          if (id === 'close-others') {
+            onCloseOthers?.(target.id)
+            return
+          }
+          if (menuPath !== null && id === 'copy-absolute') {
+            void writeClipboard(menuPath.absolute)
+            return
+          }
+          if (menuPath !== null && id === 'copy-relative') {
+            void writeClipboard(menuPath.relative)
+            return
+          }
+          if (id === 'open-system' && menuPath !== null) {
+            onOpenFileSystem?.(menuPath.absolute)
+          }
+        }}
+        portal
+        align="start"
+        getAnchorRect={() => (tabMenu === null ? null : new DOMRect(tabMenu.x, tabMenu.y, 0, 0))}
+        anchor={<span />}
+      />
     </div>
   )
 }

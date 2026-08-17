@@ -14,7 +14,7 @@ import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import type { SidebarState, SidebarTab, SplitNode } from './state.ts'
 import type { DropZone } from './state.ts'
-import { TabBar, type NewTabOption, parseDrag, type TabDragPayload } from './TabBar.tsx'
+import { TabBar, type NewTabOption, type TabPathPayload, parseDrag, type TabDragPayload } from './TabBar.tsx'
 import css from './sidebar.module.css'
 
 /** Actions the workbench needs (bound to the store by the sidebar shell). */
@@ -28,6 +28,8 @@ export interface WorkbenchActions {
   /** Reorder within a pane (drop onto another tab inserts before it). */
   moveTabBefore: (payload: TabDragPayload, toPane: string, beforeTabId: string) => void
   resizeSplit: (splitId: string, index: number, deltaFrac: number) => void
+  /** VSCode tab context menu: close the tabs right of / left of / other than a tab. */
+  closeTabRange: (paneId: string, tabId: string, mode: 'right' | 'left' | 'others') => void
 }
 
 /** One divider: pointer-capture drag translating px deltas into fractions.
@@ -124,8 +126,10 @@ function LeafView(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  getTabPath?: (tab: SidebarTab) => TabPathPayload | null
+  onOpenFileSystem?: (path: string) => void
 }) {
-  const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, getTabPath, onOpenFileSystem } = props
   const [dropZone, setDropZone] = useState<DropZone | null>(null)
   const activeTab = leaf.tabs.find(tab => tab.id === leaf.active) ?? leaf.tabs[leaf.tabs.length - 1]
 
@@ -180,6 +184,11 @@ function LeafView(props: {
         newTabOptions={newTabOptions}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        getTabPath={getTabPath}
+        onOpenFileSystem={onOpenFileSystem}
+        onCloseRight={(tabId) => { actions.closeTabRange(leaf.id, tabId, 'right') }}
+        onCloseLeft={(tabId) => { actions.closeTabRange(leaf.id, tabId, 'left') }}
+        onCloseOthers={(tabId) => { actions.closeTabRange(leaf.id, tabId, 'others') }}
         onDropTab={(payload, before) => {
           if (before === null) actions.moveTabToEdge(payload, leaf.id, 'center')
           else actions.moveTabBefore(payload, leaf.id, before)
@@ -220,8 +229,10 @@ function NodeView(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  getTabPath?: (tab: SidebarTab) => TabPathPayload | null
+  onOpenFileSystem?: (path: string) => void
 }) {
-  const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, getTabPath, onOpenFileSystem } = props
   if (node.kind === 'leaf') {
     return (
       <LeafView
@@ -232,6 +243,8 @@ function NodeView(props: {
         renderTab={renderTab}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        getTabPath={getTabPath}
+        onOpenFileSystem={onOpenFileSystem}
       />
     )
   }
@@ -259,6 +272,8 @@ function NodeView(props: {
               renderTab={renderTab}
               getTabIcon={getTabIcon}
               getTabBadge={getTabBadge}
+              getTabPath={getTabPath}
+              onOpenFileSystem={onOpenFileSystem}
             />
           </div>
         </Fragment>
@@ -280,8 +295,10 @@ export function Workbench(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  getTabPath?: (tab: SidebarTab) => TabPathPayload | null
+  onOpenFileSystem?: (path: string) => void
 }) {
-  const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, getTabPath, onOpenFileSystem } = props
   return (
     <div className={css.workbench}>
       <NodeView
@@ -293,6 +310,8 @@ export function Workbench(props: {
         renderTab={renderTab}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        getTabPath={getTabPath}
+        onOpenFileSystem={onOpenFileSystem}
       />
     </div>
   )
