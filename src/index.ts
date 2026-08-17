@@ -234,7 +234,7 @@ function registerFederatedJsonApi(
     | { ok: true; value: unknown }
     | { ok: false; error: { code: string; message: string; details: Record<string, unknown> } }
   >> = {}
-  for (const capability of capabilities) {
+  for (const capability of capabilities.filter(entry => entry.transport === 'json')) {
     handlers[capability.name] = async (context, payload) => {
       const source = payload !== null && typeof payload === 'object' && !Array.isArray(payload)
         ? payload as Record<string, unknown>
@@ -765,7 +765,11 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     const extensionRegistry = globalService<import('./context-types.ts').SidebarFederatedExtensionRegistry>(FEDERATED_EXTENSIONS_GLOBAL)
       ?? ctx.get('federatedExtensions') as import('./context-types.ts').SidebarFederatedExtensionRegistry | undefined
     if (extensionRegistry !== undefined) {
-      extensionDisposer = registerFederatedJsonApi(ctx, resolved, ptyManager, extensionRegistry, ownerApi)
+      try {
+        extensionDisposer = registerFederatedJsonApi(ctx, resolved, ptyManager, extensionRegistry, ownerApi)
+      } catch (error) {
+        ctx.logger?.warn(`[dsh-better-sidebar] federation registration deferred: ${error instanceof Error ? error.message : String(error)}`)
+      }
     }
   }
   ensureFederationRegistration()
