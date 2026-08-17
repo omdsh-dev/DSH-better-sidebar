@@ -760,7 +760,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // ordered before the sidebar bundle in deployment, a root lookup avoids
   // Cordis child-context injection ordering differences between profiles.
   let extensionDisposer: (() => void) | undefined
-  const ownerSessions = ctx.sessions
+  const ownerSessions = (ctx.get('sessions', true) ?? ctx.sessions) as Context['sessions']
   const ownerApi = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace, 'owner-strict', ownerSessions)
   const ensureFederationRegistration = (): void => {
     if (extensionDisposer !== undefined) return
