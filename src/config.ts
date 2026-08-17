@@ -44,6 +44,16 @@ export interface SidebarConfig {
   mediaLimit?: number
   /** Explorer row bound of one level. */
   listLimit?: number
+  /** Path-cache index bound: max files collected by one workspace tree scan. */
+  indexLimit?: number
+  /** Path-cache index bound: max directory nesting scanned from the workspace root. */
+  indexMaxDepth?: number
+  /**
+   * Whether the plugin injects a short system-prompt section asking the
+   * model to cite code as relative paths with line ranges (e.g.
+   * `src/main.ts:42-56`). Off disables the injection.
+   */
+  codeRefPrompt?: boolean
   /** Terminals per session. */
   terminalsPerSession?: number
   /** How long a disconnected terminal process survives awaiting a reconnect. */
@@ -63,6 +73,9 @@ export const Config: z<SidebarConfig> = z.object({
   readLimit: z.number().step(1).min(1).default(512 * 1024),
   mediaLimit: z.number().step(1).min(1).default(20 * 1024 * 1024),
   listLimit: z.number().step(1).min(1).default(1000),
+  indexLimit: z.number().step(1).min(1).default(20_000),
+  indexMaxDepth: z.number().step(1).min(1).default(12),
+  codeRefPrompt: z.boolean().default(true),
   terminalsPerSession: z.number().step(1).min(1).default(3),
   reconnectGraceMs: z.number().step(1).min(0).default(30_000),
   shell: z.string().default(''),
@@ -73,6 +86,9 @@ export interface ResolvedSidebarConfig {
   readLimit: number
   mediaLimit: number
   listLimit: number
+  indexLimit: number
+  indexMaxDepth: number
+  codeRefPrompt: boolean
   terminalsPerSession: number
   reconnectGraceMs: number
   shell: string
@@ -89,6 +105,9 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
     readLimit: config?.readLimit ?? 512 * 1024,
     mediaLimit: config?.mediaLimit ?? 20 * 1024 * 1024,
     listLimit: config?.listLimit ?? 1000,
+    indexLimit: config?.indexLimit ?? 20_000,
+    indexMaxDepth: config?.indexMaxDepth ?? 12,
+    codeRefPrompt: config?.codeRefPrompt ?? true,
     terminalsPerSession: config?.terminalsPerSession ?? 3,
     reconnectGraceMs: config?.reconnectGraceMs ?? 30_000,
     shell: config?.shell?.trim() ?? '',

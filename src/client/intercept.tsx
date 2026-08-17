@@ -14,9 +14,11 @@ import { IconCodeOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import type { SidebarStore } from './state.ts'
 import { t } from './locales.ts'
+import { api } from './api.ts'
 import { resolveSidebarPath, selectProducedFiles } from './produced-files.ts'
 import { wrapOpenPath } from './openpath-intercept.ts'
 import { wrapChatFileMentions, type ChatFileMentionsService } from './chat-mentions.ts'
+import { createPathVerifier } from './verified-paths.ts'
 import { parsePathLine, type LineRange } from './path-line.ts'
 import css from './sidebar.module.css'
 
@@ -165,14 +167,60 @@ function chatPathLinksEnabled(store: SidebarStore): boolean {
  * Produced-path resolution keeps precedence; the side-card toggle gates the
  * extra resolution only (produced mentions keep working when it is off).
  *
+ * Only paths VERIFIED to exist render as links: mention resolution is
+ * synchronous (MarkdownText), so a client-side verified-path cache
+ * (verified-paths.ts) answers membership while an async `fs.read` probe
+ * confirms unknown paths in the background — an illustrative or typo'd
+ * path stays plain code and never becomes a link.
+ *
  * The service may not be provided yet when this plugin activates (both are
  * client bundles), and ui-deliverables HMR re-provides a fresh object — a
  * cheap poll re-wraps in both cases. Returns the disposer (HMR-safe).
+ *
+ * `probe` is injectable for tests (defaults to an `fs.read` existence
+ * probe through the sidebar API).
  */
-export function registerChatMentionInterception(ctx: Context, store: SidebarStore): () => void {
+export function registerChatMentionInterception(
+  ctx: Context,
+  store: SidebarStore,
+  probe?: (scope: { sessionId: string; cwd?: string }, absolute: string) => Promise<boolean>,
+): () => void {
   let restore: (() => void) | null = null
   let wrapped: ChatFileMentionsService | null = null
   let disposed = false
+
+  // The current session scope (the visible conversation — where mentions
+  // render and click), used for both path resolution and the fs probes.
+  const scopeOf = (): { sessionId: string; cwd?: string } | undefined => {
+    const snapshot = ctx.sessions.list.getSnapshot()
+    const sessionId = snapshot.current
+    if (sessionId === undefined) return undefined
+    const summary = snapshot.byId[sessionId]
+    return summary === undefined ? { sessionId } : { sessionId, cwd: summary.cwd }
+  }
+
+  // Existence cache: a bounded recursive workspace scan (`fs.index`) seeds
+  // verified paths whenever a session (workspace) becomes active; paths the
+  // scan missed fall back to a rare per-path fs.read probe. `check()` stays
+  // synchronous for the renderer.
+  const verifier = createPathVerifier({
+    scope: scopeOf,
+    resolveAbsolute: (path) => resolveSidebarPath(scopeOf()?.cwd, path),
+    fetchIndex: async (scope) => (await api.fsIndex(scope)).paths,
+    probe: probe ?? (async (scope, absolute) => {
+      try {
+        await api.fsRead(scope, absolute)
+        return true
+      } catch {
+        return false
+      }
+    }),
+  })
+  // Scan the workspace as soon as it opens (a session switch changes cwd),
+  // so the cache is warm before the first message renders.
+  const warm = (): void => { verifier.warm() }
+  warm()
+  const offSessions = ctx.sessions.list.subscribe(warm)
 
   const tryWrap = (): void => {
     if (disposed) return
@@ -181,6 +229,7 @@ export function registerChatMentionInterception(ctx: Context, store: SidebarStor
     restore?.()
     restore = wrapChatFileMentions(service, (owner) => ({
       enabled: () => chatPathLinksEnabled(store),
+      verified: (path) => verifier.check(path),
       // Route the open through the chat file-open funnel: the owner's
       // openFile resolves against the session cwd and calls
       // workspaces.openPath — which registerOpenPathInterception reroutes
@@ -213,6 +262,8 @@ export function registerChatMentionInterception(ctx: Context, store: SidebarStor
   return () => {
     disposed = true
     window.clearInterval(timer)
+    offSessions()
+    verifier.clear()
     restore?.()
     restore = null
     wrapped = null

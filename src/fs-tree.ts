@@ -6,8 +6,16 @@
  * expands like a directory — and dangling links are flagged broken. The
  * probe runs only for entries that are actually symlinks, so levels without
  * links stay as cheap as before.
+ *
+ * Also home to {@link indexDirectory}: a BOUNDED recursive workspace scan
+ * that powers the chat path-cache (see verified-paths.ts). It deliberately
+ * skips heavyweight / generated directories and stops at entry-count and
+ * depth caps, so scanning a huge, deeply nested repository stays cheap —
+ * the cache is a hint, not an exhaustive inventory (paths beyond the bounds
+ * fall back to a per-path probe at mention time).
  */
-import { opendir, stat } from 'node:fs/promises'
+import { opendir, readdir, stat } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { SidebarError } from './wire.ts'
 
@@ -84,6 +92,77 @@ export async function listDirectory(path: string, maxEntries = 1000): Promise<Si
 
 /** How many symlink target stats run in flight during one level listing. */
 const SYMLINK_PROBE_CONCURRENCY = 32
+
+/** Directory names never entered by the workspace index scan: heavyweight
+ *  or generated content where referencing files is rare and the cost of
+ *  walking is high (node_modules alone can dwarf the whole repo). The
+ *  mention path-cache treats these as "unknown" and falls back to a
+ *  per-path probe, so nothing is permanently invisible. */
+export const INDEX_SKIP_DIRS: ReadonlySet<string> = new Set([
+  'node_modules',
+  '.git', '.hg', '.svn',
+  'dist', 'build', 'out', 'target', 'coverage',
+  '.next', '.nuxt', '.turbo', '.parcel-cache', '.eslintcache', '.pytest_cache',
+  '.venv', 'venv', '__pycache__',
+  '.cache', '.idea', '.vscode',
+  'tmp', 'temp',
+])
+
+/** One workspace index scan result. */
+export interface SidebarFsIndex {
+  /** Absolute paths of every indexed entry (files and directories). */
+  paths: string[]
+  /** Whether a bound (entry count / depth) stopped the scan early. */
+  truncated: boolean
+}
+
+/** The bounds of one index scan. */
+export interface IndexLimits {
+  /** Max collected entries; the scan stops at this many (truncated). */
+  maxEntries: number
+  /** Max directory nesting below the root; deeper levels are skipped (truncated). */
+  maxDepth: number
+}
+
+/**
+ * Bounded recursive workspace scan for the chat path-cache. Walks the tree
+ * level by level (bounded concurrency per level), skipping
+ * {@link INDEX_SKIP_DIRS}, and stops at the entry-count / depth caps.
+ * Symlinked directories are recorded but NOT descended into (cycle safety);
+ * symlinked files are recorded like any other entry. Unreadable levels are
+ * skipped silently — the index is a best-effort hint. Returns every indexed
+ * absolute path, plus whether the scan was cut short by a bound.
+ */
+export async function indexDirectory(root: string, limits: IndexLimits): Promise<SidebarFsIndex> {
+  const paths: string[] = []
+  let truncated = false
+  let level = [root]
+  for (let depth = 0; depth <= limits.maxDepth && level.length > 0 && !truncated; depth += 1) {
+    const next: string[] = []
+    await Promise.all(level.map(async (dir) => {
+      if (truncated) return
+      const entries = await readdir(dir, { withFileTypes: true }).catch(() => [] as Dirent[])
+      for (const entry of entries) {
+        if (paths.length >= limits.maxEntries) {
+          truncated = true
+          return
+        }
+        // Heavyweight / generated directories are skipped entirely (neither
+        // recorded nor descended into) — a skipped entry must NOT abort the
+        // rest of the level.
+        if (entry.isDirectory() && INDEX_SKIP_DIRS.has(entry.name)) continue
+        paths.push(join(dir, entry.name))
+        // Real directories (not symlinks) are descended into on the next
+        // level; a symlink to a directory is recorded but not followed.
+        if (entry.isDirectory() && !entry.isSymbolicLink()) next.push(join(dir, entry.name))
+      }
+    }))
+    level = next
+  }
+  // Deeper levels still pending = the depth bound cut the scan short.
+  if (level.length > 0) truncated = true
+  return { paths, truncated }
+}
 
 /** Probe each symlink row's target once (bounded concurrency, order-preserving). */
 async function probeSymlinkTargets(rows: SidebarFsEntry[], concurrency = SYMLINK_PROBE_CONCURRENCY): Promise<void> {

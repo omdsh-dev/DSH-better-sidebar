@@ -21,6 +21,7 @@ import { BrowserView } from '../BrowserView.tsx'
 import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16 } from '../icons.tsx'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
 import { readJumpMeta } from '../path-line.ts'
+import { useMemo } from 'react'
 import type { ComponentType } from 'react'
 import type { SessionScope } from '../api.ts'
 import type { SidebarStore } from '../state.ts'
@@ -82,16 +83,24 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
           },
         ],
       },
-      component: ({ ctx, store, scope, tab }) => (
-        <EditorHost
-          ctx={ctx}
-          store={store}
-          scope={scope}
-          path={tab.path ?? ''}
-          title={tab.title}
-          jumpLine={readJumpMeta(tab.meta)}
-        />
-      ),
+      component: ({ ctx, store, scope, tab }) => {
+        // The line jump target derived from the tab meta. Memoized on the
+        // meta VALUE: the sidebar re-renders the active tab on every store
+        // change, and an unmemoized fresh object would re-fire the editor's
+        // jump effect on each render — clobbering the user's selection and
+        // re-scrolling to the jump target while they select code.
+        const jumpLine = useMemo(() => readJumpMeta(tab.meta), [tab.meta])
+        return (
+          <EditorHost
+            ctx={ctx}
+            store={store}
+            scope={scope}
+            path={tab.path ?? ''}
+            title={tab.title}
+            jumpLine={jumpLine}
+          />
+        )
+      },
     },
     {
       id: 'explorer',

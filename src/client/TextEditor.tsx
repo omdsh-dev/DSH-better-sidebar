@@ -340,18 +340,25 @@ export function TextEditor(props: FileViewerProps) {
 
   // The line jump (from a chat path:line click or the tab's meta): stash it
   // and apply once the view exists; a null jump (plain reopen) clears any
-  // pending jump and highlight.
+  // pending jump and highlight. The same target (path + line range) is never
+  // re-applied — the parent may re-render the tab for unrelated reasons, and
+  // re-dispatching the selection would clobber the user's own selection.
   useEffect(() => {
     if (jumpLine === undefined || jumpLine === null) {
       clearJump()
       return
     }
-    pendingJumpRef.current = { line: { start: jumpLine.start, end: jumpLine.end }, path }
+    const line = { start: jumpLine.start, end: jumpLine.end }
+    const prev = pendingJumpRef.current
+    if (prev !== null && prev.path === path && prev.line.start === line.start && prev.line.end === line.end) {
+      return
+    }
+    pendingJumpRef.current = { line, path }
     appliedJumpRef.current = false
     applyJump()
-    // path is part of the pending record; applyJump reads refs for the rest.
+    // applyJump reads refs for the rest; path is part of the pending record.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jumpLine])
+  }, [jumpLine, path])
 
   const save = (): void => {
     const view = viewRef.current

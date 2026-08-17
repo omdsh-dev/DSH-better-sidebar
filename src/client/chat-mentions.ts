@@ -14,8 +14,16 @@
  * on top:
  *
  * 1. the DSH produced-path resolution first (unchanged behavior);
- * 2. `path:line` / `path:start-end` references (see path-line.ts);
- * 3. bare paths with a separator.
+ * 2. `path:line` / `path:start-end` references (see path-line.ts) whose
+ *    path is VERIFIED to exist (verified-paths.ts);
+ * 3. bare separator-carrying paths that are VERIFIED to exist.
+ *
+ * Existence gating: MarkdownText's `resolve()` is synchronous, so only paths
+ * the {@link PathVerifier} cache knows to exist become mentions — a
+ * non-existent path (an illustrative example in prose, a typo, a deleted
+ * file) stays plain code and never renders as a link. Unknown paths are
+ * probed in the background; once verified, a later render of the message
+ * (any chat re-render) upgrades them to links.
  *
  * The open callback rides the chat file-open funnel (`owner.openFile`) with
  * the line suffix re-appended to the path (`src/foo.ts:42`); the open-path
@@ -46,6 +54,12 @@ export interface ChatFileMentionsService {
 export interface ChatMentionDeps {
   /** Whether the feature is on (the side-card toggle, read live). */
   enabled(): boolean
+  /**
+   * Whether a (possibly relative) path is VERIFIED to exist; unknown paths
+   * trigger a background probe (verified-paths.ts). Only verified paths
+   * may resolve into mentions — non-existent references stay plain code.
+   */
+  verified(path: string): boolean
   /** Route one open through the chat file-open funnel (`owner.openFile`). */
   openPath(path: string): void
   /** Localized accessible label for a mention (`{name}` is the display text). */
@@ -68,6 +82,9 @@ export function enhanceMentionResolver(
       if (produced !== undefined) return produced
       const line = parsePathLine(value)
       if (line !== null) {
+        // Only references to files that EXIST become links: an illustrative
+        // or typo'd path stays plain code (and is probed for later renders).
+        if (!deps.verified(line.path)) return undefined
         const title = linePathWithSuffix(line)
         return {
           open: () => deps.openPath(title),
@@ -76,6 +93,7 @@ export function enhanceMentionResolver(
         }
       }
       if (looksLikePath(value)) {
+        if (!deps.verified(value)) return undefined
         return {
           open: () => deps.openPath(value),
           label: deps.label(value),

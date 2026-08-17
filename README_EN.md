@@ -22,7 +22,7 @@
 ## ✨ Features
 
 - **🗂️ File Workbench**: file explorer (lazy-loading tree; symlinks show their target kind — directory links expand, dangling links flagged) + CodeMirror editor; inline preview for images / Markdown / HTML / PDF / Office
-- **🔗 Path & Line Jump**: file paths and `path:line` references in chat (e.g. `src/main.ts:42`) become clickable — clicking opens the file in the sidebar and scrolls to, highlighting, the referenced lines
+- **🔗 Path & Line Jump**: file paths and `path:line` references in chat (e.g. `src/main.ts:42`) become clickable — clicking opens the file in the sidebar and scrolls to, highlighting, the referenced lines; **only real files get links** (workspace tree-scan cache), non-existent paths stay plain text
 - **🌐 Embedded Browser**: multiple web tabs with back / forward / refresh; content runs in a sandboxed iframe; external links are routed by protocol by default — HTTP opens in the sidebar, HTTPS goes to the system browser (both adjustable in settings)
 - **💻 Real Terminal**: xterm.js + node-pty real shell, reconnect with transcript replay; optionally injects `terminal_*` tools for the model
 - **🌿 Git Panel**: real diff + VSCode-style diff tabs, history, right-click to stage / commit / revert
@@ -46,8 +46,14 @@
 
 **✨ New features**
 
-- 🔗 **Path & line links in chat**: file paths (`src/main.ts`) and line references (`src/main.ts:42`, `src/main.ts:42-56`) in chat code snippets become clickable — clicking opens the file in the sidebar editor and scrolls to, highlighting, the referenced lines (Markdown/HTML auto-switch to edit mode to reveal them); produced-path resolution keeps DSH's semantics; toggle under the Editor card's gear dialog
+- 🔗 **Path & line links in chat**: file paths (`src/main.ts`) and line references (`src/main.ts:42`, `src/main.ts:42-56`) in chat code snippets become clickable — clicking opens the file in the sidebar editor and scrolls to, highlighting, the referenced lines (Markdown/HTML auto-switch to edit mode to reveal them)
+- 🗂️ **Only real files become links**: opening a workspace triggers one BOUNDED directory-tree scan (heavyweight dirs like node_modules/.git/dist skipped; defaults 20k entries / 12 levels, configurable) that seeds a path cache; non-existent paths (e.g. illustrative examples in chat) stay plain code and never render as links; files created after the scan fall back to a lightweight probe
+- ✍️ **Prompt the model to cite relative-path:line**: the host injects one short system-prompt section via DSH's public `systemPrompt.section()` (toggleable with the `codeRefPrompt` config), nudging the model toward `src/main.ts:42-56`-style references
 - 🔌 **New FileViewerProps field**: optional `jumpLine` (`{ start, end }`) — text viewers can scroll to and highlight a line range
+
+**🐛 Fixes**
+
+- 🖱️ **Selecting code no longer jumps**: fixed the jump target re-applying on every re-render, clobbering the user's selection and re-scrolling to the jump lines (`readJumpMeta` memoized + same-target jump deduped)
 
 ### v0.12.3
 
