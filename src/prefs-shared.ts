@@ -46,6 +46,14 @@ export interface SidebarPrefs {
    */
   terminalFontSize: number
   /**
+   * Explicit shell override: a full path to the shell executable (e.g.
+   * `C:\Program Files\PowerShell\7\pwsh.exe`) or a bare exe name on PATH.
+   * Empty string means "use the platform default" (`defaultShell()`).
+   * Takes priority over `$SHELL` / `$DSH_SIDEBAR_SHELL` and the automatic
+   * resolution chain.
+   */
+  shellOverride: string
+  /**
    * Whether expanding the bottom panel for the FIRST time in a session tries
    * to open a fresh terminal tab there (the terminal quota/type still gates
    * the attempt). On by default; the switch lives under the terminal tab's
@@ -187,6 +195,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   bottomPanelAutoTerminal: true,
   terminalFontFamily: '',
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
+  shellOverride: '',
   interceptOpenPath: true,
   editorExplorer: true,
   titleBarCompat: false,

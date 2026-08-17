@@ -189,13 +189,26 @@ export function snapshotOf(handle: AgentTerminalHandle): AgentTerminalSnapshot {
 export class AgentPtyRegistry {
   private readonly sessions = new Map<string, AgentTerminalHandle>()
   private readonly changeListeners = new Set<() => void>()
+  /** The current shell path (can be updated by the user through settings). */
+  private _shell: string
 
   constructor(
-    private readonly shell: string,
+    shell: string,
     /** The loaded node-pty module (injected so a broken install degrades instead of crashing the plugin). */
     private readonly nodePty: NodePtyModule = loadRequiredNodePty(),
   ) {
+    this._shell = shell
     ensureSpawnHelper()
+  }
+
+  /** Get the current shell path. */
+  get shell(): string {
+    return this._shell
+  }
+
+  /** Update the shell path (takes effect for new terminals). */
+  updateShell(shell: string): void {
+    this._shell = shell
   }
 
   /**
@@ -216,7 +229,7 @@ export class AgentPtyRegistry {
   ): string {
     const uuid = randomUUID()
     const dims = clampDims(cols, rows)
-    const pty = this.nodePty.spawn(this.shell, shellSpawnArgs(), {
+    const pty = this.nodePty.spawn(this._shell, shellSpawnArgs(), {
       name: 'xterm-256color',
       cols: dims.cols,
       rows: dims.rows,

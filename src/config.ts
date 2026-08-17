@@ -107,6 +107,7 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   bottomPanelAutoTerminal: z.boolean().default(true),
   terminalFontFamily: z.string().default(''),
   terminalFontSize: z.number().step(1).min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX).default(TERMINAL_FONT_SIZE_DEFAULT),
+  shellOverride: z.string().default(''),
   interceptOpenPath: z.boolean().default(true),
   editorExplorer: z.boolean().default(true),
   titleBarCompat: z.boolean().default(false),

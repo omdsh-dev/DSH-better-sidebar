@@ -713,3 +713,93 @@
     transition: none;
   }
 }
+
+/* ── Terminal shell selection ─────────────────────────────────────────── */
+
+.selectWrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.select {
+  appearance: none;
+  width: 200px;
+  padding: 6px 28px 6px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.select:hover {
+  border-color: var(--dsw-alias-label-dimmed);
+}
+
+.select:focus {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+  border-color: var(--dsw-alias-button-primary-fill);
+}
+
+.selectChevron {
+  position: absolute;
+  right: 8px;
+  pointer-events: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.detectButton {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.detectButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-label-dimmed);
+}
+
+.detectButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.shellList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 2px 0;
+}
+
+.shellChip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.shellPath {
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--dsw-alias-label-tertiary);
+  word-break: break-all;
+}

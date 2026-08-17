@@ -36,7 +36,7 @@ import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
 import * as git from './git.ts'
 import { SettingsConflictError, settingsNamespace, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
-import { defaultShell, ensureSpawnHelper, PtyManager } from './pty-manager.ts'
+import { defaultShell, ensureSpawnHelper, PtyManager, detectShells } from './pty-manager.ts'
 import { AgentPtyRegistry, clampDims, type AgentTerminalHandle } from './agent-pty.ts'
 import {
   DSH_NODE_PTY_RANGE,
@@ -433,6 +433,9 @@ function buildApi(
         clearTimeout(timer)
       }
     },
+    // Detect available shells on the current system. Returns a list of
+    // ShellInfo objects with availability status and resolved paths.
+    'shell.detect': () => detectShells(),
   }
 }
 
@@ -535,6 +538,16 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     // and keep them in sync with every settings commit.
     syncToolsGate(scope)
     scope.watch(() => { syncToolsGate(scope) })
+    // Sync the shell override from user settings to the PtyManager and
+    // AgentPtyRegistry so new terminals use the user's chosen shell.
+    const syncShell = (prefs: SidebarPrefs): void => {
+      const override = prefs.shellOverride?.trim() ?? ''
+      const shell = override !== '' ? override : terminalShell
+      ptyManager?.updateShell(shell)
+      agentPtyRegistry?.updateShell(shell)
+    }
+    syncShell(scope.get())
+    scope.watch((next) => { syncShell(next) })
   })
 
   // ── JSON API ────────────────────────────────────────────────────────────

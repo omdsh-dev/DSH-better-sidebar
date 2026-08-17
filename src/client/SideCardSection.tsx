@@ -60,7 +60,7 @@ import {
   WIDTH_PERCENT_MIN,
   type SidebarPrefs,
 } from '../prefs-shared.ts'
-import { api } from './api.ts'
+import { api, type ShellInfo } from './api.ts'
 import { parsePrefs } from './prefs.ts'
 import { AddPluginModal, type PluginKind } from './add-plugin-modal.tsx'
 import { t } from './locales.ts'
@@ -486,6 +486,118 @@ export function SettingsBody(props: {
 }
 
 /**
+ * Terminal section: shell selection with auto-detection.
+ * Shows a dropdown of detected shells and a refresh button.
+ */
+function TerminalSection(props: {
+  prefs: SidebarPrefs
+  onShellChange: (shell: string) => void
+}) {
+  const { prefs, onShellChange } = props
+  const [shells, setShells] = useState<ShellInfo[]>([])
+  const [detecting, setDetecting] = useState(false)
+  const [detectError, setDetectError] = useState<string | null>(null)
+
+  // Detect shells on mount
+  useEffect(() => {
+    let cancelled = false
+    void api.shellDetect().then((result) => {
+      if (!cancelled) {
+        setShells(result.filter(s => s.available))
+        setDetectError(null)
+      }
+    }).catch((error) => {
+      if (!cancelled) {
+        setDetectError(error instanceof Error ? error.message : String(error))
+      }
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  const handleDetect = async (): Promise<void> => {
+    setDetecting(true)
+    setDetectError(null)
+    try {
+      const result = await api.shellDetect()
+      setShells(result.filter(s => s.available))
+    } catch (error) {
+      setDetectError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDetecting(false)
+    }
+  }
+
+  // Build options for the select: detected shells + a "default" option
+  const options: Array<{ value: string; label: string; desc?: string }> = [
+    { value: '', label: t('settingsShellDefault'), desc: t('settingsShellDefaultDesc') },
+    ...shells.map(shell => ({
+      value: shell.path,
+      label: shell.name,
+      desc: shell.path !== shell.exe ? shell.path : undefined,
+    })),
+  ]
+
+  // Find the currently selected option
+  const currentShell = prefs.shellOverride?.trim() ?? ''
+  const selectedLabel = currentShell === ''
+    ? t('settingsShellDefault')
+    : shells.find(s => s.path === currentShell)?.name ?? currentShell
+
+  return (
+    <div className={css.group}>
+      <div className={css.groupHeading}>{t('settingsShellTitle')}</div>
+      <div className={css.row}>
+        <span className={css.rowText}>
+          <span className={css.title}>{t('settingsShellSelectTitle')}</span>
+          <span className={css.desc}>{t('settingsShellSelectDesc')}</span>
+        </span>
+        <span className={css.control}>
+          <span className={css.selectWrapper}>
+            <select
+              className={css.select}
+              value={currentShell}
+              aria-label={t('settingsShellSelectTitle')}
+              onChange={(e) => { onShellChange(e.target.value) }}
+            >
+              {options.map(opt => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <IconChevronDownOutline14 size={14} className={css.selectChevron} />
+          </span>
+          <button
+            type="button"
+            className={css.detectButton}
+            onClick={handleDetect}
+            disabled={detecting}
+            title={t('settingsShellDetectTitle')}
+          >
+            {detecting ? '⏳' : '🔄'}
+          </button>
+        </span>
+      </div>
+      {shells.length > 0 && (
+        <div className={css.shellList}>
+          {shells.map(shell => (
+            <span key={shell.exe} className={css.shellChip}>
+              {shell.name}
+              {shell.path !== shell.exe && (
+                <span className={css.shellPath}>{shell.path}</span>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+      {detectError !== null && (
+        <div className={css.error} role="alert">{detectError}</div>
+      )}
+    </div>
+  )
+}
+
+/**
  * Render the Side card preferences section.
  * @param props - composed slot props (runtime share + injected store/service).
  * @returns the section element tree.
@@ -815,6 +927,12 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
           </span>
         </div>
       </div>
+
+      {/* 终端: shell selection and detection. */}
+      <TerminalSection
+        prefs={prefs}
+        onShellChange={(shell) => { applyPref({ shellOverride: shell }) }}
+      />
 
       {/* 侧边栏内容: one small card per registered tab type in a responsive
           grid; features declaring `settings.toggles` open their settings in

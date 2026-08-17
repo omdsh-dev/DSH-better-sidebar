@@ -68,13 +68,27 @@ export interface SidebarPty {
 export class PtyManager {
   private readonly sessions = new Map<string, SidebarPty>()
   private readonly pendingCloses = new Map<string, ReturnType<typeof setTimeout>>()
+  /** The current shell path (can be updated by the user through settings). */
+  private _shell: string
 
   constructor(
-    private readonly shell: string,
+    shell: string,
     private readonly maxPerSession: number,
     /** The loaded node-pty module (injected so a broken install degrades instead of crashing the plugin). */
     private readonly nodePty: NodePtyModule = loadRequiredNodePty(),
-  ) {}
+  ) {
+    this._shell = shell
+  }
+
+  /** Get the current shell path. */
+  get shell(): string {
+    return this._shell
+  }
+
+  /** Update the shell path (takes effect for new terminals). */
+  updateShell(shell: string): void {
+    this._shell = shell
+  }
 
   /** All live terminal keys of one session. */
   keysOf(sessionId: string): string[] {
@@ -122,7 +136,7 @@ export class PtyManager {
       sessionId,
       tabId,
       cwd,
-      pty: this.nodePty.spawn(this.shell, shellSpawnArgs(), {
+      pty: this.nodePty.spawn(this._shell, shellSpawnArgs(), {
         name: 'xterm-256color',
         cols: Math.max(2, Math.floor(cols)),
         rows: Math.max(2, Math.floor(rows)),
@@ -301,4 +315,89 @@ export function defaultShell(options: ShellResolutionOptions = {}): string {
  */
 export function shellSpawnArgs(): string[] {
   return process.platform === 'win32' ? [] : ['-l']
+}
+
+// ── Shell auto-detection ────────────────────────────────────────────────────
+
+/** Information about a detected shell. */
+export interface ShellInfo {
+  /** Human-readable name (e.g. "PowerShell Core (pwsh)"). */
+  name: string
+  /** The executable name (e.g. "pwsh.exe"). */
+  exe: string
+  /** Full resolved path if found, or the bare exe name if not. */
+  path: string
+  /** Whether the executable was found on this system. */
+  available: boolean
+}
+
+/** Candidate shells to probe, ordered by preference (first found wins). */
+const CANDIDATE_SHELLS: Array<{ name: string; exe: string; args?: string[] }> = process.platform === 'win32'
+  ? [
+    { name: 'PowerShell Core (pwsh)', exe: 'pwsh.exe', args: ['--version'] },
+    { name: 'Windows PowerShell', exe: 'powershell.exe', args: ['-Command', 'Write-Output ok'] },
+    { name: 'Command Prompt', exe: 'cmd.exe', args: ['/c', 'echo ok'] },
+    { name: 'Git Bash', exe: 'bash.exe', args: ['--version'] },
+    { name: 'WSL', exe: 'wsl.exe', args: ['--status'] },
+    { name: 'Nushell', exe: 'nu.exe', args: ['--version'] },
+    { name: 'Fish', exe: 'fish.exe', args: ['--version'] },
+  ]
+  : [
+    { name: 'Zsh', exe: 'zsh', args: ['--version'] },
+    { name: 'Bash', exe: 'bash', args: ['--version'] },
+    { name: 'Fish', exe: 'fish', args: ['--version'] },
+    { name: 'Nushell', exe: 'nu', args: ['--version'] },
+  ]
+
+/**
+ * Detect available shells on the current system. Runs each candidate
+ * through `execFile` with a short timeout; shells that respond are marked
+ * `available: true` with their resolved path. Non-responsive or missing
+ * shells return `available: false` with the bare exe name as path.
+ *
+ * Uses a lazy import for `child_process` so the module remains testable
+ * in environments without Node's full API surface.
+ */
+export async function detectShells(): Promise<ShellInfo[]> {
+  const { execFile } = await import('node:child_process')
+  const { promisify } = await import('node:util')
+  const execFileAsync = promisify(execFile)
+
+  const results: ShellInfo[] = []
+  for (const candidate of CANDIDATE_SHELLS) {
+    let available = false
+    let resolvedPath = candidate.exe
+    try {
+      const { stdout } = await execFileAsync(candidate.exe, candidate.args ?? [], {
+        timeout: 3000,
+        windowsHide: true,
+        encoding: 'utf8',
+      })
+      if (stdout !== undefined && stdout.trim() !== '') {
+        available = true
+        // Try to resolve the full path via `where` on Windows or `which` on POSIX
+        try {
+          const cmd = process.platform === 'win32' ? 'where' : 'which'
+          const { stdout: pathOut } = await execFileAsync(cmd, [candidate.exe], {
+            timeout: 2000,
+            windowsHide: true,
+            encoding: 'utf8',
+          })
+          const firstLine = pathOut.split('\n')[0]?.trim()
+          if (firstLine !== undefined && firstLine !== '') resolvedPath = firstLine
+        } catch {
+          // path resolution failed; keep the exe name
+        }
+      }
+    } catch {
+      // Shell not found or timed out — mark unavailable
+    }
+    results.push({
+      name: candidate.name,
+      exe: candidate.exe,
+      path: resolvedPath,
+      available,
+    })
+  }
+  return results
 }

@@ -214,6 +214,22 @@ export const api = {
    *  check; see the host's browser.probe route). */
   browserProbe: (url: string, signal?: AbortSignal) =>
     call<BrowserProbeResult>('browser.probe', { url }, signal),
+  /** Detect available shells on the current system. Returns a list of
+   *  ShellInfo objects with availability status and resolved paths. */
+  shellDetect: () =>
+    call<ShellInfo[]>('shell.detect', {}),
+}
+
+/** Information about a detected shell. */
+export interface ShellInfo {
+  /** Human-readable name (e.g. "PowerShell Core (pwsh)"). */
+  name: string
+  /** The executable name (e.g. "pwsh.exe"). */
+  exe: string
+  /** Full resolved path if found, or the bare exe name if not. */
+  path: string
+  /** Whether the executable was found on this system. */
+  available: boolean
 }
 
 /** Absolute URL of the media route for one path (images only). */
