@@ -758,12 +758,21 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // cwd resolver. The service is optional; because the Federation bundle is
   // ordered before the sidebar bundle in deployment, a root lookup avoids
   // Cordis child-context injection ordering differences between profiles.
-  const extensionRegistry = globalService<import('./context-types.ts').SidebarFederatedExtensionRegistry>(FEDERATED_EXTENSIONS_GLOBAL)
-    ?? ctx.get('federatedExtensions') as import('./context-types.ts').SidebarFederatedExtensionRegistry | undefined
-  if (extensionRegistry !== undefined) {
-    const ownerApi = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace, 'owner-strict')
-    ctx.effect(() => registerFederatedJsonApi(ctx, resolved, ptyManager, extensionRegistry, ownerApi))
+  let extensionDisposer: (() => void) | undefined
+  const ownerApi = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace, 'owner-strict')
+  const ensureFederationRegistration = (): void => {
+    if (extensionDisposer !== undefined) return
+    const extensionRegistry = globalService<import('./context-types.ts').SidebarFederatedExtensionRegistry>(FEDERATED_EXTENSIONS_GLOBAL)
+      ?? ctx.get('federatedExtensions') as import('./context-types.ts').SidebarFederatedExtensionRegistry | undefined
+    if (extensionRegistry !== undefined) {
+      extensionDisposer = registerFederatedJsonApi(ctx, resolved, ptyManager, extensionRegistry, ownerApi)
+    }
   }
+  ensureFederationRegistration()
+  ctx.effect(() => {
+    const timer = setInterval(ensureFederationRegistration, 100)
+    return () => { clearInterval(timer); extensionDisposer?.(); extensionDisposer = undefined }
+  })
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
