@@ -13,6 +13,7 @@ function mount(options: { cwd?: string; withRouter?: boolean } = {}) {
   let routedCall: unknown
   const routes: Route[] = []
   const ctx = {
+    get root() { return ctx },
     webRuntime: { trustedHosts: [] },
     webServer: { register: (route: Route) => { routes.push(route); return () => {} }, registerUpgrade: () => () => {} },
     sessions: { get: (id: string) => id === 'owner-local' && options.cwd !== undefined ? { header: { cwd: options.cwd } } : undefined },
@@ -41,6 +42,7 @@ function mount(options: { cwd?: string; withRouter?: boolean } = {}) {
       return () => {}
     },
     get: (name: string) => {
+      if (name === 'sessions') return ctx.sessions
       if (name === 'federatedExtensions') {
         return {
           register(value: Registration) {

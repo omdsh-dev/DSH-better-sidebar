@@ -750,18 +750,15 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
 
   // ── JSON API ────────────────────────────────────────────────────────────
   const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace)
-  let federationRouter = globalService<import('./context-types.ts').SidebarFederationExtensionRouter>(FEDERATION_EXTENSION_ROUTER_GLOBAL)
-    ?? ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
-  ctx.effect(() => {
-    // Rows may activate in either order. Resolve lazily from the root service
-    // registry on every request if the router was not present at sidebar boot.
-    return () => { federationRouter = undefined }
-  })
+  const federationRouter = (): import('./context-types.ts').SidebarFederationExtensionRouter | undefined =>
+    globalService<import('./context-types.ts').SidebarFederationExtensionRouter>(FEDERATION_EXTENSION_ROUTER_GLOBAL)
+      ?? ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
   // Federation calls the same business handlers, but through a strict owner
   // cwd resolver. The service is optional; because the Federation bundle is
   // ordered before the sidebar bundle in deployment, a root lookup avoids
   // Cordis child-context injection ordering differences between profiles.
   let extensionDisposer: (() => void) | undefined
+  let boundRegistry: import('./context-types.ts').SidebarFederatedExtensionRegistry | undefined
   const root = ctx.root
   const ownerSessionGet: OwnerSessionGet = (sessionId) => {
     const sessions = root.get('sessions', true) as Context['sessions']
@@ -769,9 +766,12 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   }
   const ownerApi = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace, 'owner-strict', ownerSessionGet)
   const ensureFederationRegistration = (): void => {
-    if (extensionDisposer !== undefined) return
     const extensionRegistry = globalService<import('./context-types.ts').SidebarFederatedExtensionRegistry>(FEDERATED_EXTENSIONS_GLOBAL)
       ?? ctx.get('federatedExtensions') as import('./context-types.ts').SidebarFederatedExtensionRegistry | undefined
+    if (extensionRegistry === boundRegistry) return
+    extensionDisposer?.()
+    extensionDisposer = undefined
+    boundRegistry = extensionRegistry
     if (extensionRegistry !== undefined) {
       try {
         extensionDisposer = registerFederatedJsonApi(ctx, resolved, ptyManager, ownerSessionGet, extensionRegistry, ownerApi)
@@ -783,7 +783,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   ensureFederationRegistration()
   ctx.effect(() => {
     const timer = setInterval(ensureFederationRegistration, 100)
-    return () => { clearInterval(timer); extensionDisposer?.(); extensionDisposer = undefined }
+    return () => { clearInterval(timer); extensionDisposer?.(); extensionDisposer = undefined; boundRegistry = undefined }
   })
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
@@ -805,12 +805,11 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       }
       try {
         const payload = await readJsonBody(req)
-        federationRouter ??= globalService<import('./context-types.ts').SidebarFederationExtensionRouter>(FEDERATION_EXTENSION_ROUTER_GLOBAL)
-          ?? ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
-        if (federationRouter !== undefined
+        const router = federationRouter()
+        if (router !== undefined
           && isFederatedSessionId((payload as { sessionId?: unknown } | null)?.sessionId)
           && [...FEDERATED_JSON_READ_METHODS, ...FEDERATED_JSON_WRITE_METHODS].includes(method as never)) {
-          writeOk(res, await invokeFederatedJson(federationRouter, method, payload))
+          writeOk(res, await invokeFederatedJson(router, method, payload))
           return
         }
         const handler = api[method]
@@ -850,10 +849,9 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const sessionId = url.searchParams.get('sessionId')
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
-        federationRouter ??= globalService<import('./context-types.ts').SidebarFederationExtensionRouter>(FEDERATION_EXTENSION_ROUTER_GLOBAL)
-          ?? ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
-        if (federationRouter !== undefined && isFederatedSessionId(sessionId)) {
-          const result = await federationRouter.invokeBinary({
+        const router = federationRouter()
+        if (router !== undefined && isFederatedSessionId(sessionId)) {
+          const result = await router.invokeBinary({
             namespace: BETTER_SIDEBAR_FEDERATION_NAMESPACE,
             version: BETTER_SIDEBAR_FEDERATION_VERSION,
             capability: 'file.read', sessionId,
@@ -925,10 +923,9 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
           return
         }
         const { sessionId, path } = decoded.ref
-        federationRouter ??= globalService<import('./context-types.ts').SidebarFederationExtensionRouter>(FEDERATION_EXTENSION_ROUTER_GLOBAL)
-          ?? ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
-        if (federationRouter !== undefined && isFederatedSessionId(sessionId)) {
-          const result = await federationRouter.invokeBinary({
+        const router = federationRouter()
+        if (router !== undefined && isFederatedSessionId(sessionId)) {
+          const result = await router.invokeBinary({
             namespace: BETTER_SIDEBAR_FEDERATION_NAMESPACE,
             version: BETTER_SIDEBAR_FEDERATION_VERSION,
             capability: 'html.read', sessionId, payload: { path },
@@ -991,10 +988,9 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       wss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
         const url = new URL(req.url ?? '/', 'http://dsh.internal')
         const sessionId = url.searchParams.get('sessionId')
-        federationRouter ??= globalService<import('./context-types.ts').SidebarFederationExtensionRouter>(FEDERATION_EXTENSION_ROUTER_GLOBAL)
-          ?? ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
-        if (federationRouter !== undefined && sessionId !== null && isFederatedSessionId(sessionId)) {
-          void attachFederatedTerminal(federationRouter, ws, sessionId, url.searchParams.get('tab'), resolved)
+        const router = federationRouter()
+        if (router !== undefined && sessionId !== null && isFederatedSessionId(sessionId)) {
+          void attachFederatedTerminal(router, ws, sessionId, url.searchParams.get('tab'), resolved)
           return
         }
         void attachTerminal(ctx, ptyManager, agentPtyRegistry, ws, req, resolved)
@@ -1062,6 +1058,8 @@ async function attachAgentList(
   }
 }
 
+const FEDERATED_TERMINAL_OFFSETS = new Map<string, number>()
+
 /** Ingress-side terminal channel gateway over owner-routed extension calls. */
 async function attachFederatedTerminal(
   router: import('./context-types.ts').SidebarFederationExtensionRouter,
@@ -1076,18 +1074,36 @@ async function attachFederatedTerminal(
     version: BETTER_SIDEBAR_FEDERATION_VERSION,
     capability, sessionId, payload,
   })
-  let offset = 0
+  const channelKey = `${sessionId}\u001f${tabId}`
+  let offset = FEDERATED_TERMINAL_OFFSETS.get(channelKey) ?? 0
   let closed = false
   let ready = false
+  let terminated = false
+  let outbound = Promise.resolve()
   const pending: string[] = []
+  const enqueue = (task: () => Promise<void>): void => {
+    outbound = outbound.then(task).catch((error) => {
+      if (ws.readyState === WebSocket.OPEN) ws.close(1011, String((error as Error).message).slice(0, 120))
+    })
+  }
   const forward = (text: string): void => {
+    if (terminated) return
     let control: { type?: unknown; cols?: unknown; rows?: unknown } | undefined
     try { const value = JSON.parse(text) as unknown; if (value !== null && typeof value === 'object') control = value as never } catch {}
-    if (control?.type === 'close') { void call('terminal.terminate', { tab: tabId }); return }
-    if (control?.type === 'resize' && typeof control.cols === 'number' && typeof control.rows === 'number') {
-      void call('terminal.resize', { tab: tabId, cols: control.cols, rows: control.rows }); return
-    }
-    void call('terminal.input', { tab: tabId, data: text })
+    enqueue(async () => {
+      if (terminated) return
+      if (control?.type === 'close') {
+        terminated = true
+        FEDERATED_TERMINAL_OFFSETS.delete(channelKey)
+        await call('terminal.terminate', { tab: tabId })
+        return
+      }
+      if (control?.type === 'resize' && typeof control.cols === 'number' && typeof control.rows === 'number') {
+        await call('terminal.resize', { tab: tabId, cols: control.cols, rows: control.rows })
+        return
+      }
+      await call('terminal.input', { tab: tabId, data: text })
+    })
   }
   // Install listeners before the owner open RPC. Browser WebSocket `open`
   // fires as soon as the upgrade completes, and xterm may send resize/input
@@ -1099,14 +1115,18 @@ async function attachFederatedTerminal(
   })
   ws.on('close', () => {
     closed = true
-    if (ready) void call('terminal.detach', { tab: tabId, graceMs: resolved.reconnectGraceMs })
+    if (ready && !terminated) enqueue(async () => { await call('terminal.detach', { tab: tabId, graceMs: resolved.reconnectGraceMs }) })
   })
   try {
     const opened = await call('terminal.open', { tab: tabId, cols: 80, rows: 24 })
     if (!opened.ok) { ws.close(1011, opened.error.message.slice(0, 120)); return }
     ready = true
+    const openedValue = opened.value as { base?: number; next?: number }
+    const base = Number(openedValue.base ?? 0)
+    const next = Number(openedValue.next ?? base)
+    if (offset < base || offset > next) offset = base
+    if (closed && !terminated) enqueue(async () => { await call('terminal.detach', { tab: tabId, graceMs: resolved.reconnectGraceMs }) })
     for (const text of pending.splice(0)) forward(text)
-    offset = Number((opened.value as { base?: number }).base ?? 0)
     const pump = async (): Promise<void> => {
       while (!closed && ws.readyState === WebSocket.OPEN) {
         const result = await call('terminal.read', { tab: tabId, offset })
@@ -1114,6 +1134,7 @@ async function attachFederatedTerminal(
         const page = result.value as { offset: number; next: number; data: string; exited?: boolean; exitCode?: number | null }
         if (page.data !== '') ws.send(page.data)
         offset = page.next
+        FEDERATED_TERMINAL_OFFSETS.set(channelKey, offset)
         if (page.exited === true) {
           if (page.data === '') ws.send(`\r\n[process exited with code ${String(page.exitCode ?? 0)}]\r\n`)
           return
