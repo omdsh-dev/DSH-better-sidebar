@@ -21,7 +21,7 @@
 
 ## ✨ Features
 
-- **🗂️ File Workbench**: file explorer (lazy-loading tree; symlinks show their target kind — directory links expand, dangling links flagged) + CodeMirror editor; inline preview for images / Markdown / HTML / PDF / Office
+- **🗂️ File Workbench**: file explorer (lazy-loading tree; symlinks show their target kind — directory links expand, dangling links flagged) + CodeMirror editor; inline preview for images / Markdown (incl. Mermaid diagrams, strict-mode safe rendering + click-to-zoom) / HTML / PDF / Office
 - **🌐 Embedded Browser**: multiple web tabs with back / forward / refresh; content runs in a sandboxed iframe; external links are routed by protocol by default — HTTP opens in the sidebar, HTTPS goes to the system browser (both adjustable in settings)
 - **💻 Real Terminal**: xterm.js + node-pty real shell, reconnect with transcript replay; optionally injects `terminal_*` tools for the model
 - **🌿 Git Panel**: real diff + VSCode-style diff tabs, history, right-click to stage / commit / revert
@@ -29,7 +29,7 @@
 - **🪟 Dual Workbench**: right sidebar + bottom panel; drag tabs to split / merge panes (cross-panel), mobile auto-merges into a full-width drawer
 - **🔁 Session Isolation**: layout / tabs / panels persisted per session, stale state auto-purged
 - **⚙️ Declarative Settings**: per-item toggles in the "Side Cards" settings section, secondary settings via the gear dialog
-- **⚡ On-demand Loading**: only ~325KB core at startup; heavy deps (terminal / editor) load on demand ([design](docs/plans/2026-08-12-lazy-chunks-design.md))
+- **⚡ On-demand Loading**: only ~325KB core at startup; heavy deps (terminal / editor / mermaid diagrams) load on demand ([design](docs/plans/2026-08-12-lazy-chunks-design.md))
 - **🌏 i18n**: UI text follows DSH's language (zh / en) with live switching
 
 > 🔌 **Core principle**: service-first — the 7 built-in tabs + 6 viewers register through the same `ctx.betterSidebar` API as third-party plugins, with fully equal capabilities; anything the ecosystem can provide better is delegated to ecosystem plugins. See the "🔌 Service" section below and the [external plugin guide](./docs/external-plugin-guide.md).
