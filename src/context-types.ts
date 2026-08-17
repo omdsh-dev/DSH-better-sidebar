@@ -422,6 +422,16 @@ export interface SidebarFederationExtensionRouter {
     | { ok: true; value: unknown }
     | { ok: false; error: { code: string; message: string; details: Record<string, unknown> } }
   >
+  invokeBinary(call: {
+    namespace: string
+    version: string
+    capability: string
+    sessionId: string
+    payload: unknown
+  }, signal?: AbortSignal): Promise<
+    | { status: number; headers: Readonly<Record<string, string>>; body: Uint8Array }
+    | { ok: false; error: { code: string; message: string; details: Record<string, unknown> } }
+  >
 }
 
 export interface SidebarFederatedExtensionRegistry {
@@ -433,7 +443,7 @@ export interface SidebarFederatedExtensionRegistry {
         name: string
         scope: 'session'
         risk: 'read' | 'write'
-        transport: 'json'
+        transport: 'json' | 'binary'
       }[]
     }
     handlers: Readonly<Record<string, (
@@ -441,6 +451,13 @@ export interface SidebarFederatedExtensionRegistry {
       payload: unknown,
     ) => Promise<
       | { ok: true; value: unknown }
+      | { ok: false; error: { code: string; message: string; details: Record<string, unknown> } }
+    >>>
+    binaryHandlers?: Readonly<Record<string, (
+      context: { callerNodeId: string; sessionId: string; signal: AbortSignal },
+      payload: unknown,
+    ) => Promise<
+      | { status: number; headers: Readonly<Record<string, string>>; body: Uint8Array }
       | { ok: false; error: { code: string; message: string; details: Record<string, unknown> } }
     >>>
   }): () => void

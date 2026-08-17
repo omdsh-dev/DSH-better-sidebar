@@ -48,11 +48,13 @@ function mount(options: { cwd?: string; withRouter?: boolean } = {}) {
 }
 
 describe('better-sidebar Federation extension', () => {
-  it('registers an explicit read/write JSON capability catalog only', () => {
+  it('registers an explicit read/write JSON plus bounded binary capability catalog', () => {
     const { registration } = mount({ cwd: process.cwd() })
     expect(registration.manifest.namespace).toBe(BETTER_SIDEBAR_FEDERATION_NAMESPACE)
     expect(registration.manifest.version).toBe(BETTER_SIDEBAR_FEDERATION_VERSION)
-    expect(registration.manifest.capabilities.every(entry => entry.transport === 'json')).toBe(true)
+    expect(registration.manifest.capabilities.every(entry => entry.transport === 'json' || entry.transport === 'binary')).toBe(true)
+    expect(registration.manifest.capabilities).toContainEqual({ name: 'file.read', scope: 'session', risk: 'read', transport: 'binary' })
+    expect(registration.manifest.capabilities).toContainEqual({ name: 'html.read', scope: 'session', risk: 'read', transport: 'binary' })
     expect(registration.manifest.capabilities).toContainEqual({ name: 'fs.tree', scope: 'session', risk: 'read', transport: 'json' })
     expect(registration.manifest.capabilities).toContainEqual({ name: 'fs.write', scope: 'session', risk: 'write', transport: 'json' })
     expect(registration.manifest.capabilities.some(entry => entry.name === 'settings.update')).toBe(false)

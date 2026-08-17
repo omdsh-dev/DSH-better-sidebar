@@ -207,12 +207,16 @@ const FEDERATED_JSON_WRITE_METHODS = [
  * and UUID-only agent terminal operations are deliberately not exported.
  */
 function registerFederatedJsonApi(
+  ctx: Context,
+  resolved: ResolvedSidebarConfig,
   registry: import('./context-types.ts').SidebarFederatedExtensionRegistry,
   api: Record<string, ApiMethod>,
 ): () => void {
   const capabilities = [
     ...FEDERATED_JSON_READ_METHODS.map(name => ({ name, scope: 'session' as const, risk: 'read' as const, transport: 'json' as const })),
     ...FEDERATED_JSON_WRITE_METHODS.map(name => ({ name, scope: 'session' as const, risk: 'write' as const, transport: 'json' as const })),
+    { name: 'file.read', scope: 'session' as const, risk: 'read' as const, transport: 'binary' as const },
+    { name: 'html.read', scope: 'session' as const, risk: 'read' as const, transport: 'binary' as const },
   ]
   const handlers: Record<string, (
     context: { callerNodeId: string; sessionId: string; signal: AbortSignal },
@@ -244,9 +248,35 @@ function registerFederatedJsonApi(
       }
     }
   }
+  const binaryHandlers = {
+    'file.read': async (context: { sessionId: string }, payload: unknown) => {
+      const cwd = ownerSessionCwdOf(ctx, context.sessionId)
+      const record = payload as { path?: unknown; download?: unknown } | null
+      const path = requireAbsolute(requireString(record, 'path'))
+      if (!isWithin(cwd, path)) throw new SidebarError('fs-error', 'media path outside the session working directory', 403)
+      const info = await stat(path)
+      if (!info.isFile() || info.size > resolved.mediaLimit) throw new SidebarError('fs-error', 'not a file or too large', 400)
+      const headers: Record<string, string> = { 'content-type': mediaTypeForPath(path), 'cache-control': 'no-cache' }
+      if (record?.download === true) headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(basename(path))}`
+      return { status: 200, headers, body: new Uint8Array(await readFile(path)) }
+    },
+    'html.read': async (context: { sessionId: string }, payload: unknown) => {
+      const cwd = ownerSessionCwdOf(ctx, context.sessionId)
+      const path = requireAbsolute(requireString(payload, 'path'))
+      if (!isWithin(cwd, path)) throw new SidebarError('fs-error', 'html path outside the session working directory', 403)
+      const info = await stat(path)
+      if (!info.isFile() || info.size > resolved.mediaLimit) throw new SidebarError('fs-error', 'not a file or too large', 400)
+      return { status: 200, headers: {
+        'content-type': mediaTypeForPath(path), 'cache-control': 'no-cache',
+        'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer',
+        'content-security-policy': "sandbox allow-scripts allow-popups allow-downloads allow-modals; object-src 'none'",
+      }, body: new Uint8Array(await readFile(path)) }
+    },
+  }
   return registry.register({
     manifest: { namespace: BETTER_SIDEBAR_FEDERATION_NAMESPACE, version: BETTER_SIDEBAR_FEDERATION_VERSION, capabilities },
     handlers,
+    binaryHandlers,
   })
 }
 
@@ -674,7 +704,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // remains fully usable when Federation is not installed.
   ctx.inject(['federatedExtensions'], (fctx) => {
     const ownerApi = buildApi(fctx as Context, ptyManager, agentPtyRegistry, resolved, () => settingsFace, 'owner-strict')
-    return registerFederatedJsonApi(fctx.federatedExtensions, ownerApi)
+    return registerFederatedJsonApi(fctx as Context, resolved, fctx.federatedExtensions, ownerApi)
   })
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
@@ -739,6 +769,18 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const sessionId = url.searchParams.get('sessionId')
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
+        if (federationRouter !== undefined && isFederatedSessionId(sessionId)) {
+          const result = await federationRouter.invokeBinary({
+            namespace: BETTER_SIDEBAR_FEDERATION_NAMESPACE,
+            version: BETTER_SIDEBAR_FEDERATION_VERSION,
+            capability: 'file.read', sessionId,
+            payload: { path: raw, download: url.searchParams.get('download') === '1' },
+          })
+          if ('ok' in result) throw new SidebarError('internal', result.error.message, 502)
+          res.writeHead(result.status, result.headers)
+          res.end(Buffer.from(result.body))
+          return
+        }
         const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
         const path = requireAbsolute(raw)
         if (!isWithin(cwd, path)) {
@@ -800,6 +842,17 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
           return
         }
         const { sessionId, path } = decoded.ref
+        if (federationRouter !== undefined && isFederatedSessionId(sessionId)) {
+          const result = await federationRouter.invokeBinary({
+            namespace: BETTER_SIDEBAR_FEDERATION_NAMESPACE,
+            version: BETTER_SIDEBAR_FEDERATION_VERSION,
+            capability: 'html.read', sessionId, payload: { path },
+          })
+          if ('ok' in result) throw new SidebarError('internal', result.error.message, 502)
+          res.writeHead(result.status, result.headers)
+          res.end(Buffer.from(result.body))
+          return
+        }
         // The session's authoritative cwd (client cwd cannot ride in the URL
         // — the path encoding has no query; a detached first request falls
         // back to the process cwd and is normally refused by isWithin, same
