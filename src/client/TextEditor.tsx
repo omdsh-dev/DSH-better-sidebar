@@ -13,7 +13,8 @@
  * the FileViewerProps toolbar callbacks so the host's path-input header
  * renders the controls instead.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ComponentType } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { EditorState } from '@codemirror/state'
@@ -27,6 +28,8 @@ import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { appendToDraft } from './conversation-draft.ts'
 import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
+import { lazyChunkComponent } from './lazy-chunk.tsx'
+import { splitMermaidBlocks, type MermaidBlocksProps } from './mermaid-blocks.ts'
 import { t } from './locales.ts'
 import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
@@ -40,6 +43,16 @@ interface SelectionPopup {
   left: number
   top: number
 }
+
+/**
+ * The chunk-resident markdown preview renderer (mermaid lazy chunk): renders
+ * the interleaved md/mermaid block stream once the source contains at least
+ * one mermaid fence. Module-level `pick` keeps the load effect stable.
+ */
+const LazyMermaidBlocks = lazyChunkComponent<MermaidBlocksProps>(
+  'mermaid',
+  (mod) => mod.MermaidBlocks as ComponentType<MermaidBlocksProps> | undefined,
+)
 
 /**
  * The sandbox tokens of the HTML preview iframe. NO allow-same-origin (the
@@ -237,6 +250,19 @@ export function TextEditor(props: FileViewerProps) {
 
   const markdown = viewerId === 'markdown'
   const html = viewerId === 'html'
+  /** The markdown source the preview renders (draft wins over saved content). */
+  const mdText = draft ?? content ?? ''
+  /** md/mermaid block split for the preview (mermaid fences lift out). Split
+   *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
+  const mdBlocks = useMemo(
+    () => (markdown && mode === 'preview' ? splitMermaidBlocks(mdText) : []),
+    [markdown, mode, mdText],
+  )
+  const hasMermaid = useMemo(
+    () => mdBlocks.some(block => block.kind === 'mermaid'),
+    [mdBlocks],
+  )
+  const codeLabels = { copyLabel: t('copy'), copiedLabel: t('copied') }
 
   /**
    * Selection popup for the markdown preview: a mouse-up inside the preview
@@ -263,7 +289,7 @@ export function TextEditor(props: FileViewerProps) {
       return
     }
     const rect = sel.getRangeAt(0).getBoundingClientRect()
-    const lines = linesOfSelection(draft ?? content ?? '', text)
+    const lines = linesOfSelection(mdText, text)
     showPopup(
       buildSelectionInsert(path, scope.cwd, lines ?? undefined, text),
       rect.left + rect.width / 2,
@@ -361,11 +387,13 @@ export function TextEditor(props: FileViewerProps) {
               dictionary: the DSH MarkdownText/CodeBlock are cordis-free and
               fall back to hardcoded Chinese otherwise (same pattern as the
               chat's AssistantMarkdown). Render-time t() keeps them following
-              the active locale on live switches. */}
-          <MarkdownText
-            text={draft ?? content ?? ''}
-            codeLabels={{ copyLabel: t('copy'), copiedLabel: t('copied') }}
-          />
+              the active locale on live switches. Mermaid fences hand the
+              whole block stream to the mermaid lazy chunk (interleaved
+              md/diagram rendering, source order preserved); files without
+              one render exactly as before. */}
+          {hasMermaid
+            ? <LazyMermaidBlocks blocks={mdBlocks} codeLabels={codeLabels} />
+            : <MarkdownText text={mdText} codeLabels={codeLabels} />}
         </div>
       )}
       {html && mode === 'preview' && (

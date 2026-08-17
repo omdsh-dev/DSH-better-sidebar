@@ -1290,6 +1290,166 @@
   font: var(--dsw-font-xs-13);
 }
 
+/* ── Mermaid diagram block (markdown preview, mermaid lazy chunk) ────────
+   Mirrors the md-code-block chrome the DSH CodeBlock renders, so a diagram
+   reads as a peer of the surrounding fences: hairline border, layer-2
+   header with the info string + copy action, layer-1 body. The SVG body is
+   static (no bindFunctions) and sanitized (no foreignObject/script/@attrs/
+   hrefs), so it carries no event surface beyond the copy button; the body
+   click opens the zoom modal on a sanitized clone. */
+
+.mermaidWrap {
+  margin: 6px 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  overflow: hidden;
+}
+
+.mermaidHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.mermaidInfo {
+  font: var(--dsw-font-xxxs-strong-11);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mermaidCopy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  cursor: pointer;
+}
+
+.mermaidCopy:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.mermaidBody {
+  display: flex;
+  justify-content: center;
+  padding: 10px;
+  overflow: auto;
+  cursor: zoom-in;
+}
+
+.mermaidBody :global(svg) {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaidError {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxxs-11);
+}
+
+/* The diagram source shown under a render error (helps fixing the fence). */
+.mermaidCode {
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  font: var(--dsw-font-xxxs-11);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ── Mermaid zoom modal (click-to-enlarge; portalled to document.body) ──
+   Fixed overlay above the DSH overlay stack (1000+), token-driven surface.
+   The stage centers the (sanitized, cloned) svg and the modal owns the
+   transform; the drag/zoom listeners live in the component, nothing here
+   targets global class names. */
+
+.mermaidModal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--dsw-alias-bg-mask-1);
+  backdrop-filter: blur(2px);
+}
+
+.mermaidModalToolbar {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 8px;
+  z-index: 10;
+}
+
+.mermaidModalButton {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xs-strong-13);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mermaidModalButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.mermaidModalStage {
+  width: 90vw;
+  height: 80vh;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mermaidModalStage :global(svg) {
+  max-width: none;
+  max-height: none;
+  cursor: grab;
+  transform-origin: center center;
+  user-select: none;
+  -webkit-user-drag: none;
+  background: var(--dsw-alias-bg-layer-1);
+  padding: 16px;
+  border-radius: 12px;
+}
+
+.mermaidModalStage :global(svg):active {
+  cursor: grabbing;
+}
+
+.mermaidModalHint {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  pointer-events: none;
+}
+
 /* The floating "add to conversation" button anchored above a text
    selection in the preview/code viewers. Portalled to document.body and
    position:fixed, so the editor's overflow clips cannot crop it; flat
