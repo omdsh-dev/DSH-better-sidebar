@@ -158,11 +158,11 @@ export function TextEditor(props: FileViewerProps) {
           ...defaultKeymap,
           ...historyKeymap,
         ]),
-        // Selection popup (the code and markdown editors): a non-empty
+        // Selection popup (the code, markdown, and html editors): a non-empty
         // selection anchors the floating "add to conversation" button above
         // its head. Scrolling (geometry/viewport change) or losing focus
         // hides it; typing collapses the selection and hides it too.
-        ...(viewerId === 'code' || viewerId === 'markdown' ? [
+        ...(viewerId === 'code' || viewerId === 'markdown' || viewerId === 'html' ? [
           CodeMirrorView.updateListener.of((update) => {
             if (update.geometryChanged || update.viewportChanged) {
               hidePopup()
