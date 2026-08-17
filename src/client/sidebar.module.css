@@ -554,6 +554,19 @@
   background: transparent;
   cursor: pointer;
   user-select: none;
+  transition: opacity 120ms ease-out, min-width 120ms ease-out, max-width 120ms ease-out;
+}
+
+/* Tab being closed: fade out and shrink before removal from DOM. */
+.tabClosing {
+  opacity: 0;
+  min-width: 0;
+  max-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  border-right-width: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .tab:hover {
@@ -2033,6 +2046,7 @@
   .toggleCluster,
   .toggleButton,
   .tab,
+  .tabClosing,
   .tabBarPlus,
   .paneCard,
   .explorerRow,

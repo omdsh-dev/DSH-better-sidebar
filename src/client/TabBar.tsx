@@ -5,7 +5,7 @@
  * terminal). Tabs are draggable; dropping onto another tab inserts before it,
  * dropping on the strip background appends to this pane.
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   IconCloseFill14, IconPlusOutline16, Menu,
@@ -72,7 +72,9 @@ export function TabBar(props: {
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [closingTabs, setClosingTabs] = useState<Set<string>>(new Set())
   const listRef = useRef<HTMLDivElement>(null)
+  const closingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   // Wheel over the strip scrolls the tab row horizontally (a plain mouse
   // wheel emits deltaY, which overflow-x alone never consumes). Bound as a
@@ -106,6 +108,30 @@ export function TabBar(props: {
     }
   }, [])
 
+  // Cleanup closing timers on unmount.
+  useEffect(() => {
+    return () => {
+      for (const timer of closingTimers.current.values()) clearTimeout(timer)
+      closingTimers.current.clear()
+    }
+  }, [])
+
+  // Close handler: two-phase — animate out, then remove from DOM.
+  const handleClose = useCallback((tabId: string) => {
+    if (closingTimers.current.has(tabId)) return // already closing
+    setClosingTabs(prev => new Set(prev).add(tabId))
+    const timer = setTimeout(() => {
+      closingTimers.current.delete(tabId)
+      setClosingTabs(prev => {
+        const next = new Set(prev)
+        next.delete(tabId)
+        return next
+      })
+      onClose(tabId)
+    }, 120) // matches CSS transition duration
+    closingTimers.current.set(tabId, timer)
+  }, [onClose])
+
   return (
     <div
       className={clsx(css.tabBar, dragOver && css.tabBarDrop)}
@@ -132,7 +158,7 @@ export function TabBar(props: {
         {tabs.map(tab => (
           <div
             key={tab.id}
-            className={clsx(css.tab, active === tab.id && css.tabActive)}
+            className={clsx(css.tab, active === tab.id && css.tabActive, closingTabs.has(tab.id) && css.tabClosing)}
             title={tab.title}
             draggable
             onDragStart={(event) => {
@@ -155,7 +181,7 @@ export function TabBar(props: {
               // Middle-click closes the tab (and suppresses autoscroll).
               if (event.button === 1) {
                 event.preventDefault()
-                onClose(tab.id)
+                handleClose(tab.id)
               }
             }}
           >
@@ -168,7 +194,7 @@ export function TabBar(props: {
               aria-label={t('close')}
               onClick={(event) => {
                 event.stopPropagation()
-                onClose(tab.id)
+                handleClose(tab.id)
               }}
             >
               <IconCloseFill14 />
