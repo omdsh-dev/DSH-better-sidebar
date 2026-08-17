@@ -17,7 +17,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ComponentType } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
-import { EditorState } from '@codemirror/state'
+import { EditorState, Transaction } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -132,6 +132,38 @@ export function TextEditor(props: FileViewerProps) {
     const language = languageForPath(path)
     const themeComp = new CmThemeCompartment()
     themeCompRef.current = themeComp
+
+    // Anchor the popup above the editor's current main selection (line-exact
+    // via the document); an empty/whitespace selection hides it instead.
+    const popupFromSelection = (view: CodeMirrorView): void => {
+      const sel = view.state.selection.main
+      if (sel.empty) {
+        hidePopup()
+        return
+      }
+      const text = view.state.sliceDoc(sel.from, sel.to)
+      if (text.trim() === '') {
+        hidePopup()
+        return
+      }
+      // Page coordinates (the document root may scroll); the popup is
+      // position:fixed, so convert to viewport coordinates.
+      const rect = view.coordsAtPos(sel.head)
+      if (rect === null) {
+        hidePopup()
+        return
+      }
+      const doc = view.state.doc
+      showPopup(
+        buildSelectionInsert(path, scope.cwd, {
+          start: doc.lineAt(sel.from).number,
+          end: doc.lineAt(sel.to).number,
+        }, text),
+        rect.left - window.scrollX + (rect.right - rect.left) / 2,
+        rect.top - window.scrollY,
+      )
+    }
+
     const state = EditorState.create({
       doc: content,
       extensions: [
@@ -162,6 +194,9 @@ export function TextEditor(props: FileViewerProps) {
         // selection anchors the floating "add to conversation" button above
         // its head. Scrolling (geometry/viewport change) or losing focus
         // hides it; typing collapses the selection and hides it too.
+        // Keyboard selections (Shift+arrows) pop immediately; pointer drags
+        // pop on mouseup (the DOM handler below), so the popup appears only
+        // after the drag is released — matching the markdown preview.
         ...(viewerId === 'code' || viewerId === 'markdown' || viewerId === 'html' ? [
           CodeMirrorView.updateListener.of((update) => {
             if (update.geometryChanged || update.viewportChanged) {
@@ -173,32 +208,16 @@ export function TextEditor(props: FileViewerProps) {
               return
             }
             if (!(update.selectionSet || update.docChanged || update.focusChanged)) return
-            const sel = update.state.selection.main
-            if (sel.empty) {
-              hidePopup()
-              return
-            }
-            const text = update.state.sliceDoc(sel.from, sel.to)
-            if (text.trim() === '') {
-              hidePopup()
-              return
-            }
-            // Page coordinates (the document root may scroll); the popup is
-            // position:fixed, so convert to viewport coordinates.
-            const rect = update.view.coordsAtPos(sel.head)
-            if (rect === null) {
-              hidePopup()
-              return
-            }
-            const doc = update.state.doc
-            showPopup(
-              buildSelectionInsert(path, scope.cwd, {
-                start: doc.lineAt(sel.from).number,
-                end: doc.lineAt(sel.to).number,
-              }, text),
-              rect.left - window.scrollX + (rect.right - rect.left) / 2,
-              rect.top - window.scrollY,
-            )
+            // A mouse drag dispatches a selection update on every pointer
+            // move; defer those to the mouseup handler so the popup waits
+            // for the drag to end.
+            const pointer = update.transactions.some((tr) =>
+              (tr.annotation(Transaction.userEvent) ?? '').startsWith('select.pointer'))
+            if (pointer) return
+            popupFromSelection(update.view)
+          }),
+          CodeMirrorView.domEventHandlers({
+            mouseup: (_event, view) => { popupFromSelection(view) },
           }),
         ] : []),
       ],
