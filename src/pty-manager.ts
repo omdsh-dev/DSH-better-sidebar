@@ -56,6 +56,10 @@ export interface SidebarPty {
   pty: IPty
   /** Output accumulated since spawn (bounded; head dropped when over the limit). */
   transcript: string
+  /** Monotonic UTF-16 output offset after the retained transcript. */
+  outputOffset: number
+  /** Offset represented by transcript[0]. */
+  transcriptBase: number
   /** Whether the top-level process exited (transcript stays replayable). */
   exited: boolean
   exitCode?: number | null
@@ -130,13 +134,17 @@ export class PtyManager {
         env: { ...process.env },
       }),
       transcript: '',
+      outputOffset: 0,
+      transcriptBase: 0,
       exited: false,
     }
     handle.pty.onData((data) => {
       handle.transcript += data
+      handle.outputOffset += data.length
       if (handle.transcript.length > TRANSCRIPT_LIMIT) {
         handle.transcript = handle.transcript.slice(handle.transcript.length - TRANSCRIPT_LIMIT)
       }
+      handle.transcriptBase = handle.outputOffset - handle.transcript.length
     })
     handle.pty.onExit(({ exitCode }) => {
       handle.exited = true

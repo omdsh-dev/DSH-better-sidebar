@@ -199,6 +199,7 @@ const FEDERATED_JSON_READ_METHODS = [
 const FEDERATED_JSON_WRITE_METHODS = [
   'fs.write', 'git.stage', 'git.unstage', 'git.commit', 'git.checkout',
   'git.discard', 'git.revert', 'git.cherry-pick', 'pty.close', 'jobs.kill',
+  'terminal.open', 'terminal.input', 'terminal.resize', 'terminal.terminate', 'terminal.detach',
 ] as const
 
 /**
@@ -209,12 +210,14 @@ const FEDERATED_JSON_WRITE_METHODS = [
 function registerFederatedJsonApi(
   ctx: Context,
   resolved: ResolvedSidebarConfig,
+  ptyManager: PtyManager | null,
   registry: import('./context-types.ts').SidebarFederatedExtensionRegistry,
   api: Record<string, ApiMethod>,
 ): () => void {
   const capabilities = [
     ...FEDERATED_JSON_READ_METHODS.map(name => ({ name, scope: 'session' as const, risk: 'read' as const, transport: 'json' as const })),
     ...FEDERATED_JSON_WRITE_METHODS.map(name => ({ name, scope: 'session' as const, risk: 'write' as const, transport: 'json' as const })),
+    { name: 'terminal.read', scope: 'session' as const, risk: 'read' as const, transport: 'json' as const },
     { name: 'file.read', scope: 'session' as const, risk: 'read' as const, transport: 'binary' as const },
     { name: 'html.read', scope: 'session' as const, risk: 'read' as const, transport: 'binary' as const },
   ]
@@ -247,6 +250,50 @@ function registerFederatedJsonApi(
         return { ok: false, error: { code: 'internal', message: error instanceof Error ? error.message : String(error), details: {} } }
       }
     }
+  }
+  handlers['terminal.open'] = async (context, payload) => {
+    if (ptyManager === null) return { ok: false, error: { code: 'pty-deps-missing', message: PTY_DEPS_MISSING, details: {} } }
+    const cwd = ownerSessionCwdOf(ctx, context.sessionId)
+    const tab = requireString(payload, 'tab')
+    const record = payload as { cols?: unknown; rows?: unknown }
+    const dims = clampDims(typeof record.cols === 'number' ? record.cols : 80, typeof record.rows === 'number' ? record.rows : 24)
+    const handle = ptyManager.open(context.sessionId, tab, cwd, dims.cols, dims.rows)
+    return { ok: true, value: { base: handle.transcriptBase, next: handle.outputOffset, exited: handle.exited, exitCode: handle.exitCode ?? null } }
+  }
+  handlers['terminal.read'] = async (context, payload) => {
+    if (ptyManager === null) return { ok: false, error: { code: 'pty-deps-missing', message: PTY_DEPS_MISSING, details: {} } }
+    const tab = requireString(payload, 'tab')
+    const handle = ptyManager.get(`${context.sessionId}:${tab}`)
+    if (handle === undefined) return { ok: false, error: { code: 'not-found', message: 'terminal not found', details: {} } }
+    const record = payload as { offset?: unknown }
+    const requested = typeof record.offset === 'number' && Number.isInteger(record.offset) ? record.offset : handle.transcriptBase
+    const offset = Math.max(handle.transcriptBase, Math.min(requested, handle.outputOffset))
+    return { ok: true, value: { offset, next: handle.outputOffset, data: handle.transcript.slice(offset - handle.transcriptBase), base: handle.transcriptBase, exited: handle.exited, exitCode: handle.exitCode ?? null } }
+  }
+  handlers['terminal.input'] = async (context, payload) => {
+    const tab = requireString(payload, 'tab'); const data = requireString(payload, 'data')
+    const handle = ptyManager?.get(`${context.sessionId}:${tab}`)
+    if (handle === undefined) return { ok: false, error: { code: 'not-found', message: 'terminal not found', details: {} } }
+    if (!handle.exited) handle.pty.write(data)
+    return { ok: true, value: { accepted: true } }
+  }
+  handlers['terminal.resize'] = async (context, payload) => {
+    const tab = requireString(payload, 'tab'); const record = payload as { cols?: unknown; rows?: unknown }
+    const handle = ptyManager?.get(`${context.sessionId}:${tab}`)
+    if (handle === undefined) return { ok: false, error: { code: 'not-found', message: 'terminal not found', details: {} } }
+    if (typeof record.cols === 'number' && typeof record.rows === 'number' && !handle.exited) {
+      const dims = clampDims(record.cols, record.rows); handle.pty.resize(dims.cols, dims.rows)
+    }
+    return { ok: true, value: { accepted: true } }
+  }
+  handlers['terminal.terminate'] = async (context, payload) => {
+    const tab = requireString(payload, 'tab'); ptyManager?.close(`${context.sessionId}:${tab}`)
+    return { ok: true, value: { terminated: true } }
+  }
+  handlers['terminal.detach'] = async (context, payload) => {
+    const tab = requireString(payload, 'tab')
+    ptyManager?.scheduleClose(`${context.sessionId}:${tab}`, resolved.reconnectGraceMs)
+    return { ok: true, value: { detached: true } }
   }
   const binaryHandlers = {
     'file.read': async (context: { sessionId: string }, payload: unknown) => {
@@ -704,7 +751,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // remains fully usable when Federation is not installed.
   ctx.inject(['federatedExtensions'], (fctx) => {
     const ownerApi = buildApi(fctx as Context, ptyManager, agentPtyRegistry, resolved, () => settingsFace, 'owner-strict')
-    return registerFederatedJsonApi(fctx as Context, resolved, fctx.federatedExtensions, ownerApi)
+    return registerFederatedJsonApi(fctx as Context, resolved, ptyManager, fctx.federatedExtensions, ownerApi)
   })
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
@@ -904,6 +951,12 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       // The structural request/socket/head faces satisfy the shared fence;
       // the `ws` package wants the real Node types — cast at this boundary.
       wss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
+        const url = new URL(req.url ?? '/', 'http://dsh.internal')
+        const sessionId = url.searchParams.get('sessionId')
+        if (federationRouter !== undefined && sessionId !== null && isFederatedSessionId(sessionId)) {
+          void attachFederatedTerminal(federationRouter, ws, sessionId, url.searchParams.get('tab'), resolved)
+          return
+        }
         void attachTerminal(ctx, ptyManager, agentPtyRegistry, ws, req, resolved)
       })
     },
@@ -966,6 +1019,57 @@ async function attachAgentList(
     ws.on('error', () => { unsubscribe?.() })
   } catch (error) {
     ws.close(1011, error instanceof Error ? error.message : String(error))
+  }
+}
+
+/** Ingress-side terminal channel gateway over owner-routed extension calls. */
+async function attachFederatedTerminal(
+  router: import('./context-types.ts').SidebarFederationExtensionRouter,
+  ws: WebSocket,
+  sessionId: string,
+  tabId: string | null,
+  resolved: ResolvedSidebarConfig,
+): Promise<void> {
+  if (tabId === null) { ws.close(1008, 'tab is required'); return }
+  const call = (capability: string, payload: unknown) => router.invokeJson({
+    namespace: BETTER_SIDEBAR_FEDERATION_NAMESPACE,
+    version: BETTER_SIDEBAR_FEDERATION_VERSION,
+    capability, sessionId, payload,
+  })
+  let offset = 0
+  let closed = false
+  try {
+    const opened = await call('terminal.open', { tab: tabId, cols: 80, rows: 24 })
+    if (!opened.ok) { ws.close(1011, opened.error.message.slice(0, 120)); return }
+    offset = Number((opened.value as { base?: number }).base ?? 0)
+    const pump = async (): Promise<void> => {
+      while (!closed && ws.readyState === WebSocket.OPEN) {
+        const result = await call('terminal.read', { tab: tabId, offset })
+        if (!result.ok) { ws.close(1011, result.error.message.slice(0, 120)); return }
+        const page = result.value as { offset: number; next: number; data: string; exited?: boolean; exitCode?: number | null }
+        if (page.data !== '') ws.send(page.data)
+        offset = page.next
+        if (page.exited === true) {
+          if (page.data === '') ws.send(`\r\n[process exited with code ${String(page.exitCode ?? 0)}]\r\n`)
+          return
+        }
+        await new Promise(resolve => setTimeout(resolve, 40))
+      }
+    }
+    void pump()
+    ws.on('message', (raw) => {
+      const text = raw.toString('utf8')
+      let control: { type?: unknown; cols?: unknown; rows?: unknown } | undefined
+      try { const value = JSON.parse(text) as unknown; if (value !== null && typeof value === 'object') control = value as never } catch {}
+      if (control?.type === 'close') { void call('terminal.terminate', { tab: tabId }); return }
+      if (control?.type === 'resize' && typeof control.cols === 'number' && typeof control.rows === 'number') {
+        void call('terminal.resize', { tab: tabId, cols: control.cols, rows: control.rows }); return
+      }
+      void call('terminal.input', { tab: tabId, data: text })
+    })
+    ws.on('close', () => { closed = true; void call('terminal.detach', { tab: tabId, graceMs: resolved.reconnectGraceMs }) })
+  } catch (error) {
+    ws.close(1011, (error instanceof Error ? error.message : String(error)).slice(0, 120))
   }
 }
 
