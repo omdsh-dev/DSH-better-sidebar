@@ -193,6 +193,23 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   )
   const fileRow = sidebar.locator(`[role="button"][title$="${SEEDED_FILE}"]`)
   await expect(fileRow, `the seeded "${SEEDED_FILE}" file must appear in the Explorer tree`).toHaveCount(1, { timeout: 30_000 })
+  // The icon theme must serve its assets in the packed profile: the
+  // explorer's rows render <img src="/sidebar/icons/<file>.svg">. A
+  // response wait can't prove it here — the explorer already mounted (and
+  // fetched its icons) during the sweep, and re-focusing the open tab does
+  // not re-request the images, so no new /sidebar/icons response fires.
+  // Instead: fetch a bundled icon through the plugin route (must be a 200
+  // in the real shell) and require the seeded file's row to reference an
+  // icon-theme asset in the DOM. Together they prove icons/ ships in the
+  // npm package and the route is mounted.
+  const iconStatus = await page.evaluate(async () => {
+    const response = await fetch('/sidebar/icons/default_file.svg')
+    return response.status
+  })
+  expect(iconStatus, 'the icon asset route must serve in the packed profile').toBe(200)
+  const rowIcon = fileRow.locator('img[src*="/sidebar/icons/"]')
+  await expect(rowIcon, 'the seeded file row must render an icon-theme image').toHaveCount(1)
+  expect(await rowIcon.getAttribute('src'), 'file row icon must point at the icon route').toMatch(/^\/sidebar\/icons\//)
   await fileRow.click()
   await editorChunk
   await page.waitForTimeout(1_500)

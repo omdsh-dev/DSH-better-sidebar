@@ -25,7 +25,7 @@ import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import { extOf, languageKeyForExt } from '../src/client/lang.ts'
 import { isPdfExt } from '../src/client/pdf-types.ts'
 import { isImageExt } from '../src/client/image-types.ts'
-import { relativeTo } from '../src/client/paths.ts'
+import { relativeTo, baseName } from '../src/client/paths.ts'
 import { producedForClosing, resolveSidebarPath, selectProducedFiles } from '../src/client/produced-files.ts'
 import { wrapOpenPath, type OpenPathInterceptDeps, type OpenPathService } from '../src/client/openpath-intercept.ts'
 import { registerOpenPathInterception } from '../src/client/intercept.tsx'
@@ -1119,6 +1119,15 @@ describe('path helpers', () => {
     expect(resolveSidebarPath('C:\\work\\proj', 'src/a.ts')).toBe('C:\\work\\proj\\src/a.ts')
     expect(resolveSidebarPath('C:\\work\\proj', 'C:\\abs\\x.ts')).toBe('C:\\abs\\x.ts')
     expect(resolveSidebarPath('C:\\work\\proj\\', 'C:\\abs\\x.ts')).toBe('C:\\abs\\x.ts')
+  })
+
+  it('derives the last path segment for icon lookups (both separators, no trailing)', () => {
+    expect(baseName('/Users/me/code/src/main.ts')).toBe('main.ts')
+    expect(baseName('/Users/me/code/')).toBe('code')
+    expect(baseName('C:\\Users\\me\\src\\a.ts')).toBe('a.ts')
+    expect(baseName('C:\\Users\\me\\')).toBe('me')
+    expect(baseName('plain-name')).toBe('plain-name')
+    expect(baseName('a.ts')).toBe('a.ts')
   })
 })
 
