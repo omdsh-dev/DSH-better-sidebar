@@ -13,10 +13,17 @@
  *   /sidebar/html/S/Users/me/proj/index.html
  *     + ./style.css → /sidebar/html/S/Users/me/proj/style.css
  *   Windows: C:\Users\me\a.html → /sidebar/html/S/C%3A/Users/me/a.html
- *   Windows UNC: \\server\share\proj\a.html
+ *   UNC (\\server\share\... or //server/share/...):
  *     → /sidebar/html/S//server/share/proj/a.html  ('//' right after the
  *       sessionId marks the UNC prefix; the WHATWG URL keeps '//' intact so
  *       relative assets still resolve inside the same route)
+ *
+ * The decoder rebuilds the marker as a forward-slash `//server/share/...`
+ * path. That form is intentionally platform-neutral: `node:path` resolves it
+ * to `\\server\share\...` on win32 and `/server/share/...` on POSIX, so the
+ * host's existing requireAbsolute + isWithin fence needs no platform signal
+ * (a leading `//` is a legal POSIX absolute path, so no data is lost on
+ * either platform).
  *
  * This module is intentionally dependency-free (no node imports, no wire
  * helpers) so the client bundle can import `encodeHtmlUrl` without tripping
@@ -41,10 +48,6 @@ export const HTML_ROUTE_PREFIX = '/sidebar/html/'
 
 /** Build the route URL for one absolute file path (client + tests). */
 export function encodeHtmlUrl(sessionId: string, path: string): string {
-  // A Windows UNC share (\\server\share\...) must survive the round-trip:
-  // the decoder rebuilds it from a '//' marker right after the sessionId,
-  // which the plain segment list can never produce (empty segments are
-  // filtered here, so the marker is unambiguous).
   const unc = /^[\\/]{2}[^\\/]/.test(path)
   const segments = path.split(/[\\/]+/).filter(segment => segment !== '')
   return `${HTML_ROUTE_PREFIX}${encodeURIComponent(sessionId)}/${unc ? '/' : ''}${segments.map(encodeURIComponent).join('/')}`
@@ -52,10 +55,10 @@ export function encodeHtmlUrl(sessionId: string, path: string): string {
 
 /**
  * Decode a route pathname into the session + absolute file path. Rejects
- * a wrong prefix (404), an empty or double-slash path, malformed percent
- * encoding, and a missing sessionId or file path (400). The caller still
- * must bound the decoded path with requireAbsolute + isWithin(cwd) — a
- * decoded `..` segment resolves outside the cwd and is refused there.
+ * a wrong prefix (404), an empty path, malformed percent encoding, and a
+ * missing sessionId or file path (400). The caller still must bound the
+ * decoded path with requireAbsolute + isWithin(cwd) — a decoded `..`
+ * segment resolves outside the cwd and is refused there.
  */
 export function decodeHtmlUrl(pathname: string): HtmlDecodeResult {
   if (!pathname.startsWith(HTML_ROUTE_PREFIX)) {
@@ -76,9 +79,9 @@ export function decodeHtmlUrl(pathname: string): HtmlDecodeResult {
     return { ok: false, status: 400, message: 'sessionId and file path are required' }
   }
   // An empty FIRST path segment is the UNC marker (encodeHtmlUrl emits
-  // '<sid>//server/share/...' for \\server\share\...); the encoder filters
-  // empty segments everywhere else, so an empty segment can only be the
-  // marker or a malformed URL — both handled here.
+  // '<sid>//server/share/...' for UNC paths); the encoder filters empty
+  // segments everywhere else, so an empty segment can only be the marker or
+  // a malformed URL — both handled here.
   const unc = pathSegments[0] === ''
   const tail = unc ? pathSegments.slice(1) : pathSegments
   if (tail.length === 0 || tail.some(segment => segment === '')) {
@@ -86,9 +89,9 @@ export function decodeHtmlUrl(pathname: string): HtmlDecodeResult {
   }
   let path: string
   if (unc) {
-    // Rebuild the UNC form \\server\share\... so requireAbsolute() +
-    // isWithin(cwd) see the same path the explorer works with.
-    path = `\\\\${tail.join('\\')}`
+    // Rebuild the platform-neutral forward-slash form `//server/share/...`;
+    // requireAbsolute() resolves it to the platform's own UNC/POSIX spelling.
+    path = `//${tail.join('/')}`
   } else if (/^[A-Za-z]:$/.test(tail[0] ?? '')) {
     // A Windows drive segment ('D:') is the FIRST path segment of an encoded
     // drive path. Rejoining it with a leading slash would yield '/D:/work/...'

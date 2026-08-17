@@ -60,6 +60,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     interceptOpenPath: typeof record.interceptOpenPath === 'boolean'
       ? record.interceptOpenPath
       : SIDEBAR_PREFS_DEFAULTS.interceptOpenPath,
+    editorExplorer: typeof record.editorExplorer === 'boolean'
+      ? record.editorExplorer
+      : SIDEBAR_PREFS_DEFAULTS.editorExplorer,
     titleBarCompat: typeof record.titleBarCompat === 'boolean'
       ? record.titleBarCompat
       : SIDEBAR_PREFS_DEFAULTS.titleBarCompat,

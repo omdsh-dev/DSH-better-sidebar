@@ -248,7 +248,7 @@ function makeCssPlugin(pluginId: string): BuildPlugin {
     resolveId(source: string, importer: string | undefined) {
       if (!source.endsWith('.css')) return null
       // Relative/absolute paths resolve against the importer; bare
-      // specifiers (e.g. 'xterm/css/xterm.css') resolve from the package.
+      // specifiers (e.g. '@xterm/xterm/css/xterm.css') resolve from the package.
       let abs: string
       if (source.startsWith('.') || source.startsWith('/') || /^[A-Za-z]:[\\/]/.test(source)) {
         abs = importer === undefined ? source : resolvePath(dirname(importer), source)

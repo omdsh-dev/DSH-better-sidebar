@@ -13,10 +13,13 @@
  *     plugin's `[data-dsh-better-sidebar]` host mount;
  *  3. asserts the plugin's crash markers never appear (no RenderBoundary /
  *     fail() strips, no `pageerror`, no plugin-prefixed console errors);
- *  4. sweeps every built-in tab (Explorer / Source Control / Tasks /
- *     Terminal / Browser) — including the lazily-fetched terminal chunk —
- *     and then opens a seeded file through the Explorer to force the
- *     lazily-fetched editor chunk (client-editor.js) to load as well.
+ *  4. expands the collapsed panel (openByDefault defaults off), sweeps every
+ *     built-in tab (Files / Source Control / Tasks / Terminal / Browser) —
+ *     including the lazily-fetched terminal chunk — and then opens a seeded
+ *     file through the Files window's tree (in-place mode: the seeded home
+ *     tab itself switches to the file, no new tab), while a response wait
+ *     armed before goto proves the lazily-fetched editor chunk
+ *     (client-editor.js) loaded.
  *
  * Deterministic by construction: every wait is on a DOM/network marker, the
  * suite is serial (one server instance), and any crash trips the very next
@@ -35,8 +38,8 @@ if (!BASE_URL) {
 /** Workspace the sidebar renders against (created by the lane's seeding). */
 const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-workspace')
 
-/** A file seeded into the workspace, opened through the Explorer to force the
- *  lazily-packed editor chunk (client-editor.js) to load. */
+/** A file seeded into the workspace, opened through the Files window's tree to
+ *  exercise the file-open path (editor chunk = client-editor.js). */
 const SEEDED_FILE = 'hello.txt'
 
 /**
@@ -47,7 +50,7 @@ const SEEDED_FILE = 'hello.txt'
 const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 
 /** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const BUILTIN_TABS = ['Explorer', 'Source Control', 'Tasks', 'Terminal', 'Browser']
+const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Terminal', 'Browser']
 
 let api: APIRequestContext
 
@@ -91,6 +94,15 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
 
   // Load the shell. The app renders into #root; the plugin appends its own
   // [data-dsh-better-sidebar] host once its client half activates.
+  //
+  // The editor chunk (client-editor.js) loads as soon as ANY files-window tab
+  // renders — the seeded home tab mounts the moment the panel expands, long
+  // before the tree click below — so the response wait must be armed BEFORE
+  // goto, or it misses the fetch and times out.
+  const editorChunk = page.waitForResponse(
+    (response) => response.url().includes('/sidebar/bundle/editor.js'),
+    { timeout: 120_000 },
+  )
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
   const sidebar = page.locator('[data-dsh-better-sidebar]')
@@ -134,6 +146,22 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const tabBar = sidebar.locator('[title]')
   await expect(tabBar.first()).toBeAttached({ timeout: 90_000 })
 
+  // openByDefault defaults OFF: a fresh session's panel starts collapsed.
+  // Expand it through the toggle cluster before the layout push can apply.
+  const expandButton = sidebar.getByRole('button', { name: 'Expand sidebar' })
+  await expect(expandButton, 'the collapsed toggle cluster must offer the expand button').toHaveCount(1)
+  await expandButton.click()
+
+  // The skinning contract is token-driven (AGENTS.md §8): the panels consume
+  // `--dsw-alias-bg-layer-1`, so switching a skin re-skins the sidebar with
+  // no per-skin code. The layout push variable must be live once the panel
+  // mounts (its absence would mean the panel never opened with the session).
+  await expect
+    .poll(async () => (
+      await page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))
+    ), { timeout: 90_000 })
+    .not.toBe('')
+
   // Crash-marker assertions shared by every step.
   const assertNoCrash = async (): Promise<void> => {
     await expect
@@ -169,22 +197,36 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     await assertNoCrash()
   }
 
-  // The editor tab is hidden from the + menu — its CodeMirror chunk
-  // (client-editor.js) only loads when a file is opened. Exercise that path
-  // explicitly: reopen Explorer, open the seeded file, and require the chunk
-  // round-trip, so a missing/corrupt editor chunk fails the lane.
-  await newTabButton.click()
-  const explorerItem = page.getByRole('menuitem', { name: 'Explorer' }).first()
-  await expect(explorerItem, 'Explorer must be re-openable for the editor-chunk probe').toHaveCount(1)
-  await explorerItem.click()
-  const editorChunk = page.waitForResponse(
-    (response) => response.url().includes('/sidebar/bundle/editor.js'),
-    { timeout: 30_000 },
-  )
-  const fileRow = sidebar.locator(`[role="button"][title$="${SEEDED_FILE}"]`)
-  await expect(fileRow, `the seeded "${SEEDED_FILE}" file must appear in the Explorer tree`).toHaveCount(1, { timeout: 30_000 })
-  await fileRow.click()
+  // The editor chunk (client-editor.js) only loads when a files-window tab
+  // renders. Exercise the file-open path explicitly through the Files window's
+  // own tree: the seeded home tab ("Files") is already open with its tree
+  // panel pinned — activate it from the tab strip, open the seeded file, and
+  // require the chunk round-trip (armed before goto), so a missing/corrupt
+  // editor chunk fails the lane.
+  // Tab-strip tabs carry `draggable="true"`; the always-mounted (hidden)
+  // bottom panel's empty-pane welcome cards repeat the + menu labels with
+  // `title="Files"`, so a bare `[title="Files"]` match is ambiguous.
+  const filesTab = sidebar.locator('[title="Files"][draggable="true"]').first()
+  await expect(filesTab, 'the seeded files-window home tab must be in the tab strip').toHaveCount(1)
+  await filesTab.click()
+  // Inactive tabs stay mounted (display:none); only the ACTIVE files
+  // window's embedded tree is visible — match the visible row.
+  const fileRow = sidebar.locator(`[role="button"][title$="${SEEDED_FILE}"]:visible`)
+  await expect(fileRow, `the seeded "${SEEDED_FILE}" file must appear in the files window's tree`).toHaveCount(1, { timeout: 30_000 })
+  // Click near the row's LEFT edge: hovering reveals an @-reference button at
+  // the row's right end, and a center click on a narrow dock lands on it
+  // (referencing the file into the composer instead of opening it).
+  await fileRow.click({ position: { x: 8, y: 8 } })
   await editorChunk
+  // In-place mode (editorExplorer default): the SAME tab switches to the
+  // file — its title is rewritten, no new tab appears. One "Files" tab
+  // remains: the second files window the sweep opened via the + menu.
+  await expect(
+    sidebar.locator('[title="Files"][draggable="true"]'),
+    'in-place mode rewrites the activated home tab instead of opening a new one',
+  ).toHaveCount(1)
+  const pathInput = sidebar.locator('input[placeholder^="File path"]:visible')
+  await expect(pathInput, 'the files window header path input shows the opened file').toHaveValue(new RegExp(`${SEEDED_FILE}$`))
   await page.waitForTimeout(1_500)
   await assertNoCrash()
 

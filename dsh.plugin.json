@@ -1,6 +1,6 @@
 {
   "id": "dsh-external/dsh-better-sidebar",
-  "version": "0.12.2",
+  "version": "0.12.3",
   "main": "./lib/index.js",
   "description": "VSCode 风格右侧侧边栏：文件资源管理器 / 编辑器 / 终端 / Git / 浏览器，按会话隔离。暴露服务供其他插件注册侧边栏页面和文件预览器",
   "engines": {

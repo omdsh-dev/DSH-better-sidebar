@@ -19,9 +19,18 @@ better-sidebar 从 v0.4.0 起暴露 `ctx.betterSidebar` 服务（Cordis context 
 
 1. `pnpm build && pnpm pack` 产出 tarball（与发布产物一致）。
 2. `scripts/e2e-mount.sh` 用官方 CLI 把它装进一个**全新 scratch profile**（`dsh plugin --profile web add file:<tarball>`，触发 `dsh.profile.bundles` 协调），然后启动真实 `dsh web`（keyless，`--port 0`）。
-3. `tests/e2e/mount.e2e.ts`（Playwright Chromium）加载页面，断言外壳与 `[data-dsh-better-sidebar]` 挂载、无 `dsh-better-sidebar:` 错误条、无 pageerror/插件 console 错误，并通过「+ 菜单」逐个打开内置 tab（含终端懒加载 chunk）深扫，再经 Explorer 打开 seed 文件强制加载 editor 懒加载 chunk（`client-editor.js`）——缺失的内置 tab 或 chunk 都会使门禁变红。
+3. `tests/e2e/mount.e2e.ts`（Playwright Chromium）加载页面，断言外壳与 `[data-dsh-better-sidebar]` 挂载、无 `dsh-better-sidebar:` 错误条、无 pageerror/插件 console 错误，显式展开面板（`openByDefault` 默认关）后通过「+ 菜单」逐个打开内置 tab（含终端懒加载 chunk）深扫，再经 Files 文件窗口的内嵌树打开 seed 文件强制加载 editor 懒加载 chunk（`client-editor.js`，原地模式：seed 的 home tab 原地切换到文件）——缺失的内置 tab 或 chunk 都会使门禁变红。
 
 本地跑：`pnpm build && pnpm pack && pnpm exec playwright install chromium && pnpm test:mount`（需 PATH 上有 `dsh` 或可经 npx 拉取）。DSH CLI 版本在 CI 钉住 `@deepseek-ai/dsh@0.1.0-rc.6`（与插件 peer 范围同步）。`tests/e2e` 的 spec 命名 `*.e2e.ts` + vitest `exclude` 双保险与 vitest 隔离；**改动 vitest `exclude` 时必须保留默认排除项**（`exclude` 会整体替换默认值）。
+
+### npm 发版（GitHub Release → npm publish）
+
+`.github/workflows/release.yml` 在 GitHub Release 发布（tag `vX.Y.Z`）时自动发版到 npm：
+
+1. **发版前置**：`package.json` 版本号 bump 到 `X.Y.Z`（manifest 一致性守卫会校验其它副本），CI 全绿后打 tag `vX.Y.Z` 并发布 GitHub Release。tag 必须与 package.json 版本一致——workflow 在发布前校验，不匹配直接失败、不发版。
+2. **流程**：workflow 依次执行 `pnpm build` / `pnpm typecheck` / `pnpm test`，校验 tag，然后 `pnpm publish --provenance --access public`（`prepublishOnly` 会重建产物；产物带 provenance 签名）。
+3. **认证**：走 npm **Trusted Publishing（OIDC）**，不需要也不应配置 `NPM_TOKEN` secret。一次性手动配置（在 npmjs.com 完成）：package `dsh-better-sidebar` → Settings → Publishing access → Trusted Publishers → Add Trusted Publisher，字段为 Provider `GitHub Actions`、Organization `omdsh-dev`、Repository `DSH-better-sidebar`、**Workflow filename `release.yml`**、Environment 留空。未配置前发布会失败（OIDC 交换报错），配置后无需改 workflow。
+4. **调试**：`workflow_dispatch` 手动触发 + `dry_run=true` 只打包验证、不发版。
 
 ---
 
@@ -122,7 +131,7 @@ interface TabDescriptor {
   title: string | (() => string)
   /** 图标：ReactNode 或 (size: number) => ReactNode */
   icon?: ReactNode | ((size: number) => ReactNode)
-  /** + 菜单排序（升序）；默认 100。内置：explorer=10, git=20, subagent=30, terminal=40 */
+  /** + 菜单排序（升序）；默认 100。内置：editor=10, git=20, subagent=30, terminal=40, browser=50 */
   order?: number
   /** 从 + 菜单隐藏（editor/diff 用：由其他流程触发打开，不在菜单里） */
   hidden?: boolean
@@ -136,7 +145,7 @@ interface TabDescriptor {
   /**
    * 去重键：openTab 时若已存在 dedupeKey 相同的 tab，则聚焦而非新开。
    * 返回 undefined 表示不去重（每次都新开，但同 id 会被 id 安全网聚焦）。
-   * 内置策略：explorer/git/subagent 用 single: true；editor 用 tab => tab.path；diff 用 tab => tab.id。
+   * 内置策略：git/subagent 用 single: true；editor 用 tab => tab.path；diff 用 tab => tab.id。
    */
   dedupeKey?: (tab: SidebarTab) => string | undefined  // 必须保持纯函数：每次 open 会求值两次，抛错会向外传播
   /**
@@ -159,20 +168,24 @@ interface TabDescriptor {
    * 声明式设置（v0.4.1+）：每个注册的 tab 都会在 Side card 设置页获得一行
    * 开关（图标 + 标题 + 类型 id），`settings.toggles` 在其行下追加嵌套设置行，
    * 绑定 SidebarPrefs 字段。嵌套设置仅父级启用时显示（v0.11.0 起行控件不限于
-   * 布尔开关：`type: 'switch' | 'text' | 'number'`，缺省 'switch'；text/number
-   * 行 blur/Enter 提交，number 行按 min/max 钳制，unit 渲染单位后缀）。
+   * 布尔开关：`type: 'switch' | 'text' | 'number' | 'select'`，缺省 'switch'；
+   * text/number 行 blur/Enter 提交，number 行按 min/max 钳制，unit 渲染单位后缀；
+   * select 行是下拉选择：options 声明 `{ value, title, desc?, icon? }`，任一
+   * 选项带 icon 时下拉渲染大图标选项卡、收起态同样显示图标，否则单行文本；
+   * `multi: true`（缺省 false）多选，存储值为选中 value 的数组，按 options
+   * 顺序提交）。
    * v0.12.0 起增加两个插件自有扩展（详见 §5 声明式设置）：
    * `pluginToggles`（插件自有 key，持久化在 pluginSettings[id]，无需宿主 schema 字段）
    * 与 `render`（自定义设置面板，替代行列表）。
    */
   settings?: {
     toggles?: readonly {
-      /** SidebarPrefs 字段名（内置键：'autoOpenSubagent' / 'agentTerminalTools' / 'terminalFontFamily' / 'htmlViewerNoSandbox' / 'htmlViewerDefaultUnsafe' / 'browserNoSandbox' / 'browserInterceptLinks' / 'browserInterceptHttp' / 'browserInterceptHttps'） */
+      /** SidebarPrefs 字段名（内置键：'autoOpenSubagent' / 'agentTerminalTools' / 'terminalFontFamily' / 'editorExplorer' / 'htmlViewerNoSandbox' / 'htmlViewerDefaultUnsafe' / 'browserNoSandbox' / 'browserInterceptLinks' / 'browserInterceptHttp' / 'browserInterceptHttps'） */
       key: string
       title: string | (() => string)
       desc?: string | (() => string)
       /** 行控件类型；缺省 'switch'（向后兼容）。 */
-      type?: 'switch' | 'text' | 'number'
+      type?: 'switch' | 'text' | 'number' | 'select'
       /** number 行的提交钳制下限。 */
       min?: number
       /** number 行的提交钳制上限。 */
@@ -181,6 +194,15 @@ interface TabDescriptor {
       placeholder?: string
       /** 输入框后的单位后缀（如 'px'）。 */
       unit?: string
+      /** select 行的选项（value 为提交值：string | number | boolean）。 */
+      options?: readonly {
+        value: string | number | boolean
+        title: string | (() => string)
+        desc?: string | (() => string)
+        icon?: ReactNode | ((size: number) => ReactNode)
+      }[]
+      /** select 行是否多选（缺省 false；存储值为 value 数组）。 */
+      multi?: boolean
     }[]
     /** 插件自有设置行（v0.12.0+）：形状同 toggles，但 key 是插件局部的，
      *  持久化在 `pluginSettings[<descriptor id>]`——不需要宿主 PrefsSchema 字段。 */
@@ -188,11 +210,18 @@ interface TabDescriptor {
       key: string
       title: string | (() => string)
       desc?: string | (() => string)
-      type?: 'switch' | 'text' | 'number'
+      type?: 'switch' | 'text' | 'number' | 'select'
       min?: number
       max?: number
       placeholder?: string
       unit?: string
+      options?: readonly {
+        value: string | number | boolean
+        title: string | (() => string)
+        desc?: string | (() => string)
+        icon?: ReactNode | ((size: number) => ReactNode)
+      }[]
+      multi?: boolean
     }[]
     /** 自定义设置面板（v0.12.0+）：给出时齿轮弹窗渲染它而非行列表。
      *  props 含 store/service/prefs、本 descriptor 的 pluginSettings blob、
@@ -242,7 +271,7 @@ interface TabComponentProps {
   tab: SidebarTab              // 当前 tab 实例（含 id/type/title/path?/diff?）
   visible: boolean             // 是否是当前激活 tab 且面板打开（不可见时暂停轮询等）
   // 以下由内置 tab 使用，外部 tab 可忽略：
-  expanded?: string[]          // explorer 的展开目录集
+  expanded?: string[]          // 文件树的展开目录集
   onToggleDir?: (path: string) => void
   onReferenceFile?: (path: string) => void
   onOpenFile?: (path: string) => void
@@ -321,8 +350,7 @@ ctx.effect(() => {
 
 | id | order | single | hidden | 用途 |
 |---|---|---|---|---|
-| `editor` | -1 | 否（按 path 去重） | 是 | 文件编辑/预览（由 openSidebarFile 触发） |
-| `explorer` | 10 | 是 | 否 | 文件资源管理器 |
+| `editor` | 10 | 否（按 path 去重） | 否 | 唯一的「文件窗口」（文件编辑/预览 + 文件资源管理）：文件 tab（有 path）在两种 `editorExplorer` 模式下 chrome 恒为合并形态——头部路径输入框 + 文本编辑器预览/编辑/保存控件 + 可开关的内嵌文件树面板（含全局文件名搜索，走 host `fs.search` 路由；左缘拖拽调宽），状态存 `tab.meta.treeOpen` / `tab.meta.treeWidth`；pref 控制**打开行为与无路径窗口形态**：开（默认，合并）= 树点击/输入框 Enter 原地切换当前 tab（`updateTab` 重写 path/title，id 与 meta 不变），无路径窗口 = 带 chrome 的空文件窗口（树默认展开）；关（独立）= 走 `openSidebarFile` 按 path 新开，**无路径窗口即独立资源管理器——只渲染文件树面板**（搜索 + FileTree 撑满全窗，无编辑器 chrome）。树右键菜单提供「在新 Tab 中打开」「在侧边打开」（后者在当前 pane 右侧 split 出新 editor tab）。新会话在两种模式下都默认 seed 空文件窗口（`title: 'Files'`，无 path，树面板展开）；持久化的旧 `explorer` tab 经 `sanitizeState` 迁移为该 home tab |
 | `git` | 20 | 是 | 否 | Git 面板 |
 | `subagent` | 30 | 是 | 否 | 子代理拓扑 |
 | `terminal` | 40 | 否 | 否 | 终端（nextTerminal 自增） |
@@ -377,6 +405,11 @@ interface FileViewerProps {
   truncated?: boolean     // fetchStrategy='fsRead' 时
   mediaUrl?: string       // fetchStrategy='mediaUrl' 时
   customData?: unknown    // fetchStrategy='custom' 时（load() 的返回值）
+  // 以下三个为内置文本编辑器与 EditorHost 的内部协作字段（合并模式把
+  // 预览/编辑/保存工具栏上移到路径输入框行）；外部 viewer 忽略即可：
+  toolbar?: 'self' | 'host'
+  onToolbarState?: (state: EditorToolbarState) => void
+  onToolbarControls?: (controls: EditorToolbarControls | null) => void
 }
 ```
 
@@ -501,7 +534,7 @@ interface BetterSidebarService {
   readonly version: string
   /** 单调能力清单（只增不删）：'badge' | 'tabLifecycle' | 'updateTab' |
    *  'openFile' | 'targetedOpen' | 'stateSubscription' | 'tabMeta' |
-   *  'pluginSettings' | 'urlTarget'——消费插件用 `features.includes('xxx')` 按能力 gate。 */
+   *  'pluginSettings' | 'urlTarget' | 'settingSelect'——消费插件用 `features.includes('xxx')` 按能力 gate。 */
   readonly features: readonly string[]
   /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs。
    *  session 未激活时 state/sessionId 为 undefined。 */
@@ -514,7 +547,10 @@ interface BetterSidebarService {
    *  未知 id 严格 no-op）；scope（v0.12.0+）随回调传递，同 closeTab */
   activateTab(tabId: string, scope?: SessionScope): void
   /** 在 scope.sessionId 的侧边栏编辑器打开一个文件（title 缺省为文件名；
-   *  id 按路径派生，与内置 open-path 拦截一致，不同文件可并排打开） */
+   *  id 按路径派生（`editor:` + path），与内置 open-path 拦截一致，不同文件
+   *  可并排打开。注意：path 派生 id 只对 openFile/openSidebarFile 的打开成立——
+   *  文件窗口的原地切换（editorExplorer 开）经 updateTab 重写 path/title，
+   *  tab id 保持稳定、不再与 path 对应） */
   openFile(scope: SessionScope, path: string, title?: string): void
 }
 
@@ -532,7 +568,7 @@ interface OpenTabSeed {
 }
 ```
 
-> **声明式设置（v0.4.1+）**：每个注册的 tab/viewer 自动出现在 DSH 设置页「侧边卡片」分区的清单里——响应式网格中的**小卡片**（图标 + 标题 + 类型 id + **高亮 = 启用**，勾选徽标钉在卡片最右端，viewer 卡片还显示扩展名），开关持久化到 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，缺省 = 启用）。关闭语义：tab 从 `+` 菜单消失、`openTab` 拒绝新开、子代理自动展开 / agent 终端自动补 tab 等派生流程停止，**已打开的 tab 保留**；viewer 被 `matchFileViewer` 跳过，文件落到下一个匹配。`settings.toggles` 声明的相关设置（如子代理的 `autoOpenSubagent`、终端的 `terminalFontFamily`/`terminalFontSize`）通过卡片右下角的齿轮按钮在**原生弹窗**中编辑——`type: 'switch'` 行是复选框，`type: 'text'`/`'number'` 行是输入框（v0.11.0+）——父级卡片关闭时齿轮隐藏；`settings.toggles` 的 **key 必须是宿主 PrefsSchema 的字段**（内置键：`autoOpenSubagent` / `agentTerminalTools` / `terminalFontFamily` / `terminalFontSize` / `htmlViewerNoSandbox` / `htmlViewerDefaultUnsafe` / `browserNoSandbox` / `browserInterceptLinks` / `browserInterceptHttp` / `browserInterceptHttps`）。**v0.12.0 起设置 seam 已开放**：外部插件用 `settings.pluginToggles`（同款行控件，key 插件局部）或 `settings.render`（自定义面板）声明自己的设置，值持久化在 prefs 文档的 `pluginSettings[<descriptor id>]`（开放 map，宿主 schema 已有字段，无需注册）——齿轮弹窗对 tab 与 viewer 都可用（viewer 卡片 v0.12.0 起也有齿轮）。
+> **声明式设置（v0.4.1+）**：每个注册的 tab/viewer 自动出现在 DSH 设置页「侧边卡片」分区的清单里——响应式网格中的**小卡片**（图标 + 标题 + 类型 id + **高亮 = 启用**，勾选徽标钉在卡片最右端，viewer 卡片还显示扩展名），开关持久化到 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，缺省 = 启用）。关闭语义：tab 从 `+` 菜单消失、`openTab` 拒绝新开、子代理自动展开 / agent 终端自动补 tab 等派生流程停止，**已打开的 tab 保留**；viewer 被 `matchFileViewer` 跳过，文件落到下一个匹配。`settings.toggles` 声明的相关设置（如子代理的 `autoOpenSubagent`、终端的 `terminalFontFamily`/`terminalFontSize`）通过卡片右下角的齿轮按钮在**原生弹窗**中编辑——`type: 'switch'` 行是复选框，`type: 'text'`/`'number'` 行是输入框（v0.11.0+），`type: 'select'` 行是下拉选择（options 带 icon 时为大图标选项卡，`multi: true` 多选存 value 数组）——父级卡片关闭时齿轮隐藏；`settings.toggles` 的 **key 必须是宿主 PrefsSchema 的字段**（内置键：`autoOpenSubagent` / `agentTerminalTools` / `terminalFontFamily` / `terminalFontSize` / `editorExplorer` / `htmlViewerNoSandbox` / `htmlViewerDefaultUnsafe` / `browserNoSandbox` / `browserInterceptLinks` / `browserInterceptHttp` / `browserInterceptHttps`）。**v0.12.0 起设置 seam 已开放**：外部插件用 `settings.pluginToggles`（同款行控件，key 插件局部）或 `settings.render`（自定义面板）声明自己的设置，值持久化在 prefs 文档的 `pluginSettings[<descriptor id>]`（开放 map，宿主 schema 已有字段，无需注册）——齿轮弹窗对 tab 与 viewer 都可用（viewer 卡片 v0.12.0 起也有齿轮）。
 
 ---
 
@@ -560,7 +596,26 @@ interface OpenTabSeed {
 
 ---
 
-## 8. 完整最小示例
+## 8. 皮肤兼容（令牌驱动）
+
+> 侧边栏的皮肤兼容是**令牌驱动**的：所有视觉值都消费 DSH 的 `--dsw-alias-*` / `--dsw-font-*` / `--ds-*` 令牌（无硬编码颜色），皮肤系统覆盖什么令牌我们就跟随什么——**不做任何每皮肤适配**。当前已与 dsh-web-ui 皮肤中心兼容：其 10 款皮肤全部覆盖 `--dsw-alias-*` 层，换肤后面板自动跟随（测试：`tests/e2e/mount.e2e.ts` 断言布局变量随面板挂载生效；`tests/theme.spec.ts` 守护令牌读取）。
+
+### 8.1 规则
+
+- **面板表面**：右/底面板背景 = `var(--dsw-alias-bg-layer-1)`（通用卡片表面）。**绝不消费 `--dsw-specific-sidebar-fill`**——那是宿主左侧导航列专属令牌，皮肤系统按左导航语义覆盖它（dsh-web-ui 皮肤把它做成半透明玻璃或主题色，Aqua 设成 `transparent`），面板消费它会失去填充或与标签令牌冲突。皮肤要整体换面板表面：覆写 `--dsw-alias-bg-layer-1` 即可（dsh-web-ui 10 款皮肤都已覆盖，无需任何额外工作）。
+- **终端/编辑器表面**：经 `effectiveTokenValue` 读取 `--dsw-alias-bg-base`——`transparent` 与 alpha < 0.9 的半透明玻璃值（dsh-web-ui 皮肤用 rgba 0.16–0.7）一律回退不透明底色，文字永不叠在皮肤背景画上滚动（issue #90）；≥ 0.9 的近不透明值（如皮肤作用域内 0.96 的瓷器玻璃）放行，皮肤仍能控制终端表面。
+- **根锚点**：宿主 div 带 `data-dsh-better-sidebar` 属性（append 到 `document.body`），面板是其 fixed 直接子级。皮肤若要做作用域覆盖（deep-whale 的做法），限定在 `[data-dsh-better-sidebar]` 内即可，避免全局改写影响宿主。
+- **布局变量**（写在 `<html>` 上，面板打开时有效）：`--dsh-sidebar-width` / `--dsh-sidebar-height`（面板几何；拖拽期间逐帧更新）。
+- **z-index**：面板 40、折叠按钮簇 45（角手柄在面板内层叠，z-index 2 仅面板内有效）——全部低于 DSH 浮层栈（100/1000+），任何浮层天然盖住侧边栏。
+
+### 8.2 注意事项
+
+- 类名是 CSS Modules 哈希（`[hash]_[local]`），**不是契约**——皮肤不要依赖类名寻址；需要精确命中单表面时，用 `[data-dsh-better-sidebar]` 属性选择器配合子串类名（如 `[class*='panel']`）或 DOM 结构。
+- 改动本契约（面板表面令牌、透明度阈值、z-index 层级）必须同步更新本文档、设计文档与 `tests/theme.spec.ts`。
+
+---
+
+## 9. 完整最小示例
 
 > 假设插件 `my-plugin` 要加一个"Database 浏览器" tab + `.csv` 文件预览器。
 
@@ -636,16 +691,17 @@ function parseCsv(text: string): string[][] { /* ... */ }
 
 ---
 
-## 9. 参考实现
+## 10. 参考实现
 
 better-sidebar 自己的内置 tab 和 viewer 就是参考实现（"吃狗粮"）：
 
-- **`src/client/builtins/`**：7 个内置 tab（explorer/git/subagent/terminal/browser/editor/diff）+ 6 个内置 viewer（image/pdf/markdown/html/code/binary-download）的注册代码（tabs.tsx / viewers.tsx / index.ts；Office 预览已迁至推荐插件，见 plugins-viewers.ts）
+- **`src/client/builtins/`**：6 个内置 tab（editor/git/subagent/terminal/browser/diff）+ 6 个内置 viewer（image/pdf/markdown/html/code/binary-download）的注册代码（tabs.tsx / viewers.tsx / index.ts；Office 预览已迁至推荐插件，见 plugins-viewers.ts）
 - **`src/client/service.ts`**：`BetterSidebarService` 接口 + `createBetterSidebarService` 工厂实现
 - **`src/client/SideCardSection.tsx`**：声明式设置页（注册表驱动清单 + `settings.toggles` 嵌套设置行：switch/text/number + 持久化）
 - **`tests/service.spec.ts`**：注册表生命周期 / 匹配算法 / dedupe / createTab / 启用态 gating 测试
 - **`tests/builtins.spec.ts`**：内置注册清单断言（7 tab + 6 viewer + 声明式元数据）
 - **`src/client/plugins-tabs.ts`** / **`src/client/plugins-viewers.ts`**：推荐插件目录（名字/url/简介/安装脚本，分别对应 Tab 注册与文件预览注册），在设置页两个「添加插件」弹窗展示（共享类型在 `plugins-shared.ts`）；插件作者可按扩展点加一条数据（弹窗内「跳转」直达仓库、「复制」把安装命令写入剪贴板，粘贴到 DSH 所在环境的终端执行）——数据完整性由 `tests/plugin-list.spec.ts` 守护
+- **`src/client/FileTree.tsx`** / **`src/client/TreePanel.tsx`** / **`src/fs-search.ts`**：受控文件树组件（纯树体，文件行右键菜单含「在新 Tab 中打开」「在侧边打开」，仅宿主编排提供回调时渲染）/ 树面板（搜索框 + 刷新 + FileTree，文件窗口的内嵌 dock 使用）与 host 侧递归文件名搜索（`fs.search` 路由，预算兜底 + 跳过 `.git`/symlink 目录；测试 `tests/fs-search.spec.ts`、组件测试 `tests/editor-host.spec.tsx`）
 - **`docs/plans/2026-08-11-service-registry-design.md`** / **`docs/plans/2026-08-11-declarative-sidebar-settings-design.md`** / **`docs/plans/2026-08-14-add-plugins-modal-design.md`**：设计文档（含实施偏差记录）
 
 调试时直接读这些文件即可看到所有 API 的真实用法。

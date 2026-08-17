@@ -155,7 +155,7 @@ describe('PluginListBody copy click (interactive)', () => {
     vi.restoreAllMocks()
   })
 
-  it('both the name button and the jump button open the repo in a NEW browser tab (window.open, not a link)', () => {
+  it('the name and jump buttons open each catalog entry in a NEW browser tab (window.open, not a link)', () => {
     const store = createSidebarStore()
     const service = createBetterSidebarService(store)
     const opened: Array<[string, string, string]> = []
@@ -171,14 +171,21 @@ describe('PluginListBody copy click (interactive)', () => {
       act(() => {
         root.render(createElement(PluginListBody, { service, kind: 'viewer' }))
       })
+      // Two window.open buttons per catalog entry — the name button and the
+      // jump button. The expected count is catalog-driven so adding or
+      // removing recommended plugins keeps the test honest instead of
+      // pinning a hardcoded total.
       const jumpButtons = [...container.querySelectorAll('button[aria-label^="Open:"]')]
-      expect(jumpButtons).toHaveLength(2) // the name + the jump button
-      act(() => { (jumpButtons[0] as HTMLButtonElement).click() })
-      act(() => { (jumpButtons[1] as HTMLButtonElement).click() })
-      expect(opened).toEqual([
-        [officeEntry.url, '_blank', 'noopener'],
-        [officeEntry.url, '_blank', 'noopener'],
-      ])
+      expect(jumpButtons).toHaveLength(builtinViewerPlugins.length * 2)
+      for (const button of jumpButtons) {
+        act(() => { (button as HTMLButtonElement).click() })
+      }
+      expect(opened).toEqual(
+        builtinViewerPlugins.flatMap((entry) => [
+          [entry.url, '_blank', 'noopener'],
+          [entry.url, '_blank', 'noopener'],
+        ]),
+      )
       act(() => { root.unmount() })
       container.remove()
     } finally {

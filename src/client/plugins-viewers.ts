@@ -20,4 +20,11 @@ export const builtinViewerPlugins: readonly PluginEntry[] = [
     description: () => t('pluginOfficeDesc'),
     install: 'cd ~/.dsh && dsh plugin --profile web add @huanlin/dsh-plugin-better-sidebar-plugin-office',
   },
+  {
+    id: 'dsh-video-preview',
+    name: '视频预览插件',
+    url: 'https://github.com/zemul/dsh-video-preview',
+    description: () => t('pluginVideoPreviewDesc'),
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-video-preview',
+  },
 ]

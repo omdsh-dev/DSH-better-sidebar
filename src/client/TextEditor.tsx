@@ -7,7 +7,11 @@
  * so this component never fetches or dispatches — it only edits.
  *
  * The toolbar (mode toggle / dirty dot / save / status) renders as its own
- * row below the host's title bar, VSCode-style.
+ * row below the host's title bar, VSCode-style — unless the host passes
+ * `toolbar: 'host'` (the merged editor-explorer mode), in which case this
+ * component skips the row and reports state + registers commands through
+ * the FileViewerProps toolbar callbacks so the host's path-input header
+ * renders the controls instead.
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -24,7 +28,7 @@ import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { appendToDraft } from './conversation-draft.ts'
 import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
 import { t } from './locales.ts'
-import type { FileViewerProps } from './service.ts'
+import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
 
 /** Previewable files (rendered output vs source editing). */
@@ -278,8 +282,31 @@ export function TextEditor(props: FileViewerProps) {
   const [localUnlock, setLocalUnlock] = useState(() => props.store?.getPrefs().htmlViewerDefaultUnsafe === true)
   const htmlNoSandbox = props.store?.getPrefs().htmlViewerNoSandbox === true || localUnlock
 
+  // Host-toolbar mode (the merged editor header renders the controls): skip
+  // the own toolbar row, report the state after every relevant render (the
+  // JSON key guards redundant calls), and register the commands on mount.
+  const hostToolbar = props.toolbar === 'host'
+  const lastToolbarRef = useRef('')
+  useEffect(() => {
+    if (!hostToolbar) return
+    const state: EditorToolbarState = { modes: markdown || html, mode, dirty, editable, saveState }
+    const key = JSON.stringify(state)
+    if (lastToolbarRef.current === key) return
+    lastToolbarRef.current = key
+    props.onToolbarState?.(state)
+  })
+  useEffect(() => {
+    if (!hostToolbar) return
+    // `save` reads live refs only, and `setMode` is the stable state setter —
+    // registering this render's closures is safe for the mount's lifetime.
+    props.onToolbarControls?.({ setMode, save })
+    return () => { props.onToolbarControls?.(null) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostToolbar])
+
   return (
     <>
+      {!hostToolbar && (
       <div className={css.editorHeader}>
         {(markdown || html) && (
           <div className={css.editorModeToggle}>
@@ -313,6 +340,7 @@ export function TextEditor(props: FileViewerProps) {
         )}
         {saveLabel !== '' && <span className={clsx(css.editorStatus, saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>}
       </div>
+      )}
       {editable && (
         <>
           {truncated === true && mode === 'edit' && <div className={css.editorBanner}>{t('truncation')}</div>}

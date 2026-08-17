@@ -20,6 +20,7 @@ import { RenderBoundary } from './RenderBoundary.tsx'
 import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
+import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { loadPrefs } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
@@ -211,6 +212,16 @@ export function apply(ctx: Context): void {
         }
       },
       'dsh-better-sidebar: IME composition guard',
+    )
+
+    // DSH 0.1.x does not yet carry an icon through the settings.section
+    // registration contract: its shell renders a generic gear for every
+    // external section. Mark only this plugin's localized nav row so
+    // layout.css can paint the requested Side card SVG; the disposer clears
+    // the marker for HMR / plugin disable.
+    ctx.effect(
+      () => registerSettingsNavIcon(() => t('settingsNav')),
+      'dsh-better-sidebar: settings navigation icon',
     )
 
     // The "Side card" settings section: appears in the DSH Settings shell

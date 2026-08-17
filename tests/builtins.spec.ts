@@ -1,5 +1,5 @@
 /**
- * Built-in registration tests: the plugin registers 7 tabs and 6 file
+ * Built-in registration tests: the plugin registers 6 tabs and 6 file
  * viewers through the same service external plugins use (dogfooding);
  * the catch-all `code` viewer, the NUL-sniffing `binary-download` viewer,
  * and the html sandbox settings pin the registry's behavior. (Office
@@ -24,21 +24,24 @@ function setup(): { service: ReturnType<typeof createBetterSidebarService>; stor
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 7 built-in tabs', () => {
+  it('registers the 6 built-in tabs', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['browser', 'diff', 'editor', 'explorer', 'git', 'subagent', 'terminal'],
+      ['browser', 'diff', 'editor', 'git', 'subagent', 'terminal'],
     )
   })
 
-  it('editor and diff are hidden from the + menu (opened by file-open / git view)', () => {
+  it('only diff is hidden from the + menu; editor is the visible files window (order 10)', () => {
     const { service } = setup()
-    expect(service.getTabs().filter(t => t.hidden).map(t => t.id).sort()).toEqual(['diff', 'editor'])
+    expect(service.getTabs().filter(t => t.hidden).map(t => t.id)).toEqual(['diff'])
+    const editor = service.getTab('editor')
+    expect(editor?.hidden).toBe(false)
+    expect(editor?.order).toBe(10)
   })
 
   it('single-instance tabs use the single sugar', () => {
     const { service } = setup()
-    for (const id of ['explorer', 'git', 'subagent']) {
+    for (const id of ['git', 'subagent']) {
       expect(service.getTab(id)?.single).toBe(true)
     }
   })
@@ -47,6 +50,19 @@ describe('built-in tab registrations', () => {
     const { service } = setup()
     const toggles = service.getTab('subagent')?.settings?.toggles ?? []
     expect(toggles.map(t => t.key)).toEqual(['autoOpenSubagent', 'autoOpenJobs'])
+  })
+
+  it('the editor tab declares its merged-mode (embedded file tree) setting', () => {
+    const { service } = setup()
+    const toggles = service.getTab('editor')?.settings?.toggles ?? []
+    expect(toggles.map(t => t.key)).toEqual(['editorExplorer'])
+    expect(toggles[0]?.title).toBeDefined()
+    expect(toggles[0]?.desc).toBeDefined()
+    // The merged mode is an iconed select (merged vs separate), not a switch.
+    expect(toggles[0]?.type).toBe('select')
+    const options = toggles[0]?.options ?? []
+    expect(options.map(o => o.value)).toEqual([true, false])
+    expect(options.every(o => o.icon !== undefined && o.title !== undefined)).toBe(true)
   })
 
   it('the terminal tab declares the model terminal-tools, auto-terminal and custom-font settings', () => {

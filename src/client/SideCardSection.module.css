@@ -24,12 +24,11 @@
   flex-direction: column;
   gap: 14px;
   width: 100%;
-  /* Tall inventories (7 tab cards + 9 viewer cards + general rows) must
-     never be clipped by the settings shell: fill the shell's options area
-     and scroll inside the section when the content outgrows the panel. */
-  height: 100%;
-  min-height: 0;
-  overflow-y: auto;
+  max-width: 760px;
+  /* The DSH settings shell's `.options` area owns vertical scrolling. Keep
+     this page a plain content column like Plugins → Plugin list so its
+     scrollbar stays at the shell edge instead of being inset by the options
+     area's right padding. */
 }
 
 /* One-line section intro (the DSH section heading+intro recipe). */
@@ -404,6 +403,59 @@
   width: 76px;
 }
 
+/* Select rows: the closed anchor is a compact button (selected option's
+   icon when the options carry icons, plus title and a chevron); the dropdown
+   itself is the primitives Menu (portal). */
+.selectAnchor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.selectAnchor:hover {
+  border-color: var(--dsw-alias-label-dimmed);
+}
+
+.selectAnchorIcon {
+  display: inline-flex;
+  flex: none;
+}
+
+.selectAnchorText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One big-icon option card inside the select dropdown. */
+.selectOption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 200px;
+}
+
+.selectOptionIcon {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.selectOptionText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .suffix {
   font-size: 14px;
   line-height: 22px;
@@ -417,10 +469,13 @@
   width: min(460px, 100%);
 }
 
-/* Popup rows: the same settings-row recipe with switch controls. */
+/* Popup rows: each setting gets the same outer chrome as a plugin-list
+   PluginCard (l2 hairline, 12px radius, layer-3 fill). The row's title,
+   description and control geometry stay unchanged inside that frame. */
 .popupRows {
   display: flex;
   flex-direction: column;
+  gap: 10px;
   width: 100%;
 }
 
@@ -429,16 +484,16 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 2px;
-  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-3);
+  transition: border-color 0.16s, background 0.16s;
 }
 
 .popupRow:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.popupRows > :last-child {
-  border-bottom: none;
+  border-color: var(--dsw-alias-label-dimmed);
 }
 
 /* The popup's Done button: the settings primary-button recipe

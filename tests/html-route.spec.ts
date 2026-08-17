@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest'
 import { resolve } from 'node:path'
 import { decodeHtmlUrl, encodeHtmlUrl } from '../src/html-route.ts'
+import { isWin32 } from './platform.ts'
 
 describe('encodeHtmlUrl', () => {
   it('encodes a POSIX absolute path into route segments', () => {
@@ -20,6 +21,21 @@ describe('encodeHtmlUrl', () => {
       .toBe('/sidebar/html/sess-1/C%3A/Users/me/a.html')
   })
 
+  it('encodes a UNC path with the // marker (backslash and forward-slash forms)', () => {
+    expect(encodeHtmlUrl('sess-1', '\\\\server\\share\\proj\\a.html'))
+      .toBe('/sidebar/html/sess-1//server/share/proj/a.html')
+    expect(encodeHtmlUrl('sess-1', '//server/share/proj/a.html'))
+      .toBe('/sidebar/html/sess-1//server/share/proj/a.html')
+  })
+
+  it('keeps a POSIX // path marker-encoded (the marker is platform-neutral)', () => {
+    // The decoder rebuilds '//server/share/...', which node:path resolves to
+    // '/server/share/...' on POSIX and '\\server\share\...' on win32 — so the
+    // leading double slash round-trips without any platform signal.
+    expect(encodeHtmlUrl('s-1', '//server/share/a.html'))
+      .toBe('/sidebar/html/s-1//server/share/a.html')
+  })
+
   it('percent-encodes special characters in segments', () => {
     expect(encodeHtmlUrl('s-1', '/a b/中文/100%.html'))
       .toBe('/sidebar/html/s-1/a%20b/%E4%B8%AD%E6%96%87/100%25.html')
@@ -27,14 +43,6 @@ describe('encodeHtmlUrl', () => {
 
   it('ignores leading/trailing slashes (files only)', () => {
     expect(encodeHtmlUrl('s', '/a//b/x.html')).toBe('/sidebar/html/s/a/b/x.html')
-  })
-
-  it('encodes a Windows UNC path with the // marker after the sessionId', () => {
-    expect(encodeHtmlUrl('sess-1', '\\\\server\\share\\proj\\a.html'))
-      .toBe('/sidebar/html/sess-1//server/share/proj/a.html')
-    // Forward-slash UNC input produces the same marker form.
-    expect(encodeHtmlUrl('sess-1', '//server/share/proj/a.html'))
-      .toBe('/sidebar/html/sess-1//server/share/proj/a.html')
   })
 })
 
@@ -53,13 +61,37 @@ describe('decodeHtmlUrl', () => {
       ok: true,
       ref: { sessionId: 'sess-1', path: 'C:/Users/me/a.html' },
     })
+  })
+
+  it.skipIf(!isWin32)('decoded drive paths resolve back verbatim on win32', () => {
     // The host runs requireAbsolute() over the decoded path: with the old
     // '/C:/...' form node's resolve() produced 'C:\C:\Users\...' (drive
     // doubled) on Windows and the isWithin(cwd) fence rejected every drive
     // path. The slash-free form must resolve back to the original path.
-    if (process.platform === 'win32') {
-      expect(resolve('C:/Users/me/a.html')).toBe('C:\\Users\\me\\a.html')
-    }
+    expect(resolve('C:/Users/me/a.html')).toBe('C:\\Users\\me\\a.html')
+  })
+
+  it('decodes a UNC round-trip back to the platform-neutral forward-slash form', () => {
+    const url = encodeHtmlUrl('sess-1', '\\\\server\\share\\proj\\a.html')
+    expect(decodeHtmlUrl(url)).toEqual({
+      ok: true,
+      ref: { sessionId: 'sess-1', path: '//server/share/proj/a.html' },
+    })
+    // The host's requireAbsolute resolves that form per-platform:
+    // '\\server\share\proj\a.html' on win32, '/server/share/proj/a.html' on POSIX.
+  })
+
+  it('round-trips a POSIX // path through the same marker', () => {
+    const url = encodeHtmlUrl('s-1', '//server/share/a.html')
+    expect(decodeHtmlUrl(url)).toEqual({
+      ok: true,
+      ref: { sessionId: 's-1', path: '//server/share/a.html' },
+    })
+  })
+
+  it('refuses a marker-only UNC URL and stray double slashes (400)', () => {
+    expect(decodeHtmlUrl('/sidebar/html/s//').ok).toBe(false)
+    expect(decodeHtmlUrl('/sidebar/html/s//server//x.html').ok).toBe(false)
   })
 
   it('decodes a lowercase-drive Windows path without a leading slash', () => {
@@ -67,24 +99,6 @@ describe('decodeHtmlUrl', () => {
       ok: true,
       ref: { sessionId: 's', path: 'd:/work/x.html' },
     })
-  })
-
-  it('decodes a UNC round-trip back to the network path', () => {
-    const url = encodeHtmlUrl('sess-1', '\\\\server\\share\\proj\\a.html')
-    expect(decodeHtmlUrl(url)).toEqual({
-      ok: true,
-      ref: { sessionId: 'sess-1', path: '\\\\server\\share\\proj\\a.html' },
-    })
-    // The host runs requireAbsolute() + isWithin(cwd) over the decoded path:
-    // the UNC form must survive both (resolve keeps the prefix verbatim).
-    if (process.platform === 'win32') {
-      expect(resolve('\\\\server\\share\\proj\\a.html')).toBe('\\\\server\\share\\proj\\a.html')
-    }
-  })
-
-  it('refuses a marker-only UNC URL and stray double slashes (400)', () => {
-    expect(decodeHtmlUrl('/sidebar/html/s//').ok).toBe(false)
-    expect(decodeHtmlUrl('/sidebar/html/s//server//x.html').ok).toBe(false)
   })
 
   it('decodes special characters round-trip', () => {
@@ -157,7 +171,7 @@ describe('relative asset resolution stays in-route', () => {
       .toBe('/sidebar/html/s//server/share/proj/style.css')
     expect(decodeHtmlUrl(new URL('./style.css', doc).pathname)).toEqual({
       ok: true,
-      ref: { sessionId: 's', path: '\\\\server\\share\\proj\\style.css' },
+      ref: { sessionId: 's', path: '//server/share/proj/style.css' },
     })
   })
 })

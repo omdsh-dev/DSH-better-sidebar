@@ -1,6 +1,6 @@
 {
   "name": "dsh-better-sidebar",
-  "version": "0.12.2",
+  "version": "0.12.3",
   "description": "DSH web plugin: a VSCode-like right sidebar (explorer / editor / terminal / git / browser), isolated per conversation session. Exposes a service for other plugins to register sidebar tabs and file viewers.",
   "type": "module",
   "repository": {
@@ -129,13 +129,11 @@
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.8",
     "@lezer/highlight": "^1.2.3",
-    "@xterm/addon-fit": "^0.10.0",
     "clsx": "^2.1.1",
     "node-pty": "^1.1.0",
     "rxjs": "^7.8.2",
     "schemastery": "^3.18.0",
-    "ws": "^8.18.0",
-    "xterm": "^5.3.0"
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@cordisjs/plugin-loader": "^1.0.0-rc.5",
@@ -159,6 +157,8 @@
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.1",
     "@types/ws": "^8.5.10",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^5.5.0",
     "cordis": "^4.0.0-rc.7",
     "jsdom": "^29.1.1",
     "lightningcss": "^1.32.0",
