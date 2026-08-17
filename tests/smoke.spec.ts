@@ -572,6 +572,18 @@ describe('explorer fs operations over the API route', () => {
     expect(readFileSync(join(work, 'b.txt'), 'utf8')).toBe('b')
   })
 
+  it('fs.write accepts empty content (new empty file)', async () => {
+    // Regression: the explorer's "new file" action writes `content: ''`, and
+    // the editor clears files to empty — requireString's empty-string
+    // rejection used to fail both with "missing or invalid content".
+    const route = mount()
+    const target = join(work, 'blank.txt')
+    const result = await invoke(route, 'fs.write', { sessionId: 's', path: target, content: '' })
+    expect(result.ok).toBe(true)
+    expect(existsSync(target)).toBe(true)
+    expect(readFileSync(target, 'utf8')).toBe('')
+  })
+
   it('fs.remove moves the entry into the configured trash', async () => {
     const route = mount()
     writeFileSync(join(work, 'bye.txt'), 'data')

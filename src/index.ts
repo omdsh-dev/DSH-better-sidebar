@@ -52,7 +52,7 @@ import {
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
-import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
+import { readJsonBody, requireString, requireStringAllowEmpty, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
@@ -232,7 +232,9 @@ function buildApi(
     'fs.write': async (payload) => {
       const { cwd } = cwdOf(payload)
       const path = requireAbsolute(requireString(payload, 'path'))
-      const content = requireString(payload, 'content')
+      // Empty content is legitimate (creating an empty file, clearing a file
+      // in the editor) — requireStringAllowEmpty instead of requireString.
+      const content = requireStringAllowEmpty(payload, 'content')
       const tmp = `${path}.dsh-sidebar-tmp-${process.pid}`
       try {
         await mkdir(dirname(path), { recursive: true })
