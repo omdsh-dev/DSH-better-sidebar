@@ -40,7 +40,20 @@ function mount(options: { cwd?: string; withRouter?: boolean } = {}) {
       }
       return () => {}
     },
-    get: () => undefined,
+    get: (name: string) => {
+      if (name === 'federatedExtensions') {
+        return {
+          register(value: Registration) {
+            registration = value
+            return () => { disposed = true }
+          },
+        }
+      }
+      if (name === 'federationExtensionRouter' && options.withRouter === true) {
+        return { async invokeJson(call: unknown) { routedCall = call; return { ok: true, value: { remote: true } } } }
+      }
+      return undefined
+    },
   }
   apply(ctx as never)
   if (registration === undefined) throw new Error('federation registration was not captured')

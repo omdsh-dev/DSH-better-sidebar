@@ -509,6 +509,8 @@ declare module 'cordis' {
      * the disposer.
      */
     on(event: string, listener: (session: unknown, event: SidebarSessionEvent) => void): () => void
+    /** Resolve an optional Host service by name without making it a hard inject dependency. */
+    get(name: string, strict?: boolean): any
     /**
      * Register a lifecycle callback (DSH-vendored cordis): runs at plugin
      * activation; its returned cleanup runs at disposal.

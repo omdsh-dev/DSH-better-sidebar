@@ -741,18 +741,21 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
 
   // ── JSON API ────────────────────────────────────────────────────────────
   const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace)
-  let federationRouter: import('./context-types.ts').SidebarFederationExtensionRouter | undefined
-  ctx.inject(['federationExtensionRouter'], (fctx) => {
-    federationRouter = fctx.federationExtensionRouter
+  let federationRouter = ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
+  ctx.effect(() => {
+    // Rows may activate in either order. Resolve lazily from the root service
+    // registry on every request if the router was not present at sidebar boot.
     return () => { federationRouter = undefined }
   })
   // Federation calls the same business handlers, but through a strict owner
-  // cwd resolver. The optional service is lifecycle-injected, so the sidebar
-  // remains fully usable when Federation is not installed.
-  ctx.inject(['federatedExtensions'], (fctx) => {
-    const ownerApi = buildApi(fctx as Context, ptyManager, agentPtyRegistry, resolved, () => settingsFace, 'owner-strict')
-    return registerFederatedJsonApi(fctx as Context, resolved, ptyManager, fctx.federatedExtensions, ownerApi)
-  })
+  // cwd resolver. The service is optional; because the Federation bundle is
+  // ordered before the sidebar bundle in deployment, a root lookup avoids
+  // Cordis child-context injection ordering differences between profiles.
+  const extensionRegistry = ctx.get('federatedExtensions') as import('./context-types.ts').SidebarFederatedExtensionRegistry | undefined
+  if (extensionRegistry !== undefined) {
+    const ownerApi = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace, 'owner-strict')
+    ctx.effect(() => registerFederatedJsonApi(ctx, resolved, ptyManager, extensionRegistry, ownerApi))
+  }
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -773,6 +776,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       }
       try {
         const payload = await readJsonBody(req)
+        federationRouter ??= ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
         if (federationRouter !== undefined
           && isFederatedSessionId((payload as { sessionId?: unknown } | null)?.sessionId)
           && [...FEDERATED_JSON_READ_METHODS, ...FEDERATED_JSON_WRITE_METHODS].includes(method as never)) {
@@ -816,6 +820,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const sessionId = url.searchParams.get('sessionId')
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
+        federationRouter ??= ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
         if (federationRouter !== undefined && isFederatedSessionId(sessionId)) {
           const result = await federationRouter.invokeBinary({
             namespace: BETTER_SIDEBAR_FEDERATION_NAMESPACE,
@@ -889,6 +894,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
           return
         }
         const { sessionId, path } = decoded.ref
+        federationRouter ??= ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
         if (federationRouter !== undefined && isFederatedSessionId(sessionId)) {
           const result = await federationRouter.invokeBinary({
             namespace: BETTER_SIDEBAR_FEDERATION_NAMESPACE,
@@ -953,6 +959,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       wss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
         const url = new URL(req.url ?? '/', 'http://dsh.internal')
         const sessionId = url.searchParams.get('sessionId')
+        federationRouter ??= ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
         if (federationRouter !== undefined && sessionId !== null && isFederatedSessionId(sessionId)) {
           void attachFederatedTerminal(federationRouter, ws, sessionId, url.searchParams.get('tab'), resolved)
           return
