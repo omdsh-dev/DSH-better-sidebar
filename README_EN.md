@@ -171,6 +171,8 @@ Update: `git pull && pnpm install && pnpm build` → `node scripts/package-regis
 | Split / merge panes | Drag tab to pane edge / middle |
 | Reference file to input | Hover the `@file` button at end of line |
 | Copy file path | Right-click row → copy relative/absolute path |
+| Open with default app | Right-click file row → open with default app |
+| Tab context menu | Right-click a tab → close this / right / left / other tabs; file tabs also copy absolute/relative paths and open with the default app |
 
 ## 🔌 Service: register tabs & file viewers
 
