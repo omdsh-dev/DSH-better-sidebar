@@ -411,6 +411,41 @@ export interface SidebarAgent {
   }
 }
 
+export interface SidebarFederationExtensionRouter {
+  invokeJson(call: {
+    namespace: string
+    version: string
+    capability: string
+    sessionId: string
+    payload: unknown
+  }, signal?: AbortSignal): Promise<
+    | { ok: true; value: unknown }
+    | { ok: false; error: { code: string; message: string; details: Record<string, unknown> } }
+  >
+}
+
+export interface SidebarFederatedExtensionRegistry {
+  register(registration: {
+    manifest: {
+      namespace: string
+      version: string
+      capabilities: readonly {
+        name: string
+        scope: 'session'
+        risk: 'read' | 'write'
+        transport: 'json'
+      }[]
+    }
+    handlers: Readonly<Record<string, (
+      context: { callerNodeId: string; sessionId: string; signal: AbortSignal },
+      payload: unknown,
+    ) => Promise<
+      | { ok: true; value: unknown }
+      | { ok: false; error: { code: string; message: string; details: Record<string, unknown> } }
+    >>>
+  }): () => void
+}
+
 declare module 'cordis' {
   interface Context {
     webServer: SidebarWebServer
@@ -438,6 +473,10 @@ declare module 'cordis' {
      * resolve the caller the jobs fence compares against).
      */
     agents: SidebarAgentsService
+    /** Optional Host-side Federation extension registry. */
+    federatedExtensions: SidebarFederatedExtensionRegistry
+    /** Optional ingress owner router for global Session-scoped calls. */
+    federationExtensionRouter: SidebarFederationExtensionRouter
     /**
      * The client-side sidebar registry: external plugins register tab types
      * and file previewers here. Provided by the client half (see

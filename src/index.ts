@@ -66,6 +66,8 @@ export type {
 
 /** Plugin identity for cordis.yml rows. */
 export const name = 'dsh-better-sidebar'
+export const BETTER_SIDEBAR_FEDERATION_NAMESPACE = 'dsh-better-sidebar'
+export const BETTER_SIDEBAR_FEDERATION_VERSION = '0.12.3'
 
 /** Services required before mounting: the webserver routes, the session store, the web runtime's trusted hosts, and the tool registry. */
 export const inject = ['webServer', 'sessions', 'webRuntime', 'tools']
@@ -113,6 +115,26 @@ function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string): stri
     }
   }
   return process.cwd()
+}
+
+/**
+ * Resolve a Session cwd strictly on its owner node.
+ *
+ * Federation callers never get the hydration fallbacks used by the local UI:
+ * their `cwd` field is untrusted, and falling back to process.cwd() for an
+ * unknown owner-local Session would turn a routing mistake into filesystem
+ * access on an unrelated directory.
+ */
+function ownerSessionCwdOf(ctx: Context, sessionId: string): string {
+  const cwd = ctx.sessions.get(sessionId)?.header.cwd
+  if (cwd === undefined || cwd === '') {
+    throw new SidebarError('not-found', `session "${sessionId}" has no owner-local working directory`, 404)
+  }
+  try {
+    return requireAbsolute(cwd)
+  } catch {
+    throw new SidebarError('fs-error', `session "${sessionId}" has an invalid working directory`, 400)
+  }
 }
 
 /**
@@ -169,6 +191,104 @@ async function readText(path: string, readLimit: number): Promise<{
 /** One API method dispatch table entry. */
 type ApiMethod = (payload: unknown) => Promise<unknown> | unknown
 
+const FEDERATED_JSON_READ_METHODS = [
+  'session.cwd', 'fs.tree', 'fs.search', 'fs.read',
+  'git.status', 'git.diff', 'git.branch', 'git.log', 'git.commit-diff', 'git.show',
+  'jobs.output',
+] as const
+const FEDERATED_JSON_WRITE_METHODS = [
+  'fs.write', 'git.stage', 'git.unstage', 'git.commit', 'git.checkout',
+  'git.discard', 'git.revert', 'git.cherry-pick', 'pty.close', 'jobs.kill',
+] as const
+
+/**
+ * Registers the owner-local JSON backend with Federation when that optional
+ * Host service is present. Global settings, browser probes, dependency status,
+ * and UUID-only agent terminal operations are deliberately not exported.
+ */
+function registerFederatedJsonApi(
+  registry: import('./context-types.ts').SidebarFederatedExtensionRegistry,
+  api: Record<string, ApiMethod>,
+): () => void {
+  const capabilities = [
+    ...FEDERATED_JSON_READ_METHODS.map(name => ({ name, scope: 'session' as const, risk: 'read' as const, transport: 'json' as const })),
+    ...FEDERATED_JSON_WRITE_METHODS.map(name => ({ name, scope: 'session' as const, risk: 'write' as const, transport: 'json' as const })),
+  ]
+  const handlers: Record<string, (
+    context: { callerNodeId: string; sessionId: string; signal: AbortSignal },
+    payload: unknown,
+  ) => Promise<
+    | { ok: true; value: unknown }
+    | { ok: false; error: { code: string; message: string; details: Record<string, unknown> } }
+  >> = {}
+  for (const capability of capabilities) {
+    handlers[capability.name] = async (context, payload) => {
+      const source = payload !== null && typeof payload === 'object' && !Array.isArray(payload)
+        ? payload as Record<string, unknown>
+        : {}
+      // Owner routing decides sessionId. A caller-supplied cwd is never carried
+      // into the owner backend, even when hidden inside the ordinary payload.
+      const ownerPayload: Record<string, unknown> = { ...source, sessionId: context.sessionId }
+      delete ownerPayload.cwd
+      try {
+        const handler = api[capability.name]
+        if (handler === undefined) {
+          return { ok: false, error: { code: 'not-found', message: `unknown sidebar API method "${capability.name}"`, details: {} } }
+        }
+        return { ok: true, value: await handler(ownerPayload) }
+      } catch (error) {
+        if (error instanceof SidebarError) {
+          return { ok: false, error: { code: error.code, message: error.message, details: {} } }
+        }
+        return { ok: false, error: { code: 'internal', message: error instanceof Error ? error.message : String(error), details: {} } }
+      }
+    }
+  }
+  return registry.register({
+    manifest: { namespace: BETTER_SIDEBAR_FEDERATION_NAMESPACE, version: BETTER_SIDEBAR_FEDERATION_VERSION, capabilities },
+    handlers,
+  })
+}
+
+/**
+ * Routes an ingress `/sidebar/api/*` request through Federation only when the
+ * supplied Session id is node-scoped. Bare ids keep the original local fast
+ * path, so installing Federation does not add a network hop to local sidebar
+ * use.
+ */
+function isFederatedSessionId(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const separator = value.indexOf('~')
+  return separator > 0 && separator < value.length - 1
+}
+
+async function invokeFederatedJson(
+  router: import('./context-types.ts').SidebarFederationExtensionRouter,
+  method: string,
+  payload: unknown,
+): Promise<unknown> {
+  const sessionId = requireString(payload, 'sessionId')
+  const source = payload !== null && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : {}
+  const forwarded: Record<string, unknown> = { ...source }
+  delete forwarded.sessionId
+  delete forwarded.cwd
+  const result = await router.invokeJson({
+    namespace: BETTER_SIDEBAR_FEDERATION_NAMESPACE,
+    version: BETTER_SIDEBAR_FEDERATION_VERSION,
+    capability: method,
+    sessionId,
+    payload: forwarded,
+  })
+  if (result.ok) return result.value
+  throw new SidebarError(
+    result.error.code === 'session-not-found' ? 'not-found' : 'internal',
+    result.error.message,
+    result.error.code === 'session-not-found' ? 404 : 502,
+  )
+}
+
 /**
  * The live face of the side card settings namespace, bound to the settings
  * service when it is mounted. The DSH settings RPC domain only serves
@@ -183,6 +303,9 @@ export interface SidebarSettingsFace {
   update(patch: Record<string, unknown>, expectedRevision?: number): Promise<{ value?: unknown; revision?: number }>
 }
 
+/** How API methods resolve the owner-local Session cwd. */
+type CwdMode = 'local-fallbacks' | 'owner-strict'
+
 /** Build the API method table bound to the plugin context, pty manager, agent pty registry, and resolved config. */
 function buildApi(
   ctx: Context,
@@ -190,9 +313,11 @@ function buildApi(
   agentPtyRegistry: AgentPtyRegistry | null,
   resolved: ResolvedSidebarConfig,
   getSettings: () => SidebarSettingsFace | undefined,
+  cwdMode: CwdMode = 'local-fallbacks',
 ): Record<string, ApiMethod> {
   const cwdOf = (payload: unknown): { sessionId: string; cwd: string } => {
     const sessionId = requireString(payload, 'sessionId')
+    if (cwdMode === 'owner-strict') return { sessionId, cwd: ownerSessionCwdOf(ctx, sessionId) }
     const record = payload as { cwd?: unknown } | null
     const clientCwd = typeof record?.cwd === 'string' && record.cwd !== '' ? record.cwd : undefined
     return { sessionId, cwd: sessionCwdOf(ctx, sessionId, clientCwd) }
@@ -539,6 +664,18 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
 
   // ── JSON API ────────────────────────────────────────────────────────────
   const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace)
+  let federationRouter: import('./context-types.ts').SidebarFederationExtensionRouter | undefined
+  ctx.inject(['federationExtensionRouter'], (fctx) => {
+    federationRouter = fctx.federationExtensionRouter
+    return () => { federationRouter = undefined }
+  })
+  // Federation calls the same business handlers, but through a strict owner
+  // cwd resolver. The optional service is lifecycle-injected, so the sidebar
+  // remains fully usable when Federation is not installed.
+  ctx.inject(['federatedExtensions'], (fctx) => {
+    const ownerApi = buildApi(fctx as Context, ptyManager, agentPtyRegistry, resolved, () => settingsFace, 'owner-strict')
+    return registerFederatedJsonApi(fctx.federatedExtensions, ownerApi)
+  })
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -559,6 +696,12 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       }
       try {
         const payload = await readJsonBody(req)
+        if (federationRouter !== undefined
+          && isFederatedSessionId((payload as { sessionId?: unknown } | null)?.sessionId)
+          && [...FEDERATED_JSON_READ_METHODS, ...FEDERATED_JSON_WRITE_METHODS].includes(method as never)) {
+          writeOk(res, await invokeFederatedJson(federationRouter, method, payload))
+          return
+        }
         const handler = api[method]
         if (handler === undefined) {
           throw new SidebarError('not-found', `unknown sidebar API method "${method}"`, 404)
