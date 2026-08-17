@@ -200,7 +200,7 @@ type ApiMethod = (payload: unknown) => Promise<unknown> | unknown
 const FEDERATED_JSON_READ_METHODS = [
   'session.cwd', 'fs.tree', 'fs.search', 'fs.read',
   'git.status', 'git.diff', 'git.branch', 'git.log', 'git.commit-diff', 'git.show',
-  'jobs.output',
+  'jobs.output', 'terminal.read',
 ] as const
 const FEDERATED_JSON_WRITE_METHODS = [
   'fs.write', 'git.stage', 'git.unstage', 'git.commit', 'git.checkout',
@@ -224,7 +224,6 @@ function registerFederatedJsonApi(
   const capabilities = [
     ...FEDERATED_JSON_READ_METHODS.map(name => ({ name, scope: 'session' as const, risk: 'read' as const, transport: 'json' as const })),
     ...FEDERATED_JSON_WRITE_METHODS.map(name => ({ name, scope: 'session' as const, risk: 'write' as const, transport: 'json' as const })),
-    { name: 'terminal.read', scope: 'session' as const, risk: 'read' as const, transport: 'json' as const },
     { name: 'file.read', scope: 'session' as const, risk: 'read' as const, transport: 'binary' as const },
     { name: 'html.read', scope: 'session' as const, risk: 'read' as const, transport: 'binary' as const },
   ]
