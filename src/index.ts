@@ -131,8 +131,8 @@ function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string): stri
  * unknown owner-local Session would turn a routing mistake into filesystem
  * access on an unrelated directory.
  */
-function ownerSessionCwdOf(ctx: Context, sessionId: string): string {
-  const cwd = ctx.sessions.get(sessionId)?.header.cwd
+function ownerSessionCwdOf(sessions: Context['sessions'], sessionId: string): string {
+  const cwd = sessions.get(sessionId)?.header.cwd
   if (cwd === undefined || cwd === '') {
     throw new SidebarError('not-found', `session "${sessionId}" has no owner-local working directory`, 404)
   }
@@ -217,6 +217,7 @@ function registerFederatedJsonApi(
   ctx: Context,
   resolved: ResolvedSidebarConfig,
   ptyManager: PtyManager | null,
+  ownerSessions: Context['sessions'],
   registry: import('./context-types.ts').SidebarFederatedExtensionRegistry,
   api: Record<string, ApiMethod>,
 ): () => void {
@@ -259,7 +260,7 @@ function registerFederatedJsonApi(
   }
   handlers['terminal.open'] = async (context, payload) => {
     if (ptyManager === null) return { ok: false, error: { code: 'pty-deps-missing', message: PTY_DEPS_MISSING, details: {} } }
-    const cwd = ownerSessionCwdOf(ctx, context.sessionId)
+    const cwd = ownerSessionCwdOf(ownerSessions, context.sessionId)
     const tab = requireString(payload, 'tab')
     const record = payload as { cols?: unknown; rows?: unknown }
     const dims = clampDims(typeof record.cols === 'number' ? record.cols : 80, typeof record.rows === 'number' ? record.rows : 24)
@@ -303,7 +304,7 @@ function registerFederatedJsonApi(
   }
   const binaryHandlers = {
     'file.read': async (context: { sessionId: string }, payload: unknown) => {
-      const cwd = ownerSessionCwdOf(ctx, context.sessionId)
+      const cwd = ownerSessionCwdOf(ownerSessions, context.sessionId)
       const record = payload as { path?: unknown; download?: unknown } | null
       const path = requireAbsolute(requireString(record, 'path'))
       if (!isWithin(cwd, path)) throw new SidebarError('fs-error', 'media path outside the session working directory', 403)
@@ -314,7 +315,7 @@ function registerFederatedJsonApi(
       return { status: 200, headers, body: new Uint8Array(await readFile(path)) }
     },
     'html.read': async (context: { sessionId: string }, payload: unknown) => {
-      const cwd = ownerSessionCwdOf(ctx, context.sessionId)
+      const cwd = ownerSessionCwdOf(ownerSessions, context.sessionId)
       const path = requireAbsolute(requireString(payload, 'path'))
       if (!isWithin(cwd, path)) throw new SidebarError('fs-error', 'html path outside the session working directory', 403)
       const info = await stat(path)
@@ -397,10 +398,11 @@ function buildApi(
   resolved: ResolvedSidebarConfig,
   getSettings: () => SidebarSettingsFace | undefined,
   cwdMode: CwdMode = 'local-fallbacks',
+  ownerSessions: Context['sessions'] = ctx.sessions,
 ): Record<string, ApiMethod> {
   const cwdOf = (payload: unknown): { sessionId: string; cwd: string } => {
     const sessionId = requireString(payload, 'sessionId')
-    if (cwdMode === 'owner-strict') return { sessionId, cwd: ownerSessionCwdOf(ctx, sessionId) }
+    if (cwdMode === 'owner-strict') return { sessionId, cwd: ownerSessionCwdOf(ownerSessions, sessionId) }
     const record = payload as { cwd?: unknown } | null
     const clientCwd = typeof record?.cwd === 'string' && record.cwd !== '' ? record.cwd : undefined
     return { sessionId, cwd: sessionCwdOf(ctx, sessionId, clientCwd) }
@@ -759,14 +761,15 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // ordered before the sidebar bundle in deployment, a root lookup avoids
   // Cordis child-context injection ordering differences between profiles.
   let extensionDisposer: (() => void) | undefined
-  const ownerApi = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace, 'owner-strict')
+  const ownerSessions = ctx.sessions
+  const ownerApi = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace, 'owner-strict', ownerSessions)
   const ensureFederationRegistration = (): void => {
     if (extensionDisposer !== undefined) return
     const extensionRegistry = globalService<import('./context-types.ts').SidebarFederatedExtensionRegistry>(FEDERATED_EXTENSIONS_GLOBAL)
       ?? ctx.get('federatedExtensions') as import('./context-types.ts').SidebarFederatedExtensionRegistry | undefined
     if (extensionRegistry !== undefined) {
       try {
-        extensionDisposer = registerFederatedJsonApi(ctx, resolved, ptyManager, extensionRegistry, ownerApi)
+        extensionDisposer = registerFederatedJsonApi(ctx, resolved, ptyManager, ownerSessions, extensionRegistry, ownerApi)
       } catch (error) {
         ctx.logger?.warn(`[dsh-better-sidebar] federation registration deferred: ${error instanceof Error ? error.message : String(error)}`)
       }
