@@ -29,6 +29,7 @@
 - **🪟 Dual Workbench**: right sidebar + bottom panel; drag tabs to split / merge panes (cross-panel), mobile auto-merges into a full-width drawer
 - **🔁 Session Isolation**: layout / tabs / panels persisted per session, stale state auto-purged
 - **⚙️ Declarative Settings**: per-item toggles in the "Side Cards" settings section, secondary settings via the gear dialog
+- **🧩 Family integration**: with the dsh-web-ui family installed, the settings entry moves into the "Web UI Plugins" group (better-sidebar card) and the "Side card" gear row steps aside; standalone installs keep the original entry
 - **⚡ On-demand Loading**: only ~325KB core at startup; heavy deps (terminal / editor) load on demand ([design](docs/plans/2026-08-12-lazy-chunks-design.md))
 - **🌏 i18n**: UI text follows DSH's language (zh / en) with live switching
 
@@ -40,6 +41,12 @@
   <a href="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0"><img width="45%" alt="Service API base screenshot" src="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0" /></a>
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="45%" alt="Add Plugins screenshot" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
 </div>
+
+### v0.13.0
+
+**✨ New features**
+
+- 🧩 **dsh-web-ui family settings card**: when the dsh-web-ui family is detected (the `webUiSettings` service — dsh-web-ui-settings / the aggregate bundle installed), the settings entry automatically moves into the family "Web UI Plugins" group as a better-sidebar card (the full settings inventory, same component as the "Side card" section so the two can never drift), and the plugin's own "Side card" gear row in the DSH settings shell is skipped — exactly one settings entry in family mode; standalone installs keep the previous behavior
 
 ### v0.12.3
 
@@ -104,7 +111,7 @@ Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R) to see the sidebar (DSH hot
 dsh plugin --profile web add dsh-better-sidebar@latest
 ```
 
-or bump the version in `~/.dsh/profiles/web/package.json` (e.g. `"^0.12.3"`) and run `pnpm install`. Then hard-refresh the browser (Cmd/Ctrl+Shift+R) — client changes do not need a DSH restart.
+or bump the version in `~/.dsh/profiles/web/package.json` (e.g. `"^0.13.0"`) and run `pnpm install`. Then hard-refresh the browser (Cmd/Ctrl+Shift+R) — client changes do not need a DSH restart.
 
 </details>
 
@@ -140,7 +147,7 @@ To debug local changes or track the dev branch, point the dependency at a local 
 5. Restart DSH and hard-refresh
 ```
 
-Update: `git pull && pnpm install && pnpm build` → just hard-refresh the browser (client changes hot-reload; only host-half changes need a DSH restart). To switch back to the npm channel, restore `"dsh-better-sidebar": "^0.12.3"` and re-run `pnpm install`.
+Update: `git pull && pnpm install && pnpm build` → just hard-refresh the browser (client changes hot-reload; only host-half changes need a DSH restart). To switch back to the npm channel, restore `"dsh-better-sidebar": "^0.13.0"` and re-run `pnpm install`.
 
 </details>
 

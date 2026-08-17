@@ -3,10 +3,12 @@
  * preferences through the plugin's own fenced settings route, mounts the
  * right sidebar portal (inside an error boundary so a rendering failure
  * shows an error strip instead of a blank panel), registers the turn-tail
- * interception, and contributes the Side card settings section to the DSH
- * Settings shell. Requires the runtime's slots and sessions services; the
- * bundle itself is a module-table consumer only (react + ui-primitives +
- * xterm, all provided or inlined).
+ * interception, and contributes the settings entry: the "Side card"
+ * section in the DSH Settings shell when installed standalone, or the
+ * better-sidebar card inside the dsh-web-ui family "Web UI 插件" group when
+ * the family bundle (web-ui-settings) is present. Requires the runtime's
+ * slots and sessions services; the bundle itself is a module-table consumer
+ * only (react + ui-primitives + xterm, all provided or inlined).
  */
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -20,11 +22,10 @@ import { RenderBoundary } from './RenderBoundary.tsx'
 import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
-import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { loadPrefs } from './prefs.ts'
-import { SideCardSection } from './SideCardSection.tsx'
+import { registerSettingsEntry } from './settings-entry.ts'
 import { api } from './api.ts'
-import { LOCALE_NS, attachLocale, t, zh, en } from './locales.ts'
+import { LOCALE_NS, attachLocale, zh, en } from './locales.ts'
 import css from './sidebar.module.css'
 import './layout.css'
 
@@ -214,28 +215,17 @@ export function apply(ctx: Context): void {
       'dsh-better-sidebar: IME composition guard',
     )
 
-    // DSH 0.1.x does not yet carry an icon through the settings.section
-    // registration contract: its shell renders a generic gear for every
-    // external section. Mark only this plugin's localized nav row so
-    // layout.css can paint the requested Side card SVG; the disposer clears
-    // the marker for HMR / plugin disable.
-    ctx.effect(
-      () => registerSettingsNavIcon(() => t('settingsNav')),
-      'dsh-better-sidebar: settings navigation icon',
-    )
-
-    // The "Side card" settings section: appears in the DSH Settings shell
-    // once the shell's declaration is on the ledger (slots.inject waits for
-    // it); the section reads/writes the prefs through the plugin's own
-    // fenced settings route, keeps the shared store in sync, and renders the
-    // declarative enable/disable inventory from the tab/viewer registry.
-    ctx.slots.inject('settings.section', () => ctx.slots.register({
-      name: 'settings.section',
-      id: 'better-sidebar',
-      order: 100,
-      label: () => t('settingsNav'),
-      inject: () => ({ store: sidebarStore, service }),
-    }, SideCardSection))
+    // The settings entry: the dsh-web-ui family "Web UI 插件" group card when
+    // the family bundle is present (webUiSettings service visible — its row
+    // leads the aggregate patch), otherwise the standalone "Side card"
+    // section in the DSH Settings shell. The family card reuses the section
+    // component, so the two entry points never drift; the family mode skips
+    // the shell section (and its nav icon) so there is exactly one entry.
+    registerSettingsEntry(ctx, {
+      store: sidebarStore,
+      service,
+      hasFamilySettings: ctx.get('webUiSettings') !== undefined,
+    })
   } catch (error) {
     fail('load', error)
   }

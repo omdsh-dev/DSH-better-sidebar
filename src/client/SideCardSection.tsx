@@ -51,7 +51,6 @@ import {
 import clsx from 'clsx'
 // Type-only: pulls the settings shell's SlotMap merges ('settings.section').
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   clampWidthPercent,
   TITLE_BAR_STRIP_MAX,
@@ -80,8 +79,14 @@ export interface SideCardSectionInjected {
   service: BetterSidebarService
 }
 
-/** Full section props: the runtime share plus the injected face. */
-export type SideCardSectionProps = PropsRuntime<'settings.section'> & SideCardSectionInjected
+/**
+ * Full section props. The runtime share the settings shell passes
+ * (`PropsRuntime<'settings.section'>` — owner props, global standard props)
+ * is deliberately not part of the type: the section never reads it, and
+ * both entry points (the standalone shell section and the dsh-web-ui family
+ * card) render the same component with the injected face only.
+ */
+export type SideCardSectionProps = SideCardSectionInjected
 
 /** Map one wire failure to the inline message (the conflict gets friendly copy). */
 function messageOf(error: unknown): string {
