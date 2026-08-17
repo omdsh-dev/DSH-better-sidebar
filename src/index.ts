@@ -14,6 +14,7 @@
  * processes are keyed by session.
  */
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
@@ -166,6 +167,31 @@ async function readText(path: string, readLimit: number): Promise<{
   }
 }
 
+/** macOS `open` wrapper: reveal/open actions run on the user's machine, so a
+ *  Finder reveal or an app launch is a first-class local action. Resolves
+ *  `{ok:true}` on exit 0; rejects fs-error otherwise. */
+function runOpen(args: string[]): Promise<{ ok: true }> {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn('open', args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    let stderr = ''
+    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8') })
+    child.on('error', (error) => {
+      reject(new SidebarError('fs-error', 'cannot launch "open": ' + error.message, 400))
+    })
+    child.on('close', (code) => {
+      if (code === 0) resolvePromise({ ok: true })
+      else reject(new SidebarError('fs-error', '"open" failed (' + String(code) + '): ' + stderr.trim(), 400))
+    })
+  })
+}
+
+/** Guard: reveal/open only make sense where the macOS `open` binary exists. */
+function requireMacOpen(): void {
+  if (process.platform !== 'darwin') {
+    throw new SidebarError('fs-error', 'reveal/open is only supported on macOS', 400)
+  }
+}
+
 /** One API method dispatch table entry. */
 type ApiMethod = (payload: unknown) => Promise<unknown> | unknown
 
@@ -245,6 +271,22 @@ function buildApi(
         throw new SidebarError('fs-error', `cannot write "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
       }
       return { ok: true }
+    },
+    'fs.reveal': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      requireMacOpen()
+      const path = requireAbsolute(requireString(payload, 'path'))
+      if (!isWithin(cwd, path)) throw new SidebarError('fs-error', 'path outside the session working directory', 403)
+      return runOpen(['-R', path])
+    },
+    'fs.open': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      requireMacOpen()
+      const path = requireAbsolute(requireString(payload, 'path'))
+      if (!isWithin(cwd, path)) throw new SidebarError('fs-error', 'path outside the session working directory', 403)
+      const record = payload as { app?: unknown }
+      const app = typeof record.app === 'string' && record.app !== '' ? record.app : undefined
+      return runOpen(app === undefined ? [path] : ['-a', app, path])
     },
     'git.status': async (payload) => {
       const { cwd } = cwdOf(payload)
