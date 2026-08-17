@@ -52,6 +52,8 @@ if (g.window === undefined) {
   g.window = {
     clearTimeout: () => {},
     setTimeout: (_fn: () => void) => 0,
+    clearInterval: () => {},
+    setInterval: () => 0,
     innerWidth: 1024,
     innerHeight: 768,
     getComputedStyle: () => ({ getPropertyValue: () => '' }),

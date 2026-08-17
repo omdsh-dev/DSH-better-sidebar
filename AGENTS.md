@@ -386,8 +386,13 @@ interface FileViewerProps {
   truncated?: boolean     // fetchStrategy='fsRead' 时
   mediaUrl?: string       // fetchStrategy='mediaUrl' 时
   customData?: unknown    // fetchStrategy='custom' 时（load() 的返回值）
+  jumpLine?: { start: number; end: number }  // v0.13.0+：行跳转目标（见下）
 }
 ```
+
+> 💡 **`jumpLine`（v0.13.0+）**：当文件是从聊天里的 `path:line` 提及（如 `` `src/main.ts:42` ``）打开时，编辑器宿主把 `tab.meta.line` 翻译成 `jumpLine`（1-based 起止行、含两端）传给命中的 viewer。内置文本 viewer（`code`/`markdown`/`html`）据此滚动到该行范围并临时高亮（Markdown/HTML 会切到编辑模式展示）。其它 viewer 忽略即可——缺省 `undefined`，行为与之前完全一致。
+
+> 💡 **聊天路径/行号超链接（v0.13.0+，内置行为）**：DSH 的 `chatFileMentions` 服务（ui-deliverables）只解析「本次产出的文件」，本插件包装该服务（wrap `forClosing`，与 `workspaces.openPath` 同款单漏斗模式，不重复注册服务）：settled 聊天内联代码中的文件路径与 `path:line`/`path:start-end` 引用（`src/main.ts`、`src/main.ts:42`、`src/main.ts:42-56`、`C:\proj\a.ts:42`）解析为可点击提及，点击经 openPath 拦截进侧边栏编辑器并带行跳转；产物路径解析保持 DSH 原语义（优先）。解析规则见 `src/client/path-line.ts`（纯函数，`tests/path-line.spec.ts` 守护）；开关注册在编辑器 tab 的 `settings.pluginToggles`（key `chatPathLinks`，默认开，`pluginSettings['editor'].chatPathLinks`）。
 
 ### 4.3 `fetchStrategy` 对照
 
@@ -510,7 +515,7 @@ interface BetterSidebarService {
   readonly version: string
   /** 单调能力清单（只增不删）：'badge' | 'tabLifecycle' | 'updateTab' |
    *  'openFile' | 'targetedOpen' | 'stateSubscription' | 'tabMeta' |
-   *  'pluginSettings' | 'urlTarget'——消费插件用 `features.includes('xxx')` 按能力 gate。 */
+   *  'pluginSettings' | 'urlTarget' | 'viewerJumpLine'——消费插件用 `features.includes('xxx')` 按能力 gate。 */
   readonly features: readonly string[]
   /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs。
    *  session 未激活时 state/sessionId 为 undefined。 */

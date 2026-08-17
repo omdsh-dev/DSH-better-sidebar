@@ -1091,6 +1091,16 @@
   outline: none;
 }
 
+/* The transient line-jump highlight (a chat path:line click): a soft
+   brand-tinted wash plus a left-edge marker, token-driven like every other
+   surface. The plain rgba fallback keeps older engines usable; color-mix
+   tints the alias token for scheme-aware blending. */
+.jumpLine {
+  background: rgba(112, 128, 255, 0.12);
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--dsw-alias-state-business-primary);
+}
+
 /* Preview / edit segmented toggle (markdown and other previewable files). */
 .editorModeToggle {
   flex: none;

@@ -20,6 +20,7 @@ import { SubagentView } from '../SubagentView.tsx'
 import { BrowserView } from '../BrowserView.tsx'
 import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16 } from '../icons.tsx'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
+import { readJumpMeta } from '../path-line.ts'
 import type { ComponentType } from 'react'
 import type { SessionScope } from '../api.ts'
 import type { SidebarStore } from '../state.ts'
@@ -69,8 +70,27 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       order: -1,
       hidden: true,
       dedupeKey: (tab) => tab.path,
+      // The chat path:line links ride the tab's meta (`{ line: { start, end } }`,
+      // written by openSidebarFile); the editor host translates it into a
+      // CodeMirror jump. The side-card toggle gates the chat link feature.
+      settings: {
+        pluginToggles: [
+          {
+            key: 'chatPathLinks',
+            title: () => t('settingsChatPathLinksTitle'),
+            desc: () => t('settingsChatPathLinksDesc'),
+          },
+        ],
+      },
       component: ({ ctx, store, scope, tab }) => (
-        <EditorHost ctx={ctx} store={store} scope={scope} path={tab.path ?? ''} title={tab.title} />
+        <EditorHost
+          ctx={ctx}
+          store={store}
+          scope={scope}
+          path={tab.path ?? ''}
+          title={tab.title}
+          jumpLine={readJumpMeta(tab.meta)}
+        />
       ),
     },
     {

@@ -22,6 +22,7 @@
 ## ✨ 功能一览
 
 - **🗂️ 文件工作台**：资源管理器（懒加载目录树；软链接按目标类型展示——目录软链接可展开、失效链接标红）+ CodeMirror 编辑器；图片 / Markdown / HTML / PDF / Office 内联预览
+- **🔗 路径/行号直达**：聊天中模型输出的文件路径与 `path:line`（如 `src/main.ts:42`）自动可点击，点击即在侧边栏打开并滚动高亮到对应行
 - **🌐 内嵌浏览器**：多开网页 tab，后退 / 前进 / 刷新；内容运行在沙箱 iframe；外链默认按协议分流——HTTP 在侧边栏打开、HTTPS 走系统浏览器（设置页可分别调整）
 - **💻 真实终端**：xterm.js + node-pty 真实 shell，断线重连回放；可选为模型注入 `terminal_*` 工具
 - **🌿 Git 面板**：真 diff + VSCode 式 diff tab、历史、右键暂存 / 提交 / 还原
@@ -40,6 +41,13 @@
   <a href="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0"><img width="45%" alt="服务化基座截图" src="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0" /></a>
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="45%" alt="添加插件截图" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
 </div>
+
+### v0.13.0
+
+**✨ 新功能**
+
+- 🔗 **聊天区路径/行号超链接**：聊天代码片段中的文件路径（`src/main.ts`）与行号引用（`src/main.ts:42`、`src/main.ts:42-56`）自动变为可点击链接，点击后在侧边栏编辑器打开文件，并**滚动 + 高亮**到对应行（Markdown/HTML 自动切到编辑模式预览）；产物路径解析保持 DSH 原语义，可在「编辑器」的齿轮弹窗中关闭
+- 🔌 **文件预览器新字段**：`FileViewerProps` 新增可选 `jumpLine`（`{ start, end }`），文本类预览器可据此滚动高亮行范围
 
 ### v0.12.3
 

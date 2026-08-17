@@ -22,6 +22,7 @@
 ## ✨ Features
 
 - **🗂️ File Workbench**: file explorer (lazy-loading tree; symlinks show their target kind — directory links expand, dangling links flagged) + CodeMirror editor; inline preview for images / Markdown / HTML / PDF / Office
+- **🔗 Path & Line Jump**: file paths and `path:line` references in chat (e.g. `src/main.ts:42`) become clickable — clicking opens the file in the sidebar and scrolls to, highlighting, the referenced lines
 - **🌐 Embedded Browser**: multiple web tabs with back / forward / refresh; content runs in a sandboxed iframe; external links are routed by protocol by default — HTTP opens in the sidebar, HTTPS goes to the system browser (both adjustable in settings)
 - **💻 Real Terminal**: xterm.js + node-pty real shell, reconnect with transcript replay; optionally injects `terminal_*` tools for the model
 - **🌿 Git Panel**: real diff + VSCode-style diff tabs, history, right-click to stage / commit / revert
@@ -40,6 +41,13 @@
   <a href="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0"><img width="45%" alt="Service API base screenshot" src="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0" /></a>
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="45%" alt="Add Plugins screenshot" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
 </div>
+
+### v0.13.0
+
+**✨ New features**
+
+- 🔗 **Path & line links in chat**: file paths (`src/main.ts`) and line references (`src/main.ts:42`, `src/main.ts:42-56`) in chat code snippets become clickable — clicking opens the file in the sidebar editor and scrolls to, highlighting, the referenced lines (Markdown/HTML auto-switch to edit mode to reveal them); produced-path resolution keeps DSH's semantics; toggle under the Editor card's gear dialog
+- 🔌 **New FileViewerProps field**: optional `jumpLine` (`{ start, end }`) — text viewers can scroll to and highlight a line range
 
 ### v0.12.3
 

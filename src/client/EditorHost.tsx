@@ -17,6 +17,7 @@ import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './edit
 import { t } from './locales.ts'
 import type { FileViewerDescriptor } from './service.ts'
 import type { SidebarStore } from './state.ts'
+import type { LineRange } from './path-line.ts'
 import css from './sidebar.module.css'
 
 type EditorLoad =
@@ -25,8 +26,8 @@ type EditorLoad =
   | { status: 'ready'; viewer: FileViewerDescriptor; content?: string; truncated?: boolean; mediaUrl?: string; customData?: unknown }
   | { status: 'binary' }
 
-export function EditorHost(props: { ctx: Context; store: SidebarStore; scope: SessionScope; path: string; title: string }) {
-  const { ctx, store, scope, path, title } = props
+export function EditorHost(props: { ctx: Context; store: SidebarStore; scope: SessionScope; path: string; title: string; jumpLine?: LineRange | null }) {
+  const { ctx, store, scope, path, title, jumpLine } = props
   const [load, setLoad] = useState<EditorLoad>({ status: 'loading' })
 
   useEffect(() => {
@@ -98,6 +99,9 @@ export function EditorHost(props: { ctx: Context; store: SidebarStore; scope: Se
         truncated: load.truncated,
         mediaUrl: load.mediaUrl,
         customData: load.customData,
+        // The line jump (from a chat path:line click or tab.meta): the code
+        // viewers scroll to and highlight the range; other viewers ignore it.
+        jumpLine: jumpLine ?? undefined,
       })}
     </div>
   )

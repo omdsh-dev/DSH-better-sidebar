@@ -240,6 +240,13 @@ export interface FileViewerProps {
   mediaUrl?: string
   /** custom load() return value (fetchStrategy='custom'). */
   customData?: unknown
+  /**
+   * A line range to reveal (v0.13.0+): set by the editor host when the file
+   * was opened from a chat `path:line` mention (or another flow carrying
+   * `tab.meta.line`). Text viewers scroll to and temporarily highlight the
+   * range; other viewers ignore it. Absent when the file opens plainly.
+   */
+  jumpLine?: { start: number; end: number }
 }
 
 /** Describes one file previewer (builtins register themselves too). */
@@ -420,7 +427,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.12.3'
+export const SIDEBAR_SERVICE_VERSION = '0.13.0'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -434,6 +441,7 @@ export const SIDEBAR_SERVICE_VERSION = '0.12.3'
  * - 'tabMeta': SidebarTab.meta (seeds, createTab, updateTab, persistence)
  * - 'pluginSettings': SidebarSettingsDeclaration.pluginToggles/render
  * - 'urlTarget' (v0.13.0): TabDescriptor.urlTarget (external-link claims)
+ * - 'viewerJumpLine' (v0.13.0): FileViewerProps.jumpLine (line-jump reveal)
  */
 export const SIDEBAR_FEATURES = [
   'badge',
@@ -445,6 +453,7 @@ export const SIDEBAR_FEATURES = [
   'tabMeta',
   'pluginSettings',
   'urlTarget',
+  'viewerJumpLine',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */

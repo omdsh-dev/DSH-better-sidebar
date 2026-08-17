@@ -17,7 +17,7 @@ import { resetChunks } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
-import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
+import { registerOpenPathInterception, registerTurnTailInterception, registerChatMentionInterception } from './intercept.tsx'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
@@ -149,6 +149,22 @@ export function apply(ctx: Context): void {
         }
       },
       'dsh-better-sidebar: open-path interception',
+    )
+
+    ctx.effect(
+      () => {
+        try {
+          // Chat path / path:line mention links: the DSH `chatFileMentions`
+          // service (ui-deliverables) is wrapped so inline-code file
+          // references resolve as clickable mentions that open the sidebar
+          // editor — jumping to the referenced line when one is given.
+          return registerChatMentionInterception(ctx, sidebarStore)
+        } catch (error) {
+          fail('interception', error)
+          return undefined
+        }
+      },
+      'dsh-better-sidebar: chat mention interception',
     )
 
     ctx.effect(
