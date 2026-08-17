@@ -33,6 +33,7 @@ import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
 import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
+import { registerIconsRoute } from './icons-route.ts'
 import * as git from './git.ts'
 import { SettingsConflictError, settingsNamespace, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { defaultShell, ensureSpawnHelper, PtyManager } from './pty-manager.ts'
@@ -538,6 +539,11 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // heavy preview/terminal libraries load on first use, not at page start
   // (see bundle-route.ts / src/client/chunk-loader.ts).
   ctx.effect(() => registerBundleRoute(ctx, fence), 'dsh-better-sidebar: /sidebar/bundle chunk route')
+
+  // ── Sidebar icon assets route (explorer icon theme) ─────────────────────
+  // Serves the bundled file/folder icon SVGs the explorer's VSCode-style
+  // icon theme renders (icons/, resolved by src/client/icons-theme.tsx).
+  ctx.effect(() => registerIconsRoute(ctx, fence), 'dsh-better-sidebar: /sidebar/icons route')
 
   // ── Media route (images for the editor) ─────────────────────────────────
   ctx.effect(() => ctx.webServer.register({

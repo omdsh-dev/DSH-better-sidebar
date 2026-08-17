@@ -708,6 +708,17 @@
   text-overflow: ellipsis;
 }
 
+/* VSCode-style file/folder icons: the icon-theme SVGs (32px viewBox) render
+   as block boxes (no inline baseline gap) at the size the caller sets inline
+   (16px in explorer rows — crisp on 2× displays — 14px on editor tabs).
+   Images never drag and never take part in text selection. */
+.explorerIcon {
+  flex: none;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
 /* The hover-revealed @-reference button at the row's far right (and the
    transient "copied" label that replaces it after a copy). Hidden rows
    keep the name at full width; hovering or focusing the row reveals it. */

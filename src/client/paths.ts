@@ -6,6 +6,17 @@
  */
 
 /**
+ * The last path segment (platform-independent: '/' and '\' both split), with
+ * trailing separators trimmed ('/a/b/' → 'b'). Used for the explorer's root
+ * label and for deriving file icons (basename → icon-theme lookup).
+ */
+export function baseName(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, '')
+  const at = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  return at === -1 ? trimmed : trimmed.slice(at + 1)
+}
+
+/**
  * The path relative to the session's working directory.
  * @param cwd - the explorer root (absolute).
  * @param path - an absolute entry path from the fs-tree.

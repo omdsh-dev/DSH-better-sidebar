@@ -62,6 +62,7 @@
     "lib/client-editor.js",
     "lib/types/**/*.d.ts",
     "src",
+    "icons",
     "scripts/install.sh",
     "scripts/install.ps1",
     "cordis.patch.yml",
@@ -78,7 +79,8 @@
     "prepare": "tsdown",
     "test": "vitest run",
     "test:mount": "bash scripts/e2e-mount.sh",
-    "check:consumer-types": "bash scripts/check-consumer-types.sh"
+    "check:consumer-types": "bash scripts/check-consumer-types.sh",
+    "gen-icons": "node scripts/gen-icons.mjs"
   },
   "license": "MIT",
   "peerDependencies": {

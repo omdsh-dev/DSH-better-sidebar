@@ -13,24 +13,18 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
+  IconCopyOutline16, IconDownloadOutline16,
   IconRefreshOutline16, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
-import { relativeTo } from './paths.ts'
+import { ExplorerFileIcon, ExplorerFolderIcon } from './icons-theme.tsx'
+import { baseName, relativeTo } from './paths.ts'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
 
 interface LevelData {
   entries?: FsEntry[]
   error?: string
-}
-
-/** Root label: the last path segment (mirror of the host rootLabel). */
-function baseName(path: string): string {
-  const trimmed = path.replace(/[\\/]+$/, '')
-  const at = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
-  return at === -1 ? trimmed : trimmed.slice(at + 1)
 }
 
 /** How long the row's "copied" label stays after a successful write. */
@@ -161,7 +155,9 @@ export function ExplorerView(props: {
               }}
               onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
             >
-              {isOpen ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />}
+              {isOpen
+                ? <ExplorerFolderIcon name={entry.name} open />
+                : <ExplorerFolderIcon name={entry.name} open={false} />}
               <span className={css.explorerName}>{entry.name}</span>
               {rowActions(entry)}
             </div>
@@ -186,7 +182,7 @@ export function ExplorerView(props: {
           }}
           onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
         >
-          <IconCodeOutline16 size={14} />
+          <ExplorerFileIcon name={entry.name} />
           <span className={css.explorerName}>{entry.name}</span>
           {rowActions(entry)}
         </div>
@@ -222,7 +218,7 @@ export function ExplorerView(props: {
               style={{ paddingLeft: 6 }}
               onContextMenu={(event) => { openRowMenu(event, root, true) }}
             >
-              <IconFolderOpen16 size={14} />
+              <ExplorerFolderIcon name={baseName(root)} open root />
               <span className={css.explorerName}>{baseName(root)}</span>
               {copiedPath === root
                 ? <span className={css.explorerCopied}>{t('copied')}</span>
