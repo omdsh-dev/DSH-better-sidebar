@@ -47,15 +47,14 @@ interface SelectionPopup {
  */
 export const HTML_IFRAME_SANDBOX = 'allow-scripts allow-popups allow-downloads allow-modals'
 
-/** How long the line-jump highlight stays visible before fading out (ms). */
-const JUMP_HIGHLIGHT_MS = 1600
-
 /** Effect carrying the next line-jump decoration set (none = clear). */
 const setJumpHighlight = StateEffect.define<DecorationSet>()
 
 /** The line-jump highlight: a line decoration set driven by
  *  {@link setJumpHighlight}, mapped across document changes so a jump's
- *  highlight survives edits until its timer clears it. */
+ *  highlight survives edits. It persists until the user CLICKS inside the
+ *  editor (see the mousedown handler below) or a new jump / plain reopen
+ *  replaces it — scrolling never clears it. */
 const jumpHighlightField = StateField.define<DecorationSet>({
   create: () => Decoration.none,
   update: (deco, tr) => {
@@ -94,8 +93,6 @@ export function TextEditor(props: FileViewerProps) {
   const appliedJumpRef = useRef(false)
   /** A rAF retry while the view is hidden (collapsed panel / inactive split). */
   const jumpRetryRef = useRef<number | null>(null)
-  /** The timer clearing the jump highlight. */
-  const jumpTimerRef = useRef<number | null>(null)
   /** The current path, read fresh by deferred jump retries (never stale). */
   const pathRef = useRef(path)
   pathRef.current = path
@@ -137,21 +134,19 @@ export function TextEditor(props: FileViewerProps) {
     pendingJumpRef.current = null
     appliedJumpRef.current = false
     cancelJumpRetry()
-    if (jumpTimerRef.current !== null) {
-      window.clearTimeout(jumpTimerRef.current)
-      jumpTimerRef.current = null
-    }
     viewRef.current?.dispatch({ effects: setJumpHighlight.of(Decoration.none) })
   }
 
   /**
    * Apply the pending line jump to the CodeMirror view: select the range,
-   * scroll it into view (vertically centered) and highlight it for a beat.
-   * The markdown/html preview hides the CM view — reveal the edit surface
-   * first (the [mode] effect re-runs this once the mode flips). A hidden
-   * (zero-size) view defers to the next frame; a missing view waits for the
-   * view-creation effect to call back. Applies at most once per jump, and
-   * only when the pending jump belongs to the CURRENT file.
+   * scroll it into view (vertically centered) and highlight it. The
+   * highlight stays until the user clicks inside the editor — scrolling
+   * never clears it. The markdown/html preview hides the CM view — reveal
+   * the edit surface first (the [mode] effect re-runs this once the mode
+   * flips). A hidden (zero-size) view defers to the next frame; a missing
+   * view waits for the view-creation effect to call back. Applies at most
+   * once per jump, and only when the pending jump belongs to the CURRENT
+   * file.
    */
   const applyJump = (): void => {
     const view = viewRef.current
@@ -195,11 +190,6 @@ export function TextEditor(props: FileViewerProps) {
       ],
     })
     appliedJumpRef.current = true
-    if (jumpTimerRef.current !== null) window.clearTimeout(jumpTimerRef.current)
-    jumpTimerRef.current = window.setTimeout(() => {
-      jumpTimerRef.current = null
-      viewRef.current?.dispatch({ effects: setJumpHighlight.of(Decoration.none) })
-    }, JUMP_HIGHLIGHT_MS)
   }
 
   useEffect(() => subscribeColorScheme(() => { setDark(isDarkScheme()) }), [])
@@ -237,6 +227,14 @@ export function TextEditor(props: FileViewerProps) {
         cmSurfaceTheme,
         themeComp.of(dark),
         jumpHighlightField,
+        // A click inside the editor dismisses the line-jump highlight (the
+        // user asked for click-based dismissal — scrolling keeps it). The
+        // handler receives the view, so no refs are captured.
+        CodeMirrorView.domEventHandlers({
+          mousedown: (_event, view) => {
+            view.dispatch({ effects: setJumpHighlight.of(Decoration.none) })
+          },
+        }),
         ...(language !== null ? [language] : []),
         CodeMirrorView.updateListener.of((update) => {
           if (update.docChanged) {
@@ -305,10 +303,6 @@ export function TextEditor(props: FileViewerProps) {
     applyJump()
     return () => {
       cancelJumpRetry()
-      if (jumpTimerRef.current !== null) {
-        window.clearTimeout(jumpTimerRef.current)
-        jumpTimerRef.current = null
-      }
       view.destroy()
       viewRef.current = null
       themeCompRef.current = null
@@ -340,25 +334,22 @@ export function TextEditor(props: FileViewerProps) {
 
   // The line jump (from a chat path:line click or the tab's meta): stash it
   // and apply once the view exists; a null jump (plain reopen) clears any
-  // pending jump and highlight. The same target (path + line range) is never
-  // re-applied — the parent may re-render the tab for unrelated reasons, and
-  // re-dispatching the selection would clobber the user's own selection.
+  // pending jump and highlight. `jumpLine` is MEMOIZED by the editor tab on
+  // `tab.meta` (builtins/tabs.tsx), so this effect only re-runs when the
+  // jump target actually changes — a re-click of the same mention pushes a
+  // fresh meta and re-jumps; unrelated re-renders never re-apply (the
+  // original "selecting code re-jumps" bug).
   useEffect(() => {
     if (jumpLine === undefined || jumpLine === null) {
       clearJump()
       return
     }
-    const line = { start: jumpLine.start, end: jumpLine.end }
-    const prev = pendingJumpRef.current
-    if (prev !== null && prev.path === path && prev.line.start === line.start && prev.line.end === line.end) {
-      return
-    }
-    pendingJumpRef.current = { line, path }
+    pendingJumpRef.current = { line: { start: jumpLine.start, end: jumpLine.end }, path }
     appliedJumpRef.current = false
     applyJump()
     // applyJump reads refs for the rest; path is part of the pending record.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jumpLine, path])
+  }, [jumpLine])
 
   const save = (): void => {
     const view = viewRef.current
