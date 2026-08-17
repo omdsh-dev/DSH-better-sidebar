@@ -15,7 +15,10 @@
  *   `video`/`audio`/`input`/`button`/`form`/`link`/`meta`/`base`): belt and
  *   braces — real browsers reject these outside foreignObject at XML parse
  *   time (→ '') while lenient parsers keep them, so they are stripped
- *   explicitly instead of relying on the parser alone.
+ *   explicitly instead of relying on the parser alone. Element names are
+ *   matched case-insensitively (XML preserves their case; the output is
+ *   re-parsed as HTML whose parser normalizes tag casing, so `<sCrIpT>` /
+ *   `<foreignobject>` would otherwise come back as script/foreignObject).
  * - `@*` / `on*` attributes: event-handler channels (Vue-style directives
  *   and native listeners), matched case-insensitively — the output is
  *   re-parsed as HTML whose parser normalizes attribute casing, so
@@ -31,8 +34,9 @@
  * fallback) instead of ever passing the raw string through; only a document
  * whose root is an `<svg>` element is accepted.
  */
-const STRIP_ELEMENTS = [
-  'foreignObject',
+/** Element local names stripped case-insensitively (all lowercase). */
+const STRIP_ELEMENTS = new Set([
+  'foreignobject',
   'script',
   'img',
   'iframe',
@@ -46,7 +50,7 @@ const STRIP_ELEMENTS = [
   'link',
   'meta',
   'base',
-]
+])
 
 /** A parse failure keeps nothing of the input: the caller shows the error. */
 export function sanitizeSvg(svg: string): string {
@@ -59,8 +63,15 @@ export function sanitizeSvg(svg: string): string {
   }
   if (doc.querySelector('parsererror') !== null) return ''
   if (doc.documentElement === null || doc.documentElement.localName !== 'svg') return ''
-  doc.querySelectorAll(STRIP_ELEMENTS.join(',')).forEach((node) => { node.remove() })
   doc.querySelectorAll('*').forEach((node) => {
+    // XML element names preserve case; the string is later re-parsed as HTML
+    // whose parser normalizes tag casing — so mixed-case spellings of the
+    // strip list (e.g. `<sCrIpT>`, `<foreignobject>`) must be caught the
+    // same way as their canonical forms.
+    if (STRIP_ELEMENTS.has(node.localName.toLowerCase())) {
+      node.remove()
+      return
+    }
     for (const attribute of [...node.attributes]) {
       const name = attribute.name
       // XML attribute names preserve case; the string is later re-parsed as

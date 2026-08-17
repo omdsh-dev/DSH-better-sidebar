@@ -77,6 +77,27 @@ describe('sanitizeSvg', () => {
     expect(out).toContain('<text>t</text>')
   })
 
+  it('strips mixed-case element names (HTML parsing normalizes tag casing)', () => {
+    const svg = [
+      '<svg xmlns="http://www.w3.org/2000/svg">',
+      '<sCrIpT>alert(1)</sCrIpT>',
+      '<foreignobject><div><img src="x" onerror="alert(1)"/></div></foreignobject>',
+      '<ImG src="y" onerror="alert(2)"/>',
+      '<iFrAmE src="https://evil.test"/>',
+      '<text>keep</text>',
+      '</svg>',
+    ].join('')
+    const out = sanitizeSvg(svg)
+    expect(out).not.toContain('sCrIpT')
+    expect(out).not.toContain('alert')
+    expect(out).not.toContain('foreignobject')
+    expect(out).not.toContain('<img')
+    expect(out).not.toContain('<ImG')
+    expect(out).not.toContain('iFrAmE')
+    expect(out).not.toContain('onerror')
+    expect(out).toContain('<text>keep</text>')
+  })
+
   it('rejects malformed XML instead of passing it through', () => {
     const out = sanitizeSvg('<svg xmlns="http://www.w3.org/2000/svg"><text>oops</svg>')
     expect(out).toBe('')
