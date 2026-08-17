@@ -3,7 +3,7 @@ import {
   activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, createSidebarStore,
   insertLeafAt, makeDefaultState, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
   openTabInActivePane, patchTab, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight,
-  splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded, togglePanel,
+  splitPane, tabOpenIn, toggleBottomMaximized, toggleBottomPanel, toggleExpanded, togglePanel,
   type SidebarState, type SidebarTab, type SplitNode,
 } from '../src/client/state.ts'
 
@@ -380,6 +380,31 @@ describe('sidebar state', () => {
     expect(s.bottomOpen).toBe(true)
   })
 
+  it('toggleBottomMaximized opens a closed panel MAXIMIZED and restores it while staying open', () => {
+    let s = state()
+    expect(s.bottomOpen).toBe(false)
+    s = toggleBottomMaximized(s)
+    expect(s.bottomOpen).toBe(true)
+    expect(s.bottomMaximized).toBe(true)
+    // The drag height survives the maximize round-trip untouched — restoring
+    // returns to it, never to a stale fullscreen.
+    expect(s.bottomHeight).toBe(BOTTOM_DEFAULT)
+    s = toggleBottomMaximized(s)
+    expect(s.bottomOpen).toBe(true)
+    expect(s.bottomMaximized).toBe(false)
+  })
+
+  it('closing the bottom panel forgets the maximized state', () => {
+    let s = toggleBottomMaximized(state())
+    s = toggleBottomPanel(s)
+    expect(s.bottomOpen).toBe(false)
+    expect(s.bottomMaximized).toBe(false)
+    // The next open (⌘J) is a normal open, never a stale fullscreen.
+    s = toggleBottomPanel(s)
+    expect(s.bottomOpen).toBe(true)
+    expect(s.bottomMaximized).toBe(false)
+  })
+
   it('setBottomHeight clamps to the contract range', () => {
     expect(setBottomHeight(state(), 50).bottomHeight).toBe(BOTTOM_MIN)
     const g = globalThis as Record<string, unknown>
@@ -413,6 +438,9 @@ describe('sidebar state', () => {
     // new tabs land in the right tree.
     expect((migrated.bottomSplits as { tabs: SidebarTab[] }).tabs).toHaveLength(0)
     expect(migrated.bottomOpen).toBe(false)
+    // The maximized flag dies with the panel: re-widening never pops a
+    // stale fullscreen.
+    expect(migrated.bottomMaximized).toBe(false)
     expect(migrated.activePane).toBe((migrated.splits as { id: string }).id)
     // The migrated tabs are fully functional: closing one works through the
     // right tree.
@@ -535,6 +563,7 @@ describe('sidebar state', () => {
     const s = sanitizeState(base)
     expect(s?.bottomOpen).toBe(false)
     expect(s?.bottomHeight).toBe(BOTTOM_DEFAULT)
+    expect(s?.bottomMaximized).toBe(false)
     expect(s?.bottomSplits.kind).toBe('leaf')
     expect((s?.bottomSplits as { tabs: SidebarTab[] }).tabs).toHaveLength(0)
     // A malformed bottom tree is replaced with a fresh empty pane.

@@ -333,6 +333,17 @@ export interface SidebarConversation {
 }
 
 /**
+ * The layout service face (mirror of ui-layout's ILayout): the app shell's
+ * panel transitions, provided by the web app's root entry (AppFrame).
+ * Resolved lazily through `ctx.get` — the inject-free read, like
+ * 'conversation'.
+ */
+export interface SidebarLayoutService {
+  /** Toggle the host's LEFT sidebar (closed ⟷ contract default width). */
+  toggleSidebar(): void
+}
+
+/**
  * The client workspaces service face (mirror of the runtime IWorkspaces). Only
  * the chat's file-open funnel is touched: `openPath` hands an absolute path
  * to the Host OS's default application, and every chat-side file open
@@ -419,6 +430,11 @@ declare module 'cordis' {
     webRuntime: SidebarWebRuntime
     slots: SidebarSlotsService
     workspaces: SidebarWorkspacesService
+    /**
+     * The app shell's panel transitions (ui-layout's ILayout): provided by
+     * the web app's root entry; read lazily through `ctx.get('layout')`.
+     */
+    layout: SidebarLayoutService
     settings: SidebarSettingsService
     invariants: SidebarInvariantsService
     tools: SidebarToolsService

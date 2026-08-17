@@ -10,7 +10,7 @@
  */
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import type { Context } from '../context-types.ts'
+import type { Context, SidebarLayoutService } from '../context-types.ts'
 import { createSidebarStore } from './state.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
 import { resetChunks } from './chunk-loader.ts'
@@ -20,6 +20,7 @@ import { RenderBoundary } from './RenderBoundary.tsx'
 import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
+import { registerPanelHotkeys } from './hotkeys.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { loadPrefs } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
@@ -212,6 +213,35 @@ export function apply(ctx: Context): void {
         }
       },
       'dsh-better-sidebar: IME composition guard',
+    )
+
+    // The panel-toggle hotkeys (⌘B / ⌘J / ⌘⌥B, VSCode-style):
+    // document-capture keydown that toggles the host's LEFT sidebar
+    // (ui-layout's ctx.layout, resolved lazily like 'conversation'), the
+    // bottom panel, and the right sidebar through the store. Self-guarded
+    // (IME composition, AltGr, key repeat, narrow viewports) and a strict
+    // no-op without a current session.
+    ctx.effect(
+      () => {
+        try {
+          return registerPanelHotkeys(sidebarStore, () => {
+            try {
+              const layout = ctx.get('layout') as SidebarLayoutService | undefined
+              if (layout === undefined) {
+                console.warn('[dsh-better-sidebar] layout service unavailable — ⌘B left-sidebar toggle skipped')
+                return
+              }
+              layout.toggleSidebar()
+            } catch (error) {
+              console.warn('[dsh-better-sidebar] left-sidebar toggle failed:', error)
+            }
+          })
+        } catch (error) {
+          fail('panel hotkeys', error)
+          return undefined
+        }
+      },
+      'dsh-better-sidebar: panel-toggle hotkeys',
     )
 
     // DSH 0.1.x does not yet carry an icon through the settings.section

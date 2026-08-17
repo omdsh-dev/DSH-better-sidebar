@@ -27,6 +27,7 @@
 - **🌿 Git Panel**: real diff + VSCode-style diff tabs, history, right-click to stage / commit / revert
 - **🧩 Background Tasks**: agent topology + background tasks (exit codes / live output / force-kill)
 - **🪟 Dual Workbench**: right sidebar + bottom panel; drag tabs to split / merge panes (cross-panel), mobile auto-merges into a full-width drawer
+- **🖱️ Layout Sync**: panel hotkeys (⌘B host sidebar / ⌘J bottom panel / ⌘⇧J bottom fullscreen / ⌘⌥B right sidebar); when the right panel squeezes the host layout, the host's left sidebar is automatically kept expanded (on windows that are wide enough on their own)
 - **🔁 Session Isolation**: layout / tabs / panels persisted per session, stale state auto-purged
 - **⚙️ Declarative Settings**: per-item toggles in the "Side Cards" settings section, secondary settings via the gear dialog
 - **⚡ On-demand Loading**: only ~325KB core at startup; heavy deps (terminal / editor) load on demand ([design](docs/plans/2026-08-12-lazy-chunks-design.md))
@@ -165,6 +166,10 @@ Update: `git pull && pnpm install && pnpm build` → `node scripts/package-regis
 
 | Action | Keys |
 |---|---|
+| Toggle left sidebar (host nav) | `Ctrl/Cmd + B` |
+| Toggle bottom panel | `Ctrl/Cmd + J` |
+| Maximize bottom panel (fullscreen over the center) | `Ctrl/Cmd + Shift + J` |
+| Toggle sidebar | `Ctrl/Cmd + Alt + B` (macOS: `⌘⌥B`) |
 | Save edits | `Ctrl/Cmd + S` |
 | Git commit | `Ctrl + Enter` |
 | Close tab | Middle mouse button |

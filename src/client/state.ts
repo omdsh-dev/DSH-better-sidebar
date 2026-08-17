@@ -84,6 +84,14 @@ export interface SidebarState {
    * on the bottomPanelAutoTerminal pref); later expansions never do.
    */
   bottomOpenedOnce: boolean
+  /**
+   * Whether the bottom panel is MAXIMIZED (⌘⇧J): it covers the whole center
+   * column (full viewport height) instead of its drag height, and the
+   * layout push is released so the conversation sits BEHIND the panel
+   * instead of being squeezed. Closing the panel forgets the flag; the
+   * previous `bottomHeight` survives, so un-maximizing restores it.
+   */
+  bottomMaximized: boolean
   /** The bottom panel's own split tree (panes/tabs live only in ONE tree;
    *  tabs never cross panels — the two panels only share panel-size drags). */
   bottomSplits: SplitNode
@@ -180,6 +188,7 @@ export function makeDefaultState(width = PANEL_DEFAULT, panelOpen = true, seed: 
     bottomOpen: false,
     bottomHeight: BOTTOM_DEFAULT,
     bottomOpenedOnce: false,
+    bottomMaximized: false,
     bottomSplits: bottomLeaf,
   }
 }
@@ -252,7 +261,10 @@ export function migrateBottomTabs(state: SidebarState): SidebarState {
   return {
     ...state,
     activePane: target.id,
+    // The bottom panel ceases to exist on narrow: closing it also forgets
+    // the maximized flag, so re-widening never pops a stale fullscreen.
     bottomOpen: false,
+    bottomMaximized: false,
     splits: bottomTabs.length > 0
       ? mapLeaf(state.splits, target.id, leaf => {
         leaf.tabs = [...leaf.tabs, ...bottomTabs]
@@ -619,9 +631,21 @@ export function togglePanel(state: SidebarState): SidebarState {
   return { ...state, panelOpen: !state.panelOpen }
 }
 
-/** Toggle the bottom panel open/closed (independent of the right panel). */
+/** Toggle the bottom panel open/closed (independent of the right panel).
+ *  Closing forgets the maximized state: the next open restores the normal
+ *  drag height, never a stale fullscreen. */
 export function toggleBottomPanel(state: SidebarState): SidebarState {
-  return { ...state, bottomOpen: !state.bottomOpen }
+  const bottomOpen = !state.bottomOpen
+  return { ...state, bottomOpen, bottomMaximized: bottomOpen && state.bottomMaximized }
+}
+
+/** Toggle the bottom panel's MAXIMIZED state (⌘⇧J): it covers the whole
+ *  center column (full viewport height) with the layout push released. A
+ *  closed panel opens maximized; an open maximized panel restores its drag
+ *  height (the panel stays open — `bottomHeight` is never overwritten). */
+export function toggleBottomMaximized(state: SidebarState): SidebarState {
+  const maximized = !state.bottomMaximized
+  return { ...state, bottomOpen: maximized ? true : state.bottomOpen, bottomMaximized: maximized }
 }
 
 /** Set the panel width (clamped to the contract range; the upper bound is
@@ -859,6 +883,8 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     // arrived later): defaulting to false gives it the first-expansion
     // auto-terminal exactly once after the upgrade.
     bottomOpenedOnce: record.bottomOpenedOnce === true,
+    // The maximized flag arrived later still: older states restore normal.
+    bottomMaximized: record.bottomMaximized === true,
     bottomSplits,
   }
 }
