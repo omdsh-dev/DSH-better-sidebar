@@ -68,4 +68,25 @@ describe('splitMermaidBlocks', () => {
     const blocks = splitMermaidBlocks('```mermaid\n```')
     expect(blocks).toEqual([{ kind: 'mermaid', code: '' }])
   })
+
+  it('lifts four-backtick and tilde fences (CommonMark fence runs)', () => {
+    const backticks = splitMermaidBlocks('````mermaid\ngraph TD\n  A\n````')
+    expect(backticks).toEqual([{ kind: 'mermaid', code: 'graph TD\n  A' }])
+    const tildes = splitMermaidBlocks('~~~mermaid\ngraph TD\n  A\n~~~')
+    expect(tildes).toEqual([{ kind: 'mermaid', code: 'graph TD\n  A' }])
+  })
+
+  it('only a same-char, at-least-as-long fence closes the opening fence', () => {
+    // A shorter backtick run must not close a 4-backtick opening fence.
+    const blocks = splitMermaidBlocks('````mermaid\na\n```\nb\n````')
+    expect(blocks).toEqual([{ kind: 'mermaid', code: 'a\n```\nb' }])
+    // A different fence character must not close the fence either.
+    const mixed = splitMermaidBlocks('~~~mermaid\na\n```\n~~~')
+    expect(mixed).toEqual([{ kind: 'mermaid', code: 'a\n```' }])
+  })
+
+  it('ignores backticks inside a backtick fence info string (CommonMark)', () => {
+    const source = '```mermaid`graph\na-->b\n```'
+    expect(splitMermaidBlocks(source)).toEqual([{ kind: 'markdown', text: source }])
+  })
 })

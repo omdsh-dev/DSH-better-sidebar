@@ -7,4 +7,4 @@
  * Never import this module from the core bundle: it pulls mermaid into the
  * startup path.
  */
-export { MermaidBlocks } from '../mermaid.tsx'
+export { MermaidMarkdown } from '../mermaid.tsx'

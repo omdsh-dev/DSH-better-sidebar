@@ -66,14 +66,21 @@ async function seedSession(): Promise<void> {
   mkdirSync(WORKSPACE_PATH, { recursive: true })
   writeFileSync(join(WORKSPACE_PATH, SEEDED_FILE), 'hello from the mount lane\n')
   // The mermaid-chunk probe file: a markdown doc whose preview must fetch
-  // client-mermaid.js and render the fence into an SVG diagram.
+  // client-mermaid.js and render the fence into an SVG diagram. The
+  // reference-style link's definition sits AFTER the fence: it only
+  // resolves when the preview is one single markdown parse (the mermaid
+  // path must not split the document into independent MarkdownText blocks).
   writeFileSync(join(WORKSPACE_PATH, SEEDED_MD_FILE), [
     '# Diagram',
+    '',
+    '[before][shared]',
     '',
     '```mermaid',
     'graph TD',
     '  A[Hello] --> B[World]',
     '```',
+    '',
+    '[shared]: https://example.com',
     '',
     'tail text',
     '',
@@ -273,6 +280,13 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     sidebar.locator('[data-mermaid-diagram]').first(),
     'the diagram node labels must render inside the SVG',
   ).toContainText('Hello', { timeout: 30_000 })
+  // Cross-fence semantics: the reference-style link [before][shared] must
+  // resolve to the definition that sits AFTER the fence — proof that the
+  // preview is a single markdown parse and not per-fence fragments.
+  await expect(
+    sidebar.locator('a[href="https://example.com"]').first(),
+    'reference-style links with definitions across a mermaid fence must resolve',
+  ).toContainText('before', { timeout: 30_000 })
   // Click-to-enlarge: clicking the diagram opens the zoom modal (portalled
   // to document.body), Esc closes it again.
   const modal = page.locator('[data-mermaid-modal]')

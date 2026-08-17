@@ -29,7 +29,7 @@ import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { appendToDraft } from './conversation-draft.ts'
 import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
 import { lazyChunkComponent } from './lazy-chunk.tsx'
-import { splitMermaidBlocks, type MermaidBlocksProps } from './mermaid-blocks.ts'
+import { splitMermaidBlocks, type MermaidMarkdownProps } from './mermaid-blocks.ts'
 import { t } from './locales.ts'
 import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
@@ -45,13 +45,13 @@ interface SelectionPopup {
 }
 
 /**
- * The chunk-resident markdown preview renderer (mermaid lazy chunk): renders
- * the interleaved md/mermaid block stream once the source contains at least
- * one mermaid fence. Module-level `pick` keeps the load effect stable.
+ * The chunk-resident markdown preview renderer (mermaid lazy chunk): one
+ * MarkdownText pass over the whole source, with rendered mermaid fences
+ * swapped for diagrams. Module-level `pick` keeps the load effect stable.
  */
-const LazyMermaidBlocks = lazyChunkComponent<MermaidBlocksProps>(
+const LazyMermaidMarkdown = lazyChunkComponent<MermaidMarkdownProps>(
   'mermaid',
-  (mod) => mod.MermaidBlocks as ComponentType<MermaidBlocksProps> | undefined,
+  (mod) => mod.MermaidMarkdown as ComponentType<MermaidMarkdownProps> | undefined,
 )
 
 /**
@@ -388,11 +388,11 @@ export function TextEditor(props: FileViewerProps) {
               fall back to hardcoded Chinese otherwise (same pattern as the
               chat's AssistantMarkdown). Render-time t() keeps them following
               the active locale on live switches. Mermaid fences hand the
-              whole block stream to the mermaid lazy chunk (interleaved
-              md/diagram rendering, source order preserved); files without
-              one render exactly as before. */}
+              whole document to the mermaid lazy chunk (single markdown
+              parse; cross-fence references/footnotes stay intact); files
+              without one render exactly as before. */}
           {hasMermaid
-            ? <LazyMermaidBlocks blocks={mdBlocks} codeLabels={codeLabels} />
+            ? <LazyMermaidMarkdown text={mdText} codeLabels={codeLabels} />
             : <MarkdownText text={mdText} codeLabels={codeLabels} />}
         </div>
       )}

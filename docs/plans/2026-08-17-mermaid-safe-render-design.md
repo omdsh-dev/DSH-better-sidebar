@@ -22,15 +22,25 @@ Markdown 预览（`TextEditor.tsx` 的 preview 模式）直接把全文交给 DS
 
 ## 2. 方案
 
-### 2.1 拆分：纯函数按 fence 切块
+### 2.1 检测：纯函数按 fence 切块
 
-新增 `src/client/mermaid-blocks.ts`（`splitMermaidBlocks`，纯函数、无依赖）：
+新增 `src/client/mermaid-blocks.ts`（`splitMermaidBlocks`，纯函数、无依赖），职责是**检测**预览是否需要 mermaid chunk：
 
-- 逐行扫描，命中 info string 为 `mermaid` 的围栏（大小写不敏感，支持 `mermaid{...}` 属性后缀，缩进 ≤3 空格，CommonMark 语义）即从 md 流中"提出"为 `{ kind: 'mermaid', code }` 块；
-- 其余行原样保留在 `{ kind: 'markdown', text }` 块中（含非 mermaid 围栏，行为与现在完全一致）；
-- 未闭合的 mermaid fence 吞掉文件剩余部分（与 CommonMark 对开 fence 的恢复一致）。
+- 逐行扫描，命中 info string 为 `mermaid` 的围栏（大小写不敏感，支持 `mermaid{...}` 属性后缀，缩进 ≤3 空格，CommonMark 语义）即"提出"为 `{ kind: 'mermaid', code }` 块；
+- 其余行原样保留在 `{ kind: 'markdown', text }` 块中（含非 mermaid 围栏）；
+- 未闭合的 mermaid fence 吞掉文件剩余部分（与 CommonMark 对开 fence 的恢复一致）；
+- **CommonMark fence 规则完整**：开 fence 为 3+ 反引号**或波浪号**；闭 fence 必须同字符且长度 ≥ 开 fence；反引号 fence 的 info string 含反引号时该行不是开 fence。
 
-`TextEditor` 预览时先 `splitMermaidBlocks`，**无 mermaid 块则走原 `MarkdownText` 直渲路径（零行为变化）**；有则渲染 `MermaidBlocks`（mermaid chunk 内），由它按源顺序交错渲染 md 段（`MarkdownText`）与图段（`MermaidDiagram`）。
+`TextEditor` 预览时先 `splitMermaidBlocks`，**无 mermaid 块则走原 `MarkdownText` 直渲路径（零行为变化）**；有则渲染 `MermaidMarkdown`（mermaid chunk 内）。
+
+### 2.2 渲染架构：单次解析 + 占位替换（CR 第 3 轮 P1 修正）
+
+早期方案把文档切成多个独立 `MarkdownText` 片段，会破坏跨 fence 的 Markdown 语义（引用式链接定义在 fence 之后、脚注、有序列表连续性）。当前实现：
+
+- **整篇文档只走一次 `MarkdownText`**（`MermaidMarkdown`），跨 fence 语义完整；
+- 布局阶段（`useLayoutEffect`）扫描容器内 `.md-code-block`，识别 mermaid 块（双通道：shiki 路径的 `code.language-mermaid` 类，或 plain 路径的 banner infostring 文本 === `mermaid`——mermaid 无 shiki 语法必走 plain，语言只显示在 infostring 里），用 `createRoot` 把 `MermaidDiagram` 挂进替换后的子节点；**React 管理的 `.md-code-block` 宿主节点保留在树中**（仅替换其 children，CSS `display: contents` 抑制代码块自身盒子），React 协调不会丢失宿主；
+- 块内容变化（编辑后重新预览）按源码 diff 重渲；块不再是 mermaid fence 时还原原 children（普通代码块恢复显示）；fence 消失时卸载对应 root；
+- DSH `MarkdownText` 无代码块渲染扩展入口（且仓库硬约束禁止改 DSH），这是约束内的最小侵入方案。
 
 ### 2.2 懒加载 chunk：`mermaid`
 
@@ -57,15 +67,16 @@ mermaid 及其图依赖（d3 / dagre-d3-es / cytoscape 等）打包进新的 `li
 
 ## 3. 验证
 
-- 单测：`tests/mermaid-blocks.spec.ts`（10 例：fence 识别大小写/属性/缩进、非 mermaid 围栏不动、交错顺序、开 fence 恢复、空文件）；`tests/mermaid-sanitize.spec.ts`（8 例 XSS：foreignObject 整体剥离、`on*`/`@*` 剥离、href/xlink:href 全删、script/外来元素删除、畸形 XML → 空串、非 SVG 根 → 空串、良性图保真）；
+- 单测：`tests/mermaid-blocks.spec.ts`（14 例：fence 识别大小写/属性/缩进、4 反引号/波浪号、同字符且不短于开 fence 的闭 fence、非 mermaid 围栏不动、交错顺序、开 fence 恢复、空文件）；`tests/mermaid-sanitize.spec.ts`（10 例 XSS：foreignObject/script/外来元素整节点剥离（含混合大小写元素名与属性名）、`on*`/`@*` 剥离、href/xlink:href 全删、畸形 XML → 空串、非 SVG 根 → 空串、良性图保真）；`tests/mermaid-markdown.spec.tsx`（3 例架构回归：mermaid 块被交换为图、**跨 fence 引用式链接在单次解析下解析**、非 mermaid 围栏不动）；
 - 产物契约：`chunk-artifact.spec.ts`（mermaid chunk 执行 + registry 槽位 + 平台 externals require，`addEventListener` stub）/ `manifest-consistency.spec.ts` / `bundle-route.spec.ts` 的 chunk 清单同步加入 `mermaid`；
-- 挂载冒烟：`tests/e2e/mount.e2e.ts` 新增 seed `diagram.md`，打开后强制 `client-mermaid.js` 往返、断言 `[data-mermaid-diagram] svg` 含节点文字（真实 `<text>`）、点击弹窗出现且 Esc 关闭、预览模式编辑器隐藏；缺 chunk、文字丢失、弹窗失效任一即红；
+- 挂载冒烟：`tests/e2e/mount.e2e.ts` 新增 seed `diagram.md`，打开后强制 `client-mermaid.js` 往返、断言 `[data-mermaid-diagram] svg` 含节点文字（真实 `<text>`）、**跨 fence 引用式链接解析为真实锚点（单次解析证明）**、点击弹窗出现且 Esc 关闭、预览模式编辑器隐藏；缺 chunk、文字丢失、语义破坏、弹窗失效任一即红；
 - 现有 `markdown-copy-labels.spec.tsx` 不回归（无 mermaid 文件走原路径）。
 
 ## 4. 风险与取舍
 
 - 编辑器 chunk 之外新增 ~7MB 懒 chunk（mermaid + d3/dagre/cytoscape/katex 图依赖）；仅预览含 mermaid fence 的 md 时下载，启动与普通文本打开路径零成本；
-- `splitMermaidBlocks` 对"mermaid 围栏嵌在其他代码块内"的极边缘情况会误提——预览级工具接受该取舍（与常见 md 渲染器行为一致）；
+- `splitMermaidBlocks` 对"mermaid 围栏嵌在其他代码块内"的极边缘情况会误提（只影响是否走 mermaid 路径，不影响渲染正确性）——预览级工具接受该取舍（与常见 md 渲染器行为一致）；
+- 占位替换依赖 DSH `MarkdownText` 的 DOM 输出结构（`.md-code-block` + `language-mermaid`）：宿主节点保留在 React 树中、仅换 children，协调安全；若未来 DSH 渲染器结构变化，`data-mermaid-processed` 扫描点需要同步（有 e2e 兜底）；
 - 清洗器删除全部 `href`/`xlink:href`：`<use href>` 类图标引用可能不显示（纯装饰性损失），换取确定性的无导航/无脚本面；
 - mermaid 官方核心包持续演化，锁 `^11.16.1`，升级靠 Renovate 常规流程；
 - 回滚：删除 chunk 三处声明 + `files` 条目 + `TextEditor` 分支即可回到纯代码块展示。

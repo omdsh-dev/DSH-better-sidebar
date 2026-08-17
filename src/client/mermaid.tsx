@@ -5,9 +5,18 @@
  * lib/client-mermaid.js and fetched only when a previewed markdown file
  * actually contains a mermaid fence (see mermaid-blocks.ts).
  *
- * Rendering is client-side: mermaid.render → sanitized SVG injected into
- * the block. `bindFunctions` is intentionally NOT applied (static diagrams;
- * no flowchart click handlers), `securityLevel` stays 'strict' (labels are
+ * Rendering architecture: the whole document is rendered ONCE through the
+ * DSH `MarkdownText` (so cross-fence semantics — reference-style links,
+ * footnotes, ordered-list continuity — stay intact), then a layout effect
+ * swaps every rendered `language-mermaid` CodeBlock for a diagram. The
+ * swap keeps the React-managed `.md-code-block` host node in the tree and
+ * only replaces its children (display:contents suppresses the code-block
+ * chrome), so React reconciliation never loses the host; when a swapped
+ * block stops being a mermaid fence, the original children are restored.
+ *
+ * Security: mermaid.render → sanitized SVG injected into the block.
+ * `bindFunctions` is intentionally NOT applied (static diagrams; no
+ * flowchart click handlers), `securityLevel` stays 'strict' (labels are
  * escaped, no raw-HTML foreignObject), `htmlLabels: false` keeps node text
  * as real SVG <text>, and the emitted SVG is re-sanitized (see
  * mermaid-sanitize.ts) before it reaches dangerouslySetInnerHTML. Clicking
@@ -15,14 +24,15 @@
  * from the mermaid PR #75, reimplemented on top of the sanitized SVG —
  * the clone carries no event surface, so the modal adds no attack surface).
  */
-import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { createRoot, type Root } from 'react-dom/client'
 import mermaid from 'mermaid'
 import { IconCopyOutline16, MarkdownText, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { t } from './locales.ts'
 import { sanitizeSvg } from './mermaid-sanitize.ts'
-import type { MdBlock, MermaidBlocksProps } from './mermaid-blocks.ts'
+import type { MermaidMarkdownProps } from './mermaid-blocks.ts'
 import css from './sidebar.module.css'
 
 /** Monotonic id seed: every render call gets a fresh, document-unique id. */
@@ -292,20 +302,100 @@ function MermaidDiagram({ code }: { code: string }): React.ReactNode {
   )
 }
 
+/** One swapped mount: the diagram root + the CodeBlock children it displaced. */
+interface MermaidMount {
+  root: Root
+  source: string
+  removed: ChildNode[]
+}
+
 /**
- * The chunk-resident markdown preview renderer: interleaves plain markdown
- * spans (through the DSH MarkdownText renderer) with rendered mermaid
- * diagrams, preserving the source order. Only mounted when the source
- * contains at least one mermaid fence (see TextEditor.tsx).
+ * True when a rendered CodeBlock is a mermaid fence. The DSH CodeBlock has
+ * two bodies: the shiki path carries the `language-*` class on generated
+ * <code> elements, while the plain path (which is always the one mermaid
+ * takes — no shiki grammar) only shows the language in the banner
+ * infostring (first element of the banner row; CSS-module classes are
+ * hashed, so that match is structural).
  */
-export function MermaidBlocks({ blocks, codeLabels }: MermaidBlocksProps): React.ReactNode {
+function isMermaidBlock(block: HTMLElement): boolean {
+  const code = block.querySelector('code')
+  if (code !== null && [...code.classList].some(c => c.startsWith('language-mermaid'))) return true
+  const infostring = block.firstElementChild?.firstElementChild?.firstElementChild
+  return infostring !== null
+    && infostring !== undefined
+    && (infostring.textContent ?? '').trim() === 'mermaid'
+}
+
+/**
+ * The chunk-resident markdown preview renderer: ONE MarkdownText pass over
+ * the full source (cross-fence reference/footnote/list semantics intact),
+ * then every rendered `language-mermaid` code block is swapped for a
+ * `MermaidDiagram`. The `.md-code-block` host stays in the React tree —
+ * only its children are replaced — so reconciliation never loses the host;
+ * a block that stops being a mermaid fence gets its original children back.
+ * Only mounted when the source contains at least one mermaid fence (see
+ * TextEditor.tsx).
+ */
+export function MermaidMarkdown({ text, codeLabels }: MermaidMarkdownProps): React.ReactNode {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const mountsRef = useRef(new Map<HTMLElement, MermaidMount>())
+
+  useLayoutEffect(() => {
+    const container = containerRef.current
+    if (container === null) return
+    const mounts = mountsRef.current
+    const seen = new Set<HTMLElement>()
+
+    for (const block of container.querySelectorAll<HTMLElement>('.md-code-block')) {
+      const mount = mounts.get(block)
+      const isMermaid = isMermaidBlock(block)
+      if (!isMermaid) {
+        // A previously swapped block that is no longer a mermaid fence:
+        // restore the CodeBlock children React still manages, so the plain
+        // fence renders normally again.
+        if (mount !== undefined) {
+          mount.root.unmount()
+          block.replaceChildren(...mount.removed)
+          block.removeAttribute('data-mermaid-processed')
+          mounts.delete(block)
+        }
+        continue
+      }
+      seen.add(block)
+      // The plain body always carries the fence source in <code>.
+      const source = block.querySelector('code')?.textContent ?? ''
+      if (mount !== undefined && mount.source === source) continue
+      if (mount === undefined) {
+        const host = document.createElement('div')
+        const removed = [...block.childNodes]
+        block.replaceChildren(host)
+        block.setAttribute('data-mermaid-processed', 'true')
+        const root = createRoot(host)
+        mounts.set(block, { root, source, removed })
+        root.render(<MermaidDiagram code={source} />)
+      } else {
+        mount.source = source
+        mount.root.render(<MermaidDiagram code={source} />)
+      }
+    }
+
+    // Drop mounts whose code block left the tree (fence removed, document
+    // restructured): the host node is gone with it.
+    for (const [block, mount] of mounts) {
+      if (seen.has(block)) continue
+      mount.root.unmount()
+      mounts.delete(block)
+    }
+  }, [text])
+
+  useEffect(() => () => {
+    for (const { root } of mountsRef.current.values()) root.unmount()
+    mountsRef.current.clear()
+  }, [])
+
   return (
-    <>
-      {blocks.map((block: MdBlock, index: number) => (
-        block.kind === 'mermaid'
-          ? <MermaidDiagram key={index} code={block.code} />
-          : <MarkdownText key={index} text={block.text} codeLabels={codeLabels} />
-      ))}
-    </>
+    <div className={css.mermaidMarkdown} ref={containerRef}>
+      <MarkdownText text={text} codeLabels={codeLabels} />
+    </div>
   )
 }

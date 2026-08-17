@@ -1369,6 +1369,14 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/* The mermaid markdown container (single MarkdownText pass): a swapped
+   code block keeps its React-managed .md-code-block wrapper in the tree
+   (reconciliation safety), but the wrapper's own box is suppressed so only
+   the diagram chrome renders; the swapped-in host div flows as a block. */
+.mermaidMarkdown :global(.md-code-block[data-mermaid-processed]) {
+  display: contents;
+}
+
 /* ── Mermaid zoom modal (click-to-enlarge; portalled to document.body) ──
    Fixed overlay above the DSH overlay stack (1000+), token-driven surface.
    The stage centers the (sanitized, cloned) svg and the modal owns the
