@@ -68,6 +68,12 @@ export type {
 export const name = 'dsh-better-sidebar'
 export const BETTER_SIDEBAR_FEDERATION_NAMESPACE = 'dsh-better-sidebar'
 export const BETTER_SIDEBAR_FEDERATION_VERSION = '0.12.3'
+const FEDERATED_EXTENSIONS_GLOBAL = Symbol.for('fzhiyu.dsh.federation.extensions.v1')
+const FEDERATION_EXTENSION_ROUTER_GLOBAL = Symbol.for('fzhiyu.dsh.federation.extension-router.v1')
+
+function globalService<T>(key: symbol): T | undefined {
+  return (globalThis as Record<symbol, unknown>)[key] as T | undefined
+}
 
 /** Services required before mounting: the webserver routes, the session store, the web runtime's trusted hosts, and the tool registry. */
 export const inject = ['webServer', 'sessions', 'webRuntime', 'tools']
@@ -741,7 +747,8 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
 
   // ── JSON API ────────────────────────────────────────────────────────────
   const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace)
-  let federationRouter = ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
+  let federationRouter = globalService<import('./context-types.ts').SidebarFederationExtensionRouter>(FEDERATION_EXTENSION_ROUTER_GLOBAL)
+    ?? ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
   ctx.effect(() => {
     // Rows may activate in either order. Resolve lazily from the root service
     // registry on every request if the router was not present at sidebar boot.
@@ -751,7 +758,8 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // cwd resolver. The service is optional; because the Federation bundle is
   // ordered before the sidebar bundle in deployment, a root lookup avoids
   // Cordis child-context injection ordering differences between profiles.
-  const extensionRegistry = ctx.get('federatedExtensions') as import('./context-types.ts').SidebarFederatedExtensionRegistry | undefined
+  const extensionRegistry = globalService<import('./context-types.ts').SidebarFederatedExtensionRegistry>(FEDERATED_EXTENSIONS_GLOBAL)
+    ?? ctx.get('federatedExtensions') as import('./context-types.ts').SidebarFederatedExtensionRegistry | undefined
   if (extensionRegistry !== undefined) {
     const ownerApi = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace, 'owner-strict')
     ctx.effect(() => registerFederatedJsonApi(ctx, resolved, ptyManager, extensionRegistry, ownerApi))
@@ -776,7 +784,8 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       }
       try {
         const payload = await readJsonBody(req)
-        federationRouter ??= ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
+        federationRouter ??= globalService<import('./context-types.ts').SidebarFederationExtensionRouter>(FEDERATION_EXTENSION_ROUTER_GLOBAL)
+          ?? ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
         if (federationRouter !== undefined
           && isFederatedSessionId((payload as { sessionId?: unknown } | null)?.sessionId)
           && [...FEDERATED_JSON_READ_METHODS, ...FEDERATED_JSON_WRITE_METHODS].includes(method as never)) {
@@ -820,7 +829,8 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const sessionId = url.searchParams.get('sessionId')
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
-        federationRouter ??= ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
+        federationRouter ??= globalService<import('./context-types.ts').SidebarFederationExtensionRouter>(FEDERATION_EXTENSION_ROUTER_GLOBAL)
+          ?? ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
         if (federationRouter !== undefined && isFederatedSessionId(sessionId)) {
           const result = await federationRouter.invokeBinary({
             namespace: BETTER_SIDEBAR_FEDERATION_NAMESPACE,
@@ -894,7 +904,8 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
           return
         }
         const { sessionId, path } = decoded.ref
-        federationRouter ??= ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
+        federationRouter ??= globalService<import('./context-types.ts').SidebarFederationExtensionRouter>(FEDERATION_EXTENSION_ROUTER_GLOBAL)
+          ?? ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
         if (federationRouter !== undefined && isFederatedSessionId(sessionId)) {
           const result = await federationRouter.invokeBinary({
             namespace: BETTER_SIDEBAR_FEDERATION_NAMESPACE,
@@ -959,7 +970,8 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       wss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
         const url = new URL(req.url ?? '/', 'http://dsh.internal')
         const sessionId = url.searchParams.get('sessionId')
-        federationRouter ??= ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
+        federationRouter ??= globalService<import('./context-types.ts').SidebarFederationExtensionRouter>(FEDERATION_EXTENSION_ROUTER_GLOBAL)
+          ?? ctx.get('federationExtensionRouter') as import('./context-types.ts').SidebarFederationExtensionRouter | undefined
         if (federationRouter !== undefined && sessionId !== null && isFederatedSessionId(sessionId)) {
           void attachFederatedTerminal(federationRouter, ws, sessionId, url.searchParams.get('tab'), resolved)
           return
