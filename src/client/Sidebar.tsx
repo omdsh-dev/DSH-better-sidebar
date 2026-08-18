@@ -549,8 +549,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     if (dragCommitted.current) return
     stopDragScheduling()
     applyDrag(
-      Math.min(state?.width ?? 0, window.innerWidth),
-      state?.bottomOpen === true ? Math.min(state.bottomHeight, window.innerHeight) : 0,
+      !narrow && state?.panelOpen === true ? Math.min(state?.width ?? 0, window.innerWidth) : 0,
+      !narrow && state?.bottomOpen === true ? Math.min(state.bottomHeight, window.innerHeight) : 0,
     )
     reset()
   }
