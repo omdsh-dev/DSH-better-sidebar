@@ -12,7 +12,7 @@ import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-setti
 import { apply, mediaTypeForPath } from '../src/index.ts'
 import * as git from '../src/git.ts'
 import { listDirectory } from '../src/fs-tree.ts'
-import { defaultShell, PtyManager } from '../src/pty-manager.ts'
+import { defaultShell, PtyManager, type SidebarPty } from '../src/pty-manager.ts'
 import type { SidebarWebRoute, SidebarWebUpgradeRoute } from '../src/context-types.ts'
 
 interface FakeContext {
@@ -29,6 +29,32 @@ interface FakeContext {
   inject: (deps: readonly string[], callback: (sctx: never) => void) => () => void
   /** Optional services (jobs/agents) are read lazily; absent → undefined. */
   get: (key: string) => undefined
+}
+
+/**
+ * The login-shell test spawns a real pty whose bash may still be writing to
+ * the temp HOME (history files, etc.) when `disposeAll()` returns — `close()`
+ * only requests the kill and the process exit lands asynchronously in
+ * `onExit`. Deleting the directory immediately then races the shell and
+ * fails with ENOTEMPTY on CI. Wait for the spawned handle to report `exited`
+ * (bounded), then remove with a short retry loop as a belt-and-braces
+ * fallback for any straggler fd.
+ */
+async function rmTempDirAfterPtyExit(handle: { exited: boolean }, dir: string): Promise<void> {
+  const deadline = Date.now() + 2000
+  while (Date.now() < deadline && !handle.exited) {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  for (let attempt = 0; ; attempt++) {
+    try {
+      rmSync(dir, { recursive: true, force: true })
+      return
+    } catch (error) {
+      const busy = (error as NodeJS.ErrnoException).code === 'ENOTEMPTY' || (error as NodeJS.ErrnoException).code === 'EBUSY'
+      if (!busy || attempt >= 4) throw error
+      await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)))
+    }
+  }
 }
 
 describe('host plugin smoke', () => {
@@ -191,6 +217,7 @@ describe('host plugin smoke', () => {
   it.skipIf(process.platform === 'win32')('spawns the shell as a login shell (loads ~/.profile)', async () => {
     const home = mkdtempSync(join(tmpdir(), 'dsh-sidebar-login-'))
     const previousHome = process.env.HOME
+    let handle: SidebarPty | undefined
     try {
       // A login bash reads ~/.profile (a non-login interactive bash reads
       // ~/.bashrc instead), so this marker proves the spawn used a login
@@ -199,7 +226,7 @@ describe('host plugin smoke', () => {
       process.env.HOME = home
       const manager = new PtyManager('/bin/bash', 3)
       try {
-        const handle = manager.open('s5', 't1', process.cwd(), 80, 24)
+        handle = manager.open('s5', 't1', process.cwd(), 80, 24)
         handle.pty.write('echo $DSH_LOGIN_MARKER\r')
         const deadline = Date.now() + 5000
         while (!handle.transcript.includes('loaded-from-profile') && Date.now() < deadline) {
@@ -212,7 +239,7 @@ describe('host plugin smoke', () => {
     } finally {
       if (previousHome === undefined) delete process.env.HOME
       else process.env.HOME = previousHome
-      rmSync(home, { recursive: true, force: true })
+      await rmTempDirAfterPtyExit(handle ?? { exited: true }, home)
     }
   })
 
@@ -449,11 +476,15 @@ describe('session cwd resolution over the API route', () => {
 
 describe('side card settings routes', () => {
   /** A minimal settings seam: register/describe/update with the revision guard. */
-  const createFakeSettings = () => {    const namespaces = new Map<string, {
+  const createFakeSettings = (pre?: Record<string, Record<string, unknown>>) => {
+    const namespaces = new Map<string, {
       schema: unknown
       value: Record<string, unknown> | undefined
       revision: number
     }>()
+    for (const [ns, value] of Object.entries(pre ?? {})) {
+      namespaces.set(ns, { schema: (input: unknown) => input, value, revision: 0 })
+    }
     const resolve = (entry: { schema: unknown; value: Record<string, unknown> | undefined }): unknown => {
       const schema = entry.schema as (input: unknown) => unknown
       return entry.value === undefined ? schema(undefined) : schema(entry.value)
@@ -530,7 +561,21 @@ describe('side card settings routes', () => {
     const route = mountWithSettings(undefined)
     const result = await invoke(route, 'settings.get', {})
     expect(result.ok).toBe(true)
-    expect(result.value).toEqual({ value: undefined, revision: undefined })
+    expect(result.value).toEqual({ value: undefined, revision: undefined, externalDisable: false })
+  })
+
+  it('reports externalDisable false when the aionui namespace is absent', async () => {
+    const route = mountWithSettings(createFakeSettings())
+    const result = await invoke(route, 'settings.get', {})
+    expect(result.ok).toBe(true)
+    expect((result.value as { externalDisable?: boolean }).externalDisable).toBe(false)
+  })
+
+  it('reports externalDisable true while the aionui provider is selected', async () => {
+    const route = mountWithSettings(createFakeSettings({ 'aionui-panel': { rightPanel: 'aionui-panel' } }))
+    const result = await invoke(route, 'settings.get', {})
+    expect(result.ok).toBe(true)
+    expect((result.value as { externalDisable?: boolean }).externalDisable).toBe(true)
   })
 
   it('reads the resolved prefs and writes a patch through the seam', async () => {
@@ -539,8 +584,8 @@ describe('side card settings routes', () => {
     expect(read.ok).toBe(true)
     expect(read.value).toEqual({
       value: {
-        openByDefault: true,
-        defaultWidthPercent: 30,
+        openByDefault: false,
+        defaultWidthPercent: 35,
         autoOpenSubagent: true,
         autoOpenJobs: true,
         agentTerminalTools: false,
@@ -548,6 +593,7 @@ describe('side card settings routes', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
+        editorExplorer: true,
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
@@ -563,13 +609,14 @@ describe('side card settings routes', () => {
         pluginSettings: {},
       },
       revision: 0,
+      externalDisable: false,
     })
 
-    const written = await invoke(route, 'settings.update', { patch: { openByDefault: false } })
+    const written = await invoke(route, 'settings.update', { patch: { openByDefault: true } })
     expect(written.ok).toBe(true)
     const view = written.value as { value: { openByDefault: boolean; defaultWidthPercent: number }; revision: number }
-    expect(view.value.openByDefault).toBe(false)
-    expect(view.value.defaultWidthPercent).toBe(30)
+    expect(view.value.openByDefault).toBe(true)
+    expect(view.value.defaultWidthPercent).toBe(35)
     expect(view.revision).toBe(1)
   })
 

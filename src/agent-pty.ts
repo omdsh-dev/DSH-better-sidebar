@@ -12,8 +12,9 @@
  * Both registries share the same shell resolver and spawn-helper fix.
  */
 import { randomUUID } from 'node:crypto'
-import * as nodePty from 'node-pty'
+import type { IPty } from 'node-pty'
 import { ensureSpawnHelper, shellSpawnArgs } from './pty-manager.ts'
+import { loadRequiredNodePty, type NodePtyModule } from './pty-deps.ts'
 import { SidebarError } from './wire.ts'
 
 /** Per-agent-terminal transcript bound (bytes kept for replay and reads). */
@@ -106,7 +107,7 @@ export interface AgentTerminalHandle {
   /** The working directory the process was spawned with. */
   cwd: string
   /** The live pty process. */
-  pty: nodePty.IPty
+  pty: IPty
   /** Output accumulated since spawn (bounded; head dropped when over the limit). */
   transcript: string
   /** Whether the top-level process exited (transcript stays replayable). */
@@ -189,7 +190,11 @@ export class AgentPtyRegistry {
   private readonly sessions = new Map<string, AgentTerminalHandle>()
   private readonly changeListeners = new Set<() => void>()
 
-  constructor(private readonly shell: string) {
+  constructor(
+    private readonly shell: string,
+    /** The loaded node-pty module (injected so a broken install degrades instead of crashing the plugin). */
+    private readonly nodePty: NodePtyModule = loadRequiredNodePty(),
+  ) {
     ensureSpawnHelper()
   }
 
@@ -211,7 +216,7 @@ export class AgentPtyRegistry {
   ): string {
     const uuid = randomUUID()
     const dims = clampDims(cols, rows)
-    const pty = nodePty.spawn(this.shell, shellSpawnArgs(), {
+    const pty = this.nodePty.spawn(this.shell, shellSpawnArgs(), {
       name: 'xterm-256color',
       cols: dims.cols,
       rows: dims.rows,

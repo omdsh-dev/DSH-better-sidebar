@@ -16,8 +16,8 @@ import { SIDEBAR_PREFS_DEFAULTS, type SidebarPrefs } from '../prefs-shared.ts'
 import { isNarrowWidth } from './breakpoints.ts'
 
 /**
- * Tab type identifier. Builtins register their ids (explorer / git / editor
- * / terminal / subagent / diff) through the sidebar service; external
+ * Tab type identifier. Builtins register their ids (editor / git / terminal
+ * / subagent / browser / diff) through the sidebar service; external
  * plugins register their own (e.g. `'my-plugin:db'`). Kept as `string` so
  * the registry stays open.
  */
@@ -28,7 +28,7 @@ export type SidebarDiffRef =
   | { kind: 'worktree'; path: string; staged: boolean; untracked?: boolean }
   | { kind: 'commit'; hash: string; hashFull: string; subject: string }
 
-/** One open tab. `path` carries the file (editor) or is absent (explorer/git);
+/** One open tab. `path` carries the file (editor) or is absent (git/terminal);
  *  `diff` carries the change a diff tab shows; `meta` (v0.12.0+) carries
  *  plugin-owned JSON-serializable state, preserved across reloads. */
 export interface SidebarTab {
@@ -172,6 +172,13 @@ function uid(prefix: string): string {
   return `${prefix}:${nextIdCounter}`
 }
 
+/** Mint a fresh uid-based tab id. The `'editor:' + path` convention only
+ *  covers openSidebarFile opens (per-path dedupe); opens that must not
+ *  dedupe (the tree's "open to the side") mint through here. */
+export function mintTabId(): string {
+  return uid('tab')
+}
+
 /**
  * The largest numeric suffix across a raw persisted state's counter ids
  * (`pane:N` / `tab:N` / `split:N`). The uid counter is module-global and
@@ -206,17 +213,24 @@ function maxCounterId(record: { splits: SplitNode; bottomSplits: SplitNode }): n
   return max
 }
 
-/** A fresh default state: one explorer tab in one pane, open per the caller's
+/** The default tab a fresh session seeds. */
+export type DefaultSeed = 'editor-home' | 'none'
+
+/** A fresh default state: one seeded tab in one pane, open per the caller's
  * preference. `width` is the caller's preferred panel width (default
  * PANEL_DEFAULT) and `panelOpen` whether the panel starts expanded (default
  * true); the store seeds new sessions from the user's side card prefs.
- * `seedExplorer` places the default explorer tab — the store passes false
- * when the user disabled the explorer tab type in settings, so a fresh
- * session starts with an empty pane instead of a tab they turned off. */
-export function makeDefaultState(width = PANEL_DEFAULT, panelOpen = true, seedExplorer = true): SidebarState {
+ * `seed` picks the seeded tab: 'editor-home' places the EMPTY files window
+ * (an editor tab with no path whose tree panel starts open,
+ * `meta.treeOpen: true`) — in BOTH editorExplorer modes that window is the
+ * file explorer page — and 'none' starts with an empty pane (the store
+ * passes it when the user disabled the editor tab type in settings). */
+export function makeDefaultState(width = PANEL_DEFAULT, panelOpen = true, seed: DefaultSeed = 'editor-home'): SidebarState {
   const leaf: SidebarLeaf = { kind: 'leaf', id: uid('pane'), tabs: [], active: null }
-  if (seedExplorer) {
-    leaf.tabs = [{ id: uid('tab'), type: 'explorer', title: 'Explorer' }]
+  if (seed === 'editor-home') {
+    // No path: the editor host renders its empty-state hint and the docked
+    // tree panel (treeOpen defaults open for path-less tabs; meta pins it).
+    leaf.tabs = [{ id: uid('tab'), type: 'editor', title: 'Files', meta: { treeOpen: true } }]
     leaf.active = leaf.tabs[0]!.id
   }
   // The bottom panel starts closed with an empty pane (its welcome cards
@@ -239,12 +253,15 @@ export function makeDefaultState(width = PANEL_DEFAULT, panelOpen = true, seedEx
 
 /**
  * The PINNED tab types always shown first in the RIGHT panel of every session
- * (Explorer / Git / Subagent). They cannot be closed or reordered out of their
- * pinned front positions — they are the "keep the same panels everywhere"
- * skeleton. Everything else (editor / terminal / browser / external) floats
- * per session as today.
+ * (Git / Subagent). They cannot be closed or reordered out of their pinned
+ * front positions — they are the "keep the same panels everywhere" skeleton.
+ * Everything else (editor file window / terminal / browser / external) floats
+ * per session as today. (Upstream 0.13 removed the `explorer` tab in favor of
+ * the `editor` files window; the editor window itself is NOT pinned — it is a
+ * rich per-path window with in-place switching, not a simple fixed bar — so
+ * only the clean single bars git/subagent are pinned.)
  */
-export const PINNED_TYPES: readonly TabType[] = ['explorer', 'git', 'subagent']
+export const PINNED_TYPES: readonly TabType[] = ['git', 'subagent']
 
 /** Whether a tab type is one of the pinned front tabs. */
 export function isPinnedType(type: string): boolean {
@@ -256,7 +273,6 @@ export function isPinnedType(type: string): boolean {
  *  (localized) descriptor title from when they were first opened; this is only
  *  a fallback for the brief补齐 of a missing bar. */
 function titleForType(type: string): string {
-  if (type === 'explorer') return 'Explorer'
   if (type === 'git') return 'Source Control'
   return 'Subagents'
 }
@@ -1080,10 +1096,11 @@ export function sanitizeLayout(parsed: unknown): GlobalSidebarLayout | undefined
   }
 }
 
-/** The default explorer CONTENT for a brand-new session (one empty pane,
- *  explorer tab unless the user disabled the explorer type; counters at 1). */
-export function makeDefaultContent(seedExplorer: boolean): SidebarContent {
-  const state = makeDefaultState(0, true, seedExplorer)
+/** The default CONTENT for a brand-new session (one seeded pane per the seed
+ *  — 'editor-home' places the editor files window, 'none' an empty pane —
+ *  with counters at 1). */
+export function makeDefaultContent(seed: DefaultSeed = 'editor-home'): SidebarContent {
+  const state = makeDefaultState(0, true, seed)
   return splitState(state).content
 }
 
@@ -1130,7 +1147,7 @@ function loadContent(sessionId: string, prefs: SidebarPrefs): SidebarContent {
   } catch {
     // Corrupt or unavailable storage: fall through to the default.
   }
-  return makeDefaultContent(prefs.tabsEnabled['explorer'] !== false)
+  return makeDefaultContent(prefs.tabsEnabled['editor'] === false ? 'none' : 'editor-home')
 }
 
 /** Load the GLOBAL layout from localStorage (one shared key), falling back to
@@ -1219,6 +1236,21 @@ function sanitizeNode(node: unknown, seen: Set<string>, reid: Map<string, string
       // accept any string type here — an unregistered type renders an
       // <OrphanedTab/> at view time and recovers if its plugin loads later.
       if (typeof candidate.type !== 'string') return undefined
+      // The standalone explorer tab type merged INTO the editor (the single
+      // files window): a persisted explorer tab reopens as an editor home
+      // tab — no path, tree panel open (an existing meta object survives).
+      if (candidate.type === 'explorer') {
+        const meta = candidate.meta !== null && typeof candidate.meta === 'object' && !Array.isArray(candidate.meta)
+          ? candidate.meta as Record<string, unknown>
+          : undefined
+        tabs.push({
+          id: candidate.id,
+          type: 'editor',
+          title: 'Files',
+          meta: { treeOpen: true, ...meta },
+        })
+        continue
+      }
       // `meta` is plugin-owned JSON-serializable state (v0.12.0+): the
       // persisted value already went through JSON.parse, so it is inherently
       // serializable — carry it through verbatim (absent on older states).
@@ -1283,6 +1315,26 @@ export class SidebarStore {
   private readonly persistTimers = new Map<string, number>()
   /** User-facing side card prefs seeding brand-new session states (defaults until the settings RPC resolves). */
   private prefs: SidebarPrefs = { ...SIDEBAR_PREFS_DEFAULTS }
+  /**
+   * External disable (the dsh-web-ui family's aionui-panel provider choice):
+   * while true the sidebar must not mount at all. Not part of the snapshot —
+   * nothing renders on it; the mount gate and the intercept predicates read
+   * it directly.
+   */
+  private suspended = false
+
+  /**
+   * Set the external-disable flag (from the settings route) and remember it
+   * for the mount gate and the intercept predicates.
+   */
+  setSuspended(suspended: boolean): void {
+    this.suspended = suspended
+  }
+
+  /** Whether the sidebar is externally disabled (aionui-panel chosen). */
+  getSuspended(): boolean {
+    return this.suspended
+  }
 
   /** Load (once) and cache the global layout, defaulting from the current
    *  prefs on a fresh install (no migration of old per-session geometry). */

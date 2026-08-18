@@ -46,6 +46,8 @@
 - 插件侧不可消除：不改 DSH 源码、不 patch node-pty 依赖是仓库硬约束（见 AGENTS.md §0），且 `IPty.kill()` 是 node-pty 的唯一 kill 通道；
 - 建议：保持现状（无功能影响），上游如提供无控制台规避选项再跟进；reporter 若在意日志噪音，可反馈 microsoft/node-pty。
 
+> 交叉引用（issue #140）：与本文档「仅刷日志」不同，**依赖缺失/损坏**（node-pty 安装不完整导致模块加载失败）已有插件侧降级处理——宿主半懒加载 node-pty，失败时终端 tab 显示可复制的修复命令（`scripts/install.sh --repair` / `install.ps1 -Repair`），详见 `src/pty-deps.ts` 与 `tests/pty-deps.spec.ts`。
+
 ## 4. 验证
 
 - 全量测试：`pnpm test` → 34 文件 / 430 例全部通过（基线 425 + 同期 PR #43 的 html 盘符修复 1 例 + 本次新增 4 例）；

@@ -22,13 +22,18 @@
 
 ---
 
-## 2. 右侧主面板固定前三：Explorer / Git / Subagent（PR #2）
+## 2. 右侧主面板固定栏：`git` / `subagent`（PR #2 + 上游 0.13 调和）
 
-**目标**：所有 session 右侧主面板固定前三个面板（Explorer + Git + Subagent），不可删除、不可拖出其固定位置、自动归置补齐；第四位起的浮动 tab（编辑器/终端/浏览器/外部插件）保持 per-session。
+**目标**：所有 session 右侧主面板固定两个稳定单面板 **Git + Subagent**，不可删除、不可拖出其固定位置、自动归置补齐；其余（editor 文件窗口 / 终端 / 浏览器 / 外部插件 / 多实例 editor）保持 per-session 浮动。
+
+> ⚠️ **上游 0.13 调和（重要）**：
+> - 上游 0.13 删除了 `explorer` tab、改为 `editor` 文件窗口（editor home，含内嵌文件树）。
+> - 经探明并拍板：**editor 不固定**——它是按 path 的多文件窗口 + 原地/分栏切换的富类型，无法当简单固定栏；固定栏收敛为 **git + subagent**（两个干净的单栏类型）。
+> - 因此 PR #2 原来的「固定前三 Explorer/Git/Subagent」→ 0.13 后为「固定 git + subagent」。
 
 **改动**：
 - `src/client/state.ts`：
-  - `PINNED_TYPES = ['explorer','git','subagent']`、`isPinnedType`。
+  - `PINNED_TYPES`（0.13 合并后 = `['git','subagent']`）、`isPinnedType`。
   - `ensurePinnedTabs(state, tabsEnabled)`：跨右侧整棵树收集/去重固定实例，归置到承载固定组的 home pane 并重排到首位；剔除被掏空的重复 pane；尊重 `tabsEnabled` 禁用；已归置时返回原引用（幂等）。
   - `rotateHomeFirst`/`leafWithId`/`containsLeaf`：树重排 + 递归清理非 home 分支的空 pane；单 child 提升、杜绝零子节点 split。
   - store 的 `commitActive`/`commitTarget`/`setSession`/`setPrefs` 套用 `ensurePinnedTabs`。
@@ -61,6 +66,12 @@
 
 - 排序：自上游 `ecebc97` fork，提交顺序见 `git log upstream/main..origin/main`。
 - 本地改动涉及的重叠文件（同步上游时需重点关注）：`package.json`、`src/client/state.ts`、`Sidebar.tsx`、`GitView.tsx`、`builtins/tabs.tsx`、`service.ts`、`TabBar.tsx`、`split-pane.tsx`，以及 `tests/unit.spec.ts` / `tests/service.spec.ts` / `tests/e2e/mount.e2e.ts`。
+
+### 4.1 本次 0.13 合并附带的修复 / 边界决定
+
+- **`src/client/EditorHost.tsx`「在侧边打开」**：修复跨树放置（原用 `treeOf(tab.id)` 会误落右栏，改为用 `leafWithTab` 分别扫两树定位 tab 所属 pane）、补 `isTabEnabled('editor')` 禁用门、移除多余 `treeOf` 导入。这是对上游新代码的**修正**，已保留。
+- **mermaid（`src/client/mermaid.tsx`）**：恢复为**上游原版，不修**。上游 mermaid 用「DOM 手术替换 React 管理的 CodeBlock 子节点」实现，属上游新功能的**设计缺陷**（同一 root 下编辑源码会闪回/无法真降级）；按 fork 边界决策，本 fork **不为上游修 bug**，留待上游处理。若日后需要，可重写 mermaid.tsx 为 React 原生渲染。
+- **测试改写**：为适配本 fork「固定注入 git+subagent」于 seed，改写 upstream 的 `prefs.spec` / `state.spec` / `editor-host.spec` / `service.spec` 中假定「仅 editor」的断言。
 
 ---
 

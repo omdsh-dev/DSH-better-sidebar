@@ -1,4 +1,4 @@
-﻿# =============================================================================
+﻿## =============================================================================
 # dsh-better-sidebar 一键安装脚本（官方 CLI 方式，Windows PowerShell 5.1+ / pwsh）
 #
 # 通过 DSH 官方插件命令安装 npm 包并自动挂载：
@@ -16,9 +16,15 @@
 #   & ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1'))) -Version 0.10.2 -Restart
 #   # 本地保存后运行
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Version 0.10.2 -DryRun
+#   # 修复 node-pty 依赖（终端提示「node-pty 加载失败」时用，见 issue #140）
+#   powershell -ExecutionPolicy Bypass -File install.ps1 -Repair
 #
 # 参数：
 #   -Version    npm 版本号/范围，缺省 latest（自动解析为最新）。
+#   -Repair     修复模式：不重装插件，只确保 profile 的 pnpm-workspace.yaml
+#               放行 node-pty 构建脚本，然后重跑 pnpm install + pnpm rebuild
+#               node-pty。
+#   -Profile    目标 profile 名（缺省 web）；安装与修复模式均适用。
 #   -Restart    装完后尝试 `pm2 restart dsh-web`（无 pm2 时仅提示）。会断开当前页面会话。
 #   -DryRun     只打印将要执行的操作，不写任何文件。
 #
@@ -39,7 +45,9 @@
 param(
   [string]$Version = '',
   [switch]$Restart,
-  [switch]$DryRun
+  [switch]$DryRun,
+  [switch]$Repair,
+  [string]$Profile = 'web'
 )
 
 $PKG = 'dsh-better-sidebar'
@@ -53,7 +61,7 @@ if ($env:DSH_HOME) {
 } else {
   $DSH_HOME = Join-Path $HOME '.dsh'
 }
-$PROFILE_DIR = Join-Path $DSH_HOME 'profiles\web'
+$PROFILE_DIR = Join-Path $DSH_HOME "profiles\$Profile"
 $WS_YML = Join-Path $PROFILE_DIR 'pnpm-workspace.yaml'
 $PATCH_YML = Join-Path $PROFILE_DIR 'cordis.patch.yml'
 
@@ -88,35 +96,10 @@ function Get-DshCli {
   return $null
 }
 
-# 前置校验
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  Die '未找到 node（DSH 运行需要 Node.js >= 20），请先安装 Node.js 并加入 PATH。'
-}
-if (-not (Test-Path $PROFILE_DIR)) {
-  Die "找不到 profile 目录：$PROFILE_DIR（请先安装并运行过一次 dsh web）"
-}
-if (-not (Test-Path $WS_YML)) {
-  Die "找不到 $WS_YML（请先初始化 web profile）"
-}
-
-$SPEC = Resolve-Spec $Version
-$CLI = Get-DshCli
-if (-not $CLI) {
-  Die '未找到 dsh 或 npx。请先安装 DSH（并确保 Node/npm 可用），或用 DSH_CMD 指定。'
-}
-Say "目标：$CLI plugin --profile web add $PKG@$SPEC（profile: $PROFILE_DIR）"
-
-if ($DryRun) {
-  Say "[dry-run] 步骤 1：确保 $WS_YML 含 allowBuilds（node-pty/protobufjs: true）与 minimumReleaseAgeExclude（$PKG）"
-  Say "[dry-run] 步骤 2：执行 $CLI plugin --profile web add $PKG@$SPEC（安装 + bundle 自动注册）"
-  Say "[dry-run] 步骤 3：校验 dsh.profile.bundles 含 $PKG"
-  Say "[dry-run] 步骤 4：幂等移除 $PATCH_YML 里旧的 better-sidebar 手动挂载行（避免双挂载）"
-  if ($Restart) { Say '[dry-run] 步骤 5：pm2 restart dsh-web' } else { Say '[dry-run] 步骤 5：提示用户手动重启 DSH' }
-  exit 0
-}
-
-# 步骤 1：预写 workspace 设置（幂等），保证 pnpm 不拦截构建、放行本插件新版本
-$wsScript = @'
+# 步骤 1（安装与修复共用）：预写 workspace 设置（幂等），保证 pnpm 不拦截
+# node-pty/protobufjs 构建脚本、放行本插件新版本
+function Ensure-WorkspaceSettings {
+  $wsScript = @'
 const fs = require("fs");
 const p = process.argv[2];
 let t = fs.readFileSync(p, "utf8");
@@ -141,29 +124,84 @@ if (!/^\s*-\s+dsh-better-sidebar\s*$/m.test(t)) {
 if (t !== before) fs.writeFileSync(p, t);
 console.log(t === before ? "unchanged" : "updated");
 '@
-# PowerShell 5.1 把含内嵌双引号的多行 JS 作为参数传给 `node -e` 时，引号会被
-# Windows 命令行解析吞掉，导致 JS 语法错误（Expected ',', got ':'）。
-# 改用临时文件方式，兼容 PS 5.1 与 pwsh 7。
-$wsJs = Join-Path $env:TEMP ("dshbs-ws-" + [guid]::NewGuid().ToString("N") + ".js")
-Set-Content -LiteralPath $wsJs -Value $wsScript -Encoding UTF8
-$wsOut = node $wsJs "$WS_YML" 2>&1
-$wsCode = $LASTEXITCODE
-Remove-Item -LiteralPath $wsJs -Force -ErrorAction SilentlyContinue
-$wsResult = (($wsOut | Out-String)).Trim()
-if ($wsCode -ne 0) { Die "处理 $WS_YML 失败（node 退出码 $wsCode）：$wsResult" }
-if ($wsResult -eq 'updated') {
-  Say "已确保 $WS_YML：allowBuilds（node-pty/protobufjs: true）+ minimumReleaseAgeExclude（$PKG）"
-} else {
-  Say 'workspace 设置已就绪，跳过'
+  # PowerShell 5.1 把含内嵌双引号的多行 JS 作为参数传给 `node -e` 时，引号会被
+  # Windows 命令行解析吞掉，导致 JS 语法错误（Expected ',', got ':'）。
+  # 改用临时文件方式，兼容 PS 5.1 与 pwsh 7。
+  $wsJs = Join-Path $env:TEMP ("dshbs-ws-" + [guid]::NewGuid().ToString("N") + ".js")
+  Set-Content -LiteralPath $wsJs -Value $wsScript -Encoding UTF8
+  $wsOut = node $wsJs "$WS_YML" 2>&1
+  $wsCode = $LASTEXITCODE
+  Remove-Item -LiteralPath $wsJs -Force -ErrorAction SilentlyContinue
+  $wsResult = (($wsOut | Out-String)).Trim()
+  if ($wsCode -ne 0) { Die "处理 $WS_YML 失败（node 退出码 $wsCode）：$wsResult" }
+  if ($wsResult -eq 'updated') {
+    Say "已确保 $WS_YML：allowBuilds（node-pty/protobufjs: true）+ minimumReleaseAgeExclude（$PKG）"
+  } else {
+    Say 'workspace 设置已就绪，跳过'
+  }
 }
+
+# 前置校验
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  Die '未找到 node（DSH 运行需要 Node.js >= 20），请先安装 Node.js 并加入 PATH。'
+}
+if (-not (Test-Path $PROFILE_DIR)) {
+  Die "找不到 profile 目录：$PROFILE_DIR（请先安装并运行过一次 dsh web）"
+}
+if (-not (Test-Path $WS_YML)) {
+  Die "找不到 $WS_YML（请先初始化 $Profile profile）"
+}
+
+# ── 修复模式（issue #140）：不重装插件，只修复 node-pty 依赖 ────────────
+# 终端提示「node-pty 加载失败」时运行：确保 allowBuilds 后重跑
+# pnpm install + pnpm rebuild node-pty（重放被 pnpm 11 拦截的构建脚本）。
+if ($Repair) {
+  if ($DryRun) {
+    Say "[dry-run] 修复：确保 $WS_YML 含 allowBuilds（node-pty: true）"
+    Say "[dry-run] 修复：cd $PROFILE_DIR; pnpm install; pnpm rebuild node-pty"
+    exit 0
+  }
+  Say "修复模式：重装 node-pty（profile: $Profile，$PROFILE_DIR）..."
+  Ensure-WorkspaceSettings
+  Push-Location $PROFILE_DIR
+  try {
+    pnpm install
+    if ($LASTEXITCODE -ne 0) { Die "pnpm install 失败（退出码 $LASTEXITCODE）。请确认 pnpm 在 PATH 上、网络可用，然后重试。" }
+    pnpm rebuild node-pty
+    if ($LASTEXITCODE -ne 0) { Die "pnpm rebuild node-pty 失败（退出码 $LASTEXITCODE）。请确认 pnpm 在 PATH 上，然后重试。" }
+  } finally {
+    Pop-Location
+  }
+  Say '修复完成：node-pty 已重装（与 DSH 核心保持同一版本）。请重启 DSH 后重试终端。'
+  exit 0
+}
+
+$SPEC = Resolve-Spec $Version
+$CLI = Get-DshCli
+if (-not $CLI) {
+  Die '未找到 dsh 或 npx。请先安装 DSH（并确保 Node/npm 可用），或用 DSH_CMD 指定。'
+}
+Say "目标：$CLI plugin --profile $Profile add $PKG@$SPEC（profile: $PROFILE_DIR）"
+
+if ($DryRun) {
+  Say "[dry-run] 步骤 1：确保 $WS_YML 含 allowBuilds（node-pty/protobufjs: true）与 minimumReleaseAgeExclude（$PKG）"
+  Say "[dry-run] 步骤 2：执行 $CLI plugin --profile $Profile add $PKG@$SPEC（安装 + bundle 自动注册）"
+  Say "[dry-run] 步骤 3：校验 dsh.profile.bundles 含 $PKG"
+  Say "[dry-run] 步骤 4：幂等移除 $PATCH_YML 里旧的 better-sidebar 手动挂载行（避免双挂载）"
+  if ($Restart) { Say '[dry-run] 步骤 5：pm2 restart dsh-web' } else { Say '[dry-run] 步骤 5：提示用户手动重启 DSH' }
+  exit 0
+}
+
+# 步骤 1：预写 workspace 设置（幂等），保证 pnpm 不拦截构建、放行本插件新版本
+Ensure-WorkspaceSettings
 
 # 步骤 2：官方 CLI 安装 + bundle 自动注册（含挂载）
 if ($CLI -eq 'dsh') {
-  $cliArgs = @('plugin', '--profile', 'web', 'add', "$PKG@$SPEC")
+  $cliArgs = @('plugin', '--profile', $Profile, 'add', "$PKG@$SPEC")
 } else {
-  $cliArgs = @('-y', '--package', '@deepseek-ai/dsh', 'dsh', 'plugin', '--profile', 'web', 'add', "$PKG@$SPEC")
+  $cliArgs = @('-y', '--package', '@deepseek-ai/dsh', 'dsh', 'plugin', '--profile', $Profile, 'add', "$PKG@$SPEC")
 }
-Say "执行 $CLI plugin --profile web add $PKG@$SPEC ..."
+Say "执行 $CLI plugin --profile $Profile add $PKG@$SPEC ..."
 $addOut = & $CLI @cliArgs 2>&1
 $addCode = $LASTEXITCODE
 $addOut | ForEach-Object { $_ }
