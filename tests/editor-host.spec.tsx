@@ -215,7 +215,7 @@ describe('EditorHost (files window)', () => {
     }
   })
 
-  it('dragging the panel edge resizes the dock and persists meta.treeWidth on release', () => {
+  it('dragging the panel edge resizes the dock and persists the GLOBAL tree width on release', () => {
     const { store, ctx, homeTab } = setup()
     const { container, unmount } = mountHost(ctx, store, homeTab)
     try {
@@ -224,17 +224,20 @@ describe('EditorHost (files window)', () => {
       // The dock starts at the default width.
       const dock = handle.parentElement!
       expect(dock.style.width).toBe('240px')
-      // Drag the left edge LEFT by 100px → the right-docked panel widens.
-      // Pointer capture keeps move/up on the handle (jsdom: MouseEvent with
-      // pointer* type names; setPointerCapture is absent and skipped).
+      // The tree docks LEFT now; dragging the handle RIGHT widens it. Pointer
+      // capture keeps move/up on the handle (jsdom: MouseEvent with pointer*
+      // type names; setPointerCapture is absent and skipped).
       act(() => {
-        handle.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 300 }))
-        handle.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 200 }))
+        handle.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 200 }))
+        handle.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 300 }))
       })
       expect(dock.style.width).toBe('340px')
-      // Release: the drag state clears and the width persists on the tab.
-      act(() => { handle.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientX: 200 })) })
-      expect(homeTab().meta).toEqual({ treeOpen: true, treeWidth: 340 })
+      // Release: drag state clears and the width persists GLOBALLY (shared by
+      // every session), not per-tab meta.
+      act(() => { handle.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientX: 300 })) })
+      expect(store.getSnapshot().state?.treeWidth).toBe(340)
+      // treeWidth no longer lives on the tab's meta (only the open flag does).
+      expect(homeTab().meta).toEqual({ treeOpen: true })
     } finally {
       unmount()
     }

@@ -73,6 +73,12 @@
 - **mermaid（`src/client/mermaid.tsx`）**：恢复为**上游原版，不修**。上游 mermaid 用「DOM 手术替换 React 管理的 CodeBlock 子节点」实现，属上游新功能的**设计缺陷**（同一 root 下编辑源码会闪回/无法真降级）；按 fork 边界决策，本 fork **不为上游修 bug**，留待上游处理。若日后需要，可重写 mermaid.tsx 为 React 原生渲染。
 - **测试改写**：为适配本 fork「固定注入 git+subagent」于 seed，改写 upstream 的 `prefs.spec` / `state.spec` / `editor-host.spec` / `service.spec` 中假定「仅 editor」的断言。
 
+### 4.2 editor 文件窗口：树在左、编辑在右 + 分栏宽度全局共享
+
+- **方向**：`EditorHost.tsx` 把 `editorTreeDock`（文件树）移到 `editorMain`（编辑/预览）**之前**（树在左、编辑在右）；CSS `.editorTreeDock` 改 `border-right`、resize 手柄置 `right:0`；拖拽方向反转为「向右拖变宽」。
+- **宽度全局共享**：新增 `GlobalSidebarLayout.treeWidth`（存 `dsh-sidebar:v1:global`，与面板宽度同层），`splitState`/`synthState`/`sanitizeLayout`/`makeDefaultLayout` 一并携带；`EditorHost` 从 `store.state.treeWidth` 读、通过 `setTreeWidth` reducer 写全局。原 `tab.meta.treeWidth` 每 tab 记录废弃（仅 `treeOpen` 仍按 tab）。
+- 常量 `TREE_WIDTH_MIN/MAX/DEFAULT` 及 `clampTreeWidth`/`setTreeWidth` 收敛到 `state.ts`。测试 `editor-host.spec` 改为断言全局 `state.treeWidth` + 新方向。
+
 ---
 
 ## 5. 同步上游的注意事项（给后续 AI / 团队成员）

@@ -37,7 +37,7 @@ import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
-import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, type SidebarStore, type SidebarTab } from './state.ts'
+import { TREE_WIDTH_DEFAULT, TREE_WIDTH_MAX, TREE_WIDTH_MIN, clampTreeWidth, firstLeaf, insertLeafAt, leafWithTab, mintTabId, setTreeWidth, type SidebarStore, type SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
 
 type EditorLoad =
@@ -45,11 +45,6 @@ type EditorLoad =
   | { status: 'error'; message: string }
   | { status: 'ready'; viewer: FileViewerDescriptor; content?: string; truncated?: boolean; mediaUrl?: string; customData?: unknown }
   | { status: 'binary' }
-
-/** The docked tree panel's width bounds (drag-resize clamps into them). */
-const TREE_WIDTH_DEFAULT = 240
-const TREE_WIDTH_MIN = 160
-const TREE_WIDTH_MAX = 480
 
 /** The tab's persisted meta object (a malformed meta reads as empty). */
 function metaOf(tab: SidebarTab): Record<string, unknown> {
@@ -66,22 +61,9 @@ function treeOpenOf(tab: SidebarTab): boolean {
   return typeof treeOpen === 'boolean' ? treeOpen : (tab.path === undefined || tab.path === '')
 }
 
-/** Read the persisted tree-panel width (clamped; default 240). */
-function treeWidthOf(tab: SidebarTab): number {
-  const width = metaOf(tab).treeWidth
-  return typeof width === 'number' && Number.isFinite(width)
-    ? Math.min(TREE_WIDTH_MAX, Math.max(TREE_WIDTH_MIN, Math.round(width)))
-    : TREE_WIDTH_DEFAULT
-}
-
 /** Merge a patch into the tab's persisted meta (rides the layout). */
 function patchMeta(ctx: Context, tab: SidebarTab, patch: Record<string, unknown>): void {
   ctx.betterSidebar?.updateTab(tab.id, { meta: { ...metaOf(tab), ...patch } })
-}
-
-/** Clamp one dock width into the contract range. */
-function clampTreeWidth(value: number): number {
-  return Math.min(TREE_WIDTH_MAX, Math.max(TREE_WIDTH_MIN, Math.round(value)))
 }
 
 export function EditorHost(props: {
@@ -172,11 +154,12 @@ export function EditorHost(props: {
 
   // The docked panel's drag-resize: pointer capture on the handle itself
   // (no window listeners — the captured pointer keeps tracking even off the
-  // handle). Local width while dragging, persisted into meta.treeWidth on
-  // release. The panel docks right, so dragging LEFT widens it.
+  // handle). Local width while dragging, persisted into the GLOBAL layout
+  // (shared by every session) on release. The panel docks LEFT, so dragging
+  // RIGHT widens it.
   const [dragWidth, setDragWidth] = useState<number | null>(null)
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null)
-  const treeWidth = dragWidth ?? treeWidthOf(tab)
+  const treeWidth = dragWidth ?? store.getSnapshot().state?.treeWidth ?? TREE_WIDTH_DEFAULT
 
   const onResizeStart = (event: React.PointerEvent): void => {
     event.preventDefault()
@@ -187,15 +170,19 @@ export function EditorHost(props: {
   const onResizeMove = (event: React.PointerEvent): void => {
     const drag = dragRef.current
     if (drag === null) return
-    setDragWidth(clampTreeWidth(drag.startWidth + (drag.startX - event.clientX)))
+    setDragWidth(clampTreeWidth(drag.startWidth + (event.clientX - drag.startX)))
   }
   const onResizeEnd = (event: React.PointerEvent): void => {
     const drag = dragRef.current
     if (drag === null) return
     dragRef.current = null
     setDragWidth(null)
-    const finalWidth = clampTreeWidth(drag.startWidth + (drag.startX - event.clientX))
-    if (finalWidth !== treeWidthOf(tab)) patchMeta(ctx, tab, { treeWidth: finalWidth })
+    const finalWidth = clampTreeWidth(drag.startWidth + (event.clientX - drag.startX))
+    // The width is a GLOBAL panel-surface preference (shared across sessions):
+    // commit it through the store's global-layout reducer, not per-tab meta.
+    if (finalWidth !== (store.getSnapshot().state?.treeWidth ?? TREE_WIDTH_DEFAULT)) {
+      store.reduce(s => setTreeWidth(s, finalWidth))
+    }
   }
 
   useEffect(() => {
@@ -336,24 +323,6 @@ export function EditorHost(props: {
         </button>
       </div>
       <div className={css.editorBody}>
-        <div className={css.editorMain}>
-          {showEmpty && <div className={css.editorPlaceholder}>{t('editorEmptyHint')}</div>}
-          {!showEmpty && load.status === 'loading' && <div className={css.editorPlaceholder}>{t('loading')}</div>}
-          {!showEmpty && load.status === 'error' && <div className={css.editorError}>{load.message}</div>}
-          {!showEmpty && load.status === 'binary' && <BinaryDownload scope={scope} path={path} />}
-          {!showEmpty && load.status === 'ready' && createElement(load.viewer.component, {
-            ctx, store, scope, path, title,
-            viewerId: load.viewer.id,
-            content: load.content,
-            truncated: load.truncated,
-            mediaUrl: load.mediaUrl,
-            customData: load.customData,
-            // The viewer's toolbar always hoists into this host's header.
-            toolbar: 'host',
-            onToolbarState,
-            onToolbarControls,
-          })}
-        </div>
         {treeOpen && (
           <div className={css.editorTreeDock} style={{ width: treeWidth }}>
             <div
@@ -378,6 +347,24 @@ export function EditorHost(props: {
             />
           </div>
         )}
+        <div className={css.editorMain}>
+          {showEmpty && <div className={css.editorPlaceholder}>{t('editorEmptyHint')}</div>}
+          {!showEmpty && load.status === 'loading' && <div className={css.editorPlaceholder}>{t('loading')}</div>}
+          {!showEmpty && load.status === 'error' && <div className={css.editorError}>{load.message}</div>}
+          {!showEmpty && load.status === 'binary' && <BinaryDownload scope={scope} path={path} />}
+          {!showEmpty && load.status === 'ready' && createElement(load.viewer.component, {
+            ctx, store, scope, path, title,
+            viewerId: load.viewer.id,
+            content: load.content,
+            truncated: load.truncated,
+            mediaUrl: load.mediaUrl,
+            customData: load.customData,
+            // The viewer's toolbar always hoists into this host's header.
+            toolbar: 'host',
+            onToolbarState,
+            onToolbarControls,
+          })}
+        </div>
       </div>
     </div>
   )
