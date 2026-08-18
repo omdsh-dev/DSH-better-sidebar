@@ -16,6 +16,8 @@ export type SidebarErrorCode =
   | 'git-error'
   | 'pty-error'
   | 'pty-deps-missing'
+  | 'ide-not-found'
+  | 'ide-open-failed'
   | 'job-error'
   | 'settings-rejected'
   | 'settings-conflict'

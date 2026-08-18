@@ -916,6 +916,7 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
           description={t('settingsPopupDesc', { feature: featureNameOf(settingsFor) })}
           closeLabel={t('close')}
           className={css.popupDialog}
+          contentClassName={css.popupContent}
           footer={(
             <button type="button" className={css.done} onClick={() => { setSettingsFor(null) }}>
               {t('settingsDone')}
@@ -951,6 +952,7 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
           description={t('settingsPopupDesc', { feature: t('settingsTitleBarTitle') })}
           closeLabel={t('close')}
           className={css.popupDialog}
+          contentClassName={css.popupContent}
           footer={(
             <button type="button" className={css.done} onClick={() => { setStripSettingsOpen(false) }}>
               {t('settingsDone')}

@@ -23,6 +23,7 @@ import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { loadExternalDisable, loadPrefs } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
+import { IdeLauncherAction } from './IdeLauncherAction.tsx'
 import { api } from './api.ts'
 import { LOCALE_NS, attachLocale, t, zh, en } from './locales.ts'
 import css from './sidebar.module.css'
@@ -253,6 +254,17 @@ export function apply(ctx: Context): void {
       () => registerSettingsNavIcon(() => t('settingsNav')),
       'dsh-better-sidebar: settings navigation icon',
     )
+
+    // A DSH-native header utility immediately before Session Log. The slot
+    // supplies the strict session id + global sessions selector; our inject
+    // face contributes only the fenced host detection/open calls.
+    ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+      name: 'conversation.session.header.utilities',
+      id: 'better-sidebar-ide-launcher',
+      order: -10,
+      locale: LOCALE_NS,
+      inject: () => ({ listIdes: api.ideList, openIde: api.ideOpen }),
+    }, IdeLauncherAction))
 
     // The "Side card" settings section: appears in the DSH Settings shell
     // once the shell's declaration is on the ledger (slots.inject waits for

@@ -7,6 +7,7 @@
  * request). Failures surface as {@link SidebarApiError} with the wire code.
  */
 import { encodeHtmlUrl } from '../html-route.ts'
+import type { IdeId, InstalledIde } from '../ide-catalog.ts'
 import type { BrowserProbeResult } from './browser.ts'
 
 /** One wire failure. */
@@ -133,6 +134,12 @@ function scopePayload(scope: SessionScope, extra: Record<string, unknown>): Reco
 export const api = {
   sessionCwd: (scope: SessionScope, signal?: AbortSignal) =>
     call<{ sessionId: string; cwd: string; root: string; parent: string | null }>('session.cwd', scopePayload(scope, {}), signal),
+  /** IDEs installed on the machine running DSH (not the browser machine). */
+  ideList: (signal?: AbortSignal) =>
+    call<InstalledIde[]>('ide.list', {}, signal),
+  /** Open the session cwd in one detected, allowlisted host IDE. */
+  ideOpen: (scope: SessionScope, ideId: IdeId) =>
+    call<{ ok: true }>('ide.open', scopePayload(scope, { ideId })),
   fsTree: (scope: SessionScope, path: string, signal?: AbortSignal) =>
     call<{ path: string; entries: FsEntry[]; truncated: boolean }>('fs.tree', scopePayload(scope, { path }), signal),
   /** Global recursive file-name search rooted at the session cwd (the editor

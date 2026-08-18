@@ -135,6 +135,7 @@
     "node-pty": "^1.1.0",
     "rxjs": "^7.8.2",
     "schemastery": "^3.18.0",
+    "simple-icons": "^16.28.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {

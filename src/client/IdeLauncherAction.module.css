@@ -1,0 +1,98 @@
+/* Session Log's native 32px capsule geometry, split into primary + chooser. */
+.splitTrigger {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 18px;
+  color: var(--dsw-alias-label-primary);
+  background: transparent;
+  font-family: var(--dsw-font-family);
+}
+
+.primaryButton,
+.menuButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.primaryButton {
+  width: 38px;
+  border-radius: 17px 0 0 17px;
+}
+
+.menuButton {
+  width: 27px;
+  border-radius: 0 17px 17px 0;
+}
+
+.primaryButton:hover:not(:disabled),
+.menuButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.primaryButton:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: wait;
+}
+
+.menuSeat {
+  display: inline-flex;
+  height: 30px;
+}
+
+.menuGlyph {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 16px;
+}
+
+.menuGlyph svg + svg {
+  margin-top: -4px;
+}
+
+.spinner {
+  animation: ide-spin 0.9s linear infinite;
+}
+
+.ideIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: currentColor;
+}
+
+.primaryButton .ideIcon {
+  width: 20px;
+  height: 20px;
+}
+
+.ideFallback {
+  box-sizing: border-box;
+  padding: 1px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font: 700 6px/1 var(--dsw-font-family);
+  letter-spacing: -0.25px;
+}
+
+@keyframes ide-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+}

@@ -469,6 +469,29 @@
   width: min(460px, 100%);
 }
 
+/* Match the secondary-settings close control to the parent Settings card's
+   title-bar control: 28px circular hit area, primary glyph and the same hover
+   fill. Modal exposes the content class rather than the close-button class,
+   so target only its immediate header button (custom settings body buttons
+   remain untouched). */
+.popupContent > :first-child > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 28px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--dsw-alias-label-primary);
+}
+
+.popupContent > :first-child > button:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
 /* Popup rows: each setting gets the same outer chrome as a plugin-list
    PluginCard (l2 hairline, 12px radius, layer-3 fill). The row's title,
    description and control geometry stay unchanged inside that frame. */
