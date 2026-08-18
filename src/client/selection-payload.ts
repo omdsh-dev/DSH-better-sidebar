@@ -1,6 +1,6 @@
 /**
  * Pure payload builders for the "add selection to conversation" popup in the
- * text viewers (markdown preview + the catch-all code viewer). Everything
+ * text viewers (markdown preview + the code/markdown/html editors). Everything
  * here is string math — no React, no ctx — so the unit tests cover it
  * directly.
  *

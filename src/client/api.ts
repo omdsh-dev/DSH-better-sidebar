@@ -217,6 +217,11 @@ export const api = {
    *  check; see the host's browser.probe route). */
   browserProbe: (url: string, signal?: AbortSignal) =>
     call<BrowserProbeResult>('browser.probe', { url }, signal),
+  /** Run one AI writing instruction over the selected text. `instruction` is
+   *  a free-form request (润色 / 扩写 / 续写 / custom); the signal cancels the
+   *  host-side generation. */
+  aiProcess: (scope: SessionScope, text: string, instruction: string, signal?: AbortSignal) =>
+    call<{ result: string }>('ai.process', scopePayload(scope, { text, instruction }), signal),
 }
 
 /** Absolute URL of the media route for one path (images only). */

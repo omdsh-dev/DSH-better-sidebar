@@ -35,6 +35,9 @@ export interface SidebarHttpRequest {
   url?: string
   method?: string
   headers: Record<string, string | string[] | undefined>
+  /** Client-disconnect signal (node's IncomingMessage.signal); routes forward
+   *  it to abortable work (e.g. streaming LLM calls). */
+  signal?: AbortSignal
   [Symbol.asyncIterator](): AsyncIterator<string | Uint8Array>
 }
 

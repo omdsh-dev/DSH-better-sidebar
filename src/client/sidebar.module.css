@@ -2,7 +2,9 @@
  * Sidebar styles. Per the DSH web-styling rules every visual value rides the
  * theme: --dsw-alias-* semantic tokens for colors, --dsw-font-* typography
  * roles (size paired with line-height), and --ds-* for motion. The chrome
- * mirrors the native DSH sidebar: flat (NO box-shadows anywhere), the
+ * mirrors the native DSH sidebar: flat chrome with no box-shadows (the
+ * portalled selection / AI popups are the exception — they carry the DSH
+ * lv3 shadow to read against editor text), the
  * sidebar fill surface, hairline borders, and the 28/36px circular icon
  * controls with hover fills. No static palette values, no color literals, no
  * theme selectors — light/dark adaptation is the theme package's job.
@@ -1458,30 +1460,141 @@
   pointer-events: none;
 }
 
-/* The floating "add to conversation" button anchored above a text
-   selection in the preview/code viewers. Portalled to document.body and
-   position:fixed, so the editor's overflow clips cannot crop it; flat
-   chrome like the rest of the sidebar (hairline border, layer-2 fill,
-   hover fill — no shadow). */
-.selectionPopup {
+/* The floating selection actions anchored above a text selection in the
+   preview/code viewers. Portalled to document.body and position:fixed, so
+   the editor's overflow clips cannot crop it; hairline border + layer-2
+   fill like the rest of the sidebar, but with the DSH lv3 shadow so the
+   floating chrome reads clearly against the editor text. The group holds
+   "add to conversation" plus (edit mode only) the AI buttons. */
+.selectionPopupGroup {
   position: fixed;
   z-index: 60;
   transform: translate(-50%, calc(-100% - 8px));
   display: inline-flex;
   align-items: center;
+  gap: 2px;
   height: 28px;
-  padding: 0 10px;
+  padding: 2px;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 6px;
   background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv3);
+  white-space: nowrap;
+}
+
+.selectionPopupBtn {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
   color: var(--dsw-alias-label-primary);
   font: var(--dsw-font-xxxs-strong-11);
-  white-space: nowrap;
   cursor: pointer;
 }
 
-.selectionPopup:hover {
+.selectionPopupBtn:hover {
   background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The instruction input in the selection popup: a quiet inline field whose
+   placeholder (label-tertiary) hints the supported instructions. */
+.selectionPopupInput {
+  height: 22px;
+  min-width: 132px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxxs-strong-11);
+  outline: none;
+}
+
+.selectionPopupInput::placeholder {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.selectionPopupInput:focus {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The hairline gap between the AI-edit cluster and "add to conversation". */
+.selectionPopupDivider {
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: var(--dsw-alias-border-l1);
+}
+
+/* The AI writing popup (loading / undo-confirm / error), anchored where the
+   selection popup was. Same fixed-portal chrome, slightly taller for the
+   two-button confirm row and the spinner. */
+.aiPopup {
+  position: fixed;
+  z-index: 60;
+  transform: translate(-50%, calc(-100% - 8px));
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv3);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xs-13);
+  white-space: nowrap;
+}
+
+.aiBtn {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxxs-strong-11);
+  cursor: pointer;
+}
+
+.aiBtn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.aiSpinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--dsw-alias-border-l2);
+  border-top-color: var(--dsw-alias-brand-primary);
+  border-radius: 50%;
+  animation: aiSpin 0.8s linear infinite;
+}
+
+@keyframes aiSpin {
+  to { transform: rotate(360deg); }
+}
+
+.aiError {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* The CodeMirror decoration mark painted over freshly inserted AI text.
+   Blue text on a light-blue fill (the DSH business-primary blue) so the
+   unconfirmed insertion reads clearly against normal text. */
+.aiHighlight {
+  color: var(--dsw-alias-state-business-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 18%, transparent);
+  border-radius: 2px;
 }
 
 .editorPdf {
