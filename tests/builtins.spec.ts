@@ -15,11 +15,13 @@ import { createBetterSidebarService } from '../src/client/service.ts'
 import { createSidebarStore } from '../src/client/state.ts'
 import { allLeaves } from '../src/client/state.ts'
 import { registerBuiltins } from '../src/client/builtins/index.ts'
+import type { BuiltinTabOptions } from '../src/client/builtins/tabs.tsx'
+import { t } from '../src/client/locales.ts'
 
-function setup(): { service: ReturnType<typeof createBetterSidebarService>; store: ReturnType<typeof createSidebarStore>; dispose: () => void } {
+function setup(options: BuiltinTabOptions = {}): { service: ReturnType<typeof createBetterSidebarService>; store: ReturnType<typeof createSidebarStore>; dispose: () => void } {
   const store = createSidebarStore()
   const service = createBetterSidebarService(store)
-  const dispose = registerBuiltins({} as Context, service)
+  const dispose = registerBuiltins({} as Context, service, options)
   return { service, store, dispose }
 }
 
@@ -109,6 +111,30 @@ describe('built-in tab registrations', () => {
     expect(tabs[0]!.id).toBe('browser:1')
     expect(tabs[1]!.id).toBe('browser:2')
     expect(state.nextBrowser).toBe(3)
+  })
+
+  it('the terminal createTab uses shell-name titles and hidden uuid ids, allowing duplicates', () => {
+    const { service, store } = setup({ terminalTitle: () => 'bash' })
+    store.setSession('s1')
+    service.openTab({ type: 'terminal' })
+    service.openTab({ type: 'terminal' })
+    const state = store.getSnapshot().state!
+    const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'terminal')
+    expect(tabs).toHaveLength(2)
+    expect(tabs[0]!.title).toBe('bash')
+    expect(tabs[1]!.title).toBe('bash')
+    expect(tabs[0]!.id).toMatch(/^terminal:[0-9a-f-]{36}$/)
+    expect(tabs[1]!.id).toMatch(/^terminal:[0-9a-f-]{36}$/)
+    expect(tabs[0]!.id).not.toBe(tabs[1]!.id)
+  })
+
+  it('the terminal createTab falls back to the localized terminal label before shell info resolves', () => {
+    const { service, store } = setup()
+    store.setSession('s1')
+    service.openTab({ type: 'terminal' })
+    const state = store.getSnapshot().state!
+    const tab = allLeaves(state.splits).flatMap(leaf => leaf.tabs).find(t => t.type === 'terminal')
+    expect(tab?.title).toBe(t('terminal'))
   })
 
   it('every built-in tab carries the settings-surface icon', () => {

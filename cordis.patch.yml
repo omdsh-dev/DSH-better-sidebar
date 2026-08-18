@@ -14,6 +14,21 @@
 # If the profile still carries the old manual mount line in its own
 # cordis.patch.yml, remove it before switching to the bundle channel to
 # avoid double-mounting (two Node halves, two sidebars).
+#
+# To choose the terminal shell, add `config.shell` to the inserted plugin
+# row (or to the profile's manual cordis.patch.yml mount line). When omitted,
+# the host keeps resolving $SHELL / the login shell / powershell.exe.
+# `config.shellArgs` optionally supplies explicit startup arguments; when
+# non-empty they replace the automatic POSIX `-l` login flag:
+#
+#   - insert:
+#       - id: better-sidebar
+#         name: 'dsh-better-sidebar'
+#         config:
+#           shell: /bin/zsh
+#           shellArgs:
+#             - --noprofile
+#             - --no-rc
 - insert:
     - id: better-sidebar
       name: 'dsh-better-sidebar'

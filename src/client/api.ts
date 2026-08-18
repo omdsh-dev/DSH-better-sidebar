@@ -201,6 +201,9 @@ export const api = {
       id,
       ...(reason !== undefined ? { reason } : {}),
     })),
+  /** The effective terminal shell and its display name (plugin-global). */
+  shellGet: () =>
+    call<{ shell: string; name: string }>('shell.get', {}),
   /** Read the side card preferences (plugin-global, no session scope). */
   settingsGet: () =>
     call<{ value?: unknown; revision?: number; externalDisable?: boolean }>('settings.get', {}),

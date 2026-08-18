@@ -53,9 +53,17 @@ export interface SidebarConfig {
    * terminal tabs and the model-facing `terminal_*` tools. Empty = auto:
    * POSIX follows `$SHELL` then the account login shell; Windows follows
    * `DSH_SIDEBAR_SHELL`, then probes for `pwsh.exe`, then falls back to the
-   * inbox `powershell.exe` (5.1).
+   * inbox `powershell.exe` (5.1). Set it from `cordis.patch.yml` / profile
+   * plugin config, e.g. `config: { shell: /bin/zsh }`.
    */
   shell?: string
+  /**
+   * Optional arguments passed to the shell executable. When non-empty these
+   * REPLACE the automatic platform defaults (POSIX `-l` / Windows none), so
+   * the deployment has full control over how the shell starts. When omitted
+   * the existing default behavior is kept.
+   */
+  shellArgs?: string[]
 }
 
 /** Schemastery schema for the plugin configuration. */
@@ -66,6 +74,7 @@ export const Config: z<SidebarConfig> = z.object({
   terminalsPerSession: z.number().step(1).min(1).default(3),
   reconnectGraceMs: z.number().step(1).min(0).default(30_000),
   shell: z.string().default(''),
+  shellArgs: z.array(z.string()).default([]),
 })
 
 /** Fully defaulted sidebar host settings. */
@@ -75,7 +84,10 @@ export interface ResolvedSidebarConfig {
   listLimit: number
   terminalsPerSession: number
   reconnectGraceMs: number
+  /** The configured terminal shell; empty means the host auto-resolves it. */
   shell: string
+  /** Explicit shell arguments; empty means use the platform defaults. */
+  shellArgs: string[]
 }
 
 /**
@@ -92,6 +104,7 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
     terminalsPerSession: config?.terminalsPerSession ?? 3,
     reconnectGraceMs: config?.reconnectGraceMs ?? 30_000,
     shell: config?.shell?.trim() ?? '',
+    shellArgs: config?.shellArgs ?? [],
   }
 }
 

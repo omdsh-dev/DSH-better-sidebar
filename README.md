@@ -145,10 +145,15 @@ dsh plugin --profile web add dsh-better-sidebar@latest
 1. git clone https://github.com/omdsh-dev/DSH-better-sidebar.git ~/Code/DSH-better-sidebar
    cd ~/Code/DSH-better-sidebar && pnpm install && pnpm build
 2. ~/.dsh/profiles/web/package.json 的 dependencies 写 "dsh-better-sidebar": "link:<克隆目录绝对路径>"
-3. ~/.dsh/profiles/web/cordis.patch.yml 追加挂载行：
+3. ~/.dsh/profiles/web/cordis.patch.yml 追加挂载行（需要指定终端 shell 时，在行内加 `config.shell`；`config.shellArgs` 可带参启动，非空时替换默认的 `-l`。不填则自动解析 `$SHELL` / 登录 shell / powershell.exe）：
    - insert:
        - id: better-sidebar
          name: 'dsh-better-sidebar'
+         config:
+           shell: /bin/zsh
+           shellArgs:
+             - --noprofile
+             - --no-rc
 4. 在 ~/.dsh/profiles/web 执行 pnpm install
 5. 硬刷新浏览器（Cmd/Ctrl+Shift+R）即可看到效果（client 改动无需重启 DSH；host 半改动才需重启）
 ```

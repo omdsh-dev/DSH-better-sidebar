@@ -3,7 +3,7 @@
  * (editor / git / terminal / browser / subagent / diff) through
  * the same {@link BetterSidebarService} external plugins use — eating its
  * own dogfood. The terminal descriptor owns its quota (`TERMINAL_LIMIT`)
- * and mints `terminal:<n>` ids through `createTab`; the browser mints
+ * and mints `terminal:<uuid>` ids through `createTab`; the browser mints
  * `browser:<n>` the same way (no quota). The editor IS the files window
  * (the old standalone explorer merged into it).
  */
@@ -52,6 +52,20 @@ interface TerminalViewProps {
 /** How many UI-owned terminals may be open at once (agent-owned ones are uncapped). */
 export const TERMINAL_LIMIT = 3
 
+/** Optional per-registration builtin behavior (currently terminal title). */
+export interface BuiltinTabOptions {
+  /** Returns the display title for newly opened terminal tabs. */
+  terminalTitle?: () => string
+}
+
+/** A client-side uuid for terminal tab identity (not shown in the UI). */
+function terminalUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
+}
+
 /** Count UI-owned terminals (agent:` tabs excluded — they are the model's). */
 function uiTerminalCount(state: SidebarState): number {
   return allLeaves(state.splits)
@@ -60,7 +74,7 @@ function uiTerminalCount(state: SidebarState): number {
 }
 
 /** The 6 built-in tab descriptors. */
-export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
+export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): readonly TabDescriptor[] {
   return [
     {
       id: 'editor',
@@ -192,10 +206,12 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
         if (count >= TERMINAL_LIMIT) return null
         return {
           tab: {
-            id: `terminal:${state.nextTerminal}`,
+            id: `terminal:${terminalUuid()}`,
             type: 'terminal',
-            title: `${t('terminal')} ${state.nextTerminal}`,
+            title: options.terminalTitle?.() ?? t('terminal'),
           },
+          // Keep the legacy counter advancing for compatibility with older
+          // persisted states; new ids no longer use it.
           patch: { nextTerminal: state.nextTerminal + 1 },
         }
       },

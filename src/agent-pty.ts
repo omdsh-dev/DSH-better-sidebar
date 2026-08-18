@@ -192,6 +192,7 @@ export class AgentPtyRegistry {
 
   constructor(
     private readonly shell: string,
+    private readonly shellArgs: string[] = [],
     /** The loaded node-pty module (injected so a broken install degrades instead of crashing the plugin). */
     private readonly nodePty: NodePtyModule = loadRequiredNodePty(),
   ) {
@@ -216,7 +217,7 @@ export class AgentPtyRegistry {
   ): string {
     const uuid = randomUUID()
     const dims = clampDims(cols, rows)
-    const pty = this.nodePty.spawn(this.shell, shellSpawnArgs(), {
+    const pty = this.nodePty.spawn(this.shell, shellSpawnArgs(this.shellArgs), {
       name: 'xterm-256color',
       cols: dims.cols,
       rows: dims.rows,

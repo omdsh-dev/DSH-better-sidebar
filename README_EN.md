@@ -144,10 +144,15 @@ To debug local changes or track the dev branch, point the dependency at a local 
 1. git clone https://github.com/omdsh-dev/DSH-better-sidebar.git ~/Code/DSH-better-sidebar
    cd ~/Code/DSH-better-sidebar && pnpm install && pnpm build
 2. In ~/.dsh/profiles/web/package.json dependencies write "dsh-better-sidebar": "link:<absolute path of the clone>"
-3. Append this mount line to ~/.dsh/profiles/web/cordis.patch.yml:
+3. Append this mount line to ~/.dsh/profiles/web/cordis.patch.yml (to pick the terminal shell, add `config.shell`; `config.shellArgs` starts it with explicit args — when non-empty they replace the default `-l`. When omitted the host resolves `$SHELL` / the login shell / powershell.exe):
    - insert:
        - id: better-sidebar
          name: 'dsh-better-sidebar'
+         config:
+           shell: /bin/zsh
+           shellArgs:
+             - --noprofile
+             - --no-rc
 4. Run pnpm install in ~/.dsh/profiles/web
 5. Restart DSH and hard-refresh
 ```

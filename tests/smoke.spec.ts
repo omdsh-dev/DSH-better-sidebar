@@ -578,6 +578,17 @@ describe('side card settings routes', () => {
     expect((result.value as { externalDisable?: boolean }).externalDisable).toBe(true)
   })
 
+  it('serves the effective terminal shell and its display name', async () => {
+    const route = mountWithSettings(undefined)
+    const result = await invoke(route, 'shell.get', {})
+    expect(result.ok).toBe(true)
+    expect(result.value).toMatchObject({
+      shell: expect.any(String),
+      name: expect.any(String),
+    })
+    expect(String((result.value as { name: unknown }).name).length).toBeGreaterThan(0)
+  })
+
   it('reads the resolved prefs and writes a patch through the seam', async () => {
     const route = mountWithSettings(createFakeSettings())
     const read = await invoke(route, 'settings.get', {})
