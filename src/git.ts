@@ -2,14 +2,16 @@
  * Git operations for the sidebar source-control panel. Everything goes
  * through the system `git` binary spawned per request (no library, no state),
  * with porcelain-parseable output formats (`-z` NUL framing, unit separators)
- * so parsing never depends on locale or color config. All commands run with
- * `-C <cwd>` on the session's working directory and `--no-pager` /
+ * so parsing never depends on locale or color config. Commands run with
+ * `-C <cwd>` on the selected repository and `--no-pager` /
  * `-c color.ui=false` so output stays machine-readable.
  *
  * Commits use the user's git global identity untouched (never sets
  * user.name/user.email).
  */
 import { spawn } from 'node:child_process'
+import { readdir, realpath } from 'node:fs/promises'
+import { join } from 'node:path'
 
 /** A parsed `git status --porcelain=v1 -z` entry. */
 export interface GitStatusEntry {
@@ -24,6 +26,14 @@ export interface GitStatusResult {
   branch?: string
   entries: GitStatusEntry[]
 }
+
+/** One repository discovered under the session workspace. */
+export interface GitRepositoryStatus extends GitStatusResult {
+  root: string
+}
+
+const REPOSITORY_SCAN_IGNORES = new Set(['.git', 'node_modules'])
+const REPOSITORY_SCAN_MAX_DIRECTORIES = 10_000
 
 /** One `git log` row. */
 export interface GitLogEntry {
@@ -154,47 +164,91 @@ export async function status(cwd: string): Promise<GitStatusResult> {
   return { isRepo: true, branch, entries: parsePorcelainZ(raw) }
 }
 
+/** Status for the containing repository and independent repositories below cwd. */
+export async function repositories(cwd: string): Promise<GitRepositoryStatus[]> {
+  const roots = new Set<string>()
+  try {
+    roots.add(await realpath(await repoRoot(cwd)))
+  } catch {
+    // A workspace outside Git can still contain independent repositories.
+  }
+
+  const queue = [await realpath(cwd)]
+  let cursor = 0
+  while (cursor < queue.length && cursor < REPOSITORY_SCAN_MAX_DIRECTORIES) {
+    const directory = queue[cursor]!
+    cursor += 1
+    let entries
+    try {
+      entries = await readdir(directory, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    if (entries.some(entry => entry.name === '.git')) {
+      try {
+        const root = await realpath(await repoRoot(directory))
+        if (root === directory) roots.add(root)
+      } catch {
+        // An unreadable or invalid .git marker is not a repository.
+      }
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || REPOSITORY_SCAN_IGNORES.has(entry.name)) continue
+      queue.push(join(directory, entry.name))
+    }
+  }
+
+  const sorted = [...roots].sort((left, right) => left.localeCompare(right))
+  return Promise.all(sorted.map(async root => ({ root, ...await status(root) })))
+}
+
+/** Use an explicitly selected repository when one is supplied by the UI. */
+function selectedCwd(cwd: string, repository?: string): string {
+  return repository ?? cwd
+}
+
 /** Diff text of the worktree (unstaged) or the index (staged). */
-export async function diff(cwd: string, path: string | undefined, staged: boolean): Promise<string> {
+export async function diff(cwd: string, path: string | undefined, staged: boolean, repository?: string): Promise<string> {
   const args = ['diff', '--no-ext-diff', '--no-color', '-U3']
   if (staged) args.push('--cached')
   if (path !== undefined) args.push('--', path)
-  return runGit(cwd, args)
+  return runGit(selectedCwd(cwd, repository), args)
 }
 
 /** Stage paths (all when path is undefined). */
-export async function stage(cwd: string, path: string | undefined): Promise<void> {
-  await runGit(cwd, ['add', '-A', ...(path !== undefined ? ['--', path] : [])])
+export async function stage(cwd: string, path: string | undefined, repository?: string): Promise<void> {
+  await runGit(selectedCwd(cwd, repository), ['add', '-A', ...(path !== undefined ? ['--', path] : [])])
 }
 
 /** Unstage paths (all when path is undefined). */
-export async function unstage(cwd: string, path: string | undefined): Promise<void> {
-  await runGit(cwd, ['reset', '-q', ...(path !== undefined ? ['--', path] : [])])
+export async function unstage(cwd: string, path: string | undefined, repository?: string): Promise<void> {
+  await runGit(selectedCwd(cwd, repository), ['reset', '-q', ...(path !== undefined ? ['--', path] : [])])
 }
 
 /** Commit the staged changes with a message (global identity untouched). */
-export async function commit(cwd: string, message: string): Promise<void> {
-  await runGit(cwd, ['commit', '-m', message])
+export async function commit(cwd: string, message: string, repository?: string): Promise<void> {
+  await runGit(selectedCwd(cwd, repository), ['commit', '-m', message])
 }
 
 /** Branch names (current first). */
-export async function branches(cwd: string): Promise<{ current: string; names: string[] }> {
+export async function branches(cwd: string, repository?: string): Promise<{ current: string; names: string[] }> {
+  const target = selectedCwd(cwd, repository)
   const [current, raw] = await Promise.all([
-    currentBranch(cwd).catch(() => 'HEAD'),
-    runGit(cwd, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
+    currentBranch(target).catch(() => 'HEAD'),
+    runGit(target, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
   ])
   const names = raw.split('\n').filter(line => line !== '')
   return { current, names: names.includes(current) ? names : [current, ...names] }
 }
 
 /** Switch to an existing branch. */
-export async function checkout(cwd: string, branch: string): Promise<void> {
-  await runGit(cwd, ['checkout', branch])
+export async function checkout(cwd: string, branch: string, repository?: string): Promise<void> {
+  await runGit(selectedCwd(cwd, repository), ['checkout', branch])
 }
 
 /** Recent commit history (newest first), lazily pageable via skip/count. */
-export async function log(cwd: string, count = 30, skip = 0): Promise<GitLogEntry[]> {
-  const raw = await runGit(cwd, [
+export async function log(cwd: string, count = 30, skip = 0, repository?: string): Promise<GitLogEntry[]> {
+  const raw = await runGit(selectedCwd(cwd, repository), [
     'log', '-n', String(count), '--skip', String(skip), '--decorate=short',
     '--pretty=format:%h%x1f%s%x1f%an%x1f%ai%x1f%H%x1f%D',
   ])
@@ -205,9 +259,9 @@ export async function log(cwd: string, count = 30, skip = 0): Promise<GitLogEntr
  * Content of a file at a revision (`git show <rev>:<path>`), or null when the
  * revision has no such path (a new/untracked file has no HEAD side).
  */
-export async function show(cwd: string, rev: string, path: string): Promise<string | null> {
+export async function show(cwd: string, rev: string, path: string, repository?: string): Promise<string | null> {
   try {
-    return await runGit(cwd, ['show', `${rev}:${path}`])
+    return await runGit(selectedCwd(cwd, repository), ['show', `${rev}:${path}`])
   } catch {
     return null
   }
@@ -216,21 +270,21 @@ export async function show(cwd: string, rev: string, path: string): Promise<stri
 /** Full patch text of one commit (`git show` with the commit header suppressed).
  *  Merge commits show their diff against the first parent (`-m --first-parent`
  *  is a no-op for regular commits), so a history click always has content. */
-export async function commitDiff(cwd: string, hash: string): Promise<string> {
-  return runGit(cwd, ['show', '--no-ext-diff', '--no-color', '--format=', '-m', '--first-parent', hash])
+export async function commitDiff(cwd: string, hash: string, repository?: string): Promise<string> {
+  return runGit(selectedCwd(cwd, repository), ['show', '--no-ext-diff', '--no-color', '--format=', '-m', '--first-parent', hash])
 }
 
 /** Discard the worktree changes of one path (`git checkout -- <path>`; the index is untouched). */
-export async function discard(cwd: string, path: string): Promise<void> {
-  await runGit(cwd, ['checkout', '--', path])
+export async function discard(cwd: string, path: string, repository?: string): Promise<void> {
+  await runGit(selectedCwd(cwd, repository), ['checkout', '--', path])
 }
 
 /** Revert one commit onto the current branch with an auto-generated message. */
-export async function revert(cwd: string, hash: string): Promise<void> {
-  await runGit(cwd, ['revert', '--no-edit', hash])
+export async function revert(cwd: string, hash: string, repository?: string): Promise<void> {
+  await runGit(selectedCwd(cwd, repository), ['revert', '--no-edit', hash])
 }
 
 /** Cherry-pick one commit onto the current branch. */
-export async function cherryPick(cwd: string, hash: string): Promise<void> {
-  await runGit(cwd, ['cherry-pick', hash])
+export async function cherryPick(cwd: string, hash: string, repository?: string): Promise<void> {
+  await runGit(selectedCwd(cwd, repository), ['cherry-pick', hash])
 }
