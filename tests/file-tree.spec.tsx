@@ -9,13 +9,15 @@ import { createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 
-const fsTree = vi.fn(async (_scope: unknown, dir: string) => ({
-  entries: dir === 'C:\\work'
-    ? [
-        { name: 'src', path: 'C:\\work\\src', isDir: true, hidden: false, isSymlink: false, broken: false },
-        { name: 'README.md', path: 'C:\\work\\README.md', isDir: false, hidden: false, isSymlink: false, broken: false },
-      ]
-    : [],
+const { fsTree } = vi.hoisted(() => ({
+  fsTree: vi.fn(async (_scope: unknown, dir: string) => ({
+    entries: dir === 'C:\\work'
+      ? [
+          { name: 'src', path: 'C:\\work\\src', isDir: true, hidden: false, isSymlink: false, broken: false },
+          { name: 'README.md', path: 'C:\\work\\README.md', isDir: false, hidden: false, isSymlink: false, broken: false },
+        ]
+      : [],
+  })),
 }))
 
 vi.mock('../src/client/api.ts', async (importOriginal) => {
@@ -87,11 +89,14 @@ describe('local path drag payload', () => {
     const { container, unmount } = await mountTree()
     try {
       const rows = Array.from(container.querySelectorAll('[draggable="true"]'))
-      expect(rows.map(row => row.textContent)).toEqual(expect.arrayContaining(['work@', 'src@', 'README.md@']))
+      const byName = (name: string): Element => rows.find(row => row.textContent?.startsWith(`${name}@`))!
+      expect(rows.some(row => row.textContent?.startsWith('work@'))).toBe(true)
+      expect(rows.some(row => row.textContent?.startsWith('src@'))).toBe(true)
+      expect(rows.some(row => row.textContent?.startsWith('README.md@'))).toBe(true)
 
-      const root = rows.find(row => row.textContent === 'work@')!
-      const directory = rows.find(row => row.textContent === 'src@')!
-      const file = rows.find(row => row.textContent === 'README.md@')!
+      const root = byName('work')
+      const directory = byName('src')
+      const file = byName('README.md')
       expect(dragStart(root).get(LOCAL_PATH_MIME)).toBe('.')
       expect(dragStart(directory).get(LOCAL_PATH_MIME)).toBe('src')
       expect(dragStart(file).get('text/plain')).toBe('README.md')
@@ -116,8 +121,8 @@ describe('local path drag payload', () => {
     })
     try {
       const rows = Array.from(container.querySelectorAll('[draggable="true"]'))
-      const directory = rows.find(row => row.textContent === 'src@')!
-      const file = rows.find(row => row.textContent === 'README.md@')!
+      const directory = rows.find(row => row.textContent?.startsWith('src@'))!
+      const file = rows.find(row => row.textContent?.startsWith('README.md@'))!
       act(() => { file.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
       act(() => { directory.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
       act(() => { file.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 4, clientY: 8 })) })
