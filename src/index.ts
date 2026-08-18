@@ -46,6 +46,7 @@ import {
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
+import { processWithAI } from './ai-writer.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 
 export { Config }
@@ -166,8 +167,9 @@ async function readText(path: string, readLimit: number): Promise<{
   }
 }
 
-/** One API method dispatch table entry. */
-type ApiMethod = (payload: unknown) => Promise<unknown> | unknown
+/** One API method dispatch table entry (the optional signal is the client's
+ *  disconnect signal, forwarded to abortable work like the AI stream). */
+type ApiMethod = (payload: unknown, signal?: AbortSignal) => Promise<unknown> | unknown
 
 /**
  * The live face of the side card settings namespace, bound to the settings
@@ -443,6 +445,12 @@ function buildApi(
         clearTimeout(timer)
       }
     },
+    'ai.process': async (payload, signal) => {
+      const text = requireString(payload, 'text')
+      const instruction = requireString(payload, 'instruction')
+      const result = await processWithAI(ctx, text, instruction, signal)
+      return { result }
+    },
   }
 }
 
@@ -585,7 +593,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         if (handler === undefined) {
           throw new SidebarError('not-found', `unknown sidebar API method "${method}"`, 404)
         }
-        writeOk(res, await handler(payload))
+        writeOk(res, await handler(payload, req.signal))
       } catch (error) {
         writeError(res, error)
       }

@@ -17,8 +17,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ComponentType } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
-import { EditorState, Transaction } from '@codemirror/state'
-import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
+import { EditorState, StateEffect, StateField, Transaction } from '@codemirror/state'
+import type { RangeSet } from '@codemirror/state'
+import { Decoration, EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, htmlUrl } from './api.ts'
@@ -37,12 +38,50 @@ import css from './sidebar.module.css'
 /** Previewable files (rendered output vs source editing). */
 type ViewMode = 'preview' | 'edit'
 
-/** The floating "add to conversation" action: payload + viewport anchor. */
+/** The floating selection actions: payload + viewport anchor + the selected
+ *  text and (when locatable) its CodeMirror span. `text` alone enables the AI
+ *  buttons; `from`/`to` enable the precise splice (always set in the editors,
+ *  set in the preview only when the selection uniquely matches the source). */
 interface SelectionPopup {
   insert: string
   left: number
   top: number
+  /** Selected text (present for both the preview and the editors). */
+  text?: string
+  /** CodeMirror range to rewrite (present for the editors; best-effort in preview). */
+  from?: number
+  to?: number
 }
+
+/** The AI-writing flow state: idle → loading (cancellable) → done (undo/confirm) → idle. */
+type AiState =
+  | { kind: 'idle' }
+  | { kind: 'loading'; instruction: string; isContinue: boolean; from: number; to: number; original: string; left: number; top: number }
+  | { kind: 'done'; instruction: string; isContinue: boolean; from: number; to: number; original: string; insertedFrom: number; insertedTo: number; result: string; left: number; top: number }
+  | { kind: 'failed'; message: string; left: number; top: number }
+
+/** Highlight mark for freshly inserted AI text (cleared on confirm/revoke). */
+const aiHighlightMark = Decoration.mark({ class: css.aiHighlight })
+
+/** StateEffect carrying the highlight range (null clears it). */
+const setAiHighlight = StateEffect.define<{ from: number; to: number } | null>()
+
+/** Decoration state field mapping the highlight range onto the document. */
+const aiHighlightField = StateField.define<RangeSet<Decoration>>({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes)
+    for (const effect of tr.effects) {
+      if (effect.is(setAiHighlight)) {
+        deco = effect.value === null
+          ? Decoration.none
+          : Decoration.set([aiHighlightMark.range(effect.value.from, effect.value.to)])
+      }
+    }
+    return deco
+  },
+  provide: (field) => CodeMirrorView.decorations.from(field),
+})
 
 /**
  * The chunk-resident markdown preview renderer (mermaid lazy chunk): one
@@ -83,18 +122,40 @@ export function TextEditor(props: FileViewerProps) {
   const popupRef = useRef<SelectionPopup | null>(null)
   /** The markdown preview container (selection-containment + line lookup). */
   const mdRef = useRef<HTMLDivElement>(null)
+  /** The AI-writing flow state (idle when no generation is in flight). */
+  const [ai, setAi] = useState<AiState>({ kind: 'idle' })
+  /** Live mirror of the AI state for read-time checks inside CodeMirror callbacks. */
+  const aiRef = useRef<AiState>({ kind: 'idle' })
+  /** Abort controller for the in-flight generation (the stop button). */
+  const aiAbortRef = useRef<AbortController | null>(null)
+  /** The instruction typed in the selection popup's input (mirrored for click-time reads). */
+  const [aiInstruction, setAiInstruction] = useState('')
+  const aiInstructionRef = useRef('')
+  /** True while the popup's instruction input holds focus — keeps the popup
+   *  alive when the CodeMirror view loses focus to that input. */
+  const popupInputFocusedRef = useRef(false)
 
   const hidePopup = (): void => {
     popupRef.current = null
     setPopup(null)
   }
 
-  /** Anchor the popup above the selection center; clamp inside the viewport. */
-  const showPopup = (insert: string, left: number, top: number): void => {
+  /** Anchor the popup above the selection center; clamp inside the viewport.
+   *  `span` carries the selected text plus (when precisely locatable) the
+   *  CodeMirror range the AI buttons rewrite — always present in the editors,
+   *  best-effort in the markdown preview (a uniquely matched selection). */
+  const showPopup = (insert: string, left: number, top: number, span?: { from?: number; to?: number; text: string }): void => {
+    // A fresh selection starts a fresh instruction — drop the previous one so
+    // the input shows its placeholder again instead of the last typed value.
+    aiInstructionRef.current = ''
+    setAiInstruction('')
     const next: SelectionPopup = {
       insert,
       left: Math.min(Math.max(left, 80), window.innerWidth - 80),
       top,
+      ...(span !== undefined
+        ? { text: span.text, ...(span.from !== undefined && span.to !== undefined ? { from: span.from, to: span.to } : {}) }
+        : {}),
     }
     popupRef.current = next
     setPopup(next)
@@ -108,6 +169,100 @@ export function TextEditor(props: FileViewerProps) {
     hidePopup()
   }
 
+  /** Start one AI writing operation from the instruction input: stream the
+   *  result, splice it into the document (replace, or append when the
+   *  instruction asks to continue), highlight the new text, and open the
+   *  undo/confirm popup. */
+  const startAi = (): void => {
+    const instruction = aiInstructionRef.current.trim()
+    if (instruction === '') return
+    const current = popupRef.current
+    if (current === null || current.text === undefined) return
+    const { from, to, text, left, top } = current
+    // The AI popup appears in the markdown preview too; there the selection
+    // is a DOM range, so a rewrite must happen in the (already mounted but
+    // hidden) CodeMirror. Flip to edit mode so the splice + highlight are
+    // visible. When the preview selection could not be located uniquely,
+    // there is no safe splice — switch to edit mode and ask for a manual
+    // selection instead.
+    if (from === undefined || to === undefined) {
+      setMode('edit')
+      hidePopup()
+      setAi({ kind: 'failed', message: t('aiLocateFailed'), left, top })
+      return
+    }
+    setMode('edit')
+    // A "continue" request appends after the selection; anything else replaces.
+    const isContinue = /续写|接着写|继续写|continue/i.test(instruction)
+    const controller = new AbortController()
+    aiAbortRef.current = controller
+    setAi({ kind: 'loading', instruction, isContinue, from, to, original: text, left, top })
+    api.aiProcess(scope, text, instruction, controller.signal).then(({ result }) => {
+      const view = viewRef.current
+      if (view === null) {
+        setAi({ kind: 'idle' })
+        return
+      }
+      let insertedFrom: number
+      let insertedTo: number
+      if (isContinue) {
+        // Append after the selection (a new line when it doesn't end with one).
+        const sep = text.endsWith('\n') ? '' : '\n'
+        view.dispatch({
+          changes: { from: to, insert: sep + result },
+          effects: setAiHighlight.of({ from: to + sep.length, to: to + sep.length + result.length }),
+        })
+        insertedFrom = to
+        insertedTo = to + sep.length + result.length
+      } else {
+        // Replace the selection with the generated text.
+        view.dispatch({
+          changes: { from, to, insert: result },
+          effects: setAiHighlight.of({ from, to: from + result.length }),
+        })
+        insertedFrom = from
+        insertedTo = from + result.length
+      }
+      hidePopup()
+      setAi({ kind: 'done', instruction, isContinue, from, to, original: text, insertedFrom, insertedTo, result, left, top })
+    }).catch((error) => {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        setAi({ kind: 'idle' })
+        return
+      }
+      setAi({ kind: 'failed', message: error instanceof Error ? error.message : t('aiFailed'), left, top })
+    })
+  }
+
+  /** The loading popup's stop button: abort the in-flight generation. */
+  const stopAi = (): void => {
+    aiAbortRef.current?.abort()
+    aiAbortRef.current = null
+    setAi({ kind: 'idle' })
+  }
+
+  /** Accept the highlighted text: clear the highlight and close the popup. */
+  const confirmAi = (): void => {
+    viewRef.current?.dispatch({ effects: setAiHighlight.of(null) })
+    setAi({ kind: 'idle' })
+  }
+
+  /** Revoke the generated text: restore the original span and clear the highlight. */
+  const revokeAi = (): void => {
+    if (ai.kind !== 'done') return
+    const view = viewRef.current
+    if (view !== null) {
+      const insert = ai.isContinue ? '' : ai.original
+      view.dispatch({
+        changes: { from: ai.insertedFrom, to: ai.insertedTo, insert },
+        effects: setAiHighlight.of(null),
+      })
+    }
+    setAi({ kind: 'idle' })
+  }
+
+  useEffect(() => { aiRef.current = ai }, [ai])
+
   useEffect(() => subscribeColorScheme(() => { setDark(isDarkScheme()) }), [])
 
   // A new file (tab switch) starts clean: fresh preview mode, no draft.
@@ -117,6 +272,9 @@ export function TextEditor(props: FileViewerProps) {
     setDirty(false)
     setSaveState('idle')
     hidePopup()
+    aiAbortRef.current?.abort()
+    aiAbortRef.current = null
+    setAi({ kind: 'idle' })
   }, [content])
 
   // Create the CodeMirror editor once the content is loaded. The view owns
@@ -136,6 +294,12 @@ export function TextEditor(props: FileViewerProps) {
     // Anchor the popup above the editor's current main selection (line-exact
     // via the document); an empty/whitespace selection hides it instead.
     const popupFromSelection = (view: CodeMirrorView): void => {
+      // A generation in flight owns the flow; don't re-anchor a selection
+      // popup under the AI popups (the splice dispatches selection changes).
+      if (aiRef.current.kind !== 'idle') {
+        hidePopup()
+        return
+      }
       const sel = view.state.selection.main
       if (sel.empty) {
         hidePopup()
@@ -161,6 +325,7 @@ export function TextEditor(props: FileViewerProps) {
         }, text),
         rect.left - window.scrollX + (rect.right - rect.left) / 2,
         rect.top - window.scrollY,
+        { from: sel.from, to: sel.to, text },
       )
     }
 
@@ -174,6 +339,7 @@ export function TextEditor(props: FileViewerProps) {
         CodeMirrorView.contentAttributes.of({ spellcheck: 'false' }),
         cmSurfaceTheme,
         themeComp.of(dark),
+        aiHighlightField,
         ...(language !== null ? [language] : []),
         CodeMirrorView.updateListener.of((update) => {
           if (update.docChanged) {
@@ -204,6 +370,9 @@ export function TextEditor(props: FileViewerProps) {
               return
             }
             if (!update.view.hasFocus) {
+              // Focus moved to the popup's instruction input — keep the popup
+              // alive so the field stays mounted for typing.
+              if (popupInputFocusedRef.current) return
               hidePopup()
               return
             }
@@ -308,11 +477,23 @@ export function TextEditor(props: FileViewerProps) {
       return
     }
     const rect = sel.getRangeAt(0).getBoundingClientRect()
-    const lines = linesOfSelection(mdText, text)
+    const source = mdText
+    const lines = linesOfSelection(source, text)
+    // Best-effort character span for the AI rewrite: strip the trailing
+    // newline DOM block selections carry, then require an exactly-one match
+    // (the same rule as linesOfSelection) so an ambiguous hit never rewrites
+    // the wrong text. A miss keeps the AI buttons but they prompt a manual
+    // selection in edit mode.
+    const trimmed = text.endsWith('\n') ? text.slice(0, -1) : text
+    const at = trimmed === '' ? -1 : source.indexOf(trimmed)
+    const span = at !== -1 && source.indexOf(trimmed, at + 1) === -1
+      ? { from: at, to: at + trimmed.length, text: trimmed }
+      : { text: trimmed }
     showPopup(
       buildSelectionInsert(path, scope.cwd, lines ?? undefined, text),
       rect.left + rect.width / 2,
       rect.top,
+      span,
     )
   }
   const editable = content !== undefined
@@ -438,18 +619,76 @@ export function TextEditor(props: FileViewerProps) {
           />
         </>
       )}
-      {popup !== null && createPortal(
-        <button
-          type="button"
-          className={css.selectionPopup}
+      {ai.kind === 'idle' && popup !== null && createPortal(
+        <div
+          className={css.selectionPopupGroup}
           style={{ left: popup.left, top: popup.top }}
-          // Keep the selection (and CodeMirror focus) alive until the click
-          // commits — without this the popup unmounts before click lands.
+          // Keep the selection (and CodeMirror focus) alive until a click
+          // commits — without this the popup unmounts before the click lands.
           onMouseDown={(event) => { event.preventDefault() }}
-          onClick={commitPopup}
         >
-          {t('addToConversation')}
-        </button>,
+          {popup.text !== undefined && (
+            <>
+              <input
+                type="text"
+                className={css.selectionPopupInput}
+                placeholder={t('aiInstructionPlaceholder')}
+                value={aiInstruction}
+                onChange={(event) => {
+                  aiInstructionRef.current = event.target.value
+                  setAiInstruction(event.target.value)
+                }}
+                onKeyDown={(event) => { if (event.key === 'Enter') startAi() }}
+                // Let the field take focus: the group's mousedown preventDefault
+                // (which keeps the CodeMirror selection alive for button clicks)
+                // would otherwise swallow the focus and make the input read-only.
+                // Mark the focus in mousedown (it runs before the view's blur
+                // dispatch) so the popup survives the view losing focus to this
+                // field, and clear it on blur so a real focus-away hides it.
+                onMouseDown={(event) => {
+                  event.stopPropagation()
+                  popupInputFocusedRef.current = true
+                }}
+                onBlur={() => { popupInputFocusedRef.current = false }}
+              />
+              <button type="button" className={css.selectionPopupBtn} onClick={startAi}>
+                {t('aiEdit')}
+              </button>
+              <span className={css.selectionPopupDivider} aria-hidden="true" />
+            </>
+          )}
+          <button type="button" className={css.selectionPopupBtn} onClick={commitPopup}>
+            {t('addToConversation')}
+          </button>
+        </div>,
+        document.body,
+      )}
+      {ai.kind !== 'idle' && createPortal(
+        <div
+          className={css.aiPopup}
+          style={{ left: ai.left, top: ai.top }}
+          onMouseDown={(event) => { event.preventDefault() }}
+        >
+          {ai.kind === 'loading' && (
+            <>
+              <span className={css.aiSpinner} aria-hidden="true" />
+              <span>{t('aiGenerating')}</span>
+              <button type="button" className={css.aiBtn} onClick={stopAi}>{t('aiStop')}</button>
+            </>
+          )}
+          {ai.kind === 'done' && (
+            <>
+              <button type="button" className={css.aiBtn} onClick={revokeAi}>{t('aiRevoke')}</button>
+              <button type="button" className={css.aiBtn} onClick={confirmAi}>{t('aiConfirm')}</button>
+            </>
+          )}
+          {ai.kind === 'failed' && (
+            <>
+              <span className={css.aiError}>{ai.message}</span>
+              <button type="button" className={css.aiBtn} onClick={() => { setAi({ kind: 'idle' }) }}>{t('close')}</button>
+            </>
+          )}
+        </div>,
         document.body,
       )}
     </>
