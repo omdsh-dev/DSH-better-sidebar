@@ -25,6 +25,15 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add "github:fuhefei/dsh-sentinel#v0.7.0"',
   },
   {
+    id: 'dsh-git-forge',
+    name: 'dsh-git-forge Git 凭据',
+    url: 'https://github.com/thirsty5034/dsh-git-forge',
+    description: () => t('pluginGitForgeDesc'),
+    // Peer-depends on dsh-better-sidebar (Git Forge tab). Install the
+    // prerequisite first; package is GitHub-sourced until npm publish.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add "dsh-git-forge@github:thirsty5034/dsh-git-forge"',
+  },
+  {
     id: 'dsh-git-remotes',
     name: 'dsh-git-remotes Git 远程',
     url: 'https://github.com/yq04/dsh-git-remotes',
@@ -39,5 +48,14 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     // dsh-sidebar-qa hard-depends on dsh-better-sidebar (required peer), so
     // the install line installs the prerequisite first, then the plugin.
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/ChenRuoT/dsh-sidebar-qa.git',
+  },
+  {
+    id: 'dsh-ssh-tunnel',
+    name: 'dsh-ssh-tunnel SSH 隧道',
+    url: 'https://github.com/thirsty5034/dsh-ssh-tunnel',
+    description: () => t('pluginSshTunnelDesc'),
+    // Peer-depends on dsh-better-sidebar (SSH Tunnel tab + center terminal/SFTP).
+    // Install the prerequisite first; package is GitHub-sourced until npm publish.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add "dsh-ssh-tunnel@github:thirsty5034/dsh-ssh-tunnel"',
   },
 ]
