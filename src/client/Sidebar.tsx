@@ -194,6 +194,19 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     }
   }, [titleBarCompat, titleBarStrip])
 
+  // Panel opacity (panelOpacity pref): the right panel and the bottom panel
+  // fade to the configured value through a CSS variable (sidebar.module.css
+  // keys .panel/.bottomPanel off it). The variable rides the snapshot's
+  // prefs, so flipping the setting re-applies immediately; the cleanup
+  // removes it on unmount/boundary swap so a crashed sidebar never leaves a
+  // stale opacity behind.
+  const panelOpacity = snapshot.prefs.panelOpacity
+  useEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty('--dsh-sidebar-panel-opacity', String((panelOpacity ?? 100) / 100))
+    return () => { root.style.removeProperty('--dsh-sidebar-panel-opacity') }
+  }, [panelOpacity])
+
   /**
    * Bottom-panel merge on narrow viewports: whenever a session is current
    * while narrow (mount, session switch, or a desktop→narrow transition),

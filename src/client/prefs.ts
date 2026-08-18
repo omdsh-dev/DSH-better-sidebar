@@ -10,6 +10,7 @@
  */
 import type { api } from './api.ts'
 import {
+  clampPanelOpacity,
   clampTerminalFontSize,
   clampTitleBarStrip,
   clampWidthPercent,
@@ -17,7 +18,7 @@ import {
   type SidebarPrefs,
 } from '../prefs-shared.ts'
 
-export { SIDEBAR_PREFS_DEFAULTS, clampTerminalFontSize, clampTitleBarStrip, clampWidthPercent }
+export { SIDEBAR_PREFS_DEFAULTS, clampPanelOpacity, clampTerminalFontSize, clampTitleBarStrip, clampWidthPercent }
 export type { SidebarPrefs }
 
 /** The settings wire face the preferences need (a subset of the plugin api). */
@@ -39,6 +40,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     defaultWidthPercent: typeof record.defaultWidthPercent === 'number' && Number.isFinite(record.defaultWidthPercent)
       ? clampWidthPercent(record.defaultWidthPercent)
       : SIDEBAR_PREFS_DEFAULTS.defaultWidthPercent,
+    panelOpacity: typeof record.panelOpacity === 'number' && Number.isFinite(record.panelOpacity)
+      ? clampPanelOpacity(record.panelOpacity)
+      : SIDEBAR_PREFS_DEFAULTS.panelOpacity,
     autoOpenSubagent: typeof record.autoOpenSubagent === 'boolean'
       ? record.autoOpenSubagent
       : SIDEBAR_PREFS_DEFAULTS.autoOpenSubagent,

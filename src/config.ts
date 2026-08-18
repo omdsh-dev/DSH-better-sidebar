@@ -7,6 +7,9 @@
 
 import z from 'schemastery'
 import {
+  PANEL_OPACITY_DEFAULT,
+  PANEL_OPACITY_MAX,
+  PANEL_OPACITY_MIN,
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
   TERMINAL_FONT_SIZE_DEFAULT,
@@ -22,6 +25,9 @@ import {
 } from './prefs-shared.ts'
 
 export {
+  PANEL_OPACITY_DEFAULT,
+  PANEL_OPACITY_MAX,
+  PANEL_OPACITY_MIN,
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
   TERMINAL_FONT_SIZE_DEFAULT,
@@ -114,6 +120,7 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
 export const PrefsSchema: z<SidebarPrefs> = z.object({
   openByDefault: z.boolean().default(false),
   defaultWidthPercent: z.number().step(1).min(WIDTH_PERCENT_MIN).max(WIDTH_PERCENT_MAX).default(WIDTH_PERCENT_DEFAULT),
+  panelOpacity: z.number().step(1).min(PANEL_OPACITY_MIN).max(PANEL_OPACITY_MAX).default(PANEL_OPACITY_DEFAULT),
   autoOpenSubagent: z.boolean().default(true),
   autoOpenJobs: z.boolean().default(true),
   agentTerminalTools: z.boolean().default(false),
