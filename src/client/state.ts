@@ -414,16 +414,23 @@ export function moveTabToEdge(
  */
 export function removeLeafAt(node: SplitNode, paneId: string): SplitNode {
   if (node.kind === 'leaf') return node.id === paneId ? { ...node, tabs: [], active: null } : node
-  const children = node.children.filter(child => !(child.kind === 'leaf' && child.id === paneId))
-  if (children.length === node.children.length) {
+  const kept = node.children
+    .map((child, index) => ({ child, size: node.sizes[index] ?? 1 }))
+    .filter(({ child }) => !(child.kind === 'leaf' && child.id === paneId))
+  if (kept.length === node.children.length) {
     return {
       ...node,
       sizes: [...node.sizes],
       children: node.children.map(child => removeLeafAt(child, paneId)),
     }
   }
-  if (children.length === 1) return children[0]!
-  return { ...node, sizes: [...node.sizes], children }
+  if (kept.length === 1) return kept[0]!.child
+  const total = kept.reduce((sum, item) => sum + item.size, 0)
+  return {
+    ...node,
+    sizes: kept.map(item => item.size / total),
+    children: kept.map(item => item.child),
+  }
 }
 
 /** Close a tab; an emptied leaf is removed (unless it is the only pane). */

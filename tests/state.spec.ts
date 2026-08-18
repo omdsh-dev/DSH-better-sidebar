@@ -857,13 +857,24 @@ describe('file workbench continuity', () => {
       ...targetBase,
       bottomOpen: true,
       bottomSplits: {
-        kind: 'leaf',
-        id: 'target-bottom',
-        tabs: [
-          { ...sourceEditor, id: 'existing-editor' },
-          { id: 'terminal:1', type: 'terminal', title: 'Terminal 1' },
+        kind: 'split',
+        id: 'target-bottom-split',
+        dir: 'row',
+        sizes: [0.2, 0.3, 0.5],
+        children: [
+          {
+            kind: 'leaf', id: 'target-bottom',
+            tabs: [{ ...sourceEditor, id: 'existing-editor' }], active: 'existing-editor',
+          },
+          {
+            kind: 'leaf', id: 'target-terminal',
+            tabs: [{ id: 'terminal:1', type: 'terminal', title: 'Terminal 1' }], active: 'terminal:1',
+          },
+          {
+            kind: 'leaf', id: 'target-browser',
+            tabs: [{ id: 'browser:1', type: 'browser', title: 'Browser' }], active: 'browser:1',
+          },
         ],
-        active: 'existing-editor',
       },
     }
     const carried = carryFileWorkbenchState(source, target)
@@ -874,6 +885,13 @@ describe('file workbench continuity', () => {
     expect(editors[0]!.id).toBe('existing-editor')
     expect(allLeaves(carried.splits)[0]!.active).toBe('existing-editor')
     expect(allLeaves(carried.bottomSplits)[0]!.tabs.some(tab => tab.type === 'terminal')).toBe(true)
+    expect(carried.bottomSplits.kind).toBe('split')
+    if (carried.bottomSplits.kind === 'split') {
+      expect(carried.bottomSplits.sizes).toHaveLength(carried.bottomSplits.children.length)
+      expect(carried.bottomSplits.sizes[0]).toBeCloseTo(0.375)
+      expect(carried.bottomSplits.sizes[1]).toBeCloseTo(0.625)
+    }
+    expect(sanitizeState(JSON.parse(JSON.stringify(carried)))).toBeDefined()
   })
 
   it('carries only geometry when no editor is visible in the outgoing session', () => {
