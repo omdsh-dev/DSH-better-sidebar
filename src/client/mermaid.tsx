@@ -319,11 +319,11 @@ interface MermaidMount {
  */
 function isMermaidBlock(block: HTMLElement): boolean {
   const code = block.querySelector('code')
-  if (code !== null && [...code.classList].some(c => c.toLowerCase().startsWith('language-mermaid'))) return true
+  if (code !== null && [...code.classList].some(c => c.startsWith('language-mermaid'))) return true
   const infostring = block.firstElementChild?.firstElementChild?.firstElementChild
   return infostring !== null
     && infostring !== undefined
-    && (infostring.textContent ?? '').trim().toLowerCase() === 'mermaid'
+    && (infostring.textContent ?? '').trim() === 'mermaid'
 }
 
 /**
@@ -348,20 +348,22 @@ export function MermaidMarkdown({ text, codeLabels }: MermaidMarkdownProps): Rea
 
     for (const block of container.querySelectorAll<HTMLElement>('.md-code-block')) {
       const mount = mounts.get(block)
-      const processed = mount !== undefined
-      // A processed block's children were replaced by the diagram host, so
-      // re-judging it against the replaced DOM would wrongly read "not a
-      // mermaid fence" (no <code>/banner left) and flash back to raw source on
-      // every text update. Only NEW blocks get the DOM-level judgment; an
-      // already-mounted block stays mermaid (it is demoted only when it leaves
-      // the tree, handled by the `seen` cleanup below).
-      if (!processed && !isMermaidBlock(block)) continue
+      const isMermaid = isMermaidBlock(block)
+      if (!isMermaid) {
+        // A previously swapped block that is no longer a mermaid fence:
+        // restore the CodeBlock children React still manages, so the plain
+        // fence renders normally again.
+        if (mount !== undefined) {
+          mount.root.unmount()
+          block.replaceChildren(...mount.removed)
+          block.removeAttribute('data-mermaid-processed')
+          mounts.delete(block)
+        }
+        continue
+      }
       seen.add(block)
-      // The plain body always carries the fence source in <code>. For an
-      // already-processed block the children were replaced, so fall back to
-      // the source we last rendered (no re-parse — conservatively keep the
-      // diagram stable instead of flashing to raw code).
-      const source = block.querySelector('code')?.textContent ?? mount?.source ?? ''
+      // The plain body always carries the fence source in <code>.
+      const source = block.querySelector('code')?.textContent ?? ''
       if (mount !== undefined && mount.source === source) continue
       if (mount === undefined) {
         const host = document.createElement('div')
