@@ -188,6 +188,12 @@ export class PtyManager {
     }
   }
 
+  /** Close every terminal of one session (the conversation was deleted —
+   *  terminals must follow the session, not linger until the grace expires). */
+  closeSession(sessionId: string): void {
+    for (const key of this.keysOf(sessionId)) this.close(key)
+  }
+
   /** Close every terminal (plugin teardown). */
   disposeAll(): void {
     for (const timer of this.pendingCloses.values()) clearTimeout(timer)

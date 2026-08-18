@@ -774,6 +774,13 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     wss.close()
     agentListWss.close()
   }, 'dsh-better-sidebar: teardown')
+
+  // Close all UI terminals of a session when the conversation is deleted —
+  // terminals follow the session, not the reconnect grace. Agent terminals
+  // are owned by the agent lifecycle and are not touched here.
+  ctx.on('session/disposed', (session) => {
+    try { ptyManager.closeSession(session?.id) } catch {}
+  }, { global: true })
 }
 
 /** Push the live agent-terminal list for one session to a connected sidebar view. */

@@ -25,7 +25,7 @@
  * drawer floats). Widening does not migrate back: the tabs keep living in
  * the right tree.
  */
-import { createElement, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -491,14 +491,23 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    *  too — React state only updates on release, so the inline right must be
    *  written directly or the bottom panel would lag the sidebar mid-drag. */
   const applyDrag = (width: number, height: number): void => {
-    panelRef.current?.style.setProperty('width', `${width}px`)
+    // Fix (bounce): the width must only be written while the right panel is
+    // OPEN. When it is closed, `state.width` still holds the last used width,
+    // so dragging the bottom panel height used to write a stale non-zero
+    // `--dsh-sidebar-width` and squeezed the conversation left for the whole
+    // drag (it only recovered on release).
+    const effWidth = state?.panelOpen === true ? width : 0
+    const baseWidth = state?.panelOpen === true ? (state?.width ?? 0) : 0
+    panelRef.current?.style.setProperty('width', `${effWidth}px`)
     bottomRef.current?.style.setProperty('height', `${height}px`)
     // centerRect.right is the center column's right edge at the committed
     // width (innerWidth - state.width - detailsWidth), so this equals
-    // `width + detailsWidth` — derived from the measured column, keeping the
-    // drag write-only (no React re-render mid-drag).
-    bottomRef.current?.style.setProperty('right', `${(window.innerWidth - centerRect.right) + (width - (state?.width ?? 0))}px`)
-    document.documentElement.style.setProperty('--dsh-sidebar-width', `${width}px`)
+    // `effWidth + detailsWidth` — derived from the measured column, keeping the
+    // drag write-only (no React re-render mid-drag). With the panel closed
+    // both effWidth and baseWidth are 0, so the bottom panel keeps only the
+    // native details-column offset (0 on current DSH builds).
+    bottomRef.current?.style.setProperty('right', `${(window.innerWidth - centerRect.right) + (effWidth - baseWidth)}px`)
+    document.documentElement.style.setProperty('--dsh-sidebar-width', `${effWidth}px`)
     document.documentElement.style.setProperty('--dsh-sidebar-height', `${height}px`)
     // The corner handle positions itself relative to the panel (CSS
     // `bottom: calc(var(--dsh-sidebar-height) + 6px)`), so these two layout
@@ -562,7 +571,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // crush the app shell to zero. Dragging disables the layout transition.
   // On NARROW viewports the drawer FLOATS over the app shell — no push, the
   // conversation keeps the full width behind the drawer.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const width = !narrow && snapshot.state?.panelOpen === true
       ? Math.min(snapshot.state.width, window.innerWidth)
       : 0
@@ -576,8 +585,18 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // HMR), the CSS variables would otherwise stay on <html> and layout.css
     // keeps squeezing #root with a stale margin — "the sidebar cannot be
     // hidden" until a full reload. removeProperty restores the CSS fallback
-    // (var(--dsh-sidebar-width, 0px)); React re-runs cleanup+setup in the
-    // same commit on state changes, so there is no visible flicker.
+    // (var(--dsh-sidebar-width, 0px)).
+    //
+    // Fix (bounce): this effect was a passive `useEffect`, which runs AFTER
+    // paint. On release the cleanup removes the variables and the setup
+    // re-adds them, but the two phases can straddle a paint (React 18/19
+    // flush passive effects in chunks), so the browser paints the
+    // intermediate state where `--dsh-sidebar-width` is missing and #root's
+    // margin-right falls back to 0 — the conversation flashes back to full
+    // width and then returns ("bounce"). A layout effect runs synchronously
+    // before paint, so cleanup+setup land in the same frame and the
+    // intermediate state is never painted, while the unmount cleanup above
+    // still releases the push exactly as before.
     return () => {
       document.documentElement.style.removeProperty('--dsh-sidebar-width')
       document.documentElement.style.removeProperty('--dsh-sidebar-height')
@@ -820,8 +839,23 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
                 dragCommitted.current = true
                 event.currentTarget.releasePointerCapture(event.pointerId)
                 const { startX, startWidth } = widthDrag.current
+                // Fix (bounce): flush the FINAL frame BEFORE stopDragScheduling.
+                // The stop cancels the pending rAF, so the DOM variables would
+                // otherwise stay at the second-to-last frame's width while the
+                // store commits the final one — a few px that re-animate when
+                // the drag transition comes back.
+                const finalWidth = clampWidth(startWidth + (startX - event.clientX))
+                const finalHeight = state.bottomOpen ? Math.min(state.bottomHeight, window.innerHeight) : 0
+                applyDrag(finalWidth, finalHeight)
+                // Keep the bottom panel's measured right edge in sync with the
+                // committed width (details-column offset preserved), so the
+                // release render doesn't paint the pre-drag edge.
+                const detailsOffset = Math.max(0, window.innerWidth - centerRect.right - (state.panelOpen ? state.width : 0))
+                setCenterRect(prev => prev.right === centerRect.right
+                  ? { left: prev.left, right: window.innerWidth - finalWidth - detailsOffset }
+                  : prev)
                 stopDragScheduling()
-                store.reduce(s => setWidth(s, startWidth + (startX - event.clientX)))
+                store.reduce(s => setWidth(s, finalWidth))
                 setDraggingWidth(false)
               }}
               onPointerCancel={() => { abortDrag(() => setDraggingWidth(false)) }}
@@ -878,8 +912,17 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
               dragCommitted.current = true
               event.currentTarget.releasePointerCapture(event.pointerId)
               const { startX, startY, startWidth, startHeight } = cornerDrag.current
+              // Fix (bounce): flush the final frame before stopDragScheduling
+              // (same as the width/bottom drags).
+              const finalWidth = clampWidth(startWidth + (startX - event.clientX))
+              const finalHeight = clampHeight(startHeight + (startY - event.clientY))
+              applyDrag(finalWidth, finalHeight)
+              const detailsOffset = Math.max(0, window.innerWidth - centerRect.right - state.width)
+              setCenterRect(prev => prev.right === centerRect.right
+                ? { left: prev.left, right: window.innerWidth - finalWidth - detailsOffset }
+                : prev)
               stopDragScheduling()
-              store.reduce(s => setBottomHeight(setWidth(s, startWidth + (startX - event.clientX)), startHeight + (startY - event.clientY)))
+              store.reduce(s => setBottomHeight(setWidth(s, finalWidth), finalHeight))
               setDraggingCorner(false)
             }}
             onPointerCancel={() => { abortDrag(() => setDraggingCorner(false)) }}
@@ -938,8 +981,13 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             dragCommitted.current = true
             event.currentTarget.releasePointerCapture(event.pointerId)
             const { startY, startHeight } = bottomDrag.current
+            // Fix (bounce): flush the final frame before stopDragScheduling
+            // (same as the width drag — the pending rAF would otherwise be
+            // dropped and the height would snap back a few px on release).
+            const finalHeight = clampHeight(startHeight + (startY - event.clientY))
+            applyDrag(Math.min(state.width, window.innerWidth), finalHeight)
             stopDragScheduling()
-            store.reduce(s => setBottomHeight(s, startHeight + (startY - event.clientY)))
+            store.reduce(s => setBottomHeight(s, finalHeight))
             setDraggingBottom(false)
           }}
           onPointerCancel={() => { abortDrag(() => setDraggingBottom(false)) }}

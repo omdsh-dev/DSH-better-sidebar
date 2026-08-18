@@ -132,7 +132,7 @@
 }
 
 .panelResizeActive {
-  background: var(--dsw-alias-interactive-bg-hover-accent);
+  /* Drag feedback disabled by local preference: no highlight while resizing. */
 }
 
 .panelBody {
@@ -195,7 +195,7 @@
 }
 
 .bottomResizeActive {
-  background: var(--dsw-alias-interactive-bg-hover-accent);
+  /* Drag feedback disabled by local preference: no highlight while resizing. */
 }
 
 /* The bottom panel's close control: the app's icon-button pattern (28px
@@ -274,8 +274,8 @@
   touch-action: none;
 }
 
-.cornerHandle:hover,
-.cornerHandle[data-dragging] {
+.cornerHandle:hover {
+  /* Only hover feedback stays; dragging highlight disabled by local preference. */
   background: var(--dsw-alias-interactive-bg-hover-accent);
 }
 
