@@ -57,10 +57,9 @@ const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 
 /**
  * FLOATING built-in tab titles the +-menu sweep drives (en-US copy; follows DSH
- * locale). The pinned Editor-files-window / Source Control / Tasks bars are
- * always visible and no longer offered by the + menu, so only the floating
- * built-ins are swept through it. (Editor itself is opened via the pinned bar
- * + the file-tree probe below, not the + menu.)
+ * locale). The fixed Git/Subagent bars are always visible and no longer offered
+ * by the + menu. The Files editor home is not swept through the menu either;
+ * the file-tree probe below opens it directly and exercises the editor chunk.
  */
 const FLOATING_BUILTIN_TABS = ['Terminal', 'Browser']
 
