@@ -113,11 +113,11 @@ describe('enable switches (declarative settings)', () => {
     const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs)
     expect(tabs.some(t => t.type === 'my:tab')).toBe(false)
     // A pinned type disabled in settings is likewise absent (the other pinned
-    // bars still show): with editor disabled, only git + subagent remain.
-    store.setPrefs({ ...store.getPrefs(), tabsEnabled: { 'my:tab': false, editor: false } })
+    // bar still shows): with git disabled, subagent remains (and the editor
+    // files-window stays as the floating seeded home).
+    store.setPrefs({ ...store.getPrefs(), tabsEnabled: { 'my:tab': false, git: false } })
     const tabTypes = allLeaves(store.getSnapshot().state!.splits).flatMap(l => l.tabs).map(t => t.type)
-    expect(tabTypes).not.toContain('editor')
-    expect(tabTypes).toContain('git')
+    expect(tabTypes).not.toContain('git')
     expect(tabTypes).toContain('subagent')
   })
 

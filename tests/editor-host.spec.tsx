@@ -148,8 +148,8 @@ describe('EditorHost (files window)', () => {
       expect(after.path).toBe('/tmp/a.ts')
       expect(after.title).toBe('a.ts')
       expect(after.meta).toEqual({ treeOpen: true })
-      // No new tab landed.
-      expect(allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)).toHaveLength(1)
+      // No new tab landed (of editor type; our fork pins git+subagent).
+      expect(allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'editor')).toHaveLength(1)
     } finally {
       unmount()
     }
@@ -165,11 +165,11 @@ describe('EditorHost (files window)', () => {
     const { container, unmount } = mountHost(ctx, store, fileTab)
     try {
       typeAndCommit(container.querySelector('input[placeholder^="File path"]')!, '/tmp/b.ts')
-      const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
-      // home + a.ts + b.ts
-      expect(tabs).toHaveLength(3)
+      const editorTabs = allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'editor')
+      // home + a.ts + b.ts (editor tabs; our fork pins git+subagent separately)
+      expect(editorTabs).toHaveLength(3)
       expect(fileTab().path).toBe('/tmp/a.ts')
-      const opened = tabs.find(tab => tab.path === '/tmp/b.ts')!
+      const opened = editorTabs.find(tab => tab.path === '/tmp/b.ts')!
       expect(opened.type).toBe('editor')
       expect(opened.title).toBe('b.ts')
       expect(opened.id).toBe('editor:/tmp/b.ts')

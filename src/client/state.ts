@@ -253,14 +253,15 @@ export function makeDefaultState(width = PANEL_DEFAULT, panelOpen = true, seed: 
 
 /**
  * The PINNED tab types always shown first in the RIGHT panel of every session
- * (Editor-files-window / Git / Subagent). They cannot be closed or reordered
- * out of their pinned front positions — they are the "keep the same panels
- * everywhere" skeleton. Everything else (terminal / browser / external /
- * additional editor tabs) floats per session as today. (Upstream 0.13 removed
- * the `explorer` tab in favor of the `editor` files window; the pinned three
- * follow that model: editor / git / subagent.)
+ * (Git / Subagent). They cannot be closed or reordered out of their pinned
+ * front positions — they are the "keep the same panels everywhere" skeleton.
+ * Everything else (editor file window / terminal / browser / external) floats
+ * per session as today. (Upstream 0.13 removed the `explorer` tab in favor of
+ * the `editor` files window; the editor window itself is NOT pinned — it is a
+ * rich per-path window with in-place switching, not a simple fixed bar — so
+ * only the clean single bars git/subagent are pinned.)
  */
-export const PINNED_TYPES: readonly TabType[] = ['editor', 'git', 'subagent']
+export const PINNED_TYPES: readonly TabType[] = ['git', 'subagent']
 
 /** Whether a tab type is one of the pinned front tabs. */
 export function isPinnedType(type: string): boolean {
@@ -272,7 +273,6 @@ export function isPinnedType(type: string): boolean {
  *  (localized) descriptor title from when they were first opened; this is only
  *  a fallback for the brief补齐 of a missing bar. */
 function titleForType(type: string): string {
-  if (type === 'editor') return 'Files'
   if (type === 'git') return 'Source Control'
   return 'Subagents'
 }

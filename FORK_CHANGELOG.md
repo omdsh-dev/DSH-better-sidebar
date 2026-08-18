@@ -22,15 +22,18 @@
 
 ---
 
-## 2. 右侧主面板固定前三：`editor` / `git` / `subagent`（PR #2 + 上游 0.13 调和）
+## 2. 右侧主面板固定栏：`git` / `subagent`（PR #2 + 上游 0.13 调和）
 
-**目标**：所有 session 右侧主面板固定前三个面板，不可删除、不可拖出其固定位置、自动归置补齐；第四位起的浮动 tab（终端/浏览器/外部插件/多实例 editor）保持 per-session。
+**目标**：所有 session 右侧主面板固定两个稳定单面板 **Git + Subagent**，不可删除、不可拖出其固定位置、自动归置补齐；其余（editor 文件窗口 / 终端 / 浏览器 / 外部插件 / 多实例 editor）保持 per-session 浮动。
 
-> ⚠️ **上游 0.13 调和**：上游 0.13 删除了 `explorer` tab、改为 `editor` 文件窗口（editor home，含内嵌文件树）。因此固定前三由「Explorer/Git/Subagent」**调整为「editor/Git/Subagent」**（PR #2 原固定 explorer，0.13 合并后以 editor 取代 explorer）——保留"固定前三不可删/拖/补齐"的价值，但首栏跟随上游新模型。
+> ⚠️ **上游 0.13 调和（重要）**：
+> - 上游 0.13 删除了 `explorer` tab、改为 `editor` 文件窗口（editor home，含内嵌文件树）。
+> - 经探明并拍板：**editor 不固定**——它是按 path 的多文件窗口 + 原地/分栏切换的富类型，无法当简单固定栏；固定栏收敛为 **git + subagent**（两个干净的单栏类型）。
+> - 因此 PR #2 原来的「固定前三 Explorer/Git/Subagent」→ 0.13 后为「固定 git + subagent」。
 
 **改动**：
 - `src/client/state.ts`：
-  - `PINNED_TYPES`（0.13 合并后 = `['editor','git','subagent']`）、`isPinnedType`。
+  - `PINNED_TYPES`（0.13 合并后 = `['git','subagent']`）、`isPinnedType`。
   - `ensurePinnedTabs(state, tabsEnabled)`：跨右侧整棵树收集/去重固定实例，归置到承载固定组的 home pane 并重排到首位；剔除被掏空的重复 pane；尊重 `tabsEnabled` 禁用；已归置时返回原引用（幂等）。
   - `rotateHomeFirst`/`leafWithId`/`containsLeaf`：树重排 + 递归清理非 home 分支的空 pane；单 child 提升、杜绝零子节点 split。
   - store 的 `commitActive`/`commitTarget`/`setSession`/`setPrefs` 套用 `ensurePinnedTabs`。

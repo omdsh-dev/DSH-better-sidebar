@@ -869,7 +869,7 @@ describe('v0.12.0 store additions', () => {
       }))
       const sanitized = sanitizeState(JSON.parse(JSON.stringify(store.getSnapshot().state!)))
       const tabs = allLeaves(sanitized!.splits).flatMap(leaf => leaf.tabs)
-      expect(tabs[0]?.meta).toEqual({ q: [1, 2], n: 0 })
+      expect(tabs.find(t => t.type === 'db')?.meta).toEqual({ q: [1, 2], n: 0 })
     })
   })
 })

@@ -259,16 +259,19 @@ describe('side card preferences', () => {
     store.setSession('no-editor')
     const state = store.getSnapshot().state!
     const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs)
-    expect(tabs).toHaveLength(0)
+    // Our fork pins git + subagent into EVERY session; with the editor home
+    // disabled the seed is just the two pinned bars, not empty.
+    expect(tabs.map(t => t.type).sort()).toEqual(['git', 'subagent'])
     expect(state.splits.kind).toBe('leaf')
-    // Re-enabling seeds the files window (editor home tab) again — in BOTH
-    // editorExplorer modes.
+    // Re-enabling seeds the files window (editor home tab) too — in BOTH
+    // editorExplorer modes — pinned bars come first.
     for (const editorExplorer of [true, false]) {
       const openStore = createSidebarStore()
       openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
       openStore.setSession(`with-editor-${editorExplorer}`)
       const openTabs = allLeaves(openStore.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
-      expect(openTabs.map(tab => tab.type)).toEqual(['editor'])
+      expect(openTabs.map(tab => tab.type).slice(0, 2)).toEqual(['git', 'subagent'])
+      expect(openTabs.map(tab => tab.type)).toContain('editor')
     }
   })
 
@@ -278,11 +281,12 @@ describe('side card preferences', () => {
       store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
       store.setSession(`fresh-${editorExplorer}`)
       const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
-      expect(tabs).toHaveLength(1)
-      expect(tabs[0]!.type).toBe('editor')
-      expect(tabs[0]!.title).toBe('Files')
-      expect(tabs[0]!.path).toBeUndefined()
-      expect(tabs[0]!.meta).toEqual({ treeOpen: true })
+      // Our fork pins git + subagent first, then the editor files window.
+      expect(tabs.map(t => t.type).slice(0, 2)).toEqual(['git', 'subagent'])
+      const editor = tabs.find(t => t.type === 'editor')!
+      expect(editor.title).toBe('Files')
+      expect(editor.path).toBeUndefined()
+      expect(editor.meta).toEqual({ treeOpen: true })
     }
   })
 
