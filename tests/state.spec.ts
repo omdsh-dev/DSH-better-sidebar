@@ -65,6 +65,24 @@ describe('sidebar state', () => {
     expect(bottom[0]).toMatchObject({ id: 'ex-bottom', type: 'editor', title: 'Files', meta: { treeOpen: true } })
   })
 
+  it('sanitizeState removes legacy treeWidth from regular editor tabs', () => {
+    const valid = sanitizeState({
+      panelOpen: true,
+      width: 400,
+      nextTerminal: 1,
+      activePane: 'pane:1',
+      expanded: [],
+      splits: {
+        kind: 'leaf',
+        id: 'pane:1',
+        active: 'editor:1',
+        tabs: [{ id: 'editor:1', type: 'editor', title: 'a.ts', path: '/a.ts', meta: { treeOpen: true, treeWidth: 360 } }],
+      },
+    })
+    const tab = (valid?.splits as { tabs: SidebarTab[] }).tabs[0]!
+    expect(tab.meta).toEqual({ treeOpen: true })
+  })
+
   it('opens tabs into the active pane and dedupes by id (safety net)', () => {
     let s = state()
     const gitTab = { id: 'git', type: 'git' as const, title: 'Git' }

@@ -1228,6 +1228,15 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
   return synthState(layout, content)
 }
 
+/** Remove the pre-global-layout treeWidth field from legacy editor tabs.
+ * treeOpen remains per-tab; the split width is now owned by the global
+ * layout. Non-editor/plugin metadata is left untouched. */
+function sanitizeTabMeta(type: string, meta: unknown): unknown {
+  if (type !== 'editor' || meta === null || typeof meta !== 'object' || Array.isArray(meta)) return meta
+  const { treeWidth: _legacyTreeWidth, ...rest } = meta as Record<string, unknown>
+  return Object.keys(rest).length === 0 ? undefined : rest
+}
+
 /**
  * One tree node id, deduplicated against the ids already seen in this
  * state. Duplicates are exactly the pre-seeding counter-reset corruption
@@ -1289,13 +1298,15 @@ function sanitizeNode(node: unknown, seen: Set<string>, reid: Map<string, string
       }
       // `meta` is plugin-owned JSON-serializable state (v0.12.0+): the
       // persisted value already went through JSON.parse, so it is inherently
-      // serializable — carry it through verbatim (absent on older states).
+      // serializable. Built-in editor tabs additionally drop the obsolete
+      // per-tab treeWidth while retaining treeOpen and other metadata.
+      const meta = sanitizeTabMeta(candidate.type, candidate.meta)
       tabs.push({
         id: candidate.id,
         type: candidate.type,
         title: candidate.title,
         ...(typeof candidate.path === 'string' ? { path: candidate.path } : {}),
-        ...(candidate.meta !== undefined ? { meta: candidate.meta } : {}),
+        ...(meta !== undefined ? { meta } : {}),
       })
     }
     const active = typeof record.active === 'string' ? record.active : null
