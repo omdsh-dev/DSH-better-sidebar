@@ -1,9 +1,11 @@
 /**
- * Interactive tests for the settings popup's text/number rows: the draft is
- * local state committed on blur through the parent's onCommit; the parent's
- * canonical return is adopted (clamped numbers, stored value for invalid
- * input), and the row remounts when the committed pref value changes (a
- * failed commit reverts prefs → the stored value reappears).
+ * Interactive tests for the settings popup's text/number/select rows: the
+ * draft is local state committed on blur through the parent's onCommit; the
+ * parent's canonical return is adopted (clamped numbers, stored value for
+ * invalid input), and the row remounts when the committed pref value changes
+ * (a failed commit reverts prefs → the stored value reappears). Select rows
+ * commit the picked option's value (single) or the picked values in options
+ * order (multi) through onSelectValue.
  *
  * Rendered with createRoot + act() in jsdom (the SSR specs stay in
  * side-card-section.spec.tsx; this file exercises the event paths).
@@ -170,6 +172,102 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
       onCommit: (_t, raw) => raw,
     }))
     expect(container.querySelector('input')!.value).toBe('Old')
+    unmount()
+  })
+})
+
+/** Open one select row's dropdown: click the anchor, the Menu portals its
+ *  list into document.body (role="menuitem" rows). */
+function openSelect(container: HTMLDivElement): HTMLElement[] {
+  const anchor = container.querySelector<HTMLButtonElement>('button[aria-haspopup="listbox"]')!
+  act(() => { anchor.click() })
+  return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+}
+
+describe('FeatureSettingsRows select rows (interactive)', () => {
+  const options: NonNullable<SidebarSettingToggle['options']> = [
+    { value: true, icon: (size: number) => createElement('i', { 'data-size': size }), title: () => 'Merged', desc: () => 'Docked tree' },
+    { value: false, icon: (size: number) => createElement('i', { 'data-size': size }), title: () => 'Split', desc: () => 'Two tabs' },
+  ]
+
+  it('commits the picked option value and closes (iconed single select)', () => {
+    const commits: Array<[string, unknown]> = []
+    const toggle: SidebarSettingToggle = {
+      key: 'editorExplorer',
+      type: 'select',
+      title: () => 'Editor explorer',
+      options,
+    }
+    const { container, unmount } = mount(createElement(FeatureSettingsRows, {
+      toggles: [toggle],
+      prefs,
+      onToggle: () => {},
+      onSelectValue: (t, next) => { commits.push([t.key, next]) },
+    }))
+    // The closed anchor shows the selected option's title (icon variant).
+    expect(container.textContent).toContain('Merged')
+    const items = openSelect(container)
+    // Big-icon cards: title + desc per option.
+    expect(items.map(item => item.textContent)).toEqual(['MergedDocked tree', 'SplitTwo tabs'])
+    act(() => { items[1]!.click() })
+    expect(commits).toEqual([['editorExplorer', false]])
+    // Single-pick closes the dropdown.
+    expect(document.querySelectorAll('[role="menuitem"]')).toHaveLength(0)
+    unmount()
+  })
+
+  it('toggles membership and commits the picked values in options order (multi)', () => {
+    const commits: Array<[string, unknown]> = []
+    const plain: NonNullable<SidebarSettingToggle['options']> = [
+      { value: 'a', title: () => 'Alpha' },
+      { value: 'b', title: () => 'Beta' },
+      { value: 'c', title: () => 'Gamma' },
+    ]
+    const toggle: SidebarSettingToggle = {
+      key: 'pluginKey',
+      type: 'select',
+      multi: true,
+      title: () => 'Pick several',
+      options: plain,
+    }
+    const rows = (value: unknown) => createElement(FeatureSettingsRows, {
+      toggles: [toggle],
+      prefs,
+      onToggle: () => {},
+      onSelectValue: (t, next) => { commits.push([t.key, next]) },
+      valueSource: () => value,
+    })
+    const { container, rerender, unmount } = mount(rows(['c', 'a']))
+    // The anchor shows the picked titles; options follow the declared order.
+    const items = openSelect(container)
+    expect(items.map(item => item.textContent)).toEqual(['Alpha', 'Beta', 'Gamma'])
+    // Deselect 'a' → ['c'] is normalized to options order… (['c'] here).
+    act(() => { items[0]!.click() })
+    expect(commits).toEqual([['pluginKey', ['c']]])
+    // The menu stays open under multi; re-render with the committed value.
+    rerender(rows(['c']))
+    const again = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    expect(again).toHaveLength(3)
+    // Select 'b' → committed in OPTIONS order, not pick order.
+    act(() => { again[1]!.click() })
+    expect(commits[1]).toEqual(['pluginKey', ['b', 'c']])
+    unmount()
+  })
+
+  it('shows an em dash when nothing is selected', () => {
+    const toggle: SidebarSettingToggle = {
+      key: 'editorExplorer',
+      type: 'select',
+      title: () => 'Editor explorer',
+      options,
+    }
+    const { container, unmount } = mount(createElement(FeatureSettingsRows, {
+      toggles: [toggle],
+      prefs,
+      onToggle: () => {},
+      valueSource: () => undefined,
+    }))
+    expect(container.querySelector('button[aria-haspopup="listbox"]')!.textContent).toContain('—')
     unmount()
   })
 })

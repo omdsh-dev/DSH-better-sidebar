@@ -21,7 +21,7 @@
 
 ## ✨ Features
 
-- **🗂️ File Workbench**: file explorer (lazy-loading tree) + CodeMirror editor; inline preview for images / Markdown / HTML / PDF / Office
+- **🗂️ File Workbench**: file explorer (lazy-loading tree; symlinks show their target kind — directory links expand, dangling links flagged) + CodeMirror editor; inline preview for images / Markdown (incl. Mermaid diagrams, strict-mode safe rendering + click-to-zoom) / HTML / PDF / Office
 - **🌐 Embedded Browser**: multiple web tabs with back / forward / refresh; content runs in a sandboxed iframe; external links are routed by protocol by default — HTTP opens in the sidebar, HTTPS goes to the system browser (both adjustable in settings)
 - **💻 Real Terminal**: xterm.js + node-pty real shell, reconnect with transcript replay; optionally injects `terminal_*` tools for the model
 - **🌿 Git Panel**: real diff + VSCode-style diff tabs, history, right-click to stage / commit / revert
@@ -29,120 +29,94 @@
 - **🪟 Dual Workbench**: right sidebar + bottom panel; drag tabs to split / merge panes (cross-panel), mobile auto-merges into a full-width drawer
 - **🔁 Session Isolation**: layout / tabs / panels persisted per session, stale state auto-purged
 - **⚙️ Declarative Settings**: per-item toggles in the "Side Cards" settings section, secondary settings via the gear dialog
-- **⚡ On-demand Loading**: only ~325KB core at startup; heavy deps (terminal / editor) load on demand ([design](docs/plans/2026-08-12-lazy-chunks-design.md))
+- **⚡ On-demand Loading**: only ~325KB core at startup; heavy deps (terminal / editor / mermaid diagrams) load on demand ([design](docs/plans/2026-08-12-lazy-chunks-design.md))
 - **🌏 i18n**: UI text follows DSH's language (zh / en) with live switching
 
 > 🔌 **Core principle**: service-first — the 7 built-in tabs + 6 viewers register through the same `ctx.betterSidebar` API as third-party plugins, with fully equal capabilities; anything the ecosystem can provide better is delegated to ecosystem plugins. See the "🔌 Service" section below and the [external plugin guide](./docs/external-plugin-guide.md).
 
 ## 🆕 Recent Updates
 
-<small>v0.12.2</small>
+<div align="center">
+  <a href="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0"><img width="45%" alt="Service API base screenshot" src="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0" /></a>
+  <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="45%" alt="Add Plugins screenshot" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
+</div>
 
-> 📝 **Note**: this release adds "Position compat mode" — reserves top space for the native Windows title bar (top-right), shifting the sidebar buttons and content below it (0–120px, customizable in the gear popup). It ships together with the service API base introduced since v0.12.0: capability detection, state subscription, tab badges, lifecycle callbacks, external-link claiming (`urlTarget`) and plugin-owned settings are all in place for deep third-party integration; settings gained the "Add Plugins" recommended catalog. See the table below for details.
+### v0.13.0
 
-| Feature | Description | Screenshot |
-|---|---|---|
-| 📐 Position compat mode | New "Position compatibility mode" setting: reserves top space for the native Windows title bar (top-right) so the sidebar buttons and content sit below it (off by default); the shift distance is customizable in the gear popup (0–120px) | |
-| 🔌 Service API base | Complete type exports + `version`/`features` capability detection, state subscription (`getSnapshot`/`subscribeState`), tab `badge`, `onOpen`/`onActivate`/`onClose` lifecycle callbacks, `updateTab`/`activateTab`/`openFile`, targeted open, `meta` persisted across reloads, plugin-owned settings (`pluginToggles`/`render`), external-link claim (`urlTarget`) | <a href="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0"><img width="480" alt="Service API base screenshot" src="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0" /></a> |
-| ➕ Add Plugins | Recommended plugin catalog in settings + one-click copy install command; built-in Office preview moved to the recommended plugin | <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="480" alt="Add Plugins screenshot" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a> |
-| 🖱️ Tab-bar scroll | Mouse-wheel horizontal scrolling on the tab bar | |
-| 🐛 Fixes | Remote access 403 (trust fence now uses `trustedHosts`), sidebar crash [#31](https://github.com/omdsh-dev/DSH-better-sidebar/issues/31), Windows HTML-preview drive-path | |
+**✨ New features**
+
+- 📁 **Files window merged with the explorer** ([#151](https://github.com/omdsh-dev/DSH-better-sidebar/pull/151)): new `editorExplorer` setting (default on, editor card gear) — file tabs gain a path-input header plus a toggleable right-docked file tree (per-tab open/width memory, drag-resize 160–480px from the left edge, global filename search via the host `fs.search` route with a hard budget, skipping `.git` and symlink dirs); in merged mode tree clicks / Enter in the path input switch the current tab **in place**, separate mode opens by path; fresh sessions seed an empty Files window instead of the explorer tab, and a path-less window is a chrome'd empty file window in merged mode / a bare file manager in separate mode; the tree context menu offers "Open in new tab" and "Open to the side" (split)
+- 🎛️ **Select rows for declarative settings** ([#151](https://github.com/omdsh-dev/DSH-better-sidebar/pull/151)): settings rows gain `type: 'select'` (`options` with value/title/desc/icon, `multi` stores the picked values as an array); options with icons render big-icon option cards and keep the icon in the closed anchor; `editorExplorer` became an iconed select (merged vs separate); the capability list gained `settingSelect`
+- 🔀 **Mutual exclusion with the dsh-web-ui family right panel** ([#181](https://github.com/omdsh-dev/DSH-better-sidebar/pull/181)): reads the `aionui-panel` settings namespace's provider choice — when "Use aionui-panel" is selected, the whole better-sidebar (right sidebar / bottom panel / floating entry / all takeovers) does not mount; with DSH-better-sidebar (or no aionui installed) it behaves as before. Takes effect live after a settings save (settings-document push), no reload needed
+
+**📝 Other**
+
+- Install / update commands unified to `dsh-better-sidebar@latest` (bilingual README sync)
+
+### v0.12.3
+
+**✨ New features**
+
+- 🎨 **Skin compatibility (token-driven)**: fully consumes DSH design tokens and follows the dsh-web-ui skin center's 10 skins automatically; terminal/editor surfaces fall back to opaque backgrounds under transparent/translucent-glass token values so text never scrolls over the skin art ([#110](https://github.com/omdsh-dev/DSH-better-sidebar/pull/110), fixes #106 #105 #90 #60, also #52 #57 #92)
+- 🗂️ **Unified path handling**: UNC / symlink classification (directory symlinks expandable, broken links highlighted) + HTML-route platform guards ([#134](https://github.com/omdsh-dev/DSH-better-sidebar/pull/134), #65 #67 #43 #79 #115)
+- 🖥️ **Configurable terminal shell**: custom shell setting with Windows pwsh auto-probe ([#95](https://github.com/omdsh-dev/DSH-better-sidebar/pull/95))
+- 📝 **Editor languages**: C# / Kotlin / Swift syntax highlighting ([#120](https://github.com/omdsh-dev/DSH-better-sidebar/pull/120))
+- 🧭 **Settings nav icon**: settings-page navigation icon and layout polish ([#114](https://github.com/omdsh-dev/DSH-better-sidebar/pull/114))
+- ➕ **Recommended-plugin catalog**: added `dsh-git-remotes` — Git Remotes tab (branches/upstream/ahead-behind, fetch with prune, ff-only pull, confirm-before-push; does not replace the built-in stage/commit tab) ([#91](https://github.com/omdsh-dev/DSH-better-sidebar/pull/91)); and `dsh-video-preview` — inline video preview (.mp4/.webm/.mov/.mkv/.avi etc.) backed by a /video host route with HTTP Range (206) scrubbing, not capped by the 20MB mediaLimit ([#126](https://github.com/omdsh-dev/DSH-better-sidebar/pull/126))
+
+**🐛 Fixes**
+
+- 🔧 **xterm migration**: deprecated xterm dependency migrated to `@xterm/xterm` (Closes [#122](https://github.com/omdsh-dev/DSH-better-sidebar/issues/122), [#128](https://github.com/omdsh-dev/DSH-better-sidebar/pull/128))
+- 📝 **Markdown editor**: selection-to-conversation popup restored ([#24](https://github.com/omdsh-dev/DSH-better-sidebar/pull/24))
+- 🐛 **node-pty load failure no longer crashes the server** ([#140](https://github.com/omdsh-dev/DSH-better-sidebar/issues/140)): the host half now lazy-loads node-pty — when it is missing the plugin still mounts, the terminal shows a repair banner (copyable command + Retry button), and agent terminal tools are skipped
+- 🧪 Test engineering: unit spec split (#141) + flaky smoke cleanup fix
+
+**🚀 Engineering**
+
+- npm publishing wired to GitHub Releases (Trusted Publishing, provenance-attached tarballs); tagging a release publishes automatically ([#148](https://github.com/omdsh-dev/DSH-better-sidebar/pull/148))
+
+### v0.12.2
+
+- 📐 **Position compat mode**: new "Position compatibility mode" setting: reserves top space for the native Windows title bar (top-right) so the sidebar buttons and content sit below it (off by default); the shift distance is customizable in the gear popup (0–120px)
+- 🔌 **Service API base**: complete type exports + `version`/`features` capability detection, state subscription (`getSnapshot`/`subscribeState`), tab `badge`, `onOpen`/`onActivate`/`onClose` lifecycle callbacks, `updateTab`/`activateTab`/`openFile`, targeted open, `meta` persisted across reloads, plugin-owned settings (`pluginToggles`/`render`), external-link claim (`urlTarget`)
+- ➕ **Add Plugins**: recommended plugin catalog in settings + one-click copy install command; built-in Office preview moved to the recommended plugin
+- 🖱️ **Tab-bar scroll**: mouse-wheel horizontal scrolling on the tab bar
+- 🐛 **Fixes**: remote access 403 (trust fence now uses `trustedHosts`), sidebar crash [#31](https://github.com/omdsh-dev/DSH-better-sidebar/issues/31), Windows HTML-preview drive-path
+
+### v0.12.1
+
+- 🔌 **Service API base**: complete type exports + `version`/`features` capability detection, state subscription (`getSnapshot`/`subscribeState`), tab `badge`, `onOpen`/`onActivate`/`onClose` lifecycle callbacks, `updateTab`/`activateTab`/`openFile`, targeted open, `meta` persisted across reloads, plugin-owned settings (`pluginToggles`/`render`)
+- ➕ **Add Plugins**: recommended plugin catalog in settings + one-click copy install command; built-in Office preview moved to the recommended plugin
+- 🖱️ **Tab-bar scroll**: mouse-wheel horizontal scrolling on the tab bar
+- 🐛 **Fixes**: remote access 403 (trust fence now uses `trustedHosts`), sidebar crash [#31](https://github.com/omdsh-dev/DSH-better-sidebar/issues/31), Windows HTML-preview drive-path
+
+> 📝 Note: the 0.12.0 final could not be reused (npm reported the version as already published), so the public release became 0.12.1 — both carry identical content.
+
+### v0.12.0
+
+- 🔌 **Service API base**: complete type exports + `version`/`features` capability detection, state subscription, tab badges, lifecycle callbacks, targeted open, `meta` persisted across reloads, plugin-owned settings
+- ➕ **Add Plugins**: recommended plugin catalog in settings + one-click copy install command; built-in Office preview moved to the recommended plugin
+- 🖱️ **Tab-bar scroll**: mouse-wheel horizontal scrolling on the tab bar
+- 🐛 **Fixes**: remote access 403 (trust fence now uses `trustedHosts`), sidebar crash [#31](https://github.com/omdsh-dev/DSH-better-sidebar/issues/31), Windows HTML-preview drive-path
 
 ## 🚀 Installation
 
 **Prerequisites**: DSH installed (`dsh web` boots), Node.js ≥ 20, pnpm ≥ 10.
 
-**macOS / Linux** (also works in Git Bash / WSL on Windows):
-
 ```sh
-curl -fsSL https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.sh | bash
-```
-
-**Windows (PowerShell 5.1+ / pwsh)**:
-
-```powershell
-irm https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1 | iex
+dsh plugin --profile web add dsh-better-sidebar@latest
 ```
 
 Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R) to see the sidebar (DSH hot-reloads client changes; only host-half updates need a restart).
 
 <details>
-<summary><b>Pin a version / auto-restart (optional)</b></summary>
-
-```sh
-# macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.sh | bash -s 0.12.2 --restart
-
-# Windows PowerShell
-& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1'))) -Version 0.12.2 -Restart
-```
-
-Not sure? Add `--dry-run` (`-DryRun` in PowerShell) to preview before running.
-
-</details>
-
-<details>
-<summary><b>Manual install (step by step)</b></summary>
-
-Equivalent to the one-click script. **Step ③ is repeatable; ①② only need to run once.**
-
-**macOS / Linux (bash)**:
-
-```sh
-cd ~/.dsh/profiles/web
-
-# ① Allow node-pty / protobufjs build scripts (pnpm 11 blocks them by default; skip on pnpm 10)
-pnpm approve-builds --all
-
-# ② Allow versions published less than 24h ago (skip for older releases; if the key already exists, merge the line under it instead)
-cat >> pnpm-workspace.yaml <<'EOF'
-minimumReleaseAgeExclude:
-  - dsh-better-sidebar
-EOF
-
-# ③ Install and auto-mount (no @version = npm's latest; pin with dsh-better-sidebar@0.12.2)
-npx -y --package @deepseek-ai/dsh dsh plugin --profile web add dsh-better-sidebar
-```
-
-**Windows (PowerShell)**:
-
-```powershell
-cd ~\.dsh\profiles\web
-
-# ① Allow build scripts
-pnpm approve-builds --all
-
-# ② Allow fresh releases (once; if the key already exists, merge - dsh-better-sidebar under it instead)
-Add-Content -Path pnpm-workspace.yaml -Value "`nminimumReleaseAgeExclude:`n  - dsh-better-sidebar"
-
-# ③ Install and auto-mount
-npx -y --package @deepseek-ai/dsh dsh plugin --profile web add dsh-better-sidebar
-```
-
-</details>
-
-<details>
-<summary><b>What the script does (technical details)</b></summary>
-
-The one-click script does four things, all idempotent (safe to re-run):
-
-1. Pre-writes `allowBuilds` (node-pty / protobufjs) to dodge pnpm 11's build-script block;
-2. Pre-writes `minimumReleaseAgeExclude` to allow versions younger than 24 hours;
-3. Runs `dsh plugin --profile web add dsh-better-sidebar`: registers the dependency → detects `dsh.bundle.patch` → auto-appends the plugin to `dsh.profile.bundles`;
-4. Removes any leftover hand-written mount line to avoid double-mounting (two sidebars on the page).
-
-`curl | bash` / `irm | iex` executes remote code — the scripts are open source in the repo (`scripts/install.sh` / `scripts/install.ps1`); download and review them first if you prefer. The plugin ships as npm package `dsh-better-sidebar@0.12.2` and mounts via `dsh.bundle.patch` (the shipped `cordis.patch.yml`), so the DSH source is never modified.
-
-</details>
-
-<details>
 <summary><b>Updating</b></summary>
 
 ```sh
-dsh plugin --profile web add dsh-better-sidebar
+dsh plugin --profile web add dsh-better-sidebar@latest
 ```
 
-or re-run the one-click script; or bump the version in `~/.dsh/profiles/web/package.json` (e.g. `"^0.12.2"`) and run `pnpm install`. Then hard-refresh the browser (Cmd/Ctrl+Shift+R) — client changes do not need a DSH restart.
+or bump the version in `~/.dsh/profiles/web/package.json` (e.g. `"^0.13.0"`) and run `pnpm install`. Then hard-refresh the browser (Cmd/Ctrl+Shift+R) — client changes do not need a DSH restart.
 
 </details>
 
@@ -151,12 +125,13 @@ or re-run the one-click script; or bump the version in `~/.dsh/profiles/web/pack
 
 | Symptom | Cause & fix |
 |---|---|
-| `Ignored build scripts` | pnpm 11 blocked build scripts. Run `pnpm approve-builds --all` (the one-click script handles it). |
-| `minimum release age` / version `< 24h` | The release is younger than 24 hours. Wait, or re-run once (pnpm auto-adds `minimumReleaseAgeExclude`); the one-click script handles it. |
+| `Ignored build scripts` | pnpm 11 blocked build scripts. Run `pnpm approve-builds --all` in the profile directory (`~/.dsh/profiles/web`). |
+| `minimum release age` / version `< 24h` | The release is younger than 24 hours. Wait, or re-run once (pnpm auto-adds `minimumReleaseAgeExclude`). |
 | "profile directory not found" | Run `dsh web` once so it initializes `~/.dsh/profiles/web`. |
-| Two sidebars on the page | Double-mount: `~/.dsh/profiles/web/cordis.patch.yml` still has the old hand-written `- insert: ... better-sidebar ...` line — delete it (the one-click script cleans it). |
+| Two sidebars on the page | Double-mount: `~/.dsh/profiles/web/cordis.patch.yml` still has the old hand-written `- insert: ... better-sidebar ...` line — delete it. |
 | Terminal fails on Windows | `node-pty` relies on prebuilt binaries; if none match your Node version, install a build toolchain (VS Build Tools). Mainstream Node versions are usually covered. |
-| No bash / curl on Windows | Use the PowerShell one-click command, or install Git Bash / WSL and run the bash commands. |
+| Terminal shows "node-pty failed to load" | The `node-pty` install is missing or broken (e.g. pnpm skipped its build script). The terminal banner shows a repair command — copy it into a terminal/cmd on the DSH machine and run it (in `~/.dsh/profiles/web`: `pnpm approve-builds --all && pnpm rebuild node-pty`), then restart DSH and click Retry. The plugin and DSH core share the same `node-pty@^1.1.0`, so the repair restores both. |
+| `dsh: command not found` | Install DSH first, or run `npx -y --package @deepseek-ai/dsh dsh plugin --profile web add dsh-better-sidebar@latest`. |
 
 </details>
 
@@ -177,7 +152,7 @@ To debug local changes or track the dev branch, point the dependency at a local 
 5. Restart DSH and hard-refresh
 ```
 
-Update: `git pull && pnpm install && pnpm build` → just hard-refresh the browser (client changes hot-reload; only host-half changes need a DSH restart). To switch back to the npm channel, restore `"dsh-better-sidebar": "^0.12.2"` and re-run `pnpm install`.
+Update: `git pull && pnpm install && pnpm build` → just hard-refresh the browser (client changes hot-reload; only host-half changes need a DSH restart). To switch back to the npm channel, restore `"dsh-better-sidebar": "^0.13.0"` and re-run `pnpm install`.
 
 </details>
 

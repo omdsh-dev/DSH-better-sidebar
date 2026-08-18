@@ -1,6 +1,6 @@
 {
   "name": "dsh-better-sidebar",
-  "version": "0.12.2",
+  "version": "0.13.0",
   "description": "DSH web plugin: a VSCode-like right sidebar (explorer / editor / terminal / git / browser), isolated per conversation session. Exposes a service for other plugins to register sidebar tabs and file viewers.",
   "type": "module",
   "repository": {
@@ -60,6 +60,7 @@
     "lib/client-registry.js",
     "lib/client-terminal.js",
     "lib/client-editor.js",
+    "lib/client-mermaid.js",
     "lib/types/**/*.d.ts",
     "src",
     "scripts/install.sh",
@@ -130,6 +131,7 @@
     "@codemirror/view": "^6.43.8",
     "@lezer/highlight": "^1.2.3",
     "clsx": "^2.1.1",
+    "mermaid": "^11.16.1",
     "node-pty": "^1.1.0",
     "rxjs": "^7.8.2",
     "schemastery": "^3.18.0",

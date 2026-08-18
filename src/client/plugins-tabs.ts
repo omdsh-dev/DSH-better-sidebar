@@ -25,6 +25,13 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add "github:fuhefei/dsh-sentinel#v0.7.0"',
   },
   {
+    id: 'dsh-git-remotes',
+    name: 'dsh-git-remotes Git 远程',
+    url: 'https://github.com/yq04/dsh-git-remotes',
+    description: () => t('pluginGitRemotesDesc'),
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/yq04/dsh-git-remotes.git',
+  },
+  {
     id: 'dsh-sidebar-qa',
     name: 'dsh-sidebar-qa 划选追问',
     url: 'https://github.com/ChenRuoT/dsh-sidebar-qa',

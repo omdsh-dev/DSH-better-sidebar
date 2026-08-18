@@ -2,11 +2,13 @@
  * Single-level directory listing for the sidebar explorer. Streams the level
  * with opendir, sorts directories first then names (case-insensitive), and
  * marks POSIX-hidden entries (dot-prefixed) for dimmed display. Symlinks are
- * reported as files without probing their target — the explorer shows what
- * dirent says, keeping the read cheap for arbitrarily large levels.
+ * stat'ed once to expose their target kind — a symlink to a directory
+ * expands like a directory — and dangling links are flagged broken. The
+ * probe runs only for entries that are actually symlinks, so levels without
+ * links stay as cheap as before.
  */
-import { opendir } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { opendir, stat } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { SidebarError } from './wire.ts'
 
 /** One explorer row. */
@@ -15,6 +17,10 @@ export interface SidebarFsEntry {
   path: string
   isDir: boolean
   hidden: boolean
+  /** Whether the row is a symlink; `isDir` then describes the link's target. */
+  isSymlink: boolean
+  /** For symlinks: the target is missing or unreadable (stat failed). */
+  broken: boolean
 }
 
 /** One listed level. */
@@ -52,20 +58,51 @@ export async function listDirectory(path: string, maxEntries = 1000): Promise<Si
         overflow += 1
         continue
       }
+      // Platform join: on Windows the level path uses '\' — a hardcoded '/'
+      // would leak mixed separators into every row's path.
       rows.push({
         name: dirent.name,
-        // Platform join: on Windows the level path uses '\' — a hardcoded '/'
-        // would leak mixed separators into every row's path.
         path: join(path, dirent.name),
         isDir: dirent.isDirectory(),
+        isSymlink: dirent.isSymbolicLink(),
+        broken: false,
         hidden: dirent.name.startsWith('.'),
       })
     }
   } catch (error) {
     throw new SidebarError('fs-error', `cannot list "${path}": ${messageOf(error)}`, 400)
   }
+  // Probe symlink targets AFTER the readdir stream closes, with bounded
+  // concurrency: a symlink-heavy level (UNC/network targets) would otherwise
+  // serialize up to maxEntries stat calls and stall the explorer. Non-symlink
+  // rows are skipped by the probe, so levels without links stay as cheap as
+  // before.
+  await probeSymlinkTargets(rows)
   rows.sort(compareEntries)
   return { path, entries: rows, truncated: overflow > 0 }
+}
+
+/** How many symlink target stats run in flight during one level listing. */
+const SYMLINK_PROBE_CONCURRENCY = 32
+
+/** Probe each symlink row's target once (bounded concurrency, order-preserving). */
+async function probeSymlinkTargets(rows: SidebarFsEntry[], concurrency = SYMLINK_PROBE_CONCURRENCY): Promise<void> {
+  let next = 0
+  const workers = Array.from({ length: Math.min(concurrency, rows.length) }, async () => {
+    for (;;) {
+      const index = next
+      next += 1
+      if (index >= rows.length) return
+      const row = rows[index]!
+      if (!row.isSymlink) continue
+      // stat follows the chain; any failure (missing target, ELOOP, permission)
+      // leaves the row as a broken file-shaped link the editor refuses to read.
+      const info = await stat(row.path).catch(() => undefined)
+      row.isDir = info !== undefined ? info.isDirectory() : row.isDir
+      row.broken = info === undefined
+    }
+  })
+  await Promise.all(workers)
 }
 
 /** The root row label of a listing: the last path segment (or the full path at the filesystem root). */
@@ -80,9 +117,15 @@ export function parentOf(path: string): string | undefined {
   return parent === path ? undefined : parent
 }
 
-/** Normalize a caller-supplied path to an absolute, resolved path or throw fs-error. */
+/**
+ * Normalize a caller-supplied path to an absolute, resolved path or throw
+ * fs-error. `path.isAbsolute()` is the OS's own notion of absolute: POSIX
+ * roots (`/...`), Windows drive letters (`C:\...`) and — on win32 — UNC
+ * network shares (`\\server\share\...`); drive-relative forms (`C:foo`)
+ * stay rejected.
+ */
 export function requireAbsolute(path: string): string {
-  if (!path.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(path)) {
+  if (!isAbsolute(path)) {
     throw new SidebarError('fs-error', `"${path}" is not an absolute path`, 400)
   }
   return resolve(path)

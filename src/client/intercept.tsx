@@ -76,8 +76,10 @@ export function registerTurnTailInterception(ctx: Context, store: SidebarStore):
     name: 'conversation.chat.turnTail',
     // Decline the takeover while the editor tab type is disabled in the side
     // card settings: the produced-files row falls back to the default
-    // deliverables behavior instead of offering chips that cannot open.
+    // deliverables behavior instead of offering chips that cannot open. Also
+    // while the sidebar is externally disabled (aionui-panel chosen).
     select: (owner) => {
+      if (store.getSuspended()) return null
       if (store.getPrefs().tabsEnabled['editor'] === false) return null
       return selectProducedFiles(owner)
     },
@@ -99,7 +101,8 @@ export function registerTurnTailInterception(ctx: Context, store: SidebarStore):
  */
 export function registerOpenPathInterception(ctx: Context, store: SidebarStore): () => void {
   return wrapOpenPath(ctx.workspaces, {
-    takeoverEnabled: () => store.getPrefs().interceptOpenPath !== false
+    takeoverEnabled: () => !store.getSuspended()
+      && store.getPrefs().interceptOpenPath !== false
       && store.getPrefs().tabsEnabled['editor'] !== false,
     currentSessionId: () => ctx.sessions.list.getSnapshot().current,
     openInSidebar: (path, sessionId) => { openSidebarFile(ctx, store, sessionId, path) },

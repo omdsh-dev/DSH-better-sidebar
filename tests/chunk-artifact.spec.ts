@@ -15,11 +15,16 @@ import { CHUNK_EXTERNALS } from '../src/client/chunk-loader.ts'
 
 const g = globalThis as Record<string, unknown>
 
-const CHUNKS = ['terminal', 'editor']
+const CHUNKS = ['terminal', 'editor', 'mermaid']
 
 describe('built chunk artifacts', () => {
   it('each chunk assigns its global registry slot when executed as a script', () => {
     g.window = g // classic-script globals
+    // mermaid's core hooks window.addEventListener('load') at module scope
+    // (its startOnLoad wiring); the Node global lacks the API, so stub it
+    // exactly like browser-globals.ts does for its window stub.
+    if (typeof g.addEventListener !== 'function') g.addEventListener = () => {}
+    if (typeof g.removeEventListener !== 'function') g.removeEventListener = () => {}
     for (const name of CHUNKS) {
       const code = readFileSync(`lib/client-${name}.js`, 'utf8')
       // eslint-disable-next-line no-new-func
