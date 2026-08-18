@@ -132,11 +132,20 @@ export function EditorHost(props: {
    * The context menu's "open to the side": a fresh editor tab (uid id — the
    * `'editor:' + path` convention would clash with the id safety net on a
    * second side-open of the same file) in a rightward split of THIS pane.
+   * Honours the editor tab's enable gate (an already-open editor keeps
+   * rendering, but no NEW editor is created while the type is disabled).
    */
   const openFileSide = (absolute: string): void => {
+    if (ctx.betterSidebar?.isTabEnabled('editor') === false) return
     store.reduce((state) => {
-      const key = treeOf(state, tab.id)
-      const pane = leafWithTab(state[key], tab.id) ?? firstLeaf(state[key])
+      // The tab may live in EITHER tree (the bottom workbench hosts editors
+      // too). treeOf only recognizes pane/split ids, so find the tab's pane
+      // by scanning both trees FIRST, then place the split beside it.
+      const rightLeaf = leafWithTab(state.splits, tab.id)
+      const bottomLeaf = leafWithTab(state.bottomSplits, tab.id)
+      const inBottom = bottomLeaf !== undefined
+      const key: 'splits' | 'bottomSplits' = inBottom ? 'bottomSplits' : 'splits'
+      const paneId = (inBottom ? bottomLeaf : rightLeaf)?.id ?? firstLeaf(state[key]).id
       const fresh: SidebarTab = {
         id: mintTabId(),
         type: 'editor',
@@ -144,7 +153,7 @@ export function EditorHost(props: {
         path: absolute,
         meta: { treeOpen: false },
       }
-      const { node, leafId } = insertLeafAt(state[key], pane.id, 'row', fresh, false)
+      const { node, leafId } = insertLeafAt(state[key], paneId, 'row', fresh, false)
       return { ...state, [key]: node, activePane: leafId }
     })
   }
