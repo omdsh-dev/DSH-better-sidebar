@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
-  activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, createSidebarStore,
+  activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, carryFileWorkbenchState, closeTab, createSidebarStore,
   insertLeafAt, makeDefaultState, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
   openTabInActivePane, patchTab, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight,
   splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded, togglePanel,
@@ -762,6 +762,141 @@ describe('persisted state sanitization', () => {
   })
 })
 
+describe('file workbench continuity', () => {
+  it('carries panel geometry, expanded folders, and the active file without dropping target tabs', () => {
+    const sourceBase = makeDefaultState(520, true)
+    const sourceTab: SidebarTab = {
+      id: 'editor:/workspace/src/app.ts',
+      type: 'editor',
+      title: 'app.ts',
+      path: '/workspace/src/app.ts',
+      meta: { treeOpen: true, treeWidth: 318 },
+    }
+    const source: SidebarState = {
+      ...sourceBase,
+      activePane: 'source-pane',
+      expanded: ['/workspace/src'],
+      splits: { kind: 'leaf', id: 'source-pane', tabs: [sourceTab], active: sourceTab.id },
+    }
+    const targetBase = makeDefaultState(320, false)
+    const targetHome = allLeaves(targetBase.splits)[0]!.tabs[0]!
+    const target: SidebarState = {
+      ...targetBase,
+      activePane: 'target-pane',
+      expanded: ['/workspace/test'],
+      splits: {
+        kind: 'leaf',
+        id: 'target-pane',
+        tabs: [targetHome, { id: 'git', type: 'git', title: 'Git' }],
+        active: 'git',
+      },
+    }
+
+    const carried = carryFileWorkbenchState(source, target)
+    const leaf = allLeaves(carried.splits)[0]!
+    const editor = leaf.tabs.find(tab => tab.type === 'editor')!
+    expect(carried.panelOpen).toBe(true)
+    expect(carried.width).toBe(520)
+    expect(carried.expanded).toEqual(['/workspace/src'])
+    expect(leaf.tabs.some(tab => tab.type === 'git')).toBe(true)
+    expect(editor).toMatchObject({
+      id: targetHome.id,
+      title: 'app.ts',
+      path: '/workspace/src/app.ts',
+      meta: { treeOpen: true, treeWidth: 318 },
+    })
+    expect(editor.meta).not.toBe(sourceTab.meta)
+    expect(leaf.active).toBe(editor.id)
+    expect(carried.activePane).toBe(leaf.id)
+    expect(carried.bottomSplits).toBe(target.bottomSplits)
+  })
+
+  it('keeps an active bottom-panel file in the bottom panel', () => {
+    const sourceBase = makeDefaultState(420, false)
+    const editor: SidebarTab = {
+      id: 'editor:/workspace/notes.md',
+      type: 'editor',
+      title: 'notes.md',
+      path: '/workspace/notes.md',
+      meta: { treeOpen: true, treeWidth: 276 },
+    }
+    const source: SidebarState = {
+      ...sourceBase,
+      bottomOpen: true,
+      bottomHeight: 360,
+      activePane: 'bottom-source',
+      splits: { kind: 'leaf', id: 'right-source', tabs: [], active: null },
+      bottomSplits: { kind: 'leaf', id: 'bottom-source', tabs: [editor], active: editor.id },
+    }
+    const target = makeDefaultState(300, false)
+    const carried = carryFileWorkbenchState(source, target)
+    const bottomLeaf = allLeaves(carried.bottomSplits)[0]!
+    expect(carried.bottomOpen).toBe(true)
+    expect(carried.bottomHeight).toBe(360)
+    expect(carried.activePane).toBe(bottomLeaf.id)
+    expect(bottomLeaf.tabs.find(tab => tab.type === 'editor')).toMatchObject({
+      path: '/workspace/notes.md',
+      meta: { treeOpen: true, treeWidth: 276 },
+    })
+    expect(allLeaves(carried.splits)[0]!.tabs).toEqual(allLeaves(target.splits)[0]!.tabs)
+  })
+
+  it('moves an existing target file across panels instead of duplicating its path', () => {
+    const sourceBase = makeDefaultState(420, true)
+    const sourceLeaf = allLeaves(sourceBase.splits)[0]!
+    const sourceEditor: SidebarTab = {
+      id: 'editor:/workspace/shared.ts', type: 'editor', title: 'shared.ts', path: '/workspace/shared.ts',
+    }
+    const source: SidebarState = {
+      ...sourceBase,
+      activePane: sourceLeaf.id,
+      splits: { ...sourceLeaf, tabs: [sourceEditor], active: sourceEditor.id },
+    }
+    const targetBase = makeDefaultState(300, true)
+    const target: SidebarState = {
+      ...targetBase,
+      bottomOpen: true,
+      bottomSplits: {
+        kind: 'leaf',
+        id: 'target-bottom',
+        tabs: [
+          { ...sourceEditor, id: 'existing-editor' },
+          { id: 'terminal:1', type: 'terminal', title: 'Terminal 1' },
+        ],
+        active: 'existing-editor',
+      },
+    }
+    const carried = carryFileWorkbenchState(source, target)
+    const editors = allLeaves(carried.splits).concat(allLeaves(carried.bottomSplits))
+      .flatMap(leaf => leaf.tabs)
+      .filter(tab => tab.type === 'editor' && tab.path === '/workspace/shared.ts')
+    expect(editors).toHaveLength(1)
+    expect(editors[0]!.id).toBe('existing-editor')
+    expect(allLeaves(carried.splits)[0]!.active).toBe('existing-editor')
+    expect(allLeaves(carried.bottomSplits)[0]!.tabs.some(tab => tab.type === 'terminal')).toBe(true)
+  })
+
+  it('carries only geometry when no editor is visible in the outgoing session', () => {
+    const sourceBase = makeDefaultState(480, true)
+    const sourceLeaf = allLeaves(sourceBase.splits)[0]!
+    const source: SidebarState = {
+      ...sourceBase,
+      expanded: ['/shared'],
+      splits: {
+        ...sourceLeaf,
+        tabs: [...sourceLeaf.tabs, { id: 'git', type: 'git', title: 'Git' }],
+        active: 'git',
+      },
+    }
+    const target = makeDefaultState(300, false)
+    const carried = carryFileWorkbenchState(source, target)
+    expect(carried.panelOpen).toBe(true)
+    expect(carried.width).toBe(480)
+    expect(carried.expanded).toEqual(target.expanded)
+    expect(carried.splits).toBe(target.splits)
+  })
+})
+
 describe('v0.12.0 store additions', () => {
   // These blocks exercise store reduce/reduceFor (which schedule the
   // localStorage persist through window timers) and sanitizeState (which
@@ -776,6 +911,98 @@ describe('v0.12.0 store additions', () => {
     const g = globalThis as Record<string, unknown>
     delete g.window
     delete g.localStorage
+  })
+
+  it('keeps and persists the folder browser and active file across switches and the new-session gap', () => {
+    const g = globalThis as Record<string, unknown>
+    let timerId = 0
+    const timers = new Map<number, () => void>()
+    const writes = new Map<string, string>()
+    g.window = {
+      clearTimeout: (id: number) => { timers.delete(id) },
+      setTimeout: (fn: () => void) => { const id = ++timerId; timers.set(id, fn); return id },
+      innerWidth: 1024,
+      innerHeight: 800,
+    }
+    g.localStorage = {
+      getItem: () => null,
+      setItem: (key: string, value: string) => { writes.set(key, value) },
+    }
+    const flush = (): void => {
+      for (const [id, fn] of [...timers]) {
+        timers.delete(id)
+        fn()
+      }
+    }
+
+    const store = createSidebarStore()
+    store.setSession('source')
+    store.reduce(state => {
+      const leaf = allLeaves(state.splits)[0]!
+      const editor: SidebarTab = {
+        id: 'editor:/workspace/readme.md',
+        type: 'editor',
+        title: 'readme.md',
+        path: '/workspace/readme.md',
+        meta: { treeOpen: true, treeWidth: 304 },
+      }
+      return {
+        ...state,
+        panelOpen: true,
+        width: 510,
+        expanded: ['/workspace/docs'],
+        activePane: leaf.id,
+        splits: { ...leaf, tabs: [editor], active: editor.id },
+      }
+    })
+    store.reduceFor('target', state => {
+      const leaf = allLeaves(state.splits)[0]!
+      return {
+        ...state,
+        activePane: leaf.id,
+        splits: {
+          ...leaf,
+          tabs: [...leaf.tabs, { id: 'git', type: 'git', title: 'Git' }],
+          active: 'git',
+        },
+      }
+    })
+
+    store.setSession('target')
+    const target = store.getSnapshot().state!
+    const leaf = allLeaves(target.splits)[0]!
+    expect(target.panelOpen).toBe(true)
+    expect(target.width).toBe(510)
+    expect(target.expanded).toContain('/workspace/docs')
+    expect(leaf.tabs.some(tab => tab.type === 'git')).toBe(true)
+    expect(leaf.tabs.find(tab => tab.type === 'editor')).toMatchObject({
+      path: '/workspace/readme.md',
+      meta: { treeOpen: true, treeWidth: 304 },
+    })
+    expect(leaf.active).toBe(leaf.tabs.find(tab => tab.type === 'editor')!.id)
+    flush()
+    expect(JSON.parse(writes.get('dsh-sidebar:v1:target')!)).toMatchObject({
+      panelOpen: true,
+      width: 510,
+      expanded: ['/workspace/docs'],
+    })
+
+    store.setSession(undefined)
+    store.setSession('new-session')
+    const created = store.getSnapshot().state!
+    const createdLeaf = allLeaves(created.splits)[0]!
+    expect(createdLeaf.tabs.find(tab => tab.type === 'editor')).toMatchObject({
+      path: '/workspace/readme.md',
+      meta: { treeOpen: true, treeWidth: 304 },
+    })
+    expect(created.panelOpen).toBe(true)
+    expect(created.expanded).toEqual(['/workspace/docs'])
+    flush()
+    expect(JSON.parse(writes.get('dsh-sidebar:v1:new-session')!)).toMatchObject({
+      panelOpen: true,
+      width: 510,
+      expanded: ['/workspace/docs'],
+    })
   })
 
   describe('store.reduceFor (targeted opens, v0.12.0)', () => {

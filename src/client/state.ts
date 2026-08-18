@@ -1,9 +1,9 @@
 /**
- * Per-session sidebar state: the panel geometry, the split-pane workbench
- * tree, open tabs, and the explorer expansion set. One state instance per
- * conversation id, persisted to localStorage under `dsh-sidebar:v1:<id>` so
- * a reload restores the exact layout of the session it belongs to — switching
- * conversations swaps the whole state (memory + isolation).
+ * Session-scoped sidebar state: the split-pane workbench tree and non-editor
+ * tabs remain isolated per conversation id, persisted to localStorage under
+ * `dsh-sidebar:v1:<id>`. The visible file workbench follows conversation
+ * switches: panel geometry, explorer expansion, and the active editor/file are
+ * carried into the next session while terminals and other tabs stay isolated.
  *
  * The split tree is a recursive structure: a leaf holds a tab group, a split
  * divides the space row- or column-wise with fractional sizes. All tree
@@ -960,7 +960,106 @@ function sanitizeNode(node: unknown, seen: Set<string>, reid: Map<string, string
   return undefined
 }
 
-/** The session-scoped store: one state per conversation, localStorage-backed. */
+type WorkbenchTree = 'splits' | 'bottomSplits'
+
+/** The editor tab representing a currently visible file workbench pane. */
+function activeVisibleEditor(state: SidebarState): { tab: SidebarTab; tree: WorkbenchTree } | undefined {
+  const groups: Array<{ tree: WorkbenchTree; leaves: SidebarLeaf[] }> = [
+    ...(state.panelOpen ? [{ tree: 'splits' as const, leaves: allLeaves(state.splits) }] : []),
+    ...(state.bottomOpen ? [{ tree: 'bottomSplits' as const, leaves: allLeaves(state.bottomSplits) }] : []),
+  ]
+  if (state.activePane !== null) {
+    for (const group of groups) {
+      const leaf = group.leaves.find(candidate => candidate.id === state.activePane)
+      const tab = leaf?.tabs.find(candidate => candidate.id === leaf.active)
+      if (tab?.type === 'editor') return { tab, tree: group.tree }
+    }
+  }
+  for (const group of groups) {
+    for (const leaf of group.leaves) {
+      const tab = leaf.tabs.find(candidate => candidate.id === leaf.active && candidate.type === 'editor')
+      if (tab !== undefined) return { tab, tree: group.tree }
+    }
+  }
+  return undefined
+}
+
+/**
+ * Carry the user-visible file workbench into another session without leaking
+ * session-owned tabs. Panel visibility/size, expanded directories, the active
+ * file, and editor tree meta follow the user; terminal/git/browser/etc.
+ * tabs already stored on the target session remain untouched.
+ */
+export function carryFileWorkbenchState(source: SidebarState, target: SidebarState): SidebarState {
+  const sourceView = activeVisibleEditor(source)
+  let next: SidebarState = {
+    ...target,
+    panelOpen: source.panelOpen,
+    width: source.width,
+  }
+  if (sourceView === undefined) return next
+  const sourceEditor = sourceView.tab
+  if (sourceView.tree === 'bottomSplits') {
+    next = { ...next, bottomOpen: true, bottomHeight: source.bottomHeight }
+  }
+  next = { ...next, expanded: [...source.expanded] }
+
+  const targetTree = next[sourceView.tree]
+  const oppositeTreeKey: WorkbenchTree = sourceView.tree === 'splits' ? 'bottomSplits' : 'splits'
+  const leaves = allLeaves(targetTree)
+  const sameFile = leaves.flatMap(leaf => leaf.tabs.map(tab => ({ leaf, tab })))
+    .find(({ tab }) => tab.type === 'editor' && tab.path === sourceEditor.path)
+  const sameFileElsewhere = sourceEditor.path === undefined
+    ? undefined
+    : allLeaves(next[oppositeTreeKey]).flatMap(leaf => leaf.tabs.map(tab => ({ leaf, tab })))
+      .find(({ tab }) => tab.type === 'editor' && tab.path === sourceEditor.path)
+  const emptyHome = sourceEditor.path === undefined
+    ? undefined
+    : leaves.flatMap(leaf => leaf.tabs.map(tab => ({ leaf, tab })))
+      .find(({ tab }) => tab.type === 'editor' && tab.path === undefined)
+  const destination = sameFile ?? emptyHome
+  const leaf = destination?.leaf
+    ?? (next.activePane === null ? undefined : leaves.find(candidate => candidate.id === next.activePane))
+    ?? leaves[0]!
+  const existingIds = new Set(
+    allLeaves(next.splits).concat(allLeaves(next.bottomSplits)).flatMap(candidate => candidate.tabs.map(tab => tab.id)),
+  )
+  let tabId = sameFile?.tab.id
+    ?? sameFileElsewhere?.tab.id
+    ?? emptyHome?.tab.id
+    ?? (sourceEditor.path === undefined ? mintTabId() : `editor:${sourceEditor.path}`)
+  if (destination === undefined && sameFileElsewhere === undefined && existingIds.has(tabId)) tabId = mintTabId()
+  const carried: SidebarTab = {
+    id: tabId,
+    type: 'editor',
+    title: sourceEditor.title,
+    ...(sourceEditor.path !== undefined ? { path: sourceEditor.path } : {}),
+    ...(sourceEditor.meta !== undefined ? { meta: structuredClone(sourceEditor.meta) } : {}),
+  }
+  const carriedTree = mapLeaf(targetTree, leaf.id, candidate => {
+    if (destination === undefined) candidate.tabs = [...candidate.tabs, carried]
+    else candidate.tabs = candidate.tabs.map(tab => tab.id === destination.tab.id ? carried : tab)
+    candidate.active = carried.id
+  })
+  let oppositeTree = next[oppositeTreeKey]
+  if (sameFileElsewhere !== undefined) {
+    let emptied = false
+    oppositeTree = mapLeaf(oppositeTree, sameFileElsewhere.leaf.id, candidate => {
+      candidate.tabs = candidate.tabs.filter(tab => tab.id !== sameFileElsewhere.tab.id)
+      if (candidate.active === sameFileElsewhere.tab.id) {
+        candidate.active = candidate.tabs[candidate.tabs.length - 1]?.id ?? null
+      }
+      emptied = candidate.tabs.length === 0
+    })
+    if (emptied) oppositeTree = removeLeafAt(oppositeTree, sameFileElsewhere.leaf.id)
+  }
+  next = sourceView.tree === 'splits'
+    ? { ...next, activePane: leaf.id, splits: carriedTree, bottomSplits: oppositeTree }
+    : { ...next, activePane: leaf.id, bottomSplits: carriedTree, splits: oppositeTree }
+  return next
+}
+
+/** Session-scoped store with file-workbench continuity across conversations. */
 export class SidebarStore {
   private readonly bySession = new Map<string, SidebarState>()
   private snapshot: SidebarSnapshot = {
@@ -969,6 +1068,8 @@ export class SidebarStore {
     prefs: { ...SIDEBAR_PREFS_DEFAULTS },
   }
   private readonly listeners = new Set<() => void>()
+  /** Last concrete session state, retained across the transient no-session frame used while creating/opening chats. */
+  private lastSessionState: SidebarState | undefined
   /** Per-session persist debounce timers (v0.12.0+: one per session, so a
    *  targeted open never cancels another session's pending write). */
   private readonly persistTimers = new Map<string, number>()
@@ -1012,22 +1113,34 @@ export class SidebarStore {
     return { ...this.prefs }
   }
 
-  /** Select a session (or none); loads its persisted state. */
+  /**
+   * Select a session (or none). Session-owned tabs load from that session's
+   * state; the outgoing file workbench is then carried into the target so the
+   * panel, folder tree, and active file do not disappear during navigation.
+   */
   setSession(sessionId: string | undefined): void {
     if (this.snapshot.sessionId === sessionId) return
+    const current = this.snapshot.state
+    if (current !== undefined) this.lastSessionState = current
+    const outgoing = current ?? this.lastSessionState
     if (sessionId === undefined) {
       this.snapshot = { sessionId: undefined, state: undefined, prefs: this.prefs }
     } else {
       let state = this.bySession.get(sessionId)
       if (state === undefined) {
         state = loadState(sessionId, this.prefs)
-        this.bySession.set(sessionId, state)
       } else {
         // Cache hit: another session's load/ops may have left the uid
         // counter below THIS session's persisted ids — re-seed so fresh
         // pane/split ids can never collide with its tree.
         nextIdCounter = maxCounterId(state)
       }
+      if (outgoing !== undefined) {
+        state = carryFileWorkbenchState(outgoing, state)
+        this.schedulePersist(sessionId, state)
+      }
+      this.bySession.set(sessionId, state)
+      this.lastSessionState = state
       this.snapshot = { sessionId, state, prefs: this.prefs }
     }
     this.notify()
@@ -1121,6 +1234,7 @@ export class SidebarStore {
   }
 
   private schedulePersist(sessionId: string, state: SidebarState): void {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return
     // Per-session debounce timers: one session's pending write must never
     // cancel another's (targeted opens schedule writes for INACTIVE
     // sessions while the active session may already have one pending —

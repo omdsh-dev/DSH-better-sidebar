@@ -27,7 +27,7 @@
 - **🌿 Git Panel**: real diff + VSCode-style diff tabs, history, right-click to stage / commit / revert
 - **🧩 Background Tasks**: agent topology + background tasks (exit codes / live output / force-kill)
 - **🪟 Dual Workbench**: right sidebar + bottom panel; drag tabs to split / merge panes (cross-panel), mobile auto-merges into a full-width drawer
-- **🔁 Session Isolation**: layout / tabs / panels persisted per session, stale state auto-purged
+- **🔁 Session-aware continuity**: terminal / Git / browser tabs remain isolated and persisted per session, while the open file workbench (panel size, folder expansion, tree visibility, active file) follows conversation switches and new sessions
 - **⚙️ Declarative Settings**: per-item toggles in the "Side Cards" settings section, secondary settings via the gear dialog
 - **⚡ On-demand Loading**: only ~325KB core at startup; heavy deps (terminal / editor / mermaid diagrams) load on demand ([design](docs/plans/2026-08-12-lazy-chunks-design.md))
 - **🌏 i18n**: UI text follows DSH's language (zh / en) with live switching
@@ -237,7 +237,7 @@ pnpm test         # vitest (includes manifest consistency guard; build first)
 pnpm watch        # tsdown --watch
 ```
 
-**Architecture**: a single npm package with host/client halves — host (`src/index.ts`): `/sidebar/api/*` JSON API, `/sidebar/file` media route, `/sidebar/html` preview route, `/sidebar/ws/terminal` WebSocket (fs / git / pty / preview, all session-scoped with a trust fence); client (`src/client/index.tsx`): portal sidebar + views + interception; state persisted per session in localStorage. Organized per DSH official conventions (no default export, dual client bundles); no dependency on npm / checkout at runtime (`@deepseek-ai/*` provided by the web profile).
+**Architecture**: a single npm package with host/client halves — host (`src/index.ts`): `/sidebar/api/*` JSON API, `/sidebar/file` media route, `/sidebar/html` preview route, `/sidebar/ws/terminal` WebSocket (fs / git / pty / preview, all session-scoped with a trust fence); client (`src/client/index.tsx`): portal sidebar + views + interception. State is persisted per session in localStorage; on conversation navigation, only the visible file-workbench view is carried into the target session, while session-owned tools remain isolated. Organized per DSH official conventions (no default export, dual client bundles); no dependency on npm / checkout at runtime (`@deepseek-ai/*` provided by the web profile).
 
 ## 🔐 Security
 
