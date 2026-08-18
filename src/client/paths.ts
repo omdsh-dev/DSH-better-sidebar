@@ -41,7 +41,8 @@ export function relativeTo(cwd: string, path: string): string {
   const norm = (value: string): string => value.replace(/\\/g, '/')
   const nBase = norm(base)
   const nPath = norm(path)
-  if (nPath === nBase) return '.'
-  if (nPath.toLowerCase().startsWith(`${nBase.toLowerCase()}/`)) return nPath.slice(nBase.length + 1)
+  const comparablePath = nPath.replace(/\/+$/, '')
+  if (comparablePath === nBase) return '.'
+  if (comparablePath.toLowerCase().startsWith(`${nBase.toLowerCase()}/`)) return comparablePath.slice(nBase.length + 1)
   return path
 }
