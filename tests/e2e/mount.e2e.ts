@@ -250,12 +250,12 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await fileRow.click({ position: { x: 8, y: 8 } })
   await editorChunk
   // In-place mode (editorExplorer default): the SAME tab switches to the
-  // file — its title is rewritten, no new tab appears. One "Files" tab
-  // remains: the second files window the sweep opened via the + menu.
+  // file — its title is rewritten, no new Files tab is opened. The pinned home
+  // tab therefore no longer has the "Files" title.
   await expect(
     sidebar.locator('[title="Files"][draggable="true"]'),
     'in-place mode rewrites the activated home tab instead of opening a new one',
-  ).toHaveCount(1)
+  ).toHaveCount(0)
   const pathInput = sidebar.locator('input[placeholder^="File path"]:visible')
   await expect(pathInput, 'the files window header path input shows the opened file').toHaveValue(new RegExp(`${SEEDED_FILE}$`))
   await page.waitForTimeout(1_500)
