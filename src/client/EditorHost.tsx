@@ -187,6 +187,13 @@ export function EditorHost(props: {
       store.reduce(s => setTreeWidth(s, finalWidth))
     }
   }
+  const onResizeCancel = (): void => {
+    // Pointer cancellation (for example, a browser gesture interrupting the
+    // drag) must discard the preview instead of committing the cancellation
+    // event's unreliable clientX, which is commonly zero.
+    dragRef.current = null
+    setDragWidth(null)
+  }
 
   useEffect(() => {
     // A (re)load or a path-less tab clears any hoisted toolbar state — the
@@ -336,7 +343,7 @@ export function EditorHost(props: {
               onPointerDown={onResizeStart}
               onPointerMove={onResizeMove}
               onPointerUp={onResizeEnd}
-              onPointerCancel={onResizeEnd}
+              onPointerCancel={onResizeCancel}
             />
             <TreePanel
               sessionId={scope.sessionId}

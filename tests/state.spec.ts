@@ -382,6 +382,12 @@ describe('sidebar state', () => {
     expect(s.bottomOpen).toBe(true)
   })
 
+  it('setTreeWidth clamps to the global editor split contract', () => {
+    expect(setTreeWidth(state(), 50).treeWidth).toBe(160)
+    expect(setTreeWidth(state(), 999).treeWidth).toBe(480)
+    expect(setTreeWidth(state(), 340.6).treeWidth).toBe(341)
+  })
+
   it('setBottomHeight clamps to the contract range', () => {
     expect(setBottomHeight(state(), 50).bottomHeight).toBe(BOTTOM_MIN)
     const g = globalThis as Record<string, unknown>

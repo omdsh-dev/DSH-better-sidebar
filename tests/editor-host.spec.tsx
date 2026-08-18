@@ -27,6 +27,9 @@ function setup(): {
   ctx: Context
   homeTab: () => SidebarTab
 } {
+  // Each host test starts from the default global editor split width; the
+  // production store intentionally persists this value across store instances.
+  window.localStorage.removeItem('dsh-sidebar:v1:global')
   const store = createSidebarStore()
   const service = createBetterSidebarService(store)
   // The openTab path needs a registered editor descriptor (dedupe by path).
@@ -253,6 +256,27 @@ describe('EditorHost (files window)', () => {
       expect(store.getSnapshot().state?.treeWidth).toBe(340)
       // treeWidth no longer lives on the tab's meta (only the open flag does).
       expect(homeTab().meta).toEqual({ treeOpen: true })
+    } finally {
+      unmount()
+    }
+  })
+
+  it('cancelling a resize discards the preview instead of committing the cancel coordinate', () => {
+    const { store, ctx, homeTab } = setup()
+    const { container, unmount } = mountHost(ctx, store, homeTab)
+    try {
+      const handle = container.querySelector('[role="separator"]')!
+      const dock = handle.parentElement!
+      act(() => {
+        handle.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 200 }))
+        handle.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, clientX: 320 }))
+      })
+      expect(dock.style.width).toBe('360px')
+      // Browsers may report clientX=0 on pointercancel; it must not collapse
+      // the persisted width to the minimum.
+      act(() => { handle.dispatchEvent(new MouseEvent('pointercancel', { bubbles: true, clientX: 0 })) })
+      expect(dock.style.width).toBe('240px')
+      expect(store.getSnapshot().state?.treeWidth).toBe(240)
     } finally {
       unmount()
     }
