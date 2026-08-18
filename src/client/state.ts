@@ -1274,16 +1274,16 @@ function sanitizeNode(node: unknown, seen: Set<string>, reid: Map<string, string
       if (typeof candidate.type !== 'string') return undefined
       // The standalone explorer tab type merged INTO the editor (the single
       // files window): a persisted explorer tab reopens as an editor home
-      // tab — no path, tree panel open (an existing meta object survives).
+      // tab — no path, tree panel open. The old per-tab treeWidth is
+      // intentionally discarded: the dock width now belongs to the global
+      // layout, while this migrated tab retains only its per-tab open/closed
+      // flag.
       if (candidate.type === 'explorer') {
-        const meta = candidate.meta !== null && typeof candidate.meta === 'object' && !Array.isArray(candidate.meta)
-          ? candidate.meta as Record<string, unknown>
-          : undefined
         tabs.push({
           id: candidate.id,
           type: 'editor',
           title: 'Files',
-          meta: { treeOpen: true, ...meta },
+          meta: { treeOpen: true },
         })
         continue
       }

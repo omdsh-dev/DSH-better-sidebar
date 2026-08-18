@@ -110,6 +110,21 @@ describe('EditorHost (files window)', () => {
     }
   })
 
+  it('renders the file tree before the editor area', () => {
+    const { store, ctx, homeTab } = setup()
+    const { container, unmount } = mountHost(ctx, store, homeTab)
+    try {
+      const handle = container.querySelector('[role="separator"]')!
+      const dock = handle.parentElement!
+      // The dock is the first child of the body: tree on the left, editor on
+      // the right. The resize handle is therefore on the dock's right edge.
+      expect(dock.parentElement?.firstElementChild).toBe(dock)
+      expect(dock.parentElement?.lastElementChild).not.toBe(dock)
+    } finally {
+      unmount()
+    }
+  })
+
   it('the tree toggle persists meta.treeOpen through updateTab', () => {
     const { store, ctx, homeTab } = setup()
     expect(homeTab().meta).toEqual({ treeOpen: true })
