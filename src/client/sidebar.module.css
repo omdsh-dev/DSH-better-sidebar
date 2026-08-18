@@ -764,6 +764,32 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+.explorerQuickActions {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.explorerQuickActions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.explorerQuickActions button:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
 .explorerError {
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-state-error-primary);
@@ -780,6 +806,19 @@
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-label-tertiary);
   text-align: center;
+}
+
+.fileInputHidden {
+  display: none;
+}
+
+.fileDialogText {
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.fileDialogText p {
+  margin: 0 0 8px;
 }
 
 /* ── Editor ────────────────────────────────────────────────────────────── */
@@ -1032,6 +1071,35 @@
   font: var(--dsw-font-xxxs-11);
   color: var(--dsw-alias-state-warn-label);
   background: var(--dsw-alias-state-warn-tertiary);
+}
+
+.editorConflictBanner {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--dsw-alias-state-warn-primary) 35%, transparent);
+}
+
+.editorBannerActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.editorBannerActions button {
+  flex: 1 1 120px;
+  padding: 2px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 5px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.editorBannerActions button:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 /* Live sandbox status row (HTML preview / browser tab): GREEN while the
@@ -1288,6 +1356,109 @@
   overflow-y: auto;
   padding: 10px 14px;
   font: var(--dsw-font-xs-13);
+}
+
+/* Milkdown visual GFM mode. The editor ships no opinionated theme here; it
+   consumes the same DSH tokens as the preview and CodeMirror surfaces. */
+.editorVisual {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 18px 40px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+}
+
+.editorVisualPending {
+  display: none;
+}
+
+.editorVisual :global(.milkdown),
+.editorVisual :global(.ProseMirror) {
+  min-height: 100%;
+}
+
+.editorVisual :global(.ProseMirror) {
+  outline: none;
+  font: var(--dsw-font-xs-13);
+  line-height: 1.65;
+  caret-color: var(--dsw-alias-label-primary);
+}
+
+.editorVisual :global(.ProseMirror > *:first-child) {
+  margin-top: 0;
+}
+
+.editorVisual :global(h1),
+.editorVisual :global(h2),
+.editorVisual :global(h3),
+.editorVisual :global(h4),
+.editorVisual :global(h5),
+.editorVisual :global(h6) {
+  margin: 1.2em 0 0.5em;
+  color: var(--dsw-alias-label-primary);
+  line-height: 1.25;
+}
+
+.editorVisual :global(h1),
+.editorVisual :global(h2) {
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.editorVisual :global(p),
+.editorVisual :global(ul),
+.editorVisual :global(ol),
+.editorVisual :global(blockquote),
+.editorVisual :global(pre),
+.editorVisual :global(table) {
+  margin: 0.65em 0;
+}
+
+.editorVisual :global(blockquote) {
+  padding-left: 12px;
+  border-left: 3px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.editorVisual :global(code) {
+  padding: 0.12em 0.35em;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-layer-2);
+  font: var(--dsw-font-markdown-code-block-small);
+}
+
+.editorVisual :global(pre) {
+  overflow-x: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.editorVisual :global(pre code) {
+  padding: 0;
+  background: transparent;
+}
+
+.editorVisual :global(table) {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.editorVisual :global(th),
+.editorVisual :global(td) {
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  text-align: left;
+}
+
+.editorVisual :global(th) {
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.editorVisual :global(a) {
+  color: var(--dsw-alias-interactive-primary);
 }
 
 /* ── Mermaid diagram block (markdown preview, mermaid lazy chunk) ────────

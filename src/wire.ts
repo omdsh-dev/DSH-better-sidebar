@@ -13,6 +13,8 @@ export type SidebarErrorCode =
   | 'forbidden'
   | 'method-error'
   | 'fs-error'
+  | 'fs-exists'
+  | 'fs-conflict'
   | 'git-error'
   | 'pty-error'
   | 'pty-deps-missing'

@@ -61,6 +61,7 @@
     "lib/client-terminal.js",
     "lib/client-editor.js",
     "lib/client-mermaid.js",
+    "lib/client-markdown-editor.js",
     "lib/types/**/*.d.ts",
     "src",
     "scripts/install.sh",
@@ -68,10 +69,11 @@
     "cordis.patch.yml",
     "README.md",
     "README_EN.md",
-    "LICENSE"
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "build": "rm -rf lib && tsc -p tsconfig.build.json && tsdown",
+    "build": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && tsdown",
     "prepublishOnly": "pnpm build",
     "typecheck": "tsc --noEmit",
     "bundle": "tsdown",
@@ -130,6 +132,7 @@
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.8",
     "@lezer/highlight": "^1.2.3",
+    "@milkdown/kit": "^7.22.1",
     "clsx": "^2.1.1",
     "mermaid": "^11.16.1",
     "node-pty": "^1.1.0",
@@ -162,6 +165,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^5.5.0",
     "cordis": "^4.0.0-rc.7",
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "^29.1.1",
     "lightningcss": "^1.32.0",
     "react": "^18.2.0",

@@ -15,7 +15,7 @@ import { CHUNK_EXTERNALS } from '../src/client/chunk-loader.ts'
 
 const g = globalThis as Record<string, unknown>
 
-const CHUNKS = ['terminal', 'editor', 'mermaid']
+const CHUNKS = ['terminal', 'editor', 'mermaid', 'markdown-editor']
 
 describe('built chunk artifacts', () => {
   it('each chunk assigns its global registry slot when executed as a script', () => {

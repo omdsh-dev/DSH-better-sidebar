@@ -7,10 +7,11 @@
  * the tree cache. EditorHost docks it as the tab's right panel (wrapped in
  * a drag-resize handle) and provides the file context-menu open escapes.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconDownloadOutline16, IconFolderOpen16, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
+import { uploadItemsFromDrop, uploadItemsFromFiles, type UploadItem } from './drop-upload.ts'
 import { FileTree } from './FileTree.tsx'
 import { t } from './locales.ts'
 import { resolveSidebarPath } from './produced-files.ts'
@@ -27,15 +28,51 @@ export function TreePanel(props: {
   /** File context-menu "open to the side" (passed through to FileTree). */
   onOpenFileSide?: (path: string) => void
   onReferenceFile: (path: string) => void
+  onPathMoved?: (from: string, to: string, isDir: boolean) => void
+  onPathDeleted?: (path: string, isDir: boolean) => void
+  onMutated?: () => void
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, full } = props
+  const {
+    sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide,
+    onReferenceFile, onPathMoved, onPathDeleted, onMutated, full,
+  } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshTick, setRefreshTick] = useState(0)
+  const [uploadTarget, setUploadTarget] = useState<string | null>(null)
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
+
+  const refresh = (): void => {
+    setRefreshTick(tick => tick + 1)
+    onMutated?.()
+  }
+
+  const upload = async (dir: string, items: UploadItem[]): Promise<void> => {
+    if (items.length === 0) return
+    setUploadStatus(t('uploadingFiles', { count: items.length }))
+    try {
+      for (const item of items) await api.fsUpload({ sessionId, cwd }, dir, item.relativePath, item.file)
+      setUploadStatus(null)
+      refresh()
+    } catch (failure) {
+      setUploadStatus(`${t('fileOperationFailed')}: ${failure instanceof Error ? failure.message : String(failure)}`)
+    }
+  }
+
+  const requestUpload = (dir: string, kind: 'files' | 'folder'): void => {
+    setUploadTarget(dir)
+    const input = kind === 'files' ? fileInputRef.current : folderInputRef.current
+    if (input !== null) {
+      input.value = ''
+      input.click()
+    }
+  }
 
   const needle = query.trim()
   useEffect(() => {
@@ -74,13 +111,55 @@ export function TreePanel(props: {
         <button
           type="button"
           className={css.iconButton}
+          aria-label={t('uploadFiles')}
+          title={t('uploadFiles')}
+          disabled={cwd === undefined}
+          onClick={() => { if (cwd !== undefined) requestUpload(cwd, 'files') }}
+        >
+          <IconDownloadOutline16 size={14} />
+        </button>
+        <button
+          type="button"
+          className={css.iconButton}
+          aria-label={t('uploadFolder')}
+          title={t('uploadFolder')}
+          disabled={cwd === undefined}
+          onClick={() => { if (cwd !== undefined) requestUpload(cwd, 'folder') }}
+        >
+          <IconFolderOpen16 size={14} />
+        </button>
+        <button
+          type="button"
+          className={css.iconButton}
           aria-label={t('refresh')}
           title={t('refresh')}
-          onClick={() => { setRefreshTick(tick => tick + 1) }}
+          onClick={refresh}
         >
           <IconRefreshOutline16 size={14} />
         </button>
+        <input
+          ref={fileInputRef}
+          className={css.fileInputHidden}
+          type="file"
+          multiple
+          onChange={(event) => {
+            const dir = uploadTarget ?? cwd
+            if (dir !== undefined && dir !== null) void upload(dir, uploadItemsFromFiles(event.currentTarget.files ?? []))
+          }}
+        />
+        <input
+          ref={folderInputRef}
+          className={css.fileInputHidden}
+          type="file"
+          multiple
+          {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+          onChange={(event) => {
+            const dir = uploadTarget ?? cwd
+            if (dir !== undefined && dir !== null) void upload(dir, uploadItemsFromFiles(event.currentTarget.files ?? []))
+          }}
+        />
       </div>
+      {uploadStatus !== null && <div className={clsx(css.editorSearchHint, uploadStatus.startsWith(t('fileOperationFailed')) && css.editorError)}>{uploadStatus}</div>}
       {needle === '' ? (
         <FileTree
           sessionId={sessionId}
@@ -92,6 +171,11 @@ export function TreePanel(props: {
           onOpenFileSide={onOpenFileSide}
           onReferenceFile={onReferenceFile}
           refreshTick={refreshTick}
+          onUploadRequest={requestUpload}
+          onDropFiles={(dir, data) => { void uploadItemsFromDrop(data).then(items => upload(dir, items)) }}
+          onMutated={refresh}
+          onPathMoved={onPathMoved}
+          onPathDeleted={onPathDeleted}
         />
       ) : (
         <div className={css.explorerBody}>

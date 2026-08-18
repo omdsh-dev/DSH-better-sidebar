@@ -19,6 +19,7 @@ export interface FsReadOutcome {
   binary: boolean
   content: string
   truncated: boolean
+  version?: string
   /** base64 of the first bytes (present on binary reads; sniffing material). */
   head?: string
 }
@@ -28,7 +29,7 @@ export type EditorLoadAction =
   /** No renderer: show the download UI. */
   | { kind: 'binary' }
   /** Render `viewer`'s component with the carried payload. */
-  | { kind: 'render'; viewer: FileViewerDescriptor; content?: string; truncated?: boolean; mediaUrl?: string; customData?: unknown }
+  | { kind: 'render'; viewer: FileViewerDescriptor; content?: string; truncated?: boolean; version?: string; mediaUrl?: string; customData?: unknown }
   /** Fetch the file through the host (fsRead strategy). */
   | { kind: 'fetchFsRead'; viewer: FileViewerDescriptor }
   /** Call the viewer's load() and render with its return value. */
@@ -79,7 +80,7 @@ export function planFsReadOutcome(
   mediaUrlOf: () => string,
 ): EditorLoadAction {
   if (!result.binary) {
-    return { kind: 'render', viewer, content: result.content, truncated: result.truncated }
+    return { kind: 'render', viewer, content: result.content, truncated: result.truncated, version: result.version }
   }
   const claimed = result.head === undefined ? undefined : rematch(decodeHead(result.head))
   if (claimed !== undefined && claimed.fetchStrategy === 'custom') {

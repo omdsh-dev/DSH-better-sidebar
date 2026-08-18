@@ -44,7 +44,7 @@
  * open. Chunk-only source edits still need a manual page refresh (the HMR
  * poll watches only client.js).
  */
-export type ChunkName = 'terminal' | 'editor' | 'mermaid'
+export type ChunkName = 'terminal' | 'editor' | 'mermaid' | 'markdown-editor'
 
 /** The module exports a chunk factory provides (namespace-ish record). */
 export type ChunkExports = Record<string, unknown>

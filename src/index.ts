@@ -13,8 +13,8 @@
  * session's authoritative cwd comes from the session store, and terminal
  * processes are keyed by session.
  */
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, extname, isAbsolute, join } from 'node:path'
+import { open, readFile, stat } from 'node:fs/promises'
+import { basename, extname, isAbsolute, join, resolve } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -29,6 +29,15 @@ import {
   type SidebarPrefs,
 } from './config.ts'
 import { isWithin, parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import {
+  createWorkspaceDirectory,
+  createWorkspaceFile,
+  deleteWorkspaceEntry,
+  fileVersion,
+  moveWorkspaceEntry,
+  writeWorkspaceText,
+  writeWorkspaceUpload,
+} from './fs-operations.ts'
 import { searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
@@ -139,8 +148,10 @@ async function readText(path: string, readLimit: number): Promise<{
   truncated: boolean
   binary: boolean
   size: number
+  version: string
   head?: string
 }> {
+  const versionBefore = await fileVersion(path)
   const info = await stat(path).catch((error: unknown) => {
     throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
   })
@@ -160,7 +171,11 @@ async function readText(path: string, readLimit: number): Promise<{
     const head = binary
       ? slice.subarray(0, Math.min(slice.length, READ_HEAD_LIMIT)).toString('base64')
       : undefined
-    return { content: binary ? '' : slice.toString('utf8'), truncated, binary, size, head }
+    const versionAfter = await fileVersion(path)
+    if (versionBefore === null || versionAfter !== versionBefore) {
+      throw new SidebarError('fs-conflict', `"${path}" changed while it was being read`, 409)
+    }
+    return { content: binary ? '' : slice.toString('utf8'), truncated, binary, size, version: versionBefore, head }
   } finally {
     await handle.close()
   }
@@ -236,24 +251,40 @@ function buildApi(
       // Relative paths are git-derived (status/diff report repo-root-relative
       // names; the untracked diff view reads the file through this route).
       const path = await resolveGitPath(cwd, requireString(payload, 'path'))
-      const { content, truncated, binary, size, head } = await readText(path, resolved.readLimit)
-      if (binary) return { kind: 'binary', size, truncated, head }
-      return { kind: 'text', content, truncated }
+      const { content, truncated, binary, size, version, head } = await readText(path, resolved.readLimit)
+      if (binary) return { kind: 'binary', size, truncated, version, head }
+      return { kind: 'text', content, truncated, version }
     },
     'fs.write': async (payload) => {
       const { cwd } = cwdOf(payload)
-      const path = requireAbsolute(requireString(payload, 'path'))
-      const content = requireString(payload, 'content')
-      const tmp = `${path}.dsh-sidebar-tmp-${process.pid}`
-      try {
-        await mkdir(dirname(path), { recursive: true })
-        await writeFile(tmp, content, 'utf8')
-        await rename(tmp, path)
-      } catch (error) {
-        await rm(tmp, { force: true }).catch(() => {})
-        throw new SidebarError('fs-error', `cannot write "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
-      }
-      return { ok: true }
+      const record = payload as { content?: unknown; expectedVersion?: unknown; force?: unknown } | null
+      if (typeof record?.content !== 'string') throw new SidebarError('bad-request', 'missing or invalid "content"')
+      const expectedVersion = typeof record.expectedVersion === 'string' || record.expectedVersion === null
+        ? record.expectedVersion
+        : undefined
+      return writeWorkspaceText({
+        cwd,
+        path: requireString(payload, 'path'),
+        content: record.content,
+        expectedVersion,
+        force: record.force === true,
+      })
+    },
+    'fs.create-file': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      return createWorkspaceFile(cwd, requireString(payload, 'path'))
+    },
+    'fs.create-directory': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      return createWorkspaceDirectory(cwd, requireString(payload, 'path'))
+    },
+    'fs.move': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      return moveWorkspaceEntry(cwd, requireString(payload, 'from'), requireString(payload, 'to'))
+    },
+    'fs.delete': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      return deleteWorkspaceEntry(cwd, requireString(payload, 'path'))
     },
     'git.status': async (payload) => {
       const { cwd } = cwdOf(payload)
@@ -601,6 +632,42 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       }
     },
   }), 'dsh-better-sidebar: /sidebar/api routes')
+
+  // ── Raw upload route ────────────────────────────────────────────────────
+  // One request writes one file without base64 inflation. Folder uploads send
+  // each file with a relativePath, preserving the selected directory tree.
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/sidebar/upload',
+    handler: async (req, res) => {
+      if (!fence(req)) {
+        writeJson(res, 403, { ok: false, error: { code: 'forbidden', message: 'forbidden' } })
+        return
+      }
+      if (req.method !== 'POST') {
+        writeJson(res, 405, { ok: false, error: { code: 'method-error', message: 'method not allowed' } })
+        return
+      }
+      try {
+        const url = new URL(req.url ?? '/', 'http://dsh.internal')
+        const sessionId = url.searchParams.get('sessionId')
+        const dir = url.searchParams.get('dir')
+        const relativePath = url.searchParams.get('relativePath')
+        if (sessionId === null || dir === null || relativePath === null || relativePath.trim() === '') {
+          throw new SidebarError('bad-request', 'sessionId, dir, and relativePath are required')
+        }
+        const segments = relativePath.split(/[\\/]+/).filter(Boolean)
+        if (/^(?:[A-Za-z]:)?[\\/]/.test(relativePath) || segments.length === 0 || segments.some(part => part === '.' || part === '..')) {
+          throw new SidebarError('bad-request', 'relativePath must stay below the selected upload directory')
+        }
+        const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+        const target = resolve(requireAbsolute(dir), ...segments)
+        writeOk(res, await writeWorkspaceUpload({ cwd, path: target, chunks: req, limit: resolved.uploadLimit }))
+      } catch (error) {
+        writeError(res, error)
+      }
+    },
+  }), 'dsh-better-sidebar: /sidebar/upload route')
 
   // ── Lazy chunk route (client bundle splits) ─────────────────────────────
   // Serves the client half's split bundles (lib/client-<name>.js) so the

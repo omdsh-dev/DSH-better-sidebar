@@ -31,19 +31,20 @@ import { api, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
 import { baseName } from './FileTree.tsx'
+import { pathAtOrUnder } from './editor-buffers.ts'
 import { openSidebarFile } from './intercept.tsx'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
-import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, type SidebarStore, type SidebarTab } from './state.ts'
+import { allLeaves, firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, type SidebarStore, type SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
 
 type EditorLoad =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; viewer: FileViewerDescriptor; content?: string; truncated?: boolean; mediaUrl?: string; customData?: unknown }
+  | { status: 'ready'; viewer: FileViewerDescriptor; content?: string; truncated?: boolean; version?: string; mediaUrl?: string; customData?: unknown }
   | { status: 'binary' }
 
 /** The docked tree panel's width bounds (drag-resize clamps into them). */
@@ -149,6 +150,42 @@ export function EditorHost(props: {
     })
   }
 
+  const openEditorTabs = (): SidebarTab[] => {
+    const state = store.getSnapshot().state
+    if (state === undefined) return []
+    return [...allLeaves(state.splits), ...allLeaves(state.bottomSplits)]
+      .flatMap(leaf => leaf.tabs)
+      .filter(candidate => candidate.type === 'editor' && candidate.path !== undefined && candidate.path !== '')
+  }
+
+  const handlePathMoved = (from: string, to: string, isDir: boolean): void => {
+    if (isDir) {
+      store.reduce(state => ({
+        ...state,
+        expanded: state.expanded.map(path => pathAtOrUnder(from, path) ? `${to}${path.slice(from.length)}` : path),
+      }))
+    }
+    for (const candidate of openEditorTabs()) {
+      if (candidate.path === undefined || !pathAtOrUnder(from, candidate.path)) continue
+      const next = `${to}${candidate.path.slice(from.length)}`
+      ctx.betterSidebar?.updateTab(candidate.id, { path: next, title: baseName(next) })
+    }
+  }
+
+  const handlePathDeleted = (deleted: string, isDir: boolean): void => {
+    if (isDir) {
+      store.reduce(state => ({ ...state, expanded: state.expanded.filter(path => !pathAtOrUnder(deleted, path)) }))
+    }
+    for (const candidate of openEditorTabs()) {
+      if (candidate.path === undefined || !pathAtOrUnder(deleted, candidate.path)) continue
+      if (candidate.id === tab.id) {
+        ctx.betterSidebar?.updateTab(candidate.id, { path: '', title: t('files') })
+      } else {
+        ctx.betterSidebar?.closeTab(candidate.id, scope)
+      }
+    }
+  }
+
   // The viewer's toolbar, hoisted into THIS header: the text editor reports
   // its state and registers its commands (both null/absent for viewers
   // without a toolbar — image, pdf, binary download).
@@ -214,6 +251,7 @@ export function EditorHost(props: {
             viewer: action.viewer,
             content: action.content,
             truncated: action.truncated,
+            version: action.version,
             mediaUrl: action.mediaUrl,
             customData: action.customData,
           })
@@ -235,6 +273,7 @@ export function EditorHost(props: {
               binary: result.kind === 'binary',
               content: result.kind === 'text' ? result.content : '',
               truncated: result.truncated,
+              version: result.version,
               head: result.kind === 'binary' ? result.head : undefined,
             }, (head) => ctx.betterSidebar?.matchFileViewer(path, head), mediaUrlOf)
             apply(outcome)
@@ -273,6 +312,8 @@ export function EditorHost(props: {
           onOpenFileNewTab={openFileNewTab}
           onOpenFileSide={openFileSide}
           onReferenceFile={onReferenceFile}
+          onPathMoved={handlePathMoved}
+          onPathDeleted={handlePathDeleted}
         />
       </div>
     )
@@ -282,22 +323,18 @@ export function EditorHost(props: {
     <div className={css.editor}>
       <div className={css.editorHeader}>
         <EditorPathInput key={path} path={path} cwd={scope.cwd} onOpen={openFile} />
-        {toolbar?.modes === true && (
+        {toolbar !== null && toolbar.modes.length > 0 && (
           <div className={css.editorModeToggle}>
-            <button
-              type="button"
-              className={clsx(css.editorModeButton, toolbar.mode === 'preview' && css.editorModeActive)}
-              onClick={() => { controlsRef.current?.setMode('preview') }}
-            >
-              {t('preview')}
-            </button>
-            <button
-              type="button"
-              className={clsx(css.editorModeButton, toolbar.mode === 'edit' && css.editorModeActive)}
-              onClick={() => { controlsRef.current?.setMode('edit') }}
-            >
-              {t('edit')}
-            </button>
+            {toolbar.modes.map(mode => (
+              <button
+                key={mode}
+                type="button"
+                className={clsx(css.editorModeButton, toolbar.mode === mode && css.editorModeActive)}
+                onClick={() => { controlsRef.current?.setMode(mode) }}
+              >
+                {mode === 'preview' ? t('preview') : mode === 'visual' ? t('visualEdit') : t('sourceEdit')}
+              </button>
+            ))}
           </div>
         )}
         {toolbar?.dirty === true && <span className={css.dirtyDot} title={t('unsaved')} />}
@@ -337,6 +374,7 @@ export function EditorHost(props: {
             viewerId: load.viewer.id,
             content: load.content,
             truncated: load.truncated,
+            version: load.version,
             mediaUrl: load.mediaUrl,
             customData: load.customData,
             // The viewer's toolbar always hoists into this host's header.
@@ -366,6 +404,8 @@ export function EditorHost(props: {
               onOpenFileNewTab={openFileNewTab}
               onOpenFileSide={openFileSide}
               onReferenceFile={onReferenceFile}
+              onPathMoved={handlePathMoved}
+              onPathDeleted={handlePathDeleted}
             />
           </div>
         )}

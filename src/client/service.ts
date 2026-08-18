@@ -259,6 +259,8 @@ export interface FileViewerProps {
   /** fsRead text content (fetchStrategy='fsRead'). */
   content?: string
   truncated?: boolean
+  /** Host optimistic-concurrency token captured by fs.read. */
+  version?: string
   /** mediaUrl for the path (fetchStrategy='mediaUrl'). */
   mediaUrl?: string
   /** custom load() return value (fetchStrategy='custom'). */
@@ -275,11 +277,14 @@ export interface FileViewerProps {
   onToolbarControls?: (controls: EditorToolbarControls | null) => void
 }
 
+/** Modes supported by the built-in text editor toolbar. */
+export type EditorMode = 'preview' | 'visual' | 'edit'
+
 /** The toolbar state a text editor reports to the host's merged-mode header. */
 export interface EditorToolbarState {
-  /** Whether the preview/edit mode toggle applies (markdown/html). */
-  modes: boolean
-  mode: 'preview' | 'edit'
+  /** Ordered mode buttons (empty for ordinary code files). */
+  modes: readonly EditorMode[]
+  mode: EditorMode
   dirty: boolean
   /** Whether saving applies (text content loaded). */
   editable: boolean
@@ -288,7 +293,7 @@ export interface EditorToolbarState {
 
 /** The commands the host's merged-mode header sends back to the viewer. */
 export interface EditorToolbarControls {
-  setMode(mode: 'preview' | 'edit'): void
+  setMode(mode: EditorMode): void
   save(): void
 }
 

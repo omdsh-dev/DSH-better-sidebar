@@ -59,10 +59,10 @@ export interface GitLogEntry {
 }
 
 /** Text read result. */
-export interface FsTextResult { kind: 'text'; content: string; truncated: boolean }
+export interface FsTextResult { kind: 'text'; content: string; truncated: boolean; version: string }
 /** Binary read result (no content; images load through the media route).
  *  `head` carries the first bytes (base64) for viewer detect sniffing. */
-export interface FsBinaryResult { kind: 'binary'; size: number; truncated: boolean; head: string }
+export interface FsBinaryResult { kind: 'binary'; size: number; truncated: boolean; version: string; head: string }
 
 /**
  * One jobs.output response: the output the MODEL has read so far for the
@@ -129,6 +129,30 @@ function scopePayload(scope: SessionScope, extra: Record<string, unknown>): Reco
   return { sessionId: scope.sessionId, ...(scope.cwd !== undefined && scope.cwd !== '' ? { cwd: scope.cwd } : {}), ...extra }
 }
 
+/** Raw binary upload (one file per request; no JSON/base64 expansion). */
+async function uploadFile(
+  scope: SessionScope,
+  dir: string,
+  relativePath: string,
+  file: Blob,
+  signal?: AbortSignal,
+): Promise<{ path: string; size: number }> {
+  const params = new URLSearchParams({ sessionId: scope.sessionId, dir, relativePath })
+  if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
+  let response: Response
+  try {
+    response = await fetch(`/sidebar/upload?${params.toString()}`, { method: 'POST', body: file, signal })
+  } catch (error) {
+    throw new SidebarApiError('network', error instanceof Error ? error.message : String(error))
+  }
+  const parsed: { ok?: boolean; value?: unknown; error?: { code?: string; message?: string } } | null
+    = await response.json().catch(() => null)
+  if (!response.ok || parsed?.ok !== true || parsed.value === undefined) {
+    throw new SidebarApiError(parsed?.error?.code ?? 'http', parsed?.error?.message ?? `HTTP ${response.status}`)
+  }
+  return parsed.value as { path: string; size: number }
+}
+
 /** The sidebar API surface (session scope threaded through every call). */
 export const api = {
   sessionCwd: (scope: SessionScope, signal?: AbortSignal) =>
@@ -141,8 +165,22 @@ export const api = {
     call<{ matches: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query }), signal),
   fsRead: (scope: SessionScope, path: string, signal?: AbortSignal) =>
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
-  fsWrite: (scope: SessionScope, path: string, content: string) =>
-    call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
+  fsWrite: (
+    scope: SessionScope,
+    path: string,
+    content: string,
+    options: { expectedVersion?: string | null; force?: boolean } = {},
+  ) => call<{ ok: true; version: string }>('fs.write', scopePayload(scope, { path, content, ...options })),
+  fsCreateFile: (scope: SessionScope, path: string) =>
+    call<{ path: string; version: string }>('fs.create-file', scopePayload(scope, { path })),
+  fsCreateDirectory: (scope: SessionScope, path: string) =>
+    call<{ path: string }>('fs.create-directory', scopePayload(scope, { path })),
+  fsMove: (scope: SessionScope, from: string, to: string) =>
+    call<{ from: string; to: string }>('fs.move', scopePayload(scope, { from, to })),
+  fsDelete: (scope: SessionScope, path: string) =>
+    call<{ path: string }>('fs.delete', scopePayload(scope, { path })),
+  fsUpload: (scope: SessionScope, dir: string, relativePath: string, file: Blob, signal?: AbortSignal) =>
+    uploadFile(scope, dir, relativePath, file, signal),
   gitStatus: (scope: SessionScope, signal?: AbortSignal) =>
     call<GitStatusResult>('git.status', scopePayload(scope, {}), signal),
   gitDiff: (scope: SessionScope, path: string | undefined, staged: boolean, signal?: AbortSignal) =>

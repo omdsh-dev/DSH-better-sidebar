@@ -40,6 +40,7 @@
  *
  * Types ship from lib/types (tsc -p tsconfig.build.json), not from tsdown.
  */
+import { realpathSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { basename, dirname, relative, resolve as resolvePath, sep } from 'node:path'
 import { builtinModules, createRequire } from 'node:module'
@@ -208,6 +209,7 @@ function chunkBundle(name: string): UserConfig {
       purityGatePlugin(),
       makeCssPlugin('dsh-better-sidebar'),
       ...(name === 'mermaid' ? [mermaidChunkAliases()] : []),
+      ...(name === 'markdown-editor' ? [markdownChunkAliases()] : []),
     ],
     outputOptions: {
       entryFileNames: `client-${name}.js`,
@@ -246,14 +248,39 @@ function mermaidChunkAliases(): BuildPlugin {
   }
 }
 
+/**
+ * vfile uses package-import conditions for three tiny platform adapters. The
+ * bundler currently selects its `node` condition even for a browser CJS
+ * chunk, so replace only those resolved adapter modules with vfile's own
+ * shipped browser implementations (rather than weakening the purity gate).
+ */
+function markdownChunkAliases(): BuildPlugin {
+  const kitRoot = realpathSync(resolvePath('node_modules/@milkdown/kit'))
+  const transformerRoot = realpathSync(resolvePath(kitRoot, '../..', '@milkdown/transformer'))
+  const unifiedRoot = realpathSync(resolvePath(transformerRoot, '../..', 'unified'))
+  const vfileDir = realpathSync(resolvePath(unifiedRoot, '..', 'vfile'))
+  const aliases = new Map([
+    [resolvePath(vfileDir, 'lib/minpath.js'), resolvePath(vfileDir, 'lib/minpath.browser.js')],
+    [resolvePath(vfileDir, 'lib/minproc.js'), resolvePath(vfileDir, 'lib/minproc.browser.js')],
+    [resolvePath(vfileDir, 'lib/minurl.js'), resolvePath(vfileDir, 'lib/minurl.browser.js')],
+  ])
+  return {
+    name: 'dsh-markdown-vfile-browser-alias',
+    async load(id: string) {
+      const browserEntry = aliases.get(id)
+      return browserEntry === undefined ? null : await readFile(browserEntry, 'utf8')
+    },
+  }
+}
+
 /** The shared client-bundle purity gate (see the clientBundle doc). */
 function purityGatePlugin(): BuildPlugin {
   return {
     name: 'dsh-client-bundle-purity',
-    resolveId(source: string) {
+    resolveId(source: string, importer: string | undefined) {
       if (NODE_BUILTINS.has(source)) {
         throw new Error(
-          `client bundle purity: Node builtin "${source}" cannot run in the browser module table — `
+          `client bundle purity: Node builtin "${source}" imported by "${importer ?? '<entry>'}" cannot run in the browser module table — `
           + 'select the dependency browser export or add an explicit browser implementation',
         )
       }
@@ -314,7 +341,7 @@ function makeCssPlugin(pluginId: string): BuildPlugin {
 }
 
 /** The lazy chunk names (keep in sync with src/bundle-route.ts CHUNK_NAMES). */
-const CHUNKS = ['terminal', 'editor', 'mermaid']
+const CHUNKS = ['terminal', 'editor', 'mermaid', 'markdown-editor']
 
 export default [
   {

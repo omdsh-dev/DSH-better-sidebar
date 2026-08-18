@@ -21,7 +21,13 @@ import { EditorState } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
-import { api, htmlUrl } from './api.ts'
+import { api, htmlUrl, SidebarApiError } from './api.ts'
+import {
+  deleteEditorBuffer,
+  getEditorBuffer,
+  saveEditorBuffer,
+  type EditorViewMode,
+} from './editor-buffers.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
@@ -30,12 +36,13 @@ import { appendToDraft } from './conversation-draft.ts'
 import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
 import { lazyChunkComponent } from './lazy-chunk.tsx'
 import { splitMermaidBlocks, type MermaidMarkdownProps } from './mermaid-blocks.ts'
+import type { VisualMarkdownEditorProps } from './VisualMarkdownEditor.tsx'
 import { t } from './locales.ts'
-import type { EditorToolbarState, FileViewerProps } from './service.ts'
+import type { EditorMode, EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
 
-/** Previewable files (rendered output vs source editing). */
-type ViewMode = 'preview' | 'edit'
+/** Previewable files (rendered output, source editing, or visual GFM editing). */
+type ViewMode = EditorViewMode
 
 /** The floating "add to conversation" action: payload + viewport anchor. */
 interface SelectionPopup {
@@ -54,6 +61,12 @@ const LazyMermaidMarkdown = lazyChunkComponent<MermaidMarkdownProps>(
   (mod) => mod.MermaidMarkdown as ComponentType<MermaidMarkdownProps> | undefined,
 )
 
+/** Milkdown stays out of the CodeMirror chunk until visual mode is opened. */
+const LazyVisualMarkdownEditor = lazyChunkComponent<VisualMarkdownEditorProps>(
+  'markdown-editor',
+  (mod) => mod.VisualMarkdownEditor as ComponentType<VisualMarkdownEditorProps> | undefined,
+)
+
 /**
  * The sandbox tokens of the HTML preview iframe. NO allow-same-origin (the
  * preview must stay in an opaque origin — with the route's own origin it
@@ -64,11 +77,21 @@ const LazyMermaidMarkdown = lazyChunkComponent<MermaidMarkdownProps>(
 export const HTML_IFRAME_SANDBOX = 'allow-scripts allow-popups allow-downloads allow-modals'
 
 export function TextEditor(props: FileViewerProps) {
-  const { ctx, scope, path, viewerId, content, truncated } = props
+  const { ctx, scope, path, viewerId, content, truncated, version } = props
   const [mode, setMode] = useState<ViewMode>('preview')
+  /** Text chosen after the IndexedDB draft lookup; undefined while restoring. */
+  const [hydratedText, setHydratedText] = useState<string | undefined>(undefined)
   /** The editor's current text (null while clean); preview renders this. */
   const [draft, setDraft] = useState<string | null>(null)
+  const draftRef = useRef<string | null>(null)
   const [dirty, setDirty] = useState(false)
+  const dirtyRef = useRef(false)
+  const baseVersionRef = useRef<string | null>(version ?? null)
+  const savedTextRef = useRef(content ?? '')
+  const staleDraftRef = useRef(false)
+  const modeRef = useRef<ViewMode>('preview')
+  const [visualSeed, setVisualSeed] = useState('')
+  const [conflict, setConflict] = useState<'restored' | 'save' | null>(null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<CodeMirrorView | null>(null)
@@ -110,14 +133,62 @@ export function TextEditor(props: FileViewerProps) {
 
   useEffect(() => subscribeColorScheme(() => { setDark(isDarkScheme()) }), [])
 
-  // A new file (tab switch) starts clean: fresh preview mode, no draft.
+  const setDirtyValue = (value: boolean): void => {
+    dirtyRef.current = value
+    setDirty(value)
+  }
+
+  const persistDraft = (text: string, nextMode: ViewMode = modeRef.current): void => {
+    if (!dirtyRef.current) return
+    void saveEditorBuffer({
+      sessionId: scope.sessionId,
+      path,
+      text,
+      baseVersion: baseVersionRef.current,
+      mode: nextMode,
+    })
+  }
+
+  /** Restore a dirty draft before CodeMirror is constructed. */
   useEffect(() => {
+    let cancelled = false
+    setHydratedText(undefined)
     setMode('preview')
+    modeRef.current = 'preview'
+    setVisualSeed('')
     setDraft(null)
-    setDirty(false)
+    draftRef.current = null
+    setDirtyValue(false)
+    setConflict(null)
+    staleDraftRef.current = false
+    baseVersionRef.current = version ?? null
+    savedTextRef.current = content ?? ''
     setSaveState('idle')
     hidePopup()
-  }, [content])
+    if (content === undefined) return () => { cancelled = true }
+    void getEditorBuffer(scope.sessionId, path).then((record) => {
+      if (cancelled) return
+      if (record === undefined) {
+        setHydratedText(content)
+        return
+      }
+      const restoredMode: ViewMode = viewerId === 'markdown' ? record.mode : record.mode === 'visual' ? 'edit' : record.mode
+      const stale = record.baseVersion !== (version ?? null)
+      baseVersionRef.current = record.baseVersion
+      staleDraftRef.current = stale
+      modeRef.current = restoredMode
+      setMode(restoredMode)
+      if (restoredMode === 'visual') setVisualSeed(record.text)
+      draftRef.current = record.text
+      setDraft(record.text)
+      setDirtyValue(true)
+      setConflict(stale ? 'restored' : null)
+      setHydratedText(record.text)
+    }).catch(() => {
+      if (!cancelled) setHydratedText(content)
+    })
+    return () => { cancelled = true }
+  }, [content, path, scope.sessionId, version, viewerId])
 
   // Create the CodeMirror editor once the content is loaded. The view owns
   // the document; React only tracks dirty/draft state through the update
@@ -126,14 +197,14 @@ export function TextEditor(props: FileViewerProps) {
   // colors live in a compartment so a scheme flip reconfigures only that
   // part — the document, undo history and scroll position survive.
   useEffect(() => {
-    if (content === undefined) return
+    if (hydratedText === undefined) return
     const host = hostRef.current
     if (host === null) return
     const language = languageForPath(path)
     const themeComp = new CmThemeCompartment()
     themeCompRef.current = themeComp
     const state = EditorState.create({
-      doc: content,
+      doc: hydratedText,
       extensions: [
         CodeMirrorView.lineWrapping,
         lineNumbers(),
@@ -144,9 +215,17 @@ export function TextEditor(props: FileViewerProps) {
         themeComp.of(dark),
         ...(language !== null ? [language] : []),
         CodeMirrorView.updateListener.of((update) => {
-          if (update.docChanged) {
-            setDraft(update.state.doc.toString())
-            setDirty(true)
+          if (!update.docChanged) return
+          const text = update.state.doc.toString()
+          const clean = !staleDraftRef.current && text === savedTextRef.current
+          draftRef.current = clean ? null : text
+          setDraft(clean ? null : text)
+          setDirtyValue(!clean)
+          setSaveState('idle')
+          if (clean) {
+            void deleteEditorBuffer(scope.sessionId, path)
+          } else {
+            persistDraft(text)
           }
         }),
         keymap.of([
@@ -206,6 +285,7 @@ export function TextEditor(props: FileViewerProps) {
     const view = new CodeMirrorView({ state, parent: host })
     viewRef.current = view
     return () => {
+      if (dirtyRef.current) persistDraft(view.state.doc.toString())
       view.destroy()
       viewRef.current = null
       themeCompRef.current = null
@@ -213,7 +293,7 @@ export function TextEditor(props: FileViewerProps) {
     // The keymap's save() reads live refs; scope/path are stable for a
     // tab's lifetime, and the dark flip is handled by the reconfigure
     // effect below (recreating the view here would drop the draft).
-  }, [content, path])
+  }, [hydratedText, path])
 
   // Scheme flip: re-theme in place (the compartment holds only the
   // scheme-dependent extensions; everything else is untouched).
@@ -224,6 +304,15 @@ export function TextEditor(props: FileViewerProps) {
     view.dispatch({ effects: themeComp.reconfigure(dark) })
   }, [dark])
 
+  const switchMode = (next: ViewMode): void => {
+    if (next === 'visual') {
+      setVisualSeed(viewRef.current?.state.doc.toString() ?? draftRef.current ?? hydratedText ?? content ?? '')
+    }
+    modeRef.current = next
+    setMode(next)
+    if (dirtyRef.current && draftRef.current !== null) persistDraft(draftRef.current, next)
+  }
+
   // The editor may have been display:none while previewing; re-measure when
   // it becomes visible again (CodeMirror sizes itself on reveal). A mode
   // flip also invalidates any anchored selection popup.
@@ -232,26 +321,71 @@ export function TextEditor(props: FileViewerProps) {
     if (mode === 'edit') viewRef.current?.requestMeasure()
   }, [mode])
 
-  const save = (): void => {
+  const writeCurrent = (force: boolean): void => {
     const view = viewRef.current
-    if (view === null || savingRef.current) return
+    if (view === null || savingRef.current || truncated === true) return
+    const text = view.state.doc.toString()
     savingRef.current = true
     setSaveState('saving')
-    api.fsWrite(scope, path, view.state.doc.toString()).then(() => {
+    api.fsWrite(scope, path, text, force
+      ? { force: true }
+      : { expectedVersion: baseVersionRef.current }).then((result) => {
       savingRef.current = false
+      baseVersionRef.current = result.version
+      savedTextRef.current = text
+      staleDraftRef.current = false
+      draftRef.current = null
       setDraft(null)
-      setDirty(false)
+      setDirtyValue(false)
+      setConflict(null)
       setSaveState('saved')
-    }).catch(() => {
+      void deleteEditorBuffer(scope.sessionId, path)
+    }).catch((error: unknown) => {
       savingRef.current = false
+      if (error instanceof SidebarApiError && error.code === 'fs-conflict') {
+        setConflict('save')
+      }
       setSaveState('failed')
+    })
+  }
+
+  const save = (): void => { writeCurrent(false) }
+
+  const reloadFromDisk = (): void => {
+    if (savingRef.current) return
+    savingRef.current = true
+    setSaveState('saving')
+    api.fsRead(scope, path).then((result) => {
+      if (result.kind !== 'text') throw new Error('file is no longer text')
+      baseVersionRef.current = result.version
+      savedTextRef.current = result.content
+      staleDraftRef.current = false
+      const view = viewRef.current
+      if (view !== null) {
+        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: result.content } })
+      }
+      draftRef.current = null
+      setDraft(null)
+      setDirtyValue(false)
+      setConflict(null)
+      setSaveState('idle')
+      void deleteEditorBuffer(scope.sessionId, path)
+    }).catch(() => {
+      setSaveState('failed')
+    }).finally(() => {
+      savingRef.current = false
     })
   }
 
   const markdown = viewerId === 'markdown'
   const html = viewerId === 'html'
+  const handleVisualChange = (text: string): void => {
+    const view = viewRef.current
+    if (view === null || view.state.doc.toString() === text) return
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } })
+  }
   /** The markdown source the preview renders (draft wins over saved content). */
-  const mdText = draft ?? content ?? ''
+  const mdText = draft ?? savedTextRef.current
   /** md/mermaid block split for the preview (mermaid fences lift out). Split
    *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
   const mdBlocks = useMemo(
@@ -296,7 +430,8 @@ export function TextEditor(props: FileViewerProps) {
       rect.top,
     )
   }
-  const editable = content !== undefined
+  const loaded = hydratedText !== undefined
+  const editable = loaded && truncated !== true
   const saveLabel = saveState === 'saving' ? t('loading') : saveState === 'saved' ? t('saved') : saveState === 'failed' ? t('saveFailed') : ''
   // Per-feature sandbox escape hatch: the global side card setting (warned)
   // plus a per-surface temporary unlock. The unlock state starts at the
@@ -312,10 +447,11 @@ export function TextEditor(props: FileViewerProps) {
   // the own toolbar row, report the state after every relevant render (the
   // JSON key guards redundant calls), and register the commands on mount.
   const hostToolbar = props.toolbar === 'host'
+  const availableModes: readonly EditorMode[] = markdown ? ['preview', 'visual', 'edit'] : html ? ['preview', 'edit'] : []
   const lastToolbarRef = useRef('')
   useEffect(() => {
     if (!hostToolbar) return
-    const state: EditorToolbarState = { modes: markdown || html, mode, dirty, editable, saveState }
+    const state: EditorToolbarState = { modes: availableModes, mode, dirty, editable, saveState }
     const key = JSON.stringify(state)
     if (lastToolbarRef.current === key) return
     lastToolbarRef.current = key
@@ -325,7 +461,7 @@ export function TextEditor(props: FileViewerProps) {
     if (!hostToolbar) return
     // `save` reads live refs only, and `setMode` is the stable state setter —
     // registering this render's closures is safe for the mount's lifetime.
-    props.onToolbarControls?.({ setMode, save })
+    props.onToolbarControls?.({ setMode: switchMode, save })
     return () => { props.onToolbarControls?.(null) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hostToolbar])
@@ -334,22 +470,18 @@ export function TextEditor(props: FileViewerProps) {
     <>
       {!hostToolbar && (
       <div className={css.editorHeader}>
-        {(markdown || html) && (
+        {availableModes.length > 0 && (
           <div className={css.editorModeToggle}>
-            <button
-              type="button"
-              className={clsx(css.editorModeButton, mode === 'preview' && css.editorModeActive)}
-              onClick={() => { setMode('preview') }}
-            >
-              {t('preview')}
-            </button>
-            <button
-              type="button"
-              className={clsx(css.editorModeButton, mode === 'edit' && css.editorModeActive)}
-              onClick={() => { setMode('edit') }}
-            >
-              {t('edit')}
-            </button>
+            {availableModes.map(candidate => (
+              <button
+                key={candidate}
+                type="button"
+                className={clsx(css.editorModeButton, mode === candidate && css.editorModeActive)}
+                onClick={() => { switchMode(candidate) }}
+              >
+                {candidate === 'preview' ? t('preview') : candidate === 'visual' ? t('visualEdit') : t('sourceEdit')}
+              </button>
+            ))}
           </div>
         )}
         {dirty && <span className={css.dirtyDot} title={t('unsaved')} />}
@@ -367,11 +499,20 @@ export function TextEditor(props: FileViewerProps) {
         {saveLabel !== '' && <span className={clsx(css.editorStatus, saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>}
       </div>
       )}
-      {editable && (
+      {conflict !== null && (
+        <div className={clsx(css.editorBanner, css.editorConflictBanner)}>
+          <span>{conflict === 'restored' ? t('draftConflictRestored') : t('saveConflict')}</span>
+          <div className={css.editorBannerActions}>
+            <button type="button" onClick={reloadFromDisk}>{t('reloadDisk')}</button>
+            <button type="button" onClick={() => { writeCurrent(true) }}>{t('overwriteDisk')}</button>
+          </div>
+        </div>
+      )}
+      {loaded && (
         <>
           {truncated === true && mode === 'edit' && <div className={css.editorBanner}>{t('truncation')}</div>}
           <div
-            className={clsx(css.editorCm, (markdown || html) && mode === 'preview' && css.editorCmHidden)}
+            className={clsx(css.editorCm, ((markdown && mode !== 'edit') || (html && mode === 'preview')) && css.editorCmHidden)}
             ref={hostRef}
           />
         </>
@@ -395,6 +536,14 @@ export function TextEditor(props: FileViewerProps) {
             ? <LazyMermaidMarkdown text={mdText} codeLabels={codeLabels} />
             : <MarkdownText text={mdText} codeLabels={codeLabels} />}
         </div>
+      )}
+      {markdown && mode === 'visual' && (
+        <LazyVisualMarkdownEditor
+          initialMarkdown={visualSeed}
+          onChange={handleVisualChange}
+          loadingLabel={t('loading')}
+          errorLabel={t('visualEditorFailed')}
+        />
       )}
       {html && mode === 'preview' && (
         <>

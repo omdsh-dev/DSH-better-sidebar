@@ -31,6 +31,7 @@ describe('dsh-better-sidebar plugin export shape', () => {
     })(undefined)
     expect(resolved.readLimit).toBe(512 * 1024)
     expect(resolved.mediaLimit).toBe(20 * 1024 * 1024)
+    expect(resolved.uploadLimit).toBe(100 * 1024 * 1024)
     expect(resolved.listLimit).toBe(1000)
     expect(resolved.terminalsPerSession).toBe(3)
     expect(resolved.reconnectGraceMs).toBe(30_000)

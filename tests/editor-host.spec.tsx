@@ -256,7 +256,7 @@ describe('EditorHost (files window)', () => {
             setMode: (next) => { calls.push(`mode:${next}`) },
             save: () => { calls.push('save') },
           })
-          viewerProps.onToolbarState?.({ modes: true, mode: 'preview', dirty: true, editable: true, saveState: 'idle' })
+          viewerProps.onToolbarState?.({ modes: ['preview', 'edit'], mode: 'preview', dirty: true, editable: true, saveState: 'idle' })
           return () => { viewerProps.onToolbarControls?.(null) }
         }, [])
         return null
@@ -272,11 +272,11 @@ describe('EditorHost (files window)', () => {
       const header = container.querySelector('input')!.parentElement!
       const buttons = [...header.querySelectorAll('button')]
       expect(buttons.map(b => b.textContent)).toContain('Preview')
-      expect(buttons.map(b => b.textContent)).toContain('Edit')
+      expect(buttons.map(b => b.textContent)).toContain('Source')
       expect(header.querySelector('button[aria-label="Save"]')).not.toBeNull()
       expect(header.querySelector('[title="Unsaved"]')).not.toBeNull()
       // The header commands reach the viewer's registered controls.
-      act(() => { buttons.find(b => b.textContent === 'Edit')!.click() })
+      act(() => { buttons.find(b => b.textContent === 'Source')!.click() })
       act(() => { header.querySelector<HTMLButtonElement>('button[aria-label="Save"]')!.click() })
       expect(calls).toEqual(['mode:edit', 'save'])
     } finally {
