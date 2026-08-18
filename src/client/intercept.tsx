@@ -6,6 +6,7 @@
  * deliverables entry; when nothing was produced the selector returns null
  * and the original row renders unchanged.
  */
+import { useEffect } from 'react'
 import { IconCodeOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import type { SidebarStore } from './state.ts'
@@ -29,8 +30,13 @@ export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: st
 export function SidebarProducedFiles(props: {
   matched: readonly string[]
   openInSidebar: (path: string) => void
+  recordProduced: (paths: readonly string[]) => void
 }) {
-  const { matched, openInSidebar } = props
+  const { matched, openInSidebar, recordProduced } = props
+  // Publish the produced paths to the sidebar store exactly once per mount:
+  // the row only mounts for turns that produced files, so this IS the
+  // "turn ended with file writes" signal the editor's auto-refresh consumes.
+  useEffect(() => { recordProduced(matched) }, [recordProduced, matched])
   const shown = matched.slice(0, 6)
   const hidden = matched.length - shown.length
   return (
@@ -87,6 +93,7 @@ export function registerTurnTailInterception(ctx: Context, store: SidebarStore):
     registrant: 'dsh-better-sidebar',
     inject: (sessionId: string) => ({
       openInSidebar: (path: string) => { openSidebarFile(ctx, store, sessionId, path) },
+      recordProduced: (paths: readonly string[]) => { store.recordProduced(sessionId, paths) },
     }),
   }, SidebarProducedFiles))
 }

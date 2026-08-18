@@ -58,6 +58,7 @@ function MockTextViewer({ initialMode = 'preview', dirty = false, onToolbarState
 
 function setup(initialMode: 'preview' | 'edit' = 'preview', dirty = false): {
   ctx: Context
+  store: ReturnType<typeof createSidebarStore>
   fileTab: () => SidebarTab
 } {
   const store = createSidebarStore()
@@ -85,16 +86,16 @@ function setup(initialMode: 'preview' | 'edit' = 'preview', dirty = false): {
   const fileTab = (): SidebarTab =>
     allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
       .find(tab => tab.path === '/tmp/a.ts')!
-  return { ctx, fileTab }
+  return { ctx, store, fileTab }
 }
 
-function mount(ctx: Context, tab: () => SidebarTab): { container: HTMLDivElement; unmount: () => void } {
+function mount(ctx: Context, store: ReturnType<typeof createSidebarStore>, tab: () => SidebarTab): { container: HTMLDivElement; unmount: () => void } {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
   act(() => {
     root.render(createElement(EditorHost, {
-      ctx, store: ctx.betterSidebar as never, scope: { sessionId: 'editor-home-session' },
+      ctx, store, scope: { sessionId: 'editor-home-session', cwd: '/tmp' },
       tab: tab(), expanded: [], onToggleDir: () => {}, onReferenceFile: () => {},
     }))
   })
@@ -123,8 +124,8 @@ beforeEach(() => {
 
 describe('EditorHost refresh (issue #167)', () => {
   it('A: the refresh button renders for a toolbar-reporting viewer and re-runs the load', async () => {
-    const { ctx, fileTab } = setup()
-    const { container, unmount } = mount(ctx, fileTab)
+    const { ctx, store, fileTab } = setup()
+    const { container, unmount } = mount(ctx, store, fileTab)
     try {
       // The initial load ran once; settle the async fsRead.
       await act(async () => { await Promise.resolve() })
@@ -140,8 +141,8 @@ describe('EditorHost refresh (issue #167)', () => {
   })
 
   it('B: returning from edit to preview reloads (fresh content shows after save)', async () => {
-    const { ctx, fileTab } = setup('edit')
-    const { container, unmount } = mount(ctx, fileTab)
+    const { ctx, store, fileTab } = setup('edit')
+    const { container, unmount } = mount(ctx, store, fileTab)
     try {
       await act(async () => { await Promise.resolve() })
       expect(reads()).toBe(1)
@@ -156,8 +157,8 @@ describe('EditorHost refresh (issue #167)', () => {
   })
 
   it('B: a dirty draft suppresses the edit→preview reload (the draft would be dropped)', async () => {
-    const { ctx, fileTab } = setup('edit', true)
-    const { container, unmount } = mount(ctx, fileTab)
+    const { ctx, store, fileTab } = setup('edit', true)
+    const { container, unmount } = mount(ctx, store, fileTab)
     try {
       await act(async () => { await Promise.resolve() })
       expect(reads()).toBe(1)
@@ -172,8 +173,8 @@ describe('EditorHost refresh (issue #167)', () => {
   })
 
   it('C: a preview-mode save reloads on the saved edge', async () => {
-    const { ctx, fileTab } = setup('preview')
-    const { container, unmount } = mount(ctx, fileTab)
+    const { ctx, store, fileTab } = setup('preview')
+    const { container, unmount } = mount(ctx, store, fileTab)
     try {
       await act(async () => { await Promise.resolve() })
       expect(reads()).toBe(1)
@@ -181,6 +182,49 @@ describe('EditorHost refresh (issue #167)', () => {
       click(save)
       await act(async () => { await Promise.resolve() })
       expect(reads()).toBe(2)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('auto-refresh: a produced-file notification for the previewed path silently reloads', async () => {
+    const { ctx, store, fileTab } = setup('preview')
+    const { container, unmount } = mount(ctx, store, fileTab)
+    try {
+      await act(async () => { await Promise.resolve() })
+      expect(reads()).toBe(1)
+      act(() => { store.recordProduced('editor-home-session', ['a.ts']) })
+      await act(async () => { await Promise.resolve() })
+      expect(reads()).toBe(2)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('auto-refresh: a different session or an unrelated path is ignored', async () => {
+    const { ctx, store, fileTab } = setup('preview')
+    const { container, unmount } = mount(ctx, store, fileTab)
+    try {
+      await act(async () => { await Promise.resolve() })
+      expect(reads()).toBe(1)
+      act(() => { store.recordProduced('other-session', ['a.ts']) })
+      act(() => { store.recordProduced('editor-home-session', ['b.ts']) })
+      await act(async () => { await Promise.resolve() })
+      expect(reads()).toBe(1)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('auto-refresh: edit mode suppresses the reload (draft protection)', async () => {
+    const { ctx, store, fileTab } = setup('edit')
+    const { container, unmount } = mount(ctx, store, fileTab)
+    try {
+      await act(async () => { await Promise.resolve() })
+      expect(reads()).toBe(1)
+      act(() => { store.recordProduced('editor-home-session', ['a.ts']) })
+      await act(async () => { await Promise.resolve() })
+      expect(reads()).toBe(1)
     } finally {
       unmount()
     }
