@@ -110,6 +110,7 @@ URL 采用**路径编码**（无 query）——WHATSG URL 解析对纯路径相�
 - 设计初期考虑过 srcdoc + `<base>` 注入以实现"预览反映未保存草稿"，因 srcdoc 无沙箱时继承父源的致命风险与 base 注入的脆弱性，改采 route-src（预览 = 已保存文件）；相对资源经路径编码 URL 天然解析，无需内容改写。
 - `normalizeBrowserUrl` 的 scheme 判别：朴素正则会把 `example.com:8080` 误判为 scheme，最终采用「`://` 完整 URL + 危险 scheme 黑名单 + 解析后协议兜底」三段式。
 - `nextBrowser` 在 sanitize 中为宽松字段（缺失/畸形回退 1），避免旧持久化布局整体失效（与严格校验的 `nextTerminal` 不同）。
+- **UNC 路径编码标记（PR #134 整合 #79/#115 时）**：`/sidebar/html` 对 `\\server\share\...` / `//server/share/...` 采用 sessionId 后的 `//` 标记，且解码统一重建为**前斜杠** `//server/share/...` 而非反斜杠——`node:path` 在 win32/POSIX 上分别解析为 `\\server\share\...` / `/server/share/...`，因此无需任何平台信号；原「400 双斜杠」约束改为「首个空段仅作 UNC 标记，其余空段仍 400」。
 
 ## 8.1 追加需求（2026-08-11，v0.5.0 内）
 

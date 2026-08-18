@@ -22,10 +22,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import '@xterm/xterm/css/xterm.css'
 import { t } from './locales.ts'
 import { openWhenSized } from './open-when-sized.ts'
-import type { SessionScope } from './api.ts'
+import { api, type SessionScope, type TerminalDepsStatus } from './api.ts'
 import { agentUuidOf, isAgentTabId, type SidebarStore } from './state.ts'
 import { isDarkScheme, subscribeColorScheme, effectiveTokenValue, tokenValue } from './theme.ts'
 import { resolveTerminalFont } from './terminal-font.ts'
@@ -33,6 +34,17 @@ import css from './sidebar.module.css'
 
 /** How many consecutive unreasoned failures before showing the error banner. */
 const FAILURE_LIMIT = 3
+
+/**
+ * The WS close-code-1011 reason the host sends when node-pty is unavailable
+ * (mirror of the host's PTY_DEPS_MISSING; the value is a wire contract, so
+ * the two sides keep the literal in lockstep). The view then fetches the
+ * full repair details from /sidebar/api/terminal.deps.
+ */
+const PTY_DEPS_MISSING = 'pty-deps-missing'
+
+/** The degraded-mode payload rendered by {@link TerminalDepsBanner}. */
+type TerminalDepsInfo = Extract<TerminalDepsStatus, { ok: false }>
 
 /**
  * Curated ANSI palettes for the terminal. The surface colors (background,
@@ -84,6 +96,7 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
   const hostRef = useRef<HTMLDivElement>(null)
   const [connected, setConnected] = useState(false)
   const [fatal, setFatal] = useState<string | null>(null)
+  const [depsFatal, setDepsFatal] = useState<TerminalDepsInfo | null>(null)
   const [lastUrl, setLastUrl] = useState<string | null>(null)
   const connectRef = useRef<(() => void) | null>(null)
 
@@ -157,6 +170,25 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
       }
       socket.onclose = (event) => {
         setConnected(false)
+        // node-pty dependency missing/broken (issue #140): the host closed
+        // with the short marker. Fetch the full repair details over HTTP —
+        // a WS close reason is capped at 123 bytes, too small for the
+        // pasteable command. A failed fetch falls back to the plain banner.
+        if (event.code === 1011 && event.reason === PTY_DEPS_MISSING) {
+          void api.terminalDeps().then((status) => {
+            if (status.ok) {
+              // The host recovered between the close and the fetch — the
+              // plain banner with a retry is the honest state.
+              setFatal(t('terminalDepsFailed'))
+              return
+            }
+            setFatal(null)
+            setDepsFatal(status)
+          }).catch(() => {
+            setFatal(t('terminalDepsFailed'))
+          })
+          return
+        }
         // A server-side refusal carries a close code + reason; retrying it
         // forever would only spin the banner, so surface it with a retry.
         if (event.code === 1011 && event.reason !== '') {
@@ -263,6 +295,9 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
 
   return (
     <div className={css.terminalWrap}>
+      {depsFatal !== null && (
+        <TerminalDepsBanner deps={depsFatal} onRetry={() => { setDepsFatal(null); connectRef.current?.() }} />
+      )}
       {fatal !== null && (
         <div className={css.terminalBanner}>
           {t('terminalError')}: {fatal}
@@ -276,8 +311,48 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
           </button>
         </div>
       )}
-      {fatal === null && !connected && <div className={css.terminalBanner}>{t('disconnected')}</div>}
+      {fatal === null && depsFatal === null && !connected && <div className={css.terminalBanner}>{t('disconnected')}</div>}
       <div ref={hostRef} className={css.terminal} />
+    </div>
+  )
+}
+
+/**
+ * The node-pty dependency failure banner (issue #140): explains that the
+ * terminal's native dependency failed to load and shows the PASTEABLE repair
+ * command (bash / cmd / PowerShell) with a copy button — the user pastes it
+ * into a terminal where their DSH profile lives and runs it, then retries.
+ * Extracted as a standalone component for direct testing.
+ */
+export function TerminalDepsBanner(props: { deps: TerminalDepsInfo; onRetry: () => void }) {
+  const { deps, onRetry } = props
+  const [copied, setCopied] = useState(false)
+  const copy = async (): Promise<void> => {
+    const written = await writeClipboard(deps.command)
+    if (written) {
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    }
+  }
+  return (
+    <div className={css.terminalDepsBanner}>
+      <div className={css.terminalDepsTitle}>{t('terminalDepsFailed')}</div>
+      <div className={css.terminalDepsHint}>
+        {t('terminalDepsHint')}
+        {deps.profile !== null ? t('terminalDepsProfile', { profile: deps.profile }) : ''}
+      </div>
+      <div className={css.terminalDepsCommandRow}>
+        <pre className={css.terminalRepairCommand}>{deps.command}</pre>
+        <button type="button" className={css.terminalRetry} onClick={() => { void copy() }} aria-label={t('copy')}>
+          {copied ? t('copied') : t('copy')}
+        </button>
+      </div>
+      {deps.note !== undefined && <div className={css.terminalDepsNote}>{deps.note}</div>}
+      <div className={css.terminalDepsActions}>
+        <button type="button" className={css.terminalRetry} onClick={onRetry}>
+          {t('terminalRetry')}
+        </button>
+      </div>
     </div>
   )
 }

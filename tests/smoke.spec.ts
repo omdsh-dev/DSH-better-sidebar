@@ -476,11 +476,15 @@ describe('session cwd resolution over the API route', () => {
 
 describe('side card settings routes', () => {
   /** A minimal settings seam: register/describe/update with the revision guard. */
-  const createFakeSettings = () => {    const namespaces = new Map<string, {
+  const createFakeSettings = (pre?: Record<string, Record<string, unknown>>) => {
+    const namespaces = new Map<string, {
       schema: unknown
       value: Record<string, unknown> | undefined
       revision: number
     }>()
+    for (const [ns, value] of Object.entries(pre ?? {})) {
+      namespaces.set(ns, { schema: (input: unknown) => input, value, revision: 0 })
+    }
     const resolve = (entry: { schema: unknown; value: Record<string, unknown> | undefined }): unknown => {
       const schema = entry.schema as (input: unknown) => unknown
       return entry.value === undefined ? schema(undefined) : schema(entry.value)
@@ -557,7 +561,21 @@ describe('side card settings routes', () => {
     const route = mountWithSettings(undefined)
     const result = await invoke(route, 'settings.get', {})
     expect(result.ok).toBe(true)
-    expect(result.value).toEqual({ value: undefined, revision: undefined })
+    expect(result.value).toEqual({ value: undefined, revision: undefined, externalDisable: false })
+  })
+
+  it('reports externalDisable false when the aionui namespace is absent', async () => {
+    const route = mountWithSettings(createFakeSettings())
+    const result = await invoke(route, 'settings.get', {})
+    expect(result.ok).toBe(true)
+    expect((result.value as { externalDisable?: boolean }).externalDisable).toBe(false)
+  })
+
+  it('reports externalDisable true while the aionui provider is selected', async () => {
+    const route = mountWithSettings(createFakeSettings({ 'aionui-panel': { rightPanel: 'aionui-panel' } }))
+    const result = await invoke(route, 'settings.get', {})
+    expect(result.ok).toBe(true)
+    expect((result.value as { externalDisable?: boolean }).externalDisable).toBe(true)
   })
 
   it('reads the resolved prefs and writes a patch through the seam', async () => {
@@ -566,8 +584,8 @@ describe('side card settings routes', () => {
     expect(read.ok).toBe(true)
     expect(read.value).toEqual({
       value: {
-        openByDefault: true,
-        defaultWidthPercent: 30,
+        openByDefault: false,
+        defaultWidthPercent: 35,
         autoOpenSubagent: true,
         autoOpenJobs: true,
         agentTerminalTools: false,
@@ -575,6 +593,7 @@ describe('side card settings routes', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
+        editorExplorer: true,
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
@@ -590,13 +609,14 @@ describe('side card settings routes', () => {
         pluginSettings: {},
       },
       revision: 0,
+      externalDisable: false,
     })
 
-    const written = await invoke(route, 'settings.update', { patch: { openByDefault: false } })
+    const written = await invoke(route, 'settings.update', { patch: { openByDefault: true } })
     expect(written.ok).toBe(true)
     const view = written.value as { value: { openByDefault: boolean; defaultWidthPercent: number }; revision: number }
-    expect(view.value.openByDefault).toBe(false)
-    expect(view.value.defaultWidthPercent).toBe(30)
+    expect(view.value.openByDefault).toBe(true)
+    expect(view.value.defaultWidthPercent).toBe(35)
     expect(view.revision).toBe(1)
   })
 

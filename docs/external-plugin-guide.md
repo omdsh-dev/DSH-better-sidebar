@@ -480,7 +480,7 @@ const { value } = await res.json()   // 错误时 { ok: false, error: { code, me
 | 方法 | 说明 |
 |---|---|
 | `session.cwd` | 会话权威 cwd（`{ cwd, root, parent }`） |
-| `fs.tree` | 目录列表（`{ path, entries: FsEntry[], truncated }`） |
+| `fs.tree` | 目录列表（`{ path, entries: FsEntry[], truncated }`；FsEntry 含 `isSymlink`/`broken`，目录软链接的 `isDir` 按目标类型） |
 | `fs.read` | 读文件：文本返回 `{ kind: 'text', content, truncated }`；二进制返回 `{ kind: 'binary', size, truncated, head }`（head = base64 前 4KB） |
 | `fs.write` | 原子写文件 |
 | `git.status` / `git.diff` / `git.log` 等 | 全套 Git 只读 + 写操作 |

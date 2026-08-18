@@ -10,7 +10,8 @@ import { chmodSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { createRequire } from 'node:module'
 import { userInfo } from 'node:os'
-import * as nodePty from 'node-pty'
+import type { IPty } from 'node-pty'
+import { loadRequiredNodePty, type NodePtyModule } from './pty-deps.ts'
 import { SidebarError } from './wire.ts'
 
 /** Per-terminal transcript bound (bytes kept for replay). */
@@ -52,7 +53,7 @@ export interface SidebarPty {
    *  the page-load hydrate race can attach the real cwd after the first
    *  connect, and a shell in the wrong directory must not linger). */
   cwd: string
-  pty: nodePty.IPty
+  pty: IPty
   /** Output accumulated since spawn (bounded; head dropped when over the limit). */
   transcript: string
   /** Whether the top-level process exited (transcript stays replayable). */
@@ -71,6 +72,8 @@ export class PtyManager {
   constructor(
     private readonly shell: string,
     private readonly maxPerSession: number,
+    /** The loaded node-pty module (injected so a broken install degrades instead of crashing the plugin). */
+    private readonly nodePty: NodePtyModule = loadRequiredNodePty(),
   ) {}
 
   /** All live terminal keys of one session. */
@@ -119,7 +122,7 @@ export class PtyManager {
       sessionId,
       tabId,
       cwd,
-      pty: nodePty.spawn(this.shell, shellSpawnArgs(), {
+      pty: this.nodePty.spawn(this.shell, shellSpawnArgs(), {
         name: 'xterm-256color',
         cols: Math.max(2, Math.floor(cols)),
         rows: Math.max(2, Math.floor(rows)),

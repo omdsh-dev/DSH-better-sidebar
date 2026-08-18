@@ -13,10 +13,14 @@
  *     plugin's `[data-dsh-better-sidebar]` host mount;
  *  3. asserts the plugin's crash markers never appear (no RenderBoundary /
  *     fail() strips, no `pageerror`, no plugin-prefixed console errors);
- *  4. sweeps every built-in tab (Explorer / Source Control / Tasks /
- *     Terminal / Browser) — including the lazily-fetched terminal chunk —
- *     and then opens a seeded file through the Explorer to force the
- *     lazily-fetched editor chunk (client-editor.js) to load as well.
+ *  4. expands the collapsed panel (openByDefault defaults off), sweeps every
+ *     built-in tab (Files / Source Control / Tasks / Terminal / Browser) —
+ *     including the lazily-fetched terminal chunk — and then opens seeded
+ *     files through the Files window's tree (in-place mode: the seeded home
+ *     tab itself switches to the file, no new tab), while response waits
+ *     armed before goto prove the lazily-fetched editor chunk
+ *     (client-editor.js) and the mermaid chunk (client-mermaid.js, rendered
+ *     SVG diagram + zoom modal) loaded.
  *
  * Deterministic by construction: every wait is on a DOM/network marker, the
  * suite is serial (one server instance), and any crash trips the very next
@@ -35,9 +39,14 @@ if (!BASE_URL) {
 /** Workspace the sidebar renders against (created by the lane's seeding). */
 const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-workspace')
 
-/** A file seeded into the workspace, opened through the Explorer to force the
- *  lazily-packed editor chunk (client-editor.js) to load. */
+/** A file seeded into the workspace, opened through the Files window's tree to
+ *  exercise the file-open path (editor chunk = client-editor.js). */
 const SEEDED_FILE = 'hello.txt'
+
+/** A markdown file with a mermaid fence, opened through the Files window's
+ *  tree to force the lazily-packed mermaid chunk (client-mermaid.js) to load
+ *  and render a sanitized SVG diagram. */
+const SEEDED_MD_FILE = 'diagram.md'
 
 /**
  * The plugin's crash markers. The client mounts inside an error boundary that
@@ -47,15 +56,35 @@ const SEEDED_FILE = 'hello.txt'
 const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 
 /** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const BUILTIN_TABS = ['Explorer', 'Source Control', 'Tasks', 'Terminal', 'Browser']
+const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Terminal', 'Browser']
 
 let api: APIRequestContext
 
-/** Seed one workspace + one session (plus a file for the editor-chunk probe)
- *  through the host's unary RPC surface. */
+/** Seed one workspace + one session (plus files for the editor/mermaid-chunk
+ *  probes) through the host's unary RPC surface. */
 async function seedSession(): Promise<void> {
   mkdirSync(WORKSPACE_PATH, { recursive: true })
   writeFileSync(join(WORKSPACE_PATH, SEEDED_FILE), 'hello from the mount lane\n')
+  // The mermaid-chunk probe file: a markdown doc whose preview must fetch
+  // client-mermaid.js and render the fence into an SVG diagram. The
+  // reference-style link's definition sits AFTER the fence: it only
+  // resolves when the preview is one single markdown parse (the mermaid
+  // path must not split the document into independent MarkdownText blocks).
+  writeFileSync(join(WORKSPACE_PATH, SEEDED_MD_FILE), [
+    '# Diagram',
+    '',
+    '[before][shared]',
+    '',
+    '```mermaid',
+    'graph TD',
+    '  A[Hello] --> B[World]',
+    '```',
+    '',
+    '[shared]: https://example.com',
+    '',
+    'tail text',
+    '',
+  ].join('\n'))
   const workspace = await api.post(`${BASE_URL}/api/workspace.create`, {
     data: { type: 'client-request', rpcId: 'e2e-workspace', method: 'workspace.create', payload: { path: WORKSPACE_PATH } },
   })
@@ -91,6 +120,15 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
 
   // Load the shell. The app renders into #root; the plugin appends its own
   // [data-dsh-better-sidebar] host once its client half activates.
+  //
+  // The editor chunk (client-editor.js) loads as soon as ANY files-window tab
+  // renders — the seeded home tab mounts the moment the panel expands, long
+  // before the tree click below — so the response wait must be armed BEFORE
+  // goto, or it misses the fetch and times out.
+  const editorChunk = page.waitForResponse(
+    (response) => response.url().includes('/sidebar/bundle/editor.js'),
+    { timeout: 120_000 },
+  )
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
   const sidebar = page.locator('[data-dsh-better-sidebar]')
@@ -133,6 +171,12 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // shell renders a disabled toggle cluster and the tab sweep is impossible.
   const tabBar = sidebar.locator('[title]')
   await expect(tabBar.first()).toBeAttached({ timeout: 90_000 })
+
+  // openByDefault defaults OFF: a fresh session's panel starts collapsed.
+  // Expand it through the toggle cluster before the layout push can apply.
+  const expandButton = sidebar.getByRole('button', { name: 'Expand sidebar' })
+  await expect(expandButton, 'the collapsed toggle cluster must offer the expand button').toHaveCount(1)
+  await expandButton.click()
 
   // The skinning contract is token-driven (AGENTS.md §8): the panels consume
   // `--dsw-alias-bg-layer-1`, so switching a skin re-skins the sidebar with
@@ -179,29 +223,57 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     await assertNoCrash()
   }
 
-  // The editor tab is hidden from the + menu — its CodeMirror chunk
-  // (client-editor.js) only loads when a file is opened. Exercise that path
-  // explicitly: reopen Explorer, open the seeded file, and require the chunk
-  // round-trip, so a missing/corrupt editor chunk fails the lane.
-  await newTabButton.click()
-  const explorerItem = page.getByRole('menuitem', { name: 'Explorer' }).first()
-  await expect(explorerItem, 'Explorer must be re-openable for the editor-chunk probe').toHaveCount(1)
-  await explorerItem.click()
-  const editorChunk = page.waitForResponse(
-    (response) => response.url().includes('/sidebar/bundle/editor.js'),
+  // The editor chunk (client-editor.js) only loads when a files-window tab
+  // renders. Exercise the file-open path explicitly through the Files window's
+  // own tree: the seeded home tab ("Files") is already open with its tree
+  // panel pinned — activate it from the tab strip, open the seeded file, and
+  // require the chunk round-trip (armed before goto), so a missing/corrupt
+  // editor chunk fails the lane.
+  // Tab-strip tabs carry `draggable="true"`; the always-mounted (hidden)
+  // bottom panel's empty-pane welcome cards repeat the + menu labels with
+  // `title="Files"`, so a bare `[title="Files"]` match is ambiguous.
+  const filesTab = sidebar.locator('[title="Files"][draggable="true"]').first()
+  await expect(filesTab, 'the seeded files-window home tab must be in the tab strip').toHaveCount(1)
+  await filesTab.click()
+  // Inactive tabs stay mounted (display:none); only the ACTIVE files
+  // window's embedded tree is visible — match the visible row.
+  const fileRow = sidebar.locator(`[role="button"][title$="${SEEDED_FILE}"]:visible`)
+  await expect(fileRow, `the seeded "${SEEDED_FILE}" file must appear in the files window's tree`).toHaveCount(1, { timeout: 30_000 })
+  // Click near the row's LEFT edge: hovering reveals an @-reference button at
+  // the row's right end, and a center click on a narrow dock lands on it
+  // (referencing the file into the composer instead of opening it).
+  await fileRow.click({ position: { x: 8, y: 8 } })
+  await editorChunk
+  // In-place mode (editorExplorer default): the SAME tab switches to the
+  // file — its title is rewritten, no new tab appears. One "Files" tab
+  // remains: the second files window the sweep opened via the + menu.
+  await expect(
+    sidebar.locator('[title="Files"][draggable="true"]'),
+    'in-place mode rewrites the activated home tab instead of opening a new one',
+  ).toHaveCount(1)
+  const pathInput = sidebar.locator('input[placeholder^="File path"]:visible')
+  await expect(pathInput, 'the files window header path input shows the opened file').toHaveValue(new RegExp(`${SEEDED_FILE}$`))
+  await page.waitForTimeout(1_500)
+  await assertNoCrash()
+
+  // The mermaid chunk (client-mermaid.js) only loads when a previewed
+  // markdown file contains a mermaid fence. Open the seeded diagram file
+  // from the files window's tree (the embedded tree stays pinned while
+  // hello.txt is open) and require the full round-trip: chunk fetch +
+  // sanitized SVG diagram in the preview, so a missing/corrupt mermaid
+  // chunk or a broken render fails the lane.
+  const mermaidChunk = page.waitForResponse(
+    (response) => response.url().includes('/sidebar/bundle/mermaid.js'),
     { timeout: 30_000 },
   )
-  const fileRow = sidebar.locator(`[role="button"][title$="${SEEDED_FILE}"]`)
-  await expect(fileRow, `the seeded "${SEEDED_FILE}" file must appear in the Explorer tree`).toHaveCount(1, { timeout: 30_000 })
-  // The icon theme must serve its assets in the packed profile: the
-  // explorer's rows render <img src="/sidebar/icons/<file>.svg">. A
-  // response wait can't prove it here — the explorer already mounted (and
-  // fetched its icons) during the sweep, and re-focusing the open tab does
-  // not re-request the images, so no new /sidebar/icons response fires.
-  // Instead: fetch a bundled icon through the plugin route (must be a 200
-  // in the real shell) and require the seeded file's row to reference an
-  // icon-theme asset in the DOM. Together they prove icons/ ships in the
-  // npm package and the route is mounted.
+  // The icon theme must serve its assets in the packed profile: the files
+  // window's rows render <img src="/sidebar/icons/<file>.svg">. A response
+  // wait can't prove it here — the tree already mounted (and fetched its
+  // icons) while the seeded file opened, so no new /sidebar/icons response
+  // fires now. Instead: fetch a bundled icon through the plugin route (must
+  // be a 200 in the real shell) and require the seeded file's row to
+  // reference an icon-theme asset in the DOM. Together they prove icons/
+  // ships in the npm package and the route is mounted.
   const iconStatus = await page.evaluate(async () => {
     const response = await fetch('/sidebar/icons/default_file.svg')
     return response.status
@@ -210,9 +282,43 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const rowIcon = fileRow.locator('img[src*="/sidebar/icons/"]')
   await expect(rowIcon, 'the seeded file row must render an icon-theme image').toHaveCount(1)
   expect(await rowIcon.getAttribute('src'), 'file row icon must point at the icon route').toMatch(/^\/sidebar\/icons\//)
-  await fileRow.click()
-  await editorChunk
-  await page.waitForTimeout(1_500)
+
+  const mdRow = sidebar.locator(`[role="button"][title$="${SEEDED_MD_FILE}"]:visible`)
+  await expect(mdRow, `the seeded "${SEEDED_MD_FILE}" file must appear in the files window's tree`).toHaveCount(1, { timeout: 30_000 })
+  await mdRow.click({ position: { x: 8, y: 8 } })
+  await mermaidChunk
+  await expect(
+    sidebar.locator('[data-mermaid-diagram] svg'),
+    'the mermaid fence must render into an SVG diagram in the markdown preview',
+  ).toHaveCount(1, { timeout: 30_000 })
+  // Labels must survive as real SVG <text> (htmlLabels stays off so the
+  // sanitizer's foreignObject strip cannot eat the node text).
+  await expect(
+    sidebar.locator('[data-mermaid-diagram]').first(),
+    'the diagram node labels must render inside the SVG',
+  ).toContainText('Hello', { timeout: 30_000 })
+  // Cross-fence semantics: the reference-style link [before][shared] must
+  // resolve to the definition that sits AFTER the fence — proof that the
+  // preview is a single markdown parse and not per-fence fragments.
+  await expect(
+    sidebar.locator('a[href="https://example.com"]').first(),
+    'reference-style links with definitions across a mermaid fence must resolve',
+  ).toContainText('before', { timeout: 30_000 })
+  // Click-to-enlarge: clicking the diagram opens the zoom modal (portalled
+  // to document.body), Esc closes it again.
+  const modal = page.locator('[data-mermaid-modal]')
+  await sidebar.locator('[data-mermaid-diagram] svg').first().click()
+  await expect(modal, 'clicking the diagram must open the zoom modal').toHaveCount(1, { timeout: 10_000 })
+  await page.keyboard.press('Escape')
+  await expect(modal, 'Esc must close the zoom modal').toHaveCount(0, { timeout: 10_000 })
+  // The preview/edit toggle is mutually exclusive: in preview mode the
+  // CodeMirror surface must be hidden (regression guard — a stale css copy
+  // in the page made the editor stay visible under the preview, breaking
+  // the toggle semantics).
+  await expect(
+    sidebar.locator('.cm-editor').first(),
+    'preview mode must hide the CodeMirror editor (mutually exclusive toggle)',
+  ).toBeHidden()
   await assertNoCrash()
 
   // The plugin's own console prefix must never appear in errors, and no
