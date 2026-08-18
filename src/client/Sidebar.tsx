@@ -51,6 +51,24 @@ import { t } from './locales.ts'
 import { api, type SessionScope } from './api.ts'
 import css from './sidebar.module.css'
 
+function tabMeta(tab: SidebarTab): Record<string, unknown> {
+  return tab.meta !== null && typeof tab.meta === 'object' && !Array.isArray(tab.meta)
+    ? tab.meta as Record<string, unknown>
+    : {}
+}
+
+/** Carry the current editor's explorer visibility/width onto a tab before activation. */
+function inheritedEditorMeta(source: SidebarTab, target: SidebarTab): Record<string, unknown> {
+  const sourceMeta = tabMeta(source)
+  const sourceOpen = typeof sourceMeta.treeOpen === 'boolean'
+    ? sourceMeta.treeOpen
+    : source.path === undefined || source.path === ''
+  const sourceWidth = typeof sourceMeta.treeWidth === 'number' && Number.isFinite(sourceMeta.treeWidth)
+    ? sourceMeta.treeWidth
+    : 240
+  return { ...tabMeta(target), treeOpen: sourceOpen, treeWidth: sourceWidth }
+}
+
 /** How many consecutive reconnect failures stop the agent-terminals push loop
  * (mirror of the terminal view's own cap; the loop restarts on session switch). */
 const FAILURE_LIMIT = 3
@@ -620,6 +638,15 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       }
     },
     activateTab: (paneId, tabId) => {
+      const current = store.getSnapshot().state
+      const leaf = current === undefined
+        ? undefined
+        : leafWithTab(current.splits, tabId) ?? leafWithTab(current.bottomSplits, tabId)
+      const source = leaf?.tabs.find(candidate => candidate.id === leaf.active)
+      const target = leaf?.tabs.find(candidate => candidate.id === tabId)
+      if (source?.type === 'editor' && target?.type === 'editor' && source.id !== target.id) {
+        ctx.betterSidebar?.updateTab(target.id, { meta: inheritedEditorMeta(source, target) })
+      }
       // Route through the service: same reducer (finds the pane in EITHER
       // tree, sets the active pane) and fires descriptor.onActivate; the
       // session scope (with its cwd) rides to the callback.

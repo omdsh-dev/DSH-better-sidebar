@@ -95,7 +95,7 @@ describe('HTML preview iframe sandbox', () => {
     expect(html).not.toContain('临时解锁（不安全）')
   })
 
-  it('markdown preview keeps rendering markdown, not an iframe', () => {
+  it('the default Markdown Visual editor never uses the HTML iframe route', () => {
     const store = createSidebarStore()
     const html = renderToString(createElement(TextEditor, viewerProps(store, {
       viewerId: 'markdown',
@@ -104,8 +104,9 @@ describe('HTML preview iframe sandbox', () => {
     })))
     expect(html).not.toContain('<iframe')
     expect(html).not.toContain('/sidebar/html/')
-    // The markdown is rendered into markup, not framed.
-    expect(html).toContain('<h1')
+    // Markdown starts in the lazy Visual surface rather than HTML preview.
+    expect(html).toContain('可视化')
+    expect(html).toContain('加载中')
   })
 })
 

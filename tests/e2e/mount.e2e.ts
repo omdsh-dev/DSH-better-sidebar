@@ -271,6 +271,8 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await mdRow.click({ position: { x: 8, y: 8 } })
   await expect(sidebar.locator(`[title="${SEEDED_FILE}"][draggable="true"]`)).toHaveCount(1)
   await expect(sidebar.locator(`[title="${SEEDED_MD_FILE}"][draggable="true"]`)).toHaveCount(1)
+  await expect(sidebar.locator('.ProseMirror:visible'), 'Markdown must default to Visual mode').toHaveCount(1, { timeout: 30_000 })
+  await sidebar.getByRole('button', { name: 'Preview', exact: true }).click()
   await mermaidChunk
   await expect(
     sidebar.locator('[data-mermaid-diagram] svg'),

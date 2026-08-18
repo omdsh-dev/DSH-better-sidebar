@@ -95,7 +95,10 @@ test('CRUD, uploads, durable drafts, conflicts, and visual GFM work together', a
   await sidebar.locator('button[aria-label="New file"]:visible').first().click()
   let dialog = page.getByRole('dialog')
   await dialog.getByPlaceholder('Enter a name').fill(DRAFT)
+  const initialVisualChunk = page.waitForResponse(response => response.url().includes('/sidebar/bundle/markdown-editor.js'))
   await dialog.getByRole('button', { name: 'Create' }).click()
+  await initialVisualChunk
+  await expect(sidebar.locator('.ProseMirror:visible')).toBeVisible({ timeout: 30_000 })
   const pathInput = sidebar.locator('input[placeholder^="File path"]:visible')
   await expect(pathInput).toHaveValue(new RegExp(`${DRAFT.replace('.', '\\.')}$`))
 
@@ -113,6 +116,8 @@ test('CRUD, uploads, durable drafts, conflicts, and visual GFM work together', a
   await sidebar.locator('[role="button"][title$="workbench-e2e-seed.md"]:visible').first().click({ position: { x: 8, y: 8 } })
   await expect(sidebar.locator(`[title="${DRAFT}"][draggable="true"]`)).toHaveCount(1)
   await expect(sidebar.locator('[title="workbench-e2e-seed.md"][draggable="true"]')).toHaveCount(1)
+  await expect(pathInput).toHaveValue(/workbench-e2e-seed\.md$/)
+  await expect(sidebar.locator(`[role="button"][title$="${DRAFT}"]:visible`).first().locator('[data-editor-dirty]')).toBeVisible()
   await sidebar.locator(`[title="${DRAFT}"][draggable="true"]`).click()
   await expect(pathInput).toHaveValue(new RegExp(`${DRAFT.replace('.', '\\.')}$`))
   await expect(sidebar.locator(`[role="button"][title$="${DRAFT}"]:visible`).first().locator('[data-editor-dirty]')).toBeVisible()
@@ -124,11 +129,9 @@ test('CRUD, uploads, durable drafts, conflicts, and visual GFM work together', a
   source = page.locator('[data-dsh-better-sidebar] .cm-content:visible')
   await expect(source).toContainText('Durable draft marker', { timeout: 30_000 })
 
-  // The Milkdown chunk opens as rendered GFM and remains tied to Markdown source.
-  const visualChunk = page.waitForResponse(response => response.url().includes('/sidebar/bundle/markdown-editor.js'))
+  // The already-loaded Milkdown chunk reopens the restored source draft as rendered GFM.
   await page.locator('[data-dsh-better-sidebar]').getByRole('button', { name: 'Visual', exact: true }).click()
-  await visualChunk
-  await expect(page.locator('[data-dsh-better-sidebar] .ProseMirror:visible')).toContainText('Durable draft marker')
+  await expect(page.locator('[data-dsh-better-sidebar] .ProseMirror:visible')).toContainText('Durable draft marker', { timeout: 30_000 })
 
   // A disk race produces an explicit conflict instead of silently overwriting.
   await page.locator('[data-dsh-better-sidebar]').getByRole('button', { name: 'Source', exact: true }).click()

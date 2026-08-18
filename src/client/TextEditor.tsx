@@ -67,6 +67,18 @@ const LazyVisualMarkdownEditor = lazyChunkComponent<VisualMarkdownEditorProps>(
   (mod) => mod.VisualMarkdownEditor as ComponentType<VisualMarkdownEditorProps> | undefined,
 )
 
+/** The rendered-preview body, exported so its locale wiring stays unit-testable. */
+export function MarkdownPreviewContent(props: { text: string; hasMermaid: boolean }) {
+  const codeLabels = { copyLabel: t('copy'), copiedLabel: t('copied') }
+  return props.hasMermaid
+    ? <LazyMermaidMarkdown text={props.text} codeLabels={codeLabels} />
+    : <MarkdownText text={props.text} codeLabels={codeLabels} />
+}
+
+function defaultViewMode(viewerId: string): ViewMode {
+  return viewerId === 'markdown' ? 'visual' : 'preview'
+}
+
 /**
  * The sandbox tokens of the HTML preview iframe. NO allow-same-origin (the
  * preview must stay in an opaque origin — with the route's own origin it
@@ -78,7 +90,7 @@ export const HTML_IFRAME_SANDBOX = 'allow-scripts allow-popups allow-downloads a
 
 export function TextEditor(props: FileViewerProps) {
   const { ctx, scope, path, viewerId, content, truncated, version } = props
-  const [mode, setMode] = useState<ViewMode>('preview')
+  const [mode, setMode] = useState<ViewMode>(() => defaultViewMode(viewerId))
   /** Text chosen after the IndexedDB draft lookup; undefined while restoring. */
   const [hydratedText, setHydratedText] = useState<string | undefined>(undefined)
   /** The editor's current text (null while clean); preview renders this. */
@@ -89,8 +101,8 @@ export function TextEditor(props: FileViewerProps) {
   const baseVersionRef = useRef<string | null>(version ?? null)
   const savedTextRef = useRef(content ?? '')
   const staleDraftRef = useRef(false)
-  const modeRef = useRef<ViewMode>('preview')
-  const [visualSeed, setVisualSeed] = useState('')
+  const modeRef = useRef<ViewMode>(defaultViewMode(viewerId))
+  const [visualSeed, setVisualSeed] = useState(() => viewerId === 'markdown' ? content ?? '' : '')
   const [conflict, setConflict] = useState<'restored' | 'save' | null>(null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
   const hostRef = useRef<HTMLDivElement>(null)
@@ -152,10 +164,11 @@ export function TextEditor(props: FileViewerProps) {
   /** Restore a dirty draft before CodeMirror is constructed. */
   useEffect(() => {
     let cancelled = false
+    const defaultMode = defaultViewMode(viewerId)
     setHydratedText(undefined)
-    setMode('preview')
-    modeRef.current = 'preview'
-    setVisualSeed('')
+    setMode(defaultMode)
+    modeRef.current = defaultMode
+    setVisualSeed(defaultMode === 'visual' ? content ?? '' : '')
     setDraft(null)
     draftRef.current = null
     setDirtyValue(false)
@@ -396,7 +409,6 @@ export function TextEditor(props: FileViewerProps) {
     () => mdBlocks.some(block => block.kind === 'mermaid'),
     [mdBlocks],
   )
-  const codeLabels = { copyLabel: t('copy'), copiedLabel: t('copied') }
 
   /**
    * Selection popup for the markdown preview: a mouse-up inside the preview
@@ -532,9 +544,7 @@ export function TextEditor(props: FileViewerProps) {
               whole document to the mermaid lazy chunk (single markdown
               parse; cross-fence references/footnotes stay intact); files
               without one render exactly as before. */}
-          {hasMermaid
-            ? <LazyMermaidMarkdown text={mdText} codeLabels={codeLabels} />
-            : <MarkdownText text={mdText} codeLabels={codeLabels} />}
+          <MarkdownPreviewContent text={mdText} hasMermaid={hasMermaid} />
         </div>
       )}
       {markdown && mode === 'visual' && (

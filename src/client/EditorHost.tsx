@@ -75,9 +75,9 @@ function treeWidthOf(tab: SidebarTab): number {
     : TREE_WIDTH_DEFAULT
 }
 
-/** Merge a patch into the tab's persisted meta (rides the layout). */
-function patchMeta(ctx: Context, tab: SidebarTab, patch: Record<string, unknown>): void {
-  ctx.betterSidebar?.updateTab(tab.id, { meta: { ...metaOf(tab), ...patch } })
+/** Seed a new file tab with the current explorer geometry and visibility. */
+function treeMetaOf(tab: SidebarTab): Record<string, unknown> {
+  return { ...metaOf(tab), treeOpen: treeOpenOf(tab), treeWidth: treeWidthOf(tab) }
 }
 
 /** Clamp one dock width into the contract range. */
@@ -122,12 +122,12 @@ export function EditorHost(props: {
       ctx.betterSidebar?.updateTab(tab.id, { path: absolute, title: baseName(absolute) })
       return
     }
-    openSidebarFile(ctx, store, scope.sessionId, absolute)
+    openSidebarFile(ctx, store, scope.sessionId, absolute, treeMetaOf(tab))
   }
 
   /** The context menu's explicit "new tab" escape (per-path dedupe). */
   const openFileNewTab = (absolute: string): void => {
-    openSidebarFile(ctx, store, scope.sessionId, absolute)
+    openSidebarFile(ctx, store, scope.sessionId, absolute, treeMetaOf(tab))
   }
 
   /**
@@ -144,19 +144,29 @@ export function EditorHost(props: {
         type: 'editor',
         title: baseName(absolute),
         path: absolute,
-        meta: { treeOpen: false },
+        meta: treeMetaOf(tab),
       }
       const { node, leafId } = insertLeafAt(state[key], pane.id, 'row', fresh, false)
       return { ...state, [key]: node, activePane: leafId }
     })
   }
 
-  const openEditorTabs = (): SidebarTab[] => {
+  const editorTabs = (): SidebarTab[] => {
     const state = store.getSnapshot().state
     if (state === undefined) return []
     return [...allLeaves(state.splits), ...allLeaves(state.bottomSplits)]
       .flatMap(leaf => leaf.tabs)
-      .filter(candidate => candidate.type === 'editor' && candidate.path !== undefined && candidate.path !== '')
+      .filter(candidate => candidate.type === 'editor')
+  }
+
+  const openEditorTabs = (): SidebarTab[] => editorTabs()
+    .filter(candidate => candidate.path !== undefined && candidate.path !== '')
+
+  /** Explorer visibility/width belong to the session, not an individual file tab. */
+  const patchTreeMeta = (patch: Record<string, unknown>): void => {
+    for (const candidate of editorTabs()) {
+      ctx.betterSidebar?.updateTab(candidate.id, { meta: { ...treeMetaOf(candidate), ...patch } })
+    }
   }
 
   const handlePathMoved = (from: string, to: string, isDir: boolean): void => {
@@ -224,7 +234,7 @@ export function EditorHost(props: {
     dragRef.current = null
     setDragWidth(null)
     const finalWidth = clampTreeWidth(drag.startWidth + (drag.startX - event.clientX))
-    if (finalWidth !== treeWidthOf(tab)) patchMeta(ctx, tab, { treeWidth: finalWidth })
+    if (finalWidth !== treeWidthOf(tab)) patchTreeMeta({ treeWidth: finalWidth })
   }
 
   useEffect(() => {
@@ -291,7 +301,7 @@ export function EditorHost(props: {
 
   const treeOpen = treeOpenOf(tab)
   /** Persist the panel flag on the tab (survives reloads with the layout). */
-  const toggleTree = (): void => { patchMeta(ctx, tab, { treeOpen: !treeOpen }) }
+  const toggleTree = (): void => { patchTreeMeta({ treeOpen: !treeOpen }) }
   const saveLabel = toolbar === null ? ''
     : toolbar.saveState === 'saving' ? t('loading')
       : toolbar.saveState === 'saved' ? t('saved')

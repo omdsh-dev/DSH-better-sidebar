@@ -4,17 +4,15 @@
  * MarkdownText/CodeBlock are cordis-free and fall back to HARDCODED Chinese
  * when the caller omits the labels, so TextEditor must pass its own
  * dictionary copy (`t('copy')` / `t('copied')`), re-evaluated per render.
- * Rendered with renderToString (the initial preview mode never mounts
- * CodeMirror, so no DOM/effects are needed).
+ * The exact preview-content component used by TextEditor is rendered directly,
+ * so Markdown can independently default to Visual mode without weakening this guard.
  */
 import { describe, expect, it, afterEach } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import { createElement } from 'react'
 import './browser-globals.ts'
-import { TextEditor } from '../src/client/TextEditor.tsx'
-import { createSidebarStore } from '../src/client/state.ts'
+import { MarkdownPreviewContent } from '../src/client/TextEditor.tsx'
 import { attachLocale } from '../src/client/locales.ts'
-import type { FileViewerProps } from '../src/client/service.ts'
 
 /** Minimal structural fake of the DSH LocaleService face the sidebar uses. */
 class FakeLocale {
@@ -30,22 +28,11 @@ class FakeLocale {
   }
 }
 
-const CTX = {} as Parameters<typeof TextEditor>[0]['ctx']
-
 /** A markdown source with one fenced code block (the copy-button surface). */
 const MD_WITH_FENCE = '```ts\nconst a = 1\n```'
 
-function viewerProps(overrides: Partial<FileViewerProps> = {}): FileViewerProps {
-  return {
-    ctx: CTX,
-    store: createSidebarStore(),
-    scope: { sessionId: 's1', cwd: '/p' },
-    path: '/p/a/README.md',
-    title: 'README.md',
-    viewerId: 'markdown',
-    content: MD_WITH_FENCE,
-    ...overrides,
-  }
+function renderPreview(): string {
+  return renderToString(createElement(MarkdownPreviewContent, { text: MD_WITH_FENCE, hasMermaid: false }))
 }
 
 afterEach(() => {
@@ -57,7 +44,7 @@ describe('markdown preview code-block copy labels (DSH i18n following)', () => {
     const locale = new FakeLocale()
     locale.active = 'zh'
     attachLocale(locale)
-    const html = renderToString(createElement(TextEditor, viewerProps()))
+    const html = renderPreview()
     expect(html).toContain('复制')
     expect(html).not.toContain('Copy')
   })
@@ -66,7 +53,7 @@ describe('markdown preview code-block copy labels (DSH i18n following)', () => {
     const locale = new FakeLocale()
     locale.active = 'en'
     attachLocale(locale)
-    const html = renderToString(createElement(TextEditor, viewerProps()))
+    const html = renderPreview()
     expect(html).toContain('Copy')
     expect(html).not.toContain('复制')
   })

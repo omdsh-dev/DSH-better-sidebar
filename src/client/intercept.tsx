@@ -15,14 +15,20 @@ import { wrapOpenPath } from './openpath-intercept.ts'
 import css from './sidebar.module.css'
 
 /** Open a file in the sidebar's editor (used by the intercepted row and the explorer). */
-export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: string, path: string): void {
+export function openSidebarFile(
+  ctx: Context,
+  store: SidebarStore,
+  sessionId: string,
+  path: string,
+  meta?: unknown,
+): void {
   const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
   const absolute = resolveSidebarPath(summary?.cwd, path)
   const at = Math.max(absolute.lastIndexOf('/'), absolute.lastIndexOf('\\'))
   const title = at === -1 ? absolute : absolute.slice(at + 1)
   // Route through the sidebar service so the editor descriptor's dedupeKey
   // (per-path) applies; the id is path-derived so multiple editors coexist.
-  ctx.betterSidebar?.openTab({ type: 'editor', title, path: absolute, id: `editor:${absolute}` })
+  ctx.betterSidebar?.openTab({ type: 'editor', title, path: absolute, id: `editor:${absolute}`, meta })
 }
 
 /** The intercepted produced-files row (visual twin of the deliverables chips). */

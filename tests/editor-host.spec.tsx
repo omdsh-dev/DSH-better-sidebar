@@ -119,7 +119,7 @@ describe('EditorHost (files window)', () => {
         container.querySelector('button[aria-pressed]')!
           .dispatchEvent(new MouseEvent('click', { bubbles: true }))
       })
-      expect(homeTab().meta).toEqual({ treeOpen: false })
+      expect(homeTab().meta).toEqual({ treeOpen: false, treeWidth: 240 })
       // The store change re-renders the host with the fresh tab (Sidebar's
       // subscription in the real app); the second click flips it back.
       rerender()
@@ -128,7 +128,7 @@ describe('EditorHost (files window)', () => {
         container.querySelector('button[aria-pressed]')!
           .dispatchEvent(new MouseEvent('click', { bubbles: true }))
       })
-      expect(homeTab().meta).toEqual({ treeOpen: true })
+      expect(homeTab().meta).toEqual({ treeOpen: true, treeWidth: 240 })
     } finally {
       unmount()
     }
@@ -171,7 +171,20 @@ describe('EditorHost (files window)', () => {
       expect(currentTab().path).toBe('/tmp/a.ts')
       expect(tabs.find(tab => tab.path === '/tmp/b.ts')).toMatchObject({
         id: 'editor:/tmp/b.ts', type: 'editor', title: 'b.ts', path: '/tmp/b.ts',
+        meta: { treeOpen: true, treeWidth: 240 },
       })
+      // Toggling the explorer in either editor updates every file tab, so a
+      // top-tab switch cannot unexpectedly close or reopen the tree.
+      rerender()
+      act(() => {
+        container.querySelector('button[aria-pressed="true"]')!
+          .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+      const updated = allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+      expect(updated.filter(tab => tab.type === 'editor').map(tab => tab.meta)).toEqual([
+        { treeOpen: false, treeWidth: 240 },
+        { treeOpen: false, treeWidth: 240 },
+      ])
     } finally {
       unmount()
     }
