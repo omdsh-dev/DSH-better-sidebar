@@ -811,7 +811,8 @@
 }
 
 /* Merged mode (the editorExplorer pref): the header's path input replaces
-   the plain title, and a toggleable file tree docks at the tab's right edge. */
+   the plain title, and a toggleable file tree docks at the tab's LEFT edge;
+   its width is global and the right edge is the resize handle. */
 .editorPathInput {
   flex: 1;
   min-width: 0;
