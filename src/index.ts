@@ -29,6 +29,7 @@ import {
   type SidebarPrefs,
 } from './config.ts'
 import { isWithin, parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import { searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
 import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
@@ -37,6 +38,12 @@ import * as git from './git.ts'
 import { SettingsConflictError, settingsNamespace, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { defaultShell, ensureSpawnHelper, PtyManager } from './pty-manager.ts'
 import { AgentPtyRegistry, clampDims, type AgentTerminalHandle } from './agent-pty.ts'
+import {
+  DSH_NODE_PTY_RANGE,
+  depsStatus,
+  loadNodePty,
+  PTY_DEPS_MISSING,
+} from './pty-deps.ts'
 import { registerTools } from './tools.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
@@ -172,6 +179,14 @@ type ApiMethod = (payload: unknown) => Promise<unknown> | unknown
 export interface SidebarSettingsFace {
   /** The current resolved value + revision (undefined while the settings service is absent). */
   get(): { value?: unknown; revision?: number }
+  /**
+   * Whether the dsh-web-ui family's aionui-panel has been selected as the
+   * right-panel provider (the `aionui-panel` settings namespace resolves
+   * `rightPanel: 'aionui-panel'`). While true the sidebar must not mount —
+   * the two right panels are mutually exclusive. False when the namespace is
+   * absent (no aionui installed) or the provider is anything else.
+   */
+  externalDisable(): boolean
   /** Merge a patch (revision-guarded) and return the fresh resolved view. */
   update(patch: Record<string, unknown>, expectedRevision?: number): Promise<{ value?: unknown; revision?: number }>
 }
@@ -179,8 +194,8 @@ export interface SidebarSettingsFace {
 /** Build the API method table bound to the plugin context, pty manager, agent pty registry, and resolved config. */
 function buildApi(
   ctx: Context,
-  ptyManager: PtyManager,
-  agentPtyRegistry: AgentPtyRegistry,
+  ptyManager: PtyManager | null,
+  agentPtyRegistry: AgentPtyRegistry | null,
   resolved: ResolvedSidebarConfig,
   getSettings: () => SidebarSettingsFace | undefined,
 ): Record<string, ApiMethod> {
@@ -206,6 +221,14 @@ function buildApi(
       const record = payload as { path?: unknown }
       const target = record.path === undefined ? cwd : requireAbsolute(requireString(payload, 'path'))
       return listDirectory(target, resolved.listLimit)
+    },
+    'fs.search': async (payload) => {
+      // The editor side panel's global name search: rooted at the session
+      // cwd (not caller-targetable — the walk is unbounded by design and
+      // must never escape the workspace), budgeted inside searchFiles.
+      const { cwd } = cwdOf(payload)
+      const query = requireString(payload, 'query')
+      return searchFiles(cwd, query)
     },
     'fs.read': async (payload) => {
       const { cwd } = cwdOf(payload)
@@ -313,7 +336,9 @@ function buildApi(
     'pty.close': (payload) => {
       const sessionId = requireString(payload, 'sessionId')
       const tab = requireString(payload, 'tab')
-      ptyManager.close(`${sessionId}:${tab}`)
+      // Degraded mode (node-pty unavailable): no live pty can exist, so a
+      // no-op ok is the honest answer — never an error the client must show.
+      ptyManager?.close(`${sessionId}:${tab}`)
       return { ok: true }
     },
     // Release an agent terminal by uuid. The WS close frame already does
@@ -322,9 +347,14 @@ function buildApi(
     // tab never leaves a zombie pty behind. Idempotent.
     'agent-pty.close': (payload) => {
       const uuid = requireString(payload, 'uuid')
-      agentPtyRegistry.close(uuid)
+      agentPtyRegistry?.close(uuid)
       return { ok: true }
     },
+    // Terminal dependency status (issue #140): after a WS close 1011 with
+    // reason `pty-deps-missing` the client fetches the full repair details
+    // here — the close reason itself is capped at 123 bytes, too small for
+    // the pasteable command.
+    'terminal.deps': () => depsStatus(),
     // Background jobs: read one job's output (a REPLAY of what the model
     // has read so far, from the owner session's event log — the model's
     // job_output cursor is never touched, so the human pane can never steal
@@ -340,7 +370,9 @@ function buildApi(
     // silently overwritten (mirror of the settings seam's own guard).
     'settings.get': () => {
       const settings = getSettings()
-      return settings?.get() ?? { value: undefined, revision: undefined }
+      return settings === undefined
+        ? { value: undefined, revision: undefined, externalDisable: false }
+        : { ...settings.get(), externalDisable: settings.externalDisable() }
     },
     'settings.update': async (payload) => {
       const settings = getSettings()
@@ -426,18 +458,35 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // restore it before any terminal can spawn (idempotent).
   ensureSpawnHelper()
   const resolved = resolveSidebarConfig(config)
+  // One shell resolution feeds BOTH terminal surfaces: the UI tabs and the
+  // model-facing terminal_* tools. They must stay in lockstep, otherwise a
+  // configured shell fixes one surface and silently leaves the other on the
+  // platform default.
+  const terminalShell = defaultShell({ explicit: resolved.shell })
   // The web runtime's bind-derived trust list (boot-sampled LAN literals
   // plus --trusted-host authorities) — the authoritative source the /api
   // gateway fence derives its list from. Read per request from the live
   // service value; a replaced list takes effect without a plugin restart.
   const fence = (req: SidebarHttpRequest): boolean => isTrustedApiRequest(req, ctx.webRuntime.trustedHosts)
-  const ptyManager = new PtyManager(defaultShell(), resolved.terminalsPerSession)
+  // node-pty is loaded lazily, never at module top level (issue #140): a
+  // missing or broken install must degrade THIS plugin — terminal tab shows
+  // a repair command, agent terminal tools stay unregistered — instead of
+  // failing the plugin load and taking the whole `dsh web` server down.
+  const nodePty = loadNodePty()
+  if (nodePty === null) {
+    const status = depsStatus()
+    const detail = status.ok
+      ? 'unknown cause'
+      : `${status.cause}. Repair: ${status.command}`
+    ctx.logger?.warn(`[dsh-better-sidebar] node-pty (${DSH_NODE_PTY_RANGE}) failed to load: ${detail}`)
+  }
+  const ptyManager = nodePty !== null ? new PtyManager(terminalShell, resolved.terminalsPerSession, nodePty) : null
   // The agent-owned terminal registry: parallel to the UI-tab ptyManager,
   // keyed by uuid (the model's opaque handle) instead of `${sessionId}:${tabId}`,
   // uncapped, and torn down with the plugin. The model creates terminals here
   // through the terminal_create tool; the sidebar view attaches through the
   // same /sidebar/ws/terminal upgrade with ?uuid=... instead of ?tab=...
-  const agentPtyRegistry = new AgentPtyRegistry(defaultShell())
+  const agentPtyRegistry = nodePty !== null ? new AgentPtyRegistry(terminalShell, nodePty) : null
 
   // ── User-facing "Side card" preferences ──────────────────────────────────
   // Register the namespace with the settings provider so the Settings page
@@ -456,6 +505,9 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   const syncToolsGate = (scope: { get(): SidebarPrefs }): void => {
     if (scope.get().agentTerminalTools) {
       if (toolsDisposers === null) {
+        // Degraded mode (node-pty unavailable): never register the terminal
+        // tools — every one of them would fail at spawn time.
+        if (agentPtyRegistry === null) return
         toolsDisposers = registerTools(ctx, agentPtyRegistry, (sessionId) => sessionCwdOf(ctx, sessionId))
       }
     } else if (toolsDisposers !== null) {
@@ -464,7 +516,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       // The feature is off: release every agent terminal the model created
       // while it was on (they are only reachable through the tools). The
       // registry change fires the push, so the sidebar reconciles them away.
-      agentPtyRegistry.disposeAll()
+      agentPtyRegistry?.disposeAll()
     }
   }
   ctx.inject(['settings'], (sctx) => {
@@ -482,8 +534,20 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         ? { value: undefined, revision: undefined }
         : { value: descriptor.value, revision: descriptor.revision }
     }
+    // Mutual exclusion with the dsh-web-ui family right panel: the aionui
+    // panel's provider choice (`aionui-panel.rightPanel`) is the authority.
+    // While it resolves to 'aionui-panel', this sidebar must not mount. The
+    // namespace is read through the settings seam like any other registered
+    // section; absent namespace (no aionui installed) = not disabled.
+    const externalDisable = (): boolean => {
+      const descriptor = sctx.settings.describe({ redactSecrets: true })
+        .find(candidate => candidate.ns === 'aionui-panel')
+      const value = descriptor?.value as { rightPanel?: unknown } | undefined
+      return value?.rightPanel === 'aionui-panel'
+    }
     settingsFace = {
       get: viewOf,
+      externalDisable,
       update: async (patch, expectedRevision) => {
         await sctx.settings.update(ns, patch, expectedRevision)
         return viewOf()
@@ -695,8 +759,8 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
 
   ctx.effect(() => () => {
     toolsDisposers?.()
-    ptyManager.disposeAll()
-    agentPtyRegistry.disposeAll()
+    ptyManager?.disposeAll()
+    agentPtyRegistry?.disposeAll()
     wss.close()
     agentListWss.close()
   }, 'dsh-better-sidebar: teardown')
@@ -704,7 +768,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
 
 /** Push the live agent-terminal list for one session to a connected sidebar view. */
 async function attachAgentList(
-  registry: AgentPtyRegistry,
+  registry: AgentPtyRegistry | null,
   ws: WebSocket,
   req: SidebarHttpRequest,
 ): Promise<void> {
@@ -717,13 +781,15 @@ async function attachAgentList(
     }
     const send = (): void => {
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(registry.list(sessionId)))
+        // Degraded mode (node-pty unavailable): no agent terminal can exist,
+        // so the honest push is the empty list.
+        ws.send(JSON.stringify(registry?.list(sessionId) ?? []))
       }
     }
     send()
-    const unsubscribe = registry.subscribe(send)
-    ws.on('close', () => { unsubscribe() })
-    ws.on('error', () => { unsubscribe() })
+    const unsubscribe = registry?.subscribe(send)
+    ws.on('close', () => { unsubscribe?.() })
+    ws.on('error', () => { unsubscribe?.() })
   } catch (error) {
     ws.close(1011, error instanceof Error ? error.message : String(error))
   }
@@ -743,8 +809,8 @@ async function attachAgentList(
  */
 async function attachTerminal(
   ctx: Context,
-  ptyManager: PtyManager,
-  agentPtyRegistry: AgentPtyRegistry,
+  ptyManager: PtyManager | null,
+  agentPtyRegistry: AgentPtyRegistry | null,
   ws: WebSocket,
   req: SidebarHttpRequest,
   resolved: ResolvedSidebarConfig,
@@ -753,6 +819,12 @@ async function attachTerminal(
     const url = new URL(req.url ?? '/', 'http://dsh.internal')
     const uuid = url.searchParams.get('uuid')
     if (uuid !== null) {
+      // Degraded mode (node-pty unavailable): no agent terminal can exist,
+      // so the lookup behaves exactly like a missing uuid.
+      if (agentPtyRegistry === null) {
+        ws.close(1011, `agent terminal "${uuid}" not found`)
+        return
+      }
       const handle = agentPtyRegistry.get(uuid)
       if (handle === undefined) {
         ws.close(1011, `agent terminal "${uuid}" not found`)
@@ -765,6 +837,13 @@ async function attachTerminal(
     const tabId = url.searchParams.get('tab')
     if (sessionId === null || tabId === null) {
       ws.close(1008, 'either ?uuid or ?sessionId+?tab are required')
+      return
+    }
+    if (ptyManager === null) {
+      // Degraded mode (issue #140): node-pty unavailable. The close reason
+      // is a SHORT marker — a WS close reason is capped at 123 bytes, so the
+      // client fetches the full repair command from /sidebar/api/terminal.deps.
+      ws.close(1011, PTY_DEPS_MISSING)
       return
     }
     const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)

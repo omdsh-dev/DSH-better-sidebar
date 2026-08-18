@@ -51,6 +51,25 @@ body[data-dsh-sidebar-dragging] #root > div[data-slot="root"] > div > div:nth-ch
   transition: none;
 }
 
+/* DSH 0.1.x gives external settings sections a generic gear and exposes no
+   icon field in the settings.section contract. settings-nav-icon.ts marks
+   only this plugin's localized row; render the requested Lucide
+   gallery-horizontal-end SVG as a currentColor mask so it follows the native
+   nav hover/active colors without changing the shell's 16px icon rhythm. */
+[data-dsh-better-sidebar-settings-nav] > svg:first-child {
+  display: none;
+}
+
+[data-dsh-better-sidebar-settings-nav]::before {
+  content: '';
+  flex: none;
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 7v10'/%3E%3Cpath d='M6 5v14'/%3E%3Crect width='12' height='18' x='10' y='3' rx='2'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 7v10'/%3E%3Cpath d='M6 5v14'/%3E%3Crect width='12' height='18' x='10' y='3' rx='2'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
 @media (prefers-reduced-motion: reduce) {
   #root,
   #root > div[data-slot="root"] > div > div:nth-child(2) {
