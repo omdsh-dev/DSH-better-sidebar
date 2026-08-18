@@ -19,8 +19,8 @@
  *     files through the Files window's tree (in-place mode: the seeded home
  *     tab itself switches to the file, no new tab), while response waits
  *     armed before goto prove the lazily-fetched editor chunk
- *     (client-editor.js) and the mermaid chunk (client-mermaid.js, rendered
- *     SVG diagram + zoom modal) loaded.
+ *     (client-editor.js) loaded; Markdown is then checked for its Visual /
+ *     Source-only mode contract.
  *
  * Deterministic by construction: every wait is on a DOM/network marker, the
  * suite is serial (one server instance), and any crash trips the very next
@@ -43,9 +43,8 @@ const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-
  *  exercise the file-open path (editor chunk = client-editor.js). */
 const SEEDED_FILE = 'hello.txt'
 
-/** A markdown file with a mermaid fence, opened through the Files window's
- *  tree to force the lazily-packed mermaid chunk (client-mermaid.js) to load
- *  and render a sanitized SVG diagram. */
+/** A Markdown file opened through the Files window's tree to verify that its
+ *  toolbar exposes only Visual and Source modes. */
 const SEEDED_MD_FILE = 'diagram.md'
 
 /**
@@ -60,16 +59,13 @@ const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Terminal', 'Browser']
 
 let api: APIRequestContext
 
-/** Seed one workspace + one session (plus files for the editor/mermaid-chunk
- *  probes) through the host's unary RPC surface. */
+/** Seed one workspace + one session (plus text and Markdown editor probes)
+ *  through the host's unary RPC surface. */
 async function seedSession(): Promise<void> {
   mkdirSync(WORKSPACE_PATH, { recursive: true })
   writeFileSync(join(WORKSPACE_PATH, SEEDED_FILE), 'hello from the mount lane\n')
-  // The mermaid-chunk probe file: a markdown doc whose preview must fetch
-  // client-mermaid.js and render the fence into an SVG diagram. The
-  // reference-style link's definition sits AFTER the fence: it only
-  // resolves when the preview is one single markdown parse (the mermaid
-  // path must not split the document into independent MarkdownText blocks).
+  // The Markdown probe keeps a mermaid fence so Source mode must preserve
+  // syntax that Visual mode does not special-case.
   writeFileSync(join(WORKSPACE_PATH, SEEDED_MD_FILE), [
     '# Diagram',
     '',
@@ -256,56 +252,22 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await page.waitForTimeout(1_500)
   await assertNoCrash()
 
-  // The mermaid chunk (client-mermaid.js) only loads when a previewed
-  // markdown file contains a mermaid fence. Open the seeded diagram file
-  // from the files window's tree (the embedded tree stays pinned while
-  // hello.txt is open) and require the full round-trip: chunk fetch +
-  // sanitized SVG diagram in the preview, so a missing/corrupt mermaid
-  // chunk or a broken render fails the lane.
-  const mermaidChunk = page.waitForResponse(
-    (response) => response.url().includes('/sidebar/bundle/mermaid.js'),
-    { timeout: 30_000 },
-  )
+  // Open the seeded Markdown document from the pinned tree and verify its
+  // deliberately smaller mode surface: Visual by default, Source on demand,
+  // and no separate Preview option.
   const mdRow = sidebar.locator(`[role="button"][title$="${SEEDED_MD_FILE}"]:visible`)
   await expect(mdRow, `the seeded "${SEEDED_MD_FILE}" file must appear in the files window's tree`).toHaveCount(1, { timeout: 30_000 })
   await mdRow.click({ position: { x: 8, y: 8 } })
   await expect(sidebar.locator(`[title="${SEEDED_FILE}"][draggable="true"]`)).toHaveCount(1)
   await expect(sidebar.locator(`[title="${SEEDED_MD_FILE}"][draggable="true"]`)).toHaveCount(1)
   await expect(sidebar.locator('.ProseMirror:visible'), 'Markdown must default to Visual mode').toHaveCount(1, { timeout: 30_000 })
-  await sidebar.getByRole('button', { name: 'Preview', exact: true }).click()
-  await mermaidChunk
-  await expect(
-    sidebar.locator('[data-mermaid-diagram] svg'),
-    'the mermaid fence must render into an SVG diagram in the markdown preview',
-  ).toHaveCount(1, { timeout: 30_000 })
-  // Labels must survive as real SVG <text> (htmlLabels stays off so the
-  // sanitizer's foreignObject strip cannot eat the node text).
-  await expect(
-    sidebar.locator('[data-mermaid-diagram]').first(),
-    'the diagram node labels must render inside the SVG',
-  ).toContainText('Hello', { timeout: 30_000 })
-  // Cross-fence semantics: the reference-style link [before][shared] must
-  // resolve to the definition that sits AFTER the fence — proof that the
-  // preview is a single markdown parse and not per-fence fragments.
-  await expect(
-    sidebar.locator('a[href="https://example.com"]').first(),
-    'reference-style links with definitions across a mermaid fence must resolve',
-  ).toContainText('before', { timeout: 30_000 })
-  // Click-to-enlarge: clicking the diagram opens the zoom modal (portalled
-  // to document.body), Esc closes it again.
-  const modal = page.locator('[data-mermaid-modal]')
-  await sidebar.locator('[data-mermaid-diagram] svg').first().click()
-  await expect(modal, 'clicking the diagram must open the zoom modal').toHaveCount(1, { timeout: 10_000 })
-  await page.keyboard.press('Escape')
-  await expect(modal, 'Esc must close the zoom modal').toHaveCount(0, { timeout: 10_000 })
-  // The preview/edit toggle is mutually exclusive: in preview mode the
-  // CodeMirror surface must be hidden (regression guard — a stale css copy
-  // in the page made the editor stay visible under the preview, breaking
-  // the toggle semantics).
-  await expect(
-    sidebar.locator('.cm-editor').first(),
-    'preview mode must hide the CodeMirror editor (mutually exclusive toggle)',
-  ).toBeHidden()
+  await expect(sidebar.getByRole('button', { name: 'Visual', exact: true })).toHaveCount(1)
+  await expect(sidebar.getByRole('button', { name: 'Source', exact: true })).toHaveCount(1)
+  await expect(sidebar.getByRole('button', { name: 'Preview', exact: true })).toHaveCount(0)
+  await sidebar.getByRole('button', { name: 'Source', exact: true }).click()
+  await expect(sidebar.locator('.cm-content:visible'), 'Source mode must preserve the Markdown source').toContainText('graph TD')
+  await sidebar.getByRole('button', { name: 'Visual', exact: true }).click()
+  await expect(sidebar.locator('.ProseMirror:visible')).toHaveCount(1)
   await assertNoCrash()
 
   // The plugin's own console prefix must never appear in errors, and no

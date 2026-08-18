@@ -99,6 +99,9 @@ test('CRUD, uploads, durable drafts, conflicts, and visual GFM work together', a
   await dialog.getByRole('button', { name: 'Create' }).click()
   await initialVisualChunk
   await expect(sidebar.locator('.ProseMirror:visible')).toBeVisible({ timeout: 30_000 })
+  await expect(sidebar.getByRole('button', { name: 'Visual', exact: true })).toHaveCount(1)
+  await expect(sidebar.getByRole('button', { name: 'Source', exact: true })).toHaveCount(1)
+  await expect(sidebar.getByRole('button', { name: 'Preview', exact: true })).toHaveCount(0)
   const pathInput = sidebar.locator('input[placeholder^="File path"]:visible')
   await expect(pathInput).toHaveValue(new RegExp(`${DRAFT.replace('.', '\\.')}$`))
 

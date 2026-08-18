@@ -1,7 +1,7 @@
 /**
  * The code/markdown file viewer: a CodeMirror 6 editor with line wrapping,
  * syntax highlighting (extension-keyed language), a dirty dot and Ctrl/Cmd+S
- * save, and a preview/edit toggle for markdown files. Registered as the
+ * save, and mode controls for rendered/editable text files. Registered as the
  * `code` (catch-all) and `markdown` built-in viewers; the editor tab host
  * fetches the content through the fsRead strategy and passes it in props,
  * so this component never fetches or dispatches — it only edits.
@@ -29,6 +29,7 @@ import {
   type EditorViewMode,
 } from './editor-buffers.ts'
 import { languageForPath } from './lang.ts'
+import { defaultEditorMode, editorModesFor, restoredEditorMode } from './editor-modes.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
@@ -75,10 +76,6 @@ export function MarkdownPreviewContent(props: { text: string; hasMermaid: boolea
     : <MarkdownText text={props.text} codeLabels={codeLabels} />
 }
 
-function defaultViewMode(viewerId: string): ViewMode {
-  return viewerId === 'markdown' ? 'visual' : 'preview'
-}
-
 /**
  * The sandbox tokens of the HTML preview iframe. NO allow-same-origin (the
  * preview must stay in an opaque origin — with the route's own origin it
@@ -90,7 +87,7 @@ export const HTML_IFRAME_SANDBOX = 'allow-scripts allow-popups allow-downloads a
 
 export function TextEditor(props: FileViewerProps) {
   const { ctx, scope, path, viewerId, content, truncated, version } = props
-  const [mode, setMode] = useState<ViewMode>(() => defaultViewMode(viewerId))
+  const [mode, setMode] = useState<ViewMode>(() => defaultEditorMode(viewerId))
   /** Text chosen after the IndexedDB draft lookup; undefined while restoring. */
   const [hydratedText, setHydratedText] = useState<string | undefined>(undefined)
   /** The editor's current text (null while clean); preview renders this. */
@@ -101,7 +98,7 @@ export function TextEditor(props: FileViewerProps) {
   const baseVersionRef = useRef<string | null>(version ?? null)
   const savedTextRef = useRef(content ?? '')
   const staleDraftRef = useRef(false)
-  const modeRef = useRef<ViewMode>(defaultViewMode(viewerId))
+  const modeRef = useRef<ViewMode>(defaultEditorMode(viewerId))
   const [visualSeed, setVisualSeed] = useState(() => viewerId === 'markdown' ? content ?? '' : '')
   const [conflict, setConflict] = useState<'restored' | 'save' | null>(null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
@@ -164,7 +161,7 @@ export function TextEditor(props: FileViewerProps) {
   /** Restore a dirty draft before CodeMirror is constructed. */
   useEffect(() => {
     let cancelled = false
-    const defaultMode = defaultViewMode(viewerId)
+    const defaultMode = defaultEditorMode(viewerId)
     setHydratedText(undefined)
     setMode(defaultMode)
     modeRef.current = defaultMode
@@ -185,7 +182,7 @@ export function TextEditor(props: FileViewerProps) {
         setHydratedText(content)
         return
       }
-      const restoredMode: ViewMode = viewerId === 'markdown' ? record.mode : record.mode === 'visual' ? 'edit' : record.mode
+      const restoredMode = restoredEditorMode(viewerId, record.mode)
       const stale = record.baseVersion !== (version ?? null)
       baseVersionRef.current = record.baseVersion
       staleDraftRef.current = stale
@@ -205,8 +202,8 @@ export function TextEditor(props: FileViewerProps) {
 
   // Create the CodeMirror editor once the content is loaded. The view owns
   // the document; React only tracks dirty/draft state through the update
-  // listener. For markdown the view stays mounted while previewing (hidden),
-  // so unsaved edits survive the preview/edit toggle. The theme + syntax
+  // listener. For Markdown the view stays mounted while Visual mode hides it,
+  // so unsaved edits survive Visual/Source switches. The theme + syntax
   // colors live in a compartment so a scheme flip reconfigures only that
   // part — the document, undo history and scroll position survive.
   useEffect(() => {
@@ -318,12 +315,13 @@ export function TextEditor(props: FileViewerProps) {
   }, [dark])
 
   const switchMode = (next: ViewMode): void => {
-    if (next === 'visual') {
+    const resolved = editorModesFor(viewerId).includes(next) ? next : defaultEditorMode(viewerId)
+    if (resolved === 'visual') {
       setVisualSeed(viewRef.current?.state.doc.toString() ?? draftRef.current ?? hydratedText ?? content ?? '')
     }
-    modeRef.current = next
-    setMode(next)
-    if (dirtyRef.current && draftRef.current !== null) persistDraft(draftRef.current, next)
+    modeRef.current = resolved
+    setMode(resolved)
+    if (dirtyRef.current && draftRef.current !== null) persistDraft(draftRef.current, resolved)
   }
 
   // The editor may have been display:none while previewing; re-measure when
@@ -459,7 +457,7 @@ export function TextEditor(props: FileViewerProps) {
   // the own toolbar row, report the state after every relevant render (the
   // JSON key guards redundant calls), and register the commands on mount.
   const hostToolbar = props.toolbar === 'host'
-  const availableModes: readonly EditorMode[] = markdown ? ['preview', 'visual', 'edit'] : html ? ['preview', 'edit'] : []
+  const availableModes: readonly EditorMode[] = editorModesFor(viewerId)
   const lastToolbarRef = useRef('')
   useEffect(() => {
     if (!hostToolbar) return
