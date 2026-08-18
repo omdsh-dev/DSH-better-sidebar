@@ -1727,6 +1727,53 @@
   font: var(--dsw-font-xxs-12);
 }
 
+.gitRepository {
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.gitRepositorySelected {
+  box-shadow: inset 2px 0 0 var(--dsw-alias-brand-primary);
+}
+
+.gitRepositoryHeader {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.gitRepositoryHeader:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.gitRepositoryName,
+.gitRepositoryBranch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gitRepositoryName {
+  flex: 1;
+  font: var(--dsw-font-xxs-strong-12);
+}
+
+.gitRepositoryBranch {
+  flex: none;
+  max-width: 45%;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+}
+
 .gitSection {
   border-top: 1px solid var(--dsw-alias-border-l1);
 }
