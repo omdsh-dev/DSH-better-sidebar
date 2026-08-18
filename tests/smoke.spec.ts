@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { apply, mediaTypeForPath } from '../src/index.ts'
+import { encodeHtmlUrl } from '../src/html-route.ts'
 import * as git from '../src/git.ts'
 import { listDirectory } from '../src/fs-tree.ts'
 import { defaultShell, PtyManager, type SidebarPty } from '../src/pty-manager.ts'
@@ -92,6 +93,58 @@ describe('host plugin smoke', () => {
     expect(upgrades.map(route => route.path)).toEqual(['/sidebar/ws/terminal', '/sidebar/ws/agent-terminals'])
     // Teardown runs without throwing (pty manager has nothing open).
     for (const cleanup of effects) cleanup()
+  })
+
+  it('serves HTML previews as UTF-8 without changing the file bytes', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dsh-sidebar-html-utf8-'))
+    const path = join(directory, 'fragment.html')
+    const source = Buffer.from('<div>排序算法可视化</div>', 'utf8')
+    writeFileSync(path, source)
+    const routes: SidebarWebRoute[] = []
+    const effects: Array<() => void | (() => void)> = []
+    const ctx: FakeContext = {
+      webRuntime: { trustedHosts: [] },
+      webServer: {
+        register: (route) => { routes.push(route); return () => {} },
+        registerUpgrade: () => () => {},
+      },
+      sessions: { get: () => ({ header: { cwd: directory } }) },
+      tools: { register: () => () => {} },
+      effect: (fn) => {
+        const cleanup = fn()
+        if (typeof cleanup === 'function') effects.push(cleanup)
+      },
+      inject: () => () => {},
+      get: () => undefined,
+    }
+    try {
+      apply(ctx as never)
+      const route = routes.find(candidate => candidate.path === '/sidebar/html')!
+      const req = {
+        method: 'GET',
+        url: encodeHtmlUrl('s-html', path),
+        headers: { host: '127.0.0.1:3080' },
+      } as never
+      const response: { status?: number; headers?: Record<string, string>; chunks: Buffer[] } = { chunks: [] }
+      const res = {
+        writeHead: (status: number, headers?: Record<string, string>) => {
+          response.status = status
+          response.headers = headers
+        },
+        end: (chunk?: string | Buffer) => {
+          if (chunk !== undefined) response.chunks.push(Buffer.from(chunk))
+        },
+      } as never
+
+      await route.handler(req, res)
+
+      expect(response.status).toBe(200)
+      expect(Buffer.concat(response.chunks)).toEqual(source)
+      expect(response.headers?.['content-type']).toBe('text/html; charset=utf-8')
+    } finally {
+      for (const cleanup of effects) cleanup()
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it('runs git status/log/branches against this repository', async () => {

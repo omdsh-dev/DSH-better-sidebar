@@ -695,7 +695,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const type = mediaTypeForPath(absolute)
         const body = await readFile(absolute)
         res.writeHead(200, {
-          'content-type': type,
+          'content-type': type === 'text/html' ? 'text/html; charset=utf-8' : type,
           'cache-control': 'no-cache',
           'x-content-type-options': 'nosniff',
           'referrer-policy': 'no-referrer',
