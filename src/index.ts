@@ -13,8 +13,8 @@
  * session's authoritative cwd comes from the session store, and terminal
  * processes are keyed by session.
  */
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, extname, isAbsolute, join } from 'node:path'
+import { mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, extname, isAbsolute, join, relative } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -122,10 +122,33 @@ function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string): stri
  * paths pass through; relative ones join the repo root (falling back to the
  * cwd when the root cannot be resolved, e.g. a bare directory).
  */
-async function resolveGitPath(cwd: string, raw: string): Promise<string> {
+async function resolveGitPath(cwd: string, raw: string, repository?: string): Promise<string> {
   if (isAbsolute(raw)) return requireAbsolute(raw)
-  const root = await git.repoRoot(cwd).catch(() => cwd)
+  const root = repository ?? await git.repoRoot(cwd).catch(() => cwd)
   return requireAbsolute(join(root, raw))
+}
+
+/** Resolve and validate a repository selected by the browser. */
+async function resolveGitRepository(cwd: string, payload: unknown): Promise<string> {
+  const record = payload as { repository?: unknown }
+  const requested = record.repository === undefined
+    ? await git.repoRoot(cwd)
+    : requireAbsolute(requireString(payload, 'repository'))
+  const [canonicalCwd, canonicalRepository] = await Promise.all([
+    realpath(cwd),
+    realpath(requested),
+  ])
+  const repositoryRoot = await realpath(await git.repoRoot(canonicalRepository))
+  const containingRoot = await git.repoRoot(canonicalCwd)
+    .then(root => realpath(root))
+    .catch(() => undefined)
+  const fromWorkspace = relative(canonicalCwd, canonicalRepository)
+  const isInsideWorkspace = fromWorkspace === ''
+    || (!fromWorkspace.startsWith('..') && !isAbsolute(fromWorkspace))
+  if (repositoryRoot !== canonicalRepository || (!isInsideWorkspace && canonicalRepository !== containingRoot)) {
+    throw new SidebarError('git-error', 'repository is outside the session workspace')
+  }
+  return canonicalRepository
 }
 
 /** How many leading bytes a binary read returns for client-side detect sniffing. */
@@ -257,41 +280,42 @@ function buildApi(
     },
     'git.status': async (payload) => {
       const { cwd } = cwdOf(payload)
-      return git.status(cwd)
+      return git.repositories(cwd)
     },
     'git.diff': async (payload) => {
       const { cwd } = cwdOf(payload)
       const record = payload as { path?: unknown; staged?: unknown }
-      const path = record.path === undefined ? undefined : await resolveGitPath(cwd, requireString(payload, 'path'))
-      return { diff: await git.diff(cwd, path, record.staged === true) }
+      const repository = await resolveGitRepository(cwd, payload)
+      const path = record.path === undefined ? undefined : await resolveGitPath(cwd, requireString(payload, 'path'), repository)
+      return { diff: await git.diff(cwd, path, record.staged === true, repository) }
     },
     'git.stage': async (payload) => {
       const { cwd } = cwdOf(payload)
       const record = payload as { path?: unknown }
       const path = record.path === undefined ? undefined : requireString(payload, 'path')
-      await git.stage(cwd, path)
+      await git.stage(cwd, path, await resolveGitRepository(cwd, payload))
       return { ok: true }
     },
     'git.unstage': async (payload) => {
       const { cwd } = cwdOf(payload)
       const record = payload as { path?: unknown }
       const path = record.path === undefined ? undefined : requireString(payload, 'path')
-      await git.unstage(cwd, path)
+      await git.unstage(cwd, path, await resolveGitRepository(cwd, payload))
       return { ok: true }
     },
     'git.commit': async (payload) => {
       const { cwd } = cwdOf(payload)
       const message = requireString(payload, 'message')
-      await git.commit(cwd, message)
+      await git.commit(cwd, message, await resolveGitRepository(cwd, payload))
       return { ok: true }
     },
     'git.branch': async (payload) => {
       const { cwd } = cwdOf(payload)
-      return git.branches(cwd)
+      return git.branches(cwd, await resolveGitRepository(cwd, payload))
     },
     'git.checkout': async (payload) => {
       const { cwd } = cwdOf(payload)
-      await git.checkout(cwd, requireString(payload, 'branch'))
+      await git.checkout(cwd, requireString(payload, 'branch'), await resolveGitRepository(cwd, payload))
       return { ok: true }
     },
     'git.log': async (payload) => {
@@ -303,32 +327,34 @@ function buildApi(
       const skip = typeof record.skip === 'number' && Number.isInteger(record.skip) && record.skip >= 0
         ? record.skip
         : undefined
-      return git.log(cwd, count, skip)
+      return git.log(cwd, count, skip, await resolveGitRepository(cwd, payload))
     },
     'git.commit-diff': async (payload) => {
       const { cwd } = cwdOf(payload)
-      return { diff: await git.commitDiff(cwd, requireString(payload, 'hash')) }
+      return { diff: await git.commitDiff(cwd, requireString(payload, 'hash'), await resolveGitRepository(cwd, payload)) }
     },
     'git.discard': async (payload) => {
       const { cwd } = cwdOf(payload)
-      await git.discard(cwd, await resolveGitPath(cwd, requireString(payload, 'path')))
+      const repository = await resolveGitRepository(cwd, payload)
+      await git.discard(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), repository), repository)
       return { ok: true }
     },
     'git.revert': async (payload) => {
       const { cwd } = cwdOf(payload)
-      await git.revert(cwd, requireString(payload, 'hash'))
+      await git.revert(cwd, requireString(payload, 'hash'), await resolveGitRepository(cwd, payload))
       return { ok: true }
     },
     'git.cherry-pick': async (payload) => {
       const { cwd } = cwdOf(payload)
-      await git.cherryPick(cwd, requireString(payload, 'hash'))
+      await git.cherryPick(cwd, requireString(payload, 'hash'), await resolveGitRepository(cwd, payload))
       return { ok: true }
     },
     'git.show': async (payload) => {
       const { cwd } = cwdOf(payload)
-      const path = await resolveGitPath(cwd, requireString(payload, 'path'))
+      const repository = await resolveGitRepository(cwd, payload)
+      const path = await resolveGitPath(cwd, requireString(payload, 'path'), repository)
       const rev = requireString(payload, 'rev')
-      return { content: await git.show(cwd, rev, path) }
+      return { content: await git.show(cwd, rev, path, repository) }
     },
     // Release a terminal immediately. The WebSocket close frame already does
     // this while the socket is open; this route covers the tab-close that

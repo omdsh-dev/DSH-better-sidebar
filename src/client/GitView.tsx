@@ -8,12 +8,12 @@
  * revert, cherry-pick, copy paths/hashes). Refresh is manual + on mount/
  * focus (no file watcher — KISS).
  */
-import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
   IconTrashOutline16, Input, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { GitLogEntry, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
+import type { GitLogEntry, GitRepositoryStatus, GitStatusEntry, SessionScope } from './api.ts'
 import { api } from './api.ts'
 import { relativeTo } from './paths.ts'
 import { relativeTime, t } from './locales.ts'
@@ -55,6 +55,16 @@ function baseName(path: string): string {
   return at === -1 ? path : path.slice(at + 1)
 }
 
+/** Last path segment of a repository root, separator-agnostic. */
+function repositoryName(root: string): string {
+  return baseName(root.replace(/[\\/]+$/, '')) || root
+}
+
+/** Absolute path for one repository-relative status entry. */
+function repositoryPath(root: string, path: string): string {
+  return `${root.replace(/[\\/]+$/, '')}/${path}`
+}
+
 /** The ref names of one log row's decorations (`HEAD -> main` → `main`), deduped. */
 function refNames(refs: string): string[] {
   return [...new Set(
@@ -86,7 +96,9 @@ export function GitView(props: {
   onOpenDiff: (tab: SidebarTab) => void
 }) {
   const { scope, onOpenFile, onOpenDiff } = props
-  const [status, setStatus] = useState<GitStatusResult | null>(null)
+  const [repositories, setRepositories] = useState<GitRepositoryStatus[] | null>(null)
+  const [selectedRepository, setSelectedRepository] = useState<string | null>(null)
+  const selectedRepositoryRef = useRef<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [branchNames, setBranchNames] = useState<string[]>([])
@@ -99,23 +111,31 @@ export function GitView(props: {
   const [logLoadingMore, setLogLoadingMore] = useState(false)
 
   /** The open file-row context menu (cursor position for the portaled Menu). */
-  const [fileMenu, setFileMenu] = useState<{ entry: GitStatusEntry; staged: boolean; x: number; y: number } | null>(null)
+  const [fileMenu, setFileMenu] = useState<{ repository: string; entry: GitStatusEntry; staged: boolean; x: number; y: number } | null>(null)
   /** The open history-row context menu. */
-  const [historyMenu, setHistoryMenu] = useState<{ entry: GitLogEntry; x: number; y: number } | null>(null)
+  const [historyMenu, setHistoryMenu] = useState<{ repository: string; entry: GitLogEntry; x: number; y: number } | null>(null)
   /** The pending destructive action awaiting confirmation. */
   const [confirm, setConfirm] = useState<ConfirmState | null>(null)
 
-  const refresh = useCallback(async (): Promise<void> => {
+  const refresh = useCallback(async (targetRepository?: string): Promise<void> => {
     setLoading(true)
     setError(null)
     try {
-      const [statusResult, branchResult, logResult] = await Promise.all([
-        api.gitStatus(scope),
-        api.gitBranch(scope).catch(() => ({ current: '', names: [] as string[] })),
-        // The first history page only; the rest arrives via "load more".
-        api.gitLog(scope, LOG_BATCH, 0).catch(() => [] as GitLogEntry[]),
-      ])
-      setStatus(statusResult)
+      const statusResult = await api.gitStatus(scope)
+      const wanted = targetRepository ?? selectedRepositoryRef.current
+      const selected = statusResult.find(repository => repository.root === wanted)?.root
+        ?? statusResult[0]?.root
+        ?? null
+      const [branchResult, logResult] = selected === null
+        ? [{ current: '', names: [] as string[] }, [] as GitLogEntry[]]
+        : await Promise.all([
+            api.gitBranch(scope, selected).catch(() => ({ current: '', names: [] as string[] })),
+            // The first history page only; the rest arrives via "load more".
+            api.gitLog(scope, selected, LOG_BATCH, 0).catch(() => [] as GitLogEntry[]),
+          ])
+      setRepositories(statusResult)
+      selectedRepositoryRef.current = selected
+      setSelectedRepository(selected)
       setBranchNames(branchResult.names)
       setLogEntries(logResult)
       setLogEnded(logResult.length < LOG_BATCH)
@@ -130,10 +150,10 @@ export function GitView(props: {
 
   /** Append the next history page (lazy: only when the user asks for more). */
   const loadMoreLog = async (): Promise<void> => {
-    if (logLoadingMore || logEnded) return
+    if (logLoadingMore || logEnded || selectedRepository === null) return
     setLogLoadingMore(true)
     try {
-      const next = await api.gitLog(scope, LOG_BATCH, logEntries.length)
+      const next = await api.gitLog(scope, selectedRepository, LOG_BATCH, logEntries.length)
       setLogEntries(entries => [...entries, ...next])
       if (next.length < LOG_BATCH) setLogEnded(true)
     } catch (reason) {
@@ -144,42 +164,42 @@ export function GitView(props: {
   }
 
   /** The diff tab for one changed file (one tab per path+side; same id = focused). */
-  const openWorktreeDiff = (entry: GitStatusEntry, staged: boolean): void => {
+  const openWorktreeDiff = (repository: string, entry: GitStatusEntry, staged: boolean): void => {
     onOpenDiff({
-      id: `diff:w:${staged ? 's' : 'u'}:${entry.path}`,
+      id: `diff:w:${staged ? 's' : 'u'}:${repository}:${entry.path}`,
       type: 'diff',
       title: baseName(entry.path),
-      diff: { kind: 'worktree', path: entry.path, staged, untracked: isUntracked(entry) },
+      diff: { kind: 'worktree', path: entry.path, staged, untracked: isUntracked(entry), repository },
     })
   }
 
   /** The diff tab for one commit (one tab per commit). */
-  const openCommitDiff = (entry: GitLogEntry): void => {
+  const openCommitDiff = (repository: string, entry: GitLogEntry): void => {
     onOpenDiff({
-      id: `diff:c:${entry.hashFull}`,
+      id: `diff:c:${repository}:${entry.hashFull}`,
       type: 'diff',
       title: `${entry.hash} ${entry.subject}`,
-      diff: { kind: 'commit', hash: entry.hash, hashFull: entry.hashFull, subject: entry.subject },
+      diff: { kind: 'commit', hash: entry.hash, hashFull: entry.hashFull, subject: entry.subject, repository },
     })
   }
 
-  const stageEntry = async (entry: GitStatusEntry, staged: boolean): Promise<void> => {
+  const stageEntry = async (repository: string, entry: GitStatusEntry, staged: boolean): Promise<void> => {
     setBusy(true)
     try {
-      if (staged) await api.gitUnstage(scope, entry.path)
-      else await api.gitStage(scope, entry.path)
-      await refresh()
+      if (staged) await api.gitUnstage(scope, repository, entry.path)
+      else await api.gitStage(scope, repository, entry.path)
+      await refresh(repository)
     } finally {
       setBusy(false)
     }
   }
 
-  const stageAll = async (staged: boolean): Promise<void> => {
+  const stageAll = async (repository: string, staged: boolean): Promise<void> => {
     setBusy(true)
     try {
-      if (staged) await api.gitUnstage(scope)
-      else await api.gitStage(scope)
-      await refresh()
+      if (staged) await api.gitUnstage(scope, repository)
+      else await api.gitStage(scope, repository)
+      await refresh(repository)
     } finally {
       setBusy(false)
     }
@@ -187,11 +207,11 @@ export function GitView(props: {
 
   const commit = async (): Promise<void> => {
     const message = commitMsg.trim()
-    if (message === '' || busy) return
+    if (message === '' || busy || selectedRepository === null) return
     setBusy(true)
     setCommitError(null)
     try {
-      await api.gitCommit(scope, message)
+      await api.gitCommit(scope, selectedRepository, message)
       setCommitMsg('')
       await refresh()
     } catch (reason) {
@@ -202,12 +222,13 @@ export function GitView(props: {
   }
 
   const checkout = async (branch: string): Promise<void> => {
-    if (branch === status?.branch || busy) return
+    const selected = repositories?.find(repository => repository.root === selectedRepository)
+    if (branch === selected?.branch || busy || selectedRepository === null) return
     setBusy(true)
     setCommitError(null)
     try {
-      await api.gitCheckout(scope, branch)
-      await refresh()
+      await api.gitCheckout(scope, selectedRepository, branch)
+      await refresh(selectedRepository)
     } catch (reason) {
       setCommitError(`${t('checkoutError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
     } finally {
@@ -236,30 +257,30 @@ export function GitView(props: {
     void writeClipboard(text)
   }
 
-  const openFileMenu = (event: MouseEvent, entry: GitStatusEntry, staged: boolean): void => {
+  const openFileMenu = (event: MouseEvent, repository: string, entry: GitStatusEntry, staged: boolean): void => {
     event.preventDefault()
     event.stopPropagation()
-    setFileMenu({ entry, staged, x: event.clientX, y: event.clientY })
+    setFileMenu({ repository, entry, staged, x: event.clientX, y: event.clientY })
   }
 
-  const openHistoryMenu = (event: MouseEvent, entry: GitLogEntry): void => {
+  const openHistoryMenu = (event: MouseEvent, repository: string, entry: GitLogEntry): void => {
     event.preventDefault()
     event.stopPropagation()
-    setHistoryMenu({ entry, x: event.clientX, y: event.clientY })
+    setHistoryMenu({ repository, entry, x: event.clientX, y: event.clientY })
   }
 
-  const stagedEntries = (status?.entries ?? []).filter(isStagedEntry)
-  const unstagedEntries = (status?.entries ?? []).filter(isUnstagedEntry)
+  const selectedStatus = repositories?.find(repository => repository.root === selectedRepository) ?? null
+  const selectedStagedEntries = (selectedStatus?.entries ?? []).filter(isStagedEntry)
 
-  const renderEntry = (entry: GitStatusEntry, staged: boolean): ReactNode => {
+  const renderEntry = (repository: string, entry: GitStatusEntry, staged: boolean): ReactNode => {
     return (
       <div key={`${staged ? 's' : 'u'}:${entry.path}`} className={css.gitRow}>
         <button
           type="button"
           className={css.gitRowMain}
           title={entry.path}
-          onClick={() => { openWorktreeDiff(entry, staged) }}
-          onContextMenu={(event) => { openFileMenu(event, entry, staged) }}
+          onClick={() => { openWorktreeDiff(repository, entry, staged) }}
+          onContextMenu={(event) => { openFileMenu(event, repository, entry, staged) }}
         >
           <span className={css.gitBadge}>{badgeOf(entry)}</span>
           <span className={css.gitName}>{entry.path}</span>
@@ -270,7 +291,7 @@ export function GitView(props: {
           aria-label={staged ? t('unstage') : t('stage')}
           title={staged ? t('unstage') : t('stage')}
           disabled={busy}
-          onClick={() => { void stageEntry(entry, staged) }}
+          onClick={() => { void stageEntry(repository, entry, staged) }}
         >
           {staged ? <IconTrashOutline16 /> : <IconBranchOutline16 />}
         </button>
@@ -283,12 +304,12 @@ export function GitView(props: {
       <div className={css.gitHeader}>
         <select
           className={css.gitBranchSelect}
-          value={status?.branch ?? ''}
+          value={selectedStatus?.branch ?? ''}
           onChange={(event) => { void checkout(event.target.value) }}
-          disabled={busy || (status !== null && !status.isRepo)}
+          disabled={busy || selectedStatus === null}
         >
-          {(status?.branch ?? '') !== '' && <option value={status!.branch}>{status!.branch}</option>}
-          {branchNames.filter(name => name !== status?.branch).map(name => <option key={name} value={name}>{name}</option>)}
+          {(selectedStatus?.branch ?? '') !== '' && <option value={selectedStatus!.branch}>{selectedStatus!.branch}</option>}
+          {branchNames.filter(name => name !== selectedStatus?.branch).map(name => <option key={name} value={name}>{name}</option>)}
         </select>
         <button
           type="button"
@@ -303,36 +324,54 @@ export function GitView(props: {
 
       {loading && <div className={css.gitPlaceholder}>{t('loading')}</div>}
       {!loading && error !== null && <div className={css.gitError}>{error}</div>}
-      {!loading && status !== null && !status.isRepo && (
+      {!loading && repositories !== null && repositories.length === 0 && (
         <div className={css.gitPlaceholder}>{t('notRepo')}</div>
       )}
 
-      {status !== null && status.isRepo && (
+      {repositories !== null && repositories.length > 0 && (
         <>
-          <div className={css.gitSection}>
-            <div className={css.gitSectionHeader}>
-              <span>{t('staged')} ({stagedEntries.length})</span>
-              {stagedEntries.length > 0 && (
-                <button type="button" className={css.gitLink} disabled={busy} onClick={() => { void stageAll(true) }}>
-                  {t('unstageAll')}
+          {repositories.map(repository => {
+            const stagedEntries = repository.entries.filter(isStagedEntry)
+            const unstagedEntries = repository.entries.filter(isUnstagedEntry)
+            const selected = repository.root === selectedRepository
+            return (
+              <div key={repository.root} className={`${css.gitRepository}${selected ? ` ${css.gitRepositorySelected}` : ''}`}>
+                <button
+                  type="button"
+                  className={css.gitRepositoryHeader}
+                  title={repository.root}
+                  onClick={() => { selectedRepositoryRef.current = repository.root; setSelectedRepository(repository.root); void refresh(repository.root) }}
+                >
+                  <span className={css.gitRepositoryName}>{repositoryName(repository.root)}</span>
+                  <span className={css.gitRepositoryBranch}>{repository.branch ?? ''}</span>
                 </button>
-              )}
-            </div>
-            {stagedEntries.length === 0 && <div className={css.gitEmpty}>{t('noChanges')}</div>}
-            {stagedEntries.map(entry => renderEntry(entry, true))}
-          </div>
-          <div className={css.gitSection}>
-            <div className={css.gitSectionHeader}>
-              <span>{t('unstaged')} ({unstagedEntries.length})</span>
-              {unstagedEntries.length > 0 && (
-                <button type="button" className={css.gitLink} disabled={busy} onClick={() => { void stageAll(false) }}>
-                  {t('stageAll')}
-                </button>
-              )}
-            </div>
-            {unstagedEntries.length === 0 && <div className={css.gitEmpty}>{t('noChanges')}</div>}
-            {unstagedEntries.map(entry => renderEntry(entry, false))}
-          </div>
+                <div className={css.gitSection}>
+                  <div className={css.gitSectionHeader}>
+                    <span>{t('staged')} ({stagedEntries.length})</span>
+                    {stagedEntries.length > 0 && (
+                      <button type="button" className={css.gitLink} disabled={busy} onClick={() => { void stageAll(repository.root, true) }}>
+                        {t('unstageAll')}
+                      </button>
+                    )}
+                  </div>
+                  {stagedEntries.length === 0 && <div className={css.gitEmpty}>{t('noChanges')}</div>}
+                  {stagedEntries.map(entry => renderEntry(repository.root, entry, true))}
+                </div>
+                <div className={css.gitSection}>
+                  <div className={css.gitSectionHeader}>
+                    <span>{t('unstaged')} ({unstagedEntries.length})</span>
+                    {unstagedEntries.length > 0 && (
+                      <button type="button" className={css.gitLink} disabled={busy} onClick={() => { void stageAll(repository.root, false) }}>
+                        {t('stageAll')}
+                      </button>
+                    )}
+                  </div>
+                  {unstagedEntries.length === 0 && <div className={css.gitEmpty}>{t('noChanges')}</div>}
+                  {unstagedEntries.map(entry => renderEntry(repository.root, entry, false))}
+                </div>
+              </div>
+            )
+          })}
 
           <div className={css.gitCommit}>
             <Input
@@ -348,7 +387,7 @@ export function GitView(props: {
             <button
               type="button"
               className={css.gitCommitButton}
-              disabled={busy || commitMsg.trim() === '' || stagedEntries.length === 0}
+              disabled={busy || commitMsg.trim() === '' || selectedStagedEntries.length === 0}
               onClick={() => { void commit() }}
             >
               {t('commit')}
@@ -365,14 +404,14 @@ export function GitView(props: {
                 tabIndex={0}
                 className={css.gitLogRow}
                 title={`${entry.author} · ${entry.date}\n${entry.hashFull}`}
-                onClick={() => { openCommitDiff(entry) }}
+                onClick={() => { if (selectedRepository !== null) openCommitDiff(selectedRepository, entry) }}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault()
-                    openCommitDiff(entry)
+                    if (selectedRepository !== null) openCommitDiff(selectedRepository, entry)
                   }
                 }}
-                onContextMenu={(event) => { openHistoryMenu(event, entry) }}
+                onContextMenu={(event) => { if (selectedRepository !== null) openHistoryMenu(event, selectedRepository, entry) }}
               >
                 <span className={css.gitLogLine1}>
                   <span className={css.gitLogHash}>{entry.hash}</span>
@@ -422,11 +461,11 @@ export function GitView(props: {
               if (target === null) return
               setFileMenu(null)
               if (id === 'open') {
-                onOpenFile(target.entry.path)
+                onOpenFile(repositoryPath(target.repository, target.entry.path))
                 return
               }
               if (id === 'stage') {
-                void stageEntry(target.entry, target.staged)
+                void stageEntry(target.repository, target.entry, target.staged)
                 return
               }
               if (id === 'discard') {
@@ -434,15 +473,15 @@ export function GitView(props: {
                   title: t('discardTitle'),
                   description: t('discardDesc', { path: target.entry.path }),
                   confirmLabel: t('discard'),
-                  onConfirm: () => api.gitDiscard(scope, target.entry.path),
+                  onConfirm: () => api.gitDiscard(scope, target.repository, target.entry.path),
                 })
                 return
               }
               if (id === 'relative') {
-                copy(relativeTo(scope.cwd ?? '', target.entry.path))
+                copy(relativeTo(scope.cwd ?? '', repositoryPath(target.repository, target.entry.path)))
                 return
               }
-              if (id === 'absolute') copy(target.entry.path)
+              if (id === 'absolute') copy(repositoryPath(target.repository, target.entry.path))
             }}
             portal
             align="start"
@@ -468,7 +507,7 @@ export function GitView(props: {
               if (target === null) return
               setHistoryMenu(null)
               if (id === 'view') {
-                openCommitDiff(target.entry)
+                openCommitDiff(target.repository, target.entry)
                 return
               }
               if (id === 'copyShort') {
@@ -488,7 +527,7 @@ export function GitView(props: {
                   title: t('revertTitle'),
                   description: t('revertDesc', { subject: target.entry.subject }),
                   confirmLabel: t('revertCommit'),
-                  onConfirm: () => api.gitRevert(scope, target.entry.hashFull),
+                  onConfirm: () => api.gitRevert(scope, target.repository, target.entry.hashFull),
                 })
                 return
               }
@@ -497,7 +536,7 @@ export function GitView(props: {
                   title: t('cherryPickTitle'),
                   description: t('cherryPickDesc', { subject: target.entry.subject }),
                   confirmLabel: t('cherryPickCommit'),
-                  onConfirm: () => api.gitCherryPick(scope, target.entry.hashFull),
+                  onConfirm: () => api.gitCherryPick(scope, target.repository, target.entry.hashFull),
                 })
               }
             }}

@@ -24,7 +24,7 @@
 - **🗂️ File Workbench**: file explorer (lazy-loading tree; symlinks show their target kind — directory links expand, dangling links flagged) + CodeMirror editor; inline preview for images / Markdown (incl. Mermaid diagrams, strict-mode safe rendering + click-to-zoom) / HTML / PDF / Office
 - **🌐 Embedded Browser**: multiple web tabs with back / forward / refresh; content runs in a sandboxed iframe; external links are routed by protocol by default — HTTP opens in the sidebar, HTTPS goes to the system browser (both adjustable in settings)
 - **💻 Real Terminal**: xterm.js + node-pty real shell, reconnect with transcript replay; optionally injects `terminal_*` tools for the model
-- **🌿 Git Panel**: real diff + VSCode-style diff tabs, history, right-click to stage / commit / revert
+- **🌿 Git Panel**: real diff + VSCode-style diff tabs, history, right-click to stage / commit / revert; automatically discovers independent nested repositories below the workspace (skipping `.git` / `node_modules`, up to 10,000 directories) and scopes operations plus diff tabs to their repository
 - **🧩 Background Tasks**: agent topology + background tasks (exit codes / live output / force-kill)
 - **🪟 Dual Workbench**: right sidebar + bottom panel; drag tabs to split / merge panes (cross-panel), mobile auto-merges into a full-width drawer
 - **🔁 Session Isolation**: layout / tabs / panels persisted per session, stale state auto-purged

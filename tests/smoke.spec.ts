@@ -5,7 +5,7 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
@@ -458,6 +458,80 @@ describe('session cwd resolution over the API route', () => {
     expect(result.ok).toBe(true)
     const value = result as unknown as { ok: boolean; value?: { diff: string } }
     expect(typeof value.value?.diff).toBe('string')
+  })
+
+  it('git.status returns repository-rooted snapshots', async () => {
+    const route = mount({
+      sessions: {
+        get: () => ({ header: { cwd: process.cwd() } }),
+      },
+    })
+    const result = await invoke(route, 'git.status', { sessionId: 's-git' })
+    expect(result.ok).toBe(true)
+    const value = result as unknown as { ok: boolean; value?: Array<{ root: string; entries: unknown[] }> }
+    expect(Array.isArray(value.value)).toBe(true)
+    expect(value.value?.every(repo => typeof repo.root === 'string' && Array.isArray(repo.entries))).toBe(true)
+  })
+
+  it('routes nested repository operations through the API and rejects unknown repositories', async () => {
+    const runGit = (cwd: string, args: string[]): string => {
+      const result = spawnSync('git', [
+        '-c', 'user.name=Test',
+        '-c', 'user.email=test@dsh.local',
+        ...args,
+      ], { cwd, encoding: 'utf8' })
+      if (result.status !== 0) throw new Error(result.stderr)
+      return result.stdout
+    }
+    const makeRepo = (): string => {
+      const directory = mkdtempSync(join(tmpdir(), 'better-sidebar-api-git-'))
+      runGit(directory, ['init', '-q', '-b', 'main'])
+      writeFileSync(join(directory, 'a.txt'), 'baseline\n')
+      runGit(directory, ['add', '.'])
+      runGit(directory, ['commit', '-q', '-m', 'baseline'])
+      return directory
+    }
+    const workspace = makeRepo()
+    const nested = join(workspace, 'nested')
+    const outside = makeRepo()
+    try {
+      writeFileSync(join(workspace, '.gitignore'), 'nested/\n')
+      runGit(workspace, ['add', '.gitignore'])
+      runGit(workspace, ['commit', '-q', '-m', 'ignore nested'])
+      mkdirSync(nested)
+      runGit(nested, ['init', '-q', '-b', 'main'])
+      writeFileSync(join(nested, 'same.txt'), 'baseline\n')
+      runGit(nested, ['add', '.'])
+      runGit(nested, ['commit', '-q', '-m', 'nested baseline'])
+      writeFileSync(join(nested, 'same.txt'), 'changed\n')
+
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const status = await invoke(route, 'git.status', { sessionId: 's-nested' }) as unknown as {
+        ok: boolean
+        value?: Array<{ root: string }>
+      }
+      expect(status.value?.map(repository => repository.root)).toEqual([workspace, nested])
+
+      const staged = await invoke(route, 'git.stage', {
+        sessionId: 's-nested',
+        repository: nested,
+        path: 'same.txt',
+      })
+      expect(staged.ok).toBe(true)
+      expect(runGit(nested, ['diff', '--cached', '--name-only']).trim()).toBe('same.txt')
+      expect(runGit(workspace, ['diff', '--cached', '--name-only']).trim()).toBe('')
+
+      const rejected = await invoke(route, 'git.stage', {
+        sessionId: 's-nested',
+        repository: outside,
+        path: 'a.txt',
+      })
+      expect(rejected.ok).toBe(false)
+      expect(rejected.error?.message).toContain('outside the session workspace')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+      rmSync(outside, { recursive: true, force: true })
+    }
   })
 
   it('fs.read resolves repo-relative paths (untracked diff fallback)', async () => {

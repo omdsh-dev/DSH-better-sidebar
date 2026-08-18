@@ -26,6 +26,7 @@
  * suite is serial (one server instance), and any crash trips the very next
  * assertion.
  */
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -47,6 +48,16 @@ const SEEDED_FILE = 'hello.txt'
  *  tree to force the lazily-packed mermaid chunk (client-mermaid.js) to load
  *  and render a sanitized SVG diagram. */
 const SEEDED_MD_FILE = 'diagram.md'
+const SHARED_GIT_FILE = 'shared.txt'
+const NESTED_REPOSITORY = join(WORKSPACE_PATH, 'nested')
+
+function runGit(cwd: string, ...args: string[]): string {
+  return execFileSync('git', [
+    '-c', 'user.name=Test',
+    '-c', 'user.email=test@dsh.local',
+    ...args,
+  ], { cwd, encoding: 'utf8' })
+}
 
 /**
  * The plugin's crash markers. The client mounts inside an error boundary that
@@ -85,6 +96,20 @@ async function seedSession(): Promise<void> {
     'tail text',
     '',
   ].join('\n'))
+  writeFileSync(join(WORKSPACE_PATH, SHARED_GIT_FILE), 'outer baseline\n')
+  writeFileSync(join(WORKSPACE_PATH, '.gitignore'), 'nested/\n')
+  runGit(WORKSPACE_PATH, 'init', '-q', '-b', 'main')
+  runGit(WORKSPACE_PATH, 'add', '.')
+  runGit(WORKSPACE_PATH, 'commit', '-q', '-m', 'outer baseline')
+
+  mkdirSync(NESTED_REPOSITORY)
+  runGit(NESTED_REPOSITORY, 'init', '-q', '-b', 'main')
+  writeFileSync(join(NESTED_REPOSITORY, SHARED_GIT_FILE), 'nested baseline\n')
+  runGit(NESTED_REPOSITORY, 'add', '.')
+  runGit(NESTED_REPOSITORY, 'commit', '-q', '-m', 'nested baseline')
+
+  writeFileSync(join(WORKSPACE_PATH, SHARED_GIT_FILE), 'outer changed\n')
+  writeFileSync(join(NESTED_REPOSITORY, SHARED_GIT_FILE), 'nested changed\n')
   const workspace = await api.post(`${BASE_URL}/api/workspace.create`, {
     data: { type: 'client-request', rpcId: 'e2e-workspace', method: 'workspace.create', payload: { path: WORKSPACE_PATH } },
   })
@@ -222,6 +247,19 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     await page.waitForTimeout(1_500)
     await assertNoCrash()
   }
+
+  const sourceControlTab = sidebar.locator('[title="Source Control"][draggable="true"]').first()
+  await sourceControlTab.click()
+  const outerRepository = sidebar.getByTitle(/[\\/]workspace$/)
+  const nestedRepository = sidebar.getByTitle(/[\\/]nested$/)
+  await expect(outerRepository).toHaveCount(1, { timeout: 30_000 })
+  await expect(nestedRepository).toHaveCount(1)
+
+  const nestedFile = nestedRepository.locator('..').getByTitle(SHARED_GIT_FILE, { exact: true })
+  await expect(nestedFile).toHaveCount(1)
+  await nestedFile.locator('..').getByRole('button', { name: 'Stage' }).click()
+  await expect.poll(() => runGit(NESTED_REPOSITORY, 'diff', '--cached', '--name-only').trim()).toBe(SHARED_GIT_FILE)
+  expect(runGit(WORKSPACE_PATH, 'diff', '--cached', '--name-only').trim()).toBe('')
 
   // The editor chunk (client-editor.js) only loads when a files-window tab
   // renders. Exercise the file-open path explicitly through the Files window's
