@@ -67,6 +67,12 @@
 - 排序：自上游 `ecebc97` fork，提交顺序见 `git log upstream/main..origin/main`。
 - 本地改动涉及的重叠文件（同步上游时需重点关注）：`package.json`、`src/client/state.ts`、`Sidebar.tsx`、`GitView.tsx`、`builtins/tabs.tsx`、`service.ts`、`TabBar.tsx`、`split-pane.tsx`，以及 `tests/unit.spec.ts` / `tests/service.spec.ts` / `tests/e2e/mount.e2e.ts`。
 
+### 4.1 本次 0.13 合并附带的修复 / 边界决定
+
+- **`src/client/EditorHost.tsx`「在侧边打开」**：修复跨树放置（原用 `treeOf(tab.id)` 会误落右栏，改为用 `leafWithTab` 分别扫两树定位 tab 所属 pane）、补 `isTabEnabled('editor')` 禁用门、移除多余 `treeOf` 导入。这是对上游新代码的**修正**，已保留。
+- **mermaid（`src/client/mermaid.tsx`）**：恢复为**上游原版，不修**。上游 mermaid 用「DOM 手术替换 React 管理的 CodeBlock 子节点」实现，属上游新功能的**设计缺陷**（同一 root 下编辑源码会闪回/无法真降级）；按 fork 边界决策，本 fork **不为上游修 bug**，留待上游处理。若日后需要，可重写 mermaid.tsx 为 React 原生渲染。
+- **测试改写**：为适配本 fork「固定注入 git+subagent」于 seed，改写 upstream 的 `prefs.spec` / `state.spec` / `editor-host.spec` / `service.spec` 中假定「仅 editor」的断言。
+
 ---
 
 ## 5. 同步上游的注意事项（给后续 AI / 团队成员）
