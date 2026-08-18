@@ -63,7 +63,8 @@ export interface SidebarPrefs {
   /**
    * Whether the editor tab runs in merged mode: a path input replaces the
    * plain header and a toggleable file-tree panel (with a global name
-   * search) docks at the tab's right edge. On by default; also makes brand
+   * search) docks at the tab's LEFT edge (its width is a global preference,
+   * shared across every session). On by default; also makes brand
    * new sessions seed an empty editor tab (tree panel open) instead of the
    * explorer tab. The switch lives under the editor card's gear in the
    * Side card settings; off restores the pre-merge editor exactly.

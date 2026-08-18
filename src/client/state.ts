@@ -105,9 +105,11 @@ export const BOTTOM_MIN = 120
 export const BOTTOM_DEFAULT = 220
 /** The editor file-window's tree-panel width contract: the docked file tree
  *  vs the editor/preview split width, shared GLOBALLY across every session
- *  (like the panel width) rather than per tab. */
+ *  (like the panel width) rather than per tab. The 160–480 range is
+ *  upstream's documented contract — the upper bound keeps the editor side
+ *  usable inside a 640px panel. */
 export const TREE_WIDTH_MIN = 160
-export const TREE_WIDTH_MAX = 640
+export const TREE_WIDTH_MAX = 480
 export const TREE_WIDTH_DEFAULT = 240
 
 /**

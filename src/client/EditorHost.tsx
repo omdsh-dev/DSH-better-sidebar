@@ -10,13 +10,16 @@
  * toggling it re-renders without a reload):
  * - merged (in-place): tree click / path-input Enter switch the CURRENT
  *   tab in place (updateTab rewrites path/title; the tab keeps its id and
- *   meta, so treeOpen/treeWidth survive the switch);
+ *   meta — treeOpen stays per-tab; the dock width `treeWidth` is GLOBAL,
+ *   shared by every session);
  * - split: they open through `openSidebarFile` (a per-path dedupe tab),
  *   and a PATH-LESS window is the standalone explorer — it renders ONLY
  *   the tree panel (search + FileTree, full-window), no editor chrome.
  *   Editor tabs (with a path) keep the full chrome in both modes.
- * The tree's context menu offers the explicit escapes in both modes: open
- * in a new tab (per-path dedupe) or to the side (a fresh tab in a fresh
+ * The tree docks on the LEFT (editor/preview to its right); its width is a
+ * global panel-surface preference (drag the right edge, 160–480px). The
+ * tree's context menu offers the explicit escapes in both modes: open in a
+ * new tab (per-path dedupe) or to the side (a fresh tab in a fresh
  * rightward split of the current pane).
  *
  * The strategy dispatch is pure (planFirstMatch / planFsReadOutcome in
