@@ -208,13 +208,13 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     expect(strips, 'a dsh-better-sidebar error strip is present in the sidebar').toBe(0)
   }
 
-  // Sweep every FLOATING built-in tab through the "+" menu. The pinned
-  // Editor-files-window / Source Control / Tasks bars are always visible and
-  // are NOT offered by the + menu (a fixed panel needs no way to re-open).
-  // Each open may fetch a lazy chunk (/sidebar/bundle/client-terminal.js /
-  // client-editor.js) and mount a real viewer — the highest-risk crash
-  // surfaces. The pinned plugin must offer every listed built-in: a missing
-  // or renamed descriptor is a real regression and fails the lane loudly.
+  // Sweep every FLOATING built-in tab through the "+" menu. The fixed
+  // Git/Subagent bars and the seeded Files home are exercised separately and
+  // are not offered by the + menu. Each open may fetch a lazy chunk
+  // (/sidebar/bundle/client-terminal.js / client-editor.js) and mount a real
+  // viewer — the highest-risk crash surfaces. The mounted plugin must offer
+  // every listed built-in: a missing or renamed descriptor is a real
+  // regression and fails the lane loudly.
   const newTabButton = sidebar.getByRole('button', { name: 'New tab' }).first()
   for (const title of FLOATING_BUILTIN_TABS) {
     await newTabButton.click()
@@ -230,8 +230,8 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // The editor chunk (client-editor.js) only loads when a files-window tab
   // renders. Exercise the file-open path explicitly through the Files window's
   // own tree: the seeded home tab ("Files") is already open with its tree
-  // panel pinned (it is one of our pinned front bars) — activate it from the
-  // tab strip, open the seeded file, and require the chunk round-trip (armed
+  // panel expanded by default — activate it from the tab strip, open the
+  // seeded file, and require the chunk round-trip (armed
   // before goto), so a missing/corrupt editor chunk fails the lane.
   // Tab-strip tabs carry `draggable="true"`; the always-mounted (hidden)
   // bottom panel's empty-pane welcome cards repeat the + menu labels with
@@ -249,7 +249,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await fileRow.click({ position: { x: 8, y: 8 } })
   await editorChunk
   // In-place mode (editorExplorer default): the SAME tab switches to the
-  // file — its title is rewritten, no new Files tab is opened. The pinned home
+  // file — its title is rewritten, no new Files tab is opened. The seeded home
   // tab therefore no longer has the "Files" title.
   await expect(
     sidebar.locator('[title="Files"][draggable="true"]'),
@@ -262,7 +262,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
 
   // The mermaid chunk (client-mermaid.js) only loads when a previewed
   // markdown file contains a mermaid fence. Open the seeded diagram file
-  // from the files window's tree (the embedded tree stays pinned while
+  // from the files window's tree (the embedded tree stays open while
   // hello.txt is open) and require the full round-trip: chunk fetch +
   // sanitized SVG diagram in the preview, so a missing/corrupt mermaid
   // chunk or a broken render fails the lane.
