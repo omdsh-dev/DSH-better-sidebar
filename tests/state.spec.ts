@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
-  activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, createSidebarStore,
+  activateTab, allLeaves, applyExpandedMutation, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, createSidebarStore,
   insertLeafAt, makeDefaultState, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
-  openTabInActivePane, patchTab, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight,
+  openTabInActivePane, patchTab, pruneExpanded, renameExpanded, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight,
   splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded, togglePanel,
   type SidebarState, type SidebarTab, type SplitNode,
 } from '../src/client/state.ts'
@@ -298,6 +298,32 @@ describe('sidebar state', () => {
     const tabId = leaf.tabs[0]!.id
     const after = activateTab(s, leaf.id, tabId)
     expect((after.splits as { active: string | null }).active).toBe(tabId)
+  })
+
+  it('pruneExpanded drops a deleted directory and its expanded descendants', () => {
+    let s = state()
+    s = { ...s, expanded: ['/p/a', '/p/a/src', '/p/a/src/util', '/p/ab', '/other'] }
+    s = pruneExpanded(s, '/p/a')
+    expect(s.expanded).toEqual(['/p/ab', '/other'])
+    // Deleting a non-expanded path is a no-op.
+    const untouched = pruneExpanded(s, '/p/a')
+    expect(untouched).toBe(s)
+  })
+
+  it('renameExpanded moves a renamed directory and its descendants', () => {
+    let s = state()
+    s = { ...s, expanded: ['/p/a', '/p/a/src', '/p/a/src/util', '/p/ab', '/other'] }
+    s = renameExpanded(s, '/p/a', '/p/renamed')
+    expect(s.expanded).toEqual(['/p/renamed', '/p/renamed/src', '/p/renamed/src/util', '/p/ab', '/other'])
+    // The suffix is carried verbatim: '/p/a/x' → '/p/renamed/x'.
+    s = { ...state(), expanded: ['/p/a/x/y'] }
+    expect(renameExpanded(s, '/p/a', '/q/b').expanded).toEqual(['/q/b/x/y'])
+  })
+
+  it('applyExpandedMutation dispatches prune vs rename', () => {
+    const s = { ...state(), expanded: ['/p/a', '/p/a/x', '/p/b'] }
+    expect(applyExpandedMutation(s, { type: 'prune', path: '/p/a' }).expanded).toEqual(['/p/b'])
+    expect(applyExpandedMutation(s, { type: 'rename', oldPath: '/p/a', newPath: '/p/c' }).expanded).toEqual(['/p/c', '/p/c/x', '/p/b'])
   })
 
   it('patchTab updates the title and path of one open tab (browser persistence)', () => {

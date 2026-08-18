@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isAbsolutePath, relativeTo } from '../src/client/paths.ts'
+import { isAbsolutePath, parentOf, relativeTo } from '../src/client/paths.ts'
 import { resolveSidebarPath } from '../src/client/produced-files.ts'
 import { htmlUrl } from '../src/client/api.ts'
 
@@ -54,6 +54,14 @@ describe('path helpers', () => {
     expect(isAbsolutePath('//server/share/x.ts')).toBe(true)
     expect(isAbsolutePath('C:relative.ts')).toBe(false)
     expect(isAbsolutePath('rel/x.ts')).toBe(false)
+  })
+
+  it('derives parent directories across separator styles', () => {
+    expect(parentOf('/a/b/c.ts')).toBe('/a/b')
+    expect(parentOf('/a/b/')).toBe('/a')
+    expect(parentOf('C:\\a\\b\\c.ts')).toBe('C:\\a\\b')
+    expect(parentOf('C:\\a\\b\\')).toBe('C:\\a')
+    expect(parentOf('/single')).toBe('')
   })
 
   it('htmlUrl always marks UNC paths (platform-neutral marker)', () => {

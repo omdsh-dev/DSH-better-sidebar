@@ -32,10 +32,10 @@ import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
-  BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, isAgentTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
+  BOTTOM_MIN, PANEL_MIN, agentUuidOf, applyExpandedMutation, firstLeaf, isAgentTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
   reconcileAgentTerminals,
   resizeSplitIn, setBottomHeight, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
-  type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
+  type DropZone, type ExpandedMutation, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
 } from './state.ts'
 import { IconPanelBottomOutline16, IconPanelRightOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
@@ -63,6 +63,7 @@ function TabContent(props: {
   expanded: string[]
   onToggleDir: (path: string) => void
   onReferenceFile: (path: string) => void
+  onMutateExpanded: (mutation: ExpandedMutation) => void
   ctx: Context
   store: SidebarStore
   /** Whether this tab is the active one AND the panel is open (live views pause otherwise). */
@@ -72,7 +73,7 @@ function TabContent(props: {
   /** Open a diff tab from the git panel (placement handled by the store). */
   onOpenDiff: (tab: SidebarTab) => void
 }) {
-  const { tab, sessionId, cwd, expanded, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff } = props
+  const { tab, sessionId, cwd, expanded, onToggleDir, onReferenceFile, onMutateExpanded, ctx, store, visible, onSubagentJump, onOpenDiff } = props
   const scope = { sessionId, cwd }
   const descriptor = ctx.betterSidebar?.getTab(tab.type)
   if (descriptor === undefined) {
@@ -91,7 +92,7 @@ function TabContent(props: {
     { className: css.tabBoundaryError },
     createElement(descriptor.component, {
       ctx, store, scope, tab, visible, expanded,
-      onToggleDir, onReferenceFile, onOpenDiff, onSubagentJump,
+      onToggleDir, onReferenceFile, onMutateExpanded, onOpenDiff, onSubagentJump,
     }),
   )
 }
@@ -714,6 +715,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       cwd={cwd}
       expanded={state.expanded}
       onToggleDir={(path) => { store.reduce(s => toggleExpanded(s, path)) }}
+      onMutateExpanded={(mutation) => { store.reduce(s => applyExpandedMutation(s, mutation)) }}
       onReferenceFile={referenceInChat}
       ctx={ctx}
       store={store}

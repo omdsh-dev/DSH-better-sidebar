@@ -13,7 +13,7 @@
  * session's authoritative cwd comes from the session store, and terminal
  * processes are keyed by session.
  */
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
@@ -46,6 +46,7 @@ import {
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
+import { revealInFileManager } from './reveal.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 
 export { Config }
@@ -251,6 +252,115 @@ function buildApi(
       } catch (error) {
         await rm(tmp, { force: true }).catch(() => {})
         throw new SidebarError('fs-error', `cannot write "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+      }
+      return { ok: true }
+    },
+    // Create an EMPTY file (exclusive — never clobbers an existing one),
+    // creating any missing parent directories first. `open(path, 'wx')`
+    // atomically fails with EEXIST when the file already exists.
+    'fs.create': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const path = requireAbsolute(requireString(payload, 'path'))
+      try {
+        await mkdir(dirname(path), { recursive: true })
+        const handle = await open(path, 'wx')
+        await handle.close()
+      } catch (error) {
+        throw new SidebarError('fs-error', `cannot create "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+      }
+      return { ok: true, path }
+    },
+    // Reveal a path in the OS file manager (Finder / File Explorer / the
+    // xdg-open file manager). Display-only — no bytes leave the host, the
+    // OS just opens a window at the path — so the session cwd containment
+    // check used by the media/html routes is not needed here (mirror of
+    // fs.write's absolute-path trust, behind the same request fence).
+    'fs.reveal': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const path = requireAbsolute(requireString(payload, 'path'))
+      const info = await stat(path).catch(() => undefined)
+      const result = await revealInFileManager(path, info?.isDirectory() ?? false)
+      if (!result.ok) {
+        throw new SidebarError('fs-error', `cannot reveal "${path}": ${result.error ?? 'unknown error'}`, 400)
+      }
+      return { ok: true }
+    },
+    // Create a DIRECTORY (exclusive: non-recursive mkdir fails with EEXIST
+    // when it already exists; the parent is always an existing tree row).
+    'fs.mkdir': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const path = requireAbsolute(requireString(payload, 'path'))
+      try {
+        await mkdir(path)
+      } catch (error) {
+        throw new SidebarError('fs-error', `cannot create folder "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+      }
+      return { ok: true, path }
+    },
+    // Move/rename a file or directory (the explorer's drag-and-drop). The
+    // destination's parent is created first; an existing destination is
+    // refused (never overwrite), and a directory cannot be moved into its
+    // own subtree.
+    'fs.move': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const src = requireAbsolute(requireString(payload, 'src'))
+      const dst = requireAbsolute(requireString(payload, 'dst'))
+      const srcInfo = await stat(src).catch(() => undefined)
+      if (srcInfo === undefined) {
+        throw new SidebarError('fs-error', `cannot move "${src}": source not found`, 400)
+      }
+      if (srcInfo.isDirectory() && isWithin(src, dst)) {
+        throw new SidebarError('fs-error', `cannot move "${src}" into itself`, 400)
+      }
+      const dstInfo = await stat(dst).catch(() => undefined)
+      if (dstInfo !== undefined) {
+        throw new SidebarError('fs-error', `cannot move "${src}" to "${dst}": destination already exists`, 400)
+      }
+      try {
+        await mkdir(dirname(dst), { recursive: true })
+        await rename(src, dst)
+      } catch (error) {
+        throw new SidebarError('fs-error', `cannot move "${src}" to "${dst}": ${error instanceof Error ? error.message : String(error)}`, 400)
+      }
+      return { ok: true, src, dst }
+    },
+    // Copy a file or directory (the explorer's copy/paste). `cp` is recursive
+    // so it copies trees too; an existing destination is refused and a
+    // directory cannot be copied into its own subtree.
+    'fs.copy': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const src = requireAbsolute(requireString(payload, 'src'))
+      const dst = requireAbsolute(requireString(payload, 'dst'))
+      const srcInfo = await stat(src).catch(() => undefined)
+      if (srcInfo === undefined) {
+        throw new SidebarError('fs-error', `cannot copy "${src}": source not found`, 400)
+      }
+      if (srcInfo.isDirectory() && isWithin(src, dst)) {
+        throw new SidebarError('fs-error', `cannot copy "${src}" into itself`, 400)
+      }
+      const dstInfo = await stat(dst).catch(() => undefined)
+      if (dstInfo !== undefined) {
+        throw new SidebarError('fs-error', `cannot copy "${src}" to "${dst}": destination already exists`, 400)
+      }
+      try {
+        await cp(src, dst, { recursive: true })
+      } catch (error) {
+        throw new SidebarError('fs-error', `cannot copy "${src}" to "${dst}": ${error instanceof Error ? error.message : String(error)}`, 400)
+      }
+      return { ok: true, src, dst }
+    },
+    // Delete a file or directory (recursive for directories). The workspace
+    // root is refused: deleting the session cwd would break the session.
+    'fs.delete': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const path = requireAbsolute(requireString(payload, 'path'))
+      if (path === requireAbsolute(cwd)) {
+        throw new SidebarError('fs-error', 'cannot delete the workspace root', 400)
+      }
+      try {
+        await rm(path, { recursive: true, force: false })
+      } catch (error) {
+        throw new SidebarError('fs-error', `cannot delete "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
       }
       return { ok: true }
     },

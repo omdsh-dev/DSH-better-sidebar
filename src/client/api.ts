@@ -143,6 +143,24 @@ export const api = {
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
+  /** Create an empty file (exclusive — fails if it already exists). */
+  fsCreate: (scope: SessionScope, path: string) =>
+    call<{ ok: true; path: string }>('fs.create', scopePayload(scope, { path })),
+  /** Reveal a path in the OS file manager (Finder / File Explorer / xdg-open). */
+  fsReveal: (scope: SessionScope, path: string) =>
+    call<{ ok: true }>('fs.reveal', scopePayload(scope, { path })),
+  /** Create a new directory (exclusive — fails if it already exists). */
+  fsMkdir: (scope: SessionScope, path: string) =>
+    call<{ ok: true; path: string }>('fs.mkdir', scopePayload(scope, { path })),
+  /** Move/rename a file or directory (drag-and-drop; refuses overwrites). */
+  fsMove: (scope: SessionScope, src: string, dst: string) =>
+    call<{ ok: true; src: string; dst: string }>('fs.move', scopePayload(scope, { src, dst })),
+  /** Copy a file or directory (copy/paste; refuses overwrites). */
+  fsCopy: (scope: SessionScope, src: string, dst: string) =>
+    call<{ ok: true; src: string; dst: string }>('fs.copy', scopePayload(scope, { src, dst })),
+  /** Delete a file or directory (recursive for directories). */
+  fsDelete: (scope: SessionScope, path: string) =>
+    call<{ ok: true }>('fs.delete', scopePayload(scope, { path })),
   gitStatus: (scope: SessionScope, signal?: AbortSignal) =>
     call<GitStatusResult>('git.status', scopePayload(scope, {}), signal),
   gitDiff: (scope: SessionScope, path: string | undefined, staged: boolean, signal?: AbortSignal) =>
