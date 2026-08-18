@@ -2,6 +2,7 @@
 import 'fake-indexeddb/auto'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  deleteEditorBuffer,
   deleteEditorBuffersUnder,
   getEditorBuffer,
   listEditorBuffersUnder,
@@ -9,6 +10,7 @@ import {
   pathAtOrUnder,
   resetEditorBuffersForTests,
   saveEditorBuffer,
+  subscribeEditorBuffers,
 } from '../src/client/editor-buffers.ts'
 
 afterEach(async () => { await resetEditorBuffersForTests() })
@@ -22,6 +24,21 @@ describe('durable editor buffers', () => {
       text: '# draft', baseVersion: 'v1', mode: 'visual',
     })
     await expect(getEditorBuffer('s2', '/work/note.md')).resolves.toBeUndefined()
+  })
+
+  it('notifies file-tree subscribers after durable writes and deletes', async () => {
+    let notifications = 0
+    const unsubscribe = subscribeEditorBuffers(() => { notifications++ })
+    await saveEditorBuffer({
+      sessionId: 's', path: '/work/a.md', text: 'draft', baseVersion: '1', mode: 'edit',
+    })
+    await deleteEditorBuffer('s', '/work/a.md')
+    expect(notifications).toBe(2)
+    unsubscribe()
+    await saveEditorBuffer({
+      sessionId: 's', path: '/work/b.md', text: 'draft', baseVersion: '1', mode: 'edit',
+    })
+    expect(notifications).toBe(2)
   })
 
   it('remaps descendant buffers on folder move and removes them on delete', async () => {

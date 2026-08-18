@@ -3,9 +3,9 @@
  * renders the empty-state hint with the tree dock open, and the header's
  * tree toggle persists its flag through ctx.betterSidebar.updateTab
  * (meta.treeOpen rides the tab's persisted layout). The editorExplorer pref
- * controls FILE-OPEN behavior — in-place rewrites the current tab via
- * updateTab, split opens a per-path dedupe tab via openSidebarFile — and in
- * split mode a PATH-LESS window becomes the standalone explorer (tree panel
+ * controls FILE-OPEN behavior — merged mode rewrites only the empty home tab
+ * for the first file and then opens per-path top tabs; split always opens a
+ * per-path dedupe tab — and in split mode a PATH-LESS window becomes the standalone explorer (tree panel
  * only, no editor chrome); file tabs keep the full chrome in both modes.
  */
 // @vitest-environment jsdom
@@ -150,6 +150,28 @@ describe('EditorHost (files window)', () => {
       expect(after.meta).toEqual({ treeOpen: true })
       // No new tab landed.
       expect(allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)).toHaveLength(1)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('merged mode: later files open in distinct deduped top tabs', () => {
+    const { store, ctx, homeTab } = setup()
+    const homeId = homeTab().id
+    const currentTab = (): SidebarTab =>
+      allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+        .find(tab => tab.id === homeId)!
+    const { container, rerender, unmount } = mountHost(ctx, store, currentTab)
+    try {
+      typeAndCommit(container.querySelector('input[placeholder^="File path"]')!, '/tmp/a.ts')
+      rerender()
+      typeAndCommit(container.querySelector('input[placeholder^="File path"]')!, '/tmp/b.ts')
+      const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+      expect(tabs).toHaveLength(2)
+      expect(currentTab().path).toBe('/tmp/a.ts')
+      expect(tabs.find(tab => tab.path === '/tmp/b.ts')).toMatchObject({
+        id: 'editor:/tmp/b.ts', type: 'editor', title: 'b.ts', path: '/tmp/b.ts',
+      })
     } finally {
       unmount()
     }

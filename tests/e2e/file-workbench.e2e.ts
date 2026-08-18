@@ -106,9 +106,21 @@ test('CRUD, uploads, durable drafts, conflicts, and visual GFM work together', a
   await page.keyboard.press('Control+End')
   await page.keyboard.type('# Durable draft marker')
   await expect(source).toContainText('Durable draft marker')
+  const draftRow = sidebar.locator(`[role="button"][title$="${DRAFT}"]:visible`).first()
+  await expect(draftRow.locator('[data-editor-dirty]')).toBeVisible({ timeout: 10_000 })
+
+  // A second tree click keeps the draft tab and opens another top-level file tab.
+  await sidebar.locator('[role="button"][title$="workbench-e2e-seed.md"]:visible').first().click({ position: { x: 8, y: 8 } })
+  await expect(sidebar.locator(`[title="${DRAFT}"][draggable="true"]`)).toHaveCount(1)
+  await expect(sidebar.locator('[title="workbench-e2e-seed.md"][draggable="true"]')).toHaveCount(1)
+  await sidebar.locator(`[title="${DRAFT}"][draggable="true"]`).click()
+  await expect(pathInput).toHaveValue(new RegExp(`${DRAFT.replace('.', '\\.')}$`))
+  await expect(sidebar.locator(`[role="button"][title$="${DRAFT}"]:visible`).first().locator('[data-editor-dirty]')).toBeVisible()
+
   await page.reload({ waitUntil: 'domcontentloaded' })
   await dismissOnboarding(page)
   await ensureSidebarOpen(page)
+  await page.locator(`[data-dsh-better-sidebar] [title="${DRAFT}"][draggable="true"]`).click()
   source = page.locator('[data-dsh-better-sidebar] .cm-content:visible')
   await expect(source).toContainText('Durable draft marker', { timeout: 30_000 })
 
@@ -129,6 +141,7 @@ test('CRUD, uploads, durable drafts, conflicts, and visual GFM work together', a
   await expect(page.getByText('An agent or another program changed this file. The disk copy was not overwritten.')).toBeVisible()
   await page.getByRole('button', { name: 'Overwrite with this draft' }).click()
   await expect.poll(() => readFileSync(join(WORKSPACE, DRAFT), 'utf8')).toContain('Conflict-safe text')
+  await expect(page.locator(`[data-dsh-better-sidebar] [role="button"][title$="${DRAFT}"]:visible`).first().locator('[data-editor-dirty]')).toHaveCount(0)
 
   // Rename keeps the open tab/path synchronized.
   let row = page.locator(`[data-dsh-better-sidebar] [role="button"][title$="${DRAFT}"]:visible`).first()
@@ -164,5 +177,6 @@ test('CRUD, uploads, durable drafts, conflicts, and visual GFM work together', a
 
   await deleteFromTree(page, ASSETS)
   await deleteFromTree(page, RENAMED)
+  await deleteFromTree(page, 'workbench-e2e-seed.md')
   expect(errors).toEqual([])
 })

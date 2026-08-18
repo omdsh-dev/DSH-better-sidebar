@@ -112,16 +112,17 @@ export function EditorHost(props: {
   const treeOnly = showEmpty && !inPlace
 
   /**
-   * Open a file from THIS window (tree click / search row / path input):
-   * merged mode switches this tab in place (stable id, meta survives);
-   * split mode opens a per-path dedupe tab through openSidebarFile.
+   * Open a file from THIS window (tree click / search row / path input).
+   * The empty merged Files home becomes the first file in place so its tree
+   * geometry survives; every later distinct file opens as a path-deduped top
+   * tab. Split mode always uses the same per-path tab path.
    */
   const openFile = (absolute: string): void => {
-    if (inPlace) {
+    if (inPlace && path === '') {
       ctx.betterSidebar?.updateTab(tab.id, { path: absolute, title: baseName(absolute) })
-    } else {
-      openSidebarFile(ctx, store, scope.sessionId, absolute)
+      return
     }
+    openSidebarFile(ctx, store, scope.sessionId, absolute)
   }
 
   /** The context menu's explicit "new tab" escape (per-path dedupe). */

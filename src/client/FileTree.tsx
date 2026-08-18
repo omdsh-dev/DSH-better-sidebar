@@ -22,7 +22,9 @@ import {
   IconLinkOutline16, IconPlusOutline16, IconTrashOutline16, Input, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
-import { deleteEditorBuffersUnder, listEditorBuffersUnder, moveEditorBuffers } from './editor-buffers.ts'
+import {
+  deleteEditorBuffersUnder, editorBufferKey, listEditorBuffersUnder, moveEditorBuffers, subscribeEditorBuffers,
+} from './editor-buffers.ts'
 import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
@@ -103,6 +105,7 @@ export function FileTree(props: {
   const [operationError, setOperationError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [dragEntry, setDragEntry] = useState<{ path: string; isDir: boolean } | null>(null)
+  const [dirtyKeys, setDirtyKeys] = useState<ReadonlySet<string>>(() => new Set())
 
   const storeLevel = useCallback((path: string, level: LevelData) => {
     dataRef.current = { ...dataRef.current, [path]: level }
@@ -137,6 +140,35 @@ export function FileTree(props: {
     loadDir(root)
     for (const dir of expanded) loadDir(dir)
   }, [cwd, expanded, refreshTick, loadDir])
+
+  useEffect(() => {
+    let active = true
+    let revision = 0
+    let timer: number | undefined
+    const refreshDirty = (): void => {
+      const current = ++revision
+      if (cwd === undefined) {
+        setDirtyKeys(new Set())
+        return
+      }
+      void listEditorBuffersUnder(sessionId, cwd).then((records) => {
+        if (!active || current !== revision) return
+        setDirtyKeys(new Set(records.map(record => record.key)))
+      })
+    }
+    const scheduleRefresh = (): void => {
+      if (timer !== undefined) window.clearTimeout(timer)
+      timer = window.setTimeout(refreshDirty, 60)
+    }
+    const unsubscribe = subscribeEditorBuffers(scheduleRefresh)
+    refreshDirty()
+    return () => {
+      active = false
+      revision++
+      unsubscribe()
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [sessionId, cwd])
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
   const copyPath = useCallback((text: string, path: string): void => {
@@ -311,6 +343,7 @@ export function FileTree(props: {
     }
     const entries = level.entries ?? []
     return entries.map(entry => {
+      const dirty = !entry.isDir && dirtyKeys.has(editorBufferKey(sessionId, entry.path))
       if (entry.isDir) {
         const isOpen = expanded.includes(entry.path)
         return (
@@ -366,6 +399,7 @@ export function FileTree(props: {
         >
           <IconCodeOutline16 size={14} />
           <span className={css.explorerName}>{entry.name}</span>
+          {dirty && <span className={css.dirtyDot} data-editor-dirty title={t('unsaved')} aria-label={t('unsaved')} />}
           {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
           {rowActions(entry)}
         </div>

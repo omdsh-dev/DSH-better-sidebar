@@ -244,12 +244,12 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // (referencing the file into the composer instead of opening it).
   await fileRow.click({ position: { x: 8, y: 8 } })
   await editorChunk
-  // In-place mode (editorExplorer default): the SAME tab switches to the
-  // file — its title is rewritten, no new tab appears. One "Files" tab
-  // remains: the second files window the sweep opened via the + menu.
+  // Merged mode (editorExplorer default): the empty home tab becomes the
+  // first file in place. Later distinct files stay open as top-level tabs.
+  // One "Files" tab remains: the second files window opened by the sweep.
   await expect(
     sidebar.locator('[title="Files"][draggable="true"]'),
-    'in-place mode rewrites the activated home tab instead of opening a new one',
+    'merged mode rewrites only the activated empty home tab for the first file',
   ).toHaveCount(1)
   const pathInput = sidebar.locator('input[placeholder^="File path"]:visible')
   await expect(pathInput, 'the files window header path input shows the opened file').toHaveValue(new RegExp(`${SEEDED_FILE}$`))
@@ -269,6 +269,8 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const mdRow = sidebar.locator(`[role="button"][title$="${SEEDED_MD_FILE}"]:visible`)
   await expect(mdRow, `the seeded "${SEEDED_MD_FILE}" file must appear in the files window's tree`).toHaveCount(1, { timeout: 30_000 })
   await mdRow.click({ position: { x: 8, y: 8 } })
+  await expect(sidebar.locator(`[title="${SEEDED_FILE}"][draggable="true"]`)).toHaveCount(1)
+  await expect(sidebar.locator(`[title="${SEEDED_MD_FILE}"][draggable="true"]`)).toHaveCount(1)
   await mermaidChunk
   await expect(
     sidebar.locator('[data-mermaid-diagram] svg'),

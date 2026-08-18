@@ -25,6 +25,15 @@ let dbPromise: Promise<IDBDatabase | null> | undefined
 /** Brief tombstones stop unmount cleanup from recreating moved/deleted drafts. */
 const blockedPrefixes = new Map<string, number>()
 const BLOCK_MS = 2_000
+const CHANGE_EVENT = 'dsh-better-sidebar:editor-buffers-changed'
+
+/** Cross-chunk notification: the text editor is lazy-loaded separately. */
+export function subscribeEditorBuffers(listener: () => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+  const onChange = (): void => { listener() }
+  window.addEventListener(CHANGE_EVENT, onChange)
+  return () => { window.removeEventListener(CHANGE_EVENT, onChange) }
+}
 
 export function editorBufferKey(sessionId: string, path: string): string {
   return `${sessionId}\u0000${normalizedPath(path)}`
@@ -62,11 +71,9 @@ export function saveEditorBuffer(input: Omit<EditorBufferRecord, 'key' | 'update
   const record: EditorBufferRecord = { ...input, key, updatedAt: Date.now() }
   return enqueue(key, async () => {
     const db = await openDb()
-    if (db === null) {
-      memory.set(key, record)
-      return
-    }
-    await transactionDone(db, 'readwrite', store => { store.put(record) })
+    if (db === null) memory.set(key, record)
+    else await transactionDone(db, 'readwrite', store => { store.put(record) })
+    notifyEditorBuffers()
   })
 }
 
@@ -74,11 +81,9 @@ export function deleteEditorBuffer(sessionId: string, path: string): Promise<voi
   const key = editorBufferKey(sessionId, path)
   return enqueue(key, async () => {
     const db = await openDb()
-    if (db === null) {
-      memory.delete(key)
-      return
-    }
-    await transactionDone(db, 'readwrite', store => { store.delete(key) })
+    if (db === null) memory.delete(key)
+    else await transactionDone(db, 'readwrite', store => { store.delete(key) })
+    notifyEditorBuffers()
   })
 }
 
@@ -134,6 +139,10 @@ function normalizedPath(path: string): string {
   return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith('//')
     ? normalized.toLowerCase()
     : normalized
+}
+
+function notifyEditorBuffers(): void {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(CHANGE_EVENT))
 }
 
 function enqueue(key: string, task: () => Promise<void>): Promise<void> {
