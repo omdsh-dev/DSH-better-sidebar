@@ -35,6 +35,7 @@ import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
 import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
+import { FsWatcherManager } from './fs-watcher.ts'
 import * as git from './git.ts'
 import { SettingsConflictError, settingsNamespace, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { defaultShell, ensureSpawnHelper, PtyManager, shellDisplayName } from './pty-manager.ts'
@@ -535,6 +536,9 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   const agentPtyRegistry = nodePty !== null
     ? new AgentPtyRegistry(terminalShell, resolved.shellArgs, nodePty)
     : null
+  // The file-manager workspace watcher: shared per working directory, started
+  // on the first subscriber and stopped when the last sidebar view closes.
+  const fsWatcherManager = new FsWatcherManager()
 
   // ── User-facing "Side card" preferences ──────────────────────────────────
   // Register the namespace with the settings provider so the Settings page
@@ -846,12 +850,33 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     },
   }), 'dsh-better-sidebar: agent-terminals push WebSocket')
 
+  // ── File-tree change push WebSocket ─────────────────────────────────────
+  // Pushes a lightweight "workspace changed" signal for one session's working
+  // directory. The client bumps its file-tree refresh when the setting
+  // `autoRefreshFiles` is on; the host watcher is shared per cwd and starts
+  // only while at least one sidebar view is subscribed.
+  const fsEventsWss = new WebSocketServer({ noServer: true })
+  ctx.effect(() => ctx.webServer.registerUpgrade({
+    path: '/sidebar/ws/fs-events',
+    handler: (req, socket, head) => {
+      if (!fence(req)) {
+        socket.destroy()
+        return
+      }
+      fsEventsWss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
+        void attachFsEvents(ctx, fsWatcherManager, ws, req)
+      })
+    },
+  }), 'dsh-better-sidebar: file-tree change WebSocket')
+
   ctx.effect(() => () => {
     toolsDisposers?.()
     ptyManager?.disposeAll()
     agentPtyRegistry?.disposeAll()
+    fsWatcherManager.dispose()
     wss.close()
     agentListWss.close()
+    fsEventsWss.close()
   }, 'dsh-better-sidebar: teardown')
 }
 
@@ -879,6 +904,33 @@ async function attachAgentList(
     const unsubscribe = registry?.subscribe(send)
     ws.on('close', () => { unsubscribe?.() })
     ws.on('error', () => { unsubscribe?.() })
+  } catch (error) {
+    ws.close(1011, error instanceof Error ? error.message : String(error))
+  }
+}
+
+/** Push workspace-change signals for one session's file manager. */
+async function attachFsEvents(
+  ctx: Context,
+  manager: FsWatcherManager,
+  ws: WebSocket,
+  req: SidebarHttpRequest,
+): Promise<void> {
+  try {
+    const url = new URL(req.url ?? '/', 'http://dsh.internal')
+    const sessionId = url.searchParams.get('sessionId')
+    if (sessionId === null) {
+      ws.close(1008, 'sessionId is required')
+      return
+    }
+    const clientCwd = url.searchParams.get('cwd') ?? undefined
+    const cwd = sessionCwdOf(ctx, sessionId, clientCwd)
+    const send = (): void => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'change' }))
+    }
+    const unsubscribe = manager.subscribe(cwd, send)
+    ws.on('close', unsubscribe)
+    ws.on('error', unsubscribe)
   } catch (error) {
     ws.close(1011, error instanceof Error ? error.message : String(error))
   }

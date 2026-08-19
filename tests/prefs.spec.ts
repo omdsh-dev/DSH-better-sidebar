@@ -35,6 +35,8 @@ describe('side card preferences', () => {
       .toEqual({
         openByDefault: false,
         defaultWidthPercent: 60,
+        sidebarWidthPersistent: false,
+        autoRefreshFiles: false,
         autoOpenSubagent: false,
         autoOpenJobs: true,
         agentTerminalTools: true,
@@ -67,6 +69,8 @@ describe('side card preferences', () => {
       .toEqual({
         openByDefault: false,
         defaultWidthPercent: 33,
+        sidebarWidthPersistent: false,
+        autoRefreshFiles: false,
         autoOpenSubagent: true,
         autoOpenJobs: true,
         agentTerminalTools: false,
@@ -99,6 +103,8 @@ describe('side card preferences', () => {
       .toEqual({
         openByDefault: false,
         defaultWidthPercent: 40,
+        sidebarWidthPersistent: false,
+        autoRefreshFiles: false,
         autoOpenSubagent: true,
         autoOpenJobs: true,
         agentTerminalTools: false,
@@ -260,9 +266,9 @@ describe('side card preferences', () => {
     const store = createSidebarStore()
     // Node environment: no window → the width falls back to PANEL_DEFAULT,
     // while the open flag still follows the preference.
-    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, sidebarWidthPersistent: false, autoRefreshFiles: false, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     store.setSession('fresh-session')
-    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, sidebarWidthPersistent: false, autoRefreshFiles: false, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     const snapshot = store.getSnapshot()
     expect(snapshot.sessionId).toBe('fresh-session')
     expect(snapshot.state?.panelOpen).toBe(false)
@@ -298,7 +304,7 @@ describe('side card preferences', () => {
 
   it('skips the default seed tab when the editor (files window) type is disabled', () => {
     const store = createSidebarStore()
-    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: { editor: false }, viewersEnabled: {}, pluginSettings: {} })
+    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, sidebarWidthPersistent: false, autoRefreshFiles: false, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: { editor: false }, viewersEnabled: {}, pluginSettings: {} })
     store.setSession('no-editor')
     const state = store.getSnapshot().state!
     const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs)
@@ -308,7 +314,7 @@ describe('side card preferences', () => {
     // editorExplorer modes.
     for (const editorExplorer of [true, false]) {
       const openStore = createSidebarStore()
-      openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+      openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, sidebarWidthPersistent: false, autoRefreshFiles: false, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
       openStore.setSession(`with-editor-${editorExplorer}`)
       const openTabs = allLeaves(openStore.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
       expect(openTabs.map(tab => tab.type)).toEqual(['editor'])
@@ -318,7 +324,7 @@ describe('side card preferences', () => {
   it('seeds the empty editor home tab (files window) in both editorExplorer modes', () => {
     for (const editorExplorer of [true, false]) {
       const store = createSidebarStore()
-      store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+      store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, sidebarWidthPersistent: false, autoRefreshFiles: false, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
       store.setSession(`fresh-${editorExplorer}`)
       const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
       expect(tabs).toHaveLength(1)
@@ -342,6 +348,209 @@ describe('side card preferences', () => {
     // The 'none' seed starts with an empty pane (no default tab).
     expect(makeDefaultState(400, true, 'none').splits.kind).toBe('leaf')
     expect((makeDefaultState(400, true, 'none').splits as { tabs: unknown[] }).tabs).toHaveLength(0)
+  })
+
+  it('applies the persistent width preference to an already-open session', () => {
+    const original = (globalThis as Record<string, unknown>).window
+    ;(globalThis as Record<string, unknown>).window = {
+      innerWidth: 1440,
+      setTimeout: (fn: () => void) => { fn(); return 0 },
+      clearTimeout: () => {},
+    }
+    try {
+      const store = createSidebarStore()
+      store.setPrefs({ ...SIDEBAR_PREFS_DEFAULTS, defaultWidthPercent: 30 })
+      store.setSession('persistent-width')
+      expect(store.getSnapshot().state?.width).toBe(432)
+      // Enabling the cross-session width snaps the current session to the
+      // shared default percent immediately.
+      store.setPrefs({ ...store.getPrefs(), sidebarWidthPersistent: true, defaultWidthPercent: 50 })
+      expect(store.getSnapshot().state?.width).toBe(720)
+    } finally {
+      if (original === undefined) delete (globalThis as Record<string, unknown>).window
+      else (globalThis as Record<string, unknown>).window = original
+    }
+  })
+
+  it('persists the normalized width when setPrefs changes the active session', () => {
+    const originalWindow = (globalThis as Record<string, unknown>).window
+    const originalStore = (globalThis as Record<string, unknown>).localStorage
+    const storage = new Map<string, string>()
+    ;(globalThis as Record<string, unknown>).window = {
+      innerWidth: 1440,
+      setTimeout: (fn: () => void) => { fn(); return 0 },
+      clearTimeout: () => {},
+    }
+    ;(globalThis as Record<string, unknown>).localStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => { storage.set(key, value) },
+      removeItem: (key: string) => { storage.delete(key) },
+      key: (index: number) => [...storage.keys()][index] ?? null,
+      get length() { return storage.size },
+    }
+    try {
+      const store = createSidebarStore()
+      store.setPrefs({ ...SIDEBAR_PREFS_DEFAULTS, defaultWidthPercent: 30 })
+      store.setSession('persist-normalized-width')
+      store.setPrefs({ ...store.getPrefs(), sidebarWidthPersistent: true, defaultWidthPercent: 50 })
+      const raw = storage.get('dsh-sidebar:v1:persist-normalized-width')
+      expect(raw).toBeDefined()
+      const persisted = JSON.parse(raw ?? '{}') as { width: number; panelOpen: boolean }
+      expect(persisted.width).toBe(defaultWidthFor(1440, 50))
+    } finally {
+      if (originalWindow === undefined) delete (globalThis as Record<string, unknown>).window
+      else (globalThis as Record<string, unknown>).window = originalWindow
+      if (originalStore === undefined) delete (globalThis as Record<string, unknown>).localStorage
+      else (globalThis as Record<string, unknown>).localStorage = originalStore
+    }
+  })
+
+  it('applies the new-install defaults once when no per-session layout exists', async () => {
+    const original = (globalThis as Record<string, unknown>).localStorage
+    const storage = new Map<string, string>()
+    ;(globalThis as Record<string, unknown>).localStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => { storage.set(key, value) },
+      removeItem: (key: string) => { storage.delete(key) },
+      key: (index: number) => [...storage.keys()][index] ?? null,
+      get length() { return storage.size },
+    }
+    let value: Record<string, unknown> = {}
+    const settings: SidebarSettingsClient = {
+      settingsGet: async () => ({ value, revision: 1 }),
+      settingsUpdate: async (patch) => {
+        value = { ...value, ...patch }
+        return { value, revision: 2 }
+      },
+    }
+    try {
+      const prefs = await loadPrefs(settings)
+      expect(prefs.sidebarWidthPersistent).toBe(true)
+      expect(prefs.autoRefreshFiles).toBe(true)
+      expect(value.sidebarWidthPersistent).toBe(true)
+      expect(value.autoRefreshFiles).toBe(true)
+      expect(storage.get('dsh-sidebar:new-install-defaults-v1')).toBe('1')
+      // The marker prevents a second migration on the next load.
+      const again = await loadPrefs(settings)
+      expect(again.sidebarWidthPersistent).toBe(true)
+      expect(again.autoRefreshFiles).toBe(true)
+    } finally {
+      if (original === undefined) delete (globalThis as Record<string, unknown>).localStorage
+      else (globalThis as Record<string, unknown>).localStorage = original
+    }
+  })
+
+  it('retries the new-install defaults when the settings write fails', async () => {
+    const original = (globalThis as Record<string, unknown>).localStorage
+    const storage = new Map<string, string>()
+    ;(globalThis as Record<string, unknown>).localStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => { storage.set(key, value) },
+      removeItem: (key: string) => { storage.delete(key) },
+      key: (index: number) => [...storage.keys()][index] ?? null,
+      get length() { return storage.size },
+    }
+    let value: Record<string, unknown> = {}
+    let updateAttempts = 0
+    const settings: SidebarSettingsClient = {
+      settingsGet: async () => ({ value, revision: 1 }),
+      settingsUpdate: async () => {
+        updateAttempts += 1
+        throw new Error('settings write failed')
+      },
+    }
+    try {
+      const prefs = await loadPrefs(settings)
+      expect(prefs.sidebarWidthPersistent).toBe(true)
+      expect(prefs.autoRefreshFiles).toBe(true)
+      // The marker must not be set on failure; a later load can retry.
+      expect(storage.get('dsh-sidebar:new-install-defaults-v1')).toBeUndefined()
+      await loadPrefs(settings)
+      expect(updateAttempts).toBe(2)
+    } finally {
+      if (original === undefined) delete (globalThis as Record<string, unknown>).localStorage
+      else (globalThis as Record<string, unknown>).localStorage = original
+    }
+  })
+
+  it('keeps fresh defaults when the new-install settings write fails', async () => {
+    const original = (globalThis as Record<string, unknown>).localStorage
+    const storage = new Map<string, string>()
+    ;(globalThis as Record<string, unknown>).localStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => { storage.set(key, value) },
+      removeItem: (key: string) => { storage.delete(key) },
+      key: (index: number) => [...storage.keys()][index] ?? null,
+      get length() { return storage.size },
+    }
+    const settings: SidebarSettingsClient = {
+      settingsGet: async () => ({ value: {}, revision: 1 }),
+      settingsUpdate: async () => { throw new Error('settings write failed') },
+    }
+    try {
+      const prefs = await loadPrefs(settings)
+      expect(prefs.openByDefault).toBe(SIDEBAR_PREFS_DEFAULTS.openByDefault)
+      expect(prefs.defaultWidthPercent).toBe(SIDEBAR_PREFS_DEFAULTS.defaultWidthPercent)
+      // The new defaults are still attempted in memory for this session.
+      expect(prefs.sidebarWidthPersistent).toBe(true)
+      expect(prefs.autoRefreshFiles).toBe(true)
+    } finally {
+      if (original === undefined) delete (globalThis as Record<string, unknown>).localStorage
+      else (globalThis as Record<string, unknown>).localStorage = original
+    }
+  })
+
+  it('does not treat an upgraded install with custom settings as brand-new', async () => {
+    const original = (globalThis as Record<string, unknown>).localStorage
+    const storage = new Map<string, string>()
+    ;(globalThis as Record<string, unknown>).localStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => { storage.set(key, value) },
+      removeItem: (key: string) => { storage.delete(key) },
+      key: (index: number) => [...storage.keys()][index] ?? null,
+      get length() { return storage.size },
+    }
+    let updates = 0
+    const settings: SidebarSettingsClient = {
+      settingsGet: async () => ({ value: { openByDefault: true }, revision: 1 }),
+      settingsUpdate: async () => { updates += 1; return { value: {}, revision: 2 } },
+    }
+    try {
+      const prefs = await loadPrefs(settings)
+      expect(prefs.openByDefault).toBe(true)
+      expect(prefs.sidebarWidthPersistent).toBe(false)
+      expect(prefs.autoRefreshFiles).toBe(false)
+      expect(updates).toBe(0)
+    } finally {
+      if (original === undefined) delete (globalThis as Record<string, unknown>).localStorage
+      else (globalThis as Record<string, unknown>).localStorage = original
+    }
+  })
+
+  it('keeps old defaults for existing users (per-session layout already present)', async () => {
+    const original = (globalThis as Record<string, unknown>).localStorage
+    const storage = new Map<string, string>([['dsh-sidebar:v1:existing', '{}']])
+    ;(globalThis as Record<string, unknown>).localStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => { storage.set(key, value) },
+      removeItem: (key: string) => { storage.delete(key) },
+      key: (index: number) => [...storage.keys()][index] ?? null,
+      get length() { return storage.size },
+    }
+    let updates = 0
+    const settings: SidebarSettingsClient = {
+      settingsGet: async () => ({ value: {}, revision: 1 }),
+      settingsUpdate: async () => { updates += 1; return { value: {}, revision: 2 } },
+    }
+    try {
+      const prefs = await loadPrefs(settings)
+      expect(prefs.sidebarWidthPersistent).toBe(false)
+      expect(prefs.autoRefreshFiles).toBe(false)
+      expect(updates).toBe(0)
+    } finally {
+      if (original === undefined) delete (globalThis as Record<string, unknown>).localStorage
+      else (globalThis as Record<string, unknown>).localStorage = original
+    }
   })
 })
 

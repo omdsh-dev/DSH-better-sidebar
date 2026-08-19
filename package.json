@@ -130,6 +130,7 @@
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.8",
     "@lezer/highlight": "^1.2.3",
+    "chokidar": "^4.0.3",
     "clsx": "^2.1.1",
     "mermaid": "^11.16.1",
     "node-pty": "^1.1.0",
