@@ -56,8 +56,15 @@ export function TreePanel(props: {
     void uploadToDir({ sessionId, cwd: dir }, dir, items, (done, total, current) => {
       if (current !== '') setUploadStatus(t('uploadProgress', { done, total, name: current }))
     }).then((results) => {
-      setUploadStatus(summarizeResults(results, t))
+      const status = summarizeResults(results, t)
+      setUploadStatus(status)
       setRefreshTick(tick => tick + 1)
+      // Success messages are transient; failures stay until the next action.
+      if (results.every(r => r.ok)) {
+        window.setTimeout(() => {
+          setUploadStatus(current => current === status ? '' : current)
+        }, 3500)
+      }
     })
   }
 

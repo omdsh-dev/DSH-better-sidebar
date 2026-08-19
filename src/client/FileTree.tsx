@@ -73,19 +73,6 @@ export function FileTree(props: {
   const pendingUploadDir = useRef<string | undefined>(undefined)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  /** Upload into `dir` (absolute, inside the workspace) and refresh the tree. */
-  const uploadInto = useCallback((dir: string, items: UploadItem[]): void => {
-    if (items.length === 0 || cwd === undefined) return
-    setUploadStatus(t('uploadingTo', { dir }))
-    void uploadToDir({ sessionId, cwd }, dir, items, (done, total, current) => {
-      if (current !== '') setUploadStatus(t('uploadProgress', { done, total, name: current }))
-    }).then((results) => {
-      setUploadStatus(summarizeResults(results, t))
-      dataRef.current = {}
-      setData({})
-    })
-  }, [sessionId, cwd, t])
-
   /** Container drop: upload into the workspace root. */
   const handleBodyDrop = (event: DragEvent): void => {
     event.preventDefault()
@@ -144,6 +131,32 @@ export function FileTree(props: {
     loadDir(root)
     for (const dir of expanded) loadDir(dir)
   }, [cwd, expanded, refreshTick, loadDir])
+
+  /** Upload into `dir` (absolute, inside the workspace) and refresh the tree. */
+  const uploadInto = useCallback((dir: string, items: UploadItem[]): void => {
+    if (items.length === 0 || cwd === undefined) return
+    setUploadStatus(t('uploadingTo', { dir }))
+    void uploadToDir({ sessionId, cwd }, dir, items, (done, total, current) => {
+      if (current !== '') setUploadStatus(t('uploadProgress', { done, total, name: current }))
+    }).then((results) => {
+      const status = summarizeResults(results, t)
+      setUploadStatus(status)
+      // Reload the visible set directly: this path cannot bump the caller's
+      // refreshTick, so clear the level cache and refetch root + expanded.
+      dataRef.current = {}
+      setData({})
+      if (cwd !== undefined) {
+        loadDir(cwd)
+        for (const dir of expanded) loadDir(dir)
+      }
+      // Success messages are transient; failures stay until the next action.
+      if (results.every(r => r.ok)) {
+        window.setTimeout(() => {
+          setUploadStatus(current => current === status ? '' : current)
+        }, 3500)
+      }
+    })
+  }, [sessionId, cwd, t, loadDir, expanded])
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
   const copyPath = useCallback((text: string, path: string): void => {
