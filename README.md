@@ -199,7 +199,7 @@ v0.12.1 补齐基座能力（完整类型导出、能力探测、状态订阅、
 ## 🛠️ 开发与构建
 
 ```sh
-pnpm install      # @deepseek-ai/* 已发布到 npm（^0.1.0-rc.7），直接解析、无需令牌
+pnpm install      # @deepseek-ai/* 已发布到 npm（^0.1.0-rc.8），直接解析、无需令牌
 pnpm typecheck    # tsc --noEmit
 pnpm build        # → lib/index.js + lib/invariant.js + lib/client.js + lib/client-registry.js + lib/types
 pnpm test         # vitest（含 manifest 一致性守卫，需先 build）
