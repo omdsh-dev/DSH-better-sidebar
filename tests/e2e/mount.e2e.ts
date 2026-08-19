@@ -133,6 +133,9 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
   const sidebar = page.locator('[data-dsh-better-sidebar]')
   await expect(sidebar).toBeAttached({ timeout: 90_000 })
+  // The unified panel host: the fixed containing block every panel lives in
+  // (data-dsh-panel-host). Its presence is part of the injection contract.
+  await expect(page.locator('[data-dsh-panel-host]')).toBeAttached({ timeout: 90_000 })
 
   // A keyless boot stacks onboarding takeovers that mask the whole shell: a
   // versioned welcome notice ("Continue", persists its acknowledgement to
@@ -312,4 +315,22 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
 
   // Final screenshot: the rendered panel with a session is the lane's proof.
   await page.screenshot({ path: 'test-results/mount-final.png' })
+})
+
+test('desktop shell stamps auto-enable the win32 title-bar compatibility mode', async ({ page }) => {
+  // The official DSH Desktop shell stamps every render URL with
+  // dsh-desktop-mode / dsh-desktop-platform (and exposes a preload marker).
+  // The win32 advanced shell reserves a 32px overlay for the window
+  // controls where the toggle cluster sits — the sidebar must auto-drop
+  // below it (body[data-dsh-title-bar-compat]) without any manual pref.
+  await page.goto(`${BASE_URL}?dsh-desktop-mode=advanced&dsh-desktop-platform=win32`, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
+  await expect(
+    page.locator('body[data-dsh-title-bar-compat]'),
+    'win32 advanced shell must auto-enable title-bar compatibility',
+  ).toBeAttached({ timeout: 90_000 })
+  // The strip variable must be sized to the shell's 32px overlay.
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-title-bar-strip')))
+    .toBe('32px')
 })
