@@ -50,9 +50,9 @@ const CLIENT_REQUIRE_ALLOWED = new Set([
   'react-dom/client',
   'cordis',
   '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
+  '@deepseek-ai/dsh-client-ui-renderer',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-schema-form',
+  '@deepseek-ai/dsh-client-ui-reference',
   '@deepseek-ai/dsh-client-runtime/client',
 ])
 
