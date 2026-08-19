@@ -99,8 +99,10 @@ export function EditorHost(props: {
   expanded: string[]
   onToggleDir: (path: string) => void
   onReferenceFile: (path: string) => void
+  /** False while this tab is not active/visible — used to stop hidden watchers. */
+  visible?: boolean
 }) {
-  const { ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile } = props
+  const { ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile, visible } = props
   const path = tab.path ?? ''
   const title = tab.title
   const [load, setLoad] = useState<EditorLoad>({ status: 'loading' })
@@ -122,6 +124,12 @@ export function EditorHost(props: {
   )
   const openWithConfig = useMemo(() => parseOpenWithConfig(editorBlob.openWith), [editorBlob])
   const openWithTargets = useMemo(() => resolveOpenWithTargets(openWithConfig), [openWithConfig])
+  // The auto-refresh file-tree setting lives with the editor settings and
+  // should take effect live (no reload needed).
+  const autoRefresh = useSyncExternalStore(
+    useCallback((callback: () => void) => store.subscribe(callback), [store]),
+    useCallback(() => store.getSnapshot().prefs.autoRefreshFiles, [store]),
+  )
   // A path-less tab shows the empty-state hint in merged mode — and in split
   // mode it is the standalone explorer (tree-only, see the render below).
   const showEmpty = path === ''
@@ -342,6 +350,8 @@ export function EditorHost(props: {
           onOpenWith={openWith}
           onToggleOpenWithPin={toggleOpenWithPin}
           onReferenceFile={onReferenceFile}
+          autoRefresh={autoRefresh}
+          visible={visible}
         />
       </div>
     )
@@ -440,6 +450,8 @@ export function EditorHost(props: {
               onOpenWith={openWith}
               onToggleOpenWithPin={toggleOpenWithPin}
               onReferenceFile={onReferenceFile}
+              autoRefresh={autoRefresh}
+              visible={visible}
             />
           </div>
         )}

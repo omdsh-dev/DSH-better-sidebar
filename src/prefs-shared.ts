@@ -16,6 +16,19 @@ export interface SidebarPrefs {
   /** Default panel width as a percent of the window width (20–60). */
   defaultWidthPercent: number
   /**
+   * Whether every conversation shares the same right-sidebar width. When on,
+   * the `defaultWidthPercent` preference is the single source of truth: all
+   * sessions use that width and dragging the panel updates the preference.
+   * Off by default so existing per-session layouts keep their own widths.
+   */
+  sidebarWidthPersistent: boolean
+  /**
+   * Whether the file manager automatically refreshes when workspace files
+   * change (host fs watcher pushes). Off by default so existing installs
+   * keep the manual refresh behavior.
+   */
+  autoRefreshFiles: boolean
+  /**
    * Whether the sidebar auto-activates (opens the panel) and expands the
    * Subagent page when the current conversation spawns a new subagent.
    */
@@ -226,6 +239,8 @@ export type TitleBarScheme = typeof TITLE_BAR_SCHEMES[number]
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   openByDefault: false,
   defaultWidthPercent: WIDTH_PERCENT_DEFAULT,
+  sidebarWidthPersistent: false,
+  autoRefreshFiles: false,
   autoOpenSubagent: true,
   autoOpenJobs: true,
   agentTerminalTools: false,

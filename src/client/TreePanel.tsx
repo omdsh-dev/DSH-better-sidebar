@@ -3,7 +3,7 @@
  * (300ms debounce; an in-flight search is aborted by the next keystroke)
  * over either the shared controlled FileTree (empty query) or the flat
  * result list (relative paths; click opens through the caller's mode-aware
- * open). Owns its refresh tick: the icon next to the search input clears
+ * open). Owns its refresh tick: the icon next to the search input invalidates
  * the tree cache. EditorHost docks it as the tab's right panel (wrapped in
  * a drag-resize handle) and provides the file context-menu open escapes.
  *
@@ -62,8 +62,14 @@ export function TreePanel(props: {
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean
+  /** Whether the host workspace watcher should push refresh signals here
+   *  (the "auto-refresh file tree" setting lives with the editor settings). */
+  autoRefresh?: boolean
+  /** False while this tab is not the active/visible one — no watcher should
+   *  be held open for a hidden editor tab. */
+  visible?: boolean
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, full } = props
+  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, full, autoRefresh, visible } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -125,6 +131,51 @@ export function TreePanel(props: {
   }
 
   const folderInputProps = { webkitdirectory: '' } as InputHTMLAttributes<HTMLInputElement>
+
+  // The host workspace watcher pushes a lightweight `change` signal whenever
+  // the session's working directory changes on disk. Only enabled by the
+  // user-facing `autoRefreshFiles` setting; the socket reconnects on drops
+  // and follows cwd changes (the host resolves the authoritative cwd). The
+  // watcher is intentionally lazy: it starts only once the tree actually has
+  // a working directory to render, so a slow session-cwd lookup never makes
+  // the host scan a workspace just to paint the sidebar shell.
+  useEffect(() => {
+    if (autoRefresh !== true) return
+    if (visible === false) return
+    if (cwd === undefined || cwd === '') return
+    let socket: WebSocket | null = null
+    let retry: number | undefined
+    let closed = false
+    const connect = (): void => {
+      if (closed) return
+      const url = new URL('/sidebar/ws/fs-events', location.origin)
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+      const params = new URLSearchParams({ sessionId })
+      if (cwd !== undefined && cwd !== '') params.set('cwd', cwd)
+      url.search = params.toString()
+      socket = new WebSocket(url.toString())
+      socket.onmessage = (event) => {
+        if (typeof event.data !== 'string') return
+        try {
+          const message = JSON.parse(event.data) as { type?: string }
+          if (message.type === 'change') setRefreshTick(tick => tick + 1)
+        } catch {
+          // Malformed push: ignore (the next push will refresh).
+        }
+      }
+      socket.onclose = () => {
+        if (closed) return
+        retry = window.setTimeout(connect, 2000)
+      }
+      socket.onerror = () => { socket?.close() }
+    }
+    connect()
+    return () => {
+      closed = true
+      window.clearTimeout(retry)
+      socket?.close()
+    }
+  }, [autoRefresh, visible, sessionId, cwd])
 
   const needle = query.trim()
   useEffect(() => {

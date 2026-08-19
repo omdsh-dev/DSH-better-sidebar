@@ -761,6 +761,17 @@ export function defaultWidthFor(viewport: number, percent: number): number {
   return Math.min(viewport, Math.max(PANEL_MIN, Math.round(viewport * percent / 100)))
 }
 
+/** Apply the cross-session width preference to one state. When enabled, the
+ * global `defaultWidthPercent` overrides the per-session width so the DOM and
+ * the session cache stay in sync; otherwise the state is returned unchanged. */
+export function applyPersistentWidth(state: SidebarState, prefs: SidebarPrefs): SidebarState {
+  if (!prefs.sidebarWidthPersistent) return state
+  const viewport = typeof window !== 'undefined' ? window.innerWidth : undefined
+  if (viewport === undefined) return state
+  const width = defaultWidthFor(viewport, prefs.defaultWidthPercent)
+  return state.width === width ? state : { ...state, width }
+}
+
 function loadState(sessionId: string, prefs: SidebarPrefs): SidebarState {
   try {
     const raw = localStorage.getItem(`${STORAGE_PREFIX}:${sessionId}`)
@@ -770,7 +781,7 @@ function loadState(sessionId: string, prefs: SidebarPrefs): SidebarState {
       // sanitize re-ids any duplicates the pre-seeding counter left behind.
       nextIdCounter = maxCounterId(parsed)
       const sanitized = sanitizeState(parsed)
-      if (sanitized !== undefined) return sanitized
+      if (sanitized !== undefined) return applyPersistentWidth(sanitized, prefs)
     }
   } catch {
     // Corrupt or unavailable storage: fall through to the default.
@@ -1022,7 +1033,18 @@ export class SidebarStore {
    */
   setPrefs(prefs: SidebarPrefs): void {
     this.prefs = { ...prefs }
-    this.snapshot = { ...this.snapshot, prefs: this.prefs }
+    let state = this.snapshot.state
+    if (state !== undefined) {
+      const next = applyPersistentWidth(state, this.prefs)
+      if (next !== state) {
+        if (this.snapshot.sessionId !== undefined) {
+          this.bySession.set(this.snapshot.sessionId, next)
+          this.schedulePersist(this.snapshot.sessionId, next)
+        }
+        state = next
+      }
+    }
+    this.snapshot = { ...this.snapshot, state, prefs: this.prefs }
     this.notify()
   }
 
@@ -1047,6 +1069,8 @@ export class SidebarStore {
         // pane/split ids can never collide with its tree.
         nextIdCounter = maxCounterId(state)
       }
+      state = applyPersistentWidth(state, this.prefs)
+      this.bySession.set(sessionId, state)
       this.snapshot = { sessionId, state, prefs: this.prefs }
     }
     this.notify()
@@ -1130,6 +1154,8 @@ export class SidebarStore {
       // like setSession's cache-hit path.
       nextIdCounter = maxCounterId(state)
     }
+    state = applyPersistentWidth(state, this.prefs)
+    this.bySession.set(sessionId, state)
     const next = reducer(state)
     // Same-reference result = no change: keep the counter restore (it may
     // have been seeded down) but skip the write.

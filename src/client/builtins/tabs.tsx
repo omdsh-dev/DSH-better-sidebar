@@ -114,12 +114,16 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
               desc: () => t('editorExplorerSplitDesc'),
             },
           ],
+        }, {
+          key: 'autoRefreshFiles',
+          title: () => t('autoRefreshFiles'),
+          desc: () => t('autoRefreshFilesDesc'),
         }],
         render: ({ pluginSettings, updatePluginSetting }) => (
           <OpenWithSettings pluginSettings={pluginSettings} updatePluginSetting={updatePluginSetting} />
         ),
       },
-      component: ({ ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile }) => (
+      component: ({ ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile, visible }) => (
         <EditorHost
           ctx={ctx}
           store={store}
@@ -128,6 +132,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           expanded={expanded ?? []}
           onToggleDir={onToggleDir ?? (() => { /* no-op */ })}
           onReferenceFile={onReferenceFile ?? (() => { /* no-op */ })}
+          visible={visible}
         />
       ),
     },
