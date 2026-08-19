@@ -25,6 +25,15 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add "github:fuhefei/dsh-sentinel#v0.7.0"',
   },
   {
+    id: 'dsh-docs-panel',
+    name: 'dsh-docs-panel 全局文档',
+    url: 'https://github.com/mlosun/dsh-docs-panel',
+    description: () => t('pluginDocsPanelDesc'),
+    // dsh-docs-panel hard-depends on dsh-better-sidebar (required peer), so
+    // the install line installs the prerequisite first, then the plugin.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-docs-panel',
+  },
+  {
     id: 'dsh-git-remotes',
     name: 'dsh-git-remotes Git 远程',
     url: 'https://github.com/yq04/dsh-git-remotes',
