@@ -24,6 +24,19 @@
   transition: margin-right var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
+/* DSH Desktop advanced mode replaces the upstream AppFrame with its own
+   .dshDesktopFrame grid. Reserve the sidebar width/height on that frame too,
+   so the fixed panels occupy layout space instead of overlaying the
+   conversation / input bar. */
+body[data-dsh-desktop-mode="advanced"] .dshDesktopFrame {
+  box-sizing: border-box;
+  padding-right: var(--dsh-sidebar-width, 0px);
+  padding-bottom: var(--dsh-sidebar-height, 0px);
+  transition:
+    padding-right var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    padding-bottom var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
 /* The AppFrame's grid items are sidebarCol, centerCol, detailsCol (children
    1-3 of #root > div[data-slot="root"] > div) — nth-child(2) is the center
    column. A stretched grid item shrinks by its margins, so the conversation
