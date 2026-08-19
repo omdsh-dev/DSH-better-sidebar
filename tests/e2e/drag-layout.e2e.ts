@@ -256,3 +256,106 @@ test('width drag tracks the shell 1:1 with transitions disabled (issue #92)', as
   const convoTravel = first!.convoRight - last!.convoRight
   expect(Math.abs(convoTravel - stripTravel), 'conversation must track the panel edge 1:1').toBeLessThanOrEqual(8)
 })
+
+test('a very fast width drag still commits the dragged position (no rollback on quick release)', async ({ page }) => {
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
+  const sidebar = page.locator('[data-dsh-better-sidebar]')
+  await expect(sidebar).toBeAttached({ timeout: 90_000 })
+
+  // Dismiss whatever onboarding takeover is present (same dance as the
+  // main lane) so the pointer can reach the strip.
+  try {
+    await expect
+      .poll(() => page.getByRole('button', { name: /^(Continue|Configure later)$/ }).count(), { timeout: 60_000 })
+      .toBeGreaterThan(0)
+  } catch {
+    console.warn('[e2e-drag-fast] no onboarding takeover appeared; proceeding')
+  }
+  for (let round = 0; round < 8; round++) {
+    let dismissed = false
+    for (const name of ['Continue', 'Configure later']) {
+      const button = page.getByRole('button', { name, exact: true }).first()
+      if ((await button.count()) === 0) continue
+      try {
+        await button.click({ timeout: 4_000 })
+        dismissed = true
+        await page.waitForTimeout(1_000)
+      } catch {
+        // Masked by a takeover stacked above; retry in the next round.
+      }
+    }
+    if (!dismissed) break
+  }
+
+  const expandButton = sidebar.getByRole('button', { name: 'Expand sidebar' })
+  await expect(expandButton, 'the collapsed toggle cluster must offer the expand button').toHaveCount(1)
+  await expandButton.click()
+  await expect
+    .poll(async () => {
+      const value = await page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))
+      return value !== '' && value !== '0px'
+    }, { timeout: 90_000 })
+    .toBe(true)
+
+  const readWidth = (): Promise<number> => page.evaluate(() => {
+    const value = parseFloat(document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))
+    return Number.isNaN(value) ? 0 : value
+  })
+  const widthBefore = await readWidth()
+
+  const stripBox = await page.evaluate(() => {
+    const host = document.querySelector('[data-dsh-better-sidebar]')
+    if (host === null) return null
+    const boxes = [...host.querySelectorAll('*')]
+      .filter(el => getComputedStyle(el).cursor === 'col-resize')
+      .map(el => el.getBoundingClientRect())
+      .filter(r => r.width > 0 && r.height > 0)
+      .sort((a, b) => a.x - b.x)
+    const r = boxes[0]
+    if (r === undefined) return null
+    const varWidth = parseFloat(document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))
+    return {
+      x: r.x, y: r.y, width: r.width, height: r.height,
+      varWidth: Number.isNaN(varWidth) ? 0 : varWidth,
+      innerWidth: window.innerWidth,
+    }
+  })
+  expect(stripBox, 'the width drag strip must be present').not.toBeNull()
+  await expect
+    .poll(async () => {
+      const box = await page.evaluate(() => {
+        const host = document.querySelector('[data-dsh-better-sidebar]')
+        const el = [...host!.querySelectorAll('*')]
+          .filter(e => getComputedStyle(e).cursor === 'col-resize')
+          .map(e => e.getBoundingClientRect())
+          .filter(r => r.width > 0 && r.height > 0)
+          .sort((a, b) => a.x - b.x)[0]
+        return el === undefined ? null : { x: el.x + el.width, innerWidth: window.innerWidth }
+      })
+      if (box === null) return false
+      const varWidth = await page.evaluate(() => parseFloat(document.documentElement.style.getPropertyValue('--dsh-sidebar-width')) || 0)
+      return Math.abs(box.x - (box.innerWidth - varWidth)) <= 8
+    }, { timeout: 30_000 })
+    .toBe(true)
+
+  const startX = stripBox!.x + stripBox!.width / 2
+  const startY = stripBox!.y + Math.min(120, stripBox!.height / 2 + 60)
+
+  // FAST release: a single move and an immediate up — no per-frame waits,
+  // so the last pointermove may never reach a requestAnimationFrame before
+  // the release (the exact quick-flick that used to roll back to the
+  // pre-drag width).
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX - 140, startY, { steps: 1 })
+  await page.mouse.up()
+
+  // The committed width must reflect the drag — and stay there (no rollback
+  // once React settles).
+  await expect
+    .poll(async () => await readWidth(), { timeout: 10_000 })
+    .toBeGreaterThan(widthBefore + 100)
+  await page.waitForTimeout(600)
+  expect(await readWidth(), 'the fast drag must not roll back after settling').toBeGreaterThan(widthBefore + 100)
+})
