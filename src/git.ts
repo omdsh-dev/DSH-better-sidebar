@@ -143,13 +143,20 @@ export async function currentBranch(cwd: string): Promise<string> {
   return out.trim()
 }
 
-/** Working-tree status (untracked included). */
+/**
+ * Working-tree status (untracked included). `--untracked-files=all` lists
+ * the CONTENTS of new directories as individual entries (`?? newdir/a.ts`
+ * rather than a collapsed `?? newdir/`), so every row in the source-control
+ * panel is a real file whose diff tab can load. With `=normal`, git folds a
+ * new folder into one trailing-slash entry that has no diff output and
+ * cannot be read as a file.
+ */
 export async function status(cwd: string): Promise<GitStatusResult> {
   const repo = await isGitRepo(cwd)
   if (!repo) return { isRepo: false, entries: [] }
   const [branch, raw] = await Promise.all([
     currentBranch(cwd).catch(() => 'HEAD'),
-    runGit(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=normal']),
+    runGit(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
   ])
   return { isRepo: true, branch, entries: parsePorcelainZ(raw) }
 }
