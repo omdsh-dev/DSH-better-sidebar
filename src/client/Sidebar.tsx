@@ -43,6 +43,7 @@ import {
 import { IconPanelBottomOutline16, IconPanelRightOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useNarrowViewport } from './breakpoints.ts'
+import { parseDesktopEnv } from './desktop-env.ts'
 import type { NewTabOption } from './TabBar.tsx'
 import type { TabDragPayload } from './TabBar.tsx'
 import { relativeTo } from './paths.ts'
@@ -140,6 +141,31 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // keep living in the right tree.
   const narrow = useNarrowViewport()
 
+  // On-screen keyboard / visual-viewport inset (mobile, split-screen, …):
+  // when the visual viewport shrinks below the layout viewport, bottom-
+  // anchored panels would hide under the keyboard. Track the inset and
+  // offset the bottom-anchored surfaces by it. Guarded: browsers without
+  // visualViewport (older WebViews, jsdom) stay at 0. rAF-throttled, same
+  // pattern as useNarrowViewport.
+  const [keyboardInset, setKeyboardInset] = useState(0)
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (vv === null || vv === undefined) return
+    let frame: number | null = null
+    const measure = (): void => {
+      frame = null
+      const inset = Math.max(0, window.innerHeight - vv.height)
+      setKeyboardInset(inset > 1 ? Math.round(inset) : 0)
+    }
+    const onResize = (): void => { if (frame === null) frame = requestAnimationFrame(measure) }
+    vv.addEventListener('resize', onResize)
+    measure()
+    return () => {
+      vv.removeEventListener('resize', onResize)
+      if (frame !== null) cancelAnimationFrame(frame)
+    }
+  }, [])
+
   // Current conversation (the sessions list feed).
   const sessionList = useSyncExternalStore(
     useMemo(() => (callback: () => void) => ctx.sessions.list.subscribe(callback), [ctx]),
@@ -172,16 +198,23 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   // Position compatibility mode (titleBarCompat pref): Windows frameless
   // windows draw the native title bar (minimize/maximize/close) at the
-  // window's top-right corner, OVER the web content. When the user enables
-  // the pref, the body attribute lets sidebar.module.css drop the toggle
-  // cluster below the strip and push the right panel's content below it.
-  // The strip height is user-tunable (titleBarStripPx) and rides a CSS
-  // variable so the rules stay declarative. The attribute rides the
+  // window's top-right corner, OVER the web content. When enabled, the body
+  // attribute lets sidebar.module.css drop the toggle cluster below the
+  // strip and push the right panel's content below it. Auto-enabled in the
+  // win32 advanced desktop shell (the shell stamps the URL — see
+  // desktop-env.ts — and reserves a 32px overlay for the window controls);
+  // the manual pref and its strip height still win when the user sets them,
+  // and the manual switch only ever ADDS compat. The strip height rides a
+  // CSS variable so the rules stay declarative; the attribute rides the
   // snapshot's prefs, so flipping the setting re-renders and re-applies
   // immediately; the cleanup removes both on unmount/boundary swap so a
   // crashed sidebar never leaves them behind.
-  const titleBarCompat = snapshot.prefs.titleBarCompat
-  const titleBarStrip = snapshot.prefs.titleBarStripPx
+  const desktopEnv = parseDesktopEnv()
+  const autoTitleBarCompat = desktopEnv.win32OverlayTop > 0
+  const titleBarCompat = snapshot.prefs.titleBarCompat || autoTitleBarCompat
+  const titleBarStrip = snapshot.prefs.titleBarCompat
+    ? snapshot.prefs.titleBarStripPx
+    : desktopEnv.win32OverlayTop
   useEffect(() => {
     const root = document.documentElement
     if (titleBarCompat) {
@@ -806,7 +839,13 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       <div
         ref={panelRef}
         className={clsx(css.panel, !state.panelOpen && css.panelHidden)}
-        style={{ width: narrow ? '100vw' : Math.min(state.width, window.innerWidth) }}
+        style={{
+          width: narrow ? '100vw' : Math.min(state.width, window.innerWidth),
+          // Narrow drawer: keep the bottom-anchored sheet above the on-screen
+          // keyboard (visualViewport inset); desktop panels are full-height
+          // and unaffected.
+          bottom: narrow && keyboardInset > 0 ? `${keyboardInset}px` : undefined,
+        }}
        
         data-dragging={anyDragging || undefined}
       >
@@ -916,6 +955,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         style={{
           height: Math.min(state.bottomHeight, window.innerHeight),
           left: centerRect.left,
+          // Keep the panel above the on-screen keyboard when the visual
+          // viewport shrinks (see the keyboardInset effect).
+          bottom: keyboardInset > 0 ? `${keyboardInset}px` : undefined,
           // Direct from the center column's measured right edge: the bottom
           // panel spans ONLY the center column, ending exactly at the
           // details column's left edge (the details column sits between the
