@@ -29,7 +29,10 @@
  * Caching contract (three layers, each with a failure path):
  * - In-memory: one in-flight promise per chunk, memoized until
  *   {@link resetChunks}; a failed load removes its entry so the next call
- *   retries from scratch.
+ *   retries from scratch. HMR re-activation keeps the resolved exports of
+ *   unchanged chunks (ETag revalidation via
+ *   {@link revalidateChunksOnReactivate}) — the next lazy open skips the
+ *   re-inject / re-execute.
  * - Script execution: each re-execution overwrites the global registry slot
  *   (assignment, never registration) — no "duplicate factory registration"
  *   class of errors; a failed materialization clears the cache so the retry
@@ -38,11 +41,13 @@
  *   no-cache` + ETag, 304 when unchanged), so page refreshes and HMR
  *   re-activations never re-download a multi-MB chunk that did not change.
  *
- * HMR: each plugin activation calls {@link resetChunks}, which drops the
- * in-memory cache (and any test registry), so a hot-reloaded core bundle
- * re-fetches and re-executes the current chunk scripts on the next lazy
- * open. Chunk-only source edits still need a manual page refresh (the HMR
- * poll watches only client.js).
+ * HMR: each plugin activation calls {@link revalidateChunksOnReactivate},
+ * which HEADs every loaded chunk against the bundle route and keeps the
+ * in-memory cache for the ones whose ETag is unchanged (a hot-reloaded core
+ * bundle therefore does not re-execute multi-MB chunk scripts). Chunk-only
+ * source edits still need a manual page refresh (the HMR poll watches only
+ * client.js); an edit that does land while a core HMR happens is caught by
+ * the ETag comparison on the next activation.
  */
 export type ChunkName = 'terminal' | 'editor' | 'mermaid'
 
@@ -155,6 +160,26 @@ async function buildExternalsRequire(modules: ChunkModuleSystem): Promise<(spec:
 /** In-flight/memoized chunk loads; a failure removes its entry so a retry re-fetches. */
 const cache = new Map<ChunkName, Promise<ChunkExports>>()
 
+/** Chunk names whose exports are currently cached (loaded successfully). */
+const loadedChunks = new Set<ChunkName>()
+
+/** ETags observed for loaded chunks (HEAD revalidation, see
+ *  {@link revalidateChunksOnReactivate}). */
+const chunkEtags = new Map<ChunkName, string>()
+
+/** Best-effort ETag capture for revalidation. The script tag itself exposes
+ *  no response headers, so after a successful load we HEAD the bundle route
+ *  once. Failures are ignored — revalidation then fails open (re-fetch). */
+async function recordEtag(name: ChunkName): Promise<void> {
+  try {
+    const res = await fetch(CHUNK_URL(name), { method: 'HEAD', cache: 'no-cache' })
+    const etag = res.headers.get('etag')
+    if (etag !== null && etag !== '') chunkEtags.set(name, etag)
+  } catch {
+    chunkEtags.delete(name)
+  }
+}
+
 /**
  * Load (once) and materialize a lazy chunk, returning its module exports.
  * Concurrent callers share one in-flight load; a failure clears the cache
@@ -178,10 +203,17 @@ export function loadChunk(name: ChunkName): Promise<ChunkExports> {
       throw new Error(`[dsh-better-sidebar] chunk "${name}" script did not register its factory`)
     }
     const require = await buildExternalsRequire(modules)
-    return factory(require)
+    const exports = factory(require)
+    loadedChunks.add(name)
+    void recordEtag(name)
+    return exports
   })()
   cache.set(name, task)
-  void task.catch(() => { cache.delete(name) })
+  void task.catch(() => {
+    cache.delete(name)
+    loadedChunks.delete(name)
+    chunkEtags.delete(name)
+  })
   return task
 }
 
@@ -193,6 +225,46 @@ export function loadChunk(name: ChunkName): Promise<ChunkExports> {
  */
 export function resetChunks(): void {
   cache.clear()
+  loadedChunks.clear()
+  chunkEtags.clear()
   testLoaders.clear()
   externalsRequire = undefined
+}
+
+/**
+ * HMR-safe re-activation hook (index.tsx calls this instead of a full
+ * reset): keep the resolved exports of every loaded chunk and drop only the
+ * ones whose script changed on disk — the bundle route revalidates every
+ * request (cache-control: no-cache + ETag), so an unchanged chunk keeps its
+ * memory cache and the next lazy open skips the re-inject / re-execute.
+ * Fail-open: an unreachable or ETag-less chunk is dropped (re-fetch on next
+ * open). Test-registry entries are always cleared (per-test fixtures).
+ * A page refresh remains the authoritative reset (the HMR poll watches only
+ * client.js; chunk-only edits surface here on the next core re-activation).
+ */
+export async function revalidateChunksOnReactivate(): Promise<void> {
+  testLoaders.clear()
+  // Entries not tracked as production-loaded (test fixtures, orphans) never
+  // survive a re-activation — their resolved exports came from per-test
+  // stubs, not from the bundle route.
+  for (const name of [...cache.keys()]) {
+    if (!loadedChunks.has(name)) cache.delete(name)
+  }
+  if (loadedChunks.size === 0) return
+  const stale: ChunkName[] = []
+  await Promise.all([...loadedChunks].map(async (name) => {
+    try {
+      const res = await fetch(CHUNK_URL(name), { method: 'HEAD', cache: 'no-cache' })
+      const etag = res.headers.get('etag')
+      if (etag !== null && etag !== '' && chunkEtags.get(name) === etag) return
+    } catch {
+      // Fail open below.
+    }
+    stale.push(name)
+  }))
+  for (const name of stale) {
+    cache.delete(name)
+    loadedChunks.delete(name)
+    chunkEtags.delete(name)
+  }
 }

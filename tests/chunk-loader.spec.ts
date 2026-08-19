@@ -18,6 +18,7 @@ import {
   CHUNK_EXTERNALS,
   loadChunk,
   registerChunkForTests,
+  revalidateChunksOnReactivate,
   resetChunks,
   setChunkScriptLoaderForTests,
 } from '../src/client/chunk-loader.ts'
@@ -189,6 +190,85 @@ describe('production path (script injection + global registry + externals requir
   it('resetChunks is a safe no-op without a module system', () => {
     resetChunks()
     expect(() => resetChunks()).not.toThrow()
+  })
+})
+
+describe('revalidateChunksOnReactivate (HMR re-activation keeps unchanged chunks)', () => {
+  /** Stub the bundle route's HEAD endpoint with per-name ETags (Error = unreachable). */
+  function stubBundleHead(etagFor: (name: string) => string | null | Error): void {
+    vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
+      const url = String(input)
+      const name = url.endsWith('terminal.js') ? 'terminal' : 'editor'
+      const etag = etagFor(name)
+      if (etag instanceof Error) throw etag
+      return {
+        headers: { get: (key: string) => (key.toLowerCase() === 'etag' ? etag : null) },
+      } as unknown as Response
+    }))
+  }
+
+  /** Let the fire-and-forget ETag recorder (recordEtag) settle. */
+  const settleEtag = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 5))
+
+  it('keeps the resolved exports of an unchanged chunk — no re-inject / re-execute', async () => {
+    installModuleSystem()
+    let scriptCalls = 0
+    setChunkScriptLoaderForTests(async () => {
+      scriptCalls += 1
+      simulateScript('editor', () => ({ TextEditor: 'editor-view' }))
+    })
+    stubBundleHead(() => '"v1"')
+    const first = await loadChunk('editor')
+    expect(scriptCalls).toBe(1)
+    await settleEtag()
+    await revalidateChunksOnReactivate()
+    const second = await loadChunk('editor')
+    expect(second).toBe(first)
+    expect(scriptCalls).toBe(1)
+  })
+
+  it('drops a chunk whose ETag changed on disk — the next open re-injects and re-executes', async () => {
+    installModuleSystem()
+    let scriptCalls = 0
+    setChunkScriptLoaderForTests(async () => {
+      scriptCalls += 1
+      simulateScript('editor', () => ({ TextEditor: `editor-view:${scriptCalls}` }))
+    })
+    let etag = '"v1"'
+    stubBundleHead(() => etag)
+    const first = await loadChunk('editor')
+    await settleEtag()
+    etag = '"v2"'
+    await revalidateChunksOnReactivate()
+    const second = await loadChunk('editor')
+    expect(second).not.toBe(first)
+    expect(scriptCalls).toBe(2)
+  })
+
+  it('fails open when revalidation cannot reach the bundle route', async () => {
+    installModuleSystem()
+    let scriptCalls = 0
+    setChunkScriptLoaderForTests(async () => {
+      scriptCalls += 1
+      simulateScript('terminal', () => ({ TerminalView: 'tv' }))
+    })
+    stubBundleHead(() => new Error('HEAD unreachable'))
+    await loadChunk('terminal')
+    await settleEtag()
+    await revalidateChunksOnReactivate()
+    await loadChunk('terminal')
+    expect(scriptCalls).toBe(2)
+  })
+
+  it('clears test-registry fixtures on re-activation (per-test stubs never leak)', async () => {
+    let testCalls = 0
+    registerChunkForTests('editor', async () => { testCalls += 1; return { TextEditor: 'test-view' } })
+    await loadChunk('editor')
+    expect(testCalls).toBe(1)
+    await revalidateChunksOnReactivate()
+    // Test fixture gone: the production path runs and fails fast (no module system).
+    await expect(loadChunk('editor')).rejects.toThrow('client module system unavailable')
+    expect(testCalls).toBe(1)
   })
 })
 

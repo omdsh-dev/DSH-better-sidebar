@@ -13,7 +13,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { Context } from '../context-types.ts'
 import { allLeaves, createSidebarStore, isAgentTabId } from './state.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
-import { resetChunks } from './chunk-loader.ts'
+import { revalidateChunksOnReactivate } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
@@ -110,10 +110,11 @@ export function apply(ctx: Context): void {
     }
   }
   try {
-    // Fresh chunk state for this activation: invalidate any chunk factories
-    // registered by a previous fiber (HMR) and drop the in-memory load cache
-    // so the next lazy open re-fetches the current chunk scripts.
-    resetChunks()
+    // Fresh chunk state for this activation: drop per-test fixtures and
+    // revalidate loaded chunk scripts against the bundle route's ETags —
+    // unchanged chunks keep their resolved exports (no re-inject /
+    // re-execute on HMR), changed ones are dropped for a clean re-fetch.
+    void revalidateChunksOnReactivate()
     ctx.effect(() => {
       let disposed = false
       let root: Root | undefined
