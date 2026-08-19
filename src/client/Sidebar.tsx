@@ -489,10 +489,24 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   const clampHeight = (height: number): number =>
     Math.min(Math.max(BOTTOM_MIN, Math.round(height)), Math.max(BOTTOM_MIN, window.innerHeight - PANEL_MIN))
 
+  /** Single writer for the layout-push variables: the app shell gives up
+   *  the panel's width/height while open (0 while collapsed) through
+   *  layout.css's margins. Every size change — drag frames and committed
+   *  state — flows through here so the push never forks between paths. */
+  const writeGeometry = (width: number, height: number): void => {
+    document.documentElement.style.setProperty('--dsh-sidebar-width', `${width}px`)
+    document.documentElement.style.setProperty('--dsh-sidebar-height', `${height}px`)
+    // The corner handle positions itself relative to the panel (CSS
+    // `bottom: calc(var(--dsh-sidebar-height) + 6px)`), so these two layout
+    // variables are all it needs — no viewport coordinates written here
+    // (issue #106: skins that inset the panels must not fight JS coords).
+  }
+
   /** Apply a drag size to the DOM without touching React state or the store.
    *  The bottom panel's right edge tracks the right panel's left edge HERE
    *  too — React state only updates on release, so the inline right must be
-   *  written directly or the bottom panel would lag the sidebar mid-drag. */
+   *  written directly or the bottom panel would lag the sidebar mid-drag.
+   *  The layout push rides the shared writer (writeGeometry). */
   const applyDrag = (width: number, height: number): void => {
     panelRef.current?.style.setProperty('width', `${width}px`)
     bottomRef.current?.style.setProperty('height', `${height}px`)
@@ -501,12 +515,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // `width + detailsWidth` — derived from the measured column, keeping the
     // drag write-only (no React re-render mid-drag).
     bottomRef.current?.style.setProperty('right', `${(window.innerWidth - centerRect.right) + (width - (state?.width ?? 0))}px`)
-    document.documentElement.style.setProperty('--dsh-sidebar-width', `${width}px`)
-    document.documentElement.style.setProperty('--dsh-sidebar-height', `${height}px`)
-    // The corner handle positions itself relative to the panel (CSS
-    // `bottom: calc(var(--dsh-sidebar-height) + 6px)`), so these two layout
-    // variables are all it needs — no viewport coordinates written here
-    // (issue #106: skins that inset the panels must not fight JS coords).
+    writeGeometry(width, height)
   }
 
   // Drags write at most once per frame: pointer events fire several times
@@ -572,8 +581,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     const height = !narrow && snapshot.state?.bottomOpen === true
       ? Math.min(snapshot.state.bottomHeight, window.innerHeight)
       : 0
-    document.documentElement.style.setProperty('--dsh-sidebar-width', `${width}px`)
-    document.documentElement.style.setProperty('--dsh-sidebar-height', `${height}px`)
+    writeGeometry(width, height)
     // Unmount must release the push (issue #31): when the boundary swaps the
     // whole sidebar after a render crash (or the plugin fiber is disposed /
     // HMR), the CSS variables would otherwise stay on <html> and layout.css

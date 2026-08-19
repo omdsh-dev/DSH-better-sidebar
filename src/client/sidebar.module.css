@@ -209,6 +209,22 @@
   transition: none;
 }
 
+/* Layout isolation: panel-internal reflows (tabs, editors, terminals) never
+   leak into the app shell's layout, and the app shell's layout changes
+   never cascade through the panel subtree — the drag stays confined.
+   will-change: transform is only live while a drag is (the body attribute
+   toggles with the drag state), promoting the panels to their own layer
+   without paying the compositing cost at rest. */
+.panel,
+.bottomPanel {
+  contain: layout style;
+}
+
+body[data-dsh-sidebar-dragging] .panel,
+body[data-dsh-sidebar-dragging] .bottomPanel {
+  will-change: transform;
+}
+
 /* The bottom panel's height drag: the top edge strip (mirror of the right
    panel's width strip), centered on the border like the width strip. */
 .bottomResize {
