@@ -18,8 +18,8 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
-  IconLinkOutline16, Menu, writeClipboard,
+  Button, IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
+  IconLinkOutline16, IconRightUpOutline16, IconSearchOutline16, Input, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
 import { relativeTo } from './paths.ts'
@@ -63,6 +63,10 @@ export function FileTree(props: {
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
   const [rowMenu, setRowMenu] = useState<{ path: string; isDir: boolean; x: number; y: number } | null>(null)
+  /** The path being opened through the "Choose App…" modal. */
+  const [openWithPrompt, setOpenWithPrompt] = useState<{ path: string } | null>(null)
+  /** The app name typed into the "Choose App…" modal. */
+  const [openWithApp, setOpenWithApp] = useState('')
 
   const storeLevel = useCallback((path: string, level: LevelData) => {
     dataRef.current = { ...dataRef.current, [path]: level }
@@ -145,6 +149,45 @@ export function FileTree(props: {
     document.body.appendChild(anchor)
     anchor.click()
     anchor.remove()
+  }
+
+  /** Reveal a path in Finder (macOS). */
+  const revealInFinder = (path: string): void => {
+    void api.fsReveal({ sessionId, cwd }, path).catch((error: unknown) => {
+      window.alert(t('openFailed') + ': ' + (error instanceof Error ? error.message : String(error)))
+    })
+  }
+
+  /** Open a path with the default app or a named app (macOS). */
+  const openFileWith = (path: string, app?: string): void => {
+    void api.fsOpen({ sessionId, cwd }, path, app).catch((error: unknown) => {
+      window.alert(t('openFailed') + ': ' + (error instanceof Error ? error.message : String(error)))
+    })
+  }
+
+  /** Save a file copy through the native save picker; falls back to the plain
+   *  download when the File System Access API is unavailable. */
+  const saveAsFile = async (path: string): Promise<void> => {
+    const picker = (window as unknown as {
+      showSaveFilePicker?: (options: { suggestedName: string }) => Promise<{
+        createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }>
+      }>
+    }).showSaveFilePicker
+    if (typeof picker === 'function') {
+      try {
+        const handle = await picker({ suggestedName: baseName(path) })
+        const writable = await handle.createWritable()
+        const response = await fetch(downloadUrl({ sessionId, cwd }, path))
+        if (!response.ok) throw new Error('HTTP ' + response.status)
+        await writable.write(await response.blob())
+        await writable.close()
+        return
+      } catch (error) {
+        // The user cancelled the save picker (AbortError) — do nothing.
+        if (error instanceof Error && error.name === 'AbortError') return
+      }
+    }
+    downloadFile(path)
   }
 
   const root = cwd
@@ -264,10 +307,23 @@ export function FileTree(props: {
           ...(rowMenu?.isDir === false && onOpenFileSide !== undefined
             ? [{ id: 'open-side', label: t('openFileSide'), icon: <IconFolderOpen16 size={14} /> }]
             : []),
-          // Download applies to files only (the host route refuses directories).
+          // Download and "save as" apply to files only (the host route refuses directories).
           ...(rowMenu?.isDir === false
             ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutline16 size={14} /> }]
             : []),
+          ...(rowMenu?.isDir === false
+            ? [{ id: 'save-as', label: t('saveAs'), icon: <IconDownloadOutline16 size={14} /> }]
+            : []),
+          { id: 'reveal', label: t('revealInFinder'), icon: <IconSearchOutline16 size={14} /> },
+          {
+            id: 'open-with',
+            label: t('openWith'),
+            icon: <IconRightUpOutline16 size={14} />,
+            submenu: [
+              { id: 'open-default', label: t('openWithDefault') },
+              { id: 'open-choose', label: t('openWithChoose') },
+            ],
+          },
           { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={14} /> },
           { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutline16 size={14} /> },
         ]}
@@ -287,6 +343,23 @@ export function FileTree(props: {
             downloadFile(target.path)
             return
           }
+          if (id === 'save-as') {
+            void saveAsFile(target.path)
+            return
+          }
+          if (id === 'reveal') {
+            revealInFinder(target.path)
+            return
+          }
+          if (id === 'open-default') {
+            openFileWith(target.path)
+            return
+          }
+          if (id === 'open-choose') {
+            setOpenWithApp('')
+            setOpenWithPrompt({ path: target.path })
+            return
+          }
           copyPath(
             id === 'relative' ? relativeTo(cwd ?? '', target.path) : target.path,
             target.path,
@@ -297,6 +370,45 @@ export function FileTree(props: {
         getAnchorRect={() => (rowMenu === null ? null : new DOMRect(rowMenu.x, rowMenu.y, 0, 0))}
         anchor={<span />}
       />
+      <Modal
+        open={openWithPrompt !== null}
+        onClose={() => { setOpenWithPrompt(null) }}
+        title={t('openWithTitle')}
+        description={t('openWithDesc', { path: openWithPrompt?.path ?? '' })}
+        closeLabel={t('cancel')}
+        footer={(
+          <>
+            <Button variant="outline" onClick={() => { setOpenWithPrompt(null) }}>{t('cancel')}</Button>
+            <Button
+              variant="primary"
+              disabled={openWithApp.trim() === ''}
+              onClick={() => {
+                const pending = openWithPrompt
+                if (pending === null) return
+                setOpenWithPrompt(null)
+                openFileWith(pending.path, openWithApp.trim())
+              }}
+            >
+              {t('openAction')}
+            </Button>
+          </>
+        )}
+      >
+        <Input
+          value={openWithApp}
+          placeholder={t('openWithPlaceholder')}
+          autoFocus
+          onChange={(event) => { setOpenWithApp(event.target.value) }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && openWithApp.trim() !== '') {
+              const pending = openWithPrompt
+              if (pending === null) return
+              setOpenWithPrompt(null)
+              openFileWith(pending.path, openWithApp.trim())
+            }
+          }}
+        />
+      </Modal>
     </div>
   )
 }

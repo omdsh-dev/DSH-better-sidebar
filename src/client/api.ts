@@ -143,6 +143,12 @@ export const api = {
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
+  /** Reveal a path in Finder (macOS). */
+  fsReveal: (scope: SessionScope, path: string) =>
+    call<{ ok: true }>('fs.reveal', scopePayload(scope, { path })),
+  /** Open a path with the default app, or a named app (macOS). */
+  fsOpen: (scope: SessionScope, path: string, app?: string) =>
+    call<{ ok: true }>('fs.open', scopePayload(scope, { path, ...(app !== undefined && app !== '' ? { app } : {}) })),
   gitStatus: (scope: SessionScope, signal?: AbortSignal) =>
     call<GitStatusResult>('git.status', scopePayload(scope, {}), signal),
   gitDiff: (scope: SessionScope, path: string | undefined, staged: boolean, signal?: AbortSignal) =>
