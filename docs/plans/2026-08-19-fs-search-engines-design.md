@@ -1,0 +1,93 @@
+# fs.search 原生搜索引擎探测设计(fd / rg)
+
+**日期**：2026-08-19
+**状态**：已实施(feat/fs-search-engines,待 PR)
+**作者**：opencode + 用户
+**关联**：issue #203(fs.search 文件名搜索优先嗅探并使用本机 fd/rg)
+
+## 1. 目标
+
+编辑器侧栏全局文件名搜索(`fs.search` 路由 → `searchFiles`)在纯 JS 递归遍历下,大目录(十万级)单次搜索可达秒级。本设计在**零新依赖、路由和客户端零改动**的前提下:
+
+1. 探测本机已验证可用的原生引擎(fd → rg),按需调用,带宽返回
+2. 引擎不可用/运行失败时无缝回退纯 JS 遍历,行为与现状一致
+3. 引擎输出统一换算为朴素遍历的既有契约(根相对、`/` 分隔、大小写不敏感名字子串、排序、上限截断)
+
+## 2. 非目标(Out of Scope)
+
+- **懒索引 / mtime 校验缓存**:无引擎?环境的兜底加速,二期候选(见 §6「二期」)
+- **应用层脏标记**:依赖 DSH jobs.output 事件流,延期
+- **自带引擎**(`@vscode/ripgrep` 作为依赖):包体积问题需维护者决策,二期候选
+- 修改 `fs.search` 路由签名、客户端 TreePanel 交互协议:不动
+
+## 3. 设计
+
+### 3.1 探测(进程内一次,懒,带缓存)
+
+- 探测顺序:`fd` → `rg`
+- 候选位置 = PATH 展开 + 固定路径,并**优先 DSH 自带的 rg**:
+  - rg 第一候选:**DSH CLI 内置的 ripgrep**(`<node 全局前缀>/lib/node_modules/@deepseek-ai/dsh/node_modules/@vscode/ripgrep-<platform>-<arch>/bin/rg`,由 `process.execPath` 推导——DSH 自身的 agent 搜索工具已在用这个二进制);之后 PATH `rg` + `/opt/homebrew/bin/rg`、`/usr/local/bin/rg`、`/usr/bin/rg`
+  - fd: PATH `fd` **与 `fdfind`**(Ubuntu 包装名)+ `/opt/homebrew/bin/fd`、`/usr/local/bin/fd`、`/usr/bin/fd`、`~/.cargo/bin/fd`
+  - ~~VS Code 捆绑 rg hack~~ **已弃用**:DSH 自身就捆绑 @vscode/ripgrep,不需要反向借用 VS Code 应用目录(issue #203 的核心洞察)
+- 每个候选二进制跑 `--version`(500ms 超时)验证可执行,验证不过的路径不采用
+- 首次搜索时懒探测,结果 Promise 级缓存整个进程生命周期;`search-engines.ts` 导出 `setEngineHooks` / `resetEngines` 作为测试注入点
+
+### 3.2 调用与语义对齐
+
+| 引擎 | 命令 | 语义对齐 |
+|---|---|---|
+| fd | `fd --hidden --no-ignore --exclude .git --fixed-strings --ignore-case --path-separator / --max-results N+1 <q> .`(cwd=root) | `--fixed-strings` 字面量子串匹配(对齐朴素语义,防 glob 注入);`-H -I` 不忽略隐藏/ignore 文件;"文件名+目录名" 都匹配;`--max-results` 天然限流;`.git` 目录显式排除(朴素遍历同样跳过) |
+| rg | `rg --files --hidden --no-ignore --glob '!**/.git/**' --iglob '*<escaped>*' .`(cwd=root) | `--iglob` 大小写不敏感(rg globset 不支持 `(?i)` 前缀);**只匹配文件,不匹配目录名**(documented lossy);`.git` 全程排除;无结果上限,流式读取到 N+1 杀进程;**exit 1 = 无匹配,属正常空结果**(rg 契约,streamLines 放行,不触发引擎禁用) |
+
+统一出口:子进程 stdout 流式逐行(全量结果用 readline + 超过 N+1 即 kill,不会 buffer 进内存),经 `normalizeEnginePaths` 换算(去 `./` 前缀、`/` 分隔),由 `searchFiles` 排序 + 截断。
+
+### 3.3 降级链与失败策略
+
+- 探测超时/非零 → 剔除该候选;无候选的引擎不进链
+- 运行期失败(超时 15s / 非零退出 / 无法 spawn)→ **禁用该引擎(进程内)**,继续下一个引擎
+- 全部不可用 → 纯 JS 遍历(`searchFilesPlain`,原逻辑原样)
+- 调用方 signal abort → 杀子进程,跳过回退遍历直接返回空(请求已死,客户端不再消费)
+
+## 4. 文件变更
+
+| 文件 | 类型 | 内容 |
+|---|---|---|
+| `src/search-engines.ts` | 新增 | 探测缓存 + 三引擎调用 + `normalizeEnginePaths`/`escapeGlob` + hooks |
+| `src/fs-search.ts` | 改动 | 原逻辑改名 `searchFilesPlain`;新增 `searchFiles` dispatch(引擎优先,失败回退) |
+| `tests/search-engines.spec.ts` | 新增 | 规范化/转义/探测缓存/失败禁用/abort 不禁用 |
+| `tests/fs-search.spec.ts` | 改动 | 既有用例改测 `searchFilesPlain`;新增 dispatch 组(路由/截断/回退/无引擎/abort) |
+| `docs/plans/2026-08-19-fs-search-engines-design.md` | 新增 | 本文档 |
+
+路由(`src/index.ts` 的 `fs.search`)与客户端:**零改动**。
+
+## 5. 验证
+
+- `pnpm typecheck` 通过;`pnpm test` 全量 637 passed / 5 skipped
+- 真实机器集成(本机 macOS):PATH 不含 Homebrew 的容器里,`/opt/homebrew/bin/rg` 被固定路径探测命中,`searchFiles` 命中 `src/search-engines.ts`;DSH 内置 rg 由 `process.execPath` 前缀推导命中(enginetest profile 实测)
+- **真实目录基准(本机 macOS,DSH 内置 rg 15.0,3 次取最优)**:
+
+  | 目录(规模) | 查询 | plain(JS walk) | rg(--iglob) |
+  |---|---|---|---|
+  | `/opt/homebrew`(17 万文件) | `libruby` | 518ms,4 命中,`truncated=true` | 205ms,4 命中,完整 |
+  | `/opt/homebrew`(17 万文件) | 无匹配 | 513ms,0 命中,`truncated=true` | 198ms,0 命中,完整 |
+  | `/Users/y/workspace`(9 万文件) | `search-engines` | 870ms,4 命中,`truncated=true` | 184ms,4 命中,完整 |
+  | `/Users/y/workspace`(9 万文件) | 无匹配 | 872ms,0 命中,`truncated=true` | 191ms,0 命中,完整 |
+  | `/Applications`(24 万文件) | `README` | 453ms,85 命中,`truncated=true` | 23ms,200 命中,完整 |
+  | `/Applications`(24 万文件) | 无匹配 | 452ms,0 命中,`truncated=true` | 184ms,0 命中,完整 |
+  | `/Users/y/tools`(3.7 万文件) | `glob` | 217ms,102 命中,完整 | 56ms,99 命中,完整 |
+
+  结论:**真实嵌套目录下 rg 快 2.5~20 倍,且 plain 大目录一律预算截断(结果不完整,正是 issue #203 指出的问题)**;`tools "glob"` 的 99 vs 102 差异是 rg 只报文件、plain 把目录也算命中(documented lossy);README 查询 rg 命中 200(结果上限)+ 完整遍历,而 plain 85 命中即因预算截断而漏掉其余。顺带修出两个 mock 测不出的 bug:`(?i)` 前缀无效(改 `--iglob`)与 rg exit 1 = 无匹配(放行,不触发引擎禁用)。极端场景(如 `~/Library/Containers`,数百万 iCloud 小文件)下 plain 与 rg 均需 >5min,两类实现都不可用,不作为基准
+- 本机无 fd,`fd` 候选探测自然剔除,链正常降级
+
+## 6. 二期候选(有意不做,记录在案)
+
+1. **懒索引 + 目录 mtime 校验**(`searchFilesPlain` 回退路径加速):文件名索引只需感知创建/删除/改名——必然改变父目录 mtime,故 mtime 校验即正确失效信号;TTL(如 5s)免校验补偿秒级粒度。有 fd/rg 时索引无意义甚至更慢(校验遍历 > 原生一次遍历),故**仅在无引擎路径生效**
+2. **自带 `@vscode/ripgrep` 依赖**:消灭"用户没装/DSH 布局探不到"的概率问题,代价是 2-4MB 三平台二进制 + optionalDependencies 平台分片,需维护者拍板
+3. **应用层脏标记**:通过 DSH `jobs.output` 事件流解析 agent 写文件路径,即时失效 mtime 兜底的陈旧窗口(延迟/复杂度高)
+4. rg 的目录名匹配缺失:`rg --files` 无目录输出,若反馈集中可考虑砍掉 rg 或换 `--no-ignore` 全量 + 客户端过滤
+
+## 7. 已知取舍(诚实记录)
+
+- **truncated 语义**:引擎路径的截断顺序是引擎遍历序(非确定性),朴素路径是遍历序——截断结果本来就不保证全集,差异可接受
+- **DSH 内置 rg 路径由 `process.execPath` 推导**:依赖 DSH CLI 的全局 node_modules 布局(npm 风格 `lib/node_modules/@deepseek-ai/dsh/...`);用 `pnpm`/`bun` 全局安装等异构布局探不到,但 existSync + `--version` 预检会将其剔除,不影响正确性(还有 PATH/固定路径 rg 与 JS 兜底)
+- **探测顺序决定引擎胜负**:rg 的 DSH 内置候选排在 PATH 之前——即使系统装了别的 rg,也优先用 DSH 自带的 15.x(行为一致、免环境依赖)
