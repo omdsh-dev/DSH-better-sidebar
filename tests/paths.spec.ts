@@ -10,6 +10,12 @@ describe('path helpers', () => {
     expect(relativeTo('/Users/me/code/', '/Users/me/code/src/a/b.ts')).toBe('src/a/b.ts')
   })
 
+  it('keeps volume and share root drags non-empty when both paths end in separators', () => {
+    expect(relativeTo('/', '/')).toBe('.')
+    expect(relativeTo('C:\\', 'C:\\')).toBe('.')
+    expect(relativeTo('\\\\server\\share\\', '\\\\server\\share\\')).toBe('.')
+  })
+
   it('falls back to the path unchanged when it lies outside the cwd', () => {
     expect(relativeTo('/Users/me/code', '/Users/other/x.ts')).toBe('/Users/other/x.ts')
     expect(relativeTo('/Users/me/code', '/Users/me/codex/y.ts')).toBe('/Users/me/codex/y.ts')

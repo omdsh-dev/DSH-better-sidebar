@@ -15,7 +15,7 @@
  * relative or absolute path (with a brief "copied" label replacing the
  * button after a successful write).
  */
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
@@ -23,6 +23,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
 import { relativeTo } from './paths.ts'
+import { setLocalPathDragData } from './path-drag.ts'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
 
@@ -136,6 +137,11 @@ export function FileTree(props: {
     setRowMenu({ path, isDir, x: event.clientX, y: event.clientY })
   }
 
+  /** Publish the row path without interfering with its click/key/menu actions. */
+  const dragPath = (event: DragEvent, path: string): void => {
+    setLocalPathDragData(event.dataTransfer, relativeTo(cwd ?? '', path))
+  }
+
   /** Download a file through the host route (raw bytes, binary-safe). */
   const downloadFile = (path: string): void => {
     const url = downloadUrl({ sessionId, cwd }, path)
@@ -170,6 +176,7 @@ export function FileTree(props: {
             <div
               role="button"
               tabIndex={0}
+              draggable
               className={clsx(css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden)}
               style={{ paddingLeft: depth * 22 + 6 }}
               onClick={() => { onToggle(entry.path) }}
@@ -180,6 +187,7 @@ export function FileTree(props: {
                 }
               }}
               onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
+              onDragStart={(event) => { dragPath(event, entry.path) }}
             >
               {isOpen ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />}
               <span className={css.explorerName}>{entry.name}</span>
@@ -195,6 +203,7 @@ export function FileTree(props: {
           key={entry.path}
           role="button"
           tabIndex={0}
+          draggable
           className={clsx(css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken)}
           style={{ paddingLeft: depth * 22 + 6 }}
           title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
@@ -206,6 +215,7 @@ export function FileTree(props: {
             }
           }}
           onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
+          onDragStart={(event) => { dragPath(event, entry.path) }}
         >
           <IconCodeOutline16 size={14} />
           <span className={css.explorerName}>{entry.name}</span>
@@ -224,8 +234,10 @@ export function FileTree(props: {
         <>
           <div
             className={css.explorerRow}
+            draggable
             style={{ paddingLeft: 6 }}
             onContextMenu={(event) => { openRowMenu(event, root, true) }}
+            onDragStart={(event) => { dragPath(event, root) }}
           >
             <IconFolderOpen16 size={14} />
             <span className={css.explorerName}>{baseName(root)}</span>
