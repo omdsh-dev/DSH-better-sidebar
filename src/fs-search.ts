@@ -11,9 +11,15 @@
  * the flat list) and `maxVisited` (a runaway tree — a home directory root,
  * a node_modules forest — must not stall the host). Exceeding either stops
  * early with `truncated: true`.
+ *
+ * `searchFiles` (the dispatch the fs.search route calls) first tries the
+ * probed native engines (fd / rg — see search-engines.ts); when
+ * none are available or all failed at runtime it falls back to this walk
+ * (exported as `searchFilesPlain` for tests).
  */
 import { opendir } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
+import { runEngine, usableEngines } from './search-engines.ts'
 
 /** One search: the relative paths of the matching entries (dirs included so
  *  the client can hint where matches live) plus the truncation flag. */
@@ -43,7 +49,7 @@ const DEFAULT_MAX_VISITED = 100_000
  *  plus whether a budget cut the walk short. An unreadable level is skipped
  *  (permission errors never fail the whole search).
  */
-export async function searchFiles(root: string, query: string, opts: FsSearchOptions = {}): Promise<FsSearchResult> {
+export async function searchFilesPlain(root: string, query: string, opts: FsSearchOptions = {}): Promise<FsSearchResult> {
   const needle = query.trim().toLowerCase()
   if (needle === '') return { matches: [], truncated: false }
   const maxMatches = opts.maxMatches ?? DEFAULT_MAX_MATCHES
@@ -83,4 +89,40 @@ export async function searchFiles(root: string, query: string, opts: FsSearchOpt
   await walk(root)
   // '/' separators on every platform: the client joins onto the cwd itself.
   return { matches: matches.sort().map(path => path.split(sep).join('/')), truncated }
+}
+
+/**
+ * The fs.search dispatch: native engines first (when verified and healthy),
+ * the plain walk as fallback. Engine output matches the walk contract:
+ * root-relative, '/'-separated, sorted; the engine's cap (maxMatches + 1)
+ * decides `truncated`. A query that matches nothing up front short-circuits
+ * before any engine or walk runs.
+ * @param signal - aborts the engine child; an aborted search skips the
+ *  fallback walk too (the client has already discarded the request).
+ */
+export async function searchFiles(
+  root: string,
+  query: string,
+  opts: FsSearchOptions = {},
+  signal?: AbortSignal,
+): Promise<FsSearchResult> {
+  const needle = query.trim()
+  if (needle === '') return { matches: [], truncated: false }
+  const maxMatches = opts.maxMatches ?? DEFAULT_MAX_MATCHES
+  for (const probe of await usableEngines()) {
+    try {
+      const { paths, truncated } = await runEngine(probe, root, needle, maxMatches, signal)
+      const matches = paths.sort()
+      return {
+        matches: truncated ? matches.slice(0, maxMatches) : matches,
+        truncated,
+      }
+    } catch {
+      // runEngine disabled the engine; try the next one (an aborted signal
+      // rethrows untouched, but matching nothing is just as good — the
+      // request is dead either way).
+      if (signal?.aborted) return { matches: [], truncated: false }
+    }
+  }
+  return searchFilesPlain(root, query, opts)
 }
