@@ -167,6 +167,10 @@ const loadedChunks = new Set<ChunkName>()
  *  {@link revalidateChunksOnReactivate}). */
 const chunkEtags = new Map<ChunkName, string>()
 
+/** Pending revalidation barrier: while set, {@link loadChunk} awaits it
+ *  before serving cache (see revalidateChunksOnReactivate). */
+let revalidation: Promise<void> | null = null
+
 /** Best-effort ETag capture for revalidation. The script tag itself exposes
  *  no response headers, so after a successful load we HEAD the bundle route
  *  once. Failures are ignored — revalidation then fails open (re-fetch). */
@@ -187,10 +191,14 @@ async function recordEtag(name: ChunkName): Promise<void> {
  * global registry slot — assignments are idempotent).
  * @param name - the chunk to load.
  */
-export function loadChunk(name: ChunkName): Promise<ChunkExports> {
+export async function loadChunk(name: ChunkName): Promise<ChunkExports> {
+  // Barrier: never serve a cache entry that a pending revalidation is about
+  // to inspect — a stale chunk could otherwise render mid-HMR (CR #232 P1).
+  if (revalidation !== null) await revalidation
   const cached = cache.get(name)
   if (cached !== undefined) return cached
-  const task = (async (): Promise<ChunkExports> => {
+  let task: Promise<ChunkExports>
+  task = (async (): Promise<ChunkExports> => {
     const test = testLoaders.get(name)
     if (test !== undefined) return test()
     const modules = moduleSystem()
@@ -204,8 +212,14 @@ export function loadChunk(name: ChunkName): Promise<ChunkExports> {
     }
     const require = await buildExternalsRequire(modules)
     const exports = factory(require)
-    loadedChunks.add(name)
-    void recordEtag(name)
+    // Only track production loads whose cache entry survived (a revalidation
+    // sweep may have dropped it mid-flight; the caller still gets these
+    // exports, they just are not memoized for the next open). Test-registry
+    // loads return above and never reach this tracking.
+    if (cache.get(name) !== undefined) {
+      loadedChunks.add(name)
+      void recordEtag(name)
+    }
     return exports
   })()
   cache.set(name, task)
@@ -241,30 +255,40 @@ export function resetChunks(): void {
  * open). Test-registry entries are always cleared (per-test fixtures).
  * A page refresh remains the authoritative reset (the HMR poll watches only
  * client.js; chunk-only edits surface here on the next core re-activation).
+ *
+ * The returned promise is also a BARRIER for {@link loadChunk}: while a
+ * revalidation is pending, every chunk load awaits it before serving cache,
+ * so a lazy tab opening mid-revalidation can never render stale exports
+ * that the sweep is about to invalidate (CR #232 P1).
  */
-export async function revalidateChunksOnReactivate(): Promise<void> {
+export function revalidateChunksOnReactivate(): Promise<void> {
   testLoaders.clear()
-  // Entries not tracked as production-loaded (test fixtures, orphans) never
-  // survive a re-activation — their resolved exports came from per-test
-  // stubs, not from the bundle route.
-  for (const name of [...cache.keys()]) {
-    if (!loadedChunks.has(name)) cache.delete(name)
-  }
-  if (loadedChunks.size === 0) return
-  const stale: ChunkName[] = []
-  await Promise.all([...loadedChunks].map(async (name) => {
-    try {
-      const res = await fetch(CHUNK_URL(name), { method: 'HEAD', cache: 'no-cache' })
-      const etag = res.headers.get('etag')
-      if (etag !== null && etag !== '' && chunkEtags.get(name) === etag) return
-    } catch {
-      // Fail open below.
+  const task = (async (): Promise<void> => {
+    // Entries not tracked as production-loaded (test fixtures, orphans) never
+    // survive a re-activation — their resolved exports came from per-test
+    // stubs, not from the bundle route.
+    for (const name of [...cache.keys()]) {
+      if (!loadedChunks.has(name)) cache.delete(name)
     }
-    stale.push(name)
-  }))
-  for (const name of stale) {
-    cache.delete(name)
-    loadedChunks.delete(name)
-    chunkEtags.delete(name)
-  }
+    if (loadedChunks.size === 0) return
+    const stale: ChunkName[] = []
+    await Promise.all([...loadedChunks].map(async (name) => {
+      try {
+        const res = await fetch(CHUNK_URL(name), { method: 'HEAD', cache: 'no-cache' })
+        const etag = res.headers.get('etag')
+        if (etag !== null && etag !== '' && chunkEtags.get(name) === etag) return
+      } catch {
+        // Fail open below.
+      }
+      stale.push(name)
+    }))
+    for (const name of stale) {
+      cache.delete(name)
+      loadedChunks.delete(name)
+      chunkEtags.delete(name)
+    }
+  })()
+  revalidation = task
+  void task.finally(() => { if (revalidation === task) revalidation = null })
+  return task
 }

@@ -260,6 +260,42 @@ describe('revalidateChunksOnReactivate (HMR re-activation keeps unchanged chunks
     expect(scriptCalls).toBe(2)
   })
 
+  it('loadChunk is a barrier: a pending revalidation never serves stale exports (CR P1)', async () => {
+    installModuleSystem()
+    let scriptCalls = 0
+    setChunkScriptLoaderForTests(async () => {
+      scriptCalls += 1
+      simulateScript('editor', () => ({ TextEditor: `editor-view:${scriptCalls}` }))
+    })
+    // First load: etag "v1", recorded after settlement.
+    let etag = '"v1"'
+    stubBundleHead(() => etag)
+    const first = await loadChunk('editor')
+    await settleEtag()
+    expect(scriptCalls).toBe(1)
+    // The chunk changed on disk; the revalidation HEAD is gated (pending).
+    etag = '"v2"'
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      await gate
+      return { headers: { get: () => etag } } as unknown as Response
+    }))
+    const revalidating = revalidateChunksOnReactivate()
+    // A lazy open DURING the pending revalidation must NOT get the old cache.
+    let resolved = false
+    let pendingLoad: Promise<ChunkExports> | null = null
+    pendingLoad = loadChunk('editor').then((exports) => { resolved = true; return exports })
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(resolved, 'loadChunk must await the pending revalidation').toBe(false)
+    // Release the HEAD; the barrier lifts and the load re-injects fresh exports.
+    release?.()
+    await revalidating
+    const after = await pendingLoad
+    expect(after).not.toBe(first)
+    expect(scriptCalls).toBe(2)
+  })
+
   it('clears test-registry fixtures on re-activation (per-test stubs never leak)', async () => {
     let testCalls = 0
     registerChunkForTests('editor', async () => { testCalls += 1; return { TextEditor: 'test-view' } })

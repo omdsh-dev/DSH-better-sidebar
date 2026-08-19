@@ -144,9 +144,13 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // On-screen keyboard / visual-viewport inset (mobile, split-screen, …):
   // when the visual viewport shrinks below the layout viewport, bottom-
   // anchored panels would hide under the keyboard. Track the inset and
-  // offset the bottom-anchored surfaces by it. Guarded: browsers without
-  // visualViewport (older WebViews, jsdom) stay at 0. rAF-throttled, same
-  // pattern as useNarrowViewport.
+  // offset the bottom-anchored surfaces by it. The obscured bottom strip is
+  // innerHeight − (vv.height + vv.offsetTop): offsetTop is nonzero while
+  // the visual viewport is scrolled/zoomed under browser chrome, so
+  // omitting it would over-lift the panels (CR #232 P2). offsetTop changes
+  // through the viewport's scroll event too, so both events are listened.
+  // Guarded: browsers without visualViewport (older WebViews, jsdom) stay
+  // at 0. rAF-throttled, same pattern as useNarrowViewport.
   const [keyboardInset, setKeyboardInset] = useState(0)
   useEffect(() => {
     const vv = window.visualViewport
@@ -154,14 +158,16 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     let frame: number | null = null
     const measure = (): void => {
       frame = null
-      const inset = Math.max(0, window.innerHeight - vv.height)
+      const inset = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop))
       setKeyboardInset(inset > 1 ? Math.round(inset) : 0)
     }
     const onResize = (): void => { if (frame === null) frame = requestAnimationFrame(measure) }
     vv.addEventListener('resize', onResize)
+    vv.addEventListener('scroll', onResize)
     measure()
     return () => {
       vv.removeEventListener('resize', onResize)
+      vv.removeEventListener('scroll', onResize)
       if (frame !== null) cancelAnimationFrame(frame)
     }
   }, [])

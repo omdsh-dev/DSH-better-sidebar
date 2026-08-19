@@ -152,8 +152,8 @@ export function apply(ctx: Context): void {
        *  <html>/<body> itself (exotic shells), a fixed panel host would
        *  track the transformed box instead of the viewport. Flip the
        *  degraded mode and pin the host to the viewport every frame until
-       *  it matches again. The normal path (no page-level transform) never
-       *  runs the sync loop. */
+       *  the ancestor transform is actually gone. The normal path (no
+       *  page-level transform) never runs the sync loop. */
       const scheduleHostCheck = (): void => {
         hostCheckFrame ??= requestAnimationFrame(() => {
           hostCheckFrame = null
@@ -169,15 +169,27 @@ export function apply(ctx: Context): void {
           }
           layer.setAttribute('data-dsh-panel-host-degraded', '')
           console.warn('[dsh-better-sidebar] panel host geometry mismatch — a page-level transform was detected; using degraded viewport sync')
+          // Track our own compensating translation so the loop judges the
+          // UNCORRECTED geometry: clearing degraded mode must wait for the
+          // ancestor transform to actually disappear — the frame right after
+          // our correction applies would otherwise look "fixed" and the
+          // offset would return immediately (CR #232 P1).
+          let applied = { x: 0, y: 0 }
           const sync = (): void => {
             const r = layer.getBoundingClientRect()
-            if (Math.abs(r.left) <= 1 && Math.abs(r.top) <= 1
+            const rawLeft = r.left - applied.x
+            const rawTop = r.top - applied.y
+            if (Math.abs(rawLeft) <= 1 && Math.abs(rawTop) <= 1
               && Math.abs(r.width - window.innerWidth) <= 1 && Math.abs(r.height - window.innerHeight) <= 1) {
               layer.removeAttribute('data-dsh-panel-host-degraded')
               layer.style.transform = ''
               return
             }
-            layer.style.transform = `translate(${-r.left}px, ${-r.top}px)`
+            const next = { x: -rawLeft, y: -rawTop }
+            if (next.x !== applied.x || next.y !== applied.y) {
+              applied = next
+              layer.style.transform = `translate(${applied.x}px, ${applied.y}px)`
+            }
             hostCheckFrame = requestAnimationFrame(sync)
           }
           hostCheckFrame = requestAnimationFrame(sync)

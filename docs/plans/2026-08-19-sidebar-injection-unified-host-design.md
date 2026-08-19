@@ -257,3 +257,4 @@ document.body
   - 桌面避让复用既有 `titleBarCompat/titleBarStripPx` 通道（未新增 `--dsh-desktop-top-inset` 变量）；darwin 红绿灯区仅预留（当前无左侧贴边控件）。
   - 测试环境为 Node + 手写 shim（非 jsdom）：`browser-globals.ts` 补 `location`；desktop-env 剥除 `location.search` 前导 `?`（真实 bug，顺带修复）。
   - 本地 Node 24 跑 `test:mount` 需 `node --expose-internals` 启动 dsh CLI（HMR 服务要求，CI Node 22 无此问题）——本地用 DSH_CMD 包装，不改仓库脚本。
+  - **CR #232 修复（2026-08-19）**：① 降级同步改为按**未修正几何**判定（跟踪自身补偿量，祖先 transform 消失才退出循环）；② chunk 重验证成为 `loadChunk` 屏障（重验证挂起期间不提供缓存，杜绝 HMR 竞态陈旧 exports）；③ 键盘 inset 公式补 `visualViewport.offsetTop` 并监听 `scroll`。
