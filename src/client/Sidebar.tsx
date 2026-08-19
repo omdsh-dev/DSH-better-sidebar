@@ -498,7 +498,13 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // `width + detailsWidth` — derived from the measured column, keeping the
     // drag write-only (no React re-render mid-drag).
     bottomRef.current?.style.setProperty('right', `${(window.innerWidth - centerRect.right) + (width - (state?.width ?? 0))}px`)
-    document.documentElement.style.setProperty('--dsh-sidebar-width', `${width}px`)
+    // The width push exists only while the right panel is OPEN (the layout
+    // push effect writes 0 while it is collapsed). The bottom-height drag
+    // reuses this function with the right panel's PERSISTED width as `width`,
+    // so writing it unconditionally would squeeze the whole app shell left
+    // mid-drag — as if the collapsed right panel were still occupying space —
+    // until the store commit on release snaps it back.
+    document.documentElement.style.setProperty('--dsh-sidebar-width', `${state?.panelOpen === true ? width : 0}px`)
     document.documentElement.style.setProperty('--dsh-sidebar-height', `${height}px`)
     // The corner handle positions itself relative to the panel (CSS
     // `bottom: calc(var(--dsh-sidebar-height) + 6px)`), so these two layout
@@ -562,6 +568,18 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // crush the app shell to zero. Dragging disables the layout transition.
   // On NARROW viewports the drawer FLOATS over the app shell — no push, the
   // conversation keeps the full width behind the drawer.
+  //
+  // This effect is deliberately SET-only (no cleanup): React runs every
+  // effect cleanup before every effect setup in the same commit, so a
+  // cleanup here would remove both variables before the draggingRef effect
+  // (declared above) runs its setup and forces a layout in measureCenter
+  // (getBoundingClientRect). That forced recalc would resolve #root's
+  // margin-right to the 0px fallback, cache it as the transition start
+  // value, and measure centerRect far too wide; once the body attribute
+  // effect re-enables transitions on pointer-up, the shell would animate
+  // margin-right 0 → width — the visible "expand to the full page then
+  // bounce back" flash. Unmount release lives in the effect below
+  // (issue #31).
   useEffect(() => {
     const width = !narrow && snapshot.state?.panelOpen === true
       ? Math.min(snapshot.state.width, window.innerWidth)
@@ -571,18 +589,20 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       : 0
     document.documentElement.style.setProperty('--dsh-sidebar-width', `${width}px`)
     document.documentElement.style.setProperty('--dsh-sidebar-height', `${height}px`)
-    // Unmount must release the push (issue #31): when the boundary swaps the
-    // whole sidebar after a render crash (or the plugin fiber is disposed /
-    // HMR), the CSS variables would otherwise stay on <html> and layout.css
-    // keeps squeezing #root with a stale margin — "the sidebar cannot be
-    // hidden" until a full reload. removeProperty restores the CSS fallback
-    // (var(--dsh-sidebar-width, 0px)); React re-runs cleanup+setup in the
-    // same commit on state changes, so there is no visible flicker.
+  }, [narrow, snapshot.state?.panelOpen, snapshot.state?.width, snapshot.state?.bottomOpen, snapshot.state?.bottomHeight])
+  // Unmount must release the push (issue #31): when the boundary swaps the
+  // whole sidebar after a render crash (or the plugin fiber is disposed /
+  // HMR), the CSS variables would otherwise stay on <html> and layout.css
+  // keeps squeezing #root with a stale margin — "the sidebar cannot be
+  // hidden" until a full reload. removeProperty restores the CSS fallback
+  // (var(--dsh-sidebar-width, 0px)). Kept separate from the set effect so a
+  // dep-change re-run never removes the variables mid-commit.
+  useEffect(() => {
     return () => {
       document.documentElement.style.removeProperty('--dsh-sidebar-width')
       document.documentElement.style.removeProperty('--dsh-sidebar-height')
     }
-  }, [narrow, snapshot.state?.panelOpen, snapshot.state?.width, snapshot.state?.bottomOpen, snapshot.state?.bottomHeight])
+  }, [])
   useEffect(() => {
     if (anyDragging) document.body.setAttribute('data-dsh-sidebar-dragging', '')
     else document.body.removeAttribute('data-dsh-sidebar-dragging')

@@ -26,7 +26,7 @@ import { act } from 'react-dom/test-utils'
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
 
 import { Sidebar } from '../src/client/Sidebar.tsx'
-import { createSidebarStore, type SidebarStore } from '../src/client/state.ts'
+import { createSidebarStore, setBottomHeight, toggleBottomPanel, type SidebarStore } from '../src/client/state.ts'
 import { createBetterSidebarService, type BetterSidebarService } from '../src/client/service.ts'
 import { t } from '../src/client/locales.ts'
 
@@ -99,6 +99,36 @@ describe('layout-push variable cleanup', () => {
     unmount()
     expect(htmlStyle.getPropertyValue('--dsh-sidebar-width')).toBe('')
     expect(htmlStyle.getPropertyValue('--dsh-sidebar-height')).toBe('')
+  })
+
+  it('a size change (release commit) re-applies the variables without removing them mid-commit', () => {
+    const { store, unmount } = mountSidebar()
+    const htmlStyle = document.documentElement.style
+    const width = store.getSnapshot().state!.width
+    const removeSpy = vi.spyOn(htmlStyle, 'removeProperty')
+    // Simulate a drag release: the bottom panel opens and its height commits.
+    act(() => { store.reduce(toggleBottomPanel) })
+    act(() => { store.reduce(s => setBottomHeight(s, 300)) })
+    expect(htmlStyle.getPropertyValue('--dsh-sidebar-width')).toBe(`${width}px`)
+    expect(htmlStyle.getPropertyValue('--dsh-sidebar-height')).toBe('300px')
+    // The commit must NOT have removed the variables at any point. React
+    // runs every effect cleanup before every effect setup in a commit, so a
+    // cleanup here would remove the variables before the draggingRef effect
+    // (declared above the layout push) forces a layout in measureCenter
+    // (getBoundingClientRect). That forced recalc resolves #root's
+    // margin-right to the 0px fallback, caches it as the transition start
+    // value, and measures centerRect too wide; once transitions re-enable on
+    // release, the shell animates margin-right 0 → width — the "expand to
+    // the full page then bounce back" flash.
+    const removalProps = removeSpy.mock.calls
+      .map(call => call[0] as string)
+      .filter(prop => prop === '--dsh-sidebar-width' || prop === '--dsh-sidebar-height')
+    expect(removalProps).toHaveLength(0)
+    // Only unmounting may remove them (issue #31).
+    unmount()
+    expect(removeSpy.mock.calls.some(call =>
+      call[0] === '--dsh-sidebar-width' || call[0] === '--dsh-sidebar-height')).toBe(true)
+    removeSpy.mockRestore()
   })
 })
 
