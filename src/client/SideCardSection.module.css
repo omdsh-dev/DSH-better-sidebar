@@ -403,6 +403,59 @@
   width: 76px;
 }
 
+/* Select rows: the closed anchor is a compact button (selected option's
+   icon when the options carry icons, plus title and a chevron); the dropdown
+   itself is the primitives Menu (portal). */
+.selectAnchor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.selectAnchor:hover {
+  border-color: var(--dsw-alias-label-dimmed);
+}
+
+.selectAnchorIcon {
+  display: inline-flex;
+  flex: none;
+}
+
+.selectAnchorText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One big-icon option card inside the select dropdown. */
+.selectOption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 200px;
+}
+
+.selectOptionIcon {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.selectOptionText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .suffix {
   font-size: 14px;
   line-height: 22px;

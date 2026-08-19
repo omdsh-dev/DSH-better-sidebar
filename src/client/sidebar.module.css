@@ -666,6 +666,8 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* Deep trees truncate their labels instead of scrolling horizontally. */
+  overflow-x: hidden;
   padding: 2px 6px 8px;
 }
 
@@ -677,7 +679,12 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  /* border-box keeps the inline indent padding (depth * 22 + 6) INSIDE the
+     row's 100% width — without it deep rows overflow and force a horizontal
+     scrollbar on the tree body. */
+  box-sizing: border-box;
   width: 100%;
+  max-width: 100%;
   height: 34px;
   padding: 0 8px;
   border: none;
@@ -716,8 +723,12 @@
 }
 
 .explorerName {
+  /* min-width: 0 lets the flex item shrink below its content so the label
+     truncates with an ellipsis instead of widening the row. */
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The hover-revealed @-reference button at the row's far right (and the
@@ -797,6 +808,139 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Merged mode (the editorExplorer pref): the header's path input replaces
+   the plain title, and a toggleable file tree docks at the tab's right edge. */
+.editorPathInput {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.editorPathInput:focus {
+  outline: none;
+  border-color: var(--dsw-alias-border-l2);
+}
+
+/* The tree-panel toggle in the header: active = panel open (the selected
+   fill of the tab strip). */
+.editorTreeToggleActive {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.editorBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.editorMain {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The docked file tree: the wrapper owns the (drag-adjustable) width and
+   the hairline separation; the resize handle is a wider invisible strip on
+   its left edge with a hover affordance. */
+.editorTreeDock {
+  position: relative;
+  flex: none;
+  min-height: 0;
+  display: flex;
+  border-left: 1px solid var(--dsw-alias-border-l1);
+}
+
+.editorTreeResize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* Inside the dock (left edge): pointer capture on the handle keeps the
+     drag alive even when the pointer leaves the strip. */
+  left: 0;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 3;
+}
+
+.editorTreeResize:hover {
+  background: var(--dsw-alias-border-l2);
+}
+
+.editorTreePanel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The tree panel's full-window form (the `full` prop): fill the tab body. */
+.editorTreePanelFull {
+  flex: 1;
+}
+
+.editorTreeSearch {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.editorSearchInput {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.editorSearchInput:focus {
+  outline: none;
+  border-color: var(--dsw-alias-border-l2);
+}
+
+.editorSearchHint {
+  padding: 8px 12px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.editorSearchResult {
+  display: block;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editorSearchResult:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .editorStatus {
@@ -1154,6 +1298,174 @@
   overflow-y: auto;
   padding: 10px 14px;
   font: var(--dsw-font-xs-13);
+}
+
+/* ── Mermaid diagram block (markdown preview, mermaid lazy chunk) ────────
+   Mirrors the md-code-block chrome the DSH CodeBlock renders, so a diagram
+   reads as a peer of the surrounding fences: hairline border, layer-2
+   header with the info string + copy action, layer-1 body. The SVG body is
+   static (no bindFunctions) and sanitized (no foreignObject/script/@attrs/
+   hrefs), so it carries no event surface beyond the copy button; the body
+   click opens the zoom modal on a sanitized clone. */
+
+.mermaidWrap {
+  margin: 6px 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  overflow: hidden;
+}
+
+.mermaidHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.mermaidInfo {
+  font: var(--dsw-font-xxxs-strong-11);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mermaidCopy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  cursor: pointer;
+}
+
+.mermaidCopy:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.mermaidBody {
+  display: flex;
+  justify-content: center;
+  padding: 10px;
+  overflow: auto;
+  cursor: zoom-in;
+}
+
+.mermaidBody :global(svg) {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaidError {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxxs-11);
+}
+
+/* The diagram source shown under a render error (helps fixing the fence). */
+.mermaidCode {
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  font: var(--dsw-font-xxxs-11);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* The mermaid markdown container (single MarkdownText pass): a swapped
+   code block keeps its React-managed .md-code-block wrapper in the tree
+   (reconciliation safety), but the wrapper's own box is suppressed so only
+   the diagram chrome renders; the swapped-in host div flows as a block. */
+.mermaidMarkdown :global(.md-code-block[data-mermaid-processed]) {
+  display: contents;
+}
+
+/* ── Mermaid zoom modal (click-to-enlarge; portalled to document.body) ──
+   Fixed overlay above the DSH overlay stack (1000+), token-driven surface.
+   The stage centers the (sanitized, cloned) svg and the modal owns the
+   transform; the drag/zoom listeners live in the component, nothing here
+   targets global class names. */
+
+.mermaidModal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--dsw-alias-bg-mask-1);
+  backdrop-filter: blur(2px);
+}
+
+.mermaidModalToolbar {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 8px;
+  z-index: 10;
+}
+
+.mermaidModalButton {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xs-strong-13);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mermaidModalButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.mermaidModalStage {
+  width: 90vw;
+  height: 80vh;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mermaidModalStage :global(svg) {
+  max-width: none;
+  max-height: none;
+  cursor: grab;
+  transform-origin: center center;
+  user-select: none;
+  -webkit-user-drag: none;
+  background: var(--dsw-alias-bg-layer-1);
+  padding: 16px;
+  border-radius: 12px;
+}
+
+.mermaidModalStage :global(svg):active {
+  cursor: grabbing;
+}
+
+.mermaidModalHint {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  pointer-events: none;
 }
 
 /* The floating "add to conversation" button anchored above a text

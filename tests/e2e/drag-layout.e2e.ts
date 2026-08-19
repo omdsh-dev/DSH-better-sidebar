@@ -83,28 +83,8 @@ interface FrameSample {
 test('width drag tracks the shell 1:1 with transitions disabled (issue #92)', async ({ page }) => {
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
-  // The seeded session opens the right panel by default: the layout push
-  // variable becomes live once the panel mounts (session activation lags
-  // the shell render).
-  await expect
-    .poll(async () => (
-      await page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))
-    ), { timeout: 90_000 })
-    .not.toBe('')
-
-  // The width drag strip is the panel's left-edge hit strip. There is no
-  // dedicated hook (the skinning contract is token-driven), so locate it
-  // semantically: the only `cursor: col-resize` element in the sidebar.
-  const stripBox = await page.evaluate(() => {
-    const host = document.querySelector('[data-dsh-better-sidebar]')
-    if (host === null) return null
-    const found = [...host.querySelectorAll<HTMLElement>('*')]
-      .find(el => getComputedStyle(el).cursor === 'col-resize')
-    if (found === undefined) return null
-    const r = found.getBoundingClientRect()
-    return { x: r.x, y: r.y, width: r.width, height: r.height }
-  })
-  expect(stripBox, 'the width drag strip must be present (cursor: col-resize)').not.toBeNull()
+  const sidebar = page.locator('[data-dsh-better-sidebar]')
+  await expect(sidebar).toBeAttached({ timeout: 90_000 })
 
   // Dismiss whatever onboarding takeover is present (same dance as the mount
   // lane), so the pointer can reach the strip without a masking overlay.
@@ -131,12 +111,72 @@ test('width drag tracks the shell 1:1 with transitions disabled (issue #92)', as
     if (!dismissed) break
   }
 
+  // openByDefault defaults OFF: a fresh session's panel starts collapsed, and
+  // the collapsed layout push still writes `--dsh-sidebar-width: 0px` — so the
+  // geometry checks below are meaningless until the panel is expanded through
+  // the toggle cluster.
+  const expandButton = sidebar.getByRole('button', { name: 'Expand sidebar' })
+  await expect(expandButton, 'the collapsed toggle cluster must offer the expand button').toHaveCount(1)
+  await expandButton.click()
+
+  // The layout push variable becomes live (non-zero) once the panel opens
+  // (session activation lags the shell render).
+  await expect
+    .poll(async () => {
+      const value = await page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))
+      return value !== '' && value !== '0px'
+    }, { timeout: 90_000 })
+    .toBe(true)
+
+  // The width drag strip is the panel's left-edge hit strip. There is no
+  // dedicated hook (the skinning contract is token-driven), so locate it
+  // semantically among the sidebar's `cursor: col-resize` elements — the files
+  // window's tree-dock handle matches too, but the panel strip is always the
+  // LEFTMOST one (the dock sits at the panel's right edge).
+  const locateStrip = `(() => {
+    const host = document.querySelector('[data-dsh-better-sidebar]')
+    if (host === null) return null
+    const boxes = [...host.querySelectorAll('*')]
+      .filter(el => getComputedStyle(el).cursor === 'col-resize')
+      .map(el => el.getBoundingClientRect())
+      .filter(r => r.width > 0 && r.height > 0)
+      .sort((a, b) => a.x - b.x)
+    const r = boxes[0]
+    if (r === undefined) return null
+    const varWidth = parseFloat(document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))
+    return {
+      x: r.x, y: r.y, width: r.width, height: r.height,
+      varWidth: Number.isNaN(varWidth) ? 0 : varWidth,
+      innerWidth: window.innerWidth,
+    }
+  })()`
+  type StripBox = { x: number; y: number; width: number; height: number; varWidth: number; innerWidth: number }
+  // The panel SLIDES IN from the right on expand: locating the strip before
+  // the open transition settles captures a mid-animation box at the viewport
+  // edge, and the drag lands off-panel. Wait until the strip sits at the
+  // pushed layout edge (its right edge ≈ innerWidth - the push variable).
+  await expect
+    .poll(async () => {
+      const box = await page.evaluate<StripBox | null>(locateStrip)
+      if (box === null) return false
+      return Math.abs((box.x + box.width) - (box.innerWidth - box.varWidth)) <= 8
+    }, { timeout: 30_000 })
+    .toBe(true)
+  const stripBox = await page.evaluate<StripBox | null>(locateStrip)
+  expect(stripBox, 'the width drag strip must be present (cursor: col-resize)').not.toBeNull()
+
   // Instrument a per-frame sampler BEFORE the drag begins.
   await page.evaluate(() => {
     type Sample = FrameSample
     const samples: Sample[] = []
-    const strip = [...document.querySelectorAll<HTMLElement>('*')]
-      .find(el => getComputedStyle(el).cursor === 'col-resize')
+    // Same rule as the strip locator above: the LEFTMOST col-resize element
+    // inside the sidebar host (the tree-dock handle is further right).
+    const host = document.querySelector('[data-dsh-better-sidebar]')
+    const strip = host === null
+      ? null
+      : [...host.querySelectorAll<HTMLElement>('*')]
+        .filter(el => getComputedStyle(el).cursor === 'col-resize')
+        .sort((a, b) => a.getBoundingClientRect().x - b.getBoundingClientRect().x)[0]
     // The conversation column: the grid item the layout push squeezes (the
     // same nth-child(2) layout.css targets for the vertical push; its right
     // edge is where the width push lands).

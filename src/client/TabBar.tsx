@@ -74,6 +74,38 @@ export function TabBar(props: {
   const [dragOver, setDragOver] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
 
+  // Middle-click close: the press target is recorded on middle mousedown
+  // (preventDefaulted to disarm Chrome's middle-click autoscroll — its
+  // indicator is inert here because the strip hides its scrollbar and only
+  // the wheel handler scrolls) and the close settles on the first middle
+  // mouseup OVER that same tab. Release-position semantics match VS Code
+  // (microsoft/vscode#101028) and what users expect from Chrome tabs
+  // (crbug/40679924): pressing on a tab and releasing elsewhere cancels the
+  // close. The browser dispatches auxclick to the nearest common ancestor of
+  // the press/release targets when they differ, so any drift, autoscroll
+  // scroll, or tab-list reflow between press and release would otherwise
+  // swallow the close; settling on the recorded press target at mouseup
+  // keeps release semantics without depending on auxclick delivery.
+  const onCloseRef = useRef(onClose)
+  const middlePressed = useRef<{ id: string; node: HTMLElement } | null>(null)
+  useEffect(() => {
+    onCloseRef.current = onClose
+  })
+  useEffect(() => {
+    const onMouseUp = (event: MouseEvent): void => {
+      if (event.button !== 1) return
+      const pressed = middlePressed.current
+      middlePressed.current = null
+      // Close only when the release lands on the pressed tab; a drag-away
+      // release cancels the press (one-shot per press).
+      if (pressed !== null && pressed.node.isConnected && pressed.node.contains(event.target as Node)) {
+        onCloseRef.current(pressed.id)
+      }
+    }
+    window.addEventListener('mouseup', onMouseUp)
+    return () => { window.removeEventListener('mouseup', onMouseUp) }
+  }, [])
+
   // Wheel over the strip scrolls the tab row horizontally (a plain mouse
   // wheel emits deltaY, which overflow-x alone never consumes). Bound as a
   // native NON-passive listener: React registers onWheel passively at the
@@ -151,11 +183,15 @@ export function TabBar(props: {
               if (payload !== null) onDropTab(payload, tab.id)
             }}
             onClick={() => { onActivate(tab.id) }}
-            onAuxClick={(event) => {
-              // Middle-click closes the tab (and suppresses autoscroll).
+            onMouseDown={(event) => {
+              // Middle-click close: record the press target and disarm
+              // Chrome's middle-click autoscroll (its indicator is inert
+              // here — the strip scrolls via the wheel handler only). The
+              // close itself settles on the first middle mouseup over this
+              // same tab (window-level), keeping release semantics.
               if (event.button === 1) {
                 event.preventDefault()
-                onClose(tab.id)
+                middlePressed.current = { id: tab.id, node: event.currentTarget }
               }
             }}
           >

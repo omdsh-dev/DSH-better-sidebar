@@ -63,9 +63,17 @@ export interface SidebarConfig {
    * terminal tabs and the model-facing `terminal_*` tools. Empty = auto:
    * POSIX follows `$SHELL` then the account login shell; Windows follows
    * `DSH_SIDEBAR_SHELL`, then probes for `pwsh.exe`, then falls back to the
-   * inbox `powershell.exe` (5.1).
+   * inbox `powershell.exe` (5.1). Set it from `cordis.patch.yml` / profile
+   * plugin config, e.g. `config: { shell: /bin/zsh }`.
    */
   shell?: string
+  /**
+   * Optional arguments passed to the shell executable. When non-empty these
+   * REPLACE the automatic platform defaults (POSIX `-l` / Windows none), so
+   * the deployment has full control over how the shell starts. When omitted
+   * the existing default behavior is kept.
+   */
+  shellArgs?: string[]
 }
 
 /** Schemastery schema for the plugin configuration. */
@@ -79,6 +87,7 @@ export const Config: z<SidebarConfig> = z.object({
   terminalsPerSession: z.number().step(1).min(1).default(3),
   reconnectGraceMs: z.number().step(1).min(0).default(30_000),
   shell: z.string().default(''),
+  shellArgs: z.array(z.string()).default([]),
 })
 
 /** Fully defaulted sidebar host settings. */
@@ -91,7 +100,10 @@ export interface ResolvedSidebarConfig {
   codeRefPrompt: boolean
   terminalsPerSession: number
   reconnectGraceMs: number
+  /** The configured terminal shell; empty means the host auto-resolves it. */
   shell: string
+  /** Explicit shell arguments; empty means use the platform defaults. */
+  shellArgs: string[]
 }
 
 /**
@@ -111,6 +123,7 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
     terminalsPerSession: config?.terminalsPerSession ?? 3,
     reconnectGraceMs: config?.reconnectGraceMs ?? 30_000,
     shell: config?.shell?.trim() ?? '',
+    shellArgs: config?.shellArgs ?? [],
   }
 }
 
@@ -118,7 +131,7 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
 
 /** Schemastery schema for the user-facing preferences (validated by the settings service). */
 export const PrefsSchema: z<SidebarPrefs> = z.object({
-  openByDefault: z.boolean().default(true),
+  openByDefault: z.boolean().default(false),
   defaultWidthPercent: z.number().step(1).min(WIDTH_PERCENT_MIN).max(WIDTH_PERCENT_MAX).default(WIDTH_PERCENT_DEFAULT),
   autoOpenSubagent: z.boolean().default(true),
   autoOpenJobs: z.boolean().default(true),
@@ -127,6 +140,7 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   terminalFontFamily: z.string().default(''),
   terminalFontSize: z.number().step(1).min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX).default(TERMINAL_FONT_SIZE_DEFAULT),
   interceptOpenPath: z.boolean().default(true),
+  editorExplorer: z.boolean().default(true),
   titleBarCompat: z.boolean().default(false),
   titleBarStripPx: z.number().step(1).min(TITLE_BAR_STRIP_MIN).max(TITLE_BAR_STRIP_MAX).default(TITLE_BAR_STRIP_DEFAULT),
   htmlViewerNoSandbox: z.boolean().default(false),

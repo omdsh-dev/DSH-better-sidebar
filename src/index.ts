@@ -29,13 +29,14 @@ import {
   type SidebarPrefs,
 } from './config.ts'
 import { isWithin, parentOf, requireAbsolute, listDirectory, rootLabel, indexDirectory } from './fs-tree.ts'
+import { searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
 import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
 import * as git from './git.ts'
 import { SettingsConflictError, settingsNamespace, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
-import { defaultShell, ensureSpawnHelper, PtyManager } from './pty-manager.ts'
+import { defaultShell, ensureSpawnHelper, PtyManager, shellDisplayName } from './pty-manager.ts'
 import { AgentPtyRegistry, clampDims, type AgentTerminalHandle } from './agent-pty.ts'
 import {
   DSH_NODE_PTY_RANGE,
@@ -179,16 +180,25 @@ type ApiMethod = (payload: unknown) => Promise<unknown> | unknown
 export interface SidebarSettingsFace {
   /** The current resolved value + revision (undefined while the settings service is absent). */
   get(): { value?: unknown; revision?: number }
+  /**
+   * Whether the dsh-web-ui family's aionui-panel has been selected as the
+   * right-panel provider (the `aionui-panel` settings namespace resolves
+   * `rightPanel: 'aionui-panel'`). While true the sidebar must not mount —
+   * the two right panels are mutually exclusive. False when the namespace is
+   * absent (no aionui installed) or the provider is anything else.
+   */
+  externalDisable(): boolean
   /** Merge a patch (revision-guarded) and return the fresh resolved view. */
   update(patch: Record<string, unknown>, expectedRevision?: number): Promise<{ value?: unknown; revision?: number }>
 }
 
-/** Build the API method table bound to the plugin context, pty manager, agent pty registry, and resolved config. */
+/** Build the API method table bound to the plugin context, pty manager, agent pty registry, resolved config, and effective terminal shell. */
 function buildApi(
   ctx: Context,
   ptyManager: PtyManager | null,
   agentPtyRegistry: AgentPtyRegistry | null,
   resolved: ResolvedSidebarConfig,
+  terminalShell: string,
   getSettings: () => SidebarSettingsFace | undefined,
 ): Record<string, ApiMethod> {
   const cwdOf = (payload: unknown): { sessionId: string; cwd: string } => {
@@ -220,6 +230,14 @@ function buildApi(
       // a huge repo costs a single request, not one HTTP call per directory.
       const { cwd } = cwdOf(payload)
       return indexDirectory(cwd, { maxEntries: resolved.indexLimit, maxDepth: resolved.indexMaxDepth })
+    },
+    'fs.search': async (payload) => {
+      // The editor side panel's global name search: rooted at the session
+      // cwd (not caller-targetable — the walk is unbounded by design and
+      // must never escape the workspace), budgeted inside searchFiles.
+      const { cwd } = cwdOf(payload)
+      const query = requireString(payload, 'query')
+      return searchFiles(cwd, query)
     },
     'fs.read': async (payload) => {
       const { cwd } = cwdOf(payload)
@@ -354,6 +372,11 @@ function buildApi(
     // exists. Kill is fenced to the owning session by the jobs registry.
     'jobs.output': (payload) => jobsApi.output(payload),
     'jobs.kill': (payload) => jobsApi.kill(payload),
+    // The effective terminal shell and its display name. The client uses
+    // this to title terminal tabs with the shell name instead of a numbered
+    // "Terminal N" label; the shell itself is configured through
+    // `cordis.patch.yml` (`config.shell`) or resolved by the host default.
+    'shell.get': () => ({ shell: terminalShell, name: shellDisplayName(terminalShell) }),
     // The side card preferences. The settings service is optional in the
     // composition; while absent the routes report undefined and the client
     // keeps the schema defaults. Writes are revision-guarded: a stale editor
@@ -361,7 +384,9 @@ function buildApi(
     // silently overwritten (mirror of the settings seam's own guard).
     'settings.get': () => {
       const settings = getSettings()
-      return settings?.get() ?? { value: undefined, revision: undefined }
+      return settings === undefined
+        ? { value: undefined, revision: undefined, externalDisable: false }
+        : { ...settings.get(), externalDisable: settings.externalDisable() }
     },
     'settings.update': async (payload) => {
       const settings = getSettings()
@@ -469,13 +494,17 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       : `${status.cause}. Repair: ${status.command}`
     ctx.logger?.warn(`[dsh-better-sidebar] node-pty (${DSH_NODE_PTY_RANGE}) failed to load: ${detail}`)
   }
-  const ptyManager = nodePty !== null ? new PtyManager(terminalShell, resolved.terminalsPerSession, nodePty) : null
+  const ptyManager = nodePty !== null
+    ? new PtyManager(terminalShell, resolved.terminalsPerSession, resolved.shellArgs, nodePty)
+    : null
   // The agent-owned terminal registry: parallel to the UI-tab ptyManager,
   // keyed by uuid (the model's opaque handle) instead of `${sessionId}:${tabId}`,
   // uncapped, and torn down with the plugin. The model creates terminals here
   // through the terminal_create tool; the sidebar view attaches through the
   // same /sidebar/ws/terminal upgrade with ?uuid=... instead of ?tab=...
-  const agentPtyRegistry = nodePty !== null ? new AgentPtyRegistry(terminalShell, nodePty) : null
+  const agentPtyRegistry = nodePty !== null
+    ? new AgentPtyRegistry(terminalShell, resolved.shellArgs, nodePty)
+    : null
 
   // The code-reference prompt section (config-gated, default on): one short
   // system-prompt instruction nudging the model to cite code as relative
@@ -532,8 +561,20 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         ? { value: undefined, revision: undefined }
         : { value: descriptor.value, revision: descriptor.revision }
     }
+    // Mutual exclusion with the dsh-web-ui family right panel: the aionui
+    // panel's provider choice (`aionui-panel.rightPanel`) is the authority.
+    // While it resolves to 'aionui-panel', this sidebar must not mount. The
+    // namespace is read through the settings seam like any other registered
+    // section; absent namespace (no aionui installed) = not disabled.
+    const externalDisable = (): boolean => {
+      const descriptor = sctx.settings.describe({ redactSecrets: true })
+        .find(candidate => candidate.ns === 'aionui-panel')
+      const value = descriptor?.value as { rightPanel?: unknown } | undefined
+      return value?.rightPanel === 'aionui-panel'
+    }
     settingsFace = {
       get: viewOf,
+      externalDisable,
       update: async (patch, expectedRevision) => {
         await sctx.settings.update(ns, patch, expectedRevision)
         return viewOf()
@@ -546,7 +587,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   })
 
   // ── JSON API ────────────────────────────────────────────────────────────
-  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace)
+  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',

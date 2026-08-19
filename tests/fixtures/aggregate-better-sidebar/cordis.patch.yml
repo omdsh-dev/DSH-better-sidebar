@@ -1,0 +1,7 @@
+# Fixture aggregate bundle: mounts dsh-better-sidebar under its own entry id,
+# the way real aggregate bundles (e.g. @linxin666/dsh-web-ui-all) do. Used by
+# scripts/e2e-aggregate-mount.sh to prove the plugin's own bundle patch backs
+# off when another enabled entry already mounts the same package.
+- insert:
+    - id: aggregate-better-sidebar
+      name: 'dsh-better-sidebar'

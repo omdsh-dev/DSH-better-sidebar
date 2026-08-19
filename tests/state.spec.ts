@@ -10,6 +10,59 @@ import {
 describe('sidebar state', () => {
   const state = (): SidebarState => makeDefaultState()
 
+  it('makeDefaultState seeds per the seed enum (editor-home / none)', () => {
+    // Default and explicit 'editor-home' seed an EMPTY editor tab (the files
+    // window) with the tree panel pinned open.
+    for (const s of [makeDefaultState(), makeDefaultState(400, true, 'editor-home')]) {
+      const leaf = s.splits as { tabs: SidebarTab[]; active: string | null }
+      expect(leaf.tabs).toHaveLength(1)
+      expect(leaf.tabs[0]!.type).toBe('editor')
+      expect(leaf.tabs[0]!.title).toBe('Files')
+      expect(leaf.tabs[0]!.path).toBeUndefined()
+      expect(leaf.tabs[0]!.meta).toEqual({ treeOpen: true })
+      expect(leaf.active).toBe(leaf.tabs[0]!.id)
+    }
+    // The seeded home tab survives the persist round-trip (meta intact).
+    const restored = sanitizeState(JSON.parse(JSON.stringify(makeDefaultState())))
+    const restoredLeaf = restored!.splits as { tabs: SidebarTab[] }
+    expect(restoredLeaf.tabs[0]!.meta).toEqual({ treeOpen: true })
+    // 'none' seeds an empty pane.
+    const bare = makeDefaultState(400, true, 'none')
+    const bareLeaf = bare.splits as { tabs: SidebarTab[]; active: string | null }
+    expect(bareLeaf.tabs).toHaveLength(0)
+    expect(bareLeaf.active).toBeNull()
+  })
+
+  it('sanitizeState migrates persisted explorer tabs to editor home tabs (both trees)', () => {
+    const valid = sanitizeState({
+      panelOpen: true,
+      width: 400,
+      nextTerminal: 1,
+      activePane: 'pane:1',
+      expanded: [],
+      splits: {
+        kind: 'leaf',
+        id: 'pane:1',
+        active: 'ex-right',
+        tabs: [{ id: 'ex-right', type: 'explorer', title: 'Explorer', meta: { treeWidth: 300 } }],
+      },
+      bottomSplits: {
+        kind: 'leaf',
+        id: 'pane:b',
+        active: 'ex-bottom',
+        tabs: [{ id: 'ex-bottom', type: 'explorer', title: 'Explorer' }],
+      },
+    })
+    const right = (valid?.splits as { tabs: SidebarTab[] }).tabs
+    expect(right).toHaveLength(1)
+    // Migrated: editor home tab (no path), tree pinned open, prior meta kept.
+    expect(right[0]).toMatchObject({ id: 'ex-right', type: 'editor', title: 'Files', meta: { treeOpen: true, treeWidth: 300 } })
+    expect(right[0]!.path).toBeUndefined()
+    const bottom = (valid?.bottomSplits as { tabs: SidebarTab[] }).tabs
+    expect(bottom).toHaveLength(1)
+    expect(bottom[0]).toMatchObject({ id: 'ex-bottom', type: 'editor', title: 'Files', meta: { treeOpen: true } })
+  })
+
   it('opens tabs into the active pane and dedupes by id (safety net)', () => {
     let s = state()
     const gitTab = { id: 'git', type: 'git' as const, title: 'Git' }
@@ -411,8 +464,8 @@ describe('sidebar state', () => {
     const tab = { id: 'git', type: 'git' as const, title: 'Git' }
     s = openTabInActivePane(s, tab)
     expect((s.bottomSplits as { tabs: SidebarTab[] }).tabs.map(t => t.id)).toContain('git')
-    // The right tree is untouched.
-    expect((s.splits as { tabs: SidebarTab[] }).tabs.map(t => t.type)).toEqual(['explorer'])
+    // The right tree is untouched (its seeded files-window home tab stays).
+    expect((s.splits as { tabs: SidebarTab[] }).tabs.map(t => t.type)).toEqual(['editor'])
     expect(s.activePane).toBe(bottomPane)
     // The id safety net works across trees: reopening the same id focuses it.
     const after = openTabInActivePane(s, tab)
@@ -677,8 +730,8 @@ describe('persisted state sanitization', () => {
   it('falls back from a stale active pane instead of dropping the open', () => {
     let s = makeDefaultState()
     const paneA = allLeaves(s.splits)[0]!.id
-    const explorerTab = allLeaves(s.splits)[0]!.tabs.find(tab => tab.type === 'explorer')!.id
-    s = closeTab(s, paneA, explorerTab)
+    const seededTab = allLeaves(s.splits)[0]!.tabs.find(tab => tab.type === 'editor')!.id
+    s = closeTab(s, paneA, seededTab)
     s = openTabInActivePane(s, { id: 'editor:/a.ts', type: 'editor', title: 'a.ts', path: '/a.ts' })
     const split = insertLeafAt(s.splits, paneA, 'col', { id: 'terminal:1', type: 'terminal', title: 'Terminal 1' }, false)
     s = { ...s, splits: split.node, activePane: paneA }

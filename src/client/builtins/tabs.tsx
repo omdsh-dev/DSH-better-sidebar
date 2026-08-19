@@ -1,17 +1,17 @@
 /**
- * The 7 built-in tab descriptors: the plugin registers its own pages
- * (explorer / git / terminal / browser / subagent / editor / diff) through
+ * The 6 built-in tab descriptors: the plugin registers its own pages
+ * (editor / git / terminal / browser / subagent / diff) through
  * the same {@link BetterSidebarService} external plugins use — eating its
  * own dogfood. The terminal descriptor owns its quota (`TERMINAL_LIMIT`)
- * and mints `terminal:<n>` ids through `createTab`; the browser mints
- * `browser:<n>` the same way (no quota).
+ * and mints `terminal:<uuid>` ids through `createTab`; the browser mints
+ * `browser:<n>` the same way (no quota). The editor IS the files window
+ * (the old standalone explorer merged into it).
  */
-import { IconBranchOutline16, IconCodeOutline16, IconFolderOpen16, IconThinkOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconBranchOutline16, IconCodeOutline16, IconFolderOpen16, IconPanelLeftOutline16, IconThinkOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
 import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
 import { openSidebarFile } from '../intercept.tsx'
-import { ExplorerView } from '../ExplorerView.tsx'
 import { EditorHost } from '../EditorHost.tsx'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
 import { GitView } from '../GitView.tsx'
@@ -20,8 +20,6 @@ import { SubagentView } from '../SubagentView.tsx'
 import { BrowserView } from '../BrowserView.tsx'
 import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16 } from '../icons.tsx'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
-import { readJumpMeta } from '../path-line.ts'
-import { useMemo } from 'react'
 import type { ComponentType } from 'react'
 import type { SessionScope } from '../api.ts'
 import type { SidebarStore } from '../state.ts'
@@ -54,6 +52,20 @@ interface TerminalViewProps {
 /** How many UI-owned terminals may be open at once (agent-owned ones are uncapped). */
 export const TERMINAL_LIMIT = 3
 
+/** Optional per-registration builtin behavior (currently terminal title). */
+export interface BuiltinTabOptions {
+  /** Returns the display title for newly opened terminal tabs. */
+  terminalTitle?: () => string
+}
+
+/** A client-side uuid for terminal tab identity (not shown in the UI). */
+function terminalUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
+}
+
 /** Count UI-owned terminals (agent:` tabs excluded — they are the model's). */
 function uiTerminalCount(state: SidebarState): number {
   return allLeaves(state.splits)
@@ -61,60 +73,59 @@ function uiTerminalCount(state: SidebarState): number {
     .filter(tab => tab.type === 'terminal' && !isAgentTabId(tab.id)).length
 }
 
-/** The 7 built-in tab descriptors. */
-export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
+/** The 6 built-in tab descriptors. */
+export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): readonly TabDescriptor[] {
   return [
     {
       id: 'editor',
-      title: () => t('editor'),
-      icon: (size: number) => <IconCodeOutline16 size={size} />,
-      order: -1,
-      hidden: true,
-      dedupeKey: (tab) => tab.path,
-      // The chat path:line links ride the tab's meta (`{ line: { start, end } }`,
-      // written by openSidebarFile); the editor host translates it into a
-      // CodeMirror jump. The side-card toggle gates the chat link feature.
-      settings: {
-        pluginToggles: [
-          {
-            key: 'chatPathLinks',
-            title: () => t('settingsChatPathLinksTitle'),
-            desc: () => t('settingsChatPathLinksDesc'),
-          },
-        ],
-      },
-      component: ({ ctx, store, scope, tab }) => {
-        // The line jump target derived from the tab meta. Memoized on the
-        // meta VALUE: the sidebar re-renders the active tab on every store
-        // change, and an unmemoized fresh object would re-fire the editor's
-        // jump effect on each render — clobbering the user's selection and
-        // re-scrolling to the jump target while they select code.
-        const jumpLine = useMemo(() => readJumpMeta(tab.meta), [tab.meta])
-        return (
-          <EditorHost
-            ctx={ctx}
-            store={store}
-            scope={scope}
-            path={tab.path ?? ''}
-            title={tab.title}
-            jumpLine={jumpLine}
-          />
-        )
-      },
-    },
-    {
-      id: 'explorer',
-      title: () => t('explorer'),
+      // The single files window: an editor tab with no path IS the file
+      // explorer (empty hint + docked tree); with a path it previews/edits
+      // the file. Visible in the + menu in the explorer's old slot.
+      title: () => t('files'),
       icon: (size: number) => <IconFolderOpen16 size={size} />,
       order: 10,
-      single: true,
-      component: ({ ctx, store, scope, expanded, onToggleDir, onReferenceFile }) => (
-        <ExplorerView
-          sessionId={scope.sessionId}
-          cwd={scope.cwd}
+      hidden: false,
+      dedupeKey: (tab) => tab.path,
+      // Declarative settings: the file-open behavior picker (in-place switch
+      // vs per-path windows) renders as an iconed select row under the
+      // editor card's gear in the Side card settings page.
+      settings: {
+        toggles: [{
+          key: 'editorExplorer',
+          type: 'select',
+          title: () => t('editorExplorer'),
+          desc: () => t('editorExplorerDesc'),
+          options: [
+            {
+              value: true,
+              icon: (size: number) => <IconPanelLeftOutline16 size={size} />,
+              title: () => t('editorExplorerMerged'),
+              desc: () => t('editorExplorerMergedDesc'),
+            },
+            {
+              value: false,
+              icon: (size: number) => <IconCodeOutline16 size={size} />,
+              title: () => t('editorExplorerSplit'),
+              desc: () => t('editorExplorerSplitDesc'),
+            },
+          ],
+        }],
+        // The chat path:line link toggle (plugin-owned, default on): gates
+        // the mention resolution that turns chat path references into links.
+        pluginToggles: [{
+          key: 'chatPathLinks',
+          title: () => t('settingsChatPathLinksTitle'),
+          desc: () => t('settingsChatPathLinksDesc'),
+        }],
+      },
+      component: ({ ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile }) => (
+        <EditorHost
+          ctx={ctx}
+          store={store}
+          scope={scope}
+          tab={tab}
           expanded={expanded ?? []}
-          onToggle={onToggleDir ?? (() => { /* no-op */ })}
-          onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}
+          onToggleDir={onToggleDir ?? (() => { /* no-op */ })}
           onReferenceFile={onReferenceFile ?? (() => { /* no-op */ })}
         />
       ),
@@ -202,10 +213,12 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
         if (count >= TERMINAL_LIMIT) return null
         return {
           tab: {
-            id: `terminal:${state.nextTerminal}`,
+            id: `terminal:${terminalUuid()}`,
             type: 'terminal',
-            title: `${t('terminal')} ${state.nextTerminal}`,
+            title: options.terminalTitle?.() ?? t('terminal'),
           },
+          // Keep the legacy counter advancing for compatibility with older
+          // persisted states; new ids no longer use it.
           patch: { nextTerminal: state.nextTerminal + 1 },
         }
       },

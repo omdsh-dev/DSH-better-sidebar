@@ -37,10 +37,18 @@ describe('dsh-better-sidebar plugin export shape', () => {
     // The terminal shell config defaults to auto-resolution (empty shell =
     // the platform chain in defaultShell()).
     expect(resolved.shell).toBe('')
+    // Shell args default to an empty list; non-empty values replace the
+    // automatic platform login flag.
+    expect(resolved.shellArgs).toEqual([])
     const configured = (schema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
     })({ shell: 'pwsh.exe' })
     expect(configured.shell).toBe('pwsh.exe')
+    const configuredWithArgs = (schema as unknown as {
+      (input: Record<string, unknown> | undefined): Record<string, unknown>
+    })({ shell: '/bin/zsh', shellArgs: ['--noprofile', '--no-rc'] })
+    expect(configuredWithArgs.shell).toBe('/bin/zsh')
+    expect(configuredWithArgs.shellArgs).toEqual(['--noprofile', '--no-rc'])
   })
 
   it('registers the side card preferences schema with the documented defaults', async () => {
@@ -49,8 +57,8 @@ describe('dsh-better-sidebar plugin export shape', () => {
     const resolved = (PrefsSchema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
     })(undefined)
-    expect(resolved.openByDefault).toBe(true)
-    expect(resolved.defaultWidthPercent).toBe(30)
+    expect(resolved.openByDefault).toBe(false)
+    expect(resolved.defaultWidthPercent).toBe(35)
     expect(resolved.autoOpenSubagent).toBe(true)
     // A new background job auto-opens the Jobs page too.
     expect(resolved.autoOpenJobs).toBe(true)
@@ -68,12 +76,14 @@ describe('dsh-better-sidebar plugin export shape', () => {
     // The enable-switch maps resolve to {} (everything on) for old documents.
     expect(resolved.tabsEnabled).toEqual({})
     expect(resolved.viewersEnabled).toEqual({})
+    // The merged editor-explorer mode defaults ON.
+    expect(resolved.editorExplorer).toBe(true)
     // A stored overridden value resolves through (the range contract is
     // enforced by the settings service on write); the new pref keeps its
     // default when the stored document predates it.
     const overridden = (PrefsSchema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
     })({ openByDefault: false, defaultWidthPercent: 45 })
-    expect(overridden).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    expect(overridden).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
   })
 })

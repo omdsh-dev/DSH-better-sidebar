@@ -138,6 +138,10 @@ export const api = {
   /** Bounded recursive workspace scan (seeds the chat path-cache). */
   fsIndex: (scope: SessionScope, signal?: AbortSignal) =>
     call<{ paths: string[]; truncated: boolean }>('fs.index', scopePayload(scope, {}), signal),
+  /** Global recursive file-name search rooted at the session cwd (the editor
+   *  side panel's search box); matches are cwd-relative '/'-separated paths. */
+  fsSearch: (scope: SessionScope, query: string, signal?: AbortSignal) =>
+    call<{ matches: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query }), signal),
   fsRead: (scope: SessionScope, path: string, signal?: AbortSignal) =>
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
@@ -200,9 +204,12 @@ export const api = {
       id,
       ...(reason !== undefined ? { reason } : {}),
     })),
+  /** The effective terminal shell and its display name (plugin-global). */
+  shellGet: () =>
+    call<{ shell: string; name: string }>('shell.get', {}),
   /** Read the side card preferences (plugin-global, no session scope). */
   settingsGet: () =>
-    call<{ value?: unknown; revision?: number }>('settings.get', {}),
+    call<{ value?: unknown; revision?: number; externalDisable?: boolean }>('settings.get', {}),
   /** Merge a patch into the side card preferences (revision-guarded). */
   settingsUpdate: (patch: Record<string, unknown>, expectedRevision?: number) =>
     call<{ value?: unknown; revision?: number }>('settings.update', {
