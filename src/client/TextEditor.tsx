@@ -28,6 +28,8 @@ import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { appendToDraft } from './conversation-draft.ts'
 import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
+import { useFindBar } from './find-bar.tsx'
+import { readScrollTop, scheduleScrollRestore, scrollKey, writeScrollTop } from './scroll-memory.ts'
 import { lazyChunkComponent } from './lazy-chunk.tsx'
 import { splitMermaidBlocks, type MermaidMarkdownProps } from './mermaid-blocks.ts'
 import { t } from './locales.ts'
@@ -35,7 +37,7 @@ import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
 
 /** Previewable files (rendered output vs source editing). */
-type ViewMode = 'preview' | 'edit'
+export type ViewMode = 'preview' | 'edit'
 
 /** The floating "add to conversation" action: payload + viewport anchor. */
 interface SelectionPopup {
@@ -84,6 +86,14 @@ export function TextEditor(props: FileViewerProps) {
   /** The markdown preview container (selection-containment + line lookup). */
   const mdRef = useRef<HTMLDivElement>(null)
 
+  // The in-viewer find session (Ctrl+F over the editor and the preview).
+  const { bar: findBar, keymap: findKeymap, close: closeFind } = useFindBar({
+    viewerId,
+    mode,
+    viewRef,
+    mdRef,
+  })
+
   const hidePopup = (): void => {
     popupRef.current = null
     setPopup(null)
@@ -117,7 +127,8 @@ export function TextEditor(props: FileViewerProps) {
     setDirty(false)
     setSaveState('idle')
     hidePopup()
-  }, [content])
+    closeFind()
+  }, [content, closeFind])
 
   // Create the CodeMirror editor once the content is loaded. The view owns
   // the document; React only tracks dirty/draft state through the update
@@ -150,6 +161,7 @@ export function TextEditor(props: FileViewerProps) {
           }
         }),
         keymap.of([
+          ...findKeymap,
           {
             key: 'Mod-s',
             preventDefault: true,
@@ -205,7 +217,15 @@ export function TextEditor(props: FileViewerProps) {
     })
     const view = new CodeMirrorView({ state, parent: host })
     viewRef.current = view
+    // Restore the remembered scroll position for this file (the view is
+    // recreated on every remount, which otherwise drops it), and keep it
+    // saved while the user scrolls.
+    const key = scrollKey(scope.sessionId, path, 'editor')
+    const onScroll = (): void => { writeScrollTop(key, view.scrollDOM.scrollTop) }
+    view.scrollDOM.addEventListener('scroll', onScroll, { passive: true })
+    scheduleScrollRestore(view.scrollDOM, readScrollTop(key))
     return () => {
+      view.scrollDOM.removeEventListener('scroll', onScroll)
       view.destroy()
       viewRef.current = null
       themeCompRef.current = null
@@ -231,6 +251,19 @@ export function TextEditor(props: FileViewerProps) {
     hidePopup()
     if (mode === 'edit') viewRef.current?.requestMeasure()
   }, [mode])
+
+  // The rendered preview pane scrolls independently of the editor surface:
+  // remember its position per file too (separate storage key).
+  useEffect(() => {
+    if (viewerId !== 'markdown' || mode !== 'preview') return
+    const host = mdRef.current
+    if (host === null) return
+    const key = scrollKey(scope.sessionId, path, 'preview')
+    const persist = (): void => { writeScrollTop(key, host.scrollTop) }
+    host.addEventListener('scroll', persist, { passive: true })
+    scheduleScrollRestore(host, readScrollTop(key))
+    return () => { host.removeEventListener('scroll', persist) }
+  }, [viewerId, mode, path, scope.sessionId])
 
   const save = (): void => {
     const view = viewRef.current
@@ -367,6 +400,7 @@ export function TextEditor(props: FileViewerProps) {
         {saveLabel !== '' && <span className={clsx(css.editorStatus, saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>}
       </div>
       )}
+      {findBar}
       {editable && (
         <>
           {truncated === true && mode === 'edit' && <div className={css.editorBanner}>{t('truncation')}</div>}

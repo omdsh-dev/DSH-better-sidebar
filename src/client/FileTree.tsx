@@ -19,7 +19,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNo
 import clsx from 'clsx'
 import {
   IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
-  IconLinkOutline16, Menu, writeClipboard,
+  IconFolderOpenOutline16, IconLinkOutline16, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
 import { relativeTo } from './paths.ts'
@@ -268,6 +268,12 @@ export function FileTree(props: {
           ...(rowMenu?.isDir === false
             ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutline16 size={14} /> }]
             : []),
+          // Reveal in the OS file manager (files selected, folders opened).
+          {
+            id: 'reveal',
+            label: rowMenu?.isDir === true ? t('openInFileManager') : t('revealInFileManager'),
+            icon: <IconFolderOpenOutline16 size={14} />,
+          },
           { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={14} /> },
           { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutline16 size={14} /> },
         ]}
@@ -285,6 +291,12 @@ export function FileTree(props: {
           }
           if (id === 'download') {
             downloadFile(target.path)
+            return
+          }
+          if (id === 'reveal') {
+            void api.reveal({ sessionId, cwd }, target.path).catch((error: unknown) => {
+              console.warn('[dsh-better-sidebar] reveal failed:', error)
+            })
             return
           }
           copyPath(
