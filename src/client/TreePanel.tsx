@@ -14,6 +14,7 @@ import { api } from './api.ts'
 import { FileTree } from './FileTree.tsx'
 import { t } from './locales.ts'
 import { resolveSidebarPath } from './produced-files.ts'
+import type { ExpandedMutation } from './state.ts'
 import css from './sidebar.module.css'
 
 export function TreePanel(props: {
@@ -27,11 +28,13 @@ export function TreePanel(props: {
   /** File context-menu "open to the side" (passed through to FileTree). */
   onOpenFileSide?: (path: string) => void
   onReferenceFile: (path: string) => void
+  /** Explorer expansion rewrite after a rename/delete (passed through). */
+  onMutateExpanded?: (mutation: ExpandedMutation) => void
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, full } = props
+  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, onMutateExpanded, full } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -91,6 +94,7 @@ export function TreePanel(props: {
           onOpenFileNewTab={onOpenFileNewTab}
           onOpenFileSide={onOpenFileSide}
           onReferenceFile={onReferenceFile}
+          onMutateExpanded={onMutateExpanded}
           refreshTick={refreshTick}
         />
       ) : (

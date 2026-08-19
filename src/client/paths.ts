@@ -45,3 +45,15 @@ export function relativeTo(cwd: string, path: string): string {
   if (nPath.toLowerCase().startsWith(`${nBase.toLowerCase()}/`)) return nPath.slice(nBase.length + 1)
   return path
 }
+
+/**
+ * Parent directory of a path (the client mirror of the host fs-tree's
+ * `parentOf`). Explorer paths only ever come from the host's `join`, whose
+ * parents are real directories, so this returns `path` itself at a
+ * filesystem root rather than trying to model root semantics.
+ */
+export function parentOf(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, '')
+  const at = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  return at === -1 ? trimmed : trimmed.slice(0, at)
+}

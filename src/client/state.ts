@@ -649,6 +649,44 @@ export function toggleExpanded(state: SidebarState, path: string): SidebarState 
   return { ...state, expanded }
 }
 
+/** A rewrite of the explorer expansion set after a tree mutation. */
+export type ExpandedMutation =
+  | { type: 'prune'; path: string }
+  | { type: 'rename'; oldPath: string; newPath: string }
+
+/** Whether `target` equals `base` or lies under it (separator- and case-tolerant). */
+function isUnder(base: string, target: string): boolean {
+  const norm = (value: string): string => value.replace(/[\\/]+/g, '/').replace(/\/$/, '')
+  const b = norm(base)
+  const t = norm(target)
+  return t === b || t.toLowerCase().startsWith(`${b.toLowerCase()}/`)
+}
+
+/** Remove a deleted directory (and any expanded descendants) from the expansion set. */
+export function pruneExpanded(state: SidebarState, path: string): SidebarState {
+  const expanded = state.expanded.filter(item => !isUnder(path, item))
+  return expanded.length === state.expanded.length ? state : { ...state, expanded }
+}
+
+/** Rewrite the expansion set after a directory rename: the renamed directory
+ *  and every expanded descendant move under the new path (the parent prefix
+ *  is identical, so a plain slice carries the suffix over verbatim). */
+export function renameExpanded(state: SidebarState, oldPath: string, newPath: string): SidebarState {
+  const expanded = state.expanded.map(item => {
+    if (item === oldPath) return newPath
+    if (isUnder(oldPath, item)) return newPath + item.slice(oldPath.length)
+    return item
+  })
+  return { ...state, expanded }
+}
+
+/** Apply one explorer expansion rewrite (the shell's single dispatch point). */
+export function applyExpandedMutation(state: SidebarState, mutation: ExpandedMutation): SidebarState {
+  return mutation.type === 'rename'
+    ? renameExpanded(state, mutation.oldPath, mutation.newPath)
+    : pruneExpanded(state, mutation.path)
+}
+
 /** Adjust one split divider: `i` is the left/top child index, delta in fractions. */
 export function resizeSplit(node: SplitNode, splitId: string, index: number, delta: number): SplitNode {
   if (node.kind === 'leaf') return node

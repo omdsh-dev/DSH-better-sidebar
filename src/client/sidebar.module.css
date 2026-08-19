@@ -93,8 +93,11 @@
   /* The generic card surface (see the root contract above). Never
      `--dsw-specific-sidebar-fill` — skin plugins restyle that token for the
      app's own left nav and a panel consuming it loses its fill or clashes
-     with labels (#60/#105/#106). */
-  background: var(--dsw-alias-bg-layer-1);
+     with labels (#60/#105/#106). The surface is lifted slightly toward white
+     (color-mix) so it reads a step above the app's own chrome instead of a
+     heavy gray; the blend is negligible on light skins and lightens dark
+     skins — adjust the 90% weight here to tune. */
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 90%, white 10%);
   border-left: 1px solid var(--dsw-alias-border-l2);
   /* Expand/collapse slides the panel; fullscreen animates the width. */
   transition:
@@ -157,7 +160,8 @@
   z-index: 40;
   display: flex;
   flex-direction: column;
-  background: var(--dsw-alias-bg-layer-1);
+  /* Same lifted card surface as the right panel (see .panel). */
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 90%, white 10%);
   border-top: 1px solid var(--dsw-alias-border-l2);
   /* Expand/collapse slides the panel; height drags animate the height. */
   transition:
@@ -700,6 +704,15 @@
 
 .explorerRow:hover {
   background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The folder row currently hovered by a drag-and-drop (the move target).
+   An active-surface fill + brand-colored inset ring reads as a "will move
+   here" indicator without flipping the label ink. */
+.explorerDropTarget,
+.explorerDropTarget:hover {
+  background: var(--dsw-alias-interactive-bg-active);
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-brand-primary);
 }
 
 .explorerDir {

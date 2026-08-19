@@ -37,7 +37,7 @@ import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
-import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, type SidebarStore, type SidebarTab } from './state.ts'
+import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, type ExpandedMutation, type SidebarStore, type SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
 
 type EditorLoad =
@@ -92,8 +92,9 @@ export function EditorHost(props: {
   expanded: string[]
   onToggleDir: (path: string) => void
   onReferenceFile: (path: string) => void
+  onMutateExpanded?: (mutation: ExpandedMutation) => void
 }) {
-  const { ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile } = props
+  const { ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile, onMutateExpanded } = props
   const path = tab.path ?? ''
   const title = tab.title
   const [load, setLoad] = useState<EditorLoad>({ status: 'loading' })
@@ -273,6 +274,7 @@ export function EditorHost(props: {
           onOpenFileNewTab={openFileNewTab}
           onOpenFileSide={openFileSide}
           onReferenceFile={onReferenceFile}
+          onMutateExpanded={onMutateExpanded}
         />
       </div>
     )
@@ -366,6 +368,7 @@ export function EditorHost(props: {
               onOpenFileNewTab={openFileNewTab}
               onOpenFileSide={openFileSide}
               onReferenceFile={onReferenceFile}
+              onMutateExpanded={onMutateExpanded}
             />
           </div>
         )}

@@ -24,7 +24,7 @@ import type { Context } from '../context-types.ts'
 import {
   activateTab as activateTabReducer, allLeaves, closeTab as closeTabReducer, leafWithTab,
   openTabInActivePane, patchTab, tabOpenIn, togglePanel, treeOf,
-  type SidebarSnapshot, type SidebarState, type SidebarStore, type SidebarTab,
+  type ExpandedMutation, type SidebarSnapshot, type SidebarState, type SidebarStore, type SidebarTab,
 } from './state.ts'
 import { isNarrowWidth } from './breakpoints.ts'
 import type { SessionScope } from './api.ts'
@@ -43,6 +43,7 @@ export type {
   SidebarSnapshot,
   SidebarDiffRef,
   TabType,
+  ExpandedMutation,
 } from './state.ts'
 export type { SessionScope } from './api.ts'
 export type { SidebarPrefs } from '../prefs-shared.ts'
@@ -153,6 +154,8 @@ export interface TabComponentProps {
   onOpenFile?: (path: string) => void
   onOpenDiff?: (tab: SidebarTab) => void
   onSubagentJump?: (childSessionId: string) => void
+  /** Rewrite the explorer expansion set after a directory rename/delete. */
+  onMutateExpanded?: (mutation: ExpandedMutation) => void
 }
 
 /** Describes one kind of sidebar tab (builtins register themselves too). */
