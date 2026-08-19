@@ -296,6 +296,75 @@ describe('revalidateChunksOnReactivate (HMR re-activation keeps unchanged chunks
     expect(scriptCalls).toBe(2)
   })
 
+  it('a HEAD that never answers is bounded by a timeout signal and fails open (barrier cannot wedge loads forever)', async () => {
+    installModuleSystem()
+    let scriptCalls = 0
+    setChunkScriptLoaderForTests(async () => {
+      scriptCalls += 1
+      simulateScript('editor', () => ({ TextEditor: `editor-view:${scriptCalls}` }))
+    })
+    // First load settles an ETag under a healthy HEAD route.
+    stubBundleHead(() => '"v1"')
+    const first = await loadChunk('editor')
+    await settleEtag()
+    expect(scriptCalls).toBe(1)
+    // The revalidation HEAD now hangs. The loader must hand the fetch a
+    // timeout signal and, when it fires, fail open (drop + re-fetch) — the
+    // barrier must never block lazy loads indefinitely.
+    const controller = new AbortController()
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal)
+    vi.stubGlobal('fetch', vi.fn(async (_input, init?: RequestInit) => {
+      await new Promise<void>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('timed out', 'AbortError')))
+      })
+    }))
+    const revalidating = revalidateChunksOnReactivate()
+    let resolved = false
+    const pendingLoad = loadChunk('editor').then((exports) => { resolved = true; return exports })
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(resolved, 'loadChunk must await the pending revalidation').toBe(false)
+    controller.abort() // the timeout fires
+    await revalidating
+    const after = await pendingLoad
+    expect(after).not.toBe(first)
+    expect(scriptCalls).toBe(2)
+    expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Number))
+    timeoutSpy.mockRestore()
+  })
+
+  it('resetChunks clears a pending revalidation barrier (the next load does not wait on the orphaned task)', async () => {
+    installModuleSystem()
+    let scriptCalls = 0
+    setChunkScriptLoaderForTests(async () => {
+      scriptCalls += 1
+      simulateScript('editor', () => ({ TextEditor: `editor-view:${scriptCalls}` }))
+    })
+    let etag = '"v1"'
+    stubBundleHead(() => etag)
+    await loadChunk('editor')
+    await settleEtag()
+    // Gate the revalidation HEAD so the barrier stays pending.
+    let release: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      await gate
+      return { headers: { get: () => etag } } as unknown as Response
+    }))
+    const revalidating = revalidateChunksOnReactivate()
+    // resetChunks mid-revalidation: the barrier guarded only the state being
+    // dropped, so the next load must proceed without waiting for the HEAD.
+    resetChunks()
+    const after = await loadChunk('editor')
+    expect(after).toEqual({ TextEditor: 'editor-view:2' })
+    expect(scriptCalls).toBe(2)
+    // The orphaned task still settles; its identity-guarded finally no-ops.
+    // (Its sweep may later drop the freshly loaded entry — chunkEtags was
+    // cleared by resetChunks, so the old ETag no longer matches. That is the
+    // fail-safe direction: never serve stale, at worst one redundant fetch.)
+    release?.()
+    await revalidating
+  })
+
   it('clears test-registry fixtures on re-activation (per-test stubs never leak)', async () => {
     let testCalls = 0
     registerChunkForTests('editor', async () => { testCalls += 1; return { TextEditor: 'test-view' } })

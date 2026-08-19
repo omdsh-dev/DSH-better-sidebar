@@ -79,6 +79,11 @@ export const CHUNK_EXTERNALS: readonly string[] = [
 /** Chunk script endpoint served by the plugin host half (src/bundle-route.ts). */
 const CHUNK_URL = (name: ChunkName): string => `/sidebar/bundle/${name}.js`
 
+/** Bound on the revalidation HEAD round-trip. A timeout fails open (drop +
+ *  re-fetch on the next open) so a stuck bundle route can never wedge lazy
+ *  chunk loads behind the revalidation barrier. */
+const CHUNK_REVALIDATE_TIMEOUT_MS = 5_000
+
 /** The client module system surface this loader needs (window.__DSH_MODULES__). */
 interface ChunkModuleSystem {
   import(specifier: string): Promise<unknown>
@@ -173,10 +178,15 @@ let revalidation: Promise<void> | null = null
 
 /** Best-effort ETag capture for revalidation. The script tag itself exposes
  *  no response headers, so after a successful load we HEAD the bundle route
- *  once. Failures are ignored — revalidation then fails open (re-fetch). */
+ *  once. Failures (including a stuck route — bounded by the timeout) are
+ *  ignored — revalidation then fails open (re-fetch). */
 async function recordEtag(name: ChunkName): Promise<void> {
   try {
-    const res = await fetch(CHUNK_URL(name), { method: 'HEAD', cache: 'no-cache' })
+    const res = await fetch(CHUNK_URL(name), {
+      method: 'HEAD',
+      cache: 'no-cache',
+      signal: AbortSignal.timeout(CHUNK_REVALIDATE_TIMEOUT_MS),
+    })
     const etag = res.headers.get('etag')
     if (etag !== null && etag !== '') chunkEtags.set(name, etag)
   } catch {
@@ -235,7 +245,10 @@ export async function loadChunk(name: ChunkName): Promise<ChunkExports> {
  * Drop all chunk state for a fresh plugin activation (HMR-safe): clear the
  * in-memory cache and any test-registry entries, so the next lazy open
  * re-fetches and re-executes the current chunk scripts (the registry slots
- * are overwritten by the re-execution — no cleanup needed).
+ * are overwritten by the re-execution — no cleanup needed). A pending
+ * revalidation barrier is cleared too: it was only guarding the cache reads
+ * of the state being dropped, so the next load must not wait on it (the
+ * orphaned task still settles and its identity-guarded `finally` no-ops).
  */
 export function resetChunks(): void {
   cache.clear()
@@ -243,6 +256,7 @@ export function resetChunks(): void {
   chunkEtags.clear()
   testLoaders.clear()
   externalsRequire = undefined
+  revalidation = null
 }
 
 /**
@@ -251,8 +265,9 @@ export function resetChunks(): void {
  * ones whose script changed on disk — the bundle route revalidates every
  * request (cache-control: no-cache + ETag), so an unchanged chunk keeps its
  * memory cache and the next lazy open skips the re-inject / re-execute.
- * Fail-open: an unreachable or ETag-less chunk is dropped (re-fetch on next
- * open). Test-registry entries are always cleared (per-test fixtures).
+ * Fail-open: an unreachable, ETag-less, or timed-out chunk is dropped
+ * (re-fetch on next open). Test-registry entries are always cleared
+ * (per-test fixtures).
  * A page refresh remains the authoritative reset (the HMR poll watches only
  * client.js; chunk-only edits surface here on the next core re-activation).
  *
@@ -274,11 +289,15 @@ export function revalidateChunksOnReactivate(): Promise<void> {
     const stale: ChunkName[] = []
     await Promise.all([...loadedChunks].map(async (name) => {
       try {
-        const res = await fetch(CHUNK_URL(name), { method: 'HEAD', cache: 'no-cache' })
+        const res = await fetch(CHUNK_URL(name), {
+          method: 'HEAD',
+          cache: 'no-cache',
+          signal: AbortSignal.timeout(CHUNK_REVALIDATE_TIMEOUT_MS),
+        })
         const etag = res.headers.get('etag')
         if (etag !== null && etag !== '' && chunkEtags.get(name) === etag) return
       } catch {
-        // Fail open below.
+        // Fail open below (network errors and timeouts alike).
       }
       stale.push(name)
     }))
