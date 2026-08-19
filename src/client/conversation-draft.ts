@@ -8,9 +8,35 @@
 import type { Context, SidebarConversation } from '../context-types.ts'
 
 /**
+ * Focus the active conversation's composer textarea with the caret at the
+ * end. The composer commits the draft on its next render, so the caret is
+ * placed once via rAF and once via a late fallback — whichever runs after
+ * the textarea's value has caught up.
+ */
+function focusComposer(): void {
+  try {
+    const input = document.querySelector<HTMLTextAreaElement>('[data-composer-seat] textarea')
+    if (input === null) return
+    input.focus({ preventScroll: true })
+    const placeCaret = (): void => {
+      try {
+        input.setSelectionRange(input.value.length, input.value.length)
+      } catch {
+        /* read-only surface */
+      }
+    }
+    requestAnimationFrame(placeCaret)
+    setTimeout(placeCaret, 80)
+  } catch {
+    /* composer unavailable */
+  }
+}
+
+/**
  * Append `text` to the session's composer draft (space-separated, like the
- * @-mentions). Returns false — and logs — when the conversation service or
- * the session scope is unavailable.
+ * @-mentions), then focus the composer so the user can continue typing or
+ * submit right away. Returns false — and logs — when the conversation
+ * service or the session scope is unavailable.
  */
 export function appendToDraft(ctx: Context, sessionId: string, text: string): boolean {
   try {
@@ -21,6 +47,7 @@ export function appendToDraft(ctx: Context, sessionId: string, text: string): bo
     const input = conversation.input.for(actx)
     const draft = input.state.getSnapshot().draft
     input.setDraft(draft.trim() === '' ? text : `${draft} ${text}`)
+    focusComposer()
     return true
   } catch (error) {
     console.warn('[dsh-better-sidebar] draft insert failed:', error)

@@ -800,6 +800,41 @@
   border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
+/* In-viewer find bar (Ctrl+F): input + counter + prev/next/close, shown
+   over both the editor and the markdown preview surfaces. */
+.editorFindBar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.editorFindInput {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.editorFindInput:focus {
+  outline: none;
+  border-color: var(--dsw-alias-border-l2);
+}
+
+.editorFindCounter {
+  flex: none;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
 .editorTitle {
   flex: 1;
   min-width: 0;
