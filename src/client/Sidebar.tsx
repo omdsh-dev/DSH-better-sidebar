@@ -1,16 +1,19 @@
 /**
- * The sidebar shell: fixed-position panels portalled onto document.body
- * (the core AppFrame owns the left sidebar / center / details columns and
- * has no right-side hole for plugins). The right panel hosts the original
- * workbench; the bottom panel hosts a second, independent workbench. The
- * bottom panel squeezes ONLY the center column (the agent output area): it
- * spans from the app shell's own left sidebar to the right panel's left
- * edge, so neither sidebar gives up any position (the right panel keeps its
- * full height). A persistent two-button cluster at the top-right corner
- * toggles each panel; the right panel's width drags from its left edge, the
- * bottom panel's height from its top edge, and the shared corner drags both
- * at once. The whole layout lives in the per-session store, so switching
- * conversations swaps the sidebar.
+ * The sidebar shell: panels mounted inside the unified panel host — a
+ * fixed, viewport-sized containing block ([data-dsh-panel-host]) appended
+ * to document.body — instead of individual fixed-position elements, so a
+ * desktop shell's intermediate wrapper transforms can never hijack the
+ * panels' fixed containing block (the core AppFrame owns the left sidebar /
+ * center / details columns and has no right-side hole for plugins). The
+ * right panel hosts the original workbench; the bottom panel hosts a
+ * second, independent workbench. The bottom panel squeezes ONLY the center
+ * column (the agent output area): it spans from the app shell's own left
+ * sidebar to the right panel's left edge, so neither sidebar gives up any
+ * position (the right panel keeps its full height). A persistent two-button
+ * cluster at the top-right corner toggles each panel; the right panel's
+ * width drags from its left edge, the bottom panel's height from its top
+ * edge, and the shared corner drags both at once. The whole layout lives in
+ * the per-session store, so switching conversations swaps the sidebar.
  *
  * The shell binds the workbench actions to the store and dispatches tab
  * content to the views. New tabs come from the + menu (explorer / git /
@@ -660,19 +663,21 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   if (state === undefined || sessionId === undefined) {
     return (
-      <div className={css.toggleCluster}>
-        {!narrow && (
+      <div data-dsh-panel-host>
+        <div className={css.toggleCluster}>
+          {!narrow && (
+            <Tooltip label={t('noSession')} side="bottom" delayMs={500}>
+              <button type="button" className={css.toggleButton} disabled aria-label={t('noSession')}>
+                <IconPanelBottomOutline16 />
+              </button>
+            </Tooltip>
+          )}
           <Tooltip label={t('noSession')} side="bottom" delayMs={500}>
             <button type="button" className={css.toggleButton} disabled aria-label={t('noSession')}>
-              <IconPanelBottomOutline16 />
+              <IconPanelRightOutline16 />
             </button>
           </Tooltip>
-        )}
-        <Tooltip label={t('noSession')} side="bottom" delayMs={500}>
-          <button type="button" className={css.toggleButton} disabled aria-label={t('noSession')}>
-            <IconPanelRightOutline16 />
-          </button>
-        </Tooltip>
+        </div>
       </div>
     )
   }
@@ -744,7 +749,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   )
 
   return (
-    <>
+    <div data-dsh-panel-host>
       {/*
         The persistent toggle cluster at the top-right corner: the bottom
         panel's button (bottom glyph) LEFT of the right panel's (side glyph).
@@ -974,6 +979,6 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         </div>
       </div>
       )}
-    </>
+    </div>
   )
 }

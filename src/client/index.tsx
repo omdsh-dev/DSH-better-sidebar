@@ -119,13 +119,68 @@ export function apply(ctx: Context): void {
       let root: Root | undefined
       let host: HTMLDivElement | undefined
       let mounted = false
+      let bodyObserver: MutationObserver | undefined
+      let hostCheckFrame: number | null = null
       const unmount = (): void => {
         if (!mounted) return
         mounted = false
+        bodyObserver?.disconnect()
+        bodyObserver = undefined
+        if (hostCheckFrame !== null) {
+          cancelAnimationFrame(hostCheckFrame)
+          hostCheckFrame = null
+        }
         root?.unmount()
         root = undefined
         host?.remove()
         host = undefined
+      }
+      /** Re-attach the host if the page (a desktop shell wrapper, SPA
+       *  navigation, …) ever removes it from <body>. Cheap: childList only,
+       *  no subtree, no attribute filtering. */
+      const guardAnchor = (): void => {
+        if (bodyObserver !== undefined) return
+        bodyObserver = new MutationObserver(() => {
+          if (host !== undefined && !document.body.contains(host)) {
+            document.body.appendChild(host)
+          }
+        })
+        bodyObserver.observe(document.body, { childList: true })
+      }
+      /** One-shot geometry self-check: if the host page transforms
+       *  <html>/<body> itself (exotic shells), a fixed panel host would
+       *  track the transformed box instead of the viewport. Flip the
+       *  degraded mode and pin the host to the viewport every frame until
+       *  it matches again. The normal path (no page-level transform) never
+       *  runs the sync loop. */
+      const scheduleHostCheck = (): void => {
+        hostCheckFrame ??= requestAnimationFrame(() => {
+          hostCheckFrame = null
+          const layer = host?.querySelector<HTMLElement>('[data-dsh-panel-host]')
+          if (layer === null || layer === undefined) return
+          const rect = layer.getBoundingClientRect()
+          const mismatched = Math.abs(rect.left) > 8 || Math.abs(rect.top) > 8
+            || Math.abs(rect.width - window.innerWidth) > 8 || Math.abs(rect.height - window.innerHeight) > 8
+          if (!mismatched) {
+            layer.removeAttribute('data-dsh-panel-host-degraded')
+            layer.style.transform = ''
+            return
+          }
+          layer.setAttribute('data-dsh-panel-host-degraded', '')
+          console.warn('[dsh-better-sidebar] panel host geometry mismatch — a page-level transform was detected; using degraded viewport sync')
+          const sync = (): void => {
+            const r = layer.getBoundingClientRect()
+            if (Math.abs(r.left) <= 1 && Math.abs(r.top) <= 1
+              && Math.abs(r.width - window.innerWidth) <= 1 && Math.abs(r.height - window.innerHeight) <= 1) {
+              layer.removeAttribute('data-dsh-panel-host-degraded')
+              layer.style.transform = ''
+              return
+            }
+            layer.style.transform = `translate(${-r.left}px, ${-r.top}px)`
+            hostCheckFrame = requestAnimationFrame(sync)
+          }
+          hostCheckFrame = requestAnimationFrame(sync)
+        })
       }
       const mount = (): void => {
         if (mounted || disposed) return
@@ -136,6 +191,8 @@ export function apply(ctx: Context): void {
           root = createRoot(host)
           root.render(createElement(RenderBoundary, { className: css.boundaryError }, createElement(Sidebar, { ctx, store: sidebarStore })))
           mounted = true
+          guardAnchor()
+          scheduleHostCheck()
         } catch (error) {
           fail('mount', error)
         }
