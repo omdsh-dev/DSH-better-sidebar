@@ -42,7 +42,7 @@ describe('side card preferences', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
-        editorExplorer: true,
+        editorExplorer: false,
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
@@ -69,7 +69,7 @@ describe('side card preferences', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
-        editorExplorer: true,
+        editorExplorer: false,
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
@@ -96,7 +96,7 @@ describe('side card preferences', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
-        editorExplorer: true,
+        editorExplorer: false,
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
@@ -135,11 +135,11 @@ describe('side card preferences', () => {
     expect((await loadPrefs(wire({ interceptOpenPath: true }))).interceptOpenPath).toBe(true)
   })
 
-  it('defaults editorExplorer to true; only an explicit false restores the plain editor', async () => {
-    // Absent or malformed → on (the merged editor-explorer is the default).
-    expect((await loadPrefs(wire({}))).editorExplorer).toBe(true)
-    expect((await loadPrefs(wire({ editorExplorer: 'yes' }))).editorExplorer).toBe(true)
-    expect((await loadPrefs(wire({ editorExplorer: 0 }))).editorExplorer).toBe(true)
+  it('defaults editorExplorer to false; only an explicit true enables the merged editor-explorer', async () => {
+    // Absent or malformed → off (separate file windows are the default).
+    expect((await loadPrefs(wire({}))).editorExplorer).toBe(false)
+    expect((await loadPrefs(wire({ editorExplorer: 'yes' }))).editorExplorer).toBe(false)
+    expect((await loadPrefs(wire({ editorExplorer: 1 }))).editorExplorer).toBe(false)
     // Explicit booleans survive verbatim.
     expect((await loadPrefs(wire({ editorExplorer: false }))).editorExplorer).toBe(false)
     expect((await loadPrefs(wire({ editorExplorer: true }))).editorExplorer).toBe(true)

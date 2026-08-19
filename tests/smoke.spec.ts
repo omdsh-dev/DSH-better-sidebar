@@ -604,7 +604,7 @@ describe('side card settings routes', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
-        editorExplorer: true,
+        editorExplorer: false,
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,

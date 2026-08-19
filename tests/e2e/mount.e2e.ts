@@ -16,11 +16,11 @@
  *  4. expands the collapsed panel (openByDefault defaults off), sweeps every
  *     built-in tab (Files / Source Control / Tasks / Terminal / Browser) —
  *     including the lazily-fetched terminal chunk — and then opens seeded
- *     files through the Files window's tree (in-place mode: the seeded home
- *     tab itself switches to the file, no new tab), while response waits
- *     armed before goto prove the lazily-fetched editor chunk
- *     (client-editor.js) and the mermaid chunk (client-mermaid.js, rendered
- *     SVG diagram + zoom modal) loaded.
+ *     files through the Files window's tree (separate mode: each file opens
+ *     its own new tab, the seeded home "Files" tab stays the explorer),
+ *     while response waits armed before goto prove the lazily-fetched editor
+ *     chunk (client-editor.js) and the mermaid chunk (client-mermaid.js,
+ *     rendered SVG diagram + zoom modal) loaded.
  *
  * Deterministic by construction: every wait is on a DOM/network marker, the
  * suite is serial (one server instance), and any crash trips the very next
@@ -239,7 +239,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await expect(filesTab, 'the seeded files-window home tab must be in the tab strip').toHaveCount(1)
   await filesTab.click()
   // Inactive tabs stay mounted (display:none); only the ACTIVE files
-  // window's embedded tree is visible — match the visible row.
+  // window's tree is visible — match the visible row.
   const fileRow = sidebar.locator(`[role="button"][title$="${SEEDED_FILE}"]:visible`)
   await expect(fileRow, `the seeded "${SEEDED_FILE}" file must appear in the files window's tree`).toHaveCount(1, { timeout: 30_000 })
   // Click near the row's LEFT edge: hovering reveals an @-reference button at
@@ -247,24 +247,29 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // (referencing the file into the composer instead of opening it).
   await fileRow.click({ position: { x: 8, y: 8 } })
   await editorChunk
-  // In-place mode (editorExplorer default): the SAME tab switches to the
-  // file — its title is rewritten, no new tab appears. One "Files" tab
-  // remains: the second files window the sweep opened via the + menu.
+  // Separate-mode default (editorExplorer off): the tree click OPENS A NEW
+  // file tab (openSidebarFile, id `editor:<path>`) instead of rewriting the
+  // home tab in place. The seeded "Files" home tab stays put — it is the
+  // standalone explorer now, not a file window.
+  await expect(
+    sidebar.locator(`[title="${SEEDED_FILE}"][draggable="true"]`),
+    'separate mode opens a new file tab for the tree click',
+  ).toHaveCount(1)
   await expect(
     sidebar.locator('[title="Files"][draggable="true"]'),
-    'in-place mode rewrites the activated home tab instead of opening a new one',
+    'the seeded files-window home tab must survive the file open',
   ).toHaveCount(1)
   const pathInput = sidebar.locator('input[placeholder^="File path"]:visible')
-  await expect(pathInput, 'the files window header path input shows the opened file').toHaveValue(new RegExp(`${SEEDED_FILE}$`))
+  await expect(pathInput, 'the file tab header path input shows the opened file').toHaveValue(new RegExp(`${SEEDED_FILE}$`))
   await page.waitForTimeout(1_500)
   await assertNoCrash()
 
   // The mermaid chunk (client-mermaid.js) only loads when a previewed
   // markdown file contains a mermaid fence. Open the seeded diagram file
-  // from the files window's tree (the embedded tree stays pinned while
-  // hello.txt is open) and require the full round-trip: chunk fetch +
-  // sanitized SVG diagram in the preview, so a missing/corrupt mermaid
-  // chunk or a broken render fails the lane.
+  // from the files window's tree (the explorer stays pinned while the
+  // hello.txt tab is open beside it) and require the full round-trip: chunk
+  // fetch + sanitized SVG diagram in the preview, so a missing/corrupt
+  // mermaid chunk or a broken render fails the lane.
   const mermaidChunk = page.waitForResponse(
     (response) => response.url().includes('/sidebar/bundle/mermaid.js'),
     { timeout: 30_000 },
