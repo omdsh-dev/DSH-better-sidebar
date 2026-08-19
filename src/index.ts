@@ -15,6 +15,7 @@
  */
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
+import { spawn } from 'node:child_process'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -170,6 +171,32 @@ async function readText(path: string, readLimit: number): Promise<{
 type ApiMethod = (payload: unknown) => Promise<unknown> | unknown
 
 /**
+ * Open the operating system's file manager at `path`: directories open in
+ * the manager; files open with the file revealed and selected. Windows
+ * Explorer is driven by `explorer.exe` (`/select,`), macOS Finder by
+ * `open -R`, and other desktops fall back to xdg-open on the containing
+ * folder (no selection concept there). The child is detached so the host
+ * process never waits on the manager.
+ */
+async function revealInFileManager(path: string): Promise<void> {
+  const info = await stat(path).catch((error: unknown) => {
+    throw new SidebarError('fs-error', `cannot reveal "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+  })
+  const detach = (command: string, args: string[]): void => {
+    spawn(command, args, { detached: true, stdio: 'ignore' }).unref()
+  }
+  if (process.platform === 'win32') {
+    detach('explorer.exe', info.isDirectory() ? [path] : [`/select,${path}`])
+    return
+  }
+  if (process.platform === 'darwin') {
+    detach('open', info.isDirectory() ? [path] : ['-R', path])
+    return
+  }
+  detach('xdg-open', [info.isDirectory() ? path : dirname(path)])
+}
+
+/**
  * The live face of the side card settings namespace, bound to the settings
  * service when it is mounted. The DSH settings RPC domain only serves
  * allowlisted namespaces (api-proxy exposedNamespaces), so the client reads
@@ -253,6 +280,15 @@ function buildApi(
         await rm(tmp, { force: true }).catch(() => {})
         throw new SidebarError('fs-error', `cannot write "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
       }
+      return { ok: true }
+    },
+    'reveal': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const path = requireAbsolute(requireString(payload, 'path'))
+      if (!isWithin(cwd, path)) {
+        throw new SidebarError('fs-error', 'reveal path outside the session working directory', 403)
+      }
+      await revealInFileManager(path)
       return { ok: true }
     },
     'git.status': async (payload) => {
