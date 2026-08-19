@@ -87,14 +87,49 @@ const CHUNK_URL = (name: ChunkName): string => `/sidebar/bundle/${name}.js`
  *  chunk loads behind the revalidation barrier. */
 const CHUNK_REVALIDATE_TIMEOUT_MS = 5_000
 
-/** The client module system surface this loader needs (window.__DSH_MODULES__). */
-interface ChunkModuleSystem {
+/**
+ * The client module system surface this loader needs to resolve externals.
+ * DSH 0.1.0-rc.8 provides it as the `ctx.modules` service (no page global
+ * anymore); the plugin injects it at activation via
+ * {@link setChunkModuleSystem}. The rc.7-era `window.__DSH_MODULES__` global
+ * remains as a fallback so older hosts and the test harness keep working.
+ */
+export interface ChunkModuleSystem {
   import(specifier: string): Promise<unknown>
 }
 
-/** Resolve the shell-installed module system (set before any plugin activates). */
+/** The module system injected by the client half at activation (rc.8+). */
+let injectedModuleSystem: ChunkModuleSystem | undefined
+
+/**
+ * Plugin-owned page global carrying the injected module system across
+ * bundle copies: the lazy chunk bundles (client-editor.js etc.) inline their
+ * own chunk-loader instance, and rc.8 no longer exposes the shell module
+ * system as a page global — so the core bundle's injection must be visible
+ * to the chunk copies through a namespace of our own.
+ */
+const MODULE_SYSTEM_GLOBAL = '__dshSidebarModuleSystem__'
+
+/**
+ * Inject the client module system the chunk externals resolve through.
+ * Called by the client half's apply() with `ctx.modules` (rc.8+); pass
+ * undefined to clear (tests). Survives {@link resetChunks} — the module
+ * system is shell state, not chunk state, and stays live across HMR.
+ */
+export function setChunkModuleSystem(system: ChunkModuleSystem | undefined): void {
+  injectedModuleSystem = system
+  const g = globalThis as Record<string, unknown>
+  if (system === undefined) delete g[MODULE_SYSTEM_GLOBAL]
+  else g[MODULE_SYSTEM_GLOBAL] = system
+}
+
+/** Resolve the shell-installed module system (injected, then the plugin
+ *  global shared with chunk-bundle copies, then the rc.7 page global). */
 function moduleSystem(): ChunkModuleSystem | undefined {
-  return (globalThis as { __DSH_MODULES__?: ChunkModuleSystem }).__DSH_MODULES__
+  const g = globalThis as Record<string, unknown>
+  return injectedModuleSystem
+    ?? g[MODULE_SYSTEM_GLOBAL] as ChunkModuleSystem | undefined
+    ?? (g as { __DSH_MODULES__?: ChunkModuleSystem }).__DSH_MODULES__
 }
 
 /** The plugin-owned chunk factory registry the chunk scripts populate. */

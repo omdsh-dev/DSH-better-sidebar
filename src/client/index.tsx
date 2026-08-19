@@ -13,7 +13,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { Context } from '../context-types.ts'
 import { allLeaves, createSidebarStore, isAgentTabId } from './state.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
-import { revalidateChunksOnReactivate } from './chunk-loader.ts'
+import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
@@ -29,8 +29,10 @@ import css from './sidebar.module.css'
 import './layout.css'
 
 /** Services required before mounting (provided by the client runtime; the
- *  locale service backs the sidebar's copy — see locales.ts). */
-export const inject = ['slots', 'sessions', 'connection', 'workspaces', 'locale']
+ *  locale service backs the sidebar's copy — see locales.ts). `modules`
+ *  (rc.8+) is the client module system the chunk loader resolves its
+ *  externals through — Cordis guards service access without inject. */
+export const inject = ['slots', 'sessions', 'connection', 'workspaces', 'locale', 'modules']
 
 /**
  * Error boundary over the sidebar tree (root scope): a render error in the
@@ -110,6 +112,11 @@ export function apply(ctx: Context): void {
     }
   }
   try {
+    // rc.8+ exposes the client module system as the `ctx.modules` service
+    // (no window.__DSH_MODULES__ page global anymore); the chunk loader needs
+    // it to resolve its externals, so inject it before anything can load a
+    // lazy chunk. The loader falls back to the rc.7 global when absent.
+    setChunkModuleSystem(ctx.modules)
     // Fresh chunk state for this activation: drop per-test fixtures and
     // revalidate loaded chunk scripts against the bundle route's ETags —
     // unchanged chunks keep their resolved exports (no re-inject /

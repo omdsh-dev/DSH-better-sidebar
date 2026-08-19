@@ -196,14 +196,16 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     await expect
       .poll(async () => pageErrors, { timeout: 5_000 })
       .toEqual([])
-    const strips = await sidebar.locator('div').evaluateAll(
+    // Fail with the actual strip text so a regression is diagnosable from
+    // the test report alone (a strip renders the client fail() message).
+    const stripTexts = await sidebar.locator('div').evaluateAll(
       (nodes, patterns) => nodes.filter((node) => {
         const text = (node.textContent ?? '').trim()
         return patterns.some((pattern) => pattern.test(text))
-      }).length,
+      }).map((node) => (node.textContent ?? '').trim()),
       CRASH_STRIP_PATTERNS,
     )
-    expect(strips, 'a dsh-better-sidebar error strip is present in the sidebar').toBe(0)
+    expect(stripTexts, 'a dsh-better-sidebar error strip is present in the sidebar').toEqual([])
   }
 
   // Sweep every built-in tab through the "+" menu (the sidebar's own open-tab
@@ -255,8 +257,11 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     sidebar.locator(`[title="${SEEDED_FILE}"][draggable="true"]`),
     'separate mode opens a new file tab for the tree click',
   ).toHaveCount(1)
+  // The seeded home tab survives (separate mode never rewrites it). The
+  // sweep's + menu opened a SECOND path-less Files window (each is its own
+  // explorer in separate mode), so assert presence, not an exact count.
   await expect(
-    sidebar.locator('[title="Files"][draggable="true"]'),
+    sidebar.locator('[title="Files"][draggable="true"]').first(),
     'the seeded files-window home tab must survive the file open',
   ).toHaveCount(1)
   const pathInput = sidebar.locator('input[placeholder^="File path"]:visible')
@@ -266,17 +271,31 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
 
   // The mermaid chunk (client-mermaid.js) only loads when a previewed
   // markdown file contains a mermaid fence. Open the seeded diagram file
-  // from the files window's tree (the explorer stays pinned while the
-  // hello.txt tab is open beside it) and require the full round-trip: chunk
+  // from the files window's tree and require the full round-trip: chunk
   // fetch + sanitized SVG diagram in the preview, so a missing/corrupt
-  // mermaid chunk or a broken render fails the lane.
+  // mermaid chunk or a broken render fails the lane. In separate mode the
+  // tree click above activated the hello.txt tab, so switch back to the
+  // Files explorer first (its tree is the only one visible while active).
   const mermaidChunk = page.waitForResponse(
     (response) => response.url().includes('/sidebar/bundle/mermaid.js'),
     { timeout: 30_000 },
   )
+  await sidebar.locator('[title="Files"][draggable="true"]').first().click()
   const mdRow = sidebar.locator(`[role="button"][title$="${SEEDED_MD_FILE}"]:visible`)
   await expect(mdRow, `the seeded "${SEEDED_MD_FILE}" file must appear in the files window's tree`).toHaveCount(1, { timeout: 30_000 })
   await mdRow.click({ position: { x: 8, y: 8 } })
+  // Separate mode: the md file opens its own tab (like hello.txt above).
+  await expect(
+    sidebar.locator(`[title="${SEEDED_MD_FILE}"][draggable="true"]`),
+    'separate mode opens a new tab for the markdown file',
+  ).toHaveCount(1, { timeout: 30_000 })
+  // The markdown PREVIEW must render before the mermaid chunk can be
+  // requested — this assertion separates a preview/render regression from a
+  // chunk-loading one. (sidebar is already scoped to [data-dsh-better-sidebar].)
+  await expect(
+    sidebar.getByText('tail text'),
+    'the markdown preview must render the seeded document',
+  ).toHaveCount(1, { timeout: 30_000 })
   await mermaidChunk
   await expect(
     sidebar.locator('[data-mermaid-diagram] svg'),

@@ -20,12 +20,13 @@ import {
   registerChunkForTests,
   revalidateChunksOnReactivate,
   resetChunks,
+  setChunkModuleSystem,
   setChunkScriptLoaderForTests,
 } from '../src/client/chunk-loader.ts'
 import type { ChunkExports } from '../src/client/chunk-loader.ts'
 
 interface FakeModuleSystem {
-  import: ReturnType<typeof vi.fn>
+  import: (specifier: string) => Promise<unknown>
 }
 
 function installModuleSystem(): FakeModuleSystem {
@@ -54,6 +55,7 @@ function simulateScript(name: string, factory: (require: (spec: string) => unkno
 
 beforeEach(() => {
   removeModuleSystem()
+  setChunkModuleSystem(undefined)
   delete (globalThis as Record<string, unknown>).__dshChunks__
   resetChunks()
   setChunkScriptLoaderForTests(null)
@@ -90,6 +92,34 @@ describe('test-registry path (vitest / jsdom-less environments)', () => {
 })
 
 describe('production path (script injection + global registry + externals require)', () => {
+  it('resolves externals through an injected ctx.modules system (rc.8 — no page global)', async () => {
+    const modules = installModuleSystem()
+    // rc.8 drops window.__DSH_MODULES__; the client half injects ctx.modules.
+    removeModuleSystem()
+    setChunkModuleSystem(modules)
+    const loaded: string[] = []
+    setChunkScriptLoaderForTests(async (src) => {
+      loaded.push(src)
+      simulateScript('editor', (require) => ({ TextEditor: `view:${String(require('react'))}` }))
+    })
+    const exports = await loadChunk('editor')
+    expect(loaded).toEqual(['/sidebar/bundle/editor.js'])
+    expect(exports).toEqual({ TextEditor: 'view:[object Object]' })
+    expect(modules.import).toHaveBeenCalledTimes(CHUNK_EXTERNALS.length)
+    // The injection also lands on a plugin-owned global so chunk-bundle
+    // copies of this loader (which inline their own module instance and
+    // never run apply()) can resolve externals too — rc.8 has no shell
+    // page global anymore.
+    expect((globalThis as Record<string, unknown>).__dshSidebarModuleSystem__).toBe(modules)
+    // The injection survives resetChunks (shell state, not chunk state).
+    resetChunks()
+    setChunkScriptLoaderForTests(async () => {
+      simulateScript('editor', () => ({ TextEditor: 'editor-view' }))
+    })
+    await loadChunk('editor')
+    expect(modules.import).toHaveBeenCalledTimes(CHUNK_EXTERNALS.length * 2)
+  })
+
   it('injects the chunk script, then materializes the factory with externals from the module table', async () => {
     const modules = installModuleSystem()
     const loaded: string[] = []
