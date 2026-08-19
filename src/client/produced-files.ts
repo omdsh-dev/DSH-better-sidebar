@@ -6,6 +6,7 @@
  * Kept dependency-free so the takeover logic is unit-testable and the
  * replica is easy to diff against upstream when it drifts.
  */
+import { isAbsolutePath } from './paths.ts'
 
 /** Paths a tool-result view reports as produced, by render intent. */
 export function producedPaths(view: unknown): readonly string[] {
@@ -76,10 +77,13 @@ export function selectProducedFiles(owner: unknown): readonly string[] | null {
   return paths.length === 0 ? null : paths
 }
 
-/** Resolve a (possibly relative) path against the session cwd for the sidebar. */
+/**
+ * Resolve a (possibly relative) path against the session cwd for the sidebar.
+ * Absolute detection mirrors the host (see client/paths.isAbsolutePath):
+ * POSIX roots, drive letters and UNC shares must not be joined onto the cwd.
+ */
 export function resolveSidebarPath(cwd: string | undefined, path: string): string {
-  const absolute = path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)
-  if (absolute) return path
+  if (isAbsolutePath(path)) return path
   const base = cwd ?? ''
   if (base === '') return path
   const separator = base.includes('\\') ? '\\' : '/'

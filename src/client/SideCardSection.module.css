@@ -1,38 +1,85 @@
 /**
  * Side card settings section chrome (DSH-native tokens throughout):
+ * - the section is a column of GROUP CONTAINER cards (the PluginCard recipe:
+ *   l2 hairline, 16px radius, layer-3 fill) with a heading + inventory count
+ *   badge (the settings catalogHeading recipe), opening with a one-line
+ *   intro (the DSH section heading+intro recipe);
+ * - 常规 holds full-width settings rows (the DSH settings-row recipe:
+ *   title/desc left + control right, hairline separators) whose toggles are
+ *   custom switches — a real checkbox (native semantics and focus) driving
+ *   a styled track/thumb;
  * - the feature inventories are responsive GRIDS of small toggle cards
- *   (auto-fill columns — several cards per row, wrapping);
- * - a card's on/off state IS its visual state: enabled = brand border +
- *   tinted fill + a check badge pinned to the far right of the top row,
- *   disabled = neutral hairline + dimmed text;
+ *   (auto-fill columns — several cards per row, wrapping): icon chip +
+ *   title + type id, the card's on/off state IS its visual state
+ *   (enabled = brand border + tinted fill + circular check badge,
+ *   disabled = neutral hairline + dimmed);
  * - features that declare related settings carry a gear corner button
- *   opening a native Modal whose rows are the DSH settings-row recipe
- *   (title/desc left + native accent checkbox, hairline separators);
+ *   opening a native Modal (wider than the primitive default) whose rows
+ *   follow the same row recipe with switch controls and a Done footer;
  * - the width input stays a native settings row (a value, not a switch).
  */
 
 .section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 14px;
   width: 100%;
-  /* Tall inventories (7 tab cards + 9 viewer cards + general rows) must
-     never be clipped by the settings shell: fill the shell's options area
-     and scroll inside the section when the content outgrows the panel. */
-  height: 100%;
-  min-height: 0;
-  overflow-y: auto;
+  max-width: 760px;
+  /* The DSH settings shell's `.options` area owns vertical scrolling. Keep
+     this page a plain content column like Plugins → Plugin list so its
+     scrollbar stays at the shell edge instead of being inset by the options
+     area's right padding. */
 }
 
-.section > :last-child {
-  border-bottom: none;
+/* One-line section intro (the DSH section heading+intro recipe). */
+.intro {
+  margin: 0;
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* Group container: the DSH card recipe (PluginCard) — l2 hairline, r16,
+   layer-3 fill; holds its own heading + stacked rows / card grid. */
+.group {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 20px 20px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 16px;
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+/* Group heading: 13/600 + the inventory count badge (the settings
+   catalogHeading recipe: count in tabular-nums, tertiary). */
+.groupHeading {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 0 2px 6px;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.count {
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 400;
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Responsive inventory: as many small cards per row as the width allows. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 10px;
 }
 
 /* One small toggle card (visual chrome; the interactive part is .cardMain). */
@@ -40,7 +87,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  border-radius: 8px;
+  border-radius: 12px;
   border: 1px solid var(--dsw-alias-border-l2);
   background: transparent;
   font: inherit;
@@ -52,6 +99,7 @@
 /* Hover affordance on disabled cards only (enabled cards are already lit). */
 .card:not(.cardOn):hover {
   background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-label-dimmed);
 }
 
 /* Enabled = highlighted: brand border + tinted fill. */
@@ -64,9 +112,9 @@
 .cardMain {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
   width: 100%;
-  padding: 10px 12px;
+  padding: 12px;
   border: 0;
   border-radius: inherit;
   background: transparent;
@@ -77,7 +125,8 @@
 }
 
 .cardMain:focus-visible,
-.cardGear:focus-visible {
+.cardGear:focus-visible,
+.rowGear:focus-visible {
   outline: 2px solid var(--dsw-alias-border-l4);
   outline-offset: 2px;
 }
@@ -85,18 +134,28 @@
 .cardTop {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
-.cardIcon {
+/* The icon sits in a rounded chip: brand-tinted while the card is on,
+   neutral (layer-2 fill + hairline) while off. */
+.cardIconChip {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-tertiary);
 }
 
-.cardOn .cardIcon {
+.cardOn .cardIconChip {
+  border-color: color-mix(in srgb, var(--dsw-alias-button-primary-fill) 35%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-button-primary-fill) 12%, transparent);
   color: var(--dsw-alias-button-primary-fill);
 }
 
@@ -105,6 +164,7 @@
   min-width: 0;
   font-size: 13px;
   line-height: 20px;
+  font-weight: 600;
   color: var(--dsw-alias-label-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -115,12 +175,18 @@
   color: var(--dsw-alias-label-primary);
 }
 
-/* The check badge: pinned to the FAR RIGHT of the top row (enabled only). */
+/* The check badge: a circular brand-filled pin at the card's far right
+   (enabled only), the icon in the inverted surface token (the .save recipe). */
 .cardCheck {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   flex: none;
-  color: var(--dsw-alias-button-primary-fill);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-bg-layer-3);
 }
 
 .cardDesc {
@@ -132,28 +198,64 @@
   text-overflow: ellipsis;
 }
 
+/* The "add plugin" card: same grid cell / chrome as the inventory cards
+   (it shares .card), but a DASHED border — the repo's first dashed surface;
+   the hover accent follows the existing drag-drop dashed outlines
+   (sidebar.module.css .dropCenter / .tabBarDrop). */
+.addCard {
+  align-items: flex-start;
+  padding: 12px;
+  border-style: dashed;
+  border-color: var(--dsw-alias-border-l2);
+  text-align: left;
+}
+
+.addCard:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-interactive-bg-hover-accent);
+  color: var(--dsw-alias-label-primary);
+}
+
+.addCard:hover .cardTitle {
+  color: var(--dsw-alias-label-primary);
+}
+
+.addCard:hover .cardIconChip {
+  border-color: color-mix(in srgb, var(--dsw-alias-button-primary-fill) 35%, transparent);
+  color: var(--dsw-alias-button-primary-fill);
+}
+
+.addCard:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 2px;
+}
+
 .cardOn .cardDesc {
   color: var(--dsw-alias-label-secondary);
 }
 
-/* The gear corner button: bottom-right of cards that declare related
-   settings; the desc gets right padding so the ellipsis never runs under it. */
+/* Cards with a settings gear keep the desc clear of it: the gear sits in
+   the desc row, sharing the check badge's right edge (a vertical column of
+   controls at the card's right side). */
 .cardWithGear .cardDesc {
-  padding-right: 18px;
+  padding-right: 30px;
 }
 
+/* The gear corner button: directly UNDER the check badge on the card's
+   right edge — the two controls are vertically aligned (same right inset,
+   one row apart) and the SAME 16px size, not side by side. */
 .cardGear {
   position: absolute;
-  right: 6px;
-  bottom: 6px;
+  right: 12px;
+  top: 46px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: 50%;
   background: transparent;
   color: var(--dsw-alias-label-tertiary);
   cursor: pointer;
@@ -164,24 +266,42 @@
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-/* Inventory section heading (常规 / 侧边栏内容 / 文件预览). */
-.sectionHeading {
-  padding: 14px 0 0;
-  font-size: 12px;
-  line-height: 17px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--dsw-alias-label-secondary);
+/* The gear icon button on a general settings ROW (the position-compat
+   row's "customize the strip height" entry): the same 16px icon-button
+   recipe as the card gear, sitting in the row's control area. */
+.rowGear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  flex: none;
 }
 
-/* Native settings row recipe (the width input row + popup rows). */
+.rowGear:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* Settings-row recipe (the DSH General section rows): title/desc left,
+   control right, hairline separators (stripped on the last row). */
 .row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 12px 0;
+  padding: 12px 2px;
   border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.row:last-child {
+  border-bottom: none;
 }
 
 .rowText {
@@ -199,45 +319,66 @@
 
 .desc {
   font-size: 12px;
-  line-height: 17px;
-  color: var(--dsw-alias-label-secondary);
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
 }
 
-/* Native checkbox: 16px, brand accent (the settings-row recipe). */
-.toggle {
+/* Custom switch: a real checkbox (native semantics + focus, visually
+   hidden) driving a styled 36x20 track with a sliding thumb. */
+.switch {
+  position: relative;
+  display: inline-flex;
   flex: none;
-  width: 16px;
-  height: 16px;
+  cursor: pointer;
+}
+
+.switchInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
   margin: 0;
-  accent-color: var(--dsw-alias-button-primary-fill);
-  cursor: pointer;
+  opacity: 0;
 }
 
-.toggle:focus-visible {
-  outline: 2px solid var(--dsw-alias-border-l4);
-  outline-offset: 2px;
-}
-
-/* Secondary settings popup body: stacked native rows, trailing separator
-   stripped by the trailing-child rule. */
-.popupRows {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-}
-
-.popupRow {
-  display: flex;
+.switchTrack {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px 0;
-  border-bottom: 1px solid var(--dsw-alias-border-l2);
-  cursor: pointer;
+  width: 36px;
+  height: 20px;
+  padding: 2px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
-.popupRows > :last-child {
-  border-bottom: none;
+.switchThumb {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-secondary);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.switch:hover .switchTrack {
+  border-color: var(--dsw-alias-label-dimmed);
+}
+
+.switchInput:checked + .switchTrack {
+  border-color: var(--dsw-alias-button-primary-fill);
+  background: var(--dsw-alias-button-primary-fill);
+}
+
+.switchInput:checked + .switchTrack .switchThumb {
+  transform: translateX(16px);
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.switchInput:focus-visible + .switchTrack {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
 }
 
 .control {
@@ -251,10 +392,128 @@
   width: 76px;
 }
 
+/* Text/number rows in the settings popup: the free-form input (e.g. the
+   terminal font family) gets a generous width; numeric rows (font size)
+   keep the compact width of the general number inputs. */
+.typedInput {
+  width: 200px;
+}
+
+.typedInputNumber {
+  width: 76px;
+}
+
+/* Select rows: the closed anchor is a compact button (selected option's
+   icon when the options carry icons, plus title and a chevron); the dropdown
+   itself is the primitives Menu (portal). */
+.selectAnchor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.selectAnchor:hover {
+  border-color: var(--dsw-alias-label-dimmed);
+}
+
+.selectAnchorIcon {
+  display: inline-flex;
+  flex: none;
+}
+
+.selectAnchorText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One big-icon option card inside the select dropdown. */
+.selectOption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 200px;
+}
+
+.selectOptionIcon {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.selectOptionText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .suffix {
   font-size: 14px;
   line-height: 22px;
   color: var(--dsw-alias-label-secondary);
+}
+
+/* Secondary settings popup: a wider dialog than the primitive default (the
+   dialog portals to document.body; the doubled class keeps the width rule
+   above the primitive's .dialog regardless of stylesheet order). */
+.popupDialog.popupDialog {
+  width: min(460px, 100%);
+}
+
+/* Popup rows: each setting gets the same outer chrome as a plugin-list
+   PluginCard (l2 hairline, 12px radius, layer-3 fill). The row's title,
+   description and control geometry stay unchanged inside that frame. */
+.popupRows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.popupRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-3);
+  transition: border-color 0.16s, background 0.16s;
+}
+
+.popupRow:hover {
+  border-color: var(--dsw-alias-label-dimmed);
+}
+
+/* The popup's Done button: the settings primary-button recipe
+   (PluginCard .save: label-primary fill, inverted surface text). */
+.done {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 5px 14px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-layer-3);
+}
+
+.done:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
 }
 
 .error {
@@ -264,8 +523,193 @@
   color: var(--dsw-alias-state-error-primary);
 }
 
+/* ── "Add plugin" modal ──────────────────────────────────────────────── */
+
+/* A wide dialog like the settings popup (doubled class keeps the width
+   rule above the primitive's .dialog regardless of stylesheet order). */
+.pluginModal.pluginModal {
+  width: min(560px, 100%);
+}
+
+.pluginList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+/* The GitHub topic entry: a full-width secondary BUTTON (not a link — it
+   opens a real new browser tab via window.open, bypassing the sidebar
+   link takeover). */
+.pluginTopicBtn {
+  width: 100%;
+  appearance: none;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-1);
+  cursor: pointer;
+}
+
+.pluginTopicBtn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-interactive-bg-hover-accent);
+  color: var(--dsw-alias-label-primary);
+}
+
+.pluginTopicBtn:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 1px;
+}
+
+.pluginEmpty {
+  padding: 20px 2px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.pluginEntries {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* One catalog entry: name + install button on the head row, description,
+   then the install command in a mono block (the exact script that gets
+   pre-typed into the terminal — review it here before installing). */
+.pluginEntry {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.pluginEntryHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pluginEntryActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+/* The per-entry "jump" button: opens the plugin repo in a REAL new browser
+   tab (window.open — a button, so the sidebar link takeover cannot reroute
+   it). Secondary style, quieter than the Install button. */
+.pluginJumpBtn {
+  flex: none;
+  appearance: none;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  padding: 3px 12px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.pluginJumpBtn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-interactive-bg-hover-accent);
+  color: var(--dsw-alias-label-primary);
+}
+
+.pluginJumpBtn:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 1px;
+}
+
+/* The plugin name: a BUTTON (not an anchor — an anchor would be caught by
+   the sidebar link takeover at document capture, ignoring target=_blank)
+   styled like a link; opens the repo in a real new browser tab. */
+.pluginName {
+  appearance: none;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.pluginName:hover {
+  text-decoration: underline;
+  color: var(--dsw-alias-button-primary-fill);
+}
+
+.pluginDesc {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.pluginInstall {
+  display: block;
+  padding: 6px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+/* The per-entry copy button: copies the install script to the
+   clipboard (the settings primary-button recipe, smaller than .done). */
+.pluginCopyBtn {
+  flex: none;
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 3px 12px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-layer-3);
+}
+
+.pluginCopyBtn:hover {
+  background: var(--dsw-alias-button-primary-hover);
+}
+
+.pluginCopyBtn:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .card {
+  .card,
+  .switchTrack,
+  .switchThumb {
     transition: none;
   }
 }

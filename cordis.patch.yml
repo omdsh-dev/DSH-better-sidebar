@@ -1,0 +1,49 @@
+# dsh-better-sidebar bundle patch
+#
+# This file is the `dsh.bundle.patch` layer of the published npm package: when
+# the plugin is installed through the official CLI —
+#
+#   dsh plugin --profile <name> add dsh-better-sidebar@<version>
+#
+# — the command reconciles `dsh.profile.bundles` against installed packages
+# and, seeing this declaration, appends `dsh-better-sidebar` to the bundle
+# stack. The profile boot then merges THIS patch (a single `insert` of the
+# plugin row) exactly like the manual cordis.patch.yml mount line used
+# before. No profile file edits needed — one command installs and mounts.
+#
+# If the profile still carries the old manual mount line in its own
+# cordis.patch.yml, remove it before switching to the bundle channel to
+# avoid double-mounting (two Node halves, two sidebars).
+#
+# To choose the terminal shell, add `config.shell` to the inserted plugin
+# row (or to the profile's manual cordis.patch.yml mount line). When omitted,
+# the host keeps resolving $SHELL / the login shell / powershell.exe.
+# `config.shellArgs` optionally supplies explicit startup arguments; when
+# non-empty they replace the automatic POSIX `-l` login flag:
+#
+#   - insert:
+#       - id: better-sidebar
+#         name: 'dsh-better-sidebar'
+#         config:
+#           shell: /bin/zsh
+#           shellArgs:
+#             - --noprofile
+#             - --no-rc
+#
+# Aggregate double-mount guard: aggregate bundles (e.g. @linxin666/dsh-web-ui-all)
+# may already mount this package under their own entry id (e.g.
+# `web-ui-better-sidebar`). Two mounts register /sidebar/api twice and fail the
+# whole plugin tree at boot ("duplicate prefix route"). The `!!js` disabled
+# expression backs THIS row off when another *enabled* entry already mounts
+# `dsh-better-sidebar`; the aggregate instance then owns the sidebar. The
+# loader evaluates it when this row is processed (entry-list order, only rows
+# before this one are visible), so the aggregate bundle must precede this one
+# in `dsh.profile.bundles` — the standard install order, since `dsh plugin add`
+# appends new bundles last. The reverse order (this bundle before the
+# aggregate) is a known limitation: the guard cannot see rows that come after
+# it, and no runtime singleton guard is added. Same-id manual duplicates still
+# fail loudly at the loader as before.
+- insert:
+    - id: better-sidebar
+      name: 'dsh-better-sidebar'
+      disabled: !!js "[...ctx.loader.entries()].some((e) => e.options.name === 'dsh-better-sidebar' && e.options.id !== 'better-sidebar' && !e.disabled)"

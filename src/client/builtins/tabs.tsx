@@ -1,17 +1,17 @@
 /**
- * The 7 built-in tab descriptors: the plugin registers its own pages
- * (explorer / git / terminal / browser / subagent / editor / diff) through
+ * The 6 built-in tab descriptors: the plugin registers its own pages
+ * (editor / git / terminal / browser / subagent / diff) through
  * the same {@link BetterSidebarService} external plugins use — eating its
  * own dogfood. The terminal descriptor owns its quota (`TERMINAL_LIMIT`)
- * and mints `terminal:<n>` ids through `createTab`; the browser mints
- * `browser:<n>` the same way (no quota).
+ * and mints `terminal:<uuid>` ids through `createTab`; the browser mints
+ * `browser:<n>` the same way (no quota). The editor IS the files window
+ * (the old standalone explorer merged into it).
  */
-import { IconBranchOutline16, IconCodeOutline16, IconFolderOpen16, IconThinkOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconBranchOutline16, IconCodeOutline16, IconFolderOpen16, IconPanelLeftOutline16, IconThinkOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
 import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
 import { openSidebarFile } from '../intercept.tsx'
-import { ExplorerView } from '../ExplorerView.tsx'
 import { EditorHost } from '../EditorHost.tsx'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
 import { GitView } from '../GitView.tsx'
@@ -19,6 +19,7 @@ import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
 import { BrowserView } from '../BrowserView.tsx'
 import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16 } from '../icons.tsx'
+import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
 import type { ComponentType } from 'react'
 import type { SessionScope } from '../api.ts'
 import type { SidebarStore } from '../state.ts'
@@ -51,6 +52,20 @@ interface TerminalViewProps {
 /** How many UI-owned terminals may be open at once (agent-owned ones are uncapped). */
 export const TERMINAL_LIMIT = 3
 
+/** Optional per-registration builtin behavior (currently terminal title). */
+export interface BuiltinTabOptions {
+  /** Returns the display title for newly opened terminal tabs. */
+  terminalTitle?: () => string
+}
+
+/** A client-side uuid for terminal tab identity (not shown in the UI). */
+function terminalUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
+}
+
 /** Count UI-owned terminals (agent:` tabs excluded — they are the model's). */
 function uiTerminalCount(state: SidebarState): number {
   return allLeaves(state.splits)
@@ -58,33 +73,52 @@ function uiTerminalCount(state: SidebarState): number {
     .filter(tab => tab.type === 'terminal' && !isAgentTabId(tab.id)).length
 }
 
-/** The 7 built-in tab descriptors. */
-export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
+/** The 6 built-in tab descriptors. */
+export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): readonly TabDescriptor[] {
   return [
     {
       id: 'editor',
-      title: () => t('editor'),
-      icon: (size: number) => <IconCodeOutline16 size={size} />,
-      order: -1,
-      hidden: true,
-      dedupeKey: (tab) => tab.path,
-      component: ({ ctx, store, scope, tab }) => (
-        <EditorHost ctx={ctx} store={store} scope={scope} path={tab.path ?? ''} title={tab.title} />
-      ),
-    },
-    {
-      id: 'explorer',
-      title: () => t('explorer'),
+      // The single files window: an editor tab with no path IS the file
+      // explorer (empty hint + docked tree); with a path it previews/edits
+      // the file. Visible in the + menu in the explorer's old slot.
+      title: () => t('files'),
       icon: (size: number) => <IconFolderOpen16 size={size} />,
       order: 10,
-      single: true,
-      component: ({ ctx, store, scope, expanded, onToggleDir, onReferenceFile }) => (
-        <ExplorerView
-          sessionId={scope.sessionId}
-          cwd={scope.cwd}
+      hidden: false,
+      dedupeKey: (tab) => tab.path,
+      // Declarative settings: the file-open behavior picker (in-place switch
+      // vs per-path windows) renders as an iconed select row under the
+      // editor card's gear in the Side card settings page.
+      settings: {
+        toggles: [{
+          key: 'editorExplorer',
+          type: 'select',
+          title: () => t('editorExplorer'),
+          desc: () => t('editorExplorerDesc'),
+          options: [
+            {
+              value: true,
+              icon: (size: number) => <IconPanelLeftOutline16 size={size} />,
+              title: () => t('editorExplorerMerged'),
+              desc: () => t('editorExplorerMergedDesc'),
+            },
+            {
+              value: false,
+              icon: (size: number) => <IconCodeOutline16 size={size} />,
+              title: () => t('editorExplorerSplit'),
+              desc: () => t('editorExplorerSplitDesc'),
+            },
+          ],
+        }],
+      },
+      component: ({ ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile }) => (
+        <EditorHost
+          ctx={ctx}
+          store={store}
+          scope={scope}
+          tab={tab}
           expanded={expanded ?? []}
-          onToggle={onToggleDir ?? (() => { /* no-op */ })}
-          onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}
+          onToggleDir={onToggleDir ?? (() => { /* no-op */ })}
           onReferenceFile={onReferenceFile ?? (() => { /* no-op */ })}
         />
       ),
@@ -137,10 +171,11 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       icon: (size: number) => <IconTerminalOutline16 size={size} />,
       order: 40,
       available: (_ctx, _scope, state) => uiTerminalCount(state) < TERMINAL_LIMIT,
-      // Declarative settings: the model-facing terminal tools switch and the
-      // bottom-panel first-expansion auto-terminal switch render under this
-      // row in the Side card settings page (the Terminal page's own related
-      // settings; the host gates the toolset on the tools one independently).
+      // Declarative settings: the model-facing terminal tools switch, the
+      // bottom-panel first-expansion auto-terminal switch, and the custom
+      // font family/size rows render under this card in the Side card
+      // settings page (the host gates the toolset on the tools one
+      // independently; the font rows apply live to every terminal).
       settings: {
         toggles: [{
           key: 'agentTerminalTools',
@@ -150,6 +185,20 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
           key: 'bottomPanelAutoTerminal',
           title: () => t('settingsBottomTerminalTitle'),
           desc: () => t('settingsBottomTerminalDesc'),
+        }, {
+          key: 'terminalFontFamily',
+          type: 'text',
+          title: () => t('settingsFontFamilyTitle'),
+          desc: () => t('settingsFontFamilyDesc'),
+          placeholder: t('settingsFontFamilyPlaceholder'),
+        }, {
+          key: 'terminalFontSize',
+          type: 'number',
+          title: () => t('settingsFontSizeTitle'),
+          desc: () => t('settingsFontSizeDesc'),
+          min: TERMINAL_FONT_SIZE_MIN,
+          max: TERMINAL_FONT_SIZE_MAX,
+          unit: 'px',
         }],
       },
       createTab: (state) => {
@@ -157,10 +206,12 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
         if (count >= TERMINAL_LIMIT) return null
         return {
           tab: {
-            id: `terminal:${state.nextTerminal}`,
+            id: `terminal:${terminalUuid()}`,
             type: 'terminal',
-            title: `${t('terminal')} ${state.nextTerminal}`,
+            title: options.terminalTitle?.() ?? t('terminal'),
           },
+          // Keep the legacy counter advancing for compatibility with older
+          // persisted states; new ids no longer use it.
           patch: { nextTerminal: state.nextTerminal + 1 },
         }
       },
@@ -171,9 +222,10 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
       title: () => t('browser'),
       icon: (size: number) => <IconGlobeOutline16 size={size} />,
       order: 50,
-      // Declarative settings: the sandbox escape hatch and the link
-      // takeover render under this tab's row in the Side card settings
-      // page (the sandbox one is warned on).
+      // Declarative settings: the sandbox escape hatch, the link-takeover
+      // MASTER switch, and the per-protocol takeover switches (http on /
+      // https off by default) render under this tab's row in the Side card
+      // settings page (the sandbox one is warned on).
       settings: {
         toggles: [{
           key: 'browserNoSandbox',
@@ -183,6 +235,14 @@ export function builtinTabs(ctx: Context): readonly TabDescriptor[] {
           key: 'browserInterceptLinks',
           title: () => t('settingsBrowserLinksTitle'),
           desc: () => t('settingsBrowserLinksDesc'),
+        }, {
+          key: 'browserInterceptHttp',
+          title: () => t('settingsBrowserHttpTitle'),
+          desc: () => t('settingsBrowserHttpDesc'),
+        }, {
+          key: 'browserInterceptHttps',
+          title: () => t('settingsBrowserHttpsTitle'),
+          desc: () => t('settingsBrowserHttpsDesc'),
         }],
       },
       createTab: (state) => ({

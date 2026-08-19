@@ -22,15 +22,58 @@
 import type { ReactNode } from 'react'
 import type { Context } from '../context-types.ts'
 import {
-  activateTab, allLeaves, closeTab as closeTabReducer, openTabInActivePane, patchTab, togglePanel, treeOf,
-  type SidebarState, type SidebarStore, type SidebarTab,
+  activateTab as activateTabReducer, allLeaves, closeTab as closeTabReducer, leafWithTab,
+  openTabInActivePane, patchTab, tabOpenIn, togglePanel, treeOf,
+  type SidebarSnapshot, type SidebarState, type SidebarStore, type SidebarTab,
 } from './state.ts'
 import { isNarrowWidth } from './breakpoints.ts'
 import type { SessionScope } from './api.ts'
+import type { SidebarPrefs } from '../prefs-shared.ts'
 
-/** One declarative boolean setting of a tab/viewer, rendered as a nested
- *  switch row in the Side card settings page (e.g. the Subagent page's
- *  "auto-open when a subagent appears"). */
+/**
+ * Public state vocabulary re-exported for consumers (type-only; the values
+ * stay internal). External plugins name these types in their descriptors —
+ * e.g. `dedupeKey: (tab: SidebarTab) => tab.id`, `createTab: (state: SidebarState) => …`,
+ * or `badge: (…, state: SidebarState) => …`.
+ */
+export type {
+  SidebarTab,
+  SidebarState,
+  SidebarStore,
+  SidebarSnapshot,
+  SidebarDiffRef,
+  TabType,
+} from './state.ts'
+export type { SessionScope } from './api.ts'
+export type { SidebarPrefs } from '../prefs-shared.ts'
+
+/** The row control a declarative setting renders as in the settings popup. */
+export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select'
+
+/** One option of a `type: 'select'` setting row. */
+export interface SidebarSettingSelectOption {
+  /** The value written to the setting key when this option is picked
+   *  (JSON-serializable: string / number / boolean). */
+  value: string | number | boolean
+  /** Option title (i18n friendly: string or () => string). */
+  title: string | (() => string)
+  /** Option description (i18n friendly); rendered under the title in the
+   *  icon dropdown. */
+  desc?: string | (() => string)
+  /** Option icon: when ANY option declares one, the dropdown renders
+   *  big-icon option cards and the closed control shows the selected
+   *  option's icon too; without icons both are a single line of text. */
+  icon?: ReactNode | ((size: number) => ReactNode)
+}
+
+/** One declarative setting of a tab/viewer, rendered as a nested row in the
+ *  Side card settings page (e.g. the Subagent page's "auto-open when a
+ *  subagent appears" switch, or the terminal's custom font rows). `type`
+ *  selects the control: 'switch' (default) renders the custom switch,
+ *  'text' a free-form input committed on blur/Enter, 'number' a numeric
+ *  input clamped to `min`/`max`, 'select' a dropdown over the declared
+ *  `options` (single-pick writes the option's value; `multi: true` writes
+ *  the array of picked values and defaults to false). */
 export interface SidebarSettingToggle {
   /** The SidebarPrefs field this toggle reads and writes ('autoOpenSubagent'). */
   key: string
@@ -38,17 +81,61 @@ export interface SidebarSettingToggle {
   title: string | (() => string)
   /** Row description (i18n friendly). */
   desc?: string | (() => string)
+  /** Row control type; defaults to 'switch' (backward compatible). */
+  type?: SidebarSettingToggleType
+  /** Lower bound for `type: 'number'` rows (clamped on commit). */
+  min?: number
+  /** Upper bound for `type: 'number'` rows (clamped on commit). */
+  max?: number
+  /** Input placeholder for `type: 'text'` rows. */
+  placeholder?: string
+  /** Unit suffix rendered after the input (e.g. 'px' for a size row). */
+  unit?: string
+  /** Options of a `type: 'select'` row. */
+  options?: readonly SidebarSettingSelectOption[]
+  /** Whether a `type: 'select'` row allows picking several options (the
+   *  stored value is then an array of option values); defaults to false. */
+  multi?: boolean
+}
+
+/** Props of a descriptor's custom settings panel (`settings.render`). */
+export interface SidebarSettingsRenderProps {
+  store: SidebarStore
+  service: BetterSidebarService
+  prefs: SidebarPrefs
+  /** This descriptor's own persisted settings blob (from `pluginSettings[id]`). */
+  pluginSettings: Record<string, unknown>
+  /** Persist one plugin-owned setting of this descriptor. */
+  updatePluginSetting(key: string, value: unknown): void
+  /** Close the settings popup. */
+  close(): void
 }
 
 /** Declarative settings of one registered tab or file viewer. */
 export interface SidebarSettingsDeclaration {
   /**
-   * Extra boolean toggles rendered under the feature's own row in the
+   * Extra settings rows rendered under the feature's own row in the
    * settings page (only while the feature is enabled). Keys must be fields
    * of the host's PrefsSchema (built-ins: 'autoOpenSubagent',
-   * 'agentTerminalTools'); unknown keys are dropped by the settings seam.
+   * 'agentTerminalTools', 'terminalFontFamily'); unknown keys are dropped
+   * by the settings seam.
    */
   toggles?: readonly SidebarSettingToggle[]
+  /**
+   * Plugin-owned settings rows (v0.12.0+): same row controls as `toggles`
+   * (switch/text/number), but the keys are plugin-local and persisted in
+   * the sidebar's own prefs document under `pluginSettings[<descriptor id>]`
+   * — no host PrefsSchema field needed. Values must be JSON-serializable
+   * (the row controls produce strings / numbers / booleans).
+   */
+  pluginToggles?: readonly SidebarSettingToggle[]
+  /**
+   * Custom settings panel (v0.12.0+): when given, the gear popup renders
+   * this instead of the row lists (`toggles` / `pluginToggles`). Receives
+   * the shared store/service, the live prefs, the descriptor's own
+   * `pluginSettings` blob, and a persistence helper.
+   */
+  render?: (props: SidebarSettingsRenderProps) => ReactNode
 }
 
 /** Props every tab component receives (builtins and external alike). */
@@ -106,12 +193,49 @@ export interface TabDescriptor {
    */
   createTab?: (state: SidebarState) => { tab: SidebarTab; patch?: Partial<SidebarState> } | null
   /**
+   * External-link target claim (v0.13.0+): when a GUI external-link click
+   * is taken over (the `browserInterceptLinks` master AND the URL's
+   * protocol flag — `browserInterceptHttp` / `browserInterceptHttps` —
+   * are on), the first registered tab whose `urlTarget(url)` returns true
+   * is opened with `openTab({ type, url, title: hostname })` — the URL is
+   * the whole payload (the tab reads it from `tab.path`). Registration
+   * order wins (first claim first served); a disabled tab type is skipped;
+   * a throwing predicate is swallowed (console.error, the type is skipped).
+   * The built-in browser tab declares NO urlTarget — it stays the implicit
+   * fallback target, so plugins can never be shadowed by it. To host more
+   * than one URL at a time, mint per-URL ids through `createTab` (the
+   * browser builtin's pattern); otherwise the id safety net focuses the
+   * existing tab of the same type and the new URL is not applied.
+   */
+  urlTarget?: (url: URL) => boolean
+  /**
    * Declarative settings shown in the Side card settings page: every
    * registered tab gets an enable/disable switch (icon + title + id), and
    * `settings.toggles` adds nested switches tied to SidebarPrefs fields
    * (e.g. the subagent tab's 'autoOpenSubagent').
    */
   settings?: SidebarSettingsDeclaration
+  /**
+   * Tab-strip badge (v0.12.0+): a small pill rendered on the tab next to
+   * the icon — a number renders as a count (99+ capped), a string renders
+   * as-is, null/undefined hides the badge. Called on every tab-bar render,
+   * so keep it cheap; a throw is swallowed (no badge shown).
+   */
+  badge?: (ctx: Context, scope: SessionScope, state: SidebarState) => string | number | null | undefined
+  /**
+   * Lifecycle callbacks (v0.12.0+). Fired by the SERVICE paths only:
+   * `onOpen` when an open actually creates a tab (a dedupe/id-safety-net
+   * focus is NOT an open — it fires `onActivate` instead), `onActivate`
+   * when a tab is focused (dedupe focus, id-safety-net focus, or the
+   * tab-bar activation), `onClose` when a tab is closed through
+   * `closeTab`. Builtin-only flows that mutate state directly (the diff
+   * split placement, agent-terminal reconcile) never touch external tabs
+   * and fire no callbacks. A throwing callback is logged and never breaks
+   * the open/close/activate flow.
+   */
+  onOpen?: (tab: SidebarTab, scope: SessionScope) => void
+  onActivate?: (tab: SidebarTab, scope: SessionScope) => void
+  onClose?: (tab: SidebarTab, scope: SessionScope) => void
   component: (props: TabComponentProps) => ReactNode
 }
 
@@ -139,6 +263,33 @@ export interface FileViewerProps {
   mediaUrl?: string
   /** custom load() return value (fetchStrategy='custom'). */
   customData?: unknown
+  /** Internal (built-in text editor): 'host' asks the viewer to skip its own
+   *  toolbar row — the editor host's merged-mode header renders it instead,
+   *  fed through the two callbacks below. Viewers that ignore these fields
+   *  render exactly as before. */
+  toolbar?: 'self' | 'host'
+  /** Internal: the viewer reports its toolbar state (mode/dirty/save). */
+  onToolbarState?: (state: EditorToolbarState) => void
+  /** Internal: the viewer registers its toolbar commands on mount (null on
+   *  unmount). */
+  onToolbarControls?: (controls: EditorToolbarControls | null) => void
+}
+
+/** The toolbar state a text editor reports to the host's merged-mode header. */
+export interface EditorToolbarState {
+  /** Whether the preview/edit mode toggle applies (markdown/html). */
+  modes: boolean
+  mode: 'preview' | 'edit'
+  dirty: boolean
+  /** Whether saving applies (text content loaded). */
+  editable: boolean
+  saveState: 'idle' | 'saving' | 'saved' | 'failed'
+}
+
+/** The commands the host's merged-mode header sends back to the viewer. */
+export interface EditorToolbarControls {
+  setMode(mode: 'preview' | 'edit'): void
+  save(): void
 }
 
 /** Describes one file previewer (builtins register themselves too). */
@@ -159,8 +310,9 @@ export interface FileViewerDescriptor {
    * is consulted before its `exts` (per-descriptor, in priority order).
    */
   detect?: (path: string, head: Uint8Array) => boolean
-  /** fetchStrategy='custom' loader. */
-  load?: (path: string, scope: SessionScope) => Promise<unknown>
+  /** fetchStrategy='custom' loader. `signal` (v0.12.0+) aborts on viewer
+   *  teardown / re-match; loaders that ignore it keep working. */
+  load?: (path: string, scope: SessionScope, signal?: AbortSignal) => Promise<unknown>
   /**
    * Declarative settings shown in the Side card settings page: every
    * registered viewer gets an enable/disable switch (icon + title + exts).
@@ -169,7 +321,26 @@ export interface FileViewerDescriptor {
   component: (props: FileViewerProps) => ReactNode
 }
 
-/** The registry service published as `ctx.betterSidebar`. */
+/** One `openTab` request. */
+export interface OpenTabSeed {
+  type: string
+  /** Overrides the descriptor's title when given (the editor tab shows the file name). */
+  title?: string
+  /** A file path (the editor tab's content seed). */
+  path?: string
+  /** A diff reference (the diff tab's content seed). */
+  diff?: SidebarTab['diff']
+  /** Explicit tab id (defaults to the type). */
+  id?: string
+  /** A URL the tab navigates to on mount (the browser tab's seed). */
+  url?: string
+  /** JSON-serializable custom state carried on the minted tab (persisted across reloads; v0.12.0+). */
+  meta?: unknown
+}
+
+/**
+ * The registry service published as `ctx.betterSidebar`.
+ */
 export interface BetterSidebarService {
   registerTab(descriptor: TabDescriptor): () => void
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
@@ -200,18 +371,58 @@ export interface BetterSidebarService {
    * usually pairs it with a hostname `title`). A disabled tab type is a
    * no-op.
    *
+   * `scope` (v0.12.0+) targets a specific session: when given, the open
+   * lands in THAT session's sidebar state (loading it if it has none yet)
+   * without switching the UI's active session; when absent the open lands
+   * in the currently active session (the pre-0.12 behavior).
+   *
    * A CONTENT open (a `path` or `url` seed) must land in sight: when the
    * panel hosting the landing pane is collapsed, it is expanded
    * automatically (the right panel by default, the bottom panel when the
    * active pane lives there; on narrow viewports the merged drawer opens).
    * Type-only opens (the + menu, agent-terminal auto-tabs) never expand —
    * the panel behavior is their caller's business.
+   *
+   * Note: `available` gates the + menu's disabled state only — it does NOT
+   * refuse `openTab` (only the settings disable switch does).
    */
-  openTab(seed: { type: string; title?: string; path?: string; diff?: SidebarTab['diff']; id?: string; url?: string }): void
-  /** Close a tab by id. */
-  closeTab(tabId: string): void
+  openTab(seed: OpenTabSeed, scope?: SessionScope): void
+  /**
+   * Close a tab by id (fires descriptor.onClose). An unknown tab id is a
+   * strict no-op (no state churn, no callbacks). `scope` (v0.12.0+) rides
+   * to the callback (its optional cwd included); absent, the callback gets
+   * `{ sessionId }` of the active session.
+   */
+  closeTab(tabId: string, scope?: SessionScope): void
   /** Subscribe to registry changes (register/dispose). */
   subscribe(listener: () => void): () => void
+  /** The plugin version this service instance was built from ('0.12.0'). */
+  readonly version: string
+  /**
+   * Monotonic capability list (v0.12.0+): 'badge' | 'tabLifecycle' |
+   * 'updateTab' | 'openFile' | 'targetedOpen' | 'stateSubscription' |
+   * 'tabMeta' | 'pluginSettings'. Features are never removed — consumers
+   * gate new API usage on membership.
+   */
+  readonly features: readonly string[]
+  /**
+   * The current sidebar snapshot: the active session id, its state (panel
+   * geometry, open tabs, expansions), and the side card prefs (v0.12.0+).
+   * `state`/`sessionId` are undefined until a session becomes active.
+   */
+  getSnapshot(): SidebarSnapshot
+  /** Subscribe to snapshot changes (session switch, state changes, prefs changes). Returns the disposer. */
+  subscribeState(listener: () => void): () => void
+  /** Update an open tab's display fields (title / path / meta); a missing tab id is a no-op. */
+  updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void
+  /**
+   * Activate an open tab (the tab-bar activation path; fires
+   * descriptor.onActivate). An unknown tab id is a strict no-op. `scope`
+   * (v0.12.0+) rides to the callback like `closeTab`'s.
+   */
+  activateTab(tabId: string, scope?: SessionScope): void
+  /** Open a file in the sidebar editor of `scope`'s session (title defaults to the file name). */
+  openFile(scope: SessionScope, path: string, title?: string): void
 }
 
 /** Extract the lowercase extension without leading dot from a path. */
@@ -220,6 +431,81 @@ function extOfPath(path: string): string {
   if (at === -1) return ''
   const base = path.slice(at + 1).toLowerCase()
   return base.includes('/') || base.includes('\\') ? '' : base
+}
+
+/** The file name of a path (both separators). */
+function baseNameOf(path: string): string {
+  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return at === -1 ? path : path.slice(at + 1)
+}
+
+/**
+ * Find the tab type that claims an intercepted external-link URL (v0.13.0+).
+ * Walks the descriptors in REGISTRATION order and returns the first one
+ * that declares `urlTarget` and matches `url`; a throwing predicate is
+ * swallowed (console.error, type skipped) so one broken plugin can never
+ * break the whole link pipeline. The caller passes the ENABLED tab
+ * descriptors (enablement is the caller's prefs domain — filter
+ * `service.getTabs()` through `tabsEnabled` before matching) and falls
+ * back to the built-in browser tab when nothing claims the URL (the
+ * browser never declares `urlTarget` itself, so it can never shadow a
+ * plugin claim).
+ */
+export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDescriptor | undefined {
+  for (const tab of tabs) {
+    if (tab.urlTarget === undefined) continue
+    let claimed = false
+    try {
+      claimed = tab.urlTarget(url) === true
+    } catch (error) {
+      console.error('[dsh-better-sidebar] urlTarget error:', error)
+      continue
+    }
+    if (claimed) return tab
+  }
+  return undefined
+}
+
+/**
+ * The plugin version this service instance reports. Keep in lockstep with
+ * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
+ */
+export const SIDEBAR_SERVICE_VERSION = '0.13.1'
+
+/**
+ * Monotonic capability list consumers use to gate new API usage (features
+ * are never removed). Each string names a v0.12.0+ capability:
+ * - 'badge': TabDescriptor.badge
+ * - 'tabLifecycle': TabDescriptor.onOpen/onActivate/onClose
+ * - 'updateTab': BetterSidebarService.updateTab
+ * - 'openFile': BetterSidebarService.openFile
+ * - 'targetedOpen': BetterSidebarService.openTab(seed, scope?)
+ * - 'stateSubscription': getSnapshot/subscribeState
+ * - 'tabMeta': SidebarTab.meta (seeds, createTab, updateTab, persistence)
+ * - 'pluginSettings': SidebarSettingsDeclaration.pluginToggles/render
+ * - 'urlTarget' (v0.13.0): TabDescriptor.urlTarget (external-link claims)
+ * - 'settingSelect': SidebarSettingToggle type 'select' (options/multi)
+ */
+export const SIDEBAR_FEATURES = [
+  'badge',
+  'tabLifecycle',
+  'updateTab',
+  'openFile',
+  'targetedOpen',
+  'stateSubscription',
+  'tabMeta',
+  'pluginSettings',
+  'urlTarget',
+  'settingSelect',
+] as const
+
+/** Run one plugin callback; a throw is logged and never breaks the caller. */
+function safeCall(fn: () => void): void {
+  try {
+    fn()
+  } catch (error) {
+    console.error('[dsh-better-sidebar] plugin callback error:', error)
+  }
 }
 
 /**
@@ -308,7 +594,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     return undefined
   }
 
-  const openTab = (seed: { type: string; title?: string; path?: string; diff?: SidebarTab['diff']; id?: string; url?: string }): void => {
+  const openTab = (seed: OpenTabSeed, scope?: SessionScope): void => {
     // A type the user disabled in settings never opens — neither from the
     // + menu nor from derived flows (file opens, subagent auto-open,
     // external plugins). Already-open tabs keep rendering.
@@ -316,9 +602,23 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       console.warn(`[dsh-better-sidebar] tab type "${seed.type}" is disabled in the side card settings`)
       return
     }
-    store.reduce((state) => {
-      const descriptor = tabs.get(seed.type)
-      if (descriptor === undefined) return state
+    const descriptor = tabs.get(seed.type)
+    if (descriptor === undefined) return
+    // A scope targets another session: the open lands in THAT session's
+    // state (loaded on demand) without switching the UI's active session.
+    const targetSessionId = scope?.sessionId ?? store.getSnapshot().sessionId
+    if (targetSessionId === undefined) return
+    const callbackScope: SessionScope = scope ?? { sessionId: targetSessionId }
+    // Whether this open targets a session that is NOT the one on screen: a
+    // targeted open must not auto-expand panels the user cannot see (the
+    // expansion is about landing "in sight" for the CURRENT viewer).
+    const activeSessionId = store.getSnapshot().sessionId
+    const targetsInactiveSession = scope !== undefined && scope.sessionId !== activeSessionId
+    // Lifecycle capture: `created` when the open minted a NEW tab (a
+    // dedupe/id-safety-net focus is an ACTIVATION, not an open).
+    let created: SidebarTab | undefined
+    let activated: SidebarTab | undefined
+    const reducer = (state: SidebarState): SidebarState => {
       // Let the descriptor mint the tab (terminal's nextTerminal bump, etc.).
       let tab: SidebarTab
       let next: SidebarState
@@ -337,20 +637,49 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
           title: seed.title ?? (typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title),
           ...(seed.path !== undefined ? { path: seed.path } : {}),
           ...(seed.diff !== undefined ? { diff: seed.diff } : {}),
+          ...(seed.meta !== undefined ? { meta: seed.meta } : {}),
         }
         next = applyDedupe(state, tab, descriptor)
       }
-      // A URL seed pre-fills the tab's path (the browser tab navigates to it
-      // on mount). An explicit seed.title also wins over a createTab-minted
-      // default title (e.g. the sidebar-browser's hostname title).
-      let landed: SidebarState
-      if (seed.url !== undefined) {
+      // Classify the landing against the INPUT state FIRST: a FOCUS fires
+      // onActivate with the tab that is active NOW; a real creation fires
+      // onOpen with the minted tab. Both the dedupeKey match AND the id
+      // match count as a focus — a descriptor deduping by key (e.g. editor
+      // by path) can focus an existing tab for a NEW requested id, and
+      // classifying that as a creation would fire onOpen with a phantom
+      // tab that never closes.
+      const dedupeKey = descriptor.dedupeKey ?? (descriptor.single === true ? () => descriptor.id : undefined)
+      const key = dedupeKey?.(tab)
+      const inputTabs = allLeaves(state.splits).concat(allLeaves(state.bottomSplits)).flatMap(leaf => leaf.tabs)
+      const existedByKey = key !== undefined
+        && inputTabs.some(candidate => candidate.type === tab.type && dedupeKey!(candidate) === key)
+      const existedById = tabOpenIn(state, tab.id)
+      const isCreation = !existedByKey && !existedById
+      // A URL seed pre-fills a NEWLY CREATED tab's path (the browser tab
+      // navigates to it on mount); a FOCUS must never have its path
+      // overwritten. An explicit seed.title still wins over a createTab-
+      // minted default title (e.g. the sidebar-browser's hostname title).
+      let landed: SidebarState = next
+      if (seed.url !== undefined && isCreation) {
         landed = patchTab(next, tab.id, {
           path: seed.url,
           ...(seed.title !== undefined ? { title: seed.title } : {}),
         })
+      }
+      // Lifecycle capture (before the auto-expand block, which early-returns).
+      if (isCreation) {
+        // Resolve the ACTUAL landed tab — the url patch mints a new object,
+        // so the callback must see the tab that was really inserted.
+        const landedTabs = allLeaves(landed.splits).concat(allLeaves(landed.bottomSplits)).flatMap(leaf => leaf.tabs)
+        created = landedTabs.find(candidate => candidate.id === tab.id) ?? tab
       } else {
-        landed = next
+        // A focus happened: resolve the tab that is actually active now and
+        // report THAT to onActivate (never the caller's un-inserted seed).
+        const candidates = allLeaves(landed.splits).concat(allLeaves(landed.bottomSplits)).flatMap(leaf => leaf.tabs)
+        activated = key !== undefined
+          ? candidates.find(candidate => candidate.type === tab.type && dedupeKey!(candidate) === key)
+          : candidates.find(candidate => candidate.id === tab.id)
+        activated ??= tab
       }
       // A CONTENT open (file / browser) must land in sight: when the panel
       // hosting the landing pane is collapsed, expand it. On narrow
@@ -361,9 +690,11 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       // agent-terminal auto-tabs) never expand (the panel behavior is their
       // caller's business). The check runs on the post-dedupe state, so a
       // content open that merely FOCUSES an existing tab expands the panel
-      // too — the open must never land out of sight.
+      // too — the open must never land out of sight. Opens targeted at an
+      // INACTIVE session never expand (nothing is in sight for the user).
       if (
-        typeof window !== 'undefined'
+        !targetsInactiveSession
+        && typeof window !== 'undefined'
         && (seed.path !== undefined || seed.url !== undefined)
       ) {
         if (isNarrowWidth(window.innerWidth)) {
@@ -378,15 +709,81 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
         }
       }
       return landed
-    })
+    }
+    // A scope targeting ANOTHER session lands the open there without
+    // switching the UI; a scope naming the active session (or no scope)
+    // takes the regular reduce path so the UI notifies and re-renders.
+    if (targetsInactiveSession) {
+      store.reduceFor(scope.sessionId, reducer)
+    } else {
+      store.reduce(reducer)
+    }
+    if (created !== undefined) safeCall(() => descriptor.onOpen?.(created!, callbackScope))
+    else if (activated !== undefined) safeCall(() => descriptor.onActivate?.(activated!, callbackScope))
   }
 
-  const closeTab = (tabId: string): void => {
+  const closeTab = (tabId: string, scope?: SessionScope): void => {
+    let closed: SidebarTab | undefined
     store.reduce((state) => {
+      // Unknown tab ids are a strict no-op: no state churn, no notify, no
+      // pointless localStorage rewrite (mirrors updateTab's short-circuit).
+      if (!tabOpenIn(state, tabId)) return state
       const paneId = findPaneIdOf(state, tabId)
-      if (paneId === '') return state
+      const leaf = leafWithTab(state[treeOf(state, paneId)], tabId)
+      closed = leaf?.tabs.find(tab => tab.id === tabId)
       return closeTabReducer(state, paneId, tabId)
     })
+    if (closed !== undefined) {
+      const sessionId = scope?.sessionId ?? store.getSnapshot().sessionId
+      if (sessionId !== undefined) {
+        const descriptor = tabs.get(closed.type)
+        // An explicit scope (with its optional cwd) rides to the callback.
+        safeCall(() => descriptor?.onClose?.(closed!, scope ?? { sessionId }))
+      }
+    }
+  }
+
+  /** The snapshot the store publishes (state/prefs carry the active session). */
+  const getSnapshot = (): SidebarSnapshot => store.getSnapshot()
+
+  /** Store changes: session switch, state mutations, prefs writes. */
+  const subscribeState = (listener: () => void): (() => void) => store.subscribe(listener)
+
+  /** Patch an open tab's display fields (a missing tab id is a no-op). */
+  const updateTab = (tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void => {
+    store.reduce((state) => patchTab(state, tabId, {
+      ...(patch.title !== undefined ? { title: patch.title } : {}),
+      ...(patch.path !== undefined ? { path: patch.path } : {}),
+      ...(patch.meta !== undefined ? { meta: patch.meta } : {}),
+    }))
+  }
+
+  /** Activate an open tab (the tab-bar activation path; fires onActivate). */
+  const activateTab = (tabId: string, scope?: SessionScope): void => {
+    let activated: SidebarTab | undefined
+    store.reduce((state) => {
+      // Unknown tab ids are a strict no-op (no state churn / notify).
+      if (!tabOpenIn(state, tabId)) return state
+      const paneId = findPaneIdOf(state, tabId)
+      const leaf = leafWithTab(state[treeOf(state, paneId)], tabId)
+      activated = leaf?.tabs.find(tab => tab.id === tabId)
+      return activateTabReducer(state, paneId, tabId)
+    })
+    if (activated !== undefined) {
+      const sessionId = scope?.sessionId ?? store.getSnapshot().sessionId
+      if (sessionId !== undefined) {
+        const descriptor = tabs.get(activated.type)
+        // An explicit scope (with its optional cwd) rides to the callback.
+        safeCall(() => descriptor?.onActivate?.(activated!, scope ?? { sessionId }))
+      }
+    }
+  }
+
+  /** Open a file in the sidebar editor of `scope`'s session (title defaults
+   *  to the file name; the tab id is path-derived, like the internal
+   *  open-path interception, so distinct files open side by side). */
+  const openFile = (scope: SessionScope, path: string, title?: string): void => {
+    openTab({ type: 'editor', title: title ?? baseNameOf(path), path, id: `editor:${path}` }, scope)
   }
 
   return {
@@ -401,6 +798,13 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     openTab,
     closeTab,
     subscribe,
+    version: SIDEBAR_SERVICE_VERSION,
+    features: SIDEBAR_FEATURES,
+    getSnapshot,
+    subscribeState,
+    updateTab,
+    activateTab,
+    openFile,
   }
 }
 
@@ -419,7 +823,7 @@ function applyDedupe(state: SidebarState, tab: SidebarTab, descriptor: TabDescri
     // bottom panel focuses an existing instance wherever it lives.
     for (const leaf of allLeaves(state.splits).concat(allLeaves(state.bottomSplits))) {
       const existing = leaf.tabs.find(t => t.type === tab.type && dedupeKey!(t) === key)
-      if (existing !== undefined) return activateTab(state, leaf.id, existing.id)
+      if (existing !== undefined) return activateTabReducer(state, leaf.id, existing.id)
     }
   }
   return openTabInActivePane(state, tab)

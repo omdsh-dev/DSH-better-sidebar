@@ -8,18 +8,20 @@
  * bundle itself is a module-table consumer only (react + ui-primitives +
  * xterm, all provided or inlined).
  */
-import { Component, createElement, type ErrorInfo, type ReactNode } from 'react'
+import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Context } from '../context-types.ts'
-import { createSidebarStore } from './state.ts'
-import { createBetterSidebarService } from './service.ts'
+import { allLeaves, createSidebarStore, isAgentTabId } from './state.ts'
+import { createBetterSidebarService, matchUrlTarget } from './service.ts'
 import { resetChunks } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
+import { RenderBoundary } from './RenderBoundary.tsx'
 import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
-import { loadPrefs } from './prefs.ts'
+import { registerSettingsNavIcon } from './settings-nav-icon.ts'
+import { loadExternalDisable, loadPrefs } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
 import { LOCALE_NS, attachLocale, t, zh, en } from './locales.ts'
@@ -31,40 +33,12 @@ import './layout.css'
 export const inject = ['slots', 'sessions', 'connection', 'workspaces', 'locale']
 
 /**
- * Error boundary over the sidebar tree: a render error must never blank the
- * whole panel silently — it shows a dismissible error strip and logs the
- * stack for diagnosis.
+ * Error boundary over the sidebar tree (root scope): a render error in the
+ * sidebar SHELL itself must never blank the page silently — the shared
+ * RenderBoundary shows a dismissible error strip and logs the stack. The
+ * per-tab scope (Sidebar.tsx) catches viewer/editor crashes first; this root
+ * boundary stays as the last resort for Workbench/shell errors.
  */
-class SidebarBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
-  state = { error: null as string | null }
-
-  static getDerivedStateFromError(error: unknown): { error: string } {
-    return { error: error instanceof Error ? error.message : String(error) }
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error('[dsh-better-sidebar] render error:', error, info.componentStack)
-  }
-
-  render(): ReactNode {
-    if (this.state.error !== null) {
-      return (
-        <div className={css.boundaryError}>
-          <span>dsh-better-sidebar: {this.state.error}</span>
-          <button
-            type="button"
-            className={css.terminalRetry}
-            onClick={() => { this.setState({ error: null }) }}
-          >
-            {t('terminalRetry')}
-          </button>
-        </div>
-      )
-    }
-    return this.props.children
-  }
-}
-
 /**
  * Client plugin body.
  * @param ctx - the client cordis context (slots, sessions).
@@ -92,11 +66,31 @@ export function apply(ctx: Context): void {
   // are ready by the time the sidebar renders.
   const service = createBetterSidebarService(sidebarStore)
   ctx.provide('betterSidebar', service)
+  // Terminal tab titles use the host's effective shell name (e.g. bash/zsh)
+  // instead of "Terminal 1". Start with a safe fallback and replace it as
+  // soon as the host shell info resolves. Tabs created before the response
+  // arrives keep the fallback title, so also retitle any already-open UI
+  // terminal tabs that still carry it.
+  const fallbackTitle = t('terminal')
+  let terminalTitle = fallbackTitle
+  void api.shellGet().then(({ name }) => {
+    terminalTitle = name
+    const snapshot = service.getSnapshot()
+    if (snapshot.state === undefined) return
+    const tabs = allLeaves(snapshot.state.splits)
+      .concat(allLeaves(snapshot.state.bottomSplits))
+      .flatMap(leaf => leaf.tabs)
+    for (const tab of tabs) {
+      if (tab.type === 'terminal' && !isAgentTabId(tab.id) && tab.title === fallbackTitle) {
+        service.updateTab(tab.id, { title: name })
+      }
+    }
+  }).catch(() => { /* keep fallback */ })
   // Register the plugin's own built-in tabs and viewers through the same
   // service (eating our own dogfood). The disposer unregisters them on
   // fiber disposal (HMR-safe).
   ctx.effect(
-    () => registerBuiltins(ctx, service),
+    () => registerBuiltins(ctx, service, { terminalTitle: () => terminalTitle }),
     'dsh-better-sidebar: register built-in tabs and viewers',
   )
   // A failure anywhere in the client lifecycle must never take the app down
@@ -124,7 +118,30 @@ export function apply(ctx: Context): void {
       let disposed = false
       let root: Root | undefined
       let host: HTMLDivElement | undefined
-      void (async () => {
+      let mounted = false
+      const unmount = (): void => {
+        if (!mounted) return
+        mounted = false
+        root?.unmount()
+        root = undefined
+        host?.remove()
+        host = undefined
+      }
+      const mount = (): void => {
+        if (mounted || disposed) return
+        try {
+          host = document.createElement('div')
+          host.setAttribute('data-dsh-better-sidebar', '')
+          document.body.appendChild(host)
+          root = createRoot(host)
+          root.render(createElement(RenderBoundary, { className: css.boundaryError }, createElement(Sidebar, { ctx, store: sidebarStore })))
+          mounted = true
+        } catch (error) {
+          fail('mount', error)
+        }
+      }
+      const sync = async (): Promise<void> => {
+        if (disposed) return
         // Resolve the user's side card prefs BEFORE the first session seeds,
         // so a brand-new conversation opens (or stays closed) at the chosen
         // width from first paint. A settings route failure falls back to the
@@ -136,20 +153,26 @@ export function apply(ctx: Context): void {
         ])
         if (prefs !== null) sidebarStore.setPrefs(prefs)
         if (disposed) return
-        try {
-          host = document.createElement('div')
-          host.setAttribute('data-dsh-better-sidebar', '')
-          document.body.appendChild(host)
-          root = createRoot(host)
-          root.render(createElement(SidebarBoundary, null, createElement(Sidebar, { ctx, store: sidebarStore })))
-        } catch (error) {
-          fail('mount', error)
-        }
-      })()
+        // Mutual exclusion with the dsh-web-ui family right panel: while the
+        // aionui-panel provider is selected, the sidebar must not mount at
+        // all. Re-evaluated on every settings-document update (live switch).
+        const suspended = await loadExternalDisable(api)
+        if (disposed) return
+        sidebarStore.setSuspended(suspended)
+        if (suspended) unmount()
+        else mount()
+      }
+      void sync()
+      // Live re-evaluation: the runtime broadcasts settings-document updates
+      // (the aionui card saves through the same document). Best effort —
+      // deployments without the 'remote' service fall back to boot-time
+      // evaluation only.
+      const remote = ctx.get('remote') as { $on?: (event: string, listener: () => void) => () => void } | undefined
+      const offRemote = remote?.$on?.('settings/document-updated', () => { void sync() })
       return () => {
         disposed = true
-        root?.unmount()
-        host?.remove()
+        offRemote?.()
+        unmount()
       }
     }, 'dsh-better-sidebar: sidebar mount')
 
@@ -180,16 +203,36 @@ export function apply(ctx: Context): void {
     ctx.effect(
       () => {
         try {
-          // External http(s) links in the chat/GUI open the sidebar browser
-          // instead of a new window (gated on the browserInterceptLinks pref
-          // AND the browser tab's enable switch; Ctrl/Cmd+click bypasses).
+          // External http(s) links in the chat/GUI open the sidebar instead
+          // of a new window. Gated on the browserInterceptLinks MASTER pref,
+          // the URL's protocol flag (browserInterceptHttp / Https — https
+          // defaults OFF: most https sites refuse iframe embedding), and the
+          // target tab's enable switch; Ctrl/Cmd+click always bypasses. The
+          // target is the first registered tab whose `urlTarget` claims the
+          // URL (enabled tabs only), else the built-in browser tab.
+          const urlTargetOf = (url: URL): string | undefined => {
+            const prefs = sidebarStore.getPrefs()
+            const enabled = service.getTabs().filter(tab => prefs.tabsEnabled[tab.id] !== false)
+            return matchUrlTarget(enabled, url)?.id
+          }
           return registerLinkInterception({
-            takeoverEnabled: () => sidebarStore.getPrefs().browserInterceptLinks !== false
-              && sidebarStore.getPrefs().tabsEnabled['browser'] !== false,
+            takeoverEnabled: (url) => {
+              if (sidebarStore.getSuspended()) return false
+              const prefs = sidebarStore.getPrefs()
+              if (prefs.browserInterceptLinks === false) return false
+              const protocolOn = url.protocol === 'https:'
+                ? prefs.browserInterceptHttps !== false
+                : prefs.browserInterceptHttp !== false
+              if (!protocolOn) return false
+              // A plugin claim is the target (already enabled-filtered);
+              // otherwise the built-in browser must be enabled.
+              return urlTargetOf(url) !== undefined || prefs.tabsEnabled['browser'] !== false
+            },
             openInSidebar: (url) => {
               let title: string | undefined
               try { title = new URL(url).hostname } catch { /* keep the default title */ }
-              ctx.betterSidebar?.openTab({ type: 'browser', url, title })
+              const type = urlTargetOf(new URL(url)) ?? 'browser'
+              ctx.betterSidebar?.openTab({ type, url, title })
             },
             selfOrigin: window.location.origin,
           })
@@ -203,11 +246,12 @@ export function apply(ctx: Context): void {
 
     // The IME guard: composition keys (candidate arrows, confirm, cancel)
     // belong to the input method, never to page JS. Inlined third-party UI
-    // (Univer's office controls) has shipped unguarded keydown handlers that
-    // hijack ArrowUp/ArrowDown and break Chinese input (#562 regression); the
-    // document-capture guard neutralizes the whole class before React or any
-    // native listener sees the event. Registered as early as possible so no
-    // other capture-phase listener can win the ordering race.
+    // (formerly Univer's office controls, #562 regression) has shipped
+    // unguarded keydown handlers that hijack ArrowUp/ArrowDown and break
+    // Chinese input; the document-capture guard neutralizes the whole class
+    // before React or any native listener sees the event. Registered as
+    // early as possible so no other capture-phase listener can win the
+    // ordering race.
     ctx.effect(
       () => {
         try {
@@ -218,6 +262,16 @@ export function apply(ctx: Context): void {
         }
       },
       'dsh-better-sidebar: IME composition guard',
+    )
+
+    // DSH 0.1.x does not yet carry an icon through the settings.section
+    // registration contract: its shell renders a generic gear for every
+    // external section. Mark only this plugin's localized nav row so
+    // layout.css can paint the requested Side card SVG; the disposer clears
+    // the marker for HMR / plugin disable.
+    ctx.effect(
+      () => registerSettingsNavIcon(() => t('settingsNav')),
+      'dsh-better-sidebar: settings navigation icon',
     )
 
     // The "Side card" settings section: appears in the DSH Settings shell

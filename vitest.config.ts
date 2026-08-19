@@ -19,5 +19,18 @@ export default defineConfig({
         inline: [/@deepseek-ai\/dsh-client-ui-primitives/],
       },
     },
+    // The Playwright headless-render lane lives in tests/e2e (specs named
+    // *.e2e.ts). Keep vitest from ever collecting it, both by naming (the
+    // default include only matches *.test.* / *.spec.*) and by an explicit
+    // exclude. NOTE: `exclude` REPLACES vitest's defaults, so the standard
+    // node_modules/dist/etc. excludes must be restated here.
+    exclude: [
+      'tests/e2e/**',
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/cypress/**',
+      '**/.{idea,git,cache,output,temp}/**',
+      '**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build,eslint,prettier}.config.*',
+    ],
   },
 })

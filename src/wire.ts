@@ -4,7 +4,7 @@
  * `{ok: true, value}` on success and `{ok: false, error: {code, message}}`
  * (HTTP 4xx/5xx matching the code) on failure.
  */
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { SidebarHttpRequest, SidebarHttpResponse } from './context-types.ts'
 
 /** Machine-readable error codes of the sidebar API. */
 export type SidebarErrorCode =
@@ -15,6 +15,7 @@ export type SidebarErrorCode =
   | 'fs-error'
   | 'git-error'
   | 'pty-error'
+  | 'pty-deps-missing'
   | 'job-error'
   | 'settings-rejected'
   | 'settings-conflict'
@@ -41,11 +42,13 @@ export interface SidebarOk<T> { ok: true; value: T }
 export interface SidebarErr { ok: false; error: { code: SidebarErrorCode; message: string } }
 
 /** Read and parse the JSON request body (bounded; malformed → bad-request). */
-export async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+export async function readJsonBody(req: SidebarHttpRequest): Promise<unknown> {
   const chunks: Buffer[] = []
   let total = 0
   for await (const chunk of req) {
-    const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk
+    // The structural request yields string | Uint8Array; Buffer.from accepts
+    // both (and the real runtime chunks are node Buffers anyway).
+    const buffer = Buffer.from(chunk)
     total += buffer.length
     if (total > MAX_BODY_BYTES) {
       throw new SidebarError('bad-request', 'request body too large')
@@ -62,19 +65,19 @@ export async function readJsonBody(req: IncomingMessage): Promise<unknown> {
 }
 
 /** Write a JSON response with the given status. */
-export function writeJson(res: ServerResponse, status: number, body: unknown): void {
+export function writeJson(res: SidebarHttpResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body)
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
   res.end(payload)
 }
 
 /** Write the success envelope. */
-export function writeOk(res: ServerResponse, value: unknown): void {
+export function writeOk(res: SidebarHttpResponse, value: unknown): void {
   writeJson(res, 200, { ok: true, value })
 }
 
 /** Write the failure envelope for any thrown value (unknown → internal 500). */
-export function writeError(res: ServerResponse, error: unknown): void {
+export function writeError(res: SidebarHttpResponse, error: unknown): void {
   if (error instanceof SidebarError) {
     writeJson(res, error.status, { ok: false, error: { code: error.code, message: error.message } })
     return

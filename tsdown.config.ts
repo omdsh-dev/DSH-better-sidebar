@@ -28,10 +28,10 @@
  *   factory}) with the (require) => exports CJS closure shape.
  *
  * Lazy chunks (lib/client-<name>.js): the heavy preview/terminal libraries
- * (Univer, docx-preview, pptx-renderer, CodeMirror, xterm — tens of MB)
- * build as five standalone chunk bundles (src/client/chunks/<name>.tsx),
- * shared by both channels. Each script assigns its factory to the
- * plugin-owned global registry (globalThis.__dshChunks__) and is fetched by
+ * (CodeMirror, xterm) build as two standalone chunk bundles
+ * (src/client/chunks/<name>.tsx), shared by both channels. Each script
+ * assigns its factory to the plugin-owned global registry
+ * (globalThis.__dshChunks__) and is fetched by
  * the client on first use from the plugin's own /sidebar/bundle route —
  * chunks deliberately do NOT go through the module loader (see
  * src/client/chunk-loader.ts). `codeSplitting: false` keeps every chunk a
@@ -54,22 +54,6 @@ const NODE_BUILTINS = new Set([
   ...builtinModules,
   ...builtinModules.map(id => `node:${id}`),
 ])
-
-/**
- * Browser-only standalone entries for dependencies whose package `browser`
- * remaps Rolldown does not currently honor after CJS lowering. Without these
- * aliases nanoid/SheetJS/JSZip leave Node builtin require() calls in the
- * client factory, which the DSH module table correctly refuses.
- */
-const DOCX_PREVIEW_ENTRY = require.resolve('docx-preview')
-const JSZIP_BROWSER_ENTRY = resolvePath(
-  dirname(require.resolve('jszip/package.json', { paths: [dirname(DOCX_PREVIEW_ENTRY)] })),
-  'dist/jszip.min.js',
-)
-const XLSX_BROWSER_ENTRY = resolvePath(
-  dirname(require.resolve('xlsx/package.json')),
-  'dist/xlsx.full.min.js',
-)
 
 /** Module specifiers the web shell shares into the frozen module table (the official PLATFORM_MODULES list, plus the runtime/client exemption). */
 const CLIENT_EXTERNALS = [
@@ -147,18 +131,14 @@ function clientBundle(pluginId: string, entryFile: string): UserConfig {
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
       'import.meta.env.MODE': JSON.stringify(process.env.NODE_ENV ?? 'production'),
       'import.meta.env': JSON.stringify({ MODE: process.env.NODE_ENV ?? 'production' }),
-      // pptx-renderer only uses this to auto-discover its optional PDF.js
-      // fallback. PptxView passes pdfjs:false, so browser CJS has no resolver.
+      // No bundled chunk uses import.meta.resolve; keep the stub so a stray
+      // reference cannot resolve to Node's loader (browser CJS has none).
       'import.meta.resolve': 'undefined',
     },
-    alias: {
-      jszip: JSZIP_BROWSER_ENTRY,
-      xlsx: XLSX_BROWSER_ENTRY,
-    },
-    // CJS output otherwise makes some transitive packages (notably nanoid
-    // through Univer Core) resolve their Node entry even though this bundle
-    // runs in the browser. Keep browser conditional exports authoritative for
-    // both source import() and generated require() edges.
+    // CJS output otherwise makes some transitive packages resolve their
+    // Node entry even though this bundle runs in the browser. Keep browser
+    // conditional exports authoritative for both source import() and
+    // generated require() edges.
     inputOptions: {
       resolve: {
         conditionNames: ['browser', 'import', 'require', 'default'],
@@ -218,17 +198,17 @@ function chunkBundle(name: string): UserConfig {
       'import.meta.env': JSON.stringify({ MODE: process.env.NODE_ENV ?? 'production' }),
       'import.meta.resolve': 'undefined',
     },
-    alias: {
-      jszip: JSZIP_BROWSER_ENTRY,
-      xlsx: XLSX_BROWSER_ENTRY,
-    },
     inputOptions: {
       resolve: {
         conditionNames: ['browser', 'import', 'require', 'default'],
       },
     },
     noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
-    plugins: [purityGatePlugin(), makeCssPlugin('dsh-better-sidebar')],
+    plugins: [
+      purityGatePlugin(),
+      makeCssPlugin('dsh-better-sidebar'),
+      ...(name === 'mermaid' ? [mermaidChunkAliases()] : []),
+    ],
     outputOptions: {
       entryFileNames: `client-${name}.js`,
       sourcemapPathTransform: browserSourcePath,
@@ -242,6 +222,29 @@ function chunkBundle(name: string): UserConfig {
 
 /** A rolldown plugin as tsdown's config accepts it (contextual `this` for load/resolveId). */
 type BuildPlugin = NonNullable<UserConfig['plugins']>
+
+/**
+ * Mermaid-chunk-only alias: pin uuid's BROWSER entry. The mermaid core
+ * (mindmap definition) imports the bare `uuid` specifier, which rolldown
+ * resolves to uuid's node entry — its dist-node modules import
+ * `node:crypto` and trip the client purity gate. The browser entry
+ * (uuid/dist/index.js, Web Crypto based) carries no Node builtins, so alias
+ * the specifier there instead of special-casing the gate. Resolved relative
+ * to mermaid's own dependency tree (pnpm/npm layout agnostic).
+ */
+function mermaidChunkAliases(): BuildPlugin {
+  const uuidBrowserEntry = resolvePath(
+    dirname(require.resolve('uuid/package.json', { paths: [dirname(require.resolve('mermaid/package.json'))] })),
+    'dist/index.js',
+  )
+  return {
+    name: 'dsh-mermaid-uuid-browser-alias',
+    resolveId(source: string) {
+      if (source === 'uuid') return uuidBrowserEntry
+      return null
+    },
+  }
+}
 
 /** The shared client-bundle purity gate (see the clientBundle doc). */
 function purityGatePlugin(): BuildPlugin {
@@ -272,7 +275,7 @@ function makeCssPlugin(pluginId: string): BuildPlugin {
     resolveId(source: string, importer: string | undefined) {
       if (!source.endsWith('.css')) return null
       // Relative/absolute paths resolve against the importer; bare
-      // specifiers (e.g. 'xterm/css/xterm.css') resolve from the package.
+      // specifiers (e.g. '@xterm/xterm/css/xterm.css') resolve from the package.
       let abs: string
       if (source.startsWith('.') || source.startsWith('/') || /^[A-Za-z]:[\\/]/.test(source)) {
         abs = importer === undefined ? source : resolvePath(dirname(importer), source)
@@ -311,7 +314,7 @@ function makeCssPlugin(pluginId: string): BuildPlugin {
 }
 
 /** The lazy chunk names (keep in sync with src/bundle-route.ts CHUNK_NAMES). */
-const CHUNKS = ['docx', 'xlsx', 'pptx', 'terminal', 'editor']
+const CHUNKS = ['terminal', 'editor', 'mermaid']
 
 export default [
   {

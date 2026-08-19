@@ -61,29 +61,29 @@ beforeEach(() => {
 describe('test-registry path (vitest / jsdom-less environments)', () => {
   it('returns the registered chunk exports, loading once even for concurrent callers', async () => {
     let calls = 0
-    registerChunkForTests('docx', async () => {
+    registerChunkForTests('editor', async () => {
       calls += 1
-      return { DocxView: 'docx-view' }
+      return { TextEditor: 'text-editor' }
     })
-    const [a, b, c] = await Promise.all([loadChunk('docx'), loadChunk('docx'), loadChunk('docx')])
-    expect(a).toEqual({ DocxView: 'docx-view' })
+    const [a, b, c] = await Promise.all([loadChunk('editor'), loadChunk('editor'), loadChunk('editor')])
+    expect(a).toEqual({ TextEditor: 'text-editor' })
     expect(b).toBe(a)
     expect(c).toBe(a)
     expect(calls).toBe(1)
     // Memoized after resolution too.
-    expect(await loadChunk('docx')).toBe(a)
+    expect(await loadChunk('editor')).toBe(a)
     expect(calls).toBe(1)
   })
 
   it('a failed load clears the cache so the next call retries', async () => {
     let calls = 0
-    registerChunkForTests('pptx', async () => {
+    registerChunkForTests('terminal', async () => {
       calls += 1
       if (calls === 1) throw new Error('boom')
-      return { PptxView: 'pptx-view' }
+      return { TerminalView: 'terminal-view' }
     })
-    await expect(loadChunk('pptx')).rejects.toThrow('boom')
-    await expect(loadChunk('pptx')).resolves.toEqual({ PptxView: 'pptx-view' })
+    await expect(loadChunk('terminal')).rejects.toThrow('boom')
+    await expect(loadChunk('terminal')).resolves.toEqual({ TerminalView: 'terminal-view' })
     expect(calls).toBe(2)
   })
 })
@@ -94,15 +94,15 @@ describe('production path (script injection + global registry + externals requir
     const loaded: string[] = []
     setChunkScriptLoaderForTests(async (src) => {
       loaded.push(src)
-      simulateScript('xlsx', (require) => ({ XlsxView: `view:${String(require('react'))}` }))
+      simulateScript('editor', (require) => ({ TextEditor: `view:${String(require('react'))}` }))
     })
-    const exports = await loadChunk('xlsx')
-    expect(loaded).toEqual(['/sidebar/bundle/xlsx.js'])
-    expect(exports).toEqual({ XlsxView: 'view:[object Object]' })
+    const exports = await loadChunk('editor')
+    expect(loaded).toEqual(['/sidebar/bundle/editor.js'])
+    expect(exports).toEqual({ TextEditor: 'view:[object Object]' })
     // Externals resolved through the module system's seed branch, once.
     expect(modules.import).toHaveBeenCalledTimes(CHUNK_EXTERNALS.length)
     // Memoized: no second script injection, no second externals resolution.
-    await loadChunk('xlsx')
+    await loadChunk('editor')
     expect(loaded).toHaveLength(1)
     expect(modules.import).toHaveBeenCalledTimes(CHUNK_EXTERNALS.length)
   })
@@ -123,9 +123,9 @@ describe('production path (script injection + global registry + externals requir
   it('a chunk requiring an unresolvable externals spec fails loudly', async () => {
     installModuleSystem()
     setChunkScriptLoaderForTests(async () => {
-      simulateScript('docx', (require) => { require('not-in-the-table'); return {} })
+      simulateScript('editor', (require) => { require('not-in-the-table'); return {} })
     })
-    await expect(loadChunk('docx')).rejects.toThrow('missed the module table')
+    await expect(loadChunk('editor')).rejects.toThrow('missed the module table')
   })
 
   it('a script load failure rejects without materializing', async () => {
@@ -149,14 +149,14 @@ describe('production path (script injection + global registry + externals requir
     let calls = 0
     setChunkScriptLoaderForTests(async () => {
       calls += 1
-      simulateScript('pptx', () => {
+      simulateScript('editor', () => {
         if (calls === 1) throw new Error('materialize boom')
-        return { PptxView: 'pptx-view' }
+        return { TextEditor: 'text-editor' }
       })
     })
-    await expect(loadChunk('pptx')).rejects.toThrow('materialize boom')
+    await expect(loadChunk('editor')).rejects.toThrow('materialize boom')
     // Retry: script re-injected, slot overwritten, materialization succeeds.
-    await expect(loadChunk('pptx')).resolves.toEqual({ PptxView: 'pptx-view' })
+    await expect(loadChunk('editor')).resolves.toEqual({ TextEditor: 'text-editor' })
     expect(calls).toBe(2)
     expect(modules.import).toHaveBeenCalled()
   })
@@ -164,7 +164,7 @@ describe('production path (script injection + global registry + externals requir
   it('fails loudly when no module system is installed (before touching the network)', async () => {
     const loaded: string[] = []
     setChunkScriptLoaderForTests(async (src) => { loaded.push(src) })
-    await expect(loadChunk('docx')).rejects.toThrow('client module system unavailable')
+    await expect(loadChunk('editor')).rejects.toThrow('client module system unavailable')
     expect(loaded).toEqual([])
   })
 

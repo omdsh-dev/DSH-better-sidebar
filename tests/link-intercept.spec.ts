@@ -1,10 +1,12 @@
+// @vitest-environment jsdom
 /**
  * External-link interception policy tests: the pure decision (which http(s)
- * external links are taken over into the sidebar browser) and the click
- * shape (plain left clicks only — modified clicks always bypass).
+ * external links are taken over into the sidebar browser), the click shape
+ * (plain left clicks only — modified clicks always bypass), and the
+ * registered click capture (the caller's `takeoverEnabled(url)` gate).
  */
 import { describe, expect, it } from 'vitest'
-import { isPlainLeftClick, shouldInterceptLink } from '../src/client/link-intercept.ts'
+import { isPlainLeftClick, registerLinkInterception, shouldInterceptLink } from '../src/client/link-intercept.ts'
 
 const SELF = 'http://127.0.0.1:3080'
 
@@ -53,5 +55,68 @@ describe('isPlainLeftClick', () => {
     expect(isPlainLeftClick({ ...plain, altKey: true })).toBe(false)
     expect(isPlainLeftClick({ ...plain, button: 1 })).toBe(false)
     expect(isPlainLeftClick({ ...plain, button: 2 })).toBe(false)
+  })
+})
+
+describe('registerLinkInterception', () => {
+  /** Dispatch one click on an anchor with the given absolute href. */
+  const clickAnchor = (href: string, init: MouseEventInit = {}): void => {
+    const anchor = document.createElement('a')
+    anchor.href = href
+    document.body.appendChild(anchor)
+    anchor.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      ...init,
+    }))
+    anchor.remove()
+  }
+
+  it('passes the parsed URL to takeoverEnabled and only takes over when it returns true', () => {
+    const seen: string[] = []
+    const opened: string[] = []
+    const dispose = registerLinkInterception({
+      takeoverEnabled: (url) => {
+        seen.push(url.protocol)
+        return url.protocol === 'http:'
+      },
+      openInSidebar: (url) => { opened.push(url) },
+      selfOrigin: SELF,
+    })
+    // https → the gate refuses (the sidebar-takeover defaults: https off).
+    clickAnchor('https://example.com/page')
+    // http → the gate passes, the click is taken over with the absolute href.
+    clickAnchor('http://example.com/page')
+    expect(seen).toEqual(['https:', 'http:'])
+    expect(opened).toEqual(['http://example.com/page'])
+    dispose()
+  })
+
+  it('never consults the gate for same-origin or non-http(s) links', () => {
+    let gateCalls = 0
+    const dispose = registerLinkInterception({
+      takeoverEnabled: () => { gateCalls++; return true },
+      openInSidebar: () => { throw new Error('must not open') },
+      selfOrigin: SELF,
+    })
+    clickAnchor(`${SELF}/settings`)
+    clickAnchor('mailto:a@b.c')
+    expect(gateCalls).toBe(0)
+    dispose()
+  })
+
+  it('bypasses the takeover on modified clicks even when the gate passes', () => {
+    let gateCalls = 0
+    const dispose = registerLinkInterception({
+      takeoverEnabled: () => { gateCalls++; return true },
+      openInSidebar: () => { throw new Error('must not open') },
+      selfOrigin: SELF,
+    })
+    clickAnchor('http://example.com/', { ctrlKey: true })
+    clickAnchor('http://example.com/', { metaKey: true })
+    clickAnchor('http://example.com/', { button: 1 })
+    expect(gateCalls).toBe(0)
+    dispose()
   })
 })

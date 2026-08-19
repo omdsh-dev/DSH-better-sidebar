@@ -10,12 +10,14 @@
  */
 import type { api } from './api.ts'
 import {
+  clampTerminalFontSize,
+  clampTitleBarStrip,
   clampWidthPercent,
   SIDEBAR_PREFS_DEFAULTS,
   type SidebarPrefs,
 } from '../prefs-shared.ts'
 
-export { SIDEBAR_PREFS_DEFAULTS, clampWidthPercent }
+export { SIDEBAR_PREFS_DEFAULTS, clampTerminalFontSize, clampTitleBarStrip, clampWidthPercent }
 export type { SidebarPrefs }
 
 /** The settings wire face the preferences need (a subset of the plugin api). */
@@ -49,9 +51,24 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     bottomPanelAutoTerminal: typeof record.bottomPanelAutoTerminal === 'boolean'
       ? record.bottomPanelAutoTerminal
       : SIDEBAR_PREFS_DEFAULTS.bottomPanelAutoTerminal,
+    terminalFontFamily: typeof record.terminalFontFamily === 'string'
+      ? record.terminalFontFamily
+      : SIDEBAR_PREFS_DEFAULTS.terminalFontFamily,
+    terminalFontSize: typeof record.terminalFontSize === 'number' && Number.isFinite(record.terminalFontSize)
+      ? clampTerminalFontSize(record.terminalFontSize)
+      : SIDEBAR_PREFS_DEFAULTS.terminalFontSize,
     interceptOpenPath: typeof record.interceptOpenPath === 'boolean'
       ? record.interceptOpenPath
       : SIDEBAR_PREFS_DEFAULTS.interceptOpenPath,
+    editorExplorer: typeof record.editorExplorer === 'boolean'
+      ? record.editorExplorer
+      : SIDEBAR_PREFS_DEFAULTS.editorExplorer,
+    titleBarCompat: typeof record.titleBarCompat === 'boolean'
+      ? record.titleBarCompat
+      : SIDEBAR_PREFS_DEFAULTS.titleBarCompat,
+    titleBarStripPx: typeof record.titleBarStripPx === 'number' && Number.isFinite(record.titleBarStripPx)
+      ? clampTitleBarStrip(record.titleBarStripPx)
+      : SIDEBAR_PREFS_DEFAULTS.titleBarStripPx,
     htmlViewerNoSandbox: typeof record.htmlViewerNoSandbox === 'boolean'
       ? record.htmlViewerNoSandbox
       : SIDEBAR_PREFS_DEFAULTS.htmlViewerNoSandbox,
@@ -64,9 +81,33 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     browserInterceptLinks: typeof record.browserInterceptLinks === 'boolean'
       ? record.browserInterceptLinks
       : SIDEBAR_PREFS_DEFAULTS.browserInterceptLinks,
+    browserInterceptHttp: typeof record.browserInterceptHttp === 'boolean'
+      ? record.browserInterceptHttp
+      : SIDEBAR_PREFS_DEFAULTS.browserInterceptHttp,
+    browserInterceptHttps: typeof record.browserInterceptHttps === 'boolean'
+      ? record.browserInterceptHttps
+      : SIDEBAR_PREFS_DEFAULTS.browserInterceptHttps,
     tabsEnabled: booleanMapOf(record.tabsEnabled),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
+    pluginSettings: pluginSettingsMapOf(record.pluginSettings),
   }
+}
+
+/**
+ * Validate the plugin-owned settings map (v0.12.0+): `{ descriptorId: { key:
+ * value } }`, nested open maps. Any non-object value (or a malformed whole)
+ * falls back to the empty map — the schema defaults already guard the wire
+ * shape, this is the client's second line.
+ */
+function pluginSettingsMapOf(value: unknown): Record<string, Record<string, unknown>> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
+  const out: Record<string, Record<string, unknown>> = {}
+  for (const [id, blob] of Object.entries(value as Record<string, unknown>)) {
+    if (blob !== null && typeof blob === 'object' && !Array.isArray(blob)) {
+      out[id] = blob as Record<string, unknown>
+    }
+  }
+  return out
 }
 
 /**
@@ -96,5 +137,24 @@ export async function loadPrefs(settings: SidebarSettingsClient): Promise<Sideba
   } catch {
     // Transport/fence rejection or a malformed response: keep the defaults.
     return { ...SIDEBAR_PREFS_DEFAULTS }
+  }
+}
+
+/**
+ * Read the external-disable flag from the same settings route: the
+ * dsh-web-ui family's aionui-panel provider choice. True only when the host
+ * resolved `aionui-panel.rightPanel` to 'aionui-panel' — while true the
+ * sidebar must not mount (the two right panels are mutually exclusive). Any
+ * failure (route rejected, aionui absent, malformed response) reads false,
+ * so a missing family never hides the sidebar.
+ * @param settings - the settings wire face (the plugin api by default).
+ * @returns the external-disable flag (false on any failure).
+ */
+export async function loadExternalDisable(settings: SidebarSettingsClient): Promise<boolean> {
+  try {
+    const view = await settings.settingsGet()
+    return view.externalDisable === true
+  } catch {
+    return false
   }
 }

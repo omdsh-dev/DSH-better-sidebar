@@ -16,11 +16,10 @@ import { createHash } from 'node:crypto'
 import { stat, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { Context } from './context-types.ts'
+import type { Context, SidebarHttpRequest, SidebarHttpResponse } from './context-types.ts'
 
 /** The chunk names the client may request (mirror of src/client/chunk-loader.ts). */
-export const CHUNK_NAMES = ['docx', 'xlsx', 'pptx', 'terminal', 'editor'] as const
+export const CHUNK_NAMES = ['terminal', 'editor', 'mermaid'] as const
 export type ChunkName = (typeof CHUNK_NAMES)[number]
 
 /** Directory of this host-half module (lib/ — the chunk scripts live next to it). */
@@ -68,9 +67,9 @@ async function etagOf(name: ChunkName, chunkDir: string): Promise<string | undef
  * chunk scripts live in (overridable for tests).
  */
 export function createBundleRouteHandler(
-  fence: (req: IncomingMessage) => boolean,
+  fence: (req: SidebarHttpRequest) => boolean,
   chunkDir: string = LIB_DIR,
-): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+): (req: SidebarHttpRequest, res: SidebarHttpResponse) => Promise<void> {
   return async (req, res): Promise<void> => {
     if (!fence(req)) {
       res.writeHead(403)
@@ -121,7 +120,7 @@ export function createBundleRouteHandler(
 }
 
 /** Register the /sidebar/bundle route (disposed with the fiber). */
-export function registerBundleRoute(ctx: Context, fence: (req: IncomingMessage) => boolean): () => void {
+export function registerBundleRoute(ctx: Context, fence: (req: SidebarHttpRequest) => boolean): () => void {
   return ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/bundle',

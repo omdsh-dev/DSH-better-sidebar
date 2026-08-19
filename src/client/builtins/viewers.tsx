@@ -1,18 +1,22 @@
 /**
- * The 9 built-in file viewer descriptors: every preview surface is a
- * registered viewer (image / pdf / docx / xlsx / pptx / markdown / html /
- * code / binary-download), exactly like external plugins register theirs.
- * The `binary-download` viewer sniffs NUL bytes via `detect` for unknown
- * binaries and serves doc/xls/ppt by extension; `code` is the catch-all
- * (`exts: []`, lowest priority) that claims any file no other viewer did.
+ * The 6 built-in file viewer descriptors: every preview surface is a
+ * registered viewer (image / pdf / markdown / html / code /
+ * binary-download), exactly like external plugins register theirs. Office
+ * previews (.docx / .xlsx / .pptx) are NOT built in anymore — they moved to
+ * the recommended office plugin (see plugins-viewers.ts), which registers
+ * the same ids through this service.
  *
- * The heavy viewers (docx/xlsx/pptx and the CodeMirror-backed
- * markdown/html/code) render through {@link lazyChunkComponent} wrappers —
- * their libraries are fetched only when such a file is first opened (see
- * chunk-loader.ts). The descriptor metadata (id/exts/priority/detect) is
- * identical either way, so matching semantics and external-plugin
- * overrides are unaffected; the `component` wrapper keeps the descriptor
- * contract `(props) => ReactNode`.
+ * The `binary-download` viewer sniffs NUL bytes via `detect` for unknown
+ * binaries and serves legacy doc/xls/ppt by extension; `code` is the
+ * catch-all (`exts: []`, lowest priority) that claims any file no other
+ * viewer did.
+ *
+ * The heavy viewers (the CodeMirror-backed markdown/html/code) render
+ * through {@link lazyChunkComponent} wrappers — their libraries are fetched
+ * only when such a file is first opened (see chunk-loader.ts). The
+ * descriptor metadata (id/exts/priority/detect) is identical either way,
+ * so matching semantics and external-plugin overrides are unaffected; the
+ * `component` wrapper keeps the descriptor contract `(props) => ReactNode`.
  *
  * Every viewer carries the declarative settings-surface fields — `title`
  * and `icon` — so the Side card settings page can render the enable/disable
@@ -26,9 +30,6 @@ import {
   IconImageOutline16,
   IconMarkdownOutline16,
   IconPdfOutline16,
-  IconDocxOutline16,
-  IconXlsxOutline16,
-  IconPptxOutline16,
   IconHtmlOutline16,
 } from '../icons.tsx'
 import type { ComponentType } from 'react'
@@ -37,17 +38,14 @@ import { t } from '../locales.ts'
 import css from '../sidebar.module.css'
 
 /**
- * Lazy wrappers over the chunk-resident viewer components. The `pick`
- * functions are module-level (stable identity — the wrapper effect depends
- * on them); the cast bridges the chunk exports record to the descriptor
- * prop shape (the views read only their own subset of FileViewerProps).
+ * Lazy wrapper over the chunk-resident viewer component. The `pick`
+ * function is module-level (stable identity — the wrapper effect depends
+ * on it); the cast bridges the chunk exports record to the descriptor prop
+ * shape (the view reads only its own subset of FileViewerProps).
  */
-const LazyDocx = lazyChunkComponent<FileViewerProps>('docx', (mod) => mod.DocxView as ComponentType<FileViewerProps> | undefined)
-const LazyXlsx = lazyChunkComponent<FileViewerProps>('xlsx', (mod) => mod.XlsxView as ComponentType<FileViewerProps> | undefined)
-const LazyPptx = lazyChunkComponent<FileViewerProps>('pptx', (mod) => mod.PptxView as ComponentType<FileViewerProps> | undefined)
 const LazyTextEditor = lazyChunkComponent<FileViewerProps>('editor', (mod) => mod.TextEditor as ComponentType<FileViewerProps> | undefined)
 
-/** The 9 built-in file viewer descriptors. */
+/** The 6 built-in file viewer descriptors. */
 export function builtinViewers(): readonly FileViewerDescriptor[] {
   return [
     {
@@ -71,30 +69,6 @@ export function builtinViewers(): readonly FileViewerDescriptor[] {
       component: ({ scope, path, title }) => (
         <PdfView scope={scope} path={path} title={title} />
       ),
-    },
-    {
-      id: 'docx',
-      title: () => t('viewerDocx'),
-      icon: (size: number) => <IconDocxOutline16 size={size} />,
-      exts: ['docx'],
-      fetchStrategy: 'mediaUrl',
-      component: (props) => <LazyDocx {...props} />,
-    },
-    {
-      id: 'xlsx',
-      title: () => t('viewerXlsx'),
-      icon: (size: number) => <IconXlsxOutline16 size={size} />,
-      exts: ['xlsx'],
-      fetchStrategy: 'mediaUrl',
-      component: (props) => <LazyXlsx {...props} />,
-    },
-    {
-      id: 'pptx',
-      title: () => t('viewerPptx'),
-      icon: (size: number) => <IconPptxOutline16 size={size} />,
-      exts: ['pptx'],
-      fetchStrategy: 'mediaUrl',
-      component: (props) => <LazyPptx {...props} />,
     },
     {
       id: 'markdown',
