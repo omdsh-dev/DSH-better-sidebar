@@ -118,21 +118,20 @@ async function call<T>(method: string, payload: Record<string, unknown>, signal?
 }
 
 /**
- * Upload one file to the sidebar's raw upload route: the base64 payload goes
- * in the POST body (plain text — the host writes it through fs + shell decode,
- * so no JSON/base64 re-encoding happens on the wire shape we already trust).
- * Failure surfaces as {@link SidebarApiError} with the wire code, exactly like
- * every `/sidebar/api` call.
+ * Upload one file to the sidebar's raw upload route: the File goes straight
+ * into the POST body (no JSON/base64 re-encoding — the host streams it into
+ * the workspace). Failure surfaces as {@link SidebarApiError} with the wire
+ * code, exactly like every `/sidebar/api` call.
  */
-async function fetchUpload<T>(scope: SessionScope, dir: string, relativePath: string, b64: string): Promise<T> {
+async function fetchUpload<T>(scope: SessionScope, dir: string, relativePath: string, body: Blob): Promise<T> {
   const params = new URLSearchParams({ sessionId: scope.sessionId, dir, relativePath })
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
   let response: Response
   try {
     response = await fetch(`/sidebar/upload?${params.toString()}`, {
       method: 'POST',
-      headers: { 'content-type': 'text/plain' },
-      body: b64,
+      headers: { 'content-type': 'application/octet-stream' },
+      body,
     })
   } catch (error) {
     throw new SidebarApiError('network', error instanceof Error ? error.message : String(error))
@@ -174,10 +173,10 @@ export const api = {
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
-  /** Upload one file's base64 into `dir` (keeps the folder tree via
-   *  `relativePath`); the host writes it under the session workspace. */
-  uploadFile: (scope: SessionScope, dir: string, relativePath: string, b64: string) =>
-    fetchUpload<{ path: string; size: number }>(scope, dir, relativePath, b64),
+  /** Upload one file's raw bytes into `dir` (keeps the folder tree via
+   *  `relativePath`); the host streams it under the session workspace. */
+  uploadFile: (scope: SessionScope, dir: string, relativePath: string, body: Blob) =>
+    fetchUpload<{ path: string; size: number }>(scope, dir, relativePath, body),
   gitStatus: (scope: SessionScope, signal?: AbortSignal) =>
     call<GitStatusResult>('git.status', scopePayload(scope, {}), signal),
   gitDiff: (scope: SessionScope, path: string | undefined, staged: boolean, signal?: AbortSignal) =>

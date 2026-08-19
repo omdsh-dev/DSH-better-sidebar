@@ -42,6 +42,8 @@ export interface SidebarConfig {
   readLimit?: number
   /** Media route cap (bytes); larger binaries are refused. */
   mediaLimit?: number
+  /** Upload route cap (bytes); larger files are refused without touching disk. */
+  uploadLimit?: number
   /** Explorer row bound of one level. */
   listLimit?: number
   /** Terminals per session. */
@@ -70,6 +72,7 @@ export interface SidebarConfig {
 export const Config: z<SidebarConfig> = z.object({
   readLimit: z.number().step(1).min(1).default(512 * 1024),
   mediaLimit: z.number().step(1).min(1).default(20 * 1024 * 1024),
+  uploadLimit: z.number().step(1).min(1).default(128 * 1024 * 1024),
   listLimit: z.number().step(1).min(1).default(1000),
   terminalsPerSession: z.number().step(1).min(1).default(3),
   reconnectGraceMs: z.number().step(1).min(0).default(30_000),
@@ -81,6 +84,7 @@ export const Config: z<SidebarConfig> = z.object({
 export interface ResolvedSidebarConfig {
   readLimit: number
   mediaLimit: number
+  uploadLimit: number
   listLimit: number
   terminalsPerSession: number
   reconnectGraceMs: number
@@ -100,6 +104,7 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
   return {
     readLimit: config?.readLimit ?? 512 * 1024,
     mediaLimit: config?.mediaLimit ?? 20 * 1024 * 1024,
+    uploadLimit: config?.uploadLimit ?? 128 * 1024 * 1024,
     listLimit: config?.listLimit ?? 1000,
     terminalsPerSession: config?.terminalsPerSession ?? 3,
     reconnectGraceMs: config?.reconnectGraceMs ?? 30_000,
