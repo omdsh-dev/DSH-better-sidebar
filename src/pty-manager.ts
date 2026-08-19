@@ -104,7 +104,15 @@ export class PtyManager {
    * @returns the live handle.
    * @throws {SidebarError} pty-error when the per-session cap is reached.
    */
-  open(sessionId: string, tabId: string, cwd: string, cols: number, rows: number): SidebarPty {
+  open(
+    sessionId: string,
+    tabId: string,
+    cwd: string,
+    cols: number,
+    rows: number,
+    shell?: string,
+    shellArgs?: string[],
+  ): SidebarPty {
     const key = `${sessionId}:${tabId}`
     this.cancelClose(key)
     const existing = this.sessions.get(key)
@@ -123,7 +131,7 @@ export class PtyManager {
       sessionId,
       tabId,
       cwd,
-      pty: this.nodePty.spawn(this.shell, shellSpawnArgs(this.shellArgs), {
+      pty: this.nodePty.spawn(shell ?? this.shell, shellSpawnArgs(shellArgs ?? this.shellArgs), {
         name: 'xterm-256color',
         cols: Math.max(2, Math.floor(cols)),
         rows: Math.max(2, Math.floor(rows)),

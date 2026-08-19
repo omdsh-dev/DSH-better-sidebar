@@ -192,6 +192,26 @@ export interface SidebarSettingsFace {
 }
 
 /** Build the API method table bound to the plugin context, pty manager, agent pty registry, resolved config, and effective terminal shell. */
+/**
+ * Resolve the settings-page terminal shell overrides (the terminal card's
+ * gear rows). Empty fields mean "unset": keep the yaml `config.shell` /
+ * `shellArgs` (or the platform auto-resolution). The settings page is the
+ * runtime complement to the boot-time yaml — same contract, later binding:
+ * the values here win for terminals opened afterwards.
+ */
+function shellOverridesOf(getSettings: () => SidebarSettingsFace | undefined): { shell?: string; shellArgs?: string[] } {
+  const settings = getSettings()
+  const value = settings?.get().value
+  if (value === null || typeof value !== 'object') return {}
+  const record = value as Record<string, unknown>
+  const shell = typeof record.terminalShell === 'string' ? record.terminalShell.trim() : ''
+  const args = typeof record.terminalShellArgs === 'string' ? record.terminalShellArgs.trim() : ''
+  return {
+    shell: shell === '' ? undefined : shell,
+    shellArgs: args === '' ? undefined : args.split(/\s+/).filter(Boolean),
+  }
+}
+
 function buildApi(
   ctx: Context,
   ptyManager: PtyManager | null,
@@ -518,7 +538,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // Degraded mode (node-pty unavailable): never register the terminal
         // tools — every one of them would fail at spawn time.
         if (agentPtyRegistry === null) return
-        toolsDisposers = registerTools(ctx, agentPtyRegistry, (sessionId) => sessionCwdOf(ctx, sessionId))
+        toolsDisposers = registerTools(ctx, agentPtyRegistry, (sessionId) => sessionCwdOf(ctx, sessionId), () => shellOverridesOf(() => settingsFace))
       }
     } else if (toolsDisposers !== null) {
       toolsDisposers()
@@ -740,7 +760,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       // The structural request/socket/head faces satisfy the shared fence;
       // the `ws` package wants the real Node types — cast at this boundary.
       wss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
-        void attachTerminal(ctx, ptyManager, agentPtyRegistry, ws, req, resolved)
+        void attachTerminal(ctx, ptyManager, agentPtyRegistry, ws, req, resolved, () => settingsFace)
       })
     },
   }), 'dsh-better-sidebar: terminal WebSocket')
@@ -824,6 +844,7 @@ async function attachTerminal(
   ws: WebSocket,
   req: SidebarHttpRequest,
   resolved: ResolvedSidebarConfig,
+  getSettings: () => SidebarSettingsFace | undefined,
 ): Promise<void> {
   try {
     const url = new URL(req.url ?? '/', 'http://dsh.internal')
@@ -857,7 +878,10 @@ async function attachTerminal(
       return
     }
     const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
-    const handle = ptyManager.open(sessionId, tabId, cwd, 80, 24)
+    // Settings-page shell overrides win over the yaml/auto shell for
+    // terminals opened from now on (existing pty handles keep their shell).
+    const overrides = shellOverridesOf(getSettings)
+    const handle = ptyManager.open(sessionId, tabId, cwd, 80, 24, overrides.shell, overrides.shellArgs)
     // Replay the transcript, then follow live output.
     if (handle.transcript !== '') ws.send(handle.transcript)
     const onData = (data: string): void => {

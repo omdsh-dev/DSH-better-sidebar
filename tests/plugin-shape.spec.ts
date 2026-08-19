@@ -85,6 +85,6 @@ describe('dsh-better-sidebar plugin export shape', () => {
     const overridden = (PrefsSchema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
     })({ openByDefault: false, defaultWidthPercent: 45 })
-    expect(overridden).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: false, titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    expect(overridden).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: false, terminalShell: '', terminalShellArgs: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
   })
 })
