@@ -172,6 +172,7 @@ export function FileTree(props: {
               tabIndex={0}
               className={clsx(css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden)}
               style={{ paddingLeft: depth * 22 + 6 }}
+              title={entry.path}
               onClick={() => { onToggle(entry.path) }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
