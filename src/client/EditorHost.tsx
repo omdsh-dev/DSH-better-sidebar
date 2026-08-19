@@ -32,6 +32,7 @@ import { BinaryDownload } from './binary-download.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
 import { baseName } from './FileTree.tsx'
 import { openSidebarFile } from './intercept.tsx'
+import { openPathWithSystem } from './openpath-intercept.ts'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
@@ -126,6 +127,15 @@ export function EditorHost(props: {
   /** The context menu's explicit "new tab" escape (per-path dedupe). */
   const openFileNewTab = (absolute: string): void => {
     openSidebarFile(ctx, store, scope.sessionId, absolute)
+  }
+
+  /**
+   * The context menu's "open with the default app": reaches the Host OS
+   * through the RAW openPath (the interception would reroute it back into
+   * the sidebar editor); the fallback covers an unregistered interception.
+   */
+  const openFileSystem = (absolute: string): void => {
+    openPathWithSystem(absolute, (path) => ctx.workspaces.openPath(path))
   }
 
   /**
@@ -272,6 +282,7 @@ export function EditorHost(props: {
           onOpenFile={openFile}
           onOpenFileNewTab={openFileNewTab}
           onOpenFileSide={openFileSide}
+          onOpenFileSystem={openFileSystem}
           onReferenceFile={onReferenceFile}
         />
       </div>
@@ -365,6 +376,7 @@ export function EditorHost(props: {
               onOpenFile={openFile}
               onOpenFileNewTab={openFileNewTab}
               onOpenFileSide={openFileSide}
+              onOpenFileSystem={openFileSystem}
               onReferenceFile={onReferenceFile}
             />
           </div>

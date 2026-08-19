@@ -1,35 +1,36 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { registerOpenPathInterception } from '../src/client/intercept.tsx'
-import { wrapOpenPath, type OpenPathInterceptDeps, type OpenPathService } from '../src/client/openpath-intercept.ts'
+import { openPathWithSystem, wrapOpenPath, type OpenPathInterceptDeps, type OpenPathService } from '../src/client/openpath-intercept.ts'
 import { createSidebarStore } from '../src/client/state.ts'
 import type { Context } from '../src/context-types.ts'
 
-describe('open-path interception', () => {
-  /** A minimal fake of the workspaces.openPath service method. */
-  const service = (): OpenPathService & { calls: string[]; opened: string[] } => {
-    const fake = {
-      calls: [] as string[],
-      opened: [] as string[],
-      async openPath(path: string): Promise<void> {
-        this.calls.push(path)
-        this.opened.push(path)
-      },
-    }
-    return fake
+/** A minimal fake of the workspaces.openPath service method. */
+const service = (): OpenPathService & { calls: string[]; opened: string[] } => {
+  const fake = {
+    calls: [] as string[],
+    opened: [] as string[],
+    async openPath(path: string): Promise<void> {
+      this.calls.push(path)
+      this.opened.push(path)
+    },
   }
+  return fake
+}
 
-  const deps = (overrides: Partial<OpenPathInterceptDeps> = {}): OpenPathInterceptDeps & {
-    sidebar: string[]
-  } => {
-    const sidebar: string[] = []
-    return {
-      sidebar,
-      takeoverEnabled: () => true,
-      currentSessionId: () => 's1',
-      openInSidebar: (path, sessionId) => { sidebar.push(`${sessionId}:${path}`) },
-      ...overrides,
-    }
+const deps = (overrides: Partial<OpenPathInterceptDeps> = {}): OpenPathInterceptDeps & {
+  sidebar: string[]
+} => {
+  const sidebar: string[] = []
+  return {
+    sidebar,
+    takeoverEnabled: () => true,
+    currentSessionId: () => 's1',
+    openInSidebar: (path, sessionId) => { sidebar.push(`${sessionId}:${path}`) },
+    ...overrides,
   }
+}
+
+describe('open-path interception', () => {
 
   it('routes an intercepted open into the sidebar and resolves without the original call', async () => {
     const ws = service()
@@ -93,6 +94,79 @@ describe('open-path interception', () => {
     const restore = wrapOpenPath(failing, d)
     await expect(failing.openPath('/abs/a.ts')).rejects.toThrow('host refused')
     restore()
+  })
+})
+
+describe('open with the default app (system open bypass)', () => {
+  it('reaches the RAW host openPath while the takeover is active', async () => {
+    const opened: string[] = []
+    const ws: OpenPathService = { async openPath(path) { opened.push(path) } }
+    const d = deps()
+    const restore = wrapOpenPath(ws, d)
+    try {
+      openPathWithSystem('/abs/a.ts')
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(opened).toEqual(['/abs/a.ts'])
+      expect(d.sidebar).toEqual([])
+    } finally {
+      restore()
+    }
+  })
+
+  it('does not disturb the wrapped funnel afterwards', async () => {
+    const ws = service()
+    const d = deps()
+    const restore = wrapOpenPath(ws, d)
+    try {
+      openPathWithSystem('/abs/a.ts')
+      await ws.openPath('/abs/b.ts')
+      await Promise.resolve()
+      expect(ws.opened).toEqual(['/abs/a.ts'])
+      expect(d.sidebar).toEqual(['s1:/abs/b.ts'])
+    } finally {
+      restore()
+    }
+  })
+
+  it('falls back to the provided opener once the wrap is disposed', async () => {
+    const ws = service()
+    const d = deps()
+    const restore = wrapOpenPath(ws, d)
+    restore()
+    const calls: string[] = []
+    openPathWithSystem('/abs/a.ts', async (path) => { calls.push(path) })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(calls).toEqual(['/abs/a.ts'])
+  })
+
+  it('logs a warning and never throws when no opener is available', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(() => openPathWithSystem('/abs/a.ts')).not.toThrow()
+      expect(warn).toHaveBeenCalledWith(
+        '[dsh-better-sidebar] cannot open with the default app: no host openPath available',
+      )
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('swallows a host failure with a warning instead of throwing', async () => {
+    const ws: OpenPathService = { async openPath() { throw new Error('host refused') } }
+    const d = deps({ takeoverEnabled: () => false })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const restore = wrapOpenPath(ws, d)
+    try {
+      expect(() => openPathWithSystem('/abs/a.ts')).not.toThrow()
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(warn).toHaveBeenCalled()
+    } finally {
+      restore()
+      warn.mockRestore()
+    }
   })
 })
 

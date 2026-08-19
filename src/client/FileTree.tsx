@@ -11,15 +11,16 @@
  * right (appends `@<relative path>` to the composer draft), and right-click
  * opens a context menu: file rows offer the caller's open escapes
  * (new tab / to the side, only when the callbacks exist) and a download
- * action (the host serves raw bytes, binary-safe); every row can copy the
- * relative or absolute path (with a brief "copied" label replacing the
- * button after a successful write).
+ * action (the host serves raw bytes, binary-safe); every row can open with
+ * the OS default app (when the callback exists) and copy the relative or
+ * absolute path (with a brief "copied" label replacing the button after a
+ * successful write).
  */
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
-  IconLinkOutline16, Menu, writeClipboard,
+  IconLinkOutline16, IconRightUpOutline16, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
 import { relativeTo } from './paths.ts'
@@ -51,12 +52,17 @@ export function FileTree(props: {
   onOpenFileNewTab?: (path: string) => void
   /** Context-menu "open to the side" (file rows; absent → no entry). */
   onOpenFileSide?: (path: string) => void
+  /** Context-menu "open with the default app" (all rows; absent → no entry). */
+  onOpenFileSystem?: (path: string) => void
   /** Insert `@<relative path>` into the composer draft. */
   onReferenceFile: (path: string) => void
   /** Bump to wipe the level cache and reload the visible set. */
   refreshTick: number
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, refreshTick } = props
+  const {
+    sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onOpenFileSystem,
+    onReferenceFile, refreshTick,
+  } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
@@ -264,6 +270,10 @@ export function FileTree(props: {
           ...(rowMenu?.isDir === false && onOpenFileSide !== undefined
             ? [{ id: 'open-side', label: t('openFileSide'), icon: <IconFolderOpen16 size={14} /> }]
             : []),
+          // Open with the OS default app (directories open in the file manager).
+          ...(onOpenFileSystem !== undefined
+            ? [{ id: 'open-system', label: t('openWithDefault'), icon: <IconRightUpOutline16 size={14} /> }]
+            : []),
           // Download applies to files only (the host route refuses directories).
           ...(rowMenu?.isDir === false
             ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutline16 size={14} /> }]
@@ -281,6 +291,10 @@ export function FileTree(props: {
           }
           if (id === 'open-side') {
             onOpenFileSide?.(target.path)
+            return
+          }
+          if (id === 'open-system') {
+            onOpenFileSystem?.(target.path)
             return
           }
           if (id === 'download') {

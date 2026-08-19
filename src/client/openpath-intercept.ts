@@ -33,6 +33,14 @@ export interface OpenPathInterceptDeps {
 }
 
 /**
+ * The pre-wrap host openPath while the interception is active (undefined
+ * otherwise). Opening a path through THIS reference reaches the Host OS's
+ * default application — the wrapped `workspaces.openPath` would route the
+ * open back into the sidebar editor instead.
+ */
+let rawOpenPath: ((path: string) => Promise<void>) | undefined
+
+/**
  * Wrap `workspaces.openPath`: intercepted calls open the file in the sidebar
  * editor instead of the Host OS and resolve as success (the original's
  * callers ignore the result); anything that declines falls through to the
@@ -46,6 +54,10 @@ export function wrapOpenPath(workspaces: OpenPathService, deps: OpenPathIntercep
   // exact original so a chain of wrappers (other plugins wrapping the same
   // method) keeps working across disposals in any order.
   const original = workspaces.openPath
+  // The context menus' "open with the default app" bypasses the sidebar
+  // takeover: keep the pre-wrap call reachable while this wrap is active.
+  const bypass: (path: string) => Promise<void> = (path) => original.call(workspaces, path)
+  rawOpenPath = bypass
   workspaces.openPath = (path: string): Promise<void> => {
     if (deps.takeoverEnabled()) {
       const sessionId = deps.currentSessionId()
@@ -57,6 +69,27 @@ export function wrapOpenPath(workspaces: OpenPathService, deps: OpenPathIntercep
     return original.call(workspaces, path)
   }
   return () => {
+    if (rawOpenPath === bypass) rawOpenPath = undefined
     workspaces.openPath = original
   }
+}
+
+/**
+ * Open a path with the Host OS's default application, BYPASSING the sidebar
+ * open-path interception. This is the context menus' "open with the default
+ * app" action.
+ *
+ * `fallback` runs when the raw reference is unavailable — only possible when
+ * the interception was never registered, in which case `workspaces.openPath`
+ * IS still the raw method. Failures log a warning and never throw.
+ */
+export function openPathWithSystem(path: string, fallback?: (path: string) => Promise<void>): void {
+  const open = rawOpenPath ?? fallback
+  if (open === undefined) {
+    console.warn('[dsh-better-sidebar] cannot open with the default app: no host openPath available')
+    return
+  }
+  void open(path).catch((error: unknown) => {
+    console.warn('[dsh-better-sidebar] open with default app failed:', error)
+  })
 }

@@ -32,16 +32,17 @@ import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
-  BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, isAgentTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
+  BOTTOM_MIN, PANEL_MIN, agentUuidOf, allLeaves, firstLeaf, isAgentTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
   reconcileAgentTerminals,
-  resizeSplitIn, setBottomHeight, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
+  resizeSplitIn, setBottomHeight, setWidth, toggleBottomPanel, toggleExpanded, togglePanel, treeOf,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
 } from './state.ts'
 import { IconPanelBottomOutline16, IconPanelRightOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useNarrowViewport } from './breakpoints.ts'
-import type { NewTabOption } from './TabBar.tsx'
+import type { NewTabOption, TabPathPayload } from './TabBar.tsx'
 import type { TabDragPayload } from './TabBar.tsx'
+import { openPathWithSystem } from './openpath-intercept.ts'
 import { relativeTo } from './paths.ts'
 import { OrphanedTab } from './OrphanedTab.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
@@ -589,35 +590,58 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }, [anyDragging])
 
 
+  /**
+   * Close one tab through the service (fires the descriptor's onClose and
+   * finds the pane itself). A closed terminal releases its pty immediately —
+   * including when its socket is mid-reconnect, where the unmount close
+   * frame never reaches the host and the process would hold the quota until
+   * the grace ends. Agent terminals (tabId `agent:<uuid>`) close through a
+   * different host route: the WS close frame is the primary path (sent by
+   * TerminalView on unmount), and the agent-pty.close HTTP route is the
+   * fallback when the WS is down.
+   */
+  const closeOneTab = useCallback((tabId: string): void => {
+    const current = store.getSnapshot().state
+    // Terminal tabs may live in EITHER tree (the bottom panel hosts them
+    // too) — the pty-release lookup covers both, or the HTTP fallback is
+    // skipped for a bottom-panel terminal whose WS frame never arrived.
+    const leaf = current === undefined
+      ? undefined
+      : leafWithTab(current.splits, tabId) ?? leafWithTab(current.bottomSplits, tabId)
+    const tab = leaf?.tabs.find(candidate => candidate.id === tabId)
+    // Route through the service: the tab-bar close is the canonical close
+    // path (fires descriptor.onClose); the session scope (with its cwd)
+    // rides to the callback.
+    ctx.betterSidebar?.closeTab(tabId, sessionId === undefined ? undefined : { sessionId, cwd })
+    if (tab?.type === 'terminal') {
+      if (isAgentTabId(tabId)) {
+        const uuid = agentUuidOf(tabId)
+        void api.agentPtyClose(uuid).catch(() => { /* the host may already have released it */ })
+      } else if (sessionId !== undefined) {
+        void api.ptyClose({ sessionId, cwd }, tabId).catch(() => { /* the host may already have released it */ })
+      }
+    }
+  }, [store, ctx, sessionId, cwd])
+
   const actions: WorkbenchActions = useMemo(() => ({
-    closeTab: (paneId, tabId) => {
-      // A closed terminal releases its pty immediately — including when its
-      // socket is mid-reconnect, where the unmount close frame never reaches
-      // the host and the process would hold the quota until the grace ends.
-      // Agent terminals (tabId `agent:<uuid>`) close through a different
-      // host route: the WS close frame is the primary path (sent by
-      // TerminalView on unmount), and the agent-pty.close HTTP route is the
-      // fallback when the WS is down.
+    closeTab: (_paneId, tabId) => { closeOneTab(tabId) },
+    closeTabRange: (paneId, tabId, mode) => {
+      // The context-menu batch close: compute the affected ids from the
+      // pane's CURRENT tab order, then close each through the canonical
+      // single-tab path (pty release + onClose fire per closed tab).
       const current = store.getSnapshot().state
-      // Terminal tabs may live in EITHER tree (the bottom panel hosts them
-      // too) — the pty-release lookup covers both, or the HTTP fallback is
-      // skipped for a bottom-panel terminal whose WS frame never arrived.
+      const key = current === undefined ? 'splits' : treeOf(current, paneId)
       const leaf = current === undefined
         ? undefined
-        : leafWithTab(current.splits, tabId) ?? leafWithTab(current.bottomSplits, tabId)
-      const tab = leaf?.tabs.find(candidate => candidate.id === tabId)
-      // Route through the service: the tab-bar close is the canonical close
-      // path (finds the pane itself, fires descriptor.onClose); the session
-      // scope (with its cwd) rides to the callback.
-      ctx.betterSidebar?.closeTab(tabId, sessionId === undefined ? undefined : { sessionId, cwd })
-      if (tab?.type === 'terminal') {
-        if (isAgentTabId(tabId)) {
-          const uuid = agentUuidOf(tabId)
-          void api.agentPtyClose(uuid).catch(() => { /* the host may already have released it */ })
-        } else if (sessionId !== undefined) {
-          void api.ptyClose({ sessionId, cwd }, tabId).catch(() => { /* the host may already have released it */ })
-        }
-      }
+        : allLeaves(current[key]).find(candidate => candidate.id === paneId)
+      const index = leaf?.tabs.findIndex(candidate => candidate.id === tabId) ?? -1
+      if (leaf === undefined || index === -1) return
+      const ids = mode === 'right'
+        ? leaf.tabs.slice(index + 1).map(tab => tab.id)
+        : mode === 'left'
+          ? leaf.tabs.slice(0, index).map(tab => tab.id)
+          : leaf.tabs.filter(tab => tab.id !== tabId).map(tab => tab.id)
+      for (const id of ids) closeOneTab(id)
     },
     activateTab: (paneId, tabId) => {
       // Route through the service: same reducer (finds the pane in EITHER
@@ -642,7 +666,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     resizeSplit: (splitId, index, deltaFrac) => {
       store.reduce(s => resizeSplitIn(s, splitId, index, deltaFrac))
     },
-  }), [store, sessionId, cwd])
+  }), [store, sessionId, cwd, closeOneTab])
 
   /**
    * The explorer's @-reference button: append `@<relative path>` to the
@@ -718,6 +742,24 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     if (value === null || value === undefined || value === '') return null
     const text = typeof value === 'number' ? (value > 99 ? '99+' : String(value)) : String(value)
     return <span className={css.tabBadge}>{text}</span>
+  }
+
+  /**
+   * The tab context menu's path payload: local file tabs only. Browser tabs
+   * carry URLs in `path` (open/copy semantics don't apply to them), and
+   * terminal/git/diff tabs carry no path at all.
+   */
+  const tabPathOf = (tab: SidebarTab): TabPathPayload | null => {
+    const path = tab.path
+    if (path === undefined || path === '') return null
+    if (/^https?:\/\//i.test(path)) return null
+    return { absolute: path, relative: relativeTo(cwd ?? '', path) }
+  }
+
+  /** The tab/file context menus' "open with the default app": bypasses the
+   *  sidebar open-path interception (falls back when it is not registered). */
+  const openFileSystem = (path: string): void => {
+    openPathWithSystem(path, (target) => ctx.workspaces.openPath(target))
   }
 
   /**
@@ -837,6 +879,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={renderTab}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            getTabPath={tabPathOf}
+            onOpenFileSystem={openFileSystem}
           />
         </div>
         {/*
@@ -970,6 +1014,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={(tab, active, paneId) => renderTab(tab, active, paneId, true)}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            getTabPath={tabPathOf}
+            onOpenFileSystem={openFileSystem}
           />
         </div>
       </div>
