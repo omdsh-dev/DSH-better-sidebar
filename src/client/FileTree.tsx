@@ -170,6 +170,7 @@ export function FileTree(props: {
             <div
               role="button"
               tabIndex={0}
+              data-entry-type="dir"
               className={clsx(css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden)}
               style={{ paddingLeft: depth * 22 + 6 }}
               title={entry.path}
@@ -196,6 +197,7 @@ export function FileTree(props: {
           key={entry.path}
           role="button"
           tabIndex={0}
+          data-entry-type="file"
           className={clsx(css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken)}
           style={{ paddingLeft: depth * 22 + 6 }}
           title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
@@ -225,7 +227,9 @@ export function FileTree(props: {
         <>
           <div
             className={css.explorerRow}
+            data-entry-type="dir"
             style={{ paddingLeft: 6 }}
+            title={root}
             onContextMenu={(event) => { openRowMenu(event, root, true) }}
           >
             <IconFolderOpen16 size={14} />
