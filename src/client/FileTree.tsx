@@ -15,15 +15,17 @@
  * relative or absolute path (with a brief "copied" label replacing the
  * button after a successful write).
  */
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
   IconLinkOutline16, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
+import { IconUploadOutline16 } from './icons.tsx'
 import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
+import { summarizeResults, uploadItemsFromDrop, uploadItemsFromFiles, uploadToDir, type UploadItem } from './upload.ts'
 import css from './sidebar.module.css'
 
 interface LevelData {
@@ -63,6 +65,51 @@ export function FileTree(props: {
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
   const [rowMenu, setRowMenu] = useState<{ path: string; isDir: boolean; x: number; y: number } | null>(null)
+  /** One-line upload status ('' hides the hint). */
+  const [uploadStatus, setUploadStatus] = useState('')
+  /** Whether a drag is hovering the tree body (dashed outline hint). */
+  const [dropOver, setDropOver] = useState(false)
+  /** Context-menu "upload here" target directory. */
+  const pendingUploadDir = useRef<string | undefined>(undefined)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  /** Upload into `dir` (absolute, inside the workspace) and refresh the tree. */
+  const uploadInto = useCallback((dir: string, items: UploadItem[]): void => {
+    if (items.length === 0 || cwd === undefined) return
+    setUploadStatus(t('uploadingTo', { dir }))
+    void uploadToDir({ sessionId, cwd }, dir, items, (done, total, current) => {
+      if (current !== '') setUploadStatus(t('uploadProgress', { done, total, name: current }))
+    }).then((results) => {
+      setUploadStatus(summarizeResults(results, t))
+      dataRef.current = {}
+      setData({})
+    })
+  }, [sessionId, cwd, t])
+
+  /** Container drop: upload into the workspace root. */
+  const handleBodyDrop = (event: DragEvent): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    setDropOver(false)
+    if (cwd !== undefined) uploadInto(cwd, uploadItemsFromDrop(event.dataTransfer))
+  }
+  /** Directory-row drop: upload into that directory. */
+  const handleDirDrop = (event: DragEvent, dir: string): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    setDropOver(false)
+    uploadInto(dir, uploadItemsFromDrop(event.dataTransfer))
+  }
+  const handleBodyDragOver = (event: DragEvent): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    setDropOver(true)
+  }
+  const handleDirDragOver = (event: DragEvent): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    setDropOver(true)
+  }
 
   const storeLevel = useCallback((path: string, level: LevelData) => {
     dataRef.current = { ...dataRef.current, [path]: level }
@@ -179,6 +226,8 @@ export function FileTree(props: {
                   onToggle(entry.path)
                 }
               }}
+              onDragOver={(event) => { handleDirDragOver(event) }}
+              onDrop={(event) => { handleDirDrop(event, entry.path) }}
               onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
             >
               {isOpen ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />}
@@ -217,7 +266,13 @@ export function FileTree(props: {
   }
 
   return (
-    <div className={css.explorerBody}>
+    <div
+      className={css.explorerBody}
+      onDragOver={handleBodyDragOver}
+      onDragLeave={() => { setDropOver(false) }}
+      onDrop={handleBodyDrop}
+      style={dropOver ? { outline: '1.5px dashed var(--dsw-alias-accent-strong, rgba(128,128,128,.55))', outlineOffset: -2 } : undefined}
+    >
       {root === undefined ? (
         <div className={css.explorerEmpty}>{t('noSession')}</div>
       ) : (
@@ -253,6 +308,21 @@ export function FileTree(props: {
         The one shared context menu, positioned at the right-click cursor
         (portal so the tree's overflow clip cannot crop it).
       */}
+      {uploadStatus !== '' && (
+        <div className={css.editorSearchHint} title={uploadStatus}>{uploadStatus}</div>
+      )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        style={{ display: 'none' }}
+        onChange={(event) => {
+          const dir = pendingUploadDir.current ?? root
+          pendingUploadDir.current = undefined
+          if (dir !== undefined) uploadInto(dir, uploadItemsFromFiles(event.target.files ?? []))
+          event.target.value = ''
+        }}
+      />
       <Menu
         open={rowMenu !== null}
         onClose={() => { setRowMenu(null) }}
@@ -267,6 +337,10 @@ export function FileTree(props: {
           // Download applies to files only (the host route refuses directories).
           ...(rowMenu?.isDir === false
             ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutline16 size={14} /> }]
+            : []),
+          // Upload into a directory (incl. the workspace root row).
+          ...(rowMenu?.isDir === true
+            ? [{ id: 'upload-here', label: t('uploadHere'), icon: <IconUploadOutline16 size={14} /> }]
             : []),
           { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={14} /> },
           { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutline16 size={14} /> },
@@ -285,6 +359,11 @@ export function FileTree(props: {
           }
           if (id === 'download') {
             downloadFile(target.path)
+            return
+          }
+          if (id === 'upload-here') {
+            pendingUploadDir.current = target.path
+            fileInputRef.current?.click()
             return
           }
           copyPath(

@@ -7,13 +7,15 @@
  * the tree cache. EditorHost docks it as the tab's right panel (wrapped in
  * a drag-resize handle) and provides the file context-menu open escapes.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
-import { IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconFolderOpen16, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
 import { FileTree } from './FileTree.tsx'
+import { IconUploadOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import { resolveSidebarPath } from './produced-files.ts'
+import { summarizeResults, uploadItemsFromFiles, uploadToDir, type UploadItem } from './upload.ts'
 import css from './sidebar.module.css'
 
 export function TreePanel(props: {
@@ -36,6 +38,30 @@ export function TreePanel(props: {
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshTick, setRefreshTick] = useState(0)
+  /** One-line upload status under the search row ('' hides the hint). */
+  const [uploadStatus, setUploadStatus] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
+
+  /** Upload a picker selection into the tree root (the session workspace). */
+  const handleUpload = (files: FileList | readonly File[]): void => {
+    const items = uploadItemsFromFiles(files)
+    if (items.length === 0) return
+    const dir = cwd
+    if (dir === undefined) {
+      setUploadStatus(t('noSession'))
+      return
+    }
+    setUploadStatus(t('uploadingTo', { dir }))
+    void uploadToDir({ sessionId, cwd: dir }, dir, items, (done, total, current) => {
+      if (current !== '') setUploadStatus(t('uploadProgress', { done, total, name: current }))
+    }).then((results) => {
+      setUploadStatus(summarizeResults(results, t))
+      setRefreshTick(tick => tick + 1)
+    })
+  }
+
+  const folderInputProps = { webkitdirectory: '' } as InputHTMLAttributes<HTMLInputElement>
 
   const needle = query.trim()
   useEffect(() => {
@@ -80,7 +106,49 @@ export function TreePanel(props: {
         >
           <IconRefreshOutline16 size={14} />
         </button>
+        <button
+          type="button"
+          className={css.iconButton}
+          aria-label={t('uploadFiles')}
+          title={t('uploadFiles')}
+          onClick={() => { fileInputRef.current?.click() }}
+        >
+          <IconUploadOutline16 size={14} />
+        </button>
+        <button
+          type="button"
+          className={css.iconButton}
+          aria-label={t('uploadFolder')}
+          title={t('uploadFolder')}
+          onClick={() => { folderInputRef.current?.click() }}
+        >
+          <IconFolderOpen16 size={14} />
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          style={{ display: 'none' }}
+          onChange={(event) => {
+            handleUpload(event.target.files ?? [])
+            event.target.value = ''
+          }}
+        />
+        <input
+          ref={folderInputRef}
+          type="file"
+          multiple
+          {...folderInputProps}
+          style={{ display: 'none' }}
+          onChange={(event) => {
+            handleUpload(event.target.files ?? [])
+            event.target.value = ''
+          }}
+        />
       </div>
+      {uploadStatus !== '' && (
+        <div className={css.editorSearchHint} title={uploadStatus}>{uploadStatus}</div>
+      )}
       {needle === '' ? (
         <FileTree
           sessionId={sessionId}
