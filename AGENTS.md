@@ -12,6 +12,7 @@ better-sidebar 从 v0.4.0 起暴露 `ctx.betterSidebar` 服务（Cordis context 
 - **代码改动必须走 PR**：功能 / 修复 / 测试等非文档改动一律在分支上开发（`feat/*` / `fix/*`），用 `gh pr create` 发起 PR，review 合并后才进 main；**仅纯文档类改动**（README / AGENTS.md / docs/ 等）允许直接推送到 main。
 - **挂载只走 `cordis.patch.yml` + profile 机制**（`~/.dsh/profiles/<profile>/`），插件永远作为独立包被 profile 引用，不反向侵入 DSH。
 - 需要 harness 没有的能力时，用 DSH **现成的只读/公开 API** 或插件自有路由实现（参考 §7 的 `jobs.output` 事件回放：读会话事件日志而非动注册表）；如果确实做不到，先向用户说明取舍，而不是直接改 DSH。
+- **Locale 文案治理**：修改 `src/client/locales/` 前先阅读 [`docs/locales-governance.md`](./docs/locales-governance.md)；它是切片 owner、功能专属设置归属和自动化门禁的唯一长期合同。
 
 ### CI 挂载冒烟（`plugin-mount` job / `pnpm test:mount`）
 

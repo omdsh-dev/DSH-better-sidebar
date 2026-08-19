@@ -1,0 +1,38 @@
+/** plugins locale slice. Owned by the plugins feature boundary. */
+export const zh = {
+  addPluginsTabCard: '添加 Tab 插件',
+  addPluginsTabCardDesc: '注册新的侧边栏页面',
+  addPluginsViewerCard: '添加预览插件',
+  addPluginsViewerCardDesc: '注册新的文件类型预览',
+  addPluginsTabDesc: '侧边栏页面（Tab）可以由插件扩展。插件通过 ctx.betterSidebar 服务注册；点击「安装」复制安装命令，粘贴到 DSH 所在环境的终端执行。',
+  addPluginsViewerDesc: '文件预览器可以由插件扩展。插件通过 ctx.betterSidebar 服务注册；点击「安装」复制安装命令，粘贴到 DSH 所在环境的终端执行。',
+  addPluginsBrowseMore: '在 GitHub 上浏览更多插件（topic: dsh-better-sidebar）',
+  addPluginsRecommended: '推荐插件',
+  addPluginsEmpty: '暂未收录插件，欢迎在 GitHub topic 下发布你的插件',
+  openPlugin: '跳转',
+  copyInstall: '复制安装命令',
+  pluginOfficeDesc: '为 better-sidebar 编辑器提供 Office 三件套预览（.docx / .xlsx / .pptx），把重型 Office 渲染库拆出主包、按需安装',
+  pluginGitRemotesDesc: 'better-sidebar Git 远程 Tab：看分支/上游/ahead-behind，fetch（可 prune）、ff-only pull、确认后才 push。不替换内置 Git 的暂存/提交，也不提供 force-push 或模型自动推送',
+  pluginSentinelDesc: '条件驱动的 agent 唤醒系统：文件/进程/端口/HTTP/命令/webhook 传感器，条件达成自动唤醒休眠会话；注册「哨兵」Tab 展示服务器全局监控表',
+  pluginSidebarQaDesc: '基于 better-sidebar 的划选提问tab分页: 对话划选 → 右侧面板提问 → 同工作区独立追问会话（❓追问·主题）：快速无思考模型压缩主对话上下文后与引文一起注入，不打断主对话；追问可嵌套、可继续、可归档',
+  pluginVideoPreviewDesc: '在 better-sidebar 编辑器内联预览视频文件（.mp4/.webm/.mov/.mkv/.avi 等），自带支持 HTTP Range（206）的 /video 宿主路由，可拖动进度条、不受 20MB mediaLimit 限制',
+}
+
+export const en: Record<keyof typeof zh, string> = {
+  addPluginsTabCard: 'Add tab plugins',
+  addPluginsTabCardDesc: 'Register a new sidebar page',
+  addPluginsViewerCard: 'Add preview plugins',
+  addPluginsViewerCardDesc: 'Register a file-type preview',
+  addPluginsTabDesc: 'Sidebar pages (tabs) can be extended by plugins. Plugins register through the ctx.betterSidebar service; clicking Install copies the install command — paste it into a terminal where your DSH profile lives and run it.',
+  addPluginsViewerDesc: 'File previewers can be extended by plugins. Plugins register through the ctx.betterSidebar service; clicking Install copies the install command — paste it into a terminal where your DSH profile lives and run it.',
+  addPluginsBrowseMore: 'Browse more plugins on GitHub (topic: dsh-better-sidebar)',
+  addPluginsRecommended: 'Recommended plugins',
+  addPluginsEmpty: 'No plugins curated yet — publish yours under the GitHub topic',
+  openPlugin: 'Open',
+  copyInstall: 'Copy install command',
+  pluginOfficeDesc: 'Office-suite preview (.docx / .xlsx / .pptx) for the better-sidebar editor, keeping the heavy Office render libraries out of the core bundle',
+  pluginGitRemotesDesc: 'Git Remotes tab: branch/upstream/ahead-behind, fetch (optional prune), ff-only pull, and push only after an in-tab confirm. Does not replace the built-in Git stage/commit tab, and does not offer force-push or a model auto-push tool',
+  pluginSentinelDesc: 'Condition-driven agent wakeup: file/process/port/http/command/webhook sensors wake dormant sessions when conditions fire; registers a "Sentinel" tab with the server-wide watch table',
+  pluginSidebarQaDesc: 'Select-and-ask: Select conversation text → ask in the right-side panel → a dedicated follow-up session (❓追问) in the same workspace; a fast no-thinking model compresses the main context and injects it with the quote, without interrupting the main conversation. Follow-ups nest, continue, and archive',
+  pluginVideoPreviewDesc: 'Inline video preview (.mp4/.webm/.mov/.mkv/.avi etc.) for the better-sidebar editor, backed by a dedicated /video host route with HTTP Range (206) support — scrubbing works and files are not capped by the 20MB mediaLimit',
+}

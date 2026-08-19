@@ -7,6 +7,35 @@
  */
 import { afterEach, describe, expect, it } from 'vitest'
 import { LOCALE_NS, attachLocale, en, isZh, relativeTime, t, zh } from '../src/client/locales.ts'
+import * as browser from '../src/client/locales/browser.ts'
+import * as core from '../src/client/locales/core.ts'
+import * as explorer from '../src/client/locales/explorer.ts'
+import * as git from '../src/client/locales/git.ts'
+import * as plugins from '../src/client/locales/plugins.ts'
+import * as settings from '../src/client/locales/settings.ts'
+import * as subagent from '../src/client/locales/subagent.ts'
+import * as terminal from '../src/client/locales/terminal.ts'
+
+type Dictionary = Record<string, string>
+
+const localeSlices: readonly { name: string; zh: Dictionary; en: Dictionary }[] = [
+  { name: 'core', ...core },
+  { name: 'explorer', ...explorer },
+  { name: 'terminal', ...terminal },
+  { name: 'git', ...git },
+  { name: 'subagent', ...subagent },
+  { name: 'browser', ...browser },
+  { name: 'settings', ...settings },
+  { name: 'plugins', ...plugins },
+]
+
+function sortedKeys(dictionary: Dictionary): string[] {
+  return Object.keys(dictionary).sort()
+}
+
+function placeholders(copy: string): string[] {
+  return [...copy.matchAll(/\{([^{}]+)\}/g)].map(match => match[1]!).sort()
+}
 
 /** Minimal structural fake of the DSH LocaleService face the sidebar uses. */
 class FakeLocale {
@@ -105,5 +134,29 @@ describe('locales (DSH i18n following)', () => {
 
   it('keeps the zh and en dictionaries key-set-equal', () => {
     expect(Object.keys(en).sort()).toEqual(Object.keys(zh).sort())
+  })
+
+  it('keeps every locale slice internally bilingual', () => {
+    for (const slice of localeSlices) {
+      expect(sortedKeys(slice.en), slice.name).toEqual(sortedKeys(slice.zh))
+    }
+  })
+
+  it('keeps locale slice keys disjoint and aggregates their exact union', () => {
+    const keys = localeSlices.flatMap(slice => sortedKeys(slice.zh))
+    const uniqueKeys = [...new Set(keys)].sort()
+
+    expect(uniqueKeys).toHaveLength(keys.length)
+    expect(sortedKeys(zh)).toEqual(uniqueKeys)
+    expect(sortedKeys(en)).toEqual(uniqueKeys)
+  })
+
+  it('keeps zh and en placeholders compatible for every key', () => {
+    const aggregateZh: Dictionary = zh
+    const aggregateEn: Dictionary = en
+
+    for (const [key, zhCopy] of Object.entries(aggregateZh)) {
+      expect(placeholders(aggregateEn[key]!), key).toEqual(placeholders(zhCopy))
+    }
   })
 })
