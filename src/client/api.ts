@@ -31,6 +31,18 @@ export interface FsEntry {
   broken: boolean
 }
 
+/** One discovered git repository. */
+export interface GitRepoInfo {
+  /** Absolute path to the repo's top-level directory. */
+  root: string
+  /** Display name: the directory basename, or the submodule path relative to the parent repo. */
+  name: string
+  /** Whether this repo is a submodule of another repo. */
+  isSubmodule: boolean
+  /** The parent repo's root (only set for submodules). */
+  parentRoot?: string
+}
+
 /** Git status entry (host git shape). */
 export interface GitStatusEntry {
   path: string
@@ -129,6 +141,16 @@ function scopePayload(scope: SessionScope, extra: Record<string, unknown>): Reco
   return { sessionId: scope.sessionId, ...(scope.cwd !== undefined && scope.cwd !== '' ? { cwd: scope.cwd } : {}), ...extra }
 }
 
+/** Fold a scope and optional repoRoot into a JSON payload. */
+function gitPayload(scope: SessionScope, repoRoot: string | undefined, extra: Record<string, unknown>): Record<string, unknown> {
+  return {
+    sessionId: scope.sessionId,
+    ...(scope.cwd !== undefined && scope.cwd !== '' ? { cwd: scope.cwd } : {}),
+    ...(repoRoot !== undefined ? { repoRoot } : {}),
+    ...extra,
+  }
+}
+
 /** The sidebar API surface (session scope threaded through every call). */
 export const api = {
   sessionCwd: (scope: SessionScope, signal?: AbortSignal) =>
@@ -143,38 +165,40 @@ export const api = {
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
-  gitStatus: (scope: SessionScope, signal?: AbortSignal) =>
-    call<GitStatusResult>('git.status', scopePayload(scope, {}), signal),
-  gitDiff: (scope: SessionScope, path: string | undefined, staged: boolean, signal?: AbortSignal) =>
-    call<{ diff: string }>('git.diff', scopePayload(scope, { ...(path !== undefined ? { path } : {}), staged }), signal),
-  gitStage: (scope: SessionScope, path?: string) =>
-    call<{ ok: true }>('git.stage', scopePayload(scope, { ...(path !== undefined ? { path } : {}) })),
-  gitUnstage: (scope: SessionScope, path?: string) =>
-    call<{ ok: true }>('git.unstage', scopePayload(scope, { ...(path !== undefined ? { path } : {}) })),
-  gitCommit: (scope: SessionScope, message: string) =>
-    call<{ ok: true }>('git.commit', scopePayload(scope, { message })),
-  gitBranch: (scope: SessionScope, signal?: AbortSignal) =>
-    call<{ current: string; names: string[] }>('git.branch', scopePayload(scope, {}), signal),
-  gitCheckout: (scope: SessionScope, branch: string) =>
-    call<{ ok: true }>('git.checkout', scopePayload(scope, { branch })),
+  gitRepos: (scope: SessionScope, signal?: AbortSignal) =>
+    call<GitRepoInfo[]>('git.repos', scopePayload(scope, {}), signal),
+  gitStatus: (scope: SessionScope, repoRoot?: string, signal?: AbortSignal) =>
+    call<GitStatusResult>('git.status', gitPayload(scope, repoRoot, {}), signal),
+  gitDiff: (scope: SessionScope, path: string | undefined, staged: boolean, repoRoot?: string, signal?: AbortSignal) =>
+    call<{ diff: string }>('git.diff', gitPayload(scope, repoRoot, { ...(path !== undefined ? { path } : {}), staged }), signal),
+  gitStage: (scope: SessionScope, path?: string, repoRoot?: string) =>
+    call<{ ok: true }>('git.stage', gitPayload(scope, repoRoot, { ...(path !== undefined ? { path } : {}) })),
+  gitUnstage: (scope: SessionScope, path?: string, repoRoot?: string) =>
+    call<{ ok: true }>('git.unstage', gitPayload(scope, repoRoot, { ...(path !== undefined ? { path } : {}) })),
+  gitCommit: (scope: SessionScope, message: string, repoRoot?: string) =>
+    call<{ ok: true }>('git.commit', gitPayload(scope, repoRoot, { message })),
+  gitBranch: (scope: SessionScope, repoRoot?: string, signal?: AbortSignal) =>
+    call<{ current: string; names: string[] }>('git.branch', gitPayload(scope, repoRoot, {}), signal),
+  gitCheckout: (scope: SessionScope, branch: string, repoRoot?: string) =>
+    call<{ ok: true }>('git.checkout', gitPayload(scope, repoRoot, { branch })),
   /** Recent commit history, lazily pageable (skip/count; defaults 0/30). */
-  gitLog: (scope: SessionScope, count?: number, skip?: number, signal?: AbortSignal) =>
-    call<GitLogEntry[]>('git.log', scopePayload(scope, {
+  gitLog: (scope: SessionScope, count?: number, skip?: number, repoRoot?: string, signal?: AbortSignal) =>
+    call<GitLogEntry[]>('git.log', gitPayload(scope, repoRoot, {
       ...(count !== undefined ? { count } : {}),
       ...(skip !== undefined ? { skip } : {}),
     }), signal),
   /** Full patch text of one commit (diff display for the history rows). */
-  gitCommitDiff: (scope: SessionScope, hash: string, signal?: AbortSignal) =>
-    call<{ diff: string }>('git.commit-diff', scopePayload(scope, { hash }), signal),
+  gitCommitDiff: (scope: SessionScope, hash: string, repoRoot?: string, signal?: AbortSignal) =>
+    call<{ diff: string }>('git.commit-diff', gitPayload(scope, repoRoot, { hash }), signal),
   /** Discard the worktree changes of one file (the index is untouched). */
-  gitDiscard: (scope: SessionScope, path: string) =>
-    call<{ ok: true }>('git.discard', scopePayload(scope, { path })),
+  gitDiscard: (scope: SessionScope, path: string, repoRoot?: string) =>
+    call<{ ok: true }>('git.discard', gitPayload(scope, repoRoot, { path })),
   /** Revert one commit onto the current branch. */
-  gitRevert: (scope: SessionScope, hash: string) =>
-    call<{ ok: true }>('git.revert', scopePayload(scope, { hash })),
+  gitRevert: (scope: SessionScope, hash: string, repoRoot?: string) =>
+    call<{ ok: true }>('git.revert', gitPayload(scope, repoRoot, { hash })),
   /** Cherry-pick one commit onto the current branch. */
-  gitCherryPick: (scope: SessionScope, hash: string) =>
-    call<{ ok: true }>('git.cherry-pick', scopePayload(scope, { hash })),
+  gitCherryPick: (scope: SessionScope, hash: string, repoRoot?: string) =>
+    call<{ ok: true }>('git.cherry-pick', gitPayload(scope, repoRoot, { hash })),
   /** Release a terminal's process immediately (tab closed; the WS close frame
    *  may be unreachable while the socket is down, so the host also accepts
    *  this explicit route). */

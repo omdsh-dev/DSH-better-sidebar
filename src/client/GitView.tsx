@@ -13,7 +13,7 @@ import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
   IconTrashOutline16, Input, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { GitLogEntry, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
+import type { GitLogEntry, GitRepoInfo, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
 import { api } from './api.ts'
 import { relativeTo } from './paths.ts'
 import { relativeTime, t } from './locales.ts'
@@ -86,6 +86,13 @@ export function GitView(props: {
   onOpenDiff: (tab: SidebarTab) => void
 }) {
   const { scope, onOpenFile, onOpenDiff } = props
+  // ── repo discovery ────────────────────────────────────────────────────
+  const [repos, setRepos] = useState<GitRepoInfo[]>([])
+  const [selectedRepo, setSelectedRepo] = useState<string>('')
+  const [reposLoading, setReposLoading] = useState(true)
+  const [reposError, setReposError] = useState<string | null>(null)
+
+  // ── per-repo state ────────────────────────────────────────────────────
   const [status, setStatus] = useState<GitStatusResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -105,15 +112,39 @@ export function GitView(props: {
   /** The pending destructive action awaiting confirmation. */
   const [confirm, setConfirm] = useState<ConfirmState | null>(null)
 
+  // ── repo discovery on mount ───────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false
+    setReposLoading(true)
+    setReposError(null)
+    api.gitRepos(scope).then((list) => {
+      if (cancelled) return
+      setRepos(list)
+      if (list.length > 0) {
+        setSelectedRepo(list[0]!.root)
+      }
+      setReposLoading(false)
+    }).catch((reason) => {
+      if (cancelled) return
+      setReposError(reason instanceof Error ? reason.message : String(reason))
+      setReposLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [scope.sessionId, scope.cwd])
+
+  // ── per-repo refresh ──────────────────────────────────────────────────
+  const repoRoot = selectedRepo !== '' ? selectedRepo : undefined
+
   const refresh = useCallback(async (): Promise<void> => {
+    if (repoRoot === undefined) return
     setLoading(true)
     setError(null)
     try {
       const [statusResult, branchResult, logResult] = await Promise.all([
-        api.gitStatus(scope),
-        api.gitBranch(scope).catch(() => ({ current: '', names: [] as string[] })),
+        api.gitStatus(scope, repoRoot),
+        api.gitBranch(scope, repoRoot).catch(() => ({ current: '', names: [] as string[] })),
         // The first history page only; the rest arrives via "load more".
-        api.gitLog(scope, LOG_BATCH, 0).catch(() => [] as GitLogEntry[]),
+        api.gitLog(scope, LOG_BATCH, 0, repoRoot).catch(() => [] as GitLogEntry[]),
       ])
       setStatus(statusResult)
       setBranchNames(branchResult.names)
@@ -124,16 +155,16 @@ export function GitView(props: {
     } finally {
       setLoading(false)
     }
-  }, [scope.sessionId, scope.cwd])
+  }, [scope.sessionId, scope.cwd, repoRoot])
 
   useEffect(() => { void refresh() }, [refresh])
 
   /** Append the next history page (lazy: only when the user asks for more). */
   const loadMoreLog = async (): Promise<void> => {
-    if (logLoadingMore || logEnded) return
+    if (logLoadingMore || logEnded || repoRoot === undefined) return
     setLogLoadingMore(true)
     try {
-      const next = await api.gitLog(scope, LOG_BATCH, logEntries.length)
+      const next = await api.gitLog(scope, LOG_BATCH, logEntries.length, repoRoot)
       setLogEntries(entries => [...entries, ...next])
       if (next.length < LOG_BATCH) setLogEnded(true)
     } catch (reason) {
@@ -149,7 +180,7 @@ export function GitView(props: {
       id: `diff:w:${staged ? 's' : 'u'}:${entry.path}`,
       type: 'diff',
       title: baseName(entry.path),
-      diff: { kind: 'worktree', path: entry.path, staged, untracked: isUntracked(entry) },
+      diff: { kind: 'worktree', path: entry.path, staged, untracked: isUntracked(entry), repoRoot },
     })
   }
 
@@ -159,15 +190,16 @@ export function GitView(props: {
       id: `diff:c:${entry.hashFull}`,
       type: 'diff',
       title: `${entry.hash} ${entry.subject}`,
-      diff: { kind: 'commit', hash: entry.hash, hashFull: entry.hashFull, subject: entry.subject },
+      diff: { kind: 'commit', hash: entry.hash, hashFull: entry.hashFull, subject: entry.subject, repoRoot },
     })
   }
 
   const stageEntry = async (entry: GitStatusEntry, staged: boolean): Promise<void> => {
+    if (repoRoot === undefined) return
     setBusy(true)
     try {
-      if (staged) await api.gitUnstage(scope, entry.path)
-      else await api.gitStage(scope, entry.path)
+      if (staged) await api.gitUnstage(scope, entry.path, repoRoot)
+      else await api.gitStage(scope, entry.path, repoRoot)
       await refresh()
     } finally {
       setBusy(false)
@@ -175,10 +207,11 @@ export function GitView(props: {
   }
 
   const stageAll = async (staged: boolean): Promise<void> => {
+    if (repoRoot === undefined) return
     setBusy(true)
     try {
-      if (staged) await api.gitUnstage(scope)
-      else await api.gitStage(scope)
+      if (staged) await api.gitUnstage(scope, undefined, repoRoot)
+      else await api.gitStage(scope, undefined, repoRoot)
       await refresh()
     } finally {
       setBusy(false)
@@ -187,11 +220,11 @@ export function GitView(props: {
 
   const commit = async (): Promise<void> => {
     const message = commitMsg.trim()
-    if (message === '' || busy) return
+    if (message === '' || busy || repoRoot === undefined) return
     setBusy(true)
     setCommitError(null)
     try {
-      await api.gitCommit(scope, message)
+      await api.gitCommit(scope, message, repoRoot)
       setCommitMsg('')
       await refresh()
     } catch (reason) {
@@ -202,11 +235,11 @@ export function GitView(props: {
   }
 
   const checkout = async (branch: string): Promise<void> => {
-    if (branch === status?.branch || busy) return
+    if (branch === status?.branch || busy || repoRoot === undefined) return
     setBusy(true)
     setCommitError(null)
     try {
-      await api.gitCheckout(scope, branch)
+      await api.gitCheckout(scope, branch, repoRoot)
       await refresh()
     } catch (reason) {
       setCommitError(`${t('checkoutError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
@@ -281,6 +314,25 @@ export function GitView(props: {
   return (
     <div className={css.git}>
       <div className={css.gitHeader}>
+        {/* Repo selector: only visible when multiple repos are discovered. */}
+        {repos.length > 1 && (
+          <>
+            <span className={css.gitHeaderLabel}>{t('repo')}</span>
+            <select
+              className={css.gitBranchSelect}
+              value={selectedRepo}
+              onChange={(event) => { setSelectedRepo(event.target.value) }}
+              disabled={busy}
+            >
+              {repos.map(repo => (
+                <option key={repo.root} value={repo.root}>
+                  {repo.isSubmodule ? `↳ ${repo.name}` : repo.name}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+        <span className={css.gitHeaderLabel}>{t('branch')}</span>
         <select
           className={css.gitBranchSelect}
           value={status?.branch ?? ''}
@@ -301,9 +353,9 @@ export function GitView(props: {
         </button>
       </div>
 
-      {loading && <div className={css.gitPlaceholder}>{t('loading')}</div>}
-      {!loading && error !== null && <div className={css.gitError}>{error}</div>}
-      {!loading && status !== null && !status.isRepo && (
+      {reposLoading && <div className={css.gitPlaceholder}>{t('loading')}</div>}
+      {!reposLoading && reposError !== null && <div className={css.gitError}>{reposError}</div>}
+      {!reposLoading && repos.length === 0 && !reposError && (
         <div className={css.gitPlaceholder}>{t('notRepo')}</div>
       )}
 
@@ -434,7 +486,7 @@ export function GitView(props: {
                   title: t('discardTitle'),
                   description: t('discardDesc', { path: target.entry.path }),
                   confirmLabel: t('discard'),
-                  onConfirm: () => api.gitDiscard(scope, target.entry.path),
+                  onConfirm: () => api.gitDiscard(scope, target.entry.path, repoRoot),
                 })
                 return
               }
@@ -488,7 +540,7 @@ export function GitView(props: {
                   title: t('revertTitle'),
                   description: t('revertDesc', { subject: target.entry.subject }),
                   confirmLabel: t('revertCommit'),
-                  onConfirm: () => api.gitRevert(scope, target.entry.hashFull),
+                  onConfirm: () => api.gitRevert(scope, target.entry.hashFull, repoRoot),
                 })
                 return
               }
@@ -497,7 +549,7 @@ export function GitView(props: {
                   title: t('cherryPickTitle'),
                   description: t('cherryPickDesc', { subject: target.entry.subject }),
                   confirmLabel: t('cherryPickCommit'),
-                  onConfirm: () => api.gitCherryPick(scope, target.entry.hashFull),
+                  onConfirm: () => api.gitCherryPick(scope, target.entry.hashFull, repoRoot),
                 })
               }
             }}
