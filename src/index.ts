@@ -960,6 +960,16 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
           // immediately instead of waiting for the next page change.
           const latest = agentBrowser.getMirrorFrame(sessionId)
           if (latest !== null) sendFrame(latest)
+          // Bidirectional: text frames from the client are input events
+          // (same payload as agent-browser.mirror.input, minus the HTTP
+          // round-trip per keystroke).
+          ws.on('message', (data, isBinary) => {
+            if (isBinary) return
+            try {
+              const event = JSON.parse(String(data)) as Record<string, unknown>
+              if (typeof event.type === 'string') void agentBrowser.sendMirrorInput(sessionId, event as never).catch(() => {})
+            } catch { /* malformed input — ignore */ }
+          })
           ws.on('close', () => { offFrame?.(); offMeta?.() })
           ws.on('error', () => { offFrame?.(); offMeta?.() })
         } catch (cause) {

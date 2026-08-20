@@ -382,7 +382,7 @@ export class AgentBrowserManager {
    * Start the mirror. When displayWidth/Height are given (the sidebar canvas's
    * rendered CSS size), the page is re-laid-out at that size via device metrics
    * override so 1 browser CSS px ≈ 1 display px — text stays readable instead of
-   * shrinking the full desktop layout into a narrow panel. deviceScaleFactor 2
+   * shrinking the full desktop layout into a narrow panel. deviceScaleFactor 1.5
    * keeps the screencast JPEG retina-sharp; coordinates stay in CSS px.
    */
   async startMirror(
@@ -404,7 +404,7 @@ export class AgentBrowserManager {
       await cdp.send('Emulation.setDeviceMetricsOverride', {
         width: targetW,
         height: targetH,
-        deviceScaleFactor: 2,
+        deviceScaleFactor: 1.5,
         mobile: false,
       }).catch(() => {})
     }
@@ -451,10 +451,10 @@ export class AgentBrowserManager {
     })
     await cdp.send('Page.startScreencast', {
       format: 'jpeg',
-      quality: 70,
-      // Frames arrive at 2x device pixels under the override; cap accordingly.
-      maxWidth: vw * 2,
-      maxHeight: vh * 2,
+      quality: 65,
+      // Frames arrive at 1.5x device pixels under the override; cap accordingly.
+      maxWidth: Math.ceil(vw * 1.5),
+      maxHeight: Math.ceil(vh * 1.5),
       everyNthFrame: 1,
     })
     this.mirrors.set(sessionId, mirror)
@@ -519,7 +519,7 @@ export class AgentBrowserManager {
     await mirror.cdp.send('Emulation.setDeviceMetricsOverride', {
       width,
       height,
-      deviceScaleFactor: 2,
+      deviceScaleFactor: 1.5,
       mobile: false,
     })
     // The override triggers a reflow; getLayoutMetrics reflects it right away.

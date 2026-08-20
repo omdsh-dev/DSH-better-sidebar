@@ -3,7 +3,8 @@ import type { SessionScope } from './api.ts'
 import { api, type MirrorStateInfo } from './api.ts'
 import css from './sidebar.module.css'
 
-/** Map a DOM pointer position to browser CSS viewport coordinates. */
+/** Map a DOM pointer position to browser CSS viewport coordinates,
+ *  accounting for the canvas's object-fit: contain letterboxing. */
 function mapToViewport(
   canvas: HTMLCanvasElement,
   state: MirrorStateInfo,
@@ -12,12 +13,16 @@ function mapToViewport(
 ): { x: number; y: number } | null {
   const rect = canvas.getBoundingClientRect()
   if (rect.width === 0 || rect.height === 0) return null
-  const scaleX = state.viewportWidth / rect.width
-  const scaleY = state.viewportHeight / rect.height
-  return {
-    x: Math.round((clientX - rect.left) * scaleX),
-    y: Math.round((clientY - rect.top) * scaleY),
-  }
+  const scale = Math.min(rect.width / state.viewportWidth, rect.height / state.viewportHeight)
+  const contentW = state.viewportWidth * scale
+  const contentH = state.viewportHeight * scale
+  const offsetX = rect.left + (rect.width - contentW) / 2
+  const offsetY = rect.top + (rect.height - contentH) / 2
+  const x = (clientX - offsetX) / scale
+  const y = (clientY - offsetY) / scale
+  // Clicks on the letterbox bars map outside the viewport — ignore them.
+  if (x < 0 || y < 0 || x > state.viewportWidth || y > state.viewportHeight) return null
+  return { x: Math.round(x), y: Math.round(y) }
 }
 
 /** Special keys that should be sent as dispatchKeyEvent, not insertText. */
@@ -39,6 +44,7 @@ export function AgentBrowserView(props: { scope: SessionScope; visible: boolean 
   const stateRef = useRef<MirrorStateInfo | null>(null)
   const frameSeqRef = useRef(0)
   const renderingRef = useRef(false)
+  const socketRef = useRef<WebSocket | null>(null)
 
   // ── Mirror lifecycle (auto-retries until the agent opens a browser) ───
 
@@ -119,6 +125,7 @@ export function AgentBrowserView(props: { scope: SessionScope; visible: boolean 
     const connect = () => {
       if (cancelled) return
       socket = new WebSocket(api.mirrorWsUrl(scope))
+      socketRef.current = socket
       socket.binaryType = 'arraybuffer'
       socket.onmessage = (event) => {
         if (cancelled) return
@@ -159,43 +166,20 @@ export function AgentBrowserView(props: { scope: SessionScope; visible: boolean 
     return () => {
       cancelled = true
       window.clearTimeout(retry)
+      socketRef.current = null
       socket?.close()
     }
   }, [visible, mirrorState !== null, scope.sessionId, scope.cwd]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Sidebar resize → re-fit the mirrored page layout ──────────────────
-
-  useEffect(() => {
-    if (!visible || mirrorState === null) return
-    const el = containerRef.current
-    if (!el) return
-    let timer: number | undefined
-    let lastW = el.clientWidth
-    let lastH = el.clientHeight
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0]
-      if (!entry) return
-      const { width, height } = entry.contentRect
-      // Ignore sub-pixel jitter and tiny adjustments.
-      if (Math.abs(width - lastW) < 24 && Math.abs(height - lastH) < 24) return
-      window.clearTimeout(timer)
-      timer = window.setTimeout(() => {
-        lastW = width
-        lastH = height
-        const w = Math.floor(width)
-        const h = Math.floor(height)
-        if (w < 320 || h < 240) return
-        void api.mirrorRefit(scope, { width: w, height: h }).catch(() => {})
-      }, 400)
-    })
-    observer.observe(el)
-    return () => {
-      observer.disconnect()
-      window.clearTimeout(timer)
-    }
-  }, [visible, mirrorState !== null, scope.sessionId, scope.cwd]) // eslint-disable-line react-hooks/exhaustive-deps
-
   // ── Input forwarding ──────────────────────────────────────────────────
+  // Input rides the mirror WebSocket when it's open (no HTTP round-trip per
+  // keystroke); falls back to the HTTP route while reconnecting.
+
+  const sendInput = useCallback((event: Record<string, unknown>) => {
+    const ws = socketRef.current
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(event))
+    else void api.mirrorInput(scope, event).catch(() => {})
+  }, [scope])
 
   const sendMouse = useCallback((
     type: 'mousePressed' | 'mouseReleased' | 'mouseMoved' | 'mouseWheel',
@@ -206,7 +190,7 @@ export function AgentBrowserView(props: { scope: SessionScope; visible: boolean 
     if (!canvas || !state) return
     const coords = mapToViewport(canvas, state, e.clientX, e.clientY)
     if (!coords) return
-    void api.mirrorInput(scope, {
+    sendInput({
       type,
       x: coords.x,
       y: coords.y,
@@ -215,7 +199,7 @@ export function AgentBrowserView(props: { scope: SessionScope; visible: boolean 
       deltaX: e.deltaX ?? 0,
       deltaY: e.deltaY ?? 0,
     })
-  }, [scope])
+  }, [sendInput])
 
   /** Move the hidden IME textarea to the click point and focus it, so the
    *  OS input method attaches there and its candidate window opens near
@@ -256,36 +240,36 @@ export function AgentBrowserView(props: { scope: SessionScope; visible: boolean 
     if (e.metaKey || e.ctrlKey || e.altKey) return
     if (SPECIAL_KEYS.has(e.key)) {
       e.preventDefault()
-      void api.mirrorInput(scope, { type: 'keyDown', key: e.key, code: e.code })
+      sendInput({ type: 'keyDown', key: e.key, code: e.code })
     } else if (e.key.length === 1) {
       e.preventDefault()
-      void api.mirrorInput(scope, { type: 'insertText', text: e.key })
+      sendInput({ type: 'insertText', text: e.key })
     }
     // Modifier-only presses (Shift, Ctrl, …) are ignored for now
-  }, [scope])
+  }, [sendInput])
 
   const handleKeyUp = useCallback((e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing) return
     if (e.metaKey || e.ctrlKey || e.altKey) return
     if (SPECIAL_KEYS.has(e.key)) {
       e.preventDefault()
-      void api.mirrorInput(scope, { type: 'keyUp', key: e.key, code: e.code })
+      sendInput({ type: 'keyUp', key: e.key, code: e.code })
     }
-  }, [scope])
+  }, [sendInput])
 
   // IME composition: forward the marked text so the mirrored page shows the
   // same in-progress composition, then commit with insertText.
 
   const handleCompositionUpdate = useCallback((e: React.CompositionEvent) => {
-    void api.mirrorInput(scope, { type: 'imeSetComposition', text: e.data })
-  }, [scope])
+    sendInput({ type: 'imeSetComposition', text: e.data })
+  }, [sendInput])
 
   const handleCompositionEnd = useCallback((e: React.CompositionEvent) => {
     const text = e.data
-    if (text) void api.mirrorInput(scope, { type: 'insertText', text })
+    if (text) sendInput({ type: 'insertText', text })
     // Clear the hidden textarea so the next composition starts clean.
     window.setTimeout(() => { if (imeRef.current) imeRef.current.value = '' }, 0)
-  }, [scope])
+  }, [sendInput])
 
   // Non-composition input into the textarea (e.g. Cmd+V paste): forward the
   // whole inserted value as text, then clear.
@@ -295,8 +279,8 @@ export function AgentBrowserView(props: { scope: SessionScope; visible: boolean 
     if (!el || !el.value) return
     const text = el.value
     el.value = ''
-    void api.mirrorInput(scope, { type: 'insertText', text })
-  }, [scope])
+    sendInput({ type: 'insertText', text })
+  }, [sendInput])
 
   // ── Control ownership ─────────────────────────────────────────────────
 
@@ -328,12 +312,15 @@ export function AgentBrowserView(props: { scope: SessionScope; visible: boolean 
         : <button onClick={takeControl} style={{ fontSize: 11, padding: '2px 8px', cursor: 'pointer' }}>Take Control</button>}
     </div>
     <div ref={containerRef} style={{ position: 'relative', flex: 1, minHeight: 0 }}>
-      {/* Canvas must stay mounted even before the first frame arrives —
-          renderFrame draws into it and only then flips hasFrame. */}
+      {/* Canvas fills the container and letterboxes the frame (object-fit:
+          contain) — resizing the sidebar scales the picture proportionally
+          instead of re-laying-out the page. Must stay mounted even before
+          the first frame: renderFrame draws into it, then flips hasFrame. */}
       <canvas
         ref={canvasRef}
         style={{
-          width: '100%', height: 'auto', objectFit: 'contain', background: '#000',
+          position: 'absolute', inset: 0, width: '100%', height: '100%',
+          objectFit: 'contain', background: '#000',
           display: 'block', cursor: isHuman ? 'default' : 'pointer',
           outline: 'none',
         }}
