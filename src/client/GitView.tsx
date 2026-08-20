@@ -8,7 +8,7 @@
  * revert, cherry-pick, copy paths/hashes). Refresh is manual + on mount/
  * focus (no file watcher — KISS).
  */
-import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
   IconTrashOutline16, Input, Menu, Modal, writeClipboard,
@@ -19,6 +19,133 @@ import { relativeTo } from './paths.ts'
 import { relativeTime, t } from './locales.ts'
 import type { SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
+
+const GRAPH_COLORS = ['#3b82f6', '#10b981', '#a855f7', '#f59e0b', '#ec4899', '#06b6d4', '#84cc16', '#f43f5e']
+
+export interface GraphRow {
+  lane: number
+  color: string
+  fromTop: boolean
+  hasBottom: boolean
+  isJunction: boolean
+  passThroughLanes: number[]
+  incomingForks: { fromLane: number; color: string }[]
+  outgoingMerges: { toLane: number; color: string }[]
+}
+
+export function computeGitGraph(entries: GitLogEntry[]): { rows: GraphRow[]; maxLanes: number } {
+  const activeLanes: (string | null)[] = []
+  let maxLanes = 1
+  const rows: GraphRow[] = []
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]
+    if (entry === undefined) continue
+    const hash = entry.hashFull || entry.hash
+    // Fallback: if parents is not provided (or empty for non-last commits), assume linear parent is next commit
+    const hasExplicitParents = Array.isArray(entry.parents) && entry.parents.length > 0
+    const isLast = i === entries.length - 1
+    const parents = hasExplicitParents
+      ? (entry.parents as string[])
+      : (!isLast && entries[i + 1] ? [entries[i + 1]?.hashFull || entries[i + 1]?.hash || ''] : [])
+
+    // 1. Find all lanes in activeLanes matching this commit
+    let lane = -1
+    const incomingLanes: number[] = []
+    for (let l = 0; l < activeLanes.length; l++) {
+      if (activeLanes[l] === hash || (entry.hash && activeLanes[l] === entry.hash)) {
+        if (lane === -1) {
+          lane = l
+        } else {
+          incomingLanes.push(l)
+        }
+      }
+    }
+
+    let fromTop = true
+    if (lane === -1) {
+      fromTop = false
+      // Allocate the first empty slot or push a new lane
+      lane = activeLanes.indexOf(null)
+      if (lane === -1) {
+        lane = activeLanes.length
+        activeLanes.push(hash)
+      } else {
+        activeLanes[lane] = hash
+      }
+    }
+
+    // Incoming forks from other lanes that terminate at this commit
+    const incomingForks = incomingLanes.map(fromLane => {
+      activeLanes[fromLane] = null
+      return {
+        fromLane,
+        color: GRAPH_COLORS[fromLane % GRAPH_COLORS.length] ?? '#3b82f6',
+      }
+    })
+
+    // 2. Identify pass-through lanes (all other currently active lanes)
+    const passThroughLanes: number[] = []
+    for (let l = 0; l < activeLanes.length; l++) {
+      if (l !== lane && activeLanes[l] !== null) {
+        passThroughLanes.push(l)
+      }
+    }
+
+    // 3. Update parents
+    const outgoingMerges: { toLane: number; color: string }[] = []
+    const hasBottom = parents.length > 0
+
+    if (parents.length === 0) {
+      activeLanes[lane] = null
+    } else {
+      // Primary parent stays in the current lane
+      activeLanes[lane] = parents[0] ?? null
+
+      // Secondary parents (merge commits)
+      for (let p = 1; p < parents.length; p++) {
+        const pHash = parents[p]
+        if (pHash === undefined) continue
+        let pLane = activeLanes.indexOf(pHash)
+        if (pLane === -1) {
+          pLane = activeLanes.indexOf(null)
+          if (pLane === -1) {
+            pLane = activeLanes.length
+            activeLanes.push(pHash)
+          } else {
+            activeLanes[pLane] = pHash
+          }
+        }
+        outgoingMerges.push({
+          toLane: pLane,
+          color: GRAPH_COLORS[pLane % GRAPH_COLORS.length] ?? '#10b981',
+        })
+      }
+    }
+
+    // Clean up trailing null lanes
+    while (activeLanes.length > 0 && activeLanes[activeLanes.length - 1] === null) {
+      activeLanes.pop()
+    }
+
+    maxLanes = Math.max(maxLanes, activeLanes.length, lane + 1, ...incomingLanes.map(l => l + 1), 1)
+
+    const isJunction = incomingForks.length > 0 || outgoingMerges.length > 0 || !fromTop
+
+    rows.push({
+      lane,
+      color: GRAPH_COLORS[lane % GRAPH_COLORS.length] ?? '#3b82f6',
+      fromTop,
+      hasBottom,
+      isJunction,
+      passThroughLanes,
+      incomingForks,
+      outgoingMerges,
+    })
+  }
+
+  return { rows, maxLanes }
+}
 
 /** The XY status letters a row badge shows (X = index, Y = worktree). */
 function badgeOf(entry: GitStatusEntry): string {
@@ -91,6 +218,7 @@ export function GitView(props: {
   const [error, setError] = useState<string | null>(null)
   const [branchNames, setBranchNames] = useState<string[]>([])
   const [logEntries, setLogEntries] = useState<GitLogEntry[]>([])
+  const graphData = useMemo(() => computeGitGraph(logEntries), [logEntries])
   const [commitMsg, setCommitMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
@@ -358,34 +486,134 @@ export function GitView(props: {
 
           <div className={css.gitSection}>
             <div className={css.gitSectionHeader}><span>{t('history')}</span></div>
-            {logEntries.map(entry => (
-              <div
-                key={entry.hashFull}
-                role="button"
-                tabIndex={0}
-                className={css.gitLogRow}
-                title={`${entry.author} · ${entry.date}\n${entry.hashFull}`}
-                onClick={() => { openCommitDiff(entry) }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    openCommitDiff(entry)
-                  }
-                }}
-                onContextMenu={(event) => { openHistoryMenu(event, entry) }}
-              >
-                <span className={css.gitLogLine1}>
-                  <span className={css.gitLogHash}>{entry.hash}</span>
-                  <span className={css.gitLogSubject}>{entry.subject}</span>
-                </span>
-                <span className={css.gitLogLine2}>
-                  {refNames(entry.refs).map(ref => (
-                    <span key={ref} className={css.gitLogRef}>{ref}</span>
-                  ))}
-                  <span className={css.gitLogMeta}>{entry.author} · {relativeTime(entry.date)}</span>
-                </span>
-              </div>
-            ))}
+            {logEntries.map((entry, index) => {
+              const graph = graphData.rows[index]
+              const LANE_WIDTH = 14
+              const svgWidth = Math.max(1, graphData.maxLanes) * LANE_WIDTH + 8
+              const laneX = (l: number) => l * LANE_WIDTH + 8
+              const ROW_H = 48
+              const DOT_Y = 16
+              return (
+                <div
+                  key={entry.hashFull}
+                  role="button"
+                  tabIndex={0}
+                  className={css.gitLogRow}
+                  title={`${entry.author} · ${entry.date}\n${entry.hashFull}`}
+                  onClick={() => { openCommitDiff(entry) }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      openCommitDiff(entry)
+                    }
+                  }}
+                  onContextMenu={(event) => { openHistoryMenu(event, entry) }}
+                >
+                  {graph !== undefined && (
+                    <div className={css.gitGraphCol} style={{ width: svgWidth }}>
+                      <svg
+                        width={svgWidth}
+                        height={ROW_H}
+                        viewBox={`0 0 ${svgWidth} ${ROW_H}`}
+                        style={{ display: 'block', overflow: 'visible', flexShrink: 0 }}
+                      >
+                        {/* Pass-through lines for other active branches */}
+                        {graph.passThroughLanes.map(lIndex => (
+                          <line
+                            key={`pass-${lIndex}`}
+                            x1={laneX(lIndex)}
+                            y1={0}
+                            x2={laneX(lIndex)}
+                            y2={ROW_H}
+                            stroke={GRAPH_COLORS[lIndex % GRAPH_COLORS.length]}
+                            strokeWidth={2}
+                            strokeLinecap="round"
+                          />
+                        ))}
+                        {/* Upward straight line if this branch continues upwards */}
+                        {graph.fromTop && (
+                          <line
+                            x1={laneX(graph.lane)}
+                            y1={0}
+                            x2={laneX(graph.lane)}
+                            y2={DOT_Y}
+                            stroke={graph.color}
+                            strokeWidth={2}
+                            strokeLinecap="round"
+                          />
+                        )}
+                        {/* Incoming fork curves (from other branches that merged into this commit from above) */}
+                        {graph.incomingForks.map((fork, fIdx) => (
+                          <path
+                            key={`fork-${fIdx}`}
+                            d={`M ${laneX(fork.fromLane)} 0 C ${laneX(fork.fromLane)} ${DOT_Y * 0.55}, ${laneX(graph.lane)} ${DOT_Y * 0.85}, ${laneX(graph.lane)} ${DOT_Y}`}
+                            stroke={fork.color}
+                            strokeWidth={2}
+                            fill="none"
+                            strokeLinecap="round"
+                          />
+                        ))}
+                        {/* Downward straight line to primary parent */}
+                        {graph.hasBottom && (
+                          <line
+                            x1={laneX(graph.lane)}
+                            y1={DOT_Y}
+                            x2={laneX(graph.lane)}
+                            y2={ROW_H}
+                            stroke={graph.color}
+                            strokeWidth={2}
+                            strokeLinecap="round"
+                          />
+                        )}
+                        {/* Outgoing merge curves (to secondary parents below) */}
+                        {graph.outgoingMerges.map((conn, cIdx) => (
+                          <path
+                            key={`merge-${cIdx}`}
+                            d={`M ${laneX(graph.lane)} ${DOT_Y} C ${laneX(graph.lane)} ${DOT_Y + (ROW_H - DOT_Y) * 0.35}, ${laneX(conn.toLane)} ${DOT_Y + (ROW_H - DOT_Y) * 0.75}, ${laneX(conn.toLane)} ${ROW_H}`}
+                            stroke={conn.color}
+                            strokeWidth={2}
+                            fill="none"
+                            strokeLinecap="round"
+                          />
+                        ))}
+                        {/* Commit node dot aligned with Line 1 (hash and message) */}
+                        {graph.isJunction ? (
+                          <circle
+                            cx={laneX(graph.lane)}
+                            cy={DOT_Y}
+                            r={4.5}
+                            fill={graph.color}
+                            stroke="var(--dsw-alias-bg-layer-1)"
+                            strokeWidth={1.5}
+                          />
+                        ) : (
+                          <circle
+                            cx={laneX(graph.lane)}
+                            cy={DOT_Y}
+                            r={4}
+                            fill="var(--dsw-alias-bg-layer-1)"
+                            stroke={graph.color}
+                            strokeWidth={2}
+                          />
+                        )}
+                      </svg>
+                    </div>
+                  )}
+                  <div className={css.gitLogContent}>
+                    <span className={css.gitLogLine1}>
+                      <span className={css.gitLogHash}>{entry.hash}</span>
+                      <span className={css.gitLogSubject}>{entry.subject}</span>
+                    </span>
+                    <span className={css.gitLogLine2}>
+                      {refNames(entry.refs).map(ref => (
+                        <span key={ref} className={css.gitLogRef}>{ref}</span>
+                      ))}
+                      <span className={css.gitLogMeta}>{entry.author} · {relativeTime(entry.date)}</span>
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
             {!logEnded && (
               <button
                 type="button"
