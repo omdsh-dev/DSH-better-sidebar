@@ -11,9 +11,14 @@
  * right (appends `@<relative path>` to the composer draft), and right-click
  * opens a context menu: file rows offer the caller's open escapes
  * (new tab / to the side, only when the callbacks exist) and a download
- * action (the host serves raw bytes, binary-safe); every row can copy the
- * relative or absolute path (with a brief "copied" label replacing the
- * button after a successful write).
+ * action (the host serves raw bytes, binary-safe); directory rows offer
+ * "upload here"; every row can copy the relative or absolute path (with a
+ * brief "copied" label replacing the button after a successful write).
+ *
+ * Uploads start here (drag-drop or the context menu picker) but run in the
+ * caller: every request is reported through `onUploadRequest(dir, items)`
+ * (VSCode semantics — a drop on a file row targets its parent directory),
+ * and `busy` gates new drags while one upload is in flight.
  */
 import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
 import clsx from 'clsx'
@@ -25,7 +30,7 @@ import { api, downloadUrl, type FsEntry } from './api.ts'
 import { IconUploadOutline16 } from './icons.tsx'
 import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
-import { summarizeResults, uploadItemsFromDrop, uploadItemsFromFiles, uploadToDir, type UploadItem } from './upload.ts'
+import { uploadItemsFromDrop, uploadItemsFromFiles, type UploadItem } from './upload.ts'
 import css from './sidebar.module.css'
 
 interface LevelData {
@@ -38,6 +43,12 @@ export function baseName(path: string): string {
   const trimmed = path.replace(/[\\/]+$/, '')
   const at = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
   return at === -1 ? trimmed : trimmed.slice(at + 1)
+}
+
+/** The containing directory of an absolute row path (never the root edge here). */
+function parentOf(path: string): string {
+  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return at <= 0 ? path : path.slice(0, at)
 }
 
 /** How long the row's "copied" label stays after a successful write. */
@@ -57,45 +68,64 @@ export function FileTree(props: {
   onReferenceFile: (path: string) => void
   /** Bump to wipe the level cache and reload the visible set. */
   refreshTick: number
+  /** Upload into `dir` (absolute, inside the workspace); runs in the caller. */
+  onUploadRequest: (dir: string, items: UploadItem[]) => void
+  /** True while an upload is in flight (drops are ignored). */
+  busy: boolean
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, refreshTick } = props
+  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, refreshTick, onUploadRequest, busy } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
   const [rowMenu, setRowMenu] = useState<{ path: string; isDir: boolean; x: number; y: number } | null>(null)
-  /** One-line upload status ('' hides the hint). */
-  const [uploadStatus, setUploadStatus] = useState('')
-  /** Whether a drag is hovering the tree body (dashed outline hint). */
+  /** Whether a drag is hovering the tree body (dashed outline + hint pill). */
   const [dropOver, setDropOver] = useState(false)
+  /** The directory a drag is hovering right now ('' = body only, drop to root). */
+  const [dropTarget, setDropTarget] = useState<string | null>(null)
   /** Context-menu "upload here" target directory. */
   const pendingUploadDir = useRef<string | undefined>(undefined)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  /** Container drop: upload into the workspace root. */
+  /** Drop handlers: always swallow the event (a dropped file must never open
+   *  in the browser), then report the target directory to the caller. */
   const handleBodyDrop = (event: DragEvent): void => {
     event.preventDefault()
     event.stopPropagation()
     setDropOver(false)
-    if (cwd !== undefined) uploadInto(cwd, uploadItemsFromDrop(event.dataTransfer))
+    setDropTarget(null)
+    if (!busy && cwd !== undefined) onUploadRequest(cwd, uploadItemsFromDrop(event.dataTransfer))
   }
-  /** Directory-row drop: upload into that directory. */
   const handleDirDrop = (event: DragEvent, dir: string): void => {
     event.preventDefault()
     event.stopPropagation()
     setDropOver(false)
-    uploadInto(dir, uploadItemsFromDrop(event.dataTransfer))
+    setDropTarget(null)
+    if (!busy) onUploadRequest(dir, uploadItemsFromDrop(event.dataTransfer))
+  }
+  const handleFileDrop = (event: DragEvent, path: string): void => {
+    // VSCode semantics: dropping onto a file uploads into its directory.
+    handleDirDrop(event, parentOf(path))
   }
   const handleBodyDragOver = (event: DragEvent): void => {
     event.preventDefault()
     event.stopPropagation()
+    if (busy) return
     setDropOver(true)
   }
-  const handleDirDragOver = (event: DragEvent): void => {
+  const handleRowDragOver = (event: DragEvent, dir: string): void => {
     event.preventDefault()
     event.stopPropagation()
+    if (busy) return
     setDropOver(true)
+    setDropTarget(dir)
+  }
+  const handleRowDragLeave = (event: DragEvent): void => {
+    // Child-element transitions (icon/label) keep the highlight; only leaving
+    // the row itself clears it.
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+    setDropTarget(null)
   }
 
   const storeLevel = useCallback((path: string, level: LevelData) => {
@@ -131,32 +161,6 @@ export function FileTree(props: {
     loadDir(root)
     for (const dir of expanded) loadDir(dir)
   }, [cwd, expanded, refreshTick, loadDir])
-
-  /** Upload into `dir` (absolute, inside the workspace) and refresh the tree. */
-  const uploadInto = useCallback((dir: string, items: UploadItem[]): void => {
-    if (items.length === 0 || cwd === undefined) return
-    setUploadStatus(t('uploadingTo', { dir }))
-    void uploadToDir({ sessionId, cwd }, dir, items, (done, total, current) => {
-      if (current !== '') setUploadStatus(t('uploadProgress', { done, total, name: current }))
-    }).then((results) => {
-      const status = summarizeResults(results, t)
-      setUploadStatus(status)
-      // Reload the visible set directly: this path cannot bump the caller's
-      // refreshTick, so clear the level cache and refetch root + expanded.
-      dataRef.current = {}
-      setData({})
-      if (cwd !== undefined) {
-        loadDir(cwd)
-        for (const dir of expanded) loadDir(dir)
-      }
-      // Success messages are transient; failures stay until the next action.
-      if (results.every(r => r.ok)) {
-        window.setTimeout(() => {
-          setUploadStatus(current => current === status ? '' : current)
-        }, 3500)
-      }
-    })
-  }, [sessionId, cwd, t, loadDir, expanded])
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
   const copyPath = useCallback((text: string, path: string): void => {
@@ -230,7 +234,10 @@ export function FileTree(props: {
             <div
               role="button"
               tabIndex={0}
-              className={clsx(css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden)}
+              className={clsx(
+                css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden,
+                dropTarget === entry.path && css.explorerRowDropTarget,
+              )}
               style={{ paddingLeft: depth * 22 + 6 }}
               onClick={() => { onToggle(entry.path) }}
               onKeyDown={(event) => {
@@ -239,8 +246,9 @@ export function FileTree(props: {
                   onToggle(entry.path)
                 }
               }}
-              onDragOver={(event) => { handleDirDragOver(event) }}
+              onDragOver={(event) => { handleRowDragOver(event, entry.path) }}
               onDrop={(event) => { handleDirDrop(event, entry.path) }}
+              onDragLeave={handleRowDragLeave}
               onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
             >
               {isOpen ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />}
@@ -257,7 +265,10 @@ export function FileTree(props: {
           key={entry.path}
           role="button"
           tabIndex={0}
-          className={clsx(css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken)}
+          className={clsx(
+            css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken,
+            dropTarget === parentOf(entry.path) && css.explorerRowDropTarget,
+          )}
           style={{ paddingLeft: depth * 22 + 6 }}
           title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
           onClick={() => { onOpenFile(entry.path) }}
@@ -267,6 +278,9 @@ export function FileTree(props: {
               onOpenFile(entry.path)
             }
           }}
+          onDragOver={(event) => { handleRowDragOver(event, parentOf(entry.path)) }}
+          onDrop={(event) => { handleFileDrop(event, entry.path) }}
+          onDragLeave={handleRowDragLeave}
           onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
         >
           <IconCodeOutline16 size={14} />
@@ -280,19 +294,21 @@ export function FileTree(props: {
 
   return (
     <div
-      className={css.explorerBody}
+      className={clsx(css.explorerBody, dropOver && css.explorerDropActive)}
       onDragOver={handleBodyDragOver}
-      onDragLeave={() => { setDropOver(false) }}
+      onDragLeave={() => { setDropOver(false); setDropTarget(null) }}
       onDrop={handleBodyDrop}
-      style={dropOver ? { outline: '1.5px dashed var(--dsw-alias-accent-strong, rgba(128,128,128,.55))', outlineOffset: -2 } : undefined}
     >
       {root === undefined ? (
         <div className={css.explorerEmpty}>{t('noSession')}</div>
       ) : (
         <>
           <div
-            className={css.explorerRow}
+            className={clsx(css.explorerRow, dropTarget === root && css.explorerRowDropTarget)}
             style={{ paddingLeft: 6 }}
+            onDragOver={(event) => { handleRowDragOver(event, root) }}
+            onDrop={(event) => { handleDirDrop(event, root) }}
+            onDragLeave={handleRowDragLeave}
             onContextMenu={(event) => { openRowMenu(event, root, true) }}
           >
             <IconFolderOpen16 size={14} />
@@ -317,13 +333,15 @@ export function FileTree(props: {
           {data[root] !== undefined && renderLevel(root, 1)}
         </>
       )}
+      {dropOver && (
+        <div className={css.uploadDropPill}>
+          {dropTarget !== null ? t('uploadTo', { dir: dropTarget }) : t('uploadDropHint')}
+        </div>
+      )}
       {/*
         The one shared context menu, positioned at the right-click cursor
         (portal so the tree's overflow clip cannot crop it).
       */}
-      {uploadStatus !== '' && (
-        <div className={css.editorSearchHint} title={uploadStatus}>{uploadStatus}</div>
-      )}
       <input
         ref={fileInputRef}
         type="file"
@@ -332,7 +350,7 @@ export function FileTree(props: {
         onChange={(event) => {
           const dir = pendingUploadDir.current ?? root
           pendingUploadDir.current = undefined
-          if (dir !== undefined) uploadInto(dir, uploadItemsFromFiles(event.target.files ?? []))
+          if (dir !== undefined && !busy) onUploadRequest(dir, uploadItemsFromFiles(event.target.files ?? []))
           event.target.value = ''
         }}
       />

@@ -832,6 +832,123 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   text-align: center;
 }
 
+/* Drag a file/folder over the tree: dashed outline on the body (drops land
+   in the workspace root) and a filled row highlight on the target directory
+   (drops land inside it; file rows target their parent directory). */
+.explorerDropActive {
+  outline: 2px dashed var(--dsw-alias-interactive-bg-hover-accent);
+  outline-offset: -2px;
+}
+
+.explorerRowDropTarget {
+  background: var(--dsw-alias-interactive-bg-hover);
+  outline: 1px dashed var(--dsw-alias-interactive-bg-hover-accent);
+  outline-offset: -1px;
+}
+
+/* Centered drag hint pill: 'Drop files/folders here to upload' over the body,
+   'Upload into {dir}' over the hovered row (pointer-events none so the drop
+   still lands on the row beneath). */
+.uploadDropPill {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: calc(100% - 24px);
+  padding: 8px 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-strong-12);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Full-window upload progress: blurred scrim + card (same mask/backdrop
+   tokens as the repo's Modal primitive; absolute within the tree panel so it
+   never covers the conversation column). */
+.uploadOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--dsw-alias-bg-mask-1);
+  backdrop-filter: var(--dsw-mask-blur);
+}
+
+.uploadOverlayCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 280px;
+  max-width: min(420px, calc(100% - 48px));
+  padding: 20px 24px;
+  border: 1px solid var(--dsw-alias-border-inverted);
+  border-radius: 24px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv3);
+}
+
+.uploadOverlayTitle {
+  font: var(--dsw-font-s-strong-14);
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.uploadOverlayProgress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--dsw-alias-border-l2);
+  overflow: hidden;
+}
+
+.uploadOverlayProgressFill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  transition: width 150ms var(--ds-ease-in-out);
+}
+
+.uploadOverlayStatus {
+  min-height: 1em;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.uploadOverlayCancel {
+  align-self: flex-end;
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-strong-12);
+  cursor: pointer;
+}
+
+.uploadOverlayCancel:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-border-l2);
+}
+
+.uploadOverlayCancel:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* ── Editor ────────────────────────────────────────────────────────────── */
 
 .editor {
@@ -929,6 +1046,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 .editorTreePanel {
+  /* Relative so the upload overlay and drop pill can cover the tree exactly. */
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
