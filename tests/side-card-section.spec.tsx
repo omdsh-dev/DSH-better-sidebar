@@ -14,10 +14,19 @@
  * Rendered with renderToString (mount effects — the settings RPC sync — do
  * not run in SSR; the initial store prefs are the render input).
  */
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
 import { createElement } from 'react'
 import { createSidebarStore, type SidebarStore } from '../src/client/state.ts'
+// The copy assertions below are English; pin the browser language so the
+// module-level t()/isZh() resolve en regardless of the host system locale
+// (vitest 4.1.11+/jsdom follow the OS locale — zh-CN on this machine).
+beforeAll(() => {
+  Object.defineProperty(navigator, 'language', {
+    value: 'en-US',
+    configurable: true,
+  })
+})
 import { createBetterSidebarService, type BetterSidebarService } from '../src/client/service.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import { FeatureSettingsRows, mergePluginSetting, SideCardSection, type SideCardSectionProps } from '../src/client/SideCardSection.tsx'

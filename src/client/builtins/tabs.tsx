@@ -186,6 +186,18 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           title: () => t('settingsBottomTerminalTitle'),
           desc: () => t('settingsBottomTerminalDesc'),
         }, {
+          key: 'terminalShell',
+          type: 'text',
+          title: () => t('settingsShellTitle'),
+          desc: () => t('settingsShellDesc'),
+          placeholder: t('settingsShellPlaceholder'),
+        }, {
+          key: 'terminalShellArgs',
+          type: 'text',
+          title: () => t('settingsShellArgsTitle'),
+          desc: () => t('settingsShellArgsDesc'),
+          placeholder: t('settingsShellArgsPlaceholder'),
+        }, {
           key: 'terminalFontFamily',
           type: 'text',
           title: () => t('settingsFontFamilyTitle'),

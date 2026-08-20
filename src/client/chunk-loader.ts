@@ -29,7 +29,10 @@
  * Caching contract (three layers, each with a failure path):
  * - In-memory: one in-flight promise per chunk, memoized until
  *   {@link resetChunks}; a failed load removes its entry so the next call
- *   retries from scratch.
+ *   retries from scratch. HMR re-activation keeps the resolved exports of
+ *   unchanged chunks (ETag revalidation via
+ *   {@link revalidateChunksOnReactivate}) — the next lazy open skips the
+ *   re-inject / re-execute.
  * - Script execution: each re-execution overwrites the global registry slot
  *   (assignment, never registration) — no "duplicate factory registration"
  *   class of errors; a failed materialization clears the cache so the retry
@@ -38,11 +41,13 @@
  *   no-cache` + ETag, 304 when unchanged), so page refreshes and HMR
  *   re-activations never re-download a multi-MB chunk that did not change.
  *
- * HMR: each plugin activation calls {@link resetChunks}, which drops the
- * in-memory cache (and any test registry), so a hot-reloaded core bundle
- * re-fetches and re-executes the current chunk scripts on the next lazy
- * open. Chunk-only source edits still need a manual page refresh (the HMR
- * poll watches only client.js).
+ * HMR: each plugin activation calls {@link revalidateChunksOnReactivate},
+ * which HEADs every loaded chunk against the bundle route and keeps the
+ * in-memory cache for the ones whose ETag is unchanged (a hot-reloaded core
+ * bundle therefore does not re-execute multi-MB chunk scripts). Chunk-only
+ * source edits still need a manual page refresh (the HMR poll watches only
+ * client.js); an edit that does land while a core HMR happens is caught by
+ * the ETag comparison on the next activation.
  */
 export type ChunkName = 'terminal' | 'editor' | 'mermaid'
 
@@ -56,7 +61,12 @@ type ChunkFactory = (require: (spec: string) => unknown) => ChunkExports
  * The platform externals a chunk bundle may require (mirror of
  * CLIENT_EXTERNALS in tsdown.config.ts — the chunk builds keep these
  * external and the loader resolves them here). A superset is safe: the
- * require only answers what the chunk actually asks for.
+ * require only answers what the chunk actually asks for. The shell's static
+ * module table seeds React, Cordis, and the UI libraries (primitives/slots);
+ * `dsh-client-runtime/client` normalizes onto the runtime package row
+ * (stripClientSuffix). dsh-client-web-react / dsh-client-schema-form were
+ * dropped in DSH 0.1.0-rc.8 (no rc.8 publish, nothing requires them) — the
+ * chunks never asked for them, so they no longer belong here.
  */
 export const CHUNK_EXTERNALS: readonly string[] = [
   'react',
@@ -65,23 +75,61 @@ export const CHUNK_EXTERNALS: readonly string[] = [
   'react-dom/client',
   'cordis',
   '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-schema-form',
   '@deepseek-ai/dsh-client-runtime/client',
 ]
 
 /** Chunk script endpoint served by the plugin host half (src/bundle-route.ts). */
 const CHUNK_URL = (name: ChunkName): string => `/sidebar/bundle/${name}.js`
 
-/** The client module system surface this loader needs (window.__DSH_MODULES__). */
-interface ChunkModuleSystem {
+/** Bound on the revalidation HEAD round-trip. A timeout fails open (drop +
+ *  re-fetch on the next open) so a stuck bundle route can never wedge lazy
+ *  chunk loads behind the revalidation barrier. */
+const CHUNK_REVALIDATE_TIMEOUT_MS = 5_000
+
+/**
+ * The client module system surface this loader needs to resolve externals.
+ * DSH 0.1.0-rc.8 provides it as the `ctx.modules` service (no page global
+ * anymore); the plugin injects it at activation via
+ * {@link setChunkModuleSystem}. The rc.7-era `window.__DSH_MODULES__` global
+ * remains as a fallback so older hosts and the test harness keep working.
+ */
+export interface ChunkModuleSystem {
   import(specifier: string): Promise<unknown>
 }
 
-/** Resolve the shell-installed module system (set before any plugin activates). */
+/** The module system injected by the client half at activation (rc.8+). */
+let injectedModuleSystem: ChunkModuleSystem | undefined
+
+/**
+ * Plugin-owned page global carrying the injected module system across
+ * bundle copies: the lazy chunk bundles (client-editor.js etc.) inline their
+ * own chunk-loader instance, and rc.8 no longer exposes the shell module
+ * system as a page global — so the core bundle's injection must be visible
+ * to the chunk copies through a namespace of our own.
+ */
+const MODULE_SYSTEM_GLOBAL = '__dshSidebarModuleSystem__'
+
+/**
+ * Inject the client module system the chunk externals resolve through.
+ * Called by the client half's apply() with `ctx.modules` (rc.8+); pass
+ * undefined to clear (tests). Survives {@link resetChunks} — the module
+ * system is shell state, not chunk state, and stays live across HMR.
+ */
+export function setChunkModuleSystem(system: ChunkModuleSystem | undefined): void {
+  injectedModuleSystem = system
+  const g = globalThis as Record<string, unknown>
+  if (system === undefined) delete g[MODULE_SYSTEM_GLOBAL]
+  else g[MODULE_SYSTEM_GLOBAL] = system
+}
+
+/** Resolve the shell-installed module system (injected, then the plugin
+ *  global shared with chunk-bundle copies, then the rc.7 page global). */
 function moduleSystem(): ChunkModuleSystem | undefined {
-  return (globalThis as { __DSH_MODULES__?: ChunkModuleSystem }).__DSH_MODULES__
+  const g = globalThis as Record<string, unknown>
+  return injectedModuleSystem
+    ?? g[MODULE_SYSTEM_GLOBAL] as ChunkModuleSystem | undefined
+    ?? (g as { __DSH_MODULES__?: ChunkModuleSystem }).__DSH_MODULES__
 }
 
 /** The plugin-owned chunk factory registry the chunk scripts populate. */
@@ -155,6 +203,35 @@ async function buildExternalsRequire(modules: ChunkModuleSystem): Promise<(spec:
 /** In-flight/memoized chunk loads; a failure removes its entry so a retry re-fetches. */
 const cache = new Map<ChunkName, Promise<ChunkExports>>()
 
+/** Chunk names whose exports are currently cached (loaded successfully). */
+const loadedChunks = new Set<ChunkName>()
+
+/** ETags observed for loaded chunks (HEAD revalidation, see
+ *  {@link revalidateChunksOnReactivate}). */
+const chunkEtags = new Map<ChunkName, string>()
+
+/** Pending revalidation barrier: while set, {@link loadChunk} awaits it
+ *  before serving cache (see revalidateChunksOnReactivate). */
+let revalidation: Promise<void> | null = null
+
+/** Best-effort ETag capture for revalidation. The script tag itself exposes
+ *  no response headers, so after a successful load we HEAD the bundle route
+ *  once. Failures (including a stuck route — bounded by the timeout) are
+ *  ignored — revalidation then fails open (re-fetch). */
+async function recordEtag(name: ChunkName): Promise<void> {
+  try {
+    const res = await fetch(CHUNK_URL(name), {
+      method: 'HEAD',
+      cache: 'no-cache',
+      signal: AbortSignal.timeout(CHUNK_REVALIDATE_TIMEOUT_MS),
+    })
+    const etag = res.headers.get('etag')
+    if (etag !== null && etag !== '') chunkEtags.set(name, etag)
+  } catch {
+    chunkEtags.delete(name)
+  }
+}
+
 /**
  * Load (once) and materialize a lazy chunk, returning its module exports.
  * Concurrent callers share one in-flight load; a failure clears the cache
@@ -162,10 +239,14 @@ const cache = new Map<ChunkName, Promise<ChunkExports>>()
  * global registry slot — assignments are idempotent).
  * @param name - the chunk to load.
  */
-export function loadChunk(name: ChunkName): Promise<ChunkExports> {
+export async function loadChunk(name: ChunkName): Promise<ChunkExports> {
+  // Barrier: never serve a cache entry that a pending revalidation is about
+  // to inspect — a stale chunk could otherwise render mid-HMR (CR #232 P1).
+  if (revalidation !== null) await revalidation
   const cached = cache.get(name)
   if (cached !== undefined) return cached
-  const task = (async (): Promise<ChunkExports> => {
+  let task: Promise<ChunkExports>
+  task = (async (): Promise<ChunkExports> => {
     const test = testLoaders.get(name)
     if (test !== undefined) return test()
     const modules = moduleSystem()
@@ -178,10 +259,23 @@ export function loadChunk(name: ChunkName): Promise<ChunkExports> {
       throw new Error(`[dsh-better-sidebar] chunk "${name}" script did not register its factory`)
     }
     const require = await buildExternalsRequire(modules)
-    return factory(require)
+    const exports = factory(require)
+    // Only track production loads whose cache entry survived (a revalidation
+    // sweep may have dropped it mid-flight; the caller still gets these
+    // exports, they just are not memoized for the next open). Test-registry
+    // loads return above and never reach this tracking.
+    if (cache.get(name) !== undefined) {
+      loadedChunks.add(name)
+      void recordEtag(name)
+    }
+    return exports
   })()
   cache.set(name, task)
-  void task.catch(() => { cache.delete(name) })
+  void task.catch(() => {
+    cache.delete(name)
+    loadedChunks.delete(name)
+    chunkEtags.delete(name)
+  })
   return task
 }
 
@@ -189,10 +283,69 @@ export function loadChunk(name: ChunkName): Promise<ChunkExports> {
  * Drop all chunk state for a fresh plugin activation (HMR-safe): clear the
  * in-memory cache and any test-registry entries, so the next lazy open
  * re-fetches and re-executes the current chunk scripts (the registry slots
- * are overwritten by the re-execution — no cleanup needed).
+ * are overwritten by the re-execution — no cleanup needed). A pending
+ * revalidation barrier is cleared too: it was only guarding the cache reads
+ * of the state being dropped, so the next load must not wait on it (the
+ * orphaned task still settles and its identity-guarded `finally` no-ops).
  */
 export function resetChunks(): void {
   cache.clear()
+  loadedChunks.clear()
+  chunkEtags.clear()
   testLoaders.clear()
   externalsRequire = undefined
+  revalidation = null
+}
+
+/**
+ * HMR-safe re-activation hook (index.tsx calls this instead of a full
+ * reset): keep the resolved exports of every loaded chunk and drop only the
+ * ones whose script changed on disk — the bundle route revalidates every
+ * request (cache-control: no-cache + ETag), so an unchanged chunk keeps its
+ * memory cache and the next lazy open skips the re-inject / re-execute.
+ * Fail-open: an unreachable, ETag-less, or timed-out chunk is dropped
+ * (re-fetch on next open). Test-registry entries are always cleared
+ * (per-test fixtures).
+ * A page refresh remains the authoritative reset (the HMR poll watches only
+ * client.js; chunk-only edits surface here on the next core re-activation).
+ *
+ * The returned promise is also a BARRIER for {@link loadChunk}: while a
+ * revalidation is pending, every chunk load awaits it before serving cache,
+ * so a lazy tab opening mid-revalidation can never render stale exports
+ * that the sweep is about to invalidate (CR #232 P1).
+ */
+export function revalidateChunksOnReactivate(): Promise<void> {
+  testLoaders.clear()
+  const task = (async (): Promise<void> => {
+    // Entries not tracked as production-loaded (test fixtures, orphans) never
+    // survive a re-activation — their resolved exports came from per-test
+    // stubs, not from the bundle route.
+    for (const name of [...cache.keys()]) {
+      if (!loadedChunks.has(name)) cache.delete(name)
+    }
+    if (loadedChunks.size === 0) return
+    const stale: ChunkName[] = []
+    await Promise.all([...loadedChunks].map(async (name) => {
+      try {
+        const res = await fetch(CHUNK_URL(name), {
+          method: 'HEAD',
+          cache: 'no-cache',
+          signal: AbortSignal.timeout(CHUNK_REVALIDATE_TIMEOUT_MS),
+        })
+        const etag = res.headers.get('etag')
+        if (etag !== null && etag !== '' && chunkEtags.get(name) === etag) return
+      } catch {
+        // Fail open below (network errors and timeouts alike).
+      }
+      stale.push(name)
+    }))
+    for (const name of stale) {
+      cache.delete(name)
+      loadedChunks.delete(name)
+      chunkEtags.delete(name)
+    }
+  })()
+  revalidation = task
+  void task.finally(() => { if (revalidation === task) revalidation = null })
+  return task
 }

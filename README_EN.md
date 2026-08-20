@@ -41,7 +41,26 @@
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="45%" alt="Add Plugins screenshot" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
 </div>
 
-### v0.13.1
+### v0.14.0
+
+> ⚠️ **This release adapts to DSH 0.1.0-rc.8**: every `@deepseek-ai/*` peer/devDependency is raised to `^0.1.0-rc.8` (transitives included — zero rc.7 leftovers in the lockfile), `cordis` to `^4.0.0-rc.8`, and the CI mount lane pins `@deepseek-ai/dsh@0.1.0-rc.8`. **DSH environments on rc.7 or earlier can no longer resolve this release's dependencies — upgrade DSH first.** All changes since v0.13.1:
+
+**✨ New features**
+
+- 🖼️ **Unified panel-host injection refactor** ([#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)): panels/toggle clusters moved into a `[data-dsh-panel-host]` fixed containing block (`fixed inset-0 z-40`), immune to desktop-shell intermediate transforms hijacking `fixed`; mount self-check (page-level transform → `data-dsh-panel-host-degraded` degraded sync, judged on uncorrected geometry, exits only when the ancestor transform is gone); push anchor switched to `#root [data-dsh-frame] > [data-pane="conversation"]` + `#root` calc width against desktop-shell additive overflow; chunk revalidation on activation (HEAD+ETag keeps unchanged chunks, 5s timeout fails open); desktop signal auto-detection (win32 advanced title-bar compat 32px avoidance, manual pref overrides); `visualViewport` keyboard inset + `env(safe-area-inset-*)` mobile adaptation
+- 📂 **Separate file windows by default** ([#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)): `editorExplorer` now defaults to **separate** — tree clicks / file opens create a new tab per path and the path-less window is a pure file manager; merged mode stays available as an opt-in
+- 🖥️ **Terminal shell / shellArgs configurable from the settings page** ([#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)): the terminal card's gear popup gains "Shell path" and "Shell arguments" rows (previously yaml-only via `cordis.patch.yml`) — saved values take effect immediately for terminals opened afterwards (UI terminals and model `terminal_create` alike); empty keeps the existing yaml → `$SHELL` / login shell / `powershell.exe` resolution order
+- 🏷️ **Version badge on the settings page** ([#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)): the side-card settings section now opens with a `DSH-better-sidebar v0.14.0` identity badge (version synced with the service instance, test-guarded)
+- 🔍 **Add-plugin catalog: search / grouping / independent scroll** ([#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)): built for a growing plugin ecosystem — a live search box (filters by name / id / description), optional `category` grouping for entries, and an independently scrolling list (the modal no longer grows unbounded with catalog size)
+
+**🐛 Fixes**
+
+- 🔧 **Adapted to DSH 0.1.0-rc.8** ([#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)): all 13 `@deepseek-ai/*` peer/devDependencies raised to `^0.1.0-rc.8` (transitives included; zero rc.7 leftovers in the lockfile), `cordis` to `^4.0.0-rc.8`; `dsh-client-web-react` / `dsh-client-schema-form` removed (no rc.8 publish, no longer in the shell module table, zero plugin references); CI mount lane pins `@deepseek-ai/dsh@0.1.0-rc.8`; pnpm 11.8 supply-chain verification adapted
+- 🧩 **rc.8 module-system migration** ([#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)): rc.8 no longer exposes the `window.__DSH_MODULES__` page global (it moved to the `ctx.modules` service), which broke every lazy chunk's externals resolution — the client now injects the `modules` service and shares it with chunk-bundle copies through a plugin-owned global (terminal / editor / Mermaid on-demand loading restored)
+- 🧩 **Chunk revalidation barrier hardening** ([#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)): HEAD revalidation gains a 5s timeout (fails open on a stuck route so the barrier can never wedge lazy loads); `resetChunks` clears a pending revalidation barrier
+- 🖱️ **Drag robustness** ([#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)): fast releases (browsers merge/lose pointermove bursts) commit the last known dragged position instead of rolling back; `pointercancel` / lost-capture interruptions keep the drag result too; the center column is re-measured right after commit (no mid-frame bottom-panel width jump); HMR re-activation re-locates the center column via an `<html>` style observer plus a retry when the bottom panel opens (fixes the blank bottom panel / shifted input bar after a hot reload)
+
+### v0.13.1### v0.13.1
 
 **✨ New features**
 
@@ -57,7 +76,7 @@
 
 **✨ New features**
 
-- 📁 **Files window merged with the explorer** ([#151](https://github.com/omdsh-dev/DSH-better-sidebar/pull/151)): new `editorExplorer` setting (default on, editor card gear) — file tabs gain a path-input header plus a toggleable right-docked file tree (per-tab open/width memory, drag-resize 160–480px from the left edge, global filename search via the host `fs.search` route with a hard budget, skipping `.git` and symlink dirs); in merged mode tree clicks / Enter in the path input switch the current tab **in place**, separate mode opens by path; fresh sessions seed an empty Files window instead of the explorer tab, and a path-less window is a chrome'd empty file window in merged mode / a bare file manager in separate mode; the tree context menu offers "Open in new tab" and "Open to the side" (split)
+- 📁 **Files window merged with the explorer** ([#151](https://github.com/omdsh-dev/DSH-better-sidebar/pull/151)): new `editorExplorer` setting (editor card gear) — file tabs gain a path-input header plus a toggleable right-docked file tree (per-tab open/width memory, drag-resize 160–480px from the left edge, global filename search via the host `fs.search` route with a hard budget, skipping `.git` and symlink dirs); in separate mode (default) tree clicks / Enter in the path input open each file **in its own new tab**, merged mode switches the current tab **in place**; fresh sessions seed an empty Files window instead of the explorer tab, and a path-less window is a bare file manager in separate mode / a chrome'd empty file window in merged mode; the tree context menu offers "Open in new tab" and "Open to the side" (split)
 - 🎛️ **Select rows for declarative settings** ([#151](https://github.com/omdsh-dev/DSH-better-sidebar/pull/151)): settings rows gain `type: 'select'` (`options` with value/title/desc/icon, `multi` stores the picked values as an array); options with icons render big-icon option cards and keep the icon in the closed anchor; `editorExplorer` became an iconed select (merged vs separate); the capability list gained `settingSelect`
 - 🔀 **Mutual exclusion with the dsh-web-ui family right panel** ([#181](https://github.com/omdsh-dev/DSH-better-sidebar/pull/181)): reads the `aionui-panel` settings namespace's provider choice — when "Use aionui-panel" is selected, the whole better-sidebar (right sidebar / bottom panel / floating entry / all takeovers) does not mount; with DSH-better-sidebar (or no aionui installed) it behaves as before. Takes effect live after a settings save (settings-document push), no reload needed
 
@@ -230,7 +249,7 @@ The dashed cards at the end of the "Sidebar content" / "File viewers" grids in t
 ## 🛠️ Development & Build
 
 ```sh
-pnpm install      # @deepseek-ai/* resolved from npm (^0.1.0-rc.7, published) — no token needed
+pnpm install      # @deepseek-ai/* resolved from npm (^0.1.0-rc.8, published) — no token needed
 pnpm typecheck    # tsc --noEmit
 pnpm build        # → lib/index.js + lib/invariant.js + lib/client.js + lib/client-registry.js + lib/types
 pnpm test         # vitest (includes manifest consistency guard; build first)
