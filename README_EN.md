@@ -41,6 +41,10 @@
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="45%" alt="Add Plugins screenshot" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
 </div>
 
+### v0.14.1
+
+- 📱 **No-session feedback on phones**: without a selected session, the subdued sidebar toggle remains unavailable but shows “Select a conversation to use the sidebar” on tap or keyboard focus; after selecting a session, the same toggle opens the full-width mobile drawer, whose border-inclusive width no longer introduces one pixel of horizontal overflow.
+
 ### v0.14.0
 
 > ⚠️ **This release adapts to DSH 0.1.0-rc.8**: every `@deepseek-ai/*` peer/devDependency is raised to `^0.1.0-rc.8` (transitives included — zero rc.7 leftovers in the lockfile), `cordis` to `^4.0.0-rc.8`, and the CI mount lane pins `@deepseek-ai/dsh@0.1.0-rc.8`. **DSH environments on rc.7 or earlier can no longer resolve this release's dependencies — upgrade DSH first.** All changes since v0.13.1:
@@ -271,7 +275,7 @@ pnpm watch        # tsdown --watch
 - Office-suite preview (.docx/.xlsx/.pptx) moved to the recommended office plugin (see the "Add plugins" modals in settings); without it these files fall through to the code/download fallbacks
 - Browser sandbox has no login state / third-party cookies are restricted; some sites need popup login; sites that refuse embedding via `X-Frame-Options`/`frame-ancestors` (e.g. arxiv.org) show a reason panel (with "Open in browser"); in-iframe navigation does not enter the back stack
 - HTML preview renders the saved file (not unsaved drafts)
-- No bottom panel on mobile (<768px): on narrow screens its tabs merge into the right sidebar once (after migrating back to desktop they stay in the right sidebar); the desktop bottom panel is only available on wide viewports; auto-open terminal on first bottom-panel expand does not trigger on mobile
+- No bottom panel on mobile (<768px): on narrow screens its tabs merge into the right sidebar once (after migrating back to desktop they stay in the right sidebar); the desktop bottom panel is only available on wide viewports; auto-open terminal on first bottom-panel expand does not trigger on mobile. Without a selected session, tapping the subdued toggle shows the select-session message; with a selected session, it opens the full-width drawer
 
 ## 🖥️ Platform Support
 

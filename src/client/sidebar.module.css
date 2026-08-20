@@ -91,17 +91,19 @@
     color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
-.toggleButton:hover:not(:disabled) {
+.toggleButton:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
 }
 
-.toggleButton:disabled {
+.toggleButton:disabled,
+.toggleButton[aria-disabled='true'] {
   opacity: 0.4;
   cursor: default;
 }
 
 .panel {
+  box-sizing: border-box;
   position: absolute;
   top: 0;
   right: 0;
