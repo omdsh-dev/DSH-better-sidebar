@@ -332,11 +332,18 @@ function buildApi(
     },
     'git.worktree-list': async (payload) => {
       const { cwd } = cwdOf(payload)
-      return { entries: await git.worktrees(cwd) }
+      const [entries, pathPrefix] = await Promise.all([git.worktrees(cwd), git.worktreePathPrefix(cwd)])
+      return { entries, pathPrefix }
     },
     'git.worktree-add': async (payload) => {
       const { cwd } = cwdOf(payload)
-      await git.addWorktree(cwd, requireString(payload, 'path'), requireString(payload, 'branch'))
+      const record = payload as { base?: unknown }
+      await git.addWorktree(cwd, requireString(payload, 'path'), requireString(payload, 'branch'), record.base === undefined ? undefined : requireString(payload, 'base'))
+      return { ok: true }
+    },
+    'git.worktree-merge': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      await git.mergeWorktree(cwd, requireString(payload, 'targetPath'), requireString(payload, 'sourceBranch'))
       return { ok: true }
     },
     'git.worktree-remove': async (payload) => {

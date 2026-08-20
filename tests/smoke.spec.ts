@@ -392,6 +392,14 @@ describe('git destructive operations (scratch repository)', () => {
       ])
       await git.removeWorktree(dir, linked)
       expect((await git.worktrees(dir)).map(entry => entry.branch)).toEqual(['main'])
+
+      await git.addWorktree(dir, linked, 'parallel-task', 'main')
+      writeFileSync(join(linked, 'parallel.txt'), 'parallel work\n')
+      gitRun(linked, ['add', '-A'])
+      gitRun(linked, ['commit', '-q', '-m', 'parallel work'])
+      await git.mergeWorktree(dir, dir, 'parallel-task')
+      expect(readFileSync(join(dir, 'parallel.txt'), 'utf8')).toBe('parallel work\n')
+      await git.removeWorktree(dir, linked)
     } finally {
       rmSync(linked, { recursive: true, force: true })
       rmSync(dir, { recursive: true, force: true })

@@ -10,8 +10,8 @@
  * user.name/user.email).
  */
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, realpathSync } from 'node:fs'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 
 export type GitOperation = 'merge' | 'rebase'
 
@@ -248,8 +248,28 @@ export async function worktrees(cwd: string): Promise<GitWorktree[]> {
 }
 
 /** Add a linked checkout for an existing branch. */
-export async function addWorktree(cwd: string, path: string, branch: string): Promise<void> {
-  await runGit(cwd, ['worktree', 'add', '--', path, branch])
+export async function addWorktree(cwd: string, path: string, branch: string, base?: string): Promise<void> {
+  await runGit(cwd, ['worktree', 'add', ...(base === undefined ? [] : ['-b', branch]), '--', path, base ?? branch])
+}
+
+export async function worktreePathPrefix(cwd: string): Promise<string> {
+  const root = await repoRoot(cwd)
+  return `${join(dirname(root), `${basename(root)}-worktrees`)}${sep}`
+}
+
+/** Merge only inside a registered Worktree of the same repository. */
+export async function mergeWorktree(cwd: string, targetPath: string, sourceBranch: string): Promise<void> {
+  let canonical: string
+  try {
+    canonical = realpathSync(targetPath)
+  } catch {
+    throw new GitCommandError('unknown target worktree', 'git-error', 'worktree merge')
+  }
+  const target = (await worktrees(cwd)).find(entry => {
+    try { return realpathSync(entry.path) === canonical } catch { return false }
+  })
+  if (target === undefined) throw new GitCommandError('unknown target worktree', 'git-error', 'worktree merge')
+  await merge(target.path, sourceBranch)
 }
 
 /** Remove a clean linked checkout; git refuses dirty/current/locked trees. */

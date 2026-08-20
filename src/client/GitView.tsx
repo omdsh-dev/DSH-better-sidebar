@@ -103,8 +103,13 @@ export function GitView(props: {
   const [worktreeOpen, setWorktreeOpen] = useState(false)
   const [worktreeBranch, setWorktreeBranch] = useState('')
   const [worktreePath, setWorktreePath] = useState('')
+  const [worktreePathPrefix, setWorktreePathPrefix] = useState('')
+  const [worktreeCreateNew, setWorktreeCreateNew] = useState(false)
+  const [worktreeNewBranch, setWorktreeNewBranch] = useState('')
+  const [worktreeBase, setWorktreeBase] = useState('')
   const [worktreeError, setWorktreeError] = useState<string | null>(null)
   const [worktreeMerge, setWorktreeMerge] = useState<GitWorktree | null>(null)
+  const [worktreeTarget, setWorktreeTarget] = useState('')
   const [operation, setOperation] = useState<GitOperation | null>(null)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
@@ -126,7 +131,7 @@ export function GitView(props: {
         api.gitBranch(scope).catch(() => ({ current: '', names: [] as string[] })),
         // The first history page only; the rest arrives via "load more".
         api.gitLog(scope, LOG_BATCH, 0).catch(() => [] as GitLogEntry[]),
-        api.gitWorktrees(scope).catch(() => ({ entries: [] as GitWorktree[] })),
+        api.gitWorktrees(scope).catch(() => ({ entries: [] as GitWorktree[], pathPrefix: '' })),
         api.gitOperation(scope).catch(() => ({ operation: null })),
       ])
       setStatus(statusResult)
@@ -134,9 +139,12 @@ export function GitView(props: {
       setLogEntries(logResult)
       setLogEnded(logResult.length < LOG_BATCH)
       setWorktrees(worktreeResult.entries)
+      setWorktreePathPrefix(worktreeResult.pathPrefix)
       setOperation(operationResult.operation)
       const available = branchResult.names.filter(name => !worktreeResult.entries.some(entry => entry.branch === name))
       setWorktreeBranch(branch => available.includes(branch) ? branch : available[0] ?? '')
+      setWorktreeBase(base => branchResult.names.includes(base) ? base : branchResult.current)
+      setWorktreePath(path => path !== '' ? path : `${worktreeResult.pathPrefix}${(available[0] ?? 'new-worktree').replace(/[^\w.-]+/g, '-')}`)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -248,11 +256,12 @@ export function GitView(props: {
 
   const addWorktree = async (): Promise<void> => {
     const path = worktreePath.trim()
-    if (path === '' || worktreeBranch === '' || busy) return
+    const branch = worktreeCreateNew ? worktreeNewBranch.trim() : worktreeBranch
+    if (path === '' || branch === '' || busy) return
     setBusy(true)
     setWorktreeError(null)
     try {
-      await api.gitWorktreeAdd(scope, path, worktreeBranch)
+      await api.gitWorktreeAdd(scope, path, branch, worktreeCreateNew ? worktreeBase : undefined)
       setWorktreePath('')
       await refresh()
     } catch (reason) {
@@ -289,17 +298,23 @@ export function GitView(props: {
   }
 
   const mergeWorktree = async (entry: GitWorktree, remove: boolean): Promise<void> => {
-    if (entry.branch === undefined || busy) return
+    const target = worktrees.find(candidate => candidate.path === worktreeTarget)
+    if (entry.branch === undefined || target === undefined || busy) return
     setWorktreeMerge(null)
     setBusy(true)
     setCommitError(null)
     try {
-      await api.gitMerge(scope, entry.branch)
+      await api.gitWorktreeMerge(scope, target.path, entry.branch)
       if (remove) await api.gitWorktreeRemove(scope, entry.path)
     } catch (reason) {
       setCommitError(reason instanceof Error ? reason.message : String(reason))
     } finally {
       await refresh()
+      try {
+        await onOpenWorktree(target.path)
+      } catch (reason) {
+        setCommitError(reason instanceof Error ? reason.message : String(reason))
+      }
       setBusy(false)
     }
   }
@@ -776,26 +791,49 @@ export function GitView(props: {
           <select
             className={css.gitBranchSelect}
             aria-label={t('worktreeBranch')}
-            value={worktreeBranch}
-            disabled={busy || worktreeBranch === ''}
-            onChange={(event) => { setWorktreeBranch(event.target.value) }}
+            value={worktreeCreateNew ? '__new__' : worktreeBranch}
+            disabled={busy}
+            onChange={(event) => {
+              const value = event.target.value
+              setWorktreeCreateNew(value === '__new__')
+              if (value !== '__new__') setWorktreeBranch(value)
+              setWorktreePath(`${worktreePathPrefix}${(value === '__new__' ? worktreeNewBranch || 'new-branch' : value).replace(/[^\w.-]+/g, '-')}`)
+            }}
           >
+            <option value="__new__">{t('worktreeCreateBranch')}</option>
             {branchNames
               .filter(name => !worktrees.some(entry => entry.branch === name))
               .map(name => <option key={name} value={name}>{name}</option>)}
           </select>
+          {worktreeCreateNew && (
+            <>
+              <Input
+                value={worktreeNewBranch}
+                aria-label={t('worktreeNewBranch')}
+                placeholder={t('worktreeNewBranch')}
+                disabled={busy}
+                onChange={(event) => {
+                  setWorktreeNewBranch(event.target.value)
+                  setWorktreePath(`${worktreePathPrefix}${(event.target.value || 'new-branch').replace(/[^\w.-]+/g, '-')}`)
+                }}
+              />
+              <select className={css.gitBranchSelect} aria-label={t('worktreeBase')} value={worktreeBase} disabled={busy} onChange={(event) => { setWorktreeBase(event.target.value) }}>
+                {branchNames.map(name => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </>
+          )}
           <Input
             value={worktreePath}
             aria-label={t('worktreePath')}
             placeholder={t('worktreePathPlaceholder')}
-            disabled={busy || worktreeBranch === ''}
+            disabled={busy || (worktreeCreateNew ? worktreeNewBranch.trim() === '' : worktreeBranch === '')}
             onChange={(event) => { setWorktreePath(event.target.value) }}
           />
-          <Button type="submit" size="sm" variant="primary" disabled={busy || worktreeBranch === '' || worktreePath.trim() === ''}>
+          <Button type="submit" size="sm" variant="primary" disabled={busy || (worktreeCreateNew ? worktreeNewBranch.trim() === '' || worktreeBase === '' : worktreeBranch === '') || worktreePath.trim() === ''}>
             {t('worktreeAdd')}
           </Button>
         </form>
-        {worktreeBranch === '' && <p className={css.gitWorktreeHint}>{t('worktreeNoBranch')}</p>}
+        {!worktreeCreateNew && worktreeBranch === '' && <p className={css.gitWorktreeHint}>{t('worktreeNoBranch')}</p>}
         {worktreeError !== null && <div className={css.gitError}>{worktreeError}</div>}
         <div className={css.gitWorktreeList}>
           {worktrees.map(entry => (
@@ -820,7 +858,11 @@ export function GitView(props: {
                 aria-label={t('worktreeMerge')}
                 title={t('worktreeMerge')}
                 disabled={busy || entry.current || entry.branch === undefined || operation !== null}
-                onClick={() => { setWorktreeOpen(false); setWorktreeMerge(entry) }}
+                onClick={() => {
+                  setWorktreeOpen(false)
+                  setWorktreeMerge(entry)
+                  setWorktreeTarget(worktrees.find(candidate => candidate.current)?.path ?? '')
+                }}
               >
                 <IconBranchOutline16 size={14} />
               </button>
@@ -855,12 +897,17 @@ export function GitView(props: {
         footer={(
           <>
             <Button variant="outline" onClick={() => { setWorktreeMerge(null) }}>{t('cancel')}</Button>
-            <Button variant="outline" disabled={busy} onClick={() => { if (worktreeMerge !== null) void mergeWorktree(worktreeMerge, true) }}>{t('worktreeMergeRemove')}</Button>
-            <Button variant="primary" disabled={busy} onClick={() => { if (worktreeMerge !== null) void mergeWorktree(worktreeMerge, false) }}>{t('worktreeMerge')}</Button>
+            <Button variant="outline" disabled={busy || worktreeTarget === ''} onClick={() => { if (worktreeMerge !== null) void mergeWorktree(worktreeMerge, true) }}>{t('worktreeMergeRemove')}</Button>
+            <Button variant="primary" disabled={busy || worktreeTarget === ''} onClick={() => { if (worktreeMerge !== null) void mergeWorktree(worktreeMerge, false) }}>{t('worktreeMerge')}</Button>
           </>
         )}
       >
-        <p className={css.gitConfirmDesc}>{t('worktreeMergeDesc', { source: worktreeMerge?.branch ?? '', current: status?.branch ?? '' })}</p>
+        <p className={css.gitConfirmDesc}>{t('worktreeMergeDesc', { source: worktreeMerge?.branch ?? '', target: worktrees.find(entry => entry.path === worktreeTarget)?.branch ?? '' })}</p>
+        <select className={css.gitBranchSelect} aria-label={t('worktreeMergeTitle')} value={worktreeTarget} onChange={(event) => { setWorktreeTarget(event.target.value) }}>
+          {worktrees.filter(entry => entry.path !== worktreeMerge?.path && entry.branch !== undefined && !entry.prunable).map(entry => (
+            <option key={entry.path} value={entry.path}>{entry.branch}</option>
+          ))}
+        </select>
       </Modal>
     </div>
   )
