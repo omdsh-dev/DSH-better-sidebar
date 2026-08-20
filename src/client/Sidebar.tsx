@@ -37,7 +37,10 @@ import {
   resizeSplitIn, setBottomHeight, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
 } from './state.ts'
-import { IconPanelBottomOutline16, IconPanelRightOutline16 } from './icons.tsx'
+import {
+  IconMaximizeOutline16, IconPanelBottomOutline16, IconPanelRightOutline16, IconRestoreOutline16,
+  IconSidebarMaximizeOutline16, IconSidebarRestoreOutline16,
+} from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useNarrowViewport } from './breakpoints.ts'
 import type { NewTabOption } from './TabBar.tsx'
@@ -358,6 +361,30 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // right panel opens/closes; a frame that never appears keeps the initial
   // zero-size fallback (the panel renders at 0 width until measured).
   const [centerRect, setCenterRect] = useState({ left: 0, right: 0 })
+  const [sidebarMaximized, setSidebarMaximized] = useState(false)
+  const [maximizedRightPaneId, setMaximizedRightPaneId] = useState<string | null>(null)
+  const [maximizedBottomPaneId, setMaximizedBottomPaneId] = useState<string | null>(null)
+
+  const isRightMaximized = (sidebarMaximized || maximizedRightPaneId !== null) && (state?.panelOpen ?? false)
+
+  useEffect(() => {
+    if (isRightMaximized) {
+      document.body.setAttribute('data-dsh-sidebar-maximized', '')
+    } else {
+      document.body.removeAttribute('data-dsh-sidebar-maximized')
+    }
+    return () => {
+      document.body.removeAttribute('data-dsh-sidebar-maximized')
+    }
+  }, [isRightMaximized])
+
+  const toggleMaximizeRightPane = useCallback((paneId: string) => {
+    setMaximizedRightPaneId(cur => cur === paneId ? null : paneId)
+  }, [])
+
+  const toggleMaximizeBottomPane = useCallback((paneId: string) => {
+    setMaximizedBottomPaneId(cur => cur === paneId ? null : paneId)
+  }, [])
   // Refs keep the measure step stable across renders and let it skip work
   // mid-drag: during a width/corner drag the layout push resizes the center
   // column every frame, and reacting (setCenterRect → re-render) would
@@ -755,6 +782,28 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       */}
       <div className={css.toggleCluster}>
         {/*
+          1. Maximize Sidebar (Codex-like full workspace cover mode with floating chat bar)
+        */}
+        {state.panelOpen && !narrow && (
+          <Tooltip label={isRightMaximized ? t('restoreSidebar') : t('maximizeSidebar')} side="bottom" delayMs={500}>
+            <button
+              type="button"
+              className={clsx(css.toggleButton, isRightMaximized && css.toggleButtonActive)}
+              aria-label={isRightMaximized ? t('restoreSidebar') : t('maximizeSidebar')}
+              onClick={() => {
+                if (isRightMaximized) {
+                  setSidebarMaximized(false)
+                  setMaximizedRightPaneId(null)
+                } else {
+                  setSidebarMaximized(true)
+                }
+              }}
+            >
+              {isRightMaximized ? <IconSidebarRestoreOutline16 /> : <IconSidebarMaximizeOutline16 />}
+            </button>
+          </Tooltip>
+        )}
+        {/*
           Narrow viewports merge the two workbenches into the one drawer —
           there is no bottom panel, so its toggle button is not offered.
         */}
@@ -775,7 +824,14 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             type="button"
             className={css.toggleButton}
             aria-label={state.panelOpen ? t('collapse') : t('expand')}
-            onClick={() => { store.reduce(togglePanel) }}
+            onClick={() => {
+              if (state.panelOpen) {
+                setSidebarMaximized(false)
+                setMaximizedRightPaneId(null)
+                setMaximizedBottomPaneId(null)
+              }
+              store.reduce(togglePanel)
+            }}
           >
             <IconPanelRightOutline16 />
           </button>
@@ -792,18 +848,21 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       */}
       <div
         ref={panelRef}
-        className={clsx(css.panel, !state.panelOpen && css.panelHidden)}
-        style={{ width: narrow ? '100vw' : Math.min(state.width, window.innerWidth) }}
-       
+        className={clsx(css.panel, !state.panelOpen && css.panelHidden, isRightMaximized && css.panelMaximized)}
+        style={{
+          width: narrow
+            ? '100vw'
+            : (isRightMaximized ? Math.max(0, window.innerWidth - centerRect.left) : Math.min(state.width, window.innerWidth)),
+        }}
         data-dragging={anyDragging || undefined}
       >
           {!narrow && (
             <div
               className={clsx(css.panelResize, draggingWidth && css.panelResizeActive)}
-             
               onPointerDown={(event) => {
                 event.preventDefault()
                 event.currentTarget.setPointerCapture(event.pointerId)
+                if (sidebarMaximized) setSidebarMaximized(false)
                 dragCommitted.current = false
                 widthDrag.current = { startX: event.clientX, startWidth: state.width }
                 setDraggingWidth(true)
@@ -837,6 +896,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={renderTab}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            maximizedPaneId={maximizedRightPaneId}
+            onToggleMaximizePane={toggleMaximizeRightPane}
           />
         </div>
         {/*
@@ -970,6 +1031,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={(tab, active, paneId) => renderTab(tab, active, paneId, true)}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            maximizedPaneId={maximizedBottomPaneId}
+            onToggleMaximizePane={toggleMaximizeBottomPane}
           />
         </div>
       </div>

@@ -36,14 +36,31 @@
 /* When the sidebar is collapsed, the toggle cluster reclaims the top-right
    corner. Push the DSH session header's right padding out so its right-aligned
    utilities (the "Session log" download capsule) yield the corner instead of
-   hiding under the cluster. The header default right-pads 28px; the 2-button
-   cluster spans right 10→70px, so 78px clears it with an 8px gap. Anchor on
+   hiding under the cluster. The header default right-pads 28px; the 3-button
+   cluster spans right 10→106px, so 114px clears it with an 8px gap. Anchor on
    the header's slot host wrapper ([data-slot="conversation.session.header"])
    rather than a positional path: DSH 0.1.x nests the header several levels
    under the center column. The Sidebar shell toggles the body attribute with
    the panel open state. */
 body[data-dsh-sidebar-collapsed] [data-slot="conversation.session.header"] > header {
-  padding-right: 78px;
+  padding-right: 114px;
+}
+
+/* Floating conversation input bar in Codex-like maximized sidebar mode */
+body[data-dsh-sidebar-maximized] [data-composer-seat],
+body[data-dsh-sidebar-maximized] [class*="composerSeat"],
+body[data-dsh-sidebar-maximized] [class*="composerBar"],
+body[data-dsh-sidebar-maximized] [class*="composerStack"] {
+  position: fixed !important;
+  bottom: 24px !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  z-index: 50 !important;
+  width: min(720px, calc(100vw - 320px)) !important;
+  max-width: min(720px, calc(100vw - 320px)) !important;
+  pointer-events: auto !important;
+  filter: drop-shadow(0 8px 32px rgba(0, 0, 0, 0.28));
+  transition: all var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
 body[data-dsh-sidebar-dragging] #root,

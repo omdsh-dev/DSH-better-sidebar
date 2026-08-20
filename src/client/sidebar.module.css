@@ -42,7 +42,7 @@
    right end, so the tabs and the + menu genuinely yield space to the cluster
    (never hiding under it). */
 .panel:not(.panelHidden) .tabBar {
-  padding-right: 72px;
+  padding-right: 106px;
 }
 
 /* The closed-state affordance is the native rail icon control: a plain
@@ -64,6 +64,11 @@
   transition:
     background var(--ds-transition-duration-slow) var(--ds-ease-in-out),
     color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.toggleButtonActive {
+  color: var(--dsw-alias-brand-primary) !important;
+  background: var(--dsw-alias-interactive-bg-hover-accent) !important;
 }
 
 .toggleButton:hover:not(:disabled) {
@@ -397,6 +402,14 @@
   background: var(--dsw-alias-bg-base);
 }
 
+.paneMaximized {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 20 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
 .paneDrop {
   outline: 1px solid var(--dsw-alias-interactive-bg-hover-accent);
   outline-offset: -1px;
@@ -631,6 +644,36 @@
 }
 
 .tabBarPlus:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.tabBarActions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  padding-right: 4px;
+}
+
+.tabBarMaximize {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  transition: background var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.tabBarMaximize:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
 }
