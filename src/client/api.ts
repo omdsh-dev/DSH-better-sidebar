@@ -121,9 +121,16 @@ async function call<T>(method: string, payload: Record<string, unknown>, signal?
  * Upload one file to the sidebar's raw upload route: the File goes straight
  * into the POST body (no JSON/base64 re-encoding — the host streams it into
  * the workspace). Failure surfaces as {@link SidebarApiError} with the wire
- * code, exactly like every `/sidebar/api` call.
+ * code, exactly like every `/sidebar/api` call. An aborted `signal` rejects
+ * with the DOMException as-is (the caller decides whether that is an error).
  */
-async function fetchUpload<T>(scope: SessionScope, dir: string, relativePath: string, body: Blob): Promise<T> {
+async function fetchUpload<T>(
+  scope: SessionScope,
+  dir: string,
+  relativePath: string,
+  body: Blob,
+  signal?: AbortSignal,
+): Promise<T> {
   const params = new URLSearchParams({ sessionId: scope.sessionId, dir, relativePath })
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
   let response: Response
@@ -132,8 +139,10 @@ async function fetchUpload<T>(scope: SessionScope, dir: string, relativePath: st
       method: 'POST',
       headers: { 'content-type': 'application/octet-stream' },
       body,
+      signal,
     })
   } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
     throw new SidebarApiError('network', error instanceof Error ? error.message : String(error))
   }
   const parsed: { ok?: boolean; value?: unknown; error?: { code?: string; message?: string } } | null
@@ -175,8 +184,8 @@ export const api = {
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
   /** Upload one file's raw bytes into `dir` (keeps the folder tree via
    *  `relativePath`); the host streams it under the session workspace. */
-  uploadFile: (scope: SessionScope, dir: string, relativePath: string, body: Blob) =>
-    fetchUpload<{ path: string; size: number }>(scope, dir, relativePath, body),
+  uploadFile: (scope: SessionScope, dir: string, relativePath: string, body: Blob, signal?: AbortSignal) =>
+    fetchUpload<{ path: string; size: number }>(scope, dir, relativePath, body, signal),
   gitStatus: (scope: SessionScope, signal?: AbortSignal) =>
     call<GitStatusResult>('git.status', scopePayload(scope, {}), signal),
   gitDiff: (scope: SessionScope, path: string | undefined, staged: boolean, signal?: AbortSignal) =>
