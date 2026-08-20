@@ -136,3 +136,17 @@ export const IconSidebarRestoreOutline16 = ({ size = 16, className }: IconProps)
     <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
   </svg>
 )
+
+/** Chevron Up glyph (expandable floating chat header). */
+export const IconChevronUp16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M3.5 10.5 8 6l4.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+/** Chevron Down glyph (expandable floating chat header). */
+export const IconChevronDown16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M3.5 5.5 8 10l4.5-4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)

@@ -26,9 +26,10 @@
  * the right tree.
  */
 import { createElement, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
-import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { FishLogo, IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
@@ -38,6 +39,7 @@ import {
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
 } from './state.ts'
 import {
+  IconChevronDown16, IconChevronUp16,
   IconMaximizeOutline16, IconPanelBottomOutline16, IconPanelRightOutline16, IconRestoreOutline16,
   IconSidebarMaximizeOutline16, IconSidebarRestoreOutline16,
 } from './icons.tsx'
@@ -157,6 +159,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   const state = snapshot.state
   const sessionId = snapshot.sessionId
   const summaryCwd = sessionId === undefined ? undefined : sessionList.byId[sessionId]?.cwd
+  const hasChatHistory = sessionId !== undefined && sessionList.byId[sessionId]?.blank !== true
 
   // The collapsed toggle cluster reclaims the top-right corner, so the DSH
   // session header's right-aligned utilities (the "Session log" download
@@ -362,29 +365,107 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // zero-size fallback (the panel renders at 0 width until measured).
   const [centerRect, setCenterRect] = useState({ left: 0, right: 0 })
   const [sidebarMaximized, setSidebarMaximized] = useState(false)
+  const [chatExpanded, setChatExpanded] = useState(false)
+  const [chatFolded, setChatFolded] = useState(false)
   const [maximizedRightPaneId, setMaximizedRightPaneId] = useState<string | null>(null)
-  const [maximizedBottomPaneId, setMaximizedBottomPaneId] = useState<string | null>(null)
 
   const isRightMaximized = (sidebarMaximized || maximizedRightPaneId !== null) && (state?.panelOpen ?? false)
+
+  useEffect(() => {
+    setChatExpanded(false)
+    setChatFolded(false)
+  }, [sessionId])
+
+  useEffect(() => {
+    // A blank session has no history viewport to expand, but its composer can
+    // still be folded into the DeepSeek pill with the same bottom handle.
+    if (!hasChatHistory) setChatExpanded(false)
+  }, [hasChatHistory])
 
   useEffect(() => {
     if (isRightMaximized) {
       document.body.setAttribute('data-dsh-sidebar-maximized', '')
     } else {
+      setChatExpanded(false)
       document.body.removeAttribute('data-dsh-sidebar-maximized')
+      document.body.removeAttribute('data-dsh-chat-expanded')
+      document.body.removeAttribute('data-dsh-chat-folded')
     }
     return () => {
       document.body.removeAttribute('data-dsh-sidebar-maximized')
+      document.body.removeAttribute('data-dsh-chat-expanded')
+      document.body.removeAttribute('data-dsh-chat-folded')
     }
   }, [isRightMaximized])
+
+  useEffect(() => {
+    if (isRightMaximized && chatExpanded) {
+      document.body.setAttribute('data-dsh-chat-expanded', '')
+    } else {
+      document.body.removeAttribute('data-dsh-chat-expanded')
+    }
+    return () => {
+      document.body.removeAttribute('data-dsh-chat-expanded')
+    }
+  }, [isRightMaximized, chatExpanded])
+
+  useEffect(() => {
+    if (isRightMaximized && chatFolded) {
+      document.body.setAttribute('data-dsh-chat-folded', '')
+    } else {
+      document.body.removeAttribute('data-dsh-chat-folded')
+    }
+    return () => {
+      document.body.removeAttribute('data-dsh-chat-folded')
+    }
+  }, [isRightMaximized, chatFolded])
+
+  const [composerSeatEl, setComposerSeatEl] = useState<HTMLElement | null>(null)
+  useEffect(() => {
+    if (!isRightMaximized) {
+      setComposerSeatEl(null)
+      return
+    }
+    const update = (): void => {
+      const el = document.querySelector('[data-composer-seat]') as HTMLElement | null
+      setComposerSeatEl(el)
+    }
+    update()
+    const observer = new MutationObserver(update)
+    observer.observe(document.body, { childList: true, subtree: true })
+    return () => { observer.disconnect() }
+  }, [isRightMaximized])
+
+  // The history viewport is positioned independently of the composer seat.
+  // Keep its bottom edge tied to the seat's measured height so expanding the
+  // history never moves the input itself and remains correct for multi-line
+  // drafts or toolbar changes.
+  useEffect(() => {
+    if (!isRightMaximized || composerSeatEl === null) return
+
+    const updateComposerMetrics = (): void => {
+      const rect = composerSeatEl.getBoundingClientRect()
+      const bottom = Math.max(0, window.innerHeight - rect.bottom)
+      document.body.style.setProperty('--dsh-composer-height', `${rect.height}px`)
+      document.body.style.setProperty('--dsh-composer-bottom', `${bottom}px`)
+    }
+
+    updateComposerMetrics()
+    const observer = new ResizeObserver(updateComposerMetrics)
+    observer.observe(composerSeatEl)
+    window.addEventListener('resize', updateComposerMetrics)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', updateComposerMetrics)
+      document.body.style.removeProperty('--dsh-composer-height')
+      document.body.style.removeProperty('--dsh-composer-bottom')
+    }
+  }, [composerSeatEl, isRightMaximized])
 
   const toggleMaximizeRightPane = useCallback((paneId: string) => {
     setMaximizedRightPaneId(cur => cur === paneId ? null : paneId)
   }, [])
 
-  const toggleMaximizeBottomPane = useCallback((paneId: string) => {
-    setMaximizedBottomPaneId(cur => cur === paneId ? null : paneId)
-  }, [])
   // Refs keep the measure step stable across renders and let it skip work
   // mid-drag: during a width/corner drag the layout push resizes the center
   // column every frame, and reacting (setCenterRect → re-render) would
@@ -828,7 +909,6 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
               if (state.panelOpen) {
                 setSidebarMaximized(false)
                 setMaximizedRightPaneId(null)
-                setMaximizedBottomPaneId(null)
               }
               store.reduce(togglePanel)
             }}
@@ -1031,11 +1111,67 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={(tab, active, paneId) => renderTab(tab, active, paneId, true)}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
-            maximizedPaneId={maximizedBottomPaneId}
-            onToggleMaximizePane={toggleMaximizeBottomPane}
           />
         </div>
       </div>
+      )}
+      {/*
+        Floating conversation controls in Codex-like maximized mode.
+      */}
+      {isRightMaximized && (
+        <>
+          {chatFolded ? (
+            /* Bottom DeepSeek Tab when fully folded (Image 4) */
+            <Tooltip label={t('expandChat')} side="top" delayMs={300}>
+              <button
+                type="button"
+                className={css.floatingDeepSeekPill}
+                onClick={() => { setChatFolded(false) }}
+                aria-label={t('expandChat')}
+              >
+                <FishLogo size={18} />
+              </button>
+            </Tooltip>
+          ) : composerSeatEl !== null ? (
+            createPortal(
+              <>
+                {hasChatHistory && (
+                  /* Header pill directly docked on top of the input card (Image 3) */
+                  <button
+                    type="button"
+                    className={clsx(css.floatingChatHeader, chatExpanded && css.floatingChatHeaderExpanded)}
+                    onClick={() => { setChatExpanded(v => !v) }}
+                    aria-label={chatExpanded ? t('collapseChat') : t('expandChat')}
+                  >
+                    <div className={css.floatingChatStatus}>
+                      <span className={css.floatingChatDot} />
+                      <span className={css.floatingChatTitle}>{t('chatPreview')}</span>
+                    </div>
+                    <span className={css.floatingChatToggle}>
+                      {chatExpanded ? <IconChevronDown16 size={14} /> : <IconChevronUp16 size={14} />}
+                    </span>
+                  </button>
+                )}
+
+                {/* Bottom fold handle directly docked at the bottom of the composer (Image 3) */}
+                <Tooltip label={t('collapseChat')} side="top" delayMs={500}>
+                  <button
+                    type="button"
+                    className={css.floatingBottomFoldHandle}
+                    onClick={() => {
+                      setChatExpanded(false)
+                      setChatFolded(true)
+                    }}
+                    aria-label={t('collapseChat')}
+                  >
+                    <IconChevronDown16 size={12} />
+                  </button>
+                </Tooltip>
+              </>,
+              composerSeatEl,
+            )
+          ) : null}
+        </>
       )}
     </>
   )

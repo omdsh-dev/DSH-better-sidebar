@@ -46,21 +46,152 @@ body[data-dsh-sidebar-collapsed] [data-slot="conversation.session.header"] > hea
   padding-right: 114px;
 }
 
-/* Floating conversation input bar in Codex-like maximized sidebar mode */
-body[data-dsh-sidebar-maximized] [data-composer-seat],
-body[data-dsh-sidebar-maximized] [class*="composerSeat"],
-body[data-dsh-sidebar-maximized] [class*="composerBar"],
-body[data-dsh-sidebar-maximized] [class*="composerStack"] {
+/* ── Codex-like Maximized Mode Stacking & Floating Chat ──────────── */
+
+/* Elevate #root above the maximized panel without blocking panel clicks */
+body[data-dsh-sidebar-maximized] #root {
+  z-index: 50 !important;
+}
+
+body[data-dsh-sidebar-maximized] #root,
+body[data-dsh-sidebar-maximized] #root > div[data-slot="root"],
+body[data-dsh-sidebar-maximized] #root > div[data-slot="root"] > div {
+  background: transparent !important;
+  contain: none !important;
+  pointer-events: auto !important;
+}
+
+body[data-dsh-sidebar-maximized] #root [data-pane="conversation"],
+body[data-dsh-sidebar-maximized] #root [data-slot="conversation"],
+body[data-dsh-sidebar-maximized] #root [data-pane="details"],
+body[data-dsh-sidebar-maximized] #root [data-slot="details"] {
+  background: transparent !important;
+  contain: none !important;
+  pointer-events: none !important;
+}
+
+/* The host app's left navigation remains usable while a better-sidebar pane
+   is maximized. The root stays non-hit-testable so the fixed panel below it
+   still receives clicks; this explicit child restores the native sidebar. */
+body[data-dsh-sidebar-maximized] #root [data-pane="sidebar"] {
+  pointer-events: auto !important;
+}
+
+/* Hide the native session header while the sidebar owns the conversation
+   controls. The message stream is handled separately below so its layout
+   cannot affect the fixed composer seat. */
+body[data-dsh-sidebar-maximized] [data-slot="conversation.session.header"] {
+  display: none !important;
+}
+
+body[data-dsh-sidebar-maximized]:not([data-dsh-chat-expanded]) [data-slot="conversation.session"] {
+  display: none !important;
+}
+
+body[data-dsh-sidebar-maximized][data-dsh-chat-expanded] [data-slot="conversation.session"] {
+  display: contents !important;
+}
+
+/* [data-slot="conversation.session"] is a display:contents host. Its first
+   child is the real message viewport, so only that viewport becomes the
+   floating history card. The composer remains a sibling fixed to the viewport. */
+body[data-dsh-sidebar-maximized][data-dsh-chat-expanded] [data-slot="conversation.session"] > :first-child {
   position: fixed !important;
-  bottom: 24px !important;
+  bottom: calc(
+    var(--dsh-composer-bottom, 20px) +
+    var(--dsh-composer-height, 0px) +
+    8px
+  ) !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  width: min(720px, calc(100vw - 320px)) !important;
+  max-width: min(720px, calc(100vw - 320px)) !important;
+  height: 380px !important;
+  max-height: 52vh !important;
+  min-height: 0 !important;
+  box-sizing: border-box !important;
+  flex: none !important;
+  margin: 0 !important;
+  z-index: 50 !important;
+  background: var(--dsw-alias-bg-layer-1) !important;
+  background-color: var(--dsw-alias-bg-layer-1) !important;
+  border: 1px solid var(--dsw-alias-border-l2) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.24) !important;
+  overflow: auto !important;
+  padding: 16px !important;
+  pointer-events: auto !important;
+  backdrop-filter: blur(20px) !important;
+}
+
+/* Floating conversation input bar in Codex-like maximized sidebar mode */
+body[data-dsh-sidebar-maximized] [data-composer-seat] {
+  position: fixed !important;
+  bottom: 20px !important;
   left: 50% !important;
   transform: translateX(-50%) !important;
   z-index: 50 !important;
   width: min(720px, calc(100vw - 320px)) !important;
   max-width: min(720px, calc(100vw - 320px)) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  gap: 6px !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  filter: none !important;
+  padding: 0 !important;
   pointer-events: auto !important;
-  filter: drop-shadow(0 8px 32px rgba(0, 0, 0, 0.28));
-  transition: all var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+  transition:
+    transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    opacity var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    width var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+/* Ensure inner composer stack and card fill the seat without double-transform */
+body[data-dsh-sidebar-maximized] [data-composer-seat] [class*="composerStack"],
+body[data-dsh-sidebar-maximized] [data-composer-seat] [class*="composerBar"] {
+  position: static !important;
+  transform: none !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+body[data-dsh-sidebar-maximized] [data-composer-seat] [data-composer-card] {
+  position: static !important;
+  transform: none !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  background: var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-1)) !important;
+  background-color: var(--dsw-specific-input-major, var(--dsw-alias-bg-layer-1)) !important;
+}
+
+/* The composer slot host is display:contents in DSH. Keep it transparent so
+   it cannot become a second white shell around the actual input card. */
+body[data-dsh-sidebar-maximized] [data-composer-seat] > [data-slot="conversation.composer"] {
+  display: contents !important;
+  position: static !important;
+  transform: none !important;
+  width: auto !important;
+  max-width: none !important;
+  height: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  overflow: visible !important;
+}
+
+/* When fully folded to bottom DeepSeek tab, slide composer off-screen */
+body[data-dsh-sidebar-maximized][data-dsh-chat-folded] [data-composer-seat] {
+  transform: translateX(-50%) translateY(140%) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 body[data-dsh-sidebar-dragging] #root,

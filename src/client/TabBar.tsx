@@ -146,7 +146,11 @@ export function TabBar(props: {
 
   return (
     <div
-      className={clsx(css.tabBar, dragOver && css.tabBarDrop)}
+      className={clsx(
+        css.tabBar,
+        isTopRight && !isBottom && css.tabBarTopRight,
+        dragOver && css.tabBarDrop,
+      )}
       onDragOver={(event) => {
         // The strip owns drops on itself (merge into this pane); stopping
         // propagation keeps the pane root from also running its edge-zone

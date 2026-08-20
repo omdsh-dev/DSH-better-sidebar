@@ -135,6 +135,8 @@ export interface SidebarSessionSummary {
   id: string
   cwd?: string
   displayTitle: string
+  /** Whether the session has no conversation history yet. */
+  blank?: boolean
   /** Coarse durable origin for navigation filtering (subagent children). */
   origin?: 'subagent'
   /** Durable direct parent session id (present on subagent children). */
