@@ -611,3 +611,94 @@ test('bottom panel re-locates a center column replaced deep inside #root (issue 
     }, { timeout: 15_000 })
     .toBe(true)
 })
+
+/* ── issue #258: the bottom panel must not flash full-width after a width
+      drag release ─────────────────────────────────────────────────────── */
+
+test('bottom panel never flashes full-width after a width drag release (issue #258)', async ({ page }) => {
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
+  const sidebar = page.locator('[data-dsh-better-sidebar]')
+  await expect(sidebar).toBeAttached({ timeout: 90_000 })
+  await dismissOnboarding(page)
+  await expandSidebar(page, sidebar)
+
+  // The bottom panel must be OPEN too — its right edge is what tracks the
+  // center column (and what flashes full-width on release).
+  const bottomExpand = sidebar.getByRole('button', { name: 'Expand bottom panel' })
+  await expect(bottomExpand, 'the toggle cluster must offer the bottom-panel expand button').toHaveCount(1)
+  await bottomExpand.click()
+  await expect
+    .poll(async () => {
+      const value = await page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-sidebar-height'))
+      return value !== '' && value !== '0px'
+    }, { timeout: 90_000 })
+    .toBe(true)
+
+  const { startX, startY } = await settleWidthStrip(page)
+
+  // Per-frame sampler: the bottom panel's right edge vs the center column's
+  // right edge (where the layout push lands). The release path used to
+  // TRANSIENTLY REMOVE the push variables between the layout effect's
+  // cleanup and setup phases — React can yield a render frame in that gap,
+  // so the browser painted the push-less layout (center column full width),
+  // the drag-end measure cached that full-width rect, and the bottom panel
+  // rendered full-width while #root's margin transition animated back to
+  // the new width. Every post-release frame must keep the two edges glued
+  // at the committed width: no full-width frame, no drift, no margin
+  // animation.
+  await page.evaluate(() => {
+    const samples: Array<{ t: number; bottomRight: number; colRight: number; varW: string; dragging: boolean; iw: number }> = []
+    const loop = (): void => {
+      const bottom = document.querySelector('[data-dsh-better-sidebar] [data-dsh-bottom-panel]')
+      const col = document.querySelector('#root [data-slot="conversation"]')?.parentElement
+      samples.push({
+        t: performance.now(),
+        bottomRight: bottom?.getBoundingClientRect().right ?? -1,
+        colRight: col?.getBoundingClientRect().right ?? -1,
+        varW: document.documentElement.style.getPropertyValue('--dsh-sidebar-width'),
+        dragging: document.body.hasAttribute('data-dsh-sidebar-dragging'),
+        iw: window.innerWidth,
+      })
+      requestAnimationFrame(loop)
+    }
+    requestAnimationFrame(loop)
+    ;(window as unknown as { __flashSamples: typeof samples }).__flashSamples = samples
+  })
+
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  for (let i = 1; i <= 10; i++) {
+    await page.mouse.move(startX - i * 12, startY, { steps: 2 })
+    await page.waitForTimeout(30)
+  }
+  await page.mouse.up()
+  await page.waitForTimeout(500)
+
+  const samples = await page.evaluate(
+    () => (window as unknown as { __flashSamples: Array<{ t: number; bottomRight: number; colRight: number; varW: string; dragging: boolean; iw: number }> }).__flashSamples,
+  )
+  expect(samples.length, 'the frame sampler must have collected frames').toBeGreaterThan(20)
+  const lastDrag = [...samples].reverse().find(s => s.dragging)
+  expect(lastDrag, 'the dragging attribute must appear during the drag').toBeDefined()
+  const releaseIdx = samples.indexOf(lastDrag!) + 1
+  const release = samples[releaseIdx]!
+  expect(release.colRight, 'the center column must be measurable after release').toBeGreaterThan(0)
+  expect(release.bottomRight, 'the bottom panel must be measurable after release').toBeGreaterThan(0)
+  const settled = samples[samples.length - 1]!
+  for (const s of samples.slice(releaseIdx)) {
+    expect(
+      Math.abs(s.bottomRight - s.colRight),
+      `bottom panel drifted from the center column at t=${Math.round(s.t)} (bottom ${s.bottomRight} vs column ${s.colRight})`,
+    ).toBeLessThanOrEqual(8)
+    const fullWidth = s.bottomRight >= s.iw - 1
+    expect(
+      fullWidth && s.varW !== '' && s.varW !== '0px',
+      `bottom panel flashed full-width at t=${Math.round(s.t)} (right ${s.bottomRight}, push ${s.varW})`,
+    ).toBe(false)
+    expect(
+      Math.abs(s.colRight - settled.colRight),
+      `center column edge animated after release at t=${Math.round(s.t)} (${s.colRight} vs settled ${settled.colRight})`,
+    ).toBeLessThanOrEqual(8)
+  }
+})

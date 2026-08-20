@@ -767,18 +767,25 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       ? Math.min(snapshot.state.bottomHeight, window.innerHeight)
       : 0
     writeGeometry(width, height)
-    // Unmount must release the push (issue #31): when the boundary swaps the
-    // whole sidebar after a render crash (or the plugin fiber is disposed /
-    // HMR), the CSS variables would otherwise stay on <html> and layout.css
-    // keeps squeezing #root with a stale margin — "the sidebar cannot be
-    // hidden" until a full reload. removeProperty restores the CSS fallback
-    // (var(--dsh-sidebar-width, 0px)); React re-runs cleanup+setup in the
-    // same commit on state changes, so there is no visible flicker.
+  }, [narrow, snapshot.state?.panelOpen, snapshot.state?.width, snapshot.state?.bottomOpen, snapshot.state?.bottomHeight])
+  // Unmount must release the push (issue #31): when the boundary swaps the
+  // whole sidebar after a render crash (or the plugin fiber is disposed /
+  // HMR), the CSS variables would otherwise stay on <html> and layout.css
+  // keeps squeezing #root with a stale margin — "the sidebar cannot be
+  // hidden" until a full reload. This lives in an UNMOUNT-ONLY effect, NOT
+  // in the push effect's cleanup: React can yield between a passive
+  // effect's cleanup and setup phases, and removing the variables on a
+  // dependency change used to paint the push-less layout for a frame (the
+  // center column went full width) while the re-add restarted the margin
+  // transition — the bottom panel flashed full width after every width
+  // drag (issue #258). Keeping the variables continuously valid while
+  // mounted makes the push invisible to mid-flush style recals.
+  useEffect(() => {
     return () => {
       document.documentElement.style.removeProperty('--dsh-sidebar-width')
       document.documentElement.style.removeProperty('--dsh-sidebar-height')
     }
-  }, [narrow, snapshot.state?.panelOpen, snapshot.state?.width, snapshot.state?.bottomOpen, snapshot.state?.bottomHeight])
+  }, [])
   useEffect(() => {
     if (anyDragging) document.body.setAttribute('data-dsh-sidebar-dragging', '')
     else document.body.removeAttribute('data-dsh-sidebar-dragging')
