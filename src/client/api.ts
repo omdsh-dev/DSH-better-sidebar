@@ -64,6 +64,39 @@ export interface FsTextResult { kind: 'text'; content: string; truncated: boolea
  *  `head` carries the first bytes (base64) for viewer detect sniffing. */
 export interface FsBinaryResult { kind: 'binary'; size: number; truncated: boolean; head: string }
 
+export interface AgentBrowserSnapshot {
+  sessionId: string
+  url: string
+  title: string
+  text: string
+  textLength: number
+  links: Array<{ t: string; h: string }>
+  elements: Array<{ ref: number; tag: string; type: string; label: string; href: string }>
+  screenshot: string
+  updatedAt: number
+  changed: {
+    urlChanged: boolean
+    titleChanged: boolean
+    textDelta: number
+    added: Array<{ ref: number; tag: string; label: string; type: string }>
+    removed: Array<{ tag: string; label: string; type: string }>
+  } | null
+}
+
+export interface MirrorFrame {
+  data: string
+  seq: number
+  timestamp: number
+  viewportWidth: number
+  viewportHeight: number
+}
+
+export interface MirrorStateInfo {
+  controlOwner: 'agent' | 'human' | 'none'
+  viewportWidth: number
+  viewportHeight: number
+}
+
 /**
  * One jobs.output response: the output the MODEL has read so far for the
  * job (replayed from the owner session's event log — the model's
@@ -256,6 +289,18 @@ export const api = {
       patch,
       ...(expectedRevision !== undefined ? { expectedRevision } : {}),
     }),
+  browserSnapshot: (scope: SessionScope, signal?: AbortSignal) =>
+    call<AgentBrowserSnapshot>('agent-browser.snapshot', scopePayload(scope, {}), signal),
+  mirrorStart: (scope: SessionScope) =>
+    call<{ viewportWidth: number; viewportHeight: number; controlOwner: string }>('agent-browser.mirror.start', scopePayload(scope, {})),
+  mirrorStop: (scope: SessionScope) =>
+    call<{ ok: boolean }>('agent-browser.mirror.stop', scopePayload(scope, {})),
+  mirrorFrame: (scope: SessionScope, signal?: AbortSignal) =>
+    call<{ frame: MirrorFrame | null; state: MirrorStateInfo | null }>('agent-browser.mirror.frame', scopePayload(scope, {}), signal),
+  mirrorInput: (scope: SessionScope, event: Record<string, unknown>) =>
+    call<{ ok: boolean }>('agent-browser.mirror.input', scopePayload(scope, { event })),
+  mirrorControl: (scope: SessionScope, owner: string) =>
+    call<{ ok: boolean; owner: string }>('agent-browser.mirror.control', scopePayload(scope, { owner })),
   /** Probe a URL's response headers (the sidebar browser's embeddability
    *  check; see the host's browser.probe route). */
   browserProbe: (url: string, signal?: AbortSignal) =>

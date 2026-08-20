@@ -46,6 +46,8 @@ import {
   PTY_DEPS_MISSING,
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
+import { registerAgentBrowserTools } from './agent-browser-tools.ts'
+import { AgentBrowserManager } from './agent-browser.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 
@@ -220,6 +222,7 @@ function buildApi(
   resolved: ResolvedSidebarConfig,
   terminalShell: string,
   getSettings: () => SidebarSettingsFace | undefined,
+  agentBrowser: AgentBrowserManager,
 ): Record<string, ApiMethod> {
   const cwdOf = (payload: unknown): { sessionId: string; cwd: string } => {
     const sessionId = requireString(payload, 'sessionId')
@@ -421,6 +424,46 @@ function buildApi(
         throw new SidebarError('settings-rejected', error instanceof Error ? error.message : String(error), 400)
       }
     },
+    'agent-browser.snapshot': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      // Resolve through the authoritative session store before exposing a
+      // browser snapshot; an arbitrary known session id must not be enough.
+      sessionCwdOf(ctx, sessionId)
+      return agentBrowser.snapshot(sessionId)
+    },
+    'agent-browser.mirror.start': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      sessionCwdOf(ctx, sessionId)
+      return agentBrowser.startMirror(sessionId)
+    },
+    'agent-browser.mirror.stop': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      sessionCwdOf(ctx, sessionId)
+      await agentBrowser.stopMirror(sessionId)
+      return { ok: true }
+    },
+    'agent-browser.mirror.frame': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      sessionCwdOf(ctx, sessionId)
+      return {
+        frame: agentBrowser.getMirrorFrame(sessionId),
+        state: agentBrowser.getMirrorState(sessionId),
+      }
+    },
+    'agent-browser.mirror.input': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      sessionCwdOf(ctx, sessionId)
+      const record = payload as Record<string, unknown>
+      await agentBrowser.sendMirrorInput(sessionId, record.event as Parameters<typeof agentBrowser.sendMirrorInput>[1])
+      return { ok: true }
+    },
+    'agent-browser.mirror.control': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      sessionCwdOf(ctx, sessionId)
+      const owner = requireString(payload, 'owner') as 'agent' | 'human' | 'none'
+      agentBrowser.setMirrorControl(sessionId, owner)
+      return { ok: true, owner }
+    },
     // Probe a URL's RESPONSE HEADERS so the sidebar browser can explain an
     // iframe refusal: X-Frame-Options / CSP frame-ancestors are exactly the
     // signals the browser enforces when it refuses to embed a site. The
@@ -519,6 +562,20 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     ? new AgentPtyRegistry(terminalShell, resolved.shellArgs, nodePty)
     : null
 
+  // Agent browser is capability-layer state, isolated by initiating session.
+  // It is created lazily only when the user enables the browser tools.
+  const agentBrowser = new AgentBrowserManager()
+  let browserToolsDisposer: (() => void) | null = null
+  const syncBrowserToolsGate = (scope: { get(): SidebarPrefs }): void => {
+    if (scope.get().agentBrowserTools) {
+      if (browserToolsDisposer === null) browserToolsDisposer = registerAgentBrowserTools(ctx, agentBrowser)
+    } else if (browserToolsDisposer !== null) {
+      browserToolsDisposer()
+      browserToolsDisposer = null
+      void agentBrowser.dispose()
+    }
+  }
+
   // ── User-facing "Side card" preferences ──────────────────────────────────
   // Register the namespace with the settings provider so the Settings page
   // (client half) can render and persist the new-conversation defaults. The
@@ -587,11 +644,17 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     // Register (or unregister) the terminal tools from the current setting,
     // and keep them in sync with every settings commit.
     syncToolsGate(scope)
-    scope.watch(() => { syncToolsGate(scope) })
+    syncBrowserToolsGate(scope)
+    scope.watch(() => { syncToolsGate(scope); syncBrowserToolsGate(scope) })
+    ctx.effect(() => () => {
+      browserToolsDisposer?.()
+      browserToolsDisposer = null
+      void agentBrowser.dispose()
+    }, 'dsh-better-sidebar: agent browser')
   })
 
   // ── JSON API ────────────────────────────────────────────────────────────
-  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace)
+  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace, agentBrowser)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
