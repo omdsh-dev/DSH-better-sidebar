@@ -18,6 +18,7 @@ import { GitView } from '../GitView.tsx'
 import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
 import { BrowserView } from '../BrowserView.tsx'
+import { AgentBrowserView } from '../AgentBrowserView.tsx'
 import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16 } from '../icons.tsx'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
 import type { ComponentType } from 'react'
@@ -234,10 +235,6 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       title: () => t('browser'),
       icon: (size: number) => <IconGlobeOutline16 size={size} />,
       order: 50,
-      // Declarative settings: the sandbox escape hatch, the link-takeover
-      // MASTER switch, and the per-protocol takeover switches (http on /
-      // https off by default) render under this tab's row in the Side card
-      // settings page (the sandbox one is warned on).
       settings: {
         toggles: [{
           key: 'browserNoSandbox',
@@ -258,14 +255,25 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
         }],
       },
       createTab: (state) => ({
-        tab: {
-          id: `browser:${state.nextBrowser}`,
-          type: 'browser',
-          title: t('browser'),
-        },
+        tab: { id: `browser:${state.nextBrowser}`, type: 'browser', title: t('browser') },
         patch: { nextBrowser: state.nextBrowser + 1 },
       }),
       component: (props) => <BrowserView {...props} />,
+    },
+    {
+      id: 'agent-browser',
+      title: () => 'Agent Browser',
+      icon: (size: number) => <IconGlobeOutline16 size={size} />,
+      order: 51,
+      settings: {
+        toggles: [{
+          key: 'agentBrowserTools',
+          title: () => 'Enable agent browser tools',
+          desc: () => 'Allow the agent to open, inspect, click, and type in the session browser. Off by default.',
+        }],
+      },
+      single: true,
+      component: ({ scope, visible }) => <AgentBrowserView scope={scope} visible={visible} />,
     },
     {
       id: 'diff',

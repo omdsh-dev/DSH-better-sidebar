@@ -121,6 +121,7 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   defaultWidthPercent: z.number().step(1).min(WIDTH_PERCENT_MIN).max(WIDTH_PERCENT_MAX).default(WIDTH_PERCENT_DEFAULT),
   autoOpenSubagent: z.boolean().default(true),
   autoOpenJobs: z.boolean().default(true),
+  agentBrowserTools: z.boolean().default(false),
   agentTerminalTools: z.boolean().default(false),
   bottomPanelAutoTerminal: z.boolean().default(true),
   terminalFontFamily: z.string().default(''),

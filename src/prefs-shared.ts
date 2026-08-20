@@ -26,6 +26,8 @@ export interface SidebarPrefs {
    * conversation (any new job id, not just the first one).
    */
   autoOpenJobs: boolean
+  /** Whether agent-facing browser tools are injected into the model toolset. Off by default. */
+  agentBrowserTools: boolean
   /**
    * Whether the model-facing agent terminal tools (terminal_create / list /
    * send / read / wait_for / resize / signal / close) are injected into the
@@ -198,6 +200,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   defaultWidthPercent: WIDTH_PERCENT_DEFAULT,
   autoOpenSubagent: true,
   autoOpenJobs: true,
+  agentBrowserTools: false,
   agentTerminalTools: false,
   bottomPanelAutoTerminal: true,
   terminalFontFamily: '',

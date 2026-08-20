@@ -95,7 +95,7 @@ describe('host plugin smoke', () => {
       '/sidebar/file',
       '/sidebar/html',
     ])
-    expect(upgrades.map(route => route.path)).toEqual(['/sidebar/ws/terminal', '/sidebar/ws/agent-terminals'])
+    expect(upgrades.map(route => route.path)).toEqual(['/sidebar/ws/terminal', '/sidebar/ws/agent-terminals', '/sidebar/ws/browser-mirror'])
     // Teardown runs without throwing (pty manager has nothing open).
     for (const cleanup of effects) cleanup()
   })
@@ -605,6 +605,7 @@ describe('side card settings routes', () => {
         defaultWidthPercent: 35,
         autoOpenSubagent: true,
         autoOpenJobs: true,
+        agentBrowserTools: false,
         agentTerminalTools: false,
         bottomPanelAutoTerminal: true,
         terminalFontFamily: '',

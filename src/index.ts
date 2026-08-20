@@ -46,6 +46,8 @@ import {
   PTY_DEPS_MISSING,
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
+import { registerAgentBrowserTools } from './agent-browser-tools.ts'
+import { AgentBrowserManager } from './agent-browser.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 
@@ -220,6 +222,7 @@ function buildApi(
   resolved: ResolvedSidebarConfig,
   terminalShell: string,
   getSettings: () => SidebarSettingsFace | undefined,
+  agentBrowser: AgentBrowserManager,
 ): Record<string, ApiMethod> {
   const cwdOf = (payload: unknown): { sessionId: string; cwd: string } => {
     const sessionId = requireString(payload, 'sessionId')
@@ -421,6 +424,61 @@ function buildApi(
         throw new SidebarError('settings-rejected', error instanceof Error ? error.message : String(error), 400)
       }
     },
+    'agent-browser.snapshot': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      // Resolve through the authoritative session store before exposing a
+      // browser snapshot; an arbitrary known session id must not be enough.
+      sessionCwdOf(ctx, sessionId)
+      return agentBrowser.snapshot(sessionId)
+    },
+    'agent-browser.mirror.start': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      sessionCwdOf(ctx, sessionId)
+      const record = payload as Record<string, unknown>
+      const width = typeof record.displayWidth === 'number' ? record.displayWidth : undefined
+      const height = typeof record.displayHeight === 'number' ? record.displayHeight : undefined
+      const dpr = typeof record.displayDpr === 'number' ? record.displayDpr : undefined
+      return agentBrowser.startMirror(sessionId, { width, height, dpr })
+    },
+    'agent-browser.mirror.stop': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      sessionCwdOf(ctx, sessionId)
+      await agentBrowser.stopMirror(sessionId)
+      return { ok: true }
+    },
+    'agent-browser.mirror.frame': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      sessionCwdOf(ctx, sessionId)
+      return {
+        frame: agentBrowser.getMirrorFrame(sessionId),
+        state: agentBrowser.getMirrorState(sessionId),
+      }
+    },
+    'agent-browser.mirror.input': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      sessionCwdOf(ctx, sessionId)
+      const record = payload as Record<string, unknown>
+      await agentBrowser.sendMirrorInput(sessionId, record.event as Parameters<typeof agentBrowser.sendMirrorInput>[1])
+      return { ok: true }
+    },
+    'agent-browser.mirror.control': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      sessionCwdOf(ctx, sessionId)
+      const owner = requireString(payload, 'owner') as 'agent' | 'human' | 'none'
+      agentBrowser.setMirrorControl(sessionId, owner)
+      return { ok: true, owner }
+    },
+    'agent-browser.mirror.refit': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      sessionCwdOf(ctx, sessionId)
+      const record = payload as Record<string, unknown>
+      const width = record.displayWidth
+      const height = record.displayHeight
+      if (typeof width !== 'number' || typeof height !== 'number' || !(width >= 320) || !(height >= 240)) {
+        throw new SidebarError('bad-request', 'displayWidth/displayHeight must be numbers (width >= 320, height >= 240)', 400)
+      }
+      return agentBrowser.refitMirror(sessionId, { width, height })
+    },
     // Probe a URL's RESPONSE HEADERS so the sidebar browser can explain an
     // iframe refusal: X-Frame-Options / CSP frame-ancestors are exactly the
     // signals the browser enforces when it refuses to embed a site. The
@@ -519,6 +577,20 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     ? new AgentPtyRegistry(terminalShell, resolved.shellArgs, nodePty)
     : null
 
+  // Agent browser is capability-layer state, isolated by initiating session.
+  // It is created lazily only when the user enables the browser tools.
+  const agentBrowser = new AgentBrowserManager()
+  let browserToolsDisposer: (() => void) | null = null
+  const syncBrowserToolsGate = (scope: { get(): SidebarPrefs }): void => {
+    if (scope.get().agentBrowserTools) {
+      if (browserToolsDisposer === null) browserToolsDisposer = registerAgentBrowserTools(ctx, agentBrowser)
+    } else if (browserToolsDisposer !== null) {
+      browserToolsDisposer()
+      browserToolsDisposer = null
+      void agentBrowser.dispose()
+    }
+  }
+
   // ── User-facing "Side card" preferences ──────────────────────────────────
   // Register the namespace with the settings provider so the Settings page
   // (client half) can render and persist the new-conversation defaults. The
@@ -587,11 +659,17 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     // Register (or unregister) the terminal tools from the current setting,
     // and keep them in sync with every settings commit.
     syncToolsGate(scope)
-    scope.watch(() => { syncToolsGate(scope) })
+    syncBrowserToolsGate(scope)
+    scope.watch(() => { syncToolsGate(scope); syncBrowserToolsGate(scope) })
+    ctx.effect(() => () => {
+      browserToolsDisposer?.()
+      browserToolsDisposer = null
+      void agentBrowser.dispose()
+    }, 'dsh-better-sidebar: agent browser')
   })
 
   // ── JSON API ────────────────────────────────────────────────────────────
-  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace)
+  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace, agentBrowser)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -829,12 +907,86 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     },
   }), 'dsh-better-sidebar: agent-terminals push WebSocket')
 
+  // ── Browser mirror push WebSocket ──────────────────────────────────────
+  // Video channel for the interactive browser mirror: pushes CDP screencast
+  // frames as they arrive (no 100ms polling gap, no base64/JSON overhead).
+  // Wire format:
+  //   binary frame = 4-byte LE uint32 seq + raw JPEG bytes
+  //   text frame   = JSON { type: 'meta', controlOwner, viewportWidth, viewportHeight }
+  // A slow client drops frames (latest-frame-only end to end): when the send
+  // buffer is over the high-water mark the frame is skipped — Chromium keeps
+  // producing because screencast ACKs are unconditional.
+  const mirrorWss = new WebSocketServer({ noServer: true })
+  const MIRROR_BACKPRESSURE_HIGH_WATER = 512 * 1024
+  ctx.effect(() => ctx.webServer.registerUpgrade({
+    path: '/sidebar/ws/browser-mirror',
+    handler: (req, socket, head) => {
+      if (!fence(req)) {
+        socket.destroy()
+        return
+      }
+      mirrorWss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
+        try {
+          const url = new URL(req.url ?? '/', 'http://localhost')
+          const sessionId = url.searchParams.get('sessionId')
+          if (!sessionId) {
+            ws.close(4000, 'sessionId is required')
+            return
+          }
+          // Same trust rule as the JSON routes: resolve the session through
+          // the authoritative store before exposing its browser.
+          sessionCwdOf(ctx, sessionId)
+          const state = agentBrowser.getMirrorState(sessionId)
+          if (state === null) {
+            ws.close(4004, 'mirror not started; call mirror.start first')
+            return
+          }
+          const sendMeta = () => {
+            const meta = agentBrowser.getMirrorState(sessionId)
+            if (meta !== null && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'meta', ...meta }))
+          }
+          const sendFrame = (frame: { seq: number; data: string }) => {
+            if (ws.readyState !== WebSocket.OPEN) return
+            if (ws.bufferedAmount > MIRROR_BACKPRESSURE_HIGH_WATER) return // drop, next frame is newer
+            const jpeg = Buffer.from(frame.data, 'base64')
+            const packet = Buffer.allocUnsafe(4 + jpeg.byteLength)
+            packet.writeUInt32LE(frame.seq >>> 0, 0)
+            jpeg.copy(packet, 4)
+            ws.send(packet)
+          }
+          sendMeta()
+          const offFrame = agentBrowser.onMirrorFrame(sessionId, sendFrame)
+          const offMeta = agentBrowser.onMirrorMeta(sessionId, sendMeta)
+          // Replay the latest frame so a freshly connected client paints
+          // immediately instead of waiting for the next page change.
+          const latest = agentBrowser.getMirrorFrame(sessionId)
+          if (latest !== null) sendFrame(latest)
+          // Bidirectional: text frames from the client are input events
+          // (same payload as agent-browser.mirror.input, minus the HTTP
+          // round-trip per keystroke).
+          ws.on('message', (data, isBinary) => {
+            if (isBinary) return
+            try {
+              const event = JSON.parse(String(data)) as Record<string, unknown>
+              if (typeof event.type === 'string') void agentBrowser.sendMirrorInput(sessionId, event as never).catch(() => {})
+            } catch { /* malformed input — ignore */ }
+          })
+          ws.on('close', () => { offFrame?.(); offMeta?.() })
+          ws.on('error', () => { offFrame?.(); offMeta?.() })
+        } catch (cause) {
+          try { ws.close(1011, cause instanceof Error ? cause.message : String(cause)) } catch { /* already gone */ }
+        }
+      })
+    },
+  }), 'dsh-better-sidebar: browser-mirror push WebSocket')
+
   ctx.effect(() => () => {
     toolsDisposers?.()
     ptyManager?.disposeAll()
     agentPtyRegistry?.disposeAll()
     wss.close()
     agentListWss.close()
+    mirrorWss.close()
   }, 'dsh-better-sidebar: teardown')
 }
 

@@ -26,10 +26,10 @@ function setup(options: BuiltinTabOptions = {}): { service: ReturnType<typeof cr
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 6 built-in tabs', () => {
+  it('registers the 7 built-in tabs', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['browser', 'diff', 'editor', 'git', 'subagent', 'terminal'],
+      ['agent-browser', 'browser', 'diff', 'editor', 'git', 'subagent', 'terminal'],
     )
   })
 
@@ -104,6 +104,11 @@ describe('built-in tab registrations', () => {
       expect(toggle.title).toBeDefined()
       expect(toggle.desc).toBeDefined()
     }
+  })
+
+  it('the agent browser tab declares its opt-in tool setting', () => {
+    const { service } = setup()
+    expect(service.getTab('agent-browser')?.settings?.toggles?.map(t => t.key)).toEqual(['agentBrowserTools'])
   })
 
   it('the browser createTab mints browser:<n> ids and bumps nextBrowser', () => {
