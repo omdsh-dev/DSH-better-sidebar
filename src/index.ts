@@ -314,6 +314,11 @@ function buildApi(
       await git.checkout(cwd, requireString(payload, 'branch'))
       return { ok: true }
     },
+    'git.merge': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      await git.merge(cwd, requireString(payload, 'branch'))
+      return { ok: true }
+    },
     'git.log': async (payload) => {
       const { cwd } = cwdOf(payload)
       const record = payload as { count?: unknown; skip?: unknown }
