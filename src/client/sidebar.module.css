@@ -846,15 +846,20 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   outline-offset: -1px;
 }
 
-/* Centered drag hint pill: 'Drop files/folders here to upload' over the body,
-   'Upload into {dir}' over the hovered row (pointer-events none so the drop
-   still lands on the row beneath). */
+/* Centered drag hint pill, portaled to document.body: 'Drop files/folders
+   here to upload' over the tree, 'Upload into {dir}' over the hovered row.
+   Fixed + z-index 1001 keeps it above DSH's own whole-page drop overlay
+   (z-1000, see InputBar's document-level intake) when a drag entered the
+   page outside the tree first — the mask then stays visible until dragend,
+   and our hint must stay readable on top. Deliberate exception to the
+   "panel stays below the DSH float stack" rule: transient, pointer-events
+   none, and the drop always lands on the tree beneath. */
 .uploadDropPill {
-  position: absolute;
+  position: fixed;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  max-width: calc(100% - 24px);
+  max-width: calc(100vw - 48px);
   padding: 8px 14px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
@@ -866,7 +871,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
-  z-index: 2;
+  z-index: 1001;
 }
 
 /* Full-window upload progress: blurred scrim + card (same mask/backdrop

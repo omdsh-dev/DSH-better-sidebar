@@ -21,6 +21,7 @@
  * and `busy` gates new drags while one upload is in flight.
  */
 import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
   IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
@@ -333,10 +334,16 @@ export function FileTree(props: {
           {data[root] !== undefined && renderLevel(root, 1)}
         </>
       )}
-      {dropOver && (
+      {dropOver && createPortal(
+        // Portaled above DSH's whole-page drop overlay (z-1000): when a file
+        // drag enters the tree from elsewhere in the page, DSH's mask stays
+        // visible until dragend, and our hint must stay readable on top.
+        // Transient decoration — pointer-events none, so the drop still lands
+        // on the tree beneath.
         <div className={css.uploadDropPill}>
           {dropTarget !== null ? t('uploadTo', { dir: dropTarget }) : t('uploadDropHint')}
-        </div>
+        </div>,
+        document.body,
       )}
       {/*
         The one shared context menu, positioned at the right-click cursor
