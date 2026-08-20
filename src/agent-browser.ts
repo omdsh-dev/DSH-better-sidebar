@@ -89,7 +89,14 @@ export type MirrorFrame = {
 export type MirrorInputEvent =
   | { type: 'mousePressed' | 'mouseReleased' | 'mouseMoved' | 'mouseWheel'; x: number; y: number; button?: 'left' | 'right' | 'middle' | 'none'; clickCount?: number; deltaX?: number; deltaY?: number }
   | { type: 'keyDown' | 'keyUp'; key: string; code?: string; text?: string }
+  | { type: 'imeSetComposition'; text: string; selectionStart?: number; selectionEnd?: number }
   | { type: 'insertText'; text: string }
+
+export type MirrorMeta = {
+  controlOwner: ControlOwner
+  viewportWidth: number
+  viewportHeight: number
+}
 
 interface MirrorState {
   cdp: CDPSession
@@ -98,6 +105,10 @@ interface MirrorState {
   controlOwner: ControlOwner
   viewportWidth: number
   viewportHeight: number
+  /** Push subscribers (the WebSocket bridge): frames fire as they arrive. */
+  frameListeners: Set<(frame: MirrorFrame) => void>
+  /** Meta subscribers: control ownership / viewport changes. */
+  metaListeners: Set<(meta: MirrorMeta) => void>
 }
 
 interface BrowserState {
@@ -417,18 +428,26 @@ export class AgentBrowserManager {
       controlOwner: 'agent',
       viewportWidth: vw,
       viewportHeight: vh,
+      frameListeners: new Set(),
+      metaListeners: new Set(),
     }
     cdp.on('Page.screencastFrame', (frame: { data: string; sessionId: number }) => {
       mirror.frameSeq++
-      mirror.latestFrame = {
+      const next: MirrorFrame = {
         data: frame.data,
         seq: mirror.frameSeq,
         timestamp: Date.now(),
         viewportWidth: mirror.viewportWidth,
         viewportHeight: mirror.viewportHeight,
       }
+      mirror.latestFrame = next
       // ACK immediately — never let frames queue up
       void cdp.send('Page.screencastFrameAck', { sessionId: frame.sessionId }).catch(() => {})
+      // Push to subscribers (WS bridge); a slow consumer drops frames rather
+      // than queueing them — latest-frame-only end to end.
+      for (const listener of mirror.frameListeners) {
+        try { listener(next) } catch { /* listener must not break the pipeline */ }
+      }
     })
     await cdp.send('Page.startScreencast', {
       format: 'jpeg',
@@ -454,10 +473,62 @@ export class AgentBrowserManager {
     return this.mirrors.get(sessionId)?.latestFrame ?? null
   }
 
-  getMirrorState(sessionId: string): { controlOwner: ControlOwner; viewportWidth: number; viewportHeight: number } | null {
+  getMirrorState(sessionId: string): MirrorMeta | null {
     const m = this.mirrors.get(sessionId)
     if (!m) return null
     return { controlOwner: m.controlOwner, viewportWidth: m.viewportWidth, viewportHeight: m.viewportHeight }
+  }
+
+  /** Subscribe to pushed frames; returns an unsubscribe function. */
+  onMirrorFrame(sessionId: string, listener: (frame: MirrorFrame) => void): (() => void) | null {
+    const mirror = this.mirrors.get(sessionId)
+    if (!mirror) return null
+    mirror.frameListeners.add(listener)
+    return () => { mirror.frameListeners.delete(listener) }
+  }
+
+  /** Subscribe to meta changes (controlOwner / viewport); returns unsubscribe. */
+  onMirrorMeta(sessionId: string, listener: (meta: MirrorMeta) => void): (() => void) | null {
+    const mirror = this.mirrors.get(sessionId)
+    if (!mirror) return null
+    mirror.metaListeners.add(listener)
+    return () => { mirror.metaListeners.delete(listener) }
+  }
+
+  private emitMirrorMeta(mirror: MirrorState): void {
+    const meta: MirrorMeta = {
+      controlOwner: mirror.controlOwner,
+      viewportWidth: mirror.viewportWidth,
+      viewportHeight: mirror.viewportHeight,
+    }
+    for (const listener of mirror.metaListeners) {
+      try { listener(meta) } catch { /* listener must not break the pipeline */ }
+    }
+  }
+
+  /**
+   * Re-fit the mirrored page to a new display size (sidebar drag-resize):
+   * re-applies the device metrics override without tearing down the CDP
+   * session or resetting the frame sequence.
+   */
+  async refitMirror(sessionId: string, display: { width: number; height: number }): Promise<MirrorMeta> {
+    const mirror = this.mirrors.get(sessionId)
+    if (!mirror) throw stateError('mirror not started; call mirror.start first')
+    const width = Math.round(Math.min(Math.max(display.width, 320), 1920))
+    const height = Math.round(Math.min(Math.max(display.height, 320), 1920))
+    await mirror.cdp.send('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      deviceScaleFactor: 2,
+      mobile: false,
+    })
+    // The override triggers a reflow; getLayoutMetrics reflects it right away.
+    const metrics = await mirror.cdp.send('Page.getLayoutMetrics')
+    const vp = (metrics.cssVisualViewport ?? metrics.cssLayoutViewport) as { clientWidth?: number; clientHeight?: number } | undefined
+    mirror.viewportWidth = Math.round(vp?.clientWidth ?? width)
+    mirror.viewportHeight = Math.round(vp?.clientHeight ?? height)
+    this.emitMirrorMeta(mirror)
+    return { controlOwner: mirror.controlOwner, viewportWidth: mirror.viewportWidth, viewportHeight: mirror.viewportHeight }
   }
 
   async sendMirrorInput(sessionId: string, event: MirrorInputEvent): Promise<void> {
@@ -465,6 +536,13 @@ export class AgentBrowserManager {
     if (!mirror) throw stateError('mirror not started; call mirror.start first')
     if (event.type === 'insertText') {
       await mirror.cdp.send('Input.insertText', { text: event.text })
+    } else if (event.type === 'imeSetComposition') {
+      const caret = event.text.length
+      await mirror.cdp.send('Input.imeSetComposition', {
+        text: event.text,
+        selectionStart: event.selectionStart ?? caret,
+        selectionEnd: event.selectionEnd ?? caret,
+      })
     } else if (event.type === 'keyDown' || event.type === 'keyUp') {
       const codes = SPECIAL_KEY_CODES[event.key]
       await mirror.cdp.send('Input.dispatchKeyEvent', {
@@ -492,7 +570,9 @@ export class AgentBrowserManager {
 
   setMirrorControl(sessionId: string, owner: ControlOwner): void {
     const mirror = this.mirrors.get(sessionId)
-    if (mirror) mirror.controlOwner = owner
+    if (!mirror) return
+    mirror.controlOwner = owner
+    this.emitMirrorMeta(mirror)
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────

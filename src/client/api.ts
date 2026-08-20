@@ -301,6 +301,15 @@ export const api = {
     call<{ frame: MirrorFrame | null; state: MirrorStateInfo | null }>('agent-browser.mirror.frame', scopePayload(scope, {}), signal),
   mirrorInput: (scope: SessionScope, event: Record<string, unknown>) =>
     call<{ ok: boolean }>('agent-browser.mirror.input', scopePayload(scope, { event })),
+  mirrorRefit: (scope: SessionScope, display: { width: number; height: number }) =>
+    call<MirrorStateInfo>('agent-browser.mirror.refit', scopePayload(scope, { displayWidth: display.width, displayHeight: display.height })),
+  /** Absolute WebSocket URL of the mirror's push channel for one session. */
+  mirrorWsUrl: (scope: SessionScope): string => {
+    const url = new URL('/sidebar/ws/browser-mirror', location.origin)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.search = new URLSearchParams({ sessionId: scope.sessionId }).toString()
+    return url.toString()
+  },
   mirrorControl: (scope: SessionScope, owner: string) =>
     call<{ ok: boolean; owner: string }>('agent-browser.mirror.control', scopePayload(scope, { owner })),
   /** Probe a URL's response headers (the sidebar browser's embeddability
