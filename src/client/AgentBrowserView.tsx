@@ -31,6 +31,7 @@ const SPECIAL_KEYS = new Set([
 export function AgentBrowserView(props: { scope: SessionScope; visible: boolean }): React.ReactNode {
   const { scope, visible } = props
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   const [mirrorState, setMirrorState] = useState<MirrorStateInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [hasFrame, setHasFrame] = useState(false)
@@ -46,7 +47,13 @@ export function AgentBrowserView(props: { scope: SessionScope; visible: boolean 
     let cancelled = false
     const start = async () => {
       try {
-        const result = await api.mirrorStart(scope)
+        // Measure the display area so the backend can lay the page out at
+        // ~1:1 CSS px (keeps text readable in a narrow sidebar).
+        const rect = containerRef.current?.getBoundingClientRect()
+        const display = rect && rect.width >= 320 && rect.height >= 240
+          ? { width: Math.floor(rect.width), height: Math.floor(rect.height) }
+          : undefined
+        const result = await api.mirrorStart(scope, display)
         if (!cancelled) {
           const info: MirrorStateInfo = {
             controlOwner: result.controlOwner as MirrorStateInfo['controlOwner'],
@@ -91,6 +98,12 @@ export function AgentBrowserView(props: { scope: SessionScope; visible: boolean 
         const bytes = Uint8Array.from(atob(frame.data), c => c.charCodeAt(0))
         const blob = new Blob([bytes], { type: 'image/jpeg' })
         const bitmap = await createImageBitmap(blob)
+        // Stale-frame guard: a newer frame may have arrived during async decode —
+        // never paint an older frame over a newer one.
+        if (frameSeqRef.current !== frame.seq) {
+          bitmap.close()
+          return
+        }
         canvas.width = bitmap.width
         canvas.height = bitmap.height
         const ctx = canvas.getContext('2d')
@@ -195,7 +208,6 @@ export function AgentBrowserView(props: { scope: SessionScope; visible: boolean 
   // ── Render ────────────────────────────────────────────────────────────
 
   if (error !== null) return <div className={css.browserMessage}>{error}</div>
-  if (!hasFrame) return <div className={css.browserStart}>Waiting for browser mirror...<br />Open a URL with browser_open first.</div>
 
   const isHuman = mirrorState?.controlOwner === 'human'
 
@@ -212,20 +224,28 @@ export function AgentBrowserView(props: { scope: SessionScope; visible: boolean 
         ? <button onClick={returnControl} style={{ fontSize: 11, padding: '2px 8px', cursor: 'pointer' }}>Return to Agent</button>
         : <button onClick={takeControl} style={{ fontSize: 11, padding: '2px 8px', cursor: 'pointer' }}>Take Control</button>}
     </div>
-    <canvas
-      ref={canvasRef}
-      style={{
-        width: '100%', height: 'auto', objectFit: 'contain', background: '#000',
-        flex: 1, minHeight: 0, cursor: isHuman ? 'default' : 'pointer',
-        outline: 'none',
-      }}
-      tabIndex={0}
-      onPointerDown={handlePointerDown}
-      onPointerUp={handlePointerUp}
-      onWheel={handleWheel}
-      onKeyDown={handleKeyDown}
-      onKeyUp={handleKeyUp}
-      onContextMenu={e => e.preventDefault()}
-    />
+    <div ref={containerRef} style={{ position: 'relative', flex: 1, minHeight: 0 }}>
+      {/* Canvas must stay mounted even before the first frame arrives —
+          renderLatest draws into it and only then flips hasFrame. */}
+      <canvas
+        ref={canvasRef}
+        style={{
+          width: '100%', height: 'auto', objectFit: 'contain', background: '#000',
+          display: 'block', cursor: isHuman ? 'default' : 'pointer',
+          outline: 'none',
+        }}
+        tabIndex={0}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onWheel={handleWheel}
+        onKeyDown={handleKeyDown}
+        onKeyUp={handleKeyUp}
+        onContextMenu={e => e.preventDefault()}
+      />
+      {!hasFrame && <div className={css.browserStart} style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+        <span>Waiting for browser mirror...</span>
+        <span style={{ opacity: 0.6, fontSize: 12 }}>Open a URL with browser_open first.</span>
+      </div>}
+    </div>
   </div>
 }

@@ -42,6 +42,40 @@ interface PrevSnapshot {
   elements: ElementRef[]
 }
 
+/**
+ * Virtual key codes for non-printable keys. Chrome maps windowsVirtualKeyCode
+ * (and nativeVirtualKeyCode on macOS) to editing commands — without them a
+ * Backspace keyDown is inert and deletes nothing.
+ * Table: { windows, mac } per DOM `key` name.
+ */
+const SPECIAL_KEY_CODES: Record<string, { win: number; mac: number }> = {
+  Backspace: { win: 8, mac: 51 },
+  Tab: { win: 9, mac: 48 },
+  Enter: { win: 13, mac: 36 },
+  Escape: { win: 27, mac: 53 },
+  Delete: { win: 46, mac: 117 },
+  ArrowLeft: { win: 37, mac: 123 },
+  ArrowUp: { win: 38, mac: 126 },
+  ArrowRight: { win: 39, mac: 124 },
+  ArrowDown: { win: 40, mac: 125 },
+  Home: { win: 36, mac: 115 },
+  End: { win: 35, mac: 119 },
+  PageUp: { win: 33, mac: 116 },
+  PageDown: { win: 34, mac: 121 },
+  F1: { win: 112, mac: 122 },
+  F2: { win: 113, mac: 120 },
+  F3: { win: 114, mac: 99 },
+  F4: { win: 115, mac: 118 },
+  F5: { win: 116, mac: 96 },
+  F6: { win: 117, mac: 97 },
+  F7: { win: 118, mac: 98 },
+  F8: { win: 119, mac: 100 },
+  F9: { win: 120, mac: 101 },
+  F10: { win: 121, mac: 109 },
+  F11: { win: 122, mac: 103 },
+  F12: { win: 123, mac: 111 },
+}
+
 export type ControlOwner = 'agent' | 'human' | 'none'
 
 export type MirrorFrame = {
@@ -333,10 +367,45 @@ export class AgentBrowserManager {
 
   private readonly mirrors = new Map<string, MirrorState>()
 
-  async startMirror(sessionId: string): Promise<{ viewportWidth: number; viewportHeight: number; controlOwner: ControlOwner }> {
+  /**
+   * Start the mirror. When displayWidth/Height are given (the sidebar canvas's
+   * rendered CSS size), the page is re-laid-out at that size via device metrics
+   * override so 1 browser CSS px ≈ 1 display px — text stays readable instead of
+   * shrinking the full desktop layout into a narrow panel. deviceScaleFactor 2
+   * keeps the screencast JPEG retina-sharp; coordinates stay in CSS px.
+   */
+  async startMirror(
+    sessionId: string,
+    display?: { width?: number; height?: number },
+  ): Promise<{ viewportWidth: number; viewportHeight: number; controlOwner: ControlOwner }> {
     const state = this.requireState(sessionId)
     await this.stopMirror(sessionId)
     const cdp = await state.page.context().newCDPSession(state.page)
+    await cdp.send('Page.enable').catch(() => {})
+
+    const hasDisplay = typeof display?.width === 'number' && typeof display?.height === 'number'
+      && display.width >= 320 && display.height >= 320
+    const targetW = hasDisplay ? Math.round(Math.min(display.width as number, 1920)) : 0
+    const targetH = hasDisplay ? Math.round(Math.min(display.height as number, 1920)) : 0
+    const useOverride = hasDisplay
+    const applyOverride = async () => {
+      if (!useOverride) return
+      await cdp.send('Emulation.setDeviceMetricsOverride', {
+        width: targetW,
+        height: targetH,
+        deviceScaleFactor: 2,
+        mobile: false,
+      }).catch(() => {})
+    }
+    await applyOverride()
+    // Playwright may re-apply its own viewport emulation across navigations;
+    // re-assert ours whenever the main frame navigates.
+    if (useOverride) {
+      cdp.on('Page.frameNavigated', (event: { frame?: { parentId?: string } }) => {
+        if (event.frame?.parentId === undefined) void applyOverride()
+      })
+    }
+
     const metrics = await cdp.send('Page.getLayoutMetrics')
     const vp = (metrics.cssVisualViewport ?? metrics.cssLayoutViewport) as { clientWidth?: number; clientHeight?: number } | undefined
     const vw = Math.round(vp?.clientWidth ?? 1280)
@@ -364,8 +433,9 @@ export class AgentBrowserManager {
     await cdp.send('Page.startScreencast', {
       format: 'jpeg',
       quality: 70,
-      maxWidth: 1280,
-      maxHeight: 900,
+      // Frames arrive at 2x device pixels under the override; cap accordingly.
+      maxWidth: vw * 2,
+      maxHeight: vh * 2,
       everyNthFrame: 1,
     })
     this.mirrors.set(sessionId, mirror)
@@ -396,11 +466,16 @@ export class AgentBrowserManager {
     if (event.type === 'insertText') {
       await mirror.cdp.send('Input.insertText', { text: event.text })
     } else if (event.type === 'keyDown' || event.type === 'keyUp') {
+      const codes = SPECIAL_KEY_CODES[event.key]
       await mirror.cdp.send('Input.dispatchKeyEvent', {
-        type: event.type,
+        // rawKeyDown is the correct down-type for non-text keys (CDP docs:
+        // keyDown implies text generation; rawKeyDown is the raw key press).
+        type: event.type === 'keyDown' ? 'rawKeyDown' : 'keyUp',
         key: event.key,
         code: event.code ?? event.key,
         text: event.text,
+        windowsVirtualKeyCode: codes?.win,
+        nativeVirtualKeyCode: codes?.mac,
       })
     } else if (event.type === 'mousePressed' || event.type === 'mouseReleased' || event.type === 'mouseMoved' || event.type === 'mouseWheel') {
       await mirror.cdp.send('Input.dispatchMouseEvent', {
