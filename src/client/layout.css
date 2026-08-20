@@ -25,10 +25,17 @@
 }
 
 /* The AppFrame's grid items are sidebarCol, centerCol, detailsCol (children
-   1-3 of #root > div[data-slot="root"] > div) — nth-child(2) is the center
-   column. A stretched grid item shrinks by its margins, so the conversation
-   content (output + input bar) lifts without touching the sidebars. */
-#root > div[data-slot="root"] > div > div:nth-child(2) {
+   1-3 of the frame) — centerCol is the center column. A stretched grid item
+   shrinks by its margins, so the conversation content (output + input bar)
+   lifts without touching the sidebars. Target centerCol via multiple robust
+   selectors (CSS module class substring, semantic data attributes, and
+   structural fallbacks) to survive DOM wrapping variations across DSH
+   versions and desktop environments. */
+#root [class*="centerCol"],
+#root [data-pane="conversation"],
+#root div:has(> [data-slot="conversation"]),
+#root > div[data-slot="root"] > div > div:nth-child(2),
+#root > div > div:nth-child(2) {
   margin-bottom: var(--dsh-sidebar-height, 0px);
   transition: margin-bottom var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
@@ -47,7 +54,11 @@ body[data-dsh-sidebar-collapsed] [data-slot="conversation.session.header"] > hea
 }
 
 body[data-dsh-sidebar-dragging] #root,
-body[data-dsh-sidebar-dragging] #root > div[data-slot="root"] > div > div:nth-child(2) {
+body[data-dsh-sidebar-dragging] #root [class*="centerCol"],
+body[data-dsh-sidebar-dragging] #root [data-pane="conversation"],
+body[data-dsh-sidebar-dragging] #root div:has(> [data-slot="conversation"]),
+body[data-dsh-sidebar-dragging] #root > div[data-slot="root"] > div > div:nth-child(2),
+body[data-dsh-sidebar-dragging] #root > div > div:nth-child(2) {
   transition: none;
 }
 
@@ -72,7 +83,11 @@ body[data-dsh-sidebar-dragging] #root > div[data-slot="root"] > div > div:nth-ch
 
 @media (prefers-reduced-motion: reduce) {
   #root,
-  #root > div[data-slot="root"] > div > div:nth-child(2) {
+  #root [class*="centerCol"],
+  #root [data-pane="conversation"],
+  #root div:has(> [data-slot="conversation"]),
+  #root > div[data-slot="root"] > div > div:nth-child(2),
+  #root > div > div:nth-child(2) {
     transition: none;
   }
 }

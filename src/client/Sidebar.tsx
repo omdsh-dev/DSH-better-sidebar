@@ -393,8 +393,10 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // a 1px sliver at the viewport's left edge).
     const locate = (): void => {
       if (disposed) return
-      const col = document.querySelector('#root [data-slot="conversation"]')
-        ?.parentElement as HTMLElement | undefined
+      const col = (document.querySelector('#root [data-slot="conversation"]')?.parentElement
+        ?? document.querySelector('#root [data-pane="conversation"]')
+        ?? document.querySelector('#root [class*="centerCol"]')
+        ?? document.querySelector('#root > div > div:nth-child(2)')) as HTMLElement | undefined
       if (col === undefined) {
         if (centerColRef.current !== null) {
           centerColRef.current = null
