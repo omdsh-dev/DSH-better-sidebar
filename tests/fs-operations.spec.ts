@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { writeWorkspaceUpload } from '../src/fs-operations.ts'
@@ -10,6 +10,11 @@ const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-'))
 afterAll(() => {
   rmSync(root, { recursive: true, force: true })
 })
+
+/** Names of leftover temp files under `dir` (must be empty after every run). */
+function tmpLeftovers(dir: string): string[] {
+  return readdirSync(dir).filter(name => name.includes('.dsh-upload-'))
+}
 
 /** Turn a string into the async-iterable chunk shape the route receives. */
 function chunksOf(text: string): AsyncIterable<string | Uint8Array> {
@@ -58,7 +63,7 @@ describe('writeWorkspaceUpload', () => {
     expect(path).toBe(join(root, 'docs', 'b.txt'))
   })
 
-  it('refuses traversal and empty relativePaths', async () => {
+  it('refuses traversal, empty segments, and absolute relativePaths', async () => {
     await expect(writeWorkspaceUpload({
       cwd: root, dir: root, relativePath: '../evil.txt', chunks: chunksOf('x'), limit: 1024,
     })).rejects.toMatchObject({ code: 'bad-request' })
@@ -70,6 +75,20 @@ describe('writeWorkspaceUpload', () => {
     })).rejects.toMatchObject({ code: 'bad-request' })
     await expect(writeWorkspaceUpload({
       cwd: root, dir: root, relativePath: '//', chunks: chunksOf('x'), limit: 1024,
+    })).rejects.toMatchObject({ code: 'bad-request' })
+    // Empty segments are refused, not silently collapsed.
+    await expect(writeWorkspaceUpload({
+      cwd: root, dir: root, relativePath: 'a//b.txt', chunks: chunksOf('x'), limit: 1024,
+    })).rejects.toMatchObject({ code: 'bad-request' })
+    await expect(writeWorkspaceUpload({
+      cwd: root, dir: root, relativePath: 'a/b/', chunks: chunksOf('x'), limit: 1024,
+    })).rejects.toMatchObject({ code: 'bad-request' })
+    // Absolute paths (POSIX and Windows separators) are refused, not re-anchored.
+    await expect(writeWorkspaceUpload({
+      cwd: root, dir: root, relativePath: '/x.txt', chunks: chunksOf('x'), limit: 1024,
+    })).rejects.toMatchObject({ code: 'bad-request' })
+    await expect(writeWorkspaceUpload({
+      cwd: root, dir: root, relativePath: '\\x.txt', chunks: chunksOf('x'), limit: 1024,
     })).rejects.toMatchObject({ code: 'bad-request' })
   })
 
@@ -90,7 +109,19 @@ describe('writeWorkspaceUpload', () => {
       cwd: root, dir: root, relativePath: 'big.bin', chunks: chunksOf('1234567890'), limit: 4,
     })).rejects.toMatchObject({ code: 'too-large' })
     expect(existsSync(target)).toBe(false)
-    expect(existsSync(`${target}.dsh-sidebar-upload-tmp-${process.pid}`)).toBe(false)
+    expect(tmpLeftovers(root)).toEqual([])
+  })
+
+  it('keeps concurrent uploads to the same target independent', async () => {
+    const target = join(root, 'race.txt')
+    await Promise.all([
+      writeWorkspaceUpload({ cwd: root, dir: root, relativePath: 'race.txt', chunks: chunksOf('first'), limit: 1024 }),
+      writeWorkspaceUpload({ cwd: root, dir: root, relativePath: 'race.txt', chunks: chunksOf('second'), limit: 1024 }),
+    ])
+    // Both renames succeed (unique temp names, no EEXIST cross-talk); the last
+    // rename wins and the losers leave nothing behind.
+    expect(['first', 'second']).toContain(readFileSync(target, 'utf8'))
+    expect(tmpLeftovers(root)).toEqual([])
   })
 
   it('does not overwrite an existing file on a failed (oversized) retry', async () => {
