@@ -15,6 +15,7 @@ import {
   clampWidthPercent,
   SIDEBAR_PREFS_DEFAULTS,
   TITLE_BAR_SCHEMES,
+  TITLE_BAR_STRIP_DEFAULT,
   type SidebarPrefs,
   type TitleBarScheme,
 } from '../prefs-shared.ts'
@@ -22,6 +23,7 @@ import {
 export {
   SIDEBAR_PREFS_DEFAULTS,
   TITLE_BAR_SCHEMES,
+  TITLE_BAR_STRIP_DEFAULT,
   clampTerminalFontSize,
   clampTitleBarStrip,
   clampWidthPercent,
@@ -77,15 +79,16 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     editorExplorer: typeof record.editorExplorer === 'boolean'
       ? record.editorExplorer
       : SIDEBAR_PREFS_DEFAULTS.editorExplorer,
-    // The title-bar scheme (auto | preset | custom). The schema declares the
-    // field WITHOUT a default, so documents written by older plugin versions
-    // resolve without it — migrate from the legacy boolean: a stored `true`
-    // meant "manual position compat" and maps to the `custom` scheme (the
-    // strip px is preserved below); anything else (absent or false) keeps
-    // the conservative `auto` scheme.
+    // The title-bar scheme (auto | web | preset | custom). The schema
+    // declares the field WITHOUT a default, so documents written by older
+    // plugin versions resolve without it — migrate from the legacy fields:
+    // a document that ALREADY HAS VALUES (the manual compat flag on, or a
+    // non-default strip px — both only reachable through the old gear
+    // popup) maps to the `custom` scheme so the user's numbers keep
+    // working; a pristine document keeps the conservative `auto` scheme.
     titleBarScheme: isTitleBarScheme(record.titleBarScheme)
       ? record.titleBarScheme
-      : (record.titleBarCompat === true ? 'custom' : 'auto'),
+      : (record.titleBarCompat === true || hasLegacyStripValue(record.titleBarStripPx) ? 'custom' : 'auto'),
     titleBarPresetId: typeof record.titleBarPresetId === 'string'
       ? record.titleBarPresetId
       : SIDEBAR_PREFS_DEFAULTS.titleBarPresetId,
@@ -156,6 +159,16 @@ function booleanMapOf(value: unknown): Record<string, boolean> {
 /** Type guard for the title-bar scheme union (anything else falls back). */
 function isTitleBarScheme(value: unknown): value is TitleBarScheme {
   return typeof value === 'string' && (TITLE_BAR_SCHEMES as readonly string[]).includes(value)
+}
+
+/**
+ * Whether the legacy document carries an explicit strip value (only
+ * reachable through the old gear popup): a stored number different from the
+ * default counts as "the user already configured something" and migrates to
+ * the `custom` scheme.
+ */
+function hasLegacyStripValue(value: unknown): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value !== TITLE_BAR_STRIP_DEFAULT
 }
 
 /**

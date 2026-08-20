@@ -1,4 +1,4 @@
-# 桌面端兼容统一方案：三方案二级设置（自动检测 / 壳预设 / 自定义 CSS）
+# 桌面端兼容统一方案：四选项下拉（自动检测 / DSH官方Web / 壳预设 / 自定义 CSS）
 
 > 2026-08-20 · 对应分支 `feat/desktop-scheme-settings` · 关联 issue #257、#208、#103/#111；外部 PR #82/#89/#111/#153/#226/#243 处置见文末。
 
@@ -20,7 +20,7 @@ better-sidebar 的桌面端适配历史上是"每壳一条补丁"：右上角开
 ## 决策
 
 1. **核心只留 Web 标准机制**：WCO（`navigator.windowControlsOverlay` + `geometrychange`）是唯一"不是适配、是标准"的信号；`-webkit-app-region: no-drag` 是标准属性（普通浏览器/无拖拽区壳惰性无害）。核心代码 grep 不到任何壳类名。
-2. **壳专属适配进用户空间**：「位置兼容模式」升级为二级设置，三方案：**自动检测（默认，保守，web 零修改）/ 壳兼容方案（内置预设，opt-in）/ 自定义方案（自由 CSS）**。
+2. **壳专属适配进用户空间**：「位置兼容模式」升级为**主行下拉**四选项：**自动检测（默认，保守，web 零修改）/ DSH官方Web（显式零适配）/ 壳兼容方案（内置预设，opt-in）/ 自定义方案（自由 CSS + 下移 px，保留齿轮弹窗）**。
 3. **预设准入规则**：issue/PR 中被提及（链接或明确名称）且 GitHub ⭐>100 的壳；v1 仅 anywhere-labs（唯一同时满足者）。预设只做**标题栏 strip 让位**，不做布局推挤/壳类名（尊重"不特意兼容 DSH Desktop 高级模式"）。Tauri 无冲突只写文档；EAC 未提及但提供 custom CSS 示例。
 4. 不向 anywhere-labs 提跨仓库 PR；不修改 DSH 源码。
 
@@ -28,13 +28,13 @@ better-sidebar 的桌面端适配历史上是"每壳一条补丁"：右上角开
 
 ### prefs 模型（`src/prefs-shared.ts` / `src/config.ts` / `src/client/prefs.ts`）
 
-- 新增 `titleBarScheme: 'auto' | 'preset' | 'custom'`（默认 `'auto'`）、`titleBarPresetId: string`、`customCss: string`。
+- 新增 `titleBarScheme: 'auto' | 'web' | 'preset' | 'custom'`（默认 `'auto'`）、`titleBarPresetId: string`、`customCss: string`。`web` = 显式「DSH官方Web」，取值链最优先强制 0（连 WCO 也不适用）。
 - schema 中三个新字段**无 default**（schemastery 验证：缺失字段不出现在解析结果里）→ `parsePrefs` 在字段缺失时由旧 `titleBarCompat` 派生：`true` → `custom`（保留 `titleBarStripPx`）；`false`/缺失 → `auto`。写路径镜像写旧字段（`titleBarCompat = scheme !== 'auto'`）供降级。
 
 ### 标准件（`src/client/wco.ts` + `src/client/titlebar-strip.ts`）
 
 - `wco.ts`：模块级反应式 store（subscribe/getSnapshot，`useSyncExternalStore` 消费），特性检测 `navigator.windowControlsOverlay`，订阅 `geometrychange` 重读矩形（最大化/还原实时更新）；最后订阅者退订时解绑原生监听；`setWcoSourceForTests` 注入测试源。API 抛错视为 present+0（绝不崩布局）。
-- `titlebar-strip.ts`（唯一决策点，纯函数）：**WCO 真实高度（权威，0 也权威）→ URL `dsh-desktop-titlebar-inset`（0–120 clamp）→ 预设 `stripFor`（仅 preset 方案）→ 手动 `titleBarStripPx`（仅 custom 方案）→ 0**。结果驱动 `body[data-dsh-title-bar-compat]` + `--dsh-title-bar-strip`（CSS 契约不变）。
+- `titlebar-strip.ts`（唯一决策点，纯函数）：**⓪ `web` 方案强制 0 → ① WCO 真实高度（权威，0 也权威；`visible=false` 幽灵 API 视为缺失）→ ② URL `dsh-desktop-titlebar-inset`（0–120 clamp）→ ③ 预设 `stripFor`（仅 preset 方案）→ ④ 手动 `titleBarStripPx`（仅 custom 方案）→ ⑤ 0**。结果驱动 `body[data-dsh-title-bar-compat]` + `--dsh-title-bar-strip`（CSS 契约不变）。
 - `desktop-env.ts`：只做环境报告（desktop/mode/platform/titlebarInset），SSR 安全；移除旧 `win32OverlayTop` 硬编码。
 
 ### 预设与用户 CSS（`src/client/shell-presets.ts` + `Sidebar.tsx` effect）
@@ -53,7 +53,7 @@ better-sidebar 的桌面端适配历史上是"每壳一条补丁"：右上角开
 
 ### 设置 UI（`SideCardSection.tsx` + locales）
 
-「位置兼容模式」行齿轮弹窗由单一数字行改为三方案：自动检测（radio，默认）/ 壳兼容方案（radio + 预设下拉 + 已检测提示）/ 自定义方案（radio + CSS textarea（Cmd/Ctrl+Enter 提交）+ 下移距离行）。
+「位置兼容模式」行改为**主行下拉**：自动检测（默认）/ DSH官方Web / 各壳预设（命中环境带「已检测」后缀，仅提示）/ 自定义方案（选中后行内出现齿轮，弹窗 = 下移距离 + CSS textarea（Cmd/Ctrl+Enter 提交））。
 
 ### 测试
 

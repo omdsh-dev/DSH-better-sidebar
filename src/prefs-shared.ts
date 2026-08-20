@@ -85,13 +85,14 @@ export interface SidebarPrefs {
    */
   terminalShellArgs: string
   /**
-   * Title-bar / shell compatibility scheme (the "位置兼容模式" secondary
-   * setting):
+   * Title-bar / shell compatibility scheme (the "位置兼容模式" setting):
    * - `auto` (default): CONSERVATIVE — only the standard Window Controls
    *   Overlay API (present in frameless Chromium shells that draw the
    *   native caption buttons over web content) contributes real geometry;
    *   without it nothing is modified, so plain-browser (web) behavior is
    *   untouched.
+   * - `web`: EXPLICIT "DSH official web" — never adapt, not even WCO
+   *   geometry (the user declares they run the plain web UI).
    * - `preset`: apply the built-in shell preset named by
    *   `titleBarPresetId` (data-driven, opt-in — see shell-presets.ts).
    * - `custom`: apply the free-form `customCss` (and the legacy
@@ -218,7 +219,7 @@ export const TITLE_BAR_STRIP_MAX = 120
 export const TITLE_BAR_STRIP_DEFAULT = 40
 
 /** The title-bar / shell compatibility schemes (see {@link SidebarPrefs.titleBarScheme}). */
-export const TITLE_BAR_SCHEMES = ['auto', 'preset', 'custom'] as const
+export const TITLE_BAR_SCHEMES = ['auto', 'web', 'preset', 'custom'] as const
 export type TitleBarScheme = typeof TITLE_BAR_SCHEMES[number]
 
 /** Fallback prefs used whenever the settings document is unreachable or malformed. */

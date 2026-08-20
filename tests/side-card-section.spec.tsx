@@ -125,11 +125,10 @@ describe('SideCardSection declarative inventory', () => {
     const html = renderSection(store, service)
     // Subagents declares a toggle → its card carries the settings gear
     // (aria-label = "<title> Feature settings"); Explorer and Image declare
-    // none → no gear. The position-compat general row's gear (the three-
-    // scheme popup) is ALWAYS present, so the total is 2.
-    expect(html.match(/aria-label="[^"]*Feature settings"/g)?.length).toBe(2)
+    // none → no gear. The position-compat row is a DROPDOWN (no gear unless
+    // the custom scheme is active), so the total is 1.
+    expect(html.match(/aria-label="[^"]*Feature settings"/g)?.length).toBe(1)
     expect(html).toContain('Subagents Feature settings')
-    expect(html).toContain('Position compatibility mode Feature settings')
   })
 
   it('renders the two dashed "add plugin" cards (tab grid + viewer grid)', () => {
@@ -162,33 +161,34 @@ describe('SideCardSection declarative inventory', () => {
     const { store, service } = mount()
     store.setPrefs({ ...store.getPrefs(), tabsEnabled: { subagent: false } })
     const html = renderSection(store, service)
-    // The disabled Subagents card loses its gear; the position-compat
-    // general row's gear stays (the scheme selector is always meaningful).
-    expect(html).not.toContain('Subagents Feature settings')
-    expect(html).toContain('Position compatibility mode Feature settings')
+    // The disabled Subagents card loses its gear; the position-compat row
+    // is a dropdown (default auto → no gear either).
+    expect(html).not.toContain('Feature settings')
   })
 
-  it('renders the position-compat mode general row: off by default, checked when the pref is on, gear always present', () => {
+  it('renders the position-compat mode row as a scheme dropdown: auto default, custom keeps the gear', () => {
     const { store, service } = mount()
     let html = renderSection(store, service)
-    // The general row renders its title and description (the scheme is the
-    // conservative auto by default; the description reflects the three
-    // schemes).
+    // The general row renders its title and description; the scheme is the
+    // conservative auto by default and the row is a DROPDOWN (auto first).
     expect(html).toContain('Position compatibility mode')
-    expect(html).toContain('Reserve space for native title bars / shell chrome drawn over the web content')
-    // Three general rows now: only interceptOpenPath is checked by default
-    // (openByDefault defaults off, the titleBarCompat row starts UNCHECKED) —
-    // the checked checkbox count is 1 while the total checkbox count is 3.
-    expect(html.match(/type="checkbox"/g)?.length).toBe(3)
+    expect(html).toContain('Pick the title-bar compatibility scheme: auto-detect (default, conservative) / DSH official web / known desktop shells / custom (shift distance + custom CSS)')
+    expect(html).toContain('<select')
+    expect(html).toContain('>Auto-detect</option>')
+    expect(html).toContain('>DSH official web</option>')
+    expect(html).toContain('>DeepSeek Harness Desktop</option>')
+    expect(html).toContain('>Custom</option>')
+    // Two general-row switches remain (openByDefault + interceptOpenPath),
+    // only interceptOpenPath checked by default — the scheme row is a
+    // select, not a switch.
+    expect(html.match(/type="checkbox"/g)?.length).toBe(2)
     expect(html.match(/checked=""/g)?.length).toBe(1)
-    // The row's gear (the three-scheme popup) is ALWAYS present — the scheme
-    // selector is meaningful in every state (auto is the default).
-    expect(html).toContain('aria-label="Position compatibility mode Feature settings"')
+    // Auto (default) needs no further settings → no gear.
+    expect(html).not.toContain('Position compatibility mode Feature settings')
 
-    // When the pref is on, the switch is checked (mirror of scheme != auto).
-    store.setPrefs({ ...store.getPrefs(), titleBarCompat: true })
+    // The custom scheme keeps its settings button (the px + CSS popup).
+    store.setPrefs({ ...store.getPrefs(), titleBarScheme: 'custom', titleBarCompat: true })
     html = renderSection(store, service)
-    expect(html.match(/checked=""/g)?.length).toBe(2)
     expect(html).toContain('aria-label="Position compatibility mode Feature settings"')
   })
 })

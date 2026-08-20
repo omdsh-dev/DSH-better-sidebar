@@ -28,6 +28,17 @@ describe('computeTitleBarStrip', () => {
     expect(computeTitleBarStrip(env({}), wco(false), 'custom', noPreset, 40)).toBe(40)
   })
 
+  it('the explicit WEB scheme forces 0 — not even standard WCO geometry applies', () => {
+    const desktop = env({ desktop: true, mode: 'advanced', platform: 'win32' })
+    // The user declared "DSH official web": no adaptation at all, even when
+    // a real overlay exists or a preset is active.
+    expect(computeTitleBarStrip(desktop, wco(true, 36), 'web', noPreset, 40)).toBe(0)
+    expect(computeTitleBarStrip(desktop, wco(false), 'web', noPreset, 40)).toBe(0)
+    expect(computeTitleBarStrip(desktop, wco(false), 'web', {
+      id: 't', title: 't', desc: '', stripFor: () => 20,
+    }, 40)).toBe(0)
+  })
+
   it('trusts the standard WCO geometry first in every scheme (even 0 — e.g. maximized)', () => {
     const desktop = env({ desktop: true, mode: 'advanced', platform: 'win32' })
     expect(computeTitleBarStrip(desktop, wco(true, 36), 'auto', noPreset, 0)).toBe(36)

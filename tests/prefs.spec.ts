@@ -169,25 +169,32 @@ describe('side card preferences', () => {
     expect((await loadPrefs(wire({ titleBarPresetId: 5 }))).titleBarPresetId).toBe('')
     expect((await loadPrefs(wire({}))).customCss).toBe('')
     expect((await loadPrefs(wire({ customCss: 7 }))).customCss).toBe('')
-    // Valid values survive verbatim.
+    // Valid values survive verbatim (including the explicit web scheme).
     const picked = await loadPrefs(wire({ titleBarScheme: 'preset', titleBarPresetId: 'dsh-desktop', customCss: 'html { }' }))
     expect(picked.titleBarScheme).toBe('preset')
     expect(picked.titleBarPresetId).toBe('dsh-desktop')
     expect(picked.customCss).toBe('html { }')
+    expect((await loadPrefs(wire({ titleBarScheme: 'web' }))).titleBarScheme).toBe('web')
   })
 
-  it('migrates the LEGACY titleBarCompat flag into the scheme (true → custom, false/absent → auto)', async () => {
+  it('migrates LEGACY documents that ALREADY HAVE VALUES into the custom scheme', async () => {
     // A pre-scheme document with the manual compat flag on maps to the
     // custom scheme, keeping the strip px the user chose.
     const migrated = await loadPrefs(wire({ titleBarCompat: true, titleBarStripPx: 56 }))
     expect(migrated.titleBarScheme).toBe('custom')
     expect(migrated.titleBarStripPx).toBe(56)
-    // A stored scheme always wins over the legacy flag (round-trip of the
+    // A non-default strip px alone (only reachable through the old gear
+    // popup) also counts as "already has values" → custom.
+    const stripOnly = await loadPrefs(wire({ titleBarStripPx: 48 }))
+    expect(stripOnly.titleBarScheme).toBe('custom')
+    expect(stripOnly.titleBarStripPx).toBe(48)
+    // A stored scheme always wins over the legacy fields (round-trip of the
     // mirrored write: preset stays preset even though the mirror is true).
     const roundTrip = await loadPrefs(wire({ titleBarScheme: 'preset', titleBarCompat: true }))
     expect(roundTrip.titleBarScheme).toBe('preset')
-    // Legacy off / absent → the conservative auto scheme.
+    // Legacy off / absent / default strip → the conservative auto scheme.
     expect((await loadPrefs(wire({ titleBarCompat: false }))).titleBarScheme).toBe('auto')
+    expect((await loadPrefs(wire({ titleBarStripPx: 40 }))).titleBarScheme).toBe('auto')
     expect((await loadPrefs(wire({}))).titleBarScheme).toBe('auto')
   })
 
