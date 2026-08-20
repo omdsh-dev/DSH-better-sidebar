@@ -41,7 +41,16 @@
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="45%" alt="Add Plugins screenshot" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
 </div>
 
-### v0.14.0
+### v0.14.1
+
+**✨ New features**
+
+- 📤 **Upload into the files window** ([#239](https://github.com/omdsh-dev/DSH-better-sidebar/pull/239)): header "upload file / upload folder" buttons plus drag-drop (drop on the tree body = workspace root, on a directory row = that directory, on a file row = its parent directory, VSCode semantics); full-window blurred progress overlay while uploading (per-file progress + cancel / Esc); buttons disabled while busy, tree refreshes after the upload settles
+
+**🐛 Fixes**
+
+- 🔒 **Upload-chain hardening** ([#239](https://github.com/omdsh-dev/DSH-better-sidebar/pull/239)): empty and absolute `relativePath` segments are refused outright; uniquely named temp files (concurrent uploads stay independent, crashed processes never block later uploads); write-stream error listeners (a failing disk can no longer crash the host); client error codes unified with the wire (`too-large`), 413s localized
+
 
 > ⚠️ **This release adapts to DSH 0.1.0-rc.8**: every `@deepseek-ai/*` peer/devDependency is raised to `^0.1.0-rc.8` (transitives included — zero rc.7 leftovers in the lockfile), `cordis` to `^4.0.0-rc.8`, and the CI mount lane pins `@deepseek-ai/dsh@0.1.0-rc.8`. **DSH environments on rc.7 or earlier can no longer resolve this release's dependencies — upgrade DSH first.** All changes since v0.13.1:
 
