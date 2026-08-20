@@ -63,11 +63,17 @@
   pointer-events: auto;
 }
 
-/* The tab strip of the OPEN right panel reserves the cluster's width at its
-   right end, so the tabs and the + menu genuinely yield space to the cluster
-   (never hiding under it). */
-.panel:not(.panelHidden) .tabBar {
-  padding-right: 72px;
+.tabBarTopRight {
+  padding-right: 68px !important;
+}
+
+.tabBarBottomTopRight {
+  padding-right: 36px !important;
+}
+
+.panelMaximized {
+  z-index: 42;
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.12);
 }
 
 /* The closed-state affordance is the native rail icon control: a plain
@@ -128,8 +134,8 @@
   padding-bottom: env(safe-area-inset-bottom);
   /* Expand/collapse slides the panel; fullscreen animates the width. */
   transition:
-    transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    width var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+    transform 240ms cubic-bezier(0.2, 0, 0, 1),
+    width 240ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 /* Collapsed: slid off-screen, interactive nothing, hidden after the slide. */
@@ -138,9 +144,9 @@
   pointer-events: none;
   visibility: hidden;
   transition:
-    transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    width var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    visibility 0s linear var(--ds-transition-duration-slow);
+    transform 240ms cubic-bezier(0.2, 0, 0, 1),
+    width 240ms cubic-bezier(0.2, 0, 0, 1),
+    visibility 0s linear 240ms;
 }
 
 /* Width drags write at pointer cadence; easing would detach the edge. */
@@ -195,19 +201,19 @@
   padding-bottom: env(safe-area-inset-bottom);
   /* Expand/collapse slides the panel; height drags animate the height. */
   transition:
-    transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    height var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+    transform 240ms cubic-bezier(0.2, 0, 0, 1),
+    height 240ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-/* Collapsed: slid off-screen, interactive nothing, hidden after the slide. */
+/* Collapsed: slid down off-screen, interactive nothing, hidden after the slide. */
 .bottomPanelHidden {
   transform: translateY(102%);
   pointer-events: none;
   visibility: hidden;
   transition:
-    transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    height var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    visibility 0s linear var(--ds-transition-duration-slow);
+    transform 240ms cubic-bezier(0.2, 0, 0, 1),
+    height 240ms cubic-bezier(0.2, 0, 0, 1),
+    visibility 0s linear 240ms;
 }
 
 /* Height drags write at pointer cadence; easing would detach the edge. */
@@ -248,15 +254,18 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   background: var(--dsw-alias-interactive-bg-hover-accent);
 }
 
-/* The bottom panel's close control: the app's icon-button pattern (28px
-   circle), pinned to the tab strip's right end — one tap collapses the
-   panel. The tab strips below reserve its width so the + menu never hides
-   under it. */
-.bottomClose {
+.bottomControls {
   position: absolute;
   top: 3px;
   right: 6px;
   z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.bottomMaximize,
+.bottomClose {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -271,15 +280,10 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   flex: none;
 }
 
+.bottomMaximize:hover:not(:disabled),
 .bottomClose:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
-}
-
-/* The bottom panel's tab strips reserve the close control's width at their
-   right end, so the + menu never hides under it. */
-.bottomPanel .tabBar {
-  padding-right: 40px;
 }
 
 /* ── Position compatibility mode (Windows native title bar) ────────────── */
@@ -384,6 +388,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .splitChild {
   position: relative;
   display: flex;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -445,6 +451,67 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   display: flex;
   flex-direction: column;
   background: var(--dsw-alias-bg-base);
+}
+
+.paneMaximizedGrowing {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 25 !important;
+  animation: paneGrow 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: top, left, width, height, border-radius, box-shadow;
+}
+
+.paneMaximizedShrinking {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 25 !important;
+  animation: paneShrink 280ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  pointer-events: none;
+  will-change: top, left, width, height, border-radius, box-shadow;
+}
+
+.paneMaximizedSettled {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 25 !important;
+}
+
+@keyframes paneGrow {
+  0% {
+    top: var(--orig-top, 0px);
+    left: var(--orig-left, 0px);
+    width: var(--orig-width, 100%);
+    height: var(--orig-height, 100%);
+    border-radius: 6px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+  }
+  100% {
+    top: 0px;
+    left: 0px;
+    width: 100%;
+    height: 100%;
+    border-radius: 0px;
+    box-shadow: none;
+  }
+}
+
+@keyframes paneShrink {
+  0% {
+    top: 0px;
+    left: 0px;
+    width: 100%;
+    height: 100%;
+    border-radius: 0px;
+    box-shadow: none;
+  }
+  100% {
+    top: var(--orig-top, 0px);
+    left: var(--orig-left, 0px);
+    width: var(--orig-width, 100%);
+    height: var(--orig-height, 100%);
+    border-radius: 6px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+  }
 }
 
 .paneDrop {
@@ -567,8 +634,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .tabBar {
   flex: none;
   display: flex;
-  align-items: stretch;
-  height: 34px;
+  align-items: center;
+  height: 36px;
+  padding: 0 6px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
   background: var(--dsw-alias-bg-layer-1);
 }
@@ -582,6 +650,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   flex: 1;
   min-width: 0;
   display: flex;
+  align-items: center;
+  gap: 4px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -594,25 +664,28 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   flex: none;
   max-width: 160px;
   min-width: 64px;
+  height: 26px;
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 4px 0 10px;
+  padding: 0 4px 0 8px;
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-label-secondary);
-  border-right: 1px solid var(--dsw-alias-border-l1);
-  background: transparent;
+  border-radius: 6px;
+  border-right: none;
+  background: var(--dsw-alias-interactive-bg-hover);
   cursor: pointer;
   user-select: none;
+  transition: background var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
-.tab:hover {
+.tab:hover:not(.tabActive) {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .tabActive {
   color: var(--dsw-alias-label-primary);
-  /* Native selected fill (Rows .sessionRow.selected) — no underline, no shadow. */
   background: var(--dsw-alias-interactive-bg-active);
 }
 
@@ -661,26 +734,53 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 .tabBarPlus {
   flex: none;
-  align-self: center;
-  /* Adjacent to the rightmost tab; sticky so overflowing tab rows keep it
-     visible at the right edge of the scrollport. */
-  position: sticky;
-  right: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 22px;
   height: 22px;
-  margin: 0 6px;
+  margin: 0 4px;
   padding: 0;
   border: none;
   border-radius: 5px;
-  background: var(--dsw-alias-bg-layer-1);
+  background: transparent;
   color: var(--dsw-alias-label-tertiary);
   cursor: pointer;
+  transition: background var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
-.tabBarPlus:hover {
+.tabBarPlus:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.tabBarActions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  padding-right: 4px;
+}
+
+.tabBarMaximize {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  transition: background var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.tabBarMaximize:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
 }
@@ -2088,11 +2188,36 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    (badges live on the second line so they never crowd the subject). */
 .gitLogRow {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 5px 12px;
+  flex-direction: row;
+  align-items: stretch;
+  padding: 0 12px 0 6px;
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: 4px;
+  height: 48px;
+  min-height: 48px;
+  box-sizing: border-box;
+}
+
+.gitGraphCol {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  position: relative;
+  overflow: visible;
+  height: 48px;
+  margin: 0;
+  padding: 0;
+}
+
+.gitLogContent {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 0 6px 8px;
+  overflow: hidden;
 }
 
 .gitLogRow:hover {
@@ -2101,33 +2226,20 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 .gitLogLine1 {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   min-width: 0;
+  height: 20px;
+  line-height: 20px;
+  overflow: hidden;
 }
 
 .gitLogHash {
   flex: none;
   font: var(--dsw-font-markdown-code-block-small);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.gitLogLine2 {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
-.gitLogRef {
-  flex: none;
-  padding: 0 5px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 999px;
-  font: var(--dsw-font-xxxs-strong-11);
   color: var(--dsw-alias-brand-primary);
-  white-space: nowrap;
+  font-weight: 500;
+  line-height: 20px;
 }
 
 .gitLogSubject {
@@ -2138,9 +2250,38 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: nowrap;
   font: var(--dsw-font-s-14);
   color: var(--dsw-alias-label-primary);
+  line-height: 20px;
+}
+
+.gitLogLine2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 16px;
+  line-height: 16px;
+  overflow: hidden;
+}
+
+.gitLogRef {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  font: var(--dsw-font-xxxs-strong-11);
+  color: var(--dsw-alias-brand-primary);
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .gitLogMeta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font: var(--dsw-font-xxxs-11);
   color: var(--dsw-alias-label-tertiary);
 }

@@ -27,6 +27,7 @@ describe('git parsing', () => {
         date: '2024-01-01 10:00:00 +0800',
         hashFull: 'abc1234def5678abc1234def5678abc1234def5678',
         refs: 'HEAD -> main, origin/main',
+        parents: [],
       },
       {
         hash: 'def5678',
@@ -35,6 +36,7 @@ describe('git parsing', () => {
         date: '2024-01-02 10:00:00 +0800',
         hashFull: 'def5678abc1234def5678abc1234def5678abc1234',
         refs: '',
+        parents: [],
       },
     ])
   })

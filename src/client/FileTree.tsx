@@ -22,6 +22,7 @@ import {
   IconLinkOutline16, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
+import { fileIconFor } from './icons.tsx'
 import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
@@ -207,7 +208,7 @@ export function FileTree(props: {
           }}
           onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
         >
-          <IconCodeOutline16 size={14} />
+          {fileIconFor(entry.name, 14)}
           <span className={css.explorerName}>{entry.name}</span>
           {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
           {rowActions(entry)}
