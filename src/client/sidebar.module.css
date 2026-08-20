@@ -1760,9 +1760,16 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   height: 36px;
   padding: 0 8px 0 12px;
+}
+
+.gitHeaderLabel {
+  flex: none;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
 }
 
 .gitBranchSelect {

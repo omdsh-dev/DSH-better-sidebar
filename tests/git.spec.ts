@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
-import { parseLogLines, parsePorcelainZ } from '../src/git.ts'
+import { parseLogLines, parsePorcelainZ, parseSubmoduleStatus } from '../src/git.ts'
 
 describe('git parsing', () => {
   it('parses porcelain -z entries including renames', () => {
@@ -132,5 +132,24 @@ describe('git parsing', () => {
   it('parses an empty or junk diff into no files', () => {
     expect(parseUnifiedDiff('').files).toEqual([])
     expect(parseUnifiedDiff('no diff here\n').files).toEqual([])
+  })
+})
+
+describe('submodule status parsing', () => {
+  it('parses submodule status output including recursive entries', () => {
+    const output = [
+      ' 0123456789abcdef0123456789abcdef01234567 vendor/lib (v1.0)',
+      '+89abcdef0123456789abcdef0123456789abcdef vendor/other (heads/main)',
+      ' U0123456789abcdef0123456789abcdef01234567 vendor/conflict',
+      '-0123456789abcdef0123456789abcdef01234567 vendor/uninit',
+      '',
+    ].join('\n')
+    const paths = parseSubmoduleStatus(output)
+    expect(paths).toEqual(['vendor/lib', 'vendor/other', 'vendor/conflict'])
+  })
+
+  it('returns empty for empty or junk output', () => {
+    expect(parseSubmoduleStatus('')).toEqual([])
+    expect(parseSubmoduleStatus('no submodules here\n')).toEqual([])
   })
 })

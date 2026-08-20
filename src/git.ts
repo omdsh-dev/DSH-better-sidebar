@@ -10,6 +10,8 @@
  * user.name/user.email).
  */
 import { spawn } from 'node:child_process'
+import { readdir } from 'node:fs/promises'
+import { basename, join } from 'node:path'
 
 /** A parsed `git status --porcelain=v1 -z` entry. */
 export interface GitStatusEntry {
@@ -37,6 +39,18 @@ export interface GitLogEntry {
   date: string
   /** Ref decorations (`%D` with --decorate=short), e.g. `HEAD -> main, origin/main`; '' when none. */
   refs: string
+}
+
+/** One discovered git repository. */
+export interface GitRepoInfo {
+  /** Absolute path to the repo's top-level directory. */
+  root: string
+  /** Display name: the directory basename, or the submodule path relative to the parent repo. */
+  name: string
+  /** Whether this repo is a submodule of another repo. */
+  isSubmodule: boolean
+  /** The parent repo's root (only set for submodules). */
+  parentRoot?: string
 }
 
 /** One git failure (stderr text as the message). */
@@ -129,6 +143,76 @@ export async function isGitRepo(cwd: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+/**
+ * Parse `git submodule status --recursive` output into a list of submodule
+ * paths (relative to the repo root). Skips uninitialized submodules (the
+ * leading `-` prefix). The format per line is:
+ *   `[prefix]hash path [(branch)]`
+ * where prefix is one of ` ` (in sync), `+` (different commit), `U` (merge
+ * conflict), or `-` (not initialized).
+ */
+export function parseSubmoduleStatus(output: string): string[] {
+  const paths: string[] = []
+  for (const line of output.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed === '') continue
+    // Skip uninitialized submodules.
+    if (trimmed.startsWith('-')) continue
+    // Format: [prefix]sha1hash path [(branch)]
+    // The hash is always 40 hex chars; require it so junk text is not mis-parsed.
+    const match = /^[+\sU]?[0-9a-f]{40}\s+(\S+)/.exec(trimmed)
+    if (match !== null && match[1] !== undefined) {
+      paths.push(match[1])
+    }
+  }
+  return paths
+}
+
+/**
+ * Discover all git repositories reachable from `cwd`. When `cwd` itself is
+ * inside a work tree, the top-level repo is the first entry and its submodules
+ * (recursive) follow. When `cwd` is NOT a repo, immediate subdirectories are
+ * scanned for `.git` (work trees or bare checkouts) and each is listed as a
+ * standalone repo. Uninitialized submodules (the `-` prefix in `git submodule
+ * status`) are skipped — they have no work tree to inspect.
+ */
+export async function listRepos(cwd: string): Promise<GitRepoInfo[]> {
+  const repos: GitRepoInfo[] = []
+
+  if (await isGitRepo(cwd)) {
+    const root = await repoRoot(cwd)
+    repos.push({ root, name: basename(root), isSubmodule: false })
+
+    // Recursively discover submodules from the top-level repo.
+    try {
+      const subOutput = await runGit(root, ['submodule', 'status', '--recursive'])
+      for (const subPath of parseSubmoduleStatus(subOutput)) {
+        const subRoot = join(root, subPath)
+        repos.push({ root: subRoot, name: subPath, isSubmodule: true, parentRoot: root })
+      }
+    } catch {
+      // No submodules or `git submodule` failed — the main repo is the only entry.
+    }
+  } else {
+    // cwd is not a git repo: scan immediate subdirectories for independent repos.
+    try {
+      const entries = await readdir(cwd, { withFileTypes: true })
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        const subDir = join(cwd, entry.name)
+        if (await isGitRepo(subDir)) {
+          const root = await repoRoot(subDir)
+          repos.push({ root, name: entry.name, isSubmodule: false })
+        }
+      }
+    } catch {
+      // Cannot read the directory — no repos to list.
+    }
+  }
+
+  return repos
 }
 
 /** The repository top level containing `cwd` (`git rev-parse --show-toplevel`). */
