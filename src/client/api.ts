@@ -291,9 +291,9 @@ export const api = {
     }),
   browserSnapshot: (scope: SessionScope, signal?: AbortSignal) =>
     call<AgentBrowserSnapshot>('agent-browser.snapshot', scopePayload(scope, {}), signal),
-  mirrorStart: (scope: SessionScope, display?: { width: number; height: number }) =>
+  mirrorStart: (scope: SessionScope, display?: { width: number; height: number; dpr?: number }) =>
     call<{ viewportWidth: number; viewportHeight: number; controlOwner: string }>('agent-browser.mirror.start', scopePayload(scope, {
-      ...(display ? { displayWidth: display.width, displayHeight: display.height } : {}),
+      ...(display ? { displayWidth: display.width, displayHeight: display.height, ...(display.dpr !== undefined ? { displayDpr: display.dpr } : {}) } : {}),
     })),
   mirrorStop: (scope: SessionScope) =>
     call<{ ok: boolean }>('agent-browser.mirror.stop', scopePayload(scope, {})),

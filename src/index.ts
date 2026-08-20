@@ -437,7 +437,8 @@ function buildApi(
       const record = payload as Record<string, unknown>
       const width = typeof record.displayWidth === 'number' ? record.displayWidth : undefined
       const height = typeof record.displayHeight === 'number' ? record.displayHeight : undefined
-      return agentBrowser.startMirror(sessionId, { width, height })
+      const dpr = typeof record.displayDpr === 'number' ? record.displayDpr : undefined
+      return agentBrowser.startMirror(sessionId, { width, height, dpr })
     },
     'agent-browser.mirror.stop': async (payload) => {
       const sessionId = requireString(payload, 'sessionId')

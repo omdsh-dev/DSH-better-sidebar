@@ -55,10 +55,11 @@ export function AgentBrowserView(props: { scope: SessionScope; visible: boolean 
     const start = async () => {
       try {
         // Measure the display area so the backend can lay the page out at
-        // ~1:1 CSS px (keeps text readable in a narrow sidebar).
+        // ~1:1 CSS px (keeps text readable in a narrow sidebar); dpr keeps
+        // the frames 1:1 sharp on retina displays.
         const rect = containerRef.current?.getBoundingClientRect()
         const display = rect && rect.width >= 320 && rect.height >= 240
-          ? { width: Math.floor(rect.width), height: Math.floor(rect.height) }
+          ? { width: Math.floor(rect.width), height: Math.floor(rect.height), dpr: window.devicePixelRatio || 1 }
           : undefined
         const result = await api.mirrorStart(scope, display)
         if (cancelled) return

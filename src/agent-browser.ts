@@ -105,6 +105,9 @@ interface MirrorState {
   controlOwner: ControlOwner
   viewportWidth: number
   viewportHeight: number
+  /** Device scale factor the screencast renders at (matched to the GUI's
+   *  devicePixelRatio so text is 1:1 sharp on retina, 1x-fast elsewhere). */
+  deviceScaleFactor: number
   /** Push subscribers (the WebSocket bridge): frames fire as they arrive. */
   frameListeners: Set<(frame: MirrorFrame) => void>
   /** Meta subscribers: control ownership / viewport changes. */
@@ -382,12 +385,13 @@ export class AgentBrowserManager {
    * Start the mirror. When displayWidth/Height are given (the sidebar canvas's
    * rendered CSS size), the page is re-laid-out at that size via device metrics
    * override so 1 browser CSS px ≈ 1 display px — text stays readable instead of
-   * shrinking the full desktop layout into a narrow panel. deviceScaleFactor 1.5
-   * keeps the screencast JPEG retina-sharp; coordinates stay in CSS px.
+   * shrinking the full desktop layout into a narrow panel. The device scale
+   * factor follows the GUI's devicePixelRatio (display.dpr) so frames render
+   * 1:1 sharp on retina and stay cheap on non-retina displays.
    */
   async startMirror(
     sessionId: string,
-    display?: { width?: number; height?: number },
+    display?: { width?: number; height?: number; dpr?: number },
   ): Promise<{ viewportWidth: number; viewportHeight: number; controlOwner: ControlOwner }> {
     const state = this.requireState(sessionId)
     await this.stopMirror(sessionId)
@@ -399,12 +403,13 @@ export class AgentBrowserManager {
     const targetW = hasDisplay ? Math.round(Math.min(display.width as number, 1920)) : 0
     const targetH = hasDisplay ? Math.round(Math.min(display.height as number, 1920)) : 0
     const useOverride = hasDisplay
+    const dsf = Math.min(Math.max(display?.dpr ?? 2, 1), 2)
     const applyOverride = async () => {
       if (!useOverride) return
       await cdp.send('Emulation.setDeviceMetricsOverride', {
         width: targetW,
         height: targetH,
-        deviceScaleFactor: 1.5,
+        deviceScaleFactor: dsf,
         mobile: false,
       }).catch(() => {})
     }
@@ -428,6 +433,7 @@ export class AgentBrowserManager {
       controlOwner: 'agent',
       viewportWidth: vw,
       viewportHeight: vh,
+      deviceScaleFactor: dsf,
       frameListeners: new Set(),
       metaListeners: new Set(),
     }
@@ -451,10 +457,10 @@ export class AgentBrowserManager {
     })
     await cdp.send('Page.startScreencast', {
       format: 'jpeg',
-      quality: 65,
-      // Frames arrive at 1.5x device pixels under the override; cap accordingly.
-      maxWidth: Math.ceil(vw * 1.5),
-      maxHeight: Math.ceil(vh * 1.5),
+      quality: 72,
+      // Frames arrive at `dsf` device pixels per CSS px; cap accordingly.
+      maxWidth: Math.ceil(vw * dsf),
+      maxHeight: Math.ceil(vh * dsf),
       everyNthFrame: 1,
     })
     this.mirrors.set(sessionId, mirror)
@@ -519,7 +525,9 @@ export class AgentBrowserManager {
     await mirror.cdp.send('Emulation.setDeviceMetricsOverride', {
       width,
       height,
-      deviceScaleFactor: 1.5,
+      // Keep the scale factor chosen at start — a drag must not downgrade
+      // sharpness.
+      deviceScaleFactor: mirror.deviceScaleFactor,
       mobile: false,
     })
     // The override triggers a reflow; getLayoutMetrics reflects it right away.
