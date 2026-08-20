@@ -70,6 +70,21 @@ export interface SidebarPrefs {
    */
   editorExplorer: boolean
   /**
+   * The shell the UI and agent terminals spawn (absolute path or bare
+   * executable name). Empty (default) keeps the legacy resolution order:
+   * `cordis.patch.yml` `config.shell`, then `$SHELL` / login shell /
+   * `powershell.exe` on Windows. Set it from the terminal card's gear in
+   * the Side card settings (or the yaml) to pin a specific shell — takes
+   * effect for terminals opened afterwards.
+   */
+  terminalShell: string
+  /**
+   * Explicit arguments for `terminalShell`, space-separated (empty keeps
+   * the platform defaults; when set, they fully replace them — same
+   * contract as the yaml `shellArgs`).
+   */
+  terminalShellArgs: string
+  /**
    * Position compatibility mode: reserves space at the top for the native
    * Windows title bar (drawn at the window's top-right corner over the web
    * content in frameless/hidden-title-bar windows). When on, the toggle
@@ -188,7 +203,9 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   terminalFontFamily: '',
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
   interceptOpenPath: true,
-  editorExplorer: true,
+  editorExplorer: false,
+  terminalShell: '',
+  terminalShellArgs: '',
   titleBarCompat: false,
   titleBarStripPx: TITLE_BAR_STRIP_DEFAULT,
   htmlViewerNoSandbox: false,

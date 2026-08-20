@@ -713,3 +713,83 @@
     transition: none;
   }
 }
+
+/* The managing plugin's identity badge: name + version pill, token-driven
+   (labels via --dsw-alias-label-*, surface via --dsw-alias-bg-layer-2). */
+.versionBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  padding: 4px 12px 4px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.versionBadgeName {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+
+.versionBadgeTag {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--dsw-alias-accent-soft, var(--dsw-alias-border-l2));
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Catalog search input: a compact text field above the list (token-driven).
+   The entries list below it scrolls INDEPENDENTLY — with many plugins the
+   modal stays navigable instead of growing unbounded. */
+.pluginSearch {
+  width: 100%;
+  box-sizing: border-box;
+  appearance: none;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.pluginSearch::placeholder {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.pluginSearch:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 1px;
+}
+
+/* The entries area scrolls within the modal once the catalog grows past
+   the viewport (max-height + own scrollbar keeps the modal shell fixed). */
+.pluginEntries {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+/* One catalog group: optional category heading above its stacked entries. */
+.pluginGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pluginGroupHeading {
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary);
+  padding: 2px 2px 0;
+}
