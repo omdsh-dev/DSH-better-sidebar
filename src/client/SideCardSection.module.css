@@ -462,6 +462,44 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+/* The title-bar scheme radio control: native radio whose accent follows
+   the app's business-primary token (the same accent the focus outlines
+   use). */
+.schemeRadio {
+  accent-color: var(--dsw-alias-state-business-primary);
+  cursor: pointer;
+}
+
+/* The multi-line custom-CSS input (scheme `custom`): monospace, generous
+   height, resizable — same surface tokens as the typed inputs. */
+.cssTextArea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 120px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.cssTextArea:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+/* Inline hint under the preset select ("已检测到该壳" suggestion badge). */
+.popupHint {
+  padding: 0 16px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-dimmed);
+}
+
 /* Secondary settings popup: a wider dialog than the primitive default (the
    dialog portals to document.body; the doubled class keeps the width rule
    above the primitive's .dialog regardless of stylesheet order). */

@@ -38,7 +38,7 @@
  * shows the wire error inline — a broken settings surface never crashes the
  * shell.
  */
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   IconCheckOutline16,
   IconChevronDownOutline14,
@@ -59,11 +59,14 @@ import {
   WIDTH_PERCENT_MAX,
   WIDTH_PERCENT_MIN,
   type SidebarPrefs,
+  type TitleBarScheme,
 } from '../prefs-shared.ts'
 import { api } from './api.ts'
 import { parsePrefs } from './prefs.ts'
 import { AddPluginModal, type PluginKind } from './add-plugin-modal.tsx'
 import { t } from './locales.ts'
+import { parseDesktopEnv } from './desktop-env.ts'
+import { getShellPresets } from './shell-presets.ts'
 import type { SidebarStore } from './state.ts'
 import type {
   BetterSidebarService,
@@ -320,6 +323,37 @@ function TypedRow(props: {
 }
 
 /**
+ * The multi-line custom-CSS input (scheme `custom`): a monospace textarea
+ * whose draft is local state, committed on blur or Cmd/Ctrl+Enter through
+ * the parent's handler. Keyed by the stored value so an external commit
+ * remounts it with the canonical text (same pattern as TypedRow).
+ */
+function CssDraft(props: {
+  value: string
+  onCommit: (raw: string) => void
+  label: string
+  placeholder?: string
+}) {
+  const { value, onCommit, label, placeholder } = props
+  const [draft, setDraft] = useState(value)
+  return (
+    <textarea
+      className={css.cssTextArea}
+      rows={6}
+      value={draft}
+      placeholder={placeholder}
+      aria-label={label}
+      spellCheck={false}
+      onChange={event => { setDraft(event.currentTarget.value) }}
+      onBlur={() => { onCommit(draft) }}
+      onKeyDown={event => {
+        if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) event.currentTarget.blur()
+      }}
+    />
+  )
+}
+
+/**
  * One select row: a dropdown over the toggle's declared `options`. When any
  * option carries an icon, the dropdown renders big-icon option cards (icon +
  * title + desc) and the closed anchor shows the selected option's icon as
@@ -498,6 +532,13 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
   const [settingsFor, setSettingsFor] = useState<TabDescriptor | FileViewerDescriptor | null>(null)
   // Whether the position-compat strip popup (the gear on the 常规 row) is open.
   const [stripSettingsOpen, setStripSettingsOpen] = useState(false)
+  // The shell preset whose marker is currently visible (URL stamps — see
+  // desktop-env.ts). SUGGESTION ONLY: the settings popup shows a "已检测"
+  // hint; nothing is auto-applied.
+  const detectedPreset = useMemo(() => {
+    const env = parseDesktopEnv()
+    return getShellPresets().find(preset => preset.detect?.(env) === true)
+  }, [])
   // Whether the "add plugin" modal (a dashed card at the end of the
   // 侧边栏内容 / 文件预览 grids) is open, and for which extension point
   // (null = closed).
@@ -633,6 +674,20 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     }
     applyPref({ [toggle.key]: raw })
     return raw
+  }
+
+  /**
+   * Pick the title-bar / shell compatibility scheme. Mirrors the legacy
+   * `titleBarCompat` flag (true = anything but the conservative auto) so
+   * documents stay readable by older plugin versions.
+   */
+  const setTitleBarScheme = (next: TitleBarScheme): void => {
+    applyPref({ titleBarScheme: next, titleBarCompat: next !== 'auto' })
+  }
+
+  /** Commit the free-form custom CSS (scheme `custom`). */
+  const commitCustomCss = (raw: string): void => {
+    applyPref({ customCss: raw })
   }
 
   /** Persist one plugin-owned setting of one descriptor (merged into the pluginSettings blob). */
@@ -801,25 +856,28 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
           <span className={css.control}>
             {/*
               The position-compat row's gear (same popup pattern as the
-              feature cards): opens a Modal with the strip-height number row.
-              Hidden while the mode is off — its related setting is dormant
-              then (the feature-card convention).
+              feature cards): opens the three-scheme popup (auto / preset /
+              custom). ALWAYS visible — the scheme selector is meaningful in
+              every state (auto is the default), unlike the feature-card
+              convention where a dormant-off feature hides its gear.
             */}
-            {prefs.titleBarCompat && (
-              <button
-                type="button"
-                className={css.rowGear}
-                aria-label={`${t('settingsTitleBarTitle')} ${t('settingsPopup')}`}
-                title={t('settingsPopup')}
-                onClick={() => { setStripSettingsOpen(true) }}
-              >
-                <IconSettingsOutline16 size={14} />
-              </button>
-            )}
+            <button
+              type="button"
+              className={css.rowGear}
+              aria-label={`${t('settingsTitleBarTitle')} ${t('settingsPopup')}`}
+              title={t('settingsPopup')}
+              onClick={() => { setStripSettingsOpen(true) }}
+            >
+              <IconSettingsOutline16 size={14} />
+            </button>
             <Switch
               label={t('settingsTitleBarTitle')}
               checked={prefs.titleBarCompat}
-              onChange={(next) => { applyPref({ titleBarCompat: next }) }}
+              onChange={(next) => {
+                // The row switch mirrors the scheme: on = anything but the
+                // conservative auto (the popup picks WHICH non-auto scheme).
+                applyPref({ titleBarCompat: next, titleBarScheme: next ? (prefs.titleBarScheme === 'auto' ? 'custom' : prefs.titleBarScheme) : 'auto' })
+              }}
             />
           </span>
         </div>
@@ -948,10 +1006,14 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
         </Modal>
       )}
 
-      {/* The position-compat strip popup (opened by the gear on the 常规
-          row): one number row for the reserved strip height in px. Same
-          Modal chrome and row machinery as the feature popups — mounted
-          only while open (the Modal SSR rule above). */}
+      {/* The title-bar / shell compatibility popup (opened by the gear on
+          the 常规 row): the "位置兼容模式" SECONDARY setting — three schemes.
+          Auto is the conservative default (only the standard Window
+          Controls Overlay geometry contributes; plain web = no change);
+          preset applies an opt-in built-in shell preset (data-driven, see
+          shell-presets.ts); custom hands the layout fully to the user
+          (free-form CSS + the legacy strip px). Mounted only while open
+          (the Modal SSR rule above). */}
       {stripSettingsOpen && (
         <Modal
           open
@@ -966,20 +1028,103 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
             </button>
           )}
         >
-          <FeatureSettingsRows
-            toggles={[{
-              key: 'titleBarStripPx',
-              type: 'number',
-              title: () => t('settingsTitleBarStripTitle'),
-              desc: () => t('settingsTitleBarStripDesc'),
-              min: TITLE_BAR_STRIP_MIN,
-              max: TITLE_BAR_STRIP_MAX,
-              unit: 'px',
-            }]}
-            prefs={prefs}
-            onToggle={onToggleSetting}
-            onCommit={onCommitSetting}
-          />
+          <div className={css.popupRows}>
+            <label className={css.popupRow}>
+              <span className={css.rowText}>
+                <span className={css.title}>{t('settingsSchemeAutoTitle')}</span>
+                <span className={css.desc}>{t('settingsSchemeAutoDesc')}</span>
+              </span>
+              <span className={css.control}>
+                <input
+                  type="radio"
+                  className={css.schemeRadio}
+                  name="dsh-title-bar-scheme"
+                  checked={prefs.titleBarScheme === 'auto'}
+                  onChange={() => { setTitleBarScheme('auto') }}
+                  aria-label={t('settingsSchemeAutoTitle')}
+                />
+              </span>
+            </label>
+            <label className={css.popupRow}>
+              <span className={css.rowText}>
+                <span className={css.title}>{t('settingsSchemePresetTitle')}</span>
+                <span className={css.desc}>{t('settingsSchemePresetDesc')}</span>
+              </span>
+              <span className={css.control}>
+                <input
+                  type="radio"
+                  className={css.schemeRadio}
+                  name="dsh-title-bar-scheme"
+                  checked={prefs.titleBarScheme === 'preset'}
+                  onChange={() => { setTitleBarScheme('preset') }}
+                  aria-label={t('settingsSchemePresetTitle')}
+                />
+              </span>
+            </label>
+            {prefs.titleBarScheme === 'preset' && (
+              <FeatureSettingsRows
+                toggles={[{
+                  key: 'titleBarPresetId',
+                  type: 'select',
+                  title: () => t('settingsPresetLabel'),
+                  desc: () => t('settingsPresetDesc'),
+                  options: getShellPresets().map(preset => ({
+                    value: preset.id,
+                    title: preset.title,
+                    desc: preset.desc,
+                  })),
+                }]}
+                prefs={prefs}
+                onToggle={onToggleSetting}
+                onCommit={onCommitSetting}
+                onSelectValue={onSelectSetting}
+              />
+            )}
+            {prefs.titleBarScheme === 'preset' && detectedPreset !== undefined && (
+              <div className={css.popupHint}>{t('settingsPresetDetected', { shell: detectedPreset.title })}</div>
+            )}
+            <label className={css.popupRow}>
+              <span className={css.rowText}>
+                <span className={css.title}>{t('settingsSchemeCustomTitle')}</span>
+                <span className={css.desc}>{t('settingsSchemeCustomDesc')}</span>
+              </span>
+              <span className={css.control}>
+                <input
+                  type="radio"
+                  className={css.schemeRadio}
+                  name="dsh-title-bar-scheme"
+                  checked={prefs.titleBarScheme === 'custom'}
+                  onChange={() => { setTitleBarScheme('custom') }}
+                  aria-label={t('settingsSchemeCustomTitle')}
+                />
+              </span>
+            </label>
+            {prefs.titleBarScheme === 'custom' && (
+              <>
+                <CssDraft
+                  key={prefs.customCss}
+                  value={prefs.customCss}
+                  label={t('settingsCustomCssTitle')}
+                  placeholder={t('settingsCustomCssPlaceholder')}
+                  onCommit={commitCustomCss}
+                />
+                <FeatureSettingsRows
+                  toggles={[{
+                    key: 'titleBarStripPx',
+                    type: 'number',
+                    title: () => t('settingsTitleBarStripTitle'),
+                    desc: () => t('settingsTitleBarStripDesc'),
+                    min: TITLE_BAR_STRIP_MIN,
+                    max: TITLE_BAR_STRIP_MAX,
+                    unit: 'px',
+                  }]}
+                  prefs={prefs}
+                  onToggle={onToggleSetting}
+                  onCommit={onCommitSetting}
+                />
+              </>
+            )}
+          </div>
         </Modal>
       )}
 

@@ -14,11 +14,19 @@ import {
   clampTitleBarStrip,
   clampWidthPercent,
   SIDEBAR_PREFS_DEFAULTS,
+  TITLE_BAR_SCHEMES,
   type SidebarPrefs,
+  type TitleBarScheme,
 } from '../prefs-shared.ts'
 
-export { SIDEBAR_PREFS_DEFAULTS, clampTerminalFontSize, clampTitleBarStrip, clampWidthPercent }
-export type { SidebarPrefs }
+export {
+  SIDEBAR_PREFS_DEFAULTS,
+  TITLE_BAR_SCHEMES,
+  clampTerminalFontSize,
+  clampTitleBarStrip,
+  clampWidthPercent,
+}
+export type { SidebarPrefs, TitleBarScheme }
 
 /** The settings wire face the preferences need (a subset of the plugin api). */
 export type SidebarSettingsClient = Pick<typeof api, 'settingsGet' | 'settingsUpdate'>
@@ -69,6 +77,21 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     editorExplorer: typeof record.editorExplorer === 'boolean'
       ? record.editorExplorer
       : SIDEBAR_PREFS_DEFAULTS.editorExplorer,
+    // The title-bar scheme (auto | preset | custom). The schema declares the
+    // field WITHOUT a default, so documents written by older plugin versions
+    // resolve without it — migrate from the legacy boolean: a stored `true`
+    // meant "manual position compat" and maps to the `custom` scheme (the
+    // strip px is preserved below); anything else (absent or false) keeps
+    // the conservative `auto` scheme.
+    titleBarScheme: isTitleBarScheme(record.titleBarScheme)
+      ? record.titleBarScheme
+      : (record.titleBarCompat === true ? 'custom' : 'auto'),
+    titleBarPresetId: typeof record.titleBarPresetId === 'string'
+      ? record.titleBarPresetId
+      : SIDEBAR_PREFS_DEFAULTS.titleBarPresetId,
+    customCss: typeof record.customCss === 'string'
+      ? record.customCss
+      : SIDEBAR_PREFS_DEFAULTS.customCss,
     titleBarCompat: typeof record.titleBarCompat === 'boolean'
       ? record.titleBarCompat
       : SIDEBAR_PREFS_DEFAULTS.titleBarCompat,
@@ -128,6 +151,11 @@ function booleanMapOf(value: unknown): Record<string, boolean> {
     if (typeof item === 'boolean') out[key] = item
   }
   return out
+}
+
+/** Type guard for the title-bar scheme union (anything else falls back). */
+function isTitleBarScheme(value: unknown): value is TitleBarScheme {
+  return typeof value === 'string' && (TITLE_BAR_SCHEMES as readonly string[]).includes(value)
 }
 
 /**

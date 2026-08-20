@@ -69,8 +69,15 @@ describe('dsh-better-sidebar plugin export shape', () => {
     // and 13px.
     expect(resolved.terminalFontFamily).toBe('')
     expect(resolved.terminalFontSize).toBe(13)
-    // The position-compat mode defaults OFF (the normal layout is default),
-    // with the strip defaulting to 40px.
+    // The position-compat scheme is declared WITHOUT a schema default so a
+    // stored document that predates it resolves without the field — the
+    // CLIENT parsePrefs then applies the conservative `auto` default (or
+    // migrates the legacy boolean), which is exactly what makes old
+    // documents migrate instead of silently flipping to a scheme. The
+    // legacy strip keeps its schema default of 40px.
+    expect(resolved.titleBarScheme).toBeUndefined()
+    expect(resolved.titleBarPresetId).toBeUndefined()
+    expect(resolved.customCss).toBeUndefined()
     expect(resolved.titleBarCompat).toBe(false)
     expect(resolved.titleBarStripPx).toBe(40)
     // The enable-switch maps resolve to {} (everything on) for old documents.

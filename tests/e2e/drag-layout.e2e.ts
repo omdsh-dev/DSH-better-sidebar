@@ -702,3 +702,34 @@ test('bottom panel never flashes full-width after a width drag release (issue #2
     ).toBeLessThanOrEqual(8)
   }
 })
+
+test('the bottom-push anchor resolves through the composite selectors (at least one; same element when both)', async ({ page }) => {
+  // layout.css pushes the bottom panel via the center column. The selector
+  // is COMPOSITE on purpose: `[data-pane="conversation"]` (0.1.x naming)
+  // and `:has(> [data-slot="conversation"])` (rc.8-era naming) — HOST
+  // VERSIONS MAY RENAME THE ATTRIBUTE (issue #208 comment / PR #226), so
+  // the contract is "at least one resolves", and when both resolve they
+  // must hit the SAME element (otherwise the push would land twice).
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
+  const anchors = await page.evaluate(() => {
+    const a = document.querySelector('#root [data-dsh-frame] > [data-pane="conversation"]')
+    const b = document.querySelector('#root :has(> [data-slot="conversation"])')
+    const frame = document.querySelector('#root [data-dsh-frame]')
+    return {
+      a: a !== null,
+      b: b !== null,
+      same: a !== null && b !== null && a === b,
+      frameChildren: frame !== null
+        ? [...frame.children].map(el => `${el.tagName}[${[...el.attributes].map(attr => attr.name).filter(name => name.startsWith('data-')).join(',')}]`)
+        : [],
+    }
+  })
+  expect(
+    anchors.a || anchors.b,
+    `at least one bottom-push anchor must resolve on this host (frame children: ${anchors.frameChildren.join(' / ') || 'no [data-dsh-frame]'})`,
+  ).toBe(true)
+  if (anchors.a && anchors.b) {
+    expect(anchors.same, 'both selectors must hit the SAME center-column element').toBe(true)
+  }
+})
