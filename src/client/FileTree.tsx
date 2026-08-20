@@ -374,30 +374,42 @@ export function FileTree(props: {
         /*
          * The sidebar's drop surface, portaled to document.body at z-1001 —
          * above DSH's own whole-page drop mask (z-1000, see InputBar's
-         * document-level intake) so the two never compete: the conversation
-         * column keeps DSH's native overlay, the tree shows this one.
-         * Deliberate exception to the "panel stays below the DSH float
-         * stack" rule: transient, pointer-inert (the drop always lands on
-         * the row beneath), and anchored to the tree body's viewport rect.
-         * The hint pill docks at the bottom edge, keeping the rows — the
-         * actual drop targets — visible and aimable.
+         * document-level intake) so the two never compete. It dims the WHOLE
+         * viewport (the giant box-shadow spread on the zone frame is the
+         * mask; the zone rect itself stays clear), teaching the zone split:
+         * the dimmed conversation column still takes drops into the chat
+         * natively (this layer is pointer-inert), while the clear frame
+         * marks the tree as the workspace-upload zone. Deliberate exception
+         * to the "panel stays below the DSH float stack" rule: transient,
+         * and the drop always lands on the element beneath. The hint pill
+         * docks at the TOP edge of the zone — right under the search row,
+         * the first thing the eye meets — keeping the rows aimable.
          */
-        <div
-          className={css.uploadDropZone}
-          style={{
-            top: dropRect.top + 2,
-            left: dropRect.left + 2,
-            width: dropRect.width - 4,
-            height: dropRect.height - 4,
-          }}
-        >
-          <div className={css.uploadDropZonePill}>
-            <IconUploadOutline16 size={14} />
-            <span className={css.uploadDropZoneText}>
-              {dropTarget !== null ? t('uploadTo', { dir: dropTarget }) : t('uploadDropHint')}
-            </span>
+        <>
+          <div
+            className={css.uploadDropZone}
+            style={{
+              top: dropRect.top + 2,
+              left: dropRect.left + 2,
+              width: dropRect.width - 4,
+              height: dropRect.height - 4,
+            }}
+          >
+            <div className={css.uploadDropZonePill}>
+              <IconUploadOutline16 size={14} />
+              <span className={css.uploadDropZoneText}>
+                {dropTarget !== null ? t('uploadTo', { dir: dropTarget }) : t('uploadDropHint')}
+              </span>
+            </div>
           </div>
-        </div>,
+          {/* The left zone's invitation, centered in the space beside the
+              tree; skipped when that space is too narrow to hold it. */}
+          {dropRect.left >= 200 && (
+            <div className={css.uploadDropChatHint} style={{ width: dropRect.left }}>
+              {t('uploadDropChat')}
+            </div>
+          )}
+        </>,
         document.body,
       )}
       {/*

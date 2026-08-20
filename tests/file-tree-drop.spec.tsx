@@ -114,6 +114,9 @@ describe('FileTree drag-drop surface', () => {
     expect(zone).not.toBeNull()
     expect(zone!.parentElement).toBe(document.body)
     expect(zone!.textContent).toContain('Drop files/folders here to upload')
+    // jsdom's rects are all-zero, so the left space is 0px wide and the
+    // chat-area hint is skipped (its floor is 200px).
+    expect(document.body.querySelector('[class*="uploadDropChatHint"]')).toBeNull()
   })
 
   it('keeps the zone through child-element transitions and hides it only when the drag leaves the tree', () => {

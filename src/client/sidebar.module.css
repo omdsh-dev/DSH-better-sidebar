@@ -844,22 +844,26 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 /* The sidebar's drop surface: a pointer-inert frame portaled to
    document.body, fixed over the explorer body's viewport rect at z-1001 —
    above DSH's own whole-page drop mask (z-1000, see InputBar's
-   document-level intake). While a file drag hovers the tree, the
-   conversation column keeps DSH's native overlay and the sidebar shows this
-   one instead. Deliberate exception to the "panel stays below the DSH float
-   stack" rule: transient and pointer-events none, so the drop always lands
-   on the row beneath. The hint pill docks at the bottom edge (flex-end),
-   leaving the rows — the actual drop targets — visible and aimable. */
+   document-level intake). The giant box-shadow spread IS the full-viewport
+   mask (same token DSH uses for its drop mask): everything dims except the
+   zone rect, teaching the zone split — the dimmed conversation column still
+   takes drops into the chat natively, the clear frame marks the tree as the
+   workspace-upload zone. Deliberate exception to the "panel stays below the
+   DSH float stack" rule: transient and pointer-events none, so the drop
+   always lands on the row beneath. The hint pill docks at the TOP edge of
+   the zone (right under the search row, the first thing the eye meets),
+   leaving the rows — the actual drop targets — aimable. */
 .uploadDropZone {
   position: fixed;
   z-index: 1001;
   pointer-events: none;
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: center;
   padding: 12px;
   border: 2px dashed var(--dsw-alias-interactive-bg-hover-accent);
   border-radius: 10px;
+  box-shadow: 0 0 0 200vmax var(--dsw-alias-bg-mask-drop);
   animation: dsh-row-in 150ms var(--ds-ease-in-out);
 }
 
@@ -881,6 +885,26 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* The left zone's invitation: centered in the viewport space beside the
+   tree (inline width = the zone's left edge), telling the user the dimmed
+   conversation column still accepts drops — into the chat, natively. */
+.uploadDropChatHint {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 1002;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-s-14);
+  animation: dsh-row-in 150ms var(--ds-ease-in-out);
 }
 
 /* Full-window upload progress: blurred scrim + card (same mask/backdrop
