@@ -8,8 +8,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  IconCloseFill14, IconPlusOutline16, Menu,
+  IconCloseFill14, IconPlusOutline16, Menu, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconMaximizeOutline16, IconRestoreOutline16 } from './icons.tsx'
 import type { SidebarTab } from './state.ts'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
@@ -66,9 +67,14 @@ export function TabBar(props: {
   /** Badge resolver for tab labels (reads the descriptor's `badge`; the
    *  resolver returns the rendered pill or null). */
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  isMaximized?: boolean
+  onToggleMaximize?: () => void
+  isTopRight?: boolean
+  isBottom?: boolean
 }) {
   const {
     paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge,
+    isMaximized, onToggleMaximize, isTopRight, isBottom,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -140,7 +146,11 @@ export function TabBar(props: {
 
   return (
     <div
-      className={clsx(css.tabBar, dragOver && css.tabBarDrop)}
+      className={clsx(
+        css.tabBar,
+        isTopRight && !isBottom && css.tabBarTopRight,
+        dragOver && css.tabBarDrop,
+      )}
       onDragOver={(event) => {
         // The strip owns drops on itself (merge into this pane); stopping
         // propagation keeps the pane root from also running its edge-zone
@@ -232,18 +242,33 @@ export function TabBar(props: {
           portal
           align="end"
           anchor={(
-            <button
-              type="button"
-              className={css.tabBarPlus}
-              aria-label={t('newTab')}
-              title={t('newTab')}
-              onClick={() => { setMenuOpen(v => !v) }}
-            >
-              <IconPlusOutline16 />
-            </button>
+            <Tooltip label={t('newTab')} side="bottom" delayMs={500}>
+              <button
+                type="button"
+                className={css.tabBarPlus}
+                aria-label={t('newTab')}
+                onClick={() => { setMenuOpen(v => !v) }}
+              >
+                <IconPlusOutline16 />
+              </button>
+            </Tooltip>
           )}
         />
       </div>
+      {onToggleMaximize !== undefined && (
+        <div className={css.tabBarActions}>
+          <Tooltip label={isMaximized ? t('restorePane') : t('maximizePane')} side="bottom" delayMs={500}>
+            <button
+              type="button"
+              className={css.tabBarMaximize}
+              aria-label={isMaximized ? t('restorePane') : t('maximizePane')}
+              onClick={onToggleMaximize}
+            >
+              {isMaximized ? <IconRestoreOutline16 /> : <IconMaximizeOutline16 />}
+            </button>
+          </Tooltip>
+        </div>
+      )}
     </div>
   )
 }

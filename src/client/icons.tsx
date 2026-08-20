@@ -117,3 +117,45 @@ export const IconGlobeOutline16 = ({ size = 16, className }: IconProps) => (
     <path d="M1.5 8h13M8 1.5c-2.4 1.8-2.4 11.2 0 13M8 1.5c2.4 1.8 2.4 11.2 0 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
   </svg>
 )
+
+/** Pane Maximize glyph: corner bracket expansion (distinct from sidebar maximize). */
+export const IconMaximizeOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M2.5 6.5V2.5H6.5M13.5 6.5V2.5H9.5M2.5 9.5v4H6.5M13.5 9.5v4H9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+/** Pane Restore glyph: corner bracket contraction (distinct from sidebar restore). */
+export const IconRestoreOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M6.5 2.5v4H2.5M9.5 2.5v4h4M6.5 13.5v-4H2.5M9.5 13.5v-4h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+/** Sidebar Maximize glyph: standard Lucide maximize-2 / outward diagonal arrows. */
+export const IconSidebarMaximizeOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+  </svg>
+)
+
+/** Sidebar Restore glyph: standard Lucide minimize-2 / inward diagonal arrows. */
+export const IconSidebarRestoreOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
+  </svg>
+)
+
+/** Chevron Up glyph (expandable floating chat header). */
+export const IconChevronUp16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M3.5 10.5 8 6l4.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+/** Chevron Down glyph (expandable floating chat header). */
+export const IconChevronDown16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M3.5 5.5 8 10l4.5-4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)

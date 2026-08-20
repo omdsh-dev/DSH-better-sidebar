@@ -63,11 +63,11 @@
   pointer-events: auto;
 }
 
-/* The tab strip of the OPEN right panel reserves the cluster's width at its
-   right end, so the tabs and the + menu genuinely yield space to the cluster
-   (never hiding under it). */
-.panel:not(.panelHidden) .tabBar {
-  padding-right: 72px;
+/* Only the actual top-right pane in the right panel reserves the global
+   toggle cluster's width. Other split panes keep their maximize control at
+   the right edge of their own window. */
+.panel:not(.panelHidden) .tabBarTopRight {
+  padding-right: 106px;
 }
 
 /* The closed-state affordance is the native rail icon control: a plain
@@ -89,6 +89,11 @@
   transition:
     background var(--ds-transition-duration-slow) var(--ds-ease-in-out),
     color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.toggleButtonActive {
+  color: var(--dsw-alias-brand-primary) !important;
+  background: var(--dsw-alias-interactive-bg-hover-accent) !important;
 }
 
 .toggleButton:hover:not(:disabled) {
@@ -130,6 +135,12 @@
   transition:
     transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
     width var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+/* A maximized right-side pane must cover the bottom workbench, while staying
+   below the global corner controls (z-index 45) so they remain clickable. */
+.panelMaximized {
+  z-index: 44 !important;
 }
 
 /* Collapsed: slid off-screen, interactive nothing, hidden after the slide. */
@@ -447,6 +458,14 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   background: var(--dsw-alias-bg-base);
 }
 
+.paneMaximized {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 20 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
 .paneDrop {
   outline: 1px solid var(--dsw-alias-interactive-bg-hover-accent);
   outline-offset: -1px;
@@ -681,6 +700,36 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 .tabBarPlus:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.tabBarActions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  padding-right: 4px;
+}
+
+.tabBarMaximize {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  transition: background var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.tabBarMaximize:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
 }
@@ -2480,4 +2529,124 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
     min-width: 48px;
     max-width: 128px;
   }
+}
+
+/* ── Floating Chat Controls in Codex-like Maximized Mode ───────────── */
+
+.floatingChatHeader {
+  order: -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 16px;
+  background: var(--dsw-alias-bg-layer-1);
+  background-color: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(16px);
+  margin-bottom: 2px;
+  pointer-events: auto;
+  transition:
+    background var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    border-color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.floatingChatHeader:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.floatingChatStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.floatingChatDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-brand-primary, #3b82f6);
+}
+
+.floatingChatTitle {
+  font-weight: 500;
+}
+
+.floatingChatToggle {
+  display: flex;
+  align-items: center;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.floatingBottomFoldHandle {
+  order: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 16px;
+  margin-top: 2px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  background-color: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
+  transition:
+    background var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    border-color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.floatingBottomFoldHandle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.floatingDeepSeekPill {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 52;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 28px;
+  padding: 0;
+  border-top-left-radius: 14px;
+  border-top-right-radius: 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-bottom: none;
+  background: var(--dsw-alias-bg-layer-1);
+  background-color: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-brand-primary, #3b82f6);
+  cursor: pointer;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(16px);
+  pointer-events: auto;
+  transition:
+    transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    background var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.floatingDeepSeekPill:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  transform: translateX(-50%) translateY(-2px);
 }
