@@ -9,7 +9,7 @@
  * The parser is a pure function (`parseUnifiedDiff`) so the interesting
  * cases are unit-tested without a DOM.
  */
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
@@ -187,22 +187,25 @@ export function DiffView({ diff, untrackedPath, untrackedContent }: DiffViewProp
     return parseUnifiedDiff(diff)
   }, [diff, untrackedPath, untrackedContent])
   const [expanded, setExpanded] = useState(false)
+  const [expandedFiles, setExpandedFiles] = useState<Set<number>>(() => new Set())
+
+  useEffect(() => { setExpandedFiles(new Set()) }, [parsed])
 
   // Flatten into display rows so the cap can slice a single list.
   const rows = useMemo(() => {
-    const out: Array<{ key: string; file: DiffFile; type: 'path' | 'hunk' | 'line'; hunk?: DiffHunk; line?: DiffLine }> = []
+    const out: Array<{ key: string; file: DiffFile; fileIndex: number; type: 'path' | 'hunk' | 'line'; hunk?: DiffHunk; line?: DiffLine }> = []
     parsed.files.forEach((file, fileIndex) => {
-      out.push({ key: `f${fileIndex}`, file, type: 'path' })
-      if (file.binary) return
+      out.push({ key: `f${fileIndex}`, file, fileIndex, type: 'path' })
+      if (file.binary || !expandedFiles.has(fileIndex)) return
       file.hunks.forEach((hunk, hunkIndex) => {
-        out.push({ key: `f${fileIndex}h${hunkIndex}`, file, type: 'hunk', hunk })
+        out.push({ key: `f${fileIndex}h${hunkIndex}`, file, fileIndex, type: 'hunk', hunk })
         hunk.lines.forEach((line, lineIndex) => {
-          out.push({ key: `f${fileIndex}h${hunkIndex}l${lineIndex}`, file, type: 'line', hunk, line })
+          out.push({ key: `f${fileIndex}h${hunkIndex}l${lineIndex}`, file, fileIndex, type: 'line', hunk, line })
         })
       })
     })
     return out
-  }, [parsed])
+  }, [parsed, expandedFiles])
 
   const hidden = rows.length - MAX_DIFF_ROWS
   const capped = hidden > 0 && !expanded
@@ -218,12 +221,29 @@ export function DiffView({ diff, untrackedPath, untrackedContent }: DiffViewProp
       const tag = fileTag(row.file)
       const from = displayPath(row.file.oldPath)
       const to = displayPath(row.file.newPath)
+      const expandable = !row.file.binary && row.file.hunks.length > 0
+      const fileExpanded = expandedFiles.has(row.fileIndex)
       return (
-        <div key={row.key} className={css.gitDiffFile}>
+        <button
+          key={row.key}
+          type="button"
+          className={css.gitDiffFile}
+          disabled={!expandable}
+          aria-expanded={expandable ? fileExpanded : undefined}
+          onClick={() => {
+            setExpandedFiles(current => {
+              const next = new Set(current)
+              if (next.has(row.fileIndex)) next.delete(row.fileIndex)
+              else next.add(row.fileIndex)
+              return next
+            })
+          }}
+        >
+          {expandable && <span aria-hidden="true" className={clsx(css.gitDiffFileChevron, fileExpanded && css.gitDiffFileChevronExpanded)}>›</span>}
           <span className={css.gitDiffFilePath}>{to}</span>
           {from !== to && <span className={css.gitDiffFileOld}>← {from}</span>}
           {tag !== null && <span className={css.gitDiffFileTag}>{tag}</span>}
-        </div>
+        </button>
       )
     }
     if (row.type === 'hunk') {

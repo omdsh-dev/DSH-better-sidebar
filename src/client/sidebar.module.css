@@ -1923,10 +1923,34 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 /* One changed file's section: path header, hunk headers, aligned lines. */
 .gitDiffFile {
+  width: 100%;
   display: flex;
   align-items: baseline;
   gap: 6px;
   padding: 8px 2px 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gitDiffFile:disabled {
+  cursor: default;
+}
+
+.gitDiffFile:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.gitDiffFileChevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  transform: rotate(0deg);
+}
+
+.gitDiffFileChevronExpanded {
+  transform: rotate(90deg);
 }
 
 .gitDiffFilePath {
@@ -2232,6 +2256,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .gitCommitButton:focus-visible,
 .gitLogRow:focus-visible,
 .gitLogMore:focus-visible,
+.gitDiffFile:focus-visible,
 .gitDiffExpand:focus-visible,
 .terminalRetry:focus-visible,
 .editorModeButton:focus-visible,
