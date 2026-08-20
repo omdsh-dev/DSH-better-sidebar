@@ -55,6 +55,33 @@ function parentOf(path: string): string {
 /** How long the row's "copied" label stays after a successful write. */
 const COPIED_MS = 1200
 
+/**
+ * The drop overlay's hero art: an arrow descending into a tray (upload
+ * zone) and tilted photo cards (chat zone). Hand-drawn, colored in the
+ * palette of DSH's own native drop illustration (#3964FE / #679EFE /
+ * #9CE5ED) so the two zones read as one family; the drop overlay is this
+ * flow's one brand moment, so it gets color the rest of the UI never does.
+ */
+const UploadDropIllustration = () => (
+  <svg width="64" height="56" viewBox="0 0 64 56" fill="none" aria-hidden="true">
+    <path d="M8 36h48v6a10 10 0 0 1-10 10H18A10 10 0 0 1 8 42v-6z" fill="#9CE5ED" />
+    <path d="M32 4v26" stroke="#3964FE" strokeWidth="5" strokeLinecap="round" />
+    <path d="M19 21l13 13 13-13" stroke="#3964FE" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+/** The chat zone's art: a tilted pair of photo cards (sun over mountains). */
+const ChatDropIllustration = () => (
+  <svg width="92" height="72" viewBox="0 0 92 72" fill="none" aria-hidden="true">
+    <rect x="8" y="14" width="34" height="34" rx="9" transform="rotate(-14 8 14)" fill="#9CE5ED" />
+    <g transform="rotate(10 42 10)">
+      <rect x="42" y="10" width="38" height="42" rx="9" fill="#3964FE" />
+      <circle cx="56" cy="24" r="4.5" fill="white" />
+      <path d="M47 44l9-11 7 8 5-5 8 10" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+    </g>
+  </svg>
+)
+
 export function FileTree(props: {
   sessionId: string
   cwd: string | undefined
@@ -395,18 +422,24 @@ export function FileTree(props: {
               height: dropRect.height - 4,
             }}
           >
-            <div className={css.uploadDropZonePill}>
-              <IconUploadOutline16 size={14} />
-              <span className={css.uploadDropZoneText}>
-                {dropTarget !== null ? t('uploadTo', { dir: dropTarget }) : t('uploadDropHint')}
-              </span>
+            <div className={css.uploadDropHero}>
+              <UploadDropIllustration />
+              <div className={css.uploadDropZonePill}>
+                <IconUploadOutline16 size={14} />
+                <span className={css.uploadDropZoneText}>
+                  {dropTarget !== null ? t('uploadTo', { dir: dropTarget }) : t('uploadDropHint')}
+                </span>
+              </div>
             </div>
           </div>
           {/* The left zone's invitation, centered in the space beside the
               tree; skipped when that space is too narrow to hold it. */}
           {dropRect.left >= 200 && (
             <div className={css.uploadDropChatHint} style={{ width: dropRect.left }}>
-              {t('uploadDropChat')}
+              <div className={css.uploadDropChatCard}>
+                <ChatDropIllustration />
+                <span>{t('uploadDropChat')}</span>
+              </div>
             </div>
           )}
         </>,

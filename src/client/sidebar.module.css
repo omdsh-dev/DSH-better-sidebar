@@ -867,6 +867,18 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   animation: dsh-row-in 150ms var(--ds-ease-in-out);
 }
 
+/* The zone's drop hero, docked at the TOP edge (right under the search
+   row, the first thing the eye meets): the colorful tray illustration over
+   the hint pill — stacked so the rows below stay aimable. */
+.uploadDropHero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  padding-top: 8px;
+}
+
 .uploadDropZonePill {
   display: flex;
   align-items: center;
@@ -901,10 +913,22 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  text-align: center;
-  color: var(--dsw-alias-label-secondary);
-  font: var(--dsw-font-s-14);
   animation: dsh-row-in 150ms var(--ds-ease-in-out);
+}
+
+/* The invitation's content: the colorful photo-cards illustration over the
+   label — the drop overlay is this flow's one brand moment, so it gets the
+   color the rest of the UI never does (palette borrowed from DSH's native
+   drop illustration so the two zones read as one family). */
+.uploadDropChatCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  text-align: center;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-strong-14);
 }
 
 /* Full-window upload progress: blurred scrim + card (same mask/backdrop
