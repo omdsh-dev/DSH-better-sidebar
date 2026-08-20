@@ -171,6 +171,25 @@ function fileTag(file: DiffFile): string | null {
 /** Cap the flattened rows like DiffBlock: head + tail, expand button between. */
 const MAX_DIFF_ROWS = 500
 
+const TEST_PATH = /(^|\/)(?:__tests__|tests?|specs?|fixtures?|mocks?|snapshots?)(?:\/|$)|\.(?:test|spec)\.[^/]+$/i
+const DOC_PATH = /(^|\/)(?:docs?|documentation)(?:\/|$)|(^|\/)(?:readme|changelog|contributing|license|authors|notice)(?:\.[^/]*)?$/i
+const GENERATED_PATH = /(^|\/)(?:dist|build|coverage|generated|vendor|node_modules)(?:\/|$)|(^|\/)(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|composer\.lock|cargo\.lock|poetry\.lock)$/i
+const SOURCE_PATH = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts|py|pyw|rb|php|java|kt|kts|scala|go|rs|swift|c|h|cc|cpp|cxx|hpp|hh|hxx|cs|fs|fsx|vb|dart|lua|r|ex|exs|erl|hrl|clj|cljs|cljc|groovy|sh|bash|zsh|fish|ps1|sql|vue|svelte|astro|html|htm|css|scss|sass|less)$/i
+
+/** Source files open by default; tests, docs, generated files and unknown types stay folded. */
+function defaultExpandedFiles(files: DiffFile[]): Set<number> {
+  const expanded = new Set<number>()
+  files.forEach((file, index) => {
+    const path = displayPath(file.newPath === '/dev/null' ? file.oldPath : file.newPath)
+    if (!file.binary && file.hunks.length > 0
+      && !TEST_PATH.test(path) && !DOC_PATH.test(path) && !GENERATED_PATH.test(path)
+      && SOURCE_PATH.test(path)) {
+      expanded.add(index)
+    }
+  })
+  return expanded
+}
+
 export interface DiffViewProps {
   /** Unified diff text (`git.diff` or `git.commit-diff` payloads). */
   diff: string
@@ -187,9 +206,9 @@ export function DiffView({ diff, untrackedPath, untrackedContent }: DiffViewProp
     return parseUnifiedDiff(diff)
   }, [diff, untrackedPath, untrackedContent])
   const [expanded, setExpanded] = useState(false)
-  const [expandedFiles, setExpandedFiles] = useState<Set<number>>(() => new Set())
+  const [expandedFiles, setExpandedFiles] = useState<Set<number>>(() => defaultExpandedFiles(parsed.files))
 
-  useEffect(() => { setExpandedFiles(new Set()) }, [parsed])
+  useEffect(() => { setExpandedFiles(defaultExpandedFiles(parsed.files)) }, [parsed])
 
   // Flatten into display rows so the cap can slice a single list.
   const rows = useMemo(() => {

@@ -14,33 +14,39 @@ const diff = [
   '@@ -1 +1 @@',
   '-old-a',
   '+new-a',
-  'diff --git a/src/b.ts b/src/b.ts',
-  '--- a/src/b.ts',
-  '+++ b/src/b.ts',
+  'diff --git a/tests/b.spec.ts b/tests/b.spec.ts',
+  '--- a/tests/b.spec.ts',
+  '+++ b/tests/b.spec.ts',
   '@@ -1 +1 @@',
   '-old-b',
   '+new-b',
+  'diff --git a/README.md b/README.md',
+  '--- a/README.md',
+  '+++ b/README.md',
+  '@@ -1 +1 @@',
+  '-old-doc',
+  '+new-doc',
 ].join('\n')
 
 afterEach(() => { document.body.innerHTML = '' })
 
 describe('DiffView file folding', () => {
-  it('starts collapsed and expands only the selected file', () => {
+  it('expands source by default while tests and docs stay collapsed', () => {
     const container = document.createElement('div')
     document.body.append(container)
     const root: Root = createRoot(container)
     try {
       act(() => { root.render(createElement(DiffView, { diff })) })
       const headers = [...container.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
-      expect(headers).toHaveLength(2)
-      expect(headers.map(header => header.getAttribute('aria-expanded'))).toEqual(['false', 'false'])
-      expect(container.textContent).not.toContain('new-a')
-      expect(container.textContent).not.toContain('new-b')
-
-      act(() => { headers[0]!.click() })
-      expect(headers[0]!.getAttribute('aria-expanded')).toBe('true')
+      expect(headers).toHaveLength(3)
+      expect(headers.map(header => header.getAttribute('aria-expanded'))).toEqual(['true', 'false', 'false'])
       expect(container.textContent).toContain('new-a')
       expect(container.textContent).not.toContain('new-b')
+      expect(container.textContent).not.toContain('new-doc')
+
+      act(() => { headers[1]!.click() })
+      expect(headers[1]!.getAttribute('aria-expanded')).toBe('true')
+      expect(container.textContent).toContain('new-b')
 
       act(() => { headers[0]!.click() })
       expect(headers[0]!.getAttribute('aria-expanded')).toBe('false')
