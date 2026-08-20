@@ -171,6 +171,42 @@ export function AgentBrowserView(props: { scope: SessionScope; visible: boolean 
     }
   }, [visible, mirrorState !== null, scope.sessionId, scope.cwd]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Sidebar resize: letterbox during the drag, then re-fit ────────────
+  // While dragging, the canvas scales proportionally (object-fit: contain
+  // can never overflow, so no layout feedback). 400ms after the drag
+  // settles, the page re-lays-out at the new container size so the frame
+  // fills the panel exactly — no persistent black bars, text stays ~1:1.
+
+  useEffect(() => {
+    if (!visible || mirrorState === null) return
+    const el = containerRef.current
+    if (!el) return
+    let timer: number | undefined
+    let lastW = el.clientWidth
+    let lastH = el.clientHeight
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) return
+      const { width, height } = entry.contentRect
+      // Ignore sub-pixel jitter and tiny adjustments.
+      if (Math.abs(width - lastW) < 24 && Math.abs(height - lastH) < 24) return
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        lastW = width
+        lastH = height
+        const w = Math.floor(width)
+        const h = Math.floor(height)
+        if (w < 320 || h < 240) return
+        void api.mirrorRefit(scope, { width: w, height: h }).catch(() => {})
+      }, 400)
+    })
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+      window.clearTimeout(timer)
+    }
+  }, [visible, mirrorState !== null, scope.sessionId, scope.cwd]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Input forwarding ──────────────────────────────────────────────────
   // Input rides the mirror WebSocket when it's open (no HTTP round-trip per
   // keystroke); falls back to the HTTP route while reconnecting.
