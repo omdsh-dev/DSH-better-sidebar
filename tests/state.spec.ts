@@ -188,6 +188,29 @@ describe('sidebar state', () => {
     expect((onlyDiff?.splits as { tabs: SidebarTab[] }).tabs).toEqual([])
   })
 
+  it('sanitize removes a pane emptied by ephemeral diff tabs', () => {
+    const valid = sanitizeState({
+      panelOpen: true,
+      width: 400,
+      nextTerminal: 1,
+      activePane: 'pane:diff',
+      expanded: [],
+      splits: {
+        kind: 'split',
+        id: 'split:1',
+        dir: 'col',
+        sizes: [0.5, 0.5],
+        children: [
+          { kind: 'leaf', id: 'pane:git', active: 'git', tabs: [{ id: 'git', type: 'git', title: 'Git' }] },
+          { kind: 'leaf', id: 'pane:diff', active: 'd1', tabs: [{ id: 'd1', type: 'diff', title: 'a.ts' }] },
+        ],
+      },
+    })
+    expect(valid?.splits.kind).toBe('leaf')
+    expect((valid?.splits as { id: string; tabs: SidebarTab[] }).id).toBe('pane:git')
+    expect(valid?.activePane).toBe('pane:git')
+  })
+
   it('dedupes the single-instance subagent tab (focuses instead of duplicating)', () => {
     let s = state()
     s = openTabInActivePane(s, { id: 'subagent', type: 'subagent', title: 'Subagents' })
@@ -716,11 +739,11 @@ describe('persisted state sanitization', () => {
     const clean = sanitizeState(corrupted)
     expect(clean).toBeDefined()
     const leaves = allLeaves(clean!.splits)
-    // The first occurrence keeps its id; the repeat gets a fresh unique one
-    // (exact suffix depends on the module-level uid counter, so assert shape).
-    expect(leaves[0]!.id).toBe('pane:1')
-    expect(new Set(leaves.map(leaf => leaf.id)).size).toBe(2)
-    expect(clean!.activePane).toBe(leaves[1]!.id)
+    // The empty first occurrence is pruned; the populated repeat keeps its
+    // fresh unique id and becomes active.
+    expect(leaves).toHaveLength(1)
+    expect(leaves[0]!.id).not.toBe('pane:1')
+    expect(clean!.activePane).toBe(leaves[0]!.id)
     // And an open must land in exactly one pane of the healed tree.
     const opened = openTabInActivePane(clean!, { id: 'editor:/a.ts', type: 'editor', title: 'a.ts', path: '/a.ts' })
     const owners = allLeaves(opened.splits).filter(leaf => leaf.tabs.some(tab => tab.path === '/a.ts'))
