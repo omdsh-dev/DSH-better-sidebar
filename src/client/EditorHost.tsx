@@ -273,6 +273,8 @@ export function EditorHost(props: {
           onOpenFileNewTab={openFileNewTab}
           onOpenFileSide={openFileSide}
           onReferenceFile={onReferenceFile}
+          ctx={ctx}
+          store={store}
         />
       </div>
     )
@@ -366,6 +368,8 @@ export function EditorHost(props: {
               onOpenFileNewTab={openFileNewTab}
               onOpenFileSide={openFileSide}
               onReferenceFile={onReferenceFile}
+              ctx={ctx}
+              store={store}
             />
           </div>
         )}

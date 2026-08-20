@@ -30,6 +30,13 @@ import {
 } from './config.ts'
 import { isWithin, parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
 import { searchFiles } from './fs-search.ts'
+import {
+  createDirectory,
+  removeEntry,
+  renameEntry,
+  revealEntry,
+  searchDirectory,
+} from './fs-ops.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
 import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
@@ -46,7 +53,7 @@ import {
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
-import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
+import { readJsonBody, requireString, requireStringAllowEmpty, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
@@ -263,7 +270,9 @@ function buildApi(
     'fs.write': async (payload) => {
       const { cwd } = cwdOf(payload)
       const path = requireAbsolute(requireString(payload, 'path'))
-      const content = requireString(payload, 'content')
+      // Empty content is legitimate (creating an empty file from the explorer,
+      // clearing a file in the editor) — requireStringAllowEmpty, not requireString.
+      const content = requireStringAllowEmpty(payload, 'content')
       const tmp = `${path}.dsh-sidebar-tmp-${process.pid}`
       try {
         await mkdir(dirname(path), { recursive: true })
@@ -274,6 +283,37 @@ function buildApi(
         throw new SidebarError('fs-error', `cannot write "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
       }
       return { ok: true }
+    },
+    // Explorer context-menu operations (create / rename / remove / reveal /
+    // scoped search). Like the other fs.* routes they accept any absolute
+    // path — the /sidebar trust fence is the boundary, and the client only
+    // ever sends paths it listed. cwdOf validates the session id.
+    'fs.mkdir': async (payload) => {
+      cwdOf(payload)
+      return createDirectory(requireAbsolute(requireString(payload, 'path')))
+    },
+    'fs.rename': async (payload) => {
+      cwdOf(payload)
+      const path = requireAbsolute(requireString(payload, 'path'))
+      return renameEntry(path, requireString(payload, 'name'))
+    },
+    'fs.remove': async (payload) => {
+      cwdOf(payload)
+      return removeEntry(requireAbsolute(requireString(payload, 'path')))
+    },
+    'fs.reveal': async (payload) => {
+      cwdOf(payload)
+      return revealEntry(requireAbsolute(requireString(payload, 'path')))
+    },
+    // Scoped, caller-targetable recursive search (name + content, with
+    // matchLine and budget caps). Distinct from `fs.search` above, which is
+    // pinned to the session cwd for the editor's global name lookup.
+    'fs.searchDir': async (payload) => {
+      cwdOf(payload)
+      const path = requireAbsolute(requireString(payload, 'path'))
+      const record = payload as { query?: unknown }
+      const query = typeof record?.query === 'string' ? record.query : ''
+      return searchDirectory(path, query)
     },
     'git.status': async (payload) => {
       const { cwd } = cwdOf(payload)

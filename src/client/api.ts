@@ -64,6 +64,33 @@ export interface FsTextResult { kind: 'text'; content: string; truncated: boolea
  *  `head` carries the first bytes (base64) for viewer detect sniffing. */
 export interface FsBinaryResult { kind: 'binary'; size: number; truncated: boolean; head: string }
 
+/** One scoped recursive search result row (name or content match). */
+export interface SearchResult {
+  path: string
+  name: string
+  /** Path relative to the search root. */
+  rel: string
+  type: 'file' | 'directory'
+  size: number | null
+  /** The first line containing the query (truncated); null for name matches. */
+  matchLine: string | null
+}
+
+/** One scoped recursive search outcome. */
+export interface SearchOutcome {
+  path: string
+  query: string
+  results: SearchResult[]
+  truncated: boolean
+}
+
+/** One remove outcome: whether the entry went to the system trash. */
+export interface RemoveOutcome {
+  path: string
+  trashed: boolean
+  dest?: string
+}
+
 /**
  * One jobs.output response: the output the MODEL has read so far for the
  * job (replayed from the owner session's event log — the model's
@@ -143,6 +170,21 @@ export const api = {
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
+  /** Create one directory (the parent must exist). */
+  fsMkdir: (scope: SessionScope, path: string) =>
+    call<{ path: string }>('fs.mkdir', scopePayload(scope, { path })),
+  /** Rename a file or directory (basename-only new name). */
+  fsRename: (scope: SessionScope, path: string, name: string) =>
+    call<{ path: string; dest: string }>('fs.rename', scopePayload(scope, { path, name })),
+  /** Remove a file or directory tree (trash-first, permanent-delete fallback). */
+  fsRemove: (scope: SessionScope, path: string) =>
+    call<RemoveOutcome>('fs.remove', scopePayload(scope, { path })),
+  /** Reveal the entry in the system file manager (Finder / Explorer / xdg-open). */
+  fsReveal: (scope: SessionScope, path: string) =>
+    call<{ path: string }>('fs.reveal', scopePayload(scope, { path })),
+  /** Scoped recursive search of a directory by file name and file content. */
+  fsSearchDir: (scope: SessionScope, path: string, query: string, signal?: AbortSignal) =>
+    call<SearchOutcome>('fs.searchDir', scopePayload(scope, { path, query }), signal),
   gitStatus: (scope: SessionScope, signal?: AbortSignal) =>
     call<GitStatusResult>('git.status', scopePayload(scope, {}), signal),
   gitDiff: (scope: SessionScope, path: string | undefined, staged: boolean, signal?: AbortSignal) =>

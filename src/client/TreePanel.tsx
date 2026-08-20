@@ -10,10 +10,12 @@
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import { IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { Context } from '../context-types.ts'
 import { api } from './api.ts'
 import { FileTree } from './FileTree.tsx'
 import { t } from './locales.ts'
 import { resolveSidebarPath } from './produced-files.ts'
+import type { SidebarStore } from './state.ts'
 import css from './sidebar.module.css'
 
 export function TreePanel(props: {
@@ -27,11 +29,15 @@ export function TreePanel(props: {
   /** File context-menu "open to the side" (passed through to FileTree). */
   onOpenFileSide?: (path: string) => void
   onReferenceFile: (path: string) => void
+  /** The sidebar service context (editor-tab sync on rename/delete). */
+  ctx: Context
+  /** The sidebar state store (expanded-set sync on rename/delete). */
+  store: SidebarStore
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, full } = props
+  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, ctx, store, full } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -92,6 +98,8 @@ export function TreePanel(props: {
           onOpenFileSide={onOpenFileSide}
           onReferenceFile={onReferenceFile}
           refreshTick={refreshTick}
+          ctx={ctx}
+          store={store}
         />
       ) : (
         <div className={css.explorerBody}>
