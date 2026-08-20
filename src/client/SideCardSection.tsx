@@ -332,7 +332,6 @@ function TypedRow(props: {
     </div>
   )
 }
-
 /**
  * The multi-line custom-CSS input (scheme `custom`): a monospace textarea
  * whose draft is local state, committed on blur or Cmd/Ctrl+Enter through
@@ -365,22 +364,28 @@ function CssDraft(props: {
 }
 
 /**
- * One select row: a dropdown over the toggle's declared `options`. When any
- * option carries an icon, the dropdown renders big-icon option cards (icon +
- * title + desc) and the closed anchor shows the selected option's icon as
- * well; without icons both are a single line of text. Single-pick commits the
- * option's value and closes; `multi` toggles membership, commits the picked
- * values as an array (in options order), and stays open.
+ * The reusable dropdown — the primitives Menu, NOT a native <select>: a
+ * closed anchor button (picked option text + chevron) opening one Menu item
+ * per option (big-icon cards when any option carries an icon). Single-pick
+ * commits the option's value and closes; `multi` toggles membership and
+ * commits the picked values as an array (in options order), staying open.
+ * Shared by the declarative select rows (SelectRow) and the title-bar
+ * scheme dropdown on the General row.
  */
-function SelectRow(props: {
-  toggle: SidebarSettingToggle
-  title: string
+function SelectMenu(props: {
+  label: string
   value: unknown
-  onSelectValue?: (toggle: SidebarSettingToggle, next: unknown) => void
+  options: readonly {
+    value: string | number | boolean
+    title: string | (() => string)
+    desc?: string | (() => string)
+    icon?: ReactNode | ((size: number) => ReactNode)
+  }[]
+  multi?: boolean
+  onSelect: (next: unknown) => void
+  placeholder?: string
 }) {
-  const { toggle, title, value, onSelectValue } = props
-  const options = toggle.options ?? []
-  const multi = toggle.multi === true
+  const { label, value, options, multi, onSelect, placeholder } = props
   const [open, setOpen] = useState(false)
   const hasIcons = options.some(option => option.icon !== undefined)
   const picked: readonly unknown[] = multi ? (Array.isArray(value) ? value : []) : [value]
@@ -391,7 +396,7 @@ function SelectRow(props: {
     const option = options[index]
     if (option === undefined) return
     if (!multi) {
-      onSelectValue?.(toggle, option.value)
+      onSelect(option.value)
       setOpen(false)
       return
     }
@@ -400,14 +405,14 @@ function SelectRow(props: {
     if (at >= 0) current.splice(at, 1)
     else current.push(option.value)
     // Stable wire order: follow the declared options order, not pick order.
-    onSelectValue?.(toggle, options.filter(o => current.includes(o.value)).map(o => o.value))
+    onSelect(options.filter(o => current.includes(o.value)).map(o => o.value))
   }
 
   const anchor = (
     <button
       type="button"
       className={css.selectAnchor}
-      aria-label={title}
+      aria-label={label}
       aria-haspopup="listbox"
       aria-expanded={open}
       onClick={() => { setOpen(now => !now) }}
@@ -416,12 +421,55 @@ function SelectRow(props: {
         <span className={css.selectAnchorIcon}>{iconOf(selected[0].icon, 16)}</span>
       )}
       <span className={css.selectAnchorText}>
-        {selected.length === 0 ? '—' : selected.map(option => textOf(option.title)).join(', ')}
+        {selected.length === 0 ? (placeholder ?? '—') : selected.map(option => textOf(option.title)).join(', ')}
       </span>
       <IconChevronDownOutline14 size={12} />
     </button>
   )
 
+  return (
+    <Menu
+      open={open}
+      anchor={anchor}
+      items={options.map((option, index) => ({
+        id: String(index),
+        label: hasIcons
+          ? (
+            <span className={css.selectOption}>
+              <span className={css.selectOptionIcon}>{iconOf(option.icon, 24)}</span>
+              <span className={css.selectOptionText}>
+                <span className={css.title}>{textOf(option.title)}</span>
+                {textOf(option.desc) !== '' && <span className={css.desc}>{textOf(option.desc)}</span>}
+              </span>
+            </span>
+          )
+          : textOf(option.title),
+      }))}
+      selectedId={!multi && selected[0] !== undefined ? String(options.indexOf(selected[0])) : undefined}
+      selectedIds={multi ? selected.map(option => String(options.indexOf(option))) : undefined}
+      onSelect={(id) => { pick(Number(id)) }}
+      onClose={() => { setOpen(false) }}
+      portal
+    />
+  )
+}
+
+/**
+ * One select row: a dropdown over the toggle's declared `options` (the
+ * shared SelectMenu). When any option carries an icon, the dropdown renders
+ * big-icon option cards (icon + title + desc) and the closed anchor shows
+ * the selected option's icon as well; without icons both are a single line
+ * of text. Single-pick commits the option's value and closes; `multi`
+ * toggles membership, commits the picked values as an array (in options
+ * order), and stays open.
+ */
+function SelectRow(props: {
+  toggle: SidebarSettingToggle
+  title: string
+  value: unknown
+  onSelectValue?: (toggle: SidebarSettingToggle, next: unknown) => void
+}) {
+  const { toggle, title, value, onSelectValue } = props
   return (
     <div className={css.popupRow}>
       <span className={css.rowText}>
@@ -429,28 +477,12 @@ function SelectRow(props: {
         {textOf(toggle.desc) !== '' && <span className={css.desc}>{textOf(toggle.desc)}</span>}
       </span>
       <span className={css.control}>
-        <Menu
-          open={open}
-          anchor={anchor}
-          items={options.map((option, index) => ({
-            id: String(index),
-            label: hasIcons
-              ? (
-                <span className={css.selectOption}>
-                  <span className={css.selectOptionIcon}>{iconOf(option.icon, 24)}</span>
-                  <span className={css.selectOptionText}>
-                    <span className={css.title}>{textOf(option.title)}</span>
-                    {textOf(option.desc) !== '' && <span className={css.desc}>{textOf(option.desc)}</span>}
-                  </span>
-                </span>
-              )
-              : textOf(option.title),
-          }))}
-          selectedId={!multi && selected[0] !== undefined ? String(options.indexOf(selected[0])) : undefined}
-          selectedIds={multi ? selected.map(option => String(options.indexOf(option))) : undefined}
-          onSelect={(id) => { pick(Number(id)) }}
-          onClose={() => { setOpen(false) }}
-          portal
+        <SelectMenu
+          label={title}
+          value={value}
+          options={toggle.options ?? []}
+          multi={toggle.multi === true}
+          onSelect={(next) => { onSelectValue?.(toggle, next) }}
         />
       </span>
     </div>
@@ -696,7 +728,8 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
    * `titleBarCompat` flag (true for preset/custom) so documents stay
    * readable by older plugin versions.
    */
-  const onSchemeSelect = (value: string): void => {
+  const onSchemeSelect = (value: unknown): void => {
+    if (typeof value !== 'string') return
     if (value === 'auto' || value === 'web' || value === 'custom') {
       applyPref({ titleBarScheme: value, titleBarCompat: value === 'custom' })
       return
@@ -880,26 +913,30 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
           </span>
           <span className={css.control}>
             {/*
-              The scheme dropdown: 自动检测 (default) / DSH官方Web /
-              各壳兼容方案 / 自定义方案. The 自定义方案 row keeps its gear
-              (the popup with the shift distance + custom CSS) — the other
+              The scheme dropdown (the shared SelectMenu — NOT a native
+              select): 自动检测 (default) / DSH官方Web / 各壳兼容方案 /
+              自定义方案. Matching presets carry a 「已检测」 desc badge
+              (suggestion only). The 自定义方案 row keeps its gear (the
+              popup with the shift distance + custom CSS) — the other
               schemes need no further settings.
             */}
-            <select
-              className={css.schemeSelect}
-              aria-label={t('settingsTitleBarTitle')}
+            <SelectMenu
+              label={t('settingsTitleBarTitle')}
               value={titleBarSchemeValue(prefs)}
-              onChange={event => { onSchemeSelect(event.currentTarget.value) }}
-            >
-              <option value="auto">{t('settingsSchemeAutoTitle')}</option>
-              <option value="web">{t('settingsSchemeWebTitle')}</option>
-              {getShellPresets().map(preset => (
-                <option key={preset.id} value={`preset:${preset.id}`}>
-                  {preset.title}{preset.detect?.(detectedEnv) === true ? `（${t('settingsSchemeDetectedSuffix')}）` : ''}
-                </option>
-              ))}
-              <option value="custom">{t('settingsSchemeCustomTitle')}</option>
-            </select>
+              options={[
+                { value: 'auto', title: t('settingsSchemeAutoTitle'), desc: t('settingsSchemeAutoDesc') },
+                { value: 'web', title: t('settingsSchemeWebTitle'), desc: t('settingsSchemeWebDesc') },
+                ...getShellPresets().map(preset => ({
+                  value: `preset:${preset.id}`,
+                  title: preset.title,
+                  desc: preset.detect?.(detectedEnv) === true
+                    ? `${preset.desc}（${t('settingsSchemeDetectedSuffix')}）`
+                    : preset.desc,
+                })),
+                { value: 'custom', title: t('settingsSchemeCustomTitle'), desc: t('settingsSchemeCustomDesc') },
+              ]}
+              onSelect={onSchemeSelect}
+            />
             {prefs.titleBarScheme === 'custom' && (
               <button
                 type="button"

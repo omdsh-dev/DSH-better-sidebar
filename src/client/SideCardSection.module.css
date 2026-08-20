@@ -462,31 +462,6 @@
   color: var(--dsw-alias-label-secondary);
 }
 
-/* The title-bar scheme dropdown (常规 row): native select styled with the
-   same surface tokens as the typed inputs, wide enough for the preset
-   names. */
-.schemeSelect {
-  max-width: 220px;
-  padding: 4px 8px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-3);
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  font-size: 13px;
-  line-height: 20px;
-  cursor: pointer;
-}
-
-.schemeSelect:hover {
-  border-color: var(--dsw-alias-label-dimmed);
-}
-
-.schemeSelect:focus-visible {
-  outline: 2px solid var(--dsw-alias-state-business-primary);
-  outline-offset: 2px;
-}
-
 /* The multi-line custom-CSS input (scheme `custom`): monospace, generous
    height, resizable — same surface tokens as the typed inputs. */
 .cssTextArea {
