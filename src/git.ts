@@ -10,6 +10,10 @@
  * user.name/user.email).
  */
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+export type GitOperation = 'merge' | 'rebase'
 
 /** A parsed `git status --porcelain=v1 -z` entry. */
 export interface GitStatusEntry {
@@ -251,6 +255,27 @@ export async function addWorktree(cwd: string, path: string, branch: string): Pr
 /** Remove a clean linked checkout; git refuses dirty/current/locked trees. */
 export async function removeWorktree(cwd: string, path: string): Promise<void> {
   await runGit(cwd, ['worktree', 'remove', '--', path])
+}
+
+/** In-progress history operation for conflict recovery controls. */
+export async function operation(cwd: string): Promise<GitOperation | null> {
+  try {
+    await runGit(cwd, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])
+    return 'merge'
+  } catch { /* no merge */ }
+  for (const name of ['rebase-merge', 'rebase-apply']) {
+    const path = (await runGit(cwd, ['rev-parse', '--git-path', name])).trim()
+    if (existsSync(resolve(cwd, path))) return 'rebase'
+  }
+  return null
+}
+
+export async function continueOperation(cwd: string, kind: GitOperation): Promise<void> {
+  await runGit(cwd, ['-c', 'core.editor=true', kind, '--continue'])
+}
+
+export async function abortOperation(cwd: string, kind: GitOperation): Promise<void> {
+  await runGit(cwd, [kind, '--abort'])
 }
 
 /** Recent commit history (newest first), lazily pageable via skip/count. */

@@ -398,6 +398,45 @@ describe('git destructive operations (scratch repository)', () => {
     }
   })
 
+  it('continues a conflicted merge after resolution', async () => {
+    const dir = makeScratchRepo()
+    try {
+      gitRun(dir, ['checkout', '-q', '-b', 'feature'])
+      writeFileSync(join(dir, 'a.txt'), 'feature\n')
+      gitRun(dir, ['commit', '-qam', 'feature'])
+      gitRun(dir, ['checkout', '-q', 'main'])
+      writeFileSync(join(dir, 'a.txt'), 'main\n')
+      gitRun(dir, ['commit', '-qam', 'main'])
+      await expect(git.merge(dir, 'feature')).rejects.toThrow()
+      expect(await git.operation(dir)).toBe('merge')
+      writeFileSync(join(dir, 'a.txt'), 'resolved\n')
+      gitRun(dir, ['add', 'a.txt'])
+      await git.continueOperation(dir, 'merge')
+      expect(await git.operation(dir)).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('aborts a conflicted rebase', async () => {
+    const dir = makeScratchRepo()
+    try {
+      gitRun(dir, ['checkout', '-q', '-b', 'feature'])
+      writeFileSync(join(dir, 'a.txt'), 'feature\n')
+      gitRun(dir, ['commit', '-qam', 'feature'])
+      gitRun(dir, ['checkout', '-q', 'main'])
+      writeFileSync(join(dir, 'a.txt'), 'main\n')
+      gitRun(dir, ['commit', '-qam', 'main'])
+      gitRun(dir, ['checkout', '-q', 'feature'])
+      await expect(git.rebase(dir, 'main')).rejects.toThrow()
+      expect(await git.operation(dir)).toBe('rebase')
+      await git.abortOperation(dir, 'rebase')
+      expect(await git.operation(dir)).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('reports a failing destructive operation as a GitCommandError', async () => {
     const dir = makeScratchRepo()
     try {

@@ -66,6 +66,7 @@ export interface GitWorktree {
   locked: boolean
   prunable: boolean
 }
+export type GitOperation = 'merge' | 'rebase'
 
 /** Text read result. */
 export interface FsTextResult { kind: 'text'; content: string; truncated: boolean }
@@ -176,6 +177,12 @@ export const api = {
     call<{ ok: true }>('git.worktree-add', scopePayload(scope, { path, branch })),
   gitWorktreeRemove: (scope: SessionScope, path: string) =>
     call<{ ok: true }>('git.worktree-remove', scopePayload(scope, { path })),
+  gitOperation: (scope: SessionScope, signal?: AbortSignal) =>
+    call<{ operation: GitOperation | null }>('git.operation', scopePayload(scope, {}), signal),
+  gitOperationContinue: (scope: SessionScope, operation: GitOperation) =>
+    call<{ ok: true }>('git.operation-continue', scopePayload(scope, { operation })),
+  gitOperationAbort: (scope: SessionScope, operation: GitOperation) =>
+    call<{ ok: true }>('git.operation-abort', scopePayload(scope, { operation })),
   /** Recent commit history, lazily pageable (skip/count; defaults 0/30). */
   gitLog: (scope: SessionScope, count?: number, skip?: number, signal?: AbortSignal) =>
     call<GitLogEntry[]>('git.log', scopePayload(scope, {

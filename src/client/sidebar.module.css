@@ -1781,6 +1781,20 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   border-top: 1px solid var(--dsw-alias-border-l1);
 }
 
+.gitOperation {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-state-warn-label);
+  font: var(--dsw-font-xxs-12);
+}
+
+.gitOperation > span {
+  flex: 1;
+}
+
 .gitSectionHeader {
   display: flex;
   align-items: center;
