@@ -273,6 +273,8 @@ export interface SidebarSessionsService {
    * — used to jump back to the main agent from the topology root node.
    */
   open?(id: string): void
+  /** Create a root session in a registered Workspace. */
+  create?(opts: { workspaceId: string }): Promise<string>
   /**
    * Resolve an Agent-scoped context view for one session (mirror of the
    * runtime ISessions.scope) — the ticket `ctx.conversation.input.for`
@@ -339,6 +341,8 @@ export interface SidebarConversation {
  * (tool rows, produced-files, prose mentions) funnels through it.
  */
 export interface SidebarWorkspacesService {
+  /** Register or resolve an existing directory as a Workspace. */
+  create?(input: { path: string }): Promise<{ workspaceId: string }>
   /** Open a filesystem path with the Host operating system's default application. */
   openPath(path: string): Promise<void>
 }
