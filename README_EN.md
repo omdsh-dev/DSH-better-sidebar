@@ -41,6 +41,12 @@
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="45%" alt="Add Plugins screenshot" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
 </div>
 
+### v0.14.2
+
+**✨ New features**
+
+- 📂 **Explorer context menu: "Reveal in Folder" and "Open in Browser"**: every row (file / directory / root) can reveal itself in the OS file manager (macOS `open -R` / Windows `explorer /select` / Linux `xdg-open` on the containing folder); `.html` / `.htm` rows additionally offer "Open in Browser", handing the file to the system default browser. The host gains an `fs.reveal` route (absolute existing paths only; the opener spawns detached with an argv array — no shell interpolation)
+
 ### v0.14.1
 
 **✨ New features**
