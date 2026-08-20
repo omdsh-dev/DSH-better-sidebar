@@ -95,6 +95,7 @@ export function GitView(props: {
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
   const [mergeSource, setMergeSource] = useState<string | null>(null)
+  const [rebaseTarget, setRebaseTarget] = useState<string | null>(null)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
@@ -229,6 +230,19 @@ export function GitView(props: {
     }
   }
 
+  const rebase = async (branch: string): Promise<void> => {
+    setBusy(true)
+    setCommitError(null)
+    try {
+      await api.gitRebase(scope, branch)
+    } catch (reason) {
+      setCommitError(`${t('rebaseError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+    } finally {
+      await refresh()
+      setBusy(false)
+    }
+  }
+
   /** Run one destructive operation after the confirm modal, then refresh. */
   const runConfirmed = (confirmState: ConfirmState): void => {
     setConfirm({ ...confirmState, onConfirm: async () => {
@@ -311,6 +325,16 @@ export function GitView(props: {
           title={t('mergeBranch')}
           disabled={busy || branchNames.every(name => name === status?.branch)}
           onClick={() => { setMergeSource(branchNames.find(name => name !== status?.branch) ?? null) }}
+        >
+          <IconBranchOutline16 size={14} />
+        </button>
+        <button
+          type="button"
+          className={css.iconButton}
+          aria-label={t('rebaseBranch')}
+          title={t('rebaseBranch')}
+          disabled={busy || branchNames.every(name => name === status?.branch)}
+          onClick={() => { setRebaseTarget(branchNames.find(name => name !== status?.branch) ?? null) }}
         >
           <IconBranchOutline16 size={14} />
         </button>
@@ -588,6 +612,39 @@ export function GitView(props: {
           className={css.gitBranchSelect}
           value={mergeSource ?? ''}
           onChange={(event) => { setMergeSource(event.target.value) }}
+        >
+          {branchNames.filter(name => name !== status?.branch).map(name => <option key={name} value={name}>{name}</option>)}
+        </select>
+      </Modal>
+
+      <Modal
+        open={rebaseTarget !== null}
+        onClose={() => { setRebaseTarget(null) }}
+        title={t('rebaseTitle')}
+        closeLabel={t('cancel')}
+        footer={(
+          <>
+            <Button variant="outline" onClick={() => { setRebaseTarget(null) }}>{t('cancel')}</Button>
+            <Button
+              variant="primary"
+              disabled={busy || rebaseTarget === null}
+              onClick={() => {
+                const branch = rebaseTarget
+                if (branch === null) return
+                setRebaseTarget(null)
+                void rebase(branch)
+              }}
+            >
+              {t('rebaseBranch')}
+            </Button>
+          </>
+        )}
+      >
+        <p className={css.gitConfirmDesc}>{t('rebaseDesc', { current: status?.branch ?? '', target: rebaseTarget ?? '' })}</p>
+        <select
+          className={css.gitBranchSelect}
+          value={rebaseTarget ?? ''}
+          onChange={(event) => { setRebaseTarget(event.target.value) }}
         >
           {branchNames.filter(name => name !== status?.branch).map(name => <option key={name} value={name}>{name}</option>)}
         </select>
