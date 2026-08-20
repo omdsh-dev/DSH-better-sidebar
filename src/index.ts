@@ -47,6 +47,7 @@ import {
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
+import { buildSidechatApi } from './sidechat-routes.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 
 export { Config }
@@ -470,6 +471,14 @@ function buildApi(
         clearTimeout(timer)
       }
     },
+    // Side Chat: create a side-thread child seeded with the parent's full
+    // log up to now, deliver follow-ups (cold-resuming when the thread's
+    // agent is gone), abort a running thread, and release a thread's agent.
+    // Every operation runs through these routes because subagent-origin
+    // identities are fenced from the generic session RPCs (agent-lookup
+    // ownership), and the thread is created with a CUSTOM seed the stock
+    // fork APIs cannot express.
+    ...buildSidechatApi(ctx),
   }
 }
 

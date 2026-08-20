@@ -56,9 +56,11 @@ const SEEDED_MD_FILE = 'diagram.md'
 const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 
 /** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Terminal', 'Browser']
+const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Side Chat', 'Terminal', 'Browser']
 
 let api: APIRequestContext
+/** The seeded session id (captured by seedSession; the Side Chat smoke's parent). */
+let seededSessionId: string
 
 /** Seed one workspace + one session (plus files for the editor/mermaid-chunk
  *  probes) through the host's unary RPC surface. */
@@ -99,6 +101,11 @@ async function seedSession(): Promise<void> {
     data: { type: 'client-request', rpcId: 'e2e-session', method: 'session.create', payload: { workspaceId } },
   })
   expect(session.ok(), `session.create: ${session.status()} ${await session.text()}`).toBe(true)
+  const sessionBody = (await session.json()) as {
+    result: { ok: true; value: { sessionId: string } } | { ok: false; error: unknown }
+  }
+  expect(sessionBody.result.ok).toBe(true)
+  seededSessionId = (sessionBody.result as { value: { sessionId: string } }).value.sessionId
 }
 
 test.beforeAll(async () => {
@@ -227,6 +234,47 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     await page.waitForTimeout(1_500)
     await assertNoCrash()
   }
+
+  // Side Chat host-route smoke against the REAL host: create a thread child
+  // under the seeded session (custom-seed creation through AgentRegistry),
+  // deliver a follow-up, cancel, and release it. The turn itself cannot run
+  // (keyless boot has no model route), but admission + creation + the wire
+  // envelope must all succeed — this is the deepest functional proof the
+  // mount lane can make without a provider.
+  const start = await api.post(`${BASE_URL}/sidebar/api/sidechat.start`, {
+    data: { sessionId: seededSessionId, question: 'mount lane smoke' },
+  })
+  expect(start.ok(), `sidechat.start: ${start.status()} ${await start.text()}`).toBe(true)
+  const startBody = (await start.json()) as {
+    ok: boolean
+    value?: { childId?: string }
+    error?: { code?: string; message?: string }
+  }
+  expect(startBody.ok, `sidechat.start envelope: ${JSON.stringify(startBody)}`).toBe(true)
+  const childId = startBody.value?.childId
+  expect(childId, 'sidechat.start must return a child session id').toMatch(/^session-/)
+  // The child must be a REAL session in the host's store (provider-free
+  // proof of the custom-seed creation; the boundary message itself only
+  // becomes durable when a turn claims it, which needs a model route).
+  const list = await api.post(`${BASE_URL}/api/session.list`, {
+    data: { type: 'client-request', rpcId: 'e2e-sidechat-list', method: 'session.list', payload: {} },
+  })
+  expect(list.ok(), `session.list: ${list.status()} ${await list.text()}`).toBe(true)
+  const listBody = (await list.json()) as {
+    result: { ok: true; value: { items: Array<{ sessionId: string }> } } | { ok: false; error: unknown }
+  }
+  expect(listBody.result.ok, `session.list envelope: ${JSON.stringify(listBody)}`).toBe(true)
+  expect(
+    listBody.result.value.items.some(item => item.sessionId === childId),
+    'the thread child must appear in the host session list',
+  ).toBe(true)
+  for (const method of ['sidechat.prompt', 'sidechat.cancel', 'sidechat.dispose']) {
+    const response = await api.post(`${BASE_URL}/sidebar/api/${method}`, {
+      data: method === 'sidechat.prompt' ? { childId, text: 'follow-up' } : { childId },
+    })
+    expect(response.ok(), `${method}: ${response.status()} ${await response.text()}`).toBe(true)
+  }
+  await assertNoCrash()
 
   // The editor chunk (client-editor.js) only loads when a files-window tab
   // renders. Exercise the file-open path explicitly through the Files window's

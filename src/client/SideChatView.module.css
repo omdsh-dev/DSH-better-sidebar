@@ -1,0 +1,300 @@
+/* Side Chat page: thread list + thread detail (transcript / composer /
+   save). Token-driven chrome mirroring the Subagent page conventions. */
+.sidechat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidechatHeader {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px 0 12px;
+}
+
+.sidechatTitle {
+  flex: 1;
+  min-width: 0;
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidechatBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* ── thread list (left) ─────────────────────────────────────────────── */
+.sidechatList {
+  flex: none;
+  width: 210px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 6px 8px;
+  overflow-y: auto;
+  border-right: 1px solid var(--dsw-alias-hairline);
+}
+
+.sidechatNewInput {
+  flex: none;
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-13);
+  outline: none;
+}
+
+.sidechatNewInput:focus {
+  border-color: var(--dsw-alias-accent);
+}
+
+.sidechatNewInput::placeholder {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.sidechatEmpty {
+  padding: 12px 8px;
+  font: var(--dsw-font-s-13);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.sidechatEmptyDesc {
+  margin-top: 4px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  line-height: 1.5;
+}
+
+.sidechatThread {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-13);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidechatThread:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.sidechatThreadActive {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.sidechatDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-tertiary);
+}
+
+.sidechatDotRunning {
+  background: var(--dsw-alias-accent);
+}
+
+.sidechatThreadTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── thread detail (right) ──────────────────────────────────────────── */
+.sidechatDetail {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidechatDetailEmpty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: var(--dsw-font-s-13);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.sidechatDetailHeader {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--dsw-alias-hairline);
+}
+
+.sidechatDetailTitle {
+  flex: 1;
+  min-width: 0;
+  font: var(--dsw-font-s-13);
+  color: var(--dsw-alias-label-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidechatBtn {
+  flex: none;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  cursor: pointer;
+}
+
+.sidechatBtn:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.sidechatBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sidechatHint {
+  flex: none;
+  padding: 4px 10px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.sidechatError {
+  flex: none;
+  padding: 4px 10px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-danger);
+}
+
+.sidechatScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidechatUser,
+.sidechatAssistant {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  font: var(--dsw-font-s-13);
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.sidechatUser {
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.sidechatAssistant {
+  align-self: flex-start;
+  max-width: 100%;
+}
+
+.sidechatReasoning {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 4px 8px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sidechatTool {
+  align-self: flex-start;
+  max-width: 100%;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.sidechatToolSummary {
+  padding: 4px 8px;
+  font: var(--dsw-font-xxs-12);
+  font-family: var(--dsw-font-mono);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.sidechatToolFailed {
+  color: var(--dsw-alias-danger);
+}
+
+.sidechatToolArgs,
+.sidechatToolResult {
+  margin: 0;
+  padding: 4px 8px;
+  border-top: 1px solid var(--dsw-alias-hairline);
+  font: var(--dsw-font-xxs-12);
+  font-family: var(--dsw-font-mono);
+  color: var(--dsw-alias-label-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.sidechatComposer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--dsw-alias-hairline);
+}
+
+.sidechatComposerInput {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-13);
+  outline: none;
+}
+
+.sidechatComposerInput:focus {
+  border-color: var(--dsw-alias-accent);
+}
+
+.sidechatComposerInput::placeholder {
+  color: var(--dsw-alias-label-tertiary);
+}

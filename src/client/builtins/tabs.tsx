@@ -1,13 +1,13 @@
 /**
- * The 6 built-in tab descriptors: the plugin registers its own pages
- * (editor / git / terminal / browser / subagent / diff) through
+ * The 7 built-in tab descriptors: the plugin registers its own pages
+ * (editor / git / subagent / sidechat / terminal / browser / diff) through
  * the same {@link BetterSidebarService} external plugins use — eating its
  * own dogfood. The terminal descriptor owns its quota (`TERMINAL_LIMIT`)
  * and mints `terminal:<uuid>` ids through `createTab`; the browser mints
  * `browser:<n>` the same way (no quota). The editor IS the files window
  * (the old standalone explorer merged into it).
  */
-import { IconBranchOutline16, IconCodeOutline16, IconFolderOpen16, IconPanelLeftOutline16, IconThinkOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconBranchOutline16, IconCodeOutline16, IconFolderOpen16, IconNewChatOutline16, IconPanelLeftOutline16, IconThinkOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
 import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
@@ -17,6 +17,7 @@ import { lazyChunkComponent } from '../lazy-chunk.tsx'
 import { GitView } from '../GitView.tsx'
 import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
+import { SideChatView } from '../SideChatView.tsx'
 import { BrowserView } from '../BrowserView.tsx'
 import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16 } from '../icons.tsx'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
@@ -163,6 +164,16 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           active={visible}
           onOpenChild={(address) => { onSubagentJump?.(address.childSessionId) }}
         />
+      ),
+    },
+    {
+      id: 'sidechat',
+      title: () => t('sideChat'),
+      icon: (size: number) => <IconNewChatOutline16 size={size} />,
+      order: 35,
+      single: true,
+      component: ({ ctx, scope, tab, visible }) => (
+        <SideChatView ctx={ctx} scope={scope} tab={tab} visible={visible} />
       ),
     },
     {

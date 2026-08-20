@@ -26,6 +26,7 @@
 - **💻 Real Terminal**: xterm.js + node-pty real shell, reconnect with transcript replay; optionally injects `terminal_*` tools for the model
 - **🌿 Git Panel**: real diff + VSCode-style diff tabs, history, right-click to stage / commit / revert
 - **🧩 Background Tasks**: agent topology + background tasks (exit codes / live output / force-kill)
+- **💬 Side Chat**: Codex-style side threads — the child inherits the parent's FULL context (completed turns + the pending question + the in-progress turn's assistant output and tool activity, honestly frozen as "interrupted") and runs independently without entering the main conversation; threads support continuous follow-ups (auto-resumed after a DSH restart) and one-click "Save as new session" promotion to a top-level session
 - **🪟 Dual Workbench**: right sidebar + bottom panel; drag tabs to split / merge panes (cross-panel), mobile auto-merges into a full-width drawer
 - **🔁 Session Isolation**: layout / tabs / panels persisted per session, stale state auto-purged
 - **⚙️ Declarative Settings**: per-item toggles in the "Side Cards" settings section, secondary settings via the gear dialog
@@ -40,6 +41,12 @@
   <a href="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0"><img width="45%" alt="Service API base screenshot" src="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0" /></a>
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="45%" alt="Add Plugins screenshot" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
 </div>
+
+### v0.14.1 (in development)
+
+**✨ New features**
+
+- 💬 **Side Chat tab**: Codex-style side threads — the child inherits the parent's FULL context (completed turns + pending message + the in-progress turn's assistant output and tool activity, honestly frozen with an "interrupted" marker); created with an identical composition (same preset / provider / model) so the first request reuses the parent's input prefix cache; threads stay invisible in the main session list with zero subagent-catalog noise; follow-ups survive DSH restarts (auto cold-resume); one-click "Save as new session" promotes the thread to a top-level session ([design](docs/plans/2026-08-20-sidechat-tab-design.md))
 
 ### v0.14.1
 
