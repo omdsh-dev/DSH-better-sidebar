@@ -881,6 +881,198 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   text-align: center;
 }
 
+/* Drag a file/folder over a tree row: the target directory row gets a filled
+   highlight (drops land inside it; file rows target their parent directory).
+   The zone frame around the whole tree is the portaled .uploadDropZone. */
+.explorerRowDropTarget {
+  background: var(--dsw-alias-interactive-bg-hover);
+  outline: 1px dashed var(--dsw-alias-interactive-bg-hover-accent);
+  outline-offset: -1px;
+}
+
+/* The sidebar's drop surface: a pointer-inert frame portaled to
+   document.body, fixed over the explorer body's viewport rect at z-1001 —
+   above DSH's own whole-page drop mask (z-1000, see InputBar's
+   document-level intake). The giant box-shadow spread IS the full-viewport
+   mask (same token DSH uses for its drop mask): everything dims except the
+   zone rect, teaching the zone split — the dimmed conversation column still
+   takes drops into the chat natively, the clear frame marks the tree as the
+   workspace-upload zone. Deliberate exception to the "panel stays below the
+   DSH float stack" rule: transient and pointer-events none, so the drop
+   always lands on the row beneath. The hint pill docks at the TOP edge of
+   the zone (right under the search row, the first thing the eye meets),
+   leaving the rows — the actual drop targets — aimable. */
+.uploadDropZone {
+  position: fixed;
+  z-index: 1001;
+  pointer-events: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12px;
+  border: 2px dashed var(--dsw-alias-interactive-bg-hover-accent);
+  border-radius: 10px;
+  box-shadow: 0 0 0 200vmax var(--dsw-alias-bg-mask-drop);
+  animation: dsh-row-in 150ms var(--ds-ease-in-out);
+}
+
+/* The zone's drop hero, docked at the TOP edge (right under the search
+   row, the first thing the eye meets): the colorful tray illustration over
+   the hint pill — stacked so the rows below stay aimable. */
+.uploadDropHero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  padding-top: 8px;
+}
+
+.uploadDropZonePill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv2);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-strong-12);
+}
+
+.uploadDropZoneText {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The left zone's invitation: centered in the viewport space beside the
+   tree (inline width = the zone's left edge), telling the user the dimmed
+   conversation column still accepts drops — into the chat, natively. */
+.uploadDropChatHint {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 1002;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: dsh-row-in 150ms var(--ds-ease-in-out);
+}
+
+/* The invitation's content: the colorful photo-cards illustration over the
+   label — the drop overlay is this flow's one brand moment, so it gets the
+   color the rest of the UI never does (palette borrowed from DSH's native
+   drop illustration so the two zones read as one family). */
+.uploadDropChatCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  text-align: center;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-strong-14);
+}
+
+/* Full-window upload progress: blurred scrim + card (same mask/backdrop
+   tokens as the repo's Modal primitive; absolute within the tree panel so it
+   never covers the conversation column). */
+.uploadOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--dsw-alias-bg-mask-1);
+  backdrop-filter: var(--dsw-mask-blur);
+  animation: dsh-row-in 150ms var(--ds-ease-in-out);
+}
+
+.uploadOverlayCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 280px;
+  max-width: min(420px, calc(100% - 48px));
+  padding: 20px 24px;
+  border: 1px solid var(--dsw-alias-border-inverted);
+  border-radius: 24px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv3);
+}
+
+.uploadOverlayTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: var(--dsw-font-s-strong-14);
+  color: var(--dsw-alias-label-primary);
+}
+
+.uploadOverlayTitle > svg {
+  flex: none;
+}
+
+.uploadOverlayTitle > span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.uploadOverlayProgress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--dsw-alias-border-l2);
+  overflow: hidden;
+}
+
+.uploadOverlayProgressFill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  transition: width 150ms var(--ds-ease-in-out);
+}
+
+.uploadOverlayStatus {
+  min-height: 1em;
+  font: var(--dsw-font-xxs-12);
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.uploadOverlayCancel {
+  align-self: flex-end;
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-strong-12);
+  cursor: pointer;
+}
+
+.uploadOverlayCancel:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-border-l2);
+}
+
+.uploadOverlayCancel:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* ── Editor ────────────────────────────────────────────────────────────── */
 
 .editor {
@@ -978,6 +1170,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 .editorTreePanel {
+  /* Relative so the upload overlay and drop pill can cover the tree exactly. */
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;

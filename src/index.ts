@@ -29,6 +29,7 @@ import {
   type SidebarPrefs,
 } from './config.ts'
 import { isWithin, parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import { writeWorkspaceUpload } from './fs-operations.ts'
 import { searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
@@ -621,6 +622,47 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       }
     },
   }), 'dsh-better-sidebar: /sidebar/api routes')
+
+  // ── Raw upload route ───────────────────────────────────────────────────
+  // One request writes one file without JSON/base64 inflation. Folder uploads
+  // send each file with a relativePath, preserving the selected directory
+  // tree. Bytes stream to a temp sibling and are renamed into place, so a
+  // failed or oversized upload never leaves a partial file (see
+  // fs-operations.ts for the containment and shape rules).
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/sidebar/upload',
+    handler: async (req, res) => {
+      if (!fence(req)) {
+        writeJson(res, 403, { ok: false, error: { code: 'forbidden', message: 'forbidden' } })
+        return
+      }
+      if (req.method !== 'POST') {
+        writeJson(res, 405, { ok: false, error: { code: 'method-error', message: 'method not allowed' } })
+        return
+      }
+      try {
+        const url = new URL(req.url ?? '/', 'http://dsh.internal')
+        const sessionId = url.searchParams.get('sessionId')
+        const dir = url.searchParams.get('dir')
+        const relativePath = url.searchParams.get('relativePath')
+        if (sessionId === null || dir === null || relativePath === null || relativePath.trim() === '') {
+          throw new SidebarError('bad-request', 'sessionId, dir, and relativePath are required')
+        }
+        const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+        const { path, size } = await writeWorkspaceUpload({
+          cwd,
+          dir,
+          relativePath,
+          chunks: req,
+          limit: resolved.uploadLimit,
+        })
+        writeOk(res, { path, size })
+      } catch (error) {
+        writeError(res, error)
+      }
+    },
+  }), 'dsh-better-sidebar: /sidebar/upload route')
 
   // ── Lazy chunk route (client bundle splits) ─────────────────────────────
   // Serves the client half's split bundles (lib/client-<name>.js) so the

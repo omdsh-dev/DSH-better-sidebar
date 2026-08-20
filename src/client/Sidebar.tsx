@@ -28,7 +28,7 @@
  * drawer floats). Widening does not migrate back: the tabs keep living in
  * the right tree.
  */
-import { createElement, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createElement, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
@@ -63,6 +63,33 @@ import css from './sidebar.module.css'
 /** How many consecutive reconnect failures stop the agent-terminals push loop
  * (mirror of the terminal view's own cap; the loop restarts on session switch). */
 const FAILURE_LIMIT = 3
+
+/**
+ * OS file drags over the sidebar belong to the sidebar, not to the chat:
+ * DSH's composer (InputBar) listens for file drags on the DOCUMENT and
+ * answers with a full-screen "drop image here" mask plus image intake on
+ * drop. Both panel-host render sites swallow the whole event quartet —
+ * enter/over/leave/drop — so the region is a black hole to that document
+ * listener. All four must be stopped: InputBar keeps an enter/leave depth
+ * counter, and a leave that escapes without its matching enter unbalances
+ * the count (this was the full-screen mask flickering over the sidebar).
+ * The conversation column keeps DSH's native overlay and intake untouched;
+ * gated on the 'Files' type so in-app drags (tab reorder, split zones)
+ * propagate exactly as before.
+ */
+const swallowOsFileDrag = (event: DragEvent): void => {
+  if (!(event.dataTransfer?.types.includes('Files') ?? false)) return
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+/** The four drag events a file drag must never carry past the panel host. */
+const osFileDragShield = {
+  onDragEnter: swallowOsFileDrag,
+  onDragOver: swallowOsFileDrag,
+  onDragLeave: swallowOsFileDrag,
+  onDrop: swallowOsFileDrag,
+}
 
 /** Render the content of one tab (dispatched by type). */
 function TabContent(props: {
@@ -499,6 +526,14 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     if (draggingRef.current) return
     const col = centerColRef.current
     if (col === null) return
+    if (!col.isConnected) {
+      // The observed column was detached (HMR re-render swapped the node
+      // in place): its rect is stale garbage. Drop the ref — the locate
+      // chain re-runs on the next mutation/interval tick and picks up the
+      // new column node (issue #248).
+      centerColRef.current = null
+      return
+    }
     const rect = col.getBoundingClientRect()
     // The bottom panel only cares about the horizontal edges: a pure height
     // change (the bottom panel itself opening/closing) must not re-render,
@@ -517,15 +552,15 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // so its parent IS that column — no hashed-class or positional
     // dependency (layout.css uses the same anchor). The shell swaps the
     // boot page for the AppFrame only AFTER boot settles, so the first
-    // query may miss it. Never give up: watch #root's children (the swap
-    // mutates them) and re-run this locator — querying once and bailing
-    // would strand the panel at the zero-size fallback forever (observed:
-    // a 1px sliver at the viewport's left edge).
+    // query may miss it. Never give up: watch #root's subtree (the swap and
+    // HMR re-renders mutate it) and re-run this locator — querying once and
+    // bailing would strand the panel at the zero-size fallback forever
+    // (observed: a 1px sliver at the viewport's left edge).
     const locate = (): void => {
       if (disposed) return
       const col = document.querySelector('#root [data-slot="conversation"]')
         ?.parentElement as HTMLElement | undefined
-      if (col === undefined) {
+      if (col === undefined || !col.isConnected) {
         if (centerColRef.current !== null) {
           centerColRef.current = null
           observer?.disconnect()
@@ -534,17 +569,33 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         return
       }
       if (centerColRef.current !== col) {
+        // A NEW column node (boot swap, HMR re-render, or a previous locate
+        // that found nothing): attach the ResizeObserver to THIS node and
+        // measure it once. Same-node size changes are the ResizeObserver's
+        // job — no forced measurement here, because a forced
+        // getBoundingClientRect per mutation would reflow the shell at
+        // mutation cadence.
         centerColRef.current = col
         observer?.disconnect()
         observer = new ResizeObserver(measureCenter)
         observer.observe(col)
+        measureCenter()
       }
-      measureCenter()
     }
     locate()
-    const watcher = new MutationObserver(locate)
+    // rAF-debounce the mutation watchers: #root's subtree changes at chat
+    // cadence (streaming turns), and locate() itself must stay cheap.
+    let locateFrame: number | null = null
+    const scheduleLocate = (): void => {
+      if (locateFrame !== null) return
+      locateFrame = requestAnimationFrame(() => {
+        locateFrame = null
+        locate()
+      })
+    }
+    const watcher = new MutationObserver(scheduleLocate)
     const root = document.getElementById('root')
-    if (root !== null) watcher.observe(root, { childList: true })
+    if (root !== null) watcher.observe(root, { childList: true, subtree: true })
     // The layout push writes --dsh-sidebar-* on <html>. A HMR re-activation
     // clears those variables on teardown and re-writes them on setup — and
     // that is also the moment the shell may have re-created the center
@@ -553,10 +604,20 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // Watching <html>'s style attribute catches that re-sync: the push
     // rewrite re-locates and re-measures, so the bottom panel recovers
     // instead of staying hidden on a stale {0,0} center rect.
-    const htmlStyleWatcher = new MutationObserver(locate)
+    const htmlStyleWatcher = new MutationObserver(scheduleLocate)
     htmlStyleWatcher.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] })
+    // Last-resort safety net (issue #248): no watcher is guaranteed to fire
+    // for every HMR teardown/setup interleaving (e.g. the style attribute
+    // may end up byte-identical, and the col may be swapped before the
+    // subtree watcher attaches). A slow unconditional re-locate makes the
+    // panel converge on the real column within a couple of seconds no
+    // matter what sequence the shell used. locate() is cheap when nothing
+    // changed (one querySelector + an identity compare; no forced layout).
+    const retry = window.setInterval(locate, 1500)
     return () => {
       disposed = true
+      if (locateFrame !== null) cancelAnimationFrame(locateFrame)
+      window.clearInterval(retry)
       observer?.disconnect()
       watcher.disconnect()
       htmlStyleWatcher.disconnect()
@@ -644,12 +705,20 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // (issue #106: skins that inset the panels must not fight JS coords).
   }
 
+  /** Last size a drag actually applied to the DOM (updated by applyDrag).
+   *  When a pointer stream dies without any position info (issue #247: an
+   *  ultra-fast flick whose release events carried no usable coordinates),
+   *  the abort path adopts this instead of rolling back to the pre-drag
+   *  value — the DOM's current size is the only truthful record left. */
+  const lastDragSize = useRef<{ width: number; height: number } | null>(null)
+
   /** Apply a drag size to the DOM without touching React state or the store.
    *  The bottom panel's right edge tracks the right panel's left edge HERE
    *  too — React state only updates on release, so the inline right must be
    *  written directly or the bottom panel would lag the sidebar mid-drag.
    *  The layout push rides the shared writer (writeGeometry). */
   const applyDrag = (width: number, height: number): void => {
+    lastDragSize.current = { width, height }
     panelRef.current?.style.setProperty('width', `${width}px`)
     bottomRef.current?.style.setProperty('height', `${height}px`)
     // centerRect.right is the center column's right edge at the committed
@@ -728,9 +797,18 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    * and an ultra-fast flick can cancel the stream before ANY move lands.
    * The commit order is therefore: the LAST KNOWN dragged size (the rAF
    * pending value) first, then the interrupting event's own pointer
-   * position (pointercancel / lostpointercapture still carry coordinates),
-   * and only a drag that produced neither (pure down+up at the same spot)
-   * reverts to the store's committed sizes.
+   * position (only pointercancel is trusted to carry coordinates —
+   * lostpointercapture's coordinates are not guaranteed, so the handlers
+   * pass the event only from pointercancel), and finally the size the drag
+   * last APPLIED to the DOM (lastDragSize). A drag that produced none of
+   * those (pure down+up at the same spot) commits the store's own sizes —
+   * a no-op, never an explicit rollback (issue #247: v0.13.1 never reverted
+   * an interrupted fast flick; the abort path added in the unified-host
+   * refactor did, and that regression is what this ordering removes).
+   *
+   * Every commit path marks the drag committed, so the interrupt
+   * double-fire (pointercancel → lostpointercapture) cannot commit once
+   * and then roll the same drag back.
    */
   const abortDrag = (reset: () => void, event?: { clientX: number; clientY: number }): void => {
     if (dragCommitted.current) return
@@ -741,8 +819,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       width = pending.width
       height = pending.height
     } else if (event !== undefined) {
-      // No move ever landed: the cancel/lost-capture position is all we
-      // have — commit it (clamped) instead of rolling back the flick.
+      // No move ever landed: the cancel position is all we have — commit it
+      // (clamped) instead of rolling back the flick.
       if (draggingWidth) {
         width = clampWidth(widthDrag.current.startWidth + (widthDrag.current.startX - event.clientX))
         height = state?.bottomOpen === true ? Math.min(state.bottomHeight, window.innerHeight) : 0
@@ -755,6 +833,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       }
     }
     if (width !== undefined && height !== undefined) {
+      dragCommitted.current = true
       pendingDrag.current = null
       if (dragFrame.current !== null) {
         cancelAnimationFrame(dragFrame.current)
@@ -765,11 +844,25 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       measureCenter()
       store.reduce(s => setBottomHeight(setWidth(s, width), height))
     } else {
+      // No pending write and no usable event coordinates: keep the size the
+      // drag last applied instead of rolling back to the pre-drag value
+      // (the flick's moves may have been consumed by the rAF just before
+      // the stream died — the DOM already shows the dragged size). Clamp to
+      // the current geometry like the layout-push effect (closed/narrow
+      // panels are written 0 by the push).
+      dragCommitted.current = true
       stopDragScheduling()
-      applyDrag(
-        !narrow && state?.panelOpen === true ? Math.min(state?.width ?? 0, window.innerWidth) : 0,
-        !narrow && state?.bottomOpen === true ? Math.min(state.bottomHeight, window.innerHeight) : 0,
-      )
+      const last = lastDragSize.current
+      const adoptedWidth = !narrow && state?.panelOpen === true
+        ? Math.min(last?.width ?? state?.width ?? 0, window.innerWidth)
+        : 0
+      const adoptedHeight = !narrow && state?.bottomOpen === true
+        ? Math.min(last?.height ?? state?.bottomHeight ?? 0, window.innerHeight)
+        : 0
+      applyDrag(adoptedWidth, adoptedHeight)
+      draggingRef.current = false
+      measureCenter()
+      store.reduce(s => setBottomHeight(setWidth(s, adoptedWidth), adoptedHeight))
     }
     reset()
   }
@@ -789,18 +882,25 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       ? Math.min(snapshot.state.bottomHeight, window.innerHeight)
       : 0
     writeGeometry(width, height)
-    // Unmount must release the push (issue #31): when the boundary swaps the
-    // whole sidebar after a render crash (or the plugin fiber is disposed /
-    // HMR), the CSS variables would otherwise stay on <html> and layout.css
-    // keeps squeezing #root with a stale margin — "the sidebar cannot be
-    // hidden" until a full reload. removeProperty restores the CSS fallback
-    // (var(--dsh-sidebar-width, 0px)); React re-runs cleanup+setup in the
-    // same commit on state changes, so there is no visible flicker.
+  }, [narrow, snapshot.state?.panelOpen, snapshot.state?.width, snapshot.state?.bottomOpen, snapshot.state?.bottomHeight])
+  // Unmount must release the push (issue #31): when the boundary swaps the
+  // whole sidebar after a render crash (or the plugin fiber is disposed /
+  // HMR), the CSS variables would otherwise stay on <html> and layout.css
+  // keeps squeezing #root with a stale margin — "the sidebar cannot be
+  // hidden" until a full reload. This lives in an UNMOUNT-ONLY effect, NOT
+  // in the push effect's cleanup: React can yield between a passive
+  // effect's cleanup and setup phases, and removing the variables on a
+  // dependency change used to paint the push-less layout for a frame (the
+  // center column went full width) while the re-add restarted the margin
+  // transition — the bottom panel flashed full width after every width
+  // drag (issue #258). Keeping the variables continuously valid while
+  // mounted makes the push invisible to mid-flush style recals.
+  useEffect(() => {
     return () => {
       document.documentElement.style.removeProperty('--dsh-sidebar-width')
       document.documentElement.style.removeProperty('--dsh-sidebar-height')
     }
-  }, [narrow, snapshot.state?.panelOpen, snapshot.state?.width, snapshot.state?.bottomOpen, snapshot.state?.bottomHeight])
+  }, [])
   useEffect(() => {
     if (anyDragging) document.body.setAttribute('data-dsh-sidebar-dragging', '')
     else document.body.removeAttribute('data-dsh-sidebar-dragging')
@@ -878,7 +978,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   if (state === undefined || sessionId === undefined) {
     return (
-      <div data-dsh-panel-host>
+      <div data-dsh-panel-host {...osFileDragShield}>
         <div className={css.toggleCluster}>
           {!narrow && (
             <Tooltip label={t('noSession')} side="bottom" delayMs={500}>
@@ -964,7 +1064,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   )
 
   return (
-    <div data-dsh-panel-host>
+    <div data-dsh-panel-host {...osFileDragShield}>
       {/*
         The persistent toggle cluster at the top-right corner: the bottom
         panel's button (bottom glyph) LEFT of the right panel's (side glyph).
@@ -1069,22 +1169,20 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
               }}
               onPointerUp={(event) => {
                 if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+                if (dragCommitted.current) return
                 dragCommitted.current = true
                 event.currentTarget.releasePointerCapture(event.pointerId)
                 const { startX, startWidth } = widthDrag.current
-                // A very fast release can merge/lose pointermove bursts:
-                // prefer the LAST KNOWN dragged width (already clamped by
-                // the move handler) over the up position, which may equal
-                // the down position when no move landed.
-                const pending = pendingDrag.current
-                const width = pending !== null
-                  ? pending.width
-                  : clampWidth(startWidth + (startX - event.clientX))
+                // The up position is the pointer's FINAL position — a fast
+                // flick's tail is coalesced into the up event, so the last
+                // pointermove (the rAF pending value) can be stale. Commit
+                // from the up position (v0.13.1 semantics; issue #247).
+                const width = clampWidth(startWidth + (startX - event.clientX))
                 const height = state.bottomOpen ? Math.min(state.bottomHeight, window.innerHeight) : 0
                 commitDrag(width, height, s => setWidth(s, width))
                 setDraggingWidth(false)
               }}
-              onPointerCancel={() => { abortDrag(() => setDraggingWidth(false)) }}
+              onPointerCancel={(event) => { abortDrag(() => setDraggingWidth(false), event) }}
               onLostPointerCapture={() => { abortDrag(() => setDraggingWidth(false)) }}
             />
           )}
@@ -1137,22 +1235,18 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             }}
             onPointerUp={(event) => {
               if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+              if (dragCommitted.current) return
               dragCommitted.current = true
               event.currentTarget.releasePointerCapture(event.pointerId)
               const { startX, startY, startWidth, startHeight } = cornerDrag.current
-              // Last known dragged size wins over the up position (fast
-              // releases can merge/lose pointermove bursts).
-              const pending = pendingDrag.current
-              const width = pending !== null
-                ? pending.width
-                : clampWidth(startWidth + (startX - event.clientX))
-              const height = pending !== null
-                ? pending.height
-                : clampHeight(startHeight + (startY - event.clientY))
+              // Up position wins over the rAF pending value (see the width
+              // strip handler — issue #247).
+              const width = clampWidth(startWidth + (startX - event.clientX))
+              const height = clampHeight(startHeight + (startY - event.clientY))
               commitDrag(width, height, s => setBottomHeight(setWidth(s, width), height))
               setDraggingCorner(false)
             }}
-            onPointerCancel={() => { abortDrag(() => setDraggingCorner(false)) }}
+            onPointerCancel={(event) => { abortDrag(() => setDraggingCorner(false), event) }}
             onLostPointerCapture={() => { abortDrag(() => setDraggingCorner(false)) }}
           />
         )}
@@ -1177,6 +1271,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       <div
         ref={bottomRef}
         className={clsx(css.bottomPanel, !state.bottomOpen && css.bottomPanelHidden)}
+        data-dsh-bottom-panel=""
         style={{
           height: Math.min(state.bottomHeight, window.innerHeight),
           left: centerRect.left,
@@ -1218,19 +1313,17 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           }}
           onPointerUp={(event) => {
             if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+            if (dragCommitted.current) return
             dragCommitted.current = true
             event.currentTarget.releasePointerCapture(event.pointerId)
             const { startY, startHeight } = bottomDrag.current
-            // Last known dragged height wins over the up position (fast
-            // releases can merge/lose pointermove bursts).
-            const pending = pendingDrag.current
-            const height = pending !== null
-              ? pending.height
-              : clampHeight(startHeight + (startY - event.clientY))
+            // Up position wins over the rAF pending value (see the width
+            // strip handler — issue #247).
+            const height = clampHeight(startHeight + (startY - event.clientY))
             commitDrag(Math.min(state.width, window.innerWidth), height, s => setBottomHeight(s, height))
             setDraggingBottom(false)
           }}
-          onPointerCancel={() => { abortDrag(() => setDraggingBottom(false)) }}
+          onPointerCancel={(event) => { abortDrag(() => setDraggingBottom(false), event) }}
           onLostPointerCapture={() => { abortDrag(() => setDraggingBottom(false)) }}
         />
         {/*
