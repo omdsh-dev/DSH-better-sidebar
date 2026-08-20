@@ -314,6 +314,20 @@ function buildApi(
       await git.checkout(cwd, requireString(payload, 'branch'))
       return { ok: true }
     },
+    'git.worktree-list': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      return { entries: await git.worktrees(cwd) }
+    },
+    'git.worktree-add': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      await git.addWorktree(cwd, requireString(payload, 'path'), requireString(payload, 'branch'))
+      return { ok: true }
+    },
+    'git.worktree-remove': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      await git.removeWorktree(cwd, requireString(payload, 'path'))
+      return { ok: true }
+    },
     'git.log': async (payload) => {
       const { cwd } = cwdOf(payload)
       const record = payload as { count?: unknown; skip?: unknown }

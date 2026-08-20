@@ -343,6 +343,25 @@ describe('git destructive operations (scratch repository)', () => {
     }
   })
 
+  it('lists, creates, and safely removes a linked worktree', async () => {
+    const dir = makeScratchRepo()
+    const linked = `${dir}-linked`
+    try {
+      gitRun(dir, ['branch', 'feature'])
+      await git.addWorktree(dir, linked, 'feature')
+      const entries = await git.worktrees(dir)
+      expect(entries.map(entry => [entry.branch, entry.current])).toEqual([
+        ['main', true],
+        ['feature', false],
+      ])
+      await git.removeWorktree(dir, linked)
+      expect((await git.worktrees(dir)).map(entry => entry.branch)).toEqual(['main'])
+    } finally {
+      rmSync(linked, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('reports a failing destructive operation as a GitCommandError', async () => {
     const dir = makeScratchRepo()
     try {

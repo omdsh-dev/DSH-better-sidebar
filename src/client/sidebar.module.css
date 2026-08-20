@@ -2050,6 +2050,86 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: pre-wrap;
 }
 
+.gitWorktreeCreate {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.7fr) minmax(160px, 1.3fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.gitWorktreeHint {
+  margin: 0 0 12px;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.gitWorktreeList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: min(360px, 50vh);
+  overflow-y: auto;
+}
+
+.gitWorktreeRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+}
+
+.gitWorktreeRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.gitWorktreeMain {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.gitWorktreeMain:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.gitWorktreeLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.gitWorktreeCurrent {
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.gitWorktreePath {
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .gitWorktreeCreate {
+    grid-template-columns: 1fr;
+  }
+}
+
 .gitCommit {
   display: flex;
   gap: 6px;

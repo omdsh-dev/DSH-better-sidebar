@@ -13,7 +13,7 @@ import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
   IconTrashOutline16, Input, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { GitLogEntry, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
+import type { GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
 import { api } from './api.ts'
 import { relativeTo } from './paths.ts'
 import { relativeTime, t } from './locales.ts'
@@ -82,10 +82,12 @@ const LOG_BATCH = 20
 export function GitView(props: {
   scope: SessionScope
   onOpenFile: (path: string) => void
+  /** Register the Worktree as a DSH Workspace, create a session, and open it. */
+  onOpenWorktree: (path: string) => Promise<void>
   /** Open a diff tab (the shell places it below the git pane on first use). */
   onOpenDiff: (tab: SidebarTab) => void
 }) {
-  const { scope, onOpenFile, onOpenDiff } = props
+  const { scope, onOpenFile, onOpenDiff, onOpenWorktree } = props
   const [status, setStatus] = useState<GitStatusResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -94,6 +96,11 @@ export function GitView(props: {
   const [commitMsg, setCommitMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
+  const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
+  const [worktreeOpen, setWorktreeOpen] = useState(false)
+  const [worktreeBranch, setWorktreeBranch] = useState('')
+  const [worktreePath, setWorktreePath] = useState('')
+  const [worktreeError, setWorktreeError] = useState<string | null>(null)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
@@ -109,16 +116,20 @@ export function GitView(props: {
     setLoading(true)
     setError(null)
     try {
-      const [statusResult, branchResult, logResult] = await Promise.all([
+      const [statusResult, branchResult, logResult, worktreeResult] = await Promise.all([
         api.gitStatus(scope),
         api.gitBranch(scope).catch(() => ({ current: '', names: [] as string[] })),
         // The first history page only; the rest arrives via "load more".
         api.gitLog(scope, LOG_BATCH, 0).catch(() => [] as GitLogEntry[]),
+        api.gitWorktrees(scope).catch(() => ({ entries: [] as GitWorktree[] })),
       ])
       setStatus(statusResult)
       setBranchNames(branchResult.names)
       setLogEntries(logResult)
       setLogEnded(logResult.length < LOG_BATCH)
+      setWorktrees(worktreeResult.entries)
+      const available = branchResult.names.filter(name => !worktreeResult.entries.some(entry => entry.branch === name))
+      setWorktreeBranch(branch => available.includes(branch) ? branch : available[0] ?? '')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -215,6 +226,35 @@ export function GitView(props: {
     }
   }
 
+  const addWorktree = async (): Promise<void> => {
+    const path = worktreePath.trim()
+    if (path === '' || worktreeBranch === '' || busy) return
+    setBusy(true)
+    setWorktreeError(null)
+    try {
+      await api.gitWorktreeAdd(scope, path, worktreeBranch)
+      setWorktreePath('')
+      await refresh()
+    } catch (reason) {
+      setWorktreeError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openWorktree = async (path: string): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    setWorktreeError(null)
+    try {
+      await onOpenWorktree(path)
+    } catch (reason) {
+      setWorktreeError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   /** Run one destructive operation after the confirm modal, then refresh. */
   const runConfirmed = (confirmState: ConfirmState): void => {
     setConfirm({ ...confirmState, onConfirm: async () => {
@@ -290,6 +330,19 @@ export function GitView(props: {
           {(status?.branch ?? '') !== '' && <option value={status!.branch}>{status!.branch}</option>}
           {branchNames.filter(name => name !== status?.branch).map(name => <option key={name} value={name}>{name}</option>)}
         </select>
+        <button
+          type="button"
+          className={css.iconButton}
+          aria-label={t('worktrees')}
+          title={t('worktrees')}
+          disabled={busy || (status !== null && !status.isRepo)}
+          onClick={() => {
+            setWorktreeError(null)
+            setWorktreeOpen(true)
+          }}
+        >
+          <IconBranchOutline16 size={14} />
+        </button>
         <button
           type="button"
           className={css.iconButton}
@@ -535,6 +588,84 @@ export function GitView(props: {
           </Modal>
         </>
       )}
+
+      <Modal
+        open={worktreeOpen}
+        onClose={() => { setWorktreeOpen(false) }}
+        title={t('worktrees')}
+        closeLabel={t('close')}
+        footer={<Button variant="outline" onClick={() => { setWorktreeOpen(false) }}>{t('close')}</Button>}
+      >
+        <form
+          className={css.gitWorktreeCreate}
+          onSubmit={(event) => {
+            event.preventDefault()
+            void addWorktree()
+          }}
+        >
+          <select
+            className={css.gitBranchSelect}
+            aria-label={t('worktreeBranch')}
+            value={worktreeBranch}
+            disabled={busy || worktreeBranch === ''}
+            onChange={(event) => { setWorktreeBranch(event.target.value) }}
+          >
+            {branchNames
+              .filter(name => !worktrees.some(entry => entry.branch === name))
+              .map(name => <option key={name} value={name}>{name}</option>)}
+          </select>
+          <Input
+            value={worktreePath}
+            aria-label={t('worktreePath')}
+            placeholder={t('worktreePathPlaceholder')}
+            disabled={busy || worktreeBranch === ''}
+            onChange={(event) => { setWorktreePath(event.target.value) }}
+          />
+          <Button type="submit" size="sm" variant="primary" disabled={busy || worktreeBranch === '' || worktreePath.trim() === ''}>
+            {t('worktreeAdd')}
+          </Button>
+        </form>
+        {worktreeBranch === '' && <p className={css.gitWorktreeHint}>{t('worktreeNoBranch')}</p>}
+        {worktreeError !== null && <div className={css.gitError}>{worktreeError}</div>}
+        <div className={css.gitWorktreeList}>
+          {worktrees.map(entry => (
+            <div key={entry.path} className={css.gitWorktreeRow}>
+              <button
+                type="button"
+                className={css.gitWorktreeMain}
+                disabled={busy || entry.prunable}
+                title={t('worktreeOpenSession')}
+                onClick={() => { void openWorktree(entry.path) }}
+              >
+                <span className={css.gitWorktreeLine}>
+                  <span className={css.gitLogRef}>{entry.branch ?? t('worktreeDetached')}</span>
+                  {entry.current && <span className={css.gitWorktreeCurrent}>{t('worktreeCurrent')}</span>}
+                  {entry.locked && <span className={css.gitWorktreeCurrent}>{t('worktreeLocked')}</span>}
+                </span>
+                <span className={css.gitWorktreePath}>{entry.path}</span>
+              </button>
+              <button
+                type="button"
+                className={css.iconButton}
+                aria-label={t('worktreeRemove')}
+                title={entry.current ? t('worktreeCurrentRemove') : t('worktreeRemove')}
+                disabled={busy || entry.current || entry.locked}
+                onClick={() => {
+                  setWorktreeOpen(false)
+                  runConfirmed({
+                    title: t('worktreeRemoveTitle'),
+                    description: t('worktreeRemoveDesc', { path: entry.path }),
+                    confirmLabel: t('worktreeRemove'),
+                    onConfirm: () => api.gitWorktreeRemove(scope, entry.path),
+                  })
+                }}
+              >
+                <IconTrashOutline16 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </Modal>
     </div>
   )
 }
