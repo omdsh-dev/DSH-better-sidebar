@@ -28,7 +28,7 @@
  * drawer floats). Widening does not migrate back: the tabs keep living in
  * the right tree.
  */
-import { createElement, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createElement, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -58,6 +58,33 @@ import css from './sidebar.module.css'
 /** How many consecutive reconnect failures stop the agent-terminals push loop
  * (mirror of the terminal view's own cap; the loop restarts on session switch). */
 const FAILURE_LIMIT = 3
+
+/**
+ * OS file drags over the sidebar belong to the sidebar, not to the chat:
+ * DSH's composer (InputBar) listens for file drags on the DOCUMENT and
+ * answers with a full-screen "drop image here" mask plus image intake on
+ * drop. Both panel-host render sites swallow the whole event quartet —
+ * enter/over/leave/drop — so the region is a black hole to that document
+ * listener. All four must be stopped: InputBar keeps an enter/leave depth
+ * counter, and a leave that escapes without its matching enter unbalances
+ * the count (this was the full-screen mask flickering over the sidebar).
+ * The conversation column keeps DSH's native overlay and intake untouched;
+ * gated on the 'Files' type so in-app drags (tab reorder, split zones)
+ * propagate exactly as before.
+ */
+const swallowOsFileDrag = (event: DragEvent): void => {
+  if (!(event.dataTransfer?.types.includes('Files') ?? false)) return
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+/** The four drag events a file drag must never carry past the panel host. */
+const osFileDragShield = {
+  onDragEnter: swallowOsFileDrag,
+  onDragOver: swallowOsFileDrag,
+  onDragLeave: swallowOsFileDrag,
+  onDrop: swallowOsFileDrag,
+}
 
 /** Render the content of one tab (dispatched by type). */
 function TabContent(props: {
@@ -863,7 +890,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   if (state === undefined || sessionId === undefined) {
     return (
-      <div data-dsh-panel-host>
+      <div data-dsh-panel-host {...osFileDragShield}>
         <div className={css.toggleCluster}>
           {!narrow && (
             <Tooltip label={t('noSession')} side="bottom" delayMs={500}>
@@ -949,7 +976,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   )
 
   return (
-    <div data-dsh-panel-host>
+    <div data-dsh-panel-host {...osFileDragShield}>
       {/*
         The persistent toggle cluster at the top-right corner: the bottom
         panel's button (bottom glyph) LEFT of the right panel's (side glyph).

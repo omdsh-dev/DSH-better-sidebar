@@ -11,8 +11,11 @@
  * all funnel through here: one session at a time, shown in a full-window
  * progress overlay with cancel, followed by a tree refresh and a one-line
  * hint under the search row (success fades, failures and cancels stay).
+ * OS file drags are shielded at the panel host (see Sidebar.tsx), so a
+ * drop over the file window uploads here and never reaches DSH's chat
+ * intake.
  */
-import { useEffect, useRef, useState, type DragEvent, type InputHTMLAttributes } from 'react'
+import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
 import { IconFolderOpen16, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
@@ -141,32 +144,8 @@ export function TreePanel(props: {
 
   const busy = upload !== null
 
-  /** Swallow file drags anywhere over the file window before they reach DSH's
-   *  document-level intake (its whole-page "drop image here" overlay). The
-   *  tree's own handlers fire first (bubble order) and stop propagation for
-   *  their targets; these backstops cover the search row, gaps, and the
-   *  search-results view, so a drag over the file window uploads here instead
-   *  of adding an image to the chat and never flashes DSH's full-screen mask. */
-  const handleTreeDragEnter = (event: DragEvent): void => {
-    event.preventDefault()
-    event.stopPropagation()
-  }
-  const handleTreeDragOver = (event: DragEvent): void => {
-    event.preventDefault()
-    event.stopPropagation()
-  }
-  const handleTreeDrop = (event: DragEvent): void => {
-    event.preventDefault()
-    event.stopPropagation()
-  }
-
   return (
-    <div
-      className={clsx(css.editorTreePanel, full === true && css.editorTreePanelFull)}
-      onDragEnter={handleTreeDragEnter}
-      onDragOver={handleTreeDragOver}
-      onDrop={handleTreeDrop}
-    >
+    <div className={clsx(css.editorTreePanel, full === true && css.editorTreePanelFull)}>
       <div className={css.editorTreeSearch}>
         <input
           className={css.editorSearchInput}

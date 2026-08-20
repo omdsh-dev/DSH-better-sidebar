@@ -81,52 +81,89 @@ export function FileTree(props: {
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
   const [rowMenu, setRowMenu] = useState<{ path: string; isDir: boolean; x: number; y: number } | null>(null)
-  /** Whether a drag is hovering the tree body (dashed outline + hint pill). */
+  /** Whether a file drag hovers the tree (drives the portaled drop zone). */
   const [dropOver, setDropOver] = useState(false)
-  /** The directory a drag is hovering right now ('' = body only, drop to root). */
+  /** The directory a drag is hovering right now (null = body, drop to root). */
   const [dropTarget, setDropTarget] = useState<string | null>(null)
+  /**
+   * Enter/leave depth under the tree body. dragenter/dragleave fire per
+   * element along the drag path (and bubble), so a counter — DSH InputBar's
+   * own pattern — is the flicker-free signal; relatedTarget is unreliable
+   * across engines for drag events.
+   */
+  const dropDepth = useRef(0)
+  /** Explorer body element; its viewport rect anchors the portaled drop zone. */
+  const bodyRef = useRef<HTMLDivElement>(null)
+  /** The body's viewport rect captured at drag entry (null = not measured). */
+  const [dropRect, setDropRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null)
   /** Context-menu "upload here" target directory. */
   const pendingUploadDir = useRef<string | undefined>(undefined)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  /** Drop handlers: always swallow the event (a dropped file must never open
-   *  in the browser), then report the target directory to the caller. */
+  /** Reset all drag state (drop landed, the drag left, or a new drag begins). */
+  const resetDrop = (): void => {
+    dropDepth.current = 0
+    setDropOver(false)
+    setDropTarget(null)
+    setDropRect(null)
+  }
+
+  /**
+   * Drop handlers: always swallow the event (a dropped file must never open
+   * in the browser), then report the target directory to the caller. A drop
+   * ends the drag without further leave events, so the depth resets here.
+   */
   const handleBodyDrop = (event: DragEvent): void => {
     event.preventDefault()
     event.stopPropagation()
-    setDropOver(false)
-    setDropTarget(null)
+    resetDrop()
     if (!busy && cwd !== undefined) onUploadRequest(cwd, uploadItemsFromDrop(event.dataTransfer))
   }
   const handleDirDrop = (event: DragEvent, dir: string): void => {
     event.preventDefault()
     event.stopPropagation()
-    setDropOver(false)
-    setDropTarget(null)
+    resetDrop()
     if (!busy) onUploadRequest(dir, uploadItemsFromDrop(event.dataTransfer))
   }
   const handleFileDrop = (event: DragEvent, path: string): void => {
     // VSCode semantics: dropping onto a file uploads into its directory.
     handleDirDrop(event, parentOf(path))
   }
+  const handleBodyDragEnter = (event: DragEvent): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    dropDepth.current += 1
+    if (busy) return
+    // First entry: anchor the portaled drop zone to the body's rect.
+    if (dropDepth.current === 1) {
+      const rect = bodyRef.current?.getBoundingClientRect()
+      setDropRect(rect === undefined ? null : { top: rect.top, left: rect.left, width: rect.width, height: rect.height })
+    }
+    setDropOver(true)
+  }
+  const handleBodyDragLeave = (): void => {
+    dropDepth.current = Math.max(0, dropDepth.current - 1)
+    if (dropDepth.current > 0) return
+    setDropOver(false)
+    setDropTarget(null)
+    setDropRect(null)
+  }
   const handleBodyDragOver = (event: DragEvent): void => {
     event.preventDefault()
     event.stopPropagation()
+    event.dataTransfer.dropEffect = busy ? 'none' : 'copy'
     if (busy) return
-    setDropOver(true)
+    // Rows stop propagation, so this only fires over non-row regions: the
+    // drag targets the workspace root. dragover fires continuously, making
+    // it the authoritative (flicker-free) place to clear the row target.
+    setDropTarget(null)
   }
   const handleRowDragOver = (event: DragEvent, dir: string): void => {
     event.preventDefault()
     event.stopPropagation()
+    event.dataTransfer.dropEffect = busy ? 'none' : 'copy'
     if (busy) return
-    setDropOver(true)
     setDropTarget(dir)
-  }
-  const handleRowDragLeave = (event: DragEvent): void => {
-    // Child-element transitions (icon/label) keep the highlight; only leaving
-    // the row itself clears it.
-    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
-    setDropTarget(null)
   }
 
   const storeLevel = useCallback((path: string, level: LevelData) => {
@@ -249,7 +286,6 @@ export function FileTree(props: {
               }}
               onDragOver={(event) => { handleRowDragOver(event, entry.path) }}
               onDrop={(event) => { handleDirDrop(event, entry.path) }}
-              onDragLeave={handleRowDragLeave}
               onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
             >
               {isOpen ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />}
@@ -281,7 +317,6 @@ export function FileTree(props: {
           }}
           onDragOver={(event) => { handleRowDragOver(event, parentOf(entry.path)) }}
           onDrop={(event) => { handleFileDrop(event, entry.path) }}
-          onDragLeave={handleRowDragLeave}
           onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
         >
           <IconCodeOutline16 size={14} />
@@ -295,9 +330,11 @@ export function FileTree(props: {
 
   return (
     <div
-      className={clsx(css.explorerBody, dropOver && css.explorerDropActive)}
+      ref={bodyRef}
+      className={css.explorerBody}
+      onDragEnter={handleBodyDragEnter}
       onDragOver={handleBodyDragOver}
-      onDragLeave={() => { setDropOver(false); setDropTarget(null) }}
+      onDragLeave={handleBodyDragLeave}
       onDrop={handleBodyDrop}
     >
       {root === undefined ? (
@@ -309,7 +346,6 @@ export function FileTree(props: {
             style={{ paddingLeft: 6 }}
             onDragOver={(event) => { handleRowDragOver(event, root) }}
             onDrop={(event) => { handleDirDrop(event, root) }}
-            onDragLeave={handleRowDragLeave}
             onContextMenu={(event) => { openRowMenu(event, root, true) }}
           >
             <IconFolderOpen16 size={14} />
@@ -334,14 +370,33 @@ export function FileTree(props: {
           {data[root] !== undefined && renderLevel(root, 1)}
         </>
       )}
-      {dropOver && createPortal(
-        // Portaled above DSH's whole-page drop overlay (z-1000): when a file
-        // drag enters the tree from elsewhere in the page, DSH's mask stays
-        // visible until dragend, and our hint must stay readable on top.
-        // Transient decoration — pointer-events none, so the drop still lands
-        // on the tree beneath.
-        <div className={css.uploadDropPill}>
-          {dropTarget !== null ? t('uploadTo', { dir: dropTarget }) : t('uploadDropHint')}
+      {dropOver && dropRect !== null && createPortal(
+        /*
+         * The sidebar's drop surface, portaled to document.body at z-1001 —
+         * above DSH's own whole-page drop mask (z-1000, see InputBar's
+         * document-level intake) so the two never compete: the conversation
+         * column keeps DSH's native overlay, the tree shows this one.
+         * Deliberate exception to the "panel stays below the DSH float
+         * stack" rule: transient, pointer-inert (the drop always lands on
+         * the row beneath), and anchored to the tree body's viewport rect.
+         * The hint pill docks at the bottom edge, keeping the rows — the
+         * actual drop targets — visible and aimable.
+         */
+        <div
+          className={css.uploadDropZone}
+          style={{
+            top: dropRect.top + 2,
+            left: dropRect.left + 2,
+            width: dropRect.width - 4,
+            height: dropRect.height - 4,
+          }}
+        >
+          <div className={css.uploadDropZonePill}>
+            <IconUploadOutline16 size={14} />
+            <span className={css.uploadDropZoneText}>
+              {dropTarget !== null ? t('uploadTo', { dir: dropTarget }) : t('uploadDropHint')}
+            </span>
+          </div>
         </div>,
         document.body,
       )}

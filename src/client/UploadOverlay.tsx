@@ -7,6 +7,7 @@
  * window and never the conversation column.
  */
 import { useEffect, type ReactNode } from 'react'
+import { IconUploadOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import { uploadHintText } from './upload.ts'
 import css from './sidebar.module.css'
@@ -37,7 +38,10 @@ export function UploadOverlay(props: {
   return (
     <div className={css.uploadOverlay} role="dialog" aria-modal="true" aria-label={t('uploadingTo', { dir })}>
       <div className={css.uploadOverlayCard}>
-        <div className={css.uploadOverlayTitle} title={dir}>{t('uploadingTo', { dir })}</div>
+        <div className={css.uploadOverlayTitle} title={dir}>
+          <IconUploadOutline16 size={16} />
+          <span>{t('uploadingTo', { dir })}</span>
+        </div>
         <div
           className={css.uploadOverlayProgress}
           role="progressbar"
