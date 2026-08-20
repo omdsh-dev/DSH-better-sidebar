@@ -70,6 +70,18 @@ export interface SidebarPrefs {
    */
   editorExplorer: boolean
   /**
+   * VS Code `files.exclude`-style glob patterns (the editor card's gear
+   * popup manages the list): matched entries are REMOVED from the file tree
+   * and the name search entirely — dot-prefixed rows otherwise render
+   * dimmed as usual. Supported shapes: a bare name
+   * (`Thumbs.db`) at any depth, a cwd-anchored path (`build/out`), a
+   * doublestar head for any depth (doublestar + slash + name), and `*` /
+   * `?` wildcards.
+   * Excluded entries never block the breadcrumb fold either (the host probe
+   * and the listing share the one compiled matcher).
+   */
+  explorerExclude: string[]
+  /**
    * The shell the UI and agent terminals spawn (absolute path or bare
    * executable name). Empty (default) keeps the legacy resolution order:
    * `cordis.patch.yml` `config.shell`, then `$SHELL` / login shell /
@@ -192,6 +204,9 @@ export const TITLE_BAR_STRIP_MIN = 0
 export const TITLE_BAR_STRIP_MAX = 120
 export const TITLE_BAR_STRIP_DEFAULT = 40
 
+/** The stock exclude list (VS Code ships a similar files.exclude default). */
+export const EXPLORER_EXCLUDE_DEFAULTS: readonly string[] = ['.DS_Store', 'Thumbs.db']
+
 /** Fallback prefs used whenever the settings document is unreachable or malformed. */
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   openByDefault: false,
@@ -204,6 +219,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
   interceptOpenPath: true,
   editorExplorer: false,
+  explorerExclude: [...EXPLORER_EXCLUDE_DEFAULTS],
   terminalShell: '',
   terminalShellArgs: '',
   titleBarCompat: false,

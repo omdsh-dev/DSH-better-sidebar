@@ -48,7 +48,7 @@ export type { SessionScope } from './api.ts'
 export type { SidebarPrefs } from '../prefs-shared.ts'
 
 /** The row control a declarative setting renders as in the settings popup. */
-export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select'
+export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select' | 'patterns'
 
 /** One option of a `type: 'select'` setting row. */
 export interface SidebarSettingSelectOption {
@@ -73,7 +73,10 @@ export interface SidebarSettingSelectOption {
  *  'text' a free-form input committed on blur/Enter, 'number' a numeric
  *  input clamped to `min`/`max`, 'select' a dropdown over the declared
  *  `options` (single-pick writes the option's value; `multi: true` writes
- *  the array of picked values and defaults to false). */
+ *  the array of picked values and defaults to false), 'patterns' an
+ *  editable string list (chips with a remove button + an add input) that
+ *  commits the whole `string[]` value — the setting key must hold a string
+ *  array (the editor's `explorerExclude` glob list uses it). */
 export interface SidebarSettingToggle {
   /** The SidebarPrefs field this toggle reads and writes ('autoOpenSubagent'). */
   key: string
@@ -89,6 +92,8 @@ export interface SidebarSettingToggle {
   max?: number
   /** Input placeholder for `type: 'text'` rows. */
   placeholder?: string
+  /** Input placeholder for the add input of `type: 'patterns'` rows. */
+  patternsPlaceholder?: string
   /** Unit suffix rendered after the input (e.g. 'px' for a size row). */
   unit?: string
   /** Options of a `type: 'select'` row. */
@@ -485,6 +490,7 @@ export const SIDEBAR_SERVICE_VERSION = '0.14.0'
  * - 'pluginSettings': SidebarSettingsDeclaration.pluginToggles/render
  * - 'urlTarget' (v0.13.0): TabDescriptor.urlTarget (external-link claims)
  * - 'settingSelect': SidebarSettingToggle type 'select' (options/multi)
+ * - 'settingPatterns': SidebarSettingToggle type 'patterns' (string-list editor)
  */
 export const SIDEBAR_FEATURES = [
   'badge',
@@ -497,6 +503,7 @@ export const SIDEBAR_FEATURES = [
   'pluginSettings',
   'urlTarget',
   'settingSelect',
+  'settingPatterns',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */

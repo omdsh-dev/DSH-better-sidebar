@@ -13,11 +13,12 @@ import {
   clampTerminalFontSize,
   clampTitleBarStrip,
   clampWidthPercent,
+  EXPLORER_EXCLUDE_DEFAULTS,
   SIDEBAR_PREFS_DEFAULTS,
   type SidebarPrefs,
 } from '../prefs-shared.ts'
 
-export { SIDEBAR_PREFS_DEFAULTS, clampTerminalFontSize, clampTitleBarStrip, clampWidthPercent }
+export { EXPLORER_EXCLUDE_DEFAULTS, SIDEBAR_PREFS_DEFAULTS, clampTerminalFontSize, clampTitleBarStrip, clampWidthPercent }
 export type { SidebarPrefs }
 
 /** The settings wire face the preferences need (a subset of the plugin api). */
@@ -69,6 +70,7 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     editorExplorer: typeof record.editorExplorer === 'boolean'
       ? record.editorExplorer
       : SIDEBAR_PREFS_DEFAULTS.editorExplorer,
+    explorerExclude: stringArrayOf(record.explorerExclude),
     titleBarCompat: typeof record.titleBarCompat === 'boolean'
       ? record.titleBarCompat
       : SIDEBAR_PREFS_DEFAULTS.titleBarCompat,
@@ -112,6 +114,23 @@ function pluginSettingsMapOf(value: unknown): Record<string, Record<string, unkn
     if (blob !== null && typeof blob === 'object' && !Array.isArray(blob)) {
       out[id] = blob as Record<string, unknown>
     }
+  }
+  return out
+}
+
+/**
+ * Validate the exclude-pattern list: a JSON array whose string entries
+ * survive (trimmed; blanks dropped). Anything else falls back to the stock
+ * list — the schema defaults already guard the wire shape, this is the
+ * client's second line.
+ */
+function stringArrayOf(value: unknown): string[] {
+  if (!Array.isArray(value)) return [...EXPLORER_EXCLUDE_DEFAULTS]
+  const out: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const trimmed = item.trim()
+    if (trimmed !== '') out.push(trimmed)
   }
   return out
 }

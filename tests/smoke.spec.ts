@@ -605,6 +605,7 @@ describe('side card settings routes', () => {
         terminalFontSize: 13,
         interceptOpenPath: true,
         editorExplorer: false,
+        explorerExclude: ['.DS_Store', 'Thumbs.db'],
         terminalShell: '',
         terminalShellArgs: '',
         titleBarCompat: false,

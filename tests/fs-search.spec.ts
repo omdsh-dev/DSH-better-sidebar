@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { compileExcludePatterns } from '../src/exclude-patterns.ts'
 import { searchFiles } from '../src/fs-search.ts'
 
 /**
@@ -81,6 +82,28 @@ describe('fs-search', () => {
       expect((await searchFiles(dir, 'readme')).matches).toEqual(['README.md'])
       expect((await searchFiles(dir, 'config')).matches).toEqual([])
       expect((await searchFiles(dir, '.git')).matches).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('the exclude probe removes entries and stops descent (in lockstep with the tree)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-search-exclude-'))
+    try {
+      mkdirSync(join(dir, 'node_modules', 'pkg'), { recursive: true })
+      writeFileSync(join(dir, 'node_modules', 'pkg', 'index.ts'), 'dep')
+      writeFileSync(join(dir, 'node_modules', 'index.ts'), 'dep')
+      writeFileSync(join(dir, 'debug.log'), 'log')
+      mkdirSync(join(dir, 'src'))
+      writeFileSync(join(dir, 'src', 'index.ts'), 'code')
+      const exclude = compileExcludePatterns(['node_modules', '*.log'], dir)
+      // Excluded names never match AND their subtrees are never walked.
+      const result = await searchFiles(dir, 'index', { exclude })
+      expect(result).toEqual({ matches: ['src/index.ts'], truncated: false })
+      expect((await searchFiles(dir, 'log', { exclude })).matches).toEqual([])
+      // Without the probe the junk level matches and is descended.
+      const unfiltered = await searchFiles(dir, 'index')
+      expect(unfiltered.matches).toEqual(['node_modules/index.ts', 'node_modules/pkg/index.ts', 'src/index.ts'])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

@@ -14,6 +14,7 @@
  */
 import { opendir } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
+import type { ExcludeTest } from './exclude-patterns.ts'
 
 /** One search: the relative paths of the matching entries (dirs included so
  *  the client can hint where matches live) plus the truncation flag. */
@@ -28,6 +29,10 @@ export interface FsSearchOptions {
   maxMatches?: number
   /** Total entries visited before the walk gives up (default 100_000). */
   maxVisited?: number
+  /** Compiled exclude-pattern probe (the explorerExclude pref): matched
+   *  entries never match AND are never descended — the search surface stays
+   *  in lockstep with the tree listing. */
+  exclude?: ExcludeTest
 }
 
 const DEFAULT_MAX_MATCHES = 200
@@ -65,6 +70,9 @@ export async function searchFiles(root: string, query: string, opts: FsSearchOpt
       }
       // .git is VCS-internal noise: never matched, never descended.
       if (dirent.isDirectory() && dirent.name === '.git') continue
+      // The user's exclude list removes entries from search exactly like the
+      // tree listing (no match, no descent).
+      if (opts.exclude !== undefined && opts.exclude(join(dir, dirent.name), dirent.name)) continue
       if (dirent.name.toLowerCase().includes(needle)) {
         matches.push(join(relative(root, dir), dirent.name))
         if (matches.length >= maxMatches) {

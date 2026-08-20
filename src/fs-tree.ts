@@ -5,11 +5,15 @@
  * stat'ed once to expose their target kind — a symlink to a directory
  * expands like a directory — and dangling links are flagged broken. The
  * probe runs only for entries that are actually symlinks, so levels without
- * links stay as cheap as before.
+ * links stay as cheap as before. Directory rows additionally get one
+ * bounded read of their own level to mark singleton-dir chains (`compact`)
+ * for the explorer's breadcrumb folding.
  */
 import { opendir, stat } from 'node:fs/promises'
+import type { Dir, Dirent } from 'node:fs'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { SidebarError } from './wire.ts'
+import type { ExcludeTest } from './exclude-patterns.ts'
 
 /** One explorer row. */
 export interface SidebarFsEntry {
@@ -21,6 +25,14 @@ export interface SidebarFsEntry {
   isSymlink: boolean
   /** For symlinks: the target is missing or unreadable (stat failed). */
   broken: boolean
+  /**
+   * Directory rows only: the contents are EXACTLY one child — the explorer
+   * folds such singleton chains into one breadcrumb row (VSCode's "compact
+   * folders"). The terminal link (sole child is a FILE) is marked too, so
+   * the row label never shifts when the chain expands. Symlink children
+   * never qualify: a self-referential link would otherwise fold forever.
+   */
+  compact?: boolean
 }
 
 /** One listed level. */
@@ -40,10 +52,13 @@ export function compareEntries(a: SidebarFsEntry, b: SidebarFsEntry): number {
  * List one directory level.
  * @param path - absolute directory path.
  * @param maxEntries - row bound of one level (extra rows flag `truncated`).
+ * @param exclude - compiled exclude-pattern probe (the explorerExclude pref):
+ * matched entries are dropped from the listing AND the singleton fold probe,
+ * so they never render nor block a breadcrumb fold.
  * @returns the sorted listing.
  * @throws {SidebarError} fs-error when the level is unreadable or not a directory.
  */
-export async function listDirectory(path: string, maxEntries = 1000): Promise<SidebarFsListing> {
+export async function listDirectory(path: string, maxEntries = 1000, exclude?: ExcludeTest): Promise<SidebarFsListing> {
   let level
   try {
     level = await opendir(path)
@@ -54,15 +69,19 @@ export async function listDirectory(path: string, maxEntries = 1000): Promise<Si
   let overflow = 0
   try {
     for await (const dirent of level) {
+      // Platform join: on Windows the level path uses '\' — a hardcoded '/'
+      // would leak mixed separators into every row's path.
+      const entryPath = join(path, dirent.name)
+      // The user's exclude list removes matched rows entirely (VS Code's
+      // files.exclude semantics) — the fold probe below shares the filter.
+      if (exclude !== undefined && exclude(entryPath, dirent.name)) continue
       if (rows.length >= maxEntries) {
         overflow += 1
         continue
       }
-      // Platform join: on Windows the level path uses '\' — a hardcoded '/'
-      // would leak mixed separators into every row's path.
       rows.push({
         name: dirent.name,
-        path: join(path, dirent.name),
+        path: entryPath,
         isDir: dirent.isDirectory(),
         isSymlink: dirent.isSymbolicLink(),
         broken: false,
@@ -78,6 +97,10 @@ export async function listDirectory(path: string, maxEntries = 1000): Promise<Si
   // rows are skipped by the probe, so levels without links stay as cheap as
   // before.
   await probeSymlinkTargets(rows)
+  // Mark singleton-directory rows AFTER the symlink probe (it finalizes
+  // isDir/broken), so the client can fold compact chains without an extra
+  // round trip per collapsed level.
+  await probeCompactRows(rows, exclude)
   rows.sort(compareEntries)
   return { path, entries: rows, truncated: overflow > 0 }
 }
@@ -103,6 +126,67 @@ async function probeSymlinkTargets(rows: SidebarFsEntry[], concurrency = SYMLINK
     }
   })
   await Promise.all(workers)
+}
+
+/** How many compact probes run in flight during one level listing. */
+const COMPACT_PROBE_CONCURRENCY = 32
+
+/**
+ * Mark each directory row whose contents are EXACTLY one non-symlink child
+ * (`compact`), so the explorer can fold singleton chains into one breadcrumb
+ * row. The terminal link (sole FILE child) is marked too: the client
+ * preloads marked levels to stabilize the fold label before expansion.
+ * Bounded concurrency like the symlink probe: each probe is one opendir + up
+ * to two dirent reads, so a directory-heavy level stays responsive. Probe
+ * failures (unreadable child level) leave the row unmarked — it simply does
+ * not fold.
+ */
+async function probeCompactRows(rows: SidebarFsEntry[], exclude?: ExcludeTest, concurrency = COMPACT_PROBE_CONCURRENCY): Promise<void> {
+  let next = 0
+  const workers = Array.from({ length: Math.min(concurrency, rows.length) }, async () => {
+    for (;;) {
+      const index = next
+      next += 1
+      if (index >= rows.length) return
+      const row = rows[index]!
+      if (!row.isDir || row.broken) continue
+      if (await hasSingletonChild(row.path, exclude)) row.compact = true
+    }
+  })
+  await Promise.all(workers)
+}
+
+/**
+ * Whether `dir` holds exactly one EFFECTIVE entry (POSIX-hidden entries —
+ * dot-prefixed, e.g. macOS's `.DS_Store` — don't count, and neither do
+ * entries the user's exclude list removes) and that entry is NOT a symlink.
+ * Symlink children never qualify: the client's fold chain follows `compact`
+ * links eagerly, and a self-referential link would otherwise fold forever.
+ * Hidden/excluded entries never qualify either: the client walks chains
+ * with the same filters, so a fold never hides a visible row — the user's
+ * "show hidden files" switch only affects rendering, never the fold itself.
+ */
+async function hasSingletonChild(dir: string, exclude?: ExcludeTest): Promise<boolean> {
+  let level: Dir | undefined
+  try {
+    level = await opendir(dir)
+    let only: Dirent | null = null
+    for (;;) {
+      const entry = await level.read()
+      if (entry === null) break
+      if (entry.name.startsWith('.')) continue
+      if (exclude !== undefined && exclude(join(dir, entry.name), entry.name)) continue
+      if (only !== null) return false
+      only = entry
+    }
+    // A dirent's isSymbolicLink() never follows targets — exactly the
+    // exclusion we want here (see above).
+    return only !== null && !only.isSymbolicLink()
+  } catch {
+    return false
+  } finally {
+    await level?.close().catch(() => undefined)
+  }
 }
 
 /** The root row label of a listing: the last path segment (or the full path at the filesystem root). */
