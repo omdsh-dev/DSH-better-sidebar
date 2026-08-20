@@ -462,6 +462,70 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+/* Patterns rows (type 'patterns'): an editable string list — removable
+   chips over the committed values plus one always-present add input. The
+   row stacks vertically (title/desc, then chips, then the input) because
+   the list needs the popup's full width. */
+.patternsRow {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+}
+
+.patternsChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.patternsChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 9px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.patternsChipRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.patternsChipRemove:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.patternsAdd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.patternsInput {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 /* Secondary settings popup: a wider dialog than the primitive default (the
    dialog portals to document.body; the doubled class keeps the width rule
    above the primitive's .dialog regardless of stylesheet order). */

@@ -88,7 +88,8 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       dedupeKey: (tab) => tab.path,
       // Declarative settings: the file-open behavior picker (in-place switch
       // vs per-path windows) renders as an iconed select row under the
-      // editor card's gear in the Side card settings page.
+      // editor card's gear in the Side card settings page; the hidden-rows
+      // switch below it controls dot-prefixed entries in the file tree.
       settings: {
         toggles: [{
           key: 'editorExplorer',
@@ -109,6 +110,12 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
               desc: () => t('editorExplorerSplitDesc'),
             },
           ],
+        }, {
+          key: 'explorerExclude',
+          type: 'patterns',
+          title: () => t('explorerExclude'),
+          desc: () => t('explorerExcludeDesc'),
+          patternsPlaceholder: t('explorerExcludePlaceholder'),
         }],
       },
       component: ({ ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile }) => (

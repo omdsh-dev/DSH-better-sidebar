@@ -105,6 +105,14 @@ export function EditorHost(props: {
     useCallback((callback: () => void) => store.subscribe(callback), [store]),
     useCallback(() => store.getSnapshot().prefs.editorExplorer, [store]),
   )
+  // The exclude-pattern list (VS Code files.exclude style): the host filters
+  // the listing with it, so a change reloads the tree (FileTree wipes its
+  // cache when the list changes). The snapshot array identity is stable
+  // until prefs are rewritten, so useSyncExternalStore stays quiet.
+  const exclude = useSyncExternalStore(
+    useCallback((callback: () => void) => store.subscribe(callback), [store]),
+    useCallback(() => store.getSnapshot().prefs.explorerExclude, [store]),
+  )
   // A path-less tab shows the empty-state hint in merged mode — and in split
   // mode it is the standalone explorer (tree-only, see the render below).
   const showEmpty = path === ''
@@ -268,6 +276,7 @@ export function EditorHost(props: {
           sessionId={scope.sessionId}
           cwd={scope.cwd}
           expanded={expanded}
+          exclude={exclude}
           onToggle={onToggleDir}
           onOpenFile={openFile}
           onOpenFileNewTab={openFileNewTab}
@@ -361,6 +370,7 @@ export function EditorHost(props: {
               sessionId={scope.sessionId}
               cwd={scope.cwd}
               expanded={expanded}
+              exclude={exclude}
               onToggle={onToggleDir}
               onOpenFile={openFile}
               onOpenFileNewTab={openFileNewTab}

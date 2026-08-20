@@ -5,7 +5,9 @@
  * directory), directories sort first, hidden entries render dimmed. The
  * expansion set lives in the per-session state (owned by the caller); the
  * caller also owns the refresh affordance — a `refreshTick` bump wipes the
- * level cache so the visible set reloads.
+ * level cache so the visible set reloads. Chains of dirs holding exactly
+ * one real dir child each fold into one breadcrumb row (`a/b/c`, VSCode
+ * "compact folders"); clicking the row toggles the whole chain.
  *
  * Row actions: hovering a row reveals an @-reference button on the far
  * right (appends `@<relative path>` to the composer draft), and right-click
@@ -22,6 +24,7 @@ import {
   IconLinkOutline16, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
+import { compactChain, compactLoadTargets } from './file-tree-compact.ts'
 import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
@@ -53,10 +56,14 @@ export function FileTree(props: {
   onOpenFileSide?: (path: string) => void
   /** Insert `@<relative path>` into the composer draft. */
   onReferenceFile: (path: string) => void
+  /** The explorerExclude pref patterns: the HOST filters the listing with
+   *  them (excluded rows never arrive), so changing the list wipes the level
+   *  cache and reloads — the rows themselves need no client-side filter. */
+  exclude?: readonly string[]
   /** Bump to wipe the level cache and reload the visible set. */
   refreshTick: number
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, refreshTick } = props
+  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, exclude, refreshTick } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
@@ -72,12 +79,12 @@ export function FileTree(props: {
   const loadDir = useCallback((dir: string) => {
     if (dataRef.current[dir] !== undefined) return
     storeLevel(dir, {})
-    api.fsTree({ sessionId, cwd }, dir).then((listing) => {
+    api.fsTree({ sessionId, cwd }, dir, exclude).then((listing) => {
       storeLevel(dir, { entries: listing.entries })
     }).catch((error: unknown) => {
       storeLevel(dir, { error: error instanceof Error ? error.message : String(error) })
     })
-  }, [sessionId, cwd, storeLevel])
+  }, [sessionId, cwd, exclude, storeLevel])
 
   // The caller's refresh tick wipes the cache (declared BEFORE the load
   // effect so the reload below sees the empty cache).
@@ -89,6 +96,18 @@ export function FileTree(props: {
     setData({})
   }, [refreshTick])
 
+  // Same wipe machinery for the exclude list: the filtering happens HOST-side,
+  // so a changed list means every cached level is stale. The joined key makes
+  // the check value-based (the array identity may churn between renders).
+  const excludeKey = (exclude ?? []).join('\n')
+  const lastExcludeKey = useRef(excludeKey)
+  useEffect(() => {
+    if (lastExcludeKey.current === excludeKey) return
+    lastExcludeKey.current = excludeKey
+    dataRef.current = {}
+    setData({})
+  }, [excludeKey])
+
   useEffect(() => {
     // Load the visible set; already-loaded levels (kept in the cache) are
     // not refetched. Only the refresh tick wipes the cache.
@@ -97,6 +116,14 @@ export function FileTree(props: {
     loadDir(root)
     for (const dir of expanded) loadDir(dir)
   }, [cwd, expanded, refreshTick, loadDir])
+
+  useEffect(() => {
+    // Compact chains fold through COLLAPSED singleton dirs, so their levels
+    // load ahead of expansion; each arrival may reveal the next fold link,
+    // hence the rescan on every cache update (loadDir dedupes the rest).
+    if (cwd === undefined) return
+    for (const dir of compactLoadTargets(data)) loadDir(dir)
+  }, [cwd, data, loadDir])
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
   const copyPath = useCallback((text: string, path: string): void => {
@@ -136,6 +163,17 @@ export function FileTree(props: {
     setRowMenu({ path, isDir, x: event.clientX, y: event.clientY })
   }
 
+  /**
+   * Toggle a whole compact fold chain at once: a collapsed chain expands
+   * every link (so the children render, and stay rendered even if the fold
+   * later breaks), an open one collapses every expanded link.
+   */
+  const toggleChain = (chain: readonly FsEntry[], isOpen: boolean): void => {
+    for (const link of chain) {
+      if (expanded.includes(link.path) === isOpen) onToggle(link.path)
+    }
+  }
+
   /** Download a file through the host route (raw bytes, binary-safe). */
   const downloadFile = (path: string): void => {
     const url = downloadUrl({ sessionId, cwd }, path)
@@ -164,7 +202,12 @@ export function FileTree(props: {
     const entries = level.entries ?? []
     return entries.map(entry => {
       if (entry.isDir) {
-        const isOpen = expanded.includes(entry.path)
+        // Breadcrumb folding (VSCode "compact folders"): a chain of dirs
+        // holding exactly one real dir child each renders as ONE `a/b/c`
+        // row; the chain pauses at whatever the cache has loaded so far.
+        const chain = entry.compact === true ? compactChain(entry, path => data[path]) : [entry]
+        const tail = chain[chain.length - 1]!
+        const isOpen = chain.some(link => expanded.includes(link.path))
         return (
           <div key={entry.path}>
             <div
@@ -172,21 +215,24 @@ export function FileTree(props: {
               tabIndex={0}
               className={clsx(css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden)}
               style={{ paddingLeft: depth * 22 + 6 }}
-              onClick={() => { onToggle(entry.path) }}
+              title={chain.length > 1 ? tail.path : undefined}
+              onClick={() => { toggleChain(chain, isOpen) }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault()
-                  onToggle(entry.path)
+                  toggleChain(chain, isOpen)
                 }
               }}
-              onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
+              onContextMenu={(event) => { openRowMenu(event, tail.path, true) }}
             >
               {isOpen ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />}
-              <span className={css.explorerName}>{entry.name}</span>
+              <span className={css.explorerName}>
+                {chain.length > 1 ? chain.map(link => link.name).join('/') : entry.name}
+              </span>
               {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
-              {rowActions(entry)}
+              {rowActions(tail)}
             </div>
-            {isOpen && renderLevel(entry.path, depth + 1)}
+            {isOpen && renderLevel(tail.path, depth + 1)}
           </div>
         )
       }

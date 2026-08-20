@@ -7,6 +7,7 @@
 
 import z from 'schemastery'
 import {
+  EXPLORER_EXCLUDE_DEFAULTS,
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
   TERMINAL_FONT_SIZE_DEFAULT,
@@ -22,6 +23,7 @@ import {
 } from './prefs-shared.ts'
 
 export {
+  EXPLORER_EXCLUDE_DEFAULTS,
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
   TERMINAL_FONT_SIZE_DEFAULT,
@@ -122,6 +124,7 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   terminalFontSize: z.number().step(1).min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX).default(TERMINAL_FONT_SIZE_DEFAULT),
   interceptOpenPath: z.boolean().default(true),
   editorExplorer: z.boolean().default(false),
+  explorerExclude: z.array(z.string()).default([...EXPLORER_EXCLUDE_DEFAULTS]),
   terminalShell: z.string().default(''),
   terminalShellArgs: z.string().default(''),
   titleBarCompat: z.boolean().default(false),
