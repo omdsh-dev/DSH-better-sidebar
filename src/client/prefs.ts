@@ -54,6 +54,12 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     terminalFontFamily: typeof record.terminalFontFamily === 'string'
       ? record.terminalFontFamily
       : SIDEBAR_PREFS_DEFAULTS.terminalFontFamily,
+    terminalShell: typeof record.terminalShell === 'string'
+      ? record.terminalShell
+      : SIDEBAR_PREFS_DEFAULTS.terminalShell,
+    terminalShellArgs: typeof record.terminalShellArgs === 'string'
+      ? record.terminalShellArgs
+      : SIDEBAR_PREFS_DEFAULTS.terminalShellArgs,
     terminalFontSize: typeof record.terminalFontSize === 'number' && Number.isFinite(record.terminalFontSize)
       ? clampTerminalFontSize(record.terminalFontSize)
       : SIDEBAR_PREFS_DEFAULTS.terminalFontSize,

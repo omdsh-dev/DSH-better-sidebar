@@ -20,6 +20,28 @@
    switching skins in the dsh-web-ui skin center re-skins the sidebar panels
    automatically (see AGENTS.md §8). */
 
+/* The unified panel host: a fixed, viewport-sized, click-transparent
+   containing block for every panel element. Panels are ABSOLUTE within it
+   (not fixed), so a desktop shell's intermediate wrapper transform can
+   never hijack their containing block — the host itself is the only fixed
+   element, appended directly to document.body. The layer sits at z-index 40
+   (below the app's overlay stack at 100+); each panel re-enables pointer
+   events on itself. Degraded mode ([data-dsh-panel-host-degraded]) covers
+   the rare shell that transforms <html>/<body> itself: the host becomes
+   absolute and the mount self-check pins it to the viewport every frame. */
+:global([data-dsh-panel-host]) {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+
+:global([data-dsh-panel-host][data-dsh-panel-host-degraded]) {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
 /* The persistent expand/collapse cluster at the top-right corner: two rail
    controls side by side (bottom panel's glyph LEFT of the right panel's).
    Always pinned to the viewport corner — inside the right panel's top-right
@@ -27,15 +49,18 @@
    top: 3) whose right end it really squeezes. z-index 45: above the panels
    (40) but below the app's overlay stack (menus/tooltips/modals sit at
    100+), so a cordis approval popup is never hidden behind the workbench
-   (issue #52). */
+   (issue #52). Absolute within the panel host (the host's inset: 0 makes
+   viewport coordinates identical). */
 .toggleCluster {
-  position: fixed;
-  top: 3px;
+  position: absolute;
+  /* env() resolves to 0 on devices without a top inset (desktops). */
+  top: calc(3px + env(safe-area-inset-top));
   right: 10px;
   z-index: 45;
   display: flex;
   flex-direction: row;
   gap: 4px;
+  pointer-events: auto;
 }
 
 /* The tab strip of the OPEN right panel reserves the cluster's width at its
@@ -77,7 +102,7 @@
 }
 
 .panel {
-  position: fixed;
+  position: absolute;
   top: 0;
   right: 0;
   /* Full height: the bottom panel squeezes only the center column, so the
@@ -90,12 +115,17 @@
   z-index: 40;
   display: flex;
   flex-direction: column;
+  /* Re-enable interaction inside the click-transparent panel host. */
+  pointer-events: auto;
   /* The generic card surface (see the root contract above). Never
      `--dsw-specific-sidebar-fill` — skin plugins restyle that token for the
      app's own left nav and a panel consuming it loses its fill or clashes
      with labels (#60/#105/#106). */
   background: var(--dsw-alias-bg-layer-1);
   border-left: 1px solid var(--dsw-alias-border-l2);
+  /* Bottom safe-area (notched phones): the drawer's bottom content clears
+     the home indicator; 0 on desktops. */
+  padding-bottom: env(safe-area-inset-bottom);
   /* Expand/collapse slides the panel; fullscreen animates the width. */
   transition:
     transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
@@ -152,13 +182,17 @@
    (issue #52: below the app's overlay stack so popups win over the
    workbench). */
 .bottomPanel {
-  position: fixed;
+  position: absolute;
   bottom: 0;
   z-index: 40;
   display: flex;
   flex-direction: column;
   background: var(--dsw-alias-bg-layer-1);
   border-top: 1px solid var(--dsw-alias-border-l2);
+  /* Re-enable interaction inside the click-transparent panel host. */
+  pointer-events: auto;
+  /* Bottom safe-area (notched phones); 0 on desktops. */
+  padding-bottom: env(safe-area-inset-bottom);
   /* Expand/collapse slides the panel; height drags animate the height. */
   transition:
     transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
@@ -179,6 +213,22 @@
 /* Height drags write at pointer cadence; easing would detach the edge. */
 .bottomPanel[data-dragging] {
   transition: none;
+}
+
+/* Layout isolation: panel-internal reflows (tabs, editors, terminals) never
+   leak into the app shell's layout, and the app shell's layout changes
+   never cascade through the panel subtree — the drag stays confined.
+   will-change: transform is only live while a drag is (the body attribute
+   toggles with the drag state), promoting the panels to their own layer
+   without paying the compositing cost at rest. */
+.panel,
+.bottomPanel {
+  contain: layout style;
+}
+
+body[data-dsh-sidebar-dragging] .panel,
+body[data-dsh-sidebar-dragging] .bottomPanel {
+  will-change: transform;
 }
 
 /* The bottom panel's height drag: the top edge strip (mirror of the right

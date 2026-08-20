@@ -5,14 +5,22 @@
  * panel's width squeeze (margin-right on #root) lands exactly on the
  * conversation output and the input bar, like a VSCode sidebar.
  *
+ * The width rides `calc(100% - var(...))` instead of a bare margin on a
+ * full-width box: some desktop shells (DSH Desktop, #208) set #root to
+ * width:100%, where a margin would overflow the viewport additively —
+ * the calc keeps the box at exactly 100% minus the push in every shell.
+ * Width and margin transition in lockstep (same variable, same duration
+ * and easing), so expand/collapse animates the content width exactly as
+ * the bare-margin version did.
+ *
  * The bottom panel squeezes ONLY the center column — it must not cover the
- * app's own left sidebar or the right panel. DSH 0.1.x wraps slot hosts in
- * [data-slot] containers, so the AppFrame grid lives one level deeper:
- * #root > div[data-slot="root"] > div (the frame). Its grid items are
- * (frame > div:nth-child(1..3)): sidebarCol, centerCol, detailsCol, so the
- * vertical push lands on the center column alone. The fixed panels cover
- * the vacated strips, which looks seamless because #root's background is
- * the theme base.
+ * app's own left sidebar or the right panel. The anchor is the frame's
+ * center grid item via its stable data attribute ([data-pane="conversation"]
+ * on the centerCol inside [data-dsh-frame]), not a positional path: the
+ * frame's child order also contains an overlay layer and drag handles
+ * (verified against a live DSH 0.1.x page), so nth-child is brittle. A
+ * stretched grid item shrinks by its margins, so the conversation content
+ * (output + input bar) lifts without touching the sidebars.
  *
  * The sizes ride CSS variables updated by the Sidebar shell (0 while
  * collapsed); expand/collapse animates both the margins and the panel
@@ -21,14 +29,14 @@
  */
 #root {
   margin-right: var(--dsh-sidebar-width, 0px);
-  transition: margin-right var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+  width: calc(100% - var(--dsh-sidebar-width, 0px));
+  transition:
+    margin-right var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    width var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
-/* The AppFrame's grid items are sidebarCol, centerCol, detailsCol (children
-   1-3 of #root > div[data-slot="root"] > div) — nth-child(2) is the center
-   column. A stretched grid item shrinks by its margins, so the conversation
-   content (output + input bar) lifts without touching the sidebars. */
-#root > div[data-slot="root"] > div > div:nth-child(2) {
+/* The AppFrame's center column, anchored by data attributes (see above). */
+#root [data-dsh-frame] > [data-pane="conversation"] {
   margin-bottom: var(--dsh-sidebar-height, 0px);
   transition: margin-bottom var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
@@ -47,7 +55,7 @@ body[data-dsh-sidebar-collapsed] [data-slot="conversation.session.header"] > hea
 }
 
 body[data-dsh-sidebar-dragging] #root,
-body[data-dsh-sidebar-dragging] #root > div[data-slot="root"] > div > div:nth-child(2) {
+body[data-dsh-sidebar-dragging] #root [data-dsh-frame] > [data-pane="conversation"] {
   transition: none;
 }
 
@@ -72,7 +80,7 @@ body[data-dsh-sidebar-dragging] #root > div[data-slot="root"] > div > div:nth-ch
 
 @media (prefers-reduced-motion: reduce) {
   #root,
-  #root > div[data-slot="root"] > div > div:nth-child(2) {
+  #root [data-dsh-frame] > [data-pane="conversation"] {
     transition: none;
   }
 }

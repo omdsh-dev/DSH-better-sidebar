@@ -13,7 +13,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { Context } from '../context-types.ts'
 import { allLeaves, createSidebarStore, isAgentTabId } from './state.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
-import { resetChunks } from './chunk-loader.ts'
+import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
@@ -29,8 +29,10 @@ import css from './sidebar.module.css'
 import './layout.css'
 
 /** Services required before mounting (provided by the client runtime; the
- *  locale service backs the sidebar's copy — see locales.ts). */
-export const inject = ['slots', 'sessions', 'connection', 'workspaces', 'locale']
+ *  locale service backs the sidebar's copy — see locales.ts). `modules`
+ *  (rc.8+) is the client module system the chunk loader resolves its
+ *  externals through — Cordis guards service access without inject. */
+export const inject = ['slots', 'sessions', 'connection', 'workspaces', 'locale', 'modules']
 
 /**
  * Error boundary over the sidebar tree (root scope): a render error in the
@@ -110,22 +112,95 @@ export function apply(ctx: Context): void {
     }
   }
   try {
-    // Fresh chunk state for this activation: invalidate any chunk factories
-    // registered by a previous fiber (HMR) and drop the in-memory load cache
-    // so the next lazy open re-fetches the current chunk scripts.
-    resetChunks()
+    // rc.8+ exposes the client module system as the `ctx.modules` service
+    // (no window.__DSH_MODULES__ page global anymore); the chunk loader needs
+    // it to resolve its externals, so inject it before anything can load a
+    // lazy chunk. The loader falls back to the rc.7 global when absent.
+    setChunkModuleSystem(ctx.modules)
+    // Fresh chunk state for this activation: drop per-test fixtures and
+    // revalidate loaded chunk scripts against the bundle route's ETags —
+    // unchanged chunks keep their resolved exports (no re-inject /
+    // re-execute on HMR), changed ones are dropped for a clean re-fetch.
+    void revalidateChunksOnReactivate()
     ctx.effect(() => {
       let disposed = false
       let root: Root | undefined
       let host: HTMLDivElement | undefined
       let mounted = false
+      let bodyObserver: MutationObserver | undefined
+      let hostCheckFrame: number | null = null
       const unmount = (): void => {
         if (!mounted) return
         mounted = false
+        bodyObserver?.disconnect()
+        bodyObserver = undefined
+        if (hostCheckFrame !== null) {
+          cancelAnimationFrame(hostCheckFrame)
+          hostCheckFrame = null
+        }
         root?.unmount()
         root = undefined
         host?.remove()
         host = undefined
+      }
+      /** Re-attach the host if the page (a desktop shell wrapper, SPA
+       *  navigation, …) ever removes it from <body>. Cheap: childList only,
+       *  no subtree, no attribute filtering. */
+      const guardAnchor = (): void => {
+        if (bodyObserver !== undefined) return
+        bodyObserver = new MutationObserver(() => {
+          if (host !== undefined && !document.body.contains(host)) {
+            document.body.appendChild(host)
+          }
+        })
+        bodyObserver.observe(document.body, { childList: true })
+      }
+      /** One-shot geometry self-check: if the host page transforms
+       *  <html>/<body> itself (exotic shells), a fixed panel host would
+       *  track the transformed box instead of the viewport. Flip the
+       *  degraded mode and pin the host to the viewport every frame until
+       *  the ancestor transform is actually gone. The normal path (no
+       *  page-level transform) never runs the sync loop. */
+      const scheduleHostCheck = (): void => {
+        hostCheckFrame ??= requestAnimationFrame(() => {
+          hostCheckFrame = null
+          const layer = host?.querySelector<HTMLElement>('[data-dsh-panel-host]')
+          if (layer === null || layer === undefined) return
+          const rect = layer.getBoundingClientRect()
+          const mismatched = Math.abs(rect.left) > 8 || Math.abs(rect.top) > 8
+            || Math.abs(rect.width - window.innerWidth) > 8 || Math.abs(rect.height - window.innerHeight) > 8
+          if (!mismatched) {
+            layer.removeAttribute('data-dsh-panel-host-degraded')
+            layer.style.transform = ''
+            return
+          }
+          layer.setAttribute('data-dsh-panel-host-degraded', '')
+          console.warn('[dsh-better-sidebar] panel host geometry mismatch — a page-level transform was detected; using degraded viewport sync')
+          // Track our own compensating translation so the loop judges the
+          // UNCORRECTED geometry: clearing degraded mode must wait for the
+          // ancestor transform to actually disappear — the frame right after
+          // our correction applies would otherwise look "fixed" and the
+          // offset would return immediately (CR #232 P1).
+          let applied = { x: 0, y: 0 }
+          const sync = (): void => {
+            const r = layer.getBoundingClientRect()
+            const rawLeft = r.left - applied.x
+            const rawTop = r.top - applied.y
+            if (Math.abs(rawLeft) <= 1 && Math.abs(rawTop) <= 1
+              && Math.abs(r.width - window.innerWidth) <= 1 && Math.abs(r.height - window.innerHeight) <= 1) {
+              layer.removeAttribute('data-dsh-panel-host-degraded')
+              layer.style.transform = ''
+              return
+            }
+            const next = { x: -rawLeft, y: -rawTop }
+            if (next.x !== applied.x || next.y !== applied.y) {
+              applied = next
+              layer.style.transform = `translate(${applied.x}px, ${applied.y}px)`
+            }
+            hostCheckFrame = requestAnimationFrame(sync)
+          }
+          hostCheckFrame = requestAnimationFrame(sync)
+        })
       }
       const mount = (): void => {
         if (mounted || disposed) return
@@ -136,6 +211,8 @@ export function apply(ctx: Context): void {
           root = createRoot(host)
           root.render(createElement(RenderBoundary, { className: css.boundaryError }, createElement(Sidebar, { ctx, store: sidebarStore })))
           mounted = true
+          guardAnchor()
+          scheduleHostCheck()
         } catch (error) {
           fail('mount', error)
         }

@@ -429,6 +429,13 @@ declare module 'cordis' {
      */
     locale: SidebarLocaleService
     /**
+     * The client module system (rc.8+): resolves module-table specifiers
+     * (seed words, graph rows) — the chunk loader's externals go through it
+     * (`ctx.modules.import`). rc.7 exposed the same surface as the
+     * `window.__DSH_MODULES__` page global; the loader keeps that fallback.
+     */
+    modules: { import(specifier: string): Promise<unknown> }
+    /**
      * The host background-job registry (`ctx.get('jobs')`; optional — the
      * sidebar routes degrade to a 503 when the deployment lacks it).
      */

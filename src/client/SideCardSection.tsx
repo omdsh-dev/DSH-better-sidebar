@@ -736,6 +736,15 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     <div className={css.section}>
       <p className={css.intro}>{t('settingsIntro')}</p>
 
+      {/* The managing plugin's own identity: name + version badge, so the
+          section is attributable at a glance (the version is the service
+          instance's, kept in lockstep with package.json by
+          tests/service.spec.ts). */}
+      <div className={css.versionBadge}>
+        <span className={css.versionBadgeName}>DSH-better-sidebar</span>
+        <span className={css.versionBadgeTag}>v{service.version}</span>
+      </div>
+
       {/* 常规: the DSH settings-row recipe — title/desc left, control right. */}
       <div className={css.group}>
         <div className={css.groupHeading}>{t('settingsGeneralTitle')}</div>
