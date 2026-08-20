@@ -75,7 +75,13 @@ async function mountTree(busy = false): Promise<Harness> {
 function dragEvent(type: string): Event {
   const event = new Event(type, { bubbles: true, cancelable: true })
   Object.defineProperty(event, 'dataTransfer', {
-    value: { types: ['Files'], files: [], dropEffect: '' },
+    // No entry API on the items, so drops fall back to the flat file list.
+    value: {
+      types: ['Files'],
+      items: [],
+      files: [new File(['x'], 'dropped.txt')],
+      dropEffect: '',
+    },
   })
   return event
 }
@@ -140,19 +146,23 @@ describe('FileTree drag-drop surface', () => {
     expect(dir.className).not.toContain('explorerRowDropTarget')
   })
 
-  it('drops onto a file row upload into its parent directory and reset the drag state', () => {
+  it('drops onto a file row upload into its parent directory and reset the drag state', async () => {
     const file = rowByName(harness.container, 'a.ts')
     fire(harness.body, 'dragenter')
     const drop = fire(file, 'drop')
+    // The payload collection is async (entry traversal); flush the then.
+    await act(async () => {})
     expect(drop.defaultPrevented).toBe(true)
     expect(harness.uploads).toHaveLength(1)
     expect(harness.uploads[0]!.dir).toBe('/tmp')
+    expect(harness.uploads[0]!.items.map(item => item.relativePath)).toEqual(['dropped.txt'])
     expect(dropZone()).toBeNull()
   })
 
-  it('drops onto the tree body upload into the workspace root', () => {
+  it('drops onto the tree body upload into the workspace root', async () => {
     fire(harness.body, 'dragenter')
     fire(harness.body, 'drop')
+    await act(async () => {})
     expect(harness.uploads).toHaveLength(1)
     expect(harness.uploads[0]!.dir).toBe('/tmp')
   })
@@ -165,6 +175,7 @@ describe('FileTree drag-drop surface', () => {
     fire(busyHarness.body, 'dragover')
     expect(dropZone()).toBeNull()
     fire(busyHarness.body, 'drop')
+    await act(async () => {})
     expect(busyHarness.uploads).toHaveLength(0)
     busyHarness.unmount()
   })

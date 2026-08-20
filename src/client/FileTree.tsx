@@ -139,18 +139,27 @@ export function FileTree(props: {
    * Drop handlers: always swallow the event (a dropped file must never open
    * in the browser), then report the target directory to the caller. A drop
    * ends the drag without further leave events, so the depth resets here.
+   * The payload collection is async (dropped folders are traversed through
+   * their entry handles — captured synchronously inside uploadItemsFromDrop
+   * while the dataTransfer is still live), so the request rides a then.
    */
+  const reportDrop = (dir: string, data: DataTransfer | undefined): void => {
+    if (busy) return
+    void uploadItemsFromDrop(data).then((items) => {
+      if (items.length > 0) onUploadRequest(dir, items)
+    })
+  }
   const handleBodyDrop = (event: DragEvent): void => {
     event.preventDefault()
     event.stopPropagation()
     resetDrop()
-    if (!busy && cwd !== undefined) onUploadRequest(cwd, uploadItemsFromDrop(event.dataTransfer))
+    if (cwd !== undefined) reportDrop(cwd, event.dataTransfer)
   }
   const handleDirDrop = (event: DragEvent, dir: string): void => {
     event.preventDefault()
     event.stopPropagation()
     resetDrop()
-    if (!busy) onUploadRequest(dir, uploadItemsFromDrop(event.dataTransfer))
+    reportDrop(dir, event.dataTransfer)
   }
   const handleFileDrop = (event: DragEvent, path: string): void => {
     // VSCode semantics: dropping onto a file uploads into its directory.

@@ -2,14 +2,17 @@
  * File-upload plumbing for the files window: turn a file picker or a drag-drop
  * into per-file raw-byte uploads through the sidebar's `/sidebar/upload` route.
  *
- * A dropped folder arrives as `File` objects with `webkitRelativePath` filled
- * (Chromium), so the relative path is preserved for every nested file and the
- * host recreates the tree under the chosen directory. The File is streamed
- * straight into the POST body (no base64 inflation); uploads run sequentially
- * so one slow file cannot starve the others, and each result reports its own
- * outcome (the tree keeps going after a failure). An optional `AbortSignal`
- * stops the queue at the next item boundary and aborts the in-flight request;
- * the host cleans up its temp file when the request stream dies.
+ * Folders keep their tree in both flows: the picker's `webkitdirectory`
+ * selection arrives as Files with `webkitRelativePath` filled, and dropped
+ * folders — which never surface in `dataTransfer.files` — are traversed via
+ * `webkitGetAsEntry`, so the relative path is preserved for every nested file
+ * and the host recreates the tree under the chosen directory. The File is
+ * streamed straight into the POST body (no base64 inflation); uploads run
+ * sequentially so one slow file cannot starve the others, and each result
+ * reports its own outcome (the tree keeps going after a failure). An
+ * optional `AbortSignal` stops the queue at the next item boundary and
+ * aborts the in-flight request; the host cleans up its temp file when the
+ * request stream dies.
  */
 import { api, SidebarApiError, type SessionScope } from './api.ts'
 import { isAbsolutePath } from './paths.ts'
@@ -34,11 +37,15 @@ export interface UploadResult {
 
 /** Sanitize a relative target: absolute paths, traversal, and empty segments
  *  are rejected (the host enforces the same rules with a 400). */
-function relativePathOf(file: File): string | undefined {
-  const rel = file.webkitRelativePath || file.name || ''
+function sanitizeRelativePath(rel: string): string | undefined {
   if (rel === '' || isAbsolutePath(rel)) return undefined
   if (rel.split(/[\\/]/).some((s) => s === '' || s === '.' || s === '..')) return undefined
   return rel
+}
+
+/** The picker's relative path: webkitRelativePath when present, else the name. */
+function relativePathOf(file: File): string | undefined {
+  return sanitizeRelativePath(file.webkitRelativePath || file.name || '')
 }
 
 /** Collect a picker selection (webkitdirectory folders carry relative paths). */
@@ -51,10 +58,52 @@ export function uploadItemsFromFiles(files: FileList | readonly File[]): UploadI
   return items
 }
 
-/** Collect a drag-drop payload (files only; folder entries keep their paths). */
-export function uploadItemsFromDrop(data: DataTransfer | undefined): UploadItem[] {
-  if (data === undefined || data.files.length === 0) return []
-  return uploadItemsFromFiles(data.files)
+/** Read one dropped file-system entry into upload items; directories
+ *  recurse, prefixing their name onto every descendant's relative path. */
+async function itemsFromEntry(entry: FileSystemEntry, prefix: string): Promise<UploadItem[]> {
+  if (entry.isFile) {
+    const file = await new Promise<File>((resolve, reject) => {
+      ;(entry as FileSystemFileEntry).file(resolve, reject)
+    })
+    const rel = sanitizeRelativePath(prefix + file.name)
+    return rel === undefined ? [] : [{ file, relativePath: rel }]
+  }
+  if (entry.isDirectory) {
+    const reader = (entry as FileSystemDirectoryEntry).createReader()
+    const entries: FileSystemEntry[] = []
+    // readEntries returns one BATCH per call; drain until an empty batch.
+    for (;;) {
+      const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => {
+        reader.readEntries(resolve, reject)
+      })
+      if (batch.length === 0) break
+      entries.push(...batch)
+    }
+    const nested = await Promise.all(entries.map(child => itemsFromEntry(child, `${prefix}${entry.name}/`)))
+    return nested.flat()
+  }
+  return []
+}
+
+/**
+ * Collect a drag-drop payload. Dropped folders do NOT surface in
+ * `dataTransfer.files` — they arrive as directory items, so entries are
+ * captured via `webkitGetAsEntry` and traversed (draining readEntries
+ * batches), keeping each nested file's relative path. MUST be invoked
+ * synchronously from the drop handler: the dataTransfer enters protected
+ * mode once the event dispatch ends, while the captured entry handles stay
+ * readable asynchronously. Falls back to the flat file list when the entry
+ * API is unavailable; an entry that fails to read is skipped, not fatal.
+ */
+export async function uploadItemsFromDrop(data: DataTransfer | undefined): Promise<UploadItem[]> {
+  if (data === undefined) return []
+  // Synchronous section: capture every entry handle before returning.
+  const entries = [...data.items]
+    .map(item => (item.kind === 'file' ? item.webkitGetAsEntry() : null))
+    .filter((entry): entry is FileSystemEntry => entry !== null)
+  if (entries.length === 0) return uploadItemsFromFiles(data.files)
+  const nested = await Promise.all(entries.map(entry => itemsFromEntry(entry, '').catch(() => [])))
+  return nested.flat()
 }
 
 /**

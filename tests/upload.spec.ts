@@ -53,13 +53,64 @@ describe('uploadItemsFromFiles', () => {
 })
 
 describe('uploadItemsFromDrop', () => {
-  it('collects the drop payload like a picker selection', () => {
-    const data = { files: [fileOf('a.txt'), fileOf('b.txt', 'dir/b.txt')] } as unknown as DataTransfer
-    expect(uploadItemsFromDrop(data).map(item => item.relativePath)).toEqual(['a.txt', 'dir/b.txt'])
+  /** A DataTransfer stub: flat file list, no entry API. */
+  const dataOf = (files: File[], items: unknown[] = []): DataTransfer =>
+    ({ files, items }) as unknown as DataTransfer
+  /** A dropped file entry stub (webkitGetAsEntry world). */
+  const fileEntryOf = (name: string): FileSystemEntry =>
+    ({
+      isFile: true, isDirectory: false, name,
+      file: (ok: (file: File) => void) => { ok(new File(['x'], name)) },
+    }) as unknown as FileSystemEntry
+  /** A dropped directory entry stub: readEntries serves one batch, then empty. */
+  const dirEntryOf = (name: string, children: FileSystemEntry[]): FileSystemEntry =>
+    ({
+      isFile: false, isDirectory: true, name,
+      createReader: () => {
+        let drained = false
+        return {
+          readEntries: (ok: (entries: FileSystemEntry[]) => void) => {
+            ok(drained ? [] : children)
+            drained = true
+          },
+        }
+      },
+    }) as unknown as FileSystemEntry
+  const itemOf = (entry: FileSystemEntry): unknown => ({ kind: 'file', webkitGetAsEntry: () => entry })
+
+  it('falls back to the flat file list when the entry API is unavailable', async () => {
+    const data = dataOf([fileOf('a.txt'), fileOf('b.txt', 'dir/b.txt')])
+    const items = await uploadItemsFromDrop(data)
+    expect(items.map(item => item.relativePath)).toEqual(['a.txt', 'dir/b.txt'])
   })
 
-  it('returns nothing for an empty drop', () => {
-    expect(uploadItemsFromDrop(undefined)).toEqual([])
+  it('returns nothing for an empty drop', async () => {
+    expect(await uploadItemsFromDrop(undefined)).toEqual([])
+  })
+
+  it('traverses dropped directories, keeping every nested relative path', async () => {
+    const tree = dirEntryOf('docs', [
+      fileEntryOf('a.txt'),
+      dirEntryOf('nested', [fileEntryOf('b.txt')]),
+    ])
+    const data = dataOf([], [itemOf(fileEntryOf('top.txt')), itemOf(tree)])
+    const items = await uploadItemsFromDrop(data)
+    expect(items.map(item => item.relativePath)).toEqual(['top.txt', 'docs/a.txt', 'docs/nested/b.txt'])
+  })
+
+  it('skips an unreadable entry instead of failing the whole drop', async () => {
+    const broken = {
+      isFile: true, isDirectory: false, name: 'bad.txt',
+      file: (_ok: unknown, fail: (error: Error) => void) => { fail(new Error('denied')) },
+    } as unknown as FileSystemEntry
+    const data = dataOf([], [itemOf(broken), itemOf(fileEntryOf('good.txt'))])
+    const items = await uploadItemsFromDrop(data)
+    expect(items.map(item => item.relativePath)).toEqual(['good.txt'])
+  })
+
+  it('sanitizes entry-derived paths (absolute and traversal segments rejected)', async () => {
+    const data = dataOf([], [itemOf(dirEntryOf('..', [fileEntryOf('evil.txt')]))])
+    expect(await uploadItemsFromDrop(data)).toEqual([])
   })
 })
 
