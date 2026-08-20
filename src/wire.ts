@@ -95,3 +95,17 @@ export function requireString(payload: unknown, key: string): string {
   }
   return value
 }
+
+/**
+ * Narrow an unknown payload value to a string — EMPTY strings allowed —
+ * else throw bad-request. For fields whose empty value is meaningful (e.g.
+ * `fs.write` content: creating an empty file sends `''`).
+ */
+export function requireStringAllowEmpty(payload: unknown, key: string): string {
+  const record = payload as Record<string, unknown> | null
+  const value = record?.[key]
+  if (typeof value !== 'string') {
+    throw new SidebarError('bad-request', `missing or invalid "${key}"`)
+  }
+  return value
+}
