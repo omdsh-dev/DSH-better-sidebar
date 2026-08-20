@@ -31,9 +31,10 @@ const iconNames = [
   'cpp', 'c', 'csharp', 'java', 'kotlin', 'swift', 'php', 'ruby', 'dart', 'lua', 'zig',
   'html', 'css', 'sass', 'less', 'json', 'yaml', 'toml', 'markdown', 'console', 'powershell',
   'database', 'docker', 'git', 'nodejs', 'npm', 'pnpm', 'yarn', 'bun', 'playwright', 'vite',
-  'vitest', 'tailwindcss', 'eslint', 'prettier', 'tsconfig', 'readme', 'certificate', 'pdf',
-  'image', 'svg', 'table', 'word', 'powerpoint', 'zip', 'font', 'tune', 'document', 'settings',
-  'graphql', 'proto', 'webassembly', 'audio', 'video', 'file'
+  'vitest', 'tsdown', 'tailwindcss', 'postcss', 'eslint', 'prettier', 'tsconfig', 'readme', 'certificate',
+  'pdf', 'image', 'svg', 'table', 'word', 'powerpoint', 'zip', 'font', 'tune', 'document',
+  'settings', 'graphql', 'proto', 'webassembly', 'audio', 'video', 'file', 'jest', 'webpack',
+  'rollup', 'babel', 'next', 'remix', 'astro', 'nuxt', 'turborepo', 'biome', 'deno'
 ];
 
 let out = '';
@@ -155,6 +156,7 @@ const EXACT_FILES: Record<string, string> = {
   'package-lock.json': 'nodejs',
   '.nvmrc': 'nodejs',
   '.node-version': 'nodejs',
+  '.esmrc': 'nodejs',
   'pnpm-lock.yaml': 'pnpm',
   'pnpm-workspace.yaml': 'pnpm',
   '.pnpmfile.cjs': 'pnpm',
@@ -165,27 +167,75 @@ const EXACT_FILES: Record<string, string> = {
   'bun.lockb': 'bun',
   'bun.lock': 'bun',
   'bunfig.toml': 'bun',
+  '.bun-version': 'bun',
+  'deno.json': 'deno',
+  'deno.jsonc': 'deno',
+  'deno.lock': 'deno',
+  'turbo.json': 'turborepo',
+  'turbo.jsonc': 'turborepo',
+  'biome.json': 'biome',
+  'biome.jsonc': 'biome',
   'tsconfig.json': 'tsconfig',
   'tsconfig.build.json': 'tsconfig',
   'tsconfig.esm.json': 'tsconfig',
   'tsconfig.node.json': 'tsconfig',
+  'tsconfig.app.json': 'tsconfig',
+  'tsconfig.spec.json': 'tsconfig',
   'jsconfig.json': 'tsconfig',
+  'tsdown.config.ts': 'tsdown',
+  'tsdown.config.js': 'tsdown',
+  'tsdown.config.mjs': 'tsdown',
+  'tsdown.config.cjs': 'tsdown',
+  'tsdown.config.json': 'tsdown',
   'playwright.config.ts': 'playwright',
   'playwright.config.js': 'playwright',
   'playwright.config.mjs': 'playwright',
   'playwright.config.cjs': 'playwright',
-  'vite.config.ts': 'vite',
-  'vite.config.js': 'vite',
-  'vite.config.mjs': 'vite',
-  'vite.config.cjs': 'vite',
   'vitest.config.ts': 'vitest',
   'vitest.config.js': 'vitest',
   'vitest.config.mjs': 'vitest',
   'vitest.config.cjs': 'vitest',
+  'vitest.config.mts': 'vitest',
+  'vitest.config.cts': 'vitest',
+  'jest.config.js': 'jest',
+  'jest.config.ts': 'jest',
+  'jest.config.cjs': 'jest',
+  'jest.config.mjs': 'jest',
+  'jest.config.json': 'jest',
+  'vite.config.ts': 'vite',
+  'vite.config.js': 'vite',
+  'vite.config.mjs': 'vite',
+  'vite.config.cjs': 'vite',
+  'vite.config.mts': 'vite',
+  'vite.config.cts': 'vite',
+  'rollup.config.js': 'rollup',
+  'rollup.config.ts': 'rollup',
+  'rollup.config.mjs': 'rollup',
+  'rollup.config.cjs': 'rollup',
+  'webpack.config.js': 'webpack',
+  'webpack.config.ts': 'webpack',
+  'webpack.config.cjs': 'webpack',
+  'webpack.config.mjs': 'webpack',
+  'next.config.js': 'next',
+  'next.config.ts': 'next',
+  'next.config.mjs': 'next',
+  'nuxt.config.js': 'nuxt',
+  'nuxt.config.ts': 'nuxt',
+  'astro.config.mjs': 'astro',
+  'astro.config.js': 'astro',
+  'astro.config.ts': 'astro',
   'tailwind.config.js': 'tailwindcss',
   'tailwind.config.ts': 'tailwindcss',
   'tailwind.config.mjs': 'tailwindcss',
   'tailwind.config.cjs': 'tailwindcss',
+  'postcss.config.js': 'postcss',
+  'postcss.config.ts': 'postcss',
+  'postcss.config.mjs': 'postcss',
+  'postcss.config.cjs': 'postcss',
+  'postcss.config.json': 'postcss',
+  '.postcssrc': 'postcss',
+  '.postcssrc.json': 'postcss',
+  '.postcssrc.js': 'postcss',
   'eslint.config.js': 'eslint',
   'eslint.config.mjs': 'eslint',
   'eslint.config.cjs': 'eslint',
@@ -255,6 +305,7 @@ const EXT_MAP: Record<string, string> = {
   jsx: 'react',
   vue: 'vue',
   svelte: 'svelte',
+  astro: 'astro',
   py: 'python',
   pyw: 'python',
   ipynb: 'python',
@@ -405,15 +456,23 @@ export function fileIconFor(fileName: string, size = 14): ReactNode {
   // 2. Prefix & pattern matches for special config / dotfiles
   if (base.startsWith('.env')) return renderIcon('tune', size)
   if (base.startsWith('tsconfig.') || base.startsWith('jsconfig.')) return renderIcon('tsconfig', size)
+  if (base.startsWith('tsdown.config.')) return renderIcon('tsdown', size)
   if (base.startsWith('playwright.config.')) return renderIcon('playwright', size)
-  if (base.startsWith('vite.config.')) return renderIcon('vite', size)
   if (base.startsWith('vitest.config.')) return renderIcon('vitest', size)
+  if (base.startsWith('jest.config.')) return renderIcon('jest', size)
+  if (base.startsWith('vite.config.')) return renderIcon('vite', size)
+  if (base.startsWith('rollup.config.')) return renderIcon('rollup', size)
+  if (base.startsWith('webpack.config.')) return renderIcon('webpack', size)
+  if (base.startsWith('next.config.')) return renderIcon('next', size)
+  if (base.startsWith('nuxt.config.')) return renderIcon('nuxt', size)
+  if (base.startsWith('astro.config.')) return renderIcon('astro', size)
   if (base.startsWith('tailwind.config.')) return renderIcon('tailwindcss', size)
+  if (base.startsWith('postcss.config.') || base.startsWith('.postcssrc')) return renderIcon('postcss', size)
   if (base.startsWith('eslint.config.') || base.startsWith('.eslintrc')) return renderIcon('eslint', size)
   if (base.startsWith('prettier.config.') || base.startsWith('.prettierrc')) return renderIcon('prettier', size)
   if (base.startsWith('dockerfile.') || base.startsWith('docker-compose.')) return renderIcon('docker', size)
-  if (base.startsWith('readme.') || base.startsWith('readme_') || base.startsWith('changelog.')) return renderIcon('readme', size)
-  if (base.startsWith('license.') || base.startsWith('licence.')) return renderIcon('certificate', size)
+  if (base.startsWith('readme.') || base.startsWith('readme_') || base.startsWith('changelog.') || base.startsWith('changelog_')) return renderIcon('readme', size)
+  if (base.startsWith('license.') || base.startsWith('licence.') || base.startsWith('copying.')) return renderIcon('certificate', size)
 
   // 3. Extension match
   const dot = base.lastIndexOf('.')

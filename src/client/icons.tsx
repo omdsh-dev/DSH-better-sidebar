@@ -304,9 +304,19 @@ const MATERIAL_ICONS: Record<string, (size: number) => ReactNode> = {
       <path fill="#00e676" d="M15.438 29.636a.685.685 0 0 1-1.029.213L2.274 20.755A.65.65 0 0 1 2 20.187V9.175a.715.715 0 0 1 1.166-.568l7.404 5.612a1.47 1.47 0 0 0 2.125-.497l6.102-11.367A.72.72 0 0 1 19.414 2h9.872a.76.76 0 0 1 .617 1.137l-14.465 26.57Z"/>
     </svg>
   ),
+  'tsdown': (size: number) => (
+    <svg width={size} height={size} xmlSpace="preserve" viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
+      <path fill="#757575" d="M14.999 11h10l-5 11H10z"/><path fill="#bdbdbd" d="M19.998 2 25 10.998H15l-5-9z"/><path fill="#9e9e9e" d="m14.998 11-5 11-5.237-8.795L10 2z"/><path fill="#ffb74d" d="m16.999 16.005 3-.006 7 12h-3z"/><path fill="#ff9800" d="m15.999 17.998 1-1.993 7 11.994-1 2z"/><path fill="#ef6c00" d="M26 29.999h-3.001l1-2h3z"/>
+    </svg>
+  ),
   'tailwindcss': (size: number) => (
     <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
       <path fill="#4db6ac" d="M23.5 12H8c.89-2.3 4.02-4 7.75-4s6.86 1.7 7.75 4M14 12h15.5c-.89 2.3-4.02 4-7.75 4s-6.86-1.7-7.75-4m3.5 8H2c.89-2.3 4.02-4 7.75-4s6.86 1.7 7.75 4M8 20h15.5c-.89 2.3-4.02 4-7.75 4S8.89 22.3 8 20"/>
+    </svg>
+  ),
+  'postcss': (size: number) => (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
+      <path fill="#e53935" d="M20 12v8h-8v-8zm2-2H10v12h12z"/><path fill="#e53935" d="M16 5.488 26.159 20H5.84zM16 2 2 22h28z"/><path fill="#e53935" d="M16 13a3 3 0 1 1-3 3 3.003 3.003 0 0 1 3-3m0-2a5 5 0 1 0 5 5 5 5 0 0 0-5-5"/><path fill="#e53935" d="M16 4A12 12 0 1 1 4 16 12.014 12.014 0 0 1 16 4m0-2a14 14 0 1 0 14 14A14 14 0 0 0 16 2"/>
     </svg>
   ),
   'eslint': (size: number) => (
@@ -419,6 +429,61 @@ const MATERIAL_ICONS: Record<string, (size: number) => ReactNode> = {
       <path d="m8.668 6h3.6641l-3.6641-3.668v3.668m-4.668-4.668h5.332l4 4v8c0 0.73828-0.59375 1.3359-1.332 1.3359h-8c-0.73828 0-1.332-0.59766-1.332-1.3359v-10.664c0-0.74219 0.59375-1.3359 1.332-1.3359m3.332 1.3359h-3.332v10.664h8v-6h-4.668z" fill="#90a4ae" />
     </svg>
   ),
+  'jest': (size: number) => (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
+      <path fill="#f4511e" d="m21.032 8-1.878 4L20 13.998h2L22.928 12z"/><path fill="#f4511e" d="m14 2 2 8h2l3.032-6L24 10h2l2-8zm14 18h-2a4.34 4.34 0 0 1-4-4h-2a4.17 4.17 0 0 1-4.23 3.87c-1.522 2.38-5.155 4.283-7.77 5.148A4.724 4.724 0 0 1 5 20H4c-4.718 7.978 3.064 13.219 10.955 7.895C18.85 24.497 29.658 27.487 28 20"/><circle cx="7" cy="15" r="3" fill="#f4511e"/><circle cx="27" cy="15" r="3" fill="#f4511e"/><circle cx="16" cy="16" r="2" fill="#f4511e"/>
+    </svg>
+  ),
+  'webpack': (size: number) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+      <path fill="#fafafa" fillOpacity=".785" d="m19.376 15.988-7.708 4.45-7.709-4.45v-8.9l7.709-4.451 7.708 4.45z"/><path fill="#90caf9" d="M12.286 1.98c-.21 0-.41.059-.57.179l-7.9 4.44c-.32.17-.53.5-.53.88v9c0 .38.21.711.53.881l7.9 4.44c.16.12.36.18.57.18s.41-.06.57-.18l7.9-4.44c.32-.17.53-.5.53-.88v-9c0-.38-.21-.712-.53-.882l-7.9-4.44a.95.95 0 0 0-.57-.179zm0 2.15 7 3.94v2.103h-.016v5.177h.016v.54l-7 3.939-7-3.94V8.07zm0 2.08-4.9 2.83 4.9 2.83 4.9-2.83zm-5 5.08v3.58l4 2.309v-3.58l-4-2.31zm10 0-4 2.308v3.58l4-2.308z"/><path fill="#0277bd" d="m12.286 6.21-4.9 2.83 4.9 2.83 4.9-2.83zm-5 5.08v3.58l4 2.309v-3.58l-4-2.31zm10 0-4 2.308v3.58l4-2.308z"/>
+    </svg>
+  ),
+  'rollup': (size: number) => (
+    <svg width={size} height={size} viewBox="100 100 800 800" fill="none" style={{ flexShrink: 0 }}>
+      <path fill="#f44336" d="M733.79 394.71c0 77.407-42.308 144.79-104.67 180.51-3.76 3.134-5.954 8.148-3.76 12.849l106.87 211.22c2.82 6.581-1.568 14.103-8.776 14.103h-408.35l2.194-1.254c15.356-8.774 121.91-219.06 225.95-318.72 104.05-99.658 117.21-66.439 59.857-174.87 0 0 44.188 86.182 6.581 92.763-29.459 5.328-97.15-60.17-72.08-119.09 25.071-57.664 123.79-46.695 169.23.314 17.236 30.085 26.952 64.872 26.952 102.17m-385.47 140.71c-41.367 76.154-67.692 131.62-82.108 170.48v-509.57c0-5.328 4.388-9.715 9.715-9.715h252.91c73.333 1.253 137.58 40.114 173.62 98.718-26.325-32.906-67.692-51.71-108.43-51.71-77.407 0-96.837 28.206-245.7 301.79z"/>
+    </svg>
+  ),
+  'babel': (size: number) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+      <path fill="#fdd835" d="M18.23 11.21q-.045-.24-1.32-1.65c-.02-.19.29-.45.9-.8l1.74-1.55c.39-.5.62-1.28.69-2.38l-.02-.26c-.07-.78-.63-1.4-1.69-1.89-.63-.42-1.76-.65-3.38-.68-1.35.11-3.11.59-5.28 1.43-.6.43-1.28.86-2.04 1.28l.01.14.21-.08c.08-.01.13.03.14.11l.13-.07.07-.01.01.06c0 .07-.47.44-1.76 1.35l-.06.12c-.31.02-.61.25-.91.67l.08.12.25-.09.18.24c.32-.33.66-.62 1.03-.87.19.05.29.11.44.16 1.02-.75 2.03-1.3 3.04-1.64l.01.14c-.2.27-.32.42-.38.42l.1.23c.01.19-2.55 7-6.66 14.44l.08.19c.35-.08.58-.17.75-.26l.01.13.4-.03-.67 1.76.14.06c.57-.64 1-1.29 1.3-1.88 1.67-.49 2.94-.97 3.82-1.44.88-.08 1.56-.31 2.02-.7l.92-.47c1.27-.98 2.22-1.67 2.87-2.08 1.33-.98 2.2-1.93 2.6-2.85zm-3.46 2.31L13 14.91c-1.29.85-2 1.3-2.09 1.3-2.07 1.13-3.36 1.72-3.86 1.76l-.05.01c.04-.23.96-2.12 2.75-5.67.78-.06 2.02-.43 3.71-1.1l.41-.03c.85-.08 1.49.09 1.91.49l.03.26c-.31.9-.67 1.44-1.04 1.59m1.09-5.78q-.27.33-1.5 1.11c-.27.03-1.27.42-3.01 1.18l-.28-.05-.01-.12c-.02-.25.09-.57.34-.95.13-.7.28-1.12.44-1.2l1.45-3.28c-.02-.22.29-.35.93-.46l.21-.02.01.18 1.16-.16c1.15-.1 1.75.14 1.8.7l.13-.02-.03-.32.15-.02c.35.19.52.4.54.68.02.18-.08.41-.29.68-.09.01-.14-.06-.15-.18l-.14.01-.03.4c-.58.87-1.01 1.31-1.27 1.34z"/>
+    </svg>
+  ),
+  'next': (size: number) => (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
+      <path fill="#cfd8dc" d="M16 2a14 14 0 1 0 5.816 26.723L12 14v9a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1h2.434a1 1 0 0 1 .857.486l11.491 19.15A14 14 0 0 0 16 2m8 16h-4V9a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1Z"/>
+    </svg>
+  ),
+  'remix': (size: number) => (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
+      <path fill="#b0bec5" d="M28 12v-2a8 8 0 0 0-8-8H4v6h12.83a3.114 3.114 0 0 1 3.166 2.839A3 3 0 0 1 17 14H4v6h12a4 4 0 0 1 4 4v6h8v-5a7 7 0 0 0-7-7h1a6 6 0 0 0 6-6M12 26H4v4h10v-2a2 2 0 0 0-2-2"/>
+    </svg>
+  ),
+  'astro': (size: number) => (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
+      <path fill="#7c4dff" d="M12.106 25.849c-1.262-1.156-1.63-3.586-1.105-5.346a5.18 5.18 0 0 0 3.484 1.66 9.68 9.68 0 0 0 5.882-.734c.215-.106.413-.247.648-.39a3.5 3.5 0 0 1 .16 1.555 4.26 4.26 0 0 1-1.798 3.021c-.404.3-.832.569-1.25.852a2.613 2.613 0 0 0-1.15 3.372l.048.161a3.4 3.4 0 0 1-1.5-1.285 3.6 3.6 0 0 1-.578-1.962 9 9 0 0 0-.05-1.037c-.114-.831-.504-1.204-1.238-1.225a1.45 1.45 0 0 0-1.507 1.18c-.012.056-.028.112-.046.178M4.901 20a17.75 17.75 0 0 1 7.4-2l2.913-8.38a.765.765 0 0 1 1.527 0L19.7 18a14.24 14.24 0 0 1 7.399 2S20.704 2.877 20.692 2.842C20.51 2.33 20.202 2 19.787 2h-7.619c-.415 0-.71.33-.904.842z"/>
+    </svg>
+  ),
+  'nuxt': (size: number) => (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
+      <path fill="#00e676" d="m30.27 23-6.93-12a1.98 1.98 0 0 0-1.73-1 1.96 1.96 0 0 0-1.73 1l-2.27 3.93-3.88-6.71a1.996 1.996 0 0 0-3.46 0L1.73 23a2 2 0 0 0 1.73 3h8.915a6 6 0 0 0 5.197-3.001L21.61 16l3.46 6h-2.31l-2.31 4h8.09a2 2 0 0 0 1.73-3m-17.896-1H6.93L12 13.22l3.3 5.71-1.193 2.069A2 2 0 0 1 12.374 22"/>
+    </svg>
+  ),
+  'turborepo': (size: number) => (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
+      <defs><linearGradient id="a" x1="27.349" x2="7.613" y1="26.455" y2="6.719" gradientTransform="matrix(1 0 0 -1 0 34)" gradientUnits="userSpaceOnUse"><stop offset=".15" stopColor="#2196f3"/><stop offset=".85" stopColor="#f50057"/></linearGradient></defs><path fill="#cfd8dc" d="M16 8a8 8 0 1 0 8 8 8 8 0 0 0-8-8m0 12a4 4 0 1 1 4-4 4 4 0 0 1-4 4"/><path fill="url(#a)" d="M4.281 23.647A13.9 13.9 0 0 1 2 16h4a9.95 9.95 0 0 0 1.192 4.736ZM14 29.84v-4.042a9.9 9.9 0 0 1-3.892-1.732l-2.854 2.855A13.9 13.9 0 0 0 14 29.84M16 2v4a10 10 0 0 1 2 19.8v4.04A13.992 13.992 0 0 0 16 2"/>
+    </svg>
+  ),
+  'biome': (size: number) => (
+    <svg width={size} height={size} viewBox="0 0 74 74" fill="none" style={{ flexShrink: 0 }}>
+      <path fill="#42a5f5" d="M37 9 22.745 33.69a32.2 32.2 0 0 1 16.869-.584l4.818 1.137-4.533 19.22-4.825-1.137c-5.93-1.399-11.628 1.716-14.036 6.685l-4.46-2.158c3.404-7.029 11.425-11.285 19.637-9.347l2.259-9.58A27.23 27.23 0 0 0 5 64.424l64 .001z"/>
+    </svg>
+  ),
+  'deno': (size: number) => (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
+      <path fill="#cfd8dc" d="M3.288 23.102A13.937 14.098 0 0 1 2 17.16c0-.553.028-1.09.091-1.622a14.049 14.211 0 0 1 .273-1.586 14 14.162 0 0 1 4.333-7.37 14.007 14.169 0 0 1 6.37-3.272 14.028 14.19 0 0 1 3.997-.27 13.958 14.12 0 0 1 4.76 1.24 14.021 14.183 0 0 1 3.241 2.089 14.028 14.19 0 0 1 4.732 8.355A14.063 14.225 0 0 1 30 17.161a14.175 14.339 0 0 1-.042 1.076 13.986 14.147 0 0 1-.847 3.902 14.007 14.169 0 0 1-2.779 4.574A7.245 7.329 0 0 1 21.166 29a5.054 5.112 0 0 1-4.816-6.444c.119-.453.434-1.317.889-1.699a5.334 5.396 0 0 1-1.435-.977c-.049-.057-.042-.156.007-.22a.182.184 0 0 1 .203-.056 10.206 10.324 0 0 0 1.596.41c.777.128 1.736.298 2.709.34 2.366.12 4.844-.956 5.614-3.094.763-2.146.469-4.263-2.289-5.53-2.758-1.275-4.032-2.783-6.258-3.696-1.456-.595-3.073-.241-4.732.694-4.48 2.5-8.491 10.408-6.643 17.737a.224.227 0 0 1-.364.22 14.077 14.24 0 0 1-1.463-1.927 14.021 14.183 0 0 1-.896-1.656M15.503 9.018c.749-.057 1.414.595 1.526 1.459.147 1.154-.273 2.35-1.645 2.379-1.183.02-1.54-1.176-1.456-1.905.077-.73.665-1.862 1.568-1.933z"/>
+    </svg>
+  ),
 }
 
 // Exact filename to icon ID (lowercased)
@@ -427,6 +492,7 @@ const EXACT_FILES: Record<string, string> = {
   'package-lock.json': 'nodejs',
   '.nvmrc': 'nodejs',
   '.node-version': 'nodejs',
+  '.esmrc': 'nodejs',
   'pnpm-lock.yaml': 'pnpm',
   'pnpm-workspace.yaml': 'pnpm',
   '.pnpmfile.cjs': 'pnpm',
@@ -437,27 +503,75 @@ const EXACT_FILES: Record<string, string> = {
   'bun.lockb': 'bun',
   'bun.lock': 'bun',
   'bunfig.toml': 'bun',
+  '.bun-version': 'bun',
+  'deno.json': 'deno',
+  'deno.jsonc': 'deno',
+  'deno.lock': 'deno',
+  'turbo.json': 'turborepo',
+  'turbo.jsonc': 'turborepo',
+  'biome.json': 'biome',
+  'biome.jsonc': 'biome',
   'tsconfig.json': 'tsconfig',
   'tsconfig.build.json': 'tsconfig',
   'tsconfig.esm.json': 'tsconfig',
   'tsconfig.node.json': 'tsconfig',
+  'tsconfig.app.json': 'tsconfig',
+  'tsconfig.spec.json': 'tsconfig',
   'jsconfig.json': 'tsconfig',
+  'tsdown.config.ts': 'tsdown',
+  'tsdown.config.js': 'tsdown',
+  'tsdown.config.mjs': 'tsdown',
+  'tsdown.config.cjs': 'tsdown',
+  'tsdown.config.json': 'tsdown',
   'playwright.config.ts': 'playwright',
   'playwright.config.js': 'playwright',
   'playwright.config.mjs': 'playwright',
   'playwright.config.cjs': 'playwright',
-  'vite.config.ts': 'vite',
-  'vite.config.js': 'vite',
-  'vite.config.mjs': 'vite',
-  'vite.config.cjs': 'vite',
   'vitest.config.ts': 'vitest',
   'vitest.config.js': 'vitest',
   'vitest.config.mjs': 'vitest',
   'vitest.config.cjs': 'vitest',
+  'vitest.config.mts': 'vitest',
+  'vitest.config.cts': 'vitest',
+  'jest.config.js': 'jest',
+  'jest.config.ts': 'jest',
+  'jest.config.cjs': 'jest',
+  'jest.config.mjs': 'jest',
+  'jest.config.json': 'jest',
+  'vite.config.ts': 'vite',
+  'vite.config.js': 'vite',
+  'vite.config.mjs': 'vite',
+  'vite.config.cjs': 'vite',
+  'vite.config.mts': 'vite',
+  'vite.config.cts': 'vite',
+  'rollup.config.js': 'rollup',
+  'rollup.config.ts': 'rollup',
+  'rollup.config.mjs': 'rollup',
+  'rollup.config.cjs': 'rollup',
+  'webpack.config.js': 'webpack',
+  'webpack.config.ts': 'webpack',
+  'webpack.config.cjs': 'webpack',
+  'webpack.config.mjs': 'webpack',
+  'next.config.js': 'next',
+  'next.config.ts': 'next',
+  'next.config.mjs': 'next',
+  'nuxt.config.js': 'nuxt',
+  'nuxt.config.ts': 'nuxt',
+  'astro.config.mjs': 'astro',
+  'astro.config.js': 'astro',
+  'astro.config.ts': 'astro',
   'tailwind.config.js': 'tailwindcss',
   'tailwind.config.ts': 'tailwindcss',
   'tailwind.config.mjs': 'tailwindcss',
   'tailwind.config.cjs': 'tailwindcss',
+  'postcss.config.js': 'postcss',
+  'postcss.config.ts': 'postcss',
+  'postcss.config.mjs': 'postcss',
+  'postcss.config.cjs': 'postcss',
+  'postcss.config.json': 'postcss',
+  '.postcssrc': 'postcss',
+  '.postcssrc.json': 'postcss',
+  '.postcssrc.js': 'postcss',
   'eslint.config.js': 'eslint',
   'eslint.config.mjs': 'eslint',
   'eslint.config.cjs': 'eslint',
@@ -527,6 +641,7 @@ const EXT_MAP: Record<string, string> = {
   jsx: 'react',
   vue: 'vue',
   svelte: 'svelte',
+  astro: 'astro',
   py: 'python',
   pyw: 'python',
   ipynb: 'python',
@@ -677,15 +792,23 @@ export function fileIconFor(fileName: string, size = 14): ReactNode {
   // 2. Prefix & pattern matches for special config / dotfiles
   if (base.startsWith('.env')) return renderIcon('tune', size)
   if (base.startsWith('tsconfig.') || base.startsWith('jsconfig.')) return renderIcon('tsconfig', size)
+  if (base.startsWith('tsdown.config.')) return renderIcon('tsdown', size)
   if (base.startsWith('playwright.config.')) return renderIcon('playwright', size)
-  if (base.startsWith('vite.config.')) return renderIcon('vite', size)
   if (base.startsWith('vitest.config.')) return renderIcon('vitest', size)
+  if (base.startsWith('jest.config.')) return renderIcon('jest', size)
+  if (base.startsWith('vite.config.')) return renderIcon('vite', size)
+  if (base.startsWith('rollup.config.')) return renderIcon('rollup', size)
+  if (base.startsWith('webpack.config.')) return renderIcon('webpack', size)
+  if (base.startsWith('next.config.')) return renderIcon('next', size)
+  if (base.startsWith('nuxt.config.')) return renderIcon('nuxt', size)
+  if (base.startsWith('astro.config.')) return renderIcon('astro', size)
   if (base.startsWith('tailwind.config.')) return renderIcon('tailwindcss', size)
+  if (base.startsWith('postcss.config.') || base.startsWith('.postcssrc')) return renderIcon('postcss', size)
   if (base.startsWith('eslint.config.') || base.startsWith('.eslintrc')) return renderIcon('eslint', size)
   if (base.startsWith('prettier.config.') || base.startsWith('.prettierrc')) return renderIcon('prettier', size)
   if (base.startsWith('dockerfile.') || base.startsWith('docker-compose.')) return renderIcon('docker', size)
-  if (base.startsWith('readme.') || base.startsWith('readme_') || base.startsWith('changelog.')) return renderIcon('readme', size)
-  if (base.startsWith('license.') || base.startsWith('licence.')) return renderIcon('certificate', size)
+  if (base.startsWith('readme.') || base.startsWith('readme_') || base.startsWith('changelog.') || base.startsWith('changelog_')) return renderIcon('readme', size)
+  if (base.startsWith('license.') || base.startsWith('licence.') || base.startsWith('copying.')) return renderIcon('certificate', size)
 
   // 3. Extension match
   const dot = base.lastIndexOf('.')
