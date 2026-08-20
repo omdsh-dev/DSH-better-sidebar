@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
+// First import: browser globals before the xterm-carrying builtin graph loads.
+import './browser-globals.ts'
+import { registerBuiltins } from '../src/client/builtins/index.ts'
+import { createBetterSidebarService } from '../src/client/service.ts'
 import { registerOpenPathInterception } from '../src/client/intercept.tsx'
 import { wrapOpenPath, type OpenPathInterceptDeps, type OpenPathService } from '../src/client/openpath-intercept.ts'
-import { createSidebarStore } from '../src/client/state.ts'
+import { createSidebarStore, allLeaves } from '../src/client/state.ts'
 import type { Context } from '../src/context-types.ts'
 
 describe('open-path interception', () => {
@@ -140,5 +144,85 @@ describe('open-path interception wiring', () => {
     // Disposal restores the raw original method (HMR-safe).
     restore()
     expect(ctx.workspaces.openPath).toBe(original)
+  })
+
+  it('splits a path:line suffix off before opening the editor (single and range)', async () => {
+    const opened: Array<Record<string, unknown>> = []
+    const ctx = {
+      sessions: {
+        list: { getSnapshot: () => ({ current: 's1', byId: { s1: { cwd: '/w' } } }) },
+      },
+      workspaces: { openPath: async (): Promise<void> => {} },
+      betterSidebar: { openTab: (seed: unknown) => { opened.push(seed as Record<string, unknown>) } },
+    } as unknown as Context
+    const store = createSidebarStore()
+    const restore = registerOpenPathInterception(ctx, store)
+
+    await ctx.workspaces.openPath('/w/src/a.ts:42')
+    await ctx.workspaces.openPath('/w/src/a.ts:10-20')
+    await ctx.workspaces.openPath('/w/src/b.ts')
+    expect(opened).toEqual([
+      {
+        type: 'editor',
+        title: 'a.ts',
+        path: '/w/src/a.ts',
+        id: 'editor:/w/src/a.ts',
+        meta: { line: { start: 42, end: 42 } },
+      },
+      {
+        type: 'editor',
+        title: 'a.ts',
+        path: '/w/src/a.ts',
+        id: 'editor:/w/src/a.ts',
+        meta: { line: { start: 10, end: 20 } },
+      },
+      {
+        type: 'editor',
+        title: 'b.ts',
+        path: '/w/src/b.ts',
+        id: 'editor:/w/src/b.ts',
+      },
+    ])
+    restore()
+  })
+
+  it('a plain reopen of an already-open file clears a stale jump via updateTab', async () => {
+    const store = createSidebarStore()
+    store.setSession('s1')
+    // The REAL sidebar service + builtins: the editor tab actually lands in
+    // the store, so the second open dedupes (focus) and openSidebarFile must
+    // push the jump through updateTab (a dedupe focus never updates meta).
+    const service = createBetterSidebarService(store)
+    const disposeBuiltins = registerBuiltins({} as Context, service)
+    const ctx = {
+      sessions: {
+        list: { getSnapshot: () => ({ current: 's1', byId: { s1: { cwd: '/w' } } }) },
+      },
+      workspaces: { openPath: async (): Promise<void> => {} },
+      betterSidebar: service,
+    } as unknown as Context
+    const restore = registerOpenPathInterception(ctx, store)
+    const editorTabs = (): Array<{ id: string; meta?: unknown }> => {
+      const state = store.getSnapshot().state!
+      return allLeaves(state.splits).concat(allLeaves(state.bottomSplits)).flatMap(leaf => leaf.tabs)
+        .filter(t => t.type === 'editor')
+    }
+
+    // First open creates the tab (the meta rides the seed).
+    await ctx.workspaces.openPath('/w/src/a.ts:42')
+    expect(editorTabs().find(t => t.id === 'editor:/w/src/a.ts')?.meta)
+      .toEqual({ line: { start: 42, end: 42 } })
+
+    // Second open at a new line FOCUSES the existing tab (per-path dedupe)
+    // — the seed meta is dropped, so the jump must be pushed via updateTab.
+    await ctx.workspaces.openPath('/w/src/a.ts:100')
+    expect(editorTabs().find(t => t.id === 'editor:/w/src/a.ts')?.meta)
+      .toEqual({ line: { start: 100, end: 100 } })
+
+    // A plain reopen clears the stale jump.
+    await ctx.workspaces.openPath('/w/src/a.ts')
+    expect(editorTabs().find(t => t.id === 'editor:/w/src/a.ts')?.meta).toBeNull()
+    restore()
+    disposeBuiltins()
   })
 })

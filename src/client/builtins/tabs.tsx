@@ -110,6 +110,13 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
             },
           ],
         }],
+        // The chat path:line link toggle (plugin-owned, default on): gates
+        // the mention resolution that turns chat path references into links.
+        pluginToggles: [{
+          key: 'chatPathLinks',
+          title: () => t('settingsChatPathLinksTitle'),
+          desc: () => t('settingsChatPathLinksDesc'),
+        }],
       },
       component: ({ ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile }) => (
         <EditorHost

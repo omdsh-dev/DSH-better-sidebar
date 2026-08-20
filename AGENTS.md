@@ -410,8 +410,14 @@ interface FileViewerProps {
   toolbar?: 'self' | 'host'
   onToolbarState?: (state: EditorToolbarState) => void
   onToolbarControls?: (controls: EditorToolbarControls | null) => void
+  // 行跳转目标（v0.13.0+）：见下方说明。
+  jumpLine?: { start: number; end: number }
 }
 ```
+
+> 💡 **`jumpLine`（v0.13.0+）**：当文件是从聊天里的 `path:line` 提及（如 `` `src/main.ts:42` ``）打开时，编辑器宿主把 `tab.meta.line` 翻译成 `jumpLine`（1-based 起止行、含两端）传给命中的 viewer。内置文本 viewer（`code`/`markdown`/`html`）据此滚动到该行范围并高亮（高亮保留到用户在编辑器内点击才消失；滚动不清除；Markdown/HTML 自动切到编辑模式展示）。其它 viewer 忽略即可——缺省 `undefined`，行为与之前完全一致。
+
+> 💡 **聊天路径/行号超链接（v0.13.0+，内置行为）**：DSH 的 `chatFileMentions` 服务（ui-deliverables）只解析「本次产出的文件」，本插件包装该服务（wrap `forClosing`，与 `workspaces.openPath` 同款单漏斗模式，不重复注册服务）：settled 聊天内联代码中的文件路径与 `path:line`/`path:start-end` 引用（`src/main.ts`、`src/main.ts:42`、`src/main.ts:42-56`、`C:\proj\a.ts:42`）解析为可点击提及，点击经 openPath 拦截进侧边栏编辑器并带行跳转；产物路径解析保持 DSH 原语义（优先）。**只对「确认存在」的文件生成链接**：MarkdownText 的 `resolve()` 是同步的，无法等异步校验，所以客户端维护一个已验证路径缓存（`src/client/verified-paths.ts`）——会话（工作区）激活时宿主侧 `fs.index` 路由做一次**有边界的递归扫描**（跳过 node_modules/.git/dist 等重型目录，条目数默认 20k、深度默认 12，超限截断）把整棵树的路径灌进缓存；索引未覆盖的路径（扫描后新建的文件、被跳过的目录等）回退到一次性 `fs.read` 探测（带失败 TTL，避免每次重渲染重复探测）。不存在的路径（如聊天里的举例占位）保持纯文本、永不渲染成链接；已验证的路径在下一次聊天重渲染后升级为链接。解析规则见 `src/client/path-line.ts`（纯函数，`tests/path-line.spec.ts` 守护）；开关注册在编辑器 tab 的 `settings.pluginToggles`（key `chatPathLinks`，默认开，`pluginSettings['editor'].chatPathLinks`）。宿主还通过 `systemPrompt.section()`（DSH 公开服务，`dsh-app-boot` 同款用法）注入一行极简指令，让模型倾向于用 `相对路径:行号` 引用代码——配置项 `codeRefPrompt`（默认开）控制，`indexLimit`/`indexMaxDepth` 控制扫描边界。
 
 ### 4.3 `fetchStrategy` 对照
 

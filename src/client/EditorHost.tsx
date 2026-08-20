@@ -22,7 +22,7 @@
  * The strategy dispatch is pure (planFirstMatch / planFsReadOutcome in
  * editor-load.ts); this component only wires it to the host APIs.
  */
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
 import { IconCheckOutline16, IconFolderOpen16 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -34,6 +34,7 @@ import { baseName } from './FileTree.tsx'
 import { openSidebarFile } from './intercept.tsx'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
+import { readJumpMeta } from './path-line.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
@@ -96,6 +97,12 @@ export function EditorHost(props: {
   const { ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile } = props
   const path = tab.path ?? ''
   const title = tab.title
+  // The line jump target from the tab's meta (a chat path:line click).
+  // Memoized on the meta VALUE: the sidebar re-renders the active tab on
+  // every store change, and an unmemoized fresh object would re-fire the
+  // editor's jump effect on each render — clobbering the user's selection
+  // and re-scrolling to the jump target while they select code.
+  const jumpLine = useMemo(() => readJumpMeta(tab.meta), [tab.meta])
   const [load, setLoad] = useState<EditorLoad>({ status: 'loading' })
 
   // Reactive prefs read: flipping editorExplorer re-renders this tab with no
@@ -343,6 +350,9 @@ export function EditorHost(props: {
             toolbar: 'host',
             onToolbarState,
             onToolbarControls,
+            // The line jump (from a chat path:line click or tab.meta): the
+            // code viewers scroll to and highlight the range; others ignore.
+            jumpLine: jumpLine ?? undefined,
           })}
         </div>
         {treeOpen && (

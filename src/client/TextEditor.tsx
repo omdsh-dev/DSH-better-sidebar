@@ -17,8 +17,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ComponentType } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
-import { EditorState } from '@codemirror/state'
-import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
+import { EditorState, StateEffect, StateField } from '@codemirror/state'
+import { Decoration, EditorView as CodeMirrorView, keymap, lineNumbers, type DecorationSet } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, htmlUrl } from './api.ts'
@@ -31,6 +31,7 @@ import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
 import { lazyChunkComponent } from './lazy-chunk.tsx'
 import { splitMermaidBlocks, type MermaidMarkdownProps } from './mermaid-blocks.ts'
 import { t } from './locales.ts'
+import { readJumpMeta, type LineRange } from './path-line.ts'
 import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
 
@@ -63,8 +64,28 @@ const LazyMermaidMarkdown = lazyChunkComponent<MermaidMarkdownProps>(
  */
 export const HTML_IFRAME_SANDBOX = 'allow-scripts allow-popups allow-downloads allow-modals'
 
+/** Effect carrying the next line-jump decoration set (none = clear). */
+const setJumpHighlight = StateEffect.define<DecorationSet>()
+
+/** The line-jump highlight: a line decoration set driven by
+ *  {@link setJumpHighlight}, mapped across document changes so a jump's
+ *  highlight survives edits. It persists until the user CLICKS inside the
+ *  editor (see the mousedown handler below) or a new jump / plain reopen
+ *  replaces it — scrolling never clears it. */
+const jumpHighlightField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update: (deco, tr) => {
+    deco = deco.map(tr.changes)
+    for (const effect of tr.effects) {
+      if (effect.is(setJumpHighlight)) deco = effect.value
+    }
+    return deco
+  },
+  provide: (field) => CodeMirrorView.decorations.from(field),
+})
+
 export function TextEditor(props: FileViewerProps) {
-  const { ctx, scope, path, viewerId, content, truncated } = props
+  const { ctx, scope, path, viewerId, content, truncated, jumpLine } = props
   const [mode, setMode] = useState<ViewMode>('preview')
   /** The editor's current text (null while clean); preview renders this. */
   const [draft, setDraft] = useState<string | null>(null)
@@ -83,6 +104,15 @@ export function TextEditor(props: FileViewerProps) {
   const popupRef = useRef<SelectionPopup | null>(null)
   /** The markdown preview container (selection-containment + line lookup). */
   const mdRef = useRef<HTMLDivElement>(null)
+  /** The line jump still to apply (the view may not exist / be visible yet). */
+  const pendingJumpRef = useRef<{ line: LineRange; path: string } | null>(null)
+  /** Whether the pending jump was already applied (scroll + highlight done). */
+  const appliedJumpRef = useRef(false)
+  /** A rAF retry while the view is hidden (collapsed panel / inactive split). */
+  const jumpRetryRef = useRef<number | null>(null)
+  /** The current path, read fresh by deferred jump retries (never stale). */
+  const pathRef = useRef(path)
+  pathRef.current = path
 
   const hidePopup = (): void => {
     popupRef.current = null
@@ -106,6 +136,77 @@ export function TextEditor(props: FileViewerProps) {
     if (current === null) return
     appendToDraft(ctx, scope.sessionId, current.insert)
     hidePopup()
+  }
+
+  /** Cancel a pending rAF jump retry (idempotent). */
+  const cancelJumpRetry = (): void => {
+    if (jumpRetryRef.current !== null) {
+      cancelAnimationFrame(jumpRetryRef.current)
+      jumpRetryRef.current = null
+    }
+  }
+
+  /** Clear the pending jump state and any highlight (idempotent). */
+  const clearJump = (): void => {
+    pendingJumpRef.current = null
+    appliedJumpRef.current = false
+    cancelJumpRetry()
+    viewRef.current?.dispatch({ effects: setJumpHighlight.of(Decoration.none) })
+  }
+
+  /**
+   * Apply the pending line jump to the CodeMirror view: select the range,
+   * scroll it into view (vertically centered) and highlight it. The
+   * highlight stays until the user clicks inside the editor — scrolling
+   * never clears it. The markdown/html preview hides the CM view — reveal
+   * the edit surface first (the [mode] effect re-runs this once the mode
+   * flips). A hidden (zero-size) view defers to the next frame; a missing
+   * view waits for the view-creation effect to call back. Applies at most
+   * once per jump, and only when the pending jump belongs to the CURRENT
+   * file.
+   */
+  const applyJump = (): void => {
+    const view = viewRef.current
+    const pending = pendingJumpRef.current
+    if (view === null || pending === null || appliedJumpRef.current) return
+    if (pending.path !== pathRef.current) return
+    const jump = pending.line
+    const markdown = viewerId === 'markdown'
+    const html = viewerId === 'html'
+    if ((markdown || html) && mode === 'preview') {
+      setMode('edit')
+      return
+    }
+    const host = hostRef.current
+    if (host !== null && (host.clientWidth === 0 || host.clientHeight === 0)) {
+      cancelJumpRetry()
+      jumpRetryRef.current = requestAnimationFrame(() => {
+        jumpRetryRef.current = null
+        applyJump()
+      })
+      return
+    }
+    const doc = view.state.doc
+    if (doc.lines === 0) {
+      appliedJumpRef.current = true
+      return
+    }
+    const startLine = Math.min(Math.max(jump.start, 1), doc.lines)
+    const endLine = Math.min(Math.max(jump.end, startLine), doc.lines)
+    const from = doc.line(startLine).from
+    const to = doc.line(endLine).to
+    const decorations = Decoration.set(
+      Array.from({ length: endLine - startLine + 1 }, (_, i) =>
+        Decoration.line({ class: css.jumpLine }).range(doc.line(startLine + i).from)),
+    )
+    view.dispatch({
+      selection: { anchor: from, head: to },
+      effects: [
+        setJumpHighlight.of(decorations),
+        CodeMirrorView.scrollIntoView(from, { y: 'center' }),
+      ],
+    })
+    appliedJumpRef.current = true
   }
 
   useEffect(() => subscribeColorScheme(() => { setDark(isDarkScheme()) }), [])
@@ -142,6 +243,15 @@ export function TextEditor(props: FileViewerProps) {
         CodeMirrorView.contentAttributes.of({ spellcheck: 'false' }),
         cmSurfaceTheme,
         themeComp.of(dark),
+        jumpHighlightField,
+        // A click inside the editor dismisses the line-jump highlight (the
+        // user asked for click-based dismissal — scrolling keeps it). The
+        // handler receives the view, so no refs are captured.
+        CodeMirrorView.domEventHandlers({
+          mousedown: (_event, view) => {
+            view.dispatch({ effects: setJumpHighlight.of(Decoration.none) })
+          },
+        }),
         ...(language !== null ? [language] : []),
         CodeMirrorView.updateListener.of((update) => {
           if (update.docChanged) {
@@ -205,7 +315,11 @@ export function TextEditor(props: FileViewerProps) {
     })
     const view = new CodeMirrorView({ state, parent: host })
     viewRef.current = view
+    // A line jump requested while the content was still loading applies
+    // once the view exists (and again on visibility changes via [mode]).
+    applyJump()
     return () => {
+      cancelJumpRetry()
       view.destroy()
       viewRef.current = null
       themeCompRef.current = null
@@ -226,11 +340,33 @@ export function TextEditor(props: FileViewerProps) {
 
   // The editor may have been display:none while previewing; re-measure when
   // it becomes visible again (CodeMirror sizes itself on reveal). A mode
-  // flip also invalidates any anchored selection popup.
+  // flip also invalidates any anchored selection popup — and re-runs a
+  // pending line jump (the markdown/html preview deferral re-applies once
+  // the mode flips to edit).
   useEffect(() => {
     hidePopup()
     if (mode === 'edit') viewRef.current?.requestMeasure()
+    applyJump()
   }, [mode])
+
+  // The line jump (from a chat path:line click or the tab's meta): stash it
+  // and apply once the view exists; a null jump (plain reopen) clears any
+  // pending jump and highlight. `jumpLine` is MEMOIZED by the editor host on
+  // `tab.meta` (EditorHost), so this effect only re-runs when the jump
+  // target actually changes — a re-click of the same mention pushes a fresh
+  // meta and re-jumps; unrelated re-renders never re-apply (the original
+  // "selecting code re-jumps" bug).
+  useEffect(() => {
+    if (jumpLine === undefined || jumpLine === null) {
+      clearJump()
+      return
+    }
+    pendingJumpRef.current = { line: { start: jumpLine.start, end: jumpLine.end }, path }
+    appliedJumpRef.current = false
+    applyJump()
+    // applyJump reads refs for the rest; path is part of the pending record.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpLine])
 
   const save = (): void => {
     const view = viewRef.current

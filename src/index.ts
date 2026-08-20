@@ -28,7 +28,7 @@ import {
   type SidebarConfig,
   type SidebarPrefs,
 } from './config.ts'
-import { isWithin, parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import { isWithin, parentOf, requireAbsolute, listDirectory, rootLabel, indexDirectory } from './fs-tree.ts'
 import { searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
@@ -45,6 +45,7 @@ import {
   PTY_DEPS_MISSING,
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
+import { registerCodeRefPrompt, type SystemPromptFace } from './code-ref-prompt.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 
@@ -242,6 +243,13 @@ function buildApi(
       const record = payload as { path?: unknown }
       const target = record.path === undefined ? cwd : requireAbsolute(requireString(payload, 'path'))
       return listDirectory(target, resolved.listLimit)
+    },
+    'fs.index': async (payload) => {
+      // One bounded recursive scan of the session workspace: seeds the chat
+      // path-cache (verified-paths.ts). The host walks the tree directly, so
+      // a huge repo costs a single request, not one HTTP call per directory.
+      const { cwd } = cwdOf(payload)
+      return indexDirectory(cwd, { maxEntries: resolved.indexLimit, maxDepth: resolved.indexMaxDepth })
     },
     'fs.search': async (payload) => {
       // The editor side panel's global name search: rooted at the session
@@ -517,6 +525,15 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   const agentPtyRegistry = nodePty !== null
     ? new AgentPtyRegistry(terminalShell, resolved.shellArgs, nodePty)
     : null
+
+  // The code-reference prompt section (config-gated, default on): one short
+  // system-prompt instruction nudging the model to cite code as relative
+  // paths with line ranges — the format the chat mention links consume.
+  // Defensive: a deployment without the systemPrompt service is a no-op.
+  ctx.effect(
+    () => registerCodeRefPrompt(() => ctx.get('systemPrompt') as SystemPromptFace | undefined, ctx.logger),
+    'dsh-better-sidebar: code-reference prompt section',
+  )
 
   // ── User-facing "Side card" preferences ──────────────────────────────────
   // Register the namespace with the settings provider so the Settings page

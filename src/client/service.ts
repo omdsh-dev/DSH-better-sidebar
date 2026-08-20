@@ -263,6 +263,14 @@ export interface FileViewerProps {
   mediaUrl?: string
   /** custom load() return value (fetchStrategy='custom'). */
   customData?: unknown
+  /**
+   * A line range to reveal (v0.13.0+): set by the editor host when the file
+   * was opened from a chat `path:line` mention (or another flow carrying
+   * `tab.meta.line`). Text viewers scroll to and highlight the range (until
+   * a click dismisses it); other viewers ignore it. Absent when the file
+   * opens plainly.
+   */
+  jumpLine?: { start: number; end: number }
   /** Internal (built-in text editor): 'host' asks the viewer to skip its own
    *  toolbar row — the editor host's merged-mode header renders it instead,
    *  fed through the two callbacks below. Viewers that ignore these fields
@@ -485,6 +493,7 @@ export const SIDEBAR_SERVICE_VERSION = '0.14.0'
  * - 'pluginSettings': SidebarSettingsDeclaration.pluginToggles/render
  * - 'urlTarget' (v0.13.0): TabDescriptor.urlTarget (external-link claims)
  * - 'settingSelect': SidebarSettingToggle type 'select' (options/multi)
+ * - 'viewerJumpLine' (v0.13.0): FileViewerProps.jumpLine (line-jump reveal)
  */
 export const SIDEBAR_FEATURES = [
   'badge',
@@ -497,6 +506,7 @@ export const SIDEBAR_FEATURES = [
   'pluginSettings',
   'urlTarget',
   'settingSelect',
+  'viewerJumpLine',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
