@@ -214,10 +214,12 @@ export class AgentPtyRegistry {
     cwd: string,
     cols = 80,
     rows = 24,
+    shell?: string,
+    shellArgs?: string[],
   ): string {
     const uuid = randomUUID()
     const dims = clampDims(cols, rows)
-    const pty = this.nodePty.spawn(this.shell, shellSpawnArgs(this.shellArgs), {
+    const pty = this.nodePty.spawn(shell ?? this.shell, shellSpawnArgs(shellArgs ?? this.shellArgs), {
       name: 'xterm-256color',
       cols: dims.cols,
       rows: dims.rows,

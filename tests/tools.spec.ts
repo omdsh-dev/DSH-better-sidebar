@@ -87,7 +87,7 @@ function mount(): { captured: CapturedTool[]; registry: FakeRegistry; dispose: (
     },
   } as unknown as Context
   const registry = new FakeRegistry()
-  const dispose = registerTools(ctx, registry as unknown as AgentPtyRegistry, () => '/cwd')
+  const dispose = registerTools(ctx, registry as unknown as AgentPtyRegistry, () => '/cwd', () => ({}))
   return { captured, registry, dispose: () => { dispose(); return disposeCount } }
 }
 

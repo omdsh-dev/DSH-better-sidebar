@@ -20,6 +20,28 @@
    switching skins in the dsh-web-ui skin center re-skins the sidebar panels
    automatically (see AGENTS.md §8). */
 
+/* The unified panel host: a fixed, viewport-sized, click-transparent
+   containing block for every panel element. Panels are ABSOLUTE within it
+   (not fixed), so a desktop shell's intermediate wrapper transform can
+   never hijack their containing block — the host itself is the only fixed
+   element, appended directly to document.body. The layer sits at z-index 40
+   (below the app's overlay stack at 100+); each panel re-enables pointer
+   events on itself. Degraded mode ([data-dsh-panel-host-degraded]) covers
+   the rare shell that transforms <html>/<body> itself: the host becomes
+   absolute and the mount self-check pins it to the viewport every frame. */
+:global([data-dsh-panel-host]) {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+
+:global([data-dsh-panel-host][data-dsh-panel-host-degraded]) {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
 /* The persistent expand/collapse cluster at the top-right corner: two rail
    controls side by side (bottom panel's glyph LEFT of the right panel's).
    Always pinned to the viewport corner — inside the right panel's top-right
@@ -27,15 +49,18 @@
    top: 3) whose right end it really squeezes. z-index 45: above the panels
    (40) but below the app's overlay stack (menus/tooltips/modals sit at
    100+), so a cordis approval popup is never hidden behind the workbench
-   (issue #52). */
+   (issue #52). Absolute within the panel host (the host's inset: 0 makes
+   viewport coordinates identical). */
 .toggleCluster {
-  position: fixed;
-  top: 3px;
+  position: absolute;
+  /* env() resolves to 0 on devices without a top inset (desktops). */
+  top: calc(3px + env(safe-area-inset-top));
   right: 10px;
   z-index: 45;
   display: flex;
   flex-direction: row;
   gap: 4px;
+  pointer-events: auto;
 }
 
 /* The tab strip of the OPEN right panel reserves the cluster's width at its
@@ -77,7 +102,7 @@
 }
 
 .panel {
-  position: fixed;
+  position: absolute;
   top: 0;
   right: 0;
   /* Full height: the bottom panel squeezes only the center column, so the
@@ -90,12 +115,17 @@
   z-index: 40;
   display: flex;
   flex-direction: column;
+  /* Re-enable interaction inside the click-transparent panel host. */
+  pointer-events: auto;
   /* The generic card surface (see the root contract above). Never
      `--dsw-specific-sidebar-fill` — skin plugins restyle that token for the
      app's own left nav and a panel consuming it loses its fill or clashes
      with labels (#60/#105/#106). */
   background: var(--dsw-alias-bg-layer-1);
   border-left: 1px solid var(--dsw-alias-border-l2);
+  /* Bottom safe-area (notched phones): the drawer's bottom content clears
+     the home indicator; 0 on desktops. */
+  padding-bottom: env(safe-area-inset-bottom);
   /* Expand/collapse slides the panel; fullscreen animates the width. */
   transition:
     transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
@@ -152,13 +182,17 @@
    (issue #52: below the app's overlay stack so popups win over the
    workbench). */
 .bottomPanel {
-  position: fixed;
+  position: absolute;
   bottom: 0;
   z-index: 40;
   display: flex;
   flex-direction: column;
   background: var(--dsw-alias-bg-layer-1);
   border-top: 1px solid var(--dsw-alias-border-l2);
+  /* Re-enable interaction inside the click-transparent panel host. */
+  pointer-events: auto;
+  /* Bottom safe-area (notched phones); 0 on desktops. */
+  padding-bottom: env(safe-area-inset-bottom);
   /* Expand/collapse slides the panel; height drags animate the height. */
   transition:
     transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
@@ -179,6 +213,22 @@
 /* Height drags write at pointer cadence; easing would detach the edge. */
 .bottomPanel[data-dragging] {
   transition: none;
+}
+
+/* Layout isolation: panel-internal reflows (tabs, editors, terminals) never
+   leak into the app shell's layout, and the app shell's layout changes
+   never cascade through the panel subtree — the drag stays confined.
+   will-change: transform is only live while a drag is (the body attribute
+   toggles with the drag state), promoting the panels to their own layer
+   without paying the compositing cost at rest. */
+.panel,
+.bottomPanel {
+  contain: layout style;
+}
+
+body[data-dsh-sidebar-dragging] .panel,
+body[data-dsh-sidebar-dragging] .bottomPanel {
+  will-change: transform;
 }
 
 /* The bottom panel's height drag: the top edge strip (mirror of the right
@@ -230,6 +280,21 @@
    right end, so the + menu never hides under it. */
 .bottomPanel .tabBar {
   padding-right: 40px;
+}
+
+/* ── Desktop drag-region opt-out ──────────────────────────────────────── */
+
+/* Frameless desktop shells make the top strip of the web content draggable
+   (Electron `-webkit-app-region: drag`); pointer events over that strip are
+   swallowed as window drags unless the interactive element opts out
+   (issues #103/#111). The plugin's viewport-corner chrome must declare
+   `no-drag` itself — some shells (Tauri, older desktop builds, third-party
+   wrappers) have no blanket button rule. The property is a no-op in plain
+   browsers and in shells without drag regions — safe everywhere. */
+.toggleCluster,
+.toggleButton,
+.tabBar {
+  -webkit-app-region: no-drag;
 }
 
 /* ── Position compatibility mode (Windows native title bar) ────────────── */
@@ -782,6 +847,198 @@
   text-align: center;
 }
 
+/* Drag a file/folder over a tree row: the target directory row gets a filled
+   highlight (drops land inside it; file rows target their parent directory).
+   The zone frame around the whole tree is the portaled .uploadDropZone. */
+.explorerRowDropTarget {
+  background: var(--dsw-alias-interactive-bg-hover);
+  outline: 1px dashed var(--dsw-alias-interactive-bg-hover-accent);
+  outline-offset: -1px;
+}
+
+/* The sidebar's drop surface: a pointer-inert frame portaled to
+   document.body, fixed over the explorer body's viewport rect at z-1001 —
+   above DSH's own whole-page drop mask (z-1000, see InputBar's
+   document-level intake). The giant box-shadow spread IS the full-viewport
+   mask (same token DSH uses for its drop mask): everything dims except the
+   zone rect, teaching the zone split — the dimmed conversation column still
+   takes drops into the chat natively, the clear frame marks the tree as the
+   workspace-upload zone. Deliberate exception to the "panel stays below the
+   DSH float stack" rule: transient and pointer-events none, so the drop
+   always lands on the row beneath. The hint pill docks at the TOP edge of
+   the zone (right under the search row, the first thing the eye meets),
+   leaving the rows — the actual drop targets — aimable. */
+.uploadDropZone {
+  position: fixed;
+  z-index: 1001;
+  pointer-events: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12px;
+  border: 2px dashed var(--dsw-alias-interactive-bg-hover-accent);
+  border-radius: 10px;
+  box-shadow: 0 0 0 200vmax var(--dsw-alias-bg-mask-drop);
+  animation: dsh-row-in 150ms var(--ds-ease-in-out);
+}
+
+/* The zone's drop hero, docked at the TOP edge (right under the search
+   row, the first thing the eye meets): the colorful tray illustration over
+   the hint pill — stacked so the rows below stay aimable. */
+.uploadDropHero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  padding-top: 8px;
+}
+
+.uploadDropZonePill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv2);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-strong-12);
+}
+
+.uploadDropZoneText {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The left zone's invitation: centered in the viewport space beside the
+   tree (inline width = the zone's left edge), telling the user the dimmed
+   conversation column still accepts drops — into the chat, natively. */
+.uploadDropChatHint {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 1002;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: dsh-row-in 150ms var(--ds-ease-in-out);
+}
+
+/* The invitation's content: the colorful photo-cards illustration over the
+   label — the drop overlay is this flow's one brand moment, so it gets the
+   color the rest of the UI never does (palette borrowed from DSH's native
+   drop illustration so the two zones read as one family). */
+.uploadDropChatCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  text-align: center;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-strong-14);
+}
+
+/* Full-window upload progress: blurred scrim + card (same mask/backdrop
+   tokens as the repo's Modal primitive; absolute within the tree panel so it
+   never covers the conversation column). */
+.uploadOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--dsw-alias-bg-mask-1);
+  backdrop-filter: var(--dsw-mask-blur);
+  animation: dsh-row-in 150ms var(--ds-ease-in-out);
+}
+
+.uploadOverlayCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 280px;
+  max-width: min(420px, calc(100% - 48px));
+  padding: 20px 24px;
+  border: 1px solid var(--dsw-alias-border-inverted);
+  border-radius: 24px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv3);
+}
+
+.uploadOverlayTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: var(--dsw-font-s-strong-14);
+  color: var(--dsw-alias-label-primary);
+}
+
+.uploadOverlayTitle > svg {
+  flex: none;
+}
+
+.uploadOverlayTitle > span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.uploadOverlayProgress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--dsw-alias-border-l2);
+  overflow: hidden;
+}
+
+.uploadOverlayProgressFill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  transition: width 150ms var(--ds-ease-in-out);
+}
+
+.uploadOverlayStatus {
+  min-height: 1em;
+  font: var(--dsw-font-xxs-12);
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.uploadOverlayCancel {
+  align-self: flex-end;
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-strong-12);
+  cursor: pointer;
+}
+
+.uploadOverlayCancel:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-border-l2);
+}
+
+.uploadOverlayCancel:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* ── Editor ────────────────────────────────────────────────────────────── */
 
 .editor {
@@ -879,6 +1136,8 @@
 }
 
 .editorTreePanel {
+  /* Relative so the upload overlay and drop pill can cover the tree exactly. */
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;

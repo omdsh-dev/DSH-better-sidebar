@@ -20,6 +20,9 @@ export interface PluginEntry {
   url: string
   /** One-line description (i18n friendly: string or () => string). */
   description: string | (() => string)
+  /** Optional catalog group heading (i18n friendly); entries without one
+   *  render under the plain list (a flat catalog stays flat). */
+  category?: string | (() => string)
   /** The full shell command pre-filled into the install terminal (not
    *  executed until the user presses Enter). */
   install: string
