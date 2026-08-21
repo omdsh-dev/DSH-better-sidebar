@@ -11,9 +11,11 @@
  * - the feature inventories are responsive GRIDS of small toggle cards
  *   (auto-fill columns — several cards per row, wrapping): icon chip +
  *   title + type id, the card's on/off state IS its visual state
- *   (enabled = softened brand border + tinted fill + a green circular
- *   check badge — coordinated two-hue semantics: brand = active accent,
- *   success green = confirmed on; disabled = neutral hairline + dimmed);
+ *   (enabled = softened brand border + tinted fill + a compact brand
+ *   switch knob at the far right — the card itself is the toggle;
+ *   disabled = neutral hairline + dimmed, no knob); every card shares a
+ *   uniform min-height so rows stay equal whether or not they carry a
+ *   settings strip;
  * - features that declare related settings carry a labeled SETTINGS STRIP
  *   across the card's bottom edge (gear icon + text, hairline-separated)
  *   opening a native Modal (wider than the primitive default) whose rows
@@ -90,11 +92,14 @@
 }
 
 /* One small toggle card (visual chrome; the interactive part is .cardMain).
-   overflow:hidden clips the bottom settings strip to the card's radius. */
+   A uniform min-height keeps every inventory card the same height across
+   rows whether or not it carries a settings strip (strip cards are
+   naturally taller); overflow:hidden clips the strip to the card's radius. */
 .card {
   position: relative;
   display: flex;
   flex-direction: column;
+  min-height: 106px;
   overflow: hidden;
   border-radius: 12px;
   border: 1px solid var(--dsw-alias-border-l2);
@@ -118,9 +123,12 @@
   background: var(--dsw-alias-interactive-bg-active);
 }
 
-/* The card's switch: the whole main area (top row + desc) flips the feature. */
+/* The card's switch: the whole main area (top row + desc) flips the feature.
+   flex:1 lets the main area absorb the extra height of the uniform card
+   (cards without a settings strip stretch to match the strip cards). */
 .cardMain {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 6px;
   width: 100%;
@@ -146,6 +154,7 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+  min-height: 28px;
 }
 
 /* The icon sits in a rounded chip: brand-tinted while the card is on,
@@ -185,19 +194,46 @@
   color: var(--dsw-alias-label-primary);
 }
 
-/* The check badge: a circular SUCCESS-green pin at the card's far right
-   (enabled only) — green = "confirmed on", complementing the brand border
-   (coordinated two-hue semantics); the icon in the inverted surface token. */
-.cardCheck {
+/* The compact on/off switch knob at the card's far right (enabled only):
+   the card itself is the toggle (aria-pressed on .cardMain), so this is a
+   PURELY VISUAL switch — same track/thumb geometry as the row switches,
+   one size down. Off cards show no knob (neutral card = off). */
+.cardSwitch {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   flex: none;
-  width: 16px;
+}
+
+.cardSwitchTrack {
+  display: inline-flex;
+  align-items: center;
+  width: 30px;
   height: 16px;
+  padding: 2px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l2);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.cardSwitchThumb {
+  display: block;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: var(--dsw-alias-state-success-primary);
-  color: var(--dsw-alias-bg-layer-3);
+  background: var(--dsw-alias-label-tertiary);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.cardOn .cardSwitchTrack {
+  border-color: var(--dsw-alias-button-primary-fill);
+  background: var(--dsw-alias-button-primary-fill);
+}
+
+.cardOn .cardSwitchThumb {
+  transform: translateX(14px);
+  background: var(--dsw-alias-bg-layer-3);
 }
 
 .cardDesc {
@@ -507,21 +543,43 @@
 
 /* Popup rows: each setting gets the same outer chrome as a plugin-list
    PluginCard (l2 hairline, 12px radius, layer-3 fill). The row's title,
-   description and control geometry stay unchanged inside that frame. */
+   description and control geometry stay unchanged inside that frame.
+   The body scrolls INTERNALLY once a feature declares many rows (e.g.
+   Terminal's six) — the dialog shell and its Done footer stay put; a thin
+   token-driven scrollbar makes the scrollable region discoverable. */
 .popupRows {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
+  max-height: min(52vh, 440px);
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--dsw-alias-scrollbar-bg-l2, transparent) transparent;
+}
+
+.popupRows::-webkit-scrollbar {
+  width: 6px;
+}
+
+.popupRows::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: var(--dsw-alias-scrollbar-bg-l2, var(--dsw-alias-border-l2));
+}
+
+.popupRows::-webkit-scrollbar-thumb:hover {
+  background: var(--dsw-alias-scrollbar-hover-l2, var(--dsw-alias-label-dimmed));
 }
 
 .popupRow {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   min-width: 0;
-  padding: 14px 16px;
+  padding: 12px 14px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 12px;
   background: var(--dsw-alias-bg-layer-3);
@@ -739,6 +797,8 @@
 @media (prefers-reduced-motion: reduce) {
   .card,
   .cardSettings,
+  .cardSwitchTrack,
+  .cardSwitchThumb,
   .rowGear,
   .popupRow,
   .switchTrack,

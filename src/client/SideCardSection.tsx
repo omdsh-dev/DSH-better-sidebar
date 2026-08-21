@@ -21,13 +21,15 @@
  * one-line intro (the DSH section heading+intro recipe).
  *
  * A card's on/off state is its VISUAL STATE: enabled = highlighted (brand
- * border + tinted fill + a circular check badge pinned to the card's far
- * right), disabled = neutral and dimmed. Features that declare
- * `settings.toggles` carry a gear corner button that opens a native Modal
- * (wider than the primitive default) with the related settings as
- * title/desc + custom-switch rows and a Done footer. The toggles
- * themselves are custom switches: a real checkbox (native semantics and
- * focus) driving a styled track/thumb.
+ * border + tinted fill + a compact switch knob at the card's far right),
+ * disabled = neutral and dimmed. Features that declare
+ * `settings.toggles` carry a labeled settings strip at the card's bottom
+ * edge that opens a native Modal (wider than the primitive default) with
+ * the related settings as title/desc + custom-switch rows and a Done
+ * footer; the popup body scrolls internally when a feature declares many
+ * rows (e.g. Terminal's six). The toggles themselves are custom
+ * switches: a real checkbox (native semantics and focus) driving a styled
+ * track/thumb.
  *
  * Writes ride the plugin's own fenced settings route (the host calls the
  * settings seam in-process — the DSH settings RPC domain does not serve
@@ -40,7 +42,6 @@
  */
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  IconCheckOutline16,
   IconChevronDownOutline14,
   IconPlusOutline16,
   IconSettingsOutline16,
@@ -824,8 +825,10 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
             )}
             <span className={css.cardTitle}>{props.title}</span>
             {props.enabled && (
-              <span className={css.cardCheck}>
-                <IconCheckOutline16 size={12} />
+              <span className={css.cardSwitch} aria-hidden="true">
+                <span className={css.cardSwitchTrack}>
+                  <span className={css.cardSwitchThumb} />
+                </span>
               </span>
             )}
           </span>
