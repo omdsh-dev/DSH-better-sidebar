@@ -267,7 +267,7 @@ return <viewer.component {...props} />
 ```jsonc
 {
   "peerDependencies": {
-    "cordis": "^4.0.0-rc.7",
+    "cordis": "^4.0.0-rc.8",
     "dsh-better-sidebar": "workspace:*"
   },
   "peerDependenciesMeta": {

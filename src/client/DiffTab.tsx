@@ -90,7 +90,7 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
           title={t('refresh')}
           onClick={refresh}
         >
-          <IconRefreshOutline16 />
+          <IconRefreshOutline16 size={14} />
         </button>
       </div>
       {loading && <div className={css.gitPlaceholder}>{t('loading')}</div>}

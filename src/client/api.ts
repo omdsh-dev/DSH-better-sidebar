@@ -7,6 +7,8 @@
  * request). Failures surface as {@link SidebarApiError} with the wire code.
  */
 import { encodeHtmlUrl } from '../html-route.ts'
+import type { LastActivity } from '../subagent-activity.ts'
+import type { SidechatThreadInfo } from '../sidechat-core.ts'
 import type { BrowserProbeResult } from './browser.ts'
 
 /** One wire failure. */
@@ -25,6 +27,10 @@ export interface FsEntry {
   path: string
   isDir: boolean
   hidden: boolean
+  /** Whether the row is a symlink; `isDir` then describes the link's target. */
+  isSymlink: boolean
+  /** For symlinks: the target is missing or unreadable (stat failed). */
+  broken: boolean
 }
 
 /** Git status entry (host git shape). */
@@ -75,6 +81,24 @@ export interface JobOutputResult {
   read: boolean
 }
 
+/** The `subagents.live` response: running child id → latest activity. */
+export type SubagentLiveResult = { live: Record<string, LastActivity> }
+
+/** Terminal dependency status (mirror of the host's depsStatus; issue #140). */
+export type TerminalDepsStatus =
+  | { ok: true }
+  | {
+    ok: false
+    /** The require-time error message (module missing, native binding broken…). */
+    cause: string
+    /** The pasteable repair command (terminal/cmd). */
+    command: string
+    /** The detected profile name (null when undetected → the command defaults to web). */
+    profile: string | null
+    /** Optional supplementary hint (fallback command only). */
+    note?: string
+  }
+
 async function call<T>(method: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   let response: Response
   try {
@@ -85,6 +109,45 @@ async function call<T>(method: string, payload: Record<string, unknown>, signal?
       signal,
     })
   } catch (error) {
+    throw new SidebarApiError('network', error instanceof Error ? error.message : String(error))
+  }
+  const parsed: { ok?: boolean; value?: unknown; error?: { code?: string; message?: string } } | null
+    = await response.json().catch(() => null)
+  if (!response.ok || parsed === null || parsed.ok !== true || parsed.value === undefined) {
+    throw new SidebarApiError(
+      parsed?.error?.code ?? 'http',
+      parsed?.error?.message ?? `HTTP ${response.status}`,
+    )
+  }
+  return parsed.value as T
+}
+
+/**
+ * Upload one file to the sidebar's raw upload route: the File goes straight
+ * into the POST body (no JSON/base64 re-encoding — the host streams it into
+ * the workspace). Failure surfaces as {@link SidebarApiError} with the wire
+ * code, exactly like every `/sidebar/api` call. An aborted `signal` rejects
+ * with the DOMException as-is (the caller decides whether that is an error).
+ */
+async function fetchUpload<T>(
+  scope: SessionScope,
+  dir: string,
+  relativePath: string,
+  body: Blob,
+  signal?: AbortSignal,
+): Promise<T> {
+  const params = new URLSearchParams({ sessionId: scope.sessionId, dir, relativePath })
+  if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
+  let response: Response
+  try {
+    response = await fetch(`/sidebar/upload?${params.toString()}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body,
+      signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
     throw new SidebarApiError('network', error instanceof Error ? error.message : String(error))
   }
   const parsed: { ok?: boolean; value?: unknown; error?: { code?: string; message?: string } } | null
@@ -116,10 +179,18 @@ export const api = {
     call<{ sessionId: string; cwd: string; root: string; parent: string | null }>('session.cwd', scopePayload(scope, {}), signal),
   fsTree: (scope: SessionScope, path: string, signal?: AbortSignal) =>
     call<{ path: string; entries: FsEntry[]; truncated: boolean }>('fs.tree', scopePayload(scope, { path }), signal),
+  /** Global recursive file-name search rooted at the session cwd (the editor
+   *  side panel's search box); matches are cwd-relative '/'-separated paths. */
+  fsSearch: (scope: SessionScope, query: string, signal?: AbortSignal) =>
+    call<{ matches: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query }), signal),
   fsRead: (scope: SessionScope, path: string, signal?: AbortSignal) =>
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
+  /** Upload one file's raw bytes into `dir` (keeps the folder tree via
+   *  `relativePath`); the host streams it under the session workspace. */
+  uploadFile: (scope: SessionScope, dir: string, relativePath: string, body: Blob, signal?: AbortSignal) =>
+    fetchUpload<{ path: string; size: number }>(scope, dir, relativePath, body, signal),
   gitStatus: (scope: SessionScope, signal?: AbortSignal) =>
     call<GitStatusResult>('git.status', scopePayload(scope, {}), signal),
   gitDiff: (scope: SessionScope, path: string | undefined, staged: boolean, signal?: AbortSignal) =>
@@ -160,6 +231,11 @@ export const api = {
   /** Release an agent terminal by uuid (tab closed while WS was down). */
   agentPtyClose: (uuid: string) =>
     call<{ ok: true }>('agent-pty.close', { uuid }),
+  /** Terminal dependency status (issue #140): after a WS close 1011 with
+   *  reason `pty-deps-missing` the view fetches the full repair details here
+   *  (the close reason itself is capped at 123 bytes). */
+  terminalDeps: () =>
+    call<TerminalDepsStatus>('terminal.deps', {}),
   /**
    * The output the model has read so far for one background job (replayed
    * from the owner session's event log — never the model's job_output
@@ -173,9 +249,36 @@ export const api = {
       id,
       ...(reason !== undefined ? { reason } : {}),
     })),
+  /**
+   * One batch live-preview fetch for the whole Subagent tree. The payload is
+   * the already-resolved topology ROOT (not a session scope); the host
+   * enumerates descendants once and folds running children's activity.
+   */
+  subagentsLive: (rootSessionId: string, signal?: AbortSignal) =>
+    call<SubagentLiveResult>('subagents.live', { rootSessionId }, signal),
+  /** Create a Side Chat thread: a child session seeded with the parent's
+   *  full log up to now. Empty question = immediate create (Codex-style):
+   *  the thread opens empty, the first prompt carries the boundary. */
+  sidechatStart: (sessionId: string, question?: string) =>
+    call<{ childId: string }>('sidechat.start', { sessionId, question: question ?? '' }),
+  /** Deliver one follow-up message to a Side Chat thread. */
+  sidechatPrompt: (childId: string, text: string) =>
+    call<{ accepted: true }>('sidechat.prompt', { childId, text }),
+  /** Abort a Side Chat thread's running turn (queued work is preserved). */
+  sidechatCancel: (childId: string) =>
+    call<{ accepted: true }>('sidechat.cancel', { childId }),
+  /** Release a Side Chat thread's live agent (history stays persisted). */
+  sidechatDispose: (childId: string) =>
+    call<{ accepted: true }>('sidechat.dispose', { childId }),
+  /** Live state + agent identity (provider/model/preset) of a thread. */
+  sidechatInfo: (childId: string) =>
+    call<SidechatThreadInfo>('sidechat.info', { childId }),
+  /** The effective terminal shell and its display name (plugin-global). */
+  shellGet: () =>
+    call<{ shell: string; name: string }>('shell.get', {}),
   /** Read the side card preferences (plugin-global, no session scope). */
   settingsGet: () =>
-    call<{ value?: unknown; revision?: number }>('settings.get', {}),
+    call<{ value?: unknown; revision?: number; externalDisable?: boolean }>('settings.get', {}),
   /** Merge a patch into the side card preferences (revision-guarded). */
   settingsUpdate: (patch: Record<string, unknown>, expectedRevision?: number) =>
     call<{ value?: unknown; revision?: number }>('settings.update', {
@@ -207,9 +310,14 @@ function fileUrl(scope: SessionScope, path: string, download: boolean): string {
   return `/sidebar/file?${params.toString()}`
 }
 
-/** Absolute URL of the HTML preview route (see html-route.ts): the path is
- *  fully encoded so the previewed page's relative assets resolve back into
- *  the same route with the session scope intact. */
+/**
+ * Absolute URL of the HTML preview route (see html-route.ts): the path is
+ * fully encoded so the previewed page's relative assets resolve back into
+ * the same route with the session scope intact. The UNC marker is
+ * platform-neutral — the host's requireAbsolute resolves the decoded
+ * forward-slash `//server/share/...` form on both win32 and POSIX — so no
+ * client-side platform signal is needed.
+ */
 export function htmlUrl(scope: SessionScope, path: string): string {
   return encodeHtmlUrl(scope.sessionId, path)
 }

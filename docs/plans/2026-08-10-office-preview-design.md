@@ -260,7 +260,9 @@ if (officeKind === 'docx' || officeKind === 'xlsx') {
 - `xlsx`(SheetJS,~400KB,xlsx 导入)
 - `@univerjs/core` + `@univerjs/sheets` + `@univerjs/sheets-ui` + `@univerjs/sheets-formula` + `@univerjs/sheets-conditional-formatting` + `@univerjs/sheets-chart` + `@univerjs/docs-ui` + `@univerjs/design` + `@univerjs/engine-render`(~5MB 合计)
 
-**不放 `peerDependencies`**:这些是插件自有运行时依赖,不由 web profile 提供(对比现有 `node-pty`/`xterm`/`CodeMirror` 也在 `dependencies`)。
+**不放 `peerDependencies`**:这些是插件自有运行时依赖,不由 web profile 提供(对比现有 `node-pty`/`CodeMirror` 也在 `dependencies`)。
+
+> **实施偏差记录（#122，2026-08）**：上文"`xterm` 也在 `dependencies`"已过时——`xterm` 与 `@xterm/addon-fit` 自 v0.13.0 起从 `dependencies` 迁至 `devDependencies`：二者始终内联进 `lib/client-terminal.js`（tsdown `noExternal` 全内联 + CSS 构建期解析），运行时零依赖；同时代码与开发依赖已从已弃用的 `xterm` 迁移到官方新包名 `@xterm/xterm@^5.5.0`（addon-fit@0.10.0 的 peer 约束锁 `^5.0.0`，不用 6.x），消除用户安装时的 deprecated 与 missing-peer 警告。Office 预览若落地，其依赖按同一原则处理。
 
 ### 5.2 tsdown.config.ts 调整
 

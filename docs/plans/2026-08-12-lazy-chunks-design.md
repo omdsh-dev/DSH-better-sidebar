@@ -46,6 +46,7 @@ chunk 脚本**不经过** `window.__ModuleLoader__` / `ClientModuleSystem.import
 | `pptx` | `src/client/chunks/pptx.tsx` | `PptxView` + pptx-renderer | lib/client-pptx.js(~2.4MB) | 打开 .pptx |
 | `terminal` | `src/client/chunks/terminal.tsx` | `TerminalView` + xterm + addon-fit + xterm.css | lib/client-terminal.js(~450KB) | 打开终端 tab |
 | `editor` | `src/client/chunks/editor.tsx` | `TextEditor` + @codemirror/* + lang.ts + cm-themes | lib/client-editor.js(~1.6MB) | 打开 code/md/html 文件 |
+| `mermaid` | `src/client/chunks/mermaid.tsx` | `MermaidBlocks` + mermaid + d3/dagre/cytoscape | lib/client-mermaid.js(~7MB) | 预览含 mermaid fence 的 md |
 | 核心 | `src/client/index.tsx` | 其余全部 | lib/client.js(~325KB) | 启动 |
 
 关键拆分:**`office-view.tsx` 拆为 `docx-view.tsx` + `xlsx-view.tsx` + `office-shared.tsx`**(共享 `LoadState`/`BinaryFallback`)。若不拆,docx chunk 会经共享文件静态拖入 `xlsx-to-univer` → Univer 14.5MB。原路径 `office-view.tsx` 保留为 re-export 垫片,兼容 `./src/*` 深导入。

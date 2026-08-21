@@ -15,6 +15,17 @@ import type {
   SidebarSessionSummary,
   SidebarSubagentCatalog,
 } from '../context-types.ts'
+import { SIDE_LABEL_PREFIX } from '../sidechat-core.ts'
+
+/**
+ * Side Chat threads ride the subagent origin (main-list hiding + the RPC
+ * ownership fence) but they are NOT subagent topology: they carry the
+ * durable 'Side: ' label and live as sidebar tabs. Excluding them here
+ * keeps the auto-open trigger and the Subagent page counts clean.
+ */
+export function isSideThreadSummary(summary: SidebarSessionSummary): boolean {
+  return summary.origin === 'subagent' && summary.displayTitle.startsWith(SIDE_LABEL_PREFIX)
+}
 
 /** Count the direct subagent children of one session (durable `origin` rows). */
 export function directSubagentCount(
@@ -23,7 +34,8 @@ export function directSubagentCount(
 ): number {
   let count = 0
   for (const summary of Object.values(byId)) {
-    if (summary.origin === 'subagent' && summary.parentId === sessionId) count += 1
+    if (summary.origin === 'subagent' && summary.parentId === sessionId
+      && !isSideThreadSummary(summary)) count += 1
   }
   return count
 }
@@ -107,7 +119,7 @@ export function countSubagentDescendants(
 ): SubagentDescendantTotals {
   const totals: SubagentDescendantTotals = { count: 0, runningCount: 0 }
   for (const descendant of Object.values(byId)) {
-    if (descendant.origin !== 'subagent') continue
+    if (descendant.origin !== 'subagent' || isSideThreadSummary(descendant)) continue
     const seen = new Set<string>()
     let current: SidebarSessionSummary | undefined = descendant
     while (current?.origin === 'subagent' && current.parentId !== undefined

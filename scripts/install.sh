@@ -12,9 +12,14 @@
 #
 # 用法：
 #   bash scripts/install.sh [版本] [--restart] [--dry-run]
+#   bash scripts/install.sh --repair [--profile <名>] [--dry-run]
 #
 #   版本        npm 版本号/范围，缺省为 latest（自动解析为 ^<最新>）。
 #               示例：0.10.2、^0.10.2、~0.10.2、latest
+#   --repair    修复模式：不重装插件，只确保 profile 的 pnpm-workspace.yaml
+#               放行 node-pty 构建脚本，然后重跑 pnpm install + pnpm rebuild
+#               node-pty（终端提示「node-pty 加载失败」时用它，见 issue #140）。
+#   --profile   目标 profile 名（缺省 web）；安装与修复模式均适用。
 #   --restart   装完后尝试 `pm2 restart dsh-web`（无 pm2 时仅打印提示）。
 #               注意：重启会断开当前 DSH 页面会话，默认不自动重启。
 #   --dry-run   只打印将要执行的操作，不写任何文件。
@@ -42,11 +47,15 @@ set -euo pipefail
 for arg in "$@"; do
   if [ "$arg" = "-h" ] || [ "$arg" = "--help" ]; then
     cat <<'EOF'
-dsh-better-sidebar 一键安装脚本
+dsh-better-sidebar 一键安装 / 依赖修复脚本
 
-用法：bash scripts/install.sh [版本] [--restart] [--dry-run]
+用法：
+  bash scripts/install.sh [版本] [--restart] [--dry-run] [--profile <名>]
+  bash scripts/install.sh --repair [--profile <名>] [--dry-run]
 
   版本         npm 版本号/范围，缺省 latest（自动解析为最新）。示例：0.10.2、^0.10.2、latest
+  --repair     修复模式：确保 profile 放行 node-pty 构建脚本并重装 node-pty（终端提示依赖加载失败时用）
+  --profile    目标 profile 名（缺省 web）
   --restart    装完后尝试 `pm2 restart dsh-web`（无 pm2 时仅提示）
   --dry-run    只打印将要执行的操作，不写任何文件
 
@@ -57,29 +66,72 @@ EOF
 done
 
 DSH_HOME="${DSH_HOME:-${HOME:-${USERPROFILE:-}}/.dsh}"
-PROFILE_DIR="$DSH_HOME/profiles/web"
-WS_YML="$PROFILE_DIR/pnpm-workspace.yaml"
-PATCH_YML="$PROFILE_DIR/cordis.patch.yml"
 REGISTRY="${REGISTRY:-https://registry.npmjs.org}"
 PKG="dsh-better-sidebar"
 DSH_CMD="${DSH_CMD:-dsh}"
 
 RESTART=false
 DRY_RUN=false
+REPAIR=false
 VERSION_SPEC=""
-for arg in "$@"; do
-  case "$arg" in
+PROFILE_NAME="web"
+while [ $# -gt 0 ]; do
+  case "$1" in
     --restart) RESTART=true ;;
     --dry-run) DRY_RUN=true ;;
+    --repair) REPAIR=true ;;
+    --profile)
+      if [ $# -lt 2 ]; then echo "--profile 需要一个 profile 名（如 web）" >&2; exit 2; fi
+      PROFILE_NAME="$2"; shift ;;
     -h|--help) : ;;  # 已在上面处理
-    -*) echo "未知参数: ${arg}（用 -h 查看用法）" >&2; exit 2 ;;
-    *) VERSION_SPEC="$arg" ;;
+    -*) echo "未知参数: ${1}（用 -h 查看用法）" >&2; exit 2 ;;
+    *) VERSION_SPEC="$1" ;;
   esac
+  shift
 done
+
+PROFILE_DIR="$DSH_HOME/profiles/$PROFILE_NAME"
+WS_YML="$PROFILE_DIR/pnpm-workspace.yaml"
+PATCH_YML="$PROFILE_DIR/cordis.patch.yml"
 
 say()  { printf '\033[32m[install]\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m[warn]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
+
+# 步骤 1（安装与修复共用）：预写 workspace 设置（幂等），保证 pnpm 不拦截
+# node-pty/protobufjs 构建脚本、放行本插件新版本
+ensure_workspace_settings() {
+  WS_RESULT="$(node -e '
+const fs = require("fs");
+const p = process.argv[1];
+let t = fs.readFileSync(p, "utf8");
+const before = t;
+// allowBuilds：把 node-pty/protobufjs 归位为 true
+t = t.replace(/^(\s*)(node-pty|protobufjs):.*$/gm, "$1$2: true");
+if (!/^\s*allowBuilds:\s*$/m.test(t)) {
+  t += "\nallowBuilds:\n  node-pty: true\n  protobufjs: true\n";
+} else {
+  for (const k of ["node-pty", "protobufjs"]) {
+    if (!new RegExp("^\\s*" + k + ":\\s*true\\s*$", "m").test(t)) {
+      t = t.replace(/^(\s*allowBuilds:\s*)$/m, "$1\n  " + k + ": true");
+    }
+  }
+}
+// minimumReleaseAgeExclude：放行本插件（版本无关），避免 <24h 新版本被拒
+if (!/^\s*-\s+dsh-better-sidebar\s*$/m.test(t)) {
+  if (/^\s*minimumReleaseAgeExclude:\s*$/m.test(t)) {
+    t = t.replace(/^(\s*minimumReleaseAgeExclude:\s*)$/m, "$1\n  - dsh-better-sidebar");
+  } else {
+    t += "\nminimumReleaseAgeExclude:\n  - dsh-better-sidebar\n";
+  }
+}
+if (t !== before) fs.writeFileSync(p, t);
+console.log(t === before ? "unchanged" : "updated");
+' "$WS_YML")"
+  [ "$WS_RESULT" = "updated" ] \
+    && say "已确保 ${WS_YML}：allowBuilds（node-pty/protobufjs: true）+ minimumReleaseAgeExclude（${PKG}）" \
+    || say "workspace 设置已就绪，跳过"
+}
 
 # 解析用户给的版本 -> CLI 要用的 npm spec（"x.y.z" / "^x.y.z" / latest）
 resolve_spec() {
@@ -120,15 +172,33 @@ dsh_cli() {
 command -v node >/dev/null 2>&1 || die "未找到 node（DSH 运行需要 Node.js ≥ 20），请先安装 Node.js 并加入 PATH。"
 
 [ -d "$PROFILE_DIR" ] || die "找不到 profile 目录：${PROFILE_DIR}（请先安装并运行过一次 dsh web）"
-[ -f "$WS_YML" ]      || die "找不到 ${WS_YML}（请先初始化 web profile）"
+[ -f "$WS_YML" ]      || die "找不到 ${WS_YML}（请先初始化 ${PROFILE_NAME} profile）"
+
+# ── 修复模式（issue #140）：不重装插件，只修复 node-pty 依赖 ────────────
+# 终端提示「node-pty 加载失败」时运行：确保 allowBuilds 后重跑
+# pnpm install + pnpm rebuild node-pty（重放被 pnpm 11 拦截的构建脚本）。
+if [ "$REPAIR" = true ]; then
+  if [ "$DRY_RUN" = true ]; then
+    say "[dry-run] 修复：确保 $WS_YML 含 allowBuilds（node-pty: true）"
+    say "[dry-run] 修复：cd $PROFILE_DIR && pnpm install && pnpm rebuild node-pty"
+    exit 0
+  fi
+  say "修复模式：重装 node-pty（profile: ${PROFILE_NAME}，${PROFILE_DIR}）..."
+  ensure_workspace_settings
+  if ! (cd "$PROFILE_DIR" && pnpm install && pnpm rebuild node-pty); then
+    die "修复失败：pnpm install / pnpm rebuild node-pty 非零退出。请确认 pnpm 在 PATH 上、网络可用，然后重试。"
+  fi
+  say "修复完成：node-pty 已重装（与 DSH 核心保持同一版本）。请重启 DSH 后重试终端。"
+  exit 0
+fi
 
 SPEC="$(resolve_spec "$VERSION_SPEC")"
 CLI="$(dsh_cli)"
-say "目标：$CLI plugin --profile web add $PKG@${SPEC}（profile: ${PROFILE_DIR}）"
+say "目标：$CLI plugin --profile $PROFILE_NAME add $PKG@${SPEC}（profile: ${PROFILE_DIR}）"
 
 if [ "$DRY_RUN" = true ]; then
   say "[dry-run] 步骤 1：确保 $WS_YML 含 allowBuilds（node-pty/protobufjs: true）与 minimumReleaseAgeExclude（${PKG}）"
-  say "[dry-run] 步骤 2：执行 $CLI plugin --profile web add $PKG@${SPEC}（安装 + bundle 自动注册）"
+  say "[dry-run] 步骤 2：执行 $CLI plugin --profile $PROFILE_NAME add $PKG@${SPEC}（安装 + bundle 自动注册）"
   say "[dry-run] 步骤 3：校验 dsh.profile.bundles 含 $PKG"
   say "[dry-run] 步骤 4：幂等移除 $PATCH_YML 里旧的 better-sidebar 手动挂载行（避免双挂载）"
   if [ "$RESTART" = true ]; then say "[dry-run] 步骤 5：pm2 restart dsh-web"; else say "[dry-run] 步骤 5：提示用户手动重启 DSH"; fi
@@ -136,40 +206,11 @@ if [ "$DRY_RUN" = true ]; then
 fi
 
 # 步骤 1：预写 workspace 设置（幂等），保证 pnpm 不拦截构建、不放行旧版本策略
-WS_RESULT="$(node -e '
-const fs = require("fs");
-const p = process.argv[1];
-let t = fs.readFileSync(p, "utf8");
-const before = t;
-// allowBuilds：把 node-pty/protobufjs 归位为 true
-t = t.replace(/^(\s*)(node-pty|protobufjs):.*$/gm, "$1$2: true");
-if (!/^\s*allowBuilds:\s*$/m.test(t)) {
-  t += "\nallowBuilds:\n  node-pty: true\n  protobufjs: true\n";
-} else {
-  for (const k of ["node-pty", "protobufjs"]) {
-    if (!new RegExp("^\\s*" + k + ":\\s*true\\s*$", "m").test(t)) {
-      t = t.replace(/^(\s*allowBuilds:\s*)$/m, "$1\n  " + k + ": true");
-    }
-  }
-}
-// minimumReleaseAgeExclude：放行本插件（版本无关），避免 <24h 新版本被拒
-if (!/^\s*-\s+dsh-better-sidebar\s*$/m.test(t)) {
-  if (/^\s*minimumReleaseAgeExclude:\s*$/m.test(t)) {
-    t = t.replace(/^(\s*minimumReleaseAgeExclude:\s*)$/m, "$1\n  - dsh-better-sidebar");
-  } else {
-    t += "\nminimumReleaseAgeExclude:\n  - dsh-better-sidebar\n";
-  }
-}
-if (t !== before) fs.writeFileSync(p, t);
-console.log(t === before ? "unchanged" : "updated");
-' "$WS_YML")"
-[ "$WS_RESULT" = "updated" ] \
-  && say "已确保 ${WS_YML}：allowBuilds（node-pty/protobufjs: true）+ minimumReleaseAgeExclude（${PKG}）" \
-  || say "workspace 设置已就绪，跳过"
+ensure_workspace_settings
 
 # 步骤 2：官方 CLI 安装 + bundle 自动注册（含挂载）
-say "执行 $CLI plugin --profile web add $PKG@$SPEC ..."
-if ! $CLI plugin --profile web add "$PKG@$SPEC" 2>&1 | tail -n +1; then
+say "执行 $CLI plugin --profile $PROFILE_NAME add $PKG@$SPEC ..."
+if ! $CLI plugin --profile "$PROFILE_NAME" add "$PKG@$SPEC" 2>&1 | tail -n +1; then
   warn "dsh plugin add 失败。已预写 allowBuilds 与 minimumReleaseAgeExclude，仍失败的可能原因："
   warn "  - 网络/登录问题：npm registry 不可达或需要登录。"
   warn "  - 依赖安装冲突：可手动重试 cd $PROFILE_DIR && pnpm install。"

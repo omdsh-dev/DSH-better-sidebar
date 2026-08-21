@@ -61,17 +61,67 @@ export interface SidebarPrefs {
    */
   interceptOpenPath: boolean
   /**
-   * Position compatibility mode: reserves space at the top for the native
-   * Windows title bar (drawn at the window's top-right corner over the web
-   * content in frameless/hidden-title-bar windows). When on, the toggle
-   * cluster drops below the strip and the right panel's content starts
-   * below it. Off by default — the sidebar layout is untouched.
+   * Whether the editor tab runs in merged mode: a path input replaces the
+   * plain header and a toggleable file-tree panel (with a global name
+   * search) docks at the tab's right edge. On by default; also makes brand
+   * new sessions seed an empty editor tab (tree panel open) instead of the
+   * explorer tab. The switch lives under the editor card's gear in the
+   * Side card settings; off restores the pre-merge editor exactly.
+   */
+  editorExplorer: boolean
+  /**
+   * The shell the UI and agent terminals spawn (absolute path or bare
+   * executable name). Empty (default) keeps the legacy resolution order:
+   * `cordis.patch.yml` `config.shell`, then `$SHELL` / login shell /
+   * `powershell.exe` on Windows. Set it from the terminal card's gear in
+   * the Side card settings (or the yaml) to pin a specific shell — takes
+   * effect for terminals opened afterwards.
+   */
+  terminalShell: string
+  /**
+   * Explicit arguments for `terminalShell`, space-separated (empty keeps
+   * the platform defaults; when set, they fully replace them — same
+   * contract as the yaml `shellArgs`).
+   */
+  terminalShellArgs: string
+  /**
+   * Title-bar / shell compatibility scheme (the "位置兼容模式" setting):
+   * - `auto` (default): CONSERVATIVE — only the standard Window Controls
+   *   Overlay API (present in frameless Chromium shells that draw the
+   *   native caption buttons over web content) contributes real geometry;
+   *   without it nothing is modified, so plain-browser (web) behavior is
+   *   untouched.
+   * - `web`: EXPLICIT "DSH official web" — never adapt, not even WCO
+   *   geometry (the user declares they run the plain web UI).
+   * - `preset`: apply the built-in shell preset named by
+   *   `titleBarPresetId` (data-driven, opt-in — see shell-presets.ts).
+   * - `custom`: apply the free-form `customCss` (and the legacy
+   *   `titleBarStripPx` strip).
+   */
+  titleBarScheme: TitleBarScheme
+  /**
+   * The built-in shell preset id applied while `titleBarScheme` is
+   * `preset` ('' = no preset — nothing extra is applied).
+   */
+  titleBarPresetId: string
+  /**
+   * Free-form CSS injected into the page (last in the cascade, so it can
+   * override the plugin's styles; use `!important` to override JS-written
+   * inline CSS variables). Applied while `titleBarScheme` is `custom`.
+   */
+  customCss: string
+  /**
+   * LEGACY (kept for read-migration and downgrade mirroring only): position
+   * compatibility mode flag. The UI writes `titleBarScheme` instead; a
+   * stored `true` without a scheme migrates to the `custom` scheme (with
+   * `titleBarStripPx` preserved).
    */
   titleBarCompat: boolean
   /**
-   * The reserved top strip height in px when `titleBarCompat` is on
-   * (0–120, default 40). Drives the `--dsh-title-bar-strip` CSS variable:
-   * the toggle cluster drops `strip + 3px` and the right panel's content
+   * LEGACY (kept for read-migration and downgrade mirroring only): the
+   * reserved top strip height in px used by the `custom` scheme (0–120,
+   * default 40). Drives the `--dsh-title-bar-strip` CSS variable: the
+   * toggle cluster drops `strip + 3px` and the right panel's content
    * starts `strip` px below its top edge.
    */
   titleBarStripPx: number
@@ -156,7 +206,7 @@ export interface SidebarPrefs {
 /** Range contract of {@link SidebarPrefs.defaultWidthPercent}. */
 export const WIDTH_PERCENT_MIN = 20
 export const WIDTH_PERCENT_MAX = 60
-export const WIDTH_PERCENT_DEFAULT = 30
+export const WIDTH_PERCENT_DEFAULT = 35
 
 /** Range contract of {@link SidebarPrefs.terminalFontSize}. */
 export const TERMINAL_FONT_SIZE_MIN = 9
@@ -168,9 +218,13 @@ export const TITLE_BAR_STRIP_MIN = 0
 export const TITLE_BAR_STRIP_MAX = 120
 export const TITLE_BAR_STRIP_DEFAULT = 40
 
+/** The title-bar / shell compatibility schemes (see {@link SidebarPrefs.titleBarScheme}). */
+export const TITLE_BAR_SCHEMES = ['auto', 'web', 'preset', 'custom'] as const
+export type TitleBarScheme = typeof TITLE_BAR_SCHEMES[number]
+
 /** Fallback prefs used whenever the settings document is unreachable or malformed. */
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
-  openByDefault: true,
+  openByDefault: false,
   defaultWidthPercent: WIDTH_PERCENT_DEFAULT,
   autoOpenSubagent: true,
   autoOpenJobs: true,
@@ -179,6 +233,12 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   terminalFontFamily: '',
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
   interceptOpenPath: true,
+  editorExplorer: false,
+  terminalShell: '',
+  terminalShellArgs: '',
+  titleBarScheme: 'auto',
+  titleBarPresetId: '',
+  customCss: '',
   titleBarCompat: false,
   titleBarStripPx: TITLE_BAR_STRIP_DEFAULT,
   htmlViewerNoSandbox: false,

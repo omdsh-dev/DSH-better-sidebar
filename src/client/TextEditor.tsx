@@ -7,9 +7,14 @@
  * so this component never fetches or dispatches — it only edits.
  *
  * The toolbar (mode toggle / dirty dot / save / status) renders as its own
- * row below the host's title bar, VSCode-style.
+ * row below the host's title bar, VSCode-style — unless the host passes
+ * `toolbar: 'host'` (the merged editor-explorer mode), in which case this
+ * component skips the row and reports state + registers commands through
+ * the FileViewerProps toolbar callbacks so the host's path-input header
+ * renders the controls instead.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ComponentType } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { EditorState } from '@codemirror/state'
@@ -23,8 +28,10 @@ import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { appendToDraft } from './conversation-draft.ts'
 import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
+import { lazyChunkComponent } from './lazy-chunk.tsx'
+import { splitMermaidBlocks, type MermaidMarkdownProps } from './mermaid-blocks.ts'
 import { t } from './locales.ts'
-import type { FileViewerProps } from './service.ts'
+import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
 
 /** Previewable files (rendered output vs source editing). */
@@ -36,6 +43,16 @@ interface SelectionPopup {
   left: number
   top: number
 }
+
+/**
+ * The chunk-resident markdown preview renderer (mermaid lazy chunk): one
+ * MarkdownText pass over the whole source, with rendered mermaid fences
+ * swapped for diagrams. Module-level `pick` keeps the load effect stable.
+ */
+const LazyMermaidMarkdown = lazyChunkComponent<MermaidMarkdownProps>(
+  'mermaid',
+  (mod) => mod.MermaidMarkdown as ComponentType<MermaidMarkdownProps> | undefined,
+)
 
 /**
  * The sandbox tokens of the HTML preview iframe. NO allow-same-origin (the
@@ -141,11 +158,11 @@ export function TextEditor(props: FileViewerProps) {
           ...defaultKeymap,
           ...historyKeymap,
         ]),
-        // Selection popup (the catch-all code viewer only): a non-empty
+        // Selection popup (the code and markdown editors): a non-empty
         // selection anchors the floating "add to conversation" button above
         // its head. Scrolling (geometry/viewport change) or losing focus
         // hides it; typing collapses the selection and hides it too.
-        ...(viewerId === 'code' ? [
+        ...(viewerId === 'code' || viewerId === 'markdown' ? [
           CodeMirrorView.updateListener.of((update) => {
             if (update.geometryChanged || update.viewportChanged) {
               hidePopup()
@@ -233,6 +250,19 @@ export function TextEditor(props: FileViewerProps) {
 
   const markdown = viewerId === 'markdown'
   const html = viewerId === 'html'
+  /** The markdown source the preview renders (draft wins over saved content). */
+  const mdText = draft ?? content ?? ''
+  /** md/mermaid block split for the preview (mermaid fences lift out). Split
+   *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
+  const mdBlocks = useMemo(
+    () => (markdown && mode === 'preview' ? splitMermaidBlocks(mdText) : []),
+    [markdown, mode, mdText],
+  )
+  const hasMermaid = useMemo(
+    () => mdBlocks.some(block => block.kind === 'mermaid'),
+    [mdBlocks],
+  )
+  const codeLabels = { copyLabel: t('copy'), copiedLabel: t('copied') }
 
   /**
    * Selection popup for the markdown preview: a mouse-up inside the preview
@@ -259,7 +289,7 @@ export function TextEditor(props: FileViewerProps) {
       return
     }
     const rect = sel.getRangeAt(0).getBoundingClientRect()
-    const lines = linesOfSelection(draft ?? content ?? '', text)
+    const lines = linesOfSelection(mdText, text)
     showPopup(
       buildSelectionInsert(path, scope.cwd, lines ?? undefined, text),
       rect.left + rect.width / 2,
@@ -278,8 +308,31 @@ export function TextEditor(props: FileViewerProps) {
   const [localUnlock, setLocalUnlock] = useState(() => props.store?.getPrefs().htmlViewerDefaultUnsafe === true)
   const htmlNoSandbox = props.store?.getPrefs().htmlViewerNoSandbox === true || localUnlock
 
+  // Host-toolbar mode (the merged editor header renders the controls): skip
+  // the own toolbar row, report the state after every relevant render (the
+  // JSON key guards redundant calls), and register the commands on mount.
+  const hostToolbar = props.toolbar === 'host'
+  const lastToolbarRef = useRef('')
+  useEffect(() => {
+    if (!hostToolbar) return
+    const state: EditorToolbarState = { modes: markdown || html, mode, dirty, editable, saveState }
+    const key = JSON.stringify(state)
+    if (lastToolbarRef.current === key) return
+    lastToolbarRef.current = key
+    props.onToolbarState?.(state)
+  })
+  useEffect(() => {
+    if (!hostToolbar) return
+    // `save` reads live refs only, and `setMode` is the stable state setter —
+    // registering this render's closures is safe for the mount's lifetime.
+    props.onToolbarControls?.({ setMode, save })
+    return () => { props.onToolbarControls?.(null) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostToolbar])
+
   return (
     <>
+      {!hostToolbar && (
       <div className={css.editorHeader}>
         {(markdown || html) && (
           <div className={css.editorModeToggle}>
@@ -313,6 +366,7 @@ export function TextEditor(props: FileViewerProps) {
         )}
         {saveLabel !== '' && <span className={clsx(css.editorStatus, saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>}
       </div>
+      )}
       {editable && (
         <>
           {truncated === true && mode === 'edit' && <div className={css.editorBanner}>{t('truncation')}</div>}
@@ -333,11 +387,13 @@ export function TextEditor(props: FileViewerProps) {
               dictionary: the DSH MarkdownText/CodeBlock are cordis-free and
               fall back to hardcoded Chinese otherwise (same pattern as the
               chat's AssistantMarkdown). Render-time t() keeps them following
-              the active locale on live switches. */}
-          <MarkdownText
-            text={draft ?? content ?? ''}
-            codeLabels={{ copyLabel: t('copy'), copiedLabel: t('copied') }}
-          />
+              the active locale on live switches. Mermaid fences hand the
+              whole document to the mermaid lazy chunk (single markdown
+              parse; cross-fence references/footnotes stay intact); files
+              without one render exactly as before. */}
+          {hasMermaid
+            ? <LazyMermaidMarkdown text={mdText} codeLabels={codeLabels} />
+            : <MarkdownText text={mdText} codeLabels={codeLabels} />}
         </div>
       )}
       {html && mode === 'preview' && (

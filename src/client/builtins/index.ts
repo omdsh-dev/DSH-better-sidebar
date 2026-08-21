@@ -8,7 +8,7 @@
  */
 import type { Context } from '../../context-types.ts'
 import type { BetterSidebarService } from '../service.ts'
-import { builtinTabs } from './tabs.tsx'
+import { builtinTabs, type BuiltinTabOptions } from './tabs.tsx'
 import { builtinViewers } from './viewers.tsx'
 
 /**
@@ -17,9 +17,13 @@ import { builtinViewers } from './viewers.tsx'
  * disposal). The `ctx` is threaded into tab descriptors that need it
  * (EditorHost reads `ctx.betterSidebar` for file-viewer matching).
  */
-export function registerBuiltins(ctx: Context, service: BetterSidebarService): () => void {
+export function registerBuiltins(
+  ctx: Context,
+  service: BetterSidebarService,
+  options: BuiltinTabOptions = {},
+): () => void {
   const disposers: (() => void)[] = []
-  for (const tab of builtinTabs(ctx)) {
+  for (const tab of builtinTabs(ctx, options)) {
     disposers.push(service.registerTab(tab))
   }
   for (const viewer of builtinViewers()) {

@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url'
 import type { Context, SidebarHttpRequest, SidebarHttpResponse } from './context-types.ts'
 
 /** The chunk names the client may request (mirror of src/client/chunk-loader.ts). */
-export const CHUNK_NAMES = ['terminal', 'editor'] as const
+export const CHUNK_NAMES = ['terminal', 'editor', 'mermaid'] as const
 export type ChunkName = (typeof CHUNK_NAMES)[number]
 
 /** Directory of this host-half module (lib/ — the chunk scripts live next to it). */

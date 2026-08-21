@@ -1,0 +1,97 @@
+name: Release
+
+# Publishes `dsh-better-sidebar` to npm via npm Trusted Publishing (OIDC) —
+# no NPM_TOKEN secret required, provenance is attached to the tarball.
+#
+# Trigger: a GitHub Release is published (tag vX.Y.Z). The tag MUST match
+# package.json `version`; the workflow verifies this before publishing.
+#
+# One-time npm-side setup (manual, on npmjs.com):
+#   1. package `dsh-better-sidebar` -> Settings -> Publishing access
+#      -> Trusted Publishers -> "Add Trusted Publisher".
+#   2. Provider: GitHub Actions
+#      Organization or user: omdsh-dev
+#      Repository:           DSH-better-sidebar
+#      Workflow filename:    release.yml
+#      Environment:          (blank)
+#   3. Save. Do NOT add an NPM_TOKEN secret — Trusted Publishing replaces it.
+# Canonical reference: https://docs.npmjs.com/trusted-publishers
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Pack and verify everything, but do not publish
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write  # mint the OIDC token npm Trusted Publishing exchanges
+
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: build · verify · publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Tests run git log against this repository and need full history.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      # The plugin's git revert/cherry-pick spawn git without an identity
+      # (see tests/smoke.spec.ts); the runner has none by default.
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.name "dsh-better-sidebar-ci"
+          git config --global user.email "ci@dsh.invalid"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify release tag matches package.json version
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          expected="v$(node -p "require('./package.json').version")"
+          echo "package.json version: ${expected#v}"
+          echo "release tag:          ${RELEASE_TAG}"
+          if [ "${RELEASE_TAG}" != "${expected}" ]; then
+            echo "::error::Release tag ${RELEASE_TAG} does not match package.json version ${expected#v} (expected ${expected})."
+            exit 1
+          fi
+
+      - name: Build
+        run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Dry-run publish (validation only)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true'
+        run: pnpm publish --dry-run --no-git-checks
+
+      - name: Publish to npm
+        if: github.event_name == 'release' || github.event.inputs.dry_run != 'true'
+        run: pnpm publish --provenance --access public --no-git-checks
