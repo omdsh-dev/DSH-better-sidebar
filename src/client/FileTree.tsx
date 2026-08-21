@@ -11,8 +11,11 @@
  * right (appends `@<relative path>` to the composer draft), and right-click
  * opens a context menu: file rows offer the caller's open escapes
  * (new tab / to the side, only when the callbacks exist) and a download
- * action (the host serves raw bytes, binary-safe); directory rows offer
- * "upload here"; every row can copy the relative or absolute path (with a
+ * action (the host serves raw bytes, binary-safe); HTML files additionally
+ * offer "open in the browser" (the host fires the OS default browser);
+ * directory rows offer
+ * "upload here"; every row can reveal itself in the OS file manager and
+ * copy the relative or absolute path (with a
  * brief "copied" label replacing the button after a successful write).
  *
  * Uploads start here (drag-drop or the context menu picker) but run in the
@@ -295,6 +298,20 @@ export function FileTree(props: {
     anchor.remove()
   }
 
+  /** OS-level row action: reveal in the file manager, or hand an HTML file
+   *  to the default browser (host route spawns the platform opener). */
+  const revealRow = (path: string, mode: 'reveal' | 'open'): void => {
+    api.fsReveal({ sessionId, cwd }, path, mode).catch((error: unknown) => {
+      console.warn('[sidebar] fs.reveal failed:', error instanceof Error ? error.message : error)
+    })
+  }
+
+  /** Lower-cased .html/.htm test for the browser-open menu entry. */
+  const isHtmlPath = (path: string): boolean => {
+    const lower = path.toLowerCase()
+    return lower.endsWith('.html') || lower.endsWith('.htm')
+  }
+
   const root = cwd
 
   const renderLevel = (dir: string, depth: number): ReactNode => {
@@ -499,6 +516,15 @@ export function FileTree(props: {
           ...(rowMenu?.isDir === true
             ? [{ id: 'upload-here', label: t('uploadHere'), icon: <IconUploadOutline16 size={14} /> }]
             : []),
+          // Browser open applies to HTML files only (the host fires the OS
+          // default browser with the file path).
+          ...(rowMenu?.isDir === false && isHtmlPath(rowMenu.path)
+            ? [{ id: 'open-browser', label: t('openInBrowser'), icon: <IconLinkOutline16 size={14} /> }]
+            : []),
+          // Reveal applies to every row (files, dirs, and the root).
+          ...(rowMenu !== null
+            ? [{ id: 'reveal', label: t('revealInFolder'), icon: <IconFolderOpen16 size={14} /> }]
+            : []),
           { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={14} /> },
           { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutline16 size={14} /> },
         ]}
@@ -521,6 +547,14 @@ export function FileTree(props: {
           if (id === 'upload-here') {
             pendingUploadDir.current = target.path
             fileInputRef.current?.click()
+            return
+          }
+          if (id === 'open-browser') {
+            revealRow(target.path, 'open')
+            return
+          }
+          if (id === 'reveal') {
+            revealRow(target.path, 'reveal')
             return
           }
           copyPath(

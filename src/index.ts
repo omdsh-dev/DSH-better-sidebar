@@ -29,6 +29,7 @@ import {
   type SidebarPrefs,
 } from './config.ts'
 import { isWithin, parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import { revealPath, type RevealMode } from './reveal.ts'
 import { writeWorkspaceUpload } from './fs-operations.ts'
 import { searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
@@ -275,6 +276,18 @@ function buildApi(
         throw new SidebarError('fs-error', `cannot write "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
       }
       return { ok: true }
+    },
+    'fs.reveal': async (payload) => {
+      // Explorer context menu: "show in folder" / "open with the default
+      // app" (HTML → browser). Absolute existing paths only, same bar as
+      // fs.write; the opener spawns detached (see reveal.ts).
+      cwdOf(payload) // session scope must resolve, even though the path is absolute
+      const path = requireAbsolute(requireString(payload, 'path'))
+      const record = payload as { mode?: unknown }
+      const mode: RevealMode = record.mode === 'open' ? 'open' : 'reveal'
+      return revealPath(path, mode).catch((error: unknown) => {
+        throw new SidebarError('fs-error', `cannot reveal "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+      })
     },
     'git.status': async (payload) => {
       const { cwd } = cwdOf(payload)

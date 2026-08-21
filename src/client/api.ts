@@ -182,6 +182,10 @@ export const api = {
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
+  /** Explorer context menu: reveal the row in the OS file manager
+   *  ('reveal') or open it with the default app ('open' — HTML → browser). */
+  fsReveal: (scope: SessionScope, path: string, mode: 'reveal' | 'open') =>
+    call<{ ok: true }>('fs.reveal', scopePayload(scope, { path, mode })),
   /** Upload one file's raw bytes into `dir` (keeps the folder tree via
    *  `relativePath`); the host streams it under the session workspace. */
   uploadFile: (scope: SessionScope, dir: string, relativePath: string, body: Blob, signal?: AbortSignal) =>

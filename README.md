@@ -42,6 +42,12 @@
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="33%" alt="添加插件截图" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
 </div>
 
+### v0.14.2
+
+**✨ 新功能**
+
+- 📂 **文件树右键新增「在文件夹中显示」与「在浏览器中打开」**：任意行（文件/目录/根目录）右键可调起系统文件管理器并定位到该行（macOS `open -R` / Windows `explorer /select` / Linux `xdg-open` 所在目录）；`.html` / `.htm` 文件行额外提供「在浏览器中打开」，直接交给系统默认浏览器。宿主侧新增 `fs.reveal` 路由（仅接受存在的绝对路径，opener 以参数数组 detached 拉起，杜绝 shell 注入）
+
 ### v0.14.1
 
 **✨ 新功能**
