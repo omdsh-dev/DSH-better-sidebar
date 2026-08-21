@@ -96,6 +96,7 @@ function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise<string
   return new Promise<string>((resolvePromise, reject) => {
     const child = spawn('git', full, {
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
       env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
     })
     let stdout = ''
