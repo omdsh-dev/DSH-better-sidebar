@@ -94,6 +94,25 @@ export type TerminalDepsStatus =
     note?: string
   }
 
+/** One MCP server's tool as shown in the panel (issue #276). */
+export interface McpToolInfo {
+  /** The raw tool name without the `mcp__<server>__` prefix. */
+  name: string
+  /** The tool's model-facing description (empty string when the server sent none). */
+  description?: string
+}
+
+/** One connected MCP server (issue #276): server name + its tool list. */
+export interface McpServerStatus {
+  name: string
+  tools: McpToolInfo[]
+}
+
+/** The MCP status snapshot: every currently connected server (global state). */
+export interface McpStatusResult {
+  servers: McpServerStatus[]
+}
+
 async function call<T>(method: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   let response: Response
   try {
@@ -231,6 +250,9 @@ export const api = {
    *  (the close reason itself is capped at 123 bytes). */
   terminalDeps: () =>
     call<TerminalDepsStatus>('terminal.deps', {}),
+  /** The live MCP server roster (issue #276): global state, no session scope. */
+  mcpStatus: (signal?: AbortSignal) =>
+    call<McpStatusResult>('mcp.status', {}, signal),
   /**
    * The output the model has read so far for one background job (replayed
    * from the owner session's event log — never the model's job_output

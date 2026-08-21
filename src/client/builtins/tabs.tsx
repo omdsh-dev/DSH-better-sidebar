@@ -1,6 +1,6 @@
 /**
- * The 6 built-in tab descriptors: the plugin registers its own pages
- * (editor / git / terminal / browser / subagent / diff) through
+ * The 7 built-in tab descriptors: the plugin registers its own pages
+ * (editor / git / terminal / browser / subagent / mcp / diff) through
  * the same {@link BetterSidebarService} external plugins use — eating its
  * own dogfood. The terminal descriptor owns its quota (`TERMINAL_LIMIT`)
  * and mints `terminal:<uuid>` ids through `createTab`; the browser mints
@@ -18,7 +18,8 @@ import { GitView } from '../GitView.tsx'
 import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
 import { BrowserView } from '../BrowserView.tsx'
-import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16 } from '../icons.tsx'
+import { McpView } from '../McpView.tsx'
+import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16, IconMcpOutline16 } from '../icons.tsx'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
 import type { ComponentType } from 'react'
 import type { SessionScope } from '../api.ts'
@@ -233,8 +234,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       id: 'browser',
       title: () => t('browser'),
       icon: (size: number) => <IconGlobeOutline16 size={size} />,
-      order: 50,
-      // Declarative settings: the sandbox escape hatch, the link-takeover
+      order: 50,      // Declarative settings: the sandbox escape hatch, the link-takeover
       // MASTER switch, and the per-protocol takeover switches (http on /
       // https off by default) render under this tab's row in the Side card
       // settings page (the sandbox one is warned on).
@@ -266,6 +266,14 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
         patch: { nextBrowser: state.nextBrowser + 1 },
       }),
       component: (props) => <BrowserView {...props} />,
+    },
+    {
+      id: 'mcp',
+      title: () => t('mcp'),
+      icon: (size: number) => <IconMcpOutline16 size={size} />,
+      order: 60,
+      single: true,
+      component: ({ visible }) => <McpView visible={visible} />,
     },
     {
       id: 'diff',

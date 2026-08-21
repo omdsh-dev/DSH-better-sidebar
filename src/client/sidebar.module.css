@@ -2259,6 +2259,146 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: pre-wrap;
 }
 
+/* ── MCP panel (issue #276) ─────────────────────────────────────────── */
+
+.mcp {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  /* Tab pages never scroll horizontally: content wraps or truncates to the
+     panel width instead of panning sideways. */
+  overflow-x: hidden;
+}
+
+.mcpHeader {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px 0 12px;
+}
+
+.mcpTitle {
+  flex: 1;
+  min-width: 0;
+  font: var(--dsw-font-xxs-strong-12);
+  color: var(--dsw-alias-label-primary);
+  text-transform: uppercase;
+}
+
+.mcpPlaceholder {
+  padding: 12px;
+  font: var(--dsw-font-xs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mcpError {
+  padding: 8px 12px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-state-error-primary);
+  white-space: pre-wrap;
+}
+
+.mcpServers {
+  display: flex;
+  flex-direction: column;
+}
+
+.mcpServer {
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  padding-bottom: 6px;
+}
+
+.mcpServerHeader {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px 4px;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.mcpServerHeader:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.mcpServerHeader:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
+.mcpServerName {
+  flex: 1;
+  min-width: 0;
+  font: var(--dsw-font-xxs-strong-12);
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcpServerCount {
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-strong-11);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mcpToolList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mcpTool {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 6px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  animation: dsh-row-in 150ms var(--ds-ease-in-out);
+}
+
+.mcpTool:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.mcpToolName {
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcpToolDesc {
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .gitCommit {
   display: flex;
   gap: 6px;
