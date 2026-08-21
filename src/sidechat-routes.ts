@@ -32,17 +32,23 @@ import type {
   SidebarSessionTitleService,
 } from './context-types.ts'
 import {
+  boundaryDelivered,
   buildSidechatInheritance,
   resolvePresetId,
   SIDE_BOUNDARY_PROMPT,
+  SIDE_NEW_THREAD_TITLE,
   sideLabel,
   type SidechatLogEvent,
+  type SidechatThreadInfo,
 } from './sidechat-core.ts'
 import { requireString, SidebarError } from './wire.ts'
 
-/** The four Side Chat routes of the sidebar API (wire method names). */
+/** The five Side Chat routes of the sidebar API (wire method names). */
 export interface SidechatRoutes {
-  /** Create a side thread child seeded with the parent's log up to now. */
+  /** Create a side thread child seeded with the parent's log up to now.
+   *  `question` is optional: empty creates an EMPTY thread (Codex-style
+   *  immediate create); the first `sidechat.prompt` then carries the
+   *  boundary + snapshot and earns the thread its real label. */
   'sidechat.start'(payload: unknown): Promise<{ childId: string }>
   /** Deliver one follow-up message to a thread (live, or cold-resumed). */
   'sidechat.prompt'(payload: unknown): Promise<{ accepted: true }>
@@ -50,6 +56,8 @@ export interface SidechatRoutes {
   'sidechat.cancel'(payload: unknown): Promise<{ accepted: true }>
   /** Release the thread's live agent (session and history stay persisted). */
   'sidechat.dispose'(payload: unknown): Promise<{ accepted: true }>
+  /** Live state + agent identity for the thread header. */
+  'sidechat.info'(payload: unknown): Promise<SidechatThreadInfo>
 }
 
 /** Timeout guarding the create call (the registry detaches it before the
@@ -59,6 +67,11 @@ const CREATE_TIMEOUT_MS = 15_000
 /** Per-activation disposers of created thread agents (the dispose route
  *  releases them; the session and its history always stay persisted). */
 const threadDisposers = new Map<string, () => Promise<void>>()
+
+/** The in-progress-turn snapshot captured at creation of an EMPTY thread,
+ *  waiting to ride the first prompt (lost on a host restart — the boundary
+ *  prompt is then delivered alone, a logged degradation). */
+const pendingSnapshots = new Map<string, string>()
 
 /** Resolve the parent's preset and build the child's composition setup
  *  (mirror of api-proxy's composeAgent minus the model-selection install —
@@ -122,10 +135,8 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
   return {
     'sidechat.start': async (payload: unknown) => {
       const sessionId = requireString(payload, 'sessionId')
-      const question = requireString(payload, 'question').trim()
-      if (question === '') {
-        throw new SidebarError('bad-request', 'question is required')
-      }
+      const rawQuestion = (payload as { question?: unknown }).question
+      const question = typeof rawQuestion === 'string' ? rawQuestion.trim() : ''
       const parent = liveThreadAgent(ctx, sessionId)
       if (parent === undefined) {
         throw new SidebarError('sidechat-error', `parent session "${sessionId}" is not running`, 409)
@@ -134,9 +145,6 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
       const inheritance = buildSidechatInheritance(
         parentSession.events as unknown as readonly SidechatLogEvent[],
       )
-      const promptParts = [SIDE_BOUNDARY_PROMPT]
-      if (inheritance.snapshot !== null) promptParts.push(inheritance.snapshot)
-      promptParts.push(question)
       const { agentPreset, setup } = await composeChildSetup(
         ctx,
         resolvePresetId(parentSession.header, parentSession.events),
@@ -170,16 +178,28 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
         throw new SidebarError('sidechat-error', `thread creation failed: ${error instanceof Error ? error.message : String(error)}`, 500)
       }
       threadDisposers.set(childId, () => handle.dispose())
-      admitFollowup(handle.agent, textPrompt(promptParts.join('\n\n')))
       // Pin the thread label so the client can identify its threads by
       // title prefix (the rename is a live-session op, no RPC fence).
       const titles = ctx.get('sessionTitle') as SidebarSessionTitleService | undefined
-      if (titles !== undefined) {
+      const pinTitle = (label: string): void => {
+        if (titles === undefined) return
         try {
-          titles.rename(handle.agent.session, sideLabel(question))
+          titles.rename(handle.agent.session, label)
         } catch {
           // Keep the auto-generated title; the thread stays usable.
         }
+      }
+      if (question === '') {
+        // Codex-style immediate create: no prompt yet — the composer owns
+        // the first message; the snapshot waits for it.
+        if (inheritance.snapshot !== null) pendingSnapshots.set(childId, inheritance.snapshot)
+        pinTitle(SIDE_NEW_THREAD_TITLE)
+      } else {
+        const promptParts = [SIDE_BOUNDARY_PROMPT]
+        if (inheritance.snapshot !== null) promptParts.push(inheritance.snapshot)
+        promptParts.push(question)
+        admitFollowup(handle.agent, textPrompt(promptParts.join('\n\n')))
+        pinTitle(sideLabel(question))
       }
       return { childId }
     },
@@ -207,7 +227,27 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
           throw new SidebarError('sidechat-error', `thread resume failed: ${error instanceof Error ? error.message : String(error)}`, 500)
         }
       }
-      admitFollowup(agent, textPrompt(text))
+      if (boundaryDelivered(agent.session.events as unknown as readonly SidechatLogEvent[])) {
+        admitFollowup(agent, textPrompt(text))
+      } else {
+        // First message of an immediately-created thread: it carries the
+        // boundary (+ the snapshot parked at creation, if still around)
+        // and earns the thread its real label.
+        const parts = [SIDE_BOUNDARY_PROMPT]
+        const snapshot = pendingSnapshots.get(childId)
+        pendingSnapshots.delete(childId)
+        if (snapshot !== undefined) parts.push(snapshot)
+        parts.push(text)
+        admitFollowup(agent, textPrompt(parts.join('\n\n')))
+        const titles = ctx.get('sessionTitle') as SidebarSessionTitleService | undefined
+        if (titles !== undefined) {
+          try {
+            titles.rename(agent.session, sideLabel(text))
+          } catch {
+            // Keep the placeholder title; the thread stays usable.
+          }
+        }
+      }
       return { accepted: true as const }
     },
 
@@ -222,6 +262,7 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
 
     'sidechat.dispose': async (payload: unknown) => {
       const childId = requireString(payload, 'childId')
+      pendingSnapshots.delete(childId)
       const dispose = threadDisposers.get(childId)
       if (dispose !== undefined) {
         threadDisposers.delete(childId)
@@ -232,6 +273,33 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
         }
       }
       return { accepted: true as const }
+    },
+
+    'sidechat.info': async (payload: unknown) => {
+      const childId = requireString(payload, 'childId')
+      const agent = liveThreadAgent(ctx, childId)
+      if (agent !== undefined) {
+        const preset = agent.session.header.agentPreset
+        return {
+          live: true,
+          status: agent.status,
+          ...(agent.options.provider === undefined ? {} : { provider: agent.options.provider }),
+          ...(agent.options.model === undefined ? {} : { model: agent.options.model }),
+          ...(preset === undefined ? {} : { preset }),
+        }
+      }
+      // Cold thread: only the persisted preset is worth reading back.
+      const persistence = ctx.get('sessionPersistence') as SidebarSessionPersistenceService | undefined
+      if (persistence !== undefined) {
+        try {
+          const inspected = await persistence.inspect(childId)
+          const preset = resolvePresetId(inspected.meta, inspected.events)
+          return { live: false, ...(preset === undefined ? {} : { preset }) }
+        } catch {
+          // Unknown/gone session: report a bare cold info.
+        }
+      }
+      return { live: false }
     },
   }
 }

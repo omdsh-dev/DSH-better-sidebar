@@ -73,8 +73,8 @@
 
 ## 8. 测试与自验
 
-- 单测：`sidechat-core.spec.ts`（种子全分支：turn 外 / 空 / 仅 pending user / open turn 无工具 / 成对工具 / 悬挂回退 / 多 step 闭合 / seq 连续性；转储保真；线程过滤；保存资格；preset 解析）、`sidechat-transcript.spec.ts`（种子截断、boundary 丢弃、chunk 流式、工具配对、孤儿失败工具）、`sidechat-routes.spec.ts`（start 全路径 / prompt live+cold / cancel / dispose）、`builtins.spec.ts` 7 tab。
-- e2e 挂载冒烟：+ 菜单深扫含 Side Chat；**host 路由级自验**（真实 keyless dsh web 中 sidechat.start/prompt/cancel/dispose 全链路，种子会话为父）。
+- 单测：`sidechat-core.spec.ts`（种子全分支：turn 外 / 空 / 仅 pending user / open turn 无工具 / 成对工具 / 悬挂回退 / 多 step 闭合 / seq 连续性；转储保真；线程过滤；保存资格；preset 解析；boundaryDelivered）、`sidechat-seed-validation.spec.ts`（真实 `Session.create` 校验器接受种子产物）、`sidechat-transcript.spec.ts`（种子截断、boundary 丢弃、chunk 流式、工具配对、孤儿失败工具）、`sidechat-routes.spec.ts`（start 带问/空问立即创建、首条 prompt 包裹边界+快照并改名、prompt live+cold、cancel、dispose、info live/cold/未知）、`builtins.spec.ts` 7 tab + sidechat 每线程一 Tab 铸造/去重。
+- e2e 挂载冒烟：+ 菜单深扫含 Side Chat；**host 路由级自验**（真实 keyless dsh web 中 sidechat.start/prompt/cancel/dispose/info 全链路 + 空问题立即创建流程，种子会话为父）。
 - 真实环境手测（实施后勾选）：新建线程 → 追问往返 → 流式渲染 → 工具行 → 主会话流式中新建（冻结继承）→ 工具执行中途新建（回退转储）→ 重启后续聊 → 保存为新会话 → 刷新持久。
 
 ## 9. 复用门记录
@@ -86,4 +86,7 @@
 - 路由键命名：`buildSidechatApi` 返回对象的键必须是**完整 wire 方法名**（`'sidechat.start'` 等，/sidebar/api 分发器按 `api[method]` 查找），而非短名 `start/prompt/…`。首次实现用了短名，单测直接调对象方法未暴露，真实挂载冒烟以 404 抓出（该冒烟因此新增了路由级自验，见 §8）。
 - 种子函数入参类型：sidechat-core 使用宽松结构类型 `SidechatLogEvent {type, seq, time, data: unknown}`（同时接受 host 真实 `SessionEvent` 与 client 的 `SidebarSessionEvent` 镜像），避免两半的类型图互相污染。
 - keyless 挂载冒烟无法验证 boundary 消息落盘：`agent.followup` 的消息先入 inbox，被 turn claim 后才写入 session 日志——keyless（无模型路由）下 turn 不会 claim。挂载冒烟的深度断言因此改为 **session.list 成员校验**（证明子会话真实创建，provider 无关）；boundary 落盘与流式/回答在真实 provider 环境手测（§8 清单）。
+- **UI 两轮返工（用户实测驱动）**：
+  1. 种子事件信封字段丢失（用户实测报 `invalid seed event … requires a surfaceOp marker`）：`copyEvents` 重建事件时只保留 `{type,seq,time,data}`，剥掉了 `surfaceOp`/`sourceEventSeqs`/`ignorable`，而种子校验器要求 surface-eligible 事件必带 `surfaceOp`。修复 = 信封字段原样透传 + 新增 `sidechat-seed-validation.spec.ts`（用真实 `@deepseek-ai/dsh-session` 的 `Session.create` 校验器跑种子产物，回归守护）。
+  2. 交互模型从「单 Tab + 内嵌线程列表 + 首问表单」改为 **Codex app 对齐的「每线程一 Tab」**：`createTab` 铸造 `sidechat:new-<uuid>`（meta `autoCreate`，视图挂载即调 `sidechat.start` 空问题立即建线程）或消费 `parkSidechatReopen` 停泊的 `sidechat:<threadId>` 重连 Tab；`dedupeKey = meta.threadId` 保证同线程聚焦不重复；`onClose` 释放 live agent（历史保留，头部菜单可重开）。配套后端变化：`sidechat.start` 的 `question` 变为可选（空 = 仅建线程，快照停泊在 `pendingSnapshots`）；`sidechat.prompt` 检测边界未送达时（`boundaryDelivered` 扫日志）自动包裹边界 + 停泊快照并用首条消息改名；新增 `sidechat.info` 路由（live 状态 + provider/model/preset 身份，供头部 Agent 徽标）。UI 对齐主对话区：用户右对齐气泡（`--dsw-specific-bubble`）、assistant 通栏 markdown、胶囊 composer（`--dsw-specific-input-major` + 圆形 accent 发送/停止钮 + 自动增高 textarea）、运行扫光状态行与工具行（`StateDot` + shimmer），动效全部 ≤200ms 交叉淡化并受 `prefers-reduced-motion` 收敛。
 - （预留）实施过程中如有与本文档的其他偏差，在此记录。

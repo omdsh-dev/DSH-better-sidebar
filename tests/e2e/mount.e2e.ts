@@ -264,8 +264,9 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     result: { ok: true; value: { items: Array<{ sessionId: string }> } } | { ok: false; error: unknown }
   }
   expect(listBody.result.ok, `session.list envelope: ${JSON.stringify(listBody)}`).toBe(true)
+  const listedItems = (listBody.result as { value: { items: Array<{ sessionId: string }> } }).value.items
   expect(
-    listBody.result.value.items.some(item => item.sessionId === childId),
+    listedItems.some(item => item.sessionId === childId),
     'the thread child must appear in the host session list',
   ).toBe(true)
   for (const method of ['sidechat.prompt', 'sidechat.cancel', 'sidechat.dispose']) {
@@ -273,6 +274,30 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
       data: method === 'sidechat.prompt' ? { childId, text: 'follow-up' } : { childId },
     })
     expect(response.ok(), `${method}: ${response.status()} ${await response.text()}`).toBe(true)
+  }
+
+  // The Codex-style immediate-create flow: a blank question creates an
+  // EMPTY thread (no prompt admitted), sidechat.info reports the live
+  // agent, and the first prompt delivers the boundary host-side.
+  const empty = await api.post(`${BASE_URL}/sidebar/api/sidechat.start`, {
+    data: { sessionId: seededSessionId, question: '' },
+  })
+  expect(empty.ok(), `sidechat.start (empty): ${empty.status()} ${await empty.text()}`).toBe(true)
+  const emptyBody = (await empty.json()) as { ok: boolean; value?: { childId?: string } }
+  const emptyChildId = emptyBody.value?.childId
+  expect(emptyChildId, 'immediate create must return a child session id').toMatch(/^session-/)
+  const info = await api.post(`${BASE_URL}/sidebar/api/sidechat.info`, {
+    data: { childId: emptyChildId },
+  })
+  expect(info.ok(), `sidechat.info: ${info.status()} ${await info.text()}`).toBe(true)
+  const infoBody = (await info.json()) as { ok: boolean; value?: { live?: boolean; preset?: string } }
+  expect(infoBody.ok, `sidechat.info envelope: ${JSON.stringify(infoBody)}`).toBe(true)
+  expect(infoBody.value?.live, 'the fresh thread must have a live agent').toBe(true)
+  for (const method of ['sidechat.prompt', 'sidechat.dispose']) {
+    const response = await api.post(`${BASE_URL}/sidebar/api/${method}`, {
+      data: method === 'sidechat.prompt' ? { childId: emptyChildId, text: 'first message' } : { childId: emptyChildId },
+    })
+    expect(response.ok(), `${method} (immediate thread): ${response.status()} ${await response.text()}`).toBe(true)
   }
   await assertNoCrash()
 

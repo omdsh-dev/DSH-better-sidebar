@@ -14,9 +14,14 @@ function entry(event: SidebarSessionEvent): SidebarHistoryEntry {
   return { event }
 }
 
-/** One log event fixture. */
+/** One log event fixture. Surface-eligible events carry their required
+ *  `surfaceOp: 'append'` marker, exactly like the live pipeline appends them. */
 function ev(type: string, seq: number, data: Record<string, unknown> = {}): SidebarSessionEvent {
-  return { type, seq, time: seq * 1000, data }
+  const event: SidebarSessionEvent = { type, seq, time: seq * 1000, data }
+  if (type === 'user/message' || type === 'assistant/message' || type === 'tool/result') {
+    return { ...event, surfaceOp: 'append' } as SidebarSessionEvent
+  }
+  return event
 }
 
 function textBlocks(...texts: string[]): unknown[] {

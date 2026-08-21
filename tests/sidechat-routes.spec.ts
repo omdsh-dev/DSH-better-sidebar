@@ -8,13 +8,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import { buildSidechatApi } from '../src/sidechat-routes.ts'
 import { SidebarError } from '../src/wire.ts'
-import { SIDE_BOUNDARY_PROMPT, sideLabel } from '../src/sidechat-core.ts'
+import { SIDE_BOUNDARY_PROMPT, SIDE_NEW_THREAD_TITLE, sideLabel } from '../src/sidechat-core.ts'
 import type { Context } from '../src/context-types.ts'
 
 /** A fake live agent (followup/cancel spied). */
 function agent(id: string, over: { events?: unknown[]; header?: Record<string, unknown>; provider?: string; model?: string } = {}) {
   return {
     id,
+    status: 'idle' as const,
     options: { provider: over.provider ?? 'test', model: over.model ?? 'model-x' },
     session: {
       id,
@@ -76,8 +77,12 @@ function ctxWith(services: {
   } as unknown as Context
 }
 
-function ev(type: string, seq: number, data: Record<string, unknown> = {}): { type: string; seq: number; time: number; data: Record<string, unknown> } {
-  return { type, seq, time: seq * 1000, data }
+function ev(type: string, seq: number, data: Record<string, unknown> = {}): { type: string; seq: number; time: number; data: Record<string, unknown>; surfaceOp?: string } {
+  const event = { type, seq, time: seq * 1000, data }
+  if (type === 'user/message' || type === 'assistant/message' || type === 'tool/result') {
+    return { ...event, surfaceOp: 'append' }
+  }
+  return event
 }
 
 describe('sidechat.start', () => {
@@ -174,12 +179,42 @@ describe('sidechat.start', () => {
     expect(message.content[0]!.text).toContain('`bash` (executing)')
   })
 
-  it('rejects a blank question and a non-running parent', async () => {
-    const parent = agent('parent', { events: [] })
+  it('creates an EMPTY thread on a blank question (Codex-style immediate create)', async () => {
+    const parent = agent('parent', {
+      events: [
+        ev('user/message', 0, { content: [{ type: 'text', text: 'q' }], source: { kind: 'user' } }),
+        ev('turn/start', 1, { turn: 1 }),
+        ev('step/start', 2, { turn: 1, step: 1 }),
+        ev('tool/call', 3, { turn: 1, step: 1, callId: 'c1', name: 'bash', arguments: '{"cmd":"sleep"}' }),
+      ],
+    })
     const child = agent('child')
     const services = happyServices(parent, child)
     const api = buildSidechatApi(ctxWith(services))
-    await expect(api['sidechat.start']({ sessionId: 'parent', question: '   ' })).rejects.toThrow(SidebarError)
+
+    const { childId } = await api['sidechat.start']({ sessionId: 'parent', question: '   ' })
+
+    // No prompt yet: the composer owns the first message; the placeholder
+    // label is pinned and the in-progress snapshot is parked for it.
+    expect(child.followup).not.toHaveBeenCalled()
+    expect(services.rename).toHaveBeenCalledWith(child.session, SIDE_NEW_THREAD_TITLE)
+
+    // The first prompt carries the boundary + the parked snapshot and earns
+    // the thread its real label.
+    services.agents.get = vi.fn((id: unknown) => (id === childId ? child : parent))
+    await api['sidechat.prompt']({ childId, text: 'explain the event flow' })
+    expect(child.followup).toHaveBeenCalledTimes(1)
+    const message = child.followup.mock.calls[0]![0] as { content: Array<{ text: string }> }
+    expect(message.content[0]!.text.startsWith(SIDE_BOUNDARY_PROMPT)).toBe(true)
+    expect(message.content[0]!.text).toContain('`bash` (executing)')
+    expect(message.content[0]!.text).toContain('explain the event flow')
+    expect(services.rename).toHaveBeenCalledWith(child.session, sideLabel('explain the event flow'))
+  })
+
+  it('rejects a non-running parent', async () => {
+    const parent = agent('parent', { events: [] })
+    const child = agent('child')
+    const services = happyServices(parent, child)
     const idle = ctxWith({
       ...services,
       agents: { ...services.agents, get: vi.fn((_id: unknown) => undefined) },
@@ -195,8 +230,15 @@ describe('sidechat.start', () => {
 })
 
 describe('sidechat.prompt', () => {
-  it('delivers follow-ups to a live agent', async () => {
-    const child = agent('child')
+  it('delivers follow-ups to a live agent (boundary already delivered)', async () => {
+    const child = agent('child', {
+      events: [
+        ev('user/message', 0, {
+          content: [{ type: 'text', text: `${SIDE_BOUNDARY_PROMPT}\n\nfirst question` }],
+          source: { kind: 'user' },
+        }),
+      ],
+    })
     const services = happyServices(undefined, child)
     const api = buildSidechatApi(ctxWith(services))
     const result = await api['sidechat.prompt']({ childId: 'child', text: 'tell me more' })
@@ -253,5 +295,40 @@ describe('sidechat.cancel and sidechat.dispose', () => {
     // A second dispose is a harmless no-op.
     await api['sidechat.dispose']({ childId })
     expect(dispose).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('sidechat.info', () => {
+  it('reports the live agent state and identity', async () => {
+    const child = agent('child')
+    const services = happyServices(undefined, child)
+    const api = buildSidechatApi(ctxWith(services))
+    const info = await api['sidechat.info']({ childId: 'child' })
+    expect(info).toEqual({
+      live: true,
+      status: 'idle',
+      provider: 'test',
+      model: 'model-x',
+      preset: 'preset-a',
+    })
+  })
+
+  it('reports the persisted preset of a cold thread', async () => {
+    const child = agent('child')
+    const services = happyServices(undefined, child)
+    services.agents.get = vi.fn((_id: unknown) => undefined)
+    const api = buildSidechatApi(ctxWith(services))
+    const info = await api['sidechat.info']({ childId: 'child' })
+    expect(info).toEqual({ live: false, preset: 'preset-a' })
+    expect(services.inspect).toHaveBeenCalledWith('child')
+  })
+
+  it('degrades to a bare cold info when the session is gone', async () => {
+    const services = happyServices(undefined, agent('child'))
+    services.agents.get = vi.fn((_id: unknown) => undefined)
+    services.inspect = vi.fn(async () => { throw new Error('unknown session') })
+    services.sessionPersistence = { inspect: services.inspect }
+    const api = buildSidechatApi(ctxWith(services))
+    await expect(api['sidechat.info']({ childId: 'ghost' })).resolves.toEqual({ live: false })
   })
 })

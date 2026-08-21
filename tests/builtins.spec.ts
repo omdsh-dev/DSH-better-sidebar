@@ -16,6 +16,7 @@ import { createSidebarStore } from '../src/client/state.ts'
 import { allLeaves } from '../src/client/state.ts'
 import { registerBuiltins } from '../src/client/builtins/index.ts'
 import type { BuiltinTabOptions } from '../src/client/builtins/tabs.tsx'
+import { parkSidechatReopen } from '../src/client/SideChatView.tsx'
 import { t } from '../src/client/locales.ts'
 
 function setup(options: BuiltinTabOptions = {}): { service: ReturnType<typeof createBetterSidebarService>; store: ReturnType<typeof createSidebarStore>; dispose: () => void } {
@@ -43,7 +44,7 @@ describe('built-in tab registrations', () => {
 
   it('single-instance tabs use the single sugar', () => {
     const { service } = setup()
-    for (const id of ['git', 'sidechat', 'subagent']) {
+    for (const id of ['git', 'subagent']) {
       expect(service.getTab(id)?.single).toBe(true)
     }
   })
@@ -53,6 +54,27 @@ describe('built-in tab registrations', () => {
     const sidechat = service.getTab('sidechat')
     expect(sidechat?.order).toBe(35)
     expect(sidechat?.hidden).not.toBe(true)
+  })
+
+  it('side chat mints one tab per thread (Codex-style multi-instance)', () => {
+    const { service } = setup()
+    const sidechat = service.getTab('sidechat')
+    expect(sidechat?.single).not.toBe(true)
+    // A plain open mints a fresh autoCreate tab (the view creates the
+    // thread on mount); two opens never collide. (createTab ignores the
+    // state argument for sidechat — the cast stands in for it.)
+    const first = sidechat?.createTab?.(undefined as never)
+    const second = sidechat?.createTab?.(undefined as never)
+    expect(first?.tab.meta).toEqual({ autoCreate: true })
+    expect(first?.tab.id).not.toBe(second?.tab.id)
+    // A parked reopen target mints the deterministic reattach tab, and
+    // dedupeKey focuses an already-open thread instead of duplicating it.
+    parkSidechatReopen('session-t1')
+    const reopen = sidechat?.createTab?.(undefined as never)
+    expect(reopen?.tab.id).toBe('sidechat:session-t1')
+    expect(reopen?.tab.meta).toEqual({ threadId: 'session-t1' })
+    expect(sidechat?.dedupeKey?.(reopen!.tab)).toBe('session-t1')
+    expect(sidechat?.dedupeKey?.(first!.tab)).toBeUndefined()
   })
 
   it('the subagent tab declares its auto-open related settings', () => {

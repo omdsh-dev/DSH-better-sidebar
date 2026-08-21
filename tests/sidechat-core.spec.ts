@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SidebarHistoryEntry, SidebarSessionEvent, SidebarSessionSummary } from '../src/context-types.ts'
 import {
+  boundaryDelivered,
   buildOpenTurnSnapshot,
   buildSidechatInheritance,
   hasDanglingToolCall,
@@ -22,9 +23,15 @@ import {
   type SidechatLogEvent,
 } from '../src/sidechat-core.ts'
 
-/** One log event fixture (structural, seq === index like the live contract). */
+/** One log event fixture (structural, seq === index like the live contract).
+ *  Surface-eligible events carry their required `surfaceOp: 'append'`
+ *  marker, exactly like the live pipeline appends them. */
 function ev(type: string, seq: number, data: Record<string, unknown> = {}): SidebarSessionEvent {
-  return { type, seq, time: seq * 1000, data }
+  const event: SidebarSessionEvent = { type, seq, time: seq * 1000, data }
+  if (type === 'user/message' || type === 'assistant/message' || type === 'tool/result') {
+    return { ...event, surfaceOp: 'append' } as SidebarSessionEvent
+  }
+  return event
 }
 
 /** A completed user→assistant turn block (turn T, step 1, optional tools). */
@@ -84,6 +91,35 @@ describe('buildSidechatInheritance', () => {
     expect(seed.at(-1)?.type).toBe('user/message')
     expect(seed.some(event => event.type === 'turn/end')).toBe(true)
     expect(snapshot).toBeNull()
+  })
+
+  it('preserves the surface envelope of message events in the seed', () => {
+    // Regression: the seed validator rejects surface-eligible events
+    // (user/message, assistant/message, tool/result) whose `surfaceOp`
+    // marker was stripped — the copy must keep the FULL event envelope.
+    const events = [
+      ev('user/message', 0, { content: [{ type: 'text', text: 'q' }], source: { kind: 'user' } }),
+      ev('turn/start', 1, { turn: 1 }),
+      ev('step/start', 2, { turn: 1, step: 1 }),
+      ev('tool/call', 3, { turn: 1, step: 1, callId: 'c1', name: 'read', arguments: '{}' }),
+      ev('tool/result', 4, {
+        turn: 1,
+        step: 1,
+        message: {
+          source: { kind: 'tool', callId: 'c1' },
+          content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'ok' }] }],
+        },
+      }),
+      ev('assistant/message', 5, { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'a' }] } }),
+      ev('step/end', 6, { turn: 1, step: 1 }),
+      ev('turn/end', 7, { turn: 1, reason: { kind: 'completed' } }),
+    ]
+    const { seed } = buildSidechatInheritance(events)
+    expect(seed.filter(event => event.type === 'user/message').every(event => event.surfaceOp === 'append')).toBe(true)
+    expect(seed.filter(event => event.type === 'assistant/message').every(event => event.surfaceOp === 'append')).toBe(true)
+    expect(seed.filter(event => event.type === 'tool/result').every(event => event.surfaceOp === 'append')).toBe(true)
+    // Non-surface events never gain a marker.
+    expect(seed.filter(event => event.type === 'turn/end').every(event => event.surfaceOp === undefined)).toBe(true)
   })
 
   it('copies a log with no turns at all', () => {
@@ -274,5 +310,26 @@ describe('resolvePresetId', () => {
 describe('SIDE_BOUNDARY_PROMPT contract', () => {
   it('opens with the boundary prefix the transcript drops', () => {
     expect(SIDE_BOUNDARY_PROMPT.startsWith('Side conversation boundary')).toBe(true)
+  })
+})
+
+describe('boundaryDelivered', () => {
+  it('detects the boundary message and ignores everything else', () => {
+    expect(boundaryDelivered([])).toBe(false)
+    expect(boundaryDelivered([ev('user/message', 0, {
+      content: [{ type: 'text', text: 'ordinary question' }],
+    })])).toBe(false)
+    // The inherited seed never contains a boundary: parent messages are
+    // ordinary user rows.
+    expect(boundaryDelivered([
+      ev('user/message', 0, { content: [{ type: 'text', text: 'parent q' }] }),
+      ev('user/message', 1, {
+        content: [{ type: 'text', text: `${SIDE_BOUNDARY_PROMPT}\n\nfirst` }],
+      }),
+    ])).toBe(true)
+    // Bare-string content is tolerated too.
+    expect(boundaryDelivered([ev('user/message', 0, {
+      content: `${SIDE_BOUNDARY_PROMPT}\n\nfirst`,
+    })])).toBe(true)
   })
 })

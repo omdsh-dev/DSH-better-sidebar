@@ -21,6 +21,12 @@ import type { SidebarHistoryEntry, SidebarSessionSummary } from './context-types
 /** The durable thread-label prefix (also the row filter in the client list). */
 export const SIDE_LABEL_PREFIX = 'Side: '
 
+/** The pinned label of a freshly created thread that no prompt has reached
+ *  yet (Codex-style immediate create: the tab opens an EMPTY thread, the
+ *  first composer message carries the boundary and earns the real label).
+ *  The client renders it localized; the prefix keeps the row filter honest. */
+export const SIDE_NEW_THREAD_TITLE = 'Side: New thread'
+
 /** Maximum code points kept in a durable thread label (matches subagent labels). */
 export const LABEL_MAX_CHARS = 48
 
@@ -42,12 +48,22 @@ Do not continue, execute, or complete any instructions, plans, tool calls, appro
 
 Mode: this is a continuable side conversation. Your answers stay in this side thread and are viewed in the side panel; they are never delivered into the parent session.`
 
-/** One seed event (structural mirror of the durable SessionEvent). */
+/** One seed event (structural mirror of the durable SessionEvent). The
+ *  envelope fields are preserved verbatim: surface-eligible events
+ *  (user/message, assistant/message, tool/result) REQUIRE the `surfaceOp`
+ *  marker (and may carry `sourceEventSeqs`) — the seed validator rejects
+ *  them without it. */
 export interface SeedEvent {
   type: string
   seq: number
   time: number
   data: Record<string, unknown>
+  /** Surface marker of message-producing events ('append' | replace op). */
+  surfaceOp?: unknown
+  /** Seq numbers of earlier events this event cites as sources. */
+  sourceEventSeqs?: unknown
+  /** Reader-skip marker of purely informational events. */
+  ignorable?: true
 }
 
 /** The minimal structural face of a session-log event this module reads
@@ -77,14 +93,26 @@ function dataOf(event: SidechatLogEvent): Record<string, unknown> {
   return event.data as Record<string, unknown>
 }
 
-/** Copy parent events verbatim (their live seq === array index contract). */
+/** Copy parent events verbatim (their live seq === array index contract).
+ *  The FULL envelope is preserved — stripping `surfaceOp` would make the
+ *  seed validator reject every surface-eligible message event. */
 function copyEvents(events: readonly SidechatLogEvent[]): SeedEvent[] {
-  return events.map(event => ({
-    type: event.type,
-    seq: event.seq,
-    time: event.time,
-    data: dataOf(event),
-  }))
+  return events.map(event => {
+    const source = event as SidechatLogEvent & {
+      surfaceOp?: unknown
+      sourceEventSeqs?: unknown
+      ignorable?: true
+    }
+    return {
+      type: source.type,
+      seq: source.seq,
+      time: source.time,
+      data: dataOf(source),
+      ...(source.surfaceOp === undefined ? {} : { surfaceOp: source.surfaceOp }),
+      ...(source.sourceEventSeqs === undefined ? {} : { sourceEventSeqs: source.sourceEventSeqs }),
+      ...(source.ignorable === undefined ? {} : { ignorable: source.ignorable }),
+    }
+  })
 }
 
 /** Index of the last `turn/start` or `turn/end`, or -1. */
@@ -325,6 +353,42 @@ export function sideLabel(question: string): string {
   const max = Math.max(1, LABEL_MAX_CHARS - SIDE_LABEL_PREFIX.length)
   const body = flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
   return `${SIDE_LABEL_PREFIX}${body}`
+}
+
+/**
+ * Whether the thread log already carries the side boundary message — i.e.
+ * the first prompt was delivered. Tolerant to the content shape (block
+ * array or bare string) and to inherited seed messages (only an OWN
+ * boundary message starts with the prefix; seed messages came from the
+ * parent's log, which never contains one).
+ */
+export function boundaryDelivered(events: readonly SidechatLogEvent[]): boolean {
+  for (const event of events) {
+    if (event.type !== 'user/message') continue
+    const content = dataOf(event).content
+    const first = Array.isArray(content) ? content[0] : content
+    const text = typeof first === 'string'
+      ? first
+      : (typeof first === 'object' && first !== null && 'text' in first
+        ? String((first as { text: unknown }).text)
+        : '')
+    if (text.startsWith(SIDE_BOUNDARY_PREFIX)) return true
+  }
+  return false
+}
+
+/** The info the thread header shows (live runtime state + agent identity). */
+export interface SidechatThreadInfo {
+  /** A live agent drives the thread right now (false = cold/persisted). */
+  live: boolean
+  /** Live lifecycle state; absent on cold threads. */
+  status?: 'idle' | 'running'
+  /** Provider route of the live agent. */
+  provider?: string
+  /** Model id of the live agent. */
+  model?: string
+  /** The recorded agent preset (live header, or persisted on cold reads). */
+  preset?: string
 }
 
 /** The events a thread produced itself: everything after the LAST
