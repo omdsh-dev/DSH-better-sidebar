@@ -7,7 +7,7 @@
  * KISS policy).
  */
 import { useCallback, useEffect, useState } from 'react'
-import { IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconChevronDownOutline14, IconChevronRightOutline14, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { McpStatusResult } from './api.ts'
 import { api } from './api.ts'
 import { t } from './locales.ts'
@@ -18,6 +18,17 @@ export function McpView(props: { visible: boolean }) {
   const [status, setStatus] = useState<McpStatusResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  /** Servers whose tool list is collapsed (per-server toggle; in-session only). */
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
+
+  const toggleServer = (name: string): void => {
+    setCollapsed(prev => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
 
   const refresh = useCallback(async (): Promise<void> => {
     setLoading(true)
@@ -61,24 +72,37 @@ export function McpView(props: { visible: boolean }) {
 
       {status !== null && status.servers.length > 0 && (
         <div className={css.mcpServers}>
-          {status.servers.map(server => (
-            <section key={server.name} className={css.mcpServer}>
-              <header className={css.mcpServerHeader}>
-                <span className={css.mcpServerName}>{server.name}</span>
-                <span className={css.mcpServerCount}>{server.tools.length}</span>
-              </header>
-              <ul className={css.mcpToolList}>
-                {server.tools.map(tool => (
-                  <li key={tool.name} className={css.mcpTool}>
-                    <span className={css.mcpToolName}>{tool.name}</span>
-                    {tool.description !== undefined && tool.description !== '' && (
-                      <span className={css.mcpToolDesc}>{tool.description}</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
+          {status.servers.map(server => {
+            const isCollapsed = collapsed.has(server.name)
+            return (
+              <section key={server.name} className={css.mcpServer}>
+                <button
+                  type="button"
+                  className={css.mcpServerHeader}
+                  aria-expanded={!isCollapsed}
+                  onClick={() => { toggleServer(server.name) }}
+                >
+                  {isCollapsed
+                    ? <IconChevronRightOutline14 size={14} />
+                    : <IconChevronDownOutline14 size={14} />}
+                  <span className={css.mcpServerName}>{server.name}</span>
+                  <span className={css.mcpServerCount}>{server.tools.length}</span>
+                </button>
+                {!isCollapsed && (
+                  <ul className={css.mcpToolList}>
+                    {server.tools.map(tool => (
+                      <li key={tool.name} className={css.mcpTool}>
+                        <span className={css.mcpToolName}>{tool.name}</span>
+                        {tool.description !== undefined && tool.description !== '' && (
+                          <span className={css.mcpToolDesc}>{tool.description}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            )
+          })}
         </div>
       )}
     </div>

@@ -2314,10 +2314,28 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 .mcpServerHeader {
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 6px 12px 4px;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.mcpServerHeader:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.mcpServerHeader:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+  border-radius: 6px;
 }
 
 .mcpServerName {
