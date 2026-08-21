@@ -793,8 +793,9 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
    * One SMALL toggle card for the responsive inventory grid: the card's main
    * area is the switch (click to flips, visual state IS the state), the icon
    * sits in a rounded chip, the check badge pins to the far right, and a
-   * feature that declares related settings carries a gear corner button
-   * opening its settings popup.
+   * feature that declares related settings gets a labeled SETTINGS STRIP
+   * across the card's bottom edge (gear icon + text) opening its settings
+   * popup — discoverable at rest, not a hover-only ghost corner button.
    */
   const renderCard = (props: {
     title: string
@@ -802,13 +803,13 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     icon?: ReactNode
     enabled: boolean
     onToggle: (next: boolean) => void
-    /** A feature with declared related settings shows the gear corner button. */
+    /** A feature with declared related settings shows the settings strip. */
     onOpenSettings?: () => void
   }) => {
     const hasSettings = props.onOpenSettings !== undefined
     return (
       <div
-        className={clsx(css.card, props.enabled && css.cardOn, hasSettings && css.cardWithGear)}
+        className={clsx(css.card, props.enabled && css.cardOn)}
       >
         <button
           type="button"
@@ -833,12 +834,12 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
         {hasSettings && (
           <button
             type="button"
-            className={css.cardGear}
+            className={css.cardSettings}
             aria-label={`${props.title} ${t('settingsPopup')}`}
-            title={t('settingsPopup')}
             onClick={props.onOpenSettings}
           >
             <IconSettingsOutline16 size={12} />
+            <span>{t('settingsPopup')}</span>
           </button>
         )}
       </div>
