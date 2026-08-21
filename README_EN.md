@@ -26,6 +26,7 @@
 - **💻 Real Terminal**: xterm.js + node-pty real shell, reconnect with transcript replay; optionally injects `terminal_*` tools for the model
 - **🌿 Git Panel**: real diff + VSCode-style diff tabs, history, right-click to stage / commit / revert
 - **🧩 Background Tasks**: agent topology + background tasks (exit codes / live output / force-kill)
+- **💬 Side Chat**: Codex-style side threads — the child inherits the parent's FULL context (completed turns + the pending question + the in-progress turn's assistant output and tool activity, honestly frozen as "interrupted") and runs independently without entering the main conversation; threads support continuous follow-ups (auto-resumed after a DSH restart) and one-click "Save as new session" promotion to a top-level session
 - **🪟 Dual Workbench**: right sidebar + bottom panel; drag tabs to split / merge panes (cross-panel), mobile auto-merges into a full-width drawer
 - **🔁 Session Isolation**: layout / tabs / panels persisted per session, stale state auto-purged
 - **⚙️ Declarative Settings**: per-item toggles in the "Side Cards" settings section, secondary settings via the gear dialog
@@ -41,13 +42,30 @@
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="45%" alt="Add Plugins screenshot" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
 </div>
 
-### v0.14.0
-
-> ⚠️ **This release adapts to DSH 0.1.0-rc.8**: every `@deepseek-ai/*` peer/devDependency is raised to `^0.1.0-rc.8` (transitives included — zero rc.7 leftovers in the lockfile), `cordis` to `^4.0.0-rc.8`, and the CI mount lane pins `@deepseek-ai/dsh@0.1.0-rc.8`. **DSH environments on rc.7 or earlier can no longer resolve this release's dependencies — upgrade DSH first.** All changes since v0.13.1:
+### v0.14.1 (in development)
 
 **✨ New features**
 
-- 🖼️ **Unified panel-host injection refactor** ([#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)): panels/toggle clusters moved into a `[data-dsh-panel-host]` fixed containing block (`fixed inset-0 z-40`), immune to desktop-shell intermediate transforms hijacking `fixed`; mount self-check (page-level transform → `data-dsh-panel-host-degraded` degraded sync, judged on uncorrected geometry, exits only when the ancestor transform is gone); push anchor switched to `#root [data-dsh-frame] > [data-pane="conversation"]` + `#root` calc width against desktop-shell additive overflow; chunk revalidation on activation (HEAD+ETag keeps unchanged chunks, 5s timeout fails open); desktop signal auto-detection (win32 advanced title-bar compat 32px avoidance, manual pref overrides); `visualViewport` keyboard inset + `env(safe-area-inset-*)` mobile adaptation
+- 💬 **Side Chat tab**: Codex-style side threads — the child inherits the parent's FULL context (completed turns + pending message + the in-progress turn's assistant output and tool activity, honestly frozen with an "interrupted" marker); created with an identical composition (same preset / provider / model) so the first request reuses the parent's input prefix cache; threads stay invisible in the main session list with zero subagent-catalog noise; follow-ups survive DSH restarts (auto cold-resume); one-click "Save as new session" promotes the thread to a top-level session ([design](docs/plans/2026-08-20-sidechat-tab-design.md))
+
+### v0.14.1
+
+**✨ New features**
+
+- 📤 **Upload into the files window** ([#239](https://github.com/omdsh-dev/DSH-better-sidebar/pull/239)): header "upload file / upload folder" buttons plus drag-drop (drop on the tree body = workspace root, on a directory row = that directory, on a file row = its parent directory, VSCode semantics); full-window blurred progress overlay while uploading (per-file progress + cancel / Esc); buttons disabled while busy, tree refreshes after the upload settles
+
+**🐛 Fixes**
+
+- 🔧 **Adapted to DSH 0.1.1-rc.1 (@next)**: devDependencies / lockfile / CI verification baseline raised to `0.1.1-rc.1` (14 packages — zero rc.8 leftovers in the lockfile); **peer floor stays at `^0.1.0-rc.8`** (rc.8 and 0.1.1-rc.1 are mutually compatible, rc.8 environments don't need to upgrade). 0.1.1-rc.1 is a routine rc progression (dependency graph unchanged, pure version shift); every consumed contract — DOM slot (`data-slot="conversation"`), CSS tokens, `__DSH_BOOT__`/`__ModuleLoader__` boot protocol, MarkdownText `codeLabels`, `webServer` route registration — was compared package by package and is intact, so **no code changes were needed**
+- 🔒 **Upload-chain hardening** ([#239](https://github.com/omdsh-dev/DSH-better-sidebar/pull/239)): empty and absolute `relativePath` segments are refused outright; uniquely named temp files (concurrent uploads stay independent, crashed processes never block later uploads); write-stream error listeners (a failing disk can no longer crash the host); client error codes unified with the wire (`too-large`), 413s localized
+
+
+> ⚠️ **This release adapts to DSH 0.1.1-rc.1 (@next)**: devDependencies / lockfile / CI verification baseline is raised to `0.1.1-rc.1` (zero rc.8 leftovers in the lockfile); **the peer floor stays at `^0.1.0-rc.8`** — 0.1.1-rc.1 is a routine rc progression, mutually compatible with rc.8, so **rc.8 users don't need to upgrade DSH**. `cordis` stays at `^4.0.0-rc.8` (its own version line did not move). All changes since v0.13.1:
+
+**✨ New features**
+
+- 🧩 **Desktop compatibility in four options**: "Position compatibility mode" is now a main-row dropdown — **Auto-detect** (default, conservative: only the standard Window Controls Overlay geometry contributes; real 32/36px caption-overlay heights per shell, live on maximize/restore; zero modification on plain web) / **DSH official web** (explicitly no adaptation) / **Shell preset** (built-in, opt-in; only shells that appeared in this repo's issues/PRs with 100+ stars, "detected" badge when the environment matches) / **Custom** (free-form CSS + shift distance, keeps the settings button). Documents that already carried compatibility values migrate to the custom scheme. The core no longer branches per shell; interactive chrome opts out of desktop drag regions (`no-drag`, absorbing #111/#153); the bottom-push anchor is a composite selector (`[data-pane]` and `:has(> [data-slot])` — same element, double protection)
+- 🖼️ **Unified panel-host injection refactor** ([#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)): panels/toggle clusters moved into a `[data-dsh-panel-host]` fixed containing block (`fixed inset-0 z-40`), immune to desktop-shell intermediate transforms hijacking `fixed`; mount self-check (page-level transform → `data-dsh-panel-host-degraded` degraded sync, judged on uncorrected geometry, exits only when the ancestor transform is gone); push anchor switched to `#root [data-dsh-frame] > [data-pane="conversation"]` + `#root` calc width against desktop-shell additive overflow; chunk revalidation on activation (HEAD+ETag keeps unchanged chunks, 5s timeout fails open); `visualViewport` keyboard inset + `env(safe-area-inset-*)` mobile adaptation
 - 📂 **Separate file windows by default** ([#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)): `editorExplorer` now defaults to **separate** — tree clicks / file opens create a new tab per path and the path-less window is a pure file manager; merged mode stays available as an opt-in
 - 🖥️ **Terminal shell / shellArgs configurable from the settings page** ([#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)): the terminal card's gear popup gains "Shell path" and "Shell arguments" rows (previously yaml-only via `cordis.patch.yml`) — saved values take effect immediately for terminals opened afterwards (UI terminals and model `terminal_create` alike); empty keeps the existing yaml → `$SHELL` / login shell / `powershell.exe` resolution order
 - 🏷️ **Version badge on the settings page** ([#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)): the side-card settings section now opens with a `DSH-better-sidebar v0.14.0` identity badge (version synced with the service instance, test-guarded)
@@ -249,7 +267,7 @@ The dashed cards at the end of the "Sidebar content" / "File viewers" grids in t
 ## 🛠️ Development & Build
 
 ```sh
-pnpm install      # @deepseek-ai/* resolved from npm (^0.1.0-rc.8, published) — no token needed
+pnpm install      # @deepseek-ai/* devDependencies resolve to 0.1.1-rc.1 (published) — no token needed
 pnpm typecheck    # tsc --noEmit
 pnpm build        # → lib/index.js + lib/invariant.js + lib/client.js + lib/client-registry.js + lib/types
 pnpm test         # vitest (includes manifest consistency guard; build first)

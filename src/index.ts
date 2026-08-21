@@ -29,6 +29,7 @@ import {
   type SidebarPrefs,
 } from './config.ts'
 import { isWithin, parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import { writeWorkspaceUpload } from './fs-operations.ts'
 import { searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
@@ -46,6 +47,8 @@ import {
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
+import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
+import { buildSidechatApi } from './sidechat-routes.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 
 export { Config }
@@ -232,6 +235,10 @@ function buildApi(
   // job_output cursor is never consumed) and kill (the registry's stock
   // API). A deployment without the jobs registry downgrades kill to a 503.
   const jobsApi: SidebarJobsRoutes = buildJobsApi(ctx, resolved.readLimit)
+  // Subagent live previews: one batch request instead of N per-child
+  // `subagents.history` calls. The route degrades to a 503 when the host
+  // subagent runtime is absent (the page has no topology to show anyway).
+  const subagentLiveApi: SidebarSubagentLiveRoutes = buildSubagentLiveApi(ctx)
   return {
     'session.cwd': (payload) => {
       const { sessionId, cwd } = cwdOf(payload)
@@ -384,6 +391,9 @@ function buildApi(
     // exists. Kill is fenced to the owning session by the jobs registry.
     'jobs.output': (payload) => jobsApi.output(payload),
     'jobs.kill': (payload) => jobsApi.kill(payload),
+    // Subagent live previews: one batch request per refresh; the route folds
+    // the newest text/tool activity of every running child in the tree.
+    'subagents.live': (payload) => subagentLiveApi.live(payload),
     // The effective terminal shell and its display name. The client uses
     // this to title terminal tabs with the shell name instead of a numbered
     // "Terminal N" label; the shell itself is configured through
@@ -469,6 +479,14 @@ function buildApi(
         clearTimeout(timer)
       }
     },
+    // Side Chat: create a side-thread child seeded with the parent's full
+    // log up to now, deliver follow-ups (cold-resuming when the thread's
+    // agent is gone), abort a running thread, and release a thread's agent.
+    // Every operation runs through these routes because subagent-origin
+    // identities are fenced from the generic session RPCs (agent-lookup
+    // ownership), and the thread is created with a CUSTOM seed the stock
+    // fork APIs cannot express.
+    ...buildSidechatApi(ctx),
   }
 }
 
@@ -621,6 +639,47 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       }
     },
   }), 'dsh-better-sidebar: /sidebar/api routes')
+
+  // ── Raw upload route ───────────────────────────────────────────────────
+  // One request writes one file without JSON/base64 inflation. Folder uploads
+  // send each file with a relativePath, preserving the selected directory
+  // tree. Bytes stream to a temp sibling and are renamed into place, so a
+  // failed or oversized upload never leaves a partial file (see
+  // fs-operations.ts for the containment and shape rules).
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/sidebar/upload',
+    handler: async (req, res) => {
+      if (!fence(req)) {
+        writeJson(res, 403, { ok: false, error: { code: 'forbidden', message: 'forbidden' } })
+        return
+      }
+      if (req.method !== 'POST') {
+        writeJson(res, 405, { ok: false, error: { code: 'method-error', message: 'method not allowed' } })
+        return
+      }
+      try {
+        const url = new URL(req.url ?? '/', 'http://dsh.internal')
+        const sessionId = url.searchParams.get('sessionId')
+        const dir = url.searchParams.get('dir')
+        const relativePath = url.searchParams.get('relativePath')
+        if (sessionId === null || dir === null || relativePath === null || relativePath.trim() === '') {
+          throw new SidebarError('bad-request', 'sessionId, dir, and relativePath are required')
+        }
+        const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+        const { path, size } = await writeWorkspaceUpload({
+          cwd,
+          dir,
+          relativePath,
+          chunks: req,
+          limit: resolved.uploadLimit,
+        })
+        writeOk(res, { path, size })
+      } catch (error) {
+        writeError(res, error)
+      }
+    },
+  }), 'dsh-better-sidebar: /sidebar/upload route')
 
   // ── Lazy chunk route (client bundle splits) ─────────────────────────────
   // Serves the client half's split bundles (lib/client-<name>.js) so the

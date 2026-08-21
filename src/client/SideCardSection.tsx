@@ -21,13 +21,15 @@
  * one-line intro (the DSH section heading+intro recipe).
  *
  * A card's on/off state is its VISUAL STATE: enabled = highlighted (brand
- * border + tinted fill + a circular check badge pinned to the card's far
- * right), disabled = neutral and dimmed. Features that declare
- * `settings.toggles` carry a gear corner button that opens a native Modal
- * (wider than the primitive default) with the related settings as
- * title/desc + custom-switch rows and a Done footer. The toggles
- * themselves are custom switches: a real checkbox (native semantics and
- * focus) driving a styled track/thumb.
+ * border + tinted fill + a compact switch knob at the card's far right),
+ * disabled = neutral and dimmed. Features that declare
+ * `settings.toggles` carry a labeled settings strip at the card's bottom
+ * edge that opens a native Modal (wider than the primitive default) with
+ * the related settings as title/desc + custom-switch rows and a Done
+ * footer; the popup body scrolls internally when a feature declares many
+ * rows (e.g. Terminal's six). The toggles themselves are custom
+ * switches: a real checkbox (native semantics and focus) driving a styled
+ * track/thumb.
  *
  * Writes ride the plugin's own fenced settings route (the host calls the
  * settings seam in-process — the DSH settings RPC domain does not serve
@@ -38,9 +40,8 @@
  * shows the wire error inline — a broken settings surface never crashes the
  * shell.
  */
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  IconCheckOutline16,
   IconChevronDownOutline14,
   IconPlusOutline16,
   IconSettingsOutline16,
@@ -59,11 +60,14 @@ import {
   WIDTH_PERCENT_MAX,
   WIDTH_PERCENT_MIN,
   type SidebarPrefs,
+  type TitleBarScheme,
 } from '../prefs-shared.ts'
 import { api } from './api.ts'
 import { parsePrefs } from './prefs.ts'
 import { AddPluginModal, type PluginKind } from './add-plugin-modal.tsx'
 import { t } from './locales.ts'
+import { parseDesktopEnv } from './desktop-env.ts'
+import { getShellPreset, getShellPresets } from './shell-presets.ts'
 import type { SidebarStore } from './state.ts'
 import type {
   BetterSidebarService,
@@ -107,6 +111,17 @@ function iconOf(icon: ReactNode | ((size: number) => ReactNode) | undefined, siz
 function tabOrder(a: TabDescriptor, b: TabDescriptor): number {
   if (a.hidden !== b.hidden) return a.hidden === true ? 1 : -1
   return (a.order ?? 100) - (b.order ?? 100)
+}
+
+/**
+ * The scheme dropdown's current value: the plain scheme, or `preset:<id>`
+ * while a preset is active. Falls back to `auto` when the stored preset id
+ * is no longer registered (the strip resolves to 0 then anyway).
+ */
+function titleBarSchemeValue(prefs: SidebarPrefs): string {
+  if (prefs.titleBarScheme !== 'preset') return prefs.titleBarScheme
+  const preset = getShellPreset(prefs.titleBarPresetId)
+  return preset !== undefined ? `preset:${preset.id}` : 'auto'
 }
 
 /** Viewer inventory order: priority desc (the catch-all `code` comes last). */
@@ -318,24 +333,60 @@ function TypedRow(props: {
     </div>
   )
 }
+/**
+ * The multi-line custom-CSS input (scheme `custom`): a monospace textarea
+ * whose draft is local state, committed on blur or Cmd/Ctrl+Enter through
+ * the parent's handler. Keyed by the stored value so an external commit
+ * remounts it with the canonical text (same pattern as TypedRow).
+ */
+function CssDraft(props: {
+  value: string
+  onCommit: (raw: string) => void
+  label: string
+  placeholder?: string
+}) {
+  const { value, onCommit, label, placeholder } = props
+  const [draft, setDraft] = useState(value)
+  return (
+    <textarea
+      className={css.cssTextArea}
+      rows={6}
+      value={draft}
+      placeholder={placeholder}
+      aria-label={label}
+      spellCheck={false}
+      onChange={event => { setDraft(event.currentTarget.value) }}
+      onBlur={() => { onCommit(draft) }}
+      onKeyDown={event => {
+        if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) event.currentTarget.blur()
+      }}
+    />
+  )
+}
 
 /**
- * One select row: a dropdown over the toggle's declared `options`. When any
- * option carries an icon, the dropdown renders big-icon option cards (icon +
- * title + desc) and the closed anchor shows the selected option's icon as
- * well; without icons both are a single line of text. Single-pick commits the
- * option's value and closes; `multi` toggles membership, commits the picked
- * values as an array (in options order), and stays open.
+ * The reusable dropdown — the primitives Menu, NOT a native <select>: a
+ * closed anchor button (picked option text + chevron) opening one Menu item
+ * per option (big-icon cards when any option carries an icon). Single-pick
+ * commits the option's value and closes; `multi` toggles membership and
+ * commits the picked values as an array (in options order), staying open.
+ * Shared by the declarative select rows (SelectRow) and the title-bar
+ * scheme dropdown on the General row.
  */
-function SelectRow(props: {
-  toggle: SidebarSettingToggle
-  title: string
+function SelectMenu(props: {
+  label: string
   value: unknown
-  onSelectValue?: (toggle: SidebarSettingToggle, next: unknown) => void
+  options: readonly {
+    value: string | number | boolean
+    title: string | (() => string)
+    desc?: string | (() => string)
+    icon?: ReactNode | ((size: number) => ReactNode)
+  }[]
+  multi?: boolean
+  onSelect: (next: unknown) => void
+  placeholder?: string
 }) {
-  const { toggle, title, value, onSelectValue } = props
-  const options = toggle.options ?? []
-  const multi = toggle.multi === true
+  const { label, value, options, multi, onSelect, placeholder } = props
   const [open, setOpen] = useState(false)
   const hasIcons = options.some(option => option.icon !== undefined)
   const picked: readonly unknown[] = multi ? (Array.isArray(value) ? value : []) : [value]
@@ -346,7 +397,7 @@ function SelectRow(props: {
     const option = options[index]
     if (option === undefined) return
     if (!multi) {
-      onSelectValue?.(toggle, option.value)
+      onSelect(option.value)
       setOpen(false)
       return
     }
@@ -355,14 +406,14 @@ function SelectRow(props: {
     if (at >= 0) current.splice(at, 1)
     else current.push(option.value)
     // Stable wire order: follow the declared options order, not pick order.
-    onSelectValue?.(toggle, options.filter(o => current.includes(o.value)).map(o => o.value))
+    onSelect(options.filter(o => current.includes(o.value)).map(o => o.value))
   }
 
   const anchor = (
     <button
       type="button"
       className={css.selectAnchor}
-      aria-label={title}
+      aria-label={label}
       aria-haspopup="listbox"
       aria-expanded={open}
       onClick={() => { setOpen(now => !now) }}
@@ -371,12 +422,55 @@ function SelectRow(props: {
         <span className={css.selectAnchorIcon}>{iconOf(selected[0].icon, 16)}</span>
       )}
       <span className={css.selectAnchorText}>
-        {selected.length === 0 ? '—' : selected.map(option => textOf(option.title)).join(', ')}
+        {selected.length === 0 ? (placeholder ?? '—') : selected.map(option => textOf(option.title)).join(', ')}
       </span>
       <IconChevronDownOutline14 size={12} />
     </button>
   )
 
+  return (
+    <Menu
+      open={open}
+      anchor={anchor}
+      items={options.map((option, index) => ({
+        id: String(index),
+        label: hasIcons
+          ? (
+            <span className={css.selectOption}>
+              <span className={css.selectOptionIcon}>{iconOf(option.icon, 24)}</span>
+              <span className={css.selectOptionText}>
+                <span className={css.title}>{textOf(option.title)}</span>
+                {textOf(option.desc) !== '' && <span className={css.desc}>{textOf(option.desc)}</span>}
+              </span>
+            </span>
+          )
+          : textOf(option.title),
+      }))}
+      selectedId={!multi && selected[0] !== undefined ? String(options.indexOf(selected[0])) : undefined}
+      selectedIds={multi ? selected.map(option => String(options.indexOf(option))) : undefined}
+      onSelect={(id) => { pick(Number(id)) }}
+      onClose={() => { setOpen(false) }}
+      portal
+    />
+  )
+}
+
+/**
+ * One select row: a dropdown over the toggle's declared `options` (the
+ * shared SelectMenu). When any option carries an icon, the dropdown renders
+ * big-icon option cards (icon + title + desc) and the closed anchor shows
+ * the selected option's icon as well; without icons both are a single line
+ * of text. Single-pick commits the option's value and closes; `multi`
+ * toggles membership, commits the picked values as an array (in options
+ * order), and stays open.
+ */
+function SelectRow(props: {
+  toggle: SidebarSettingToggle
+  title: string
+  value: unknown
+  onSelectValue?: (toggle: SidebarSettingToggle, next: unknown) => void
+}) {
+  const { toggle, title, value, onSelectValue } = props
   return (
     <div className={css.popupRow}>
       <span className={css.rowText}>
@@ -384,28 +478,12 @@ function SelectRow(props: {
         {textOf(toggle.desc) !== '' && <span className={css.desc}>{textOf(toggle.desc)}</span>}
       </span>
       <span className={css.control}>
-        <Menu
-          open={open}
-          anchor={anchor}
-          items={options.map((option, index) => ({
-            id: String(index),
-            label: hasIcons
-              ? (
-                <span className={css.selectOption}>
-                  <span className={css.selectOptionIcon}>{iconOf(option.icon, 24)}</span>
-                  <span className={css.selectOptionText}>
-                    <span className={css.title}>{textOf(option.title)}</span>
-                    {textOf(option.desc) !== '' && <span className={css.desc}>{textOf(option.desc)}</span>}
-                  </span>
-                </span>
-              )
-              : textOf(option.title),
-          }))}
-          selectedId={!multi && selected[0] !== undefined ? String(options.indexOf(selected[0])) : undefined}
-          selectedIds={multi ? selected.map(option => String(options.indexOf(option))) : undefined}
-          onSelect={(id) => { pick(Number(id)) }}
-          onClose={() => { setOpen(false) }}
-          portal
+        <SelectMenu
+          label={title}
+          value={value}
+          options={toggle.options ?? []}
+          multi={toggle.multi === true}
+          onSelect={(next) => { onSelectValue?.(toggle, next) }}
         />
       </span>
     </div>
@@ -498,6 +576,10 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
   const [settingsFor, setSettingsFor] = useState<TabDescriptor | FileViewerDescriptor | null>(null)
   // Whether the position-compat strip popup (the gear on the 常规 row) is open.
   const [stripSettingsOpen, setStripSettingsOpen] = useState(false)
+  // The parsed desktop environment (URL stamps — see desktop-env.ts). Used
+  // ONLY to badge matching presets in the scheme dropdown ("已检测");
+  // nothing is auto-applied.
+  const detectedEnv = useMemo(() => parseDesktopEnv(), [])
   // Whether the "add plugin" modal (a dashed card at the end of the
   // 侧边栏内容 / 文件预览 grids) is open, and for which extension point
   // (null = closed).
@@ -635,6 +717,38 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     return raw
   }
 
+  /**
+   * Pick the title-bar / shell compatibility scheme. Mirrors the legacy
+   * `titleBarCompat` flag (true = anything but the conservative auto) so
+   * documents stay readable by older plugin versions.
+   */
+  /**
+   * Pick the title-bar / shell compatibility scheme from the dropdown. The
+   * option values are `auto` | `web` | `custom` | `preset:<id>`; selecting
+   * a preset stores both the scheme and its id. Mirrors the legacy
+   * `titleBarCompat` flag (true for preset/custom) so documents stay
+   * readable by older plugin versions.
+   */
+  const onSchemeSelect = (value: unknown): void => {
+    if (typeof value !== 'string') return
+    if (value === 'auto' || value === 'web' || value === 'custom') {
+      applyPref({ titleBarScheme: value, titleBarCompat: value === 'custom' })
+      return
+    }
+    if (value.startsWith('preset:') && getShellPreset(value.slice('preset:'.length)) !== undefined) {
+      applyPref({
+        titleBarScheme: 'preset',
+        titleBarPresetId: value.slice('preset:'.length),
+        titleBarCompat: true,
+      })
+    }
+  }
+
+  /** Commit the free-form custom CSS (scheme `custom`). */
+  const commitCustomCss = (raw: string): void => {
+    applyPref({ customCss: raw })
+  }
+
   /** Persist one plugin-owned setting of one descriptor (merged into the pluginSettings blob). */
   const applyPluginSetting = (descriptorId: string, key: string, value: unknown): void => {
     applyPref({ pluginSettings: mergePluginSetting(optimisticRef.current.pluginSettings, descriptorId, key, value) })
@@ -680,8 +794,9 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
    * One SMALL toggle card for the responsive inventory grid: the card's main
    * area is the switch (click to flips, visual state IS the state), the icon
    * sits in a rounded chip, the check badge pins to the far right, and a
-   * feature that declares related settings carries a gear corner button
-   * opening its settings popup.
+   * feature that declares related settings gets a labeled SETTINGS STRIP
+   * across the card's bottom edge (gear icon + text) opening its settings
+   * popup — discoverable at rest, not a hover-only ghost corner button.
    */
   const renderCard = (props: {
     title: string
@@ -689,13 +804,13 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     icon?: ReactNode
     enabled: boolean
     onToggle: (next: boolean) => void
-    /** A feature with declared related settings shows the gear corner button. */
+    /** A feature with declared related settings shows the settings strip. */
     onOpenSettings?: () => void
   }) => {
     const hasSettings = props.onOpenSettings !== undefined
     return (
       <div
-        className={clsx(css.card, props.enabled && css.cardOn, hasSettings && css.cardWithGear)}
+        className={clsx(css.card, props.enabled && css.cardOn)}
       >
         <button
           type="button"
@@ -710,8 +825,10 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
             )}
             <span className={css.cardTitle}>{props.title}</span>
             {props.enabled && (
-              <span className={css.cardCheck}>
-                <IconCheckOutline16 size={12} />
+              <span className={css.cardSwitch} aria-hidden="true">
+                <span className={css.cardSwitchTrack}>
+                  <span className={css.cardSwitchThumb} />
+                </span>
               </span>
             )}
           </span>
@@ -720,12 +837,12 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
         {hasSettings && (
           <button
             type="button"
-            className={css.cardGear}
+            className={css.cardSettings}
             aria-label={`${props.title} ${t('settingsPopup')}`}
-            title={t('settingsPopup')}
             onClick={props.onOpenSettings}
           >
             <IconSettingsOutline16 size={12} />
+            <span>{t('settingsPopup')}</span>
           </button>
         )}
       </div>
@@ -800,12 +917,31 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
           </span>
           <span className={css.control}>
             {/*
-              The position-compat row's gear (same popup pattern as the
-              feature cards): opens a Modal with the strip-height number row.
-              Hidden while the mode is off — its related setting is dormant
-              then (the feature-card convention).
+              The scheme dropdown (the shared SelectMenu — NOT a native
+              select): 自动检测 (default) / DSH官方Web / 各壳兼容方案 /
+              自定义方案. Matching presets carry a 「已检测」 desc badge
+              (suggestion only). The 自定义方案 row keeps its gear (the
+              popup with the shift distance + custom CSS) — the other
+              schemes need no further settings.
             */}
-            {prefs.titleBarCompat && (
+            <SelectMenu
+              label={t('settingsTitleBarTitle')}
+              value={titleBarSchemeValue(prefs)}
+              options={[
+                { value: 'auto', title: t('settingsSchemeAutoTitle'), desc: t('settingsSchemeAutoDesc') },
+                { value: 'web', title: t('settingsSchemeWebTitle'), desc: t('settingsSchemeWebDesc') },
+                ...getShellPresets().map(preset => ({
+                  value: `preset:${preset.id}`,
+                  title: preset.title,
+                  desc: preset.detect?.(detectedEnv) === true
+                    ? `${preset.desc}（${t('settingsSchemeDetectedSuffix')}）`
+                    : preset.desc,
+                })),
+                { value: 'custom', title: t('settingsSchemeCustomTitle'), desc: t('settingsSchemeCustomDesc') },
+              ]}
+              onSelect={onSchemeSelect}
+            />
+            {prefs.titleBarScheme === 'custom' && (
               <button
                 type="button"
                 className={css.rowGear}
@@ -816,11 +952,6 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
                 <IconSettingsOutline16 size={14} />
               </button>
             )}
-            <Switch
-              label={t('settingsTitleBarTitle')}
-              checked={prefs.titleBarCompat}
-              onChange={(next) => { applyPref({ titleBarCompat: next }) }}
-            />
           </span>
         </div>
       </div>
@@ -948,10 +1079,11 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
         </Modal>
       )}
 
-      {/* The position-compat strip popup (opened by the gear on the 常规
-          row): one number row for the reserved strip height in px. Same
-          Modal chrome and row machinery as the feature popups — mounted
-          only while open (the Modal SSR rule above). */}
+      {/* The custom-scheme popup (opened by the gear next to the scheme
+          dropdown when 自定义方案 is active): the shift distance in px and
+          the free-form custom CSS. The OTHER schemes (自动检测 / DSH官方Web /
+          壳预设) need no further settings — the scheme itself is chosen on
+          the 常规 row. Mounted only while open (the Modal SSR rule above). */}
       {stripSettingsOpen && (
         <Modal
           open
@@ -966,20 +1098,29 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
             </button>
           )}
         >
-          <FeatureSettingsRows
-            toggles={[{
-              key: 'titleBarStripPx',
-              type: 'number',
-              title: () => t('settingsTitleBarStripTitle'),
-              desc: () => t('settingsTitleBarStripDesc'),
-              min: TITLE_BAR_STRIP_MIN,
-              max: TITLE_BAR_STRIP_MAX,
-              unit: 'px',
-            }]}
-            prefs={prefs}
-            onToggle={onToggleSetting}
-            onCommit={onCommitSetting}
-          />
+          <div className={css.popupRows}>
+            <FeatureSettingsRows
+              toggles={[{
+                key: 'titleBarStripPx',
+                type: 'number',
+                title: () => t('settingsTitleBarStripTitle'),
+                desc: () => t('settingsTitleBarStripDesc'),
+                min: TITLE_BAR_STRIP_MIN,
+                max: TITLE_BAR_STRIP_MAX,
+                unit: 'px',
+              }]}
+              prefs={prefs}
+              onToggle={onToggleSetting}
+              onCommit={onCommitSetting}
+            />
+            <CssDraft
+              key={prefs.customCss}
+              value={prefs.customCss}
+              label={t('settingsCustomCssTitle')}
+              placeholder={t('settingsCustomCssPlaceholder')}
+              onCommit={commitCustomCss}
+            />
+          </div>
         </Modal>
       )}
 

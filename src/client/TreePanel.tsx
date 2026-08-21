@@ -6,15 +6,39 @@
  * open). Owns its refresh tick: the icon next to the search input clears
  * the tree cache. EditorHost docks it as the tab's right panel (wrapped in
  * a drag-resize handle) and provides the file context-menu open escapes.
+ *
+ * Uploads (header pickers, the tree's drag-drop and "upload here" menu)
+ * all funnel through here: one session at a time, shown in a full-window
+ * progress overlay with cancel, followed by a tree refresh and a one-line
+ * hint under the search row (success fades, failures and cancels stay).
+ * OS file drags are shielded at the panel host (see Sidebar.tsx), so a
+ * drop over the file window uploads here and never reaches DSH's chat
+ * intake.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
-import { IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconFolderOpen16, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
 import { FileTree } from './FileTree.tsx'
+import { IconUploadOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import { resolveSidebarPath } from './produced-files.ts'
+import { UploadOverlay } from './UploadOverlay.tsx'
+import {
+  summarizeResults, uploadHintText, uploadItemsFromFiles, uploadToDir,
+  UPLOAD_HINT_MS, type UploadItem,
+} from './upload.ts'
 import css from './sidebar.module.css'
+
+/** One in-flight upload session (the overlay's progress source). */
+interface UploadSession {
+  dir: string
+  done: number
+  total: number
+  /** Relative path of the file being uploaded ('' when none is in flight). */
+  current: string
+  controller: AbortController
+}
 
 export function TreePanel(props: {
   sessionId: string
@@ -36,6 +60,63 @@ export function TreePanel(props: {
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshTick, setRefreshTick] = useState(0)
+  /** One-line upload status under the search row ('' hides the hint). */
+  const [uploadStatus, setUploadStatus] = useState('')
+  /** Whether the status line is a failure/cancel (error color, stays visible). */
+  const [uploadFailed, setUploadFailed] = useState(false)
+  /** The in-flight upload session (null → no overlay, buttons enabled). */
+  const [upload, setUpload] = useState<UploadSession | null>(null)
+  /** True between the cancel click and the session settling (button disabled). */
+  const [cancelling, setCancelling] = useState(false)
+  /** Set by cancelUpload; the settle path shows 'upload cancelled' instead of
+   *  summarizing the partial results. */
+  const cancelledRef = useRef(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
+
+  /** Start one upload session into `dir` (absolute, inside the workspace). */
+  const startUpload = (dir: string, items: UploadItem[]): void => {
+    if (items.length === 0 || cwd === undefined || upload !== null) return
+    cancelledRef.current = false
+    const controller = new AbortController()
+    setUploadFailed(false)
+    setUploadStatus(uploadHintText(0, items.length, '', dir, t))
+    setUpload({ dir, done: 0, total: items.length, current: '', controller })
+    void uploadToDir({ sessionId, cwd }, dir, items, (done, total, current) => {
+      if (current !== '') setUploadStatus(uploadHintText(done, total, current, dir, t))
+      setUpload(session => session === null ? session : { ...session, done, total, current })
+    }, controller.signal).then((results) => {
+      setUpload(null)
+      setCancelling(false)
+      // Reload the tree whatever the outcome: files may have landed before a
+      // cancel, and failures leave whatever did succeed visible.
+      setRefreshTick(tick => tick + 1)
+      if (cancelledRef.current) {
+        setUploadStatus(t('uploadCancelled'))
+        setUploadFailed(true)
+        return
+      }
+      const status = summarizeResults(results, t)
+      setUploadStatus(status)
+      setUploadFailed(results.some(result => !result.ok))
+      // Success messages are transient; failures stay until the next action.
+      if (results.every(result => result.ok)) {
+        window.setTimeout(() => {
+          setUploadStatus(current => current === status ? '' : current)
+        }, UPLOAD_HINT_MS)
+      }
+    })
+  }
+
+  /** Cancel the in-flight upload (aborts the request; the host drops its temp). */
+  const cancelUpload = (): void => {
+    if (upload === null || cancelling) return
+    cancelledRef.current = true
+    setCancelling(true)
+    upload.controller.abort()
+  }
+
+  const folderInputProps = { webkitdirectory: '' } as InputHTMLAttributes<HTMLInputElement>
 
   const needle = query.trim()
   useEffect(() => {
@@ -61,6 +142,8 @@ export function TreePanel(props: {
     }
   }, [sessionId, cwd, needle])
 
+  const busy = upload !== null
+
   return (
     <div className={clsx(css.editorTreePanel, full === true && css.editorTreePanelFull)}>
       <div className={css.editorTreeSearch}>
@@ -80,7 +163,51 @@ export function TreePanel(props: {
         >
           <IconRefreshOutline16 size={14} />
         </button>
+        <button
+          type="button"
+          className={css.iconButton}
+          aria-label={t('uploadFiles')}
+          title={t('uploadFiles')}
+          disabled={busy}
+          onClick={() => { fileInputRef.current?.click() }}
+        >
+          <IconUploadOutline16 size={14} />
+        </button>
+        <button
+          type="button"
+          className={css.iconButton}
+          aria-label={t('uploadFolder')}
+          title={t('uploadFolder')}
+          disabled={busy}
+          onClick={() => { folderInputRef.current?.click() }}
+        >
+          <IconFolderOpen16 size={14} />
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          style={{ display: 'none' }}
+          onChange={(event) => {
+            if (cwd !== undefined) startUpload(cwd, uploadItemsFromFiles(event.target.files ?? []))
+            event.target.value = ''
+          }}
+        />
+        <input
+          ref={folderInputRef}
+          type="file"
+          multiple
+          {...folderInputProps}
+          style={{ display: 'none' }}
+          onChange={(event) => {
+            if (cwd !== undefined) startUpload(cwd, uploadItemsFromFiles(event.target.files ?? []))
+            event.target.value = ''
+          }}
+        />
       </div>
+      {uploadStatus !== '' && (
+        <div className={clsx(css.editorSearchHint, uploadFailed && css.editorError)} title={uploadStatus}>{uploadStatus}</div>
+      )}
       {needle === '' ? (
         <FileTree
           sessionId={sessionId}
@@ -92,6 +219,8 @@ export function TreePanel(props: {
           onOpenFileSide={onOpenFileSide}
           onReferenceFile={onReferenceFile}
           refreshTick={refreshTick}
+          onUploadRequest={startUpload}
+          busy={busy}
         />
       ) : (
         <div className={css.explorerBody}>
@@ -115,6 +244,16 @@ export function TreePanel(props: {
             <div className={css.editorSearchHint}>{t('editorSearchTruncated')}</div>
           )}
         </div>
+      )}
+      {upload !== null && (
+        <UploadOverlay
+          dir={upload.dir}
+          done={upload.done}
+          total={upload.total}
+          current={upload.current}
+          onCancel={cancelUpload}
+          cancelling={cancelling}
+        />
       )}
     </div>
   )
