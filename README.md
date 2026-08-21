@@ -43,29 +43,32 @@
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="33%" alt="添加插件截图" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
 </div>
 
-### v0.14.1（开发中）
+### v0.15.0
+
+> ⚠️ **本版验证基线为 DSH 0.1.1-rc.2（@next）**：devDependencies / lockfile / CI 挂载冒烟基线升至 `0.1.1-rc.2`（lockfile 零 rc.8 残留）；**peer 下限保持 `^0.1.0-rc.8`**——0.1.1-rc.x 为常规 rc 递进、与 rc.8 双向兼容，**rc.8 用户无需升级 DSH**。`cordis` 保持 `^4.0.0-rc.8`。自 v0.14.0 以来的全部更改：
 
 **✨ 新功能**
 
-- 💬 **侧边对话(beta) Tab**：Codex 风格的侧边线程——子会话继承主会话**完整上下文**（已完成回合 + 未回答消息 + 进行中回合的 assistant 输出与工具调用，以「interrupted」冻结标记诚实继承）；同组合创建（同 preset / provider / model）复用前缀输入缓存；线程对主会话列表不可见、零子代理目录噪音；线程内可持续追问（重启后自动恢复）；一键「保存为新会话」提升为顶层会话（[设计文档](docs/plans/2026-08-20-sidechat-tab-design.md)）
-
-### v0.14.1
-
-**✨ 新功能**
-
+- 💬 **侧边对话(beta) Tab**（[#286](https://github.com/omdsh-dev/DSH-better-sidebar/pull/286)）：Codex 风格的侧边线程，**每个对话一个独立 Tab**——子会话继承主会话完整上下文（已完成回合 + 未回答消息 + 进行中回合的 assistant 输出与工具调用，以「interrupted」冻结标记诚实继承）；同组合创建（同 preset / provider / model）复用前缀输入缓存；线程对主会话列表不可见、零子代理目录噪音；线程内可持续追问（重启后自动冷恢复）；一键「保存为新会话」提升为顶层会话（[设计文档](docs/plans/2026-08-20-sidechat-tab-design.md)）
 - 📤 **文件窗口上传**（[#239](https://github.com/omdsh-dev/DSH-better-sidebar/pull/239)）：头部「上传文件 / 上传文件夹」按钮 + 拖放上传（拖到树区 = 工作区根，目录行 = 进该目录，文件行 = 进其所在目录，对齐 VSCode）；上传时全屏模糊进度弹层（文件级进度 + 取消 / Esc）；上传中按钮禁用、成功后文件树自动刷新
+- 🧩 **桌面兼容四选项**（[#284](https://github.com/omdsh-dev/DSH-better-sidebar/pull/284)）：位置兼容模式改为**主行下拉**——**自动检测**（默认，保守：仅使用标准的 Window Controls Overlay 几何，32/36px 等各壳差异自动跟随、最大化/还原实时更新，网页环境零修改）/ **DSH官方Web**（显式零适配）/ **壳兼容方案**（内置预设，手动启用；只收录 issue/PR 中出现过且 100+ star 的壳，命中环境带「已检测」提示）/ **自定义方案**（自定义 CSS + 下移距离）。旧版本已有兼容配置的用户自动落到自定义方案；交互控件统一退出桌面拖拽区（`no-drag`）；底栏推挤锚点复合选择器双保险（`[data-pane]` 与 `:has(> [data-slot])`）
+- 🎛️ **设置页 UI/UX 现代化**（[#300](https://github.com/omdsh-dev/DSH-better-sidebar/pull/300)）：侧边卡片二级设置入口改为卡片底部「功能设置」设置条（替代右下角隐形齿轮，可发现性提升）；协调双色启用态（brand 激活强调 + success 绿勾选徽标）；全部颜色仍为 `--dsw-alias-*` 令牌派生，皮肤体系自动跟随
+- ➕ **推荐插件目录新增**：`dsh-docs-panel` 全局文档面板（[#230](https://github.com/omdsh-dev/DSH-better-sidebar/pull/230)）、`dsh-flowglass`（[#261](https://github.com/omdsh-dev/DSH-better-sidebar/pull/261)）、`dsh-git-forge` 与 `dsh-ssh-tunnel`（[#204](https://github.com/omdsh-dev/DSH-better-sidebar/pull/204)）、`dsh-turn-review`（[#102](https://github.com/omdsh-dev/DSH-better-sidebar/pull/102)）
 
 **🐛 修复**
 
-- 🔧 **适配 DSH 0.1.1-rc.1（@next）**：devDependencies / lockfile / CI 验证基线升至 `0.1.1-rc.1`（14 个包，lockfile 零 rc.8 残留）；**peer 下限保持 `^0.1.0-rc.8`**（rc.8 与 0.1.1-rc.1 双向兼容，rc.8 环境无需升级 DSH）。0.1.1-rc.1 为常规 rc 递进（依赖图零增删、纯版本平移），已逐包比对确认所有既有契约——DOM 槽位（`data-slot="conversation"`）、CSS 令牌、`__DSH_BOOT__`/`__ModuleLoader__` boot 协议、MarkdownText `codeLabels`、`webServer` 路由注册——均无破坏，**无代码逻辑改动**
-- 🔒 **上传链路的代码规范整改**（[#239](https://github.com/omdsh-dev/DSH-better-sidebar/pull/239)）：`relativePath` 空段 / 绝对路径显式拒绝；临时文件唯一命名（并发上传互不干扰、崩溃不阻塞）；写流错误监听（磁盘失败不崩溃进程）；客户端错误码与服务端统一、413 本地化
+- ⚡ **子代理页实时预览批量接口**（[#298](https://github.com/omdsh-dev/DSH-better-sidebar/pull/298)）：旧实现每个 running 子代理独立轮询 `subagents.history`，host 侧每次触发全量子代理枚举形成 O(N²) 放大、多子代理并发时页面卡顿——改为单个批量接口 `subagents.live`（一次枚举整棵子代理树）+ 客户端单轮询、单在途请求；展示逻辑与文案不变
+- 🖱️ **拖拽中断 / 快速释放不再回滚**（[#249](https://github.com/omdsh-dev/DSH-better-sidebar/pull/249)，关闭 [#247](https://github.com/omdsh-dev/DSH-better-sidebar/issues/247) [#248](https://github.com/omdsh-dev/DSH-better-sidebar/issues/248)）：中断 / 快速释放提交最后已知位置；HMR 后中心列重定位兜底（修复热更新后底栏空白）
+- 📐 **推挤变量挂载期持续有效**（[#259](https://github.com/omdsh-dev/DSH-better-sidebar/pull/259)，修复 [#258](https://github.com/omdsh-dev/DSH-better-sidebar/issues/258)）：拖拽松手后底边栏不再闪全宽
+- 🔧 **适配 DSH 0.1.1-rc.1 / rc.2（@next）**（[#297](https://github.com/omdsh-dev/DSH-better-sidebar/pull/297) [#305](https://github.com/omdsh-dev/DSH-better-sidebar/pull/305)）：devDependencies / lockfile / CI 验证基线平移；逐包比对所有既有契约（DOM 槽位、CSS 令牌、boot 协议、MarkdownText `codeLabels`、`webServer` 路由注册）零破坏，**无代码逻辑改动**；peer 下限保持 `^0.1.0-rc.8`
+- 🔒 **上传链路安全加固**（[#239](https://github.com/omdsh-dev/DSH-better-sidebar/pull/239)）：`relativePath` 空段 / 绝对路径显式拒绝；临时文件唯一命名（并发上传互不干扰、崩溃不阻塞）；写流错误监听（磁盘失败不崩溃进程）；客户端错误码与服务端统一、413 本地化
 
+### v0.14.0
 
-> ⚠️ **本版适配 DSH 0.1.1-rc.1（@next）**：devDependencies / lockfile / CI 验证基线升至 `0.1.1-rc.1`（lockfile 零 rc.8 残留）；**peer 下限保持 `^0.1.0-rc.8`**——0.1.1-rc.1 为常规 rc 递进，与 rc.8 双向兼容，**rc.8 用户无需升级 DSH**。`cordis` 保持 `^4.0.0-rc.8`（cordis 版本线未变）。自 v0.13.1 以来的全部更改：
+> ⚠️ **本版适配 DSH 0.1.0-rc.8**：全部 `@deepseek-ai/*` peer / devDependencies 升至 `^0.1.0-rc.8`（含传递依赖，lockfile 零 rc.7 残留），`cordis` 同步 `^4.0.0-rc.8`，CI 挂载冒烟钉版 `@deepseek-ai/dsh@0.1.0-rc.8`。**rc.7 及更早的 DSH 环境将无法解析本版依赖，请先升级 DSH。** 自 v0.13.1 以来的全部更改：
 
 **✨ 新功能**
 
-- 🧩 **桌面兼容四选项**：位置兼容模式改为**主行下拉**——**自动检测**（默认，保守：仅使用标准的 Window Controls Overlay 几何，32/36px 等各壳差异自动跟随、最大化/还原实时更新，网页环境零修改）/ **DSH官方Web**（显式零适配）/ **壳兼容方案**（内置预设，手动启用；只收录 issue/PR 中出现过且 100+ star 的壳，命中环境带「已检测」提示）/ **自定义方案**（自定义 CSS + 下移距离，保留设置按钮）。旧版本已有兼容配置的用户自动落到自定义方案。核心不再为具体壳写适配分支；交互控件统一退出桌面拖拽区（`no-drag`，吸收 #111/#153）；推挤锚点复合选择器加固（`[data-pane]` 与 `:has(> [data-slot])` 双保险）
 - 🖼️ **统一面板宿主注入重构**（[#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)）：面板/开关簇迁入 `[data-dsh-panel-host]` 固定含块层（`fixed inset-0 z-40`），免疫桌面套壳中间层 transform 对 fixed 含块的劫持；挂载自检（页面级 transform → `data-dsh-panel-host-degraded` 降级同步，按未修正几何判定、祖先变换消失才退出）；推挤锚点改 `#root [data-dsh-frame] > [data-pane="conversation"]` + `#root` calc 宽度防桌面壳加性溢出；chunk 激活重验证（HEAD+ETag 保留未变 chunk，5s 超时兜底 fail-open）；`visualViewport` 键盘 inset + `env(safe-area-inset-*)` 移动端适配
 - 📂 **文件打开方式默认独立**（[#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)）：`editorExplorer` 默认从「合并」改为「独立」——新会话树点击 / 打开文件按路径**新开**文件 tab，无路径窗口即纯资源管理器；合并模式保留为可选手动开启
 - 🖥️ **终端 shell / shellArgs 设置页可配**（[#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)）：终端卡齿轮二级页面新增「Shell 路径」「Shell 参数」两行配置（此前只能通过 `cordis.patch.yml` 配置）——设置页写入后对**之后打开的** UI 终端与模型终端（`terminal_create`）即时生效；留空保持 yaml → `$SHELL` / 登录 shell / `powershell.exe` 的既有解析顺序
