@@ -639,6 +639,25 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: nowrap;
 }
 
+/* The inline rename editor replacing the label while a tab is being renamed
+   (double-click a renamable tab's label; Enter/blur commits, Esc cancels). */
+.tabRename {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0 3px;
+  border: 1px solid var(--dsw-alias-interactive-bg-hover-accent);
+  border-radius: 3px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  outline: none;
+}
+
+.tabRename:focus {
+  border-color: var(--dsw-alias-brand-primary);
+}
+
 /* One tab's descriptor badge (a count capped at 99+, or a short text). */
 .tabBadge {
   flex: none;

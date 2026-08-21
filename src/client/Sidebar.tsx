@@ -36,6 +36,7 @@ import type { Context, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
   BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, isAgentTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
+  patchTab,
   reconcileAgentTerminals,
   resizeSplitIn, setBottomHeight, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
@@ -61,6 +62,14 @@ import css from './sidebar.module.css'
 /** How many consecutive reconnect failures stop the agent-terminals push loop
  * (mirror of the terminal view's own cap; the loop restarts on session switch). */
 const FAILURE_LIMIT = 3
+
+/**
+ * Which tabs accept an inline rename (double-click their label in the tab
+ * strip). Scoped to terminal tabs: editor tabs derive their label from the
+ * file path, browser tabs from the visited page — only terminals own a
+ * stable, user-meaningful name (终端 1 / 终端 2 …).
+ */
+const canRenameTab = (tab: SidebarTab): boolean => tab.type === 'terminal'
 
 /**
  * OS file drags over the sidebar belong to the sidebar, not to the chat:
@@ -894,6 +903,13 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       // session scope (with its cwd) rides to the callback.
       ctx.betterSidebar?.activateTab(tabId, sessionId === undefined ? undefined : { sessionId, cwd })
     },
+    // Rename the label of one open tab (patchTab persists it with the
+    // layout, so a reload keeps the custom name). Pane id is not needed by
+    // the reducer (it locates the tab across both trees) but kept in the
+    // action signature for symmetry with the other tab actions.
+    renameTab: (_paneId, tabId, title) => {
+      store.reduce(s => patchTab(s, tabId, { title }))
+    },
     focusPane: (paneId) => { store.reduce(s => ({ ...s, activePane: paneId })) },
     moveTabToEdge: (payload: TabDragPayload, toPane: string, zone: DropZone) => {
       store.reduce(s => moveTabToEdge(s, payload.paneId, payload.tabId, toPane, zone))
@@ -1121,6 +1137,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={renderTab}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            canRenameTab={canRenameTab}
           />
         </div>
         {/*
@@ -1276,6 +1293,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={(tab, active, paneId) => renderTab(tab, active, paneId, true)}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            canRenameTab={canRenameTab}
           />
         </div>
       </div>
