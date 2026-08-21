@@ -423,7 +423,13 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     defaultTabSeededRef.current = sessionId
     store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
     const title = typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title
+    // `openTab` expands a collapsed panel, which is correct for a user gesture
+    // but must not override `openByDefault: false` here: the two prefs are
+    // orthogonal, one picks WHICH tab and the other WHETHER the panel starts
+    // expanded. Restore the collapsed state the seed asked for.
+    const wasOpen = state.panelOpen
     ctx.betterSidebar?.openTab({ type, title }, { sessionId, cwd })
+    if (!wasOpen) store.reduce(s => (s.panelOpen ? togglePanel(s) : s))
   }, [snapshot, sessionId, cwd, store, ctx])
 
   /**
