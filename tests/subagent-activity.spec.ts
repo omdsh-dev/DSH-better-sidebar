@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { contentText, lastActivity } from '../src/client/subagent-activity.ts'
-import type { SidebarHistoryEntry } from '../src/context-types.ts'
+import { contentText, lastActivity } from '../src/subagent-activity.ts'
+import type { SidebarSessionEvent } from '../src/context-types.ts'
 
 describe('subagent activity summary parser', () => {
-  /** One history entry from raw event fields. */
-  const entry = (type: string, data: Record<string, unknown>): SidebarHistoryEntry => ({
-    event: { type, seq: 0, time: 0, data },
+  /** One raw session event. */
+  const entry = (type: string, data: Record<string, unknown>): SidebarSessionEvent => ({
+    type, seq: 0, time: 0, data,
   })
 
   it('extracts text blocks and skips non-text content', () => {
@@ -37,7 +37,7 @@ describe('subagent activity summary parser', () => {
     })
   })
 
-  it('lastActivity keeps only the fields the tail actually has', () => {
+  it('lastActivity keeps only the fields the log actually has', () => {
     expect(lastActivity([
       entry('tool/call', { callId: 'c1', name: 'bash', arguments: '{"command":"ls"}' }),
     ])).toEqual({ tool: { name: 'bash', args: '{"command":"ls"}' } })

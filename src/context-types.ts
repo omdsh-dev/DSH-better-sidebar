@@ -239,6 +239,41 @@ export interface SidebarAgentsService {
   resume?(options: unknown): Promise<{ agent: SidebarAgent; dispose(): Promise<void> }>
 }
 
+/** The host subagent runtime face (`ctx.subagents`; optional — the live
+ *  batch route degrades to a 503 when the deployment lacks it). Only the
+ *  read-only descendant enumeration this plugin needs is mirrored. */
+export interface SidebarSubagentsService {
+  /**
+   * Enumerate the root's complete session-backed subagent tree in stable
+   * pre-order without loading or resuming an Agent (mirror of
+   * `SubagentRuntime.listDescendants`).
+   */
+  listDescendants(
+    rootSessionId: string,
+    signal?: AbortSignal,
+  ): Promise<SidebarSubagentDescendantEntry[]>
+}
+
+/** One descendant row of `ctx.subagents.listDescendants` (structural mirror). */
+export type SidebarSubagentDescendantEntry =
+  | {
+    kind: 'child'
+    id: string
+    activity: 'running' | 'inactive'
+    hasChildren: boolean
+    mode: 'one-shot' | 'continuable'
+    label?: string
+    parentId: string
+    depth: number
+  }
+  | {
+    kind: 'diagnostic'
+    id: string
+    reason: 'corrupt' | 'unsupported' | 'unavailable'
+    parentId: string
+    depth: number
+  }
+
 /** The host agent-presets service face (mirror of the runtime agentPresets
  *  service): resolves and mounts the preset composition a session recorded,
  *  so a resumed or forked session rebuilds the same tool/prompt world its
@@ -477,6 +512,8 @@ export interface SidebarAgent {
     /** The session's header (validated cwd, lineage metadata). */
     readonly header: { readonly cwd?: string }
   }
+  /** The agent's live driver status (`'running'` while a turn is active). */
+  readonly status?: string
 }
 
 declare module 'cordis' {
@@ -514,6 +551,11 @@ declare module 'cordis' {
      * resume the Side Chat thread agents).
      */
     agents: SidebarAgentsService
+    /**
+     * The host subagent runtime (`ctx.subagents`; optional — the Subagent
+     * page's live batch route reads descendant catalogs through it).
+     */
+    subagents: SidebarSubagentsService
     /**
      * The host agent-presets service (`ctx.get('agentPresets')`; optional —
      * absent deployments compose nothing and every session shares the host

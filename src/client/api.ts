@@ -80,6 +80,17 @@ export interface JobOutputResult {
   read: boolean
 }
 
+/** One compact live preview row of the Subagent page. */
+export interface SubagentLiveEntry {
+  /** The latest assembled assistant text output in the child's log. */
+  text?: string
+  /** The latest tool call in the child's log. */
+  tool?: { name: string; args: string }
+}
+
+/** The `subagents.live` response: running child id → latest activity. */
+export type SubagentLiveResult = { live: Record<string, SubagentLiveEntry> }
+
 /** Terminal dependency status (mirror of the host's depsStatus; issue #140). */
 export type TerminalDepsStatus =
   | { ok: true }
@@ -245,6 +256,13 @@ export const api = {
       id,
       ...(reason !== undefined ? { reason } : {}),
     })),
+  /**
+   * One batch live-preview fetch for the whole Subagent tree. The payload is
+   * the already-resolved topology ROOT (not a session scope); the host
+   * enumerates descendants once and folds running children's activity.
+   */
+  subagentsLive: (rootSessionId: string, signal?: AbortSignal) =>
+    call<SubagentLiveResult>('subagents.live', { rootSessionId }, signal),
   /** Create a Side Chat thread: a child session seeded with the parent's
    *  full log up to now. Empty question = immediate create (Codex-style):
    *  the thread opens empty, the first prompt carries the boundary. */

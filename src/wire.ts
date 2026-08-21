@@ -19,6 +19,7 @@ export type SidebarErrorCode =
   | 'pty-deps-missing'
   | 'job-error'
   | 'sidechat-error'
+  | 'subagents-unavailable'
   | 'settings-rejected'
   | 'settings-conflict'
   | 'internal'

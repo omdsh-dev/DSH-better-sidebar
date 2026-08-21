@@ -1,11 +1,13 @@
 /**
  * Pure derivation of the compact LIVE line shown on a running subagent card:
- * the last text output and the last tool call of the child's history tail
- * (`subagent.history` events, oldest → newest). Renders nothing itself — the
- * SubagentLiveLine component turns this into the card's status lines.
- * Kept framework-free so the parser is unit-testable in the node environment.
+ * the last text output and the last tool call of the child's session events.
+ * The host batch route feeds raw session events into this parser; the client
+ * only receives the already-folded `LastActivity` map. Renders nothing
+ * itself — the SubagentView component turns this into the card's status
+ * lines. Kept framework-free so the parser is unit-testable in the node
+ * environment.
  */
-import type { SidebarHistoryEntry } from '../context-types.ts'
+import type { SidebarSessionEvent } from './context-types.ts'
 
 /**
  * Extract the concatenated plain text of a content-block list (the durable
@@ -36,23 +38,28 @@ export interface LastActivity {
 }
 
 /**
- * Fold a history tail into the last text output + last tool call (each is
- * the LAST occurrence in event order). Lifecycle events and raw
+ * Fold a session event log into the last text output + last tool call (each
+ * is the LAST occurrence in event order). Lifecycle events and raw
  * `assistant/chunk` rows are ignored — the card shows what the subagent is
- * doing right now, not its plumbing.
- * @param entries - the tail page from `subagent.history` (oldest → newest).
- * @returns the last text and/or tool call; an empty object when the tail has neither.
+ * doing right now, not its plumbing. The scan runs BACKWARD from the newest
+ * event and stops once both fields are found, so a long history costs only
+ * the recent tail in the common case.
+ * @param events - the session's append-only event log (oldest → newest).
+ * @returns the last text and/or tool call; an empty object when the log has neither.
  */
-export function lastActivity(entries: SidebarHistoryEntry[]): LastActivity {
+export function lastActivity(events: readonly SidebarSessionEvent[]): LastActivity {
   let text: string | undefined
   let tool: { name: string; args: string } | undefined
-  for (const entry of entries) {
-    const { type, data } = entry.event
-    if (type === 'assistant/message') {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (text !== undefined && tool !== undefined) break
+    const event = events[index]
+    if (event === undefined) continue
+    const { type, data } = event
+    if (text === undefined && type === 'assistant/message') {
       const message = data.message as { content?: unknown } | undefined
       const extracted = contentText(message?.content)
       if (extracted !== undefined) text = extracted
-    } else if (type === 'tool/call') {
+    } else if (tool === undefined && type === 'tool/call') {
       tool = {
         name: typeof data.name === 'string' ? data.name : 'tool',
         args: typeof data.arguments === 'string' ? data.arguments : '',
