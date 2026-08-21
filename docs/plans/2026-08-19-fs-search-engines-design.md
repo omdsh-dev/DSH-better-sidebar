@@ -53,6 +53,7 @@
 | 文件 | 类型 | 内容 |
 |---|---|---|
 | `src/search-engines.ts` | 新增 | 探测缓存 + 三引擎调用 + `normalizeEnginePaths`/`escapeGlob` + hooks |
+| `src/search-debug.ts` | 新增 | 门控调试插桩:`DSH_SEARCH_DEBUG=1` 才写 `$DSH_HOME/search-debug.log`(+ console 镜像),默认零开销;写盘失败静默 |
 | `src/fs-search.ts` | 改动 | 原逻辑改名 `searchFilesPlain`;新增 `searchFiles` dispatch(引擎优先,失败回退) |
 | `tests/search-engines.spec.ts` | 新增 | 规范化/转义/探测缓存/失败禁用/abort 不禁用 |
 | `tests/fs-search.spec.ts` | 改动 | 既有用例改测 `searchFilesPlain`;新增 dispatch 组(路由/截断/回退/无引擎/abort) |
@@ -78,6 +79,11 @@
 
   结论:**真实嵌套目录下 rg 快 2.5~20 倍,且 plain 大目录一律预算截断(结果不完整,正是 issue #203 指出的问题)**;`tools "glob"` 的 99 vs 102 差异是 rg 只报文件、plain 把目录也算命中(documented lossy);README 查询 rg 命中 200(结果上限)+ 完整遍历,而 plain 85 命中即因预算截断而漏掉其余。顺带修出两个 mock 测不出的 bug:`(?i)` 前缀无效(改 `--iglob`)与 rg exit 1 = 无匹配(放行,不触发引擎禁用)。极端场景(如 `~/Library/Containers`,数百万 iCloud 小文件)下 plain 与 rg 均需 >5min,两类实现都不可用,不作为基准
 - 本机无 fd,`fd` 候选探测自然剔除,链正常降级
+- **门控插桩验收(2026-08-21,本机 macOS,真机 dsh web + UI 实测)**:
+  - 默认静默:未设 `DSH_SEARCH_DEBUG` 时零 console、零磁盘写(测试与真机双重确认)
+  - 开启后:进程首搜 1 行 `engines probed: rg(<捆绑路径>)`(fd 缺失静默剔除,不报错);每搜索 1 行 `engine=rg bin=<捆绑 rg> root=~… query=… hits=… truncated=… ms`(root 以 `~` 缩写)
+  - `~/workspace`(9 万文件量级)实测 15~500ms:常见词毫秒级;罕见词(如 `.dsh` 仅 1 命中)全量遍历 ~478ms 且**结果完整不截断**——正是 issue #203 要的行为(`query="."` 则 hits=202 `truncated=true`,200 上限截断生效)
+  - `query="*"` → 0 命中(glob 元字符转义生效,字面量语义);真机复跑同款 rg 命令确认输出无任何 `.git/` 目录内部路径
 
 ## 6. 二期候选(有意不做,记录在案)
 
@@ -91,3 +97,4 @@
 - **truncated 语义**:引擎路径的截断顺序是引擎遍历序(非确定性),朴素路径是遍历序——截断结果本来就不保证全集,差异可接受
 - **DSH 内置 rg 路径由 `process.execPath` 推导**:依赖 DSH CLI 的全局 node_modules 布局(npm 风格 `lib/node_modules/@deepseek-ai/dsh/...`);用 `pnpm`/`bun` 全局安装等异构布局探不到,但 existSync + `--version` 预检会将其剔除,不影响正确性(还有 PATH/固定路径 rg 与 JS 兜底)
 - **探测顺序决定引擎胜负**:rg 的 DSH 内置候选排在 PATH 之前——即使系统装了别的 rg,也优先用 DSH 自带的 15.x(行为一致、免环境依赖)
+- **node_modules 不排除**:引擎与兜底 walk 同样沿用 no-ignore 语义(结果集一致,不引入两种模式的结果漂移);常见词查询的 200 名额可能被依赖树打满(实测 `query="test"` 202 条大半来自 node_modules)。加 `--exclude node_modules` 属产品决策(§6 候选),留待反馈
