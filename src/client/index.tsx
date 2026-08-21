@@ -19,6 +19,7 @@ import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
 import { registerLinkInterception } from './link-intercept.ts'
+import { registerFileLink } from './file-link.ts'
 import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { loadExternalDisable, loadPrefs } from './prefs.ts'
@@ -94,6 +95,13 @@ export function apply(ctx: Context): void {
   ctx.effect(
     () => registerBuiltins(ctx, service, { terminalTitle: () => terminalTitle }),
     'dsh-better-sidebar: register built-in tabs and viewers',
+  )
+  // file:line link integration: chat inline-code references (`path:line`,
+  // `path:start-end`, `path#L123`) become clickable, opening in this
+  // sidebar's editor at the target line with a range highlight.
+  ctx.effect(
+    () => registerFileLink(ctx, service),
+    'dsh-better-sidebar: file-link integration',
   )
   // A failure anywhere in the client lifecycle must never take the app down
   // silently: log with the plugin prefix and pin a visible diagnostic strip
