@@ -546,14 +546,20 @@
    description and control geometry stay unchanged inside that frame.
    The body scrolls INTERNALLY once a feature declares many rows (e.g.
    Terminal's six) — the dialog shell and its Done footer stay put; a thin
-   token-driven scrollbar makes the scrollable region discoverable. */
+   token-driven scrollbar makes the scrollable region discoverable.
+   box-sizing:border-box keeps width:100% + the scrollbar gutter from
+   overflowing horizontally (a content-box width would add the 4px pad and
+   show a horizontal scrollbar); overflow-x:hidden is the belt-and-braces
+   guarantee that rows always FILL the width and never slide sideways. */
 .popupRows {
   display: flex;
   flex-direction: column;
   gap: 8px;
   width: 100%;
+  box-sizing: border-box;
   max-height: min(52vh, 440px);
   overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 4px;
   scrollbar-width: thin;
   scrollbar-color: var(--dsw-alias-scrollbar-bg-l2, transparent) transparent;
@@ -869,6 +875,7 @@
   gap: 10px;
   max-height: 46vh;
   overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 2px;
 }
 
