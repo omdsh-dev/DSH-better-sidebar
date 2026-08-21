@@ -24,10 +24,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import {
-  IconListPenOutline16,
   IconNewChatOutline16,
   IconPlusOutline16,
-  IconRightUpOutline16,
   IconSendOutline16,
   IconStopFill16,
   MarkdownText,
@@ -35,6 +33,7 @@ import {
   StateDot,
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconHistoryOutline16, IconSaveOutline16 } from './icons.tsx'
 import type { Context, SidebarHistoryEntry } from '../context-types.ts'
 import {
   SIDE_LABEL_PREFIX,
@@ -44,20 +43,20 @@ import {
   threadTrailingPending,
   type SidechatThreadInfo,
 } from '../sidechat-core.ts'
-import { transcriptRows, type SidechatTranscriptRow } from './sidechat-transcript.ts'
+import { collectOwnEvents, transcriptRows, type SidechatTranscriptRow } from './sidechat-transcript.ts'
 import { api } from './api.ts'
 import { t } from './locales.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarTab } from './state.ts'
 import css from './SideChatView.module.css'
 
-/** Tail-page size for one transcript fetch (events per page). Small on
- *  purpose: a thread inherits the ENTIRE parent log as its seed, and the
- *  seed is dense with chunk/reasoning events — a large window would drag
- *  megabytes of inherited seed across the wire for every poll. */
+/** Tail-page size for one transcript poll (events per page). Small on
+ *  purpose: streaming polls ride the tail and merge by seq. */
 const PAGE_MESSAGES = 8
-/** Backward-page cap for the first seed-boundary walk. */
-const SEED_WALK_PAGES = 32
+/** First-attach walk page size: cold reads re-expand chunk-rows into one
+ *  event per streamed delta, so a single answer can be hundreds of events —
+ *  the walk must page big or earlier tool/call rows fall out of the window. */
+const WALK_PAGE_EVENTS = 200
 /** Poll cadence while the selected thread is running and the tab visible. */
 const POLL_MS = 2000
 /** Textarea auto-grow ceiling (px) — the composer scrolls beyond it. */
@@ -256,8 +255,9 @@ export function SideChatView(props: {
     }
   }, [summary, tab.id, tab.title, ctx])
 
-  /** One transcript pull: the first read walks back to the seed boundary,
-   *  later reads fetch one tail page and merge (seq-deduped). */
+  /** One transcript pull: the first read walks back to the seed boundary
+   *  (big pages — chunk deltas re-expand on cold reads), later reads fetch
+   *  one tail page and merge (seq-deduped). */
   const fetchThread = useCallback(async (childId: string): Promise<void> => {
     controllerRef.current?.abort()
     const controller = new AbortController()
@@ -265,35 +265,20 @@ export function SideChatView(props: {
     const cache = cacheRef.current
     try {
       if (cache.seedBoundary === null) {
-        const collected: SidebarHistoryEntry[] = []
-        let beforeSeq: number | undefined
-        for (let page = 0; page < SEED_WALK_PAGES; page++) {
+        const walk = await collectOwnEvents(async (beforeSeq) => {
           const response = await ctx.connection.api.sessions.history(
             {
               sessionId: childId,
-              maxMessages: PAGE_MESSAGES,
+              maxMessages: WALK_PAGE_EVENTS,
               ...(beforeSeq === undefined ? {} : { beforeSeq }),
             },
             controller.signal,
           )
-          if (!response.result.ok) return
-          const events = response.result.value.events
-          if (events.length === 0) break
-          const olderThan = collected.length > 0 ? collected[0]!.event.seq : undefined
-          const fresh = olderThan === undefined
-            ? events
-            : events.filter(entry => entry.event.seq < olderThan)
-          const seedEnd = fresh.findLastIndex(entry => entry.event.type === 'session/end-seed')
-          if (seedEnd >= 0) {
-            cache.seedBoundary = fresh[seedEnd]!.event.seq
-            collected.unshift(...fresh.slice(seedEnd + 1))
-            break
-          }
-          collected.unshift(...fresh)
-          if (fresh.length === 0) break
-          beforeSeq = fresh[0]!.event.seq
-        }
-        cache.entries = mergeBySeq(cache.entries, collected)
+          if (!response.result.ok) throw new Error('history walk failed')
+          return response.result.value.events
+        })
+        cache.seedBoundary = walk.seedBoundary
+        cache.entries = mergeBySeq(cache.entries, walk.entries)
       } else {
         const response = await ctx.connection.api.sessions.history(
           { sessionId: childId, maxMessages: PAGE_MESSAGES },
@@ -437,9 +422,11 @@ export function SideChatView(props: {
     setError(null)
     setSaved(false)
     try {
-      const fork = ctx.sessions.fork
-      if (fork === undefined) throw new Error('session fork is unavailable')
-      const newId = await fork({ sessionId: threadId, increaseTitle: true })
+      // NOTE: fork must stay a METHOD call — `ctx.sessions.fork` is the
+      // client-runtime sessions service, and an unbound reference loses
+      // `this` (its fork reads this.list for the title bump).
+      if (ctx.sessions.fork === undefined) throw new Error('session fork is unavailable')
+      const newId = await ctx.sessions.fork({ sessionId: threadId, increaseTitle: true })
       const title = summary === undefined ? '' : threadDisplayTitle(summary.displayTitle).trim()
       const binding = ctx.sessions.binding?.(newId)
       if (binding !== undefined && title !== '') {
@@ -495,7 +482,7 @@ export function SideChatView(props: {
               onClick={() => { setMenuOpen(value => !value) }}
               title={t('sideChatThreads')}
             >
-              <IconListPenOutline16 />
+              <IconHistoryOutline16 />
             </button>
           )}
           items={menuItems}
@@ -513,7 +500,7 @@ export function SideChatView(props: {
           disabled={!canSave || busy !== null}
           title={`${t('sideChatSave')} — ${t('sideChatSaveTitle')}`}
         >
-          <IconRightUpOutline16 />
+          <IconSaveOutline16 />
         </button>
       </div>
       {!canSave && !freshThread && <div className={css.sidechatHint}>{t('sideChatNoTurn')}</div>}

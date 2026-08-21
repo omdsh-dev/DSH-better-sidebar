@@ -48,7 +48,7 @@
 - **cancel** `{childId}`：`agent.cancel({kind:'user'},{keepInbox:true})`。
 - **dispose** `{childId}`：释放创建/恢复时保存的 AgentHandle disposer（会话与历史保留）。
 
-为什么全走自有路由：`origin:'subagent'` 的会话被通用 RPC 的 agent-lookup 所有权 fence 全面封锁（`api/remotes/agent-lookup.ts` `hasApiRemoteSubagentOwner`），而我们的线程没有 subagent/descriptor（无目录注册、零噪音：`list-children.ts` 投影为 undefined 即丢弃），`subagents.prompt` 也无法寻址——自有路由直接调 registry/agent 绕开 fence，且只依赖公开方法。
+为什么全走自有路由：`origin:'subagent'` 的会话被通用 RPC 的 agent-lookup 所有权 fence 全面封锁（`api/remotes/agent-lookup.ts` `hasApiRemoteSubagentOwner`），`subagents.prompt` 对我们的线程也无法寻址——自有路由直接调 registry/agent 绕开 fence，且只依赖公开方法。~~线程没有 subagent/descriptor（无目录注册、零噪音：`list-children.ts` 投影为 undefined 即丢弃）~~ **修正（v3 起）**：该判断只对 live 线程成立——cold 线程无 descriptor 时 `resolveColdIdentity` 确定性产出 `corrupt` 诊断行（`list-children.ts:405`），用户实测在 Subagent 页看到「目录损坏」。修复 = 线程种子尾部追加合法的 `subagent/descriptor`（`snapshotSubagentDescriptor`，version 2 / continuable / provider `'sidechat'` / label 即 `Side: ` 标题），线程成为目录里的健康行；SubagentView 与 `subagent-detect.ts` 按 `Side: ` 标签/标题前缀过滤，拓扑 UI 与自动打开触发保持零噪音（模型侧 `list_agents` 也会列出带标签的健康行，而非 corrupt 垃圾）。
 
 ## 6. 客户端 Tab（`src/client/SideChatView.tsx`）
 
@@ -69,7 +69,7 @@
 | DSH 重启后续聊 / 线程关闭后追问 | `ctx.agents.resume`（persisted preset 组合） |
 | 线程无已完成回合 | 保存禁用 + 提示 |
 | 线程末条追问未完成 | 保存前提示不包含 |
-| 与 dsh-sidechain 并存 | 各自独立；sidechain 线程（有 descriptor）在目录可见，我们的零噪音；双方共享 `Side: ` 标签约定，线程互见 |
+| 与 dsh-sidechain 并存 | 各自独立；双方线程都有 descriptor（目录健康行），SubagentView 按 `Side: ` 前缀过滤均不可见；双方共享 `Side: ` 标签约定，线程互见 |
 
 ## 8. 测试与自验
 
@@ -90,3 +90,8 @@
   1. 种子事件信封字段丢失（用户实测报 `invalid seed event … requires a surfaceOp marker`）：`copyEvents` 重建事件时只保留 `{type,seq,time,data}`，剥掉了 `surfaceOp`/`sourceEventSeqs`/`ignorable`，而种子校验器要求 surface-eligible 事件必带 `surfaceOp`。修复 = 信封字段原样透传 + 新增 `sidechat-seed-validation.spec.ts`（用真实 `@deepseek-ai/dsh-session` 的 `Session.create` 校验器跑种子产物，回归守护）。
   2. 交互模型从「单 Tab + 内嵌线程列表 + 首问表单」改为 **Codex app 对齐的「每线程一 Tab」**：`createTab` 铸造 `sidechat:new-<uuid>`（meta `autoCreate`，视图挂载即调 `sidechat.start` 空问题立即建线程）或消费 `parkSidechatReopen` 停泊的 `sidechat:<threadId>` 重连 Tab；`dedupeKey = meta.threadId` 保证同线程聚焦不重复；`onClose` 释放 live agent（历史保留，头部菜单可重开）。配套后端变化：`sidechat.start` 的 `question` 变为可选（空 = 仅建线程，快照停泊在 `pendingSnapshots`）；`sidechat.prompt` 检测边界未送达时（`boundaryDelivered` 扫日志）自动包裹边界 + 停泊快照并用首条消息改名；新增 `sidechat.info` 路由（live 状态 + provider/model/preset 身份，供头部 Agent 徽标）。UI 对齐主对话区：用户右对齐气泡（`--dsw-specific-bubble`）、assistant 通栏 markdown、胶囊 composer（`--dsw-specific-input-major` + 圆形 accent 发送/停止钮 + 自动增高 textarea）、运行扫光状态行与工具行（`StateDot` + shimmer），动效全部 ≤200ms 交叉淡化并受 `prefers-reduced-motion` 收敛。
 - （预留）实施过程中如有与本文档的其他偏差，在此记录。
+- **第三轮实测修复（4 bug）**：
+  1. 「保存为新会话」报 `Cannot read properties of undefined (reading 'list')`：`handleSave` 把 `ctx.sessions.fork` 解构成自由函数再调用，丢失 `this`——client-runtime 的 `service.fork` 内部读 `this.list.getSnapshot()`（标题递增）。修复 = 保持方法调用形态（`ctx.sessions.fork({...})`）。
+  2. 图标语义：线程切换菜单改自绘 `IconHistoryOutline16`（逆时针时钟）、保存按钮改自绘 `IconSaveOutline16`（软盘），沿用 1.5px 描边规范（primitives 无现成 history/save 图标）。
+  3. 重开线程 Tab 丢工具行：根因**不在宿主**（`session.history` cold 路径原样返回 `tool/call`，见 `api-proxy.ts:749` 与 `chunk-rows.ts` 的无损 chunk 压缩）而在首挂回源窗口——旧实现 8 事件/页 × 32 页 = 256 事件上限，而 cold 读会把 chunk-rows 展开回每个流式 delta 一条事件，一轮回答动辄数百事件，较早的 `tool/call` 掉出窗口（settled 文本靠最终 `assistant/message` 幸存）。修复 = 抽出 `collectOwnEvents`（200 事件/页 × 40 页帽、日志穷尽/无标记时落定 `seedBoundary:0` 停止每轮重走），单测覆盖四分支。
+  4. Subagent 页「目录损坏」行：见 §5 修正——种子追加 descriptor + SubagentView/subagent-detect 按前缀过滤（`isSideThreadSummary` 同时修好 autoOpenSubagent 误触发与计数膨胀）。旧版创建的线程仍是 corrupt 诊断行，由 SubagentView 的标题前缀过滤兜底隐藏。

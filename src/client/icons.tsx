@@ -117,3 +117,23 @@ export const IconGlobeOutline16 = ({ size = 16, className }: IconProps) => (
     <path d="M1.5 8h13M8 1.5c-2.4 1.8-2.4 11.2 0 13M8 1.5c2.4 1.8 2.4 11.2 0 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
   </svg>
 )
+
+/** History glyph (thread switcher): a clock with a counterclockwise arrow,
+ *  in the app's outline style — the "past conversations" mark. */
+export const IconHistoryOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M2.4 6.8A5.6 5.6 0 1 1 2.4 9.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <path d="M2.2 3.4v3.4h3.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M8 5.4V8l1.9 1.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+/** Save glyph (save-as-new-session): the classic floppy disk, in the app's
+ *  outline style. */
+export const IconSaveOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M4.2 14.5h7.6a1.2 1.2 0 0 0 1.2-1.2V4.9L10.6 2.5H4.2A1.2 1.2 0 0 0 3 3.7v9.6a1.2 1.2 0 0 0 1.2 1.2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    <path d="M10 2.5v2.6H5.6V2.5" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    <path d="M5.4 14.5v-4.2h5.2v4.2" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+  </svg>
+)

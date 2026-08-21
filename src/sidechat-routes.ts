@@ -23,6 +23,7 @@
 import { randomUUID } from 'node:crypto'
 import { createUserMessage, type ContentBlock, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Agent, AgentSetup, CreateAgentOptions, ResumeAgentOptions } from '@deepseek-ai/dsh-agent'
+import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import type { Context as CordisContext } from '@deepseek-ai/cordis'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type {
@@ -38,6 +39,7 @@ import {
   SIDE_BOUNDARY_PROMPT,
   SIDE_NEW_THREAD_TITLE,
   sideLabel,
+  type SeedEvent,
   type SidechatLogEvent,
   type SidechatThreadInfo,
 } from './sidechat-core.ts'
@@ -150,19 +152,37 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
         resolvePresetId(parentSession.header, parentSession.events),
       )
       const childId = `session-${randomUUID()}` as SessionId
+      const label = question === '' ? SIDE_NEW_THREAD_TITLE : sideLabel(question)
+      // Honest catalog citizenship: the durable descriptor keeps the thread
+      // a HEALTHY row in the host's subagents.list — a cold child without
+      // one is deterministically rendered as a 'corrupt' diagnostic. The
+      // SubagentView filters the 'Side: ' label out, so the topology UI
+      // stays noise-free; the row only serves enumeration correctness.
+      const descriptor = snapshotSubagentDescriptor({
+        mode: 'continuable',
+        provider: 'sidechat',
+        label,
+        ...(parent.options.provider === undefined ? {} : { agentProvider: parent.options.provider }),
+        ...(parent.options.model === undefined ? {} : { agentModel: parent.options.model }),
+      })
+      const descriptorEvent: SeedEvent = {
+        type: 'subagent/descriptor',
+        seq: inheritance.seed.length,
+        time: Date.now(),
+        data: descriptor as unknown as Record<string, unknown>,
+      }
+      const seed = [...inheritance.seed, descriptorEvent]
       const options: CreateAgentOptions = {
         sessionId: childId,
         meta: {
           ...(parentSession.header.cwd === undefined ? {} : { cwd: parentSession.header.cwd }),
           parentSession: parentSession.id,
-          seedLength: inheritance.seed.length,
+          seedLength: seed.length,
           origin: 'subagent',
           delegationDepth: (parentSession.header.delegationDepth ?? 0) + 1,
           ...(agentPreset === undefined ? {} : { agentPreset }),
         },
-        ...(inheritance.seed.length > 0
-          ? { seed: inheritance.seed as unknown as readonly SessionEvent[] }
-          : {}),
+        seed: seed as unknown as readonly SessionEvent[],
         agentOptions: { ...parent.options },
         setup,
         signal: AbortSignal.timeout(CREATE_TIMEOUT_MS),

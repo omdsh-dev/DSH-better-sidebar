@@ -108,7 +108,7 @@ describe('sidechat.start', () => {
     const options = services.create.mock.calls[0]![0] as {
       sessionId: string
       meta: Record<string, unknown>
-      seed: readonly { type: string }[]
+      seed: readonly { type: string; data: Record<string, unknown> }[]
       agentOptions: { provider: string; model: string }
       setup: unknown
     }
@@ -116,16 +116,28 @@ describe('sidechat.start', () => {
     expect(options.meta).toMatchObject({
       parentSession: 'parent',
       origin: 'subagent',
-      seedLength: 6,
+      seedLength: 7,
       delegationDepth: 1,
       agentPreset: 'preset-a',
       cwd: '/p',
     })
     expect(options.agentOptions).toEqual({ provider: 'test', model: 'model-x' })
-    // The child carries the parent's completed turns as a verbatim seed.
+    // The child carries the parent's completed turns as a verbatim seed,
+    // closed by the durable subagent descriptor (honest catalog citizenship:
+    // without it the host's subagents.list renders the cold thread as a
+    // 'corrupt' diagnostic row).
     expect(options.seed.map(event => event.type)).toEqual([
       'user/message', 'turn/start', 'step/start', 'assistant/message', 'step/end', 'turn/end',
+      'subagent/descriptor',
     ])
+    expect(options.seed.at(-1)?.data).toMatchObject({
+      version: 2,
+      mode: 'continuable',
+      provider: 'sidechat',
+      label: sideLabel('explain the event flow'),
+      agentProvider: 'test',
+      agentModel: 'model-x',
+    })
     expect(child.followup).toHaveBeenCalledTimes(1)
     const message = child.followup.mock.calls[0]![0] as { content: Array<{ type: string; text: string }>; source: { kind: string } }
     expect(message.source).toEqual({ kind: 'user' })
@@ -153,8 +165,9 @@ describe('sidechat.start', () => {
     const options = services.create.mock.calls[0]![0] as { seed: Array<{ type: string; data: Record<string, unknown> }> }
     expect(options.seed.map(event => event.type)).toEqual([
       'user/message', 'turn/start', 'step/start', 'assistant/chunk', 'step/end', 'turn/end',
+      'subagent/descriptor',
     ])
-    expect(options.seed.at(-1)?.data).toEqual({ turn: 1, reason: { kind: 'interrupted' } })
+    expect(options.seed.at(-2)?.data).toEqual({ turn: 1, reason: { kind: 'interrupted' } })
   })
 
   it('falls back to the snapshot when a tool call is still executing', async () => {
@@ -174,7 +187,7 @@ describe('sidechat.start', () => {
 
     const options = services.create.mock.calls[0]![0] as { seed: Array<{ type: string }> }
     // Cut BEFORE the open turn: only the pending user message is inherited.
-    expect(options.seed.map(event => event.type)).toEqual(['user/message'])
+    expect(options.seed.map(event => event.type)).toEqual(['user/message', 'subagent/descriptor'])
     const message = child.followup.mock.calls[0]![0] as { content: Array<{ text: string }> }
     expect(message.content[0]!.text).toContain('`bash` (executing)')
   })

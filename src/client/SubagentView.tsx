@@ -38,9 +38,11 @@ import type {
 import {
   collectBranchIds,
   countSubagentDescendants,
+  isSideThreadSummary,
   rootAncestor,
 } from './subagent-detect.ts'
 import { lastActivity } from './subagent-activity.ts'
+import { SIDE_LABEL_PREFIX } from '../sidechat-core.ts'
 import {
   collectTreeJobs,
   formatJobDuration,
@@ -64,13 +66,16 @@ const JOB_POLL_MS = 2000
 /** How long the kill button stays armed before it needs re-confirming. */
 const JOB_KILL_ARM_MS = 3000
 
-/** The direct subagent children of one parent (durable `origin` rows). */
+/** The direct subagent children of one parent (durable `origin` rows;
+ *  Side Chat threads ride the same origin but are tab-strip conversations,
+ *  never topology). */
 function directChildren(
   byId: Readonly<Record<string, SidebarSessionSummary>>,
   parentSessionId: string,
 ): SidebarSessionSummary[] {
   return Object.values(byId).filter(
-    summary => summary.origin === 'subagent' && summary.parentId === parentSessionId,
+    summary => summary.origin === 'subagent' && summary.parentId === parentSessionId
+      && !isSideThreadSummary(summary),
   )
 }
 
@@ -235,6 +240,14 @@ function CatalogRows({
   openChild, refresh,
 }: RowsProps) {
   const emptyLoading = catalog?.state === 'loading' && catalog.entries.length === 0
+  // Side Chat threads are honest catalog citizens (durable descriptor, 'Side: '
+  // label) but they are NOT subagent topology — filter them out here (the tab
+  // strip owns them). Legacy threads created before the descriptor fix still
+  // arrive as corrupt diagnostics; they are recognized by summary title.
+  const visibleEntries = (catalog?.entries ?? []).filter((entry) => {
+    if (entry.kind === 'child') return !(entry.label?.startsWith(SIDE_LABEL_PREFIX) ?? false)
+    return !(byId[entry.id]?.displayTitle.startsWith(SIDE_LABEL_PREFIX) ?? false)
+  })
   return (
     <>
       {emptyLoading && (
@@ -253,7 +266,7 @@ function CatalogRows({
           </button>
         </div>
       )}
-      {(catalog?.entries ?? []).map((entry) => {
+      {visibleEntries.map((entry) => {
         if (entry.kind === 'diagnostic') {
           return (
             <div key={entry.id} className={css.subagentNode}>

@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SidebarHistoryEntry, SidebarSessionEvent } from '../src/context-types.ts'
 import { SIDE_BOUNDARY_PREFIX } from '../src/sidechat-core.ts'
-import { transcriptRows, type SidechatTranscriptRow } from '../src/client/sidechat-transcript.ts'
+import { collectOwnEvents, transcriptRows, type SidechatTranscriptRow } from '../src/client/sidechat-transcript.ts'
 
 /** One history entry (event + optional view). */
 function entry(event: SidebarSessionEvent): SidebarHistoryEntry {
@@ -127,5 +127,68 @@ describe('transcriptRows', () => {
     ]
     rows = transcriptRows(orphan)
     expect(rows[0]).toMatchObject({ kind: 'tool', failed: true, resultText: 'boom' })
+  })
+})
+
+describe('collectOwnEvents', () => {
+  /** A paginated fake log: fetchPage(beforeSeq) returns the ≤pageSize events
+   *  ENDING before beforeSeq (exclusive); the tail page when omitted. */
+  function pagedLog(events: SidebarSessionEvent[], pageSize: number) {
+    const calls: Array<number | undefined> = []
+    const fetchPage = async (beforeSeq?: number): Promise<SidebarHistoryEntry[]> => {
+      calls.push(beforeSeq)
+      const window = beforeSeq === undefined ? events : events.filter(e => e.seq < beforeSeq)
+      return window.slice(-pageSize).map(entry)
+    }
+    return { fetchPage, calls }
+  }
+
+  it('finds the seed boundary on the tail page in one fetch', async () => {
+    const { fetchPage, calls } = pagedLog([
+      ev('user/message', 0, { content: textBlocks('inherited'), source: { kind: 'user' } }),
+      ev('session/end-seed', 1),
+      ev('user/message', 2, { content: textBlocks('own'), source: { kind: 'user' } }),
+      ev('assistant/message', 3, { turn: 1, step: 1, message: { content: textBlocks('a') } }),
+    ], 200)
+    const result = await collectOwnEvents(fetchPage)
+    expect(calls).toEqual([undefined])
+    expect(result.seedBoundary).toBe(1)
+    expect(result.entries.map(e => e.event.seq)).toEqual([2, 3])
+  })
+
+  it('walks back across pages until the boundary surfaces', async () => {
+    // A dense chunk tail (cold reads re-expand chunk-rows): the boundary is
+    // several pages back and earlier tool/call events must NOT fall out of
+    // the loaded window (the re-entry tool-row regression).
+    const events = [
+      ev('session/end-seed', 0),
+      ev('tool/call', 1, { turn: 1, step: 1, callId: 'c1', name: 'bash' }),
+      ...Array.from({ length: 12 }, (_, i) => ev('assistant/chunk', 2 + i, { turn: 1, step: 1 })),
+    ]
+    const { fetchPage, calls } = pagedLog(events, 5)
+    const result = await collectOwnEvents(fetchPage)
+    expect(calls.length).toBeGreaterThan(1)
+    expect(result.seedBoundary).toBe(0)
+    // Everything after the marker, oldest-first, deduped.
+    expect(result.entries.map(e => e.event.seq)).toEqual(events.slice(1).map(e => e.seq))
+  })
+
+  it('stops at the log start when no marker exists and reports boundary 0', async () => {
+    const { fetchPage } = pagedLog([
+      ev('user/message', 0, { content: textBlocks('legacy'), source: { kind: 'user' } }),
+      ev('assistant/message', 1, { turn: 1, step: 1, message: { content: textBlocks('a') } }),
+    ], 200)
+    const result = await collectOwnEvents(fetchPage)
+    expect(result.seedBoundary).toBe(0)
+    expect(result.entries.map(e => e.event.seq)).toEqual([0, 1])
+  })
+
+  it('honours the page cap instead of re-walking forever', async () => {
+    const events = Array.from({ length: 30 }, (_, i) => ev('assistant/chunk', i, { turn: 1, step: 1 }))
+    const { fetchPage, calls } = pagedLog(events, 5)
+    const result = await collectOwnEvents(fetchPage, 2)
+    expect(calls).toEqual([undefined, 25])
+    expect(result.seedBoundary).toBe(0)
+    expect(result.entries.map(e => e.event.seq)).toEqual([20, 21, 22, 23, 24, 25, 26, 27, 28, 29])
   })
 })

@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest'
 import { Session } from '@deepseek-ai/dsh-session'
 import type { SessionId } from '@deepseek-ai/dsh-session'
+import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import type { SidebarSessionEvent } from '../src/context-types.ts'
 import { buildSidechatInheritance } from '../src/sidechat-core.ts'
 
@@ -94,5 +95,28 @@ describe('sidechat seed against the real dsh-session validator', () => {
     expect(snapshot).not.toBeNull()
     const child = Session.create('session-validator-fallback' as SessionId, seed as never)
     expect(child.events.map(event => event.type).at(-1)).toBe('session/end-seed')
+  })
+
+  it('accepts the durable subagent descriptor the routes append to the seed', () => {
+    // Regression guard for the catalog-corrupt fix: a cold thread WITHOUT a
+    // descriptor renders as a 'corrupt' diagnostic in the host subagents.list.
+    // The descriptor is a log-only event appended INSIDE the seed (before the
+    // end-seed marker); the real validator must accept the combined seed.
+    const { seed } = buildSidechatInheritance(parentLog())
+    const descriptor = snapshotSubagentDescriptor({
+      mode: 'continuable',
+      provider: 'sidechat',
+      label: 'Side: test',
+      agentProvider: 'test',
+      agentModel: 'model-x',
+    })
+    const withDescriptor = [
+      ...seed,
+      { type: 'subagent/descriptor', seq: seed.length, time: Date.now(), data: descriptor },
+    ]
+    const child = Session.create('session-validator-descriptor' as SessionId, withDescriptor as never)
+    const types = child.events.map(event => event.type)
+    expect(types.at(-2)).toBe('subagent/descriptor')
+    expect(types.at(-1)).toBe('session/end-seed')
   })
 })
