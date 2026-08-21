@@ -18,11 +18,12 @@ export function McpView(props: { visible: boolean }) {
   const [status, setStatus] = useState<McpStatusResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  /** Servers whose tool list is collapsed (per-server toggle; in-session only). */
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
+  /** Servers the user explicitly EXPANDED — everything else starts collapsed
+   *  (and newly appeared servers stay collapsed); toggles persist in-session. */
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
 
   const toggleServer = (name: string): void => {
-    setCollapsed(prev => {
+    setExpanded(prev => {
       const next = new Set(prev)
       if (next.has(name)) next.delete(name)
       else next.add(name)
@@ -73,7 +74,7 @@ export function McpView(props: { visible: boolean }) {
       {status !== null && status.servers.length > 0 && (
         <div className={css.mcpServers}>
           {status.servers.map(server => {
-            const isCollapsed = collapsed.has(server.name)
+            const isCollapsed = !expanded.has(server.name)
             return (
               <section key={server.name} className={css.mcpServer}>
                 <button
