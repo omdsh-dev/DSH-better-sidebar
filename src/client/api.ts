@@ -7,6 +7,7 @@
  * request). Failures surface as {@link SidebarApiError} with the wire code.
  */
 import { encodeHtmlUrl } from '../html-route.ts'
+import type { LastActivity } from '../subagent-activity.ts'
 import type { SidechatThreadInfo } from '../sidechat-core.ts'
 import type { BrowserProbeResult } from './browser.ts'
 
@@ -80,16 +81,8 @@ export interface JobOutputResult {
   read: boolean
 }
 
-/** One compact live preview row of the Subagent page. */
-export interface SubagentLiveEntry {
-  /** The latest assembled assistant text output in the child's log. */
-  text?: string
-  /** The latest tool call in the child's log. */
-  tool?: { name: string; args: string }
-}
-
 /** The `subagents.live` response: running child id → latest activity. */
-export type SubagentLiveResult = { live: Record<string, SubagentLiveEntry> }
+export type SubagentLiveResult = { live: Record<string, LastActivity> }
 
 /** Terminal dependency status (mirror of the host's depsStatus; issue #140). */
 export type TerminalDepsStatus =

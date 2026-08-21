@@ -1,13 +1,14 @@
 /**
  * Host route tests for the Subagent live-preview batch API ('subagents.live').
- * The route must enumerate the tree ONCE, keep only running non-Side-Chat
- * children, fold only non-empty activity from their session logs, and degrade
- * to a 503 when the host subagent runtime is absent.
+ * The route must enumerate the tree ONCE, keep only catalog-running
+ * non-Side-Chat children, fold only non-empty activity from their session
+ * logs, and degrade to a 503 when the host subagent runtime is absent.
  */
 import { describe, expect, it, vi } from 'vitest'
 import { buildSubagentLiveApi } from '../src/subagent-live-route.ts'
 import { SidebarError } from '../src/wire.ts'
 import type {
+  Context,
   SidebarSessionEvent,
   SidebarSubagentDescendantEntry,
   SidebarSubagentsService,
@@ -40,24 +41,12 @@ function session(events: SidebarSessionEvent[]): { header: { cwd: string }; even
   return { header: { cwd: '/p' }, events }
 }
 
-/** A live agent whose status can be overridden per id. */
-function agentsWith(statusById: Record<string, string>): { get(id: string): unknown } {
+/** A context whose `get` serves only the subagents face, with a session store. */
+function ctxWith(subagents: unknown, sessions: unknown): Context {
   return {
-    get: (id: string) => ({
-      id,
-      session: { header: { cwd: '/p' } },
-      status: statusById[id],
-    }),
-  }
-}
-
-/** The minimal context face the route needs. */
-function ctxWith(
-  subagents: SidebarSubagentsService | undefined,
-  agents: unknown,
-  sessions: unknown,
-): Parameters<typeof buildSubagentLiveApi>[0] {
-  return { subagents, agents, sessions } as Parameters<typeof buildSubagentLiveApi>[0]
+    sessions,
+    get: (key: string) => (key === 'subagents' ? subagents : undefined),
+  } as unknown as Context
 }
 
 describe('subagents.live route', () => {
@@ -71,7 +60,6 @@ describe('subagents.live route', () => {
         diagnostic('corrupt-row'),
       ]),
     }
-    const agents = agentsWith({ 'running-a': 'running', 'running-b': 'running' })
     const sessions = {
       get: (id: string) => {
         if (id === 'running-a') {
@@ -87,7 +75,7 @@ describe('subagents.live route', () => {
         return session([])
       },
     }
-    const api = buildSubagentLiveApi(ctxWith(subagents, agents, sessions))
+    const api = buildSubagentLiveApi(ctxWith(subagents, sessions))
     await expect(api.live({ rootSessionId: 'root' })).resolves.toEqual({
       live: {
         'running-a': { text: 'hello' },
@@ -97,37 +85,12 @@ describe('subagents.live route', () => {
     expect(subagents.listDescendants).toHaveBeenCalledWith('root')
   })
 
-  it('reads optional services through ctx.get when direct properties are absent', async () => {
-    const subagents: SidebarSubagentsService = {
-      listDescendants: vi.fn(async () => [child('via-get', { label: 'ViaGet' })]),
-    }
-    const agents = agentsWith({ 'via-get': 'running' })
-    const sessions = {
-      get: () => session([
-        { type: 'assistant/message', seq: 0, time: 0, data: { message: { content: [{ type: 'text', text: 'ok' }] } } },
-      ]),
-    }
-    const api = buildSubagentLiveApi({
-      sessions,
-      get: (key: string) => {
-        if (key === 'subagents') return subagents
-        if (key === 'agents') return agents
-        return undefined
-      },
-    })
-    await expect(api.live({ rootSessionId: 'root' })).resolves.toEqual({
-      live: { 'via-get': { text: 'ok' } },
-    })
-    expect(subagents.listDescendants).toHaveBeenCalledWith('root')
-  })
-
   it('omits children with no text/tool yet', async () => {
     const subagents: SidebarSubagentsService = {
       listDescendants: vi.fn(async () => [child('empty', { label: 'Empty' })]),
     }
-    const agents = agentsWith({ empty: 'running' })
     const sessions = { get: () => session([]) }
-    const api = buildSubagentLiveApi(ctxWith(subagents, agents, sessions))
+    const api = buildSubagentLiveApi(ctxWith(subagents, sessions))
     await expect(api.live({ rootSessionId: 'root' })).resolves.toEqual({ live: {} })
   })
 
@@ -138,7 +101,6 @@ describe('subagents.live route', () => {
         child('bad', { label: 'Bad' }),
       ]),
     }
-    const agents = agentsWith({ good: 'running', bad: 'running' })
     const sessions = {
       get: (id: string) => {
         if (id === 'good') {
@@ -149,14 +111,14 @@ describe('subagents.live route', () => {
         throw new Error('missing')
       },
     }
-    const api = buildSubagentLiveApi(ctxWith(subagents, agents, sessions))
+    const api = buildSubagentLiveApi(ctxWith(subagents, sessions))
     await expect(api.live({ rootSessionId: 'root' })).resolves.toEqual({
       live: { good: { text: 'ok' } },
     })
   })
 
   it('degrades to a 503 when the subagent runtime is absent', async () => {
-    const api = buildSubagentLiveApi(ctxWith(undefined, agentsWith({}), { get: () => undefined }))
+    const api = buildSubagentLiveApi(ctxWith(undefined, { get: () => undefined }))
     await expect(api.live({ rootSessionId: 'root' })).rejects.toThrowError(
       expect.objectContaining<Partial<SidebarError>>({ code: 'subagents-unavailable', status: 503 }),
     )
@@ -166,14 +128,14 @@ describe('subagents.live route', () => {
     const subagents: SidebarSubagentsService = {
       listDescendants: vi.fn(async () => { throw new Error('projection unavailable') }),
     }
-    const api = buildSubagentLiveApi(ctxWith(subagents, agentsWith({}), { get: () => undefined }))
+    const api = buildSubagentLiveApi(ctxWith(subagents, { get: () => undefined }))
     await expect(api.live({ rootSessionId: 'root' })).rejects.toThrowError(
       expect.objectContaining<Partial<SidebarError>>({ code: 'subagents-unavailable', status: 503 }),
     )
   })
 
   it('rejects a missing rootSessionId as bad-request', async () => {
-    const api = buildSubagentLiveApi(ctxWith(undefined, agentsWith({}), { get: () => undefined }))
+    const api = buildSubagentLiveApi(ctxWith(undefined, { get: () => undefined }))
     await expect(api.live({})).rejects.toThrowError(
       expect.objectContaining<Partial<SidebarError>>({ code: 'bad-request' }),
     )

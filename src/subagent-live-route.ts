@@ -4,15 +4,15 @@
  *
  * The route takes the already-resolved topology root (`rootSessionId`),
  * enumerates the whole descendant tree ONCE through the host subagent
- * runtime (`ctx.get('subagents')` / `listDescendants`), keeps only rows whose
- * live Agent is running, and folds the newest text/tool activity from each
+ * runtime (`ctx.get('subagents')` / `listDescendants`), keeps only rows the
+ * catalog reports running (`activity: 'running'` — the same gate the client
+ * renders cards on), and folds the newest text/tool activity from each
  * child's attached session event log. It never touches DSH source and never
  * reads the model's `job_output` cursor.
  *
  * Degradation contract:
- * - `ctx.subagents` / `ctx.agents` missing → 503 (the Subagent page has no
- *   topology to show in such deployments anyway).
- * - `listDescendants` failure → 503 (whole-batch degradation).
+ * - `ctx.get('subagents')` missing or `listDescendants` failure → 503 (the
+ *   Subagent page has no topology to show in such deployments anyway).
  * - One child's events missing/corrupt → that child is skipped, the rest of
  *   the batch still returns.
  */
@@ -32,25 +32,15 @@ export interface SidebarSubagentLiveRoutes {
   live(payload: unknown): Promise<{ live: Record<string, LastActivity> }>
 }
 
-/** The subset of `ctx` the route consumes (test doubles can satisfy it). */
-export interface SidebarSubagentLiveContext {
-  /** Direct service properties are optional; the route falls back to `get`. */
-  subagents?: SidebarSubagentsService
-  agents?: Context['agents']
-  sessions: Pick<Context['sessions'], 'get'>
-  get?(key: string): unknown
-}
-
 /**
  * Build the live-preview routes bound to the plugin context.
  * @param ctx - host plugin context.
  */
-export function buildSubagentLiveApi(ctx: SidebarSubagentLiveContext): SidebarSubagentLiveRoutes {
+export function buildSubagentLiveApi(ctx: Context): SidebarSubagentLiveRoutes {
   return {
     async live(payload) {
       const rootSessionId = requireString(payload, 'rootSessionId')
-      const subagents = ctx.subagents
-        ?? (ctx.get?.('subagents') as SidebarSubagentsService | undefined)
+      const subagents = ctx.get('subagents') as SidebarSubagentsService | undefined
       if (subagents === undefined || typeof subagents.listDescendants !== 'function') {
         throw new SidebarError(
           'subagents-unavailable',
@@ -70,14 +60,13 @@ export function buildSubagentLiveApi(ctx: SidebarSubagentLiveContext): SidebarSu
       }
 
       const live: Record<string, LastActivity> = {}
-      const agents = ctx.agents
-        ?? (ctx.get?.('agents') as Context['agents'] | undefined)
       for (const entry of descendants) {
-        if (entry.kind !== 'child') continue
+        // Same gate the client renders cards on: only catalog-running
+        // children get live lines (spec: "仅对 running 且非 Side Chat").
+        if (entry.kind !== 'child' || entry.activity !== 'running') continue
         // Side Chat threads ride the subagent origin but are sidebar tabs,
         // never topology — keep them out of the live map too.
         if (entry.label?.startsWith(SIDE_LABEL_PREFIX) ?? false) continue
-        if (agents?.get(entry.id)?.status !== 'running') continue
         try {
           const activity = lastActivity(ctx.sessions.get(entry.id)?.events ?? [])
           if (activity.text !== undefined || activity.tool !== undefined) {

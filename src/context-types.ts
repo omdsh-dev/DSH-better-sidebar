@@ -512,8 +512,6 @@ export interface SidebarAgent {
     /** The session's header (validated cwd, lineage metadata). */
     readonly header: { readonly cwd?: string }
   }
-  /** The agent's live driver status (`'running'` while a turn is active). */
-  readonly status?: string
 }
 
 declare module 'cordis' {
