@@ -72,6 +72,7 @@ export class PtyManager {
   constructor(
     private readonly shell: string,
     private readonly maxPerSession: number,
+    private readonly shellArgs: string[] = [],
     /** The loaded node-pty module (injected so a broken install degrades instead of crashing the plugin). */
     private readonly nodePty: NodePtyModule = loadRequiredNodePty(),
   ) {}
@@ -103,7 +104,15 @@ export class PtyManager {
    * @returns the live handle.
    * @throws {SidebarError} pty-error when the per-session cap is reached.
    */
-  open(sessionId: string, tabId: string, cwd: string, cols: number, rows: number): SidebarPty {
+  open(
+    sessionId: string,
+    tabId: string,
+    cwd: string,
+    cols: number,
+    rows: number,
+    shell?: string,
+    shellArgs?: string[],
+  ): SidebarPty {
     const key = `${sessionId}:${tabId}`
     this.cancelClose(key)
     const existing = this.sessions.get(key)
@@ -122,7 +131,7 @@ export class PtyManager {
       sessionId,
       tabId,
       cwd,
-      pty: this.nodePty.spawn(this.shell, shellSpawnArgs(), {
+      pty: this.nodePty.spawn(shell ?? this.shell, shellSpawnArgs(shellArgs ?? this.shellArgs), {
         name: 'xterm-256color',
         cols: Math.max(2, Math.floor(cols)),
         rows: Math.max(2, Math.floor(rows)),
@@ -295,10 +304,26 @@ export function defaultShell(options: ShellResolutionOptions = {}): string {
 }
 
 /**
+ * A short display name for a shell executable, used as the terminal tab
+ * title. `/bin/zsh` → `zsh`, `C:\...\powershell.exe` → `powershell`.
+ * Falls back to the raw value when no basename can be derived.
+ */
+export function shellDisplayName(shell: string): string {
+  const normalized = shell.replace(/\\/g, '/')
+  const base = normalized.slice(normalized.lastIndexOf('/') + 1)
+  if (base === '') return shell
+  return base.replace(/\.(exe|cmd|bat)$/i, '')
+}
+
+/**
  * Spawn arguments that make the shell behave like a terminal-emulator tab:
  * POSIX shells start as login shells (`-l`) so they read the profile files
  * (`~/.profile`, `~/.zprofile`); Windows PowerShell takes no login flag.
+ *
+ * When explicit `configured` args are supplied they REPLACE the platform
+ * defaults entirely, giving deployments full control over shell startup.
  */
-export function shellSpawnArgs(): string[] {
+export function shellSpawnArgs(configured: string[] = []): string[] {
+  if (configured.length > 0) return [...configured]
   return process.platform === 'win32' ? [] : ['-l']
 }

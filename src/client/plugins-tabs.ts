@@ -25,6 +25,24 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add "github:fuhefei/dsh-sentinel#v0.7.0"',
   },
   {
+    id: 'dsh-docs-panel',
+    name: 'dsh-docs-panel 全局文档',
+    url: 'https://github.com/mlosun/dsh-docs-panel',
+    description: () => t('pluginDocsPanelDesc'),
+    // dsh-docs-panel hard-depends on dsh-better-sidebar (required peer), so
+    // the install line installs the prerequisite first, then the plugin.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-docs-panel',
+  },
+  {
+    id: 'dsh-flowglass',
+    name: 'dsh-flowglass 流镜',
+    url: 'https://github.com/Iwctwbh/dsh-flowglass',
+    description: () => t('pluginFlowglassDesc'),
+    // Flowglass keeps its standalone drawer as a fallback and registers the
+    // native tab automatically when better-sidebar is present.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-flowglass',
+  },
+  {
     id: 'dsh-git-forge',
     name: 'dsh-git-forge Git 凭据',
     url: 'https://github.com/thirsty5034/dsh-git-forge',

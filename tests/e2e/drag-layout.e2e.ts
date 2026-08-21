@@ -29,7 +29,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test, expect, request, type APIRequestContext } from '@playwright/test'
+import { test, expect, request, type APIRequestContext, type Locator, type Page } from '@playwright/test'
 
 const BASE_URL = process.env.DSH_E2E_URL
 if (!BASE_URL) {
@@ -255,4 +255,405 @@ test('width drag tracks the shell 1:1 with transitions disabled (issue #92)', as
   const stripTravel = first!.stripX - last!.stripX
   const convoTravel = first!.convoRight - last!.convoRight
   expect(Math.abs(convoTravel - stripTravel), 'conversation must track the panel edge 1:1').toBeLessThanOrEqual(8)
+})
+
+test('a very fast width drag still commits the dragged position (no rollback on quick release)', async ({ page }) => {
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
+  const sidebar = page.locator('[data-dsh-better-sidebar]')
+  await expect(sidebar).toBeAttached({ timeout: 90_000 })
+
+  // Dismiss whatever onboarding takeover is present (same dance as the
+  // main lane) so the pointer can reach the strip.
+  try {
+    await expect
+      .poll(() => page.getByRole('button', { name: /^(Continue|Configure later)$/ }).count(), { timeout: 60_000 })
+      .toBeGreaterThan(0)
+  } catch {
+    console.warn('[e2e-drag-fast] no onboarding takeover appeared; proceeding')
+  }
+  for (let round = 0; round < 8; round++) {
+    let dismissed = false
+    for (const name of ['Continue', 'Configure later']) {
+      const button = page.getByRole('button', { name, exact: true }).first()
+      if ((await button.count()) === 0) continue
+      try {
+        await button.click({ timeout: 4_000 })
+        dismissed = true
+        await page.waitForTimeout(1_000)
+      } catch {
+        // Masked by a takeover stacked above; retry in the next round.
+      }
+    }
+    if (!dismissed) break
+  }
+
+  const expandButton = sidebar.getByRole('button', { name: 'Expand sidebar' })
+  await expect(expandButton, 'the collapsed toggle cluster must offer the expand button').toHaveCount(1)
+  await expandButton.click()
+  await expect
+    .poll(async () => {
+      const value = await page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))
+      return value !== '' && value !== '0px'
+    }, { timeout: 90_000 })
+    .toBe(true)
+
+  const readWidth = (): Promise<number> => page.evaluate(() => {
+    const value = parseFloat(document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))
+    return Number.isNaN(value) ? 0 : value
+  })
+  const widthBefore = await readWidth()
+
+  // The panel slides in from the right on expand: read the strip box only
+  // AFTER it settles at the pushed layout edge (a mid-animation read sits
+  // off-viewport and the drag never reaches the strip).
+  await expect
+    .poll(async () => {
+      const box = await page.evaluate(() => {
+        const host = document.querySelector('[data-dsh-better-sidebar]')
+        const el = [...host!.querySelectorAll('*')]
+          .filter(e => getComputedStyle(e).cursor === 'col-resize')
+          .map(e => e.getBoundingClientRect())
+          .filter(r => r.width > 0 && r.height > 0)
+          .sort((a, b) => a.x - b.x)[0]
+        return el === undefined ? null : { x: el.x + el.width, innerWidth: window.innerWidth }
+      })
+      if (box === null) return false
+      const varWidth = await page.evaluate(() => parseFloat(document.documentElement.style.getPropertyValue('--dsh-sidebar-width')) || 0)
+      return Math.abs(box.x - (box.innerWidth - varWidth)) <= 8
+    }, { timeout: 30_000 })
+    .toBe(true)
+  const stripBox = await page.evaluate(() => {
+    const host = document.querySelector('[data-dsh-better-sidebar]')
+    if (host === null) return null
+    const boxes = [...host.querySelectorAll('*')]
+      .filter(el => getComputedStyle(el).cursor === 'col-resize')
+      .map(el => el.getBoundingClientRect())
+      .filter(r => r.width > 0 && r.height > 0)
+      .sort((a, b) => a.x - b.x)
+    const r = boxes[0]
+    if (r === undefined) return null
+    return { x: r.x, y: r.y, width: r.width, height: r.height }
+  })
+  expect(stripBox, 'the width drag strip must be present').not.toBeNull()
+
+  const startX = stripBox!.x + stripBox!.width / 2
+  const startY = stripBox!.y + Math.min(120, stripBox!.height / 2 + 60)
+
+  // FAST release: a single move and an immediate up — no per-frame waits,
+  // so the last pointermove may never reach a requestAnimationFrame before
+  // the release (the exact quick-flick that used to roll back to the
+  // pre-drag width).
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX - 140, startY, { steps: 1 })
+  await page.mouse.up()
+
+  // The committed width must reflect the drag — and stay there (no rollback
+  // once React settles).
+  await expect
+    .poll(async () => await readWidth(), { timeout: 10_000 })
+    .toBeGreaterThan(widthBefore + 100)
+  await page.waitForTimeout(600)
+  expect(await readWidth(), 'the fast drag must not roll back after settling').toBeGreaterThan(widthBefore + 100)
+})
+
+/* ── issue #247: interrupted fast drags must not roll back ───────────── */
+
+/** Dismiss whatever onboarding takeover is present (same dance as above). */
+async function dismissOnboarding(page: Page): Promise<void> {
+  try {
+    await expect
+      .poll(() => page.getByRole('button', { name: /^(Continue|Configure later)$/ }).count(), { timeout: 60_000 })
+      .toBeGreaterThan(0)
+  } catch {
+    console.warn('[e2e-drag] no onboarding takeover appeared; proceeding')
+  }
+  for (let round = 0; round < 8; round++) {
+    let dismissed = false
+    for (const name of ['Continue', 'Configure later']) {
+      const button = page.getByRole('button', { name, exact: true }).first()
+      if ((await button.count()) === 0) continue
+      try {
+        await button.click({ timeout: 4_000 })
+        dismissed = true
+        await page.waitForTimeout(1_000)
+      } catch {
+        // Masked by a takeover stacked above; retry in the next round.
+      }
+    }
+    if (!dismissed) break
+  }
+}
+
+/** Open the sidebar panel and wait for the layout push to go live. */
+async function expandSidebar(page: Page, sidebar: Locator): Promise<void> {
+  const expandButton = sidebar.getByRole('button', { name: 'Expand sidebar' })
+  await expect(expandButton, 'the collapsed toggle cluster must offer the expand button').toHaveCount(1)
+  await expandButton.click()
+  await expect
+    .poll(async () => {
+      const value = await page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))
+      return value !== '' && value !== '0px'
+    }, { timeout: 90_000 })
+    .toBe(true)
+}
+
+/** Locate the width drag strip (the leftmost col-resize element inside the
+ *  sidebar host), wait for it to settle at the pushed layout edge (the
+ *  panel slides in from the right on expand — a strip read during the
+ *  animation sits off-viewport and no pointer event ever reaches it), then
+ *  read its FINAL box and return a drag start point on it. */
+async function settleWidthStrip(page: Page): Promise<{ startX: number; startY: number }> {
+  await expect
+    .poll(async () => {
+      const box = await page.evaluate(() => {
+        const host = document.querySelector('[data-dsh-better-sidebar]')
+        const el = [...host!.querySelectorAll('*')]
+          .filter(e => getComputedStyle(e).cursor === 'col-resize')
+          .map(e => e.getBoundingClientRect())
+          .filter(r => r.width > 0 && r.height > 0)
+          .sort((a, b) => a.x - b.x)[0]
+        return el === undefined ? null : { x: el.x + el.width, innerWidth: window.innerWidth }
+      })
+      if (box === null) return false
+      const varWidth = await page.evaluate(() => parseFloat(document.documentElement.style.getPropertyValue('--dsh-sidebar-width')) || 0)
+      return Math.abs(box.x - (box.innerWidth - varWidth)) <= 8
+    }, { timeout: 30_000 })
+    .toBe(true)
+  const stripBox = await page.evaluate(() => {
+    const host = document.querySelector('[data-dsh-better-sidebar]')
+    if (host === null) return null
+    const boxes = [...host.querySelectorAll('*')]
+      .filter(el => getComputedStyle(el).cursor === 'col-resize')
+      .map(el => el.getBoundingClientRect())
+      .filter(r => r.width > 0 && r.height > 0)
+      .sort((a, b) => a.x - b.x)
+    const r = boxes[0]
+    if (r === undefined) return null
+    return { x: r.x, y: r.y, width: r.width, height: r.height }
+  })
+  expect(stripBox, 'the width drag strip must be present').not.toBeNull()
+  return {
+    startX: stripBox!.x + stripBox!.width / 2,
+    startY: stripBox!.y + Math.min(120, stripBox!.height / 2 + 60),
+  }
+}
+
+/** Dispatch a synthetic pointer event (pointercancel / lostpointercapture)
+ *  onto the width strip. Synthetic events bypass the real pointer-capture
+ *  pipeline, which is exactly the point: the handlers must survive streams
+ *  that end without a component-visible pointerup. */
+async function dispatchPointerOnStrip(
+  page: Page,
+  type: 'pointercancel' | 'lostpointercapture',
+  init: { clientX?: number; clientY?: number },
+): Promise<void> {
+  await page.evaluate(({ type, init }) => {
+    const host = document.querySelector('[data-dsh-better-sidebar]')
+    if (host === null) throw new Error('sidebar host missing')
+    const el = [...host.querySelectorAll<HTMLElement>('*')]
+      .filter(el => getComputedStyle(el).cursor === 'col-resize')
+      .map(el => ({ el, r: el.getBoundingClientRect() }))
+      .filter(({ r }) => r.width > 0 && r.height > 0)
+      .sort((a, b) => a.r.x - b.r.x)[0]?.el
+    if (el === undefined) throw new Error('width drag strip not found')
+    el.dispatchEvent(new PointerEvent(type, {
+      pointerId: 1,
+      bubbles: true,
+      cancelable: true,
+      pointerType: 'mouse',
+      isPrimary: true,
+      ...init,
+    }))
+  }, { type, init })
+}
+
+test('an interrupted fast drag (pointercancel → lostpointercapture) keeps the dragged width (issue #247)', async ({ page }) => {
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
+  const sidebar = page.locator('[data-dsh-better-sidebar]')
+  await expect(sidebar).toBeAttached({ timeout: 90_000 })
+  await dismissOnboarding(page)
+  await expandSidebar(page, sidebar)
+  const readWidth = (): Promise<number> => page.evaluate(() => {
+    const value = parseFloat(document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))
+    return Number.isNaN(value) ? 0 : value
+  })
+  const widthBefore = await readWidth()
+  const { startX, startY } = await settleWidthStrip(page)
+
+  // Ultra-fast flick whose stream the browser then CANCELS (touchpad /
+  // gesture interception): pointercancel carries the final position and
+  // lostpointercapture follows it. The double fire must commit ONCE — the
+  // second interrupt event used to roll the drag back to the pre-drag
+  // width (the abort path never marked the drag committed).
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX - 140, startY, { steps: 1 })
+  await dispatchPointerOnStrip(page, 'pointercancel', { clientX: startX - 140, clientY: startY })
+  await dispatchPointerOnStrip(page, 'lostpointercapture', {})
+
+  await expect
+    .poll(async () => await readWidth(), { timeout: 10_000 })
+    .toBeGreaterThan(widthBefore + 100)
+  await page.waitForTimeout(600)
+  expect(await readWidth(), 'the interrupted fast drag must not roll back after settling').toBeGreaterThan(widthBefore + 100)
+
+  // Release the real pointer stream the synthetic events bypassed.
+  await page.mouse.up()
+})
+
+test('a capture-lost drag with no usable coordinates keeps the last applied width (issue #247)', async ({ page }) => {
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
+  const sidebar = page.locator('[data-dsh-better-sidebar]')
+  await expect(sidebar).toBeAttached({ timeout: 90_000 })
+  await dismissOnboarding(page)
+  await expandSidebar(page, sidebar)
+  const readWidth = (): Promise<number> => page.evaluate(() => {
+    const value = parseFloat(document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))
+    return Number.isNaN(value) ? 0 : value
+  })
+  const widthBefore = await readWidth()
+  const { startX, startY } = await settleWidthStrip(page)
+
+  // A flick whose move DID reach the DOM (the rAF flushed it), followed by
+  // capture loss with NO coordinates (lostpointercapture does not carry a
+  // position). The abort must adopt the last applied size — the old code
+  // explicitly reverted the DOM to the pre-drag width here.
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX - 120, startY, { steps: 1 })
+  await page.waitForTimeout(100) // let the rAF consume the pending write
+  await dispatchPointerOnStrip(page, 'lostpointercapture', {})
+
+  await expect
+    .poll(async () => await readWidth(), { timeout: 10_000 })
+    .toBeGreaterThan(widthBefore + 80)
+  await page.waitForTimeout(600)
+  expect(await readWidth(), 'the no-coordinate capture loss must not roll back after settling').toBeGreaterThan(widthBefore + 80)
+  await page.mouse.up()
+})
+
+/* ── issue #258: the bottom panel must not flash full-width after a width
+      drag release ─────────────────────────────────────────────────────── */
+
+test('bottom panel never flashes full-width after a width drag release (issue #258)', async ({ page }) => {
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
+  const sidebar = page.locator('[data-dsh-better-sidebar]')
+  await expect(sidebar).toBeAttached({ timeout: 90_000 })
+  await dismissOnboarding(page)
+  await expandSidebar(page, sidebar)
+
+  // The bottom panel must be OPEN too — its right edge is what tracks the
+  // center column (and what flashes full-width on release).
+  const bottomExpand = sidebar.getByRole('button', { name: 'Expand bottom panel' })
+  await expect(bottomExpand, 'the toggle cluster must offer the bottom-panel expand button').toHaveCount(1)
+  await bottomExpand.click()
+  await expect
+    .poll(async () => {
+      const value = await page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-sidebar-height'))
+      return value !== '' && value !== '0px'
+    }, { timeout: 90_000 })
+    .toBe(true)
+
+  const { startX, startY } = await settleWidthStrip(page)
+
+  // Per-frame sampler: the bottom panel's right edge vs the center column's
+  // right edge (where the layout push lands). The release path used to
+  // TRANSIENTLY REMOVE the push variables between the layout effect's
+  // cleanup and setup phases — React can yield a render frame in that gap,
+  // so the browser painted the push-less layout (center column full width),
+  // the drag-end measure cached that full-width rect, and the bottom panel
+  // rendered full-width while #root's margin transition animated back to
+  // the new width. Every post-release frame must keep the two edges glued
+  // at the committed width: no full-width frame, no drift, no margin
+  // animation.
+  await page.evaluate(() => {
+    const samples: Array<{ t: number; bottomRight: number; colRight: number; varW: string; dragging: boolean; iw: number }> = []
+    const loop = (): void => {
+      const bottom = document.querySelector('[data-dsh-better-sidebar] [data-dsh-bottom-panel]')
+      const col = document.querySelector('#root [data-slot="conversation"]')?.parentElement
+      samples.push({
+        t: performance.now(),
+        bottomRight: bottom?.getBoundingClientRect().right ?? -1,
+        colRight: col?.getBoundingClientRect().right ?? -1,
+        varW: document.documentElement.style.getPropertyValue('--dsh-sidebar-width'),
+        dragging: document.body.hasAttribute('data-dsh-sidebar-dragging'),
+        iw: window.innerWidth,
+      })
+      requestAnimationFrame(loop)
+    }
+    requestAnimationFrame(loop)
+    ;(window as unknown as { __flashSamples: typeof samples }).__flashSamples = samples
+  })
+
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  for (let i = 1; i <= 10; i++) {
+    await page.mouse.move(startX - i * 12, startY, { steps: 2 })
+    await page.waitForTimeout(30)
+  }
+  await page.mouse.up()
+  await page.waitForTimeout(500)
+
+  const samples = await page.evaluate(
+    () => (window as unknown as { __flashSamples: Array<{ t: number; bottomRight: number; colRight: number; varW: string; dragging: boolean; iw: number }> }).__flashSamples,
+  )
+  expect(samples.length, 'the frame sampler must have collected frames').toBeGreaterThan(20)
+  const lastDrag = [...samples].reverse().find(s => s.dragging)
+  expect(lastDrag, 'the dragging attribute must appear during the drag').toBeDefined()
+  const releaseIdx = samples.indexOf(lastDrag!) + 1
+  const release = samples[releaseIdx]!
+  expect(release.colRight, 'the center column must be measurable after release').toBeGreaterThan(0)
+  expect(release.bottomRight, 'the bottom panel must be measurable after release').toBeGreaterThan(0)
+  const settled = samples[samples.length - 1]!
+  for (const s of samples.slice(releaseIdx)) {
+    expect(
+      Math.abs(s.bottomRight - s.colRight),
+      `bottom panel drifted from the center column at t=${Math.round(s.t)} (bottom ${s.bottomRight} vs column ${s.colRight})`,
+    ).toBeLessThanOrEqual(8)
+    const fullWidth = s.bottomRight >= s.iw - 1
+    expect(
+      fullWidth && s.varW !== '' && s.varW !== '0px',
+      `bottom panel flashed full-width at t=${Math.round(s.t)} (right ${s.bottomRight}, push ${s.varW})`,
+    ).toBe(false)
+    expect(
+      Math.abs(s.colRight - settled.colRight),
+      `center column edge animated after release at t=${Math.round(s.t)} (${s.colRight} vs settled ${settled.colRight})`,
+    ).toBeLessThanOrEqual(8)
+  }
+})
+
+test('the bottom-push anchor resolves through the composite selectors (at least one; same element when both)', async ({ page }) => {
+  // layout.css pushes the bottom panel via the center column. The selector
+  // is COMPOSITE on purpose: `[data-pane="conversation"]` (0.1.x naming)
+  // and `:has(> [data-slot="conversation"])` (rc.8-era naming) — HOST
+  // VERSIONS MAY RENAME THE ATTRIBUTE (issue #208 comment / PR #226), so
+  // the contract is "at least one resolves", and when both resolve they
+  // must hit the SAME element (otherwise the push would land twice).
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
+  const anchors = await page.evaluate(() => {
+    const a = document.querySelector('#root [data-dsh-frame] > [data-pane="conversation"]')
+    const b = document.querySelector('#root :has(> [data-slot="conversation"])')
+    const frame = document.querySelector('#root [data-dsh-frame]')
+    return {
+      a: a !== null,
+      b: b !== null,
+      same: a !== null && b !== null && a === b,
+      frameChildren: frame !== null
+        ? [...frame.children].map(el => `${el.tagName}[${[...el.attributes].map(attr => attr.name).filter(name => name.startsWith('data-')).join(',')}]`)
+        : [],
+    }
+  })
+  expect(
+    anchors.a || anchors.b,
+    `at least one bottom-push anchor must resolve on this host (frame children: ${anchors.frameChildren.join(' / ') || 'no [data-dsh-frame]'})`,
+  ).toBe(true)
+  if (anchors.a && anchors.b) {
+    expect(anchors.same, 'both selectors must hit the SAME center-column element').toBe(true)
+  }
 })

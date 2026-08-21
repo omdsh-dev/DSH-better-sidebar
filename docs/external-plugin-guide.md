@@ -40,7 +40,7 @@ import type {} from 'dsh-better-sidebar'  // 触发 declare module 'cordis' 类�
 {
   "name": "my-plugin",
   "peerDependencies": {
-    "cordis": "^4.0.0-rc.7",
+    "cordis": "^4.0.0-rc.8",
     "dsh-better-sidebar": "workspace:*"
   },
   "peerDependenciesMeta": {
@@ -690,7 +690,7 @@ ctx.effect(() =>
     "./client": { "types": "./lib/types/client/index.d.ts", "default": "./lib/client.js" }
   },
   "peerDependencies": {
-    "cordis": "^4.0.0-rc.7",
+    "cordis": "^4.0.0-rc.8",
     "dsh-better-sidebar": "workspace:*",
     "@deepseek-ai/dsh-client-runtime": "^0.0.1",
     "react": "^18.2.0"
