@@ -96,21 +96,24 @@ beforeEach(() => {
   killCalls.length = 0
   vi.stubGlobal('fetch', async (url: string | URL | Request, init?: RequestInit) => {
     const method = String(url).split('/').pop()
-    const body = JSON.parse(String(init?.body)) as { sessionId: string; id: string }
+    const body = JSON.parse(String(init?.body)) as { sessionId?: string; id?: string; rootSessionId?: string }
+    if (method === 'subagents.live') {
+      return jsonResponse({ ok: true, value: { live: {} } })
+    }
     if (method === 'jobs.output') {
-      outputCalls.push({ sessionId: body.sessionId, id: body.id })
+      outputCalls.push({ sessionId: body.sessionId ?? '', id: body.id ?? '' })
       // bash-9 stands for a job the model never read (read:false).
       return jsonResponse({
         ok: true,
         value: {
-          text: body.id === 'bash-9' ? '' : `output-of-${body.id}`,
+          text: body.id === 'bash-9' ? '' : `output-of-${body.id ?? ''}`,
           truncated: false,
           read: body.id !== 'bash-9',
         },
       })
     }
     if (method === 'jobs.kill') {
-      killCalls.push({ sessionId: body.sessionId, id: body.id })
+      killCalls.push({ sessionId: body.sessionId ?? '', id: body.id ?? '' })
       return jsonResponse({ ok: true, value: { ok: true, outcome: 'requested' } })
     }
     throw new Error(`unexpected fetch ${String(url)}`)
