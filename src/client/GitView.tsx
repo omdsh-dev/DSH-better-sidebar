@@ -1,6 +1,8 @@
 /**
- * The source-control panel: status list (staged vs unstaged), stage/unstage,
- * commit with a message box, branch switch, and a VSCode-like history — rows
+ * The source-control panel: a pinned header (branch switch, refresh and the
+ * inline commit box — issue #194: the commit form must stay reachable while
+ * the status list scrolls) over the scrolling body: staged vs unstaged
+ * sections, commit with a message box, and a VSCode-like history — rows
  * carry branch decorations, author and relative time. Clicking a changed
  * file or a history row opens a dedicated diff TAB (see {@link DiffTab}),
  * placed below the git pane on first use. File rows and history rows open a
@@ -301,103 +303,111 @@ export function GitView(props: {
         </button>
       </div>
 
-      {loading && <div className={css.gitPlaceholder}>{t('loading')}</div>}
-      {!loading && error !== null && <div className={css.gitError}>{error}</div>}
-      {!loading && status !== null && !status.isRepo && (
-        <div className={css.gitPlaceholder}>{t('notRepo')}</div>
+      {status !== null && status.isRepo && (
+        <div className={css.gitCommit}>
+          <Input
+            className={css.gitCommitInput}
+            placeholder={t('commitPlaceholder')}
+            value={commitMsg}
+            disabled={busy}
+            onChange={(event) => { setCommitMsg(event.target.value); setCommitError(null) }}
+            onKeyDown={(event) => {
+              if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
+            }}
+          />
+          <button
+            type="button"
+            className={css.gitCommitButton}
+            disabled={busy || commitMsg.trim() === '' || stagedEntries.length === 0}
+            onClick={() => { void commit() }}
+          >
+            {t('commit')}
+          </button>
+        </div>
       )}
+      {commitError !== null && <div className={css.gitError}>{commitError}</div>}
+
+      <div className={css.gitBody}>
+        {loading && <div className={css.gitPlaceholder}>{t('loading')}</div>}
+        {!loading && error !== null && <div className={css.gitError}>{error}</div>}
+        {!loading && status !== null && !status.isRepo && (
+          <div className={css.gitPlaceholder}>{t('notRepo')}</div>
+        )}
+
+        {status !== null && status.isRepo && (
+          <>
+            <div className={css.gitSection}>
+              <div className={css.gitSectionHeader}>
+                <span>{t('staged')} ({stagedEntries.length})</span>
+                {stagedEntries.length > 0 && (
+                  <button type="button" className={css.gitLink} disabled={busy} onClick={() => { void stageAll(true) }}>
+                    {t('unstageAll')}
+                  </button>
+                )}
+              </div>
+              {stagedEntries.length === 0 && <div className={css.gitEmpty}>{t('noChanges')}</div>}
+              {stagedEntries.map(entry => renderEntry(entry, true))}
+            </div>
+            <div className={css.gitSection}>
+              <div className={css.gitSectionHeader}>
+                <span>{t('unstaged')} ({unstagedEntries.length})</span>
+                {unstagedEntries.length > 0 && (
+                  <button type="button" className={css.gitLink} disabled={busy} onClick={() => { void stageAll(false) }}>
+                    {t('stageAll')}
+                  </button>
+                )}
+              </div>
+              {unstagedEntries.length === 0 && <div className={css.gitEmpty}>{t('noChanges')}</div>}
+              {unstagedEntries.map(entry => renderEntry(entry, false))}
+            </div>
+
+            <div className={css.gitSection}>
+              <div className={css.gitSectionHeader}><span>{t('history')}</span></div>
+              {logEntries.map(entry => (
+                <div
+                  key={entry.hashFull}
+                  role="button"
+                  tabIndex={0}
+                  className={css.gitLogRow}
+                  title={`${entry.author} · ${entry.date}\n${entry.hashFull}`}
+                  onClick={() => { openCommitDiff(entry) }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      openCommitDiff(entry)
+                    }
+                  }}
+                  onContextMenu={(event) => { openHistoryMenu(event, entry) }}
+                >
+                  <span className={css.gitLogLine1}>
+                    <span className={css.gitLogHash}>{entry.hash}</span>
+                    <span className={css.gitLogSubject}>{entry.subject}</span>
+                  </span>
+                  <span className={css.gitLogLine2}>
+                    {refNames(entry.refs).map(ref => (
+                      <span key={ref} className={css.gitLogRef}>{ref}</span>
+                    ))}
+                    <span className={css.gitLogMeta}>{entry.author} · {relativeTime(entry.date)}</span>
+                  </span>
+                </div>
+              ))}
+              {!logEnded && (
+                <button
+                  type="button"
+                  className={css.gitLogMore}
+                  disabled={logLoadingMore || busy}
+                  onClick={() => { void loadMoreLog() }}
+                >
+                  {logLoadingMore ? t('loading') : t('loadMore')}
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
 
       {status !== null && status.isRepo && (
         <>
-          <div className={css.gitSection}>
-            <div className={css.gitSectionHeader}>
-              <span>{t('staged')} ({stagedEntries.length})</span>
-              {stagedEntries.length > 0 && (
-                <button type="button" className={css.gitLink} disabled={busy} onClick={() => { void stageAll(true) }}>
-                  {t('unstageAll')}
-                </button>
-              )}
-            </div>
-            {stagedEntries.length === 0 && <div className={css.gitEmpty}>{t('noChanges')}</div>}
-            {stagedEntries.map(entry => renderEntry(entry, true))}
-          </div>
-          <div className={css.gitSection}>
-            <div className={css.gitSectionHeader}>
-              <span>{t('unstaged')} ({unstagedEntries.length})</span>
-              {unstagedEntries.length > 0 && (
-                <button type="button" className={css.gitLink} disabled={busy} onClick={() => { void stageAll(false) }}>
-                  {t('stageAll')}
-                </button>
-              )}
-            </div>
-            {unstagedEntries.length === 0 && <div className={css.gitEmpty}>{t('noChanges')}</div>}
-            {unstagedEntries.map(entry => renderEntry(entry, false))}
-          </div>
-
-          <div className={css.gitCommit}>
-            <Input
-              className={css.gitCommitInput}
-              placeholder={t('commitPlaceholder')}
-              value={commitMsg}
-              disabled={busy}
-              onChange={(event) => { setCommitMsg(event.target.value); setCommitError(null) }}
-              onKeyDown={(event) => {
-                if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
-              }}
-            />
-            <button
-              type="button"
-              className={css.gitCommitButton}
-              disabled={busy || commitMsg.trim() === '' || stagedEntries.length === 0}
-              onClick={() => { void commit() }}
-            >
-              {t('commit')}
-            </button>
-          </div>
-          {commitError !== null && <div className={css.gitError}>{commitError}</div>}
-
-          <div className={css.gitSection}>
-            <div className={css.gitSectionHeader}><span>{t('history')}</span></div>
-            {logEntries.map(entry => (
-              <div
-                key={entry.hashFull}
-                role="button"
-                tabIndex={0}
-                className={css.gitLogRow}
-                title={`${entry.author} · ${entry.date}\n${entry.hashFull}`}
-                onClick={() => { openCommitDiff(entry) }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    openCommitDiff(entry)
-                  }
-                }}
-                onContextMenu={(event) => { openHistoryMenu(event, entry) }}
-              >
-                <span className={css.gitLogLine1}>
-                  <span className={css.gitLogHash}>{entry.hash}</span>
-                  <span className={css.gitLogSubject}>{entry.subject}</span>
-                </span>
-                <span className={css.gitLogLine2}>
-                  {refNames(entry.refs).map(ref => (
-                    <span key={ref} className={css.gitLogRef}>{ref}</span>
-                  ))}
-                  <span className={css.gitLogMeta}>{entry.author} · {relativeTime(entry.date)}</span>
-                </span>
-              </div>
-            ))}
-            {!logEnded && (
-              <button
-                type="button"
-                className={css.gitLogMore}
-                disabled={logLoadingMore || busy}
-                onClick={() => { void loadMoreLog() }}
-              >
-                {logLoadingMore ? t('loading') : t('loadMore')}
-              </button>
-            )}
-          </div>
-
           {/*
             The one shared file-row context menu, positioned at the right-click
             cursor (portal so the panel's overflow clip cannot crop it).

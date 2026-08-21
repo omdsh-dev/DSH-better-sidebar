@@ -1959,9 +1959,17 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+}
+
+/* The scrolling part of the git pane: the header (branch select + commit
+   box) stays pinned while the status sections and history scroll underneath
+   (issue #194). */
+.gitBody {
+  flex: 1;
+  min-height: 0;
   /* Tab pages never scroll horizontally: content wraps or truncates to the
      panel width instead of panning sideways. */
+  overflow-y: auto;
   overflow-x: hidden;
 }
 
@@ -1988,6 +1996,12 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 .gitSection {
   border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+/* The first section sits right under the pinned commit bar (whose bottom
+   border draws the separator); skip its own border so the rule stays 1px. */
+.gitBody > .gitSection:first-child {
+  border-top: none;
 }
 
 .gitSectionHeader {
@@ -2260,10 +2274,11 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 .gitCommit {
+  flex: none;
   display: flex;
   gap: 6px;
   padding: 8px 12px;
-  border-top: 1px solid var(--dsw-alias-border-l1);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
   align-items: center;
 }
 
