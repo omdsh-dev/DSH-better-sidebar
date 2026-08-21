@@ -270,3 +270,4 @@ Windows / Linux / macOS 三平台适配（macOS 日常验证；其余经单元�
 - [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI)：Claude Code 风格全屏交互终端插件——像素鲸鱼顶栏、实时工作状态行、思考流式展开、双击 Esc 回滚、上下文进度条 + TPS 仪表，npm 一键安装
 - [dshfind 插件超市](https://dshfind.com/zh/plugins)：三方插件市场——GitHub topic `dsh-plugin` 下的公开仓库清单，每日同步 star、贡献者与增长数据
 - [DeepSeek Harness Desktop](https://github.com/anywhere-labs/deepseek-harness-desktop)：为 DeepSeek Harness 生态打造的现代化桌面端——无需配置 Node.js 或执行命令即可启动和管理本地 Harness 服务；[官网](https://www.dshdesktop.cn)
+- [DeepSeek Harness Desktop Tauri](https://github.com/hairyf/deepseek-harness-desktop)：DeepSeek Harness 的 Tauri 桌面版——仅 5MB 安装包、零环境配置、预置插件开箱即用，支持 Windows / macOS / Linux 三平台
