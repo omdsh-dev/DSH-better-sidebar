@@ -54,7 +54,19 @@ export function buildCommitPrompt(stagedDiff: string, unstagedDiff: string): { s
     throw new SidebarError('git-error', 'no changes to commit')
   }
   return {
-    system: 'You are a commit-message writer. Given the diff, write a git commit message: ONE subject line in imperative mood, under 72 characters, prefixed with a conventional commit type (feat/fix/refactor/docs/test/chore) when it is obvious, then a blank line and a concise body only when the change warrants it. Output ONLY the commit message itself: no markdown fences, no commentary, no quoted diff.',
+    system: [
+      'You write git commit messages. Output is the commit message ONLY — no markdown fences, no surrounding quotes, no "Commit:" prefix, no commentary, no extra prose.',
+      'Exact layout (follow it every time):',
+      '  <conventional type>(<optional scope>): <imperative subject, under 72 chars>',
+      '  ',
+      '  <concise body: one self-contained line per meaningful change>',
+      'Rules:',
+      '- The subject is ALWAYS its own single line; it must never run into the body.',
+      '- Leave exactly one blank line between the subject and the body.',
+      '- Never let two words or two sentences run together without their intended separator; keep every line self-contained.',
+      '- When the change is trivial, omit the body and output only the one-line subject.',
+      '- Type from: feat, fix, refactor, docs, test, chore, perf, build, ci (choose only when obvious).',
+    ].join('\n'),
     messages: [createUserMessage({
       content: [{ type: 'text', text: sections.join('\n\n') }],
       source: { kind: 'user' },
