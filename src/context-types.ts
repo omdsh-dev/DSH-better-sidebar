@@ -225,6 +225,80 @@ export interface SidebarJobsService {
 export interface SidebarAgentsService {
   /** The live agent registered under a session id, or undefined when not live. */
   get(id: string): SidebarAgent | undefined
+  /**
+   * Create a session + agent with a custom seed (mirror of the runtime
+   * AgentRegistry.create) — the Side Chat thread-creation seam: the SAME
+   * public seam api-proxy's session.fork and the subagent fork provider use.
+   */
+  create?(options: unknown): Promise<{ agent: SidebarAgent; dispose(): Promise<void> }>
+  /**
+   * Resume an agent on a persisted session (mirror of the runtime
+   * AgentRegistry.resume) — the Side Chat cold-continuation seam after a
+   * DSH restart or a closed thread.
+   */
+  resume?(options: unknown): Promise<{ agent: SidebarAgent; dispose(): Promise<void> }>
+}
+
+/** The host subagent runtime face (`ctx.subagents`; optional — the live
+ *  batch route degrades to a 503 when the deployment lacks it). Only the
+ *  read-only descendant enumeration this plugin needs is mirrored. */
+export interface SidebarSubagentsService {
+  /**
+   * Enumerate the root's complete session-backed subagent tree in stable
+   * pre-order without loading or resuming an Agent (mirror of
+   * `SubagentRuntime.listDescendants`).
+   */
+  listDescendants(
+    rootSessionId: string,
+    signal?: AbortSignal,
+  ): Promise<SidebarSubagentDescendantEntry[]>
+}
+
+/** One descendant row of `ctx.subagents.listDescendants` (structural mirror). */
+export type SidebarSubagentDescendantEntry =
+  | {
+    kind: 'child'
+    id: string
+    activity: 'running' | 'inactive'
+    hasChildren: boolean
+    mode: 'one-shot' | 'continuable'
+    label?: string
+    parentId: string
+    depth: number
+  }
+  | {
+    kind: 'diagnostic'
+    id: string
+    reason: 'corrupt' | 'unsupported' | 'unavailable'
+    parentId: string
+    depth: number
+  }
+
+/** The host agent-presets service face (mirror of the runtime agentPresets
+ *  service): resolves and mounts the preset composition a session recorded,
+ *  so a resumed or forked session rebuilds the same tool/prompt world its
+ *  history was produced under. */
+export interface SidebarAgentPresetsService {
+  /** Resolve a preset id; undefined resolves the deployment default. */
+  resolve(presetId?: string): Promise<{ id: string }>
+  /** Mount a preset's composition into an agent scope before publication. */
+  mount(agentCtx: unknown, presetId: string): Promise<void>
+}
+
+/** The host session-title service face (mirror of the sessionTitle service). */
+export interface SidebarSessionTitleService {
+  /** Rename one live session's title (pins it against auto-regeneration). */
+  rename(session: unknown, title: string): { title: string; eventSeq: number }
+}
+
+/** The host session-persistence face (mirror of the sessionPersistence
+ *  service): detached inspection of a persisted session, used to compose the
+ *  recorded preset when a Side Chat thread cold-resumes. */
+export interface SidebarSessionPersistenceService {
+  inspect(sessionId: string): Promise<{
+    meta: { cwd?: string; agentPreset?: string }
+    events: readonly SidebarSessionEvent[]
+  }>
 }
 
 /** RPC result slot mirror (`RpcResult<T>` on the wire). */
@@ -236,9 +310,21 @@ export interface SidebarRpcResponse<T> {
   result: SidebarRpcResult<T>
 }
 
+/** The generic session-history RPC face the Side Chat transcript polls
+ *  (subagent.history verifies subagent-catalog membership, which our custom
+ *  side-thread children do not have — the generic session.history reads any
+ *  durable log directly). */
+export interface SidebarSessionHistoryRpc {
+  history(
+    payload: { sessionId: string; beforeSeq?: number; maxMessages?: number },
+    signal?: AbortSignal,
+  ): Promise<SidebarRpcResponse<{ events: SidebarHistoryEntry[]; hasMore: boolean }>>
+}
+
 /** The wire face the Subagent activity summary needs (subset of `ctx.connection`). */
 export interface SidebarConnectionHandle {
   api: {
+    sessions: SidebarSessionHistoryRpc
     subagents: {
       history(
         payload: SidebarSubagentAddress & { beforeSeq?: number; maxMessages?: number },
@@ -273,6 +359,23 @@ export interface SidebarSessionsService {
    * — used to jump back to the main agent from the topology root node.
    */
   open?(id: string): void
+  /**
+   * Fork a session from a completed-turn prefix of the source and resolve
+   * the child session id (mirror of the runtime ISessions.fork — throws on
+   * failure). The Side Chat "save as new session" action uses this to
+   * promote a hidden side thread into a top-level session.
+   */
+  fork?(opts: { sessionId: string; atSeq?: number; increaseTitle?: boolean }): Promise<string>
+  /**
+   * Resolve the stable session binding of one listed session (mirror of the
+   * runtime ISessions.binding); the saved-session rename uses the face's
+   * behavior verbs.
+   */
+  binding?(id: string): {
+    session: {
+      rename(title: string): Promise<unknown>
+    }
+  } | undefined
   /**
    * Resolve an Agent-scoped context view for one session (mirror of the
    * runtime ISessions.scope) — the ticket `ctx.conversation.input.for`
@@ -442,9 +545,31 @@ declare module 'cordis' {
     jobs: SidebarJobsService
     /**
      * The host live-agent registry (`ctx.get('agents')`; optional — used to
-     * resolve the caller the jobs fence compares against).
+     * resolve the caller the jobs fence compares against, and to create /
+     * resume the Side Chat thread agents).
      */
     agents: SidebarAgentsService
+    /**
+     * The host subagent runtime (`ctx.subagents`; optional — the Subagent
+     * page's live batch route reads descendant catalogs through it).
+     */
+    subagents: SidebarSubagentsService
+    /**
+     * The host agent-presets service (`ctx.get('agentPresets')`; optional —
+     * absent deployments compose nothing and every session shares the host
+     * composition).
+     */
+    agentPresets: SidebarAgentPresetsService
+    /**
+     * The host session-title service (`ctx.get('sessionTitle')`; optional —
+     * the Side Chat thread label pin degrades to the auto-generated title).
+     */
+    sessionTitle: SidebarSessionTitleService
+    /**
+     * The host session-persistence service (`ctx.get('sessionPersistence')`;
+     * optional — needed only for the Side Chat cold-resume composition).
+     */
+    sessionPersistence: SidebarSessionPersistenceService
     /**
      * The client-side sidebar registry: external plugins register tab types
      * and file previewers here. Provided by the client half (see

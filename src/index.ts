@@ -47,6 +47,8 @@ import {
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
+import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
+import { buildSidechatApi } from './sidechat-routes.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 
 export { Config }
@@ -233,6 +235,10 @@ function buildApi(
   // job_output cursor is never consumed) and kill (the registry's stock
   // API). A deployment without the jobs registry downgrades kill to a 503.
   const jobsApi: SidebarJobsRoutes = buildJobsApi(ctx, resolved.readLimit)
+  // Subagent live previews: one batch request instead of N per-child
+  // `subagents.history` calls. The route degrades to a 503 when the host
+  // subagent runtime is absent (the page has no topology to show anyway).
+  const subagentLiveApi: SidebarSubagentLiveRoutes = buildSubagentLiveApi(ctx)
   return {
     'session.cwd': (payload) => {
       const { sessionId, cwd } = cwdOf(payload)
@@ -385,6 +391,9 @@ function buildApi(
     // exists. Kill is fenced to the owning session by the jobs registry.
     'jobs.output': (payload) => jobsApi.output(payload),
     'jobs.kill': (payload) => jobsApi.kill(payload),
+    // Subagent live previews: one batch request per refresh; the route folds
+    // the newest text/tool activity of every running child in the tree.
+    'subagents.live': (payload) => subagentLiveApi.live(payload),
     // The effective terminal shell and its display name. The client uses
     // this to title terminal tabs with the shell name instead of a numbered
     // "Terminal N" label; the shell itself is configured through
@@ -470,6 +479,14 @@ function buildApi(
         clearTimeout(timer)
       }
     },
+    // Side Chat: create a side-thread child seeded with the parent's full
+    // log up to now, deliver follow-ups (cold-resuming when the thread's
+    // agent is gone), abort a running thread, and release a thread's agent.
+    // Every operation runs through these routes because subagent-origin
+    // identities are fenced from the generic session RPCs (agent-lookup
+    // ownership), and the thread is created with a CUSTOM seed the stock
+    // fork APIs cannot express.
+    ...buildSidechatApi(ctx),
   }
 }
 

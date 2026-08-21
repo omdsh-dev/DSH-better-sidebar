@@ -56,28 +56,38 @@ function parentOf(path: string): string {
 const COPIED_MS = 1200
 
 /**
- * The drop overlay's hero art: an arrow descending into a tray (upload
- * zone) and tilted photo cards (chat zone). Hand-drawn, colored in the
- * palette of DSH's own native drop illustration (#3964FE / #679EFE /
- * #9CE5ED) so the two zones read as one family; the drop overlay is this
- * flow's one brand moment, so it gets color the rest of the UI never does.
+ * The drop overlay's hero art: an arrow rising out of a notched tray
+ * (upload zone — the same glyph family as the toolbar's upload icon) and a
+ * tilted pair of photo cards (chat zone). Hand-drawn, colored in the
+ * palette of DSH's own native drop illustration (#3964FE / #9CE5ED) so the
+ * two zones read as one family; the drop overlay is this flow's one brand
+ * moment, so it gets color the rest of the UI never does.
  */
 const UploadDropIllustration = () => (
   <svg width="64" height="56" viewBox="0 0 64 56" fill="none" aria-hidden="true">
-    <path d="M8 36h48v6a10 10 0 0 1-10 10H18A10 10 0 0 1 8 42v-6z" fill="#9CE5ED" />
-    <path d="M32 4v26" stroke="#3964FE" strokeWidth="5" strokeLinecap="round" />
-    <path d="M19 21l13 13 13-13" stroke="#3964FE" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M32 28V11" stroke="#3964FE" strokeWidth="5" strokeLinecap="round" />
+    <path d="M23 20l9-9 9 9" stroke="#3964FE" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+    <path
+      d="M10 40a4 4 0 0 1 4-4h7l3.2 4.6a5 5 0 0 0 4.1 2.2h7.4a5 5 0 0 0 4.1-2.2L43 36h7a4 4 0 0 1 4 4v2a10 10 0 0 1-10 10H20A10 10 0 0 1 10 42v-2z"
+      fill="#9CE5ED"
+    />
   </svg>
 )
 
-/** The chat zone's art: a tilted pair of photo cards (sun over mountains). */
+/** The chat zone's art: two tilted photo cards, each with its own
+ *  sun-over-mountains motif (the back card carries detail too, so it never
+ *  reads as a bare blob). */
 const ChatDropIllustration = () => (
-  <svg width="92" height="72" viewBox="0 0 92 72" fill="none" aria-hidden="true">
-    <rect x="8" y="14" width="34" height="34" rx="9" transform="rotate(-14 8 14)" fill="#9CE5ED" />
-    <g transform="rotate(10 42 10)">
-      <rect x="42" y="10" width="38" height="42" rx="9" fill="#3964FE" />
-      <circle cx="56" cy="24" r="4.5" fill="white" />
-      <path d="M47 44l9-11 7 8 5-5 8 10" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+  <svg width="96" height="76" viewBox="0 0 96 76" fill="none" aria-hidden="true">
+    <g transform="rotate(-12 24 34)">
+      <rect x="6" y="16" width="36" height="36" rx="10" fill="#9CE5ED" />
+      <circle cx="16" cy="27" r="3.5" fill="white" />
+      <path d="M11 44l8-9 6 6 4-4 8 9" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+    </g>
+    <g transform="rotate(8 61 35)">
+      <rect x="40" y="12" width="42" height="46" rx="10" fill="#3964FE" />
+      <circle cx="55" cy="27" r="5" fill="white" />
+      <path d="M46 50l10-13 7 8 6-6 9 11" stroke="white" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
     </g>
   </svg>
 )

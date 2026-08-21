@@ -462,6 +462,28 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+/* The multi-line custom-CSS input (scheme `custom`): monospace, generous
+   height, resizable — same surface tokens as the typed inputs. */
+.cssTextArea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 120px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.cssTextArea:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
 /* Secondary settings popup: a wider dialog than the primitive default (the
    dialog portals to document.body; the doubled class keeps the width rule
    above the primitive's .dialog regardless of stylesheet order). */

@@ -282,6 +282,21 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding-right: 40px;
 }
 
+/* ── Desktop drag-region opt-out ──────────────────────────────────────── */
+
+/* Frameless desktop shells make the top strip of the web content draggable
+   (Electron `-webkit-app-region: drag`); pointer events over that strip are
+   swallowed as window drags unless the interactive element opts out
+   (issues #103/#111). The plugin's viewport-corner chrome must declare
+   `no-drag` itself — some shells (Tauri, older desktop builds, third-party
+   wrappers) have no blanket button rule. The property is a no-op in plain
+   browsers and in shells without drag regions — safe everywhere. */
+.toggleCluster,
+.toggleButton,
+.tabBar {
+  -webkit-app-region: no-drag;
+}
+
 /* ── Position compatibility mode (Windows native title bar) ────────────── */
 
 /* Windows frameless / hidden-title-bar windows draw the native caption

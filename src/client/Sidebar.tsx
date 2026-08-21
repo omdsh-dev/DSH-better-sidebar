@@ -44,6 +44,9 @@ import { IconPanelBottomOutline16, IconPanelRightOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useNarrowViewport } from './breakpoints.ts'
 import { parseDesktopEnv } from './desktop-env.ts'
+import { getWcoSnapshot, subscribeWco } from './wco.ts'
+import { getShellPreset } from './shell-presets.ts'
+import { computeTitleBarStrip } from './titlebar-strip.ts'
 import type { NewTabOption } from './TabBar.tsx'
 import type { TabDragPayload } from './TabBar.tsx'
 import { relativeTo } from './paths.ts'
@@ -84,6 +87,20 @@ const osFileDragShield = {
   onDragOver: swallowOsFileDrag,
   onDragLeave: swallowOsFileDrag,
   onDrop: swallowOsFileDrag,
+}
+
+/**
+ * Append one user-space stylesheet (preset or custom CSS) as a tagged
+ * `<style>` element. The tag attribute carries the source identity so the
+ * running configuration is inspectable in DevTools; the returned tag is
+ * removed by the caller's effect cleanup.
+ */
+function injectUserCss(attr: string, id: string, cssText: string): HTMLStyleElement {
+  const tag = document.createElement('style')
+  tag.setAttribute(attr, id)
+  tag.textContent = cssText
+  document.head.appendChild(tag)
+  return tag
 }
 
 /** Render the content of one tab (dispatched by type). */
@@ -229,25 +246,31 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     return () => { document.body.removeAttribute('data-dsh-sidebar-collapsed') }
   }, [collapsed])
 
-  // Position compatibility mode (titleBarCompat pref): Windows frameless
-  // windows draw the native title bar (minimize/maximize/close) at the
-  // window's top-right corner, OVER the web content. When enabled, the body
-  // attribute lets sidebar.module.css drop the toggle cluster below the
-  // strip and push the right panel's content below it. Auto-enabled in the
-  // win32 advanced desktop shell (the shell stamps the URL — see
-  // desktop-env.ts — and reserves a 32px overlay for the window controls);
-  // the manual pref and its strip height still win when the user sets them,
-  // and the manual switch only ever ADDS compat. The strip height rides a
-  // CSS variable so the rules stay declarative; the attribute rides the
-  // snapshot's prefs, so flipping the setting re-renders and re-applies
-  // immediately; the cleanup removes both on unmount/boundary swap so a
-  // crashed sidebar never leaves them behind.
+  // Title-bar / shell compatibility (the "位置兼容模式" scheme):
+  //   auto    — CONSERVATIVE: only the standard Window Controls Overlay
+  //             geometry contributes (the real caption-overlay height,
+  //             reactive to maximize/restore). No URL stamp, no preset, no
+  //             guess — plain browsers see zero modification.
+  //   preset  — an opt-in built-in shell preset (shell-presets.ts) adds its
+  //             per-shell strip as the no-WCO fallback.
+  //   custom  — the user's own CSS (injected below) + the legacy manual
+  //             strip px.
+  // The resolved strip drives the SAME body attribute + CSS variable as the
+  // legacy boolean did, so the CSS contract is unchanged (layout.css /
+  // sidebar.module.css); only the value source changed. The cleanup removes
+  // both on unmount/boundary swap so a crashed sidebar never leaves them
+  // behind.
   const desktopEnv = parseDesktopEnv()
-  const autoTitleBarCompat = desktopEnv.win32OverlayTop > 0
-  const titleBarCompat = snapshot.prefs.titleBarCompat || autoTitleBarCompat
-  const titleBarStrip = snapshot.prefs.titleBarCompat
-    ? snapshot.prefs.titleBarStripPx
-    : desktopEnv.win32OverlayTop
+  const wco = useSyncExternalStore(
+    useMemo(() => subscribeWco, []),
+    getWcoSnapshot,
+  )
+  const scheme = snapshot.prefs.titleBarScheme
+  const preset = scheme === 'preset' ? getShellPreset(snapshot.prefs.titleBarPresetId) : undefined
+  const titleBarStrip = computeTitleBarStrip(
+    desktopEnv, wco, scheme, preset, snapshot.prefs.titleBarStripPx,
+  )
+  const titleBarCompat = titleBarStrip > 0
   useEffect(() => {
     const root = document.documentElement
     if (titleBarCompat) {
@@ -262,6 +285,22 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       root.style.removeProperty('--dsh-title-bar-strip')
     }
   }, [titleBarCompat, titleBarStrip])
+
+  // User-space CSS injection (the escape hatch): preset CSS (scheme
+  // `preset`) and free-form custom CSS (scheme `custom`) are appended AFTER
+  // the plugin's own styles — later in the cascade wins ties, and
+  // `!important` can override the JS-written inline strip variable. Each
+  // source gets its own tagged <style> so the running configuration stays
+  // inspectable; tags are removed on change/unmount so a stale stylesheet
+  // never outlives its fiber (HMR-safe).
+  const presetCss = scheme === 'preset' ? preset?.css ?? '' : ''
+  const customCss = scheme === 'custom' ? snapshot.prefs.customCss : ''
+  useEffect(() => {
+    const tags: HTMLStyleElement[] = []
+    if (presetCss !== '') tags.push(injectUserCss('data-dsh-preset-css', preset?.id ?? '', presetCss))
+    if (customCss !== '') tags.push(injectUserCss('data-dsh-custom-css', 'custom', customCss))
+    return () => { for (const tag of tags) tag.remove() }
+  }, [presetCss, customCss, preset?.id])
 
   /**
    * Bottom-panel merge on narrow viewports: whenever a session is current
@@ -891,7 +930,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   if (state === undefined || sessionId === undefined) {
     return (
       <div data-dsh-panel-host {...osFileDragShield}>
-        <div className={css.toggleCluster}>
+        <div className={css.toggleCluster} data-dsh-toggle-cluster>
           {!narrow && (
             <Tooltip label={t('noSession')} side="bottom" delayMs={500}>
               <button type="button" className={css.toggleButton} disabled aria-label={t('noSession')}>
@@ -985,7 +1024,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         right end it really squeezes (the strip reserves its width via CSS),
         so the tabs genuinely yield space to it.
       */}
-      <div className={css.toggleCluster}>
+      <div className={css.toggleCluster} data-dsh-toggle-cluster>
         {/*
           Narrow viewports merge the two workbenches into the one drawer —
           there is no bottom panel, so its toggle button is not offered.
@@ -1025,6 +1064,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       <div
         ref={panelRef}
         className={clsx(css.panel, !state.panelOpen && css.panelHidden)}
+        data-dsh-panel
         style={{
           width: narrow ? '100vw' : Math.min(state.width, window.innerWidth),
           // Narrow drawer: keep the bottom-anchored sheet above the on-screen
@@ -1155,7 +1195,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       <div
         ref={bottomRef}
         className={clsx(css.bottomPanel, !state.bottomOpen && css.bottomPanelHidden)}
-        data-dsh-bottom-panel=""
+        data-dsh-panel
+        data-dsh-bottom-panel
         style={{
           height: Math.min(state.bottomHeight, window.innerHeight),
           left: centerRect.left,
