@@ -117,3 +117,19 @@ export const IconGlobeOutline16 = ({ size = 16, className }: IconProps) => (
     <path d="M1.5 8h13M8 1.5c-2.4 1.8-2.4 11.2 0 13M8 1.5c2.4 1.8 2.4 11.2 0 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
   </svg>
 )
+
+/** MCP tab glyph (issue #276): a frame with three client nodes wired to a
+ *  common server rail — the "several servers, many tools" roster the panel
+ *  shows. Outline style (1.5px stroke, currentColor), like the others. */
+export const IconMcpOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" strokeWidth="1.5" />
+    <circle cx="4.5" cy="5.5" r="1" fill="currentColor" stroke="none" />
+    <circle cx="4.5" cy="8" r="1" fill="currentColor" stroke="none" />
+    <circle cx="4.5" cy="10.5" r="1" fill="currentColor" stroke="none" />
+    <path d="M6 5.5h3.5M6 8h3.5M6 10.5h3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <circle cx="11.5" cy="5.5" r="1.25" stroke="currentColor" strokeWidth="1.5" />
+    <circle cx="11.5" cy="8" r="1.25" stroke="currentColor" strokeWidth="1.5" />
+    <circle cx="11.5" cy="10.5" r="1.25" stroke="currentColor" strokeWidth="1.5" />
+  </svg>
+)

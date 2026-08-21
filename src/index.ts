@@ -46,6 +46,7 @@ import {
   PTY_DEPS_MISSING,
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
+import { collectMcpStatus } from './mcp-status.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 
@@ -470,6 +471,11 @@ function buildApi(
         clearTimeout(timer)
       }
     },
+    // MCP tab (issue #276): the live roster of connected MCP servers and
+    // their tools, derived from the tool registry (a server's tools are
+    // unregistered when its connection drops, so the list is truthful by
+    // construction — see mcp-status.ts). Global state, no session scope.
+    'mcp.status': () => collectMcpStatus(ctx.tools.schemas()),
   }
 }
 

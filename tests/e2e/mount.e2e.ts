@@ -14,7 +14,8 @@
  *  3. asserts the plugin's crash markers never appear (no RenderBoundary /
  *     fail() strips, no `pageerror`, no plugin-prefixed console errors);
  *  4. expands the collapsed panel (openByDefault defaults off), sweeps every
- *     built-in tab (Files / Source Control / Tasks / Terminal / Browser) —
+ *     built-in tab (Files / Source Control / Tasks / Terminal / Browser /
+ *     MCP) —
  *     including the lazily-fetched terminal chunk — and then opens seeded
  *     files through the Files window's tree (separate mode: each file opens
  *     its own new tab, the seeded home "Files" tab stays the explorer),
@@ -56,7 +57,7 @@ const SEEDED_MD_FILE = 'diagram.md'
 const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 
 /** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Terminal', 'Browser']
+const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Terminal', 'Browser', 'MCP']
 
 let api: APIRequestContext
 

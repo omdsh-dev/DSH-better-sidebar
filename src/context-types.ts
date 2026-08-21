@@ -26,6 +26,7 @@
  * need them — e.g. the `ws` upgrade hook in src/index.ts).
  */
 import type { Context } from 'cordis'
+import type { ToolSchema } from '@deepseek-ai/dsh-llm'
 import type { BetterSidebarService } from './client/service.ts'
 
 /** The request face route handlers see (structural subset of node's
@@ -394,6 +395,11 @@ export interface SidebarSettingsService {
 export interface SidebarToolsService {
   /** Register one tool definition (raw JSON-Schema or defineTool-sugar form). */
   register(tool: unknown): () => void
+  /** Every currently registered tool's model-facing schema (name / description
+   *  / parameters). The MCP tab derives its server roster from this slice
+   *  (a connected MCP server's tools are registered under `mcp__<server>__*`;
+   *  a lost connection unregisters them — see src/mcp-status.ts). */
+  schemas(): readonly ToolSchema[]
 }
 
 /**
