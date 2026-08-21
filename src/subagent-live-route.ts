@@ -33,6 +33,14 @@ export interface SidebarSubagentLiveRoutes {
 }
 
 /**
+ * The recent-message window of the live preview: only the last 12 surface
+ * messages of a child's log are folded, matching the old per-card
+ * `subagents.history({ maxMessages: 12 })` window. Keeps stale tool calls
+ * out of the preview and bounds the backward scan per child.
+ */
+export const LIVE_WINDOW_MESSAGES = 12
+
+/**
  * Build the live-preview routes bound to the plugin context.
  * @param ctx - host plugin context.
  */
@@ -68,7 +76,10 @@ export function buildSubagentLiveApi(ctx: Context): SidebarSubagentLiveRoutes {
         // never topology — keep them out of the live map too.
         if (entry.label?.startsWith(SIDE_LABEL_PREFIX) ?? false) continue
         try {
-          const activity = lastActivity(ctx.sessions.get(entry.id)?.events ?? [])
+          const activity = lastActivity(
+            ctx.sessions.get(entry.id)?.events ?? [],
+            LIVE_WINDOW_MESSAGES,
+          )
           if (activity.text !== undefined || activity.tool !== undefined) {
             live[entry.id] = activity
           }

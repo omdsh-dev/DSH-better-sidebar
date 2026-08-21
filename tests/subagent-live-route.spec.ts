@@ -94,6 +94,31 @@ describe('subagents.live route', () => {
     await expect(api.live({ rootSessionId: 'root' })).resolves.toEqual({ live: {} })
   })
 
+  it('folds only activity inside the recent 12-message window', async () => {
+    // One stale tool call sits before 13 user messages; the recent window
+    // (the tail's last 12 messages) must not surface it.
+    const staleTool: SidebarSessionEvent = {
+      type: 'tool/call', seq: 0, time: 0,
+      data: { callId: 'stale', name: 'bash', arguments: '{"command":"old"}' },
+    }
+    const oldMessages: SidebarSessionEvent[] = Array.from({ length: 13 }, (_, i) => ({
+      type: 'user/message', seq: i + 1, time: 0,
+      data: { content: [{ type: 'text', text: `m${i}` }] },
+    }))
+    const recentText: SidebarSessionEvent = {
+      type: 'assistant/message', seq: 99, time: 0,
+      data: { message: { content: [{ type: 'text', text: 'recent' }] } },
+    }
+    const subagents: SidebarSubagentsService = {
+      listDescendants: vi.fn(async () => [child('windowed', { label: 'W' })]),
+    }
+    const sessions = { get: () => session([staleTool, ...oldMessages, recentText]) }
+    const api = buildSubagentLiveApi(ctxWith(subagents, sessions))
+    await expect(api.live({ rootSessionId: 'root' })).resolves.toEqual({
+      live: { windowed: { text: 'recent' } },
+    })
+  })
+
   it('skips a child whose session log is unavailable without failing the batch', async () => {
     const subagents: SidebarSubagentsService = {
       listDescendants: vi.fn(async () => [

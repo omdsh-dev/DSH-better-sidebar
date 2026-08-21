@@ -45,16 +45,33 @@ export interface LastActivity {
  * event and stops once both fields are found, so a long history costs only
  * the recent tail in the common case.
  * @param events - the session's append-only event log (oldest → newest).
+ * @param maxMessages - optional message-boundary window: only the tail's
+ *   last `maxMessages` surface messages (`user/message`, `assistant/message`)
+ *   and the events between them are considered, mirroring the old
+ *   `subagents.history({ maxMessages })` window. Stale activity older than
+ *   the window is never surfaced, and a long log is never scanned in full.
  * @returns the last text and/or tool call; an empty object when the log has neither.
  */
-export function lastActivity(events: readonly SidebarSessionEvent[]): LastActivity {
+export function lastActivity(
+  events: readonly SidebarSessionEvent[],
+  maxMessages = Infinity,
+): LastActivity {
   let text: string | undefined
   let tool: { name: string; args: string } | undefined
+  let messagesSeen = 0
   for (let index = events.length - 1; index >= 0; index -= 1) {
     if (text !== undefined && tool !== undefined) break
     const event = events[index]
     if (event === undefined) continue
     const { type, data } = event
+    if (type === 'user/message' || type === 'assistant/message') {
+      messagesSeen += 1
+      if (messagesSeen > maxMessages) break
+    } else if (messagesSeen >= maxMessages) {
+      // The window already holds its `maxMessages` messages: anything older
+      // than the oldest in-window message sits outside the recent window.
+      continue
+    }
     if (text === undefined && type === 'assistant/message') {
       const message = data.message as { content?: unknown } | undefined
       const extracted = contentText(message?.content)
