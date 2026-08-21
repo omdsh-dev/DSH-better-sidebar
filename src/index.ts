@@ -46,6 +46,7 @@ import {
   PTY_DEPS_MISSING,
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
+import { buildAiCommitApi } from './ai-commit.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
 import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
 import { buildSidechatApi } from './sidechat-routes.ts'
@@ -487,6 +488,8 @@ function buildApi(
     // ownership), and the thread is created with a CUSTOM seed the stock
     // fork APIs cannot express.
     ...buildSidechatApi(ctx),
+    // AI commit message: the session's own model, diff in / message out.
+    ...buildAiCommitApi(ctx, cwdOf),
   }
 }
 

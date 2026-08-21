@@ -201,6 +201,9 @@ export const api = {
     call<{ ok: true }>('git.unstage', scopePayload(scope, { ...(path !== undefined ? { path } : {}) })),
   gitCommit: (scope: SessionScope, message: string) =>
     call<{ ok: true }>('git.commit', scopePayload(scope, { message })),
+  /** Generate a commit message for the current changes (the session's own model). */
+  gitCommitMessage: (scope: SessionScope, signal?: AbortSignal) =>
+    call<{ message: string }>('git.commit-message', scopePayload(scope, {}), signal),
   gitBranch: (scope: SessionScope, signal?: AbortSignal) =>
     call<{ current: string; names: string[] }>('git.branch', scopePayload(scope, {}), signal),
   gitCheckout: (scope: SessionScope, branch: string) =>

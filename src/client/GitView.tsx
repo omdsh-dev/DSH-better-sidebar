@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
-  IconTrashOutline16, Input, Menu, Modal, writeClipboard,
+  IconSparkle16, IconTrashOutline16, Input, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GitLogEntry, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
 import { api } from './api.ts'
@@ -94,6 +94,8 @@ export function GitView(props: {
   const [commitMsg, setCommitMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
+  /** Whether the AI commit-message generation is in flight (the ✨ button). */
+  const [aiGenerating, setAiGenerating] = useState(false)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
@@ -198,6 +200,21 @@ export function GitView(props: {
       setCommitError(reason instanceof Error ? reason.message : String(reason))
     } finally {
       setBusy(false)
+    }
+  }
+
+  /** Generate a commit message for the current changes (fills the box; never commits). */
+  const generateCommit = async (): Promise<void> => {
+    if (busy || aiGenerating) return
+    setAiGenerating(true)
+    setCommitError(null)
+    try {
+      const { message } = await api.gitCommitMessage(scope)
+      setCommitMsg(message)
+    } catch (reason) {
+      setCommitError(`${t('aiCommitError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+    } finally {
+      setAiGenerating(false)
     }
   }
 
@@ -345,6 +362,16 @@ export function GitView(props: {
                 if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
               }}
             />
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={aiGenerating ? t('aiCommitRunning') : t('aiCommit')}
+              title={aiGenerating ? t('aiCommitRunning') : t('aiCommit')}
+              disabled={busy || aiGenerating || stagedEntries.length + unstagedEntries.length === 0}
+              onClick={() => { void generateCommit() }}
+            >
+              <IconSparkle16 size={14} />
+            </button>
             <button
               type="button"
               className={css.gitCommitButton}
