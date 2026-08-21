@@ -12,6 +12,7 @@ export type SidebarErrorCode =
   | 'not-found'
   | 'forbidden'
   | 'method-error'
+  | 'too-large'
   | 'fs-error'
   | 'git-error'
   | 'pty-error'

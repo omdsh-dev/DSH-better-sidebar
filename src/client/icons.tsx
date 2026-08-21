@@ -61,6 +61,15 @@ export const IconStopOutline16 = ({ size = 16, className }: IconProps) => (
   </svg>
 )
 
+/** Upload glyph in the app's outline style: an arrow rising into a tray
+ *  (the file-manager "upload into the workspace" action). */
+export const IconUploadOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M8 10V2.75M4.75 5.5 8 2.25 11.25 5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M2.75 10.5v2.25A1.25 1.25 0 0 0 4 14h8a1.25 1.25 0 0 0 1.25-1.25V10.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+)
+
 // ── File-viewer inventory glyphs (Side card settings page) ────────────────
 
 /** Image viewer glyph: a picture frame with a sun and a mountain. */

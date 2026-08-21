@@ -75,14 +75,15 @@
 
 ```
 路线 A（主线，本仓库可控）┐
-  统一面板宿主：body 固定含块包裹层            ├─ 现在 → v0.13.x
-  + 桌面信号自动适配 + rAF 几何批处理           │
-路线 B（北极星，依赖上游）┘
-  ui-sidebar 模式：占用官方槽位（grid 内渲染） ─ 上游落地后 → 迁移（浮层部分保留）
+  统一面板宿主：body 固定含块包裹层            ├─ 现在 → v0.13.x（已实施，分支 feat/injection-unified-host）
+  + 桌面信号自动适配 + 几何写路径统一          │
+路线 B（已关闭）┘
+  ui-sidebar 模式：占用官方槽位（grid 内渲染） ─ 2026-08-19 用户决策关闭：无法向官方提 issue，
+                                                纯插件侧自己优化注入方式（调研结论保留于 §6）
 ```
 
-- **路线 A 立即做**：不依赖 DSH 新能力，纯插件侧，直接吸收桌面/移动/性能问题。
-- **路线 B 并行提官方 issue**：请求上游提供「可替换/可接管的右侧面板槽」（details 支持外部替换或新增 bottom-panel 槽），落地后 better-sidebar 主体迁入 grid，body 浮层收敛为纯浮层（菜单/弹窗/右键，与官方 ui-primitives 同姿势）。
+- **路线 A 已实施**：不依赖 DSH 新能力，纯插件侧，直接吸收桌面/移动/性能问题。
+- **路线 B 已关闭**（2026-08-19 用户决策）：不提交上游 issue；§6 的槽位可行性调研保留为后续参考，但不再推进。
 
 ## 5. 路线 A 详细设计：统一面板宿主
 
@@ -140,15 +141,18 @@ document.body
 - **契约文档化**：挂载点（`data-dsh-better-sidebar` / `data-dsh-panel-host`）、z-index 栈、CSS 变量（`--dsh-sidebar-width/height` 保持对外）、桌面信号（URL/全局标记）、推挤锚点策略 —— 同步 AGENTS.md §8 与本文档。
 - **服务契约不变**：`ctx.betterSidebar` API 零变化；#135 的 service 读取问题（dsh-web-mobile 下 `ctx.betterSidebar` 直接读抛错）由「注入层与服务的解耦」顺带收敛（面板渲染不再假设服务存在即可读）。
 
-### 5.4 性能清单（验收口径）
+### 5.4 性能清单（验收口径 + 实测基线）
 
-| 指标 | 现状 | 目标 |
+基线（2026-08-19 真实页面探针，本机 3080，拖拽 12 步 ≈192ms）：**40 帧、帧均 8.36ms / p95 10.2ms、1 帧超 16ms；62 次 `setProperty`（5 种几何属性：panel width / bottom height / bottom right / 两个 html 变量）**——即每帧 5 次写同一组元素，浏览器合并为单次样式重算。
+
+| 指标 | 现状 | 目标（v0.13.1 实施后） |
 |---|---|---|
-| 拖拽期宿主 layout 次数 | 每帧 1 次批写（`applyDrag` rAF，已达标） | 保持；拖拽 0 次 reflow 读 |
-| 懒加载 chunk 二次打开 | 不重下载（304）但重注入+重执行 | 内容哈希不变 → 内存缓存命中，0 脚本执行 |
+| 拖拽期宿主 layout 次数 | 每帧 1 次批写（`applyDrag` rAF），帧均 8.36ms | 保持帧率 ≥ 基线；面板 `contain: layout style` 隔离内部重排；拖拽期 `will-change` 提升合成层 |
+| 几何写路径 | 拖拽（`applyDrag`）与打开态（effect）两条路径写同一组变量 | 统一 `writeGeometry` 单写入器（已实施） |
+| 懒加载 chunk 二次打开 | 不重下载（304）但重注入+重执行 | ETag 未变 → 内存缓存命中，0 脚本执行（已实施） |
 | 会话切换 | 面板 DOM 不重建（已满足） | 保持 + 重组件懒挂载 |
-| 面板显隐动画 | transform+width/margin 过渡 | transform 优先（overlay 模式），推挤模式过渡保留 |
-| 观察器 | ResizeObserver 已 rAF 节流（已达标） | 保持；新增挂载自检/MutationObserver 守卫均为一次性廉价检查 |
+| 面板显隐动画 | transform+width/margin 过渡 | transform 优先（overlay 模式），推挤模式过渡保留（`#root` width/margin 锁步过渡） |
+| 观察器 | ResizeObserver 已 rAF 节流 | 保持；挂载自检/MutationObserver 守卫均为一次性廉价检查 |
 
 ## 6. 路线 B 详细设计：官方槽位迁移（ui-sidebar 模式）
 
@@ -204,19 +208,15 @@ document.body
 
 ### 8.1 拆分（文件级改动清单）
 
-- **PR1（核心注入 + 性能，外部契约零变化）**
-  - `src/client/index.tsx`：挂载结构升级——`host` 内新增 `data-dsh-panel-host` 固定含块层（`position:fixed; inset:0; pointer-events:none; z-index:40`），面板子级 `pointer-events:auto`；挂载后一次性自检（`host.getBoundingClientRect()` vs 视口，偏差阈值内通过；否则降级 absolute+同步模式并 warn 一次）；`MutationObserver`（仅 body childList）守卫锚点被宿主清空时重挂。
-  - `src/client/Sidebar.tsx`：抽取 `writeGeometry` 统一两条写路径（`applyDrag` + 打开态 effect）；拖拽/折叠行为不变。
-  - `src/client/chunk-loader.ts` + `index.tsx`：缓存键加内容哈希，激活时哈希未变保留内存缓存（跳过重注入）。
-  - `src/client/layout.css`：底部推挤锚点 `nth-child(2)` → `#root [data-dsh-frame] > [data-pane="conversation"]`（§3.4 实证的稳定锚点，注释更新）；`#root` 增加 `width: calc(100% - var(--dsh-sidebar-width, 0px))` 消除桌面壳 margin 溢出（#226 目标以根因方式吸收；web 环境实测无溢出、改动无副作用，Desktop 实测待 PR1 验证）；面板根 `contain: layout style` + 拖拽期 `will-change`。
-  - 测试：`tests/` 新增几何写入器单测（fake timers 断言单帧单写）、挂载自检降级单测；`tests/e2e/mount.e2e.ts` 深扫不变并新增 `data-dsh-panel-host` 断言。
-- **PR2（桌面/移动自动适配 + 契约文档）**
-  - 新增 `src/client/desktop-env.ts`：解析 URL `dsh-desktop-mode/platform` + `__DSH_DESKTOP_FILE_PATH__` → 类型化 `DesktopEnv`（win32-advanced / darwin / compatibility / web / unknown）。
-  - `Sidebar.tsx` + CSS：win32-advanced → `--dsh-desktop-top-inset: 32px`（折叠按钮簇/面板顶部内边距避让）；darwin → 左侧红绿灯区避让（~78px，仅左侧贴边控件）；现有 `titleBarCompat/titleBarStripPx`（`lib/types/prefs-shared.d.ts:77-84`）降级为手动覆盖位，默认「自动」。
-  - 移动端：`visualViewport` 键盘弹起时底部面板上移（`resize` 事件 + rAF 节流，沿用 `useNarrowViewport` 模式）；CSS 加 `env(safe-area-inset-*)` 内边距。
-  - 契约文档：AGENTS.md §8 同步（挂载点/`data-dsh-panel-host`/z-index/桌面信号/推挤锚点策略）。
-- **PR3（可选）**：路线 B 上游 issue 提交（§6.2 草案已备）+ 槽位渲染后端原型（feature-flag 后）。
-- 各 PR 独立可验证；PR1 不依赖 PR2。
+**实施方式（2026-08-19 定稿）**：单分支 `feat/injection-unified-host`、按步骤顺序提交（每步 CI 绿）；原 PR1/PR2 拆分为内部步骤，合并为**一个 PR** 交付（改动彼此耦合，且路线 B 关闭后无外部依赖）。各步骤：
+
+1. **挂载层**（`src/client/index.tsx`、`src/client/Sidebar.tsx`、`src/client/sidebar.module.css`）：`Sidebar` 渲染根包 `data-dsh-panel-host`（`position:fixed; inset:0; pointer-events:none; z-index:40`）；`.panel/.toggleCluster/.bottomPanel` 由 fixed 改 absolute（层 inset:0 即视口坐标）+ `pointer-events:auto`；挂载后一次性几何自检（偏差 >8px → `data-dsh-panel-host-degraded` + rAF 视口同步 + warn 一次）；`MutationObserver`（body childList）守卫锚点被清空时重挂。✅ 已实施（commit 9a4c160）
+2. **几何层**（`Sidebar.tsx`、`sidebar.module.css`）：`writeGeometry` 统一拖拽/打开态两条推挤写路径；面板 `contain: layout style`；拖拽期（`body[data-dsh-sidebar-dragging]`）`will-change: transform`。✅ 已实施（commit 553e650）
+3. **chunk 缓存**（`chunk-loader.ts`、`index.tsx`）：`revalidateChunksOnReactivate()`——激活时 HEAD 每个已加载 chunk 对比 ETag，未变保留已解析 exports（跳过重注入/重执行），变更/不可达 fail-open 重取；测试夹具与孤儿缓存不跨激活存活。✅ 已实施（commit 0264625）
+4. **锚点与防溢出**（`layout.css`）：底部推挤锚点 `nth-child(2)` → `#root [data-dsh-frame] > [data-pane="conversation"]`（§3.4 实证）；`#root` 加 `width: calc(100% - var(...))` 与 margin 锁步过渡（实测 1140+300=1440 无溢出；#226 桌面溢出根因吸收）。✅ 已实施（commit 9c9515d）
+5. **桌面/移动适配**（新增 `desktop-env.ts`、`Sidebar.tsx`、CSS）：解析 `dsh-desktop-mode/platform` + `__DSH_DESKTOP_FILE_PATH__`；win32 advanced 自动 `titleBarCompat`（32px overlay，手动 pref 覆盖）；`visualViewport` 键盘 inset（底部面板/窄屏抽屉上移）；`env(safe-area-inset-*)`。✅ 已实施（commit a1906c5，单测 7 例）
+6. **测试与文档**：`tests/desktop-env.spec.ts`（7 例）、chunk-loader 重验证 4 例、`mount.e2e.ts` 增 `data-dsh-panel-host` 断言 + 桌面参数场景、AGENTS.md §8 契约同步、本文档更新。🔄 进行中
+7. **交付**：CI 全绿（含 plugin-mount）→ `gh pr create`。⏳ 待执行
 
 ### 8.2 验证
 
@@ -247,6 +247,14 @@ document.body
 ## 11. 决策记录与实施偏差记录
 
 - 2026-08-19（第一轮）：方案定稿——路线 A（统一面板宿主）为主线、路线 B（官方槽位）并行提 issue；先出设计文档，实现拆 PR1/PR2 待批准。
-- 2026-08-19（第二轮，实施就绪打磨）：对照源码核实现状——拖拽 rAF 批处理/窄屏不推挤/观察器节流/header 弱锚点**已具备**（§3.1 已标注「实施勿重做」）；chunk 缺口精确为「激活后内存缓存清空重注入」（HTTP 已 304）；§8.1 落到文件级改动清单；§6.2 备好上游 issue 草案。**等待用户批准后开 PR1**。
-- 2026-08-19（第三轮，实证核对）：真实 dsh web 页面 Playwright 探针（§3.4）——frame 子项已含 overlay/handle（nth-child 脆弱性实锤）；`data-pane="conversation"` 为新弱锚点（`[data-slot=conversation]` display:contents 作废）；推挤在 web 无溢出（calc 改动无害）；host 本体 static（fixed 在内层面板，含块层为新元素）。设计文档据此更新 §5.3/§8.1。
-- 实施偏差记录：待实施时按既有文档惯例补充。
+- 2026-08-19（第二轮，实施就绪打磨）：对照源码核实现状——拖拽 rAF 批处理/窄屏不推挤/观察器节流/header 弱锚点**已具备**（§3.1 已标注「实施勿重做」）；chunk 缺口精确为「激活后内存缓存清空重注入」（HTTP 已 304）；§8.1 落到文件级改动清单；§6.2 备好上游 issue 草案。
+- 2026-08-19（第三轮，实证核对）：真实 dsh web 页面 Playwright 探针（§3.4）——frame 子项已含 overlay/handle（nth-child 脆弱性实锤）；`data-pane="conversation"` 为新弱锚点（`[data-slot=conversation]` display:contents 作废）；推挤在 web 无溢出（calc 改动无害）；host 本体 static（fixed 在内层面板，含块层为新元素）。
+- 2026-08-19（第四轮，用户决策）：**路线 B 关闭**——无法向官方提 issue，纯插件侧自己优化注入方式；实现合并为单 PR（分支 `feat/injection-unified-host`），按 §8.1 步骤顺序落地。
+- **实施偏差记录**：
+  - 挂载自检降级实现为「`data-dsh-panel-host-degraded` 属性 + rAF 视口同步」（非独立 absolute 模式，见 §5.1 注释）。
+  - chunk 缓存实现为 **ETag HEAD 重验证**而非内容哈希（bundle 路由已发 ETag，HEAD 更廉价）；`resetChunks()` 保留（测试隔离），激活路径改用 `revalidateChunksOnReactivate()`。
+  - `#root` 防溢出采用 `width: calc(100% - var)` + width/margin **锁步过渡**（避免动画断裂），并实测 1140+300=1440。
+  - 桌面避让复用既有 `titleBarCompat/titleBarStripPx` 通道（未新增 `--dsh-desktop-top-inset` 变量）；darwin 红绿灯区仅预留（当前无左侧贴边控件）。
+  - 测试环境为 Node + 手写 shim（非 jsdom）：`browser-globals.ts` 补 `location`；desktop-env 剥除 `location.search` 前导 `?`（真实 bug，顺带修复）。
+  - 本地 Node 24 跑 `test:mount` 需 `node --expose-internals` 启动 dsh CLI（HMR 服务要求，CI Node 22 无此问题）——本地用 DSH_CMD 包装，不改仓库脚本。
+  - **CR #232 修复（2026-08-19）**：① 降级同步改为按**未修正几何**判定（跟踪自身补偿量，祖先 transform 消失才退出循环）；② chunk 重验证成为 `loadChunk` 屏障（重验证挂起期间不提供缓存，杜绝 HMR 竞态陈旧 exports）；③ 键盘 inset 公式补 `visualViewport.offsetTop` 并监听 `scroll`。
