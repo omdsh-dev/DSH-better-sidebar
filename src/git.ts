@@ -177,11 +177,11 @@ export async function commit(cwd: string, message: string): Promise<void> {
   await runGit(cwd, ['commit', '-m', message])
 }
 
-/** Branch names (current first). */
+/** Local branch names by latest commit time (newest first). */
 export async function branches(cwd: string): Promise<{ current: string; names: string[] }> {
   const [current, raw] = await Promise.all([
     currentBranch(cwd).catch(() => 'HEAD'),
-    runGit(cwd, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
+    runGit(cwd, ['for-each-ref', '--sort=-committerdate', '--format=%(refname:short)', 'refs/heads']),
   ])
   const names = raw.split('\n').filter(line => line !== '')
   return { current, names: names.includes(current) ? names : [current, ...names] }

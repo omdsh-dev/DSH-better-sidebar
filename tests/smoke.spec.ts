@@ -267,10 +267,10 @@ describe('git destructive operations (scratch repository)', () => {
     GIT_COMMITTER_EMAIL: 'test@dsh.invalid',
   }
 
-  const gitRun = (cwd: string, args: string[]): string => {
+  const gitRun = (cwd: string, args: string[], env: NodeJS.ProcessEnv = {}): string => {
     const result = spawnSync('git', ['-C', cwd, '--no-pager', '-c', 'color.ui=false', ...args], {
       encoding: 'utf8',
-      env: { ...process.env, ...FIXTURE_IDENTITY },
+      env: { ...process.env, ...FIXTURE_IDENTITY, ...env },
     })
     if (result.status !== 0) {
       throw new Error(result.stderr || `git ${args[0] ?? ''} exited with ${String(result.status)}`)
@@ -338,6 +338,24 @@ describe('git destructive operations (scratch repository)', () => {
       await git.cherryPick(dir, featureHash)
       expect(readFileSync(join(dir, 'b.txt'), 'utf8')).toBe('feature work\n')
       expect((await git.log(dir))[0]!.subject).toBe('feature work')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('lists branches by latest commit time', async () => {
+    const dir = makeScratchRepo()
+    try {
+      gitRun(dir, ['branch', 'a-old'])
+      gitRun(dir, ['checkout', '-q', '-b', 'z-new'])
+      writeFileSync(join(dir, 'new.txt'), 'new\n')
+      gitRun(dir, ['add', '-A'])
+      gitRun(dir, ['commit', '-q', '-m', 'new'], {
+        GIT_AUTHOR_DATE: '2030-01-01T00:00:00Z',
+        GIT_COMMITTER_DATE: '2030-01-01T00:00:00Z',
+      })
+      const names = (await git.branches(dir)).names
+      expect(names.indexOf('z-new')).toBeLessThan(names.indexOf('a-old'))
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
