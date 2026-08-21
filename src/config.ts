@@ -118,6 +118,7 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
 /** Schemastery schema for the user-facing preferences (validated by the settings service). */
 export const PrefsSchema: z<SidebarPrefs> = z.object({
   openByDefault: z.boolean().default(false),
+  defaultTab: z.string().default(''),
   defaultWidthPercent: z.number().step(1).min(WIDTH_PERCENT_MIN).max(WIDTH_PERCENT_MAX).default(WIDTH_PERCENT_DEFAULT),
   autoOpenSubagent: z.boolean().default(true),
   autoOpenJobs: z.boolean().default(true),
