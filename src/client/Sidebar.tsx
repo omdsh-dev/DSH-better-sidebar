@@ -944,7 +944,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       store={store}
       visible={bottom ? state.bottomOpen && active : state.panelOpen && active}
       onSubagentJump={(childSessionId) => { subagentJumpRef.current = childSessionId }}
-      onOpenDiff={(diffTab) => { store.reduce(s => openDiffTab(s, paneId, diffTab)) }}
+      onOpenDiff={(diffTab) => {
+        if (ctx.betterSidebar?.isTabEnabled('git') === true) store.reduce(s => openDiffTab(s, paneId, diffTab))
+      }}
     />
   )
 

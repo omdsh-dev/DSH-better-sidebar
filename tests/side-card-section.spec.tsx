@@ -56,6 +56,12 @@ function mount(): { store: SidebarStore; service: BetterSidebarService } {
     },
     component: () => null,
   })
+  service.registerTab({
+    id: 'diff',
+    title: () => 'Diff',
+    hidden: true,
+    component: () => null,
+  })
   service.registerFileViewer({
     id: 'image',
     title: () => 'Image',
@@ -89,6 +95,8 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('>explorer<')
     expect(html).toContain('data-icon="subagent"')
     expect(html).toContain('>Subagents<')
+    expect(html).not.toContain('>Diff<')
+    expect(html).not.toContain('>diff<')
     // Default prefs: only the interceptOpenPath switch is checked (openByDefault
     // now defaults off), and both tabs + the image viewer cards pressed
     // (3 aria-pressed cards).
@@ -109,6 +117,14 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('>File viewers</span><span')
     expect(html).toContain('>2</span>')
     expect(html).toContain('>1</span>')
+  })
+
+  it('keeps plugin-owned hidden tabs configurable while folding the built-in diff into git', () => {
+    const { store, service } = mount()
+    service.registerTab({ id: 'plugin:hidden', title: 'Plugin hidden tab', hidden: true, component: () => null })
+    const html = renderSection(store, service)
+    expect(html).toContain('>Plugin hidden tab<')
+    expect(html).not.toContain('>Diff<')
   })
 
   it('renders one small card per registered viewer: icon + title + exts', () => {

@@ -8,8 +8,8 @@
  *    default panel width as a percent of the window (number input row), and
  *    the open-path interception toggle — the DSH settings-row recipe
  *    (title/desc left + control right, hairline separators).
- *  - 侧边栏内容: one SMALL CARD per REGISTERED tab type (built-ins and
- *    external plugins alike), laid out in a responsive grid that wraps
+ *  - 侧边栏内容: one SMALL CARD per configurable tab type (the internal diff
+ *    view follows git), laid out in a responsive grid that wraps
  *    several cards per row — icon chip + title + type id, clicked to toggle
  *    the switch persisted in `prefs.tabsEnabled[id]`.
  *  - 文件预览: one SMALL CARD per REGISTERED file viewer — icon chip + title
@@ -103,7 +103,7 @@ function iconOf(icon: ReactNode | ((size: number) => ReactNode) | undefined, siz
   return typeof icon === 'function' ? icon(size) : icon
 }
 
-/** Tab inventory order: hidden types (editor/diff) last, then + menu order. */
+/** Tab inventory order: hidden types last, then + menu order. */
 function tabOrder(a: TabDescriptor, b: TabDescriptor): number {
   if (a.hidden !== b.hidden) return a.hidden === true ? 1 : -1
   return (a.order ?? 100) - (b.order ?? 100)
@@ -511,13 +511,13 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
   const optimisticRef = useRef(prefs)
   useEffect(() => { optimisticRef.current = prefs }, [prefs])
 
-  // The declarative inventory: the registered tab types and file viewers.
+  // The declarative inventory: configurable tab types and registered viewers.
   // Local state + service.subscribe (registry changes are rare — plugin
   // load/unload — so a plain effect is enough; no external-store ceremony).
-  const [tabs, setTabs] = useState<TabDescriptor[]>(() => [...service.getTabs()].sort(tabOrder))
+  const [tabs, setTabs] = useState<TabDescriptor[]>(() => service.getTabs().filter(tab => tab.id !== 'diff').sort(tabOrder))
   const [viewers, setViewers] = useState<FileViewerDescriptor[]>(() => [...service.getFileViewers()].sort(viewerOrder))
   useEffect(() => service.subscribe(() => {
-    setTabs([...service.getTabs()].sort(tabOrder))
+    setTabs(service.getTabs().filter(tab => tab.id !== 'diff').sort(tabOrder))
     setViewers([...service.getFileViewers()].sort(viewerOrder))
   }), [service])
 
