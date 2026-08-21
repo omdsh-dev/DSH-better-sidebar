@@ -21,6 +21,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { basename, dirname, join, sep } from 'node:path'
 import { homedir } from 'node:os'
+import { debugLog } from './search-debug.ts'
 
 export type Engine = 'fd' | 'rg'
 
@@ -241,6 +242,8 @@ async function probeOnce(): Promise<readonly EngineProbe[]> {
       }
     }
   }
+  const names = found.length > 0 ? found.map(p => `${p.engine}(${p.binary})`).join(', ') : 'none (plain-walk fallback)'
+  debugLog(`[dsh-search] engines probed: ${names}`)
   return found
 }
 
@@ -265,7 +268,10 @@ export async function runEngine(
   try {
     result = await runner(probe, root, query, maxMatches, signal)
   } catch (error) {
-    if (!signal?.aborted) broken.add(probe.engine)
+    if (!signal?.aborted) {
+      broken.add(probe.engine)
+      debugLog(`[dsh-search] engine ${probe.engine} failed at runtime, disabled: ${error instanceof Error ? error.message : String(error)}`)
+    }
     throw error
   }
   return result
