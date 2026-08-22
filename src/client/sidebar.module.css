@@ -34,6 +34,15 @@
   inset: 0;
   z-index: 40;
   pointer-events: none;
+  /* Clip at the viewport edge: collapsed panels slide off-screen with
+     `transform: translate(102%)`, and a transformed element still
+     contributes to its ancestors' scrollable overflow — without this the
+     hidden panels extended the document's scrollable area, making the whole
+     page draggable left-right and up-down while any panel was collapsed.
+     The host is exactly viewport-sized (inset: 0), so the clip is invisible
+     until a panel slides in from the edge; internal scroll containers and
+     the app's fixed overlay stack are unaffected. */
+  overflow: hidden;
 }
 
 :global([data-dsh-panel-host][data-dsh-panel-host-degraded]) {
