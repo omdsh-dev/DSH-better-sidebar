@@ -63,6 +63,16 @@ import css from './sidebar.module.css'
 const FAILURE_LIMIT = 3
 
 /**
+ * Subagent auto-open debounce (ms). The host delivers a new child's origin
+ * and its title in SEPARATE frames: a Side Chat thread's first visible
+ * frame still shows a fallback title (no 'Side: ' prefix), so an immediate
+ * 0→N decision mistakes it for a genuine subagent and pops the task page.
+ * The trigger therefore re-evaluates against the live snapshot once the
+ * title frame has had time to land.
+ */
+const AUTO_OPEN_DEBOUNCE_MS = 500
+
+/**
  * OS file drags over the sidebar belong to the sidebar, not to the chat:
  * DSH's composer (InputBar) listens for file drags on the DOCUMENT and
  * answers with a full-screen "drop image here" mask plus image intake on
@@ -395,22 +405,44 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    * Switching to a session that already has subagents never triggers — its
    * baseline starts at the current count — so a deliberate layout is never
    * fought.
+   *
+   * The decision is DEBOUNCED (AUTO_OPEN_DEBOUNCE_MS): a Side Chat thread
+   * is also a subagent-origin child, and its 'Side: ' title lands one frame
+   * after its origin — an immediate check would misread that first frame as
+   * a new subagent and pop this page on every thread creation. The timer
+   * re-evaluates the ORIGINAL baseline against the live snapshot; by then
+   * the title filter (isSideThreadSummary) sees the settled label.
    */
   const listBaselineRef = useRef<SidebarSessionList | undefined>(undefined)
+  const autoOpenPendingRef = useRef<{ baseline: SidebarSessionList; timer: number } | null>(null)
   useEffect(() => {
     const prev = listBaselineRef.current
     listBaselineRef.current = sessionList
     if (sessionId === undefined || prev === undefined) return
+    if (autoOpenPendingRef.current !== null) return
     if (!detectNewDirectSubagent(prev, sessionList, sessionId)) return
-    if (!store.getPrefs().autoOpenSubagent) return
-    if (ctx.betterSidebar?.isTabEnabled('subagent') === false) return
-    store.reduce(s => s.panelOpen ? s : togglePanel(s))
-    // Pin the landing to the right panel: the auto-opened Subagent page must
-    // appear where the panel just expanded, not in a bottom-panel pane the
-    // user last touched.
-    store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
-    ctx.betterSidebar?.openTab({ type: 'subagent', title: t('subagent') })
+    const baseline = prev
+    const timer = window.setTimeout(() => {
+      autoOpenPendingRef.current = null
+      if (!detectNewDirectSubagent(baseline, ctx.sessions.list.getSnapshot(), sessionId)) return
+      if (!store.getPrefs().autoOpenSubagent) return
+      if (ctx.betterSidebar?.isTabEnabled('subagent') === false) return
+      store.reduce(s => s.panelOpen ? s : togglePanel(s))
+      // Pin the landing to the right panel: the auto-opened Subagent page must
+      // appear where the panel just expanded, not in a bottom-panel pane the
+      // user last touched.
+      store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
+      ctx.betterSidebar?.openTab({ type: 'subagent', title: t('subagent') })
+    }, AUTO_OPEN_DEBOUNCE_MS)
+    autoOpenPendingRef.current = { baseline, timer }
   }, [sessionList, sessionId, store, ctx])
+
+  // A session switch (or unmount) voids any armed auto-open recheck.
+  useEffect(() => () => {
+    const pending = autoOpenPendingRef.current
+    if (pending !== null) window.clearTimeout(pending.timer)
+    autoOpenPendingRef.current = null
+  }, [sessionId])
 
   /**
    * Job auto-activation: the moment a NEW background job appears for the
