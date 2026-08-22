@@ -20,6 +20,11 @@ export function isNarrowWidth(width: number): boolean {
   return width < NARROW_MAX_WIDTH
 }
 
+export interface ViewportSize {
+  width: number
+  height: number
+}
+
 /**
  * Live narrow-viewport flag for components. Reads `window.innerWidth` and
  * re-measures on resize (rAF-throttled, the repo's existing drag pattern).
@@ -27,16 +32,17 @@ export function isNarrowWidth(width: number): boolean {
  * resize listener is equally exact for a breakpoint that never changes
  * while the page is open.
  */
-export function useNarrowViewport(): boolean {
-  const [narrow, setNarrow] = useState(
-    () => typeof window !== 'undefined' && isNarrowWidth(window.innerWidth),
-  )
+export function useViewportSize(): ViewportSize {
+  const [size, setSize] = useState<ViewportSize>(() => ({
+    width: typeof window === 'undefined' ? 0 : window.innerWidth,
+    height: typeof window === 'undefined' ? 0 : window.innerHeight,
+  }))
   useEffect(() => {
     if (typeof window === 'undefined') return
     let frame: number | null = null
     const measure = (): void => {
       frame = null
-      setNarrow(isNarrowWidth(window.innerWidth))
+      setSize({ width: window.innerWidth, height: window.innerHeight })
     }
     const onResize = (): void => {
       if (frame === null) frame = requestAnimationFrame(measure)
@@ -47,5 +53,9 @@ export function useNarrowViewport(): boolean {
       if (frame !== null) cancelAnimationFrame(frame)
     }
   }, [])
-  return narrow
+  return size
+}
+
+export function useNarrowViewport(): boolean {
+  return isNarrowWidth(useViewportSize().width)
 }
