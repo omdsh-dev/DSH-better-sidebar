@@ -188,6 +188,37 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   )
   void localeRevision
 
+  // better-locale override freshness: when @huanlin/dsh-plugin-better-locale
+  // is installed and the user picks an override language (e.g. ja), the
+  // store's `active` changes but the DSH locale's `active` does NOT —
+  // better-locale keeps the dsh active value (zh/en) unchanged and only
+  // patches `LocaleRuntime.prototype.lookup`. The localeRevision uSES
+  // above reads `getSnapshot().active`, so it sees no change and skips
+  // re-render. This second uSES reads the better-locale store's `active`
+  // directly, so an override switch fires a full re-render and t() picks
+  // up the new override text. Optional: ctx.get returns undefined when
+  // better-locale is absent, in which case this is a no-op uSES.
+  type BetterLocaleStore = {
+    readonly active: string | undefined
+    subscribe(listener: () => void): () => void
+  }
+  const betterLocaleStore = (ctx as unknown as {
+    get(name: 'betterLocale'): BetterLocaleStore | undefined
+  }).get('betterLocale')
+  const betterLocaleActive = useSyncExternalStore(
+    useMemo(() => {
+      const store = betterLocaleStore
+      if (store === undefined) return (_cb: () => void) => () => {}
+      return (callback: () => void) => store.subscribe(callback)
+    }, [betterLocaleStore]),
+    useMemo(() => {
+      const store = betterLocaleStore
+      if (store === undefined) return () => undefined
+      return () => store.active
+    }, [betterLocaleStore]),
+  )
+  void betterLocaleActive
+
   // Tab-registry revision: TabContent memo cells must pick up a descriptor
   // a plugin registers/disposes after mount (the + menu / icons already read
   // the registry at render). Rare events (plugin (un)mount), so one full

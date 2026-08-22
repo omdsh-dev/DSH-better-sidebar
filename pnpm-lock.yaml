@@ -141,6 +141,9 @@ importers:
       '@deepseek-ai/dsh-tools':
         specifier: 0.1.1-rc.1
         version: 0.1.1-rc.1(5493e0ab460eb504a0593977b284c2a8)
+      '@huanlin/dsh-plugin-better-locale':
+        specifier: link:D:/Projects/deepseek-harness/dsh-plugin-better-locale
+        version: link:../dsh-plugin-better-locale
       '@playwright/test':
         specifier: ^1.62.1
         version: 1.62.1
