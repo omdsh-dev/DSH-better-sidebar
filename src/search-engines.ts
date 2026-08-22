@@ -43,6 +43,58 @@ const ENGINE_TIMEOUT_MS = 15_000
 
 const PATH_SEPARATOR = process.platform === 'win32' ? ';' : ':'
 
+/**
+ * Where the DSH CLI's own dependency tree may live, as `@vscode/ripgrep`
+ * platform-package candidates (@vscode/ripgrep-<platform>-<arch>/bin/rg).
+ * npm global installs on POSIX lay out as <prefix>/lib/node_modules/
+ * (execPath's node lives directly under <prefix>/bin); the Windows npm
+ * global prefix has NO lib/ layer — packages land in %APPDATA%\npm\node_modules
+ * instead (nvm-windows keeps the same %APPDATA%\npm global). The
+ * launchd-spawned profile layout under ~/.dsh/profiles is covered last.
+ * Wrong guesses are cheap: every candidate goes through verify()
+ * (--version under a 500ms budget) and unusable ones are dropped.
+ */
+export function bundledRgCandidates(
+  platform: NodeJS.Platform,
+  arch: string,
+  execPath: string,
+  env: NodeJS.ProcessEnv,
+  home: string,
+): string[] {
+  const binName = platform === 'win32' ? 'rg.exe' : 'rg'
+  const pkg = `@vscode/ripgrep-${platform}-${arch}`
+  const roots: string[] = []
+  const dshDepRoot = (globalModules: string) =>
+    join(globalModules, '@deepseek-ai/dsh/node_modules')
+  if (platform === 'win32') {
+    // Windows npm global: %APPDATA%\npm\node_modules (no lib/ layer).
+    if (env.APPDATA !== undefined && env.APPDATA !== '') {
+      roots.push(dshDepRoot(join(env.APPDATA, 'npm', 'node_modules')))
+    }
+    // Portable / per-user node installs next to the executable.
+    roots.push(dshDepRoot(join(dirname(execPath), 'node_modules')))
+  } else {
+    // POSIX npm global: <prefix>/lib/node_modules — execPath's node is
+    // <prefix>/bin/node, so the prefix is two dirnames up.
+    roots.push(dshDepRoot(join(dirname(dirname(execPath)), 'lib', 'node_modules')))
+    // Homebrew and pnpm global layouts missed by the execPath derivation.
+    roots.push(dshDepRoot('/opt/homebrew/lib/node_modules'), dshDepRoot('/usr/local/lib/node_modules'))
+    roots.push(dshDepRoot(join(home, '.local', 'share', 'pnpm')))
+  }
+  // The launchd-style profile layout (no user PATH, dsh deps under ~/.dsh).
+  roots.push(dshDepRoot(join(home, '.dsh', 'profiles', 'node_modules')))
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const root of roots) {
+    const candidate = join(root, pkg, 'bin', binName)
+    if (!seen.has(candidate)) {
+      seen.add(candidate)
+      out.push(candidate)
+    }
+  }
+  return out
+}
+
 /** Candidate binaries for one engine: PATH entries then fixed well-known
  *  locations. A PATH that misses Homebrew (seen in launchd-spawned
  *  processes) is covered by the fixed paths; rg additionally probes the
@@ -57,14 +109,11 @@ function candidates(engine: Engine): string[] {
   }
   const out: string[] = []
   // DSH's bundled rg — the CLI's own dependency tree holds the platform
-  // package (@vscode/ripgrep-<platform>-<arch>), resolved from the node
-  // binary's global prefix like npm lays it out. The harness's agent-side
+  // package (@vscode/ripgrep-<platform>-<arch>). The harness's agent-side
   // search tool already uses this binary — the sidebar search should too,
   // so it wins over any system rg.
   if (engine === 'rg') {
-    const prefix = dirname(dirname(process.execPath))
-    const dshGlobal = join(prefix, 'lib/node_modules/@deepseek-ai/dsh/node_modules')
-    out.push(join(dshGlobal, `@vscode/ripgrep-${process.platform}-${process.arch}/bin/${process.platform === 'win32' ? 'rg.exe' : 'rg'}`))
+    out.push(...bundledRgCandidates(process.platform, process.arch, process.execPath, env, homedir()))
   }
   for (const name of pathNames[engine]) {
     if (env.PATH !== undefined && env.PATH !== '') {

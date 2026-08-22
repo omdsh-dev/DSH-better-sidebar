@@ -26,7 +26,7 @@
 
 - 探测顺序:`fd` → `rg`
 - 候选位置 = PATH 展开 + 固定路径,并**优先 DSH 自带的 rg**:
-  - rg 第一候选:**DSH CLI 内置的 ripgrep**(`<node 全局前缀>/lib/node_modules/@deepseek-ai/dsh/node_modules/@vscode/ripgrep-<platform>-<arch>/bin/rg`,由 `process.execPath` 推导——DSH 自身的 agent 搜索工具已在用这个二进制);之后 PATH `rg` + `/opt/homebrew/bin/rg`、`/usr/local/bin/rg`、`/usr/bin/rg`
+  - rg 第一候选:**DSH CLI 内置的 ripgrep**。因为 DSH 的安装布局因平台/包管理器而异,`bundledRgCandidates` 枚举多个候选根(每条经 `--version` 预检剔除):POSIX npm 全局(`<npm 全局 prefix>/lib/node_modules`,由 `process.execPath` 推导——node 在 `<prefix>/bin/`)、**Windows npm 全局(`%APPDATA%\npm\node_modules`,没有 `lib/` 层)**、Homebrew/pnpm 全局根、`~/.dsh/profiles/node_modules`(launchd/profile 布局,2026-08-22 本机实测 DSH 真实落在此处,旧的 execPath 单一定向反而 miss);之后 PATH `rg` + `/opt/homebrew/bin/rg`、`/usr/local/bin/rg`、`/usr/bin/rg`
   - fd: PATH `fd` **与 `fdfind`**(Ubuntu 包装名)+ `/opt/homebrew/bin/fd`、`/usr/local/bin/fd`、`/usr/bin/fd`、`~/.cargo/bin/fd`
   - ~~VS Code 捆绑 rg hack~~ **已弃用**:DSH 自身就捆绑 @vscode/ripgrep,不需要反向借用 VS Code 应用目录(issue #203 的核心洞察)
 - 每个候选二进制跑 `--version`(500ms 超时)验证可执行,验证不过的路径不采用
