@@ -81,8 +81,10 @@ export async function searchFilesPlain(root: string, query: string, opts: FsSear
         truncated = true
         return
       }
-      // .git is VCS-internal noise: never matched, never descended.
-      if (dirent.isDirectory() && dirent.name === '.git') continue
+      // .git is VCS-internal noise — directory or worktree pointer FILE,
+      // never matched, never descended (fd's --exclude .git and rg's
+      // '!**/.git' glob share this exact semantics).
+      if (dirent.name === '.git') continue
       if (dirent.name.toLowerCase().includes(needle)) {
         matches.push(join(relative(root, dir), dirent.name))
         if (matches.length >= maxMatches) {

@@ -88,6 +88,22 @@ describe('fs-search', () => {
     }
   })
 
+  // A git worktree carries a `.git` FILE (a pointer to the real gitdir),
+  // not a directory. It is VCS-internal noise exactly like the .git
+  // directory and must never surface as a match — parity with fd's
+  // --exclude .git and rg's '!**/.git' glob.
+  it('never matches a worktree-style .git file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-search-'))
+    try {
+      writeFileSync(join(dir, '.git'), 'gitdir: /elsewhere/.git/worktrees/wt')
+      writeFileSync(join(dir, 'util.ts'), 'code')
+      expect(await searchFilesPlain(dir, '.git')).toEqual({ matches: [], truncated: false })
+      expect((await searchFilesPlain(dir, 'util')).matches).toEqual(['util.ts'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('an empty (or whitespace) query matches nothing without walking', async () => {
     const dir = makeFixture()
     try {
