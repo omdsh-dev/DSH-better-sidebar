@@ -25,10 +25,11 @@ import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
   IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
-  IconLinkOutline16, Menu, writeClipboard,
+  IconLinkOutline16, Menu, type MenuEntry, type MenuItem, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
-import { IconUploadOutline16 } from './icons.tsx'
+import { IconPinOutline16, IconUploadOutline16 } from './icons.tsx'
+import type { OpenWithTarget } from './open-with.ts'
 import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
 import { uploadItemsFromDrop, uploadItemsFromFiles, type UploadItem } from './upload.ts'
@@ -109,6 +110,19 @@ export function FileTree(props: {
   onOpenFileNewTab?: (path: string) => void
   /** Context-menu "open to the side" (file rows; absent → no entry). */
   onOpenFileSide?: (path: string) => void
+  /**
+   * The "open with" menu: resolved external targets (already SSH-filtered
+   * and in menu order). Absent → the whole section is hidden.
+   */
+  openWithTargets?: OpenWithTarget[]
+  /** Ids of targets pinned to the menu's top level (subset of the ids). */
+  openWithPinned?: string[]
+  /** Whether the workspace is remote (appends the SSH hint to target labels). */
+  openWithSsh?: boolean
+  /** Open one target externally (reveal or URL — the caller decides). */
+  onOpenWith?: (targetId: string, path: string) => void
+  /** Toggle one target's pinned state (the submenu row's pushpin). */
+  onToggleOpenWithPin?: (targetId: string) => void
   /** Insert `@<relative path>` into the composer draft. */
   onReferenceFile: (path: string) => void
   /** Bump to wipe the level cache and reload the visible set. */
@@ -118,7 +132,7 @@ export function FileTree(props: {
   /** True while an upload is in flight (drops are ignored). */
   busy: boolean
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, refreshTick, onUploadRequest, busy } = props
+  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
@@ -305,6 +319,73 @@ export function FileTree(props: {
     document.body.appendChild(anchor)
     anchor.click()
     anchor.remove()
+  }
+
+  /** The menu label of one open target: a locale key for the built-ins, the
+   *  user's own name for custom editors, plus the SSH hint in remote mode. */
+  const openWithLabelOf = (target: OpenWithTarget): string => {
+    const name = target.nameKey !== undefined ? t(target.nameKey) : target.name
+    return openWithSsh === true && !target.localOnly ? `${name}${t('openWithSshSuffix')}` : name
+  }
+
+  /**
+   * The "open with" menu entries: the pinned targets as DIRECT rows, then
+   * the parent row with every target as a nested submenu. Both only render
+   * when the caller wired the feature and at least one target is visible.
+   */
+  const openWithEntries = (): MenuEntry[] => {
+    if (openWithTargets === undefined || onOpenWith === undefined || openWithTargets.length === 0) return []
+    const pinnedIds = openWithPinned ?? []
+    const itemIcon = (target: OpenWithTarget): ReactNode =>
+      target.kind === 'reveal' ? <IconFolderOpen16 size={14} /> : <IconCodeOutline16 size={14} />
+    const pinned = openWithTargets
+      .filter(target => pinnedIds.includes(target.id))
+      .map<MenuItem>(target => ({
+        id: `open-with:${target.id}`,
+        label: openWithLabelOf(target),
+        icon: itemIcon(target),
+      }))
+    const submenu = openWithTargets.map<MenuItem>(target => {
+      const pinnedNow = pinnedIds.includes(target.id)
+      return {
+        id: `open-with:${target.id}`,
+        label: (
+          <span className={css.openWithLabel}>
+            <span className={css.openWithName}>{openWithLabelOf(target)}</span>
+            {/* The pushpin: a span (never a button — the Menu row itself is
+                a button, so a nested interactive element would be invalid).
+                Clicking it pins/unpins the target at the menu's top level
+                WITHOUT selecting the row: the pin stops propagation, so the
+                menu stays open and the icon flips on the next render. */}
+            <span
+              role="button"
+              tabIndex={-1}
+              className={clsx(css.openWithPin, pinnedNow && css.openWithPinActive)}
+              aria-label={pinnedNow ? t('unpinOpenWith') : t('pinOpenWith')}
+              title={pinnedNow ? t('unpinOpenWith') : t('pinOpenWith')}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                onToggleOpenWithPin?.(target.id)
+              }}
+            >
+              <IconPinOutline16 size={13} />
+            </span>
+          </span>
+        ),
+        icon: itemIcon(target),
+      }
+    })
+    return [
+      ...pinned,
+      ...(pinned.length > 0 ? [{ id: 'open-with-sep', type: 'separator' } as MenuEntry] : []),
+      {
+        id: 'open-with-menu',
+        label: t('openWithMenu'),
+        icon: <IconCodeOutline16 size={14} />,
+        submenu,
+      },
+    ]
   }
 
   const root = cwd
@@ -503,6 +584,7 @@ export function FileTree(props: {
           ...(rowMenu?.isDir === false && onOpenFileSide !== undefined
             ? [{ id: 'open-side', label: t('openFileSide'), icon: <IconFolderOpen16 size={14} /> }]
             : []),
+          ...openWithEntries(),
           // Download applies to files only (the host route refuses directories).
           ...(rowMenu?.isDir === false
             ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutline16 size={14} /> }]
@@ -524,6 +606,10 @@ export function FileTree(props: {
           }
           if (id === 'open-side') {
             onOpenFileSide?.(target.path)
+            return
+          }
+          if (id.startsWith('open-with:')) {
+            onOpenWith?.(id.slice('open-with:'.length), target.path)
             return
           }
           if (id === 'download') {

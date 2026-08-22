@@ -492,12 +492,13 @@ function SelectRow(props: {
 
 /**
  * The secondary settings popup body of one feature (tab or viewer):
- * - `settings.render` (custom panel) when declared — rendered with the
- *   shared store/service, the live prefs, the descriptor's own plugin
- *   settings blob, a persistence helper, and a close callback;
- * - otherwise the host-prefs `toggles` rows, then the plugin-owned
- *   `pluginToggles` rows (their values live in `pluginSettings[feature.id]`,
- *   projected onto the prefs face so the shared row renderer reads them).
+ * - the host-prefs `toggles` rows, then the plugin-owned `pluginToggles`
+ *   rows (their values live in `pluginSettings[feature.id]`, projected onto
+ *   the prefs face so the shared row renderer reads them);
+ * - `settings.render` (custom panel) AFTER those rows when declared — the
+ *   custom panel is an extension of the row list, not a replacement, so a
+ *   feature can keep its declarative rows (e.g. the editor's
+ *   open-behavior picker) and still ship a custom configuration area.
  */
 export function SettingsBody(props: {
   feature: TabDescriptor | FileViewerDescriptor
@@ -515,48 +516,50 @@ export function SettingsBody(props: {
 }) {
   const { feature, prefs, store, service, onToggle, onCommit, onSelectValue, onPluginToggle, onPluginCommit, onPluginSelectValue, onPluginWrite, onClose } = props
   const render = feature.settings?.render
-  if (render !== undefined) {
-    return (
-      <SettingsRender
-        render={render}
-        renderProps={{
-          store,
-          service,
-          prefs,
-          pluginSettings: prefs.pluginSettings[feature.id] ?? {},
-          updatePluginSetting: onPluginWrite,
-          close: onClose,
-        }}
-      />
-    )
-  }
   const toggles = feature.settings?.toggles ?? []
   const pluginToggles = feature.settings?.pluginToggles ?? []
-  if (toggles.length === 0 && pluginToggles.length === 0) return null
+  if (render === undefined && toggles.length === 0 && pluginToggles.length === 0) return null
   // Plugin rows read their values from the descriptor's OWN blob through
   // an explicit value source — no projection onto the prefs face, so a
   // plugin key can never collide with (or silently read) a host pref of
   // the same name.
   const pluginBlob = prefs.pluginSettings[feature.id] ?? {}
   return (
-    <div className={css.popupRows}>
-      {toggles.length > 0 && (
-        <FeatureSettingsRows
-          toggles={toggles}
-          prefs={prefs}
-          onToggle={onToggle}
-          onCommit={onCommit}
-          onSelectValue={onSelectValue}
-        />
+    <div>
+      {(toggles.length > 0 || pluginToggles.length > 0) && (
+        <div className={css.popupRows}>
+          {toggles.length > 0 && (
+            <FeatureSettingsRows
+              toggles={toggles}
+              prefs={prefs}
+              onToggle={onToggle}
+              onCommit={onCommit}
+              onSelectValue={onSelectValue}
+            />
+          )}
+          {pluginToggles.length > 0 && (
+            <FeatureSettingsRows
+              toggles={pluginToggles}
+              prefs={prefs}
+              onToggle={onPluginToggle}
+              onCommit={onPluginCommit}
+              onSelectValue={onPluginSelectValue}
+              valueSource={(key) => pluginBlob[key]}
+            />
+          )}
+        </div>
       )}
-      {pluginToggles.length > 0 && (
-        <FeatureSettingsRows
-          toggles={pluginToggles}
-          prefs={prefs}
-          onToggle={onPluginToggle}
-          onCommit={onPluginCommit}
-          onSelectValue={onPluginSelectValue}
-          valueSource={(key) => pluginBlob[key]}
+      {render !== undefined && (
+        <SettingsRender
+          render={render}
+          renderProps={{
+            store,
+            service,
+            prefs,
+            pluginSettings: prefs.pluginSettings[feature.id] ?? {},
+            updatePluginSetting: onPluginWrite,
+            close: onClose,
+          }}
         />
       )}
     </div>
@@ -1045,9 +1048,9 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
           feature is open — the Modal primitive runs hooks unconditionally,
           so a closed-but-mounted Modal would break SSR (and the
           renderToString spec) under the test dual-react split.
-          Content: `settings.render` (custom panel) when declared, else the
-          host-prefs `toggles` rows followed by the plugin-owned
-          `pluginToggles` rows (their values live in pluginSettings[id]). */}
+          Content: the host-prefs `toggles` rows, the plugin-owned
+          `pluginToggles` rows (their values live in pluginSettings[id]),
+          then the custom `settings.render` panel when declared. */}
       {settingsFor !== null && (
         <Modal
           open

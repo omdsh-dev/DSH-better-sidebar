@@ -22,7 +22,7 @@
  * The strategy dispatch is pure (planFirstMatch / planFsReadOutcome in
  * editor-load.ts); this component only wires it to the host APIs.
  */
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
 import { IconCheckOutline16, IconFolderOpen16 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -32,6 +32,8 @@ import { BinaryDownload } from './binary-download.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
 import { baseName } from './FileTree.tsx'
 import { openSidebarFile } from './intercept.tsx'
+import { openWithSshActive, openWithUrl, parseOpenWithConfig, resolveOpenWithTargets } from './open-with.ts'
+import { updatePluginSettings } from './plugin-settings.ts'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
@@ -50,6 +52,10 @@ type EditorLoad =
 const TREE_WIDTH_DEFAULT = 240
 const TREE_WIDTH_MIN = 160
 const TREE_WIDTH_MAX = 480
+
+/** Stable empty blob for the editor pluginSettings read (a fresh `?? {}`
+ *  would change identity every snapshot and loop useSyncExternalStore). */
+const EMPTY_PLUGIN_BLOB: Record<string, unknown> = {}
 
 /** The tab's persisted meta object (a malformed meta reads as empty). */
 function metaOf(tab: SidebarTab): Record<string, unknown> {
@@ -105,6 +111,16 @@ export function EditorHost(props: {
     useCallback((callback: () => void) => store.subscribe(callback), [store]),
     useCallback(() => store.getSnapshot().prefs.editorExplorer, [store]),
   )
+  // The file tree's "open with" configuration (pluginSettings['editor']): a
+  // blob subscription, so a pin click or a settings-page edit re-renders the
+  // menu immediately. The parsed config also drives which targets are shown
+  // (SSH mode hides the host-local ones).
+  const editorBlob = useSyncExternalStore(
+    useCallback((callback: () => void) => store.subscribe(callback), [store]),
+    useCallback(() => store.getSnapshot().prefs.pluginSettings['editor'] ?? EMPTY_PLUGIN_BLOB, [store]),
+  )
+  const openWithConfig = useMemo(() => parseOpenWithConfig(editorBlob.openWith), [editorBlob])
+  const openWithTargets = useMemo(() => resolveOpenWithTargets(openWithConfig), [openWithConfig])
   // A path-less tab shows the empty-state hint in merged mode — and in split
   // mode it is the standalone explorer (tree-only, see the render below).
   const showEmpty = path === ''
@@ -146,6 +162,39 @@ export function EditorHost(props: {
       }
       const { node, leafId } = insertLeafAt(state[key], pane.id, 'row', fresh, false)
       return { ...state, [key]: node, activePane: leafId }
+    })
+  }
+
+  /** The context menu's "open with" action: reveal the path in the OS file
+   *  manager, or hand the target's URL (a local `file` URL, or the SSH-remote
+   *  form for VSCode-family editors in remote mode) to the host's external
+   *  opener. Failures are logged only — a missing handler is the OS's
+   *  dialog, not a sidebar error. */
+  const openWith = (targetId: string, absolute: string): void => {
+    const target = openWithTargets.find(item => item.id === targetId)
+    if (target === undefined) return
+    if (target.kind === 'reveal') {
+      void api.openExternal({ action: 'reveal', path: absolute }).catch(
+        (error: unknown) => { console.error('open external failed', error) },
+      )
+      return
+    }
+    const url = openWithUrl(target, absolute, openWithConfig)
+    if (url === undefined) return
+    void api.openExternal({ action: 'url', url }).catch(
+      (error: unknown) => { console.error('open external failed', error) },
+    )
+  }
+
+  /** Toggle one target's pinned state. The write is serialized (see
+   *  plugin-settings.ts) and the menu re-renders when the store prefs land. */
+  const toggleOpenWithPin = (targetId: string): void => {
+    updatePluginSettings(store, 'editor', (blob) => {
+      const config = parseOpenWithConfig(blob.openWith)
+      const pinned = config.pinned.includes(targetId)
+        ? config.pinned.filter(id => id !== targetId)
+        : [...config.pinned, targetId]
+      return { ...blob, openWith: { ...config, pinned } }
     })
   }
 
@@ -272,6 +321,11 @@ export function EditorHost(props: {
           onOpenFile={openFile}
           onOpenFileNewTab={openFileNewTab}
           onOpenFileSide={openFileSide}
+          openWithTargets={openWithTargets}
+          openWithPinned={openWithConfig.pinned}
+          openWithSsh={openWithSshActive(openWithConfig)}
+          onOpenWith={openWith}
+          onToggleOpenWithPin={toggleOpenWithPin}
           onReferenceFile={onReferenceFile}
         />
       </div>
@@ -365,6 +419,11 @@ export function EditorHost(props: {
               onOpenFile={openFile}
               onOpenFileNewTab={openFileNewTab}
               onOpenFileSide={openFileSide}
+              openWithTargets={openWithTargets}
+              openWithPinned={openWithConfig.pinned}
+              openWithSsh={openWithSshActive(openWithConfig)}
+              onOpenWith={openWith}
+              onToggleOpenWithPin={toggleOpenWithPin}
               onReferenceFile={onReferenceFile}
             />
           </div>

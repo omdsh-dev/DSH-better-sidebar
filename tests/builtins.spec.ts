@@ -94,6 +94,9 @@ describe('built-in tab registrations', () => {
     const options = toggles[0]?.options ?? []
     expect(options.map(o => o.value)).toEqual([true, false])
     expect(options.every(o => o.icon !== undefined && o.title !== undefined)).toBe(true)
+    // The open-with configuration (SSH host + custom editors) is the custom
+    // panel rendered below the declarative rows.
+    expect(service.getTab('editor')?.settings?.render).toBeDefined()
   })
 
   it('the terminal tab declares the model terminal-tools, auto-terminal, shell and custom-font settings', () => {

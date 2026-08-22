@@ -35,6 +35,7 @@ import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
 import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
+import { launchExternal } from './open-external.ts'
 import * as git from './git.ts'
 import { SettingsConflictError, settingsNamespace, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { defaultShell, ensureSpawnHelper, PtyManager, shellDisplayName } from './pty-manager.ts'
@@ -478,6 +479,19 @@ function buildApi(
       } finally {
         clearTimeout(timer)
       }
+    },
+    // External open for the file tree's "open with" menu: reveal a path in
+    // the OS file manager, or hand a custom-scheme URL (vscode://,
+    // cursor://, zed://, custom editors) to its registered handler. The
+    // client is a browser renderer where raw scheme navigation is
+    // unreliable, so the launch always goes through the host — the same
+    // fence as every other route, argv-only (no shell interpolation).
+    'open.external': (payload) => {
+      const record = payload as { action?: unknown } | null
+      const action = record?.action
+      if (action === 'reveal') return launchExternal('reveal', requireString(payload, 'path'))
+      if (action === 'url') return launchExternal('url', requireString(payload, 'url'))
+      throw new SidebarError('bad-request', 'action must be "reveal" or "url"')
     },
     // Side Chat: create a side-thread child seeded with the parent's full
     // log up to now, deliver follow-ups (cold-resuming when the thread's

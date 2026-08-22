@@ -137,3 +137,14 @@ export const IconSaveOutline16 = ({ size = 16, className }: IconProps) => (
     <path d="M5.4 14.5v-4.2h5.2v4.2" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
   </svg>
 )
+
+/** Pushpin glyph (file-tree "pin this open-with target to the menu"): a
+ *  head disk, a collar and a needle at the classic 45° angle, in the app's
+ *  outline style. */
+export const IconPinOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="10.9" cy="5.1" r="2.4" stroke="currentColor" strokeWidth="1.4" />
+    <path d="M7.4 6.5 9.5 8.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    <path d="M9.2 6.8 3.6 12.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+  </svg>
+)

@@ -289,6 +289,12 @@ export const api = {
    *  check; see the host's browser.probe route). */
   browserProbe: (url: string, signal?: AbortSignal) =>
     call<BrowserProbeResult>('browser.probe', { url }, signal),
+  /** External open for the file tree's "open with" menu: reveal a path in
+   *  the OS file manager, or hand a custom-scheme URL (vscode://, cursor://,
+   *  zed://, custom editors) to its registered handler. The host launches
+   *  the platform opener (argv, no shell). */
+  openExternal: (payload: { action: 'reveal'; path: string } | { action: 'url'; url: string }) =>
+    call<{ started: boolean }>('open.external', payload),
 }
 
 /** Absolute URL of the media route for one path (images only). */
