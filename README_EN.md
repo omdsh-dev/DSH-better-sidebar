@@ -36,7 +36,7 @@
 - [🔌 Service API](#-service-api)
 - [🛠️ Development & Build](#-development--build)
 - [🔐 Security](#-security) · [⚠️ Known Limitations](#-known-limitations) · [🖥️ Platform Support](#-platform-support)
-- [🤝 Contributing](#-contributing) · [⭐ Star History](#-star-history) · [🔗 Friends](#-friends)
+- [💬 Community](#-community) · [🤝 Contributing](#-contributing) · [⭐ Star History](#-star-history) · [🔗 Friends](#-friends)
 
 ## ✨ Features
 
@@ -461,6 +461,19 @@ pnpm watch        # tsdown --watch
 ## 🖥️ Platform Support
 
 Windows / Linux / macOS (macOS validated daily; the rest covered by unit tests); `node-pty` prefers prebuilt binaries, otherwise a build toolchain is required (Windows VS Build Tools / Linux make+g+++python3 / macOS Xcode CLT).
+
+## 💬 Community
+
+WeChat / QQ group QR codes will live here. After uploading the QR images (drag them into any issue/comment to get a `user-attachments` link), replace `src` below and uncomment:
+
+<div align="center">
+  <!-- WeChat group QR code
+  <img width="220" alt="WeChat group QR code" src="https://github.com/user-attachments/assets/REPLACE_ME" />
+  -->
+  <!-- QQ group QR code
+  <img width="220" alt="QQ group QR code" src="https://github.com/user-attachments/assets/REPLACE_ME" />
+  -->
+</div>
 
 ## 🤝 Contributing
 

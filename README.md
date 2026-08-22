@@ -36,7 +36,7 @@
 - [🔌 服务化扩展](#-服务化扩展)
 - [🛠️ 开发与构建](#-开发与构建)
 - [🔐 安全](#-安全) · [⚠️ 已知限制](#-已知限制) · [🖥️ 平台支持](#-平台支持)
-- [🤝 参与贡献](#-参与贡献) · [⭐ Star History](#-star-history) · [🔗 友情链接](#-友情链接)
+- [💬 社区](#-社区) · [🤝 参与贡献](#-参与贡献) · [⭐ Star History](#-star-history) · [🔗 友情链接](#-友情链接)
 
 ## ✨ 功能一览
 
@@ -461,6 +461,19 @@ pnpm watch        # tsdown --watch
 ## 🖥️ 平台支持
 
 Windows / Linux / macOS 三平台适配（macOS 日常验证；其余经单元测试覆盖）；`node-pty` 优先预编译二进制，失败需编译工具链（Windows VS Build Tools / Linux make+g+++python3 / macOS Xcode CLT）。
+
+## 💬 社区
+
+微信 / QQ 交流群二维码将在此处展示。上传二维码图片（拖入任意 issue / comment 即可获得 `user-attachments` 链接）后，替换下方 `src` 并取消注释：
+
+<div align="center">
+  <!-- 微信群二维码
+  <img width="220" alt="微信群二维码" src="https://github.com/user-attachments/assets/REPLACE_ME" />
+  -->
+  <!-- QQ 群二维码
+  <img width="220" alt="QQ群二维码" src="https://github.com/user-attachments/assets/REPLACE_ME" />
+  -->
+</div>
 
 ## 🤝 参与贡献
 
