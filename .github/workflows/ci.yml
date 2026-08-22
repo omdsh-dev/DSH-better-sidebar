@@ -50,6 +50,52 @@ jobs:
       - name: Check consumer type surface
         run: pnpm check:consumer-types
 
+  # Windows regression lane: the search engine module's platform risks
+  # (path separators, CRLF, probe layout, unicode names) are win32-specific
+  # and invisible to the ubuntu lane — the function logic is fully covered
+  # by the same specs on ubuntu, but the REAL windows behavior needs a real
+  # windows runner + REAL engine binaries (choco). Typecheck + search specs
+  # + the engine output-shape assertion. This lane intentionally does not
+  # run the full pnpm test: agent-pty/smoke are PTY/environment-sensitive
+  # and build uses Unix `rm` (see docs/ci-windows.md — windows-risky
+  # features MUST add their own tests here).
+  search-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Real engine binaries for the integration assertions below; the
+      # engine probe inside search-engines.ts picks them up from PATH.
+      - name: Install fd / ripgrep (choco)
+        run: choco install fd ripgrep -y --no-progress
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # The two search spec suites: unit/probe contracts (same code the
+      # ubuntu lane runs) under a real win32 Node.
+      - name: Search specs (unit + dispatch)
+        run: pnpm vitest run tests/search-engines.spec.ts tests/fs-search.spec.ts
+
+      # Byte-level engine output assertions on the REAL binaries: pinned
+      # (--path-separator /) output must contain no '\'/'CR', and unicode
+      # filenames must survive. Exit non-zero on any pinned failure.
+      - name: Engine output-shape assertions (real fd/rg)
+        run: node scripts/win-engine-check.cjs --assert
+
   # Pack the plugin as an npm tarball, mount it into a REAL DSH instance
   # through the official `dsh plugin --profile web add` channel, and render
   # the DSH web UI headlessly (Playwright Chromium) to prove the plugin
