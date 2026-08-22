@@ -27,19 +27,23 @@ function setup(options: BuiltinTabOptions = {}): { service: ReturnType<typeof cr
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 7 built-in tabs', () => {
+  it('registers the 9 built-in tabs (7 original + folder + repo-git)', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['browser', 'diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal'],
+      ['browser', 'diff', 'editor', 'folder', 'git', 'repo-git', 'sidechat', 'subagent', 'terminal'],
     )
   })
 
-  it('only diff is hidden from the + menu; editor is the visible files window (order 10)', () => {
+  it('diff, folder and repo-git are hidden from the + menu; editor is the visible files window (order 10)', () => {
     const { service } = setup()
-    expect(service.getTabs().filter(t => t.hidden).map(t => t.id)).toEqual(['diff'])
+    expect(service.getTabs().filter(t => t.hidden).map(t => t.id)).toEqual(['folder', 'repo-git', 'diff'])
     const editor = service.getTab('editor')
     expect(editor?.hidden).toBe(false)
     expect(editor?.order).toBe(10)
+    // The folder-scoped tabs dedupe per folder path (multi-instance).
+    expect(service.getTab('folder')?.dedupeKey?.({ path: '/a', type: 'folder', title: 'a', id: 'x' } as never)).toBe('/a')
+    expect(service.getTab('folder')?.single).not.toBe(true)
+    expect(service.getTab('repo-git')?.single).not.toBe(true)
   })
 
   it('single-instance tabs use the single sugar', () => {
