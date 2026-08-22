@@ -85,6 +85,12 @@ export function resolveTerminalFont(prefs, themeFontFamily):
 
 - `TerminalView` 构造 Terminal 时用解析值；主 effect 内 `store.subscribe` 回调 diff `term.options.fontFamily/fontSize`，变化则更新 options + `fit.fit()` + `sendResize()`（网格尺寸随字体变化）；cleanup 退订。懒加载 chunk 无新增依赖（store 为运行时 prop）。
 
+> **实施偏差（2026-08-17）**：`resolveTerminalFont` 不再**逐字**返回胜出的基础字体，而是经 `withIconFontFallbacks()` 追加 Nerd Font 图标族后返回。
+>
+> 起因：starship / powerlevel10k 等提示符的图标取自 Nerd Font 私有区，Chromium 的隐式系统回退能覆盖 BMP PUA（`U+E000–U+F8FF`，如 `U+E0B0`）但覆盖不到补充平面 PUA-B（`U+F0000+`，Nerd Fonts v3 把 Material Design 图标集迁到了这里），导致后者渲染为豆腐块。显式列出字体族可使浏览器逐字符查询，两个平面都能命中。
+>
+> 三条约束：①**只追加不前置**——xterm 用字体栈首项测量单元格宽度；②插入到**第一个**通用族（`monospace` 等）之前——通用族是 catch-all，其后的字体永不被查询；③按族名去重（引号/大小写/空白不敏感），用户自列的字体保持其原有优先级。基础字体的优先级链（用户 pref > 主题 > 内置栈）不变，另新增 CSS 全局关键字（`inherit`/`initial`/`unset`/`revert`/`revert-layer`）过滤——这类值只在作为整条声明值时合法，追加后会得到非法 `font-family` 而被 CSSOM 静默丢弃。
+
 ### 4.6 i18n（`locales.ts`）
 
 zh/en 各新增：`settingsFontFamilyTitle/Desc/Placeholder`、`settingsFontSizeTitle/Desc/Suffix`（px）。
