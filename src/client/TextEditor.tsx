@@ -27,6 +27,7 @@ import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { appendToDraft } from './conversation-draft.ts'
+import { htmlPreviewTarget } from './html-preview.ts'
 import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
 import { lazyChunkComponent } from './lazy-chunk.tsx'
 import { splitMermaidBlocks, type MermaidMarkdownProps } from './mermaid-blocks.ts'
@@ -307,6 +308,13 @@ export function TextEditor(props: FileViewerProps) {
   // access.
   const [localUnlock, setLocalUnlock] = useState(() => props.store?.getPrefs().htmlViewerDefaultUnsafe === true)
   const htmlNoSandbox = props.store?.getPrefs().htmlViewerNoSandbox === true || localUnlock
+  const previewTarget = htmlPreviewTarget({
+    isHtml: html,
+    dirty,
+    draft,
+    sandboxOff: htmlNoSandbox,
+    routeUrl: htmlUrl(scope, path),
+  })
 
   // Host-toolbar mode (the merged editor header renders the controls): skip
   // the own toolbar row, report the state after every relevant render (the
@@ -405,13 +413,20 @@ export function TextEditor(props: FileViewerProps) {
             onUnlock={() => { setLocalUnlock(true) }}
             onRestore={() => { setLocalUnlock(false) }}
           />
-          {/* Route-src (never srcdoc — a srcdoc frame inherits the parent
-              origin when unsandboxed; the route URL keeps the frame
-              cross-origin by construction). The preview shows the SAVED
-              file; the draft is only visible in edit mode. */}
+          {/* Route-src normally (a srcdoc frame inherits the parent origin
+              when unsandboxed; the route URL keeps the frame cross-origin by
+              construction). A dirty HTML draft previews through srcdoc ONLY
+              while the sandbox is enabled — there the frame is opaque and
+              cannot touch the GUI origin. */}
+          {previewTarget.srcDoc !== undefined && (
+            <div className={css.htmlDraftHint} role="status">
+              {t('htmlDraftHint')}
+            </div>
+          )}
           <iframe
             className={css.editorHtml}
-            src={htmlUrl(scope, path)}
+            src={previewTarget.src}
+            srcDoc={previewTarget.srcDoc}
             sandbox={htmlNoSandbox ? undefined : HTML_IFRAME_SANDBOX}
             referrerPolicy="no-referrer"
             allow=""

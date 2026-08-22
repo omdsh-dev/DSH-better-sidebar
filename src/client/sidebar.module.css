@@ -1211,6 +1211,13 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-state-error-primary);
 }
 
+.htmlDraftHint {
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-secondary);
+  padding: 4px 12px;
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent);
+}
+
 .dirtyDot {
   width: 7px;
   height: 7px;
