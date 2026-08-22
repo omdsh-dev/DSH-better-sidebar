@@ -11,9 +11,13 @@
  * - the feature inventories are responsive GRIDS of small toggle cards
  *   (auto-fill columns — several cards per row, wrapping): icon chip +
  *   title + type id, the card's on/off state IS its visual state
- *   (enabled = brand border + tinted fill + circular check badge,
- *   disabled = neutral hairline + dimmed);
- * - features that declare related settings carry a gear corner button
+ *   (enabled = softened brand border + tinted fill + a compact brand
+ *   switch knob at the far right — the card itself is the toggle;
+ *   disabled = neutral hairline + dimmed, no knob); every card shares a
+ *   uniform min-height so rows stay equal whether or not they carry a
+ *   settings strip;
+ * - features that declare related settings carry a labeled SETTINGS STRIP
+ *   across the card's bottom edge (gear icon + text, hairline-separated)
  *   opening a native Modal (wider than the primitive default) whose rows
  *   follow the same row recipe with switch controls and a Done footer;
  * - the width input stays a native settings row (a value, not a switch).
@@ -22,7 +26,7 @@
 .section {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
   width: 100%;
   max-width: 760px;
   /* The DSH settings shell's `.options` area owns vertical scrolling. Keep
@@ -47,7 +51,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 18px 20px 20px;
+  padding: 20px;
   box-sizing: border-box;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 16px;
@@ -67,26 +71,36 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* The inventory count: a soft-accent pill (the versionBadgeTag token recipe)
+   so the count reads as metadata, not as part of the heading text. */
 .count {
-  font-size: 12px;
-  line-height: 18px;
-  font-weight: 400;
-  color: var(--dsw-alias-label-tertiary);
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--dsw-alias-accent-soft, var(--dsw-alias-bg-layer-2));
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-secondary);
   font-variant-numeric: tabular-nums;
 }
 
 /* Responsive inventory: as many small cards per row as the width allows. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
 }
 
-/* One small toggle card (visual chrome; the interactive part is .cardMain). */
+/* One small toggle card (visual chrome; the interactive part is .cardMain).
+   A uniform min-height keeps every inventory card the same height across
+   rows whether or not it carries a settings strip (strip cards are
+   naturally taller); overflow:hidden clips the strip to the card's radius. */
 .card {
   position: relative;
   display: flex;
   flex-direction: column;
+  min-height: 106px;
+  overflow: hidden;
   border-radius: 12px;
   border: 1px solid var(--dsw-alias-border-l2);
   background: transparent;
@@ -102,15 +116,19 @@
   border-color: var(--dsw-alias-label-dimmed);
 }
 
-/* Enabled = highlighted: brand border + tinted fill. */
+/* Enabled = highlighted: a SOFTENED brand border (color-mix, the icon-chip
+   precedent) + tinted fill — full-strength brand reads harsh at card scale. */
 .cardOn {
-  border-color: var(--dsw-alias-button-primary-fill);
+  border-color: color-mix(in srgb, var(--dsw-alias-button-primary-fill) 45%, transparent);
   background: var(--dsw-alias-interactive-bg-active);
 }
 
-/* The card's switch: the whole main area (top row + desc) flips the feature. */
+/* The card's switch: the whole main area (top row + desc) flips the feature.
+   flex:1 lets the main area absorb the extra height of the uniform card
+   (cards without a settings strip stretch to match the strip cards). */
 .cardMain {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 6px;
   width: 100%;
@@ -125,7 +143,7 @@
 }
 
 .cardMain:focus-visible,
-.cardGear:focus-visible,
+.cardSettings:focus-visible,
 .rowGear:focus-visible {
   outline: 2px solid var(--dsw-alias-border-l4);
   outline-offset: 2px;
@@ -136,6 +154,7 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+  min-height: 28px;
 }
 
 /* The icon sits in a rounded chip: brand-tinted while the card is on,
@@ -175,18 +194,46 @@
   color: var(--dsw-alias-label-primary);
 }
 
-/* The check badge: a circular brand-filled pin at the card's far right
-   (enabled only), the icon in the inverted surface token (the .save recipe). */
-.cardCheck {
+/* The compact on/off switch knob at the card's far right (enabled only):
+   the card itself is the toggle (aria-pressed on .cardMain), so this is a
+   PURELY VISUAL switch — same track/thumb geometry as the row switches,
+   one size down. Off cards show no knob (neutral card = off). */
+.cardSwitch {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   flex: none;
-  width: 16px;
+}
+
+.cardSwitchTrack {
+  display: inline-flex;
+  align-items: center;
+  width: 30px;
   height: 16px;
+  padding: 2px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l2);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.cardSwitchThumb {
+  display: block;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
+  background: var(--dsw-alias-label-tertiary);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.cardOn .cardSwitchTrack {
+  border-color: var(--dsw-alias-button-primary-fill);
   background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-bg-layer-3);
+}
+
+.cardOn .cardSwitchThumb {
+  transform: translateX(14px);
+  background: var(--dsw-alias-bg-layer-3);
 }
 
 .cardDesc {
@@ -234,41 +281,42 @@
   color: var(--dsw-alias-label-secondary);
 }
 
-/* Cards with a settings gear keep the desc clear of it: the gear sits in
-   the desc row, sharing the check badge's right edge (a vertical column of
-   controls at the card's right side). */
-.cardWithGear .cardDesc {
-  padding-right: 30px;
-}
-
-/* The gear corner button: directly UNDER the check badge on the card's
-   right edge — the two controls are vertically aligned (same right inset,
-   one row apart) and the SAME 16px size, not side by side. */
-.cardGear {
-  position: absolute;
-  right: 12px;
-  top: 46px;
-  display: inline-flex;
+/* The settings strip: a labeled full-width footer across the card's bottom
+   edge (gear icon + "功能设置" text), hairline-separated from the toggle
+   area. This is the SECONDARY settings entry — it must be discoverable at
+   rest (not a hover-only ghost), so it keeps a steady secondary-ink label
+   and answers hover with the brand-accent tint + brand ink. */
+.cardSettings {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  padding: 0;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 12px;
   border: 0;
-  border-radius: 50%;
+  border-top: 1px solid var(--dsw-alias-border-l1);
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  text-align: left;
   cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
-.cardGear:hover {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-interactive-bg-hover);
+.cardOn .cardSettings {
+  border-top-color: color-mix(in srgb, var(--dsw-alias-button-primary-fill) 18%, transparent);
+}
+
+.cardSettings:hover {
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  color: var(--dsw-alias-brand-primary);
 }
 
 /* The gear icon button on a general settings ROW (the position-compat
-   row's "customize the strip height" entry): the same 16px icon-button
-   recipe as the card gear, sitting in the row's control area. */
+   row's "customize the strip height" entry): a bordered chip (not a ghost)
+   so it reads as a control at rest; hover answers with the accent tint. */
 .rowGear {
   display: inline-flex;
   align-items: center;
@@ -276,17 +324,19 @@
   width: 22px;
   height: 22px;
   padding: 0;
-  border: none;
-  border-radius: 50%;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-secondary);
   cursor: pointer;
   flex: none;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
 
 .rowGear:hover {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-interactive-bg-hover-accent);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  color: var(--dsw-alias-brand-primary);
 }
 
 /* Settings-row recipe (the DSH General section rows): title/desc left,
@@ -349,7 +399,7 @@
   box-sizing: border-box;
   border-radius: 10px;
   border: 1px solid var(--dsw-alias-border-l2);
-  background: var(--dsw-alias-bg-layer-1);
+  background: var(--dsw-alias-bg-layer-2);
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
@@ -358,7 +408,7 @@
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-label-tertiary);
   transition: transform 0.15s ease, background 0.15s ease;
 }
 
@@ -493,21 +543,49 @@
 
 /* Popup rows: each setting gets the same outer chrome as a plugin-list
    PluginCard (l2 hairline, 12px radius, layer-3 fill). The row's title,
-   description and control geometry stay unchanged inside that frame. */
+   description and control geometry stay unchanged inside that frame.
+   The body scrolls INTERNALLY once a feature declares many rows (e.g.
+   Terminal's six) — the dialog shell and its Done footer stay put; a thin
+   token-driven scrollbar makes the scrollable region discoverable.
+   box-sizing:border-box keeps width:100% + the scrollbar gutter from
+   overflowing horizontally (a content-box width would add the 4px pad and
+   show a horizontal scrollbar); overflow-x:hidden is the belt-and-braces
+   guarantee that rows always FILL the width and never slide sideways. */
 .popupRows {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
+  box-sizing: border-box;
+  max-height: min(52vh, 440px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--dsw-alias-scrollbar-bg-l2, transparent) transparent;
+}
+
+.popupRows::-webkit-scrollbar {
+  width: 6px;
+}
+
+.popupRows::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: var(--dsw-alias-scrollbar-bg-l2, var(--dsw-alias-border-l2));
+}
+
+.popupRows::-webkit-scrollbar-thumb:hover {
+  background: var(--dsw-alias-scrollbar-hover-l2, var(--dsw-alias-label-dimmed));
 }
 
 .popupRow {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   min-width: 0;
-  padding: 14px 16px;
+  padding: 12px 14px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 12px;
   background: var(--dsw-alias-bg-layer-3);
@@ -593,12 +671,6 @@
   font-size: 12px;
   line-height: 18px;
   color: var(--dsw-alias-label-tertiary);
-}
-
-.pluginEntries {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
 }
 
 /* One catalog entry: name + install button on the head row, description,
@@ -730,6 +802,11 @@
 
 @media (prefers-reduced-motion: reduce) {
   .card,
+  .cardSettings,
+  .cardSwitchTrack,
+  .cardSwitchThumb,
+  .rowGear,
+  .popupRow,
   .switchTrack,
   .switchThumb {
     transition: none;
@@ -798,6 +875,7 @@
   gap: 10px;
   max-height: 46vh;
   overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 2px;
 }
 

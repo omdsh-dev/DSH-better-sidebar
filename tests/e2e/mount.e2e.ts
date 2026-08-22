@@ -56,7 +56,7 @@ const SEEDED_MD_FILE = 'diagram.md'
 const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 
 /** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Side Chat', 'Terminal', 'Browser']
+const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Side Chat (beta)', 'Terminal', 'Browser']
 
 let api: APIRequestContext
 /** The seeded session id (captured by seedSession; the Side Chat smoke's parent). */

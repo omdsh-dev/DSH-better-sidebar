@@ -146,3 +146,17 @@ isViewerEnabled(id: string): boolean
 - **声明**：`SidebarSettingsDeclaration` 增加 `pluginToggles`（声明式行，控件同 toggles 的 switch/text/number，值须 JSON 可序列化）与 `render?: (props: SidebarSettingsRenderProps) => ReactNode`（自定义面板：store/service/prefs/pluginSettings/updatePluginSetting/close；抛错被吞并显示内联错误）。
 - **渲染**：齿轮弹窗体抽为 `SettingsBody`（`render` 存在时优先，否则 toggles 行 + pluginToggles 行，后者把 pluginSettings 投影到 prefs 面复用 `FeatureSettingsRows`）；`settingsFor` 状态从 `TabDescriptor | null` 扩为 `TabDescriptor | FileViewerDescriptor | null`——viewer 卡片 v0.12.0 起同样有齿轮设置弹窗（§4.6 原仅 tab）。
 - **向后兼容**：旧设置文档无 `pluginSettings` 字段 → schema default `{}`；`toggles` 行为与 v0.11.0 完全一致。
+
+---
+
+## 9. 设置页 UI/UX 现代化（feat/settings-sidecard-uiux）
+
+纯视觉/交互入口改造，无 API 与持久化语义变化（`settings.toggles` / `pluginToggles` / `render` / Modal 条件挂载契约全部不变）：
+
+- **二级设置入口：齿轮角标 → 卡片底部设置条**。原 `.cardGear`（16×16px 三级色透明幽灵按钮，`absolute; top:46px` 像素钉位 + `.cardWithGear` padding 耦合）可发现性不足；改为卡片底缘的**全宽设置条** `.cardSettings`（hairline 分隔、齿轮图标 12px + 「功能设置」文字标签 11px/500，hover 换 `--dsw-alias-interactive-bg-hover-accent` 品牌淡底 + brand 字色）。可见性条件不变（仅父级启用且声明 settings）；aria-label 模式 `"${title} ${t('settingsPopup')}"` 不变（测试契约）。常规行齿轮 `.rowGear` 升级为 22×22 带 border-l2 边框的芯片按钮（hover 同样 accent 引导）。
+- **启用态指示（后续迭代：勾选 → 紧凑开关滑块）**：启用卡片描边从全强度品牌色柔化为 `color-mix(button-primary-fill 45%)`。第一版曾把勾选徽标改为 `--dsw-alias-state-success-primary` 实心绿（绿 = 已开启确认，brand = 激活强调）；按反馈再迭代为**紧凑品牌开关滑块** `.cardSwitch`（30×16 track + 10px thumb，开 = brand 填充 + thumb 反色，关 = 中性且不渲染滑块）——纯视觉指示，卡片本身仍是开关（`aria-pressed` 语义不变），不再使用 success 色。全部颜色仍为 `--dsw-alias-*` 令牌派生，零硬编码。
+- **卡片等高**：`.card` 统一 `min-height: 106px` + `.cardMain { flex: 1 }` + `.cardTop { min-height: 28px }`——带设置条的卡片（天然更高）与不带设置条的卡片、无图标卡片全部等高；`prefers-reduced-motion` 覆盖新增的 `.cardSwitchTrack/Thumb` 过渡。
+- **二级弹窗长列表**：`.popupRows` 增加 `max-height: min(56vh, 480px)` + 内部 `overflow-y: auto`（终端等声明 6 行设置的场景下弹窗壳体与 Done 按钮固定，仅行区滚动）；行密度收紧（padding 12/14、gap 8）。
+- **节奏**：section gap 16 / group padding 20 / 网格 `minmax(180px,1fr)` gap 12；计数徽章改为 `accent-soft` 淡底 pill（versionBadgeTag 同款令牌配方）；开关关态 thumb 降一档（label-tertiary）+ track 底 layer-2。
+- **动效纪律**：全部过渡 ≤160ms 且仅 background/border-color/color；`prefers-reduced-motion` 扩展覆盖 `.cardSettings` / `.rowGear` / `.popupRow`。
+- **清理**：合并 `.pluginEntries` 重复定义（原 L598 与 L795 两处，保留带 max-height/overflow 的一处）。
