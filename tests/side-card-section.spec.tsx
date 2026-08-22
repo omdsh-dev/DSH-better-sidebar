@@ -28,8 +28,9 @@ beforeAll(() => {
   })
 })
 import { createBetterSidebarService, type BetterSidebarService } from '../src/client/service.ts'
+import type { TabDescriptor } from '../src/client/service.ts'
+import { FeatureSettingsRows, mergePluginSetting, SettingsBody, SideCardSection, type SideCardSectionProps } from '../src/client/SideCardSection.tsx'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
-import { FeatureSettingsRows, mergePluginSetting, SideCardSection, type SideCardSectionProps } from '../src/client/SideCardSection.tsx'
 
 /** One tab + one viewer + the subagent-style nested toggle under a tab. */
 function mount(): { store: SidebarStore; service: BetterSidebarService } {
@@ -345,5 +346,70 @@ describe('FeatureSettingsRows valueSource (v0.12.0, independent CR fix)', () => 
       onToggle: () => {},
     }))
     expect(html).toContain('checked=""')
+  })
+})
+
+describe('SettingsBody rows + custom render panel (open-with seam)', () => {
+  it('renders the declarative rows AND the custom panel when both are declared', () => {
+    const { store, service } = mount()
+    const feature = {
+      id: 'demo',
+      title: () => 'Demo',
+      component: () => null,
+      settings: {
+        toggles: [{
+          key: 'autoOpenSubagent',
+          title: () => 'Auto row',
+          desc: () => 'row description',
+        }],
+        render: () => createElement('div', { 'data-custom-panel': true }, 'custom panel'),
+      },
+    } as unknown as TabDescriptor
+    const html = renderToString(createElement(SettingsBody, {
+      feature,
+      prefs: SIDEBAR_PREFS_DEFAULTS,
+      store,
+      service,
+      onToggle: () => {},
+      onCommit: () => '',
+      onSelectValue: () => {},
+      onPluginToggle: () => {},
+      onPluginCommit: () => '',
+      onPluginSelectValue: () => {},
+      onPluginWrite: () => {},
+      onClose: () => {},
+    }))
+    expect(html).toContain('Auto row')
+    expect(html).toContain('row description')
+    expect(html).toContain('data-custom-panel')
+    expect(html).toContain('custom panel')
+  })
+
+  it('renders ONLY the custom panel when no rows are declared (unchanged behavior)', () => {
+    const { store, service } = mount()
+    const feature = {
+      id: 'demo',
+      title: () => 'Demo',
+      component: () => null,
+      settings: {
+        render: () => createElement('div', { 'data-custom-panel': true }, 'custom panel'),
+      },
+    } as unknown as TabDescriptor
+    const html = renderToString(createElement(SettingsBody, {
+      feature,
+      prefs: SIDEBAR_PREFS_DEFAULTS,
+      store,
+      service,
+      onToggle: () => {},
+      onCommit: () => '',
+      onSelectValue: () => {},
+      onPluginToggle: () => {},
+      onPluginCommit: () => '',
+      onPluginSelectValue: () => {},
+      onPluginWrite: () => {},
+      onClose: () => {},
+    }))
+    expect(html).toContain('custom panel')
+    expect(html).not.toContain('Auto row')
   })
 })

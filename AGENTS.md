@@ -176,7 +176,7 @@ interface TabDescriptor {
    * 顺序提交）。
    * v0.12.0 起增加两个插件自有扩展（详见 §5 声明式设置）：
    * `pluginToggles`（插件自有 key，持久化在 pluginSettings[id]，无需宿主 schema 字段）
-   * 与 `render`（自定义设置面板，替代行列表）。
+   * 与 `render`（自定义设置面板，追加渲染在行列表之后，与行列表共存）。
    */
   settings?: {
     toggles?: readonly {
@@ -223,7 +223,8 @@ interface TabDescriptor {
       }[]
       multi?: boolean
     }[]
-    /** 自定义设置面板（v0.12.0+）：给出时齿轮弹窗渲染它而非行列表。
+    /** 自定义设置面板（v0.12.0+）：给出时**追加**渲染在行列表（toggles /
+     *  pluginToggles）之后，与行列表共存；未声明行列表时单独渲染。
      *  props 含 store/service/prefs、本 descriptor 的 pluginSettings blob、
      *  updatePluginSetting(key, value) 与 close()。抛错会被吞掉并显示内联错误。 */
     render?: (props: {

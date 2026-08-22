@@ -21,6 +21,7 @@ import { IconFolderOpen16, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-
 import { api } from './api.ts'
 import { FileTree } from './FileTree.tsx'
 import { IconUploadOutline16 } from './icons.tsx'
+import type { OpenWithTarget } from './open-with.ts'
 import { t } from './locales.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import { UploadOverlay } from './UploadOverlay.tsx'
@@ -50,6 +51,13 @@ export function TreePanel(props: {
   onOpenFileNewTab?: (path: string) => void
   /** File context-menu "open to the side" (passed through to FileTree). */
   onOpenFileSide?: (path: string) => void
+  /** The "open with" menu surface (passed through to FileTree; absent →
+   *  the whole section is hidden). */
+  openWithTargets?: OpenWithTarget[]
+  openWithPinned?: string[]
+  openWithSsh?: boolean
+  onOpenWith?: (targetId: string, path: string) => void
+  onToggleOpenWithPin?: (targetId: string) => void
   /** Directory context-menu "open this folder as a folder tab". */
   onOpenDirFiles?: (path: string) => void
   /** Directory context-menu "open this folder's source control". */
@@ -62,7 +70,7 @@ export function TreePanel(props: {
    *  directory (the folder tab) instead of the session cwd. */
   targetCwd?: string
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onOpenDirFiles, onOpenDirScm, onReferenceFile, full, targetCwd } = props
+  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onOpenDirFiles, onOpenDirScm, onReferenceFile, full, targetCwd } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -226,6 +234,11 @@ export function TreePanel(props: {
           onOpenFileSide={onOpenFileSide}
           onOpenDirFiles={onOpenDirFiles}
           onOpenDirScm={onOpenDirScm}
+          openWithTargets={openWithTargets}
+          openWithPinned={openWithPinned}
+          openWithSsh={openWithSsh}
+          onOpenWith={onOpenWith}
+          onToggleOpenWithPin={onToggleOpenWithPin}
           onReferenceFile={onReferenceFile}
           refreshTick={refreshTick}
           onUploadRequest={startUpload}

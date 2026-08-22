@@ -24,11 +24,14 @@ import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEve
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
-  IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
-  IconLinkOutline16, Menu, writeClipboard,
+  IconBranchOutline16, IconChevronRightOutline14, IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16,
+  IconLinkOutline16, Menu, type MenuEntry, type MenuItem, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { SiCursor, SiZedindustries } from 'react-icons/si'
+import { VscFile, VscFolder, VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
 import { api, downloadUrl, type FsEntry } from './api.ts'
-import { IconUploadOutline16 } from './icons.tsx'
+import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
+import type { OpenWithTarget } from './open-with.ts'
 import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
 import { uploadItemsFromDrop, uploadItemsFromFiles, type UploadItem } from './upload.ts'
@@ -109,6 +112,19 @@ export function FileTree(props: {
   onOpenFileNewTab?: (path: string) => void
   /** Context-menu "open to the side" (file rows; absent → no entry). */
   onOpenFileSide?: (path: string) => void
+  /**
+   * The "open with" menu: resolved external targets (already SSH-filtered
+   * and in menu order). Absent → the whole section is hidden.
+   */
+  openWithTargets?: OpenWithTarget[]
+  /** Ids of targets pinned to the menu's top level (subset of the ids). */
+  openWithPinned?: string[]
+  /** Whether the workspace is remote (appends the SSH hint to target labels). */
+  openWithSsh?: boolean
+  /** Open one target externally (reveal or URL — the caller decides). */
+  onOpenWith?: (targetId: string, path: string) => void
+  /** Toggle one target's pinned state (the submenu row's pushpin). */
+  onToggleOpenWithPin?: (targetId: string) => void
   /** Context-menu "open this folder as a folder tab" (directory rows). */
   onOpenDirFiles?: (path: string) => void
   /** Context-menu "open this folder's source control" (directory rows). */
@@ -122,7 +138,7 @@ export function FileTree(props: {
   /** True while an upload is in flight (drops are ignored). */
   busy: boolean
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onOpenDirFiles, onOpenDirScm, onReferenceFile, refreshTick, onUploadRequest, busy } = props
+  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onOpenDirFiles, onOpenDirScm, onReferenceFile, refreshTick, onUploadRequest, busy } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
@@ -311,6 +327,88 @@ export function FileTree(props: {
     anchor.remove()
   }
 
+  /** The menu label of one open target: a locale key for the built-ins, the
+   *  user's own name for custom editors, plus the SSH hint in remote mode. */
+  const openWithLabelOf = (target: OpenWithTarget): string => {
+    const name = target.nameKey !== undefined ? t(target.nameKey) : target.name
+    return openWithSsh === true && !target.localOnly ? `${name}${t('openWithSshSuffix')}` : name
+  }
+
+  /**
+   * The "open with" menu entries: the pinned targets as DIRECT rows, then
+   * the parent row with every target as a nested submenu. Both only render
+   * when the caller wired the feature and at least one target is visible.
+   */
+  const openWithEntries = (): MenuEntry[] => {
+    if (openWithTargets === undefined || onOpenWith === undefined || openWithTargets.length === 0) return []
+    const pinnedIds = openWithPinned ?? []
+    /** Brand marks for the built-ins (monochrome silhouettes, currentColor);
+     *  reveal gets the folder glyph, custom editors a generic code mark. */
+    const itemIcon = (target: OpenWithTarget): ReactNode => {
+      if (target.kind === 'reveal') return <VscFolderOpened size={16} />
+      if (target.id === 'vscode') return <IconVscode16 size={16} />
+      if (target.id === 'cursor') return <SiCursor size={16} />
+      if (target.id === 'zed') return <SiZedindustries size={16} />
+      return <IconCodeOutline16 size={16} />
+    }
+    const pinned = openWithTargets
+      .filter(target => pinnedIds.includes(target.id))
+      .map<MenuItem>(target => ({
+        id: `open-with:${target.id}`,
+        label: openWithLabelOf(target),
+        icon: itemIcon(target),
+      }))
+    const submenu = openWithTargets.map<MenuItem>(target => {
+      const pinnedNow = pinnedIds.includes(target.id)
+      return {
+        id: `open-with:${target.id}`,
+        label: (
+          <span className={css.openWithLabel}>
+            <span className={css.openWithName}>{openWithLabelOf(target)}</span>
+            {/* The pushpin: a span (never a button — the Menu row itself is
+                a button, so a nested interactive element would be invalid).
+                Clicking it pins/unpins the target at the menu's top level
+                WITHOUT selecting the row: the pin stops propagation, so the
+                menu stays open and the icon flips on the next render. */}
+            <span
+              role="button"
+              tabIndex={-1}
+              className={clsx(css.openWithPin, pinnedNow && css.openWithPinActive)}
+              aria-label={pinnedNow ? t('unpinOpenWith') : t('pinOpenWith')}
+              title={pinnedNow ? t('unpinOpenWith') : t('pinOpenWith')}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                onToggleOpenWithPin?.(target.id)
+              }}
+            >
+              {pinnedNow ? <VscPinned size={14} /> : <VscPin size={14} />}
+            </span>
+          </span>
+        ),
+        icon: itemIcon(target),
+      }
+    })
+    return [
+      ...pinned,
+      ...(pinned.length > 0 ? [{ id: 'open-with-sep', type: 'separator' } as MenuEntry] : []),
+      {
+        id: 'open-with-menu',
+        // The primitives Menu renders no chevron for submenu parents — the
+        // trailing arrow is supplied inside the label (full-width flex row,
+        // right-aligned), matching how the submenu rows right-align the pin.
+        label: (
+          <span className={css.openWithLabel}>
+            <span className={css.openWithName}>{t('openWithMenu')}</span>
+            <IconChevronRightOutline14 size={14} className={css.openWithChevron} aria-hidden />
+          </span>
+        ),
+        icon: <VscLinkExternal size={16} />,
+        submenu,
+      },
+    ]
+  }
+
   const root = cwd
 
   const renderLevel = (dir: string, depth: number): ReactNode => {
@@ -350,7 +448,7 @@ export function FileTree(props: {
               onDrop={(event) => { handleDirDrop(event, entry.path) }}
               onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
             >
-              {isOpen ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />}
+              {isOpen ? <VscFolderOpened size={14} /> : <VscFolder size={14} />}
               <span className={css.explorerName}>{entry.name}</span>
               {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
               {rowActions(entry)}
@@ -381,7 +479,7 @@ export function FileTree(props: {
           onDrop={(event) => { handleFileDrop(event, entry.path) }}
           onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
         >
-          <IconCodeOutline16 size={14} />
+          <VscFile size={14} />
           <span className={css.explorerName}>{entry.name}</span>
           {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
           {rowActions(entry)}
@@ -410,7 +508,7 @@ export function FileTree(props: {
             onDrop={(event) => { handleDirDrop(event, root) }}
             onContextMenu={(event) => { openRowMenu(event, root, true) }}
           >
-            <IconFolderOpen16 size={14} />
+            <VscFolderOpened size={14} />
             <span className={css.explorerName}>{baseName(root)}</span>
             {copiedPath === root
               ? <span className={css.explorerCopied}>{t('copied')}</span>
@@ -502,28 +600,29 @@ export function FileTree(props: {
         items={[
           // The open escapes head the FILE menu (dirs only get copy).
           ...(rowMenu?.isDir === false && onOpenFileNewTab !== undefined
-            ? [{ id: 'open-new-tab', label: t('openFileNewTab'), icon: <IconCodeOutline16 size={14} /> }]
+            ? [{ id: 'open-new-tab', label: t('openFileNewTab'), icon: <IconCodeOutline16 size={16} /> }]
             : []),
           ...(rowMenu?.isDir === false && onOpenFileSide !== undefined
-            ? [{ id: 'open-side', label: t('openFileSide'), icon: <IconFolderOpen16 size={14} /> }]
+            ? [{ id: 'open-side', label: t('openFileSide'), icon: <VscFolderOpened size={16} /> }]
             : []),
           // Directory rows get subfolder-scoped opens (folder tab / source control).
           ...(rowMenu?.isDir === true && onOpenDirFiles !== undefined
-            ? [{ id: 'open-dir-files', label: t('openDirFiles'), icon: <IconFolderOpen16 size={14} /> }]
+            ? [{ id: 'open-dir-files', label: t('openDirFiles'), icon: <VscFolderOpened size={16} /> }]
             : []),
           ...(rowMenu?.isDir === true && onOpenDirScm !== undefined
-            ? [{ id: 'open-dir-scm', label: t('openDirScm'), icon: <IconBranchOutline16 size={14} /> }]
+            ? [{ id: 'open-dir-scm', label: t('openDirScm'), icon: <IconBranchOutline16 size={16} /> }]
             : []),
+          ...openWithEntries(),
           // Download applies to files only (the host route refuses directories).
           ...(rowMenu?.isDir === false
-            ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutline16 size={14} /> }]
+            ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutline16 size={16} /> }]
             : []),
           // Upload into a directory (incl. the workspace root row).
           ...(rowMenu?.isDir === true
-            ? [{ id: 'upload-here', label: t('uploadHere'), icon: <IconUploadOutline16 size={14} /> }]
+            ? [{ id: 'upload-here', label: t('uploadHere'), icon: <IconUploadOutline16 size={16} /> }]
             : []),
-          { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={14} /> },
-          { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutline16 size={14} /> },
+          { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={16} /> },
+          { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutline16 size={16} /> },
         ]}
         onSelect={(id) => {
           const target = rowMenu
@@ -543,6 +642,10 @@ export function FileTree(props: {
           }
           if (id === 'open-dir-scm') {
             onOpenDirScm?.(target.path)
+            return
+          }
+          if (id.startsWith('open-with:')) {
+            onOpenWith?.(id.slice('open-with:'.length), target.path)
             return
           }
           if (id === 'download') {

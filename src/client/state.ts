@@ -825,8 +825,9 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
   // bottom tree.
   const seen = new Set<string>()
   const reid = new Map<string, string>()
-  const splits = sanitizeNode(record.splits, seen, reid)
-  if (splits === undefined) return undefined
+  const restoredSplits = sanitizeNode(record.splits, seen, reid)
+  if (restoredSplits === undefined) return undefined
+  const splits = pruneEmptyPanes(restoredSplits)
   // Bottom-panel fields arrived in a later build: a missing or malformed
   // value on an OLDER persisted state defaults (closed / default height /
   // empty pane) so existing layouts keep loading, like nextBrowser.
@@ -840,15 +841,23 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     ? record.bottomHeight
     : BOTTOM_DEFAULT
   const bottomHeight = Math.min(bottomCap, Math.max(BOTTOM_MIN, Math.round(rawHeight)))
-  const bottomSplits = sanitizeNode(record.bottomSplits, seen, reid)
-    ?? { kind: 'leaf' as const, id: uid('pane'), tabs: [], active: null }
+  const bottomSplits = pruneEmptyPanes(sanitizeNode(record.bottomSplits, seen, reid)
+    ?? { kind: 'leaf' as const, id: uid('pane'), tabs: [], active: null })
+  const requestedActivePane = typeof record.activePane === 'string'
+    ? (reid.get(record.activePane) ?? record.activePane)
+    : null
+  const activePane = requestedActivePane === null
+    ? null
+    : treeHasId(splits, requestedActivePane) || treeHasId(bottomSplits, requestedActivePane)
+      ? requestedActivePane
+      : firstLeaf(splits).id
   const maxWidth = typeof window !== 'undefined' ? window.innerWidth : Infinity
   return {
     panelOpen: record.panelOpen,
     width: Math.max(PANEL_MIN, Math.min(record.width, maxWidth)),
     // A stale duplicate pane id may have been re-ided; follow the rename so
     // new tabs still land in the pane the user was using.
-    activePane: typeof record.activePane === 'string' ? (reid.get(record.activePane) ?? record.activePane) : null,
+    activePane,
     nextTerminal: record.nextTerminal,
     nextBrowser,
     expanded: record.expanded as string[],
@@ -861,6 +870,16 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     bottomOpenedOnce: record.bottomOpenedOnce === true,
     bottomSplits,
   }
+}
+
+/** Collapse persisted split panes left empty after ephemeral diff tabs are dropped. */
+function pruneEmptyPanes(node: SplitNode): SplitNode {
+  const leaves = allLeaves(node)
+  if (!leaves.some(leaf => leaf.tabs.length > 0)) return node
+  return leaves.reduce(
+    (tree, leaf) => leaf.tabs.length === 0 ? removeLeafAt(tree, leaf.id) : tree,
+    node,
+  )
 }
 
 /**

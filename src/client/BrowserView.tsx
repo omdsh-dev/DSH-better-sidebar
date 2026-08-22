@@ -22,9 +22,9 @@ import {
   IconChevronRightOutline14,
   IconLinkOutline14,
   IconRefreshOutline14,
-  IconRightUpOutline16,
   IconWarningOutline16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { VscLinkExternal } from 'react-icons/vsc'
 import { api } from './api.ts'
 import { embeddabilityOf, normalizeBrowserUrl } from './browser.ts'
 import { patchTab } from './state.ts'
@@ -186,7 +186,7 @@ export function BrowserView(props: TabComponentProps) {
             if (url !== undefined) window.open(url, '_blank', 'noopener')
           }}
         >
-          <IconRightUpOutline16 size={15} />
+          <VscLinkExternal size={15} />
         </button>
       </div>
       {message !== null && <div className={css.browserMessage}>{message}</div>}
