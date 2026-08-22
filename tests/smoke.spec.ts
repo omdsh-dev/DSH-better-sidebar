@@ -88,10 +88,11 @@ describe('host plugin smoke', () => {
       get: () => undefined,
     }
     apply(ctx as never)
-    expect(routes.map(route => route.path)).toEqual([
+expect(routes.map(route => route.path)).toEqual([
       '/sidebar/api',
       '/sidebar/upload',
       '/sidebar/bundle',
+      '/sidebar/icons',
       '/sidebar/file',
       '/sidebar/html',
     ])

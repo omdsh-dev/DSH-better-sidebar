@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { isAbsolutePath, relativeTo } from '../src/client/paths.ts'
+import { baseName, isAbsolutePath, relativeTo } from '../src/client/paths.ts'
 import { resolveSidebarPath } from '../src/client/produced-files.ts'
 import { htmlUrl } from '../src/client/api.ts'
 
 describe('path helpers', () => {
+  it('derives the last path segment for icon lookups (both separators, no trailing)', () => {
+    expect(baseName('/Users/me/code/src/main.ts')).toBe('main.ts')
+    expect(baseName('/Users/me/code/')).toBe('code')
+    expect(baseName('C:\\Users\\me\\src\\a.ts')).toBe('a.ts')
+    expect(baseName('C:\\Users\\me\\')).toBe('me')
+    expect(baseName('plain-name')).toBe('plain-name')
+    expect(baseName('a.ts')).toBe('a.ts')
+  })
   it('derives relative paths under the cwd (and "." for the cwd itself)', () => {
     expect(relativeTo('/Users/me/code', '/Users/me/code/src/main.ts')).toBe('src/main.ts')
     expect(relativeTo('/Users/me/code', '/Users/me/code')).toBe('.')

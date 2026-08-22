@@ -49,7 +49,8 @@ import { getShellPreset } from './shell-presets.ts'
 import { computeTitleBarStrip } from './titlebar-strip.ts'
 import type { NewTabOption } from './TabBar.tsx'
 import type { TabDragPayload } from './TabBar.tsx'
-import { relativeTo } from './paths.ts'
+import { relativeTo, baseName } from './paths.ts'
+import { ExplorerFileIcon } from './icons-theme.tsx'
 import { OrphanedTab } from './OrphanedTab.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { tabContentCompare, type TabContentMemoKey } from './tab-content-memo.ts'
@@ -1032,11 +1033,22 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    * ctx and the conversation input service at click time; a missing service
    * or scope degrades to a logged no-op, never a crash.
    */
-  /** The tab icon from the tab-type registry (shared by every workbench). */
+  /** The tab icon from the tab-type registry (shared by every workbench).
+   *  Editor tabs show the FILE's real icon-theme icon (VSCode-style:
+   *  `package.json` → the npm icon, `index.ts` → the TypeScript icon),
+   *  falling back to the registry's generic code glyph while/if the tab
+   *  carries no path. */
   const tabIconOf = (tab: SidebarTab): ReactNode => {
     const descriptor = ctx.betterSidebar?.getTab(tab.type)
-    if (descriptor === undefined) return null
-    return typeof descriptor.icon === 'function' ? descriptor.icon(14) : descriptor.icon
+    const fallback = descriptor === undefined ? null
+      : typeof descriptor.icon === 'function' ? descriptor.icon(14) : descriptor.icon
+    if (tab.type === 'editor') {
+      if (tab.path !== undefined && tab.path !== '') {
+        return <ExplorerFileIcon name={baseName(tab.path)} size={14} />
+      }
+      return fallback
+    }
+    return fallback
   }
 
   /**

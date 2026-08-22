@@ -14,6 +14,17 @@
  */
 
 /**
+ * The last path segment (platform-independent: '/' and '\' both split), with
+ * trailing separators trimmed ('/a/b/' → 'b'). Used for the explorer's root
+ * label and for deriving file icons (basename → icon-theme lookup).
+ */
+export function baseName(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, '')
+  const at = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  return at === -1 ? trimmed : trimmed.slice(at + 1)
+}
+
+/**
  * Mirror of the host's absolute-path notion (see fs-tree.requireAbsolute):
  * POSIX roots, Windows drive letters, and Windows UNC network shares in
  * both backslash (`\\server\share\...`) and forward-slash

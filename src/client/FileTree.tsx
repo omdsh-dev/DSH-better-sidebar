@@ -19,31 +19,35 @@
  * caller: every request is reported through `onUploadRequest(dir, items)`
  * (VSCode semantics — a drop on a file row targets its parent directory),
  * and `busy` gates new drags while one upload is in flight.
+ *
+ * File / folder rows render the VSCode-style icon theme (vscode-icons port,
+ * see src/client/icons-theme.tsx): the icon is derived from the entry's
+ * basename (exact filename / extension matching), folders switch between
+ * open / closed variants on expansion, light / dark variants follow the
+ * host color scheme, and the root row shows the root-folder glyph.
  */
 import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
-  IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
+  IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderOpen16,
   IconLinkOutline16, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
+import { ExplorerFileIcon, ExplorerFolderIcon } from './icons-theme.tsx'
 import { IconUploadOutline16 } from './icons.tsx'
-import { relativeTo } from './paths.ts'
+import { baseName, relativeTo } from './paths.ts'
 import { t } from './locales.ts'
 import { uploadItemsFromDrop, uploadItemsFromFiles, type UploadItem } from './upload.ts'
 import css from './sidebar.module.css'
 
+/** Root label / icon-key derivation (see paths.ts); re-exported for callers
+ *  that title tabs with the file's basename (EditorHost). */
+export { baseName }
+
 interface LevelData {
   entries?: FsEntry[]
   error?: string
-}
-
-/** Root label: the last path segment (mirror of the host rootLabel). */
-export function baseName(path: string): string {
-  const trimmed = path.replace(/[\\/]+$/, '')
-  const at = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
-  return at === -1 ? trimmed : trimmed.slice(at + 1)
 }
 
 /** The containing directory of an absolute row path (never the root edge here). */
@@ -346,7 +350,7 @@ export function FileTree(props: {
               onDrop={(event) => { handleDirDrop(event, entry.path) }}
               onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
             >
-              {isOpen ? <IconFolderOpen16 size={14} /> : <IconFolderClose16 size={14} />}
+              <ExplorerFolderIcon name={entry.name} open={isOpen} />
               <span className={css.explorerName}>{entry.name}</span>
               {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
               {rowActions(entry)}
@@ -377,7 +381,7 @@ export function FileTree(props: {
           onDrop={(event) => { handleFileDrop(event, entry.path) }}
           onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
         >
-          <IconCodeOutline16 size={14} />
+          <ExplorerFileIcon name={entry.name} />
           <span className={css.explorerName}>{entry.name}</span>
           {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
           {rowActions(entry)}
@@ -406,7 +410,7 @@ export function FileTree(props: {
             onDrop={(event) => { handleDirDrop(event, root) }}
             onContextMenu={(event) => { openRowMenu(event, root, true) }}
           >
-            <IconFolderOpen16 size={14} />
+            <ExplorerFolderIcon name={baseName(root)} open root />
             <span className={css.explorerName}>{baseName(root)}</span>
             {copiedPath === root
               ? <span className={css.explorerCopied}>{t('copied')}</span>
