@@ -167,7 +167,10 @@ describe('depsStatus', () => {
     writeFileSync(join(root, 'profiles', 'web', 'package.json'), JSON.stringify({ name: 'dsh-profile-web' }))
     writeFileSync(join(root, 'profiles', 'web', 'pnpm-workspace.yaml'), '')
     writeFileSync(join(pkgRoot, 'package.json'), JSON.stringify({ name: 'dsh-better-sidebar' }))
+    // Both installers exist in the real package; the repair command picks
+    // one by platform (install.ps1 on win32, install.sh elsewhere).
     writeFileSync(join(pkgRoot, 'scripts', 'install.sh'), '#!/usr/bin/env bash\n')
+    writeFileSync(join(pkgRoot, 'scripts', 'install.ps1'), '# powershell installer\n')
     moduleFile = join(pkgRoot, 'lib', 'index.js')
     writeFileSync(moduleFile, '')
     resetNodePtyCache()
@@ -188,8 +191,13 @@ describe('depsStatus', () => {
     expect(status.ok).toBe(false)
     if (status.ok) throw new Error('unreachable')
     expect(status.cause).toBe('Cannot find package node-pty')
-    const script = realpathSync(join(root, 'profiles', 'web', 'node_modules', '.pnpm', 'dsh-better-sidebar@0.0.0', 'node_modules', 'dsh-better-sidebar', 'scripts', 'install.sh'))
-    expect(status.command).toBe(`bash "${script}" --repair --profile "web"`)
+    // depsStatus() follows the REAL platform (no platform injection), so the
+    // expectation must follow it too: powershell on win32, bash elsewhere.
+    const script = realpathSync(join(root, 'profiles', 'web', 'node_modules', '.pnpm', 'dsh-better-sidebar@0.0.0', 'node_modules', 'dsh-better-sidebar', 'scripts', process.platform === 'win32' ? 'install.ps1' : 'install.sh'))
+    const expected = process.platform === 'win32'
+      ? `powershell -ExecutionPolicy Bypass -File "${script}" -Repair -Profile "web"`
+      : `bash "${script}" --repair --profile "web"`
+    expect(status.command).toBe(expected)
     expect(status.profile).toBe('web')
   })
 })

@@ -50,6 +50,67 @@ jobs:
       - name: Check consumer type surface
         run: pnpm check:consumer-types
 
+  # Windows regression lane: the search engine module's platform risks
+  # (path separators, CRLF, probe layout, unicode names) are win32-specific
+  # and invisible to the ubuntu lane. The FULL test suite is windows-green
+  # (verified on a real Windows 11 machine, 2026-08-22: 773 passed /
+  # 3 skipped over 75 files) — two platform-correctness fixes made that so:
+  # smoke.spec.ts pins core.autocrlf=false and pty-deps.spec.ts asserts per
+  # platform. Real engine binaries (choco) feed the byte-level output-shape
+  # assertion. New windows-risky features MUST add tests here (and keep the
+  # full suite green) — see docs/ci-windows.md.
+  search-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Tests run git log / cherry-pick against this repository and need
+          # the full history (same as the ci job).
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Real engine binaries for the integration assertions below; the
+      # engine probe inside search-engines.ts picks them up from PATH.
+      - name: Install fd / ripgrep (choco)
+        run: choco install fd ripgrep -y --no-progress
+
+      # The plugin's git revert/cherry-pick spawn git without setting an
+      # identity (deliberate, see tests/smoke.spec.ts) and rely on ambient
+      # config; the runner has none by default (same step as the ci job).
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.name "dsh-better-sidebar-ci"
+          git config --global user.email "ci@dsh.invalid"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Full suite under real win32 Node (the search-windows lane is the
+      # windows-cross-platform gate; the *.e2e.ts mount lane stays linux).
+      - name: Test (full suite on Windows)
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      # Byte-level engine output assertions on the REAL binaries: pinned
+      # (--path-separator /) output must contain no '\'/'CR', and unicode
+      # filenames must survive. Exit non-zero on any pinned failure.
+      - name: Engine output-shape assertions (real fd/rg)
+        run: node scripts/win-engine-check.cjs --assert
+
   # Pack the plugin as an npm tarball, mount it into a REAL DSH instance
   # through the official `dsh plugin --profile web add` channel, and render
   # the DSH web UI headlessly (Playwright Chromium) to prove the plugin

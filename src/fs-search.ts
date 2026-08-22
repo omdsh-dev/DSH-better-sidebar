@@ -11,9 +11,27 @@
  * the flat list) and `maxVisited` (a runaway tree — a home directory root,
  * a node_modules forest — must not stall the host). Exceeding either stops
  * early with `truncated: true`.
+ *
+ * `searchFiles` (the dispatch the fs.search route calls) first tries the
+ * probed native engines (fd / rg — see search-engines.ts); when
+ * none are available or all failed at runtime it falls back to this walk
+ * (exported as `searchFilesPlain` for tests).
  */
 import { opendir } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
+import { homedir } from 'node:os'
+import { runEngine, usableEngines } from './search-engines.ts'
+import { debugLog } from './search-debug.ts'
+
+/** Shorten an absolute search root for log lines: ~/ for the config home. */
+function relRoot(root: string): string {
+  const home = process.env.DSH_HOME !== undefined && process.env.DSH_HOME.trim() !== ''
+    ? process.env.DSH_HOME
+    : homedir()
+  if (root === home) return '~'
+  const boundary = home.endsWith(sep) ? home : home + sep
+  return root.startsWith(boundary) ? '~' + root.slice(home.length) : root
+}
 
 /** One search: the relative paths of the matching entries (dirs included so
  *  the client can hint where matches live) plus the truncation flag. */
@@ -43,7 +61,7 @@ const DEFAULT_MAX_VISITED = 100_000
  *  plus whether a budget cut the walk short. An unreadable level is skipped
  *  (permission errors never fail the whole search).
  */
-export async function searchFiles(root: string, query: string, opts: FsSearchOptions = {}): Promise<FsSearchResult> {
+export async function searchFilesPlain(root: string, query: string, opts: FsSearchOptions = {}): Promise<FsSearchResult> {
   const needle = query.trim().toLowerCase()
   if (needle === '') return { matches: [], truncated: false }
   const maxMatches = opts.maxMatches ?? DEFAULT_MAX_MATCHES
@@ -63,8 +81,10 @@ export async function searchFiles(root: string, query: string, opts: FsSearchOpt
         truncated = true
         return
       }
-      // .git is VCS-internal noise: never matched, never descended.
-      if (dirent.isDirectory() && dirent.name === '.git') continue
+      // .git is VCS-internal noise — directory or worktree pointer FILE,
+      // never matched, never descended (fd's --exclude .git and rg's
+      // '!**/.git' glob share this exact semantics).
+      if (dirent.name === '.git') continue
       if (dirent.name.toLowerCase().includes(needle)) {
         matches.push(join(relative(root, dir), dirent.name))
         if (matches.length >= maxMatches) {
@@ -83,4 +103,46 @@ export async function searchFiles(root: string, query: string, opts: FsSearchOpt
   await walk(root)
   // '/' separators on every platform: the client joins onto the cwd itself.
   return { matches: matches.sort().map(path => path.split(sep).join('/')), truncated }
+}
+
+/**
+ * The fs.search dispatch: native engines first (when verified and healthy),
+ * the plain walk as fallback. Engine output matches the walk contract:
+ * root-relative, '/'-separated, sorted; the engine's cap (maxMatches + 1)
+ * decides `truncated`. A query that matches nothing up front short-circuits
+ * before any engine or walk runs.
+ * @param signal - aborts the engine child; an aborted search skips the
+ *  fallback walk too (the client has already discarded the request).
+ */
+export async function searchFiles(
+  root: string,
+  query: string,
+  opts: FsSearchOptions = {},
+  signal?: AbortSignal,
+): Promise<FsSearchResult> {
+  const needle = query.trim()
+  if (needle === '') return { matches: [], truncated: false }
+  const maxMatches = opts.maxMatches ?? DEFAULT_MAX_MATCHES
+  const t0 = performance.now()
+  for (const probe of await usableEngines()) {
+    try {
+      const { paths, truncated } = await runEngine(probe, root, needle, maxMatches, signal)
+      const matches = paths.sort()
+      const elapsed = (performance.now() - t0).toFixed(0)
+      debugLog(`[dsh-search] engine=${probe.engine} bin=${probe.binary} root=${relRoot(root)} query="${needle}" hits=${matches.length} truncated=${truncated} ${elapsed}ms`)
+      return {
+        matches: truncated ? matches.slice(0, maxMatches) : matches,
+        truncated,
+      }
+    } catch {
+      // runEngine disabled the engine; try the next one (an aborted signal
+      // rethrows untouched, but matching nothing is just as good — the
+      // request is dead either way).
+      if (signal?.aborted) return { matches: [], truncated: false }
+    }
+  }
+  const result = await searchFilesPlain(root, query, opts)
+  const elapsed = (performance.now() - t0).toFixed(0)
+  debugLog(`[dsh-search] engine=plain root=${relRoot(root)} query="${needle}" hits=${result.matches.length} truncated=${result.truncated} ${elapsed}ms`)
+  return result
 }

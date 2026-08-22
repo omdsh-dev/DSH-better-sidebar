@@ -72,7 +72,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "rm -rf lib && tsc -p tsconfig.build.json && tsdown",
+    "build": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && tsdown",
     "prepublishOnly": "pnpm build",
     "typecheck": "tsc --noEmit",
     "bundle": "tsdown",
