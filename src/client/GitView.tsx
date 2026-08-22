@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
-  IconTrashOutline16, Input, Menu, Modal, writeClipboard,
+  IconSparkle16, IconTrashOutline16, Input, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GitLogEntry, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
 import { api } from './api.ts'
@@ -47,6 +47,13 @@ function isUnstagedEntry(entry: GitStatusEntry): boolean {
 /** Whether the entry is untracked (`??`): git diff never includes it. */
 function isUntracked(entry: GitStatusEntry): boolean {
   return badgeOf(entry) === '?'
+}
+
+/** Whether any entry represents a TRACKED change: `git diff` never contains
+ *  untracked (`??`) files, so they must not enable the ✨ AI-commit
+ *  generator — its click could only ever fail with "no changes to commit". */
+export function hasTrackedEntry(entries: readonly GitStatusEntry[]): boolean {
+  return entries.some(entry => !isUntracked(entry))
 }
 
 /** The last path segment (tab title for a file's diff). */
@@ -94,6 +101,8 @@ export function GitView(props: {
   const [commitMsg, setCommitMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
+  /** Whether the AI commit-message generation is in flight (the ✨ button). */
+  const [aiGenerating, setAiGenerating] = useState(false)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
@@ -201,6 +210,21 @@ export function GitView(props: {
     }
   }
 
+  /** Generate a commit message for the current changes (fills the box; never commits). */
+  const generateCommit = async (): Promise<void> => {
+    if (busy || aiGenerating) return
+    setAiGenerating(true)
+    setCommitError(null)
+    try {
+      const { message } = await api.gitCommitMessage(scope)
+      setCommitMsg(message)
+    } catch (reason) {
+      setCommitError(`${t('aiCommitError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+    } finally {
+      setAiGenerating(false)
+    }
+  }
+
   const checkout = async (branch: string): Promise<void> => {
     if (branch === status?.branch || busy) return
     setBusy(true)
@@ -250,6 +274,9 @@ export function GitView(props: {
 
   const stagedEntries = (status?.entries ?? []).filter(isStagedEntry)
   const unstagedEntries = (status?.entries ?? []).filter(isUnstagedEntry)
+  // The ✨ generator reads `git diff`, which untracked ('??') entries never
+  // appear in — a worktree with ONLY untracked files must not enable it.
+  const hasTrackedChanges = hasTrackedEntry(status?.entries ?? [])
 
   const renderEntry = (entry: GitStatusEntry, staged: boolean): ReactNode => {
     return (
@@ -345,6 +372,16 @@ export function GitView(props: {
                 if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
               }}
             />
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={aiGenerating ? t('aiCommitRunning') : t('aiCommit')}
+              title={aiGenerating ? t('aiCommitRunning') : t('aiCommit')}
+              disabled={busy || aiGenerating || !hasTrackedChanges}
+              onClick={() => { void generateCommit() }}
+            >
+              <IconSparkle16 size={14} />
+            </button>
             <button
               type="button"
               className={css.gitCommitButton}
