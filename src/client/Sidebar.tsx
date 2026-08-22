@@ -52,6 +52,7 @@ import type { TabDragPayload } from './TabBar.tsx'
 import { relativeTo } from './paths.ts'
 import { OrphanedTab } from './OrphanedTab.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
+import { tabContentCompare, type TabContentMemoKey } from './tab-content-memo.ts'
 import { detectNewDirectSubagent } from './subagent-detect.ts'
 import { detectNewJob } from './subagent-jobs.ts'
 import { t } from './locales.ts'
@@ -113,39 +114,26 @@ function injectUserCss(attr: string, id: string, cssText: string): HTMLStyleElem
   return tag
 }
 
-/** Props of one tab's content cell. The memo comparator (tabContentCompare)
- *  decides what a re-render must propagate; anything it ignores must be a
- *  stable object (ctx/store) or safe-stale (a callback whose captured
- *  dependencies are stable, or covered by a compared field like tab/session). */
-interface TabContentProps {
-  tab: SidebarTab
-  sessionId: string
-  cwd: string | undefined
-  expanded: string[]
+/** Props of one tab's content cell = the memo key (tab-content-memo.ts) plus
+ *  the runtime objects/callbacks the cell renders with. The memo comparator
+ *  is the pure `tabContentCompare`; anything in the key decides a re-render
+ *  must propagate, anything outside it must be a stable object (ctx/store)
+ *  or covered by a compared field (paneId covers onOpenDiff's captured
+ *  pane; sessionId/cwd cover onReferenceFile). */
+interface TabContentProps extends TabContentMemoKey {
   onToggleDir: (path: string) => void
   onReferenceFile: (path: string) => void
   ctx: Context
   store: SidebarStore
-  /** Whether this tab is the active one AND the panel is open (live views pause otherwise). */
-  visible: boolean
   /** Fired before a topology node jumps to its child session (see Sidebar). */
   onSubagentJump: (childSessionId: string) => void
   /** Open a diff tab from the git panel (placement handled by the store). */
   onOpenDiff: (tab: SidebarTab) => void
-  /** Locale revision: re-render (and re-run t()) whenever the DSH locale
-   *  switches — the "copy freshness" contract that used to force the whole
-   *  tree to render (there were no memo barriers below). */
-  localeRevision: string
-  /** Tab-registry revision: re-render when a plugin registers/disposes a
-   *  tab type so this cell picks up the (new) descriptor for its type. */
-  tabsVersion: number
 }
 
 /** Render the content of one tab (dispatched by type). */
 const TabContent = memo(function TabContent(props: TabContentProps) {
-  const { tab, sessionId, cwd, expanded, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff, localeRevision, tabsVersion } = props
-  void localeRevision
-  void tabsVersion
+  const { tab, sessionId, cwd, expanded, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff } = props
   const scope = { sessionId, cwd }
   const descriptor = ctx.betterSidebar?.getTab(tab.type)
   if (descriptor === undefined) {
@@ -167,28 +155,7 @@ const TabContent = memo(function TabContent(props: TabContentProps) {
       onToggleDir, onReferenceFile, onOpenDiff, onSubagentJump,
     }),
   )
-})
-
-/**
- * Which TabContent changes may skip a re-render. Compared: everything that
- * affects the rendered output. Ignored: ctx/store (stable singletons) and
- * the callbacks (their captured dependencies are either stable, or covered
- * by a compared field — e.g. onOpenDiff captures the tab's pane id, and a
- * tab that moves panes gets a NEW tab object identity, which IS compared).
- * IMPORTANT: when a new render-affecting prop is added to TabContent, it
- * must be added here too (or the cell shows stale content).
- */
-function tabContentCompare(prev: TabContentProps, next: TabContentProps): boolean {
-  return (
-    prev.tab === next.tab &&
-    prev.sessionId === next.sessionId &&
-    prev.cwd === next.cwd &&
-    prev.visible === next.visible &&
-    prev.expanded === next.expanded &&
-    prev.localeRevision === next.localeRevision &&
-    prev.tabsVersion === next.tabsVersion
-  )
-}
+}, tabContentCompare)
 
 /** The + menu options for the current state, driven by the tab registry.
  * Hidden tabs (editor/diff) never show; `available` returning false shows
@@ -1102,6 +1069,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   const renderTab = (tab: SidebarTab, active: boolean, paneId: string, bottom = false) => (
     <TabContent
       tab={tab}
+      paneId={paneId}
       sessionId={sessionId}
       cwd={cwd}
       expanded={state.expanded}
