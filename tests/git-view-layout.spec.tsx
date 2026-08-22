@@ -22,6 +22,11 @@ beforeAll(() => {
   Object.defineProperty(window.navigator, 'language', { value: 'en-US', configurable: true })
 })
 
+/** The hookable git api surface (the commit mock is asserted in the multi-line case). */
+const mocks = vi.hoisted(() => ({
+  gitCommit: vi.fn(async () => ({ ok: true as const })),
+}))
+
 vi.mock('../src/client/api.ts', () => ({
   api: {
     gitStatus: async () => ({
@@ -41,6 +46,7 @@ vi.mock('../src/client/api.ts', () => ({
       date: '2026-01-01 10:00:00 +0800',
       refs: 'HEAD -> main',
     }],
+    gitCommit: mocks.gitCommit,
   },
 }))
 
@@ -94,8 +100,8 @@ describe('GitView pinned header', () => {
     document.body.innerHTML = ''
   })
 
-  it('keeps the commit input and button in the header, outside the scrolling body', () => {
-    const input = harness.container.querySelector('input')
+  it('keeps the commit textarea and button in the header, outside the scrolling body', () => {
+    const input = harness.container.querySelector('textarea')
     expect(input).not.toBeNull()
     expect(input?.getAttribute('placeholder')).toContain('Commit message')
 
@@ -107,6 +113,27 @@ describe('GitView pinned header', () => {
     const body = scrollBody(harness.container)
     expect(body.contains(input)).toBe(false)
     expect(commitButton !== undefined && body.contains(commitButton)).toBe(false)
+  })
+
+  it('accepts multi-line commit messages and submits them verbatim with Ctrl+Enter', async () => {
+    const area = harness.container.querySelector('textarea')
+    expect(area).not.toBeNull()
+    // A React controlled textarea must be written through the native value
+    // setter, then announced with an input event (jsdom has no typing helper).
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+    const message = 'feat: subject\n\nbody line one\nbody line two'
+    act(() => { setter.call(area, message) })
+    act(() => { area!.dispatchEvent(new Event('input', { bubbles: true })) })
+
+    act(() => {
+      area!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+    })
+    await act(async () => {}) // flush the async commit round-trip
+
+    expect(mocks.gitCommit).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 's1' }),
+      message,
+    )
   })
 
   it('renders the branch select with the current branch and the other branches', () => {

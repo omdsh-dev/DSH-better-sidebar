@@ -2285,6 +2285,22 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .gitCommitInput {
   flex: 1;
   min-width: 0;
+  box-sizing: border-box;
+  /* Multi-line commit message: the box auto-grows with its content up to a
+     cap, then scrolls internally — the pinned header must never balloon.
+     `field-sizing` is Chromium 123+; unsupported engines fall back to the
+     fixed single line with the same scroll behavior. */
+  field-sizing: content;
+  max-height: 120px;
+  overflow-y: auto;
+  resize: none;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  line-height: 1.6;
+  padding: 4px 8px;
 }
 
 .gitCommitButton {

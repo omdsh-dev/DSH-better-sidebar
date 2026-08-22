@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
-  IconTrashOutline16, Input, Menu, Modal, writeClipboard,
+  IconTrashOutline16, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GitLogEntry, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
 import { api } from './api.ts'
@@ -305,7 +305,8 @@ export function GitView(props: {
 
       {status !== null && status.isRepo && (
         <div className={css.gitCommit}>
-          <Input
+          <textarea
+            rows={1}
             className={css.gitCommitInput}
             placeholder={t('commitPlaceholder')}
             value={commitMsg}
