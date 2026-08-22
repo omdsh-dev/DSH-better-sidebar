@@ -2,10 +2,12 @@
  * language mirrors the main conversation pane: right-aligned user bubbles
  * on --dsw-specific-bubble, full-width assistant markdown, a capsule
  * composer card on --dsw-specific-input-major with a circular accent
- * send/stop button, and shimmer reserved for the running status line and
- * executing tools. Motion is crossfade-only (≤200ms entrances, no
- * springs); reduced-motion disables every loop. All values consume DSW
- * tokens (fallbacks point at older alias tokens for rc-era hosts). */
+ * send/stop button. Tool calls, thinking and context injections share one
+ * collapsible-line chrome (no cards); shimmer is reserved for generating
+ * states (running status line, streaming rows, the creating hero). Motion
+ * is crossfade-only (≤200ms entrances, no springs); reduced-motion disables
+ * every loop. All values consume DSW tokens (fallbacks point at older alias
+ * tokens for rc-era hosts). */
 .sidechat {
   flex: 1;
   min-height: 0;
@@ -172,82 +174,99 @@
   overflow-wrap: anywhere;
 }
 
-.sidechatReasoning {
+/* ── collapsible context rows (tool / thinking / injection, Codex-style) ──
+ * One quiet line — chevron + label + one-line summary — that expands into
+ * an indented body hung on a hairline thread. No cards, no fills: hierarchy
+ * rides ink weight alone. Streaming rows shimmer the label (shimmer =
+ * generating); failed rows go danger; reduced-motion stills every loop. */
+.sidechatRow {
   align-self: stretch;
 }
 
-.sidechatReasoningSummary {
-  display: inline-block;
+.sidechatRowLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 0;
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-label-tertiary);
-  cursor: pointer;
-  list-style: none;
 }
 
-.sidechatReasoningSummary::-webkit-details-marker {
+.sidechatRowSummary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.sidechatRowSummary::-webkit-details-marker {
   display: none;
 }
 
-.sidechatReasoningBody {
-  margin-top: 2px;
-  padding-left: 2px;
+.sidechatRowSummary:hover {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.sidechatRowStatic {
+  cursor: default;
+}
+
+.sidechatRowChevron {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  transition: transform 100ms ease-out;
+}
+
+.sidechatRow[open] .sidechatRowChevron {
+  transform: rotate(90deg);
+}
+
+.sidechatRowLabel {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.sidechatRowMono {
+  font-family: var(--dsw-font-mono);
+}
+
+.sidechatRowMeta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--dsw-font-mono);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.sidechatRowFailed .sidechatRowLabel,
+.sidechatRowFailed .sidechatRowMeta {
+  color: var(--dsw-alias-danger);
+}
+
+.sidechatRowBody {
+  margin: 2px 0 4px 7px;
+  padding: 2px 0 2px 10px;
+  border-left: 1px solid var(--dsw-alias-hairline);
+}
+
+.sidechatRowProse {
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-label-tertiary);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow-y: auto;
 }
 
-.sidechatTool {
-  align-self: stretch;
-  border: 1px solid var(--dsw-alias-hairline);
-  border-radius: 10px;
-  background: var(--dsw-alias-bg-base);
-  overflow: hidden;
-}
-
-.sidechatToolSummary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-  list-style: none;
-}
-
-.sidechatToolSummary::-webkit-details-marker {
-  display: none;
-}
-
-.sidechatToolName {
-  font-family: var(--dsw-font-mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Running tool: a light sweep across the summary row (shimmer = generating). */
-.sidechatToolExecuting {
-  background-image: linear-gradient(
-    90deg,
-    transparent 0%,
-    var(--dsw-alias-interactive-bg-hover) 50%,
-    transparent 100%
-  );
-  background-size: 200% 100%;
-  animation: sidechatSweep 2.6s linear infinite;
-}
-
-.sidechatToolFailed {
-  color: var(--dsw-alias-danger);
-}
-
-.sidechatToolArgs,
-.sidechatToolResult {
+.sidechatRowCode {
   margin: 0;
-  padding: 6px 10px;
-  border-top: 1px solid var(--dsw-alias-hairline);
+  padding: 4px 0;
   font: var(--dsw-font-xxs-12);
   font-family: var(--dsw-font-mono);
   color: var(--dsw-alias-label-secondary);
@@ -255,6 +274,25 @@
   overflow-wrap: anywhere;
   max-height: 220px;
   overflow-y: auto;
+}
+
+.sidechatRowCode + .sidechatRowCode {
+  border-top: 1px solid var(--dsw-alias-hairline);
+}
+
+/* Shimmer sweep text: generating (streaming row labels, creating hero). */
+.sidechatShimmerText {
+  background-image: linear-gradient(
+    90deg,
+    var(--dsw-alias-label-tertiary) 0%,
+    var(--dsw-alias-label-primary) 50%,
+    var(--dsw-alias-label-tertiary) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: sidechatSweep 2.6s linear infinite;
 }
 
 /* ── running status line (above the composer, main-pane style) ──────── */
@@ -388,9 +426,12 @@
     animation: none;
   }
   .sidechatStatusText,
-  .sidechatToolExecuting {
+  .sidechatShimmerText {
     animation: none;
     background-image: none;
     color: var(--dsw-alias-label-tertiary);
+  }
+  .sidechatRowChevron {
+    transition: none;
   }
 }
