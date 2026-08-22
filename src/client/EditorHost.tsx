@@ -25,7 +25,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
-import { IconCheckOutline16, IconFolderOpen16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutline16, IconFolderOpen16, IconRefreshOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { api, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
@@ -97,6 +97,9 @@ export function EditorHost(props: {
   const path = tab.path ?? ''
   const title = tab.title
   const [load, setLoad] = useState<EditorLoad>({ status: 'loading' })
+  // Manual refresh (issue #167): bumping the sequence re-runs the load effect
+  // with the same path/scope — the only reload entry besides open/close.
+  const [reloadSeq, setReloadSeq] = useState(0)
 
   // Reactive prefs read: flipping editorExplorer re-renders this tab with no
   // reload. The snapshot is the bare boolean so unrelated store churn never
@@ -247,7 +250,20 @@ export function EditorHost(props: {
     }
     apply(planFirstMatch(ctx.betterSidebar?.matchFileViewer(path), mediaUrlOf))
     return () => { cancelled = true; controller.abort() }
-  }, [scope.sessionId, scope.cwd, path, ctx, showEmpty])
+  }, [scope.sessionId, scope.cwd, path, ctx, showEmpty, reloadSeq])
+
+  // Save-then-refresh in preview mode (issue #167 part C): the edge into
+  // 'saved' (never a lingering 'saved' state) triggers exactly one reload, so
+  // a preview-mode Ctrl+S shows the fresh content immediately. Edit mode is
+  // left alone — reloading would remount the editor and drop the caret.
+  const prevSaveState = useRef<EditorToolbarState['saveState'] | undefined>(undefined)
+  useEffect(() => {
+    const current = toolbar?.saveState
+    if (prevSaveState.current !== 'saved' && current === 'saved' && toolbar?.mode === 'preview') {
+      setReloadSeq(sequence => sequence + 1)
+    }
+    prevSaveState.current = current
+  }, [toolbar?.saveState, toolbar?.mode])
 
   const treeOpen = treeOpenOf(tab)
   /** Persist the panel flag on the tab (survives reloads with the layout). */
@@ -287,7 +303,16 @@ export function EditorHost(props: {
             <button
               type="button"
               className={clsx(css.editorModeButton, toolbar.mode === 'preview' && css.editorModeActive)}
-              onClick={() => { controlsRef.current?.setMode('preview') }}
+              onClick={() => {
+                // Issue #167 part B: returning from edit to preview reloads so
+                // the preview renders the just-saved content. A dirty draft
+                // (or a failed save) suppresses the reload — the draft only
+                // lives in the editor instance and a remount would drop it.
+                if (toolbar.mode === 'edit' && toolbar.dirty !== true && toolbar.saveState !== 'failed') {
+                  setReloadSeq(sequence => sequence + 1)
+                }
+                controlsRef.current?.setMode('preview')
+              }}
             >
               {t('preview')}
             </button>
@@ -314,6 +339,17 @@ export function EditorHost(props: {
         )}
         {saveLabel !== '' && (
           <span className={clsx(css.editorStatus, toolbar?.saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>
+        )}
+        {toolbar !== null && (
+          <button
+            type="button"
+            className={css.iconButton}
+            aria-label={t('refresh')}
+            title={t('refresh')}
+            onClick={() => { setReloadSeq(sequence => sequence + 1) }}
+          >
+            <IconRefreshOutline14 size={14} />
+          </button>
         )}
         <button
           type="button"
