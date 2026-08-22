@@ -37,6 +37,7 @@ import {
   buildSidechatInheritance,
   resolvePresetId,
   SIDE_BOUNDARY_PROMPT,
+  SIDE_INJECTION_PLUGIN,
   SIDE_NEW_THREAD_TITLE,
   sideLabel,
   type SeedEvent,
@@ -122,6 +123,26 @@ function textPrompt(text: string): ContentBlock[] {
 function admitFollowup(agent: Agent, blocks: ContentBlock[]): void {
   const message: UserMessage = createUserMessage({ content: blocks, source: { kind: 'user' } })
   agent.followup(message)
+}
+
+/**
+ * Deliver the thread's FIRST contact as TWO log-separated messages: the
+ * boundary prompt (+ the parked in-progress snapshot) rides `agent.inject`
+ * — queued model-facing context that does NOT wake the driver and is
+ * claimed FIRST at the opening step (Inbox.claim drains next-step before
+ * next-turn) — and the user's question is the follow-up that wakes it. The
+ * log therefore records two user/message events (injection, then question)
+ * instead of one wrapped blob: the transcript shows the question as a user
+ * bubble and collapses the injection as a context row. The injection source
+ * is stamped `kind: 'plugin'` so recognition is structural; its text still
+ * opens with SIDE_BOUNDARY_PREFIX, keeping boundaryDelivered intact.
+ */
+function admitFirstContact(agent: Agent, injectionText: string, question: string): void {
+  agent.inject(createUserMessage({
+    content: textPrompt(injectionText),
+    source: { kind: 'plugin', plugin: SIDE_INJECTION_PLUGIN },
+  }))
+  admitFollowup(agent, textPrompt(question))
 }
 
 /** The live thread agent, or undefined (cold — the caller resumes). */
@@ -217,8 +238,7 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
       } else {
         const promptParts = [SIDE_BOUNDARY_PROMPT]
         if (inheritance.snapshot !== null) promptParts.push(inheritance.snapshot)
-        promptParts.push(question)
-        admitFollowup(handle.agent, textPrompt(promptParts.join('\n\n')))
+        admitFirstContact(handle.agent, promptParts.join('\n\n'), question)
         pinTitle(sideLabel(question))
       }
       return { childId }
@@ -257,8 +277,7 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
         const snapshot = pendingSnapshots.get(childId)
         pendingSnapshots.delete(childId)
         if (snapshot !== undefined) parts.push(snapshot)
-        parts.push(text)
-        admitFollowup(agent, textPrompt(parts.join('\n\n')))
+        admitFirstContact(agent, parts.join('\n\n'), text)
         const titles = ctx.get('sessionTitle') as SidebarSessionTitleService | undefined
         if (titles !== undefined) {
           try {

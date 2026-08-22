@@ -35,6 +35,11 @@ export const LABEL_MAX_CHARS = 48
  *  the two plugins' threads render consistently in either UI). */
 export const SIDE_BOUNDARY_PREFIX = 'Side conversation boundary'
 
+/** The plugin identity stamped on the source of context-injection messages
+ *  (boundary prompt + parked snapshot), so the transcript recognizes them
+ *  structurally — not by text prefix. */
+export const SIDE_INJECTION_PLUGIN = 'dsh-better-sidebar'
+
 /**
  * The boundary prompt delivered as the thread's first user message: the
  * inherited seed is reference context only, never active instruction.
@@ -365,16 +370,35 @@ export function sideLabel(question: string): string {
 export function boundaryDelivered(events: readonly SidechatLogEvent[]): boolean {
   for (const event of events) {
     if (event.type !== 'user/message') continue
-    const content = dataOf(event).content
-    const first = Array.isArray(content) ? content[0] : content
-    const text = typeof first === 'string'
-      ? first
-      : (typeof first === 'object' && first !== null && 'text' in first
-        ? String((first as { text: unknown }).text)
-        : '')
-    if (text.startsWith(SIDE_BOUNDARY_PREFIX)) return true
+    if (messageLeadText(dataOf(event)).startsWith(SIDE_BOUNDARY_PREFIX)) return true
   }
   return false
+}
+
+/** The leading text of a user/message's content (block array or bare string). */
+function messageLeadText(data: Record<string, unknown>): string {
+  const content = data.content
+  const first = Array.isArray(content) ? content[0] : content
+  return typeof first === 'string'
+    ? first
+    : (typeof first === 'object' && first !== null && 'text' in first
+      ? String((first as { text: unknown }).text)
+      : '')
+}
+
+/**
+ * Whether a logged user/message is a CONTEXT INJECTION (the boundary prompt
+ * plus the parked in-progress snapshot) rather than a real user message.
+ * New threads deliver the injection via `agent.inject` stamped with a
+ * non-'user' source kind; threads created before that split carry
+ * boundary+question in ONE 'user' message, recognized by the boundary
+ * prefix. Both render as one collapsible injection row — never as a user
+ * bubble.
+ */
+export function isContextInjectionMessage(data: Record<string, unknown>): boolean {
+  const source = data.source as { kind?: unknown } | null | undefined
+  if (source?.kind !== undefined && source.kind !== 'user') return true
+  return messageLeadText(data).startsWith(SIDE_BOUNDARY_PREFIX)
 }
 
 /** The info the thread header shows (live runtime state + agent identity). */
