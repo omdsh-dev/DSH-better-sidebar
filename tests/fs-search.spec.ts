@@ -1,9 +1,10 @@
 /**
  * fs-search: the host's recursive file-name search behind the editor side
  * panel's search box. Matches are case-insensitive name substrings, reported
- * RELATIVE to the root ('/'-separated); `.git` directories are skipped,
- * symlinked directories are never descended (cycle safety), and the
- * maxMatches/maxVisited budgets stop a runaway walk with `truncated: true`.
+ * RELATIVE to the root ('/'-separated); noise directories (`.git`,
+ * `node_modules`, build caches) are skipped, symlinked directories are
+ * never descended (cycle safety), and the maxMatches/maxVisited budgets
+ * stop a runaway walk with `truncated: true`.
  */
 import { describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
@@ -81,6 +82,27 @@ describe('fs-search', () => {
       expect((await searchFiles(dir, 'readme')).matches).toEqual(['README.md'])
       expect((await searchFiles(dir, 'config')).matches).toEqual([])
       expect((await searchFiles(dir, '.git')).matches).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('never descends into node_modules or other noise directories', async () => {
+    const dir = makeFixture()
+    try {
+      mkdirSync(join(dir, 'node_modules', 'left-pad'), { recursive: true })
+      mkdirSync(join(dir, 'web', 'dist'), { recursive: true })
+      writeFileSync(join(dir, 'node_modules', 'left-pad', 'guide.md'), 'dep')
+      writeFileSync(join(dir, 'web', 'dist', 'bundle.js'), 'build')
+      writeFileSync(join(dir, 'web', 'app.ts'), 'src')
+      // A match hidden behind node_modules / dist must not appear; project
+      // files after those forests must still be reachable within budget.
+      expect((await searchFiles(dir, 'guide')).matches).toEqual(['docs/guide.md'])
+      expect((await searchFiles(dir, 'left-pad')).matches).toEqual([])
+      expect((await searchFiles(dir, 'bundle')).matches).toEqual([])
+      expect((await searchFiles(dir, 'app.ts')).matches).toEqual(['web/app.ts'])
+      expect((await searchFiles(dir, 'node_modules')).matches).toEqual([])
+      expect((await searchFiles(dir, 'dist')).matches).toEqual([])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
