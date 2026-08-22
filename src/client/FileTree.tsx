@@ -104,6 +104,8 @@ export function FileTree(props: {
   onOpenFileSide?: (path: string) => void
   /** Insert `@<relative path>` into the composer draft. */
   onReferenceFile: (path: string) => void
+  /** Resolve a registered viewer icon for a file path. */
+  fileIcon?: (path: string, size: number) => ReactNode
   /** Bump to wipe the level cache and reload the visible set. */
   refreshTick: number
   /** Upload into `dir` (absolute, inside the workspace); runs in the caller. */
@@ -111,7 +113,7 @@ export function FileTree(props: {
   /** True while an upload is in flight (drops are ignored). */
   busy: boolean
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, refreshTick, onUploadRequest, busy } = props
+  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, fileIcon, refreshTick, onUploadRequest, busy } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
@@ -365,7 +367,7 @@ export function FileTree(props: {
           onDrop={(event) => { handleFileDrop(event, entry.path) }}
           onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
         >
-          <IconCodeOutline16 size={14} />
+          {fileIcon?.(entry.path, 14) ?? <IconCodeOutline16 size={14} />}
           <span className={css.explorerName}>{entry.name}</span>
           {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
           {rowActions(entry)}

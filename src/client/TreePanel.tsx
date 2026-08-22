@@ -15,7 +15,7 @@
  * drop over the file window uploads here and never reaches DSH's chat
  * intake.
  */
-import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
+import { useEffect, useRef, useState, type InputHTMLAttributes, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { IconFolderOpen16, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
@@ -51,11 +51,13 @@ export function TreePanel(props: {
   /** File context-menu "open to the side" (passed through to FileTree). */
   onOpenFileSide?: (path: string) => void
   onReferenceFile: (path: string) => void
+  /** Resolve a registered viewer icon for a file path. */
+  fileIcon?: (path: string, size: number) => ReactNode
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, full } = props
+  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, fileIcon, full } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -218,6 +220,7 @@ export function TreePanel(props: {
           onOpenFileNewTab={onOpenFileNewTab}
           onOpenFileSide={onOpenFileSide}
           onReferenceFile={onReferenceFile}
+          fileIcon={fileIcon}
           refreshTick={refreshTick}
           onUploadRequest={startUpload}
           busy={busy}
@@ -237,6 +240,7 @@ export function TreePanel(props: {
               title={rel}
               onClick={() => { onOpenFile(resolveSidebarPath(cwd, rel)) }}
             >
+              {fileIcon?.(resolveSidebarPath(cwd, rel), 14)}
               {rel}
             </button>
           ))}

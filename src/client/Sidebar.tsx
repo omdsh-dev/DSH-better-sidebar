@@ -53,6 +53,7 @@ import { relativeTo } from './paths.ts'
 import { OrphanedTab } from './OrphanedTab.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { detectNewDirectSubagent } from './subagent-detect.ts'
+import { renderViewerIcon, viewerIconForPath } from './viewer-icon.ts'
 import { detectNewJob } from './subagent-jobs.ts'
 import { t } from './locales.ts'
 import { api, type SessionScope } from './api.ts'
@@ -964,11 +965,13 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    * ctx and the conversation input service at click time; a missing service
    * or scope degrades to a logged no-op, never a crash.
    */
-  /** The tab icon from the tab-type registry (shared by every workbench). */
+  /** File tabs use their matched viewer icon; other tabs use their type icon. */
   const tabIconOf = (tab: SidebarTab): ReactNode => {
-    const descriptor = ctx.betterSidebar?.getTab(tab.type)
-    if (descriptor === undefined) return null
-    return typeof descriptor.icon === 'function' ? descriptor.icon(14) : descriptor.icon
+    if (tab.type === 'editor' && tab.path !== undefined && tab.path !== '') {
+      const fileIcon = viewerIconForPath(ctx.betterSidebar, tab.path, 14)
+      if (fileIcon !== null) return fileIcon
+    }
+    return renderViewerIcon(ctx.betterSidebar?.getTab(tab.type)?.icon, 14)
   }
 
   /**

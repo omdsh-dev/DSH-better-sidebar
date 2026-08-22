@@ -371,7 +371,7 @@ interface FileViewerDescriptor {
   id: string
   /** 设置清单展示名（v0.4.1+，i18n 友好）；缺省回退到 id */
   title?: string | (() => string)
-  /** 设置清单图标（v0.4.1+）：ReactNode 或 (size: number) => ReactNode */
+  /** 设置清单、匹配的文件树行与编辑器 tab 图标：ReactNode 或 (size: number) => ReactNode */
   icon?: ReactNode | ((size: number) => ReactNode)
   /** 小写无点的扩展名数组：['png','jpg']。[] = catch-all（仅最低优先级有效） */
   exts: readonly string[]

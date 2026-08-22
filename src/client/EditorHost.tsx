@@ -38,6 +38,7 @@ import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
 import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, type SidebarStore, type SidebarTab } from './state.ts'
+import { viewerIconForPath } from './viewer-icon.ts'
 import css from './sidebar.module.css'
 
 type EditorLoad =
@@ -256,6 +257,7 @@ export function EditorHost(props: {
     : toolbar.saveState === 'saving' ? t('loading')
       : toolbar.saveState === 'saved' ? t('saved')
         : toolbar.saveState === 'failed' ? t('saveFailed') : ''
+  const fileIcon = (filePath: string, size: number) => viewerIconForPath(ctx.betterSidebar, filePath, size)
 
   // Split mode: the path-less window IS the standalone explorer — the tree
   // panel fills the whole tab (search + FileTree, full form), no editor
@@ -273,6 +275,7 @@ export function EditorHost(props: {
           onOpenFileNewTab={openFileNewTab}
           onOpenFileSide={openFileSide}
           onReferenceFile={onReferenceFile}
+          fileIcon={fileIcon}
         />
       </div>
     )
@@ -366,6 +369,7 @@ export function EditorHost(props: {
               onOpenFileNewTab={openFileNewTab}
               onOpenFileSide={openFileSide}
               onReferenceFile={onReferenceFile}
+              fileIcon={fileIcon}
             />
           </div>
         )}

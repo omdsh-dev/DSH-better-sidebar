@@ -298,7 +298,7 @@ export interface FileViewerDescriptor {
   id: string
   /** Display name for the settings inventory (falls back to `id` when absent). */
   title?: string | (() => string)
-  /** Icon shown in the settings inventory. */
+  /** Icon shown in settings and on matched file rows/editor tabs. */
   icon?: ReactNode | ((size: number) => ReactNode)
   /** Lowercase extensions without leading dot (`['png','jpg']`). `[]` = match any (catch-all). */
   exts: readonly string[]
