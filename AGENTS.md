@@ -606,7 +606,7 @@ interface OpenTabSeed {
 
 - **面板表面**：右/底面板背景 = `var(--dsw-alias-bg-layer-1)`（通用卡片表面）。**绝不消费 `--dsw-specific-sidebar-fill`**——那是宿主左侧导航列专属令牌，皮肤系统按左导航语义覆盖它（dsh-web-ui 皮肤把它做成半透明玻璃或主题色，Aqua 设成 `transparent`），面板消费它会失去填充或与标签令牌冲突。皮肤要整体换面板表面：覆写 `--dsw-alias-bg-layer-1` 即可（dsh-web-ui 10 款皮肤都已覆盖，无需任何额外工作）。
 - **终端/编辑器表面**：经 `effectiveTokenValue` 读取 `--dsw-alias-bg-base`——`transparent` 与 alpha < 0.9 的半透明玻璃值（dsh-web-ui 皮肤用 rgba 0.16–0.7）一律回退不透明底色，文字永不叠在皮肤背景画上滚动（issue #90）；≥ 0.9 的近不透明值（如皮肤作用域内 0.96 的瓷器玻璃）放行，皮肤仍能控制终端表面。
-- **根锚点**：宿主 div 带 `data-dsh-better-sidebar` 属性（append 到 `document.body`）。其内是**统一面板宿主层** `[data-dsh-panel-host]`（`position:fixed; inset:0; z-index:40; pointer-events:none`，v0.13.1+）：面板/开关簇在其内 **absolute** 定位（层 inset:0 即视口坐标），免疫桌面套壳中间层 transform 对 fixed 含块的劫持；页面级 transform（罕见）触发 `data-dsh-panel-host-degraded` 降级同步。皮肤若要做作用域覆盖（deep-whale 的做法），限定在 `[data-dsh-better-sidebar]` 内即可，避免全局改写影响宿主。
+- **根锚点**：宿主 div 带 `data-dsh-better-sidebar` 属性（append 到 `document.body`）。其内是**统一面板宿主层** `[data-dsh-panel-host]`（`position:fixed; inset:0; z-index:25; pointer-events:none`，v0.13.1+）：面板/开关簇在其内 **absolute** 定位（层 inset:0 即视口坐标），免疫桌面套壳中间层 transform 对 fixed 含块的劫持；页面级 transform（罕见）触发 `data-dsh-panel-host-degraded` 降级同步。皮肤若要做作用域覆盖（deep-whale 的做法），限定在 `[data-dsh-better-sidebar]` 内即可，避免全局改写影响宿主。
 - **布局变量**（写在 `<html>` 上，面板打开时有效）：`--dsh-sidebar-width` / `--dsh-sidebar-height`（面板几何；拖拽期间逐帧更新）。宿主推挤 = `#root` 的 `margin-right/width: calc(100% - var)`（v0.13.1+ 防桌面壳加性溢出）与 centerCol 的 `margin-bottom`；推挤锚点是**复合选择器**（同一元素双保险，禁止退回 `nth-child` 位置锚定）：`#root [data-dsh-frame] > [data-pane="conversation"]` **与** `#root :has(> [data-slot="conversation"])`（0.1.x 命名 / rc.8 时代命名，live 页面实测同元素；`drag-layout.e2e.ts` 断言两者同元素）。
 - **桌面信号与标题栏兼容**（v0.14.1+ 四选项模型，取代旧"win32 advanced 自动 32px"硬编码）：
   - 壳信号（只读报告，不自动触发任何修改）：URL `dsh-desktop-mode` / `dsh-desktop-platform`（DSH Desktop 壳注入；preload 另暴露 `__DSH_DESKTOP_FILE_PATH__`）；可选契约参数 `dsh-desktop-titlebar-inset`（壳声明自己预留的顶栏像素，0–120，clamp；`parseDesktopEnv().titlebarInset`）。
@@ -616,7 +616,7 @@ interface OpenTabSeed {
   - **用户空间 CSS**：预设 css（`<style data-dsh-preset-css>`）与自定义 css（`<style data-dsh-custom-css>`）经 `Sidebar.tsx` effect 注入到 `document.head` 末尾（后写胜出；覆盖 JS 内联变量需 `!important`），fiber 卸载/变更即移除。稳定寻址面（皮肤/预设/自定义 CSS 共用）：`[data-dsh-toggle-cluster]`、`[data-dsh-panel]`（右面板）、`[data-dsh-bottom-panel]`（底面板）。
   - **拖拽区退出**：插件交互 chrome（`.toggleCluster` / `.toggleButton` / `.tabBar`）统一 `-webkit-app-region: no-drag`——无边框壳的顶部拖拽带会吞点击（#103/#111），该属性在普通浏览器与无拖拽区壳中惰性无害。
   - `compatibility` 模式与无信号环境不避让。
-- **z-index**：面板宿主层 40、折叠按钮簇 45（角手柄在面板内层叠，z-index 2 仅面板内有效）——全部低于 DSH 浮层栈（100/1000+），任何浮层天然盖住侧边栏。
+- **z-index**：面板宿主层 25、折叠按钮簇 45（host 内部层叠；角手柄在面板内层叠，z-index 2 仅面板内有效）——全部低于 DSH 的 ui-cordis 动态插件面板（fixed，30，其清单/审批面不得被工作台遮挡）与 DSH 浮层栈（100/1000+），任何浮层天然盖住侧边栏。
 
 ### 8.2 注意事项
 

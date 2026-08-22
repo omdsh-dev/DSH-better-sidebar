@@ -143,6 +143,15 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // The unified panel host: the fixed containing block every panel lives in
   // (data-dsh-panel-host). Its presence is part of the injection contract.
   await expect(page.locator('[data-dsh-panel-host]')).toBeAttached({ timeout: 90_000 })
+  // The host's global z-index is part of the layering contract: it must
+  // sit above the AppFrame overlay layer (20) and below DSH's ui-cordis
+  // dynamic-plugin panel (fixed, 30) so that surface is never hidden behind
+  // the workbench, and below the DSH float stack (100+).
+  const hostZ = await page.locator('[data-dsh-panel-host]').evaluate(
+    (el) => Number.parseFloat(getComputedStyle(el).zIndex),
+  )
+  expect(hostZ).toBeGreaterThan(20)
+  expect(hostZ).toBeLessThan(30)
 
   // A keyless boot stacks onboarding takeovers that mask the whole shell: a
   // versioned welcome notice ("Continue", persists its acknowledgement to

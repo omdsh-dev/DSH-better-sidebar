@@ -24,15 +24,18 @@
    containing block for every panel element. Panels are ABSOLUTE within it
    (not fixed), so a desktop shell's intermediate wrapper transform can
    never hijack their containing block — the host itself is the only fixed
-   element, appended directly to document.body. The layer sits at z-index 40
-   (below the app's overlay stack at 100+); each panel re-enables pointer
+   element, appended directly to document.body. The layer sits at z-index 25:
+   above the app's shell overlay (AppFrame overlayLayer, 20) and in-flow
+   content, below DSH's ui-cordis dynamic-plugin panel (fixed, 30 — the
+   inventory/surfacing surface must never be hidden behind the workbench),
+   and below the app's overlay stack at 100+; each panel re-enables pointer
    events on itself. Degraded mode ([data-dsh-panel-host-degraded]) covers
    the rare shell that transforms <html>/<body> itself: the host becomes
    absolute and the mount self-check pins it to the viewport every frame. */
 :global([data-dsh-panel-host]) {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: 25;
   pointer-events: none;
 }
 
@@ -46,11 +49,13 @@
    controls side by side (bottom panel's glyph LEFT of the right panel's).
    Always pinned to the viewport corner — inside the right panel's top-right
    while it is open, sitting flush in the 34px tab strip (28px buttons at
-   top: 3) whose right end it really squeezes. z-index 45: above the panels
-   (40) but below the app's overlay stack (menus/tooltips/modals sit at
-   100+), so a cordis approval popup is never hidden behind the workbench
-   (issue #52). Absolute within the panel host (the host's inset: 0 makes
-   viewport coordinates identical). */
+   top: 3) whose right end it really squeezes. Host-internal z-index 45
+   (above the panels' 40); the host's global layer is z-index 25, so the
+   whole cluster stays below DSH's ui-cordis dynamic-plugin panel (30) and
+   the app's overlay stack (menus/tooltips/modals sit at 100+), so a cordis
+   approval popup is never hidden behind the workbench (issue #52). Absolute
+   within the panel host (the host's inset: 0 makes viewport coordinates
+   identical). */
 .toggleCluster {
   position: absolute;
   /* env() resolves to 0 on devices without a top inset (desktops). */
@@ -108,10 +113,14 @@
   /* Full height: the bottom panel squeezes only the center column, so the
      right panel never gives up any vertical position. */
   bottom: 0;
-  /* z-index 40: above the app's in-flow content, below the app's overlay
-     stack (100+), so menus/tooltips/modals always win over the panels
-     (issue #52). The toggle cluster (45) sits above it; the corner handle
-     is a child and stacks within the panel. */
+  /* Host-internal z-index 40 (sibling of the bottom panel's 40; the two
+     never overlap — the bottom panel's right edge is this panel's left
+     edge — and both sit below the toggle cluster's 45). The absolute
+     global layer comes from the host ([data-dsh-panel-host], 25) — the
+     whole stack stays above the app's in-flow content and below DSH's
+     ui-cordis dynamic-plugin panel (30) and the app's overlay stack (100+),
+     so menus/tooltips/modals always win over the panels (issue #52). The
+     corner handle is a child and stacks within the panel. */
   z-index: 40;
   display: flex;
   flex-direction: column;
@@ -178,9 +187,11 @@
    column only (the Sidebar shell writes left/right inline: from the app's
    own left sidebar to the right panel's left edge) — the sidebars never
    give up any position. Same surface as the right panel, with a top
-   hairline instead of the left one. z-index 40 mirrors the right panel
-   (issue #52: below the app's overlay stack so popups win over the
-   workbench). */
+   hairline instead of the left one. Host-internal z-index 40 mirrors the
+   right panel; the absolute global layer comes from the host (25), below
+   DSH's ui-cordis dynamic-plugin panel (30) so the cordis inventory
+   surface floats above the workbench, and below the app's overlay stack
+   (100+) so popups win over the workbench (issue #52). */
 .bottomPanel {
   position: absolute;
   bottom: 0;
