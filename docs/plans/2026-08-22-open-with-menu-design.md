@@ -15,7 +15,7 @@
 
 - DSH checkout（`~/.dsh/source/current`）无"文件树 open-with"、无 SSH 远程会话、无 `vscode://` 开启器；`host.openPath` 只能"默认应用打开"，无法指定编辑器、无 reveal/select 语义 → 需要新增。
 - dsh-external hub 无同类成品；`dsh-open-in-vscode` 是工作区行菜单、依赖外部 slot，不适用。
-- primitives `Menu` 原生支持 `submenu?: readonly MenuItem[]`（子项点击走 `onSelect(child.id)`），`label: ReactNode` 可内嵌图钉；无现成图钉图标 → 新增 `IconPinOutline16`。
+- primitives `Menu` 原生支持 `submenu?: readonly MenuItem[]`（子项点击走 `onSelect(child.id)`），`label: ReactNode` 可内嵌图钉；无现成图钉/品牌图标 → 引入 `react-icons`（`vsc` codicons 图钉 `VscPin`/`VscPinned` 与文件树 `VscFile`/`VscFolder(Opened)`、`si` 品牌剪影 Cursor/Zed、菜单父行 `VscLinkExternal`），VS Code 品牌剪影因 simple-icons 后期版本受微软商标政策下架而内嵌自 simple-icons@11.0.0（CC0，`IconVscode16`）；菜单行图标统一 16px 与 DSH 原生菜单一致，子菜单父行的 `>` chevron 由 label 内右对齐元素提供（基元不渲染）。⚠️ react-icons 的 exports 把 `require` 排在 `import` 前，tsdown 共享 conditionNames 会选中不可树摇的 CJS 入口（bundle +6.4MB）——`tsdown.config.ts` 用 `resolve.alias` 钉死 `si`/`vsc` 的 ESM 入口，树摇后仅 +12KB。
 
 ## 数据模型
 

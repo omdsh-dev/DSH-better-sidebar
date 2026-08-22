@@ -2497,22 +2497,32 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   }
 }
 
-/* The file tree "open with" menu rows: the label area fills the row so the
-   pushpin docks at its far right (the primitives Menu row is flex). */
+/* The file tree "open with" menu rows: the label area is a BLOCK-level flex
+   row that fills the primitives `.itemLabel` span (which is itself `flex: 1`
+   inside the row), so the trailing control — the pushpin on submenu rows,
+   the chevron on the submenu parent — docks at the row's far right, exactly
+   like the trailing check on selected rows of every other menu. */
 .openWithLabel {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex: 1 1 auto;
+  gap: 8px;
+  width: 100%;
   min-width: 0;
 }
 
 .openWithName {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The trailing "expands into a submenu" chevron on the open-with parent row
+   (the primitives Menu renders no arrow for submenu parents). */
+.openWithChevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
 }
 
 /* The pushpin toggle on an "open with" submenu row: brand ink once the

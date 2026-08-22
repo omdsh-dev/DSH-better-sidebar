@@ -117,6 +117,11 @@ describe('FileTree open-with menu', () => {
     expect(items.map(item => item.textContent?.trim())).toContain('VS Code')
     const parent = items.find(item => item.getAttribute('aria-haspopup') === 'menu')
     expect(parent?.textContent).toContain('Open with')
+    // The submenu parent carries the trailing chevron affordance (the
+    // primitives Menu renders no arrow of its own), right-aligned inside a
+    // full-width label row — the same structure the submenu children use.
+    expect(parent?.querySelector('[class*="openWithChevron"]')).not.toBeNull()
+    expect(parent?.querySelector('[class*="openWithLabel"]')).not.toBeNull()
   })
 
   it('opens the submenu on click and lists every target with pin toggles', async () => {
@@ -132,6 +137,11 @@ describe('FileTree open-with menu', () => {
       'File Manager', 'VS Code', 'Cursor', 'Zed', 'Windsurf',
     ])
     expect(children.every(item => item.querySelector('[class*="openWithPin"]') !== null)).toBe(true)
+    // Pinned state is announced per row (and swaps the pushpin glyph).
+    const vscodeRow = children.find(item => item.textContent?.trim() === 'VS Code')
+    const cursorRow0 = children.find(item => item.textContent?.trim() === 'Cursor')
+    expect(vscodeRow?.querySelector('[aria-label="Unpin"]')).not.toBeNull()
+    expect(cursorRow0?.querySelector('[aria-label="Pin to menu"]')).not.toBeNull()
   })
 
   it('pin click toggles without selecting the row or closing the menu', async () => {
