@@ -22,6 +22,7 @@ import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/v
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, htmlUrl } from './api.ts'
+import { rewriteLocalImageUrls } from './markdown-images.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
@@ -252,6 +253,13 @@ export function TextEditor(props: FileViewerProps) {
   const html = viewerId === 'html'
   /** The markdown source the preview renders (draft wins over saved content). */
   const mdText = draft ?? content ?? ''
+  /** The preview source: `mdText` with local image destinations rewritten to
+   *  absolute media URLs (see {@link rewriteLocalImageUrls}); the raw
+   *  `mdText` stays untouched for selection/line lookup and for mermaid-block
+   *  detection, which are unaffected by image syntax. */
+  const previewText = markdown
+    ? rewriteLocalImageUrls(mdText, scope, path, window.location.origin)
+    : mdText
   /** md/mermaid block split for the preview (mermaid fences lift out). Split
    *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
   const mdBlocks = useMemo(
@@ -392,8 +400,8 @@ export function TextEditor(props: FileViewerProps) {
               parse; cross-fence references/footnotes stay intact); files
               without one render exactly as before. */}
           {hasMermaid
-            ? <LazyMermaidMarkdown text={mdText} codeLabels={codeLabels} />
-            : <MarkdownText text={mdText} codeLabels={codeLabels} />}
+            ? <LazyMermaidMarkdown text={previewText} codeLabels={codeLabels} />
+            : <MarkdownText text={previewText} codeLabels={codeLabels} />}
         </div>
       )}
       {html && mode === 'preview' && (
