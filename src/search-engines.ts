@@ -156,10 +156,18 @@ function verify(binary: string): Promise<boolean> {
   })
 }
 
-/** Escape glob metacharacters so a query matches literally inside -g. */
+/** Escape glob metacharacters so a query matches literally inside -g.
+ *  Braces are metacharacters too ({a,b} alternation): an unbalanced '{'
+ *  makes rg fail to parse the glob (exit 2 → the engine looks broken), and
+ *  a balanced one silently matches a DIFFERENT literal ('a{b}' searches
+ *  'ab'). Verified against rg 15: '\{' is a valid brace escape. */
 export function escapeGlob(query: string): string {
-  return query.replace(/[\[\]*?\\]/g, '\\$&')
+  return query.replace(/[\[\]{}*?\\]/g, '\\$&')
 }
+
+/** A timeout means the tree is too big, not that the binary is broken —
+ *  it must not disable the engine for every other search root. */
+export class EngineTimeoutError extends Error {}
 
 /** Stream a child's stdout line-by-line, capped at `max` lines (the child is
  *  killed past the cap so a huge result set never buffers into memory). */
@@ -191,7 +199,7 @@ function streamLines(
       return
     }
     signal?.addEventListener('abort', onAbort, { once: true })
-    const timer = setTimeout(() => { finish(new Error('search engine timed out')) }, ENGINE_TIMEOUT_MS)
+    const timer = setTimeout(() => { finish(new EngineTimeoutError('search engine timed out')) }, ENGINE_TIMEOUT_MS)
     child.once('error', (error) => { finish(error) })
     child.once('exit', (code) => {
       if (truncated) {
@@ -259,10 +267,16 @@ export function fdArgv(cap: number, query: string): string[] {
 /** The rg argv: --files listing filtered by a case-insensitive literal-name
  *  glob, '/' separators pinned (rg emits '\' in cmd/PowerShell on Windows,
  *  '/' in Git Bash — rg#501; the flag exists since rg 0.8, a build without
- *  it fails at spawn and is disabled at runtime). */
+ *  it fails at spawn and is disabled at runtime). The second --glob also
+ *  excludes an entry NAMED '.git' itself: a git worktree has a `.git`
+ *  FILE (not a directory) at its root, and the directory-exclusion glob
+ *  requires a path segment AFTER .git so it does not cover the pointer
+ *  file (verified against real rg) — fd's --exclude .git and the plain
+ *  walk both skip it. */
 export function rgArgv(query: string): string[] {
   return [
-    '--files', '--hidden', '--no-ignore', '--glob', '!**/.git/**',
+    '--files', '--hidden', '--no-ignore',
+    '--glob', '!**/.git/**', '--glob', '!**/.git',
     '--iglob', `*${escapeGlob(query)}*`, '--path-separator', '/', '.',
   ]
 }
@@ -338,8 +352,11 @@ export function probeEngines(): Promise<readonly EngineProbe[]> {
 
 /** Run one engine and get capped, normalized matches; a runtime failure
  *  disables that engine for the rest of the process (a broken binary must
- *  not slow every later search). An aborted signal rethrows untouched so
- *  the caller skips the fallback walk too. */
+ *  not slow every later search) — but a TIMEOUT does not: a timeout means
+ *  THIS tree was too big, while the broken-set is per-engine, so disabling
+ *  here would strip every other (small) root of the engine over one huge
+ *  directory. An aborted signal rethrows untouched so the caller skips the
+ *  fallback walk too. */
 export async function runEngine(
   probe: EngineProbe,
   root: string,
@@ -351,7 +368,9 @@ export async function runEngine(
   try {
     result = await runner(probe, root, query, maxMatches, signal)
   } catch (error) {
-    if (!signal?.aborted) {
+    if (error instanceof EngineTimeoutError && !signal?.aborted) {
+      debugLog(`[dsh-search] engine ${probe.engine} timed out (tree too large), falling back`)
+    } else if (!signal?.aborted) {
       broken.add(probe.engine)
       debugLog(`[dsh-search] engine ${probe.engine} failed at runtime, disabled: ${error instanceof Error ? error.message : String(error)}`)
     }

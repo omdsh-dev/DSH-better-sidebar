@@ -108,8 +108,11 @@ export async function searchFilesPlain(root: string, query: string, opts: FsSear
         truncated = true
         return
       }
-      // Dependency / VCS / build-output forests: never matched, never descended.
-      if (dirent.isDirectory() && SEARCH_SKIP_DIRS.has(dirent.name.toLowerCase())) continue
+      // Dependency / VCS / build-output forests: never matched, never
+      // descended. A worktree-style `.git` FILE (pointer to the real
+      // gitdir) is VCS noise too — the name check covers both shapes,
+      // parity with fd's --exclude and rg's '!**/.git' glob.
+      if (SEARCH_SKIP_DIRS.has(dirent.name.toLowerCase())) continue
       if (dirent.name.toLowerCase().includes(needle)) {
         matches.push(join(relative(root, dir), dirent.name))
         if (matches.length >= maxMatches) {

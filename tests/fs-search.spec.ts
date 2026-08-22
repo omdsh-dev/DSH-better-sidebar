@@ -99,12 +99,28 @@ describe('fs-search', () => {
       writeFileSync(join(dir, 'web', 'app.ts'), 'src')
       // A match hidden behind node_modules / dist must not appear; project
       // files after those forests must still be reachable within budget.
-      expect((await searchFiles(dir, 'guide')).matches).toEqual(['docs/guide.md'])
-      expect((await searchFiles(dir, 'left-pad')).matches).toEqual([])
-      expect((await searchFiles(dir, 'bundle')).matches).toEqual([])
-      expect((await searchFiles(dir, 'app.ts')).matches).toEqual(['web/app.ts'])
-      expect((await searchFiles(dir, 'node_modules')).matches).toEqual([])
-      expect((await searchFiles(dir, 'dist')).matches).toEqual([])
+      expect((await searchFilesPlain(dir, 'guide')).matches).toEqual(['docs/guide.md'])
+      expect((await searchFilesPlain(dir, 'left-pad')).matches).toEqual([])
+      expect((await searchFilesPlain(dir, 'bundle')).matches).toEqual([])
+      expect((await searchFilesPlain(dir, 'app.ts')).matches).toEqual(['web/app.ts'])
+      expect((await searchFilesPlain(dir, 'node_modules')).matches).toEqual([])
+      expect((await searchFilesPlain(dir, 'dist')).matches).toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // A git worktree carries a `.git` FILE (a pointer to the real gitdir),
+  // not a directory. It is VCS-internal noise exactly like the .git
+  // directory and must never surface as a match — parity with fd's
+  // --exclude .git and rg's '!**/.git' glob.
+  it('never matches a worktree-style .git file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-search-'))
+    try {
+      writeFileSync(join(dir, '.git'), 'gitdir: /elsewhere/.git/worktrees/wt')
+      writeFileSync(join(dir, 'util.ts'), 'code')
+      expect(await searchFilesPlain(dir, '.git')).toEqual({ matches: [], truncated: false })
+      expect((await searchFilesPlain(dir, 'util')).matches).toEqual(['util.ts'])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

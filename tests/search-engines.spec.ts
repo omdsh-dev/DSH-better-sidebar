@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { join, sep } from 'node:path'
 import {
   bundledRgCandidates,
+  EngineTimeoutError,
   escapeGlob,
   fdArgv,
   normalizeEnginePaths,
@@ -72,6 +73,16 @@ describe('escapeGlob', () => {
   it('escapes glob metacharacters for rg -g literal matching', () => {
     expect(escapeGlob('a*b?c[d]')).toBe('a\\*b\\?c\\[d\\]')
   })
+
+  // '{' is globset alternation syntax: unbalanced it breaks the glob parse
+  // (rg exits 2 → the engine looks broken and gets disabled process-wide),
+  // balanced 'a{b}' silently searches 'ab' instead of the literal. Both
+  // verified against real rg 15; '\{' is the accepted escape.
+  it('escapes braces so alternation syntax cannot hijack a literal query', () => {
+    expect(escapeGlob('a{b}')).toBe('a\\{b\\}')
+    expect(escapeGlob('{')).toBe('\\{')
+    expect(escapeGlob('util{bar')).toBe('util\\{bar')
+  })
 })
 
 describe('engine argv symmetry', () => {
@@ -102,6 +113,19 @@ describe('engine argv symmetry', () => {
     expect(argv).toContain('--path-separator')
     expect(argv).toContain('*a\\*b*')
     expect(argv[argv.length - 1]).toBe('.')
+  })
+
+  // A git worktree has a `.git` FILE at its root: '!**/.git/**' needs a
+  // path segment AFTER .git, so the pointer file itself leaks through
+  // (verified against real rg). fd's --exclude .git covers both shapes;
+  // rg needs the second entry-only glob for parity.
+  it('rg argv excludes .git directories AND a bare worktree .git file', () => {
+    const argv = rgArgv('util')
+    const globs: (string | undefined)[] = []
+    for (let index = 0; index < argv.length; index += 1) {
+      if (argv[index] === '--glob') globs.push(argv[index + 1])
+    }
+    expect(globs).toEqual(['!**/.git/**', '!**/.git'])
   })
 })
 
@@ -207,6 +231,20 @@ describe('probe cache and broken-disable', () => {
     const controller = new AbortController()
     controller.abort()
     await runEngine(fdProbe, '/w', 'x', 10, controller.signal).catch(() => {
+      /* expected failure */
+    })
+    expect((await usableEngines()).map(probe => probe.engine)).toEqual(['fd'])
+  })
+
+  // A timeout means THIS tree was too big — the broken-set is per-engine,
+  // so disabling here would strip every other root of the engine over one
+  // huge directory. The engine must stay usable after a timeout.
+  it('a timed-out run does not disable the engine', async () => {
+    setEngineHooks({ prober: async () => [fdProbe] })
+    setEngineHooks({
+      runner: async () => { throw new EngineTimeoutError('search engine timed out') },
+    })
+    await runEngine(fdProbe, '/huge-tree', 'x', 10, undefined).catch(() => {
       /* expected failure */
     })
     expect((await usableEngines()).map(probe => probe.engine)).toEqual(['fd'])
