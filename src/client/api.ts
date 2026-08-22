@@ -185,6 +185,10 @@ export const api = {
     call<{ matches: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query }), signal),
   fsRead: (scope: SessionScope, path: string, signal?: AbortSignal) =>
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
+  /** Existence probe (stat) for one absolute path; `exists: false` when the
+   *  file is missing or unreadable. */
+  fsStat: (scope: SessionScope, path: string, signal?: AbortSignal) =>
+    call<{ exists: boolean; isDir: boolean; path: string }>('fs.stat', scopePayload(scope, { path }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
   /** Upload one file's raw bytes into `dir` (keeps the folder tree via

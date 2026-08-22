@@ -268,6 +268,19 @@ function buildApi(
       if (binary) return { kind: 'binary', size, truncated, head }
       return { kind: 'text', content, truncated }
     },
+    'fs.stat': async (payload) => {
+      // Existence probe for the file-link integration: the client resolves the
+      // reference to an absolute candidate first, then verifies it here before
+      // opening. Never throws for a missing file — the caller treats
+      // `exists: false` as "not a real path, leave it un-clickable".
+      const path = requireAbsolute(requireString(payload, 'path'))
+      try {
+        const info = await stat(path)
+        return { exists: true, isDir: info.isDirectory(), path }
+      } catch {
+        return { exists: false, isDir: false, path }
+      }
+    },
     'fs.write': async (payload) => {
       const { cwd } = cwdOf(payload)
       const path = requireAbsolute(requireString(payload, 'path'))
