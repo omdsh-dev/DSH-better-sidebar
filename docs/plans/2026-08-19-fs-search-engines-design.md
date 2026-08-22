@@ -84,6 +84,12 @@
   - 开启后:进程首搜 1 行 `engines probed: rg(<捆绑路径>)`(fd 缺失静默剔除,不报错);每搜索 1 行 `engine=rg bin=<捆绑 rg> root=~… query=… hits=… truncated=… ms`(root 以 `~` 缩写)
   - `~/workspace`(9 万文件量级)实测 15~500ms:常见词毫秒级;罕见词(如 `.dsh` 仅 1 命中)全量遍历 ~478ms 且**结果完整不截断**——正是 issue #203 要的行为(`query="."` 则 hits=202 `truncated=true`,200 上限截断生效)
   - `query="*"` → 0 命中(glob 元字符转义生效,字面量语义);真机复跑同款 rg 命令确认输出无任何 `.git/` 目录内部路径
+   - **Windows 真机验收(2026-08-22,Windows 11 + npm 全局 DSH 0.1.1-rc.2 + scoop fd/rg)**:
+     - 输出格式字节级:`rg` 默认输出 `\` 分隔 + `.\` 前缀(commenter 担忧的坑实锤);`--path-separator /` 后全 `/`;fd 同效。CR 全 false / LF true(Rust 二进制管道输出 LF);中文文件名 UTF-8 无乱码
+     - 探测命中:DSH 装于 `%APPDATA%\npm\node_modules`(npm 全局,无 `lib/` 层)→ `bundledRgCandidates` 的 `%APPDATA%` 候选 `existsSync` 命中,`probeEngines` 实测 `rg(捆绑 rg.exe)` 与 `fd(scoop shim)` 双双就位;PATH 滤掉 Scoop 后捆绑 rg 依旧命中(固定绝对路径兜底,与"无 PATH 环境"设计一致)
+     - 完整链路:`pnpm pack` tarball → `dsh plugin --profile web add`(首次 install 需先把 profile 模板的 `allowBuilds: node-pty` 占位写成 true)→ `dsh web --port <OS分配>` → `POST /sidebar/api/fs.search` 返回 `ok:true`、200 匹配、`/` 分隔;`DSH_SEARCH_DEBUG` 日志见引擎行(web UI 搜索路径同款)
+     - **bench(D:\Project,>10 万元素,3 次最优)**:plain 一律 `truncated=true`(visited 100k 预算耗尽,**不含匹配预算**),`query="1234"` plain hits=5 vs 引擎 hits=40——"慢且结果不全"正是 issue #203;引擎快 3.7~34.7x(md 415→25ms、hollow 978→264ms、1234 1970→262ms、test 1008→29ms)。`scripts/win-bench.cjs` 可复跑
+     - 顺手修复:fd `--max-results` 原钉在 `cap`(=maxMatches+1 哨兵)处,满集永不触发截断、多余返回 1 条;改为 `cap+1` 后 fd/rg 截断语义对齐,`fdArgv`/`rgArgv` 抽为导出纯函数由单测钉死
 
 ## 6. 二期候选(有意不做,记录在案)
 
