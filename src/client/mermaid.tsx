@@ -48,6 +48,10 @@ function configureMermaid(): void {
     // forcing pure SVG text keeps labels visible and the HTML label channel
     // closed (strict already escapes label content).
     htmlLabels: false,
+    // Mermaid 11 renders a large error SVG into document.body before rejecting
+    // invalid diagrams. The component already has its own error fallback, so
+    // suppress that global side effect to keep the DSH shell intact.
+    suppressErrorRendering: true,
     theme: isDarkScheme() ? 'dark' : 'default',
   })
 }
