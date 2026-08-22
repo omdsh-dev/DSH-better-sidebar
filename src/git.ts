@@ -192,6 +192,16 @@ export async function checkout(cwd: string, branch: string): Promise<void> {
   await runGit(cwd, ['checkout', branch])
 }
 
+/** Merge an existing branch into the current branch without opening an editor. */
+export async function merge(cwd: string, branch: string): Promise<void> {
+  await runGit(cwd, ['merge', '--no-edit', branch])
+}
+
+/** Replay the current branch's commits on top of an existing branch. */
+export async function rebase(cwd: string, branch: string): Promise<void> {
+  await runGit(cwd, ['rebase', branch])
+}
+
 /** Recent commit history (newest first), lazily pageable via skip/count. */
 export async function log(cwd: string, count = 30, skip = 0): Promise<GitLogEntry[]> {
   const raw = await runGit(cwd, [

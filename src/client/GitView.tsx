@@ -94,6 +94,9 @@ export function GitView(props: {
   const [commitMsg, setCommitMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false)
+  const [mergeSource, setMergeSource] = useState<string | null>(null)
+  const [rebaseTarget, setRebaseTarget] = useState<string | null>(null)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
@@ -215,6 +218,32 @@ export function GitView(props: {
     }
   }
 
+  const merge = async (branch: string): Promise<void> => {
+    setBusy(true)
+    setCommitError(null)
+    try {
+      await api.gitMerge(scope, branch)
+    } catch (reason) {
+      setCommitError(`${t('mergeError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+    } finally {
+      await refresh()
+      setBusy(false)
+    }
+  }
+
+  const rebase = async (branch: string): Promise<void> => {
+    setBusy(true)
+    setCommitError(null)
+    try {
+      await api.gitRebase(scope, branch)
+    } catch (reason) {
+      setCommitError(`${t('rebaseError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+    } finally {
+      await refresh()
+      setBusy(false)
+    }
+  }
+
   /** Run one destructive operation after the confirm modal, then refresh. */
   const runConfirmed = (confirmState: ConfirmState): void => {
     setConfirm({ ...confirmState, onConfirm: async () => {
@@ -290,6 +319,35 @@ export function GitView(props: {
           {(status?.branch ?? '') !== '' && <option value={status!.branch}>{status!.branch}</option>}
           {branchNames.filter(name => name !== status?.branch).map(name => <option key={name} value={name}>{name}</option>)}
         </select>
+        <Menu
+          open={branchMenuOpen}
+          onClose={() => { setBranchMenuOpen(false) }}
+          items={[
+            { id: 'merge', label: t('mergeBranch'), icon: <IconBranchOutline16 size={14} /> },
+            { id: 'rebase', label: t('rebaseBranch'), icon: <IconRefreshOutline16 size={14} /> },
+          ]}
+          onSelect={(id) => {
+            const branch = branchNames.find(name => name !== status?.branch) ?? null
+            setBranchMenuOpen(false)
+            if (id === 'merge') setMergeSource(branch)
+            if (id === 'rebase') setRebaseTarget(branch)
+          }}
+          portal
+          align="end"
+          compact
+          anchor={(
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={t('branchActions')}
+              title={t('branchActions')}
+              disabled={busy || branchNames.every(name => name === status?.branch)}
+              onClick={() => { setBranchMenuOpen(open => !open) }}
+            >
+              <IconBranchOutline16 size={14} />
+            </button>
+          )}
+        />
         <button
           type="button"
           className={css.iconButton}
@@ -535,6 +593,83 @@ export function GitView(props: {
           </Modal>
         </>
       )}
+
+      <Modal
+        open={mergeSource !== null}
+        onClose={() => { setMergeSource(null) }}
+        title={t('mergeTitle')}
+        closeLabel={t('cancel')}
+        footer={(
+          <>
+            <Button variant="outline" onClick={() => { setMergeSource(null) }}>{t('cancel')}</Button>
+            <Button
+              variant="primary"
+              disabled={busy || mergeSource === null}
+              onClick={() => {
+                const branch = mergeSource
+                if (branch === null) return
+                setMergeSource(null)
+                void merge(branch)
+              }}
+            >
+              {t('mergeBranch')}
+            </Button>
+          </>
+        )}
+      >
+        <p className={css.gitConfirmDesc}>{t('mergeDesc', { source: mergeSource ?? '', current: status?.branch ?? '' })}</p>
+        <div className={css.gitBranchFlow}>
+          <span title={mergeSource ?? ''}>{mergeSource}</span>
+          <span aria-hidden="true">→</span>
+          <span title={status?.branch ?? ''}>{status?.branch}</span>
+        </div>
+        <select
+          className={css.gitBranchSelect}
+          value={mergeSource ?? ''}
+          onChange={(event) => { setMergeSource(event.target.value) }}
+        >
+          {branchNames.filter(name => name !== status?.branch).map(name => <option key={name} value={name}>{name}</option>)}
+        </select>
+      </Modal>
+
+      <Modal
+        open={rebaseTarget !== null}
+        onClose={() => { setRebaseTarget(null) }}
+        title={t('rebaseTitle')}
+        closeLabel={t('cancel')}
+        footer={(
+          <>
+            <Button variant="outline" onClick={() => { setRebaseTarget(null) }}>{t('cancel')}</Button>
+            <Button
+              variant="primary"
+              disabled={busy || rebaseTarget === null}
+              onClick={() => {
+                const branch = rebaseTarget
+                if (branch === null) return
+                setRebaseTarget(null)
+                void rebase(branch)
+              }}
+            >
+              {t('rebaseBranch')}
+            </Button>
+          </>
+        )}
+      >
+        <p className={css.gitConfirmDesc}>{t('rebaseDesc', { current: status?.branch ?? '', target: rebaseTarget ?? '' })}</p>
+        <div className={css.gitBranchFlow}>
+          <span title={status?.branch ?? ''}>{status?.branch}</span>
+          <span aria-hidden="true">→</span>
+          <span title={rebaseTarget ?? ''}>{rebaseTarget}</span>
+        </div>
+        <p className={css.gitRebaseWarning}>{t('rebaseWarning')}</p>
+        <select
+          className={css.gitBranchSelect}
+          value={rebaseTarget ?? ''}
+          onChange={(event) => { setRebaseTarget(event.target.value) }}
+        >
+          {branchNames.filter(name => name !== status?.branch).map(name => <option key={name} value={name}>{name}</option>)}
+        </select>
+      </Modal>
     </div>
   )
 }

@@ -205,6 +205,10 @@ export const api = {
     call<{ current: string; names: string[] }>('git.branch', scopePayload(scope, {}), signal),
   gitCheckout: (scope: SessionScope, branch: string) =>
     call<{ ok: true }>('git.checkout', scopePayload(scope, { branch })),
+  gitMerge: (scope: SessionScope, branch: string) =>
+    call<{ ok: true }>('git.merge', scopePayload(scope, { branch })),
+  gitRebase: (scope: SessionScope, branch: string) =>
+    call<{ ok: true }>('git.rebase', scopePayload(scope, { branch })),
   /** Recent commit history, lazily pageable (skip/count; defaults 0/30). */
   gitLog: (scope: SessionScope, count?: number, skip?: number, signal?: AbortSignal) =>
     call<GitLogEntry[]>('git.log', scopePayload(scope, {
