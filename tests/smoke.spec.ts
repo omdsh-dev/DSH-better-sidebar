@@ -349,6 +349,22 @@ describe('git destructive operations (scratch repository)', () => {
     }
   })
 
+  it('merges another branch into the current branch', async () => {
+    const dir = makeScratchRepo()
+    try {
+      gitRun(dir, ['checkout', '-q', '-b', 'feature'])
+      writeFileSync(join(dir, 'b.txt'), 'feature work\n')
+      gitRun(dir, ['add', '-A'])
+      gitRun(dir, ['commit', '-q', '-m', 'feature work'])
+      gitRun(dir, ['checkout', '-q', 'main'])
+      await git.merge(dir, 'feature')
+      expect(await git.currentBranch(dir)).toBe('main')
+      expect(readFileSync(join(dir, 'b.txt'), 'utf8')).toBe('feature work\n')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('reports a failing destructive operation as a GitCommandError', async () => {
     const dir = makeScratchRepo()
     try {

@@ -94,6 +94,7 @@ export function GitView(props: {
   const [commitMsg, setCommitMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
+  const [mergeSource, setMergeSource] = useState<string | null>(null)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
@@ -215,6 +216,19 @@ export function GitView(props: {
     }
   }
 
+  const merge = async (branch: string): Promise<void> => {
+    setBusy(true)
+    setCommitError(null)
+    try {
+      await api.gitMerge(scope, branch)
+    } catch (reason) {
+      setCommitError(`${t('mergeError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+    } finally {
+      await refresh()
+      setBusy(false)
+    }
+  }
+
   /** Run one destructive operation after the confirm modal, then refresh. */
   const runConfirmed = (confirmState: ConfirmState): void => {
     setConfirm({ ...confirmState, onConfirm: async () => {
@@ -290,6 +304,16 @@ export function GitView(props: {
           {(status?.branch ?? '') !== '' && <option value={status!.branch}>{status!.branch}</option>}
           {branchNames.filter(name => name !== status?.branch).map(name => <option key={name} value={name}>{name}</option>)}
         </select>
+        <button
+          type="button"
+          className={css.iconButton}
+          aria-label={t('mergeBranch')}
+          title={t('mergeBranch')}
+          disabled={busy || branchNames.every(name => name === status?.branch)}
+          onClick={() => { setMergeSource(branchNames.find(name => name !== status?.branch) ?? null) }}
+        >
+          <IconBranchOutline16 size={14} />
+        </button>
         <button
           type="button"
           className={css.iconButton}
@@ -535,6 +559,39 @@ export function GitView(props: {
           </Modal>
         </>
       )}
+
+      <Modal
+        open={mergeSource !== null}
+        onClose={() => { setMergeSource(null) }}
+        title={t('mergeTitle')}
+        closeLabel={t('cancel')}
+        footer={(
+          <>
+            <Button variant="outline" onClick={() => { setMergeSource(null) }}>{t('cancel')}</Button>
+            <Button
+              variant="primary"
+              disabled={busy || mergeSource === null}
+              onClick={() => {
+                const branch = mergeSource
+                if (branch === null) return
+                setMergeSource(null)
+                void merge(branch)
+              }}
+            >
+              {t('mergeBranch')}
+            </Button>
+          </>
+        )}
+      >
+        <p className={css.gitConfirmDesc}>{t('mergeDesc', { source: mergeSource ?? '', current: status?.branch ?? '' })}</p>
+        <select
+          className={css.gitBranchSelect}
+          value={mergeSource ?? ''}
+          onChange={(event) => { setMergeSource(event.target.value) }}
+        >
+          {branchNames.filter(name => name !== status?.branch).map(name => <option key={name} value={name}>{name}</option>)}
+        </select>
+      </Modal>
     </div>
   )
 }
