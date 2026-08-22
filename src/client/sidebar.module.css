@@ -1974,6 +1974,20 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding: 0 8px 0 12px;
 }
 
+.gitWorktreeRow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 0 12px;
+}
+
+.gitWorktreeLabel {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+}
+
 .gitBranchSelect {
   flex: 1;
   min-width: 0;

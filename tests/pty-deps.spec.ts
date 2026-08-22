@@ -168,6 +168,7 @@ describe('depsStatus', () => {
     writeFileSync(join(root, 'profiles', 'web', 'pnpm-workspace.yaml'), '')
     writeFileSync(join(pkgRoot, 'package.json'), JSON.stringify({ name: 'dsh-better-sidebar' }))
     writeFileSync(join(pkgRoot, 'scripts', 'install.sh'), '#!/usr/bin/env bash\n')
+    writeFileSync(join(pkgRoot, 'scripts', 'install.ps1'), '# repair fixture\n')
     moduleFile = join(pkgRoot, 'lib', 'index.js')
     writeFileSync(moduleFile, '')
     resetNodePtyCache()
@@ -188,8 +189,11 @@ describe('depsStatus', () => {
     expect(status.ok).toBe(false)
     if (status.ok) throw new Error('unreachable')
     expect(status.cause).toBe('Cannot find package node-pty')
-    const script = realpathSync(join(root, 'profiles', 'web', 'node_modules', '.pnpm', 'dsh-better-sidebar@0.0.0', 'node_modules', 'dsh-better-sidebar', 'scripts', 'install.sh'))
-    expect(status.command).toBe(`bash "${script}" --repair --profile "web"`)
+    const scriptName = process.platform === 'win32' ? 'install.ps1' : 'install.sh'
+    const script = realpathSync(join(root, 'profiles', 'web', 'node_modules', '.pnpm', 'dsh-better-sidebar@0.0.0', 'node_modules', 'dsh-better-sidebar', 'scripts', scriptName))
+    expect(status.command).toBe(process.platform === 'win32'
+      ? `powershell -ExecutionPolicy Bypass -File "${script}" -Repair -Profile "web"`
+      : `bash "${script}" --repair --profile "web"`)
     expect(status.profile).toBe('web')
   })
 })

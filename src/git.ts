@@ -10,6 +10,7 @@
  * user.name/user.email).
  */
 import { spawn } from 'node:child_process'
+import { resolve } from 'node:path'
 
 /** A parsed `git status --porcelain=v1 -z` entry. */
 export interface GitStatusEntry {
@@ -23,6 +24,18 @@ export interface GitStatusResult {
   isRepo: boolean
   branch?: string
   entries: GitStatusEntry[]
+}
+
+/** One linked checkout returned by `git worktree list --porcelain`. */
+export interface GitWorktree {
+  /** Absolute checkout root. */
+  path: string
+  /** Branch name without `refs/heads/`, or `HEAD` when detached. */
+  branch: string
+  /** Whether this checkout contains the session cwd. */
+  current: boolean
+  /** Number of staged + unstaged status rows (a file changed on both sides counts once). */
+  changes: number
 }
 
 /** One `git log` row. */
@@ -69,6 +82,50 @@ export function parsePorcelainZ(output: string): GitStatusEntry[] {
     }
   }
   return entries
+}
+
+/** One raw porcelain worktree record. Prunable checkouts are retained by
+ * Git's administrative metadata after their directory disappears and must not
+ * become selectable command targets. Locked checkouts remain usable. */
+export interface GitWorktreeRecord {
+  path: string
+  branch: string
+  locked: boolean
+  prunable: boolean
+}
+
+/** Parse `git worktree list --porcelain` records. Production requests use
+ * `-z` so even newlines and non-ASCII bytes in checkout paths stay lossless;
+ * newline framing remains accepted for small fixtures and older Git output. */
+export function parseWorktreeList(output: string): GitWorktreeRecord[] {
+  const rows: GitWorktreeRecord[] = []
+  let path: string | undefined
+  let branch = 'HEAD'
+  let locked = false
+  let prunable = false
+  const flush = (): void => {
+    if (path !== undefined) rows.push({ path, branch, locked, prunable })
+    path = undefined
+    branch = 'HEAD'
+    locked = false
+    prunable = false
+  }
+  const sep = output.includes('\0') ? '\0' : '\n'
+  const framed = output.endsWith(sep) ? output : `${output}${sep}`
+  for (const line of framed.split(sep)) {
+    if (line === '') {
+      flush()
+    } else if (line.startsWith('worktree ')) {
+      path = line.slice('worktree '.length)
+    } else if (line.startsWith('branch refs/heads/')) {
+      branch = line.slice('branch refs/heads/'.length)
+    } else if (line === 'locked' || line.startsWith('locked ')) {
+      locked = true
+    } else if (line === 'prunable' || line.startsWith('prunable ')) {
+      prunable = true
+    }
+  }
+  return rows
 }
 
 /** Parse `git log --pretty=format:%h%x1f%s%x1f%an%x1f%ai%x1f%H%x1f%D` rows. */
@@ -152,6 +209,51 @@ export async function status(cwd: string): Promise<GitStatusResult> {
     runGit(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=normal']),
   ])
   return { isRepo: true, branch, entries: parsePorcelainZ(raw) }
+}
+
+/** Platform-aware identity used only for comparing absolute checkout roots. */
+function pathIdentity(path: string): string {
+  const absolute = resolve(path).replace(/[\\/]+$/, '')
+  return process.platform === 'win32' ? absolute.toLowerCase() : absolute
+}
+
+/** Raw usable checkout records, shared by inventory and target validation.
+ * Prunable records point at missing paths and are deliberately excluded from
+ * both the selector and the command-target allowlist. */
+async function listedWorktrees(cwd: string): Promise<GitWorktreeRecord[]> {
+  const raw = await runGit(cwd, ['worktree', 'list', '--porcelain', '-z'])
+  return parseWorktreeList(raw).filter(entry => !entry.prunable)
+}
+
+/** All linked checkouts of the repository containing `cwd`, enriched with a
+ * live change count. The current checkout is first so a single-worktree repo
+ * preserves the old UI ordering. */
+export async function worktrees(cwd: string): Promise<GitWorktree[]> {
+  if (!await isGitRepo(cwd)) return []
+  const currentRoot = await repoRoot(cwd)
+  const listed = await listedWorktrees(cwd)
+  const rows = await Promise.all(listed.map(async (entry): Promise<GitWorktree> => ({
+    path: entry.path,
+    branch: entry.branch,
+    current: pathIdentity(entry.path) === pathIdentity(currentRoot),
+    // One stale/permission-raced linked checkout must not hide the valid
+    // current repository from the panel. Targeted operations still fail loud.
+    changes: await status(entry.path).then(result => result.entries.length, () => 0),
+  })))
+  return rows.sort((left, right) => Number(right.current) - Number(left.current))
+}
+
+/** Resolve an optional client-selected linked checkout. A caller may never use
+ * this seam to point Git operations at an unrelated repository: the target
+ * must occur in the authoritative session repository's worktree list. */
+export async function resolveWorktree(cwd: string, requested?: string): Promise<string> {
+  if (requested === undefined || requested === '') return cwd
+  const identity = pathIdentity(requested)
+  const match = (await listedWorktrees(cwd)).find(entry => pathIdentity(entry.path) === identity)
+  if (match === undefined) {
+    throw new GitCommandError(`unknown linked worktree: ${requested}`, 'git-worktree', 'worktree list')
+  }
+  return match.path
 }
 
 /** Diff text of the worktree (unstaged) or the index (staged). */

@@ -6,16 +6,18 @@
  * placed below the git pane on first use. File rows and history rows open a
  * right-click context menu with advanced operations (open in editor, discard,
  * revert, cherry-pick, copy paths/hashes). Refresh is manual + on mount/
- * focus (no file watcher — KISS).
+ * focus. While visible it polls lightweight porcelain state so model-authored
+ * file changes appear without a manual refresh.
  */
-import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
   IconTrashOutline16, Input, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { GitLogEntry, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
+import type { GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
 import { api } from './api.ts'
 import { relativeTo } from './paths.ts'
+import { resolveSidebarPath } from './produced-files.ts'
 import { relativeTime, t } from './locales.ts'
 import type { SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
@@ -84,9 +86,13 @@ export function GitView(props: {
   onOpenFile: (path: string) => void
   /** Open a diff tab (the shell places it below the git pane on first use). */
   onOpenDiff: (tab: SidebarTab) => void
+  /** Poll only while the tab is actually visible. */
+  visible: boolean
 }) {
-  const { scope, onOpenFile, onOpenDiff } = props
+  const { scope, onOpenFile, onOpenDiff, visible } = props
   const [status, setStatus] = useState<GitStatusResult | null>(null)
+  const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
+  const [selectedWorktree, setSelectedWorktree] = useState<string | undefined>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [branchNames, setBranchNames] = useState<string[]>([])
@@ -104,70 +110,176 @@ export function GitView(props: {
   const [historyMenu, setHistoryMenu] = useState<{ entry: GitLogEntry; x: number; y: number } | null>(null)
   /** The pending destructive action awaiting confirmation. */
   const [confirm, setConfirm] = useState<ConfirmState | null>(null)
+  const refreshInFlight = useRef(false)
+  /** Monotonic request id: a manual worktree switch invalidates any older poll
+   *  before it can publish state from the previous checkout. */
+  const refreshGeneration = useRef(0)
+  const worktreeChosenByUser = useRef(false)
+  /** selectedWorktree read inside refresh without re-creating the callback:
+   *  avoids a spurious full refresh on every auto-select (the very state
+   *  change refresh writes back via setSelectedWorktree would recreate the
+   *  callback and re-trigger the mount effect — an N→N+1 fetch loop). */
+  const selectedRef = useRef<string | undefined>(undefined)
+  useEffect(() => { selectedRef.current = selectedWorktree }, [selectedWorktree])
 
-  const refresh = useCallback(async (): Promise<void> => {
-    setLoading(true)
+  /** Publish a complete checkout-derived view. Status, branch choices and
+   *  history are one consistency unit: never mix rows from two worktrees. */
+  const refreshTarget = useCallback(async (
+    target: string | undefined,
+    options: { loading: boolean; generation: number },
+  ): Promise<void> => {
+    if (options.loading) setLoading(true)
     setError(null)
     try {
       const [statusResult, branchResult, logResult] = await Promise.all([
-        api.gitStatus(scope),
-        api.gitBranch(scope).catch(() => ({ current: '', names: [] as string[] })),
-        // The first history page only; the rest arrives via "load more".
-        api.gitLog(scope, LOG_BATCH, 0).catch(() => [] as GitLogEntry[]),
+        api.gitStatus(scope, target),
+        api.gitBranch(scope, target).catch(() => ({ current: '', names: [] as string[] })),
+        api.gitLog(scope, LOG_BATCH, 0, target).catch(() => [] as GitLogEntry[]),
       ])
+      if (options.generation !== refreshGeneration.current) return
       setStatus(statusResult)
       setBranchNames(branchResult.names)
       setLogEntries(logResult)
       setLogEnded(logResult.length < LOG_BATCH)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason))
+      if (options.generation === refreshGeneration.current) {
+        setError(reason instanceof Error ? reason.message : String(reason))
+      }
     } finally {
-      setLoading(false)
+      if (options.loading && options.generation === refreshGeneration.current) setLoading(false)
     }
   }, [scope.sessionId, scope.cwd])
 
+  const refresh = useCallback(async (silent = false): Promise<void> => {
+    if (refreshInFlight.current) return
+    refreshInFlight.current = true
+    let generation = refreshGeneration.current
+    try {
+      const listed = await api.gitWorktrees(scope)
+      if (generation !== refreshGeneration.current) return
+      setWorktrees(listed)
+      const selectedStillExists = listed.some(entry => entry.path === selectedRef.current)
+      let target = selectedStillExists ? selectedRef.current : listed.find(entry => entry.current)?.path
+      // DSH and other coding agents commonly create one linked checkout while
+      // the session remains rooted at the clean primary checkout. Select that
+      // checkout automatically only when the choice is unambiguous.
+      const current = listed.find(entry => entry.current)
+      const dirtyLinked = listed.filter(entry => !entry.current && entry.changes > 0)
+      if (!worktreeChosenByUser.current) {
+        target = (current?.changes ?? 0) === 0 && dirtyLinked.length === 1
+          ? dirtyLinked[0]!.path
+          : current?.path
+      }
+      const targetChanged = target !== selectedRef.current
+      if (targetChanged) {
+        // Changing the automatically selected checkout invalidates any direct
+        // target refresh that may still be resolving for the previous one.
+        generation = refreshGeneration.current += 1
+        selectedRef.current = target
+        setSelectedWorktree(target)
+        // Remove rows owned by the previous checkout immediately: keeping them
+        // interactive while the target changes could apply a destructive action
+        // to the new checkout with stale history from the old one.
+        setStatus(null)
+        setBranchNames([])
+        setLogEntries([])
+        setLogEnded(false)
+        setLogLoadingMore(false)
+      }
+      // A poll may update status alone only while staying on the same checkout.
+      // Any automatic selection change refreshes the complete derived view.
+      if (silent && !targetChanged) {
+        const statusResult = await api.gitStatus(scope, target)
+        if (generation === refreshGeneration.current) setStatus(statusResult)
+        return
+      }
+      await refreshTarget(target, { loading: !silent, generation })
+    } catch (reason) {
+      if (generation === refreshGeneration.current) {
+        setError(reason instanceof Error ? reason.message : String(reason))
+        if (!silent) setLoading(false)
+      }
+    } finally {
+      refreshInFlight.current = false
+    }
+  }, [scope.sessionId, scope.cwd, refreshTarget])
+
+  useEffect(() => {
+    refreshGeneration.current += 1
+    refreshInFlight.current = false
+    worktreeChosenByUser.current = false
+    selectedRef.current = undefined
+    setSelectedWorktree(undefined)
+  }, [scope.sessionId, scope.cwd])
   useEffect(() => { void refresh() }, [refresh])
+
+  /** A user choice invalidates any older poll and atomically refreshes every
+   *  checkout-derived surface before destructive history actions can run. */
+  const chooseWorktree = (target: string): void => {
+    worktreeChosenByUser.current = true
+    selectedRef.current = target
+    setSelectedWorktree(target)
+    setStatus(null)
+    setBranchNames([])
+    setLogEntries([])
+    setLogEnded(false)
+    setLogLoadingMore(false)
+    const generation = refreshGeneration.current += 1
+    void refreshTarget(target, { loading: true, generation })
+  }
+  useEffect(() => {
+    if (!visible) return
+    const timer = window.setInterval(() => { void refresh(true) }, 2_000)
+    return () => { window.clearInterval(timer) }
+  }, [visible, refresh])
 
   /** Append the next history page (lazy: only when the user asks for more). */
   const loadMoreLog = async (): Promise<void> => {
     if (logLoadingMore || logEnded) return
+    const generation = refreshGeneration.current
+    const target = selectedRef.current
     setLogLoadingMore(true)
     try {
-      const next = await api.gitLog(scope, LOG_BATCH, logEntries.length)
+      const next = await api.gitLog(scope, LOG_BATCH, logEntries.length, target)
+      // A worktree switch clears the old history and increments generation.
+      // Never append a late page from that checkout into the new one.
+      if (generation !== refreshGeneration.current || target !== selectedRef.current) return
       setLogEntries(entries => [...entries, ...next])
       if (next.length < LOG_BATCH) setLogEnded(true)
     } catch (reason) {
-      setCommitError(`${t('historyLoadError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+      if (generation === refreshGeneration.current && target === selectedRef.current) {
+        setCommitError(`${t('historyLoadError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+      }
     } finally {
-      setLogLoadingMore(false)
+      if (generation === refreshGeneration.current && target === selectedRef.current) setLogLoadingMore(false)
     }
   }
 
   /** The diff tab for one changed file (one tab per path+side; same id = focused). */
   const openWorktreeDiff = (entry: GitStatusEntry, staged: boolean): void => {
     onOpenDiff({
-      id: `diff:w:${staged ? 's' : 'u'}:${entry.path}`,
+      id: `diff:w:${encodeURIComponent(selectedWorktree ?? '')}:${staged ? 's' : 'u'}:${entry.path}`,
       type: 'diff',
       title: baseName(entry.path),
-      diff: { kind: 'worktree', path: entry.path, staged, untracked: isUntracked(entry) },
+      diff: { kind: 'worktree', path: entry.path, staged, untracked: isUntracked(entry), worktree: selectedWorktree },
     })
   }
 
   /** The diff tab for one commit (one tab per commit). */
   const openCommitDiff = (entry: GitLogEntry): void => {
     onOpenDiff({
-      id: `diff:c:${entry.hashFull}`,
+      id: `diff:c:${encodeURIComponent(selectedWorktree ?? '')}:${entry.hashFull}`,
       type: 'diff',
       title: `${entry.hash} ${entry.subject}`,
-      diff: { kind: 'commit', hash: entry.hash, hashFull: entry.hashFull, subject: entry.subject },
+      diff: { kind: 'commit', hash: entry.hash, hashFull: entry.hashFull, subject: entry.subject, worktree: selectedWorktree },
     })
   }
 
   const stageEntry = async (entry: GitStatusEntry, staged: boolean): Promise<void> => {
     setBusy(true)
     try {
-      if (staged) await api.gitUnstage(scope, entry.path)
-      else await api.gitStage(scope, entry.path)
+      if (staged) await api.gitUnstage(scope, entry.path, selectedWorktree)
+      else await api.gitStage(scope, entry.path, selectedWorktree)
       await refresh()
     } finally {
       setBusy(false)
@@ -177,8 +289,8 @@ export function GitView(props: {
   const stageAll = async (staged: boolean): Promise<void> => {
     setBusy(true)
     try {
-      if (staged) await api.gitUnstage(scope)
-      else await api.gitStage(scope)
+      if (staged) await api.gitUnstage(scope, undefined, selectedWorktree)
+      else await api.gitStage(scope, undefined, selectedWorktree)
       await refresh()
     } finally {
       setBusy(false)
@@ -191,7 +303,7 @@ export function GitView(props: {
     setBusy(true)
     setCommitError(null)
     try {
-      await api.gitCommit(scope, message)
+      await api.gitCommit(scope, message, selectedWorktree)
       setCommitMsg('')
       await refresh()
     } catch (reason) {
@@ -206,7 +318,7 @@ export function GitView(props: {
     setBusy(true)
     setCommitError(null)
     try {
-      await api.gitCheckout(scope, branch)
+      await api.gitCheckout(scope, branch, selectedWorktree)
       await refresh()
     } catch (reason) {
       setCommitError(`${t('checkoutError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
@@ -280,6 +392,24 @@ export function GitView(props: {
 
   return (
     <div className={css.git}>
+      {worktrees.length > 1 && (
+        <div className={css.gitWorktreeRow}>
+          <span className={css.gitWorktreeLabel}>{t('worktree')}</span>
+          <select
+            className={css.gitBranchSelect}
+            value={selectedWorktree ?? ''}
+            title={selectedWorktree}
+            disabled={busy}
+            onChange={(event) => { chooseWorktree(event.target.value) }}
+          >
+            {worktrees.map(entry => (
+              <option key={entry.path} value={entry.path}>
+                {entry.branch} · {baseName(entry.path)} ({entry.changes})
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className={css.gitHeader}>
         <select
           className={css.gitBranchSelect}
@@ -422,7 +552,7 @@ export function GitView(props: {
               if (target === null) return
               setFileMenu(null)
               if (id === 'open') {
-                onOpenFile(target.entry.path)
+                onOpenFile(resolveSidebarPath(selectedWorktree ?? scope.cwd, target.entry.path))
                 return
               }
               if (id === 'stage') {
@@ -434,15 +564,15 @@ export function GitView(props: {
                   title: t('discardTitle'),
                   description: t('discardDesc', { path: target.entry.path }),
                   confirmLabel: t('discard'),
-                  onConfirm: () => api.gitDiscard(scope, target.entry.path),
+                  onConfirm: () => api.gitDiscard(scope, target.entry.path, selectedWorktree),
                 })
                 return
               }
               if (id === 'relative') {
-                copy(relativeTo(scope.cwd ?? '', target.entry.path))
+                copy(relativeTo(selectedWorktree ?? scope.cwd ?? '', target.entry.path))
                 return
               }
-              if (id === 'absolute') copy(target.entry.path)
+              if (id === 'absolute') copy(resolveSidebarPath(selectedWorktree ?? scope.cwd, target.entry.path))
             }}
             portal
             align="start"
@@ -488,7 +618,7 @@ export function GitView(props: {
                   title: t('revertTitle'),
                   description: t('revertDesc', { subject: target.entry.subject }),
                   confirmLabel: t('revertCommit'),
-                  onConfirm: () => api.gitRevert(scope, target.entry.hashFull),
+                  onConfirm: () => api.gitRevert(scope, target.entry.hashFull, selectedWorktree),
                 })
                 return
               }
@@ -497,7 +627,7 @@ export function GitView(props: {
                   title: t('cherryPickTitle'),
                   description: t('cherryPickDesc', { subject: target.entry.subject }),
                   confirmLabel: t('cherryPickCommit'),
-                  onConfirm: () => api.gitCherryPick(scope, target.entry.hashFull),
+                  onConfirm: () => api.gitCherryPick(scope, target.entry.hashFull, selectedWorktree),
                 })
               }
             }}

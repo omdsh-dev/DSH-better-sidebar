@@ -229,6 +229,14 @@ function buildApi(
     const clientCwd = typeof record?.cwd === 'string' && record.cwd !== '' ? record.cwd : undefined
     return { sessionId, cwd: sessionCwdOf(ctx, sessionId, clientCwd) }
   }
+  /** Resolve the optional Git-panel checkout selector against the authoritative
+   * session repository. Unlike `cwd`, `worktree` is never trusted directly. */
+  const gitCwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
+    const base = cwdOf(payload)
+    const record = payload as { worktree?: unknown } | null
+    const requested = typeof record?.worktree === 'string' && record.worktree !== '' ? record.worktree : undefined
+    return { sessionId: base.sessionId, cwd: await git.resolveWorktree(base.cwd, requested) }
+  }
   // Background jobs: the LIST rides the harness's `session/jobs` push
   // mirror, so these routes only replay output the model has read (from the
   // session's own event log — no DSH source is touched, the model's
@@ -282,47 +290,51 @@ function buildApi(
       }
       return { ok: true }
     },
-    'git.status': async (payload) => {
+    'git.worktrees': async (payload) => {
       const { cwd } = cwdOf(payload)
+      return git.worktrees(cwd)
+    },
+    'git.status': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
       return git.status(cwd)
     },
     'git.diff': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       const record = payload as { path?: unknown; staged?: unknown }
       const path = record.path === undefined ? undefined : await resolveGitPath(cwd, requireString(payload, 'path'))
       return { diff: await git.diff(cwd, path, record.staged === true) }
     },
     'git.stage': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       const record = payload as { path?: unknown }
       const path = record.path === undefined ? undefined : requireString(payload, 'path')
       await git.stage(cwd, path)
       return { ok: true }
     },
     'git.unstage': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       const record = payload as { path?: unknown }
       const path = record.path === undefined ? undefined : requireString(payload, 'path')
       await git.unstage(cwd, path)
       return { ok: true }
     },
     'git.commit': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       const message = requireString(payload, 'message')
       await git.commit(cwd, message)
       return { ok: true }
     },
     'git.branch': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       return git.branches(cwd)
     },
     'git.checkout': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       await git.checkout(cwd, requireString(payload, 'branch'))
       return { ok: true }
     },
     'git.log': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       const record = payload as { count?: unknown; skip?: unknown }
       const count = typeof record.count === 'number' && Number.isInteger(record.count) && record.count > 0
         ? record.count
@@ -333,26 +345,26 @@ function buildApi(
       return git.log(cwd, count, skip)
     },
     'git.commit-diff': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       return { diff: await git.commitDiff(cwd, requireString(payload, 'hash')) }
     },
     'git.discard': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       await git.discard(cwd, await resolveGitPath(cwd, requireString(payload, 'path')))
       return { ok: true }
     },
     'git.revert': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       await git.revert(cwd, requireString(payload, 'hash'))
       return { ok: true }
     },
     'git.cherry-pick': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       await git.cherryPick(cwd, requireString(payload, 'hash'))
       return { ok: true }
     },
     'git.show': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       const path = await resolveGitPath(cwd, requireString(payload, 'path'))
       const rev = requireString(payload, 'rev')
       return { content: await git.show(cwd, rev, path) }

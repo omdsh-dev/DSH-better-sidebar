@@ -14,6 +14,7 @@ import { api } from './api.ts'
 import type { SidebarDiffRef } from './state.ts'
 import { DiffView } from './DiffView.tsx'
 import { t } from './locales.ts'
+import { resolveSidebarPath } from './produced-files.ts'
 import css from './sidebar.module.css'
 
 /** The loaded diff surface (untracked content rendered as a full addition). */
@@ -40,17 +41,17 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
     const load = async (): Promise<void> => {
       try {
         if (diff.kind === 'commit') {
-          const result = await api.gitCommitDiff(scope, diff.hashFull)
+          const result = await api.gitCommitDiff(scope, diff.hashFull, diff.worktree)
           if (!cancelled) setData({ diff: result.diff })
           return
         }
-        let result = await api.gitDiff(scope, diff.path, diff.staged)
+        let result = await api.gitDiff(scope, diff.path, diff.staged, diff.worktree)
         if (result.diff === '') {
           // The requested side is empty — try the OTHER side once: the ref
           // may predate the staged-flag fix, or the change moved sides (a
           // file staged after its tab opened). Both sides empty means the
           // file genuinely has no text changes.
-          const other = await api.gitDiff(scope, diff.path, !diff.staged)
+          const other = await api.gitDiff(scope, diff.path, !diff.staged, diff.worktree)
           if (other.diff !== '') result = other
         }
         if (result.diff !== '') {
@@ -60,7 +61,7 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
         // Empty diff: an untracked file (git diff never lists it) falls back
         // to a full-file addition; anything else is a genuine no-text-change.
         if (diff.untracked === true && !diff.staged) {
-          const text = await api.fsRead(scope, diff.path)
+          const text = await api.fsRead(scope, resolveSidebarPath(diff.worktree ?? cwd, diff.path))
           if (!cancelled) {
             setData(text.kind === 'text' ? { diff: '', untracked: text.content } : { diff: '' })
           }
