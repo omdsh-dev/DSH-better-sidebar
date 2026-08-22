@@ -288,6 +288,12 @@ describe('git destructive operations (scratch repository)', () => {
   const makeScratchRepo = (): string => {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-git-'))
     gitRun(dir, ['init', '-q'])
+    // Windows git defaults to core.autocrlf=true and rewrites checkout
+    // files to CRLF; the assertions below compare exact LF content. The
+    // scratch repo only exercises git-driver logic, not line-ending
+    // conversion — pin the conversion off so the expectations hold on
+    // every platform.
+    gitRun(dir, ['config', 'core.autocrlf', 'false'])
     gitRun(dir, ['checkout', '-q', '-b', 'main'])
     writeFileSync(join(dir, 'a.txt'), 'one\ntwo\nthree\n')
     gitRun(dir, ['add', '-A'])
