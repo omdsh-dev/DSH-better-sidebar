@@ -147,6 +147,55 @@ describe('remote-access trust (webRuntime.trustedHosts)', () => {
     }
   })
 
+  it('accepts an Origin that names the Host hostname without its port (Edge 151 serialization)', async () => {
+    // Some Chromium builds serialize the Origin of a non-default-port loopback
+    // page without the port; refusing those bricks every /sidebar route.
+    const { api, cleanup } = mount([])
+    try {
+      const res = fakeRes()
+      await api(req('POST', '/sidebar/api/session.cwd', {
+        host: '127.0.0.1:3080',
+        'sec-fetch-site': 'same-origin',
+        origin: 'http://127.0.0.1',
+      }, '{"sessionId":"test-session"}'), res as unknown as ServerResponse)
+      expect(res.status).toBe(200)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('rejects an Origin whose hostname differs from the Host even on loopback', async () => {
+    // hostname, not port, re-decides trust: a same-127/8 address that is not
+    // the page's own hostname is still a different authority.
+    const { api, cleanup } = mount([])
+    try {
+      const res = fakeRes()
+      await api(req('POST', '/sidebar/api/session.cwd', {
+        host: '127.0.0.1:3080',
+        'sec-fetch-site': 'same-origin',
+        origin: 'http://127.0.0.2',
+      }, '{"sessionId":"test-session"}'), res as unknown as ServerResponse)
+      expect(res.status).toBe(403)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('rejects the opaque "null" origin', async () => {
+    const { api, cleanup } = mount([])
+    try {
+      const res = fakeRes()
+      await api(req('POST', '/sidebar/api/session.cwd', {
+        host: '127.0.0.1:3080',
+        'sec-fetch-site': 'same-origin',
+        origin: 'null',
+      }, '{"sessionId":"test-session"}'), res as unknown as ServerResponse)
+      expect(res.status).toBe(403)
+    } finally {
+      cleanup()
+    }
+  })
+
   it('rejects cross-site browser markers even for a trusted host', async () => {
     const { api, cleanup } = mount(['example.com'])
     try {

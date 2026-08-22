@@ -67,10 +67,17 @@ export function isTrustedApiRequest(request: ApiTrustRequest, trustedHosts: read
   if (hostUrl === undefined) return false
   if (!isLoopbackHostname(hostUrl.hostname) && !isTrustedAuthority(hostUrl, trustedHosts)) return false
   if (header(request.headers, 'sec-fetch-site') === 'cross-site') return false
+  // Origin fence: when a browser attaches an Origin it must name this
+  // hostname (the Host fence above already bound the authority, so the port
+  // must not re-decide trust). Comparing hostname, not host: some Chromium
+  // builds (Edge 151) serialize the Origin of a non-default-port loopback page
+  // without the port, and refusing those bricks every /sidebar route. Absent
+  // Origin is fine — the Host fence above already bound the request. The
+  // literal "null" (sandboxed iframes, file: pages) is an opaque origin, refused.
   const origin = header(request.headers, 'origin')
   if (origin === undefined) return true
   try {
-    return new URL(origin).host === hostUrl.host
+    return new URL(origin).hostname === hostUrl.hostname
   } catch {
     return false
   }
