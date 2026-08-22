@@ -64,6 +64,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Tests run git log / cherry-pick against this repository and need
+          # the full history (same as the ci job).
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v6
         with:
@@ -78,6 +82,14 @@ jobs:
       # engine probe inside search-engines.ts picks them up from PATH.
       - name: Install fd / ripgrep (choco)
         run: choco install fd ripgrep -y --no-progress
+
+      # The plugin's git revert/cherry-pick spawn git without setting an
+      # identity (deliberate, see tests/smoke.spec.ts) and rely on ambient
+      # config; the runner has none by default (same step as the ci job).
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.name "dsh-better-sidebar-ci"
+          git config --global user.email "ci@dsh.invalid"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
