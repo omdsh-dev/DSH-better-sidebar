@@ -16,7 +16,9 @@
 #   DSH_CMD        dsh 命令；缺省 PATH 上的 `dsh`，回退 npx 拉官方包
 #   TARBALL        插件 tarball；缺省仓库根 dsh-better-sidebar-*.tgz（须已 pack）
 #   PORT           固定端口（默认 0 = OS 分配，从日志解析 URL）
-#   DSH_HOME_BASE  覆盖 scratch 根目录（默认 mktemp -d）
+#   DSH_HOME_BASE  覆盖 scratch 根目录（默认系统临时目录）。脚本始终在其下
+#                  新建本调用拥有的独立子目录，只写入/删除该子目录；调用方
+#                  提供的目录本身（可能是真实 ~/.dsh）绝不写入或删除。
 #   KEEP_HOME      非空时保留 scratch home（调试用）
 #
 # 退出码 = playwright 的退出码；服务器与 scratch 目录由 trap 兜底清理。
@@ -57,8 +59,14 @@ fi
 TARBALL="$(cd "$(dirname "$TARBALL")" && pwd)/$(basename "$TARBALL")"
 say "tarball: $TARBALL"
 
-# scratch home（每次全新，绝不触碰真实 ~/.dsh）
-SCRATCH="${DSH_HOME_BASE:-$(mktemp -d /tmp/dsh-e2e-mount.XXXXXX)}"
+# scratch home（每次全新，绝不触碰真实 ~/.dsh）：调用方给了 DSH_HOME_BASE
+# 时，只在其下新建本调用拥有的子目录并只删除该子目录；缺省时直接用系统
+# 临时目录。
+if [ -n "${DSH_HOME_BASE:-}" ]; then
+  SCRATCH="$(mktemp -d "$DSH_HOME_BASE/dsh-e2e-mount.XXXXXX")"
+else
+  SCRATCH="$(mktemp -d /tmp/dsh-e2e-mount.XXXXXX)"
+fi
 export DSH_HOME="$SCRATCH/home"
 WORKSPACE_DIR="$SCRATCH/workspace"
 LOG_DIR="$SCRATCH"

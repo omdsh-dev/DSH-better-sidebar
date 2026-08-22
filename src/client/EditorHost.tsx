@@ -31,6 +31,7 @@ import { api, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
 import { baseName } from './FileTree.tsx'
+import { createFrameBatcher } from './frame-batcher.ts'
 import { openSidebarFile } from './intercept.tsx'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
@@ -165,8 +166,16 @@ export function EditorHost(props: {
   // (no window listeners — the captured pointer keeps tracking even off the
   // handle). Local width while dragging, persisted into meta.treeWidth on
   // release. The panel docks right, so dragging LEFT widens it.
+  // Moves are BATCHED per frame (createFrameBatcher): applying every
+  // pointermove is a setState that re-renders this host AND the editor
+  // viewer below it (CodeMirror re-lays out on the width change) at event
+  // cadence — the visible drag lag on slower CPUs (#315). The batch applies
+  // the latest width once per frame; release flushes it and commits.
   const [dragWidth, setDragWidth] = useState<number | null>(null)
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  const pendingWidthRef = useRef(0)
+  const dragBatcher = useRef(createFrameBatcher()).current
+  useEffect(() => () => dragBatcher.dispose(), [dragBatcher])
   const treeWidth = dragWidth ?? treeWidthOf(tab)
 
   const onResizeStart = (event: React.PointerEvent): void => {
@@ -178,11 +187,17 @@ export function EditorHost(props: {
   const onResizeMove = (event: React.PointerEvent): void => {
     const drag = dragRef.current
     if (drag === null) return
-    setDragWidth(clampTreeWidth(drag.startWidth + (drag.startX - event.clientX)))
+    pendingWidthRef.current = clampTreeWidth(drag.startWidth + (drag.startX - event.clientX))
+    dragBatcher.schedule(() => setDragWidth(pendingWidthRef.current))
   }
   const onResizeEnd = (event: React.PointerEvent): void => {
     const drag = dragRef.current
     if (drag === null) return
+    // Flush the last pending frame (a release can land with the final move
+    // still queued; without the flush a stray frame would re-apply the
+    // drag width AFTER the null below). Both setStates batch into this same
+    // event, so the committed treeWidth wins visually.
+    dragBatcher.flushNow()
     dragRef.current = null
     setDragWidth(null)
     const finalWidth = clampTreeWidth(drag.startWidth + (drag.startX - event.clientX))

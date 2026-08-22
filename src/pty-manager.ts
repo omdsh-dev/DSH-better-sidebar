@@ -64,14 +64,37 @@ export interface SidebarPty {
 /**
  * The terminal registry. `maxPerSession` bounds concurrent processes per
  * conversation (the client caps tabs at the same number).
+ *
+ * Lifecycle of a UI-tab pty when its WebSocket drops:
+ * - **Close frame** (`{type:'close'}`): the user closed the tab → schedule a
+ *   0-ms close (quota released immediately).
+ * - **Park frame** (`{type:'park'}`): the user switched to another
+ *   conversation; the tab is still open in its session's persisted state but
+ *   its view unmounted → mark the pty as parked (no auto-close countdown).
+ *   The pty stays alive until the user switches back (a reconnecting view
+ *   calls `open()` which clears the parked state) or the tab is later closed
+ *   (a `{type:'close'}` frame from a fresh connection). Without `park`, a
+ *   bare socket drop would start the reconnect-grace countdown and kill the
+ *   shell after `reconnectGraceMs` — wrong for a session switch, where the
+ *   user is still actively using the app, just in another conversation.
+ * - **Bare socket drop** (no frame): page refresh, crash, plugin teardown →
+ *   schedule a close after `reconnectGraceMs` so a quick reconnect reattaches
+ *   the same shell.
  */
 export class PtyManager {
   private readonly sessions = new Map<string, SidebarPty>()
   private readonly pendingCloses = new Map<string, ReturnType<typeof setTimeout>>()
+  /** Tabs whose view unmounted because the user switched conversations — the
+   *  tab is still open in its session's state, so the pty must NOT enter the
+   *  reconnect-grace countdown. Cleared by `cancelClose` (a reconnecting
+   *  view's `open()` cancels it) or by `scheduleClose` (an explicit close
+   *  frame still kills a parked pty). */
+  private readonly parked = new Set<string>()
 
   constructor(
     private readonly shell: string,
     private readonly maxPerSession: number,
+    private readonly shellArgs: string[] = [],
     /** The loaded node-pty module (injected so a broken install degrades instead of crashing the plugin). */
     private readonly nodePty: NodePtyModule = loadRequiredNodePty(),
   ) {}
@@ -103,7 +126,15 @@ export class PtyManager {
    * @returns the live handle.
    * @throws {SidebarError} pty-error when the per-session cap is reached.
    */
-  open(sessionId: string, tabId: string, cwd: string, cols: number, rows: number): SidebarPty {
+  open(
+    sessionId: string,
+    tabId: string,
+    cwd: string,
+    cols: number,
+    rows: number,
+    shell?: string,
+    shellArgs?: string[],
+  ): SidebarPty {
     const key = `${sessionId}:${tabId}`
     this.cancelClose(key)
     const existing = this.sessions.get(key)
@@ -122,7 +153,7 @@ export class PtyManager {
       sessionId,
       tabId,
       cwd,
-      pty: this.nodePty.spawn(this.shell, shellSpawnArgs(), {
+      pty: this.nodePty.spawn(shell ?? this.shell, shellSpawnArgs(shellArgs ?? this.shellArgs), {
         name: 'xterm-256color',
         cols: Math.max(2, Math.floor(cols)),
         rows: Math.max(2, Math.floor(rows)),
@@ -150,7 +181,9 @@ export class PtyManager {
    * Schedule the terminal's destruction after `delayMs`. A tab close sends
    * delay 0 (release the quota immediately); a bare socket drop (refresh,
    * crash) uses the grace period so a quick reconnect keeps the process.
-   * `open()` cancels any pending close.
+   * `open()` cancels any pending close. Clears the parked state — an explicit
+   * close frame on a parked pty (the user switched back and closed the tab)
+   * still kills it.
    */
   scheduleClose(key: string, delayMs: number): void {
     const handle = this.sessions.get(key)
@@ -160,13 +193,36 @@ export class PtyManager {
     this.pendingCloses.set(key, timer)
   }
 
-  /** Cancel a pending scheduled close (the terminal is being reopened). */
+  /**
+   * Park a terminal: the owning tab's view unmounted because the user
+   * switched to another conversation, but the tab is still open in its
+   * session's persisted state. Cancels any pending grace close and marks
+   * the pty so the host's `ws.on('close')` handler does NOT start the
+   * reconnect-grace countdown — the pty stays alive until the user switches
+   * back (a reconnecting view's `open()` clears this) or explicitly closes
+   * the tab (a `{type:'close'}` frame's `scheduleClose` clears this).
+   */
+  park(key: string): void {
+    if (this.sessions.get(key) === undefined) return
+    this.cancelClose(key)
+    this.parked.add(key)
+  }
+
+  /** Whether this pty was parked (its view unmounted for a session switch). */
+  isParked(key: string): boolean {
+    return this.parked.has(key)
+  }
+
+  /** Cancel a pending scheduled close (the terminal is being reopened).
+   *  Also clears the parked state — a reconnecting view reattaches a parked
+   *  pty and resumes normal lifecycle. */
   cancelClose(key: string): void {
     const timer = this.pendingCloses.get(key)
     if (timer !== undefined) {
       clearTimeout(timer)
       this.pendingCloses.delete(key)
     }
+    this.parked.delete(key)
   }
 
   /** Resolve a live handle by key, or undefined. */
@@ -295,10 +351,26 @@ export function defaultShell(options: ShellResolutionOptions = {}): string {
 }
 
 /**
+ * A short display name for a shell executable, used as the terminal tab
+ * title. `/bin/zsh` → `zsh`, `C:\...\powershell.exe` → `powershell`.
+ * Falls back to the raw value when no basename can be derived.
+ */
+export function shellDisplayName(shell: string): string {
+  const normalized = shell.replace(/\\/g, '/')
+  const base = normalized.slice(normalized.lastIndexOf('/') + 1)
+  if (base === '') return shell
+  return base.replace(/\.(exe|cmd|bat)$/i, '')
+}
+
+/**
  * Spawn arguments that make the shell behave like a terminal-emulator tab:
  * POSIX shells start as login shells (`-l`) so they read the profile files
  * (`~/.profile`, `~/.zprofile`); Windows PowerShell takes no login flag.
+ *
+ * When explicit `configured` args are supplied they REPLACE the platform
+ * defaults entirely, giving deployments full control over shell startup.
  */
-export function shellSpawnArgs(): string[] {
+export function shellSpawnArgs(configured: string[] = []): string[] {
+  if (configured.length > 0) return [...configured]
   return process.platform === 'win32' ? [] : ['-l']
 }

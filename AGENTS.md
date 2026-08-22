@@ -19,9 +19,9 @@ better-sidebar 从 v0.4.0 起暴露 `ctx.betterSidebar` 服务（Cordis context 
 
 1. `pnpm build && pnpm pack` 产出 tarball（与发布产物一致）。
 2. `scripts/e2e-mount.sh` 用官方 CLI 把它装进一个**全新 scratch profile**（`dsh plugin --profile web add file:<tarball>`，触发 `dsh.profile.bundles` 协调），然后启动真实 `dsh web`（keyless，`--port 0`）。
-3. `tests/e2e/mount.e2e.ts`（Playwright Chromium）加载页面，断言外壳与 `[data-dsh-better-sidebar]` 挂载、无 `dsh-better-sidebar:` 错误条、无 pageerror/插件 console 错误，显式展开面板（`openByDefault` 默认关）后通过「+ 菜单」逐个打开内置 tab（含终端懒加载 chunk）深扫，再经 Files 文件窗口的内嵌树打开 seed 文件强制加载 editor 懒加载 chunk（`client-editor.js`，原地模式：seed 的 home tab 原地切换到文件）——缺失的内置 tab 或 chunk 都会使门禁变红。
+3. `tests/e2e/mount.e2e.ts`（Playwright Chromium）加载页面，断言外壳与 `[data-dsh-better-sidebar]` 挂载、无 `dsh-better-sidebar:` 错误条、无 pageerror/插件 console 错误，显式展开面板（`openByDefault` 默认关）后通过「+ 菜单」逐个打开内置 tab（含终端懒加载 chunk）深扫，再经 Files 文件窗口的树打开 seed 文件强制加载 editor 懒加载 chunk（`client-editor.js`，独立模式：每个文件新开 tab，seed 的 home tab 保持资源管理器）——缺失的内置 tab 或 chunk 都会使门禁变红。
 
-本地跑：`pnpm build && pnpm pack && pnpm exec playwright install chromium && pnpm test:mount`（需 PATH 上有 `dsh` 或可经 npx 拉取）。DSH CLI 版本在 CI 钉住 `@deepseek-ai/dsh@0.1.0-rc.6`（与插件 peer 范围同步）。`tests/e2e` 的 spec 命名 `*.e2e.ts` + vitest `exclude` 双保险与 vitest 隔离；**改动 vitest `exclude` 时必须保留默认排除项**（`exclude` 会整体替换默认值）。
+本地跑：`pnpm build && pnpm pack && pnpm exec playwright install chromium && pnpm test:mount`（需 PATH 上有 `dsh` 或可经 npx 拉取）。DSH CLI 版本在 CI 钉住 `@deepseek-ai/dsh@0.1.1-rc.2`（挂载冒烟验证基线；peer 下限保持 `^0.1.0-rc.8`，rc.8 与 0.1.1-rc.x 双向兼容）。`tests/e2e` 的 spec 命名 `*.e2e.ts` + vitest `exclude` 双保险与 vitest 隔离；**改动 vitest `exclude` 时必须保留默认排除项**（`exclude` 会整体替换默认值）。
 
 ### npm 发版（GitHub Release → npm publish）
 
@@ -53,7 +53,7 @@ better-sidebar 从 v0.4.0 起暴露 `ctx.betterSidebar` 服务（Cordis context 
 {
   "name": "my-plugin",
   "peerDependencies": {
-    "cordis": "^4.0.0-rc.7",
+    "cordis": "^4.0.0-rc.8",
     "dsh-better-sidebar": "workspace:*"
   },
   "peerDependenciesMeta": {
@@ -350,9 +350,10 @@ ctx.effect(() => {
 
 | id | order | single | hidden | 用途 |
 |---|---|---|---|---|
-| `editor` | 10 | 否（按 path 去重） | 否 | 唯一的「文件窗口」（文件编辑/预览 + 文件资源管理）：文件 tab（有 path）在两种 `editorExplorer` 模式下 chrome 恒为合并形态——头部路径输入框 + 文本编辑器预览/编辑/保存控件 + 可开关的内嵌文件树面板（含全局文件名搜索，走 host `fs.search` 路由；左缘拖拽调宽），状态存 `tab.meta.treeOpen` / `tab.meta.treeWidth`；pref 控制**打开行为与无路径窗口形态**：开（默认，合并）= 树点击/输入框 Enter 原地切换当前 tab（`updateTab` 重写 path/title，id 与 meta 不变），无路径窗口 = 带 chrome 的空文件窗口（树默认展开）；关（独立）= 走 `openSidebarFile` 按 path 新开，**无路径窗口即独立资源管理器——只渲染文件树面板**（搜索 + FileTree 撑满全窗，无编辑器 chrome）。树右键菜单提供「在新 Tab 中打开」「在侧边打开」（后者在当前 pane 右侧 split 出新 editor tab）。新会话在两种模式下都默认 seed 空文件窗口（`title: 'Files'`，无 path，树面板展开）；持久化的旧 `explorer` tab 经 `sanitizeState` 迁移为该 home tab |
+| `editor` | 10 | 否（按 path 去重） | 否 | 唯一的「文件窗口」（文件编辑/预览 + 文件资源管理）：文件 tab（有 path）在两种 `editorExplorer` 模式下 chrome 恒为合并形态——头部路径输入框 + 文本编辑器预览/编辑/保存控件 + 可开关的内嵌文件树面板（含全局文件名搜索，走 host `fs.search` 路由；左缘拖拽调宽），状态存 `tab.meta.treeOpen` / `tab.meta.treeWidth`；pref 控制**打开行为与无路径窗口形态**：关（默认，独立）= 走 `openSidebarFile` 按 path 新开，**无路径窗口即独立资源管理器——只渲染文件树面板**（搜索 + FileTree 撑满全窗，无编辑器 chrome）；开（合并）= 树点击/输入框 Enter 原地切换当前 tab（`updateTab` 重写 path/title，id 与 meta 不变），无路径窗口 = 带 chrome 的空文件窗口（树默认展开）。树右键菜单提供「在新 Tab 中打开」「在侧边打开」（后者在当前 pane 右侧 split 出新 editor tab）。新会话在两种模式下都默认 seed 空文件窗口（`title: 'Files'`，无 path，树面板展开）；持久化的旧 `explorer` tab 经 `sanitizeState` 迁移为该 home tab |
 | `git` | 20 | 是 | 否 | Git 面板 |
 | `subagent` | 30 | 是 | 否 | 子代理拓扑 |
+| `sidechat` | 35 | 否（createTab 铸造 `sidechat:<uuid>`/按 `meta.threadId` 去重） | 否 | 侧边对话（Codex 风格，**每个对话一个独立 Tab**）：打开 Tab 即自动创建空线程（composer 拥有首条消息，host 侧包裹边界提示 + 创建时停泊的进行中快照，首条消息赢得真实标签并同步 Tab 标题）；线程 = 插件自建子会话（自定义种子继承父会话完整上下文，进行中回合以 `interrupted` 冻结诚实闭合；种子尾部带合法 `subagent/descriptor`——否则 cold 线程在宿主 subagents.list 里是 corrupt 诊断行——SubagentView/subagent-detect 按 `Side: ` 前缀过滤保持拓扑零噪音），`origin:'subagent'` 隐藏于主列表；生命周期走自有 `/sidebar/api/sidechat.*` 路由（`ctx.agents.create/resume` + `agent.followup/cancel` + `sidechat.info` 读 Agent 身份/状态）；头部菜单可切换/重开既有线程（`parkSidechatReopen` + `sidechat:<threadId>` 确定性 id），关闭 Tab 释放 live agent（历史保留）；重开 Tab 经 `collectOwnEvents` 大页回源到种子边界（cold 读会展开 chunk 压缩行，小窗口会丢早期 tool/call 行）；「保存为新会话」= `session.fork` 提升顶层会话（必须方法调用形态，`this` 敏感）。UI 对齐主对话区（用户气泡 `--dsw-specific-bubble`、assistant 通栏 markdown、胶囊 composer + 圆形发送/停止钮、运行扫光状态行）。见 [设计文档](docs/plans/2026-08-20-sidechat-tab-design.md) |
 | `terminal` | 40 | 否 | 否 | 终端（nextTerminal 自增） |
 | `browser` | 50 | 否（createTab 铸造 browser:`<n>`，nextBrowser 自增） | 否 | 内嵌网页浏览器（沙箱 iframe；可设置关闭沙箱） |
 | `diff` | -1 | 否（按 id 去重） | 是 | 差异查看（由 GitView 触发） |
@@ -568,7 +569,7 @@ interface OpenTabSeed {
 }
 ```
 
-> **声明式设置（v0.4.1+）**：每个注册的 tab/viewer 自动出现在 DSH 设置页「侧边卡片」分区的清单里——响应式网格中的**小卡片**（图标 + 标题 + 类型 id + **高亮 = 启用**，勾选徽标钉在卡片最右端，viewer 卡片还显示扩展名），开关持久化到 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，缺省 = 启用）。关闭语义：tab 从 `+` 菜单消失、`openTab` 拒绝新开、子代理自动展开 / agent 终端自动补 tab 等派生流程停止，**已打开的 tab 保留**；viewer 被 `matchFileViewer` 跳过，文件落到下一个匹配。`settings.toggles` 声明的相关设置（如子代理的 `autoOpenSubagent`、终端的 `terminalFontFamily`/`terminalFontSize`）通过卡片右下角的齿轮按钮在**原生弹窗**中编辑——`type: 'switch'` 行是复选框，`type: 'text'`/`'number'` 行是输入框（v0.11.0+），`type: 'select'` 行是下拉选择（options 带 icon 时为大图标选项卡，`multi: true` 多选存 value 数组）——父级卡片关闭时齿轮隐藏；`settings.toggles` 的 **key 必须是宿主 PrefsSchema 的字段**（内置键：`autoOpenSubagent` / `agentTerminalTools` / `terminalFontFamily` / `terminalFontSize` / `editorExplorer` / `htmlViewerNoSandbox` / `htmlViewerDefaultUnsafe` / `browserNoSandbox` / `browserInterceptLinks` / `browserInterceptHttp` / `browserInterceptHttps`）。**v0.12.0 起设置 seam 已开放**：外部插件用 `settings.pluginToggles`（同款行控件，key 插件局部）或 `settings.render`（自定义面板）声明自己的设置，值持久化在 prefs 文档的 `pluginSettings[<descriptor id>]`（开放 map，宿主 schema 已有字段，无需注册）——齿轮弹窗对 tab 与 viewer 都可用（viewer 卡片 v0.12.0 起也有齿轮）。
+> **声明式设置（v0.4.1+）**：每个注册的 tab/viewer 自动出现在 DSH 设置页「侧边卡片」分区的清单里——响应式网格中的**小卡片**（图标 + 标题 + 类型 id + **高亮 = 启用**，启用卡片最右端渲染紧凑品牌开关滑块，viewer 卡片还显示扩展名），开关持久化到 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，缺省 = 启用）。关闭语义：tab 从 `+` 菜单消失、`openTab` 拒绝新开、子代理自动展开 / agent 终端自动补 tab 等派生流程停止，**已打开的 tab 保留**；viewer 被 `matchFileViewer` 跳过，文件落到下一个匹配。`settings.toggles` 声明的相关设置（如子代理的 `autoOpenSubagent`、终端的 `terminalFontFamily`/`terminalFontSize`）通过卡片底部的「功能设置」设置条（齿轮图标 + 文字标签，hairline 分隔）在**原生弹窗**中编辑——`type: 'switch'` 行是复选框，`type: 'text'`/`'number'` 行是输入框（v0.11.0+），`type: 'select'` 行是下拉选择（options 带 icon 时为大图标选项卡，`multi: true` 多选存 value 数组）——父级卡片关闭时设置条隐藏；`settings.toggles` 的 **key 必须是宿主 PrefsSchema 的字段**（内置键：`autoOpenSubagent` / `agentTerminalTools` / `terminalFontFamily` / `terminalFontSize` / `editorExplorer` / `htmlViewerNoSandbox` / `htmlViewerDefaultUnsafe` / `browserNoSandbox` / `browserInterceptLinks` / `browserInterceptHttp` / `browserInterceptHttps`）。**v0.12.0 起设置 seam 已开放**：外部插件用 `settings.pluginToggles`（同款行控件，key 插件局部）或 `settings.render`（自定义面板）声明自己的设置，值持久化在 prefs 文档的 `pluginSettings[<descriptor id>]`（开放 map，宿主 schema 已有字段，无需注册）——设置弹窗对 tab 与 viewer 都可用（viewer 卡片 v0.12.0 起也有设置条）。
 
 ---
 
@@ -605,9 +606,17 @@ interface OpenTabSeed {
 
 - **面板表面**：右/底面板背景 = `var(--dsw-alias-bg-layer-1)`（通用卡片表面）。**绝不消费 `--dsw-specific-sidebar-fill`**——那是宿主左侧导航列专属令牌，皮肤系统按左导航语义覆盖它（dsh-web-ui 皮肤把它做成半透明玻璃或主题色，Aqua 设成 `transparent`），面板消费它会失去填充或与标签令牌冲突。皮肤要整体换面板表面：覆写 `--dsw-alias-bg-layer-1` 即可（dsh-web-ui 10 款皮肤都已覆盖，无需任何额外工作）。
 - **终端/编辑器表面**：经 `effectiveTokenValue` 读取 `--dsw-alias-bg-base`——`transparent` 与 alpha < 0.9 的半透明玻璃值（dsh-web-ui 皮肤用 rgba 0.16–0.7）一律回退不透明底色，文字永不叠在皮肤背景画上滚动（issue #90）；≥ 0.9 的近不透明值（如皮肤作用域内 0.96 的瓷器玻璃）放行，皮肤仍能控制终端表面。
-- **根锚点**：宿主 div 带 `data-dsh-better-sidebar` 属性（append 到 `document.body`），面板是其 fixed 直接子级。皮肤若要做作用域覆盖（deep-whale 的做法），限定在 `[data-dsh-better-sidebar]` 内即可，避免全局改写影响宿主。
-- **布局变量**（写在 `<html>` 上，面板打开时有效）：`--dsh-sidebar-width` / `--dsh-sidebar-height`（面板几何；拖拽期间逐帧更新）。
-- **z-index**：面板 40、折叠按钮簇 45（角手柄在面板内层叠，z-index 2 仅面板内有效）——全部低于 DSH 浮层栈（100/1000+），任何浮层天然盖住侧边栏。
+- **根锚点**：宿主 div 带 `data-dsh-better-sidebar` 属性（append 到 `document.body`）。其内是**统一面板宿主层** `[data-dsh-panel-host]`（`position:fixed; inset:0; z-index:40; pointer-events:none`，v0.13.1+）：面板/开关簇在其内 **absolute** 定位（层 inset:0 即视口坐标），免疫桌面套壳中间层 transform 对 fixed 含块的劫持；页面级 transform（罕见）触发 `data-dsh-panel-host-degraded` 降级同步。皮肤若要做作用域覆盖（deep-whale 的做法），限定在 `[data-dsh-better-sidebar]` 内即可，避免全局改写影响宿主。
+- **布局变量**（写在 `<html>` 上，面板打开时有效）：`--dsh-sidebar-width` / `--dsh-sidebar-height`（面板几何；拖拽期间逐帧更新）。宿主推挤 = `#root` 的 `margin-right/width: calc(100% - var)`（v0.13.1+ 防桌面壳加性溢出）与 centerCol 的 `margin-bottom`；推挤锚点是**复合选择器**（同一元素双保险，禁止退回 `nth-child` 位置锚定）：`#root [data-dsh-frame] > [data-pane="conversation"]` **与** `#root :has(> [data-slot="conversation"])`（0.1.x 命名 / rc.8 时代命名，live 页面实测同元素；`drag-layout.e2e.ts` 断言两者同元素）。
+- **桌面信号与标题栏兼容**（v0.14.1+ 四选项模型，取代旧"win32 advanced 自动 32px"硬编码）：
+  - 壳信号（只读报告，不自动触发任何修改）：URL `dsh-desktop-mode` / `dsh-desktop-platform`（DSH Desktop 壳注入；preload 另暴露 `__DSH_DESKTOP_FILE_PATH__`）；可选契约参数 `dsh-desktop-titlebar-inset`（壳声明自己预留的顶栏像素，0–120，clamp；`parseDesktopEnv().titlebarInset`）。
+  - **strip 取值链**（`src/client/titlebar-strip.ts` 唯一决策点，纯函数）：⓪ `web` 方案强制 0（显式 DSH官方Web，连 WCO 也不适用）；① `navigator.windowControlsOverlay` 标准 API 真实几何（`src/client/wco.ts`，反应式订阅 `geometrychange`，最大化/还原实时更新——**即使为 0 也权威**，`visible=false` 的幽灵 API 视为缺失，覆盖 #257 的 32/36px 差异）；② URL `dsh-desktop-titlebar-inset`；③ 壳预设 `stripFor`（仅 `preset` 方案）；④ 手动 `titleBarStripPx`（仅 `custom` 方案）；⑤ 0（网页零修改）。结果驱动 `body[data-dsh-title-bar-compat]` + `--dsh-title-bar-strip`（语义与旧布尔一致）。
+  - **四选项设置**（`SidebarPrefs.titleBarScheme`，设置页主行**下拉**：`auto` 默认 / `web` / `preset` / `custom`）：`auto` = 只信标准信号（WCO），壳 stamp 不触发任何修改——**"为某壳做的兼容在另一个壳会再坏"，核心不做壳专属分支**；`web` = 显式「DSH官方Web」，任何情况强制 0；`preset` = 数据驱动的内置壳预设（`src/client/shell-presets.ts`，准入规则：issue/PR 中被提及且 GitHub ⭐>100；v1 仅 anywhere-labs DSH Desktop：darwin advanced 20px、win32 无 WCO 时 32px 兜底；下拉选项命中环境时带「已检测」后缀，仅提示、绝不自动启用）；`custom` = 用户自定义 CSS + 手动 strip px（下拉选中后出现齿轮按钮，弹窗含下移距离与 CSS 输入）。
+  - **旧文档迁移**：schema 中 `titleBarScheme` 无默认值（缺失才可迁移）；旧文档**已有值**（`titleBarCompat === true` 或 `titleBarStripPx` 非默认 40）→ 迁移到 `custom` 方案保留用户数值；干净文档 → `auto`。
+  - **用户空间 CSS**：预设 css（`<style data-dsh-preset-css>`）与自定义 css（`<style data-dsh-custom-css>`）经 `Sidebar.tsx` effect 注入到 `document.head` 末尾（后写胜出；覆盖 JS 内联变量需 `!important`），fiber 卸载/变更即移除。稳定寻址面（皮肤/预设/自定义 CSS 共用）：`[data-dsh-toggle-cluster]`、`[data-dsh-panel]`（右面板）、`[data-dsh-bottom-panel]`（底面板）。
+  - **拖拽区退出**：插件交互 chrome（`.toggleCluster` / `.toggleButton` / `.tabBar`）统一 `-webkit-app-region: no-drag`——无边框壳的顶部拖拽带会吞点击（#103/#111），该属性在普通浏览器与无拖拽区壳中惰性无害。
+  - `compatibility` 模式与无信号环境不避让。
+- **z-index**：面板宿主层 40、折叠按钮簇 45（角手柄在面板内层叠，z-index 2 仅面板内有效）——全部低于 DSH 浮层栈（100/1000+），任何浮层天然盖住侧边栏。
 
 ### 8.2 注意事项
 
@@ -631,7 +640,7 @@ interface OpenTabSeed {
     "./client": { "types": "./lib/types/client/index.d.ts", "default": "./lib/client.js" }
   },
   "peerDependencies": {
-    "cordis": "^4.0.0-rc.7",
+    "cordis": "^4.0.0-rc.8",
     "dsh-better-sidebar": "workspace:*",
     "@deepseek-ai/dsh-client-runtime": "^0.0.1",
     "react": "^18.2.0"

@@ -75,6 +75,56 @@ describe('subagent detection over the sessions list feed', () => {
     expect(countSubagentDescendants(cyclic, 'a')).toEqual({ count: 2, runningCount: 0 })
   })
 
+  it('excludes Side Chat threads (subagent origin, "Side: " label) from counts', () => {
+    // Side threads ride the subagent origin for list hiding + the RPC fence
+    // but they are tab-strip conversations, never topology: they must not
+    // fire the auto-open trigger nor inflate the Subagent page totals.
+    const byId: SidebarSessionList['byId'] = {
+      p1: { id: 'p1', displayTitle: 'P1' },
+      c1: { id: 'c1', displayTitle: 'C1', origin: 'subagent', parentId: 'p1' },
+      s1: { id: 's1', displayTitle: 'Side: refactor plan', origin: 'subagent', parentId: 'p1', running: true },
+    }
+    expect(directSubagentCount(byId, 'p1')).toBe(1)
+    expect(countSubagentDescendants(byId, 'p1')).toEqual({ count: 1, runningCount: 0 })
+    // A side thread appearing under an empty session never trips 0 → N.
+    const before: SidebarSessionList = { current: 'p2', byId: { p2: { id: 'p2', displayTitle: 'P2' } } }
+    const after: SidebarSessionList = {
+      current: 'p2',
+      byId: {
+        p2: { id: 'p2', displayTitle: 'P2' },
+        s2: { id: 's2', displayTitle: 'Side: New thread', origin: 'subagent', parentId: 'p2' },
+      },
+    }
+    expect(detectNewDirectSubagent(before, after, 'p2')).toBe(false)
+  })
+
+  it('documents the title-frame race the Sidebar auto-open debounce absorbs', () => {
+    // The host delivers a new child's origin and title in SEPARATE frames:
+    // a Side Chat thread's FIRST visible frame still shows a fallback title
+    // (the cwd basename — no 'Side: ' prefix), so an immediate 0→N check
+    // misreads it as a genuine subagent. Sidebar.tsx therefore debounces
+    // AUTO_OPEN_DEBOUNCE_MS and re-evaluates the ORIGINAL baseline against
+    // the live snapshot; once the title frame has landed the same baseline
+    // yields no trigger. These two assertions pin exactly that dependency.
+    const baseline: SidebarSessionList = { current: 'p2', byId: { p2: { id: 'p2', displayTitle: 'P2' } } }
+    const firstFrame: SidebarSessionList = {
+      current: 'p2',
+      byId: {
+        p2: { id: 'p2', displayTitle: 'P2' },
+        s2: { id: 's2', displayTitle: 'DSH-better-sidebar', origin: 'subagent', parentId: 'p2' },
+      },
+    }
+    expect(detectNewDirectSubagent(baseline, firstFrame, 'p2')).toBe(true) // the race
+    const settled: SidebarSessionList = {
+      current: 'p2',
+      byId: {
+        p2: { id: 'p2', displayTitle: 'P2' },
+        s2: { id: 's2', displayTitle: 'Side: New thread', origin: 'subagent', parentId: 'p2' },
+      },
+    }
+    expect(detectNewDirectSubagent(baseline, settled, 'p2')).toBe(false) // after the debounce
+  })
+
   it('resolves the main-agent root of the current session tree', () => {
     const byId: SidebarSessionList['byId'] = {
       main: { id: 'main', displayTitle: 'Main' },

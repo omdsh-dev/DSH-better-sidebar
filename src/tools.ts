@@ -81,6 +81,7 @@ export function registerTools(
   ctx: Context,
   registry: AgentPtyRegistry,
   resolveCwd: (sessionId: string) => string,
+  readShellOverrides: () => { shell?: string; shellArgs?: string[] },
 ): () => void {
   const disposers: Array<() => void> = []
   const register = (tool: ReturnType<typeof defineTool>): void => {
@@ -127,7 +128,8 @@ export function registerTools(
       exec.signal.throwIfAborted()
       const sessionId = sessionIdOf(exec)
       const cwd = resolveCwd(sessionId)
-      const uuid = registry.create(sessionId, args.title, args.command, cwd, 80, 24)
+      const { shell, shellArgs } = readShellOverrides()
+      const uuid = registry.create(sessionId, args.title, args.command, cwd, 80, 24, shell, shellArgs)
       return Promise.resolve({ uuid, title: args.title })
     },
   }))

@@ -29,6 +29,7 @@ import {
   type SidebarPrefs,
 } from './config.ts'
 import { isWithin, parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import { writeWorkspaceUpload } from './fs-operations.ts'
 import { searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
@@ -37,7 +38,7 @@ import { registerBundleRoute } from './bundle-route.ts'
 import { registerIconsRoute } from './icons-route.ts'
 import * as git from './git.ts'
 import { SettingsConflictError, settingsNamespace, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
-import { defaultShell, ensureSpawnHelper, PtyManager } from './pty-manager.ts'
+import { defaultShell, ensureSpawnHelper, PtyManager, shellDisplayName } from './pty-manager.ts'
 import { AgentPtyRegistry, clampDims, type AgentTerminalHandle } from './agent-pty.ts'
 import {
   DSH_NODE_PTY_RANGE,
@@ -47,6 +48,8 @@ import {
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
+import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
+import { buildSidechatApi } from './sidechat-routes.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 
 export { Config }
@@ -192,12 +195,33 @@ export interface SidebarSettingsFace {
   update(patch: Record<string, unknown>, expectedRevision?: number): Promise<{ value?: unknown; revision?: number }>
 }
 
-/** Build the API method table bound to the plugin context, pty manager, agent pty registry, and resolved config. */
+/** Build the API method table bound to the plugin context, pty manager, agent pty registry, resolved config, and effective terminal shell. */
+/**
+ * Resolve the settings-page terminal shell overrides (the terminal card's
+ * gear rows). Empty fields mean "unset": keep the yaml `config.shell` /
+ * `shellArgs` (or the platform auto-resolution). The settings page is the
+ * runtime complement to the boot-time yaml — same contract, later binding:
+ * the values here win for terminals opened afterwards.
+ */
+function shellOverridesOf(getSettings: () => SidebarSettingsFace | undefined): { shell?: string; shellArgs?: string[] } {
+  const settings = getSettings()
+  const value = settings?.get().value
+  if (value === null || typeof value !== 'object') return {}
+  const record = value as Record<string, unknown>
+  const shell = typeof record.terminalShell === 'string' ? record.terminalShell.trim() : ''
+  const args = typeof record.terminalShellArgs === 'string' ? record.terminalShellArgs.trim() : ''
+  return {
+    shell: shell === '' ? undefined : shell,
+    shellArgs: args === '' ? undefined : args.split(/\s+/).filter(Boolean),
+  }
+}
+
 function buildApi(
   ctx: Context,
   ptyManager: PtyManager | null,
   agentPtyRegistry: AgentPtyRegistry | null,
   resolved: ResolvedSidebarConfig,
+  terminalShell: string,
   getSettings: () => SidebarSettingsFace | undefined,
 ): Record<string, ApiMethod> {
   const cwdOf = (payload: unknown): { sessionId: string; cwd: string } => {
@@ -212,6 +236,10 @@ function buildApi(
   // job_output cursor is never consumed) and kill (the registry's stock
   // API). A deployment without the jobs registry downgrades kill to a 503.
   const jobsApi: SidebarJobsRoutes = buildJobsApi(ctx, resolved.readLimit)
+  // Subagent live previews: one batch request instead of N per-child
+  // `subagents.history` calls. The route degrades to a 503 when the host
+  // subagent runtime is absent (the page has no topology to show anyway).
+  const subagentLiveApi: SidebarSubagentLiveRoutes = buildSubagentLiveApi(ctx)
   return {
     'session.cwd': (payload) => {
       const { sessionId, cwd } = cwdOf(payload)
@@ -364,6 +392,14 @@ function buildApi(
     // exists. Kill is fenced to the owning session by the jobs registry.
     'jobs.output': (payload) => jobsApi.output(payload),
     'jobs.kill': (payload) => jobsApi.kill(payload),
+    // Subagent live previews: one batch request per refresh; the route folds
+    // the newest text/tool activity of every running child in the tree.
+    'subagents.live': (payload) => subagentLiveApi.live(payload),
+    // The effective terminal shell and its display name. The client uses
+    // this to title terminal tabs with the shell name instead of a numbered
+    // "Terminal N" label; the shell itself is configured through
+    // `cordis.patch.yml` (`config.shell`) or resolved by the host default.
+    'shell.get': () => ({ shell: terminalShell, name: shellDisplayName(terminalShell) }),
     // The side card preferences. The settings service is optional in the
     // composition; while absent the routes report undefined and the client
     // keeps the schema defaults. Writes are revision-guarded: a stale editor
@@ -444,6 +480,14 @@ function buildApi(
         clearTimeout(timer)
       }
     },
+    // Side Chat: create a side-thread child seeded with the parent's full
+    // log up to now, deliver follow-ups (cold-resuming when the thread's
+    // agent is gone), abort a running thread, and release a thread's agent.
+    // Every operation runs through these routes because subagent-origin
+    // identities are fenced from the generic session RPCs (agent-lookup
+    // ownership), and the thread is created with a CUSTOM seed the stock
+    // fork APIs cannot express.
+    ...buildSidechatApi(ctx),
   }
 }
 
@@ -481,13 +525,17 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       : `${status.cause}. Repair: ${status.command}`
     ctx.logger?.warn(`[dsh-better-sidebar] node-pty (${DSH_NODE_PTY_RANGE}) failed to load: ${detail}`)
   }
-  const ptyManager = nodePty !== null ? new PtyManager(terminalShell, resolved.terminalsPerSession, nodePty) : null
+  const ptyManager = nodePty !== null
+    ? new PtyManager(terminalShell, resolved.terminalsPerSession, resolved.shellArgs, nodePty)
+    : null
   // The agent-owned terminal registry: parallel to the UI-tab ptyManager,
   // keyed by uuid (the model's opaque handle) instead of `${sessionId}:${tabId}`,
   // uncapped, and torn down with the plugin. The model creates terminals here
   // through the terminal_create tool; the sidebar view attaches through the
   // same /sidebar/ws/terminal upgrade with ?uuid=... instead of ?tab=...
-  const agentPtyRegistry = nodePty !== null ? new AgentPtyRegistry(terminalShell, nodePty) : null
+  const agentPtyRegistry = nodePty !== null
+    ? new AgentPtyRegistry(terminalShell, resolved.shellArgs, nodePty)
+    : null
 
   // ── User-facing "Side card" preferences ──────────────────────────────────
   // Register the namespace with the settings provider so the Settings page
@@ -509,7 +557,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // Degraded mode (node-pty unavailable): never register the terminal
         // tools — every one of them would fail at spawn time.
         if (agentPtyRegistry === null) return
-        toolsDisposers = registerTools(ctx, agentPtyRegistry, (sessionId) => sessionCwdOf(ctx, sessionId))
+        toolsDisposers = registerTools(ctx, agentPtyRegistry, (sessionId) => sessionCwdOf(ctx, sessionId), () => shellOverridesOf(() => settingsFace))
       }
     } else if (toolsDisposers !== null) {
       toolsDisposers()
@@ -561,7 +609,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   })
 
   // ── JSON API ────────────────────────────────────────────────────────────
-  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, () => settingsFace)
+  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -592,6 +640,47 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       }
     },
   }), 'dsh-better-sidebar: /sidebar/api routes')
+
+  // ── Raw upload route ───────────────────────────────────────────────────
+  // One request writes one file without JSON/base64 inflation. Folder uploads
+  // send each file with a relativePath, preserving the selected directory
+  // tree. Bytes stream to a temp sibling and are renamed into place, so a
+  // failed or oversized upload never leaves a partial file (see
+  // fs-operations.ts for the containment and shape rules).
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/sidebar/upload',
+    handler: async (req, res) => {
+      if (!fence(req)) {
+        writeJson(res, 403, { ok: false, error: { code: 'forbidden', message: 'forbidden' } })
+        return
+      }
+      if (req.method !== 'POST') {
+        writeJson(res, 405, { ok: false, error: { code: 'method-error', message: 'method not allowed' } })
+        return
+      }
+      try {
+        const url = new URL(req.url ?? '/', 'http://dsh.internal')
+        const sessionId = url.searchParams.get('sessionId')
+        const dir = url.searchParams.get('dir')
+        const relativePath = url.searchParams.get('relativePath')
+        if (sessionId === null || dir === null || relativePath === null || relativePath.trim() === '') {
+          throw new SidebarError('bad-request', 'sessionId, dir, and relativePath are required')
+        }
+        const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+        const { path, size } = await writeWorkspaceUpload({
+          cwd,
+          dir,
+          relativePath,
+          chunks: req,
+          limit: resolved.uploadLimit,
+        })
+        writeOk(res, { path, size })
+      } catch (error) {
+        writeError(res, error)
+      }
+    },
+  }), 'dsh-better-sidebar: /sidebar/upload route')
 
   // ── Lazy chunk route (client bundle splits) ─────────────────────────────
   // Serves the client half's split bundles (lib/client-<name>.js) so the
@@ -736,7 +825,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       // The structural request/socket/head faces satisfy the shared fence;
       // the `ws` package wants the real Node types — cast at this boundary.
       wss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
-        void attachTerminal(ctx, ptyManager, agentPtyRegistry, ws, req, resolved)
+        void attachTerminal(ctx, ptyManager, agentPtyRegistry, ws, req, resolved, () => settingsFace)
       })
     },
   }), 'dsh-better-sidebar: terminal WebSocket')
@@ -812,6 +901,10 @@ async function attachAgentList(
  * - `?tab=...&sessionId=...` attaches to a UI-tab terminal (the user
  *   created it from the + menu). The close frame schedules a 0-ms close
  *   (the host's reconnect grace keeps the shell alive across a refresh).
+ *   The park frame (sent when the user switches to another conversation)
+ *   marks the pty as parked so the upcoming bare socket drop does NOT start
+ *   the grace countdown — the tab is still open in its session's state, so
+ *   the shell must survive until the user switches back or closes the tab.
  */
 async function attachTerminal(
   ctx: Context,
@@ -820,6 +913,7 @@ async function attachTerminal(
   ws: WebSocket,
   req: SidebarHttpRequest,
   resolved: ResolvedSidebarConfig,
+  getSettings: () => SidebarSettingsFace | undefined,
 ): Promise<void> {
   try {
     const url = new URL(req.url ?? '/', 'http://dsh.internal')
@@ -853,7 +947,10 @@ async function attachTerminal(
       return
     }
     const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
-    const handle = ptyManager.open(sessionId, tabId, cwd, 80, 24)
+    // Settings-page shell overrides win over the yaml/auto shell for
+    // terminals opened from now on (existing pty handles keep their shell).
+    const overrides = shellOverridesOf(getSettings)
+    const handle = ptyManager.open(sessionId, tabId, cwd, 80, 24, overrides.shell, overrides.shellArgs)
     // Replay the transcript, then follow live output.
     if (handle.transcript !== '') ws.send(handle.transcript)
     const onData = (data: string): void => {
@@ -884,6 +981,16 @@ async function attachTerminal(
         ptyManager.scheduleClose(handle.key, 0)
         return
       }
+      if (control !== null && control.type === 'park') {
+        // The user switched to another conversation: the tab is still open in
+        // its session's persisted state, but its view unmounted. Park the pty
+        // so the upcoming bare socket drop does NOT start the reconnect-grace
+        // countdown — the pty stays alive until the user switches back (a
+        // reconnecting view clears the parked state) or explicitly closes the
+        // tab (a close frame's scheduleClose clears it).
+        ptyManager.park(handle.key)
+        return
+      }
       if (handle.exited) return
       if (
         control !== null
@@ -899,10 +1006,14 @@ async function attachTerminal(
     ws.on('close', () => {
       dataSub.dispose()
       exitSub.dispose()
-      // A bare socket drop (refresh, tab switch) leaves the process alive
-      // for a grace period so a quick reconnect keeps it; the reconnect's
-      // open() cancels the pending close.
-      ptyManager.scheduleClose(handle.key, resolved.reconnectGraceMs)
+      // A parked pty (the user switched conversations and sent `{type:'park'}`)
+      // stays alive indefinitely — do NOT start the grace countdown. A bare
+      // socket drop without a prior park (refresh, crash) starts the grace
+      // period so a quick reconnect keeps the process; the reconnect's open()
+      // cancels the pending close.
+      if (!ptyManager.isParked(handle.key)) {
+        ptyManager.scheduleClose(handle.key, resolved.reconnectGraceMs)
+      }
     })
   } catch (error) {
     ws.close(1011, error instanceof Error ? error.message : String(error))

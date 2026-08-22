@@ -42,6 +42,8 @@ export interface SidebarConfig {
   readLimit?: number
   /** Media route cap (bytes); larger binaries are refused. */
   mediaLimit?: number
+  /** Upload route cap (bytes); larger files are refused without touching disk. */
+  uploadLimit?: number
   /** Explorer row bound of one level. */
   listLimit?: number
   /** Terminals per session. */
@@ -53,29 +55,43 @@ export interface SidebarConfig {
    * terminal tabs and the model-facing `terminal_*` tools. Empty = auto:
    * POSIX follows `$SHELL` then the account login shell; Windows follows
    * `DSH_SIDEBAR_SHELL`, then probes for `pwsh.exe`, then falls back to the
-   * inbox `powershell.exe` (5.1).
+   * inbox `powershell.exe` (5.1). Set it from `cordis.patch.yml` / profile
+   * plugin config, e.g. `config: { shell: /bin/zsh }`.
    */
   shell?: string
+  /**
+   * Optional arguments passed to the shell executable. When non-empty these
+   * REPLACE the automatic platform defaults (POSIX `-l` / Windows none), so
+   * the deployment has full control over how the shell starts. When omitted
+   * the existing default behavior is kept.
+   */
+  shellArgs?: string[]
 }
 
 /** Schemastery schema for the plugin configuration. */
 export const Config: z<SidebarConfig> = z.object({
   readLimit: z.number().step(1).min(1).default(512 * 1024),
   mediaLimit: z.number().step(1).min(1).default(20 * 1024 * 1024),
+  uploadLimit: z.number().step(1).min(1).default(128 * 1024 * 1024),
   listLimit: z.number().step(1).min(1).default(1000),
   terminalsPerSession: z.number().step(1).min(1).default(3),
   reconnectGraceMs: z.number().step(1).min(0).default(30_000),
   shell: z.string().default(''),
+  shellArgs: z.array(z.string()).default([]),
 })
 
 /** Fully defaulted sidebar host settings. */
 export interface ResolvedSidebarConfig {
   readLimit: number
   mediaLimit: number
+  uploadLimit: number
   listLimit: number
   terminalsPerSession: number
   reconnectGraceMs: number
+  /** The configured terminal shell; empty means the host auto-resolves it. */
   shell: string
+  /** Explicit shell arguments; empty means use the platform defaults. */
+  shellArgs: string[]
 }
 
 /**
@@ -88,10 +104,12 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
   return {
     readLimit: config?.readLimit ?? 512 * 1024,
     mediaLimit: config?.mediaLimit ?? 20 * 1024 * 1024,
+    uploadLimit: config?.uploadLimit ?? 128 * 1024 * 1024,
     listLimit: config?.listLimit ?? 1000,
     terminalsPerSession: config?.terminalsPerSession ?? 3,
     reconnectGraceMs: config?.reconnectGraceMs ?? 30_000,
     shell: config?.shell?.trim() ?? '',
+    shellArgs: config?.shellArgs ?? [],
   }
 }
 
@@ -108,7 +126,12 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   terminalFontFamily: z.string().default(''),
   terminalFontSize: z.number().step(1).min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX).default(TERMINAL_FONT_SIZE_DEFAULT),
   interceptOpenPath: z.boolean().default(true),
-  editorExplorer: z.boolean().default(true),
+  editorExplorer: z.boolean().default(false),
+  terminalShell: z.string().default(''),
+  terminalShellArgs: z.string().default(''),
+  titleBarScheme: z.union([z.const('auto'), z.const('web'), z.const('preset'), z.const('custom')]),
+  titleBarPresetId: z.string(),
+  customCss: z.string(),
   titleBarCompat: z.boolean().default(false),
   titleBarStripPx: z.number().step(1).min(TITLE_BAR_STRIP_MIN).max(TITLE_BAR_STRIP_MAX).default(TITLE_BAR_STRIP_DEFAULT),
   htmlViewerNoSandbox: z.boolean().default(false),

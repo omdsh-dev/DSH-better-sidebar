@@ -13,7 +13,7 @@ vi.mock('node:os', async (importOriginal) => {
 })
 
 import { resolveSidebarConfig } from '../src/config.ts'
-import { defaultShell, ensureSpawnHelper } from '../src/pty-manager.ts'
+import { defaultShell, ensureSpawnHelper, shellDisplayName, shellSpawnArgs } from '../src/pty-manager.ts'
 
 describe('pty helpers', () => {
   it('prefers an explicit shell, then SHELL, then the account login shell on POSIX', () => {
@@ -69,6 +69,22 @@ describe('pty helpers', () => {
   it('trims the configured shell and defaults it to auto for old documents', () => {
     expect(resolveSidebarConfig(undefined).shell).toBe('')
     expect(resolveSidebarConfig({ shell: '  pwsh.exe  ' }).shell).toBe('pwsh.exe')
+    expect(resolveSidebarConfig({ shell: '/bin/zsh', shellArgs: ['--noprofile'] }).shellArgs).toEqual(['--noprofile'])
+    expect(resolveSidebarConfig(undefined).shellArgs).toEqual([])
+  })
+
+  it('derives a short display name for terminal tab titles', () => {
+    expect(shellDisplayName('/bin/zsh')).toBe('zsh')
+    expect(shellDisplayName('/usr/bin/bash')).toBe('bash')
+    expect(shellDisplayName('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')).toBe('powershell')
+    expect(shellDisplayName('pwsh.exe')).toBe('pwsh')
+    expect(shellDisplayName('/weird')).toBe('weird')
+    expect(shellDisplayName('/')).toBe('/')
+  })
+
+  it('uses explicit shell args verbatim and keeps platform defaults when none are configured', () => {
+    expect(shellSpawnArgs(['--noprofile', '--no-rc'])).toEqual(['--noprofile', '--no-rc'])
+    expect(shellSpawnArgs([])).toEqual(process.platform === 'win32' ? [] : ['-l'])
   })
 
   it('restores the spawn-helper executable bit idempotently', () => {
