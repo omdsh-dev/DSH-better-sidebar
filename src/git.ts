@@ -9,6 +9,8 @@
  * Commits use the user's git global identity untouched (never sets
  * user.name/user.email).
  */
+import { readdir } from 'node:fs/promises'
+import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 
 /** A parsed `git status --porcelain=v1 -z` entry. */
@@ -23,6 +25,9 @@ export interface GitStatusResult {
   isRepo: boolean
   branch?: string
   entries: GitStatusEntry[]
+  /** Selected repository root, or the discovered roots when the cwd is a container. */
+  root?: string
+  repositories?: string[]
 }
 
 /** One `git log` row. */
@@ -133,9 +138,38 @@ export async function isGitRepo(cwd: string): Promise<boolean> {
 }
 
 /** The repository top level containing `cwd` (`git rev-parse --show-toplevel`). */
-export async function repoRoot(cwd: string): Promise<string> {
+async function directRepoRoot(cwd: string): Promise<string> {
   const out = await runGit(cwd, ['rev-parse', '--show-toplevel'])
   return out.trim()
+}
+
+/** Discover the current repository or direct child repositories. */
+export async function repoRoots(cwd: string): Promise<string[]> {
+  try {
+    return [await directRepoRoot(cwd)]
+  } catch {
+    const entries = await readdir(cwd, { withFileTypes: true }).catch(() => [])
+    const roots: string[] = []
+    for (const entry of entries
+      .filter(entry => entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules')
+      .sort((left, right) => left.name.localeCompare(right.name))) {
+      try {
+        const root = await directRepoRoot(join(cwd, entry.name))
+        if (!roots.includes(root)) roots.push(root)
+      } catch {
+        // Ordinary child directory; keep discovering sibling repositories.
+      }
+    }
+    return roots
+  }
+}
+
+/** Resolve the selected repository, defaulting to the first discovered root. */
+export async function repoRoot(cwd: string, selected?: string): Promise<string> {
+  const roots = await repoRoots(cwd)
+  if (roots.length === 0) throw new GitCommandError('not a git repository', 'not-repo', 'rev-parse')
+  if (selected !== undefined && roots.includes(selected)) return selected
+  return roots[0]!
 }
 
 /** The current branch name (`git rev-parse --abbrev-ref HEAD`; 'HEAD' when detached). */
@@ -146,63 +180,63 @@ export async function currentBranch(cwd: string): Promise<string> {
 
 /**
  * Working-tree status (untracked included). `--untracked-files=all` lists
- * the CONTENTS of new directories as individual entries (`?? newdir/a.ts`
- * rather than a collapsed `?? newdir/`), so every row in the source-control
- * panel is a real file whose diff tab can load. With `=normal`, git folds a
- * new folder into one trailing-slash entry that has no diff output and
- * cannot be read as a file.
+ * the contents of new directories as individual entries, while preserving
+ * repository discovery and explicit repository selection for workspace roots.
  */
-export async function status(cwd: string): Promise<GitStatusResult> {
-  const repo = await isGitRepo(cwd)
-  if (!repo) return { isRepo: false, entries: [] }
+export async function status(cwd: string, selected?: string): Promise<GitStatusResult> {
+  const repositories = await repoRoots(cwd)
+  if (repositories.length === 0) return { isRepo: false, entries: [], repositories: [] }
+  const root = await repoRoot(cwd, selected)
   const [branch, raw] = await Promise.all([
-    currentBranch(cwd).catch(() => 'HEAD'),
-    runGit(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
+    currentBranch(root).catch(() => 'HEAD'),
+    runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']),
   ])
-  return { isRepo: true, branch, entries: parsePorcelainZ(raw) }
+  return { isRepo: true, branch, entries: parsePorcelainZ(raw), root, repositories }
 }
 
 /** Diff text of the worktree (unstaged) or the index (staged). */
-export async function diff(cwd: string, path: string | undefined, staged: boolean): Promise<string> {
+export async function diff(cwd: string, path: string | undefined, staged: boolean, selected?: string): Promise<string> {
+  const root = await repoRoot(cwd, selected)
   const args = ['diff', '--no-ext-diff', '--no-color', '-U3']
   if (staged) args.push('--cached')
   if (path !== undefined) args.push('--', path)
-  return runGit(cwd, args)
+  return runGit(root, args)
 }
 
 /** Stage paths (all when path is undefined). */
-export async function stage(cwd: string, path: string | undefined): Promise<void> {
-  await runGit(cwd, ['add', '-A', ...(path !== undefined ? ['--', path] : [])])
+export async function stage(cwd: string, path: string | undefined, selected?: string): Promise<void> {
+  await runGit(await repoRoot(cwd, selected), ['add', '-A', ...(path !== undefined ? ['--', path] : [])])
 }
 
 /** Unstage paths (all when path is undefined). */
-export async function unstage(cwd: string, path: string | undefined): Promise<void> {
-  await runGit(cwd, ['reset', '-q', ...(path !== undefined ? ['--', path] : [])])
+export async function unstage(cwd: string, path: string | undefined, selected?: string): Promise<void> {
+  await runGit(await repoRoot(cwd, selected), ['reset', '-q', ...(path !== undefined ? ['--', path] : [])])
 }
 
 /** Commit the staged changes with a message (global identity untouched). */
-export async function commit(cwd: string, message: string): Promise<void> {
-  await runGit(cwd, ['commit', '-m', message])
+export async function commit(cwd: string, message: string, selected?: string): Promise<void> {
+  await runGit(await repoRoot(cwd, selected), ['commit', '-m', message])
 }
 
 /** Branch names (current first). */
-export async function branches(cwd: string): Promise<{ current: string; names: string[] }> {
+export async function branches(cwd: string, selected?: string): Promise<{ current: string; names: string[] }> {
+  const root = await repoRoot(cwd, selected)
   const [current, raw] = await Promise.all([
-    currentBranch(cwd).catch(() => 'HEAD'),
-    runGit(cwd, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
+    currentBranch(root).catch(() => 'HEAD'),
+    runGit(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
   ])
   const names = raw.split('\n').filter(line => line !== '')
   return { current, names: names.includes(current) ? names : [current, ...names] }
 }
 
 /** Switch to an existing branch. */
-export async function checkout(cwd: string, branch: string): Promise<void> {
-  await runGit(cwd, ['checkout', branch])
+export async function checkout(cwd: string, branch: string, selected?: string): Promise<void> {
+  await runGit(await repoRoot(cwd, selected), ['checkout', branch])
 }
 
 /** Recent commit history (newest first), lazily pageable via skip/count. */
-export async function log(cwd: string, count = 30, skip = 0): Promise<GitLogEntry[]> {
-  const raw = await runGit(cwd, [
+export async function log(cwd: string, count = 30, skip = 0, selected?: string): Promise<GitLogEntry[]> {
+  const raw = await runGit(await repoRoot(cwd, selected), [
     'log', '-n', String(count), '--skip', String(skip), '--decorate=short',
     '--pretty=format:%h%x1f%s%x1f%an%x1f%ai%x1f%H%x1f%D',
   ])
@@ -213,9 +247,9 @@ export async function log(cwd: string, count = 30, skip = 0): Promise<GitLogEntr
  * Content of a file at a revision (`git show <rev>:<path>`), or null when the
  * revision has no such path (a new/untracked file has no HEAD side).
  */
-export async function show(cwd: string, rev: string, path: string): Promise<string | null> {
+export async function show(cwd: string, rev: string, path: string, selected?: string): Promise<string | null> {
   try {
-    return await runGit(cwd, ['show', `${rev}:${path}`])
+    return await runGit(await repoRoot(cwd, selected), ['show', `${rev}:${path}`])
   } catch {
     return null
   }
@@ -224,21 +258,21 @@ export async function show(cwd: string, rev: string, path: string): Promise<stri
 /** Full patch text of one commit (`git show` with the commit header suppressed).
  *  Merge commits show their diff against the first parent (`-m --first-parent`
  *  is a no-op for regular commits), so a history click always has content. */
-export async function commitDiff(cwd: string, hash: string): Promise<string> {
-  return runGit(cwd, ['show', '--no-ext-diff', '--no-color', '--format=', '-m', '--first-parent', hash])
+export async function commitDiff(cwd: string, hash: string, selected?: string): Promise<string> {
+  return runGit(await repoRoot(cwd, selected), ['show', '--no-ext-diff', '--no-color', '--format=', '-m', '--first-parent', hash])
 }
 
 /** Discard the worktree changes of one path (`git checkout -- <path>`; the index is untouched). */
-export async function discard(cwd: string, path: string): Promise<void> {
-  await runGit(cwd, ['checkout', '--', path])
+export async function discard(cwd: string, path: string, selected?: string): Promise<void> {
+  await runGit(await repoRoot(cwd, selected), ['checkout', '--', path])
 }
 
 /** Revert one commit onto the current branch with an auto-generated message. */
-export async function revert(cwd: string, hash: string): Promise<void> {
-  await runGit(cwd, ['revert', '--no-edit', hash])
+export async function revert(cwd: string, hash: string, selected?: string): Promise<void> {
+  await runGit(await repoRoot(cwd, selected), ['revert', '--no-edit', hash])
 }
 
 /** Cherry-pick one commit onto the current branch. */
-export async function cherryPick(cwd: string, hash: string): Promise<void> {
-  await runGit(cwd, ['cherry-pick', hash])
+export async function cherryPick(cwd: string, hash: string, selected?: string): Promise<void> {
+  await runGit(await repoRoot(cwd, selected), ['cherry-pick', hash])
 }

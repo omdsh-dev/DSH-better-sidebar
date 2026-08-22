@@ -1,12 +1,39 @@
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
-import { parseLogLines, parsePorcelainZ, status } from '../src/git.ts'
+import { parseLogLines, parsePorcelainZ, repoRoots, status } from '../src/git.ts'
+
+const execFileAsync = promisify(execFile)
+const normalizePath = (path: string): string => path.replaceAll('\\', '/')
 
 describe('git parsing', () => {
+  it('discovers and selects direct child repositories under a workspace directory', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-better-sidebar-git-'))
+    const first = join(workspace, 'first-repo')
+    const second = join(workspace, 'second-repo')
+    try {
+      await Promise.all([mkdir(first), mkdir(second)])
+      await Promise.all([
+        execFileAsync('git', ['-C', first, 'init']),
+        execFileAsync('git', ['-C', second, 'init']),
+      ])
+
+      await expect(repoRoots(workspace)).resolves.toEqual([normalizePath(first), normalizePath(second)])
+      await expect(status(workspace, normalizePath(second))).resolves.toMatchObject({
+        isRepo: true,
+        root: normalizePath(second),
+        repositories: [normalizePath(first), normalizePath(second)],
+      })
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('parses porcelain -z entries including renames', () => {
     const output = ['M  src/a.ts', ' M src/b.ts', '?? src/c.ts', 'R  src/new.ts', 'src/old.ts', ''].join('\0')
     const entries = parsePorcelainZ(output)

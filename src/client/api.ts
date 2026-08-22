@@ -44,6 +44,8 @@ export interface GitStatusResult {
   isRepo: boolean
   branch?: string
   entries: GitStatusEntry[]
+  root?: string
+  repositories?: string[]
 }
 
 /** One git log row. */
@@ -166,11 +168,18 @@ export interface SessionScope {
   sessionId: string
   /** The session's working directory from the client list summary (optional). */
   cwd?: string
+  /** Selected Git repository when cwd is a workspace container. */
+  repoRoot?: string
 }
 
 /** Fold a scope into a JSON payload ({cwd} only when present). */
 function scopePayload(scope: SessionScope, extra: Record<string, unknown>): Record<string, unknown> {
-  return { sessionId: scope.sessionId, ...(scope.cwd !== undefined && scope.cwd !== '' ? { cwd: scope.cwd } : {}), ...extra }
+  return {
+    sessionId: scope.sessionId,
+    ...(scope.cwd !== undefined && scope.cwd !== '' ? { cwd: scope.cwd } : {}),
+    ...(scope.repoRoot !== undefined && scope.repoRoot !== '' ? { repoRoot: scope.repoRoot } : {}),
+    ...extra,
+  }
 }
 
 /** The sidebar API surface (session scope threaded through every call). */
