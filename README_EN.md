@@ -52,7 +52,7 @@
 - **⚡ On-demand Loading**: only ~325KB core at startup; heavy deps (terminal / editor / mermaid diagrams) load on demand ([design](docs/plans/2026-08-12-lazy-chunks-design.md))
 - **🌏 i18n**: UI text follows DSH's language (zh / en) with live switching
 
-> 🔌 **Core principle**: service-first — the 7 built-in tabs + 6 viewers register through the same `ctx.betterSidebar` API as third-party plugins, with fully equal capabilities; anything the ecosystem can provide better is delegated to ecosystem plugins (**26+ ecosystem plugins** already — see "🌐 Plugin Ecosystem" below). See "🔌 Service API" and the [external plugin guide](./docs/external-plugin-guide.md).
+> 🔌 **Core principle**: service-first — the 7 built-in tabs + 6 viewers register through the same `ctx.betterSidebar` API as third-party plugins, with fully equal capabilities; anything the ecosystem can provide better is delegated to ecosystem plugins (**28+ ecosystem plugins** already — see "🌐 Plugin Ecosystem" below). See "🔌 Service API" and the [external plugin guide](./docs/external-plugin-guide.md).
 
 ## 🚀 Installation
 
@@ -234,7 +234,7 @@ export function apply(ctx: Context) {
 }
 ```
 
-The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar) already hosts **26+ ecosystem plugins** (and growing):
+The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar) already hosts **28+ ecosystem plugins** (and growing):
 
 <div align="center">
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="66%" alt="The built-in Add Plugins modal: recommended catalog + one-click install command" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a><br />
@@ -242,6 +242,9 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
 </div>
 
 ### 📑 Tab Plugins (sidebar pages)
+
+<details>
+<summary><b>23 plugins (click to expand)</b></summary>
 
 | Plugin | ⭐ | Description |
 |---|---|---|
@@ -266,8 +269,15 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
 | [yq04/dsh-turn-review](https://github.com/yq04/dsh-turn-review) | <img alt="stars" src="https://img.shields.io/github/stars/yq04/dsh-turn-review?style=flat&color=4d6bfe" /> | Turn review: review agent changes turn by turn |
 | [Ghz114514/dsh-refpics](https://github.com/Ghz114514/dsh-refpics) | <img alt="stars" src="https://img.shields.io/github/stars/Ghz114514/dsh-refpics?style=flat&color=4d6bfe" /> | Pinterest-style reference-image search: masonry wall, sidebar board, downloads, save-to-Eagle |
 | [yzlin499/dsh-yzlin499-easy-plugins](https://github.com/yzlin499/dsh-yzlin499-easy-plugins) | <img alt="stars" src="https://img.shields.io/github/stars/yzlin499/dsh-yzlin499-easy-plugins?style=flat&color=4d6bfe" /> | A handy utility bundle for a bare-bones DSH |
+| [dong-victor/dsh-better-sidebar-starter](https://github.com/dong-victor/dsh-better-sidebar-starter) | <img alt="stars" src="https://img.shields.io/github/stars/dong-victor/dsh-better-sidebar-starter?style=flat&color=4d6bfe" /> | Run-configurations tab: IDEA-style Run/Debug configs (npm / springboot / python / custom) — one-click launch, history, WebSocket live logs (ANSI colors), parallel instances, cross-platform process-tree kill |
+| [baosfeng/my-dsh-plugins](https://github.com/baosfeng/my-dsh-plugins) | <img alt="stars" src="https://img.shields.io/github/stars/baosfeng/my-dsh-plugins?style=flat&color=4d6bfe" /> | Personal multi-plugin collection (`dsh-file-activity`): a sidebar file-activity tab recording read / added / modified history and stats, flat-browsed by folder, opened with the native preview |
+
+</details>
 
 ### 🖼️ Viewer Plugins (file previewers)
+
+<details>
+<summary><b>3 plugins (click to expand)</b></summary>
 
 | Plugin | ⭐ | Description |
 |---|---|---|
@@ -275,12 +285,19 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
 | [zemul/dsh-video-preview](https://github.com/zemul/dsh-video-preview) | <img alt="stars" src="https://img.shields.io/github/stars/zemul/dsh-video-preview?style=flat&color=4d6bfe" /> | Inline video preview: .mp4 / .webm / .mov / .mkv / .avi with a /video host route supporting HTTP Range scrubbing |
 | [dong-victor/dsh-better-sidebar-jupyter](https://github.com/dong-victor/dsh-better-sidebar-jupyter) | <img alt="stars" src="https://img.shields.io/github/stars/dong-victor/dsh-better-sidebar-jupyter?style=flat&color=4d6bfe" /> | Runnable `.ipynb` notebook view: lazy-start Python kernel, streaming outputs, save-back |
 
+</details>
+
 ### 🧰 Enhancements & Tools
+
+<details>
+<summary><b>2 plugins (click to expand)</b></summary>
 
 | Plugin | ⭐ | Description |
 |---|---|---|
 | [dong-victor/dsh-better-sidebar-terminal-plus](https://github.com/dong-victor/dsh-better-sidebar-terminal-plus) | <img alt="stars" src="https://img.shields.io/github/stars/dong-victor/dsh-better-sidebar-terminal-plus?style=flat&color=4d6bfe" /> | Terminal enhancement: bundled Nerd Font icons, xterm glyph fixes, stable terminal cwd |
 | [Max-Null/dsh-sidebar-preview-select](https://github.com/Max-Null/dsh-sidebar-preview-select) | <img alt="stars" src="https://img.shields.io/github/stars/Max-Null/dsh-sidebar-preview-select?style=flat&color=4d6bfe" /> | Preview selection boost: select text in any sidebar preview → floating "send to session" |
+
+</details>
 
 > 📣 **List your plugin**: tag your repo with the `dsh-better-sidebar` topic to appear on the [topic page](https://github.com/topics/dsh-better-sidebar); then PR one `PluginEntry` into [`src/client/plugins-tabs.ts`](./src/client/plugins-tabs.ts) / [`src/client/plugins-viewers.ts`](./src/client/plugins-viewers.ts) to join the built-in recommended catalog (data integrity is guarded by `tests/plugin-list.spec.ts`).
 
@@ -292,6 +309,21 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
 </div>
 
 **Supported DSH versions**: <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions: 0.1.0-rc.8 · 0.1.1-rc.1 · 0.1.1-rc.2" src="https://img.shields.io/badge/DSH-0.1.0--rc.8_%C2%B7_0.1.1--rc.1_%C2%B7_0.1.1--rc.2-4d6bfe" /></a> · full release history on the [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases) page
+
+### v0.15.1
+
+All changes since v0.15.0:
+
+**✨ New features**
+
+- 💬 **Codex-style transcript rework for Side Chat** ([#314](https://github.com/omdsh-dev/DSH-better-sidebar/pull/314)): transcript rows became **collapsible** — tool calls, thinking and context injections share one quiet single-line chrome (chevron + label + one-line argument summary) that expands into an indented body on a hairline thread, no cards or fills; streaming labels and a creating hero shimmer (shimmer = generating), failed tools go danger, `prefers-reduced-motion` stills every loop; **the first question is no longer swallowed by the boundary prompt** — context injection and first contact are delivered as separate events (boundary + parked snapshot ride `agent.inject`, the question wakes the driver), so the transcript maps injections onto a collapsible injection row while genuine user messages — the first one included — render as user bubbles; legacy threads' first message is split out into its own bubble too
+- 📖 **README rewrite**: feature tour (real UI screenshots per feature), user-facing DSH compatibility badges, simplified install (`add` → `approve-builds` → `add`, node-pty-safe build, paste-to-DSH install prompt), 28+ plugin ecosystem with per-category collapsed listings
+
+**🐛 Fixes**
+
+- 🖥️ **Terminal pty stays alive across conversation switches** ([#323](https://github.com/omdsh-dev/DSH-better-sidebar/pull/323)): switching sessions is no longer treated as a transient drop — the client sends a `park` control frame on unmount and the host skips the 30s reconnect-grace countdown; switching back (`open()` cancels parked) or explicitly closing the tab resumes the normal lifecycle; agent terminals keep their indefinite lifetime
+- 📂 **File-tree upload overlay no longer intercepts Tab drags** ([#317](https://github.com/omdsh-dev/DSH-better-sidebar/pull/317)): dragging tabs (reorder / cross-pane split) across the explorer no longer shows the upload overlay or swallows the event — gated on `dataTransfer.types` containing `Files` (consistent with the panel-host shield), so tabs land normally; OS file drags behave as before
+- 💬 **Subagent auto-open debounced** ([#314](https://github.com/omdsh-dev/DSH-better-sidebar/pull/314)): Side Chat thread creation no longer pops the task page — the 0→N trigger rearms for 500ms and re-evaluates the original baseline against the live snapshot, by which time the title filter recognizes the thread; genuine subagents still auto-open
 
 ### v0.15.0
 

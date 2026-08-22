@@ -52,7 +52,7 @@
 - **⚡ 按需加载**：启动只拉 ~325KB 核心，终端 / 编辑器 / Mermaid 图表等重依赖用到才按需拉取（[设计文档](docs/plans/2026-08-12-lazy-chunks-design.md)）
 - **🌏 多语言**：界面文案跟随 DSH 语言（zh / en）实时切换
 
-> 🔌 **核心理念**：服务优先——内置的 7 tab + 6 viewer 与第三方插件通过同一套 `ctx.betterSidebar` API 注册，能力完全对等；官方不再内置、可由生态提供的功能，交由生态插件实现（已有 **26+ 生态插件**，见下方「🌐 插件生态」）。接入文档见「🔌 服务化扩展」与 [外部插件接入指南](./docs/external-plugin-guide.md)。
+> 🔌 **核心理念**：服务优先——内置的 7 tab + 6 viewer 与第三方插件通过同一套 `ctx.betterSidebar` API 注册，能力完全对等；官方不再内置、可由生态提供的功能，交由生态插件实现（已有 **28+ 生态插件**，见下方「🌐 插件生态」）。接入文档见「🔌 服务化扩展」与 [外部插件接入指南](./docs/external-plugin-guide.md)。
 
 ## 🚀 安装
 
@@ -234,7 +234,7 @@ export function apply(ctx: Context) {
 }
 ```
 
-GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar) 下已有 **26+ 生态插件**（持续增长中）：
+GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar) 下已有 **28+ 生态插件**（持续增长中）：
 
 <div align="center">
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="66%" alt="设置页「添加插件」弹窗：推荐插件目录 + 一键复制安装命令" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a><br />
@@ -242,6 +242,9 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 </div>
 
 ### 📑 Tab 插件（注册侧边栏页面）
+
+<details>
+<summary><b>23 个插件（点击展开）</b></summary>
 
 | 插件 | ⭐ | 简介 |
 |---|---|---|
@@ -266,8 +269,15 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 | [yq04/dsh-turn-review](https://github.com/yq04/dsh-turn-review) | <img alt="stars" src="https://img.shields.io/github/stars/yq04/dsh-turn-review?style=flat&color=4d6bfe" /> | 本轮审查：逐回合审查 agent 改动 |
 | [Ghz114514/dsh-refpics](https://github.com/Ghz114514/dsh-refpics) | <img alt="stars" src="https://img.shields.io/github/stars/Ghz114514/dsh-refpics?style=flat&color=4d6bfe" /> | Pinterest 风格参考图搜索：瀑布流、侧栏画板、下载与 Eagle 收藏 |
 | [yzlin499/dsh-yzlin499-easy-plugins](https://github.com/yzlin499/dsh-yzlin499-easy-plugins) | <img alt="stars" src="https://img.shields.io/github/stars/yzlin499/dsh-yzlin499-easy-plugins?style=flat&color=4d6bfe" /> | 实用小工具集（毛坯房 DSH 友好） |
+| [dong-victor/dsh-better-sidebar-starter](https://github.com/dong-victor/dsh-better-sidebar-starter) | <img alt="stars" src="https://img.shields.io/github/stars/dong-victor/dsh-better-sidebar-starter?style=flat&color=4d6bfe" /> | 运行配置页：IDEA 式 Run/Debug 配置（npm / springboot / python / custom）——一键启动、历史保存、WebSocket 实时日志（ANSI 彩色）、多实例并行、进程树跨平台杀死 |
+| [baosfeng/my-dsh-plugins](https://github.com/baosfeng/my-dsh-plugins) | <img alt="stars" src="https://img.shields.io/github/stars/baosfeng/my-dsh-plugins?style=flat&color=4d6bfe" /> | 个人多插件合集（`dsh-file-activity`）：侧边栏文件活动页——记录文件读取 / 新增 / 修改历史与统计，按文件夹平铺，点击用原生预览打开 |
+
+</details>
 
 ### 🖼️ 预览插件（注册文件预览器）
+
+<details>
+<summary><b>3 个插件（点击展开）</b></summary>
 
 | 插件 | ⭐ | 简介 |
 |---|---|---|
@@ -275,12 +285,19 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 | [zemul/dsh-video-preview](https://github.com/zemul/dsh-video-preview) | <img alt="stars" src="https://img.shields.io/github/stars/zemul/dsh-video-preview?style=flat&color=4d6bfe" /> | 视频内联预览：.mp4 / .webm / .mov / .mkv / .avi，自带 /video 路由支持 HTTP Range 拖进度条 |
 | [dong-victor/dsh-better-sidebar-jupyter](https://github.com/dong-victor/dsh-better-sidebar-jupyter) | <img alt="stars" src="https://img.shields.io/github/stars/dong-victor/dsh-better-sidebar-jupyter?style=flat&color=4d6bfe" /> | `.ipynb` 可运行 Notebook 视图：懒启动 Python kernel、流式输出、保存回写 |
 
+</details>
+
 ### 🧰 增强与工具
+
+<details>
+<summary><b>2 个插件（点击展开）</b></summary>
 
 | 插件 | ⭐ | 简介 |
 |---|---|---|
 | [dong-victor/dsh-better-sidebar-terminal-plus](https://github.com/dong-victor/dsh-better-sidebar-terminal-plus) | <img alt="stars" src="https://img.shields.io/github/stars/dong-victor/dsh-better-sidebar-terminal-plus?style=flat&color=4d6bfe" /> | 终端增强：内嵌 Nerd Font 图标字体、修复 xterm 图标渲染、稳定终端 cwd |
 | [Max-Null/dsh-sidebar-preview-select](https://github.com/Max-Null/dsh-sidebar-preview-select) | <img alt="stars" src="https://img.shields.io/github/stars/Max-Null/dsh-sidebar-preview-select?style=flat&color=4d6bfe" /> | 预览划选增强：侧边栏预览里划选文本 → 浮动「发送到会话」 |
+
+</details>
 
 > 📣 **上架你的插件**：给仓库打上 `dsh-better-sidebar` topic 即出现在 [topic 页](https://github.com/topics/dsh-better-sidebar)；再向 [`src/client/plugins-tabs.ts`](./src/client/plugins-tabs.ts) / [`src/client/plugins-viewers.ts`](./src/client/plugins-viewers.ts) 提一条 `PluginEntry` PR，即可进入设置页内置推荐目录（数据完整性由 `tests/plugin-list.spec.ts` 守护）。
 
@@ -292,6 +309,21 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 </div>
 
 **支持的 DSH 版本**：<a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="支持的 DSH 版本：0.1.0-rc.8 · 0.1.1-rc.1 · 0.1.1-rc.2" src="https://img.shields.io/badge/DSH-0.1.0--rc.8_%C2%B7_0.1.1--rc.1_%C2%B7_0.1.1--rc.2-4d6bfe" /></a> · 完整发布历史见 [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)
+
+### v0.15.1
+
+自 v0.15.0 以来的全部更改：
+
+**✨ 新功能**
+
+- 💬 **侧边对话 Codex 风格转录重构**（[#314](https://github.com/omdsh-dev/DSH-better-sidebar/pull/314)）：转录改为**折叠行**——工具调用 / 思考 / 上下文注入统一为安静的单行 chrome（chevron + 标签 + 单行参数摘要，展开为 hairline 缩进正文，无卡片无填充），流式标签与创建 shimmer（shimmer = 生成中）、失败工具 danger、`prefers-reduced-motion` 停帧；**首条问题不再被边界提示吞掉**——上下文注入与首问拆分交付（边界 + 快照经 `agent.inject` 排队、问题唤醒驱动），转录把注入映射为可折叠注入行、真实用户消息（**含首问**）渲染为用户气泡，旧线程的首问同样拆分为独立气泡
+- 📖 **README 重写**：功能导览（逐特性实机截图）、用户视角 DSH 兼容徽章、简化安装流程（`add` → `approve-builds` → `add`、node-pty 安全构建、粘贴到 DSH 安装提示）、插件生态 28+ 与分类折叠展示
+
+**🐛 修复**
+
+- 🖥️ **终端跨会话切换保活**（[#323](https://github.com/omdsh-dev/DSH-better-sidebar/pull/323)）：切到其他会话不再被当作瞬时掉线——客户端卸载时发送 `park` 控制帧，主机跳过 30s 重连宽限倒计时；切回会话（`open()` 取消 parked）或显式关闭恢复正常生命周期；agent 终端保持无限期存活
+- 📂 **文件树上传遮罩不再拦截 Tab 拖拽**（[#317](https://github.com/omdsh-dev/DSH-better-sidebar/pull/317)）：拖拽 Tab（重排 / 跨 pane split）经过资源管理器时不再弹上传遮罩、不吞事件——统一按 `dataTransfer.types` 含 `Files` 门控（与面板宿主 shield 一致），Tab 正常落下；OS 文件拖拽行为不变
+- 💬 **子代理自动展开去抖**（[#314](https://github.com/omdsh-dev/DSH-better-sidebar/pull/314)）：Side Chat 线程创建不再误弹任务页——0→N 触发 500ms 重臂并对实时快照按原基线重评估，标题过滤器识别线程后才放行；真实子代理依然自动展开
 
 ### v0.15.0
 
