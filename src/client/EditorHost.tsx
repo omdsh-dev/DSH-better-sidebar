@@ -25,7 +25,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
-import { IconCheckOutline16, IconFolderOpen16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutline16, IconFolderOpen16, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { api, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
@@ -97,6 +97,8 @@ export function EditorHost(props: {
   const path = tab.path ?? ''
   const title = tab.title
   const [load, setLoad] = useState<EditorLoad>({ status: 'loading' })
+  /** Bump to explicitly re-read the current file. */
+  const [reloadTick, setReloadTick] = useState(0)
 
   // Reactive prefs read: flipping editorExplorer re-renders this tab with no
   // reload. The snapshot is the bare boolean so unrelated store churn never
@@ -153,8 +155,10 @@ export function EditorHost(props: {
   // its state and registers its commands (both null/absent for viewers
   // without a toolbar — image, pdf, binary download).
   const [toolbar, setToolbar] = useState<EditorToolbarState | null>(null)
+  const toolbarRef = useRef<EditorToolbarState | null>(null)
   const controlsRef = useRef<EditorToolbarControls | null>(null)
   const onToolbarState = useCallback((next: EditorToolbarState) => {
+    toolbarRef.current = next
     setToolbar(prev => prev !== null && JSON.stringify(prev) === JSON.stringify(next) ? prev : next)
   }, [])
   const onToolbarControls = useCallback((controls: EditorToolbarControls | null) => {
@@ -192,6 +196,7 @@ export function EditorHost(props: {
   useEffect(() => {
     // A (re)load or a path-less tab clears any hoisted toolbar state — the
     // fresh viewer re-registers its own.
+    toolbarRef.current = null
     setToolbar(null)
     // The seeded home tab (no path) never loads a viewer — the empty-state
     // hint renders until the user picks a file.
@@ -247,7 +252,17 @@ export function EditorHost(props: {
     }
     apply(planFirstMatch(ctx.betterSidebar?.matchFileViewer(path), mediaUrlOf))
     return () => { cancelled = true; controller.abort() }
-  }, [scope.sessionId, scope.cwd, path, ctx, showEmpty])
+  }, [scope.sessionId, scope.cwd, path, ctx, showEmpty, reloadTick])
+
+  const refreshFile = (): void => {
+    if (toolbarRef.current?.dirty === true) {
+      const confirmed = typeof window.confirm === 'function'
+        ? window.confirm(t('refreshUnsavedConfirm'))
+        : false
+      if (!confirmed) return
+    }
+    setReloadTick(value => value + 1)
+  }
 
   const treeOpen = treeOpenOf(tab)
   /** Persist the panel flag on the tab (survives reloads with the layout). */
@@ -256,6 +271,7 @@ export function EditorHost(props: {
     : toolbar.saveState === 'saving' ? t('loading')
       : toolbar.saveState === 'saved' ? t('saved')
         : toolbar.saveState === 'failed' ? t('saveFailed') : ''
+  const markdownFile = !showEmpty && ctx.betterSidebar?.matchFileViewer(path)?.id === 'markdown'
 
   // Split mode: the path-less window IS the standalone explorer — the tree
   // panel fills the whole tab (search + FileTree, full form), no editor
@@ -314,6 +330,17 @@ export function EditorHost(props: {
         )}
         {saveLabel !== '' && (
           <span className={clsx(css.editorStatus, toolbar?.saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>
+        )}
+        {markdownFile && (
+          <button
+            type="button"
+            className={css.iconButton}
+            aria-label={t('refresh')}
+            title={t('refresh')}
+            onClick={refreshFile}
+          >
+            <IconRefreshOutline16 size={14} />
+          </button>
         )}
         <button
           type="button"

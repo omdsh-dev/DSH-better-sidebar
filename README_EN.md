@@ -419,7 +419,7 @@ pnpm watch        # tsdown --watch
 
 ## ⚠️ Known Limitations
 
-- Git has no push/pull/fetch; no file watcher (manual refresh); tool inline file-open buttons cannot be intercepted
+- Git has no push/pull/fetch; Markdown previews provide a manual refresh button with confirmation before discarding unsaved edits; no file watcher or automatic polling; tool inline file-open buttons cannot be intercepted
 - Dragging a terminal tab to another pane remounts it (shell restarts)
 - Office-suite preview (.docx/.xlsx/.pptx) moved to the recommended office plugin (see the "Add plugins" modals in settings); without it these files fall through to the code/download fallbacks
 - Browser sandbox has no login state / third-party cookies are restricted; some sites need popup login; sites that refuse embedding via `X-Frame-Options`/`frame-ancestors` (e.g. arxiv.org) show a reason panel (with "Open in browser"); in-iframe navigation does not enter the back stack

@@ -68,6 +68,8 @@ export function TextEditor(props: FileViewerProps) {
   const [mode, setMode] = useState<ViewMode>('preview')
   /** The editor's current text (null while clean); preview renders this. */
   const [draft, setDraft] = useState<string | null>(null)
+  /** Latest source known to be saved on disk; avoids reverting preview after save. */
+  const [savedContent, setSavedContent] = useState<string | undefined>(content)
   const [dirty, setDirty] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
   const hostRef = useRef<HTMLDivElement>(null)
@@ -114,6 +116,7 @@ export function TextEditor(props: FileViewerProps) {
   useEffect(() => {
     setMode('preview')
     setDraft(null)
+    setSavedContent(content)
     setDirty(false)
     setSaveState('idle')
     hidePopup()
@@ -237,8 +240,10 @@ export function TextEditor(props: FileViewerProps) {
     if (view === null || savingRef.current) return
     savingRef.current = true
     setSaveState('saving')
-    api.fsWrite(scope, path, view.state.doc.toString()).then(() => {
+    const nextContent = view.state.doc.toString()
+    api.fsWrite(scope, path, nextContent).then(() => {
       savingRef.current = false
+      setSavedContent(nextContent)
       setDraft(null)
       setDirty(false)
       setSaveState('saved')
@@ -251,7 +256,7 @@ export function TextEditor(props: FileViewerProps) {
   const markdown = viewerId === 'markdown'
   const html = viewerId === 'html'
   /** The markdown source the preview renders (draft wins over saved content). */
-  const mdText = draft ?? content ?? ''
+  const mdText = draft ?? savedContent ?? content ?? ''
   /** md/mermaid block split for the preview (mermaid fences lift out). Split
    *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
   const mdBlocks = useMemo(

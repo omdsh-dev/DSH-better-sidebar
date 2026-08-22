@@ -163,7 +163,13 @@ async function readText(path: string, readLimit: number): Promise<{
     const head = binary
       ? slice.subarray(0, Math.min(slice.length, READ_HEAD_LIMIT)).toString('base64')
       : undefined
-    return { content: binary ? '' : slice.toString('utf8'), truncated, binary, size, head }
+    return {
+      content: binary ? '' : slice.toString('utf8'),
+      truncated,
+      binary,
+      size,
+      head,
+    }
   } finally {
     await handle.close()
   }
