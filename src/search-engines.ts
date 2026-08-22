@@ -267,8 +267,15 @@ function runChild(
     ], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
   } else {
     // --iglob: case-insensitive glob (rg's globset has no (?i) inline flag).
+    // --path-separator: rg emits a platform-dependent separator — '\' in
+    // cmd/PowerShell on Windows, '/' in Git Bash and elsewhere (rg#501) —
+    // pin '/' so engine output matches the walk contract before
+    // normalizeEnginePaths even sees it (the flag exists since rg 0.8; a
+    // hypothetical build without it fails at spawn and is disabled at
+    // runtime — the plain walk still covers the search).
     child = spawn(probe.binary, [
-      '--files', '--hidden', '--no-ignore', '--glob', '!**/.git/**', '--iglob', `*${escapeGlob(query)}*`, '.',
+      '--files', '--hidden', '--no-ignore', '--glob', '!**/.git/**',
+      '--iglob', `*${escapeGlob(query)}*`, '--path-separator', '/', '.',
     ], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
   }
   return streamLines(child, cap, signal).then(({ lines, truncated }) => {
