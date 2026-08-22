@@ -24,7 +24,7 @@ import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { loadExternalDisable, loadPrefs } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
-import { LOCALE_NS, attachLocale, t, zh, en } from './locales.ts'
+import { LOCALE_NS, attachLocale, t, zh, en, ru } from './locales.ts'
 import css from './sidebar.module.css'
 import './layout.css'
 
@@ -55,7 +55,8 @@ export function apply(ctx: Context): void {
   ctx.effect(() => {
     const offZh = ctx.locale.register(LOCALE_NS, 'zh', zh)
     const offEn = ctx.locale.register(LOCALE_NS, 'en', en)
-    return () => { offZh(); offEn() }
+    const offRu = ctx.locale.register(LOCALE_NS, 'ru', ru)
+    return () => { offZh(); offEn(); offRu() }
   }, 'dsh-better-sidebar: dictionaries')
   // One store instance per activation: production code creates it only here,
   // then hands it to the mounted panel and closes over it in the slot
