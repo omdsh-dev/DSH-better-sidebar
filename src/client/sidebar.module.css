@@ -582,8 +582,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .tabBar {
   flex: none;
   display: flex;
-  align-items: stretch;
-  height: 34px;
+  align-items: center;
+  height: 36px;
+  padding: 0 6px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
   background: var(--dsw-alias-bg-layer-1);
 }
@@ -597,6 +598,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   flex: 1;
   min-width: 0;
   display: flex;
+  align-items: center;
+  gap: 4px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -609,25 +612,28 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   flex: none;
   max-width: 160px;
   min-width: 64px;
+  height: 26px;
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 4px 0 10px;
+  padding: 0 4px 0 8px;
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-label-secondary);
-  border-right: 1px solid var(--dsw-alias-border-l1);
-  background: transparent;
+  border-radius: 6px;
+  border-right: none;
+  background: var(--dsw-alias-interactive-bg-hover);
   cursor: pointer;
   user-select: none;
+  transition: background var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
-.tab:hover {
+.tab:hover:not(.tabActive) {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .tabActive {
   color: var(--dsw-alias-label-primary);
-  /* Native selected fill (Rows .sessionRow.selected) — no underline, no shadow. */
   background: var(--dsw-alias-interactive-bg-active);
 }
 
