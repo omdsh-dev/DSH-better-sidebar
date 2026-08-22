@@ -60,6 +60,16 @@ export interface GitLogEntry {
   refs: string
 }
 
+export interface GitWorktree {
+  path: string
+  head: string
+  branch?: string
+  current: boolean
+  locked: boolean
+  prunable: boolean
+}
+export type GitOperation = 'merge' | 'rebase'
+
 /** Text read result. */
 export interface FsTextResult { kind: 'text'; content: string; truncated: boolean }
 /** Binary read result (no content; images load through the media route).
@@ -205,6 +215,24 @@ export const api = {
     call<{ current: string; names: string[] }>('git.branch', scopePayload(scope, {}), signal),
   gitCheckout: (scope: SessionScope, branch: string) =>
     call<{ ok: true }>('git.checkout', scopePayload(scope, { branch })),
+  gitMerge: (scope: SessionScope, branch: string) =>
+    call<{ ok: true }>('git.merge', scopePayload(scope, { branch })),
+  gitRebase: (scope: SessionScope, branch: string) =>
+    call<{ ok: true }>('git.rebase', scopePayload(scope, { branch })),
+  gitWorktrees: (scope: SessionScope, signal?: AbortSignal) =>
+    call<{ entries: GitWorktree[]; pathPrefix: string }>('git.worktree-list', scopePayload(scope, {}), signal),
+  gitWorktreeAdd: (scope: SessionScope, path: string, branch: string, base?: string) =>
+    call<{ ok: true }>('git.worktree-add', scopePayload(scope, { path, branch, ...(base === undefined ? {} : { base }) })),
+  gitWorktreeMerge: (scope: SessionScope, targetPath: string, sourceBranch: string) =>
+    call<{ ok: true }>('git.worktree-merge', scopePayload(scope, { targetPath, sourceBranch })),
+  gitWorktreeRemove: (scope: SessionScope, path: string) =>
+    call<{ ok: true }>('git.worktree-remove', scopePayload(scope, { path })),
+  gitOperation: (scope: SessionScope, signal?: AbortSignal) =>
+    call<{ operation: GitOperation | null }>('git.operation', scopePayload(scope, {}), signal),
+  gitOperationContinue: (scope: SessionScope, operation: GitOperation) =>
+    call<{ ok: true }>('git.operation-continue', scopePayload(scope, { operation })),
+  gitOperationAbort: (scope: SessionScope, operation: GitOperation) =>
+    call<{ ok: true }>('git.operation-abort', scopePayload(scope, { operation })),
   /** Recent commit history, lazily pageable (skip/count; defaults 0/30). */
   gitLog: (scope: SessionScope, count?: number, skip?: number, signal?: AbortSignal) =>
     call<GitLogEntry[]>('git.log', scopePayload(scope, {

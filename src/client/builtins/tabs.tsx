@@ -136,6 +136,19 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           scope={scope}
           onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}
           onOpenDiff={onOpenDiff ?? (() => { /* no-op */ })}
+          onOpenWorktree={async (path) => {
+            if (ctx.workspaces.create === undefined || ctx.sessions.create === undefined || ctx.sessions.open === undefined) {
+              throw new Error(t('worktreeSessionUnsupported'))
+            }
+            const existing = Object.values(ctx.sessions.list.getSnapshot().byId).find(session => session.cwd === path && session.origin !== 'subagent')
+            if (existing !== undefined) {
+              ctx.sessions.open(existing.id)
+              return
+            }
+            const workspace = await ctx.workspaces.create({ path })
+            const sessionId = await ctx.sessions.create({ workspaceId: workspace.workspaceId })
+            ctx.sessions.open(sessionId)
+          }}
         />
       ),
     },

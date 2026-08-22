@@ -94,6 +94,12 @@ export function mediaTypeForPath(path: string): string {
   return MEDIA_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream'
 }
 
+function requireGitOperation(payload: unknown): git.GitOperation {
+  const operation = requireString(payload, 'operation')
+  if (operation !== 'merge' && operation !== 'rebase') throw new SidebarError('bad-request', 'invalid git operation')
+  return operation
+}
+
 /**
  * Resolve a session's authoritative working directory. The attached session
  * header wins; while the session is still hydrating from persistence (the
@@ -319,6 +325,51 @@ function buildApi(
     'git.checkout': async (payload) => {
       const { cwd } = cwdOf(payload)
       await git.checkout(cwd, requireString(payload, 'branch'))
+      return { ok: true }
+    },
+    'git.merge': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      await git.merge(cwd, requireString(payload, 'branch'))
+      return { ok: true }
+    },
+    'git.rebase': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      await git.rebase(cwd, requireString(payload, 'branch'))
+      return { ok: true }
+    },
+    'git.worktree-list': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const [entries, pathPrefix] = await Promise.all([git.worktrees(cwd), git.worktreePathPrefix(cwd)])
+      return { entries, pathPrefix }
+    },
+    'git.worktree-add': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const record = payload as { base?: unknown }
+      await git.addWorktree(cwd, requireString(payload, 'path'), requireString(payload, 'branch'), record.base === undefined ? undefined : requireString(payload, 'base'))
+      return { ok: true }
+    },
+    'git.worktree-merge': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      await git.mergeWorktree(cwd, requireString(payload, 'targetPath'), requireString(payload, 'sourceBranch'))
+      return { ok: true }
+    },
+    'git.worktree-remove': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      await git.removeWorktree(cwd, requireString(payload, 'path'))
+      return { ok: true }
+    },
+    'git.operation': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      return { operation: await git.operation(cwd) }
+    },
+    'git.operation-continue': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      await git.continueOperation(cwd, requireGitOperation(payload))
+      return { ok: true }
+    },
+    'git.operation-abort': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      await git.abortOperation(cwd, requireGitOperation(payload))
       return { ok: true }
     },
     'git.log': async (payload) => {
