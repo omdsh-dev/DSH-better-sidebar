@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { SidebarHistoryEntry, SidebarSessionEvent } from '../src/context-types.ts'
-import { SIDE_BOUNDARY_PREFIX, SIDE_INJECTION_PLUGIN } from '../src/sidechat-core.ts'
+import { SIDE_BOUNDARY_PREFIX, SIDE_BOUNDARY_PROMPT, SIDE_INJECTION_PLUGIN } from '../src/sidechat-core.ts'
 import { collectOwnEvents, toolArgsSummary, transcriptRows, type SidechatTranscriptRow } from '../src/client/sidechat-transcript.ts'
 
 /** One history entry (event + optional view). */
@@ -44,18 +44,19 @@ describe('transcriptRows', () => {
     ])
   })
 
-  it('maps the LEGACY wrapped first message (boundary + question in one user row) wholly onto the injection row', () => {
+  it('splits the LEGACY wrapped first message (boundary + question in one user row) at the boundary prompt', () => {
     const entries = [
       entry(ev('session/end-seed', 0)),
       entry(ev('user/message', 1, {
-        content: textBlocks(`${SIDE_BOUNDARY_PREFIX}\n\nmode`, 'the first question'),
+        content: textBlocks(`${SIDE_BOUNDARY_PROMPT}\n\nthe first question`),
         source: { kind: 'user' },
       })),
       entry(ev('user/message', 2, { content: textBlocks('follow-up'), source: { kind: 'user' } })),
     ]
     const rows = transcriptRows(entries)
     expect(rows).toEqual([
-      { kind: 'injection', seq: 1, text: `${SIDE_BOUNDARY_PREFIX}\n\nmode\n\nthe first question` },
+      { kind: 'injection', seq: 1, text: SIDE_BOUNDARY_PROMPT },
+      { kind: 'user', seq: 1, text: 'the first question' },
       { kind: 'user', seq: 2, text: 'follow-up' },
     ])
   })

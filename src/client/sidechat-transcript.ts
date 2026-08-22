@@ -15,7 +15,7 @@
  * them with the assembled message once it lands (settled rows).
  */
 import type { SidebarHistoryEntry } from '../context-types.ts'
-import { isContextInjectionMessage } from '../sidechat-core.ts'
+import { isContextInjectionMessage, SIDE_BOUNDARY_PROMPT } from '../sidechat-core.ts'
 
 /** One compact transcript row rendered in the thread view. `seq` is the
  *  source event's log sequence — stable row identity for React keys across
@@ -207,10 +207,20 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[]): Sidecha
         // Context injections (the boundary prompt + snapshot, plugin-sourced
         // context) collapse into an injection row; genuine user messages —
         // including the FIRST one, which the host now delivers as its own
-        // event — render as user rows. Threads logged before the host split
-        // carry boundary+question in one message: it maps wholly onto the
-        // injection row (the question stays visible inside the expansion).
+        // event — render as user rows.
         if (isContextInjectionMessage(data)) {
+          const source = data.source as { kind?: unknown } | undefined
+          // Threads logged BEFORE the host split carry boundary(+snapshot)+
+          // question in ONE 'user' message. The boundary prompt is a known
+          // constant, so the message splits THERE: the injection row keeps
+          // the prompt, the remainder (snapshot + question if any — pure
+          // question in the common case) renders as the user's real message.
+          if (source?.kind === 'user' && text.startsWith(`${SIDE_BOUNDARY_PROMPT}\n\n`)) {
+            rows.push({ kind: 'injection', seq: event.seq, text: SIDE_BOUNDARY_PROMPT })
+            const body = text.slice(SIDE_BOUNDARY_PROMPT.length + 2)
+            if (body !== '') rows.push({ kind: 'user', seq: event.seq, text: body })
+            break
+          }
           rows.push({ kind: 'injection', seq: event.seq, text })
           break
         }

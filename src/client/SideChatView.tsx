@@ -185,20 +185,20 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels): React.ReactNo
   switch (row.kind) {
     case 'user':
       return (
-        <div key={row.seq} className={css.sidechatUser}>
+        <div key={`${row.kind}:${row.seq}`} className={css.sidechatUser}>
           <MarkdownText text={row.text} codeLabels={labels} />
         </div>
       )
     case 'assistant':
       return (
-        <div key={row.seq} className={css.sidechatAssistant}>
+        <div key={`${row.kind}:${row.seq}`} className={css.sidechatAssistant}>
           <MarkdownText text={row.text} codeLabels={labels} />
         </div>
       )
     case 'reasoning':
       return (
         <CollapsibleRow
-          key={row.seq}
+          key={`${row.kind}:${row.seq}`}
           label={labels.thinkLabel}
           streaming={!row.settled}
         >
@@ -207,7 +207,7 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels): React.ReactNo
       )
     case 'injection':
       return (
-        <CollapsibleRow key={row.seq} label={labels.injectionLabel}>
+        <CollapsibleRow key={`${row.kind}:${row.seq}`} label={labels.injectionLabel}>
           <div className={css.sidechatRowProse}>{row.text}</div>
         </CollapsibleRow>
       )
@@ -220,7 +220,7 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels): React.ReactNo
       )
       return (
         <CollapsibleRow
-          key={row.seq}
+          key={`${row.kind}:${row.seq}`}
           label={row.name}
           meta={toolArgsSummary(row.args)}
           mono
