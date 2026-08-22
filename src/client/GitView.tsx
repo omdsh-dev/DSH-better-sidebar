@@ -149,7 +149,13 @@ export function GitView(props: {
       id: `diff:w:${staged ? 's' : 'u'}:${entry.path}`,
       type: 'diff',
       title: baseName(entry.path),
-      diff: { kind: 'worktree', path: entry.path, staged, untracked: isUntracked(entry) },
+      diff: {
+        kind: 'worktree',
+        path: entry.path,
+        staged,
+        untracked: isUntracked(entry),
+        ...(scope.cwd !== undefined ? { targetCwd: scope.cwd } : {}),
+      },
     })
   }
 
@@ -159,7 +165,13 @@ export function GitView(props: {
       id: `diff:c:${entry.hashFull}`,
       type: 'diff',
       title: `${entry.hash} ${entry.subject}`,
-      diff: { kind: 'commit', hash: entry.hash, hashFull: entry.hashFull, subject: entry.subject },
+      diff: {
+        kind: 'commit',
+        hash: entry.hash,
+        hashFull: entry.hashFull,
+        subject: entry.subject,
+        ...(scope.cwd !== undefined ? { targetCwd: scope.cwd } : {}),
+      },
     })
   }
 

@@ -24,7 +24,7 @@ import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEve
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
-  IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
+  IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16, IconFolderClose16, IconFolderOpen16,
   IconLinkOutline16, Menu, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, downloadUrl, type FsEntry } from './api.ts'
@@ -109,6 +109,10 @@ export function FileTree(props: {
   onOpenFileNewTab?: (path: string) => void
   /** Context-menu "open to the side" (file rows; absent → no entry). */
   onOpenFileSide?: (path: string) => void
+  /** Context-menu "open this folder as a folder tab" (directory rows). */
+  onOpenDirFiles?: (path: string) => void
+  /** Context-menu "open this folder's source control" (directory rows). */
+  onOpenDirScm?: (path: string) => void
   /** Insert `@<relative path>` into the composer draft. */
   onReferenceFile: (path: string) => void
   /** Bump to wipe the level cache and reload the visible set. */
@@ -118,7 +122,7 @@ export function FileTree(props: {
   /** True while an upload is in flight (drops are ignored). */
   busy: boolean
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, refreshTick, onUploadRequest, busy } = props
+  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onOpenDirFiles, onOpenDirScm, onReferenceFile, refreshTick, onUploadRequest, busy } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
@@ -503,6 +507,13 @@ export function FileTree(props: {
           ...(rowMenu?.isDir === false && onOpenFileSide !== undefined
             ? [{ id: 'open-side', label: t('openFileSide'), icon: <IconFolderOpen16 size={14} /> }]
             : []),
+          // Directory rows get subfolder-scoped opens (folder tab / source control).
+          ...(rowMenu?.isDir === true && onOpenDirFiles !== undefined
+            ? [{ id: 'open-dir-files', label: t('openDirFiles'), icon: <IconFolderOpen16 size={14} /> }]
+            : []),
+          ...(rowMenu?.isDir === true && onOpenDirScm !== undefined
+            ? [{ id: 'open-dir-scm', label: t('openDirScm'), icon: <IconBranchOutline16 size={14} /> }]
+            : []),
           // Download applies to files only (the host route refuses directories).
           ...(rowMenu?.isDir === false
             ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutline16 size={14} /> }]
@@ -524,6 +535,14 @@ export function FileTree(props: {
           }
           if (id === 'open-side') {
             onOpenFileSide?.(target.path)
+            return
+          }
+          if (id === 'open-dir-files') {
+            onOpenDirFiles?.(target.path)
+            return
+          }
+          if (id === 'open-dir-scm') {
+            onOpenDirScm?.(target.path)
             return
           }
           if (id === 'download') {

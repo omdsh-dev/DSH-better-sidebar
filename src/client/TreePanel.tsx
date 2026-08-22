@@ -50,12 +50,19 @@ export function TreePanel(props: {
   onOpenFileNewTab?: (path: string) => void
   /** File context-menu "open to the side" (passed through to FileTree). */
   onOpenFileSide?: (path: string) => void
+  /** Directory context-menu "open this folder as a folder tab". */
+  onOpenDirFiles?: (path: string) => void
+  /** Directory context-menu "open this folder's source control". */
+  onOpenDirScm?: (path: string) => void
   onReferenceFile: (path: string) => void
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean
+  /** When set, the file-name search is scoped to this target working
+   *  directory (the folder tab) instead of the session cwd. */
+  targetCwd?: string
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, full } = props
+  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onOpenDirFiles, onOpenDirScm, onReferenceFile, full, targetCwd } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -127,7 +134,7 @@ export function TreePanel(props: {
     }
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
-      api.fsSearch({ sessionId, cwd }, needle, controller.signal).then((found) => {
+      api.fsSearch({ sessionId, cwd, ...(targetCwd !== undefined ? { targetCwd } : {}) }, needle, controller.signal).then((found) => {
         setResults(found)
         setError(null)
       }).catch((failure: unknown) => {
@@ -140,7 +147,7 @@ export function TreePanel(props: {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [sessionId, cwd, needle])
+  }, [sessionId, cwd, targetCwd, needle])
 
   const busy = upload !== null
 
@@ -217,6 +224,8 @@ export function TreePanel(props: {
           onOpenFile={onOpenFile}
           onOpenFileNewTab={onOpenFileNewTab}
           onOpenFileSide={onOpenFileSide}
+          onOpenDirFiles={onOpenDirFiles}
+          onOpenDirScm={onOpenDirScm}
           onReferenceFile={onReferenceFile}
           refreshTick={refreshTick}
           onUploadRequest={startUpload}

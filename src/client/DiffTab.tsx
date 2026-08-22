@@ -33,7 +33,11 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
 
   useEffect(() => {
     let cancelled = false
-    const scope: SessionScope = { sessionId, cwd }
+    const scope: SessionScope = {
+      sessionId,
+      cwd,
+      ...(diff.targetCwd !== undefined ? { targetCwd: diff.targetCwd } : {}),
+    }
     setLoading(true)
     setError(null)
     setData(null)

@@ -225,9 +225,23 @@ function buildApi(
 ): Record<string, ApiMethod> {
   const cwdOf = (payload: unknown): { sessionId: string; cwd: string } => {
     const sessionId = requireString(payload, 'sessionId')
-    const record = payload as { cwd?: unknown } | null
+    const record = payload as { cwd?: unknown; targetCwd?: unknown } | null
     const clientCwd = typeof record?.cwd === 'string' && record.cwd !== '' ? record.cwd : undefined
-    return { sessionId, cwd: sessionCwdOf(ctx, sessionId, clientCwd) }
+    const sessionCwd = sessionCwdOf(ctx, sessionId, clientCwd)
+    // An explicit TARGET working directory (the folder / repo-git tabs open a
+    // subfolder-scoped view) is authoritative when it is an absolute path
+    // inside the session workspace; anything else falls back to the session
+    // cwd. The isWithin guard mirrors the media/html routes (L712/L777), so a
+    // crafted request can never run git/search outside the workspace.
+    const targetCwd = typeof record?.targetCwd === 'string' && record.targetCwd !== '' ? record.targetCwd : undefined
+    if (targetCwd !== undefined) {
+      const absolute = requireAbsolute(targetCwd)
+      if (!isWithin(sessionCwd, absolute)) {
+        throw new SidebarError('fs-error', 'target working directory outside the session working directory', 403)
+      }
+      return { sessionId, cwd: absolute }
+    }
+    return { sessionId, cwd: sessionCwd }
   }
   // Background jobs: the LIST rides the harness's `session/jobs` push
   // mirror, so these routes only replay output the model has read (from the

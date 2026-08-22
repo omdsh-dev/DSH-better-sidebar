@@ -166,11 +166,20 @@ export interface SessionScope {
   sessionId: string
   /** The session's working directory from the client list summary (optional). */
   cwd?: string
+  /** An explicit target working directory (the folder/repo-git tabs open a
+   *  subfolder-scoped view): when present and inside the session workspace,
+   *  the host runs git/search against it instead of the session cwd. */
+  targetCwd?: string
 }
 
-/** Fold a scope into a JSON payload ({cwd} only when present). */
+/** Fold a scope into a JSON payload ({cwd}/{targetCwd} only when present). */
 function scopePayload(scope: SessionScope, extra: Record<string, unknown>): Record<string, unknown> {
-  return { sessionId: scope.sessionId, ...(scope.cwd !== undefined && scope.cwd !== '' ? { cwd: scope.cwd } : {}), ...extra }
+  return {
+    sessionId: scope.sessionId,
+    ...(scope.cwd !== undefined && scope.cwd !== '' ? { cwd: scope.cwd } : {}),
+    ...(scope.targetCwd !== undefined && scope.targetCwd !== '' ? { targetCwd: scope.targetCwd } : {}),
+    ...extra,
+  }
 }
 
 /** The sidebar API surface (session scope threaded through every call). */

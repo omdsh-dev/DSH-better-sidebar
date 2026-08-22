@@ -13,6 +13,7 @@ import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
 import { openSidebarFile } from '../intercept.tsx'
 import { EditorHost } from '../EditorHost.tsx'
+import { FolderTab, RepoGitTab } from '../folder-tabs.tsx'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
 import { GitView } from '../GitView.tsx'
 import { DiffTab } from '../DiffTab.tsx'
@@ -124,6 +125,29 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           onReferenceFile={onReferenceFile ?? (() => { /* no-op */ })}
         />
       ),
+    },
+    {
+      // The subfolder-scoped FILE tab (「子文件」): opened only from the file
+      // tree's directory context menu (hidden from + ), one per folder path.
+      id: 'folder',
+      title: () => t('subFiles'),
+      icon: (size: number) => <IconFolderOpen16 size={size} />,
+      order: 11,
+      hidden: true,
+      dedupeKey: (tab) => tab.path,
+      component: (props) => <FolderTab {...props} />,
+    },
+    {
+      // The subfolder-scoped SOURCE-CONTROL tab (「子源代码管理」): the git
+      // panel scoped to a folder (its own repo even when the workspace root
+      // is not one). Opened only from the directory context menu (hidden).
+      id: 'repo-git',
+      title: () => t('subScm'),
+      icon: (size: number) => <IconBranchOutline16 size={size} />,
+      order: 21,
+      hidden: true,
+      dedupeKey: (tab) => tab.path,
+      component: (props) => <RepoGitTab {...props} />,
     },
     {
       id: 'git',
