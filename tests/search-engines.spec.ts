@@ -12,9 +12,11 @@ import { join, sep } from 'node:path'
 import {
   bundledRgCandidates,
   escapeGlob,
+  fdArgv,
   normalizeEnginePaths,
   probeEngines,
   resetEngines,
+  rgArgv,
   runEngine,
   setEngineHooks,
   usableEngines,
@@ -69,6 +71,37 @@ describe('normalizeEnginePaths', () => {
 describe('escapeGlob', () => {
   it('escapes glob metacharacters for rg -g literal matching', () => {
     expect(escapeGlob('a*b?c[d]')).toBe('a\\*b\\?c\\[d\\]')
+  })
+})
+
+describe('engine argv symmetry', () => {
+  it('fd --max-results sits one ABOVE the sentinel (cap + 1) so full result sets trip truncation', () => {
+    // cap = maxMatches + 1 is the stream sentinel: the runner marks
+    // truncated when a line arrives past it. fd must not stop AT the
+    // sentinel (never seen as truncated) — it caps one line higher.
+    const argv = fdArgv(201, 'util')
+    expect(argv).toContain('--max-results')
+    expect(argv[argv.indexOf('--max-results') + 1]).toBe('202')
+    expect(argv).toContain('--fixed-strings')
+    expect(argv).toContain('--path-separator')
+  })
+
+  it('fd argv keeps the literal-fixed, hidden, no-ignore contract', () => {
+    const argv = fdArgv(10, 'a*b')
+    expect(argv.slice(0, 8)).toEqual([
+      '--hidden', '--no-ignore', '--exclude', '.git',
+      '--fixed-strings', '--ignore-case', '--path-separator', '/',
+    ])
+    expect(argv[argv.length - 2]).toBe('a*b') // literal, unescaped
+    expect(argv[argv.length - 1]).toBe('.')
+  })
+
+  it('rg argv escapes glob metacharacters and pins / separators', () => {
+    const argv = rgArgv('a*b')
+    expect(argv).toContain('--files')
+    expect(argv).toContain('--path-separator')
+    expect(argv).toContain('*a\\*b*')
+    expect(argv[argv.length - 1]).toBe('.')
   })
 })
 

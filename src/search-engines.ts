@@ -246,11 +246,41 @@ export function normalizeEnginePaths(lines: readonly string[], separator: string
   return out
 }
 
+/** The fd argv: the query as a literal substring, '/' separators, and
+ *  --max-results one ABOVE the stream sentinel (cap + 1) so a full result
+ *  set overflows into the same truncation detected for rg (see runChild). */
+export function fdArgv(cap: number, query: string): string[] {
+  return [
+    '--hidden', '--no-ignore', '--exclude', '.git', '--fixed-strings', '--ignore-case',
+    '--path-separator', '/', '--max-results', String(cap + 1), query, '.',
+  ]
+}
+
+/** The rg argv: --files listing filtered by a case-insensitive literal-name
+ *  glob, '/' separators pinned (rg emits '\' in cmd/PowerShell on Windows,
+ *  '/' in Git Bash — rg#501; the flag exists since rg 0.8, a build without
+ *  it fails at spawn and is disabled at runtime). */
+export function rgArgv(query: string): string[] {
+  return [
+    '--files', '--hidden', '--no-ignore', '--glob', '!**/.git/**',
+    '--iglob', `*${escapeGlob(query)}*`, '--path-separator', '/', '.',
+  ]
+}
+
 /** One child invocation per engine, emitting normalized relative paths.
  *  rg's -g globs match the WHOLE path, while the walk contract matches
  *  entry NAMES only — the extra path-level hits are filtered back out here
  *  (a basename hit always implies a path hit under the same glob, so the
- *  glob can never drop a legitimate match). */
+ *  glob can never drop a legitimate match).
+ *
+ *  Truncation symmetry: `streamLines` marks truncated when the stream
+ *  exceeds `cap = maxMatches + 1` lines (the +1 is a sentinel proving
+ *  "there is more"). rg has no --max-results so it naturally overflows
+ *  into the sentinel; fd MUST NOT cap at `cap` (it would stop exactly at
+ *  the sentinel and never be seen as truncated) — pin its --max-results
+ *  one higher (maxMatches + 2) so a full result set trips the same
+ *  sentinel and both engines report truncated identically, with the
+ *  caller slicing back to maxMatches. */
 function runChild(
   probe: EngineProbe,
   root: string,
@@ -261,22 +291,9 @@ function runChild(
   const cap = maxMatches + 1
   let child: ChildProcess
   if (probe.engine === 'fd') {
-    child = spawn(probe.binary, [
-      '--hidden', '--no-ignore', '--exclude', '.git', '--fixed-strings', '--ignore-case',
-      '--path-separator', '/', '--max-results', String(cap), query, '.',
-    ], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
+    child = spawn(probe.binary, fdArgv(cap, query), { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
   } else {
-    // --iglob: case-insensitive glob (rg's globset has no (?i) inline flag).
-    // --path-separator: rg emits a platform-dependent separator — '\' in
-    // cmd/PowerShell on Windows, '/' in Git Bash and elsewhere (rg#501) —
-    // pin '/' so engine output matches the walk contract before
-    // normalizeEnginePaths even sees it (the flag exists since rg 0.8; a
-    // hypothetical build without it fails at spawn and is disabled at
-    // runtime — the plain walk still covers the search).
-    child = spawn(probe.binary, [
-      '--files', '--hidden', '--no-ignore', '--glob', '!**/.git/**',
-      '--iglob', `*${escapeGlob(query)}*`, '--path-separator', '/', '.',
-    ], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
+    child = spawn(probe.binary, rgArgv(query), { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
   }
   return streamLines(child, cap, signal).then(({ lines, truncated }) => {
     let paths = normalizeEnginePaths(lines)
