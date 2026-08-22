@@ -895,6 +895,10 @@ async function attachAgentList(
  * - `?tab=...&sessionId=...` attaches to a UI-tab terminal (the user
  *   created it from the + menu). The close frame schedules a 0-ms close
  *   (the host's reconnect grace keeps the shell alive across a refresh).
+ *   The park frame (sent when the user switches to another conversation)
+ *   marks the pty as parked so the upcoming bare socket drop does NOT start
+ *   the grace countdown — the tab is still open in its session's state, so
+ *   the shell must survive until the user switches back or closes the tab.
  */
 async function attachTerminal(
   ctx: Context,
@@ -971,6 +975,16 @@ async function attachTerminal(
         ptyManager.scheduleClose(handle.key, 0)
         return
       }
+      if (control !== null && control.type === 'park') {
+        // The user switched to another conversation: the tab is still open in
+        // its session's persisted state, but its view unmounted. Park the pty
+        // so the upcoming bare socket drop does NOT start the reconnect-grace
+        // countdown — the pty stays alive until the user switches back (a
+        // reconnecting view clears the parked state) or explicitly closes the
+        // tab (a close frame's scheduleClose clears it).
+        ptyManager.park(handle.key)
+        return
+      }
       if (handle.exited) return
       if (
         control !== null
@@ -986,10 +1000,14 @@ async function attachTerminal(
     ws.on('close', () => {
       dataSub.dispose()
       exitSub.dispose()
-      // A bare socket drop (refresh, tab switch) leaves the process alive
-      // for a grace period so a quick reconnect keeps it; the reconnect's
-      // open() cancels the pending close.
-      ptyManager.scheduleClose(handle.key, resolved.reconnectGraceMs)
+      // A parked pty (the user switched conversations and sent `{type:'park'}`)
+      // stays alive indefinitely — do NOT start the grace countdown. A bare
+      // socket drop without a prior park (refresh, crash) starts the grace
+      // period so a quick reconnect keeps the process; the reconnect's open()
+      // cancels the pending close.
+      if (!ptyManager.isParked(handle.key)) {
+        ptyManager.scheduleClose(handle.key, resolved.reconnectGraceMs)
+      }
     })
   } catch (error) {
     ws.close(1011, error instanceof Error ? error.message : String(error))

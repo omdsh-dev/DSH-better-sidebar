@@ -64,10 +64,32 @@ export interface SidebarPty {
 /**
  * The terminal registry. `maxPerSession` bounds concurrent processes per
  * conversation (the client caps tabs at the same number).
+ *
+ * Lifecycle of a UI-tab pty when its WebSocket drops:
+ * - **Close frame** (`{type:'close'}`): the user closed the tab → schedule a
+ *   0-ms close (quota released immediately).
+ * - **Park frame** (`{type:'park'}`): the user switched to another
+ *   conversation; the tab is still open in its session's persisted state but
+ *   its view unmounted → mark the pty as parked (no auto-close countdown).
+ *   The pty stays alive until the user switches back (a reconnecting view
+ *   calls `open()` which clears the parked state) or the tab is later closed
+ *   (a `{type:'close'}` frame from a fresh connection). Without `park`, a
+ *   bare socket drop would start the reconnect-grace countdown and kill the
+ *   shell after `reconnectGraceMs` — wrong for a session switch, where the
+ *   user is still actively using the app, just in another conversation.
+ * - **Bare socket drop** (no frame): page refresh, crash, plugin teardown →
+ *   schedule a close after `reconnectGraceMs` so a quick reconnect reattaches
+ *   the same shell.
  */
 export class PtyManager {
   private readonly sessions = new Map<string, SidebarPty>()
   private readonly pendingCloses = new Map<string, ReturnType<typeof setTimeout>>()
+  /** Tabs whose view unmounted because the user switched conversations — the
+   *  tab is still open in its session's state, so the pty must NOT enter the
+   *  reconnect-grace countdown. Cleared by `cancelClose` (a reconnecting
+   *  view's `open()` cancels it) or by `scheduleClose` (an explicit close
+   *  frame still kills a parked pty). */
+  private readonly parked = new Set<string>()
 
   constructor(
     private readonly shell: string,
@@ -159,7 +181,9 @@ export class PtyManager {
    * Schedule the terminal's destruction after `delayMs`. A tab close sends
    * delay 0 (release the quota immediately); a bare socket drop (refresh,
    * crash) uses the grace period so a quick reconnect keeps the process.
-   * `open()` cancels any pending close.
+   * `open()` cancels any pending close. Clears the parked state — an explicit
+   * close frame on a parked pty (the user switched back and closed the tab)
+   * still kills it.
    */
   scheduleClose(key: string, delayMs: number): void {
     const handle = this.sessions.get(key)
@@ -169,13 +193,36 @@ export class PtyManager {
     this.pendingCloses.set(key, timer)
   }
 
-  /** Cancel a pending scheduled close (the terminal is being reopened). */
+  /**
+   * Park a terminal: the owning tab's view unmounted because the user
+   * switched to another conversation, but the tab is still open in its
+   * session's persisted state. Cancels any pending grace close and marks
+   * the pty so the host's `ws.on('close')` handler does NOT start the
+   * reconnect-grace countdown — the pty stays alive until the user switches
+   * back (a reconnecting view's `open()` clears this) or explicitly closes
+   * the tab (a `{type:'close'}` frame's `scheduleClose` clears this).
+   */
+  park(key: string): void {
+    if (this.sessions.get(key) === undefined) return
+    this.cancelClose(key)
+    this.parked.add(key)
+  }
+
+  /** Whether this pty was parked (its view unmounted for a session switch). */
+  isParked(key: string): boolean {
+    return this.parked.has(key)
+  }
+
+  /** Cancel a pending scheduled close (the terminal is being reopened).
+   *  Also clears the parked state — a reconnecting view reattaches a parked
+   *  pty and resumes normal lifecycle. */
   cancelClose(key: string): void {
     const timer = this.pendingCloses.get(key)
     if (timer !== undefined) {
       clearTimeout(timer)
       this.pendingCloses.delete(key)
     }
+    this.parked.delete(key)
   }
 
   /** Resolve a live handle by key, or undefined. */

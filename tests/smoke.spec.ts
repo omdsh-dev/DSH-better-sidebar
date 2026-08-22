@@ -198,6 +198,60 @@ describe('host plugin smoke', () => {
     }
   })
 
+  it('pty manager: a parked pty survives past the reconnect grace (session switch)', async () => {
+    const manager = new PtyManager(defaultShell(), 3)
+    try {
+      const handle = manager.open('s2', 't1', process.cwd(), 80, 24)
+      manager.park(handle.key)
+      expect(manager.isParked(handle.key)).toBe(true)
+      // A parked pty does NOT enter the grace countdown — it stays alive
+      // well past any realistic reconnectGraceMs.
+      await new Promise(resolve => setTimeout(resolve, 300))
+      expect(manager.get(handle.key)).toBeDefined()
+      expect(manager.isParked(handle.key)).toBe(true)
+    } finally {
+      manager.disposeAll()
+    }
+  })
+
+  it('pty manager: a reconnecting view clears the parked state (switch back)', () => {
+    const manager = new PtyManager(defaultShell(), 3)
+    try {
+      const handle = manager.open('s2', 't1', process.cwd(), 80, 24)
+      manager.park(handle.key)
+      expect(manager.isParked(handle.key)).toBe(true)
+      // open() calls cancelClose(), which clears the parked state — the
+      // user switched back to the session and the view reattached.
+      manager.open('s2', 't1', process.cwd(), 80, 24)
+      expect(manager.isParked(handle.key)).toBe(false)
+      expect(manager.get(handle.key)).toBeDefined()
+    } finally {
+      manager.disposeAll()
+    }
+  })
+
+  it('pty manager: an explicit close frame on a parked pty still kills it', async () => {
+    const manager = new PtyManager(defaultShell(), 3)
+    try {
+      const handle = manager.open('s2', 't1', process.cwd(), 80, 24)
+      manager.park(handle.key)
+      // The user switched back and closed the tab — scheduleClose (the
+      // close-frame handler) clears the parked state and kills the pty.
+      manager.scheduleClose(handle.key, 0)
+      expect(manager.isParked(handle.key)).toBe(false)
+      await new Promise(resolve => setTimeout(resolve, 50))
+      expect(manager.get(handle.key)).toBeUndefined()
+    } finally {
+      manager.disposeAll()
+    }
+  })
+
+  it('pty manager: park on an unknown key is a no-op', () => {
+    const manager = new PtyManager(defaultShell(), 3)
+    expect(() => manager.park('s2:nonexistent')).not.toThrow()
+    expect(manager.isParked('s2:nonexistent')).toBe(false)
+  })
+
   it('pty manager: reopening with a different cwd respawns in the new directory', async () => {
     const manager = new PtyManager(defaultShell(), 3)
     // A real second directory: os.tmpdir() exists on every platform ('/tmp'
