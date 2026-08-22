@@ -8,13 +8,15 @@
  * revert, cherry-pick, copy paths/hashes). Refresh is manual + on mount/
  * focus (no file watcher — KISS).
  */
-import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
   IconTrashOutline16, Input, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { GitLogEntry, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
+import type { GitGraphEntry, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
 import { api } from './api.ts'
+import { GitGraphSvg } from './GitGraph.tsx'
+import { computeGraphRows } from './git-graph.ts'
 import { relativeTo } from './paths.ts'
 import { relativeTime, t } from './locales.ts'
 import type { SidebarTab } from './state.ts'
@@ -90,7 +92,7 @@ export function GitView(props: {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [branchNames, setBranchNames] = useState<string[]>([])
-  const [logEntries, setLogEntries] = useState<GitLogEntry[]>([])
+  const [logEntries, setLogEntries] = useState<GitGraphEntry[]>([])
   const [commitMsg, setCommitMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
@@ -101,7 +103,7 @@ export function GitView(props: {
   /** The open file-row context menu (cursor position for the portaled Menu). */
   const [fileMenu, setFileMenu] = useState<{ entry: GitStatusEntry; staged: boolean; x: number; y: number } | null>(null)
   /** The open history-row context menu. */
-  const [historyMenu, setHistoryMenu] = useState<{ entry: GitLogEntry; x: number; y: number } | null>(null)
+  const [historyMenu, setHistoryMenu] = useState<{ entry: GitGraphEntry; x: number; y: number } | null>(null)
   /** The pending destructive action awaiting confirmation. */
   const [confirm, setConfirm] = useState<ConfirmState | null>(null)
 
@@ -112,8 +114,9 @@ export function GitView(props: {
       const [statusResult, branchResult, logResult] = await Promise.all([
         api.gitStatus(scope),
         api.gitBranch(scope).catch(() => ({ current: '', names: [] as string[] })),
-        // The first history page only; the rest arrives via "load more".
-        api.gitLog(scope, LOG_BATCH, 0).catch(() => [] as GitLogEntry[]),
+        // The first history page only; the rest arrives via "load more". The
+        // graph flavor carries parent hashes (topo-ordered) for the lane layout.
+        api.gitLogGraph(scope, LOG_BATCH, 0).catch(() => [] as GitGraphEntry[]),
       ])
       setStatus(statusResult)
       setBranchNames(branchResult.names)
@@ -133,7 +136,7 @@ export function GitView(props: {
     if (logLoadingMore || logEnded) return
     setLogLoadingMore(true)
     try {
-      const next = await api.gitLog(scope, LOG_BATCH, logEntries.length)
+      const next = await api.gitLogGraph(scope, LOG_BATCH, logEntries.length)
       setLogEntries(entries => [...entries, ...next])
       if (next.length < LOG_BATCH) setLogEnded(true)
     } catch (reason) {
@@ -154,7 +157,7 @@ export function GitView(props: {
   }
 
   /** The diff tab for one commit (one tab per commit). */
-  const openCommitDiff = (entry: GitLogEntry): void => {
+  const openCommitDiff = (entry: GitGraphEntry): void => {
     onOpenDiff({
       id: `diff:c:${entry.hashFull}`,
       type: 'diff',
@@ -242,7 +245,7 @@ export function GitView(props: {
     setFileMenu({ entry, staged, x: event.clientX, y: event.clientY })
   }
 
-  const openHistoryMenu = (event: MouseEvent, entry: GitLogEntry): void => {
+  const openHistoryMenu = (event: MouseEvent, entry: GitGraphEntry): void => {
     event.preventDefault()
     event.stopPropagation()
     setHistoryMenu({ entry, x: event.clientX, y: event.clientY })
@@ -250,6 +253,9 @@ export function GitView(props: {
 
   const stagedEntries = (status?.entries ?? []).filter(isStagedEntry)
   const unstagedEntries = (status?.entries ?? []).filter(isUnstagedEntry)
+
+  /** The lane layout over the accumulated log pages (recomputed on append). */
+  const graph = useMemo(() => computeGraphRows(logEntries), [logEntries])
 
   const renderEntry = (entry: GitStatusEntry, staged: boolean): ReactNode => {
     return (
@@ -358,34 +364,44 @@ export function GitView(props: {
 
           <div className={css.gitSection}>
             <div className={css.gitSectionHeader}><span>{t('history')}</span></div>
-            {logEntries.map(entry => (
-              <div
-                key={entry.hashFull}
-                role="button"
-                tabIndex={0}
-                className={css.gitLogRow}
-                title={`${entry.author} · ${entry.date}\n${entry.hashFull}`}
-                onClick={() => { openCommitDiff(entry) }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    openCommitDiff(entry)
-                  }
-                }}
-                onContextMenu={(event) => { openHistoryMenu(event, entry) }}
-              >
-                <span className={css.gitLogLine1}>
-                  <span className={css.gitLogHash}>{entry.hash}</span>
-                  <span className={css.gitLogSubject}>{entry.subject}</span>
-                </span>
-                <span className={css.gitLogLine2}>
-                  {refNames(entry.refs).map(ref => (
-                    <span key={ref} className={css.gitLogRef}>{ref}</span>
-                  ))}
-                  <span className={css.gitLogMeta}>{entry.author} · {relativeTime(entry.date)}</span>
-                </span>
-              </div>
-            ))}
+            {graph.rows.map((row, index) => {
+              const entry = row.entry
+              return (
+                <div
+                  key={row.rowKey}
+                  role="button"
+                  tabIndex={0}
+                  className={css.gitLogRow}
+                  title={`${entry.author} · ${entry.date}\n${entry.hashFull}`}
+                  onClick={() => { openCommitDiff(entry) }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      openCommitDiff(entry)
+                    }
+                  }}
+                  onContextMenu={(event) => { openHistoryMenu(event, entry) }}
+                >
+                  <GitGraphSvg
+                    row={row}
+                    prev={index > 0 ? graph.rows[index - 1] : undefined}
+                    graphWidth={graph.graphWidth}
+                  />
+                  <div className={css.gitLogBody} style={{ marginLeft: graph.graphWidth + 8 }}>
+                    <span className={css.gitLogLine1}>
+                      <span className={css.gitLogHash}>{entry.hash}</span>
+                      <span className={css.gitLogSubject}>{entry.subject}</span>
+                    </span>
+                    <span className={css.gitLogLine2}>
+                      {refNames(entry.refs).map(name => (
+                        <span key={name} className={css.gitLogRef}>{name}</span>
+                      ))}
+                      <span className={css.gitLogMeta}>{entry.author} · {relativeTime(entry.date)}</span>
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
             {!logEnded && (
               <button
                 type="button"

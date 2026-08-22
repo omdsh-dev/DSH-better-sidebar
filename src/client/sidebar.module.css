@@ -2293,19 +2293,69 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   cursor: default;
 }
 
-/* A history row: line 1 = hash + subject, line 2 = ref badges + author/date
-   (badges live on the second line so they never crowd the subject). */
+/* A history row: the commit-graph lane SVG on the left, body on the right
+   (line 1 = hash + subject, line 2 = ref badges + author/date). The lane
+   colors come from the `--gg-lane-N` custom properties below — defaults are
+   DSH semantic tokens, so every skin controls the palette (skin-compat rule:
+   no hardcoded colors). */
 .gitLogRow {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 5px 12px;
+  align-items: center;
+  min-height: 40px;
+  padding: 2px 12px 2px 6px;
   cursor: pointer;
   border-radius: 8px;
 }
 
 .gitLogRow:hover {
   background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The commit-graph lane (see src/client/git-graph.ts for the geometry):
+   absolutely positioned so it NEVER takes part in the row's height — the
+   body alone decides it (rows grow when tag chips wrap). top/bottom stretch
+   the graph to the row's actual height; the svg inside uses
+   viewBox + preserveAspectRatio="none" so the nominal 40px geometry is
+   y-stretched to match (vertical lanes stay straight, x positions exact). */
+.gitLogGraph {
+  position: absolute;
+  left: 6px;
+  top: 0;
+  bottom: 0;
+  --gg-lane-0: var(--dsw-alias-brand-primary);
+  --gg-lane-1: var(--dsw-alias-state-success-primary);
+  --gg-lane-2: var(--dsw-alias-state-warn-primary);
+  --gg-lane-3: var(--dsw-alias-state-error-primary);
+  --gg-lane-4: var(--dsw-alias-state-business-primary);
+  --gg-lane-5: var(--dsw-alias-label-secondary);
+}
+
+.gitLogGraph svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* The commit dot: a CSS circle (top: 50%) so it stays a perfect circle and
+   vertically centered no matter how tall the row is (an SVG circle would
+   distort under the viewBox y-stretch). */
+.gitLogDot {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10.4px;
+  height: 10.4px;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.gitLogBody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .gitLogLine1 {

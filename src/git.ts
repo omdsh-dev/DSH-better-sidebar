@@ -39,6 +39,13 @@ export interface GitLogEntry {
   refs: string
 }
 
+/** One `git log` row with parent hashes (for the graph view's lane layout).
+ *  `parents` are FULL 40-char hashes, first-parent first (git's `%P` order),
+ *  so a merge commit carries 2+ entries and a root commit carries none. */
+export interface GitGraphEntry extends GitLogEntry {
+  parents: string[]
+}
+
 /** One git failure (stderr text as the message). */
 export class GitCommandError extends Error {
   constructor(
@@ -85,6 +92,33 @@ export function parseLogLines(output: string): GitLogEntry[] {
       date: date ?? '',
       hashFull: hashFull ?? hash,
       refs: refs ?? '',
+    })
+  }
+  return rows
+}
+
+/**
+ * Parse `git log --pretty=format:%H%x1f%P%x1f%s%x1f%an%x1f%ai%x1f%D` rows
+ * (graph flavor): the second field is `%P` — the FULL parent hashes, space
+ * separated, first-parent first. A root commit has an empty parent field →
+ * `parents: []`. The row's own hash is `%H` (full); the short hash for
+ * display is derived as the first 7 chars (git's default short length).
+ */
+export function parseGraphLines(output: string): GitGraphEntry[] {
+  const rows: GitGraphEntry[] = []
+  for (const line of output.split('\n')) {
+    if (line === '') continue
+    const [hashFull, parentsRaw, subject, author, date, refs] = line.split('\x1f')
+    if (hashFull === undefined || parentsRaw === undefined || subject === undefined) continue
+    const parents = parentsRaw === '' ? [] : parentsRaw.split(' ').filter(hash => hash !== '')
+    rows.push({
+      hash: hashFull.slice(0, 7),
+      hashFull,
+      subject,
+      author: author ?? '',
+      date: date ?? '',
+      refs: refs ?? '',
+      parents,
     })
   }
   return rows
@@ -199,6 +233,21 @@ export async function log(cwd: string, count = 30, skip = 0): Promise<GitLogEntr
     '--pretty=format:%h%x1f%s%x1f%an%x1f%ai%x1f%H%x1f%D',
   ])
   return parseLogLines(raw)
+}
+
+/**
+ * Recent commit history with parent hashes (newest first), pageable via
+ * skip/count. `--topo-order` guarantees no parent appears before its child
+ * (the lane layout algorithm's precondition), at the cost of a less strictly
+ * chronological order when branches diverge — which is the conventional
+ * arrangement for a commit graph (parallel branches stay visually grouped).
+ */
+export async function graphLog(cwd: string, count = 30, skip = 0): Promise<GitGraphEntry[]> {
+  const raw = await runGit(cwd, [
+    'log', '-n', String(count), '--skip', String(skip), '--topo-order', '--decorate=short',
+    '--pretty=format:%H%x1f%P%x1f%s%x1f%an%x1f%ai%x1f%D',
+  ])
+  return parseGraphLines(raw)
 }
 
 /**

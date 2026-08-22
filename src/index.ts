@@ -332,6 +332,17 @@ function buildApi(
         : undefined
       return git.log(cwd, count, skip)
     },
+    'git.log-graph': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const record = payload as { count?: unknown; skip?: unknown }
+      const count = typeof record.count === 'number' && Number.isInteger(record.count) && record.count > 0
+        ? record.count
+        : undefined
+      const skip = typeof record.skip === 'number' && Number.isInteger(record.skip) && record.skip >= 0
+        ? record.skip
+        : undefined
+      return git.graphLog(cwd, count, skip)
+    },
     'git.commit-diff': async (payload) => {
       const { cwd } = cwdOf(payload)
       return { diff: await git.commitDiff(cwd, requireString(payload, 'hash')) }

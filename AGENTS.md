@@ -712,6 +712,7 @@ better-sidebar 自己的内置 tab 和 viewer 就是参考实现（"吃狗粮"�
 - **`tests/builtins.spec.ts`**：内置注册清单断言（7 tab + 6 viewer + 声明式元数据）
 - **`src/client/plugins-tabs.ts`** / **`src/client/plugins-viewers.ts`**：推荐插件目录（名字/url/简介/安装脚本，分别对应 Tab 注册与文件预览注册），在设置页两个「添加插件」弹窗展示（共享类型在 `plugins-shared.ts`）；插件作者可按扩展点加一条数据（弹窗内「跳转」直达仓库、「复制」把安装命令写入剪贴板，粘贴到 DSH 所在环境的终端执行）——数据完整性由 `tests/plugin-list.spec.ts` 守护
 - **`src/client/FileTree.tsx`** / **`src/client/TreePanel.tsx`** / **`src/fs-search.ts`**：受控文件树组件（纯树体，文件行右键菜单含「在新 Tab 中打开」「在侧边打开」，仅宿主编排提供回调时渲染）/ 树面板（搜索框 + 刷新 + FileTree，文件窗口的内嵌 dock 使用）与 host 侧递归文件名搜索（`fs.search` 路由，预算兜底 + 跳过 `.git`/symlink 目录；测试 `tests/fs-search.spec.ts`、组件测试 `tests/editor-host.spec.tsx`）
-- **`docs/plans/2026-08-11-service-registry-design.md`** / **`docs/plans/2026-08-11-declarative-sidebar-settings-design.md`** / **`docs/plans/2026-08-14-add-plugins-modal-design.md`**：设计文档（含实施偏差记录）
+- **`src/client/git-graph.ts`** / **`src/client/GitGraph.tsx`**：Git 面板历史提交图（lane 图）的纯布局算法（`computeGraphRows`：lane 分配 / 菱形汇入弧 / 分叉弧 / 列回收，输入 host 的 `git.log-graph` 拓扑序数据）与逐行 SVG 渲染（视觉移植自仓库本地参考目录 `docs/prototypes/gitgraph-lines` 的原型 demo，未纳入版本库；lane 色走 `--gg-lane-N` 自定义属性，默认映射 DSH 语义令牌）；host 数据链在 `src/git.ts`（`graphLog`/`parseGraphLines`）、`src/index.ts`（`git.log-graph` 路由）、`src/client/api.ts`（`gitLogGraph`/`GitGraphEntry`）；测试 `tests/git-graph.spec.ts`、`tests/git.spec.ts`
+- **`docs/plans/2026-08-11-service-registry-design.md`** / **`docs/plans/2026-08-11-declarative-sidebar-settings-design.md`** / **`docs/plans/2026-08-14-add-plugins-modal-design.md`** / **`docs/plans/2026-08-19-git-graph-lanes-design.md`**：设计文档（含实施偏差记录）
 
 调试时直接读这些文件即可看到所有 API 的真实用法。

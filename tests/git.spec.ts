@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
-import { parseLogLines, parsePorcelainZ } from '../src/git.ts'
+import { parseGraphLines, parseLogLines, parsePorcelainZ } from '../src/git.ts'
 
 describe('git parsing', () => {
   it('parses porcelain -z entries including renames', () => {
@@ -109,6 +109,36 @@ describe('git parsing', () => {
       { kind: 'del', text: 'one', oldNum: 1, newNum: null },
       { kind: 'del', text: 'two', oldNum: 2, newNum: null },
       { kind: 'meta', text: ' No newline at end of file', oldNum: null, newNum: null },
+    ])
+  })
+
+  it('parses graph log rows with parent hashes (first-parent first, root = empty)', () => {
+    const full = 'abc1234def5678abc1234def5678abc1234def5678'
+    const parent1 = 'def5678abc1234def5678abc1234def5678abc1234'
+    const parent2 = 'fedcba9876543210fedcba9876543210fedcba98'
+    const rows = parseGraphLines(
+      `${full}\x1f${parent1} ${parent2}\x1fMerge branch\x1fAlice\x1f2024-01-01 10:00:00 +0800\x1fHEAD -> main\n`
+      + `${parent1}\x1f\x1fRoot commit\x1fBob\x1f2024-01-02 10:00:00 +0800\x1f\n`,
+    )
+    expect(rows).toEqual([
+      {
+        hash: full.slice(0, 7),
+        hashFull: full,
+        subject: 'Merge branch',
+        author: 'Alice',
+        date: '2024-01-01 10:00:00 +0800',
+        refs: 'HEAD -> main',
+        parents: [parent1, parent2],
+      },
+      {
+        hash: parent1.slice(0, 7),
+        hashFull: parent1,
+        subject: 'Root commit',
+        author: 'Bob',
+        date: '2024-01-02 10:00:00 +0800',
+        refs: '',
+        parents: [],
+      },
     ])
   })
 
