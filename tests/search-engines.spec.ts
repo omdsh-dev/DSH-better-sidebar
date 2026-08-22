@@ -41,6 +41,28 @@ describe('normalizeEnginePaths', () => {
   it('drops empty lines and the bare root', () => {
     expect(normalizeEnginePaths(['', '.', 'src/x.ts'])).toEqual(['src/x.ts'])
   })
+
+  // Windows shape (review concern: fd/rg "weird formats" on Windows):
+  // rg emits '\'-separated paths with a '.\' prefix and CRLF line endings —
+  // all of it must still land on the '/'-separated walk contract.
+  it('normalizes Windows engine output: backslash separators + .\\ prefix (rg shape)', () => {
+    expect(normalizeEnginePaths(['src\\util.ts', '.\\README.md'], '\\')).toEqual([
+      'src/util.ts',
+      'README.md',
+    ])
+  })
+
+  it('strips a trailing CR from engine lines (Windows CRLF endings)', () => {
+    expect(normalizeEnginePaths(['src/util.ts\r', './b.ts\r'])).toEqual([
+      'src/util.ts',
+      'b.ts',
+    ])
+    // Same protection applies to the Windows shape.
+    expect(normalizeEnginePaths(['src\\util.ts\r', '.\\docs\\guide.md\r'], '\\')).toEqual([
+      'src/util.ts',
+      'docs/guide.md',
+    ])
+  })
 })
 
 describe('escapeGlob', () => {
