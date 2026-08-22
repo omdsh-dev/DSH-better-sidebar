@@ -63,6 +63,7 @@ import {
   type TitleBarScheme,
 } from '../prefs-shared.ts'
 import { api } from './api.ts'
+import { getSettingsRevision, queueSettingsUpdate, setSettingsRevision, subscribeSettingsRevision } from './settings-revision.ts'
 import { parsePrefs } from './prefs.ts'
 import { AddPluginModal, type PluginKind } from './add-plugin-modal.tsx'
 import { t } from './locales.ts'
@@ -605,14 +606,30 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
 
   // The settings document revision (guards concurrent writes). A ref: commits
   // read the freshest value at execution time, no re-render needed.
-  const revisionRef = useRef<number | undefined>(undefined)
+  const revisionRef = useRef<number | undefined>(getSettingsRevision())
   // Whether the user already wrote since mount: the mount read must not
   // clobber a newer optimistic edit (the window is milliseconds, but a slow
   // route must never silently revert a just-made change).
   const dirtyRef = useRef(false)
-  // Serialize commits: a queued write must observe the previous write's
-  // revision; a failed write must not poison the queue for later ones.
-  const inFlightRef = useRef<Promise<unknown>>(Promise.resolve())
+
+  // An external write (e.g. dragging the sidebar width) may bump the settings
+  // revision outside this section. Keep the local ref current so a later
+  // settings-section commit cannot be rejected as a concurrent edit.
+  useEffect(() => subscribeSettingsRevision(() => { revisionRef.current = getSettingsRevision() }), [])
+
+  // External store prefs changes (drag width, another settings section write)
+  // must be reflected here without waiting for a server round-trip.
+  useEffect(() => {
+    let lastPrefs = store.getPrefs()
+    return store.subscribe(() => {
+      const next = store.getPrefs()
+      if (JSON.stringify(next) === JSON.stringify(lastPrefs)) return
+      lastPrefs = next
+      dirtyRef.current = true
+      setPrefs(next)
+      setWidthDraft(String(next.defaultWidthPercent))
+    })
+  }, [store])
 
   // Sync the persisted document once on mount: the revision and the current
   // values (another tab may have changed them since the store hydrated).
@@ -621,8 +638,19 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     void api.settingsGet().then((view) => {
       if (cancelled) return
       revisionRef.current = view.revision
+      setSettingsRevision(view.revision)
       if (dirtyRef.current) return
-      const next = parsePrefs(view.value)
+      let next = parsePrefs(view.value)
+      // If a new-install migration failed to persist, the store already holds
+      // the in-memory new defaults. Do not let the stale server view overwrite
+      // them on the settings page mount.
+      const current = store.getPrefs()
+      if (current.sidebarWidthPersistent && !next.sidebarWidthPersistent) {
+        next = { ...next, sidebarWidthPersistent: true }
+      }
+      if (current.autoRefreshFiles && !next.autoRefreshFiles) {
+        next = { ...next, autoRefreshFiles: true }
+      }
       setPrefs(next)
       setWidthDraft(String(next.defaultWidthPercent))
     }).catch(() => { /* the store's defaults stay authoritative */ })
@@ -632,18 +660,27 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
   /** Persist one patch through the settings route (serialized, revision-guarded). */
   const commit = (patch: Record<string, unknown>): Promise<{ ok: boolean; prefs: SidebarPrefs }> => {
     dirtyRef.current = true
-    const run = inFlightRef.current.then(async () => {
+    const run = queueSettingsUpdate(async () => {
       const view = await api.settingsUpdate(
         { ...patch },
         revisionRef.current,
       )
-      const next = parsePrefs(view.value)
+      let next = parsePrefs(view.value)
+      // Preserve in-memory new-install defaults that have not been persisted
+      // yet: the server document may still report them as off. But never
+      // override an explicit user disable in this patch.
+      const current = store.getPrefs()
+      if (!('sidebarWidthPersistent' in patch) && current.sidebarWidthPersistent && !next.sidebarWidthPersistent) {
+        next = { ...next, sidebarWidthPersistent: true }
+      }
+      if (!('autoRefreshFiles' in patch) && current.autoRefreshFiles && !next.autoRefreshFiles) {
+        next = { ...next, autoRefreshFiles: true }
+      }
       revisionRef.current = view.revision
+      setSettingsRevision(view.revision)
       store.setPrefs(next)
       return next
     })
-    // A failed commit must not poison the queue: later writes still run.
-    inFlightRef.current = run.then(() => undefined, () => undefined)
     return run.then(
       (next) => ({ ok: true, prefs: next }),
       (caught) => {
@@ -898,6 +935,17 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
             />
             <span className={css.suffix}>{t('settingsWidthSuffix')}</span>
           </span>
+        </div>
+        <div className={css.row}>
+          <span className={css.rowText}>
+            <span className={css.title}>{t('settingsWidthPersistentTitle')}</span>
+            <span className={css.desc}>{t('settingsWidthPersistentDesc')}</span>
+          </span>
+          <Switch
+            label={t('settingsWidthPersistentTitle')}
+            checked={prefs.sidebarWidthPersistent}
+            onChange={(next) => { applyPref({ sidebarWidthPersistent: next }) }}
+          />
         </div>
         <div className={css.row}>
           <span className={css.rowText}>

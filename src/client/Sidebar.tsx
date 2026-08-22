@@ -35,11 +35,12 @@ import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
-  BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, isAgentTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
+  BOTTOM_MIN, PANEL_MIN, agentUuidOf, defaultWidthFor, firstLeaf, isAgentTabId, leafWithTab, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
   reconcileAgentTerminals,
   resizeSplitIn, setBottomHeight, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
 } from './state.ts'
+import { clampWidthPercent, type SidebarPrefs } from '../prefs-shared.ts'
 import { IconPanelBottomOutline16, IconPanelRightOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useNarrowViewport } from './breakpoints.ts'
@@ -56,6 +57,7 @@ import { detectNewDirectSubagent } from './subagent-detect.ts'
 import { detectNewJob } from './subagent-jobs.ts'
 import { t } from './locales.ts'
 import { api, type SessionScope } from './api.ts'
+import { getSettingsRevision, queueSettingsUpdate, setSettingsRevision } from './settings-revision.ts'
 import css from './sidebar.module.css'
 
 /** How many consecutive reconnect failures stop the agent-terminals push loop
@@ -625,6 +627,10 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   const [draggingBottom, setDraggingBottom] = useState(false)
   const cornerDrag = useRef({ startX: 0, startY: 0, startWidth: 0, startHeight: 0 })
   const [draggingCorner, setDraggingCorner] = useState(false)
+  /** The DOM width when the current drag started (the effective/global width,
+   *  not the possibly stale per-session cache). Used by applyDrag to keep the
+   *  bottom panel's right edge in sync with the live drag delta. */
+  const dragStartWidthRef = useRef(0)
   const anyDragging = draggingWidth || draggingBottom || draggingCorner
 
   // Pause center-column measurement while dragging, and re-measure once the
@@ -663,6 +669,33 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    *  value — the DOM's current size is the only truthful record left. */
   const lastDragSize = useRef<{ width: number; height: number } | null>(null)
 
+  /** The width the sidebar should actually DISPLAY for a session. With
+   *  cross-session consistency enabled this is always the global default
+   *  width; otherwise it is the session's own cached width. Session switches
+   *  sync state.width to the global value, so a visible session always has a
+   *  cache that matches what the user sees; sessions that were never visited
+   *  while the setting was on keep their own remembered width. */
+  const effectiveWidth = (s: SidebarState | undefined, prefs: SidebarPrefs): number => {
+    if (s === undefined) return 0
+    return prefs.sidebarWidthPersistent
+      ? defaultWidthFor(window.innerWidth, prefs.defaultWidthPercent)
+      : s.width
+  }
+
+  /** Persist the shared width once, on pointer-up. No requests are sent
+   *  during the drag; the local store already uses the global percentage, so
+   *  a failed write only means the value is not saved across restarts. */
+  const persistWidthFromDrag = (width: number): void => {
+    if (!store.getPrefs().sidebarWidthPersistent) return
+    const percent = clampWidthPercent(Math.round(width / window.innerWidth * 100))
+    store.setPrefs({ ...store.getPrefs(), defaultWidthPercent: percent })
+    void queueSettingsUpdate(() => api.settingsUpdate({ defaultWidthPercent: percent }, getSettingsRevision())).then((view) => {
+      if (view.revision !== undefined) setSettingsRevision(view.revision)
+    }).catch(() => {
+      // UI stays consistent for this session; a later drag retries the write.
+    })
+  }
+
   /** Apply a drag size to the DOM without touching React state or the store.
    *  The bottom panel's right edge tracks the right panel's left edge HERE
    *  too — React state only updates on release, so the inline right must be
@@ -676,7 +709,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // width (innerWidth - state.width - detailsWidth), so this equals
     // `width + detailsWidth` — derived from the measured column, keeping the
     // drag write-only (no React re-render mid-drag).
-    bottomRef.current?.style.setProperty('right', `${(window.innerWidth - centerRect.right) + (width - (state?.width ?? 0))}px`)
+    bottomRef.current?.style.setProperty('right', `${(window.innerWidth - centerRect.right) + (width - dragStartWidthRef.current)}px`)
     writeGeometry(width, height)
   }
 
@@ -776,7 +809,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         width = clampWidth(widthDrag.current.startWidth + (widthDrag.current.startX - event.clientX))
         height = state?.bottomOpen === true ? Math.min(state.bottomHeight, window.innerHeight) : 0
       } else if (draggingBottom) {
-        width = Math.min(state?.width ?? 0, window.innerWidth)
+        width = Math.min(effectiveWidth(state, snapshot.prefs), window.innerWidth)
         height = clampHeight(bottomDrag.current.startHeight + (bottomDrag.current.startY - event.clientY))
       } else if (draggingCorner) {
         width = clampWidth(cornerDrag.current.startWidth + (cornerDrag.current.startX - event.clientX))
@@ -794,6 +827,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       draggingRef.current = false
       measureCenter()
       store.reduce(s => setBottomHeight(setWidth(s, width), height))
+      if (store.getPrefs().sidebarWidthPersistent && width > 0) persistWidthFromDrag(width)
     } else {
       // No pending write and no usable event coordinates: keep the size the
       // drag last applied instead of rolling back to the pre-drag value
@@ -805,7 +839,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       stopDragScheduling()
       const last = lastDragSize.current
       const adoptedWidth = !narrow && state?.panelOpen === true
-        ? Math.min(last?.width ?? state?.width ?? 0, window.innerWidth)
+        ? Math.min(last?.width ?? effectiveWidth(state, snapshot.prefs), window.innerWidth)
         : 0
       const adoptedHeight = !narrow && state?.bottomOpen === true
         ? Math.min(last?.height ?? state?.bottomHeight ?? 0, window.innerHeight)
@@ -814,6 +848,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       draggingRef.current = false
       measureCenter()
       store.reduce(s => setBottomHeight(setWidth(s, adoptedWidth), adoptedHeight))
+      if (store.getPrefs().sidebarWidthPersistent && adoptedWidth > 0) persistWidthFromDrag(adoptedWidth)
     }
     reset()
   }
@@ -827,13 +862,13 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // conversation keeps the full width behind the drawer.
   useEffect(() => {
     const width = !narrow && snapshot.state?.panelOpen === true
-      ? Math.min(snapshot.state.width, window.innerWidth)
+      ? Math.min(effectiveWidth(snapshot.state, snapshot.prefs), window.innerWidth)
       : 0
     const height = !narrow && snapshot.state?.bottomOpen === true
       ? Math.min(snapshot.state.bottomHeight, window.innerHeight)
       : 0
     writeGeometry(width, height)
-  }, [narrow, snapshot.state?.panelOpen, snapshot.state?.width, snapshot.state?.bottomOpen, snapshot.state?.bottomHeight])
+  }, [narrow, snapshot.state?.panelOpen, snapshot.state?.width, snapshot.prefs.sidebarWidthPersistent, snapshot.prefs.defaultWidthPercent, snapshot.state?.bottomOpen, snapshot.state?.bottomHeight])
   // Unmount must release the push (issue #31): when the boundary swaps the
   // whole sidebar after a render crash (or the plugin fiber is disposed /
   // HMR), the CSS variables would otherwise stay on <html> and layout.css
@@ -1066,7 +1101,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         className={clsx(css.panel, !state.panelOpen && css.panelHidden)}
         data-dsh-panel
         style={{
-          width: narrow ? '100vw' : Math.min(state.width, window.innerWidth),
+          width: narrow ? '100vw' : Math.min(effectiveWidth(state, snapshot.prefs), window.innerWidth),
           // Narrow drawer: keep the bottom-anchored sheet above the on-screen
           // keyboard (visualViewport inset); desktop panels are full-height
           // and unaffected.
@@ -1083,7 +1118,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
                 event.preventDefault()
                 event.currentTarget.setPointerCapture(event.pointerId)
                 dragCommitted.current = false
-                widthDrag.current = { startX: event.clientX, startWidth: state.width }
+                const startWidth = effectiveWidth(state, snapshot.prefs)
+                dragStartWidthRef.current = startWidth
+                widthDrag.current = { startX: event.clientX, startWidth }
                 setDraggingWidth(true)
               }}
               onPointerMove={(event) => {
@@ -1106,6 +1143,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
                 const width = clampWidth(startWidth + (startX - event.clientX))
                 const height = state.bottomOpen ? Math.min(state.bottomHeight, window.innerHeight) : 0
                 commitDrag(width, height, s => setWidth(s, width))
+                if (store.getPrefs().sidebarWidthPersistent) persistWidthFromDrag(width)
                 setDraggingWidth(false)
               }}
               onPointerCancel={(event) => { abortDrag(() => setDraggingWidth(false), event) }}
@@ -1142,10 +1180,12 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
               event.preventDefault()
               event.currentTarget.setPointerCapture(event.pointerId)
               dragCommitted.current = false
+              const startWidth = effectiveWidth(state, snapshot.prefs)
+              dragStartWidthRef.current = startWidth
               cornerDrag.current = {
                 startX: event.clientX,
                 startY: event.clientY,
-                startWidth: state.width,
+                startWidth,
                 startHeight: state.bottomHeight,
               }
               setDraggingCorner(true)
@@ -1168,6 +1208,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
               const width = clampWidth(startWidth + (startX - event.clientX))
               const height = clampHeight(startHeight + (startY - event.clientY))
               commitDrag(width, height, s => setBottomHeight(setWidth(s, width), height))
+              if (store.getPrefs().sidebarWidthPersistent) persistWidthFromDrag(width)
               setDraggingCorner(false)
             }}
             onPointerCancel={(event) => { abortDrag(() => setDraggingCorner(false), event) }}
@@ -1227,6 +1268,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             event.preventDefault()
             event.currentTarget.setPointerCapture(event.pointerId)
             dragCommitted.current = false
+            dragStartWidthRef.current = effectiveWidth(state, snapshot.prefs)
             bottomDrag.current = { startY: event.clientY, startHeight: state.bottomHeight }
             setDraggingBottom(true)
           }}
@@ -1234,7 +1276,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
             const { startY, startHeight } = bottomDrag.current
             const height = clampHeight(startHeight + (startY - event.clientY))
-            scheduleDrag(Math.min(state.width, window.innerWidth), height)
+            scheduleDrag(Math.min(effectiveWidth(state, snapshot.prefs), window.innerWidth), height)
           }}
           onPointerUp={(event) => {
             if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
@@ -1245,7 +1287,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             // Up position wins over the rAF pending value (see the width
             // strip handler — issue #247).
             const height = clampHeight(startHeight + (startY - event.clientY))
-            commitDrag(Math.min(state.width, window.innerWidth), height, s => setBottomHeight(s, height))
+            commitDrag(Math.min(effectiveWidth(state, snapshot.prefs), window.innerWidth), height, s => setBottomHeight(s, height))
             setDraggingBottom(false)
           }}
           onPointerCancel={(event) => { abortDrag(() => setDraggingBottom(false), event) }}

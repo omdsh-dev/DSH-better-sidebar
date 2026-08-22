@@ -49,6 +49,12 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     defaultWidthPercent: typeof record.defaultWidthPercent === 'number' && Number.isFinite(record.defaultWidthPercent)
       ? clampWidthPercent(record.defaultWidthPercent)
       : SIDEBAR_PREFS_DEFAULTS.defaultWidthPercent,
+    sidebarWidthPersistent: typeof record.sidebarWidthPersistent === 'boolean'
+      ? record.sidebarWidthPersistent
+      : SIDEBAR_PREFS_DEFAULTS.sidebarWidthPersistent,
+    autoRefreshFiles: typeof record.autoRefreshFiles === 'boolean'
+      ? record.autoRefreshFiles
+      : SIDEBAR_PREFS_DEFAULTS.autoRefreshFiles,
     autoOpenSubagent: typeof record.autoOpenSubagent === 'boolean'
       ? record.autoOpenSubagent
       : SIDEBAR_PREFS_DEFAULTS.autoOpenSubagent,
@@ -173,17 +179,83 @@ function hasLegacyStripValue(value: unknown): boolean {
 
 /**
  * Read the resolved side card preferences through the plugin's settings route.
+ * On a brand-new install (no existing per-session sidebar layout in
+ * localStorage) the two new defaults are enabled once and persisted, while
+ * updated installs keep the schema defaults (off) so their previous behavior
+ * is preserved.
  * @param settings - the settings wire face (the plugin api by default).
  * @returns validated prefs, or the schema defaults when the route rejects,
  * the namespace is absent, or a stored value violates the contract.
  */
 export async function loadPrefs(settings: SidebarSettingsClient): Promise<SidebarPrefs> {
+  let view: { value?: unknown }
   try {
-    const view = await settings.settingsGet()
-    return parsePrefs(view.value)
+    view = await settings.settingsGet()
   } catch {
-    // Transport/fence rejection or a malformed response: keep the defaults.
-    return { ...SIDEBAR_PREFS_DEFAULTS }
+    // Transport/fence rejection or a malformed response: keep the defaults
+    // (applying the new-install defaults in memory when this looks fresh).
+    // Without a successful settings write the marker is NOT set, so a later
+    // load can retry the migration instead of silently losing the new
+    // defaults.
+    const parsed = { ...SIDEBAR_PREFS_DEFAULTS }
+    if (shouldApplyNewInstallDefaults()) {
+      parsed.sidebarWidthPersistent = true
+      parsed.autoRefreshFiles = true
+    }
+    return parsed
+  }
+  const parsed = parsePrefs(view.value)
+  if (shouldApplyNewInstallDefaults() && !hasNonDefaultPrefs(parsed)) {
+    parsed.sidebarWidthPersistent = true
+    parsed.autoRefreshFiles = true
+    try {
+      await settings.settingsUpdate({ sidebarWidthPersistent: true, autoRefreshFiles: true })
+      markNewInstallDefaultsApplied()
+    } catch {
+      // The settingsGet already won; keep the user's resolved values and the
+      // in-memory new defaults for this session. The marker is not set, so a
+      // later load retries the migration.
+    }
+  }
+  return parsed
+}
+
+/** Whether the resolved document carries any explicit user setting beyond the
+ *  schema defaults. A wholly-default document is indistinguishable from a
+ *  fresh namespace, while non-defaults prove this is an upgraded install. */
+function hasNonDefaultPrefs(prefs: SidebarPrefs): boolean {
+  return (Object.keys(SIDEBAR_PREFS_DEFAULTS) as (keyof SidebarPrefs)[])
+    .some(key => JSON.stringify(prefs[key]) !== JSON.stringify(SIDEBAR_PREFS_DEFAULTS[key]))
+}
+
+/** localStorage marker: the new-install default migration has run once. */
+const NEW_INSTALL_MARKER = 'dsh-sidebar:new-install-defaults-v1'
+/** localStorage prefix used by per-session sidebar layouts. */
+const SESSION_STORAGE_PREFIX = 'dsh-sidebar:v1:'
+
+/** Whether this browser looks like a brand-new install: no migration marker
+ *  and no existing per-session sidebar layout yet. */
+function shouldApplyNewInstallDefaults(): boolean {
+  if (typeof localStorage === 'undefined') return false
+  try {
+    if (localStorage.getItem(NEW_INSTALL_MARKER) !== null) return false
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index)
+      if (key !== null && key.startsWith(SESSION_STORAGE_PREFIX)) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Remember that the new-install defaults were applied (local-only marker). */
+function markNewInstallDefaultsApplied(): void {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(NEW_INSTALL_MARKER, '1')
+  } catch {
+    // Storage unavailable: the next load may retry the idempotent migration.
   }
 }
 

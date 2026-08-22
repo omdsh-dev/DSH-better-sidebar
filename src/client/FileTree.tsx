@@ -4,8 +4,9 @@
  * session's working directory. Levels load on expansion (one API call per
  * directory), directories sort first, hidden entries render dimmed. The
  * expansion set lives in the per-session state (owned by the caller); the
- * caller also owns the refresh affordance — a `refreshTick` bump wipes the
- * level cache so the visible set reloads.
+ * caller also owns the refresh affordance — a `refreshTick` bump invalidates
+ * every cached level so the visible set reloads and collapsed dirs refetch
+ * the next time they are expanded.
  *
  * Row actions: hovering a row reveals an @-reference button on the far
  * right (appends `@<relative path>` to the composer draft), and right-click
@@ -104,7 +105,7 @@ export function FileTree(props: {
   onOpenFileSide?: (path: string) => void
   /** Insert `@<relative path>` into the composer draft. */
   onReferenceFile: (path: string) => void
-  /** Bump to wipe the level cache and reload the visible set. */
+  /** Bump to invalidate the level cache and reload the visible set. */
   refreshTick: number
   /** Upload into `dir` (absolute, inside the workspace); runs in the caller. */
   onUploadRequest: (dir: string, items: UploadItem[]) => void
@@ -114,6 +115,8 @@ export function FileTree(props: {
   const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onReferenceFile, refreshTick, onUploadRequest, busy } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
+  /** Cached levels invalidated by a refresh tick but not yet refetched. */
+  const staleRef = useRef<Set<string>>(new Set())
   /** The row whose path was just copied ("copied" label replaces its button). */
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
@@ -218,7 +221,9 @@ export function FileTree(props: {
   }, [])
 
   const loadDir = useCallback((dir: string) => {
-    if (dataRef.current[dir] !== undefined) return
+    const cached = dataRef.current[dir]
+    if (cached !== undefined && !staleRef.current.has(dir)) return
+    staleRef.current.delete(dir)
     storeLevel(dir, {})
     api.fsTree({ sessionId, cwd }, dir).then((listing) => {
       storeLevel(dir, { entries: listing.entries })
@@ -227,19 +232,36 @@ export function FileTree(props: {
     })
   }, [sessionId, cwd, storeLevel])
 
-  // The caller's refresh tick wipes the cache (declared BEFORE the load
-  // effect so the reload below sees the empty cache).
+  // Force-reload a directory WITHOUT clearing its existing rows first: the
+  // old tree stays on screen until the fresh listing arrives, so an
+  // auto-refresh push does not blank the explorer into a loading flash.
+  const reloadDir = useCallback((dir: string) => {
+    staleRef.current.delete(dir)
+    api.fsTree({ sessionId, cwd }, dir).then((listing) => {
+      storeLevel(dir, { entries: listing.entries })
+    }).catch((error: unknown) => {
+      storeLevel(dir, { error: error instanceof Error ? error.message : String(error) })
+    })
+  }, [sessionId, cwd, storeLevel])
+
+  // The caller's refresh tick invalidates every cached level, then reloads
+  // the visible set in place (declared BEFORE the load effect; the load
+  // effect's cache check then no-ops for already-loaded levels). Collapsed
+  // directories stay stale so expanding them later refetches fresh data.
   const lastTick = useRef(refreshTick)
   useEffect(() => {
     if (lastTick.current === refreshTick) return
     lastTick.current = refreshTick
-    dataRef.current = {}
-    setData({})
-  }, [refreshTick])
+    staleRef.current = new Set(Object.keys(dataRef.current))
+    const root = cwd
+    if (root === undefined) return
+    reloadDir(root)
+    for (const dir of expanded) reloadDir(dir)
+  }, [refreshTick, cwd, expanded, reloadDir])
 
   useEffect(() => {
     // Load the visible set; already-loaded levels (kept in the cache) are
-    // not refetched. Only the refresh tick wipes the cache.
+    // not refetched. The refresh tick above force-reloads them in place.
     const root = cwd
     if (root === undefined) return
     loadDir(root)
