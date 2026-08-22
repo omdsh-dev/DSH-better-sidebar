@@ -1,6 +1,10 @@
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
-import { parseLogLines, parsePorcelainZ } from '../src/git.ts'
+import { parseLogLines, parsePorcelainZ, status } from '../src/git.ts'
 
 describe('git parsing', () => {
   it('parses porcelain -z entries including renames', () => {
@@ -24,6 +28,24 @@ describe('git parsing', () => {
       { path: 'newdir/a.ts', xy: '??' },
       { path: 'newdir/sub/b.ts', xy: '??' },
     ])
+  })
+
+  it('keeps untracked files inside new directories as individual rows (real git)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-git-status-'))
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: root })
+      execFileSync('git', ['config', 'user.email', 't@t'], { cwd: root })
+      execFileSync('git', ['config', 'user.name', 't'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'init'], { cwd: root })
+      mkdirSync(join(root, 'newdir'))
+      writeFileSync(join(root, 'newdir', 'a.ts'), 'x')
+      const result = await status(root)
+      const paths = result.entries.map(entry => entry.path)
+      expect(paths).toContain('newdir/a.ts')
+      expect(paths.some(path => path.endsWith('/'))).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('parses log rows with unit separators (full hash + refs)', () => {
