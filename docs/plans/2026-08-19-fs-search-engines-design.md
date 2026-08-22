@@ -37,7 +37,7 @@
 | 引擎 | 命令 | 语义对齐 |
 |---|---|---|
 | fd | `fd --hidden --no-ignore --exclude .git --fixed-strings --ignore-case --path-separator / --max-results N+1 <q> .`(cwd=root) | `--fixed-strings` 字面量子串匹配(对齐朴素语义,防 glob 注入);`-H -I` 不忽略隐藏/ignore 文件;"文件名+目录名" 都匹配;`--max-results` 天然限流;`.git` 目录显式排除(朴素遍历同样跳过) |
-| rg | `rg --files --hidden --no-ignore --glob '!**/.git/**' --iglob '*<escaped>*' .`(cwd=root) | `--iglob` 大小写不敏感(rg globset 不支持 `(?i)` 前缀);**只匹配文件,不匹配目录名**(documented lossy);`.git` 全程排除;无结果上限,流式读取到 N+1 杀进程;**exit 1 = 无匹配,属正常空结果**(rg 契约,streamLines 放行,不触发引擎禁用) |
+| rg | `rg --files --hidden --no-ignore --glob '!**/.git/**' --iglob '*<escaped>*' --path-separator / .`(cwd=root) | `--iglob` 大小写不敏感(rg globset 不支持 `(?i)` 前缀);`--path-separator /` 把 Windows 上的 `\` 输出钉成 `/`(rg 在 cmd/PowerShell 下输出 `\`、Git Bash 下输出 `/`,见 rg#501,源头钉死);**只匹配文件,不匹配目录名**(documented lossy);`.git` 全程排除;无结果上限,流式读取到 N+1 杀进程;**exit 1 = 无匹配,属正常空结果**(rg 契约,streamLines 放行,不触发引擎禁用) |
 
 统一出口:子进程 stdout 流式逐行(全量结果用 readline + 超过 N+1 即 kill,不会 buffer 进内存),经 `normalizeEnginePaths` 换算(去 `./` 前缀、`/` 分隔),由 `searchFiles` 排序 + 截断。
 
