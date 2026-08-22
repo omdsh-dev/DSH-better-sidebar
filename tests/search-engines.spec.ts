@@ -8,8 +8,9 @@
  * contracts are what the dispatch depends on.
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { sep } from 'node:path'
+import { join, sep } from 'node:path'
 import {
+  bundledRgCandidates,
   escapeGlob,
   normalizeEnginePaths,
   probeEngines,
@@ -68,6 +69,73 @@ describe('normalizeEnginePaths', () => {
 describe('escapeGlob', () => {
   it('escapes glob metacharacters for rg -g literal matching', () => {
     expect(escapeGlob('a*b?c[d]')).toBe('a\\*b\\?c\\[d\\]')
+  })
+})
+
+describe('bundledRgCandidates', () => {
+  it('derives the POSIX npm global layout from execPath (darwin)', () => {
+    const paths = bundledRgCandidates(
+      'darwin', 'arm64',
+      '/opt/homebrew/bin/node',
+      {}, '/Users/me',
+    )
+    expect(paths).toContain(join(
+      '/opt/homebrew/lib/node_modules',
+      '@deepseek-ai/dsh/node_modules',
+      '@vscode/ripgrep-darwin-arm64/bin/rg',
+    ))
+  })
+
+  // Windows npm has NO lib/ layer: the global prefix is %APPDATA%\npm, so
+  // the execPath derivation used on POSIX would resolve to a bogus
+  // C:\lib\node_modules\… path. The review concern (fd/rg "weird formats"
+  // on Windows) includes the probe itself — pin the %APPDATA%\npm shape.
+  it('derives the Windows npm global layout from %APPDATA% (win32)', () => {
+    const paths = bundledRgCandidates(
+      'win32', 'x64',
+      'C:\\Program Files\\nodejs\\node.exe',
+      { APPDATA: 'C:\\Users\\me\\AppData\\Roaming' }, 'C:\\Users\\me',
+    )
+    // join() renders the platform separator, so this also validates the
+    // real backslash shape on Windows CI.
+    expect(paths).toContain(join(
+      'C:\\Users\\me\\AppData\\Roaming', 'npm', 'node_modules',
+      '@deepseek-ai', 'dsh', 'node_modules',
+      '@vscode', 'ripgrep-win32-x64', 'bin', 'rg.exe',
+    ))
+  })
+
+  it('covers the launchd profile layout under ~/.dsh on every platform', () => {
+    const darwin = bundledRgCandidates('darwin', 'arm64', '/usr/local/bin/node', {}, '/Users/me')
+    expect(darwin).toContain(join(
+      '/Users/me/.dsh/profiles/node_modules',
+      '@deepseek-ai', 'dsh', 'node_modules',
+      '@vscode', 'ripgrep-darwin-arm64', 'bin', 'rg',
+    ))
+    // Windows: node:path is platform-bound, so a test on POSIX cannot pin
+    // the exact backslash shape — assert the layout structure (a real
+    // Windows CI/true-positive run pins the literal '\\' separators).
+    const win = bundledRgCandidates('win32', 'x64', 'C:\\node.exe', {}, 'C:\\Users\\me')
+    expect(win.some(path => path.includes('.dsh') && path.includes('@deepseek-ai'))).toBe(true)
+  })
+
+  it('dedupes identical candidates across derivations', () => {
+    const paths = bundledRgCandidates(
+      'darwin', 'arm64',
+      '/usr/local/bin/node',
+      {}, '/Users/me',
+    )
+    // /usr/local/bin/node → /usr/local/lib/node_modules AND the fixed
+    // /usr/local/lib/node_modules root — the same file must appear once.
+    const duplicates = paths.filter((path, index) => paths.indexOf(path) !== index)
+    expect(duplicates).toEqual([])
+  })
+
+  it('drops APPDATA roots when the env var is absent (win32)', () => {
+    const paths = bundledRgCandidates('win32', 'x64', 'C:\\node.exe', {}, 'C:\\Users\\me')
+    expect(paths.some(path => path.includes('AppData'))).toBe(false)
+    // The per-executable node_modules root (portable installs) survives.
+    expect(paths.some(path => path.includes('node_modules') && path.includes('@deepseek-ai'))).toBe(true)
   })
 })
 
