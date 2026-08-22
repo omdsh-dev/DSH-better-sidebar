@@ -413,6 +413,7 @@ All changes since v0.14.0:
 | Save edits | `Ctrl/Cmd + S` |
 | Git commit | `Ctrl + Enter` |
 | Close tab | Middle mouse button |
+| Tab context menu (right-click) | Close / Close Other Tabs / Close Tabs to the Left / Close Tabs to the Right (current pane) |
 | Split / merge panes | Drag tab to pane edge / middle |
 | Reference file to input | Hover the `@file` button at end of line |
 | Copy file path | Right-click row → copy relative/absolute path |
