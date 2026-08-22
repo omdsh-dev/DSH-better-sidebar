@@ -49,6 +49,13 @@ function isUntracked(entry: GitStatusEntry): boolean {
   return badgeOf(entry) === '?'
 }
 
+/** Whether any entry represents a TRACKED change: `git diff` never contains
+ *  untracked (`??`) files, so they must not enable the ✨ AI-commit
+ *  generator — its click could only ever fail with "no changes to commit". */
+export function hasTrackedEntry(entries: readonly GitStatusEntry[]): boolean {
+  return entries.some(entry => !isUntracked(entry))
+}
+
 /** The last path segment (tab title for a file's diff). */
 function baseName(path: string): string {
   const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
@@ -267,6 +274,9 @@ export function GitView(props: {
 
   const stagedEntries = (status?.entries ?? []).filter(isStagedEntry)
   const unstagedEntries = (status?.entries ?? []).filter(isUnstagedEntry)
+  // The ✨ generator reads `git diff`, which untracked ('??') entries never
+  // appear in — a worktree with ONLY untracked files must not enable it.
+  const hasTrackedChanges = hasTrackedEntry(status?.entries ?? [])
 
   const renderEntry = (entry: GitStatusEntry, staged: boolean): ReactNode => {
     return (
@@ -367,7 +377,7 @@ export function GitView(props: {
               className={css.iconButton}
               aria-label={aiGenerating ? t('aiCommitRunning') : t('aiCommit')}
               title={aiGenerating ? t('aiCommitRunning') : t('aiCommit')}
-              disabled={busy || aiGenerating || stagedEntries.length + unstagedEntries.length === 0}
+              disabled={busy || aiGenerating || !hasTrackedChanges}
               onClick={() => { void generateCommit() }}
             >
               <IconSparkle16 size={14} />
