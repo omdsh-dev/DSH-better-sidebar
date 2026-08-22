@@ -13,7 +13,7 @@ import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
   IconTrashOutline16, Input, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { GitLogEntry, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
+import type { GitLogEntry, GitOperation, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
 import { api } from './api.ts'
 import { relativeTo } from './paths.ts'
 import { relativeTime, t } from './locales.ts'
@@ -82,10 +82,12 @@ const LOG_BATCH = 20
 export function GitView(props: {
   scope: SessionScope
   onOpenFile: (path: string) => void
+  /** Register the Worktree as a DSH Workspace, create a session, and open it. */
+  onOpenWorktree: (path: string) => Promise<void>
   /** Open a diff tab (the shell places it below the git pane on first use). */
   onOpenDiff: (tab: SidebarTab) => void
 }) {
-  const { scope, onOpenFile, onOpenDiff } = props
+  const { scope, onOpenFile, onOpenDiff, onOpenWorktree } = props
   const [status, setStatus] = useState<GitStatusResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -94,6 +96,16 @@ export function GitView(props: {
   const [commitMsg, setCommitMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false)
+  const [mergeSource, setMergeSource] = useState<string | null>(null)
+  const [rebaseTarget, setRebaseTarget] = useState<string | null>(null)
+  const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
+  const [worktreeOpen, setWorktreeOpen] = useState(false)
+  const [worktreeBranch, setWorktreeBranch] = useState('')
+  const [worktreePath, setWorktreePath] = useState('')
+  const [worktreeError, setWorktreeError] = useState<string | null>(null)
+  const [worktreeMerge, setWorktreeMerge] = useState<GitWorktree | null>(null)
+  const [operation, setOperation] = useState<GitOperation | null>(null)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
@@ -109,16 +121,22 @@ export function GitView(props: {
     setLoading(true)
     setError(null)
     try {
-      const [statusResult, branchResult, logResult] = await Promise.all([
+      const [statusResult, branchResult, logResult, worktreeResult, operationResult] = await Promise.all([
         api.gitStatus(scope),
         api.gitBranch(scope).catch(() => ({ current: '', names: [] as string[] })),
         // The first history page only; the rest arrives via "load more".
         api.gitLog(scope, LOG_BATCH, 0).catch(() => [] as GitLogEntry[]),
+        api.gitWorktrees(scope).catch(() => ({ entries: [] as GitWorktree[] })),
+        api.gitOperation(scope).catch(() => ({ operation: null })),
       ])
       setStatus(statusResult)
       setBranchNames(branchResult.names)
       setLogEntries(logResult)
       setLogEnded(logResult.length < LOG_BATCH)
+      setWorktrees(worktreeResult.entries)
+      setOperation(operationResult.operation)
+      const available = branchResult.names.filter(name => !worktreeResult.entries.some(entry => entry.branch === name))
+      setWorktreeBranch(branch => available.includes(branch) ? branch : available[0] ?? '')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -215,6 +233,92 @@ export function GitView(props: {
     }
   }
 
+  const merge = async (branch: string): Promise<void> => {
+    setBusy(true)
+    setCommitError(null)
+    try {
+      await api.gitMerge(scope, branch)
+    } catch (reason) {
+      setCommitError(`${t('mergeError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+    } finally {
+      await refresh()
+      setBusy(false)
+    }
+  }
+
+  const addWorktree = async (): Promise<void> => {
+    const path = worktreePath.trim()
+    if (path === '' || worktreeBranch === '' || busy) return
+    setBusy(true)
+    setWorktreeError(null)
+    try {
+      await api.gitWorktreeAdd(scope, path, worktreeBranch)
+      setWorktreePath('')
+      await refresh()
+    } catch (reason) {
+      setWorktreeError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const rebase = async (branch: string): Promise<void> => {
+    setBusy(true)
+    setCommitError(null)
+    try {
+      await api.gitRebase(scope, branch)
+    } catch (reason) {
+      setCommitError(`${t('rebaseError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+    } finally {
+      await refresh()
+      setBusy(false)
+    }
+  }
+
+  const openWorktree = async (path: string): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    setWorktreeError(null)
+    try {
+      await onOpenWorktree(path)
+    } catch (reason) {
+      setWorktreeError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const mergeWorktree = async (entry: GitWorktree, remove: boolean): Promise<void> => {
+    if (entry.branch === undefined || busy) return
+    setWorktreeMerge(null)
+    setBusy(true)
+    setCommitError(null)
+    try {
+      await api.gitMerge(scope, entry.branch)
+      if (remove) await api.gitWorktreeRemove(scope, entry.path)
+    } catch (reason) {
+      setCommitError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      await refresh()
+      setBusy(false)
+    }
+  }
+
+  const finishOperation = async (abort: boolean): Promise<void> => {
+    if (operation === null || busy) return
+    setBusy(true)
+    setCommitError(null)
+    try {
+      if (abort) await api.gitOperationAbort(scope, operation)
+      else await api.gitOperationContinue(scope, operation)
+    } catch (reason) {
+      setCommitError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      await refresh()
+      setBusy(false)
+    }
+  }
+
   /** Run one destructive operation after the confirm modal, then refresh. */
   const runConfirmed = (confirmState: ConfirmState): void => {
     setConfirm({ ...confirmState, onConfirm: async () => {
@@ -290,6 +394,41 @@ export function GitView(props: {
           {(status?.branch ?? '') !== '' && <option value={status!.branch}>{status!.branch}</option>}
           {branchNames.filter(name => name !== status?.branch).map(name => <option key={name} value={name}>{name}</option>)}
         </select>
+        <Menu
+          open={branchMenuOpen}
+          onClose={() => { setBranchMenuOpen(false) }}
+          items={[
+            { id: 'merge', label: t('mergeBranch'), icon: <IconBranchOutline16 size={14} />, disabled: branchNames.every(name => name === status?.branch) },
+            { id: 'rebase', label: t('rebaseBranch'), icon: <IconRefreshOutline16 size={14} />, disabled: branchNames.every(name => name === status?.branch) },
+            { type: 'separator', id: 'branch-separator' },
+            { id: 'worktree', label: t('worktrees'), icon: <IconBranchOutline16 size={14} /> },
+          ]}
+          onSelect={(id) => {
+            const branch = branchNames.find(name => name !== status?.branch) ?? null
+            setBranchMenuOpen(false)
+            if (id === 'merge') setMergeSource(branch)
+            if (id === 'rebase') setRebaseTarget(branch)
+            if (id === 'worktree') {
+              setWorktreeError(null)
+              setWorktreeOpen(true)
+            }
+          }}
+          portal
+          align="end"
+          compact
+          anchor={(
+            <button
+              type="button"
+              className={css.iconButton}
+              aria-label={t('branchActions')}
+              title={t('branchActions')}
+              disabled={busy || (status !== null && !status.isRepo)}
+              onClick={() => { setBranchMenuOpen(open => !open) }}
+            >
+              <IconBranchOutline16 size={14} />
+            </button>
+          )}
+        />
         <button
           type="button"
           className={css.iconButton}
@@ -305,6 +444,13 @@ export function GitView(props: {
       {!loading && error !== null && <div className={css.gitError}>{error}</div>}
       {!loading && status !== null && !status.isRepo && (
         <div className={css.gitPlaceholder}>{t('notRepo')}</div>
+      )}
+      {operation !== null && (
+        <div className={css.gitOperation}>
+          <span>{t('operationConflict', { operation: t(operation === 'merge' ? 'mergeBranch' : 'rebaseBranch') })}</span>
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => { void finishOperation(true) }}>{t('operationAbort')}</Button>
+          <Button size="sm" variant="primary" disabled={busy} onClick={() => { void finishOperation(false) }}>{t('operationContinue')}</Button>
+        </div>
       )}
 
       {status !== null && status.isRepo && (
@@ -535,6 +681,187 @@ export function GitView(props: {
           </Modal>
         </>
       )}
+
+      <Modal
+        open={mergeSource !== null}
+        onClose={() => { setMergeSource(null) }}
+        title={t('mergeTitle')}
+        closeLabel={t('cancel')}
+        footer={(
+          <>
+            <Button variant="outline" onClick={() => { setMergeSource(null) }}>{t('cancel')}</Button>
+            <Button
+              variant="primary"
+              disabled={busy || mergeSource === null}
+              onClick={() => {
+                const branch = mergeSource
+                if (branch === null) return
+                setMergeSource(null)
+                void merge(branch)
+              }}
+            >
+              {t('mergeBranch')}
+            </Button>
+          </>
+        )}
+      >
+        <p className={css.gitConfirmDesc}>{t('mergeDesc', { source: mergeSource ?? '', current: status?.branch ?? '' })}</p>
+        <div className={css.gitBranchFlow}>
+          <span title={mergeSource ?? ''}>{mergeSource}</span>
+          <span aria-hidden="true">→</span>
+          <span title={status?.branch ?? ''}>{status?.branch}</span>
+        </div>
+        <select
+          className={css.gitBranchSelect}
+          value={mergeSource ?? ''}
+          onChange={(event) => { setMergeSource(event.target.value) }}
+        >
+          {branchNames.filter(name => name !== status?.branch).map(name => <option key={name} value={name}>{name}</option>)}
+        </select>
+      </Modal>
+
+      <Modal
+        open={rebaseTarget !== null}
+        onClose={() => { setRebaseTarget(null) }}
+        title={t('rebaseTitle')}
+        closeLabel={t('cancel')}
+        footer={(
+          <>
+            <Button variant="outline" onClick={() => { setRebaseTarget(null) }}>{t('cancel')}</Button>
+            <Button
+              variant="primary"
+              disabled={busy || rebaseTarget === null}
+              onClick={() => {
+                const branch = rebaseTarget
+                if (branch === null) return
+                setRebaseTarget(null)
+                void rebase(branch)
+              }}
+            >
+              {t('rebaseBranch')}
+            </Button>
+          </>
+        )}
+      >
+        <p className={css.gitConfirmDesc}>{t('rebaseDesc', { current: status?.branch ?? '', target: rebaseTarget ?? '' })}</p>
+        <div className={css.gitBranchFlow}>
+          <span title={status?.branch ?? ''}>{status?.branch}</span>
+          <span aria-hidden="true">→</span>
+          <span title={rebaseTarget ?? ''}>{rebaseTarget}</span>
+        </div>
+        <p className={css.gitRebaseWarning}>{t('rebaseWarning')}</p>
+        <select
+          className={css.gitBranchSelect}
+          value={rebaseTarget ?? ''}
+          onChange={(event) => { setRebaseTarget(event.target.value) }}
+        >
+          {branchNames.filter(name => name !== status?.branch).map(name => <option key={name} value={name}>{name}</option>)}
+        </select>
+      </Modal>
+
+      <Modal
+        open={worktreeOpen}
+        onClose={() => { setWorktreeOpen(false) }}
+        title={t('worktrees')}
+        closeLabel={t('close')}
+        footer={<Button variant="outline" onClick={() => { setWorktreeOpen(false) }}>{t('close')}</Button>}
+      >
+        <form
+          className={css.gitWorktreeCreate}
+          onSubmit={(event) => {
+            event.preventDefault()
+            void addWorktree()
+          }}
+        >
+          <select
+            className={css.gitBranchSelect}
+            aria-label={t('worktreeBranch')}
+            value={worktreeBranch}
+            disabled={busy || worktreeBranch === ''}
+            onChange={(event) => { setWorktreeBranch(event.target.value) }}
+          >
+            {branchNames
+              .filter(name => !worktrees.some(entry => entry.branch === name))
+              .map(name => <option key={name} value={name}>{name}</option>)}
+          </select>
+          <Input
+            value={worktreePath}
+            aria-label={t('worktreePath')}
+            placeholder={t('worktreePathPlaceholder')}
+            disabled={busy || worktreeBranch === ''}
+            onChange={(event) => { setWorktreePath(event.target.value) }}
+          />
+          <Button type="submit" size="sm" variant="primary" disabled={busy || worktreeBranch === '' || worktreePath.trim() === ''}>
+            {t('worktreeAdd')}
+          </Button>
+        </form>
+        {worktreeBranch === '' && <p className={css.gitWorktreeHint}>{t('worktreeNoBranch')}</p>}
+        {worktreeError !== null && <div className={css.gitError}>{worktreeError}</div>}
+        <div className={css.gitWorktreeList}>
+          {worktrees.map(entry => (
+            <div key={entry.path} className={css.gitWorktreeRow}>
+              <button
+                type="button"
+                className={css.gitWorktreeMain}
+                disabled={busy || entry.prunable}
+                title={t('worktreeOpenSession')}
+                onClick={() => { void openWorktree(entry.path) }}
+              >
+                <span className={css.gitWorktreeLine}>
+                  <span className={css.gitLogRef}>{entry.branch ?? t('worktreeDetached')}</span>
+                  {entry.current && <span className={css.gitWorktreeCurrent}>{t('worktreeCurrent')}</span>}
+                  {entry.locked && <span className={css.gitWorktreeCurrent}>{t('worktreeLocked')}</span>}
+                </span>
+                <span className={css.gitWorktreePath}>{entry.path}</span>
+              </button>
+              <button
+                type="button"
+                className={css.iconButton}
+                aria-label={t('worktreeMerge')}
+                title={t('worktreeMerge')}
+                disabled={busy || entry.current || entry.branch === undefined || operation !== null}
+                onClick={() => { setWorktreeOpen(false); setWorktreeMerge(entry) }}
+              >
+                <IconBranchOutline16 size={14} />
+              </button>
+              <button
+                type="button"
+                className={css.iconButton}
+                aria-label={t('worktreeRemove')}
+                title={entry.current ? t('worktreeCurrentRemove') : t('worktreeRemove')}
+                disabled={busy || entry.current || entry.locked}
+                onClick={() => {
+                  setWorktreeOpen(false)
+                  runConfirmed({
+                    title: t('worktreeRemoveTitle'),
+                    description: t('worktreeRemoveDesc', { path: entry.path }),
+                    confirmLabel: t('worktreeRemove'),
+                    onConfirm: () => api.gitWorktreeRemove(scope, entry.path),
+                  })
+                }}
+              >
+                <IconTrashOutline16 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </Modal>
+
+      <Modal
+        open={worktreeMerge !== null}
+        onClose={() => { setWorktreeMerge(null) }}
+        title={t('worktreeMergeTitle')}
+        closeLabel={t('cancel')}
+        footer={(
+          <>
+            <Button variant="outline" onClick={() => { setWorktreeMerge(null) }}>{t('cancel')}</Button>
+            <Button variant="outline" disabled={busy} onClick={() => { if (worktreeMerge !== null) void mergeWorktree(worktreeMerge, true) }}>{t('worktreeMergeRemove')}</Button>
+            <Button variant="primary" disabled={busy} onClick={() => { if (worktreeMerge !== null) void mergeWorktree(worktreeMerge, false) }}>{t('worktreeMerge')}</Button>
+          </>
+        )}
+      >
+        <p className={css.gitConfirmDesc}>{t('worktreeMergeDesc', { source: worktreeMerge?.branch ?? '', current: status?.branch ?? '' })}</p>
+      </Modal>
     </div>
   )
 }

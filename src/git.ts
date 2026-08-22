@@ -10,6 +10,10 @@
  * user.name/user.email).
  */
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+export type GitOperation = 'merge' | 'rebase'
 
 /** A parsed `git status --porcelain=v1 -z` entry. */
 export interface GitStatusEntry {
@@ -37,6 +41,16 @@ export interface GitLogEntry {
   date: string
   /** Ref decorations (`%D` with --decorate=short), e.g. `HEAD -> main, origin/main`; '' when none. */
   refs: string
+}
+
+/** One linked checkout from `git worktree list --porcelain -z`. */
+export interface GitWorktree {
+  path: string
+  head: string
+  branch?: string
+  current: boolean
+  locked: boolean
+  prunable: boolean
 }
 
 /** One git failure (stderr text as the message). */
@@ -88,6 +102,28 @@ export function parseLogLines(output: string): GitLogEntry[] {
     })
   }
   return rows
+}
+
+/** Parse NUL-framed worktree porcelain without depending on paths being newline-free. */
+export function parseWorktreePorcelainZ(output: string): GitWorktree[] {
+  const entries: GitWorktree[] = []
+  let entry: GitWorktree | undefined
+  for (const field of output.split('\0')) {
+    if (field === '') {
+      if (entry !== undefined) entries.push(entry)
+      entry = undefined
+      continue
+    }
+    const at = field.indexOf(' ')
+    const key = at === -1 ? field : field.slice(0, at)
+    const value = at === -1 ? '' : field.slice(at + 1)
+    if (key === 'worktree') entry = { path: value, head: '', current: false, locked: false, prunable: false }
+    else if (entry !== undefined && key === 'HEAD') entry.head = value
+    else if (entry !== undefined && key === 'branch') entry.branch = value.replace(/^refs\/heads\//, '')
+    else if (entry !== undefined && key === 'locked') entry.locked = true
+    else if (entry !== undefined && key === 'prunable') entry.prunable = true
+  }
+  return entries
 }
 
 /** Run one git command; resolves with stdout, rejects with GitCommandError. */
@@ -190,6 +226,56 @@ export async function branches(cwd: string): Promise<{ current: string; names: s
 /** Switch to an existing branch. */
 export async function checkout(cwd: string, branch: string): Promise<void> {
   await runGit(cwd, ['checkout', branch])
+}
+
+/** Merge an existing branch into the current branch without opening an editor. */
+export async function merge(cwd: string, branch: string): Promise<void> {
+  await runGit(cwd, ['merge', '--no-edit', branch])
+}
+
+/** Replay the current branch's commits on top of an existing branch. */
+export async function rebase(cwd: string, branch: string): Promise<void> {
+  await runGit(cwd, ['rebase', branch])
+}
+
+/** Linked checkouts for this repository, with the caller's checkout marked. */
+export async function worktrees(cwd: string): Promise<GitWorktree[]> {
+  const [root, raw] = await Promise.all([
+    repoRoot(cwd),
+    runGit(cwd, ['worktree', 'list', '--porcelain', '-z']),
+  ])
+  return parseWorktreePorcelainZ(raw).map(entry => ({ ...entry, current: entry.path === root }))
+}
+
+/** Add a linked checkout for an existing branch. */
+export async function addWorktree(cwd: string, path: string, branch: string): Promise<void> {
+  await runGit(cwd, ['worktree', 'add', '--', path, branch])
+}
+
+/** Remove a clean linked checkout; git refuses dirty/current/locked trees. */
+export async function removeWorktree(cwd: string, path: string): Promise<void> {
+  await runGit(cwd, ['worktree', 'remove', '--', path])
+}
+
+/** In-progress history operation for conflict recovery controls. */
+export async function operation(cwd: string): Promise<GitOperation | null> {
+  try {
+    await runGit(cwd, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])
+    return 'merge'
+  } catch { /* no merge */ }
+  for (const name of ['rebase-merge', 'rebase-apply']) {
+    const path = (await runGit(cwd, ['rev-parse', '--git-path', name])).trim()
+    if (existsSync(resolve(cwd, path))) return 'rebase'
+  }
+  return null
+}
+
+export async function continueOperation(cwd: string, kind: GitOperation): Promise<void> {
+  await runGit(cwd, ['-c', 'core.editor=true', kind, '--continue'])
+}
+
+export async function abortOperation(cwd: string, kind: GitOperation): Promise<void> {
+  await runGit(cwd, [kind, '--abort'])
 }
 
 /** Recent commit history (newest first), lazily pageable via skip/count. */

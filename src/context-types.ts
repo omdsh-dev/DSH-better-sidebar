@@ -359,6 +359,8 @@ export interface SidebarSessionsService {
    * — used to jump back to the main agent from the topology root node.
    */
   open?(id: string): void
+  /** Create a root session in a registered Workspace. */
+  create?(opts: { workspaceId: string }): Promise<string>
   /**
    * Fork a session from a completed-turn prefix of the source and resolve
    * the child session id (mirror of the runtime ISessions.fork — throws on
@@ -442,6 +444,8 @@ export interface SidebarConversation {
  * (tool rows, produced-files, prose mentions) funnels through it.
  */
 export interface SidebarWorkspacesService {
+  /** Register or resolve an existing directory as a Workspace. */
+  create?(input: { path: string }): Promise<{ workspaceId: string }>
   /** Open a filesystem path with the Host operating system's default application. */
   openPath(path: string): Promise<void>
 }

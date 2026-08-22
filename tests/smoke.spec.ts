@@ -349,6 +349,100 @@ describe('git destructive operations (scratch repository)', () => {
     }
   })
 
+  it('merges another branch into the current branch', async () => {
+    const dir = makeScratchRepo()
+    try {
+      gitRun(dir, ['checkout', '-q', '-b', 'feature'])
+      writeFileSync(join(dir, 'b.txt'), 'feature work\n')
+      gitRun(dir, ['add', '-A'])
+      gitRun(dir, ['commit', '-q', '-m', 'feature work'])
+      gitRun(dir, ['checkout', '-q', 'main'])
+      await git.merge(dir, 'feature')
+      expect(await git.currentBranch(dir)).toBe('main')
+      expect(readFileSync(join(dir, 'b.txt'), 'utf8')).toBe('feature work\n')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rebases the current branch onto another branch', async () => {
+    const dir = makeScratchRepo()
+    try {
+      gitRun(dir, ['checkout', '-q', '-b', 'feature'])
+      writeFileSync(join(dir, 'feature.txt'), 'feature work\n')
+      gitRun(dir, ['add', '-A'])
+      gitRun(dir, ['commit', '-q', '-m', 'feature work'])
+      gitRun(dir, ['checkout', '-q', 'main'])
+      writeFileSync(join(dir, 'main.txt'), 'main work\n')
+      gitRun(dir, ['add', '-A'])
+      gitRun(dir, ['commit', '-q', '-m', 'main work'])
+      gitRun(dir, ['checkout', '-q', 'feature'])
+      await git.rebase(dir, 'main')
+      expect(await git.currentBranch(dir)).toBe('feature')
+      expect((await git.log(dir, 2)).map(entry => entry.subject)).toEqual(['feature work', 'main work'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('lists, creates, and safely removes a linked worktree', async () => {
+    const dir = makeScratchRepo()
+    const linked = `${dir}-linked`
+    try {
+      gitRun(dir, ['branch', 'feature'])
+      await git.addWorktree(dir, linked, 'feature')
+      const entries = await git.worktrees(dir)
+      expect(entries.map(entry => [entry.branch, entry.current])).toEqual([
+        ['main', true],
+        ['feature', false],
+      ])
+      await git.removeWorktree(dir, linked)
+      expect((await git.worktrees(dir)).map(entry => entry.branch)).toEqual(['main'])
+    } finally {
+      rmSync(linked, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('continues a conflicted merge after resolution', async () => {
+    const dir = makeScratchRepo()
+    try {
+      gitRun(dir, ['checkout', '-q', '-b', 'feature'])
+      writeFileSync(join(dir, 'a.txt'), 'feature\n')
+      gitRun(dir, ['commit', '-qam', 'feature'])
+      gitRun(dir, ['checkout', '-q', 'main'])
+      writeFileSync(join(dir, 'a.txt'), 'main\n')
+      gitRun(dir, ['commit', '-qam', 'main'])
+      await expect(git.merge(dir, 'feature')).rejects.toThrow()
+      expect(await git.operation(dir)).toBe('merge')
+      writeFileSync(join(dir, 'a.txt'), 'resolved\n')
+      gitRun(dir, ['add', 'a.txt'])
+      await git.continueOperation(dir, 'merge')
+      expect(await git.operation(dir)).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('aborts a conflicted rebase', async () => {
+    const dir = makeScratchRepo()
+    try {
+      gitRun(dir, ['checkout', '-q', '-b', 'feature'])
+      writeFileSync(join(dir, 'a.txt'), 'feature\n')
+      gitRun(dir, ['commit', '-qam', 'feature'])
+      gitRun(dir, ['checkout', '-q', 'main'])
+      writeFileSync(join(dir, 'a.txt'), 'main\n')
+      gitRun(dir, ['commit', '-qam', 'main'])
+      gitRun(dir, ['checkout', '-q', 'feature'])
+      await expect(git.rebase(dir, 'main')).rejects.toThrow()
+      expect(await git.operation(dir)).toBe('rebase')
+      await git.abortOperation(dir, 'rebase')
+      expect(await git.operation(dir)).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('reports a failing destructive operation as a GitCommandError', async () => {
     const dir = makeScratchRepo()
     try {

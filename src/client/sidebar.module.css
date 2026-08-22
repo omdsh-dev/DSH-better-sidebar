@@ -1990,6 +1990,20 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   border-top: 1px solid var(--dsw-alias-border-l1);
 }
 
+.gitOperation {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-state-warn-label);
+  font: var(--dsw-font-xxs-12);
+}
+
+.gitOperation > span {
+  flex: 1;
+}
+
 .gitSectionHeader {
   display: flex;
   align-items: center;
@@ -2132,10 +2146,34 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 /* One changed file's section: path header, hunk headers, aligned lines. */
 .gitDiffFile {
+  width: 100%;
   display: flex;
   align-items: baseline;
   gap: 6px;
   padding: 8px 2px 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gitDiffFile:disabled {
+  cursor: default;
+}
+
+.gitDiffFile:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.gitDiffFileChevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  transform: rotate(0deg);
+}
+
+.gitDiffFileChevronExpanded {
+  transform: rotate(90deg);
 }
 
 .gitDiffFilePath {
@@ -2257,6 +2295,114 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   font: var(--dsw-font-s-14);
   color: var(--dsw-alias-label-primary);
   white-space: pre-wrap;
+}
+
+.gitBranchFlow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.gitBranchFlow > span:not(:nth-child(2)) {
+  overflow: hidden;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gitRebaseWarning {
+  margin: 0 0 12px;
+  color: var(--dsw-alias-state-warn-label);
+  font: var(--dsw-font-xxs-12);
+}
+
+.gitWorktreeCreate {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.7fr) minmax(160px, 1.3fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.gitWorktreeHint {
+  margin: 0 0 12px;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.gitWorktreeList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: min(360px, 50vh);
+  overflow-y: auto;
+}
+
+.gitWorktreeRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+}
+
+.gitWorktreeRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.gitWorktreeMain {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.gitWorktreeMain:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.gitWorktreeLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.gitWorktreeCurrent {
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.gitWorktreePath {
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .gitWorktreeCreate {
+    grid-template-columns: 1fr;
+  }
 }
 
 .gitCommit {
@@ -2441,6 +2587,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .gitCommitButton:focus-visible,
 .gitLogRow:focus-visible,
 .gitLogMore:focus-visible,
+.gitDiffFile:focus-visible,
 .gitDiffExpand:focus-visible,
 .terminalRetry:focus-visible,
 .editorModeButton:focus-visible,

@@ -9,7 +9,7 @@
  * The parser is a pure function (`parseUnifiedDiff`) so the interesting
  * cases are unit-tested without a DOM.
  */
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
@@ -171,6 +171,25 @@ function fileTag(file: DiffFile): string | null {
 /** Cap the flattened rows like DiffBlock: head + tail, expand button between. */
 const MAX_DIFF_ROWS = 500
 
+const TEST_PATH = /(^|\/)(?:__tests__|tests?|specs?|fixtures?|mocks?|snapshots?)(?:\/|$)|\.(?:test|spec)\.[^/]+$/i
+const DOC_PATH = /(^|\/)(?:docs?|documentation)(?:\/|$)|(^|\/)(?:readme|changelog|contributing|license|authors|notice)(?:\.[^/]*)?$/i
+const GENERATED_PATH = /(^|\/)(?:dist|build|coverage|generated|vendor|node_modules)(?:\/|$)|(^|\/)(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|composer\.lock|cargo\.lock|poetry\.lock)$/i
+const SOURCE_PATH = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts|py|pyw|rb|php|java|kt|kts|scala|go|rs|swift|c|h|cc|cpp|cxx|hpp|hh|hxx|cs|fs|fsx|vb|dart|lua|r|ex|exs|erl|hrl|clj|cljs|cljc|groovy|sh|bash|zsh|fish|ps1|sql|vue|svelte|astro|html|htm|css|scss|sass|less)$/i
+
+/** Source files open by default; tests, docs, generated files and unknown types stay folded. */
+function defaultExpandedFiles(files: DiffFile[]): Set<number> {
+  const expanded = new Set<number>()
+  files.forEach((file, index) => {
+    const path = displayPath(file.newPath === '/dev/null' ? file.oldPath : file.newPath)
+    if (!file.binary && file.hunks.length > 0
+      && !TEST_PATH.test(path) && !DOC_PATH.test(path) && !GENERATED_PATH.test(path)
+      && SOURCE_PATH.test(path)) {
+      expanded.add(index)
+    }
+  })
+  return expanded
+}
+
 export interface DiffViewProps {
   /** Unified diff text (`git.diff` or `git.commit-diff` payloads). */
   diff: string
@@ -187,22 +206,25 @@ export function DiffView({ diff, untrackedPath, untrackedContent }: DiffViewProp
     return parseUnifiedDiff(diff)
   }, [diff, untrackedPath, untrackedContent])
   const [expanded, setExpanded] = useState(false)
+  const [expandedFiles, setExpandedFiles] = useState<Set<number>>(() => defaultExpandedFiles(parsed.files))
+
+  useEffect(() => { setExpandedFiles(defaultExpandedFiles(parsed.files)) }, [parsed])
 
   // Flatten into display rows so the cap can slice a single list.
   const rows = useMemo(() => {
-    const out: Array<{ key: string; file: DiffFile; type: 'path' | 'hunk' | 'line'; hunk?: DiffHunk; line?: DiffLine }> = []
+    const out: Array<{ key: string; file: DiffFile; fileIndex: number; type: 'path' | 'hunk' | 'line'; hunk?: DiffHunk; line?: DiffLine }> = []
     parsed.files.forEach((file, fileIndex) => {
-      out.push({ key: `f${fileIndex}`, file, type: 'path' })
-      if (file.binary) return
+      out.push({ key: `f${fileIndex}`, file, fileIndex, type: 'path' })
+      if (file.binary || !expandedFiles.has(fileIndex)) return
       file.hunks.forEach((hunk, hunkIndex) => {
-        out.push({ key: `f${fileIndex}h${hunkIndex}`, file, type: 'hunk', hunk })
+        out.push({ key: `f${fileIndex}h${hunkIndex}`, file, fileIndex, type: 'hunk', hunk })
         hunk.lines.forEach((line, lineIndex) => {
-          out.push({ key: `f${fileIndex}h${hunkIndex}l${lineIndex}`, file, type: 'line', hunk, line })
+          out.push({ key: `f${fileIndex}h${hunkIndex}l${lineIndex}`, file, fileIndex, type: 'line', hunk, line })
         })
       })
     })
     return out
-  }, [parsed])
+  }, [parsed, expandedFiles])
 
   const hidden = rows.length - MAX_DIFF_ROWS
   const capped = hidden > 0 && !expanded
@@ -218,12 +240,29 @@ export function DiffView({ diff, untrackedPath, untrackedContent }: DiffViewProp
       const tag = fileTag(row.file)
       const from = displayPath(row.file.oldPath)
       const to = displayPath(row.file.newPath)
+      const expandable = !row.file.binary && row.file.hunks.length > 0
+      const fileExpanded = expandedFiles.has(row.fileIndex)
       return (
-        <div key={row.key} className={css.gitDiffFile}>
+        <button
+          key={row.key}
+          type="button"
+          className={css.gitDiffFile}
+          disabled={!expandable}
+          aria-expanded={expandable ? fileExpanded : undefined}
+          onClick={() => {
+            setExpandedFiles(current => {
+              const next = new Set(current)
+              if (next.has(row.fileIndex)) next.delete(row.fileIndex)
+              else next.add(row.fileIndex)
+              return next
+            })
+          }}
+        >
+          {expandable && <span aria-hidden="true" className={clsx(css.gitDiffFileChevron, fileExpanded && css.gitDiffFileChevronExpanded)}>›</span>}
           <span className={css.gitDiffFilePath}>{to}</span>
           {from !== to && <span className={css.gitDiffFileOld}>← {from}</span>}
           {tag !== null && <span className={css.gitDiffFileTag}>{tag}</span>}
-        </div>
+        </button>
       )
     }
     if (row.type === 'hunk') {
