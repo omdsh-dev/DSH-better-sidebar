@@ -173,14 +173,24 @@ function streamLines(
 }
 
 /** Normalize one engine's stdout lines to the walk contract: root-relative,
- *  '/'-separated, no leading './'. fd[rg] already emit relative paths with
- *  platform separators; the walk contract is '/'-separated on every
- *  platform. */
-export function normalizeEnginePaths(lines: readonly string[]): string[] {
+ *  '/'-separated, no leading './'. fd/rg emit relative paths with the
+ *  PLATFORM separator; the walk contract is '/'-separated on every platform.
+ *  `separator` defaults to the platform separator — pass '\\' to model
+ *  Windows engine output (rg on Windows emits '\' paths and '.\' prefixes;
+ *  Windows file names can never contain '\' or '/', so the substitution is
+ *  lossless there). A trailing '\r' is also stripped: Windows engines emit
+ *  CRLF line endings, and while readline usually swallows the CR, a leftover
+ *  one must never leak into a path (safe on every platform — a POSIX file
+ *  whose name ends in CR is pathological). */
+export function normalizeEnginePaths(lines: readonly string[], separator: string = sep): string[] {
   const out: string[] = []
   for (const line of lines) {
     if (line === '') continue
-    const normalized = line.split(sep).join('/')
+    const trimmed = line.endsWith('\r') ? line.slice(0, -1) : line
+    if (trimmed === '') continue
+    // A leading '.\' becomes './' after the separator substitution below;
+    // the './' prefix strip then covers both POSIX and Windows output.
+    const normalized = trimmed.split(separator).join('/')
     const clean = normalized.startsWith('./') ? normalized.slice(2) : normalized
     if (clean !== '' && clean !== '.') out.push(clean)
   }
