@@ -26,9 +26,11 @@ import type { TabComponentProps } from './service.ts'
 /** The no-op fallback for the shell's optional callbacks. */
 const noop = (): void => { /* no-op */ }
 
-/** Open a folder-scoped tab of type `type` (folder or repo-git). */
+/** Open a folder-scoped tab of type `type` (folder or repo-git). The id is
+ *  path-derived (like the editor's `editor:<path>`) so several folders of the
+ *  same type coexist; `dedupeKey` (per-path) still focuses an already-open one. */
 function openFolderTab(ctx: TabComponentProps['ctx'], type: 'folder' | 'repo-git', path: string): void {
-  ctx.betterSidebar?.openTab({ type, title: baseName(path), path })
+  ctx.betterSidebar?.openTab({ type, id: `${type}:${path}`, title: baseName(path), path })
 }
 
 /**

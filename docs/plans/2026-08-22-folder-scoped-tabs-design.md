@@ -106,6 +106,7 @@
   - `hidden: true`、非单实例、`dedupeKey: (tab) => tab.path`；`order` 11 / 21。
   - `title`：`t('subFiles')` / `t('subScm')`（打开时由调用方用 `openTab({ title: baseName(path), path })` 覆盖为文件夹名）。
 - **新增 `src/client/folder-tabs.tsx`**：`FolderTab`（以 `tab.path` 为根渲染 `TreePanel`，自带局部展开集，`targetCwd=tab.path` 让搜索限定到该目录）与 `RepoGitTab`（把 `GitView` 的 scope 设为 `{ sessionId, cwd: tab.path, targetCwd: tab.path }`，并让 `onOpenFile` 把 git 相对路径解析到 `tab.path`）。
+- **两个新 tab 用路径派生 id**（`id: `folder:<path>` / `repo-git:<path>`，与编辑器 `editor:<path>` 同模式）：否则 `openTabInActivePane` 的 id 安全网会把同类型第二、三次打开**聚焦到首个 tab**而非新建——不同文件夹就无法并存（该 id 冲突已实测复现并修复）。`dedupeKey: (tab) => tab.path` 仍保证**同一路径**再次打开时聚焦既有 tab。
 - **diff 引用贯通 `targetCwd`**：`SidebarDiffRef`（`src/client/state.ts`）加可选 `targetCwd`；`GitView` 的 `openWorktreeDiff`/`openCommitDiff` 写入 `scope.cwd`；`DiffTab`（`src/client/DiffTab.tsx`）用它构建 scope——让嵌套仓库里点改动文件打开的 diff 正确读取。
 - **`src/client/api.ts`**：`SessionScope` 加 `targetCwd?: string`，`scopePayload` 在有值时带上。
 
@@ -126,5 +127,6 @@
 ## 7. 复现 / 验证建议
 
 - 改动后 `pnpm typecheck && pnpm build && pnpm test`（CI 另有 npm 打包 → 真实挂载 → 无头渲染门禁 `pnpm test:mount`）。
-- 实机验证要点：在工作区根（非 git 仓库）下建一个独立 git 的子文件夹 → 文件树右键该文件夹 → 「在此目录打开源代码管理」应显示该子仓库的 status/history；「在此目录打开文件」应打开以该文件夹为根的目录树；两 tab 应可并存、可递归。
+- **⚠️ host 改动须重启 `dsh web`**：本次改了 host 的 `cwdOf`（`lib/index.js`），按插件规范 host 半更新需**重启 `dsh web`**，仅硬刷新浏览器不会生效（client 半热加载即可）。若只硬刷新而未重启，`repo-git` 会因旧 host 不认 `targetCwd` 而在会话根跑 git → 显示"当前目录不是 git 仓库"（已在 `dsh web` 上实测定位）。
+- 实机验证要点：在工作区根（非 git 仓库）下建一个独立 git 的子文件夹 → 文件树右键该文件夹 → 「在此目录打开源代码管理」应显示该子仓库的 status/history；「在此目录打开文件」应打开以该文件夹为根的目录树；再右键另一子文件夹 → 两个同类 tab **并存**（不同路径）；点击已有路径再次打开 → **聚焦**而非重复新建；两 tab 可递归。
 - 前向兼容回归：未带 `targetCwd` / 目标根参数的全部既有调用（git.*、fs.*、media/html/file/tools）行为应逐字节不变。

@@ -151,12 +151,12 @@ export function EditorHost(props: {
 
   /** The context menu's "open this folder as a folder tab" (subfolder scope). */
   const openDirFiles = (absolute: string): void => {
-    ctx.betterSidebar?.openTab({ type: 'folder', title: baseName(absolute), path: absolute })
+    ctx.betterSidebar?.openTab({ type: 'folder', id: `folder:${absolute}`, title: baseName(absolute), path: absolute })
   }
 
   /** The context menu's "open this folder's source control" (subfolder scope). */
   const openDirScm = (absolute: string): void => {
-    ctx.betterSidebar?.openTab({ type: 'repo-git', title: baseName(absolute), path: absolute })
+    ctx.betterSidebar?.openTab({ type: 'repo-git', id: `repo-git:${absolute}`, title: baseName(absolute), path: absolute })
   }
 
   // The viewer's toolbar, hoisted into THIS header: the text editor reports
