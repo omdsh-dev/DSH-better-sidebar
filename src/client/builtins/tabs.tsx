@@ -13,6 +13,7 @@ import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
 import { openSidebarFile } from '../intercept.tsx'
 import { EditorHost } from '../EditorHost.tsx'
+import { OpenWithSettings } from '../open-with-settings.tsx'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
 import { GitView } from '../GitView.tsx'
 import { DiffTab } from '../DiffTab.tsx'
@@ -90,8 +91,10 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       dedupeKey: (tab) => tab.path,
       // Declarative settings: the file-open behavior picker (in-place switch
       // vs per-path windows) renders as an iconed select row under the
-      // editor card's gear in the Side card settings page; the hidden-rows
-      // switch below it controls dot-prefixed entries in the file tree.
+      // editor card's gear in the Side card settings page; the exclude-pattern
+      // rows (VS Code files.exclude style) sit below it, and the "open with"
+      // configuration (SSH host + custom editors) is the custom panel BELOW
+      // those rows — the settings seam renders rows first, custom panel after.
       settings: {
         toggles: [{
           key: 'editorExplorer',
@@ -119,6 +122,9 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           desc: () => t('explorerExcludeDesc'),
           patternsPlaceholder: t('explorerExcludePlaceholder'),
         }],
+        render: ({ pluginSettings, updatePluginSetting }) => (
+          <OpenWithSettings pluginSettings={pluginSettings} updatePluginSetting={updatePluginSetting} />
+        ),
       },
       component: ({ ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile }) => (
         <EditorHost

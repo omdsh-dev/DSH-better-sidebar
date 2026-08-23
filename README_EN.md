@@ -151,69 +151,16 @@ Update: `git pull && pnpm install && pnpm build` → `node scripts/package-regis
 
 ## 🖼️ Feature Tour
 
-> Below are real UI screenshots.
+> Below are real UI screenshots (two per row; click to zoom).
 
-### 🗂️ File Workbench: Explorer
-
-Two explorer modes: embedded in the file preview / standalone file tree. Lazy-loading directory tree, symlinks classified by target kind (directory links expand, dangling links flagged), global filename search, file/folder upload buttons plus drag-drop upload, context menu (open in new tab / open to the side / copy paths), and a hover `@file` button that references a file straight into the composer.
-
-<div align="center"><img width="880" alt="File explorer" src="https://github.com/user-attachments/assets/a410bfd2-a8ba-43e6-873e-22417756e94d" /></div>
-<div align="center"><img width="880" alt="CodeMirror editor" src="https://github.com/user-attachments/assets/b44b488e-568c-4ee0-b96c-e9c906598a77" /></div>
-
-### 📝 Inline Preview: Markdown · Images · PDF
-
-The Markdown preview renders **Mermaid diagrams** (strict-mode safe rendering + a second sanitize pass; click a diagram for a zoom modal with wheel-zoom and drag-pan); images / PDFs display inline via the media route; the Office suite is covered by an ecosystem plugin.
-
-<div align="center"><img width="880" alt="Markdown + Mermaid preview" src="https://github.com/user-attachments/assets/fe0e5182-55bb-45cc-b98b-a2877c2bdd38" /></div>
-<div align="center"><img width="880" alt="Inline image preview" src="https://github.com/user-attachments/assets/f9a58c30-5b7a-48b5-9e22-37d7e071f593" /></div>
-
-### 💻 Real Terminal
-
-xterm.js + node-pty real shell (not an emulator): transcript replay on reconnect, configurable shell / shellArgs (settings page or `cordis.patch.yml`), and optional `terminal_*` model tools so the agent can open terminals and run commands itself.
-
-<div align="center"><img width="880" alt="Real terminal" src="https://github.com/user-attachments/assets/0dad6ad3-ff3f-4b5a-86d2-f832ce65323e" /></div>
-
-### 🌿 Git Panel
-
-Stage / unstage / commit (`Ctrl+Enter`) / revert, plus a history list; clicking a changed file opens a **VSCode-style diff tab** (line-level red/green).
-
-<div align="center"><img width="880" alt="Git panel" src="https://github.com/user-attachments/assets/e7fc1220-305f-4bca-8583-e77ab4f4fa78" /></div>
-
-### 🌐 Embedded Browser
-
-Multiple web tabs with back / forward / reload / address bar; content runs in an **opaque-origin sandboxed iframe** (live sandbox status in the UI, per-page temporary unlock available); external-link clicks in the chat can be taken over into the sidebar (protocol-based routing, configurable).
-
-<div align="center"><img width="880" alt="Embedded browser" src="https://github.com/user-attachments/assets/9bc6b65a-64fc-4942-a685-76e391e55606" /></div>
-
-### 🧩 Tasks: Agent Topology + Background Jobs
-
-Live subagent-tree topology (run states, batched live previews) plus the background-jobs list (exit codes / live output / force-kill); new subagents / jobs can auto-expand the sidebar (configurable).
-
-<div align="center"><img width="880" alt="Tasks: subagent topology" src="https://github.com/user-attachments/assets/dcd8ed2f-59fa-405b-937b-2d250f5034dd" /></div>
-
-### 💬 Side Chat (beta)
-
-Codex-style side threads: **one independent tab per conversation**; the thread inherits the parent's full context (including the in-progress turn, honestly frozen as "interrupted") and runs independently without polluting the main session; follow-ups survive restarts; one click promotes the thread to a top-level session.
-
-<div align="center"><img width="880" alt="Side Chat (beta)" src="https://github.com/user-attachments/assets/3a338c36-f5de-4000-95f3-4b1cd04f60fc" /></div>
-
-### 🪟 Dual Workbench: Sidebar + Bottom Panel + Split Panes
-
-The right sidebar and the bottom panel can stay open together; drag a tab to a pane edge to **split**, to the middle to **merge** (works across panels); panel width/height drag from the left/top edge; on mobile everything merges into a full-width drawer.
-
-<div align="center"><img width="880" alt="Dual workbench (right sidebar + bottom panel)" src="https://github.com/user-attachments/assets/dfdb875e-a1a8-4d4b-8340-353736b1708f" /></div>
-
-### ⚙️ Declarative Settings
-
-The "Side card" section in DSH settings: one small card per tab / viewer with an independent toggle (highlighted enabled state + brand switch); secondary settings open from the "Feature settings" strip at the card bottom (switch / text / number / select rows); plugin-owned settings persist under `pluginSettings`.
-
-<div align="center"><img width="880" alt="Declarative settings: side cards" src="https://github.com/user-attachments/assets/0800ca64-621e-48da-b7df-aecfddc3ec29" /></div>
-
-### 📱 Mobile
-
-On narrow screens (<768px) the panels become a full-width drawer: bottom-panel tabs merge into the sidebar once, with touch-friendly dragging.
-
-<div align="center"><img width="360" alt="Mobile full-width drawer" src="https://github.com/user-attachments/assets/a82ba78a-f4cf-4d85-80e8-050a05beb144" /></div>
+| | |
+|---|---|
+| **🗂️ File Workbench: Explorer**<br/><sub>Two explorer modes: embedded in the file preview / standalone file tree. Lazy-loading directory tree, symlinks classified by target kind (directory links expand, dangling links flagged), global filename search, file/folder upload buttons plus drag-drop upload, context menu (open in new tab / open to the side / copy paths), and a hover `@file` button that references a file straight into the composer.</sub><br/><div align="center"><img width="420" alt="File explorer" src="https://github.com/user-attachments/assets/a410bfd2-a8ba-43e6-873e-22417756e94d" /></div> | **📝 Inline Preview: Markdown · Images · PDF**<br/><sub>The Markdown preview renders **Mermaid diagrams** (strict-mode safe rendering + a second sanitize pass; click a diagram for a zoom modal with wheel-zoom and drag-pan); images / PDFs display inline via the media route; the Office suite is covered by an ecosystem plugin.</sub><br/><div align="center"><img width="420" alt="Markdown + Mermaid preview" src="https://github.com/user-attachments/assets/fe0e5182-55bb-45cc-b98b-a2877c2bdd38" /></div> |
+| **🖥️ CodeMirror editor**<br/><div align="center"><img width="420" alt="CodeMirror editor" src="https://github.com/user-attachments/assets/b44b488e-568c-4ee0-b96c-e9c906598a77" /></div> | **🖼️ Inline image preview**<br/><div align="center"><img width="420" alt="Inline image preview" src="https://github.com/user-attachments/assets/f9a58c30-5b7a-48b5-9e22-37d7e071f593" /></div> |
+| **💻 Real Terminal**<br/><sub>xterm.js + node-pty real shell (not an emulator): transcript replay on reconnect, configurable shell / shellArgs (settings page or `cordis.patch.yml`), and optional `terminal_*` model tools so the agent can open terminals and run commands itself.</sub><br/><div align="center"><img width="420" alt="Real terminal" src="https://github.com/user-attachments/assets/0dad6ad3-ff3f-4b5a-86d2-f832ce65323e" /></div> | **🌿 Git Panel**<br/><sub>Stage / unstage / commit (`Ctrl+Enter`) / revert, plus a history list; clicking a changed file opens a **VSCode-style diff tab** (line-level red/green).</sub><br/><div align="center"><img width="420" alt="Git panel" src="https://github.com/user-attachments/assets/e7fc1220-305f-4bca-8583-e77ab4f4fa78" /></div> |
+| **🌐 Embedded Browser**<br/><sub>Multiple web tabs with back / forward / reload / address bar; content runs in an **opaque-origin sandboxed iframe** (live sandbox status in the UI, per-page temporary unlock available); external-link clicks in the chat can be taken over into the sidebar (protocol-based routing, configurable).</sub><br/><div align="center"><img width="420" alt="Embedded browser" src="https://github.com/user-attachments/assets/9bc6b65a-64fc-4942-a685-76e391e55606" /></div> | **🧩 Tasks: Agent Topology + Background Jobs**<br/><sub>Live subagent-tree topology (run states, batched live previews) plus the background-jobs list (exit codes / live output / force-kill); new subagents / jobs can auto-expand the sidebar (configurable).</sub><br/><div align="center"><img width="420" alt="Tasks: subagent topology" src="https://github.com/user-attachments/assets/dcd8ed2f-59fa-405b-937b-2d250f5034dd" /></div> |
+| **💬 Side Chat (beta)**<br/><sub>Codex-style side threads: **one independent tab per conversation**; the thread inherits the parent's full context (including the in-progress turn, honestly frozen as "interrupted") and runs independently without polluting the main session; follow-ups survive restarts; one click promotes the thread to a top-level session.</sub><br/><div align="center"><img width="420" alt="Side Chat (beta)" src="https://github.com/user-attachments/assets/3a338c36-f5de-4000-95f3-4b1cd04f60fc" /></div> | **🪟 Dual Workbench: Sidebar + Bottom Panel + Split Panes**<br/><sub>The right sidebar and the bottom panel can stay open together; drag a tab to a pane edge to **split**, to the middle to **merge** (works across panels); panel width/height drag from the left/top edge; on mobile everything merges into a full-width drawer.</sub><br/><div align="center"><img width="420" alt="Dual workbench (right sidebar + bottom panel)" src="https://github.com/user-attachments/assets/dfdb875e-a1a8-4d4b-8340-353736b1708f" /></div> |
+| **⚙️ Declarative Settings**<br/><sub>The "Side card" section in DSH settings: one small card per tab / viewer with an independent toggle (highlighted enabled state + brand switch); secondary settings open from the "Feature settings" strip at the card bottom (switch / text / number / select rows); plugin-owned settings persist under `pluginSettings`.</sub><br/><div align="center"><img width="420" alt="Declarative settings: side cards" src="https://github.com/user-attachments/assets/0800ca64-621e-48da-b7df-aecfddc3ec29" /></div> | **📱 Mobile**<br/><sub>On narrow screens (<768px) the panels become a full-width drawer: bottom-panel tabs merge into the sidebar once, with touch-friendly dragging.</sub><br/><div align="center"><img width="360" alt="Mobile full-width drawer" src="https://github.com/user-attachments/assets/a82ba78a-f4cf-4d85-80e8-050a05beb144" /></div> |
 
 ## 🌐 Plugin Ecosystem
 
@@ -310,6 +257,27 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
 
 **Supported DSH versions**: <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions: 0.1.0-rc.8 · 0.1.1-rc.1 · 0.1.1-rc.2" src="https://img.shields.io/badge/DSH-0.1.0--rc.8_%C2%B7_0.1.1--rc.1_%C2%B7_0.1.1--rc.2-4d6bfe" /></a> · full release history on the [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases) page
 
+### v0.15.2
+
+All changes since v0.15.1:
+
+**✨ New features**
+
+- 🗂️ **"Open in app" submenu in the file tree** ([#334](https://github.com/omdsh-dev/DSH-better-sidebar/pull/334)): the file-tree context menu gains an "Open in app >" submenu — built-in openers (reveal/select in file manager, VS Code, Cursor, Zed), each with a pin button that promotes it to a top-level context-menu item (click again to unpin); with an optional SSH host configured, VSCode-family entries switch to the `vscode-remote/ssh-remote+<host>/<path>` protocol and local-only entries hide automatically; custom editors supported (name + URL template with `{path}` + "VSCode-family" flag, configured in the Files card gear popup). Open actions go through the new host route `POST /sidebar/api/open.external` (argv-array spawn, no shell injection) ([design](docs/plans/2026-08-22-open-with-menu-design.md))
+- 📑 **Tab context menu** ([#331](https://github.com/omdsh-dev/DSH-better-sidebar/pull/331)): right-clicking a tab offers **Close / Close others / Close to the left / Close to the right**, scoped to the current pane (tab group); items grey out when there is nothing to close; the menu only opens — it never switches the active tab; bulk closes go through the existing per-tab `onClose` path so lifecycle callbacks, pty release and agent-terminal shutdown all stay intact
+- 📄 **Diff files collapsed by default** ([#270](https://github.com/omdsh-dev/DSH-better-sidebar/pull/270)): each changed-file header is now an accessible expand/collapse control; recognized source files expand by default while tests, docs, generated files, lockfiles and unknown types stay collapsed; the existing 500-row cap for expanded content is preserved
+- 📖 **README update**: feature tour converted to a table (two screenshots per row, saves space); community section now shows the WeChat group and QQ group QR codes ([#325](https://github.com/omdsh-dev/DSH-better-sidebar/pull/325), QQ group 577011007)
+
+**🐛 Fixes**
+
+- 🪟 **Prune empty restored panes** ([#268](https://github.com/omdsh-dev/DSH-better-sidebar/pull/268)): persisted split panes left empty when ephemeral diff tabs were dropped no longer survive as full-size blanks — `sanitizeState` now also prunes the empty split leaf and repairs the stale active-pane pointer; a fully empty workbench keeps its single empty pane
+- 🖥️ **Hide spawned git windows on Windows** ([#301](https://github.com/omdsh-dev/DSH-better-sidebar/pull/301), fixes [#124](https://github.com/omdsh-dev/DSH-better-sidebar/issues/124)): the shared `runGit()` spawn options now set `windowsHide: true`, so repo-status polling and git actions no longer flash console windows on Windows (no behavior change on other platforms)
+- 📁 **Untracked files inside new folders** ([#242](https://github.com/omdsh-dev/DSH-better-sidebar/pull/242)): `git status` switched from `--untracked-files=normal` to `--untracked-files=all` — each file inside a new folder now shows as its own row and its diff can be loaded (no more `fs.read` "is a directory" error), matching VSCode's default behavior
+- ⚡ **Per-frame React re-renders eliminated for toggles/drags** (closes [#315](https://github.com/omdsh-dev/DSH-better-sidebar/issues/315)): `centerRect` moved to a ref with direct DOM writes to the bottom bar (zero React renders); `TabContent` memoized with an explicit comparator; a new frame-batcher coalesces Divider/dock drags per frame; meaningless locate passes skipped during drags. 4x CPU-throttled A/B: >17ms frames on toggle collapse 19→6 / expand 24→4~6, p95 21ms→15ms; drags unchanged (non-regression)
+
+<details>
+<summary><b>Older releases (v0.12.0 – v0.15.1)</b></summary>
+
 ### v0.15.1
 
 All changes since v0.15.0:
@@ -344,9 +312,6 @@ All changes since v0.14.0:
 - 📐 **Push variables stay effective while mounted** ([#259](https://github.com/omdsh-dev/DSH-better-sidebar/pull/259), fixes [#258](https://github.com/omdsh-dev/DSH-better-sidebar/issues/258)): the bottom panel no longer flashes full-width after a drag is released
 - 🔧 **Adapted to DSH 0.1.1-rc.1 / rc.2 (@next)** ([#297](https://github.com/omdsh-dev/DSH-better-sidebar/pull/297) [#305](https://github.com/omdsh-dev/DSH-better-sidebar/pull/305)): no code changes needed
 - 🔒 **Upload-chain hardening** ([#239](https://github.com/omdsh-dev/DSH-better-sidebar/pull/239)): empty and absolute `relativePath` segments are refused outright; uniquely named temp files (concurrent uploads stay independent, crashed processes never block later uploads); write-stream error listeners (a failing disk can no longer crash the host); client error codes unified with the wire (`too-large`), 413s localized
-
-<details>
-<summary><b>Older releases (v0.12.0 – v0.14.0)</b></summary>
 
 ### v0.14.0
 
@@ -413,6 +378,7 @@ All changes since v0.14.0:
 | Save edits | `Ctrl/Cmd + S` |
 | Git commit | `Ctrl + Enter` |
 | Close tab | Middle mouse button |
+| Tab context menu (right-click) | Close / Close Other Tabs / Close Tabs to the Left / Close Tabs to the Right (current pane) |
 | Split / merge panes | Drag tab to pane edge / middle |
 | Reference file to input | Hover the `@file` button at end of line |
 | Copy file path | Right-click row → copy relative/absolute path |

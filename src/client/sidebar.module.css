@@ -2132,10 +2132,34 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 /* One changed file's section: path header, hunk headers, aligned lines. */
 .gitDiffFile {
+  width: 100%;
   display: flex;
   align-items: baseline;
   gap: 6px;
   padding: 8px 2px 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gitDiffFile:disabled {
+  cursor: default;
+}
+
+.gitDiffFile:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.gitDiffFileChevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  transform: rotate(0deg);
+}
+
+.gitDiffFileChevronExpanded {
+  transform: rotate(90deg);
 }
 
 .gitDiffFilePath {
@@ -2441,6 +2465,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .gitCommitButton:focus-visible,
 .gitLogRow:focus-visible,
 .gitLogMore:focus-visible,
+.gitDiffFile:focus-visible,
 .gitDiffExpand:focus-visible,
 .terminalRetry:focus-visible,
 .editorModeButton:focus-visible,
@@ -2495,4 +2520,55 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
     min-width: 48px;
     max-width: 128px;
   }
+}
+
+/* The file tree "open with" menu rows: the label area is a BLOCK-level flex
+   row that fills the primitives `.itemLabel` span (which is itself `flex: 1`
+   inside the row), so the trailing control — the pushpin on submenu rows,
+   the chevron on the submenu parent — docks at the row's far right, exactly
+   like the trailing check on selected rows of every other menu. */
+.openWithLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.openWithName {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The trailing "expands into a submenu" chevron on the open-with parent row
+   (the primitives Menu renders no arrow for submenu parents). */
+.openWithChevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The pushpin toggle on an "open with" submenu row: brand ink once the
+   target is pinned to the menu's top level. */
+.openWithPin {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.openWithPin:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.openWithPinActive {
+  color: var(--dsw-alias-state-business-primary);
 }
