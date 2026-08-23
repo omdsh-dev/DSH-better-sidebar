@@ -355,6 +355,7 @@ ctx.effect(() => {
 | `git` | 20 | 是 | 否 | Git 面板 |
 | `subagent` | 30 | 是 | 否 | 子代理拓扑 |
 | `sidechat` | 35 | 否（createTab 铸造 `sidechat:<uuid>`/按 `meta.threadId` 去重） | 否 | 侧边对话（Codex 风格，**每个对话一个独立 Tab**）：打开 Tab 即自动创建空线程（composer 拥有首条消息，host 侧包裹边界提示 + 创建时停泊的进行中快照，首条消息赢得真实标签并同步 Tab 标题）；线程 = 插件自建子会话（自定义种子继承父会话完整上下文，进行中回合以 `interrupted` 冻结诚实闭合；种子尾部带合法 `subagent/descriptor`——否则 cold 线程在宿主 subagents.list 里是 corrupt 诊断行——SubagentView/subagent-detect 按 `Side: ` 前缀过滤保持拓扑零噪音），`origin:'subagent'` 隐藏于主列表；生命周期走自有 `/sidebar/api/sidechat.*` 路由（`ctx.agents.create/resume` + `agent.followup/cancel` + `sidechat.info` 读 Agent 身份/状态）；头部菜单可切换/重开既有线程（`parkSidechatReopen` + `sidechat:<threadId>` 确定性 id），关闭 Tab 释放 live agent（历史保留）；重开 Tab 经 `collectOwnEvents` 大页回源到种子边界（cold 读会展开 chunk 压缩行，小窗口会丢早期 tool/call 行）；「保存为新会话」= `session.fork` 提升顶层会话（必须方法调用形态，`this` 敏感）。UI 对齐主对话区（用户气泡 `--dsw-specific-bubble`、assistant 通栏 markdown、胶囊 composer + 圆形发送/停止钮、运行扫光状态行）。见 [设计文档](docs/plans/2026-08-20-sidechat-tab-design.md) |
+| `changes` | 36 | 是 | 否 | 本轮变更：按轮次列出会话中模型写/改过的文件（每轮一行：轮次标题 + 文件 chips，点击在侧边栏编辑器打开；读取/删除/失败不计入，与 ui-deliverables 产出契约一致）。数据来自通用 `sessions.history` RPC，`collectTurnChanges` 把每个 `turn/start`→`turn/end` 内 `tool/result` 关联的 mutation view `locations` 折叠为 `{turn, paths}`；可见时 2s 轮询尾页合并，首次拉 6×200 事件回溯 |
 | `terminal` | 40 | 否 | 否 | 终端（nextTerminal 自增） |
 | `browser` | 50 | 否（createTab 铸造 browser:`<n>`，nextBrowser 自增） | 否 | 内嵌网页浏览器（沙箱 iframe；可设置关闭沙箱） |
 | `diff` | -1 | 否（按 id 去重） | 是 | 差异查看（由 GitView 触发） |

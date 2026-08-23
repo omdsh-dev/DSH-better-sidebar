@@ -1,11 +1,11 @@
 /**
- * The 7 built-in tab descriptors: the plugin registers its own pages
- * (editor / git / subagent / sidechat / terminal / browser / diff) through
- * the same {@link BetterSidebarService} external plugins use — eating its
- * own dogfood. The terminal descriptor owns its quota (`TERMINAL_LIMIT`)
- * and mints `terminal:<uuid>` ids through `createTab`; the browser mints
- * `browser:<n>` the same way (no quota). The editor IS the files window
- * (the old standalone explorer merged into it).
+ * The 8 built-in tab descriptors: the plugin registers its own pages
+ * (editor / git / subagent / sidechat / changes / terminal / browser /
+ * diff) through the same {@link BetterSidebarService} external plugins
+ * use — eating its own dogfood. The terminal descriptor owns its quota
+ * (`TERMINAL_LIMIT`) and mints `terminal:<uuid>` ids through `createTab`;
+ * the browser mints `browser:<n>` the same way (no quota). The editor IS
+ * the files window (the old standalone explorer merged into it).
  */
 import { IconBranchOutline16, IconCodeOutline16, IconFolderOpen16, IconNewChatOutline16, IconPanelLeftOutline16, IconThinkOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
@@ -19,6 +19,7 @@ import { GitView } from '../GitView.tsx'
 import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
 import { consumeSidechatSeed, SideChatView, sidechatThreadIdOf } from '../SideChatView.tsx'
+import { ChangesView } from '../ChangesView.tsx'
 import { api } from '../api.ts'
 import { BrowserView } from '../BrowserView.tsx'
 import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16 } from '../icons.tsx'
@@ -216,6 +217,16 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       },
       component: ({ ctx, scope, tab, visible }) => (
         <SideChatView ctx={ctx} scope={scope} tab={tab} visible={visible} />
+      ),
+    },
+    {
+      id: 'changes',
+      title: () => t('changes'),
+      icon: (size: number) => <IconDiffOutline16 size={size} />,
+      order: 36,
+      single: true,
+      component: ({ ctx, store, scope, visible }) => (
+        <ChangesView ctx={ctx} store={store} scope={scope} visible={visible} />
       ),
     },
     {
