@@ -155,6 +155,8 @@ export function FileTree(props: {
   const [repos, setRepos] = useState<Map<string, GitStatusResult>>(new Map())
   /** Repos already requested (a failed fetch is retried on the next refresh). */
   const repoRequested = useRef<Set<string>>(new Set())
+  /** Top-level directories already probed for a `.git` entry (repos or not). */
+  const sweepProbed = useRef<Set<string>>(new Set())
   /** The row whose path was just copied ("copied" label replaces its button). */
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
@@ -258,11 +260,13 @@ export function FileTree(props: {
     setDropTarget(dir)
   }
 
-  /** Fetch one repo's status (deduped; failures are retried next refresh). */
+  /** Fetch one repo's status (deduped; failures are retried next refresh).
+   *  Uses the explicit-dir route so the session header cwd cannot re-scope
+   *  a nested repository's status fetch back to the workspace root. */
   const fetchRepo = useCallback((root: string): void => {
     if (repoRequested.current.has(root)) return
     repoRequested.current.add(root)
-    api.gitStatus({ sessionId, cwd: root }).then((result) => {
+    api.gitStatusAt({ sessionId, cwd }, root).then((result) => {
       setRepos(prev => {
         const next = new Map(prev)
         next.set(root, result)
@@ -271,7 +275,7 @@ export function FileTree(props: {
     }).catch(() => {
       repoRequested.current.delete(root)
     })
-  }, [sessionId])
+  }, [sessionId, cwd])
 
   const storeLevel = useCallback((path: string, level: LevelData) => {
     dataRef.current = { ...dataRef.current, [path]: level }
@@ -318,10 +322,39 @@ export function FileTree(props: {
   // has no file watcher — KISS).
   useEffect(() => {
     repoRequested.current = new Set()
+    sweepProbed.current = new Set()
     setRepos(new Map())
     if (cwd === undefined) return
     fetchRepo(cwd)
   }, [sessionId, cwd, refreshTick, fetchRepo])
+
+  /**
+   * Top-level repository sweep: once the ROOT level listing is in, every
+   * visible directory inside it is probed for a `.git` entry (a directory
+   * listing of `<dir>/.git` succeeds iff the dir is a repo root) and its
+   * status is fetched right away. The workspace folder is often not a repo
+   * itself — its children are — and waiting for the user to expand a dir
+   * before discovering its repo made the marks appear too late / not at all.
+   * Nested repos still get picked up by the expansion-time discovery in
+   * `loadDir`; the sweep only covers the root level (cheap, bounded).
+   */
+  useEffect(() => {
+    if (cwd === undefined) return
+    const level = data[cwd]
+    if (level === undefined || level.entries === undefined) return
+    for (const entry of level.entries) {
+      if (!entry.isDir || entry.hidden) continue
+      if (sweepProbed.current.has(entry.path)) continue
+      sweepProbed.current.add(entry.path)
+      // Probe `<dir>/.git` with forward slashes (the host normalizes both
+      // separator styles on Windows and POSIX alike).
+      api.fsTree({ sessionId, cwd }, `${entry.path.replace(/[\\/]+$/, '')}/.git`).then(() => {
+        fetchRepo(entry.path)
+      }).catch(() => {
+        // No .git — an ordinary directory, not a repository root.
+      })
+    }
+  }, [data, cwd, sessionId, fetchRepo])
 
   /** Decorations per repo key (recomputed only when a snapshot arrives). */
   const decorByKey = useMemo(() => {
@@ -347,6 +380,16 @@ export function FileTree(props: {
     if (repo === undefined) return false
     const rel = gitRelOf(repo.root, abs)
     return rel !== undefined && (decorByKey.get(repo.key)?.dirtyDirs.has(gitKey(rel)) ?? false)
+  }
+
+  /** The dominant status letter of a directory row's subtree (tints its
+   *  name; undefined when the dir is outside any repo or holds no changes). */
+  const dirBadgeOfPath = (abs: string): string | undefined => {
+    const repo = owningRepo(repos, abs)
+    if (repo === undefined) return undefined
+    const rel = gitRelOf(repo.root, abs)
+    if (rel === undefined) return undefined
+    return decorByKey.get(repo.key)?.dirBadges.get(gitKey(rel))
   }
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
@@ -485,6 +528,14 @@ export function FileTree(props: {
    *  root-folder dot — the git panel remains the source of truth). */
   const cwdRepo = cwd === undefined ? undefined : repos.get(cwd)
   const rootDirty = cwdRepo !== undefined && cwdRepo.isRepo && cwdRepo.entries.length > 0
+  /** The root row's dominant tint: the '' key of its owning repo's
+   *  decorations (the workspace root itself, when it is a repo). */
+  const rootBadge = cwd === undefined
+    ? undefined
+    : (() => {
+      const repo = owningRepo(repos, cwd)
+      return repo === undefined ? undefined : decorByKey.get(repo.key)?.dirBadges.get('')
+    })()
 
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
@@ -503,6 +554,7 @@ export function FileTree(props: {
       if (entry.isDir) {
         const isOpen = expanded.includes(entry.path)
         const dirty = dirIsDirty(entry.path)
+        const dirBadge = dirBadgeOfPath(entry.path)
         return (
           <div key={entry.path}>
             <div
@@ -512,6 +564,7 @@ export function FileTree(props: {
                 css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden,
                 dropTarget === entry.path && css.explorerRowDropTarget,
               )}
+              {...(dirBadge !== undefined ? { 'data-git': dirBadge } : {})}
               style={{ paddingLeft: depth * 22 + 6 }}
               onClick={() => { onToggle(entry.path) }}
               onKeyDown={(event) => {
@@ -544,6 +597,7 @@ export function FileTree(props: {
             css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken,
             dropTarget === parentOf(entry.path) && css.explorerRowDropTarget,
           )}
+          {...(badge !== undefined ? { 'data-git': badge } : {})}
           style={{ paddingLeft: depth * 22 + 6 }}
           title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
           onClick={() => { onOpenFile(entry.path) }}
@@ -582,6 +636,7 @@ export function FileTree(props: {
         <>
           <div
             className={clsx(css.explorerRow, dropTarget === root && css.explorerRowDropTarget)}
+            {...(rootBadge !== undefined ? { 'data-git': rootBadge } : {})}
             style={{ paddingLeft: 6 }}
             onDragOver={(event) => { handleRowDragOver(event, root) }}
             onDrop={(event) => { handleDirDrop(event, root) }}

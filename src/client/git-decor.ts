@@ -33,31 +33,57 @@ export function gitRelOf(root: string, abs: string): string | undefined {
   return rel === abs ? undefined : rel
 }
 
+/** Dominance order for a directory's status tint: the most salient letter
+ *  wins when a subtree mixes statuses (modified > added/untracked > deleted
+ *  > renamed), so a folder's color is deterministic. */
+const DIR_TINT_PRIORITY: Record<string, number> = { M: 4, A: 3, '?': 2, D: 1, R: 0 }
+
 /** The explorer decorations of one repository. */
 export interface GitDecorations {
   badges: Map<string, string>
   dirtyDirs: Set<string>
+  /** Dominant status letter per dirty directory ('' = the repo root itself). */
+  dirBadges: Map<string, string>
 }
 
 /** The explorer decorations derived from one status snapshot: the badge
- *  letter per repo-relative path key, and the set of directories whose
- *  subtree contains at least one changed file. */
+ *  letter per repo-relative path key, the set of directories whose subtree
+ *  contains at least one changed file, and the dominant status letter per
+ *  such directory (drives the folder-name tint). */
 export function gitDecorations(status: GitStatusResult): GitDecorations {
   const badges = new Map<string, string>()
   const dirtyDirs = new Set<string>()
+  const dirBadges = new Map<string, string>()
   if (!status.isRepo) {
-    return { badges, dirtyDirs }
+    return { badges, dirtyDirs, dirBadges }
+  }
+  const noteDir = (key: string, letter: string): void => {
+    const current = dirBadges.get(key)
+    if (current === undefined || (DIR_TINT_PRIORITY[letter] ?? 0) > (DIR_TINT_PRIORITY[current] ?? 0)) {
+      dirBadges.set(key, letter)
+    }
   }
   for (const entry of status.entries) {
     const key = gitKey(entry.path)
-    badges.set(key, gitBadgeOf(entry))
+    const letter = gitBadgeOf(entry)
+    badges.set(key, letter)
     let sep = key.lastIndexOf('/')
     while (sep > 0) {
-      dirtyDirs.add(key.slice(0, sep))
+      const dir = key.slice(0, sep)
+      dirtyDirs.add(dir)
+      noteDir(dir, letter)
       sep = key.lastIndexOf('/', sep - 1)
     }
   }
-  return { badges, dirtyDirs }
+  if (status.entries.length > 0) {
+    // The repo root folder itself carries the dominant letter over all
+    // entries (the repo-relative key '' never appears as an ancestor above).
+    const dominant = status.entries
+      .map(entry => gitBadgeOf(entry))
+      .sort((a, b) => (DIR_TINT_PRIORITY[b] ?? 0) - (DIR_TINT_PRIORITY[a] ?? 0))[0]
+    if (dominant !== undefined) noteDir('', dominant)
+  }
+  return { badges, dirtyDirs, dirBadges }
 }
 
 /**

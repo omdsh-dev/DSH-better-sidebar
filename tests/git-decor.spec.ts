@@ -43,7 +43,9 @@ describe('gitKey / gitRelOf', () => {
 
 describe('gitDecorations', () => {
   it('yields nothing outside a repo', () => {
-    expect(gitDecorations({ isRepo: false, entries: [] })).toEqual({ badges: new Map(), dirtyDirs: new Set() })
+    expect(gitDecorations({ isRepo: false, entries: [] })).toEqual({
+      badges: new Map(), dirtyDirs: new Set(), dirBadges: new Map(),
+    })
   })
 
   it('maps one badge letter per changed path', () => {
@@ -70,6 +72,28 @@ describe('gitDecorations', () => {
   it('keeps directories untouched when only the root file changes', () => {
     const { dirtyDirs } = gitDecorations(status([{ path: 'a.ts', xy: 'M ' }]))
     expect(dirtyDirs.size).toBe(0)
+  })
+
+  it('tints each dirty directory with its dominant status letter', () => {
+    const { dirBadges } = gitDecorations(status([
+      { path: 'src/a.ts', xy: ' M' },
+      { path: 'src/deep/new.ts', xy: '??' },
+      { path: 'src/deep/gone.ts', xy: ' D' },
+    ]))
+    // 'src' holds M (priority 4) and '?' (2) → M wins.
+    expect(dirBadges.get('src')).toBe('M')
+    // 'src/deep' holds '?' (2) and D (1) → '?' wins.
+    expect(dirBadges.get('src/deep')).toBe('?')
+    // The repo root itself carries the overall dominant letter (M).
+    expect(dirBadges.get('')).toBe('M')
+  })
+
+  it('tints the repo root folder over mixed root-level statuses', () => {
+    const { dirBadges } = gitDecorations(status([
+      { path: 'a.ts', xy: '??' },
+      { path: 'b.ts', xy: ' R' },
+    ]))
+    expect(dirBadges.get('')).toBe('?')
   })
 })
 

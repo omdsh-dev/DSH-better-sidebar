@@ -811,6 +811,14 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .explorerGitBadge[data-git='D'] { color: var(--dsw-alias-state-error-primary); }
 .explorerGitBadge[data-git='R'] { color: var(--dsw-alias-brand-primary); }
 
+/* Changed file NAMES take the same status tint (VSCode-explorer style): the
+   whole name reads at a glance, the letter badge stays as the exact mark. */
+.explorerRow[data-git='M'] .explorerName { color: var(--dsw-alias-state-warn-primary); }
+.explorerRow[data-git='A'] .explorerName,
+.explorerRow[data-git='?'] .explorerName { color: var(--dsw-alias-state-success-primary); }
+.explorerRow[data-git='D'] .explorerName { color: var(--dsw-alias-state-error-primary); }
+.explorerRow[data-git='R'] .explorerName { color: var(--dsw-alias-brand-primary); }
+
 /* The containment dot on directory rows (incl. the workspace root) whose
    subtree holds at least one changed file. */
 .explorerGitDot {
