@@ -19,8 +19,14 @@
  * caller: every request is reported through `onUploadRequest(dir, items)`
  * (VSCode semantics — a drop on a file row targets its parent directory),
  * and `busy` gates new drags while one upload is in flight.
+ *
+ * Git decorations: the working-tree status of the session workspace is
+ * fetched alongside the tree (mount + refresh tick — no watcher, KISS).
+ * Changed files carry a one-letter status badge after their name, and
+ * directories containing changes get a dot, VSCode-explorer style. Deleted
+ * files are not listed by the fs tree and therefore cannot carry a badge.
  */
-import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
@@ -29,7 +35,8 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
 import { VscFile, VscFolder, VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
-import { api, downloadUrl, type FsEntry } from './api.ts'
+import { api, downloadUrl, type FsEntry, type GitStatusResult } from './api.ts'
+import { gitDecorations, gitKey, gitRelOf } from './git-decor.ts'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
 import type { OpenWithTarget } from './open-with.ts'
 import { relativeTo } from './paths.ts'
@@ -53,6 +60,12 @@ export function baseName(path: string): string {
 function parentOf(path: string): string {
   const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return at <= 0 ? path : path.slice(0, at)
+}
+
+/** The decorations of a not-yet-fetched status snapshot (no marks at all). */
+const EMPTY_GIT_DECOR: { badges: Map<string, string>; dirtyDirs: Set<string> } = {
+  badges: new Map(),
+  dirtyDirs: new Set(),
 }
 
 /** Only OS file drags belong to the upload surface; in-app drags (tab reorder,
@@ -137,6 +150,8 @@ export function FileTree(props: {
   const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
+  /** Working-tree status of the session workspace (drives the row marks). */
+  const [git, setGit] = useState<GitStatusResult | null>(null)
   /** The row whose path was just copied ("copied" label replaces its button). */
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
@@ -274,6 +289,50 @@ export function FileTree(props: {
     for (const dir of expanded) loadDir(dir)
   }, [cwd, expanded, refreshTick, loadDir])
 
+  // The git decorations ride the same refresh affordance: fetched on mount
+  // and on every refresh tick (the tree has no file watcher — KISS).
+  useEffect(() => {
+    if (cwd === undefined) {
+      setGit(null)
+      return
+    }
+    let cancelled = false
+    api.gitStatus({ sessionId, cwd }).then((result) => {
+      if (!cancelled) setGit(result)
+    }).catch(() => {
+      if (!cancelled) setGit(null)
+    })
+    return () => { cancelled = true }
+  }, [sessionId, cwd, refreshTick])
+
+  /** The repo root used for path matching: the host-reported root when
+   *  available, else the workspace root itself (the common case — host
+   *  versions before the `root` field fall back to it; a cwd deeper inside
+   *  the repo then merely shows no marks, never wrong ones). */
+  const gitRoot = git !== null && git.isRepo ? (git.root ?? cwd) : undefined
+
+  /** Badge letter per repo-relative path key, plus the set of directories
+   *  whose subtree contains a changed file. Both are recomputed only when a
+   *  fresh status snapshot arrives. */
+  const gitDecor = useMemo(
+    () => (git === null ? EMPTY_GIT_DECOR : gitDecorations(git)),
+    [git],
+  )
+
+  /** The badge letter of an absolute row path (undefined when not in the repo). */
+  const badgeOfPath = (abs: string): string | undefined => {
+    if (gitRoot === undefined) return undefined
+    const rel = gitRelOf(gitRoot, abs)
+    return rel === undefined ? undefined : gitDecor.badges.get(gitKey(rel))
+  }
+
+  /** Whether a directory row's subtree contains at least one changed file. */
+  const dirIsDirty = (abs: string): boolean => {
+    if (gitRoot === undefined) return false
+    const rel = gitRelOf(gitRoot, abs)
+    return rel !== undefined && gitDecor.dirtyDirs.has(gitKey(rel))
+  }
+
   /** Copy `text`; on success flip the row's copied label for a moment. */
   const copyPath = useCallback((text: string, path: string): void => {
     void writeClipboard(text).then((ok) => {
@@ -406,6 +465,9 @@ export function FileTree(props: {
   }
 
   const root = cwd
+  /** The workspace root row marks any repo with pending changes (VSCode's
+   *  root-folder dot — the git panel remains the source of truth). */
+  const rootDirty = git !== null && git.isRepo && git.entries.length > 0
 
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
@@ -423,6 +485,7 @@ export function FileTree(props: {
     return entries.map(entry => {
       if (entry.isDir) {
         const isOpen = expanded.includes(entry.path)
+        const dirty = dirIsDirty(entry.path)
         return (
           <div key={entry.path}>
             <div
@@ -446,6 +509,7 @@ export function FileTree(props: {
             >
               {isOpen ? <VscFolderOpened size={14} /> : <VscFolder size={14} />}
               <span className={css.explorerName}>{entry.name}</span>
+              {dirty && <span className={css.explorerGitDot} />}
               {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
               {rowActions(entry)}
             </div>
@@ -453,6 +517,7 @@ export function FileTree(props: {
           </div>
         )
       }
+      const badge = badgeOfPath(entry.path)
       return (
         <div
           key={entry.path}
@@ -477,6 +542,7 @@ export function FileTree(props: {
         >
           <VscFile size={14} />
           <span className={css.explorerName}>{entry.name}</span>
+          {badge !== undefined && <span className={css.explorerGitBadge} data-git={badge}>{badge}</span>}
           {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
           {rowActions(entry)}
         </div>
@@ -506,6 +572,7 @@ export function FileTree(props: {
           >
             <VscFolderOpened size={14} />
             <span className={css.explorerName}>{baseName(root)}</span>
+            {rootDirty && <span className={css.explorerGitDot} />}
             {copiedPath === root
               ? <span className={css.explorerCopied}>{t('copied')}</span>
               : (

@@ -43,6 +43,8 @@ export interface GitStatusEntry {
 export interface GitStatusResult {
   isRepo: boolean
   branch?: string
+  /** The repository top level; `entries` paths are relative to it (absent when not a repo). */
+  root?: string
   entries: GitStatusEntry[]
 }
 

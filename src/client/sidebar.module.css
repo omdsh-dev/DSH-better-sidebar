@@ -796,6 +796,31 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: nowrap;
 }
 
+/* The git status badge on changed file rows (VSCode-explorer style): a
+   one-letter mark right after the name, tinted by status type — modified =
+   warn, added/untracked = success, deleted = error, renamed = brand. */
+.explorerGitBadge {
+  flex: none;
+  font: var(--dsw-font-xxxs-strong-11);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.explorerGitBadge[data-git='M'] { color: var(--dsw-alias-state-warn-primary); }
+.explorerGitBadge[data-git='A'] { color: var(--dsw-alias-state-success-primary); }
+.explorerGitBadge[data-git='?'] { color: var(--dsw-alias-state-success-primary); }
+.explorerGitBadge[data-git='D'] { color: var(--dsw-alias-state-error-primary); }
+.explorerGitBadge[data-git='R'] { color: var(--dsw-alias-brand-primary); }
+
+/* The containment dot on directory rows (incl. the workspace root) whose
+   subtree holds at least one changed file. */
+.explorerGitDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-secondary);
+}
+
 /* The hover-revealed @-reference button at the row's far right (and the
    transient "copied" label that replaces it after a copy). Hidden rows
    keep the name at full width; hovering or focusing the row reveals it. */
