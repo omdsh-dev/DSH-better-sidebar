@@ -82,7 +82,7 @@ jobs:
       # (dsh-base / dsh-web-app) resolves from this installation. Keep in
       # step with the plugin's @deepseek-ai/* peer range when bumping.
       - name: Install dsh CLI (pinned)
-        run: npm install -g @deepseek-ai/dsh@0.1.0-rc.8
+        run: npm install -g @deepseek-ai/dsh@0.1.1-rc.2
 
       # lib/ is gitignored; the tarball is produced from this build.
       - name: Build and pack the npm tarball

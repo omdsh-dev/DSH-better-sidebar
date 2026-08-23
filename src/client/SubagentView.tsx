@@ -38,9 +38,11 @@ import type {
 import {
   collectBranchIds,
   countSubagentDescendants,
+  isSideThreadSummary,
   rootAncestor,
 } from './subagent-detect.ts'
-import { lastActivity } from './subagent-activity.ts'
+import { type LastActivity } from '../subagent-activity.ts'
+import { SIDE_LABEL_PREFIX } from '../sidechat-core.ts'
 import {
   collectTreeJobs,
   formatJobDuration,
@@ -64,13 +66,16 @@ const JOB_POLL_MS = 2000
 /** How long the kill button stays armed before it needs re-confirming. */
 const JOB_KILL_ARM_MS = 3000
 
-/** The direct subagent children of one parent (durable `origin` rows). */
+/** The direct subagent children of one parent (durable `origin` rows;
+ *  Side Chat threads ride the same origin but are tab-strip conversations,
+ *  never topology). */
 function directChildren(
   byId: Readonly<Record<string, SidebarSessionSummary>>,
   parentSessionId: string,
 ): SidebarSessionSummary[] {
   return Object.values(byId).filter(
-    summary => summary.origin === 'subagent' && summary.parentId === parentSessionId,
+    summary => summary.origin === 'subagent' && summary.parentId === parentSessionId
+      && !isSideThreadSummary(summary),
   )
 }
 
@@ -145,56 +150,14 @@ function CatalogLoadingRows(props: {
 }
 
 /**
- * The live lines of one RUNNING subagent card: the last text output and the
- * last tool call of the child's history tail, refreshed every few seconds
- * while the page is visible. Idle cards render nothing (a quiet topology); a
- * running child with neither output yet reads "thinking…".
+ * The live lines of one RUNNING subagent card: a pure presentation of the
+ * batch `subagents.live` activity. The polling lives in one place (the
+ * SubagentView hook), not per card. A running child with neither output yet
+ * reads "thinking…".
  */
-function SubagentLiveLines(props: {
-  ctx: Context
-  parentSessionId: string
-  childSessionId: string
-  mode: SidebarSubagentAddress['mode']
-  running: boolean
-  /** The page is visible (active tab + open panel): skip polling otherwise. */
-  active: boolean
-}) {
-  const { ctx, parentSessionId, childSessionId, mode, running, active } = props
-  const [live, setLive] = useState<ReturnType<typeof lastActivity>>({})
-  const controllerRef = useRef<AbortController | undefined>(undefined)
-  const address = useMemo(
-    () => ({ parentSessionId, childSessionId, mode }),
-    [parentSessionId, childSessionId, mode],
-  )
-
-  const load = useCallback(async (): Promise<void> => {
-    controllerRef.current?.abort()
-    const controller = new AbortController()
-    controllerRef.current = controller
-    try {
-      const response = await ctx.connection.api.subagents.history(
-        { ...address, maxMessages: 12 },
-        controller.signal,
-      )
-      if (!response.result.ok) return
-      setLive(lastActivity(response.result.value.events))
-    } catch {
-      // Aborted by a newer pull or a wire failure: keep the last known lines.
-    }
-  }, [ctx, address])
-
-  useEffect(() => {
-    if (!active) return
-    void load()
-    if (!running) return
-    const timer = window.setInterval(() => { void load() }, POLL_MS)
-    return () => { window.clearInterval(timer) }
-  }, [load, running, active])
-
-  useEffect(() => () => { controllerRef.current?.abort() }, [])
-
-  if (!running) return null
-  if (live.text === undefined && live.tool === undefined) {
+function SubagentLiveLines(props: { live: LastActivity | undefined }) {
+  const { live } = props
+  if (live?.text === undefined && live?.tool === undefined) {
     return <span className={css.subagentLive}>{t('subagentThinking')}</span>
   }
   return (
@@ -214,6 +177,59 @@ function SubagentLiveLines(props: {
   )
 }
 
+/**
+ * One shared live-preview poller for the whole Subagent tree. Unlike the old
+ * per-card `subagents.history` timers, this sends at most ONE `subagents.live`
+ * request at a time: a recursive timeout starts only after the previous
+ * request settles, so a slow host never sees abort/restart storms.
+ */
+function useSubagentLive(
+  rootId: string | undefined,
+  active: boolean,
+): Readonly<Record<string, LastActivity>> {
+  const [live, setLive] = useState<Record<string, LastActivity>>({})
+  const controllerRef = useRef<AbortController | undefined>(undefined)
+
+  // A new tree must never inherit another root's live previews.
+  useEffect(() => { setLive({}) }, [rootId])
+
+  useEffect(() => {
+    if (rootId === undefined || !active) return
+    const targetRootId = rootId
+    let disposed = false
+    let timer: number | undefined
+
+    const schedule = (): void => {
+      if (disposed) return
+      timer = window.setTimeout(() => { void load() }, POLL_MS)
+    }
+    async function load(): Promise<void> {
+      if (disposed) return
+      const controller = new AbortController()
+      controllerRef.current = controller
+      try {
+        const result = await api.subagentsLive(targetRootId, controller.signal)
+        if (!disposed) setLive(result.live)
+      } catch {
+        // Keep the last known live map; the next scheduled poll retries.
+      } finally {
+        if (controllerRef.current === controller) controllerRef.current = undefined
+        if (!disposed) schedule()
+      }
+    }
+
+    void load()
+    return () => {
+      disposed = true
+      if (timer !== undefined) window.clearTimeout(timer)
+      controllerRef.current?.abort()
+      controllerRef.current = undefined
+    }
+  }, [rootId, active])
+
+  return live
+}
+
 interface RowsProps {
   parentSessionId: string
   catalog: SidebarSubagentCatalog | undefined
@@ -222,19 +238,26 @@ interface RowsProps {
   level: number
   /** The currently-open session id (highlighted in the topology). */
   currentSessionId: string
-  /** The page is visible (active tab + open panel): live polling pauses otherwise. */
-  active: boolean
-  ctx: Context
+  /** The batch live-preview map (child id → latest activity). */
+  live: Readonly<Record<string, LastActivity>>
   openChild: (address: SidebarSubagentAddress) => void
   refresh: (parentSessionId: string) => void
 }
 
 /** Render one topology level; branches are always expanded (lazy catalogs). */
 function CatalogRows({
-  parentSessionId, catalog, catalogs, byId, level, currentSessionId, active, ctx,
+  parentSessionId, catalog, catalogs, byId, level, currentSessionId, live,
   openChild, refresh,
 }: RowsProps) {
   const emptyLoading = catalog?.state === 'loading' && catalog.entries.length === 0
+  // Side Chat threads are honest catalog citizens (durable descriptor, 'Side: '
+  // label) but they are NOT subagent topology — filter them out here (the tab
+  // strip owns them). Legacy threads created before the descriptor fix still
+  // arrive as corrupt diagnostics; they are recognized by summary title.
+  const visibleEntries = (catalog?.entries ?? []).filter((entry) => {
+    if (entry.kind === 'child') return !(entry.label?.startsWith(SIDE_LABEL_PREFIX) ?? false)
+    return !(byId[entry.id]?.displayTitle.startsWith(SIDE_LABEL_PREFIX) ?? false)
+  })
   return (
     <>
       {emptyLoading && (
@@ -253,7 +276,7 @@ function CatalogRows({
           </button>
         </div>
       )}
-      {(catalog?.entries ?? []).map((entry) => {
+      {visibleEntries.map((entry) => {
         if (entry.kind === 'diagnostic') {
           return (
             <div key={entry.id} className={css.subagentNode}>
@@ -314,14 +337,9 @@ function CatalogRows({
               <span className={css.subagentContent}>
                 <span className={css.subagentLabel}>{label}</span>
                 <span className={css.subagentSecondary}>{secondary}</span>
-                <SubagentLiveLines
-                  ctx={ctx}
-                  parentSessionId={parentSessionId}
-                  childSessionId={entry.id}
-                  mode={entry.mode}
-                  running={entry.activity === 'running'}
-                  active={active}
-                />
+                {entry.activity === 'running' && (
+                  <SubagentLiveLines live={live[entry.id]} />
+                )}
               </span>
             </div>
             {!knownLeaf && (
@@ -342,8 +360,7 @@ function CatalogRows({
                       byId={byId}
                       level={level + 1}
                       currentSessionId={currentSessionId}
-                      active={active}
-                      ctx={ctx}
+                      live={live}
                       openChild={openChild}
                       refresh={refresh}
                     />
@@ -645,6 +662,7 @@ export function SubagentView(props: {
   const rootId = useMemo(() => rootAncestor(byId, sessionId), [byId, sessionId])
   const rootCatalog = rootId === undefined ? undefined : catalogs[rootId]
   const rootSummary = rootId === undefined ? undefined : byId[rootId]
+  const live = useSubagentLive(rootId, active)
 
   /** Catalog owners currently consuming live membership updates. */
   const observedRef = useRef(new Set<string>())
@@ -839,8 +857,7 @@ export function SubagentView(props: {
                   byId={byId}
                   level={1}
                   currentSessionId={sessionId}
-                  active={active}
-                  ctx={ctx}
+                  live={live}
                   openChild={openChild}
                   refresh={refresh}
                 />

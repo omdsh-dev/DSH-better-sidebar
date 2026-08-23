@@ -46,6 +46,9 @@ describe('side card preferences', () => {
         explorerExclude: ['.DS_Store', 'Thumbs.db'],
         terminalShell: '',
         terminalShellArgs: '',
+        titleBarScheme: 'auto',
+        titleBarPresetId: '',
+        customCss: '',
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
@@ -76,6 +79,9 @@ describe('side card preferences', () => {
         explorerExclude: ['.DS_Store', 'Thumbs.db'],
         terminalShell: '',
         terminalShellArgs: '',
+        titleBarScheme: 'auto',
+        titleBarPresetId: '',
+        customCss: '',
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
@@ -106,6 +112,9 @@ describe('side card preferences', () => {
         explorerExclude: ['.DS_Store', 'Thumbs.db'],
         terminalShell: '',
         terminalShellArgs: '',
+        titleBarScheme: 'auto',
+        titleBarPresetId: '',
+        customCss: '',
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
@@ -176,6 +185,44 @@ describe('side card preferences', () => {
     expect((await loadPrefs(wire({ titleBarCompat: true }))).titleBarCompat).toBe(true)
   })
 
+  it('defaults the title-bar scheme to the conservative auto with no preset or custom CSS', async () => {
+    // Absent or malformed → auto (plain web keeps the untouched layout).
+    expect((await loadPrefs(wire({}))).titleBarScheme).toBe('auto')
+    expect((await loadPrefs(wire({ titleBarScheme: 'weird' }))).titleBarScheme).toBe('auto')
+    expect((await loadPrefs(wire({ titleBarScheme: 1 }))).titleBarScheme).toBe('auto')
+    expect((await loadPrefs(wire({}))).titleBarPresetId).toBe('')
+    expect((await loadPrefs(wire({ titleBarPresetId: 5 }))).titleBarPresetId).toBe('')
+    expect((await loadPrefs(wire({}))).customCss).toBe('')
+    expect((await loadPrefs(wire({ customCss: 7 }))).customCss).toBe('')
+    // Valid values survive verbatim (including the explicit web scheme).
+    const picked = await loadPrefs(wire({ titleBarScheme: 'preset', titleBarPresetId: 'dsh-desktop', customCss: 'html { }' }))
+    expect(picked.titleBarScheme).toBe('preset')
+    expect(picked.titleBarPresetId).toBe('dsh-desktop')
+    expect(picked.customCss).toBe('html { }')
+    expect((await loadPrefs(wire({ titleBarScheme: 'web' }))).titleBarScheme).toBe('web')
+  })
+
+  it('migrates LEGACY documents that ALREADY HAVE VALUES into the custom scheme', async () => {
+    // A pre-scheme document with the manual compat flag on maps to the
+    // custom scheme, keeping the strip px the user chose.
+    const migrated = await loadPrefs(wire({ titleBarCompat: true, titleBarStripPx: 56 }))
+    expect(migrated.titleBarScheme).toBe('custom')
+    expect(migrated.titleBarStripPx).toBe(56)
+    // A non-default strip px alone (only reachable through the old gear
+    // popup) also counts as "already has values" → custom.
+    const stripOnly = await loadPrefs(wire({ titleBarStripPx: 48 }))
+    expect(stripOnly.titleBarScheme).toBe('custom')
+    expect(stripOnly.titleBarStripPx).toBe(48)
+    // A stored scheme always wins over the legacy fields (round-trip of the
+    // mirrored write: preset stays preset even though the mirror is true).
+    const roundTrip = await loadPrefs(wire({ titleBarScheme: 'preset', titleBarCompat: true }))
+    expect(roundTrip.titleBarScheme).toBe('preset')
+    // Legacy off / absent / default strip → the conservative auto scheme.
+    expect((await loadPrefs(wire({ titleBarCompat: false }))).titleBarScheme).toBe('auto')
+    expect((await loadPrefs(wire({ titleBarStripPx: 40 }))).titleBarScheme).toBe('auto')
+    expect((await loadPrefs(wire({}))).titleBarScheme).toBe('auto')
+  })
+
   it('defaults titleBarStripPx to 40 and clamps stored values into the contract range', async () => {
     // Absent or malformed → 40 (the strip default).
     expect((await loadPrefs(wire({}))).titleBarStripPx).toBe(40)
@@ -238,9 +285,9 @@ describe('side card preferences', () => {
     const store = createSidebarStore()
     // Node environment: no window → the width falls back to PANEL_DEFAULT,
     // while the open flag still follows the preference.
-    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     store.setSession('fresh-session')
-    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     const snapshot = store.getSnapshot()
     expect(snapshot.sessionId).toBe('fresh-session')
     expect(snapshot.state?.panelOpen).toBe(false)
@@ -276,7 +323,7 @@ describe('side card preferences', () => {
 
   it('skips the default seed tab when the editor (files window) type is disabled', () => {
     const store = createSidebarStore()
-    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: { editor: false }, viewersEnabled: {}, pluginSettings: {} })
+    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: { editor: false }, viewersEnabled: {}, pluginSettings: {} })
     store.setSession('no-editor')
     const state = store.getSnapshot().state!
     const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs)
@@ -286,7 +333,7 @@ describe('side card preferences', () => {
     // editorExplorer modes.
     for (const editorExplorer of [true, false]) {
       const openStore = createSidebarStore()
-      openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+      openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
       openStore.setSession(`with-editor-${editorExplorer}`)
       const openTabs = allLeaves(openStore.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
       expect(openTabs.map(tab => tab.type)).toEqual(['editor'])
@@ -296,7 +343,7 @@ describe('side card preferences', () => {
   it('seeds the empty editor home tab (files window) in both editorExplorer modes', () => {
     for (const editorExplorer of [true, false]) {
       const store = createSidebarStore()
-      store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+      store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
       store.setSession(`fresh-${editorExplorer}`)
       const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
       expect(tabs).toHaveLength(1)
