@@ -22,6 +22,13 @@ interface DiffData {
   untracked?: string
 }
 
+/** The header title for a diff ref (custom diffs have no path/hash of their own). */
+function diffTitle(diff: SidebarDiffRef): string {
+  if (diff.kind === 'worktree') return diff.path
+  if (diff.kind === 'commit') return `${diff.hash} ${diff.subject}`
+  return 'Diff'
+}
+
 export function DiffTab(props: { sessionId: string; cwd: string | undefined; diff: SidebarDiffRef }) {
   const { sessionId, cwd, diff } = props
   const [loading, setLoading] = useState(true)
@@ -39,6 +46,12 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
     setData(null)
     const load = async (): Promise<void> => {
       try {
+        if (diff.kind === 'custom') {
+          // A pre-built per-turn unified diff (from the session log's mutation
+          // views) renders directly — no git round-trip needed.
+          if (!cancelled) setData({ diff: diff.diff })
+          return
+        }
         if (diff.kind === 'commit') {
           const result = await api.gitCommitDiff(scope, diff.hashFull)
           if (!cancelled) setData({ diff: result.diff })
@@ -80,8 +93,8 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
   return (
     <div className={css.gitDiffTab}>
       <div className={css.gitDiffTabHeader}>
-        <span className={css.gitDiffTabTitle} title={diff.kind === 'worktree' ? diff.path : `${diff.hash} ${diff.subject}`}>
-          {diff.kind === 'worktree' ? diff.path : `${diff.hash} ${diff.subject}`}
+        <span className={css.gitDiffTabTitle} title={diffTitle(diff)}>
+          {diffTitle(diff)}
         </span>
         <button
           type="button"

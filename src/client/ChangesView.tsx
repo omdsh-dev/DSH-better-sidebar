@@ -15,18 +15,24 @@ import { IconCodeOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/
 import { IconDiffOutline16 } from './icons.tsx'
 import type { Context, SidebarHistoryEntry } from '../context-types.ts'
 import { producedPaths } from './produced-files.ts'
+import { buildUnifiedDiff, type FileChangeText } from './diff.ts'
 import { t } from './locales.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarStore } from './state.ts'
 import css from './sidebar.module.css'
 import subagentCss from './SubagentView.module.css'
 
-/** Tail-page size for one change poll. Small on purpose: streaming polls
- *  ride the tail and merge by seq, like Side Chat's transcript. */
-const CHANGES_PAGE_EVENTS = 200
-/** First-attach walk cap: how many backward pages the initial load fetches.
- *  6 × 200 = 1200 events is ample for the recent-change history; older
- *  turns simply fall off the view (the max-turns cap also bounds the list). */
+/** First-attach page size (messages). `maxMessages` counts MESSAGES and a
+ *  single message can expand to hundreds of chunk/tool events — a 200-message
+ *  page returned ~75k events / ~16 MB, which stalled the browser. 40 messages
+ *  (~3 MB) covers ~2 completed turns and keeps the first paint responsive;
+ *  the walk pages backward until it has enough turns or hits the cap. */
+const CHANGES_PAGE_EVENTS = 40
+/** Poll page size (messages): the incremental tail fetch only needs the NEWEST
+ *  events, so a small page keeps the 2s poll light. */
+const CHANGES_POLL_EVENTS = 8
+/** First-attach walk cap: how many backward pages the initial load fetches
+ *  before it must already have found the recent turns. */
 const CHANGES_WALK_CAP = 6
 /** Poll cadence while the tab is visible. */
 const CHANGES_POLL_MS = 2000
@@ -34,6 +40,10 @@ const CHANGES_POLL_MS = 2000
 const CHANGES_MAX_TURNS = 60
 /** How many file chips one turn row shows before collapsing into `+N`. */
 const CHANGES_CHIP_LIMIT = 8
+/** Hard cap on retained history events (memory bound): the merged cache never
+ *  grows unbounded across many polls — only the newest tail is kept, which is
+ *  all the recent-turns view needs. */
+const CHANGES_MAX_EVENTS = 30000
 
 /** One completed turn that produced files. */
 interface TurnChange {
@@ -41,9 +51,13 @@ interface TurnChange {
   seq: number
   time: number
   paths: string[]
+  /** Per-file before/after text for that turn (last mutation wins per file). */
+  changes: FileChangeText[]
 }
 
-/** Merge history entries by event seq (newest wins), log order preserved. */
+/** Merge history entries by event seq (newest wins), log order preserved.
+ *  Keeps only the NEWEST {@link CHANGES_MAX_EVENTS} events so the cache stays
+ *  bounded no matter how long the session runs. */
 function mergeBySeq(
   previous: readonly SidebarHistoryEntry[],
   incoming: readonly SidebarHistoryEntry[],
@@ -51,7 +65,34 @@ function mergeBySeq(
   const bySeq = new Map<number, SidebarHistoryEntry>()
   for (const entry of previous) bySeq.set(entry.event.seq, entry)
   for (const entry of incoming) bySeq.set(entry.event.seq, entry)
-  return [...bySeq.values()].sort((a, b) => a.event.seq - b.event.seq)
+  const sorted = [...bySeq.values()].sort((a, b) => a.event.seq - b.event.seq)
+  return sorted.length > CHANGES_MAX_EVENTS ? sorted.slice(sorted.length - CHANGES_MAX_EVENTS) : sorted
+}
+
+/**
+ * Extract the per-file before/after text from a tool/result view. Mutation
+ * tools (`write` / `edit`) return a `card: 'diff'` result view whose `diffs`
+ * carry the applied change as `{ path, oldText, newText }` (full-file hunks
+ * for `edit` via `computeHunkDiffs`, the whole content for `write`).
+ * @param view - the `entry.view` of a `tool/result` event.
+ * @returns file changes, or an empty array when the view is not a diff card.
+ */
+function diffChangesFromResultView(view: unknown): FileChangeText[] {
+  if (view === null || typeof view !== 'object') return []
+  const record = view as { for?: unknown; view?: unknown }
+  if (record.for !== 'result') return []
+  const inner = record.view as { card?: unknown; diffs?: unknown } | null
+  if (inner === null || typeof inner !== 'object') return []
+  if (inner.card !== 'diff') return []
+  if (!Array.isArray(inner.diffs)) return []
+  const changes: FileChangeText[] = []
+  for (const item of inner.diffs) {
+    if (item === null || typeof item !== 'object') continue
+    const d = item as { path?: unknown; oldText?: unknown; newText?: unknown }
+    if (typeof d.path !== 'string' || typeof d.newText !== 'string') continue
+    changes.push({ path: d.path, oldText: d.oldText === null ? null : typeof d.oldText === 'string' ? d.oldText : null, newText: d.newText })
+  }
+  return changes
 }
 
 /**
@@ -59,17 +100,24 @@ function mergeBySeq(
  * new accumulation and clears the call→view index (the upstream deliverables
  * Definition keeps its own per-turn calls map, so a result only derives paths
  * from calls observed within the same turn); `turn/end` seals the turn. Paths
- * keep first-seen order and appear once per turn.
+ * keep first-seen order and appear once per turn; per-file before/after text
+ * (from the result view's `diffs`) lets the click render a REAL per-turn diff.
  * @param entries - merged history rows (event + host-computed view) in seq order.
  * @returns turns that produced files, oldest first.
  */
 export function collectTurnChanges(entries: readonly SidebarHistoryEntry[]): TurnChange[] {
   const turns: TurnChange[] = []
   const callViews = new Map<string, unknown>()
-  let current: { turn: number; seq: number; time: number; paths: string[]; seen: Set<string> } | null = null
+  let current: { turn: number; seq: number; time: number; paths: string[]; seen: Set<string>; changes: Map<string, FileChangeText> } | null = null
   const flush = (): void => {
     if (current !== null && current.paths.length > 0) {
-      turns.push({ turn: current.turn, seq: current.seq, time: current.time, paths: current.paths })
+      turns.push({
+        turn: current.turn,
+        seq: current.seq,
+        time: current.time,
+        paths: current.paths,
+        changes: [...current.changes.values()],
+      })
     }
     current = null
   }
@@ -81,7 +129,7 @@ export function collectTurnChanges(entries: readonly SidebarHistoryEntry[]): Tur
       const turn = typeof data.turn === 'number' ? data.turn : NaN
       if (current !== null && current.turn !== turn) flush()
       callViews.clear()
-      current = { turn, seq: event.seq, time: event.time, paths: [], seen: new Set() }
+      current = { turn, seq: event.seq, time: event.time, paths: [], seen: new Set(), changes: new Map() }
     } else if (event.type === 'turn/end') {
       flush()
     } else if (event.type === 'tool/call') {
@@ -115,21 +163,31 @@ export function collectTurnChanges(entries: readonly SidebarHistoryEntry[]): Tur
         current.seen.add(path)
         current.paths.push(path)
       }
+      // Capture the per-file before/after from the result view (last write
+      // wins: a file edited several times in one turn shows its final delta).
+      for (const change of diffChangesFromResultView(entry.view)) {
+        current.changes.set(change.path, change)
+      }
     }
   }
   flush()
   return turns
 }
 
-/** The file chips of one turn row (open the change as a diff tab). */
+/** The file chips of one turn row (open the change as a real per-turn diff). */
 function ChangeChips(props: {
   paths: readonly string[]
+  changes: readonly FileChangeText[]
   ctx: Context
   sessionId: string
 }): React.ReactNode {
-  const { paths, ctx, sessionId } = props
+  const { paths, changes, ctx, sessionId } = props
   const shown = paths.slice(0, CHANGES_CHIP_LIMIT)
   const hidden = paths.length - shown.length
+  const changeFor = (path: string): FileChangeText | undefined => {
+    const norm = (p: string): string => p.replace(/\\/g, '/')
+    return changes.find(c => norm(c.path) === norm(path))
+  }
   return (
     <div className={css.producedRow}>
       {shown.map(path => {
@@ -142,15 +200,27 @@ function ChangeChips(props: {
             className={css.producedChip}
             title={path}
             onClick={() => {
-              // Open the change as a git-style diff tab: tracked files show
-              // `git diff` of the worktree vs HEAD; untracked files (newly
-              // created, like a fresh test.md) render as a full-file addition.
-              ctx.betterSidebar?.openTab({
-                type: 'diff',
-                id: `diff:w:u:${path}`,
-                title: name,
-                diff: { kind: 'worktree', path, staged: false, untracked: true },
-              })
+              const change = changeFor(path)
+              // Prefer the real per-turn before/after (the result view's hunks)
+              // so the diff shows exactly what THIS turn changed — no git
+              // round-trip, and it works for untracked new files too. Fall back
+              // to a worktree git diff when the log didn't carry a diff view.
+              if (change !== undefined) {
+                const unified = buildUnifiedDiff([change])
+                ctx.betterSidebar?.openTab({
+                  type: 'diff',
+                  id: `diff:turn:${path}`,
+                  title: name,
+                  diff: unified === '' ? { kind: 'custom', diff: '' } : { kind: 'custom', diff: unified },
+                })
+              } else {
+                ctx.betterSidebar?.openTab({
+                  type: 'diff',
+                  id: `diff:w:u:${path}`,
+                  title: name,
+                  diff: { kind: 'worktree', path, staged: false, untracked: true },
+                })
+              }
             }}
           >
             <IconCodeOutline16 size={12} />
@@ -202,7 +272,11 @@ export function ChangesView(props: {
           const value = response.result.value
           if (value.events.length === 0) break
           collected.push(...value.events)
-          if (!value.hasMore) break
+          // Early stop: once the accumulated window holds a healthy number of
+          // COMPLETED turns, the recent-changes view has what it needs — no
+          // need to keep walking into the deep past (each page is multi-MB).
+          const completed = collected.filter(e => e.event.type === 'turn/end').length
+          if (!value.hasMore || completed >= CHANGES_MAX_TURNS) break
           // `history` returns events in log order (oldest first); the window
           // is cut at `beforeSeq` (exclusive), so to page OLDER we continue
           // from the OLDEST seq this page returned.
@@ -214,7 +288,7 @@ export function ChangesView(props: {
       } else {
         const response = await ctx.connection.api.sessions.history({
           sessionId,
-          maxMessages: CHANGES_PAGE_EVENTS,
+          maxMessages: CHANGES_POLL_EVENTS,
         }, controller.signal)
         if (response.result.ok) merged = mergeBySeq(cache.entries, response.result.value.events)
       }
@@ -291,7 +365,7 @@ export function ChangesView(props: {
               <span className={subagentCss.subagentLabel}>
                 {t('changesTurn', { turn: row.turn })} · {t('changesFiles', { count: row.paths.length })}
               </span>
-              <ChangeChips paths={row.paths} ctx={ctx} sessionId={sessionId} />
+              <ChangeChips paths={row.paths} changes={row.changes} ctx={ctx} sessionId={sessionId} />
             </div>
           </div>
         ))}

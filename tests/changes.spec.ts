@@ -31,9 +31,11 @@ function readCall(callId: string, path: string, seq: number): SidebarHistoryEntr
   )
 }
 
-/** The matching tool/result row (success, links the call id). */
-function result(callId: string, seq: number, error = false): SidebarHistoryEntry {
-  return row({
+/** The matching tool/result row (success, links the call id). Optionally
+ *  carries the host-computed `{ for: 'result', view: { card: 'diff', diffs } }`
+ *  that the per-turn diff capture reads. */
+function result(callId: string, seq: number, error = false, diff?: unknown): SidebarHistoryEntry {
+  const base = {
     type: 'tool/result', seq, time: seq,
     data: {
       message: {
@@ -41,7 +43,9 @@ function result(callId: string, seq: number, error = false): SidebarHistoryEntry
         content: [{ isError: error }],
       },
     },
-  })
+  }
+  if (error || diff === undefined) return row(base)
+  return row(base, { for: 'result', view: { card: 'diff', diffs: diff } })
 }
 
 function turnStart(turn: number, seq: number): SidebarHistoryEntry {
@@ -69,9 +73,24 @@ describe('collectTurnChanges', () => {
       turnEnd(2, 23),
     ]
     expect(collectTurnChanges(entries)).toEqual([
-      { turn: 1, seq: 10, time: 10, paths: ['a.txt', 'b.txt', 'c.txt'] },
-      { turn: 2, seq: 20, time: 20, paths: ['d.txt'] },
+      { turn: 1, seq: 10, time: 10, paths: ['a.txt', 'b.txt', 'c.txt'], changes: [] },
+      { turn: 2, seq: 20, time: 20, paths: ['d.txt'], changes: [] },
     ])
+  })
+
+  it('captures per-file before/after text from the result views (last write wins)', () => {
+    const entries = [
+      turnStart(1, 10),
+      writeCall('c1', 'a.txt', 11),
+      result('c1', 12, false, [{ path: 'a.txt', oldText: null, newText: 'v1' }]),
+      editCall('c2', 'a.txt', 13),
+      result('c2', 14, false, [{ path: 'a.txt', oldText: 'v1', newText: 'v2' }]),
+      turnEnd(1, 15),
+    ]
+    const turns = collectTurnChanges(entries)
+    expect(turns).toHaveLength(1)
+    expect(turns[0]!.paths).toEqual(['a.txt'])
+    expect(turns[0]!.changes).toEqual([{ path: 'a.txt', oldText: 'v1', newText: 'v2' }])
   })
 
   it('dedupes a path written twice in the same turn', () => {
@@ -84,7 +103,7 @@ describe('collectTurnChanges', () => {
       turnEnd(1, 15),
     ]
     expect(collectTurnChanges(entries)).toEqual([
-      { turn: 1, seq: 10, time: 10, paths: ['a.txt'] },
+      { turn: 1, seq: 10, time: 10, paths: ['a.txt'], changes: [] },
     ])
   })
 
@@ -126,7 +145,7 @@ describe('collectTurnChanges', () => {
     // The pre-turn call has no owning turn yet (current is null when its
     // result lands), so it contributes nothing; only the in-turn write shows.
     expect(collectTurnChanges(entries)).toEqual([
-      { turn: 1, seq: 10, time: 10, paths: ['b.txt'] },
+      { turn: 1, seq: 10, time: 10, paths: ['b.txt'], changes: [] },
     ])
   })
 })
