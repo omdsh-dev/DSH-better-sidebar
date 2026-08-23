@@ -15,19 +15,11 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GitLogEntry, GitStatusEntry, GitStatusResult, SessionScope } from './api.ts'
 import { api } from './api.ts'
+import { gitBadgeOf } from './git-decor.ts'
 import { relativeTo } from './paths.ts'
 import { relativeTime, t } from './locales.ts'
 import type { SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
-
-/** The XY status letters a row badge shows (X = index, Y = worktree). */
-function badgeOf(entry: GitStatusEntry): string {
-  const index = entry.xy[0]
-  const worktree = entry.xy[1]
-  if (index !== undefined && index !== ' ' && index !== '?') return index
-  if (worktree !== undefined && worktree !== ' ' && worktree !== '?') return worktree
-  return '?'
-}
 
 /** Whether the entry carries STAGED (index) changes — the X letter is set. */
 function isStagedEntry(entry: GitStatusEntry): boolean {
@@ -46,7 +38,7 @@ function isUnstagedEntry(entry: GitStatusEntry): boolean {
 
 /** Whether the entry is untracked (`??`): git diff never includes it. */
 function isUntracked(entry: GitStatusEntry): boolean {
-  return badgeOf(entry) === '?'
+  return gitBadgeOf(entry) === '?'
 }
 
 /** The last path segment (tab title for a file's diff). */
@@ -261,7 +253,7 @@ export function GitView(props: {
           onClick={() => { openWorktreeDiff(entry, staged) }}
           onContextMenu={(event) => { openFileMenu(event, entry, staged) }}
         >
-          <span className={css.gitBadge}>{badgeOf(entry)}</span>
+          <span className={css.gitBadge}>{gitBadgeOf(entry)}</span>
           <span className={css.gitName}>{entry.path}</span>
         </button>
         <button

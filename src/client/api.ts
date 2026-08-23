@@ -43,6 +43,8 @@ export interface GitStatusEntry {
 export interface GitStatusResult {
   isRepo: boolean
   branch?: string
+  /** The repository top level; `entries` paths are relative to it (absent when not a repo). */
+  root?: string
   entries: GitStatusEntry[]
 }
 
@@ -193,6 +195,10 @@ export const api = {
     fetchUpload<{ path: string; size: number }>(scope, dir, relativePath, body, signal),
   gitStatus: (scope: SessionScope, signal?: AbortSignal) =>
     call<GitStatusResult>('git.status', scopePayload(scope, {}), signal),
+  /** Status of one explicit directory (a nested repo root): the host runs
+   *  git against it directly instead of re-scoping to the session cwd. */
+  gitStatusAt: (scope: SessionScope, dir: string, signal?: AbortSignal) =>
+    call<GitStatusResult>('git.status', scopePayload(scope, { dir }), signal),
   gitDiff: (scope: SessionScope, path: string | undefined, staged: boolean, signal?: AbortSignal) =>
     call<{ diff: string }>('git.diff', scopePayload(scope, { ...(path !== undefined ? { path } : {}), staged }), signal),
   gitStage: (scope: SessionScope, path?: string) =>

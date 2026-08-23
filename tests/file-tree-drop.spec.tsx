@@ -34,6 +34,10 @@ vi.mock('../src/client/api.ts', () => ({
         { name: 'a.ts', path: '/tmp/a.ts', isDir: false },
       ],
     }),
+    // The tree's git decorations ride on the status snapshot; the stub keeps
+    // the workspace outside any repo so no row marks are expected.
+    gitStatus: async () => ({ isRepo: false, entries: [] }),
+    gitStatusAt: async () => ({ isRepo: false, entries: [] }),
   },
   downloadUrl: () => '/sidebar/file',
 }))

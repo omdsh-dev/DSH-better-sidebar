@@ -285,7 +285,12 @@ function buildApi(
     },
     'git.status': async (payload) => {
       const { cwd } = cwdOf(payload)
-      return git.status(cwd)
+      const record = payload as { dir?: unknown }
+      // An explicit `dir` (absolute, caller-validated) overrides the session
+      // cwd: the explorer's nested-repo sweep fetches each repository's own
+      // status, and the session header cwd must not re-scope those calls.
+      const target = record.dir === undefined ? cwd : requireAbsolute(requireString(payload, 'dir'))
+      return git.status(target)
     },
     'git.diff': async (payload) => {
       const { cwd } = cwdOf(payload)
