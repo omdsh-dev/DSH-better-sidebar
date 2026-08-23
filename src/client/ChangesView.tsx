@@ -24,27 +24,40 @@ import css from './sidebar.module.css'
 import subagentCss from './SubagentView.module.css'
 
 /** First-attach page size (messages). `maxMessages` counts MESSAGES and a
- *  single message can expand to hundreds of chunk/tool events — a 200-message
- *  page returned ~75k events / ~16 MB, which stalled the browser. 40 messages
- *  (~3 MB) covers ~2 completed turns and keeps the first paint responsive;
- *  the walk pages backward until it has enough turns or hits the cap. */
-const CHANGES_PAGE_EVENTS = 40
+ *  single message can expand to hundreds of chunk/tool events — a 40-message
+ *  page on a session with a large streaming tail returned 16k–44k events /
+ *  4–7 MB per page, which stalled the browser and the walk never completed.
+ *  16 messages keeps each fetch bounded (~1.5–6 MB); the walk pages backward
+ *  until it has enough completed turns. */
+const CHANGES_PAGE_EVENTS = 16
 /** Poll page size (messages): the incremental tail fetch only needs the NEWEST
  *  events, so a small page keeps the 2s poll light. */
 const CHANGES_POLL_EVENTS = 8
 /** First-attach walk cap: how many backward pages the initial load fetches
  *  before it must already have found the recent turns. */
-const CHANGES_WALK_CAP = 6
+const CHANGES_WALK_CAP = 20
 /** Poll cadence while the tab is visible. */
 const CHANGES_POLL_MS = 2000
 /** How many turn rows to keep at most (newest first). */
-const CHANGES_MAX_TURNS = 60
+const CHANGES_MAX_TURNS = 40
+/** How many COMPLETED turns the first walk must already have before it stops
+ *  paging into the deep past — the view is "recent changes", and each backward
+ *  page is multi-hundred-KB, so walking further only to show older turns is not
+ *  worth the payload. */
+const CHANGES_WALK_STOP_TURNS = 4
 /** How many file chips one turn row shows before collapsing into `+N`. */
 const CHANGES_CHIP_LIMIT = 8
 /** Hard cap on retained history events (memory bound): the merged cache never
- *  grows unbounded across many polls — only the newest tail is kept, which is
- *  all the recent-turns view needs. */
+ *  grows unbounded across many polls. The Changes fold only needs the
+ *  STRUCTURAL events (turn markers, tool calls/results, messages) — streaming
+ *  chunk events (`assistant/chunk`, `*-chunks`) are dropped at merge time, so
+ *  a session whose tail has tens of thousands of deltas stays light. */
 const CHANGES_MAX_EVENTS = 30000
+
+/** Whether an event type is a streaming-delta row the Changes fold never reads
+ *  (the fold keys on turn markers + tool call/result + produced paths; chunk
+ *  deltas are pure bulk). Dropping them keeps the merged cache tiny. */
+const CHANGES_DROP_TYPES = new Set(['assistant/chunk', 'reasoning-chunks', 'tool-call-chunks', 'text-chunks'])
 
 /** One completed turn that produced files. */
 interface TurnChange {
@@ -67,7 +80,10 @@ function mergeBySeq(
   for (const entry of previous) bySeq.set(entry.event.seq, entry)
   for (const entry of incoming) bySeq.set(entry.event.seq, entry)
   const sorted = [...bySeq.values()].sort((a, b) => a.event.seq - b.event.seq)
-  return sorted.length > CHANGES_MAX_EVENTS ? sorted.slice(sorted.length - CHANGES_MAX_EVENTS) : sorted
+  // Drop streaming-delta rows (see {@link CHANGES_DROP_TYPES}) so the cache
+  // holds only the structural events the fold reads.
+  const structural = sorted.filter(entry => !CHANGES_DROP_TYPES.has(entry.event.type))
+  return structural.length > CHANGES_MAX_EVENTS ? structural.slice(structural.length - CHANGES_MAX_EVENTS) : structural
 }
 
 /**
@@ -281,6 +297,11 @@ export function ChangesView(props: {
   const [expandedFiles, setExpandedFiles] = useState<ReadonlySet<string>>(new Set())
   const cacheRef = useRef<{ entries: SidebarHistoryEntry[] }>({ entries: [] })
   const controllerRef = useRef<AbortController | null>(null)
+  /** A full (non-poll) history walk is in flight. The 2s poll must NOT abort
+   *  it — a walk over a large session takes many seconds (each page is multi-
+   *  hundred-KB and the tail can be tens of thousands of events), and aborting
+   *  it every 2s would starve the first load into the empty state forever. */
+  const walkingRef = useRef(false)
 
   const toggleFile = useCallback((seq: number, path: string): void => {
     setExpandedFiles(current => {
@@ -306,13 +327,20 @@ export function ChangesView(props: {
   }, [])
 
   const fetchChanges = useCallback(async () => {
+    const cache = cacheRef.current
+    // A poll while a first-attach walk is still running must not abort it:
+    // skip this tick — the in-flight walk will land its result and the next
+    // poll picks up the tail. (The controller is only aborted on session
+    // switch / unmount.)
+    if (walkingRef.current) return
     controllerRef.current?.abort()
     const controller = new AbortController()
     controllerRef.current = controller
-    const cache = cacheRef.current
+    const isWalk = cache.entries.length === 0
+    if (isWalk) walkingRef.current = true
     try {
       let merged = cache.entries
-      if (merged.length === 0) {
+      if (isWalk) {
         const collected: SidebarHistoryEntry[] = []
         let beforeSeq: number | undefined
         for (let page = 0; page < CHANGES_WALK_CAP; page++) {
@@ -327,9 +355,9 @@ export function ChangesView(props: {
           collected.push(...value.events)
           // Early stop: once the accumulated window holds a healthy number of
           // COMPLETED turns, the recent-changes view has what it needs — no
-          // need to keep walking into the deep past (each page is multi-MB).
+          // need to keep walking into the deep past (each page is multi-hundred-KB).
           const completed = collected.filter(e => e.event.type === 'turn/end').length
-          if (!value.hasMore || completed >= CHANGES_MAX_TURNS) break
+          if (!value.hasMore || completed >= CHANGES_WALK_STOP_TURNS) break
           // `history` returns events in log order (oldest first); the window
           // is cut at `beforeSeq` (exclusive), so to page OLDER we continue
           // from the OLDEST seq this page returned.
@@ -354,11 +382,14 @@ export function ChangesView(props: {
       if (!(error instanceof DOMException && error.name === 'AbortError')) {
         setLastError(error instanceof Error ? error.message : String(error))
       }
+    } finally {
+      if (isWalk) walkingRef.current = false
     }
   }, [ctx, sessionId])
 
   useEffect(() => {
     cacheRef.current = { entries: [] }
+    walkingRef.current = false
     controllerRef.current?.abort()
     setRevision(0)
   }, [sessionId])
