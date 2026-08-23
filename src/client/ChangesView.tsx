@@ -43,8 +43,9 @@ const CHANGES_MAX_TURNS = 40
 /** How many COMPLETED turns the first walk must already have before it stops
  *  paging into the deep past — the view is "recent changes", and each backward
  *  page is multi-hundred-KB, so walking further only to show older turns is not
- *  worth the payload. */
-const CHANGES_WALK_STOP_TURNS = 4
+ *  worth the payload. Counted as turns that ACTUALLY changed files (see the
+ *  walk loop), so a run of short no-op turns never starves the real ones. */
+const CHANGES_WALK_STOP_TURNS = 5
 /** How many file chips one turn row shows before collapsing into `+N`. */
 const CHANGES_CHIP_LIMIT = 8
 /** Hard cap on retained history events (memory bound): the merged cache never
@@ -353,11 +354,14 @@ export function ChangesView(props: {
           const value = response.result.value
           if (value.events.length === 0) break
           collected.push(...value.events)
-          // Early stop: once the accumulated window holds a healthy number of
-          // COMPLETED turns, the recent-changes view has what it needs — no
-          // need to keep walking into the deep past (each page is multi-hundred-KB).
-          const completed = collected.filter(e => e.event.type === 'turn/end').length
-          if (!value.hasMore || completed >= CHANGES_WALK_STOP_TURNS) break
+          // Early stop: keep walking until the accumulated window holds a
+          // healthy number of turns that ACTUALLY changed files. Counting raw
+          // completed turns is wrong — a session with many short no-op turns
+          // (e.g. terminal/pwsh calls) would trip the stop before the walk
+          // reaches the older turns that wrote files, and the tab would show
+          // "no changes" even though history has plenty.
+          const changedTurns = collectTurnChanges(collected).filter(row => row.paths.length > 0).length
+          if (!value.hasMore || changedTurns >= CHANGES_WALK_STOP_TURNS) break
           // `history` returns events in log order (oldest first); the window
           // is cut at `beforeSeq` (exclusive), so to page OLDER we continue
           // from the OLDEST seq this page returned.
