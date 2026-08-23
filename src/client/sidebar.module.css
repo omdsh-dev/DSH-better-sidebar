@@ -2452,12 +2452,30 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   transform: rotate(90deg);
 }
 
+/* The turn header while every file of the turn is expanded: the label and
+   chevron take the accent color so the expanded state is unmistakable. */
+.changesTurnHeaderActive {
+  color: var(--dsw-alias-state-business-primary, var(--dsw-alias-label-primary));
+}
+
+.changesTurnHeaderActive .changesTurnChevron {
+  color: var(--dsw-alias-state-business-primary, var(--dsw-alias-label-tertiary));
+}
+
 /* An expanded file chip: the inline diff below it is open, so the chip
-   highlights to show the connection. */
+   highlights to show the connection. Uses the DSH "active pill" recipe
+   (ghost-active fill + ring) so the selected state reads clearly against
+   the unselected chip. */
 .producedChipActive {
-  background: var(--dsw-alias-accent-soft, var(--dsw-alias-interactive-bg-active));
+  background: var(--dsw-alias-button-ghost-active-fill, var(--dsw-alias-accent-soft, var(--dsw-alias-interactive-bg-active)));
   color: var(--dsw-alias-label-primary);
-  border-color: var(--dsw-alias-accent, var(--dsw-alias-border-l2));
+  border-color: var(--dsw-alias-button-ghost-active-border, var(--dsw-alias-state-business-primary, var(--dsw-alias-accent, var(--dsw-alias-border-l2))));
+  font-weight: 600;
+}
+
+/* The active chip's icon inherits the stronger color too. */
+.producedChipActive svg {
+  color: var(--dsw-alias-state-business-primary, var(--dsw-alias-label-primary));
 }
 
 /* The inline per-file diff below an expanded chip. Sits on its own inset

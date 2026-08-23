@@ -216,7 +216,7 @@ function TurnRow(props: {
       <div className={subagentCss.subagentContent}>
         <button
           type="button"
-          className={css.changesTurnHeader}
+          className={clsx(css.changesTurnHeader, allOn && css.changesTurnHeaderActive)}
           aria-expanded={allOn}
           onClick={() => { onToggleTurn(row) }}
         >
