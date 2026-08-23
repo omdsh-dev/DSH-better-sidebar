@@ -33,13 +33,16 @@ export function gitRelOf(root: string, abs: string): string | undefined {
   return rel === abs ? undefined : rel
 }
 
+/** The explorer decorations of one repository. */
+export interface GitDecorations {
+  badges: Map<string, string>
+  dirtyDirs: Set<string>
+}
+
 /** The explorer decorations derived from one status snapshot: the badge
  *  letter per repo-relative path key, and the set of directories whose
  *  subtree contains at least one changed file. */
-export function gitDecorations(status: GitStatusResult): {
-  badges: Map<string, string>
-  dirtyDirs: Set<string>
-} {
+export function gitDecorations(status: GitStatusResult): GitDecorations {
   const badges = new Map<string, string>()
   const dirtyDirs = new Set<string>()
   if (!status.isRepo) {
@@ -55,4 +58,25 @@ export function gitDecorations(status: GitStatusResult): {
     }
   }
   return { badges, dirtyDirs }
+}
+
+/**
+ * The deepest repository whose tree contains an absolute path, from a map
+ * of status snapshots keyed by the directory they were fetched for (the
+ * workspace root plus every visible directory carrying a `.git` entry).
+ * The effective matching root is the host-reported repo root when present
+ * (a cwd fetched from inside its repo), else the fetched directory itself.
+ */
+export function owningRepo(
+  repos: ReadonlyMap<string, GitStatusResult>,
+  abs: string,
+): { key: string; root: string; status: GitStatusResult } | undefined {
+  let best: { key: string; root: string; status: GitStatusResult } | undefined
+  for (const [key, status] of repos) {
+    if (!status.isRepo) continue
+    const root = status.root !== undefined && status.root !== '' ? status.root : key
+    if (gitRelOf(root, abs) === undefined) continue
+    if (best === undefined || root.length > best.root.length) best = { key, root, status }
+  }
+  return best
 }

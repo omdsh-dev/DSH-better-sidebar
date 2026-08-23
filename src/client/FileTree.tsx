@@ -36,7 +36,9 @@ import {
 import { SiCursor, SiZedindustries } from 'react-icons/si'
 import { VscFile, VscFolder, VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
 import { api, downloadUrl, type FsEntry, type GitStatusResult } from './api.ts'
-import { gitDecorations, gitKey, gitRelOf } from './git-decor.ts'
+import {
+  gitDecorations, gitKey, gitRelOf, owningRepo, type GitDecorations,
+} from './git-decor.ts'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
 import type { OpenWithTarget } from './open-with.ts'
 import { relativeTo } from './paths.ts'
@@ -60,12 +62,6 @@ export function baseName(path: string): string {
 function parentOf(path: string): string {
   const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return at <= 0 ? path : path.slice(0, at)
-}
-
-/** The decorations of a not-yet-fetched status snapshot (no marks at all). */
-const EMPTY_GIT_DECOR: { badges: Map<string, string>; dirtyDirs: Set<string> } = {
-  badges: new Map(),
-  dirtyDirs: new Set(),
 }
 
 /** Only OS file drags belong to the upload surface; in-app drags (tab reorder,
@@ -150,8 +146,15 @@ export function FileTree(props: {
   const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
-  /** Working-tree status of the session workspace (drives the row marks). */
-  const [git, setGit] = useState<GitStatusResult | null>(null)
+  /**
+   * Working-tree status snapshots keyed by the directory they were fetched
+   * for: the workspace root itself, plus every visible directory that
+   * carries a `.git` entry (nested repositories — the workspace folder is
+   * often not a repo itself, its children are).
+   */
+  const [repos, setRepos] = useState<Map<string, GitStatusResult>>(new Map())
+  /** Repos already requested (a failed fetch is retried on the next refresh). */
+  const repoRequested = useRef<Set<string>>(new Set())
   /** The row whose path was just copied ("copied" label replaces its button). */
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
@@ -255,6 +258,21 @@ export function FileTree(props: {
     setDropTarget(dir)
   }
 
+  /** Fetch one repo's status (deduped; failures are retried next refresh). */
+  const fetchRepo = useCallback((root: string): void => {
+    if (repoRequested.current.has(root)) return
+    repoRequested.current.add(root)
+    api.gitStatus({ sessionId, cwd: root }).then((result) => {
+      setRepos(prev => {
+        const next = new Map(prev)
+        next.set(root, result)
+        return next
+      })
+    }).catch(() => {
+      repoRequested.current.delete(root)
+    })
+  }, [sessionId])
+
   const storeLevel = useCallback((path: string, level: LevelData) => {
     dataRef.current = { ...dataRef.current, [path]: level }
     setData(dataRef.current)
@@ -265,10 +283,15 @@ export function FileTree(props: {
     storeLevel(dir, {})
     api.fsTree({ sessionId, cwd }, dir).then((listing) => {
       storeLevel(dir, { entries: listing.entries })
+      // A `.git` entry marks a repository root (worktrees carry a `.git`
+      // file) — fetch its status so the subtree gets decorated.
+      for (const entry of listing.entries) {
+        if (entry.name === '.git') fetchRepo(dir)
+      }
     }).catch((error: unknown) => {
       storeLevel(dir, { error: error instanceof Error ? error.message : String(error) })
     })
-  }, [sessionId, cwd, storeLevel])
+  }, [sessionId, cwd, storeLevel, fetchRepo])
 
   // The caller's refresh tick wipes the cache (declared BEFORE the load
   // effect so the reload below sees the empty cache).
@@ -289,48 +312,41 @@ export function FileTree(props: {
     for (const dir of expanded) loadDir(dir)
   }, [cwd, expanded, refreshTick, loadDir])
 
-  // The git decorations ride the same refresh affordance: fetched on mount
-  // and on every refresh tick (the tree has no file watcher — KISS).
+  // The git decorations ride the same refresh affordance: the workspace
+  // root's status is fetched on mount and on every refresh tick, and the
+  // repo map is reset so nested repositories are re-discovered (the tree
+  // has no file watcher — KISS).
   useEffect(() => {
-    if (cwd === undefined) {
-      setGit(null)
-      return
+    repoRequested.current = new Set()
+    setRepos(new Map())
+    if (cwd === undefined) return
+    fetchRepo(cwd)
+  }, [sessionId, cwd, refreshTick, fetchRepo])
+
+  /** Decorations per repo key (recomputed only when a snapshot arrives). */
+  const decorByKey = useMemo(() => {
+    const map = new Map<string, GitDecorations>()
+    for (const [key, status] of repos) {
+      map.set(key, gitDecorations(status))
     }
-    let cancelled = false
-    api.gitStatus({ sessionId, cwd }).then((result) => {
-      if (!cancelled) setGit(result)
-    }).catch(() => {
-      if (!cancelled) setGit(null)
-    })
-    return () => { cancelled = true }
-  }, [sessionId, cwd, refreshTick])
+    return map
+  }, [repos])
 
-  /** The repo root used for path matching: the host-reported root when
-   *  available, else the workspace root itself (the common case — host
-   *  versions before the `root` field fall back to it; a cwd deeper inside
-   *  the repo then merely shows no marks, never wrong ones). */
-  const gitRoot = git !== null && git.isRepo ? (git.root ?? cwd) : undefined
-
-  /** Badge letter per repo-relative path key, plus the set of directories
-   *  whose subtree contains a changed file. Both are recomputed only when a
-   *  fresh status snapshot arrives. */
-  const gitDecor = useMemo(
-    () => (git === null ? EMPTY_GIT_DECOR : gitDecorations(git)),
-    [git],
-  )
-
-  /** The badge letter of an absolute row path (undefined when not in the repo). */
+  /** The badge letter of an absolute row path (undefined when not in a repo). */
   const badgeOfPath = (abs: string): string | undefined => {
-    if (gitRoot === undefined) return undefined
-    const rel = gitRelOf(gitRoot, abs)
-    return rel === undefined ? undefined : gitDecor.badges.get(gitKey(rel))
+    const repo = owningRepo(repos, abs)
+    if (repo === undefined) return undefined
+    const rel = gitRelOf(repo.root, abs)
+    if (rel === undefined) return undefined
+    return decorByKey.get(repo.key)?.badges.get(gitKey(rel))
   }
 
   /** Whether a directory row's subtree contains at least one changed file. */
   const dirIsDirty = (abs: string): boolean => {
-    if (gitRoot === undefined) return false
-    const rel = gitRelOf(gitRoot, abs)
-    return rel !== undefined && gitDecor.dirtyDirs.has(gitKey(rel))
+    const repo = owningRepo(repos, abs)
+    if (repo === undefined) return false
+    const rel = gitRelOf(repo.root, abs)
+    return rel !== undefined && (decorByKey.get(repo.key)?.dirtyDirs.has(gitKey(rel)) ?? false)
   }
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
@@ -467,7 +483,8 @@ export function FileTree(props: {
   const root = cwd
   /** The workspace root row marks any repo with pending changes (VSCode's
    *  root-folder dot — the git panel remains the source of truth). */
-  const rootDirty = git !== null && git.isRepo && git.entries.length > 0
+  const cwdRepo = cwd === undefined ? undefined : repos.get(cwd)
+  const rootDirty = cwdRepo !== undefined && cwdRepo.isRepo && cwdRepo.entries.length > 0
 
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
