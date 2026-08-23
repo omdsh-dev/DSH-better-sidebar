@@ -4,7 +4,7 @@ import type { SidebarHistoryEntry } from '../src/context-types.ts'
 
 /** One history row helper: an event plus an optional tool-call view. */
 function row(event: Record<string, unknown>, view?: unknown): SidebarHistoryEntry {
-  return { event: event as SidebarHistoryEntry['event'], ...(view === undefined ? {} : { view }) }
+  return { event: event as unknown as SidebarHistoryEntry['event'], ...(view === undefined ? {} : { view }) }
 }
 
 /** A tool/call row whose result carries a diff-card location. */

@@ -7,14 +7,13 @@
  * `producedPaths` mutation-intent derivation (a `diff` card or a generic
  * `edit` card carries `locations`; reads, deletes and failed calls
  * contribute nothing, matching the ui-deliverables contract). One row per
- * turn that changed files; the chips open the path in the sidebar editor.
+ * turn that changed files; the chips open the change as a git-style diff tab.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSyncExternalStore } from 'react'
 import { IconCodeOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import { IconDiffOutline16 } from './icons.tsx'
 import type { Context, SidebarHistoryEntry } from '../context-types.ts'
-import { openSidebarFile } from './intercept.tsx'
 import { producedPaths } from './produced-files.ts'
 import { t } from './locales.ts'
 import type { SessionScope } from './api.ts'
@@ -122,14 +121,13 @@ export function collectTurnChanges(entries: readonly SidebarHistoryEntry[]): Tur
   return turns
 }
 
-/** The file chips of one turn row (opened in the sidebar editor). */
+/** The file chips of one turn row (open the change as a diff tab). */
 function ChangeChips(props: {
   paths: readonly string[]
   ctx: Context
-  store: SidebarStore
   sessionId: string
 }): React.ReactNode {
-  const { paths, ctx, store, sessionId } = props
+  const { paths, ctx, sessionId } = props
   const shown = paths.slice(0, CHANGES_CHIP_LIMIT)
   const hidden = paths.length - shown.length
   return (
@@ -143,7 +141,17 @@ function ChangeChips(props: {
             type="button"
             className={css.producedChip}
             title={path}
-            onClick={() => { openSidebarFile(ctx, store, sessionId, path) }}
+            onClick={() => {
+              // Open the change as a git-style diff tab: tracked files show
+              // `git diff` of the worktree vs HEAD; untracked files (newly
+              // created, like a fresh test.md) render as a full-file addition.
+              ctx.betterSidebar?.openTab({
+                type: 'diff',
+                id: `diff:w:u:${path}`,
+                title: name,
+                diff: { kind: 'worktree', path, staged: false, untracked: true },
+              })
+            }}
           >
             <IconCodeOutline16 size={12} />
             <span>{name}</span>
@@ -162,7 +170,7 @@ export function ChangesView(props: {
   scope: SessionScope
   visible: boolean
 }): React.ReactNode {
-  const { ctx, store, scope, visible } = props
+  const { ctx, scope, visible } = props
   const sessionId = scope.sessionId
   const sessions = ctx.sessions
   const list = useSyncExternalStore(
@@ -170,6 +178,7 @@ export function ChangesView(props: {
     useCallback(() => sessions.list.getSnapshot(), [sessions]),
   )
   const [revision, setRevision] = useState(0)
+  const [lastError, setLastError] = useState<string | null>(null)
   const cacheRef = useRef<{ entries: SidebarHistoryEntry[] }>({ entries: [] })
   const controllerRef = useRef<AbortController | null>(null)
 
@@ -189,14 +198,17 @@ export function ChangesView(props: {
             maxMessages: CHANGES_PAGE_EVENTS,
             ...(beforeSeq === undefined ? {} : { beforeSeq }),
           }, controller.signal)
-          if (!response.result.ok) throw new Error('history walk failed')
+          if (!response.result.ok) throw new Error(`history failed: ${response.result.error.code} ${response.result.error.message}`)
           const value = response.result.value
           if (value.events.length === 0) break
           collected.push(...value.events)
           if (!value.hasMore) break
-          const last = value.events[value.events.length - 1]
-          if (last === undefined) break
-          beforeSeq = last.event.seq
+          // `history` returns events in log order (oldest first); the window
+          // is cut at `beforeSeq` (exclusive), so to page OLDER we continue
+          // from the OLDEST seq this page returned.
+          const oldest = value.events[0]
+          if (oldest === undefined) break
+          beforeSeq = oldest.event.seq
         }
         merged = mergeBySeq([], collected)
       } else {
@@ -207,10 +219,14 @@ export function ChangesView(props: {
         if (response.result.ok) merged = mergeBySeq(cache.entries, response.result.value.events)
       }
       cache.entries = merged
+      setLastError(null)
       setRevision(value => value + 1)
-    } catch {
-      // Poll errors are swallowed (the next tick retries); an aborted
-      // controller on teardown is expected and not an error.
+    } catch (error) {
+      // Keep the last error visible so a broken fetch is diagnosable instead
+      // of silently showing "no changes".
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        setLastError(error instanceof Error ? error.message : String(error))
+      }
     }
   }, [ctx, sessionId])
 
@@ -256,10 +272,17 @@ export function ChangesView(props: {
         </button>
       </div>
       <div className={subagentCss.subagentBody}>
-        {isEmpty ? (
+        {lastError !== null ? (
+          <div className={subagentCss.subagentEmpty} style={{ textAlign: 'left', whiteSpace: 'pre-wrap', color: 'var(--dsw-alias-label-danger, #f2a1a1)' }}>
+            <span>Changes fetch error</span>
+            <span className={subagentCss.subagentEmptyHint}>{lastError}</span>
+            <span className={subagentCss.subagentEmptyHint}>session={sessionId}</span>
+          </div>
+        ) : isEmpty ? (
           <div className={subagentCss.subagentEmpty}>
             <span>{t('changesEmpty')}</span>
             <span className={subagentCss.subagentEmptyHint}>{t('changesEmptyHint')}</span>
+            <span className={subagentCss.subagentEmptyHint}>session={sessionId} entries={cacheRef.current.entries.length}</span>
           </div>
         ) : turns.map(row => (
           <div key={row.seq} className={subagentCss.subagentRow} style={{ cursor: 'default' }}>
@@ -268,7 +291,7 @@ export function ChangesView(props: {
               <span className={subagentCss.subagentLabel}>
                 {t('changesTurn', { turn: row.turn })} · {t('changesFiles', { count: row.paths.length })}
               </span>
-              <ChangeChips paths={row.paths} ctx={ctx} store={store} sessionId={sessionId} />
+              <ChangeChips paths={row.paths} ctx={ctx} sessionId={sessionId} />
             </div>
           </div>
         ))}
