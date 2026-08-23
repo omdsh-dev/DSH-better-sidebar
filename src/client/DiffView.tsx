@@ -177,13 +177,14 @@ const GENERATED_PATH = /(^|\/)(?:dist|build|coverage|generated|vendor|node_modul
 const SOURCE_PATH = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts|py|pyw|rb|php|java|kt|kts|scala|go|rs|swift|c|h|cc|cpp|cxx|hpp|hh|hxx|cs|fs|fsx|vb|dart|lua|r|ex|exs|erl|hrl|clj|cljs|cljc|groovy|sh|bash|zsh|fish|ps1|sql|vue|svelte|astro|html|htm|css|scss|sass|less)$/i
 
 /** Source files open by default; tests, docs, generated files and unknown types stay folded. */
-function defaultExpandedFiles(files: DiffFile[]): Set<number> {
+function defaultExpandedFiles(files: DiffFile[], forceAll = false): Set<number> {
   const expanded = new Set<number>()
   files.forEach((file, index) => {
     const path = displayPath(file.newPath === '/dev/null' ? file.oldPath : file.newPath)
     if (!file.binary && file.hunks.length > 0
-      && !TEST_PATH.test(path) && !DOC_PATH.test(path) && !GENERATED_PATH.test(path)
-      && SOURCE_PATH.test(path)) {
+      && (forceAll
+        || (!TEST_PATH.test(path) && !DOC_PATH.test(path) && !GENERATED_PATH.test(path)
+          && SOURCE_PATH.test(path)))) {
       expanded.add(index)
     }
   })
@@ -196,9 +197,12 @@ export interface DiffViewProps {
   /** Untracked-file content: when present, renders as a full-file addition instead of parsing. */
   untrackedPath?: string
   untrackedContent?: string
+  /** Force every file section expanded regardless of its path kind (inline
+   *  per-turn diffs want the hunks visible even for non-source extensions). */
+  defaultExpanded?: boolean
 }
 
-export function DiffView({ diff, untrackedPath, untrackedContent }: DiffViewProps) {
+export function DiffView({ diff, untrackedPath, untrackedContent, defaultExpanded }: DiffViewProps) {
   const parsed = useMemo<ParsedDiff>(() => {
     if (untrackedPath !== undefined) {
       return { files: [untrackedFile(untrackedPath, untrackedContent ?? '')] }
@@ -206,9 +210,9 @@ export function DiffView({ diff, untrackedPath, untrackedContent }: DiffViewProp
     return parseUnifiedDiff(diff)
   }, [diff, untrackedPath, untrackedContent])
   const [expanded, setExpanded] = useState(false)
-  const [expandedFiles, setExpandedFiles] = useState<Set<number>>(() => defaultExpandedFiles(parsed.files))
+  const [expandedFiles, setExpandedFiles] = useState<Set<number>>(() => defaultExpandedFiles(parsed.files, defaultExpanded))
 
-  useEffect(() => { setExpandedFiles(defaultExpandedFiles(parsed.files)) }, [parsed])
+  useEffect(() => { setExpandedFiles(defaultExpandedFiles(parsed.files, defaultExpanded)) }, [parsed, defaultExpanded])
 
   // Flatten into display rows so the cap can slice a single list.
   const rows = useMemo(() => {

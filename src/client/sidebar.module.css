@@ -2411,6 +2411,70 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding: 4px 0;
 }
 
+/* The per-turn changes header: a chevron + "第 N 轮 · M 个文件", clicking it
+   expands/collapses every file of the turn at once. */
+.changesTurnHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.changesTurnHeader:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.changesTurnLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+  font-weight: 400;
+  font: var(--dsw-font-s-14);
+}
+
+.changesTurnChevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  transform: rotate(0deg);
+}
+
+.changesTurnChevronExpanded {
+  transform: rotate(90deg);
+}
+
+/* An expanded file chip: the inline diff below it is open, so the chip
+   highlights to show the connection. */
+.producedChipActive {
+  background: var(--dsw-alias-accent-soft, var(--dsw-alias-interactive-bg-active));
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-accent, var(--dsw-alias-border-l2));
+}
+
+/* The inline per-file diff below an expanded chip. Sits on its own inset
+   card so the red/green lines read against a stable background. */
+.changesInlineDiff {
+  margin: 2px 0 4px;
+  padding: 4px 6px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.changesInlineDiff .gitDiff {
+  border-top: none;
+  padding: 0;
+}
+
 .producedLabel {
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-label-tertiary);
@@ -2467,6 +2531,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .gitLogMore:focus-visible,
 .gitDiffFile:focus-visible,
 .gitDiffExpand:focus-visible,
+.changesTurnHeader:focus-visible,
+.producedChip:focus-visible,
 .terminalRetry:focus-visible,
 .editorModeButton:focus-visible,
 .editorDownloadLink:focus-visible,

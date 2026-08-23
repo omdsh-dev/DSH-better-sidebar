@@ -11,11 +11,12 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSyncExternalStore } from 'react'
+import clsx from 'clsx'
 import { IconCodeOutline16, IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
-import { IconDiffOutline16 } from './icons.tsx'
 import type { Context, SidebarHistoryEntry } from '../context-types.ts'
 import { producedPaths } from './produced-files.ts'
 import { buildUnifiedDiff, type FileChangeText } from './diff.ts'
+import { DiffView } from './DiffView.tsx'
 import { t } from './locales.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarStore } from './state.ts'
@@ -174,61 +175,87 @@ export function collectTurnChanges(entries: readonly SidebarHistoryEntry[]): Tur
   return turns
 }
 
-/** The file chips of one turn row (open the change as a real per-turn diff). */
-function ChangeChips(props: {
-  paths: readonly string[]
-  changes: readonly FileChangeText[]
+/** One turn row: a clickable turn header (expand/collapse all files) with the
+ *  file chips ALWAYS shown below it; clicking a chip expands THAT file's real
+ *  per-turn diff inline (no git round-trip). */
+function TurnRow(props: {
+  row: TurnChange
+  expanded: ReadonlySet<string>
+  onToggleTurn: (row: TurnChange) => void
+  onToggleFile: (seq: number, path: string) => void
   ctx: Context
-  sessionId: string
 }): React.ReactNode {
-  const { paths, changes, ctx, sessionId } = props
-  const shown = paths.slice(0, CHANGES_CHIP_LIMIT)
-  const hidden = paths.length - shown.length
+  const { row, expanded, onToggleTurn, onToggleFile, ctx } = props
+  const keyOf = (path: string): string => `${row.seq}:${path}`
+  const allOn = row.paths.length > 0 && row.paths.every(path => expanded.has(keyOf(path)))
   const changeFor = (path: string): FileChangeText | undefined => {
     const norm = (p: string): string => p.replace(/\\/g, '/')
-    return changes.find(c => norm(c.path) === norm(path))
+    return row.changes.find(c => norm(c.path) === norm(path))
   }
+  const shown = row.paths.slice(0, CHANGES_CHIP_LIMIT)
+  const hidden = row.paths.length - shown.length
   return (
-    <div className={css.producedRow}>
-      {shown.map(path => {
-        const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
-        const name = at === -1 ? path : path.slice(at + 1)
-        return (
-          <button
-            key={path}
-            type="button"
-            className={css.producedChip}
-            title={path}
-            onClick={() => {
-              const change = changeFor(path)
-              // Prefer the real per-turn before/after (the result view's hunks)
-              // so the diff shows exactly what THIS turn changed — no git
-              // round-trip, and it works for untracked new files too. Fall back
-              // to a worktree git diff when the log didn't carry a diff view.
-              if (change !== undefined) {
-                const unified = buildUnifiedDiff([change])
-                ctx.betterSidebar?.openTab({
-                  type: 'diff',
-                  id: `diff:turn:${path}`,
-                  title: name,
-                  diff: unified === '' ? { kind: 'custom', diff: '' } : { kind: 'custom', diff: unified },
-                })
-              } else {
-                ctx.betterSidebar?.openTab({
-                  type: 'diff',
-                  id: `diff:w:u:${path}`,
-                  title: name,
-                  diff: { kind: 'worktree', path, staged: false, untracked: true },
-                })
-              }
-            }}
-          >
-            <IconCodeOutline16 size={12} />
-            <span>{name}</span>
-          </button>
-        )
-      })}
-      {hidden > 0 && <span className={css.producedMore}>+{hidden}</span>}
+    <div className={subagentCss.subagentRow} style={{ cursor: 'default' }}>
+      <StateDot state="done" className={subagentCss.subagentDot} />
+      <div className={subagentCss.subagentContent}>
+        <button
+          type="button"
+          className={css.changesTurnHeader}
+          aria-expanded={allOn}
+          onClick={() => { onToggleTurn(row) }}
+        >
+          <span aria-hidden="true" className={clsx(css.changesTurnChevron, allOn && css.changesTurnChevronExpanded)}>›</span>
+          <span className={css.changesTurnLabel}>
+            {t('changesTurn', { turn: row.turn })} · {t('changesFiles', { count: row.paths.length })}
+          </span>
+        </button>
+        <div className={css.producedRow}>
+          {shown.map(path => {
+            const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+            const name = at === -1 ? path : path.slice(at + 1)
+            const open = expanded.has(keyOf(path))
+            const change = changeFor(path)
+            return (
+              <button
+                key={path}
+                type="button"
+                className={clsx(css.producedChip, open && css.producedChipActive)}
+                title={path}
+                aria-expanded={open}
+                onClick={() => {
+                  // A captured per-turn change expands inline; a path without
+                  // one (edge case) still opens the worktree git diff tab.
+                  if (change !== undefined) {
+                    onToggleFile(row.seq, path)
+                  } else {
+                    ctx.betterSidebar?.openTab({
+                      type: 'diff',
+                      id: `diff:w:u:${path}`,
+                      title: name,
+                      diff: { kind: 'worktree', path, staged: false, untracked: true },
+                    })
+                  }
+                }}
+              >
+                <IconCodeOutline16 size={12} />
+                <span>{name}</span>
+              </button>
+            )
+          })}
+          {hidden > 0 && <span className={css.producedMore}>+{hidden}</span>}
+        </div>
+        {shown.filter(path => expanded.has(keyOf(path))).map(path => {
+          const change = changeFor(path)
+          if (change === undefined) return null
+          const unified = buildUnifiedDiff([change])
+          if (unified === '') return null
+          return (
+            <div key={keyOf(path)} className={css.changesInlineDiff}>
+              <DiffView diff={unified} defaultExpanded />
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -249,8 +276,34 @@ export function ChangesView(props: {
   )
   const [revision, setRevision] = useState(0)
   const [lastError, setLastError] = useState<string | null>(null)
+  /** Expanded per-file inline diffs: keys are `${seq}:${path}` (one turn can
+   *  touch the same file more than once — the seq anchor keeps them apart). */
+  const [expandedFiles, setExpandedFiles] = useState<ReadonlySet<string>>(new Set())
   const cacheRef = useRef<{ entries: SidebarHistoryEntry[] }>({ entries: [] })
   const controllerRef = useRef<AbortController | null>(null)
+
+  const toggleFile = useCallback((seq: number, path: string): void => {
+    setExpandedFiles(current => {
+      const key = `${seq}:${path}`
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
+  const toggleTurn = useCallback((row: TurnChange): void => {
+    setExpandedFiles(current => {
+      const next = new Set(current)
+      const allOn = row.paths.length > 0 && row.paths.every(path => next.has(`${row.seq}:${path}`))
+      for (const path of row.paths) {
+        const key = `${row.seq}:${path}`
+        if (allOn) next.delete(key)
+        else next.add(key)
+      }
+      return next
+    })
+  }, [])
 
   const fetchChanges = useCallback(async () => {
     controllerRef.current?.abort()
@@ -359,15 +412,14 @@ export function ChangesView(props: {
             <span className={subagentCss.subagentEmptyHint}>session={sessionId} entries={cacheRef.current.entries.length}</span>
           </div>
         ) : turns.map(row => (
-          <div key={row.seq} className={subagentCss.subagentRow} style={{ cursor: 'default' }}>
-            <StateDot state="done" className={subagentCss.subagentDot} />
-            <div className={subagentCss.subagentContent}>
-              <span className={subagentCss.subagentLabel}>
-                {t('changesTurn', { turn: row.turn })} · {t('changesFiles', { count: row.paths.length })}
-              </span>
-              <ChangeChips paths={row.paths} changes={row.changes} ctx={ctx} sessionId={sessionId} />
-            </div>
-          </div>
+          <TurnRow
+            key={row.seq}
+            row={row}
+            expanded={expandedFiles}
+            onToggleTurn={toggleTurn}
+            onToggleFile={toggleFile}
+            ctx={ctx}
+          />
         ))}
       </div>
     </div>
