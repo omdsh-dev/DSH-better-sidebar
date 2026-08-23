@@ -142,3 +142,12 @@ export const IconListOutline16 = ({ size = 16, className }: IconProps) => (
     <circle cx="1.7" cy="12.5" r="0.9" fill="currentColor" />
   </svg>
 )
+
+/** Manual LLM completion glyph: a four-point spark / AI badge. */
+export const IconAiOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M8 1.5l1.5 3.4 3.4 1.5-3.4 1.5L8 11.3 6.5 7.9 3.1 6.4l3.4-1.5L8 1.5z" fill="currentColor" />
+    <path d="M12.8 10.5l.9 2 2 .9-2 .9-.9 2-.9-2-2-.9 2-.9.9-2z" fill="currentColor" />
+    <path d="M4.5 11.5l.7 1.6 1.6.7-1.6.7-.7 1.6-.7-1.6-1.6-.7 1.6-.7.7-1.6z" fill="currentColor" />
+  </svg>
+)

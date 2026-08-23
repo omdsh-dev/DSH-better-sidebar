@@ -20,7 +20,7 @@ import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap, c
 import { bracketMatching, indentOnInput, indentUnit, foldGutter, foldKeymap, foldService, syntaxTree, ensureSyntaxTree } from '@codemirror/language'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
-import { IconListOutline16 } from './icons.tsx'
+import { IconListOutline16, IconAiOutline16 } from './icons.tsx'
 import { api, htmlUrl } from './api.ts'
 import { languageForPath, languageKeyForExt, extOf, keywordsForLanguage } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
@@ -293,6 +293,12 @@ export function TextEditor(props: FileViewerProps) {
   const [outlineOpen, setOutlineOpen] = useState(false)
   /** The extracted symbols (null while closed); recomputed on each open. */
   const [outlineSymbols, setOutlineSymbols] = useState<OutlineSymbol[] | null>(null)
+  /** Manual LLM panel (P2, mode A): an explicit user-triggered completion. */
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiInstruction, setAiInstruction] = useState('')
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiResult, setAiResult] = useState<string | null>(null)
+  const [aiError, setAiError] = useState<string | null>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<CodeMirrorView | null>(null)
   const savingRef = useRef(false)
@@ -340,6 +346,64 @@ export function TextEditor(props: FileViewerProps) {
     })
     view.focus()
     setOutlineOpen(false)
+  }
+
+  /** Open the LLM panel (the selection, if any, is read at run time). */
+  const openAi = (): void => {
+    setAiResult(null)
+    setAiError(null)
+    setAiInstruction('')
+    setAiOpen(true)
+  }
+
+  /** Run one explicit LLM completion with the current instruction/context. */
+  const runAi = (): void => {
+    const view = viewRef.current
+    if (view === null || aiBusy) return
+    const selection = !view.state.selection.main.empty
+      ? view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to)
+      : ''
+    // Send a capped file context plus the selection so the model sees the
+    // surrounding code; every call is an explicit user trigger (cost is
+    // fully user-controlled).
+    const docText = view.state.doc.toString()
+    const context = docText.length > 8000 ? docText.slice(0, 8000) : docText
+    const instruction = aiInstruction.trim() === '' ? t('aiDefaultInstruction') : aiInstruction
+    setAiBusy(true)
+    setAiError(null)
+    setAiResult(null)
+    api.llmComplete(scope, instruction, { selection, context })
+      .then((res) => { setAiResult(res.text) })
+      .catch((error: unknown) => { setAiError(error instanceof Error ? error.message : String(error)) })
+      .finally(() => { setAiBusy(false) })
+  }
+
+  /** Insert the LLM result immediately after the selection (or cursor). */
+  const insertAiResult = (): void => {
+    const view = viewRef.current
+    if (view === null || aiResult === null) return
+    const { from, to, head } = view.state.selection.main
+    const anchor = view.state.selection.main.empty ? head : to
+    view.dispatch({
+      changes: { from: anchor, insert: aiResult },
+      selection: { anchor: anchor + aiResult.length },
+    })
+    view.focus()
+    setAiOpen(false)
+  }
+
+  /** Replace the selection with the LLM result (no-op when nothing selected). */
+  const replaceAiResult = (): void => {
+    const view = viewRef.current
+    if (view === null || aiResult === null) return
+    const { from, to } = view.state.selection.main
+    if (from === to) return
+    view.dispatch({
+      changes: { from, to, insert: aiResult },
+      selection: { anchor: from + aiResult.length },
+    })
+    view.focus()
+    setAiOpen(false)
   }
 
   /** Anchor the popup above the selection center; clamp inside the viewport. */
@@ -557,6 +621,12 @@ export function TextEditor(props: FileViewerProps) {
             key: 'Ctrl-Shift-\\',
             run: cursorMatchingBracket,
           },
+          // Manual LLM completion (Ctrl+Alt+I): opens the panel for one
+          // explicit user-triggered model call.
+          {
+            key: 'Ctrl-Alt-i',
+            run: () => { openAi(); return true },
+          },
           // Code folding keymap: Ctrl+Shift+[ folds, Ctrl+Shift+] unfolds,
           // Ctrl+Alt+[ / ] fold/unfold all.
           ...foldKeymap,
@@ -772,6 +842,17 @@ export function TextEditor(props: FileViewerProps) {
         {editable && (
           <button
             type="button"
+            className={clsx(css.iconButton, aiOpen && css.iconButtonActive)}
+            aria-label={t('aiComplete')}
+            title={t('aiComplete')}
+            onClick={openAi}
+          >
+            <IconAiOutline16 />
+          </button>
+        )}
+        {editable && (
+          <button
+            type="button"
             className={css.iconButton}
             aria-label={t('save')}
             title={`${t('save')} (Ctrl/Cmd+S)`}
@@ -805,6 +886,32 @@ export function TextEditor(props: FileViewerProps) {
                 <span className={css.editorOutlineLine}>{symbol.line}</span>
               </button>
             ))
+          )}
+        </div>
+      )}
+      {aiOpen && (
+        <div className={css.editorAi}>
+          <div className={css.editorAiRow}>
+            <input
+              className={css.editorAiInput}
+              value={aiInstruction}
+              placeholder={t('aiInstructionPlaceholder')}
+              onChange={(event) => { setAiInstruction(event.target.value) }}
+              onKeyDown={(event) => { if (event.key === 'Enter') { runAi() } }}
+            />
+            <button type="button" className={css.editorAiRun} disabled={aiBusy} onClick={runAi}>
+              {aiBusy ? t('aiRunning') : t('aiRun')}
+            </button>
+          </div>
+          {aiError !== null && <div className={css.editorAiError}>{aiError}</div>}
+          {aiResult !== null && (
+            <div className={css.editorAiResult}>
+              <pre className={css.editorAiText}>{aiResult}</pre>
+              <div className={css.editorAiActions}>
+                <button type="button" className={css.editorAiAction} onClick={insertAiResult}>{t('aiInsert')}</button>
+                <button type="button" className={css.editorAiAction} onClick={replaceAiResult}>{t('aiReplace')}</button>
+              </div>
+            </div>
           )}
         </div>
       )}

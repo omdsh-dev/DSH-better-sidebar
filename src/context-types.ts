@@ -396,6 +396,31 @@ export interface SidebarToolsService {
   register(tool: unknown): () => void
 }
 
+/** One provider-neutral conversation message (mirror of dsh-llm Message). */
+export interface SidebarLlmMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: Array<{ type: 'text'; text: string }>
+}
+
+/** The optional LLM service face (mirror of @deepseek-ai/dsh-llm; read via
+ *  `ctx.get('llm')` so the plugin degrades when the deployment lacks it). */
+export interface SidebarLlmService {
+  /** Stream a completion; yields provider chunks until the stream closes. */
+  stream(options: {
+    provider: string
+    model: string
+    messages: SidebarLlmMessage[]
+    system?: string
+    maxTokens?: number
+    stop?: string[]
+    signal?: AbortSignal
+  }): AsyncIterable<unknown>
+  /** List registered provider route ids. */
+  listProviders(): Array<{ id: string }>
+  /** List a provider's known model ids. */
+  listModels(provider: string): Promise<Array<{ id: string; defaultMaxTokens?: number }>>
+}
+
 /**
  * The agent face a tool sees on `exec.agent` (mirror of @deepseek-ai/dsh-agent's
  * Agent). Only the slices the terminal tools touch are restated: the live

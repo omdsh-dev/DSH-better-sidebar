@@ -186,6 +186,12 @@ export const api = {
    *  check; see the host's browser.probe route). */
   browserProbe: (url: string, signal?: AbortSignal) =>
     call<BrowserProbeResult>('browser.probe', { url }, signal),
+  /** One explicit LLM completion through the host (P2, mode A): the editor
+   *  sends the selection/context plus an instruction; every call is a
+   *  user-triggered model request. provider/model are optional (host picks a
+   *  default). */
+  llmComplete: (scope: SessionScope, instruction: string, opts: { context?: string; selection?: string; provider?: string; model?: string }) =>
+    call<{ text: string; provider: string; model: string }>('llm.complete', scopePayload(scope, { instruction, ...opts })),
 }
 
 /** Absolute URL of the media route for one path (images only). */

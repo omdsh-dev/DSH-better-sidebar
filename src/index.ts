@@ -18,7 +18,7 @@ import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
-import type { Context, SidebarHttpRequest } from './context-types.ts'
+import type { Context, SidebarHttpRequest, SidebarLlmMessage, SidebarLlmService } from './context-types.ts'
 import {
   Config,
   PrefsSchema,
@@ -361,6 +361,54 @@ function buildApi(
         }
         throw new SidebarError('settings-rejected', error instanceof Error ? error.message : String(error), 400)
       }
+    },
+    // Manual LLM completion (P2, mode A): the client sends the editor
+    // selection plus an instruction and the host streams ONE completion
+    // through dsh's `llm` service. Every call is an explicit user trigger —
+    // there are never automatic LLM calls, so cost is fully user-controlled.
+    // provider/model may come from the client (preferred, e.g. a cheap
+    // model) or default to the first configured provider + its first model.
+    // Degrades to a 501 when the deployment has no `llm` service.
+    'llm.complete': async (payload) => {
+      const llm = ctx.get('llm') as SidebarLlmService | undefined
+      if (llm === undefined) {
+        throw new SidebarError('internal', 'no LLM service is available in this deployment', 501)
+      }
+      const instruction = requireString(payload, 'instruction')
+      const record = payload as { context?: unknown; selection?: unknown; provider?: unknown; model?: unknown }
+      const context = typeof record.context === 'string' ? record.context : ''
+      const selection = typeof record.selection === 'string' ? record.selection : ''
+      let provider = typeof record.provider === 'string' && record.provider !== '' ? record.provider : undefined
+      let model = typeof record.model === 'string' && record.model !== '' ? record.model : undefined
+      if (provider === undefined || model === undefined) {
+        const providers = llm.listProviders()
+        if (providers.length === 0) {
+          throw new SidebarError('internal', 'no LLM provider is configured', 501)
+        }
+        if (provider === undefined) provider = providers[0]!.id
+        const models = await llm.listModels(provider).catch(() => [])
+        if (model === undefined) {
+          model = models[0]?.id
+          if (model === undefined) {
+            throw new SidebarError('internal', `no default model for provider "${provider}"`, 501)
+          }
+        }
+      }
+      // The code block is the selection (or, if empty, the file context) and
+      // the user instruction rides on top. The system line keeps the model
+      // focused on producing code without surrounding prose.
+      const codeBlock = selection !== '' ? selection : context
+      const system = 'You are a concise coding assistant. Follow the user instruction about the provided code and output only the result (code), no surrounding explanation unless asked.'
+      const userText = [codeBlock !== '' ? `\`\`\`\n${codeBlock}\n\`\`\`\n` : '', instruction].filter(Boolean).join('\n')
+      const messages: SidebarLlmMessage[] = [
+        { role: 'user', content: [{ type: 'text', text: userText }] },
+      ]
+      let text = ''
+      for await (const raw of llm.stream({ provider, model, messages, system, maxTokens: 2048 })) {
+        const chunk = raw as { type?: string; text?: string }
+        if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
+      }
+      return { text, provider, model }
     },
     // Probe a URL's RESPONSE HEADERS so the sidebar browser can explain an
     // iframe refusal: X-Frame-Options / CSP frame-ancestors are exactly the

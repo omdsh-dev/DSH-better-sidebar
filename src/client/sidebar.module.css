@@ -965,6 +965,96 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* Manual LLM completion panel (between the header and the editor). */
+.editorAi {
+  flex: none;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-surface-muted);
+}
+
+.editorAiRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.editorAiInput {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 4px;
+  background: var(--dsw-alias-surface-muted);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.editorAiRun {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 4px;
+  background: var(--dsw-alias-surface-muted);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  cursor: pointer;
+}
+
+.editorAiRun:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.editorAiError {
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.editorAiResult {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.editorAiText {
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 4px;
+  background: var(--dsw-alias-surface-muted);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.editorAiActions {
+  display: flex;
+  gap: 6px;
+}
+
+.editorAiAction {
+  padding: 3px 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 4px;
+  background: var(--dsw-alias-surface-muted);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  cursor: pointer;
+}
+
+.iconButtonActive {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-fill-hover);
+}
+
 .dirtyDot {
   width: 7px;
   height: 7px;
