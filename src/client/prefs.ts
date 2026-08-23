@@ -46,6 +46,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     openByDefault: typeof record.openByDefault === 'boolean'
       ? record.openByDefault
       : SIDEBAR_PREFS_DEFAULTS.openByDefault,
+    defaultTab: typeof record.defaultTab === 'string'
+      ? record.defaultTab.trim()
+      : SIDEBAR_PREFS_DEFAULTS.defaultTab,
     defaultWidthPercent: typeof record.defaultWidthPercent === 'number' && Number.isFinite(record.defaultWidthPercent)
       ? clampWidthPercent(record.defaultWidthPercent)
       : SIDEBAR_PREFS_DEFAULTS.defaultWidthPercent,

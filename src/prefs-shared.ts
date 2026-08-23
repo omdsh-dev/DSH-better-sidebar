@@ -13,6 +13,16 @@ export const SIDEBAR_PREFS_NS = 'dsh-better-sidebar'
 export interface SidebarPrefs {
   /** Whether a brand-new conversation opens the side card by default. */
   openByDefault: boolean
+  /**
+   * Which tab a brand-new conversation lands on, as a registered tab
+   * descriptor id ('git', 'subagent', 'terminal', or a plugin's own id).
+   * EMPTY keeps the historical behaviour: the seeded empty Files window.
+   * An id that is unregistered or disabled in `tabsEnabled` is ignored, so
+   * a stale value degrades to that same default rather than an empty pane.
+   * Only the FIRST paint of a session is affected; once the user picks a
+   * tab, the persisted layout owns the choice like any other state.
+   */
+  defaultTab: string
   /** Default panel width as a percent of the window width (20–60). */
   defaultWidthPercent: number
   /**
@@ -225,6 +235,7 @@ export type TitleBarScheme = typeof TITLE_BAR_SCHEMES[number]
 /** Fallback prefs used whenever the settings document is unreachable or malformed. */
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   openByDefault: false,
+  defaultTab: '',
   defaultWidthPercent: WIDTH_PERCENT_DEFAULT,
   autoOpenSubagent: true,
   autoOpenJobs: true,

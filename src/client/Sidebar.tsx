@@ -412,6 +412,52 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }, [sessionId, store])
 
   /**
+   * Default tab: land a brand-new conversation on the configured tab instead
+   * of the seeded Files window. Runs at most once per session and ONLY while
+   * the layout is still that untouched seed (one pane, one path-less editor
+   * tab, or an empty pane when the editor type is disabled), so a restored
+   * layout and any tab the user opened themselves are never fought.
+   *
+   * The open goes through the ordinary `openTab` path rather than a seed in
+   * `makeDefaultState`, which cannot resolve a descriptor: this way the tab
+   * carries its localized title, honours `isTabEnabled`, and works for a
+   * plugin-registered id exactly like a built-in one. An unregistered or
+   * disabled id opens nothing and leaves the seeded default in place.
+   */
+  const defaultTabSeededRef = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    if (sessionId === undefined) return
+    if (defaultTabSeededRef.current === sessionId) return
+    const type = store.getPrefs().defaultTab.trim()
+    if (type === '') return
+    if (ctx.betterSidebar?.isTabEnabled(type) === false) return
+    const descriptor = ctx.betterSidebar?.getTab(type)
+    if (descriptor === undefined) return
+    // Read the REACTIVE snapshot, not a one-shot store read: the seeded
+    // state for a freshly created session lands a tick after `sessionId`
+    // changes, so a single read at that moment can still see the previous
+    // session's layout (or none) and skip the seeding entirely.
+    if (snapshot.sessionId !== sessionId) return
+    const state = snapshot.state
+    if (state === undefined) return
+    const leaf = firstLeaf(state.splits)
+    const pristine = state.splits.kind === 'leaf'
+      && (leaf.tabs.length === 0
+        || (leaf.tabs.length === 1 && leaf.tabs[0]!.type === 'editor' && leaf.tabs[0]!.path === undefined))
+    if (!pristine) return
+    defaultTabSeededRef.current = sessionId
+    store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
+    const title = typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title
+    // `openTab` expands a collapsed panel, which is correct for a user gesture
+    // but must not override `openByDefault: false` here: the two prefs are
+    // orthogonal, one picks WHICH tab and the other WHETHER the panel starts
+    // expanded. Restore the collapsed state the seed asked for.
+    const wasOpen = state.panelOpen
+    ctx.betterSidebar?.openTab({ type, title }, { sessionId, cwd })
+    if (!wasOpen) store.reduce(s => (s.panelOpen ? togglePanel(s) : s))
+  }, [snapshot, sessionId, cwd, store, ctx])
+
+  /**
    * Subagent auto-activation: the moment the current conversation spawns its
    * FIRST direct subagent (a 0 → N transition on the list feed), the "auto
    * open" pref is on, and the Subagent tab type is enabled in settings,
