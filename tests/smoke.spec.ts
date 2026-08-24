@@ -44,6 +44,8 @@ interface FakeContext {
   inject: (deps: readonly string[], callback: (sctx: never) => void) => () => void
   /** Optional services (jobs/agents) are read lazily; absent → undefined. */
   get: (key: string) => undefined
+  /** Host services the plugin publishes (the session backend seam). */
+  provide: (key: string, value: unknown) => void
 }
 
 /**
@@ -101,6 +103,8 @@ describe('host plugin smoke', () => {
       inject: () => () => {},
       // No jobs/agents services: the jobs routes degrade to a 503.
       get: () => undefined,
+      // The session backend seam publishes its two host services here.
+      provide: () => {},
     }
     apply(ctx as never)
     expect(routes.map(route => route.path)).toEqual([
@@ -451,6 +455,7 @@ describe('session cwd resolution over the API route', () => {
       inject: () => () => {},
       // No jobs/agents services in the smoke context: the routes degrade.
       get: () => undefined,
+      provide: () => {},
     }
     apply(ctx as never)
     return routes
@@ -771,6 +776,8 @@ describe('side card settings routes', () => {
       },
       // No jobs/agents services: the jobs routes degrade to a 503.
       get: () => undefined,
+      // The session backend seam publishes its two host services here.
+      provide: () => {},
     }
     apply(ctx as never)
     return routes.find(route => route.path === '/sidebar/api')!
@@ -994,6 +1001,8 @@ describe('agent terminal tool gating', () => {
       },
       // No jobs/agents services: the jobs routes degrade to a 503.
       get: () => undefined,
+      // The session backend seam publishes its two host services here.
+      provide: () => {},
     }
     apply(ctx as never)
     // Default off: no tools are registered even though the settings service is mounted.

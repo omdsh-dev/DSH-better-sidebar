@@ -28,7 +28,22 @@ import {
   type SidebarConfig,
   type SidebarPrefs,
 } from './config.ts'
-import { parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import { isWithin, parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import {
+  forwardablePayload,
+  isRoutableSessionMethod,
+  ownerSessionCwdOf,
+  SessionBackendRegistry,
+  sessionBackendError,
+  SESSION_SCOPED_BINARY_METHODS,
+  SESSION_SCOPED_READ_METHODS,
+  SESSION_SCOPED_WRITE_METHODS,
+  type CwdMode,
+  type OwnerSessionGet,
+  type SessionBackendBinaryResult,
+  type SessionBackendResult,
+  type SidebarSessionBackendRegistry,
+} from './session-backend.ts'
 import { writeWorkspaceUpload } from './fs-operations.ts'
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
@@ -70,6 +85,22 @@ export type {
   FileViewerProps,
   FileFetchStrategy,
 } from './client/service.ts'
+// The host-half extension seam (see docs/plans/2026-08-25-session-backend-seam-design.md):
+// a plugin serving sessions whose workspace lives elsewhere types its backend
+// against these without reaching into the source tree.
+export type { SidebarHostApiService } from './context-types.ts'
+export type {
+  SidebarSessionBackend,
+  SidebarSessionBackendRegistry,
+  SessionBackendSocket,
+  SessionBackendResult,
+  SessionBackendBinaryResult,
+} from './session-backend.ts'
+export {
+  SESSION_SCOPED_READ_METHODS,
+  SESSION_SCOPED_WRITE_METHODS,
+  SESSION_SCOPED_BINARY_METHODS,
+} from './session-backend.ts'
 
 /** Plugin identity for cordis.yml rows. */
 export const name = 'dsh-better-sidebar'
@@ -239,9 +270,14 @@ function buildApi(
   resolved: ResolvedSidebarConfig,
   terminalShell: string,
   getSettings: () => SidebarSettingsFace | undefined,
+  cwdMode: CwdMode = 'local-fallbacks',
+  ownerSessionGet: OwnerSessionGet = (sessionId) => ctx.sessions.get(sessionId),
 ): Record<string, ApiMethod> {
   const cwdOf = (payload: unknown): { sessionId: string; cwd: string } => {
     const sessionId = requireString(payload, 'sessionId')
+    // Owner-strict callers (a remote backend's owner half) get no hydration
+    // fallbacks: the session header is the only source of truth.
+    if (cwdMode === 'owner-strict') return { sessionId, cwd: ownerSessionCwdOf(ownerSessionGet, sessionId) }
     const record = payload as { cwd?: unknown } | null
     const clientCwd = typeof record?.cwd === 'string' && record.cwd !== '' ? record.cwd : undefined
     return { sessionId, cwd: sessionCwdOf(ctx, sessionId, clientCwd) }
@@ -408,6 +444,70 @@ function buildApi(
       // no-op ok is the honest answer — never an error the client must show.
       ptyManager?.close(`${sessionId}:${tab}`)
       return { ok: true }
+    },
+    // Terminal lifecycle as session-scoped API methods. The local browser
+    // drives terminals over the WebSocket (pty events push straight into the
+    // socket); these routes are the pull-shaped equivalent a session backend's
+    // owner half needs, because pty events cannot cross a transport.
+    'terminal.open': (payload) => {
+      if (ptyManager === null) throw new SidebarError('pty-deps-missing', PTY_DEPS_MISSING, 503)
+      const { sessionId, cwd } = cwdOf(payload)
+      const tab = requireString(payload, 'tab')
+      const record = payload as { cols?: unknown; rows?: unknown }
+      const dims = clampDims(typeof record.cols === 'number' ? record.cols : 80, typeof record.rows === 'number' ? record.rows : 24)
+      const handle = ptyManager.open(sessionId, tab, cwd, dims.cols, dims.rows)
+      return { base: handle.transcriptBase, next: handle.outputOffset, exited: handle.exited, exitCode: handle.exitCode ?? null }
+    },
+    // Read output by offset. An offset that fell behind the retained
+    // transcript is clamped to its base: the earliest output is lost exactly
+    // as it is for a local tab whose buffer rolled over, never an error.
+    'terminal.read': (payload) => {
+      if (ptyManager === null) throw new SidebarError('pty-deps-missing', PTY_DEPS_MISSING, 503)
+      const sessionId = requireString(payload, 'sessionId')
+      const tab = requireString(payload, 'tab')
+      const handle = ptyManager.get(`${sessionId}:${tab}`)
+      if (handle === undefined) throw new SidebarError('not-found', 'terminal not found', 404)
+      const record = payload as { offset?: unknown }
+      const requested = typeof record.offset === 'number' && Number.isInteger(record.offset) ? record.offset : handle.transcriptBase
+      const offset = Math.max(handle.transcriptBase, Math.min(requested, handle.outputOffset))
+      return {
+        offset, next: handle.outputOffset,
+        data: handle.transcript.slice(offset - handle.transcriptBase),
+        base: handle.transcriptBase, exited: handle.exited, exitCode: handle.exitCode ?? null,
+      }
+    },
+    'terminal.input': (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      const tab = requireString(payload, 'tab')
+      const data = requireString(payload, 'data')
+      const handle = ptyManager?.get(`${sessionId}:${tab}`)
+      if (handle === undefined) throw new SidebarError('not-found', 'terminal not found', 404)
+      if (!handle.exited) handle.pty.write(data)
+      return { accepted: true }
+    },
+    'terminal.resize': (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      const tab = requireString(payload, 'tab')
+      const record = payload as { cols?: unknown; rows?: unknown }
+      const handle = ptyManager?.get(`${sessionId}:${tab}`)
+      if (handle === undefined) throw new SidebarError('not-found', 'terminal not found', 404)
+      if (typeof record.cols === 'number' && typeof record.rows === 'number' && !handle.exited) {
+        const dims = clampDims(record.cols, record.rows)
+        handle.pty.resize(dims.cols, dims.rows)
+      }
+      return { accepted: true }
+    },
+    'terminal.terminate': (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      ptyManager?.close(`${sessionId}:${requireString(payload, 'tab')}`)
+      return { terminated: true }
+    },
+    // Detach keeps the pty alive for the reconnect grace, matching what the
+    // local WebSocket close path does for a UI tab.
+    'terminal.detach': (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      ptyManager?.scheduleClose(`${sessionId}:${requireString(payload, 'tab')}`, resolved.reconnectGraceMs)
+      return { detached: true }
     },
     // Release an agent terminal by uuid. The WS close frame already does
     // this while the socket is open; this route covers the tab-close that
@@ -662,6 +762,80 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
 
   // ── JSON API ────────────────────────────────────────────────────────────
   const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace)
+
+  // ── Session backend seam ────────────────────────────────────────────────
+  // Plugins claim the sessions whose workspace does not live in this process
+  // (SSH-attached machines, containers, other nodes) and serve the
+  // session-scoped API for them. An unclaimed session costs one predicate
+  // call and keeps the local path byte for byte. See
+  // docs/plans/2026-08-25-session-backend-seam-design.md.
+  const sessionBackends = new SessionBackendRegistry()
+  ctx.provide('sidebarSessionBackends', sessionBackends satisfies SidebarSessionBackendRegistry)
+  // The owner half of the same seam: a remote backend's owner node borrows
+  // the real file/Git/terminal implementations instead of reimplementing
+  // them, but through a strict cwd resolver (no client cwd, no process cwd).
+  const ownerSessionGet: OwnerSessionGet = (sessionId) => ctx.sessions.get(sessionId)
+  let ownerApi: Record<string, ApiMethod> | undefined
+  ctx.provide('sidebarHostApi', {
+    createSessionApi: () => {
+      ownerApi ??= buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace, 'owner-strict', ownerSessionGet)
+      const table = ownerApi
+      const run = async (method: string, sessionId: string, payload: unknown): Promise<SessionBackendResult> => {
+        const handler = table[method]
+        if (handler === undefined || !isRoutableSessionMethod(method)) {
+          return { ok: false, error: { code: 'not-found', message: `unknown session-scoped sidebar method "${method}"` } }
+        }
+        try {
+          return { ok: true, value: await handler({ ...forwardablePayload(payload), sessionId }) }
+        } catch (error) {
+          if (error instanceof SidebarError) return { ok: false, error: { code: error.code, message: error.message } }
+          return { ok: false, error: { code: 'internal', message: error instanceof Error ? error.message : String(error) } }
+        }
+      }
+      return {
+        invoke: run,
+        invokeBinary: async (method, sessionId, payload): Promise<SessionBackendBinaryResult> => {
+          try {
+            const cwd = ownerSessionCwdOf(ownerSessionGet, sessionId)
+            const record = payload as { path?: unknown; download?: unknown } | null
+            const path = requireAbsolute(requireString(record, 'path'))
+            if (!isWithin(cwd, path)) {
+              throw new SidebarError('fs-error', 'path outside the session working directory', 403)
+            }
+            const info = await stat(path)
+            if (!info.isFile() || info.size > resolved.mediaLimit) {
+              throw new SidebarError('fs-error', 'not a file or too large', 400)
+            }
+            const body = new Uint8Array(await readFile(path))
+            if (method === 'html.read') {
+              return { ok: true, status: 200, headers: {
+                'content-type': mediaTypeForPath(path), 'cache-control': 'no-cache',
+                'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer',
+                'content-security-policy': "sandbox allow-scripts allow-popups allow-downloads allow-modals; object-src 'none'",
+              }, body }
+            }
+            if (method !== 'file.read') {
+              return { ok: false, error: { code: 'not-found', message: `unknown binary sidebar method "${method}"` } }
+            }
+            const headers: Record<string, string> = { 'content-type': mediaTypeForPath(path), 'cache-control': 'no-cache' }
+            if (record?.download === true) {
+              headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(basename(path))}`
+            }
+            return { ok: true, status: 200, headers, body }
+          } catch (error) {
+            if (error instanceof SidebarError) return { ok: false, error: { code: error.code, message: error.message } }
+            return { ok: false, error: { code: 'internal', message: error instanceof Error ? error.message : String(error) } }
+          }
+        },
+        methods: {
+          read: SESSION_SCOPED_READ_METHODS,
+          write: SESSION_SCOPED_WRITE_METHODS,
+          binary: SESSION_SCOPED_BINARY_METHODS,
+        },
+      }
+    },
+  })
+
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -682,6 +856,14 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       }
       try {
         const payload = await readJsonBody(req)
+        const sessionId = (payload as { sessionId?: unknown } | null)?.sessionId
+        const backend = isRoutableSessionMethod(method) ? sessionBackends.claim(sessionId as string) : undefined
+        if (backend !== undefined) {
+          const result = await backend.invoke(method, sessionId as string, forwardablePayload(payload))
+          if (!result.ok) throw sessionBackendError(result.error)
+          writeOk(res, result.value)
+          return
+        }
         const handler = api[method]
         if (handler === undefined) {
           throw new SidebarError('not-found', `unknown sidebar API method "${method}"`, 404)
@@ -760,6 +942,16 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const sessionId = url.searchParams.get('sessionId')
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
+        const backend = sessionBackends.claim(sessionId)
+        if (backend !== undefined) {
+          const result = await backend.invokeBinary('file.read', sessionId, {
+            path: raw, download: url.searchParams.get('download') === '1',
+          })
+          if (!result.ok) throw sessionBackendError(result.error)
+          res.writeHead(result.status, result.headers)
+          res.end(Buffer.from(result.body))
+          return
+        }
         const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
         const path = await ensureWorkspacePath(cwd, raw)
         const info = await stat(path)
@@ -814,6 +1006,14 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
           return
         }
         const { sessionId, path } = decoded.ref
+        const backend = sessionBackends.claim(sessionId)
+        if (backend !== undefined) {
+          const result = await backend.invokeBinary('html.read', sessionId, { path })
+          if (!result.ok) throw sessionBackendError(result.error)
+          res.writeHead(result.status, result.headers)
+          res.end(Buffer.from(result.body))
+          return
+        }
         // The session's authoritative cwd (client cwd cannot ride in the URL
         // — the path encoding has no query; a detached first request falls
         // back to the process cwd and is normally refused by the workspace
@@ -863,6 +1063,18 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       // The structural request/socket/head faces satisfy the shared fence;
       // the `ws` package wants the real Node types — cast at this boundary.
       wss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
+        const url = new URL(req.url ?? '/', 'http://dsh.internal')
+        const sessionId = url.searchParams.get('sessionId')
+        const backend = sessionBackends.claim(sessionId)
+        if (backend !== undefined) {
+          // Handing the socket over is final: the backend owns its lifecycle.
+          if (backend.attachTerminal === undefined) {
+            ws.close(1011, `backend "${backend.id}" serves no terminals`)
+            return
+          }
+          backend.attachTerminal(ws, sessionId as string, url.searchParams.get('tab'), { reconnectGraceMs: resolved.reconnectGraceMs })
+          return
+        }
         void attachTerminal(ctx, ptyManager, agentPtyRegistry, ws, req, resolved, () => settingsFace)
       })
     },

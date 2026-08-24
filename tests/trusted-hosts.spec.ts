@@ -78,6 +78,7 @@ function mount(initialTrustedHosts: readonly string[] = []): {
     },
     inject: () => () => {},
     get: () => undefined,
+    provide: () => {},
   }
   apply(ctx as never)
   const api = routes.find(route => route.path === '/sidebar/api')?.handler
