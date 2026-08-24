@@ -180,6 +180,8 @@ export const id: Record<string, string> = {
   settingsOpenTitle: 'Buka secara default untuk obrolan baru',
   settingsOpenDesc: 'Bentangkan kartu samping secara otomatis untuk obrolan baru; obrolan yang sudah ada mempertahankan tata letaknya',
   settingsWidthTitle: 'Porsi lebar default',
+  settingsWhiteOpacityTitle: 'Opasitas latar putih',
+  settingsWhiteOpacityDesc: 'Sesuaikan permukaan putih kartu samping: 0% sepenuhnya transparan dan 100% sepenuhnya buram',
   settingsWidthDesc: 'Porsi lebar jendela default kartu samping untuk obrolan baru (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Buka berkas obrolan di sidebar',

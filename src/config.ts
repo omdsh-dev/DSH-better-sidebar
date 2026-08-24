@@ -9,6 +9,9 @@ import z from 'schemastery'
 import {
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
+  WHITE_BACKGROUND_OPACITY_DEFAULT,
+  WHITE_BACKGROUND_OPACITY_MAX,
+  WHITE_BACKGROUND_OPACITY_MIN,
   TERMINAL_FONT_SIZE_DEFAULT,
   TERMINAL_FONT_SIZE_MAX,
   TERMINAL_FONT_SIZE_MIN,
@@ -18,6 +21,7 @@ import {
   WIDTH_PERCENT_DEFAULT,
   WIDTH_PERCENT_MAX,
   WIDTH_PERCENT_MIN,
+  clampWhiteBackgroundOpacity,
   type SidebarPrefs,
 } from './prefs-shared.ts'
 
@@ -33,6 +37,10 @@ export {
   WIDTH_PERCENT_DEFAULT,
   WIDTH_PERCENT_MAX,
   WIDTH_PERCENT_MIN,
+  WHITE_BACKGROUND_OPACITY_DEFAULT,
+  WHITE_BACKGROUND_OPACITY_MAX,
+  WHITE_BACKGROUND_OPACITY_MIN,
+  clampWhiteBackgroundOpacity,
   type SidebarPrefs,
 } from './prefs-shared.ts'
 
@@ -119,6 +127,7 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
 export const PrefsSchema: z<SidebarPrefs> = z.object({
   openByDefault: z.boolean().default(false),
   defaultWidthPercent: z.number().step(1).min(WIDTH_PERCENT_MIN).max(WIDTH_PERCENT_MAX).default(WIDTH_PERCENT_DEFAULT),
+  whiteBackgroundOpacity: z.number().step(1).min(WHITE_BACKGROUND_OPACITY_MIN).max(WHITE_BACKGROUND_OPACITY_MAX).default(WHITE_BACKGROUND_OPACITY_DEFAULT),
   autoOpenSubagent: z.boolean().default(true),
   autoOpenJobs: z.boolean().default(true),
   agentTerminalTools: z.boolean().default(false),

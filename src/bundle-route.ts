@@ -6,7 +6,7 @@
  * first use of the feature that needs it (see src/client/chunk-loader.ts).
  *
  * Caching contract: every response carries `cache-control: no-cache` plus an
- * ETag (content hash, memoized per file by mtime/size) and honors
+ * ETag (content hash, memoized per file by mtime/ctime/size) and honors
  * If-None-Match — the browser revalidates each fetch, but a 304 avoids
  * re-downloading multi-MB chunks that did not change (page refresh, HMR
  * re-activation). Same browser-trust fence as every other /sidebar route;
@@ -32,6 +32,7 @@ function shortHash(input: string | Buffer): string {
 
 interface ChunkEtag {
   mtimeMs: number
+  ctimeMs: number
   size: number
   etag: string
 }
@@ -41,7 +42,7 @@ const etags = new Map<string, ChunkEtag>()
 
 /**
  * The chunk file's ETag (quoted hash), or undefined when the file is
- * missing. Hash is recomputed only when mtime/size changed (hashing a
+ * missing. Hash is recomputed only when mtime/ctime/size changed (hashing a
  * multi-MB chunk per request is wasteful).
  */
 async function etagOf(name: ChunkName, chunkDir: string): Promise<string | undefined> {
@@ -50,11 +51,11 @@ async function etagOf(name: ChunkName, chunkDir: string): Promise<string | undef
   try {
     const info = await stat(path)
     const memo = etags.get(key)
-    if (memo !== undefined && memo.mtimeMs === info.mtimeMs && memo.size === info.size) {
+    if (memo !== undefined && memo.mtimeMs === info.mtimeMs && memo.ctimeMs === info.ctimeMs && memo.size === info.size) {
       return memo.etag
     }
     const etag = `"${shortHash(await readFile(path))}"`
-    etags.set(key, { mtimeMs: info.mtimeMs, size: info.size, etag })
+    etags.set(key, { mtimeMs: info.mtimeMs, ctimeMs: info.ctimeMs, size: info.size, etag })
     return etag
   } catch {
     return undefined

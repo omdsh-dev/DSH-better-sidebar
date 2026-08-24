@@ -173,6 +173,8 @@ export const it: Record<string, string> = {
   settingsOpenTitle: 'Apri per impostazione predefinita per le nuove conversazioni',
   settingsOpenDesc: 'Espande automaticamente la scheda laterale per le conversazioni nuove; le conversazioni esistenti mantengono il proprio layout',
   settingsWidthTitle: 'Quota di larghezza predefinita',
+  settingsWhiteOpacityTitle: 'Opacità dello sfondo bianco',
+  settingsWhiteOpacityDesc: 'Regola la superficie bianca della scheda laterale: 0% completamente trasparente, 100% completamente opaca',
   settingsWidthDesc: 'La quota predefinita della scheda laterale sulla larghezza della finestra per le nuove conversazioni (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Apri i file della chat nella barra laterale',

@@ -174,6 +174,8 @@ export const ko: Record<string, string> = {
   settingsOpenTitle: '새 대화 기본 열림',
   settingsOpenDesc: '새 대화를 만들 때 사이드 카드를 자동으로 펼칩니다. 기존 대화는 각자의 레이아웃을 유지합니다',
   settingsWidthTitle: '기본 너비 비율',
+  settingsWhiteOpacityTitle: '흰색 배경 불투명도',
+  settingsWhiteOpacityDesc: '사이드 카드의 흰색 표면을 조정합니다. 0%는 완전 투명, 100%는 완전 불투명입니다',
   settingsWidthDesc: '새 대화에서 사이드 카드가 창 너비에서 차지하는 비율(%) (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: '채팅 영역 파일을 사이드바에서 열기',

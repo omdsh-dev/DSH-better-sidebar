@@ -182,6 +182,8 @@ export const ja: Record<string, string> = {
   settingsOpenTitle: '新規会話でデフォルト展開',
   settingsOpenDesc: '新規会話時にサイドカードを自動展開。既存の会話はそれぞれのレイアウトを維持',
   settingsWidthTitle: 'デフォルト幅の比率',
+  settingsWhiteOpacityTitle: '白い背景の不透明度',
+  settingsWhiteOpacityDesc: 'サイドカードの白い背景を調整します。0% は完全に透明、100% は完全に不透明です',
   settingsWidthDesc: '新規会話時のサイドカードがウィンドウ幅に占める割合 (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'チャット内ファイルをサイドバーで開く',

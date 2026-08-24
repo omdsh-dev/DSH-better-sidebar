@@ -12,6 +12,7 @@ import type { api } from './api.ts'
 import {
   clampTerminalFontSize,
   clampTitleBarStrip,
+  clampWhiteBackgroundOpacity,
   clampWidthPercent,
   SIDEBAR_PREFS_DEFAULTS,
   TITLE_BAR_SCHEMES,
@@ -26,6 +27,7 @@ export {
   TITLE_BAR_STRIP_DEFAULT,
   clampTerminalFontSize,
   clampTitleBarStrip,
+  clampWhiteBackgroundOpacity,
   clampWidthPercent,
 }
 export type { SidebarPrefs, TitleBarScheme }
@@ -49,6 +51,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     defaultWidthPercent: typeof record.defaultWidthPercent === 'number' && Number.isFinite(record.defaultWidthPercent)
       ? clampWidthPercent(record.defaultWidthPercent)
       : SIDEBAR_PREFS_DEFAULTS.defaultWidthPercent,
+    whiteBackgroundOpacity: typeof record.whiteBackgroundOpacity === 'number' && Number.isFinite(record.whiteBackgroundOpacity)
+      ? clampWhiteBackgroundOpacity(record.whiteBackgroundOpacity)
+      : SIDEBAR_PREFS_DEFAULTS.whiteBackgroundOpacity,
     autoOpenSubagent: typeof record.autoOpenSubagent === 'boolean'
       ? record.autoOpenSubagent
       : SIDEBAR_PREFS_DEFAULTS.autoOpenSubagent,

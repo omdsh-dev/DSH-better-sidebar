@@ -27,6 +27,20 @@ function chunksOf(text: string): AsyncIterable<string | Uint8Array> {
   }
 }
 
+/** Symlink creation needs extra privileges on Windows; skip that fixture when
+ * the current test runner cannot create links. */
+const canSymlink = (() => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-symlink-probe-'))
+  try {
+    symlinkSync('target', join(dir, 'link'))
+    return true
+  } catch {
+    return false
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})()
+
 describe('writeWorkspaceUpload', () => {
   it('writes a file under the upload directory and returns its size', async () => {
     const { path, size } = await writeWorkspaceUpload({
@@ -103,7 +117,7 @@ describe('writeWorkspaceUpload', () => {
     }
   })
 
-  it('refuses upload directories and targets that resolve outside the workspace', async () => {
+  it.skipIf(!canSymlink)('refuses upload directories and targets that resolve outside the workspace', async () => {
     const outside = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-symlink-outside-'))
     const link = join(root, 'upload-link')
     try {

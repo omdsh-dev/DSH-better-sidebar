@@ -182,6 +182,8 @@ export const th: Record<string, string> = {
   settingsOpenTitle: 'เปิดโดยค่าเริ่มต้นสำหรับแชทใหม่',
   settingsOpenDesc: 'ขยายการ์ดด้านข้างโดยอัตโนมัติสำหรับแชทใหม่; แชทที่มีอยู่แล้วยังคงเค้าโครงของตัวเอง',
   settingsWidthTitle: 'สัดส่วนความกว้างเริ่มต้น',
+  settingsWhiteOpacityTitle: 'ความทึบของพื้นหลังสีขาว',
+  settingsWhiteOpacityDesc: 'ปรับพื้นผิวสีขาวของการ์ดด้านข้าง: 0% โปร่งใสทั้งหมด และ 100% ทึบทั้งหมด',
   settingsWidthDesc: 'สัดส่วนความกว้างเริ่มต้นของการ์ดด้านข้างจากความกว้างหน้าต่างสำหรับแชทใหม่ (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'เปิดไฟล์แชทในแถบด้านข้าง',

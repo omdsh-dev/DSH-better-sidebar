@@ -175,6 +175,8 @@ export const fr: Record<string, string> = {
   settingsOpenTitle: 'Ouvert par défaut pour les nouvelles sessions',
   settingsOpenDesc: 'Déployer automatiquement la carte latérale lors de la création d’une session ; les sessions existantes conservent chacune leur disposition',
   settingsWidthTitle: 'Part de largeur par défaut',
+  settingsWhiteOpacityTitle: 'Opacité du fond blanc',
+  settingsWhiteOpacityDesc: 'Ajuster la surface blanche de la carte latérale : 0 % totalement transparente, 100 % totalement opaque',
   settingsWidthDesc: 'Pourcentage de la largeur de la fenêtre occupé par la carte latérale pour les nouvelles sessions (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Ouvrir les fichiers de discussion dans la barre latérale',

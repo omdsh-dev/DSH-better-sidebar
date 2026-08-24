@@ -182,6 +182,8 @@ export const hi: Record<string, string> = {
   settingsOpenTitle: 'नए वार्तालाप के लिए डिफ़ॉल्ट रूप से खोलें',
   settingsOpenDesc: 'बिल्कुल नए वार्तालाप के लिए साइड कार्ड स्वतः विस्तृत करें; मौजूदा वार्तालाप अपना लेआउट रखते हैं',
   settingsWidthTitle: 'डिफ़ॉल्ट चौड़ाई हिस्सा',
+  settingsWhiteOpacityTitle: 'सफेद पृष्ठभूमि की अपारदर्शिता',
+  settingsWhiteOpacityDesc: 'साइड कार्ड की सफेद सतह समायोजित करें: 0% पूरी तरह पारदर्शी और 100% पूरी तरह अपारदर्शी',
   settingsWidthDesc: 'नए वार्तालाप के लिए साइड कार्ड की विंडो चौड़ाई का डिफ़ॉल्ट हिस्सा (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'चैट फ़ाइलें साइडबार में खोलें',

@@ -184,6 +184,8 @@ export const pl: Record<string, string> = {
   settingsOpenTitle: 'Otwórz domyślnie dla nowych rozmów',
   settingsOpenDesc: 'Rozwiń kartę boczną automatycznie dla zupełnie nowych rozmów; istniejące rozmowy zachowują własne układy',
   settingsWidthTitle: 'Domyślny udział szerokości',
+  settingsWhiteOpacityTitle: 'Nieprzezroczystość białego tła',
+  settingsWhiteOpacityDesc: 'Dostosuj białą powierzchnię karty bocznej: 0% całkowicie przezroczysta, 100% całkowicie nieprzezroczysta',
   settingsWidthDesc: 'Domyślny udział szerokości okna dla karty bocznej w nowych rozmowach (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Otwieraj pliki czatu w panelu bocznym',

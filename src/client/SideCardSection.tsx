@@ -55,8 +55,11 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   clampWidthPercent,
+  clampWhiteBackgroundOpacity,
   TITLE_BAR_STRIP_MAX,
   TITLE_BAR_STRIP_MIN,
+  WHITE_BACKGROUND_OPACITY_MAX,
+  WHITE_BACKGROUND_OPACITY_MIN,
   WIDTH_PERCENT_MAX,
   WIDTH_PERCENT_MIN,
   type SidebarPrefs,
@@ -574,6 +577,7 @@ export function SettingsBody(props: {
 export function SideCardSection({ store, service }: SideCardSectionProps) {
   const [prefs, setPrefs] = useState<SidebarPrefs>(() => store.getPrefs())
   const [widthDraft, setWidthDraft] = useState<string>(String(store.getPrefs().defaultWidthPercent))
+  const [whiteOpacityDraft, setWhiteOpacityDraft] = useState<string>(String(store.getPrefs().whiteBackgroundOpacity))
   const [error, setError] = useState<string | null>(null)
   // Which feature's secondary settings popup is open (null = closed).
   const [settingsFor, setSettingsFor] = useState<TabDescriptor | FileViewerDescriptor | null>(null)
@@ -628,6 +632,7 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
       const next = parsePrefs(view.value)
       setPrefs(next)
       setWidthDraft(String(next.defaultWidthPercent))
+      setWhiteOpacityDraft(String(next.whiteBackgroundOpacity))
     }).catch(() => { /* the store's defaults stay authoritative */ })
     return () => { cancelled = true }
   }, [])
@@ -661,6 +666,7 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     const settled = outcome.ok ? outcome.prefs : previous
     setPrefs(settled)
     setWidthDraft(String(settled.defaultWidthPercent))
+    setWhiteOpacityDraft(String(settled.whiteBackgroundOpacity))
   }
 
   /** Optimistically apply one pref patch, then commit (revert on failure). */
@@ -793,6 +799,22 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     void commit({ defaultWidthPercent: clamped }).then(outcome => applyOutcome(previous, outcome))
   }
 
+  const commitWhiteBackgroundOpacity = (): void => {
+    const parsed = Number(whiteOpacityDraft)
+    if (!Number.isFinite(parsed)) {
+      setWhiteOpacityDraft(String(prefs.whiteBackgroundOpacity))
+      return
+    }
+    const clamped = clampWhiteBackgroundOpacity(parsed)
+    const previous = prefs
+    const next = { ...previous, whiteBackgroundOpacity: clamped }
+    optimisticRef.current = next
+    setPrefs(next)
+    setWhiteOpacityDraft(String(clamped))
+    setError(null)
+    void commit({ whiteBackgroundOpacity: clamped }).then(outcome => applyOutcome(previous, outcome))
+  }
+
   /**
    * One SMALL toggle card for the responsive inventory grid: the card's main
    * area is the switch (click to flips, visual state IS the state), the icon
@@ -895,6 +917,29 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
               aria-label={t('settingsWidthTitle')}
               onChange={event => { setWidthDraft(event.currentTarget.value) }}
               onBlur={commitWidth}
+              onKeyDown={event => {
+                if (event.key === 'Enter') event.currentTarget.blur()
+              }}
+            />
+            <span className={css.suffix}>{t('settingsWidthSuffix')}</span>
+          </span>
+        </div>
+        <div className={css.row}>
+          <span className={css.rowText}>
+            <span className={css.title}>{t('settingsWhiteOpacityTitle')}</span>
+            <span className={css.desc}>{t('settingsWhiteOpacityDesc')}</span>
+          </span>
+          <span className={css.control}>
+            <Input
+              type="number"
+              className={css.percentInput}
+              value={whiteOpacityDraft}
+              min={WHITE_BACKGROUND_OPACITY_MIN}
+              max={WHITE_BACKGROUND_OPACITY_MAX}
+              step={1}
+              aria-label={t('settingsWhiteOpacityTitle')}
+              onChange={event => { setWhiteOpacityDraft(event.currentTarget.value) }}
+              onBlur={commitWhiteBackgroundOpacity}
               onKeyDown={event => {
                 if (event.key === 'Enter') event.currentTarget.blur()
               }}

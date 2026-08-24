@@ -183,6 +183,8 @@ export const ar: Record<string, string> = {
   settingsOpenTitle: 'فتح افتراضياً للمحادثات الجديدة',
   settingsOpenDesc: 'توسيع البطاقة الجانبية تلقائياً للمحادثات الجديدة تماماً؛ المحادثات الموجودة تحتفظ بتخطيطاتها',
   settingsWidthTitle: 'الحصة الافتراضية للعرض',
+  settingsWhiteOpacityTitle: 'شفافية الخلفية البيضاء',
+  settingsWhiteOpacityDesc: 'اضبط سطح البطاقة الجانبية الأبيض: 0% شفاف تماماً و100% معتم تماماً',
   settingsWidthDesc: 'الحصة الافتراضية للبطاقة الجانبية من عرض النافذة للمحادثات الجديدة (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'فتح ملفات المحادثة في الشريط الجانبي',
