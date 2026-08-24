@@ -168,6 +168,8 @@ export const de: Record<string, string> = {
   settingsOpenTitle: 'Für neue Unterhaltungen standardmäßig geöffnet',
   settingsOpenDesc: 'Die Seitenkarte wird für brandneue Unterhaltungen automatisch ausgeklappt; bestehende Unterhaltungen behalten ihr eigenes Layout',
   settingsWidthTitle: 'Standardbreite',
+  settingsWhiteOpacityTitle: 'Deckkraft des weißen Hintergrunds',
+  settingsWhiteOpacityDesc: 'Deckkraft der weißen Seitenkartenfläche anpassen: 0 % vollständig transparent, 100 % vollständig undurchsichtig',
   settingsWidthDesc: 'Standardanteil der Seitenkarte an der Fensterbreite für neue Unterhaltungen (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Chat-Dateien in der Seitenleiste öffnen',

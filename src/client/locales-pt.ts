@@ -165,6 +165,8 @@ export const pt: Record<string, string> = {
   settingsOpenTitle: 'Abrir por padrão em novas conversas',
   settingsOpenDesc: 'Expandir o cartão lateral automaticamente em conversas totalmente novas; conversas existentes mantêm seus próprios layouts',
   settingsWidthTitle: 'Participação padrão na largura',
+  settingsWhiteOpacityTitle: 'Opacidade do fundo branco',
+  settingsWhiteOpacityDesc: 'Ajuste a superfície branca do cartão lateral: 0% totalmente transparente e 100% totalmente opaca',
   settingsWidthDesc: 'Participação padrão do cartão lateral na largura da janela em novas conversas (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Abrir arquivos do chat na barra lateral',

@@ -197,6 +197,8 @@ export const zhHK: Record<string, string> = {
   settingsOpenTitle: '新工作階段預設開啟',
   settingsOpenDesc: '新增工作階段時自動展開側邊卡片；已存在的工作階段保持各自佈局',
   settingsWidthTitle: '預設寬度佔比',
+  settingsWhiteOpacityTitle: '白色背景透明度',
+  settingsWhiteOpacityDesc: '調整側邊卡片白色背景的不透明程度，0% 完全透明，100% 完全不透明',
   settingsWidthDesc: '新增工作階段時側邊卡片佔視窗寬度的百分比 (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: '聊天區檔案在側邊欄開啟',

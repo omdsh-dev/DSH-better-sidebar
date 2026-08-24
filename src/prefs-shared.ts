@@ -15,6 +15,8 @@ export interface SidebarPrefs {
   openByDefault: boolean
   /** Default panel width as a percent of the window width (20–60). */
   defaultWidthPercent: number
+  /** Opacity of the white sidebar surface (0 = transparent, 100 = opaque). */
+  whiteBackgroundOpacity: number
   /**
    * Whether the sidebar auto-activates (opens the panel) and expands the
    * Subagent page when the current conversation spawns a new subagent.
@@ -216,6 +218,11 @@ export const WIDTH_PERCENT_MIN = 20
 export const WIDTH_PERCENT_MAX = 60
 export const WIDTH_PERCENT_DEFAULT = 35
 
+/** Range contract of {@link SidebarPrefs.whiteBackgroundOpacity}. */
+export const WHITE_BACKGROUND_OPACITY_MIN = 0
+export const WHITE_BACKGROUND_OPACITY_MAX = 100
+export const WHITE_BACKGROUND_OPACITY_DEFAULT = 100
+
 /** Range contract of {@link SidebarPrefs.terminalFontSize}. */
 export const TERMINAL_FONT_SIZE_MIN = 9
 export const TERMINAL_FONT_SIZE_MAX = 32
@@ -234,6 +241,7 @@ export type TitleBarScheme = typeof TITLE_BAR_SCHEMES[number]
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   openByDefault: false,
   defaultWidthPercent: WIDTH_PERCENT_DEFAULT,
+  whiteBackgroundOpacity: WHITE_BACKGROUND_OPACITY_DEFAULT,
   autoOpenSubagent: true,
   autoOpenJobs: true,
   agentTerminalTools: false,
@@ -264,6 +272,11 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
 /** Clamp one width percent into the contract range (shared by schema and client reads). */
 export function clampWidthPercent(value: number): number {
   return Math.min(WIDTH_PERCENT_MAX, Math.max(WIDTH_PERCENT_MIN, Math.round(value)))
+}
+
+/** Clamp the white sidebar surface opacity into its percentage contract. */
+export function clampWhiteBackgroundOpacity(value: number): number {
+  return Math.min(WHITE_BACKGROUND_OPACITY_MAX, Math.max(WHITE_BACKGROUND_OPACITY_MIN, Math.round(value)))
 }
 
 /** Clamp one terminal font size into the contract range (shared by schema and client reads). */

@@ -182,6 +182,8 @@ export const tr: Record<string, string> = {
   settingsOpenTitle: 'Yeni sohbetlerde varsayılan olarak aç',
   settingsOpenDesc: 'Yepyeni sohbetler için yan kartı otomatik genişlet; var olan sohbetler kendi düzenlerini korur',
   settingsWidthTitle: 'Varsayılan genişlik payı',
+  settingsWhiteOpacityTitle: 'Beyaz arka plan opaklığı',
+  settingsWhiteOpacityDesc: 'Yan kartın beyaz yüzeyini ayarlayın: %0 tamamen şeffaf, %100 tamamen opak',
   settingsWidthDesc: 'Yeni sohbetler için yan kartın pencere genişliğindeki varsayılan payı (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Sohbet dosyalarını kenar çubuğunda aç',

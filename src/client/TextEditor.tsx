@@ -33,6 +33,7 @@ import { analyzeMarkdownHtml } from './markdown-html.ts'
 import { LazyMermaidMarkdown, MarkdownDocument, type MarkdownHtmlMedia } from './MarkdownHtml.tsx'
 import { MdToc } from './md-toc.tsx'
 import { splitMermaidBlocks } from './mermaid-blocks.ts'
+import { markdownLinkTarget, resolveMarkdownAnchor, resolveMarkdownLink, rewriteMarkdownFileLinks, stripMarkdownAnchorTags } from './markdown-links.ts'
 import { t } from './locales.ts'
 import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
@@ -55,6 +56,58 @@ interface SelectionPopup {
  * in the side card settings (warned); the toggle below reflects it.
  */
 export const HTML_IFRAME_SANDBOX = 'allow-scripts allow-popups allow-downloads allow-modals'
+
+/** Turn a rendered Markdown heading into the conventional fragment id. */
+function markdownHeadingId(value: string): string {
+  const plain = value
+    .replace(/!?(\[[^\]]*\])\([^)]*\)/g, '$1')
+    .replace(/[\\`*_~]/g, '')
+    .trim()
+    .toLocaleLowerCase()
+  return plain
+    .replace(/[^\p{L}\p{N}\u3400-\u9fff]+/gu, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+/** Add stable ids to headings because the shared Markdown renderer intentionally
+ * renders untrusted Markdown headings without navigable fragment links. */
+function installMarkdownHeadingIds(host: HTMLElement, source: string): void {
+  const used = new Set<string>()
+  const headings = host.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')
+  const explicitByHeading = new Map<number, string>()
+  let sourceHeadingIndex = 0
+  let pendingExplicitId: string | undefined
+  for (const line of source.split(/\r?\n/)) {
+    const anchor = line.match(/<a\s+[^>]*id=["']([^"']+)["'][^>]*>\s*<\/a>/i)
+    if (anchor?.[1] !== undefined) pendingExplicitId = anchor[1]
+    if (/^\s{0,3}#{1,6}\s+/.test(line)) {
+      if (pendingExplicitId !== undefined) explicitByHeading.set(sourceHeadingIndex, pendingExplicitId)
+      pendingExplicitId = undefined
+      sourceHeadingIndex += 1
+    }
+  }
+  headings.forEach((heading, index) => {
+    const explicit = explicitByHeading.get(index)
+    const base = explicit ?? (markdownHeadingId(heading.textContent ?? '') || `heading-${index + 1}`)
+    let id = base
+    let suffix = 2
+    while (used.has(id)) id = `${base}-${suffix++}`
+    used.add(id)
+    heading.id = id
+  })
+}
+
+/** Scroll the current Markdown preview to a heading fragment. */
+function scrollMarkdownAnchor(host: HTMLElement, fragment: string): boolean {
+  const target = resolveMarkdownAnchor(fragment)
+  if (target === null) return false
+  const decoded = target.trim()
+  const heading = [...host.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')]
+    .find(candidate => candidate.id === decoded || markdownHeadingId(candidate.textContent ?? '') === decoded.toLocaleLowerCase())
+  if (heading === undefined) return false
+  heading.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  return true
+}
 
 export function TextEditor(props: FileViewerProps) {
   const { ctx, scope, path, viewerId, content, truncated } = props
@@ -243,6 +296,37 @@ export function TextEditor(props: FileViewerProps) {
 
   const markdown = viewerId === 'markdown'
   const html = viewerId === 'html'
+
+  /** Open relative .md/.markdown links in another sidebar editor tab. */
+  useEffect(() => {
+    if (!markdown || mode !== 'preview') return
+    const host = mdRef.current
+    const service = ctx.betterSidebar
+    if (host === null || service === undefined) return
+    const onClick = (event: MouseEvent): void => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      const target = event.target
+      if (!(target instanceof Element)) return
+      const anchor = target.closest<HTMLAnchorElement>('a[href]')
+      if (anchor === null || !host.contains(anchor)) return
+      const href = anchor.getAttribute('href')
+      if (href === null) return
+      const originalHref = markdownLinkTarget(href, window.location.origin)
+      if (resolveMarkdownAnchor(originalHref) !== null) {
+        if (!scrollMarkdownAnchor(host, originalHref)) return
+        event.preventDefault()
+        event.stopPropagation()
+        return
+      }
+      const linkedPath = resolveMarkdownLink(path, originalHref)
+      if (linkedPath === null) return
+      event.preventDefault()
+      event.stopPropagation()
+      service.openFile({ sessionId: scope.sessionId, cwd: scope.cwd }, linkedPath)
+    }
+    host.addEventListener('click', onClick, true)
+    return () => { host.removeEventListener('click', onClick, true) }
+  }, [ctx, mode, markdown, path, scope.cwd, scope.sessionId])
   /** The markdown source the preview renders (draft wins over saved content). */
   const mdText = draft ?? content ?? ''
   /** The preview source: `mdText` with local image destinations rewritten to
@@ -252,18 +336,30 @@ export function TextEditor(props: FileViewerProps) {
   const previewText = markdown
     ? rewriteLocalImageUrls(mdText, scope, path, window.location.origin)
     : mdText
+  const mdPreviewText = useMemo(
+    () => markdown && mode === 'preview'
+      ? rewriteMarkdownFileLinks(stripMarkdownAnchorTags(previewText), path, window.location.origin)
+      : mdText,
+    [markdown, mode, mdText, path, previewText],
+  )
+  useEffect(() => {
+    if (!markdown || mode !== 'preview') return
+    const host = mdRef.current
+    if (host === null) return
+    installMarkdownHeadingIds(host, mdText)
+  }, [markdown, mode, mdPreviewText, mdText])
   /** md/mermaid block split for the preview (mermaid fences lift out). Split
    *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
   const mdBlocks = useMemo(
-    () => (markdown && mode === 'preview' ? splitMermaidBlocks(mdText) : []),
-    [markdown, mode, mdText],
+    () => (markdown && mode === 'preview' ? splitMermaidBlocks(mdPreviewText) : []),
+    [markdown, mode, mdPreviewText],
   )
   /** Raw-HTML analysis (block runs lifted out + inline gate). Non-null only
    *  for documents that actually contain HTML — plain markdown keeps the
    *  legacy single-pass render path below, byte-for-byte. */
   const htmlInfo = useMemo(
-    () => (markdown && mode === 'preview' ? analyzeMarkdownHtml(mdText) : null),
-    [markdown, mode, mdText],
+    () => (markdown && mode === 'preview' ? analyzeMarkdownHtml(mdPreviewText) : null),
+    [markdown, mode, mdPreviewText],
   )
   const hasMermaid = useMemo(
     () => htmlInfo !== null
@@ -421,8 +517,8 @@ export function TextEditor(props: FileViewerProps) {
           {htmlInfo !== null
             ? <MarkdownDocument info={htmlInfo} media={htmlMedia} codeLabels={codeLabels} />
             : hasMermaid
-              ? <LazyMermaidMarkdown text={previewText} codeLabels={codeLabels} />
-              : <MarkdownText text={previewText} codeLabels={codeLabels} />}
+              ? <LazyMermaidMarkdown text={mdPreviewText} codeLabels={codeLabels} />
+              : <MarkdownText text={mdPreviewText} codeLabels={codeLabels} />}
         </div>
       )}
       {html && mode === 'preview' && (

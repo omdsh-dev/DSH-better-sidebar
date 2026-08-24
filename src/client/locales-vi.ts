@@ -182,6 +182,8 @@ export const vi: Record<string, string> = {
   settingsOpenTitle: 'Mở mặc định cho phiên mới',
   settingsOpenDesc: 'Tự động mở rộng thẻ bên cho phiên mới; phiên đã có giữ nguyên bố cục',
   settingsWidthTitle: 'Tỷ lệ chiều rộng mặc định',
+  settingsWhiteOpacityTitle: 'Độ mờ nền trắng',
+  settingsWhiteOpacityDesc: 'Điều chỉnh bề mặt trắng của thẻ bên: 0% hoàn toàn trong suốt và 100% hoàn toàn không trong suốt',
   settingsWidthDesc: 'Tỷ lệ phần trăm chiều rộng cửa sổ mà thẻ bên chiếm cho phiên mới (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Mở tệp chat trong thanh bên',

@@ -28,7 +28,7 @@
  * drawer floats). Widening does not migrate back: the tabs keep living in
  * the right tree.
  */
-import { createElement, memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from 'react'
+import { createElement, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type ReactNode } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -47,6 +47,7 @@ import { layoutPushSize } from './layout-push.ts'
 import { parseDesktopEnv } from './desktop-env.ts'
 import { getWcoSnapshot, subscribeWco } from './wco.ts'
 import { getShellPreset } from './shell-presets.ts'
+import { clampWhiteBackgroundOpacity } from '../prefs-shared.ts'
 import { computeTitleBarStrip } from './titlebar-strip.ts'
 import type { NewTabOption } from './TabBar.tsx'
 import { TAB_DRAG_TYPE, parseDrag, type TabDragPayload } from './TabBar.tsx'
@@ -310,6 +311,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     viewportWidth: viewport.width,
     viewportHeight: layoutViewportHeight,
   }).height
+  const whiteSidebarStyle = {
+    '--dsh-sidebar-white-opacity': String(clampWhiteBackgroundOpacity(snapshot.prefs.whiteBackgroundOpacity) / 100),
+  } as CSSProperties
 
   // The collapsed toggle cluster reclaims the top-right corner, so the DSH
   // session header's right-aligned utilities (the "Session log" download
@@ -1223,7 +1227,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // Keep the unavailable controls focusable: touch users have no hover, so
     // focus is the only way the existing Tooltip can explain what is missing.
     return (
-      <div data-dsh-panel-host {...osFileDragShield}>
+      <div className={css.whiteSidebar} data-dsh-panel-host style={whiteSidebarStyle} {...osFileDragShield}>
         <div className={css.toggleCluster} data-dsh-toggle-cluster>
           {!narrow && (
             <Tooltip label={t('noSession')} side="bottom" delayMs={500}>
@@ -1336,7 +1340,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   )
 
   return (
-    <div data-dsh-panel-host {...osFileDragShield}>
+    <div className={css.whiteSidebar} data-dsh-panel-host style={whiteSidebarStyle} {...osFileDragShield}>
       {/*
         The persistent toggle cluster at the top-right corner: the bottom
         panel's button (bottom glyph) LEFT of the right panel's (side glyph).

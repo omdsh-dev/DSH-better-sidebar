@@ -165,6 +165,8 @@ export const sv: Record<string, string> = {
   settingsOpenTitle: 'Öppna som standard för nya konversationer',
   settingsOpenDesc: 'Expandera sidokortet automatiskt för helt nya konversationer; befintliga konversationer behåller sina egna layouter',
   settingsWidthTitle: 'Standardbreddandel',
+  settingsWhiteOpacityTitle: 'Opacitet för vit bakgrund',
+  settingsWhiteOpacityDesc: 'Justera sidokortets vita yta: 0 % helt genomskinlig och 100 % helt ogenomskinlig',
   settingsWidthDesc: 'Sidokortets standardandel av fönsterbredden för nya konversationer (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Öppna chattfiler i sidopanelen',

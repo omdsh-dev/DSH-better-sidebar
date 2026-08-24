@@ -179,6 +179,8 @@ export const ru: Record<string, string> = {
   settingsOpenTitle: 'Открывать по умолчанию для новых сессий',
   settingsOpenDesc: 'Автоматически разворачивать боковую карточку для новых сессий; у существующих сессий сохраняется их собственная раскладка',
   settingsWidthTitle: 'Доля ширины по умолчанию',
+  settingsWhiteOpacityTitle: 'Непрозрачность белого фона',
+  settingsWhiteOpacityDesc: 'Настройте белую поверхность боковой карточки: 0% — полностью прозрачная, 100% — полностью непрозрачная',
   settingsWidthDesc: 'Доля боковой карточки в ширине окна для новых сессий, в процентах (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Открывать файлы чата в боковой панели',

@@ -180,6 +180,8 @@ export const nl: Record<string, string> = {
   settingsOpenTitle: 'Standaard openen voor nieuwe conversaties',
   settingsOpenDesc: 'De zijkaart automatisch uitklappen voor gloednieuwe conversaties; bestaande conversaties behouden hun eigen layout',
   settingsWidthTitle: 'Standaard breedte-aandeel',
+  settingsWhiteOpacityTitle: 'Ondoorzichtigheid van witte achtergrond',
+  settingsWhiteOpacityDesc: 'Pas het witte oppervlak van de zijkaart aan: 0% volledig transparant en 100% volledig ondoorzichtig',
   settingsWidthDesc: 'Het standaard breedte-aandeel van de zijkaart voor nieuwe conversaties (20–60)',
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Chatbestanden in de zijbalk openen',
