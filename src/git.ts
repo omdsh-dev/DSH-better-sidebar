@@ -55,6 +55,8 @@ export interface GitLogEntry {
   date: string
   /** Ref decorations (`%D` with --decorate=short), e.g. `HEAD -> main, origin/main`; '' when none. */
   refs: string
+  /** Parent full hashes, first parent first; empty for a root commit. */
+  parents: string[]
 }
 
 /** One git failure (stderr text as the message). */
@@ -133,12 +135,12 @@ export function parseWorktreeList(output: string): GitWorktreeRecord[] {
   return rows
 }
 
-/** Parse `git log --pretty=format:%h%x1f%s%x1f%an%x1f%ai%x1f%H%x1f%D` rows. */
+/** Parse `git log --pretty=format:%h%x1f%s%x1f%an%x1f%ai%x1f%H%x1f%P%x1f%D` rows. */
 export function parseLogLines(output: string): GitLogEntry[] {
   const rows: GitLogEntry[] = []
   for (const line of output.split('\n')) {
     if (line === '') continue
-    const [hash, subject, author, date, hashFull, refs] = line.split('\x1f')
+    const [hash, subject, author, date, hashFull, parents, refs] = line.split('\x1f')
     if (hash === undefined || subject === undefined) continue
     rows.push({
       hash,
@@ -146,6 +148,7 @@ export function parseLogLines(output: string): GitLogEntry[] {
       author: author ?? '',
       date: date ?? '',
       hashFull: hashFull ?? hash,
+      parents: (parents ?? '').split(' ').filter(parent => parent !== ''),
       refs: refs ?? '',
     })
   }
@@ -346,7 +349,7 @@ export async function checkout(cwd: string, branch: string, selected?: string): 
 export async function log(cwd: string, count = 30, skip = 0, selected?: string): Promise<GitLogEntry[]> {
   const raw = await runGit(await repoRoot(cwd, selected), [
     'log', '-n', String(count), '--skip', String(skip), '--decorate=short',
-    '--pretty=format:%h%x1f%s%x1f%an%x1f%ai%x1f%H%x1f%D',
+    '--pretty=format:%h%x1f%s%x1f%an%x1f%ai%x1f%H%x1f%P%x1f%D',
   ])
   return parseLogLines(raw)
 }

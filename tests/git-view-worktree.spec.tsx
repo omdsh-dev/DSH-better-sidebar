@@ -38,6 +38,7 @@ function logFor(target?: string, index = 0): GitLogEntry[] {
     subject: agent ? `Agent checkout commit ${index}` : `Main checkout commit ${index}`,
     author: 'Test',
     date: '2026-08-20 00:00:00 +0800',
+    parents: index === 0 ? [] : [`${digit.repeat(32)}${(index - 1).toString(16).padStart(8, '0')}`],
     refs: agent ? 'HEAD -> agent' : 'HEAD -> main',
   }]
 }

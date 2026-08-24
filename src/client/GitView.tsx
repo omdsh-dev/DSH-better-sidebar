@@ -9,7 +9,7 @@
  * focus. While visible it polls lightweight porcelain state so model-authored
  * file changes appear without a manual refresh.
  */
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconBranchOutline16, IconCodeOutline16, IconCopyOutline16, IconRefreshOutline16,
   IconTrashOutline16, Input, Menu, Modal, writeClipboard,
@@ -17,6 +17,7 @@ import {
 import type { GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
 import { api } from './api.ts'
 import { isWithinWorkspace, relativeTo } from './paths.ts'
+import { layoutGitGraph } from './git-graph.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import { relativeTime, t } from './locales.ts'
 import type { SidebarTab } from './state.ts'
@@ -104,6 +105,11 @@ export function GitView(props: {
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
+  const graphRows = useMemo(() => layoutGitGraph(logEntries), [logEntries])
+  const graphLanes = graphRows.reduce(
+    (max, row) => Math.max(max, row.lanes, row.lane + 1),
+    1,
+  )
 
   /** The open file-row context menu (cursor position for the portaled Menu). */
   const [fileMenu, setFileMenu] = useState<{ entry: GitStatusEntry; staged: boolean; x: number; y: number } | null>(null)
@@ -520,34 +526,77 @@ export function GitView(props: {
 
           <div className={css.gitSection}>
             <div className={css.gitSectionHeader}><span>{t('history')}</span></div>
-            {logEntries.map(entry => (
-              <div
-                key={entry.hashFull}
-                role="button"
-                tabIndex={0}
-                className={css.gitLogRow}
-                title={`${entry.author} · ${entry.date}\n${entry.hashFull}`}
-                onClick={() => { openCommitDiff(entry) }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    openCommitDiff(entry)
-                  }
-                }}
-                onContextMenu={(event) => { openHistoryMenu(event, entry) }}
-              >
-                <span className={css.gitLogLine1}>
-                  <span className={css.gitLogHash}>{entry.hash}</span>
-                  <span className={css.gitLogSubject}>{entry.subject}</span>
-                </span>
-                <span className={css.gitLogLine2}>
-                  {refNames(entry.refs).map(ref => (
-                    <span key={ref} className={css.gitLogRef}>{ref}</span>
-                  ))}
-                  <span className={css.gitLogMeta}>{entry.author} · {relativeTime(entry.date)}</span>
-                </span>
-              </div>
-            ))}
+            {logEntries.map((entry, index) => {
+              const graph = graphRows[index]!
+              const graphWidth = Math.max(24, Math.min(52, graphLanes * 9 + 6))
+              const laneX = (lane: number): number => graphLanes === 1
+                ? graphWidth / 2
+                : 5 + lane * ((graphWidth - 10) / (graphLanes - 1))
+              return (
+                <div
+                  key={entry.hashFull}
+                  role="button"
+                  tabIndex={0}
+                  className={css.gitLogRow}
+                  title={`${entry.author} · ${entry.date}\n${entry.hashFull}`}
+                  onClick={() => { openCommitDiff(entry) }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      openCommitDiff(entry)
+                    }
+                  }}
+                  onContextMenu={(event) => { openHistoryMenu(event, entry) }}
+                >
+                  <span className={css.gitGraphCell} style={{ width: graphWidth }}>
+                    <svg
+                      className={css.gitGraphSvg}
+                      viewBox={`0 0 ${graphWidth} 1`}
+                      preserveAspectRatio="none"
+                      aria-hidden="true"
+                    >
+                      {graph.edges.map((edge, edgeIndex) => {
+                        const from = laneX(edge.from)
+                        const to = laneX(edge.to)
+                        const d = edge.from === edge.to
+                          ? `M ${from} 0 L ${from} 1`
+                          : `M ${from} 0 C ${from} 0.45, ${to} 0.55, ${to} 1`
+                        return (
+                          <path
+                            key={edgeIndex}
+                            d={d}
+                            fill="none"
+                            stroke={`var(--git-graph-${edge.color % 6})`}
+                            strokeWidth={2}
+                            vectorEffect="non-scaling-stroke"
+                            strokeLinecap="round"
+                          />
+                        )
+                      })}
+                    </svg>
+                    <span
+                      className={css.gitGraphNode}
+                      style={{
+                        left: laneX(graph.lane),
+                        background: `var(--git-graph-${graph.color % 6})`,
+                      }}
+                    />
+                  </span>
+                  <span className={css.gitLogText}>
+                    <span className={css.gitLogLine1}>
+                      <span className={css.gitLogHash}>{entry.hash}</span>
+                      <span className={css.gitLogSubject}>{entry.subject}</span>
+                    </span>
+                    <span className={css.gitLogLine2}>
+                      {refNames(entry.refs).map(ref => (
+                        <span key={ref} className={css.gitLogRef}>{ref}</span>
+                      ))}
+                      <span className={css.gitLogMeta}>{entry.author} · {relativeTime(entry.date)}</span>
+                    </span>
+                  </span>
+                </div>
+              )
+            })}
             {!logEnded && (
               <button
                 type="button"

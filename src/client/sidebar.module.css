@@ -2507,11 +2507,51 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    (badges live on the second line so they never crowd the subject). */
 .gitLogRow {
   display: flex;
-  flex-direction: column;
+  align-items: stretch;
   gap: 2px;
   padding: 5px 12px;
   cursor: pointer;
   border-radius: 8px;
+}
+
+.gitGraphCell {
+  --git-graph-0: #2563eb;
+  --git-graph-1: #16a34a;
+  --git-graph-2: #f59e0b;
+  --git-graph-3: #9333ea;
+  --git-graph-4: #db2777;
+  --git-graph-5: #0891b2;
+
+  position: relative;
+  flex: none;
+  min-width: 24px;
+}
+
+.gitGraphSvg {
+  position: absolute;
+  inset: -5px 0;
+  width: 100%;
+  height: calc(100% + 10px);
+  overflow: visible;
+}
+
+.gitGraphNode {
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--dsw-alias-bg-layer-1);
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  box-sizing: content-box;
+}
+
+.gitLogText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
 }
 
 .gitLogRow:hover {

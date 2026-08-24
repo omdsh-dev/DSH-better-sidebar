@@ -80,8 +80,8 @@ describe('git parsing', () => {
 
   it('parses log rows with unit separators (full hash + refs)', () => {
     const rows = parseLogLines(
-      'abc1234\x1fFirst subject\x1fAlice\x1f2024-01-01 10:00:00 +0800\x1fabc1234def5678abc1234def5678abc1234def5678\x1fHEAD -> main, origin/main\n'
-      + 'def5678\x1fSecond subject\x1fBob\x1f2024-01-02 10:00:00 +0800\x1fdef5678abc1234def5678abc1234def5678abc1234\x1f\n',
+      'abc1234\x1fFirst subject\x1fAlice\x1f2024-01-01 10:00:00 +0800\x1fabc1234def5678abc1234def5678abc1234def5678\x1fdef5678abc1234def5678abc1234def5678abc1234\x1fHEAD -> main, origin/main\n'
+      + 'def5678\x1fSecond subject\x1fBob\x1f2024-01-02 10:00:00 +0800\x1fdef5678abc1234def5678abc1234def5678abc1234\x1f\x1f\n',
     )
     expect(rows).toEqual([
       {
@@ -90,6 +90,7 @@ describe('git parsing', () => {
         author: 'Alice',
         date: '2024-01-01 10:00:00 +0800',
         hashFull: 'abc1234def5678abc1234def5678abc1234def5678',
+        parents: ['def5678abc1234def5678abc1234def5678abc1234'],
         refs: 'HEAD -> main, origin/main',
       },
       {
@@ -98,6 +99,7 @@ describe('git parsing', () => {
         author: 'Bob',
         date: '2024-01-02 10:00:00 +0800',
         hashFull: 'def5678abc1234def5678abc1234def5678abc1234',
+        parents: [],
         refs: '',
       },
     ])

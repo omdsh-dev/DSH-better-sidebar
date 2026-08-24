@@ -68,6 +68,8 @@ export interface GitLogEntry {
   date: string
   /** Ref decorations (--decorate=short), e.g. `HEAD -> main, origin/main`; '' when none. */
   refs: string
+  /** Parent full hashes, first parent first; empty for a root commit. */
+  parents: string[]
 }
 
 /** Text read result. */
