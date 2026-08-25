@@ -161,6 +161,7 @@ export const fr: Record<string, string> = {
   uploadFiles: 'Importer des fichiers',
   uploadFolder: 'Importer un dossier',
   uploadHere: 'Importer ici',
+  delete: 'Supprimer',
   uploadDropHint: 'Glissez des fichiers/dossiers ici pour les importer',
   uploadDropChat: 'Glissez dans la zone de discussion : ajouter des images à la discussion',
   uploadTo: 'Importer dans {dir}',

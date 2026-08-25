@@ -154,6 +154,7 @@ export const de: Record<string, string> = {
   uploadFiles: 'Dateien hochladen',
   uploadFolder: 'Ordner hochladen',
   uploadHere: 'Hierher hochladen',
+  delete: 'Löschen',
   uploadDropHint: 'Dateien/Ordner hierher ziehen, um sie hochzuladen',
   uploadDropChat: 'In den Chatbereich ziehen: Bilder zur Unterhaltung hinzufügen',
   uploadTo: 'Nach {dir} hochladen',

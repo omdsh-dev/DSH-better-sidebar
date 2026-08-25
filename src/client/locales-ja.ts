@@ -168,6 +168,7 @@ export const ja: Record<string, string> = {
   uploadFiles: 'ファイルをアップロード',
   uploadFolder: 'フォルダーをアップロード',
   uploadHere: 'ここにアップロード',
+  delete: '削除',
   uploadDropHint: 'ファイル/フォルダーをここにドロップしてアップロード',
   uploadDropChat: 'チャットにドロップで画像を会話に追加',
   uploadTo: '{dir} にアップロード',

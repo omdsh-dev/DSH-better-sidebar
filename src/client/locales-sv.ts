@@ -151,6 +151,7 @@ export const sv: Record<string, string> = {
   uploadFiles: 'Ladda upp filer',
   uploadFolder: 'Ladda upp mapp',
   uploadHere: 'Ladda upp hit',
+  delete: 'Ta bort',
   uploadDropHint: 'Släpp filer/mappar här för att ladda upp',
   uploadDropChat: 'Släpp på chatareat för att lägga till bilder',
   uploadTo: 'Ladda upp till {dir}',

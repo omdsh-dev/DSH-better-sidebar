@@ -168,6 +168,7 @@ export const hi: Record<string, string> = {
   uploadFiles: 'फ़ाइलें अपलोड करें',
   uploadFolder: 'फ़ोल्डर अपलोड करें',
   uploadHere: 'यहाँ अपलोड करें',
+  delete: 'हटाएं',
   uploadDropHint: 'फ़ाइलें/फ़ोल्डर यहाँ छोड़कर अपलोड करें',
   uploadDropChat: 'चैट पर छोड़ें: वार्तालाप में छवियाँ जोड़ें',
   uploadTo: '{dir} में अपलोड करें',

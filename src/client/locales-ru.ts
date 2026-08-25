@@ -164,6 +164,7 @@ export const ru: Record<string, string> = {
   uploadFiles: 'Загрузить файлы',
   uploadFolder: 'Загрузить папку',
   uploadHere: 'Загрузить сюда',
+  delete: 'Удалить',
   uploadDropHint: 'Перетащите файлы/папки сюда, чтобы загрузить',
   uploadDropChat: 'Перетащите в чат, чтобы добавить изображения в диалог',
   uploadTo: 'Загрузить в {dir}',

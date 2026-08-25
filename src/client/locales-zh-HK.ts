@@ -183,6 +183,7 @@ export const zhHK: Record<string, string> = {
   uploadFiles: '上傳檔案',
   uploadFolder: '上傳資料夾',
   uploadHere: '上傳到此處',
+  delete: '刪除',
   uploadDropHint: '拖曳檔案/資料夾到此處上傳',
   uploadDropChat: '拖放到聊天區：新增圖片到對話',
   uploadTo: '上傳到 {dir}',

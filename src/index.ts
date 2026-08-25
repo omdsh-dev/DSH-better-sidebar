@@ -29,7 +29,7 @@ import {
   type SidebarConfig,
   type SidebarPrefs,
 } from './config.ts'
-import { parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import { isWithin, parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
 import { writeWorkspaceUpload } from './fs-operations.ts'
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
@@ -338,6 +338,21 @@ function buildApi(
       }
       return { ok: true }
     },
+    // Delete a file or directory (recursive) inside the workspace. Refuses
+    // to delete the session workspace root or any of its ancestors.
+    'fs.remove': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'))
+      if (isWithin(path, cwd)) {
+        throw new SidebarError('fs-error', `cannot delete "${path}": it contains the session working directory`, 400)
+      }
+      try {
+        await rm(path, { recursive: true, force: true })
+        return { ok: true }
+      } catch (error) {
+        throw new SidebarError('fs-error', `cannot delete "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+      }
+    },
     'git.worktrees': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       const selected = selectedRepoOf(payload)
@@ -584,8 +599,9 @@ function buildApi(
       const record = payload as { action?: unknown } | null
       const action = record?.action
       if (action === 'reveal') return launchExternal('reveal', requireString(payload, 'path'))
+      if (action === 'open') return launchExternal('open', requireString(payload, 'path'))
       if (action === 'url') return launchExternal('url', requireString(payload, 'url'))
-      throw new SidebarError('bad-request', 'action must be "reveal" or "url"')
+      throw new SidebarError('bad-request', 'action must be "open", "reveal" or "url"')
     },
     // Side Chat: create a side-thread child seeded with the parent's full
     // log up to now, deliver follow-ups (cold-resuming when the thread's

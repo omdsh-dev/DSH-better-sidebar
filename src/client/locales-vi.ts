@@ -168,6 +168,7 @@ export const vi: Record<string, string> = {
   uploadFiles: 'Tải tệp lên',
   uploadFolder: 'Tải thư mục lên',
   uploadHere: 'Tải lên đây',
+  delete: 'Xóa',
   uploadDropHint: 'Kéo tệp/thư mục vào đây để tải lên',
   uploadDropChat: 'Kéo vào khu vực chat: thêm hình ảnh vào cuộc trò chuyện',
   uploadTo: 'Tải lên {dir}',

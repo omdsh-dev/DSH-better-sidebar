@@ -170,6 +170,7 @@ export const pl: Record<string, string> = {
   uploadFiles: 'Wgraj pliki',
   uploadFolder: 'Wgraj folder',
   uploadHere: 'Wgraj tutaj',
+  delete: 'Usuń',
   uploadDropHint: 'Upuść pliki/foldery tutaj, aby wgrać',
   uploadDropChat: 'Upuść na obszar czatu, aby dodać obrazy do rozmowy',
   uploadTo: 'Wgraj do {dir}',

@@ -169,6 +169,7 @@ export const ar: Record<string, string> = {
   uploadFiles: 'رفع ملفات',
   uploadFolder: 'رفع مجلد',
   uploadHere: 'ارفع هنا',
+  delete: 'حذف',
   uploadDropHint: 'أسقط الملفات/المجلدات هنا للرفع',
   uploadDropChat: 'الإسقاط على منطقة المحادثة: إضافة صور إلى المحادثة',
   uploadTo: 'رفع إلى {dir}',

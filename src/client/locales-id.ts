@@ -166,6 +166,7 @@ export const id: Record<string, string> = {
   uploadFiles: 'Unggah berkas',
   uploadFolder: 'Unggah folder',
   uploadHere: 'Unggah di sini',
+  delete: 'Hapus',
   uploadDropHint: 'Jatuhkan berkas/folder di sini untuk mengunggah',
   uploadDropChat: 'Jatuhkan ke area obrolan: tambahkan gambar ke obrolan',
   uploadTo: 'Unggah ke {dir}',
