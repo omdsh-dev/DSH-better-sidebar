@@ -25,12 +25,13 @@ if (!BASE_URL) {
 }
 
 const WORKSPACE_PATH = process.env.DSH_E2E_TOGGLE_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-toggle-workspace')
+const SEEDED_FILE = 'seed.txt'
 
 let api: APIRequestContext
 
 async function seedSession(): Promise<void> {
   mkdirSync(WORKSPACE_PATH, { recursive: true })
-  writeFileSync(join(WORKSPACE_PATH, 'seed.txt'), 'toggle lane\n')
+  writeFileSync(join(WORKSPACE_PATH, SEEDED_FILE), 'toggle lane\n')
   const workspace = await api.post(`${BASE_URL}/api/workspace.create`, {
     data: { type: 'client-request', rpcId: 'e2e-toggle-workspace', method: 'workspace.create', payload: { path: WORKSPACE_PATH } },
   })
@@ -214,6 +215,12 @@ test('fullscreen covers the conversation area and restores the saved width', asy
     .poll(async () => parseFloat(await page.evaluate(() =>
       document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))), { timeout: 90_000 })
     .toBeGreaterThan(0)
+
+  const fileRow = sidebar.locator(`[role="button"][title$="${SEEDED_FILE}"]:visible`)
+  await expect(fileRow, 'the fullscreen control is available after a file opens').toHaveCount(1, { timeout: 30_000 })
+  await fileRow.click({ position: { x: 8, y: 8 } })
+  const fullscreenButton = sidebar.getByRole('button', { name: /^(Fullscreen|全屏)$/ })
+  await expect(fullscreenButton).toHaveCount(1, { timeout: 30_000 })
   await page.waitForTimeout(500)
 
   const normal = await page.evaluate(() => {
@@ -228,7 +235,7 @@ test('fullscreen covers the conversation area and restores the saved width', asy
     }
   })
 
-  await sidebar.getByRole('button', { name: 'Fullscreen' }).click()
+  await fullscreenButton.click()
   await expect(sidebar.locator('[data-dsh-code-focus="true"]')).toHaveCount(1)
   await expect
     .poll(async () => page.evaluate(() => {
@@ -240,13 +247,13 @@ test('fullscreen covers the conversation area and restores the saved width', asy
   const focused = await page.evaluate(() => ({
     push: parseFloat(document.documentElement.style.getPropertyValue('--dsh-sidebar-width')),
     rootWidth: document.querySelector('#root')!.getBoundingClientRect().width,
-    separator: document.querySelector('[role="separator"]') !== null,
+    separator: document.querySelector('[data-dsh-panel] > [role="separator"]') !== null,
   }))
   expect(focused.push, 'focus must keep the saved shell push').toBe(normal.push)
   expect(Math.abs(focused.rootWidth - normal.rootWidth), 'focus must preserve the DSH workspace rail').toBeLessThanOrEqual(2)
   expect(focused.separator, 'the saved-width handle is unavailable during transient focus').toBe(false)
 
-  await sidebar.getByRole('button', { name: 'Exit fullscreen' }).click()
+  await sidebar.getByRole('button', { name: /^(Exit fullscreen|退出全屏)$/ }).click()
   await expect(sidebar.locator('[data-dsh-code-focus="true"]')).toHaveCount(0)
   await expect
     .poll(async () => page.evaluate(() =>
