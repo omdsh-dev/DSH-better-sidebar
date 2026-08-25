@@ -98,6 +98,15 @@ function isFileDrag(event: DragEvent): boolean {
   return event.dataTransfer?.types.includes('Files') ?? false
 }
 
+/** Keep primary-pointer row selection from focusing and auto-scrolling the
+ *  row. Keyboard focus remains available through tabIndex and key handlers. */
+function preserveTreeViewportOnMouseDown(event: MouseEvent<HTMLElement>): void {
+  if (event.button !== 0) return
+  const target = event.target
+  if (target instanceof Element && target.closest('button') !== null) return
+  event.preventDefault()
+}
+
 /** How long the row's "copied" label stays after a successful write. */
 const COPIED_MS = 1200
 
@@ -495,6 +504,14 @@ export function FileTree(props: {
 
   const root = cwd
 
+  /** Capture the live viewport before the owning editor switches tabs. */
+  const openFileAtCurrentViewport = (path: string): void => {
+    const scrollTop = bodyRef.current?.scrollTop ?? desiredScrollTopRef.current
+    desiredScrollTopRef.current = scrollTop
+    onScrollTopChange?.(scrollTop)
+    onOpenFile(path)
+  }
+
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
     if (level === undefined) {
@@ -523,6 +540,7 @@ export function FileTree(props: {
               )}
               data-dsh-revealed={revealed.includes(entry.path) ? 'true' : undefined}
               style={{ paddingLeft: depth * 22 + 6 }}
+              onMouseDown={preserveTreeViewportOnMouseDown}
               onClick={() => { onToggle(entry.path) }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
@@ -556,11 +574,12 @@ export function FileTree(props: {
           data-dsh-revealed={revealed.includes(entry.path) ? 'true' : undefined}
           style={{ paddingLeft: depth * 22 + 6 }}
           title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
-          onClick={() => { onOpenFile(entry.path) }}
+          onMouseDown={preserveTreeViewportOnMouseDown}
+          onClick={() => { openFileAtCurrentViewport(entry.path) }}
           onKeyDown={(event) => {
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault()
-              onOpenFile(entry.path)
+              openFileAtCurrentViewport(entry.path)
             }
           }}
           onDragOver={(event) => { handleRowDragOver(event, parentOf(entry.path)) }}

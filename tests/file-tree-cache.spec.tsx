@@ -31,18 +31,22 @@ vi.mock('../src/client/api.ts', () => ({
   downloadUrl: () => '/sidebar/file',
 }))
 
-function renderTree(root: Root, initialScrollTop = 0): void {
+function renderTree(root: Root, initialScrollTop = 0, callbacks: {
+  onOpenFile?: (path: string) => void
+  onScrollTopChange?: (scrollTop: number) => void
+} = {}): void {
   root.render(createElement(FileTree, {
     sessionId: 'cache-continuity-session',
     cwd: '/workspace',
     expanded: [],
     onToggle: () => {},
-    onOpenFile: () => {},
+    onOpenFile: callbacks.onOpenFile ?? (() => {}),
     onReferenceFile: () => {},
     refreshTick: 0,
     onUploadRequest: () => {},
     busy: false,
     initialScrollTop,
+    onScrollTopChange: callbacks.onScrollTopChange,
   }))
 }
 
@@ -64,5 +68,32 @@ describe('FileTree cache continuity', () => {
     expect(body.scrollTop).toBe(320)
     expect(fsTree).toHaveBeenCalledTimes(1)
     act(() => { secondRoot.unmount() })
+  })
+
+  it('opens a mouse-selected file without moving focus or using a stale viewport', async () => {
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const calls: string[] = []
+    await act(async () => {
+      renderTree(root, 0, {
+        onScrollTopChange: scrollTop => { calls.push(`scroll:${scrollTop}`) },
+        onOpenFile: path => { calls.push(`open:${path}`) },
+      })
+    })
+    const body = container.querySelector<HTMLDivElement>('[class*="explorerBody"]')!
+    const row = container.querySelector<HTMLElement>('[role="button"][title="/workspace/bench.py"]')!
+    body.scrollTop = 320
+
+    const primaryDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 })
+    act(() => { row.dispatchEvent(primaryDown) })
+    expect(primaryDown.defaultPrevented).toBe(true)
+
+    act(() => { row.click() })
+    expect(calls).toEqual(['scroll:320', 'open:/workspace/bench.py'])
+
+    const secondaryDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2 })
+    act(() => { row.dispatchEvent(secondaryDown) })
+    expect(secondaryDown.defaultPrevented).toBe(false)
+    act(() => { root.unmount() })
   })
 })

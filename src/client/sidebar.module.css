@@ -982,15 +982,15 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-anchor: none;
   /* Deep trees truncate their labels instead of scrolling horizontally. */
   overflow-x: hidden;
   padding: 4px 8px 8px;
 }
 
 /* One tree row: the app's session-row cell (34px, radius 8, inset, hover
-   fill, 22px indent step, 14px ink) with a mount fade so expanding a
-   directory reveals its children gently (stable keys keep existing rows from
-   replaying it). */
+   fill, 22px indent step, 14px ink). Rows intentionally have no mount
+   animation: editor-tab changes remount the tree and must not flash it. */
 .explorerRow {
   display: flex;
   align-items: center;
@@ -1011,7 +1011,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   cursor: pointer;
   white-space: nowrap;
   border-radius: 8px;
-  animation: dsh-row-in 150ms var(--ds-ease-in-out);
 }
 
 .explorerRow:hover {
