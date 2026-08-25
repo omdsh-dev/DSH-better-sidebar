@@ -1,5 +1,5 @@
 /**
- * Workspace-safe file mutations for the sidebar (the upload route today).
+ * Workspace-safe file mutations for the sidebar (upload and file deletion).
  *
  * Every write is confined to the real session workspace: the upload
  * directory is resolved absolute and its target is checked through existing
@@ -13,10 +13,10 @@
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { createWriteStream } from 'node:fs'
-import { mkdir, rename, rm, stat } from 'node:fs/promises'
+import { lstat, mkdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { SidebarHttpRequest } from './context-types.ts'
-import { requireAbsolute } from './fs-tree.ts'
+import { isWithin, requireAbsolute } from './fs-tree.ts'
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
 import { SidebarError } from './wire.ts'
 
@@ -92,4 +92,46 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
     await rm(tmp, { force: true }).catch(() => {})
     throw error
   }
+}
+
+/**
+ * Permanently delete one file below the session workspace. Directories are
+ * refused: the explorer intentionally has no recursive-delete operation.
+ * Symlinks are removed as links rather than following their targets.
+ *
+ * @param cwd - Session workspace root.
+ * @param path - Absolute file path selected in the explorer.
+ * @returns The normalized path that was removed.
+ * @throws SidebarError when the target escapes the workspace, is a
+ * directory, is missing, or cannot be removed.
+ */
+export async function deleteWorkspaceFile(cwd: string, path: string): Promise<{ path: string }> {
+  const root = requireAbsolute(cwd)
+  const target = requireAbsolute(path)
+  if (target === root || !isWithin(root, target)) {
+    throw new SidebarError('forbidden', 'delete target escapes the session workspace', 403)
+  }
+  let info
+  try {
+    info = await lstat(target)
+  } catch (error) {
+    throw new SidebarError(
+      'fs-error',
+      `cannot delete "${target}": ${error instanceof Error ? error.message : String(error)}`,
+      400,
+    )
+  }
+  if (info.isDirectory()) {
+    throw new SidebarError('bad-request', 'directory deletion is not supported', 400)
+  }
+  try {
+    await rm(target)
+  } catch (error) {
+    throw new SidebarError(
+      'fs-error',
+      `cannot delete "${target}": ${error instanceof Error ? error.message : String(error)}`,
+      400,
+    )
+  }
+  return { path: target }
 }

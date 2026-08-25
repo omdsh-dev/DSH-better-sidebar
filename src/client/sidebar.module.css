@@ -54,8 +54,8 @@
   left: 0;
 }
 
-/* The persistent layout cluster at the top-right corner: focus, bottom-panel
-   and right-panel controls side by side while the panel is open.
+/* The persistent layout cluster at the top-right corner: bottom-panel and
+   right-panel controls side by side while the panel is open.
    Always pinned to the viewport corner — inside the right panel's top-right
    while it is open, sitting flush in the 34px tab strip (28px buttons at
    top: 3) whose right end it really squeezes. Host-internal z-index 45
@@ -81,7 +81,7 @@
    right end, so the tabs and the + menu genuinely yield space to the cluster
    (never hiding under it). */
 .panel:not(.panelHidden) .tabBar {
-  padding-right: 104px;
+  padding-right: 72px;
 }
 
 /* The closed-state affordance is the native rail icon control: a plain
@@ -1344,9 +1344,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   border-color: var(--dsw-alias-border-l2);
 }
 
-/* The tree-panel toggle in the header: active = panel open (the selected
-   fill of the tab strip). */
-.editorTreeToggleActive {
+/* Selected header controls share the tab strip's active fill. */
+.editorTreeToggleActive,
+.editorHeaderButtonActive {
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-interactive-bg-active);
 }
@@ -1438,6 +1438,20 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding: 8px 12px;
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-label-tertiary);
+}
+
+.editorDeleteDesc {
+  margin: 0;
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.editorDeleteDesc + .editorDeleteDesc {
+  margin-top: 8px;
+}
+
+.editorDeleteError {
+  color: var(--dsw-alias-state-error-primary);
 }
 
 .editorSearchResult {

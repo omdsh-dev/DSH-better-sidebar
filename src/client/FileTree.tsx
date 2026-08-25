@@ -27,7 +27,7 @@ import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
   IconChevronRightOutline14, IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16,
-  IconLinkOutline16, Menu, type MenuEntry, type MenuItem, writeClipboard,
+  IconLinkOutline16, IconTrashOutline16, Menu, type MenuEntry, type MenuItem, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
 import { VscFolder, VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
@@ -159,6 +159,8 @@ export function FileTree(props: {
   onOpenFileNewTab?: (path: string) => void
   /** Context-menu "open to the side" (file rows; absent → no entry). */
   onOpenFileSide?: (path: string) => void
+  /** Context-menu delete request (file rows only; caller confirms and runs it). */
+  onDeleteFile?: (path: string) => void
   /**
    * The "open with" menu: resolved external targets (already SSH-filtered
    * and in menu order). Absent → the whole section is hidden.
@@ -185,7 +187,7 @@ export function FileTree(props: {
   /** Reports navigation movement so the owning editor tab can persist it. */
   onScrollTopChange?: (scrollTop: number) => void
 }) {
-  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy, initialScrollTop = 0, onScrollTopChange } = props
+  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onDeleteFile, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy, initialScrollTop = 0, onScrollTopChange } = props
   const cacheKey = levelCacheKey(sessionId, cwd)
   const [data, setData] = useState<Record<string, LevelData>>(() => readLevelCache(cacheKey) ?? {})
   const dataRef = useRef(data)
@@ -728,6 +730,15 @@ export function FileTree(props: {
             : []),
           { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={16} /> },
           { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutline16 size={16} /> },
+          ...(rowMenu?.isDir === false && onDeleteFile !== undefined
+            ? [
+                { type: 'separator' as const, id: 'delete-separator' },
+                {
+                  id: 'delete', label: t('deleteFile'), icon: <IconTrashOutline16 size={16} />,
+                  danger: true, ...(busy ? { disabled: true } : {}),
+                },
+              ]
+            : []),
         ]}
         onSelect={(id) => {
           const target = rowMenu
@@ -747,6 +758,10 @@ export function FileTree(props: {
           }
           if (id === 'download') {
             downloadFile(target.path)
+            return
+          }
+          if (id === 'delete') {
+            onDeleteFile?.(target.path)
             return
           }
           if (id === 'upload-here') {

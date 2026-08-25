@@ -17,12 +17,13 @@
  */
 import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
-import { IconFolderOpen16, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconFolderOpen16, IconRefreshOutline16, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
 import { FileTree } from './FileTree.tsx'
 import { IconUploadOutline16 } from './icons.tsx'
 import type { OpenWithTarget } from './open-with.ts'
 import { t } from './locales.ts'
+import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import { UploadOverlay } from './UploadOverlay.tsx'
 import {
@@ -60,6 +61,8 @@ export function TreePanel(props: {
   onOpenWith?: (targetId: string, path: string) => void
   onToggleOpenWithPin?: (targetId: string) => void
   onReferenceFile: (path: string) => void
+  /** Called after a confirmed file deletion so open editor tabs can reset. */
+  onFileDeleted?: (path: string) => void
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean
@@ -68,19 +71,23 @@ export function TreePanel(props: {
   /** Reports file-tree navigation movement to the editor tab. */
   onScrollTopChange: (scrollTop: number) => void
 }) {
-  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, full, initialScrollTop, onScrollTopChange } = props
+  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onFileDeleted, full, initialScrollTop, onScrollTopChange } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshTick, setRefreshTick] = useState(0)
-  /** One-line upload status under the search row ('' hides the hint). */
-  const [uploadStatus, setUploadStatus] = useState('')
+  /** One-line file-operation status under the search row ('' hides it). */
+  const [operationStatus, setOperationStatus] = useState('')
   /** Whether the status line is a failure/cancel (error color, stays visible). */
-  const [uploadFailed, setUploadFailed] = useState(false)
+  const [operationFailed, setOperationFailed] = useState(false)
   /** The in-flight upload session (null → no overlay, buttons enabled). */
   const [upload, setUpload] = useState<UploadSession | null>(null)
   /** True between the cancel click and the session settling (button disabled). */
   const [cancelling, setCancelling] = useState(false)
+  /** File awaiting permanent-delete confirmation. */
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   /** Set by cancelUpload; the settle path shows 'upload cancelled' instead of
    *  summarizing the partial results. */
   const cancelledRef = useRef(false)
@@ -89,14 +96,14 @@ export function TreePanel(props: {
 
   /** Start one upload session into `dir` (absolute, inside the workspace). */
   const startUpload = (dir: string, items: UploadItem[]): void => {
-    if (items.length === 0 || cwd === undefined || upload !== null) return
+    if (items.length === 0 || cwd === undefined || upload !== null || deleteBusy) return
     cancelledRef.current = false
     const controller = new AbortController()
-    setUploadFailed(false)
-    setUploadStatus(uploadHintText(0, items.length, '', dir, t))
+    setOperationFailed(false)
+    setOperationStatus(uploadHintText(0, items.length, '', dir, t))
     setUpload({ dir, done: 0, total: items.length, current: '', controller })
     void uploadToDir({ sessionId, cwd }, dir, items, (done, total, current) => {
-      if (current !== '') setUploadStatus(uploadHintText(done, total, current, dir, t))
+      if (current !== '') setOperationStatus(uploadHintText(done, total, current, dir, t))
       setUpload(session => session === null ? session : { ...session, done, total, current })
     }, controller.signal).then((results) => {
       setUpload(null)
@@ -105,17 +112,17 @@ export function TreePanel(props: {
       // cancel, and failures leave whatever did succeed visible.
       setRefreshTick(tick => tick + 1)
       if (cancelledRef.current) {
-        setUploadStatus(t('uploadCancelled'))
-        setUploadFailed(true)
+        setOperationStatus(t('uploadCancelled'))
+        setOperationFailed(true)
         return
       }
       const status = summarizeResults(results, t)
-      setUploadStatus(status)
-      setUploadFailed(results.some(result => !result.ok))
+      setOperationStatus(status)
+      setOperationFailed(results.some(result => !result.ok))
       // Success messages are transient; failures stay until the next action.
       if (results.every(result => result.ok)) {
         window.setTimeout(() => {
-          setUploadStatus(current => current === status ? '' : current)
+          setOperationStatus(current => current === status ? '' : current)
         }, UPLOAD_HINT_MS)
       }
     })
@@ -130,6 +137,33 @@ export function TreePanel(props: {
   }
 
   const folderInputProps = { webkitdirectory: '' } as InputHTMLAttributes<HTMLInputElement>
+
+  /** Permanently delete the confirmed file, then refresh the tree. */
+  const confirmDelete = async (): Promise<void> => {
+    const target = deleteTarget
+    if (target === null || deleteBusy || upload !== null) return
+    setDeleteBusy(true)
+    setDeleteError(null)
+    try {
+      await api.fsDelete({ sessionId, cwd }, target)
+      setDeleteTarget(null)
+      setRefreshTick(tick => tick + 1)
+      setOperationFailed(false)
+      const label = relativeTo(cwd ?? '', target)
+      const status = t('deleteFileDone', { path: label })
+      setOperationStatus(status)
+      window.setTimeout(() => {
+        setOperationStatus(current => current === status ? '' : current)
+      }, UPLOAD_HINT_MS)
+      onFileDeleted?.(target)
+    } catch (reason) {
+      setDeleteError(t('deleteFileFailed', {
+        error: reason instanceof Error ? reason.message : String(reason),
+      }))
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
 
   const needle = query.trim()
   useEffect(() => {
@@ -155,7 +189,7 @@ export function TreePanel(props: {
     }
   }, [sessionId, cwd, needle])
 
-  const busy = upload !== null
+  const busy = upload !== null || deleteBusy
 
   return (
     <div className={clsx(css.editorTreePanel, full === true && css.editorTreePanelFull)}>
@@ -218,8 +252,8 @@ export function TreePanel(props: {
           }}
         />
       </div>
-      {uploadStatus !== '' && (
-        <div className={clsx(css.editorSearchHint, uploadFailed && css.editorError)} title={uploadStatus}>{uploadStatus}</div>
+      {operationStatus !== '' && (
+        <div className={clsx(css.editorSearchHint, operationFailed && css.editorError)} title={operationStatus}>{operationStatus}</div>
       )}
       {needle === '' ? (
         <FileTree
@@ -231,6 +265,10 @@ export function TreePanel(props: {
           onOpenFile={onOpenFile}
           onOpenFileNewTab={onOpenFileNewTab}
           onOpenFileSide={onOpenFileSide}
+          onDeleteFile={(path) => {
+            setDeleteError(null)
+            setDeleteTarget(path)
+          }}
           openWithTargets={openWithTargets}
           openWithPinned={openWithPinned}
           openWithSsh={openWithSsh}
@@ -276,6 +314,27 @@ export function TreePanel(props: {
           cancelling={cancelling}
         />
       )}
+      <Modal
+        open={deleteTarget !== null}
+        onClose={() => { if (!deleteBusy) setDeleteTarget(null) }}
+        title={t('deleteFileTitle')}
+        closeLabel={t('cancel')}
+        footer={(
+          <>
+            <Button variant="outline" disabled={deleteBusy} onClick={() => { setDeleteTarget(null) }}>
+              {t('cancel')}
+            </Button>
+            <Button variant="primary" disabled={deleteBusy} onClick={() => { void confirmDelete() }}>
+              {deleteBusy ? t('deletingFile') : t('deleteFile')}
+            </Button>
+          </>
+        )}
+      >
+        <p className={css.editorDeleteDesc}>
+          {t('deleteFileDesc', { path: relativeTo(cwd ?? '', deleteTarget ?? '') })}
+        </p>
+        {deleteError !== null && <p className={clsx(css.editorDeleteDesc, css.editorDeleteError)}>{deleteError}</p>}
+      </Modal>
     </div>
   )
 }

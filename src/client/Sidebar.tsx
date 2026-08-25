@@ -31,7 +31,7 @@
 import { createElement, memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
-import { IconCloseFill14, IconFullscreenOutline16, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
@@ -60,6 +60,7 @@ import { detectNewDirectSubagent } from './subagent-detect.ts'
 import { detectNewJob } from './subagent-jobs.ts'
 import { t } from './locales.ts'
 import { api, type SessionScope } from './api.ts'
+import { WorkbenchToolbarContext, type WorkbenchToolbarActions } from './workbench-toolbar.ts'
 import css from './sidebar.module.css'
 
 /** How many consecutive reconnect failures stop the agent-terminals push loop
@@ -671,10 +672,6 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // writes the bottom panel's edges directly, so measurement pauses then.
   const centerColRef = useRef<HTMLElement | null>(null)
   const draggingRef = useRef(false)
-  /** Width that covers the conversation/details area while preserving the
-   * app's own left workspace rail. `left` is the measured center-column edge. */
-  const codeFocusWidth = (left = centerRectRef.current.left): number =>
-    Math.min(window.innerWidth, Math.max(PANEL_MIN, Math.round(window.innerWidth - left)))
   const measureCenter = useCallback((): void => {
     if (draggingRef.current) return
     const col = centerColRef.current
@@ -701,8 +698,12 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       bottom.style.setProperty('right', focused ? '0px' : `${window.innerWidth - rect.right}px`)
     }
     if (focused) {
-      const width = codeFocusWidth(rect.left)
-      panelRef.current?.style.setProperty('width', `${width}px`)
+      // Pin both horizontal edges instead of deriving a width. The DSH shell
+      // can resize its center column while the overlay is active; anchoring
+      // the panel to the measured left edge keeps focus mode covering the
+      // conversation area without feeding that resize back into its width.
+      panelRef.current?.style.setProperty('left', `${rect.left}px`)
+      panelRef.current?.style.setProperty('width', 'auto')
     }
     setCenterMeasured(prev => (prev ? prev : true))
   }, [])
@@ -976,8 +977,14 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    *  The layout push rides the shared writer (writeGeometry). */
   const applyDrag = (width: number, height: number): void => {
     lastDragSize.current = { width, height }
-    const renderedWidth = codeFocusRef.current ? codeFocusWidth() : width
-    panelRef.current?.style.setProperty('width', `${renderedWidth}px`)
+    const focused = codeFocusRef.current
+    if (focused) {
+      panelRef.current?.style.setProperty('left', `${centerRectRef.current.left}px`)
+      panelRef.current?.style.setProperty('width', 'auto')
+    } else {
+      panelRef.current?.style.removeProperty('left')
+      panelRef.current?.style.setProperty('width', `${width}px`)
+    }
     bottomRef.current?.style.setProperty('height', `${height}px`)
     // centerRect.right is the center column's right edge at the committed
     // width (innerWidth - state.width - detailsWidth), so this equals
@@ -985,7 +992,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // drag write-only (no React re-render mid-drag).
     bottomRef.current?.style.setProperty(
       'right',
-      codeFocusRef.current
+      focused
         ? '0px'
         : `${(window.innerWidth - centerRectRef.current.right) + (width - (state?.width ?? 0))}px`,
     )
@@ -1270,6 +1277,28 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     appendToDraft(ctx, sessionId, `@${relativeTo(cwd ?? '', path)}`)
   }, [ctx, sessionId, cwd])
 
+  const newTabOptions = useMemo(
+    () => state === undefined || sessionId === undefined
+      ? []
+      : buildNewTabOptions(state, ctx, { sessionId, cwd }),
+    [state, ctx, sessionId, cwd, tabsVersion],
+  )
+  const onNewTab = useCallback((optionId: string): void => {
+    if (sessionId === undefined) return
+    const service = ctx.get('betterSidebar')
+    const descriptor = service?.getTab(optionId)
+    if (descriptor === undefined) return
+    const title = typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title
+    service.openTab({ type: optionId, title }, { sessionId, cwd })
+  }, [ctx, sessionId, cwd])
+  const workbenchToolbar = useMemo<WorkbenchToolbarActions>(() => ({
+    codeFocus,
+    canCodeFocus: !narrow,
+    toggleCodeFocus: () => { setCodeFocus(!codeFocus) },
+    newTabOptions,
+    onNewTab,
+  }), [codeFocus, narrow, setCodeFocus, newTabOptions, onNewTab])
+
   if (state === undefined || sessionId === undefined) {
     // Keep the unavailable controls focusable: touch users have no hover, so
     // focus is the only way the existing Tooltip can explain what is missing.
@@ -1304,17 +1333,6 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     viewportWidth: viewport.width,
     viewportHeight: layoutViewportHeight,
   }).height
-
-  const onNewTab = (optionId: string): void => {
-    const service = ctx.get('betterSidebar')
-    const descriptor = service?.getTab(optionId)
-    if (service === undefined || descriptor === undefined) return
-    const title = typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title
-    // The session scope rides along: lifecycle callbacks receive it (and
-    // the open stays in the current session, as before).
-    service.openTab({ type: optionId, title }, { sessionId, cwd })
-  }
-
   /**
    * The explorer's @-reference button: append `@<relative path>` to the
    * session's composer draft (space-separated). Resolves the session-scope
@@ -1397,22 +1415,10 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         Always pinned to the viewport corner — inside the right panel's
         top-right while it is open, sitting flush in the tab strip whose
         right end it really squeezes (the strip reserves its width via CSS),
-        so the tabs genuinely yield space to it.
+        so the tabs genuinely yield space to it. Fullscreen belongs to the
+        file path toolbar below, beside the content it expands.
       */}
       <div className={css.toggleCluster} data-dsh-toggle-cluster>
-        {!narrow && state.panelOpen && (
-          <Tooltip label={codeFocus ? t('exitCodeFocus') : t('enterCodeFocus')} side="bottom" delayMs={500}>
-            <button
-              type="button"
-              className={clsx(css.toggleButton, codeFocus && css.toggleButtonActive)}
-              aria-label={codeFocus ? t('exitCodeFocus') : t('enterCodeFocus')}
-              aria-pressed={codeFocus}
-              onClick={() => { setCodeFocus(!codeFocus) }}
-            >
-              <IconFullscreenOutline16 />
-            </button>
-          </Tooltip>
-        )}
         {/*
           Narrow viewports merge the two workbenches into the one drawer —
           there is no bottom panel, so its toggle button is not offered.
@@ -1457,7 +1463,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         className={clsx(css.panel, !state.panelOpen && css.panelHidden)}
         data-dsh-panel
         style={{
-          width: narrow ? '100vw' : codeFocus ? codeFocusWidth() : Math.min(state.width, window.innerWidth),
+          left: !narrow && codeFocus ? centerRectRef.current.left : undefined,
+          width: narrow ? '100vw' : codeFocus ? 'auto' : Math.min(state.width, window.innerWidth),
           // Narrow drawer: keep the bottom-anchored sheet above the on-screen
           // keyboard (visualViewport inset); desktop panels are full-height
           // and unaffected.
@@ -1559,15 +1566,17 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             />
           )}
         <div className={css.panelBody}>
-          <Workbench
-            state={state}
-            newTabOptions={buildNewTabOptions(state, ctx, { sessionId, cwd })}
-            actions={actions}
-            onNewTab={onNewTab}
-            renderTab={renderTab}
-            getTabIcon={tabIconOf}
-            getTabBadge={tabBadgeOf}
-          />
+          <WorkbenchToolbarContext.Provider value={workbenchToolbar}>
+            <Workbench
+              state={state}
+              newTabOptions={newTabOptions}
+              actions={actions}
+              onNewTab={onNewTab}
+              renderTab={renderTab}
+              getTabIcon={tabIconOf}
+              getTabBadge={tabBadgeOf}
+            />
+          </WorkbenchToolbarContext.Provider>
         </div>
         {/*
           The shared corner (only while BOTH panels are open): the
@@ -1716,7 +1725,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           <Workbench
             state={state}
             tree={state.bottomSplits}
-            newTabOptions={buildNewTabOptions(state, ctx, { sessionId, cwd })}
+            newTabOptions={newTabOptions}
             actions={actions}
             onNewTab={onNewTab}
             renderTab={(tab, active, paneId) => renderTab(tab, active, paneId, 'bottom')}

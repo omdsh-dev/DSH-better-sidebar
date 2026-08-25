@@ -23,10 +23,12 @@
  * The strategy dispatch is pure (planFirstMatch / planFsReadOutcome in
  * editor-load.ts); this component only wires it to the host APIs.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
-import { IconCheckOutline16, IconFolderOpen16, IconRefreshOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  IconCheckOutline16, IconFolderOpen16, IconFullscreenOutline16, IconPlusOutline16, IconRefreshOutline14, Menu,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { api, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
@@ -42,6 +44,7 @@ import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
 import { allLeaves, firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, type SidebarStore, type SidebarTab } from './state.ts'
+import { WorkbenchToolbarContext } from './workbench-toolbar.ts'
 import css from './sidebar.module.css'
 
 type EditorLoad =
@@ -141,6 +144,8 @@ export function EditorHost(props: {
     }
     setReloadSeq(sequence => sequence + 1)
   }
+  const [newTabMenuOpen, setNewTabMenuOpen] = useState(false)
+  const workbenchToolbar = useContext(WorkbenchToolbarContext)
 
   // Reactive prefs read: flipping editorExplorer re-renders this tab with no
   // reload. The snapshot is the bare boolean so unrelated store churn never
@@ -217,7 +222,7 @@ export function EditorHost(props: {
     const meta = { ...metaOf(existing ?? tab), ...navigation }
     // Dedupe focuses an existing tab without applying the new seed, so patch
     // that tab first; a new tab receives the same state through its seed.
-    if (existing !== undefined) ctx.betterSidebar?.updateTab(existing.id, { meta })
+    if (existing !== undefined) ctx.get('betterSidebar')?.updateTab(existing.id, { meta })
     openSidebarFile(ctx, store, scope.sessionId, absolute, meta)
   }
 
@@ -258,6 +263,24 @@ export function EditorHost(props: {
       const { node, leafId } = insertLeafAt(state[key], pane.id, 'row', fresh, false)
       return { ...state, [key]: node, activePane: leafId }
     })
+  }
+
+  /** Clear the deleted file from every editor tab in this workbench. The
+   *  tab that hosted the delete becomes a Files view so its pane survives;
+   *  duplicate editors close instead of reopening a missing path. */
+  const fileDeleted = (absolute: string): void => {
+    const state = store.getSnapshot().state
+    if (state === undefined) return
+    const matches = [...allLeaves(state.splits), ...allLeaves(state.bottomSplits)]
+      .flatMap(leaf => leaf.tabs)
+      .filter(candidate => candidate.type === 'editor' && candidate.path === absolute)
+    for (const candidate of matches) {
+      if (candidate.id === tab.id) {
+        ctx.get('betterSidebar')?.updateTab(candidate.id, { path: '', title: t('files') })
+      } else {
+        ctx.get('betterSidebar')?.closeTab(candidate.id, scope)
+      }
+    }
   }
 
   /** The context menu's "open with" action: reveal the path in the OS file
@@ -464,6 +487,7 @@ export function EditorHost(props: {
           onOpenWith={openWith}
           onToggleOpenWithPin={toggleOpenWithPin}
           onReferenceFile={onReferenceFile}
+          onFileDeleted={fileDeleted}
           initialScrollTop={treeScrollTopRef.current}
           onScrollTopChange={rememberTreeScroll}
         />
@@ -475,6 +499,47 @@ export function EditorHost(props: {
     <div className={css.editor}>
       <div className={css.editorHeader}>
         <EditorPathInput key={path} path={path} cwd={scope.cwd} onOpen={openFile} />
+        {workbenchToolbar?.canCodeFocus === true && (
+          <button
+            type="button"
+            className={clsx(css.iconButton, workbenchToolbar.codeFocus && css.editorHeaderButtonActive)}
+            aria-label={workbenchToolbar.codeFocus ? t('exitCodeFocus') : t('enterCodeFocus')}
+            title={workbenchToolbar.codeFocus ? t('exitCodeFocus') : t('enterCodeFocus')}
+            aria-pressed={workbenchToolbar.codeFocus}
+            onClick={workbenchToolbar.toggleCodeFocus}
+          >
+            <IconFullscreenOutline16 size={14} />
+          </button>
+        )}
+        {workbenchToolbar !== null && (
+          <Menu
+            open={newTabMenuOpen}
+            onClose={() => { setNewTabMenuOpen(false) }}
+            items={workbenchToolbar.newTabOptions.map(option => ({
+              id: option.id,
+              label: option.label,
+              ...(option.disabled === true ? { disabled: true } : {}),
+              ...(option.icon !== undefined ? { icon: option.icon } : {}),
+            }))}
+            onSelect={(id) => {
+              workbenchToolbar.onNewTab(id)
+              setNewTabMenuOpen(false)
+            }}
+            portal
+            align="end"
+            anchor={(
+              <button
+                type="button"
+                className={css.iconButton}
+                aria-label={t('newTab')}
+                title={t('newTab')}
+                onClick={() => { setNewTabMenuOpen(open => !open) }}
+              >
+                <IconPlusOutline16 size={14} />
+              </button>
+            )}
+          />
+        )}
         {toolbar?.modes === true && (
           <div className={css.editorModeToggle}>
             <button
@@ -585,6 +650,7 @@ export function EditorHost(props: {
               onOpenWith={openWith}
               onToggleOpenWithPin={toggleOpenWithPin}
               onReferenceFile={onReferenceFile}
+              onFileDeleted={fileDeleted}
               initialScrollTop={treeScrollTopRef.current}
               onScrollTopChange={rememberTreeScroll}
             />

@@ -26,6 +26,7 @@ import { act } from 'react-dom/test-utils'
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
 
 import { Sidebar } from '../src/client/Sidebar.tsx'
+import { EditorHost } from '../src/client/EditorHost.tsx'
 import { createSidebarStore, setBottomHeight, toggleBottomPanel, type SidebarStore } from '../src/client/state.ts'
 import { createBetterSidebarService, type BetterSidebarService } from '../src/client/service.ts'
 import { t } from '../src/client/locales.ts'
@@ -57,7 +58,7 @@ function mountSidebar(): MountedSidebar {
   const store = createSidebarStore()
   const service = createBetterSidebarService(store)
   // Fresh-session seed: open the panel explicitly (openByDefault defaults off).
-  store.setPrefs({ ...store.getPrefs(), openByDefault: true })
+  store.setPrefs({ ...store.getPrefs(), openByDefault: true, editorExplorer: true })
   // Unique session per test — the store persists per-session state to
   // localStorage (200ms debounce); a shared id lets a previous test's late
   // write leak into this store's setSession restore.
@@ -77,6 +78,21 @@ function mountSidebar(): MountedSidebar {
     betterSidebar: service,
     get: (name: string) => name === 'betterSidebar' ? service : undefined,
   }
+  service.registerTab({
+    id: 'editor',
+    title: 'Files',
+    dedupeKey: tab => tab.path,
+    component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile }) => createElement(EditorHost, {
+      ctx,
+      store,
+      scope,
+      tab,
+      expanded: expanded ?? [],
+      revealed: revealed ?? [],
+      onToggleDir: onToggleDir ?? (() => {}),
+      onReferenceFile: onReferenceFile ?? (() => {}),
+    }),
+  })
   const root: Root = createRoot(container)
   act(() => { root.render(createElement(Sidebar, { ctx: ctx as never, store })) })
   return {
@@ -147,10 +163,17 @@ describe('layout-push variable cleanup', () => {
     const savedWidth = store.getSnapshot().state!.width
     const enter = container.querySelector<HTMLButtonElement>(`[aria-label="${t('enterCodeFocus')}"]`)
     expect(enter).not.toBeNull()
+    expect(enter!.closest('[data-dsh-toggle-cluster]')).toBeNull()
+    expect(enter!.closest('[class*="editorHeader"]')).not.toBeNull()
+    const headerPlus = [...container.querySelectorAll<HTMLButtonElement>(`[aria-label="${t('newTab')}"]`)]
+      .find(button => button.closest('[class*="editorHeader"]') !== null)
+    expect(headerPlus).toBeDefined()
 
     act(() => { enter!.click() })
     expect(container.querySelector('[data-dsh-code-focus="true"]')).not.toBeNull()
-    expect(container.querySelector<HTMLElement>('[data-dsh-panel]')!.style.width).toBe(`${window.innerWidth}px`)
+    const focusedPanel = container.querySelector<HTMLElement>('[data-dsh-panel]')!
+    expect(focusedPanel.style.left).toBe('0px')
+    expect(focusedPanel.style.width).toBe('auto')
     expect(document.documentElement.style.getPropertyValue('--dsh-sidebar-width')).toBe(`${savedWidth}px`)
     expect(store.getSnapshot().state!.width).toBe(savedWidth)
 

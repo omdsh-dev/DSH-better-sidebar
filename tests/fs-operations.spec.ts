@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { writeWorkspaceUpload } from '../src/fs-operations.ts'
+import { deleteWorkspaceFile, writeWorkspaceUpload } from '../src/fs-operations.ts'
 
 /** The test workspace root (each suite gets its own temp tree). */
 const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-'))
@@ -148,5 +148,24 @@ describe('writeWorkspaceUpload', () => {
       cwd: root, dir: root, relativePath: 'keep.txt', chunks: chunksOf('0123456789'), limit: 2,
     })).rejects.toMatchObject({ code: 'too-large' })
     expect(readFileSync(target, 'utf8')).toBe('original')
+  })
+})
+
+describe('deleteWorkspaceFile', () => {
+  it('deletes one file inside the workspace', async () => {
+    const { path } = await writeWorkspaceUpload({
+      cwd: root, dir: root, relativePath: 'delete-me.txt', chunks: chunksOf('temporary'), limit: 1024,
+    })
+    await expect(deleteWorkspaceFile(root, path)).resolves.toEqual({ path })
+    expect(existsSync(path)).toBe(false)
+  })
+
+  it('refuses the workspace root, outside paths, and directories', async () => {
+    await expect(deleteWorkspaceFile(root, root)).rejects.toMatchObject({ code: 'forbidden' })
+    await expect(deleteWorkspaceFile(root, join(tmpdir(), 'outside.txt'))).rejects.toMatchObject({ code: 'forbidden' })
+    const directory = join(root, 'delete-dir')
+    mkdirSync(directory, { recursive: true })
+    await expect(deleteWorkspaceFile(root, directory)).rejects.toMatchObject({ code: 'bad-request' })
+    expect(existsSync(directory)).toBe(true)
   })
 })
