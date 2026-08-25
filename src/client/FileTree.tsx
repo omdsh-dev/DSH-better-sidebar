@@ -197,6 +197,8 @@ export function FileTree(props: {
   const cacheKey = levelCacheKey(sessionId, cwd)
   const [data, setData] = useState<Record<string, LevelData>>(() => readLevelCache(cacheKey) ?? {})
   const dataRef = useRef(data)
+  /** Invalidates directory requests started before a refresh/workspace switch. */
+  const requestEpochRef = useRef(0)
   /** The row whose path was just copied ("copied" label replaces its button). */
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
@@ -315,7 +317,8 @@ export function FileTree(props: {
     setData(dataRef.current)
   }, [])
 
-  const storeLevel = useCallback((path: string, level: LevelData) => {
+  const storeLevel = useCallback((path: string, level: LevelData, requestEpoch: number) => {
+    if (requestEpoch !== requestEpochRef.current) return
     const shared = writeLevelCache(cacheKey, path, level)
     dataRef.current = { ...dataRef.current, ...shared, [path]: level }
     setData(dataRef.current)
@@ -330,22 +333,28 @@ export function FileTree(props: {
       return
     }
     markLevelLoading(dir)
+    const requestEpoch = requestEpochRef.current
     api.fsTree({ sessionId, cwd }, dir).then((listing) => {
-      storeLevel(dir, { entries: listing.entries })
+      storeLevel(dir, { entries: listing.entries }, requestEpoch)
     }).catch((error: unknown) => {
-      storeLevel(dir, { error: error instanceof Error ? error.message : String(error) })
+      storeLevel(dir, { error: error instanceof Error ? error.message : String(error) }, requestEpoch)
     })
   }, [sessionId, cwd, cacheKey, markLevelLoading, storeLevel])
 
-  // The caller's refresh tick wipes the cache (declared BEFORE the load
-  // effect so the reload below sees the empty cache).
-  const lastTick = useRef(refreshTick)
-  useEffect(() => {
-    if (lastTick.current === refreshTick) return
-    lastTick.current = refreshTick
-    levelCache.delete(cacheKey)
-    dataRef.current = {}
-    setData({})
+  // Clear stale rows before paint so a deleted entry cannot still be clicked
+  // while the authoritative listing reloads. The epoch also prevents a
+  // slower pre-refresh request from restoring an obsolete directory level.
+  const lastLoadContext = useRef({ cacheKey, refreshTick })
+  useLayoutEffect(() => {
+    const previous = lastLoadContext.current
+    if (previous.cacheKey === cacheKey && previous.refreshTick === refreshTick) return
+    lastLoadContext.current = { cacheKey, refreshTick }
+    requestEpochRef.current += 1
+    const refreshed = previous.refreshTick !== refreshTick
+    if (refreshed) levelCache.delete(cacheKey)
+    const next = refreshed ? {} : readLevelCache(cacheKey) ?? {}
+    dataRef.current = next
+    setData(next)
   }, [cacheKey, refreshTick])
 
   useEffect(() => {

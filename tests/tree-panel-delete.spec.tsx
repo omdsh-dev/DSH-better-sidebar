@@ -2,7 +2,7 @@
  * confirmation dialog, refreshes the tree only after success, and notifies
  * the editor host so deleted paths cannot remain open in stale tabs. */
 // @vitest-environment jsdom
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
@@ -14,24 +14,24 @@ beforeAll(() => {
   Object.defineProperty(window.navigator, 'language', { value: 'en-US', configurable: true })
 })
 
+const entries = [
+  {
+    name: 'delete-me.ts', path: '/workspace/delete-me.ts', isDir: false,
+    hidden: false, isSymlink: false, broken: false,
+  },
+  {
+    name: 'delete-folder', path: '/workspace/delete-folder', isDir: true,
+    hidden: false, isSymlink: false, broken: false,
+  },
+  {
+    name: 'delete-link', path: '/workspace/delete-link', isDir: true,
+    hidden: false, isSymlink: true, broken: false,
+  },
+]
+
 const { fsDelete, fsTree } = vi.hoisted(() => ({
   fsDelete: vi.fn(async (_scope: unknown, path: string) => ({ path })),
-  fsTree: vi.fn(async () => ({
-    entries: [
-      {
-        name: 'delete-me.ts', path: '/workspace/delete-me.ts', isDir: false,
-        hidden: false, isSymlink: false, broken: false,
-      },
-      {
-        name: 'delete-folder', path: '/workspace/delete-folder', isDir: true,
-        hidden: false, isSymlink: false, broken: false,
-      },
-      {
-        name: 'delete-link', path: '/workspace/delete-link', isDir: true,
-        hidden: false, isSymlink: true, broken: false,
-      },
-    ],
-  })),
+  fsTree: vi.fn(),
 }))
 
 vi.mock('../src/client/api.ts', () => ({
@@ -46,6 +46,11 @@ vi.mock('../src/client/api.ts', () => ({
 describe('TreePanel entry deletion', () => {
   let root: Root | undefined
 
+  beforeEach(() => {
+    fsTree.mockReset()
+    fsTree.mockResolvedValue({ entries })
+  })
+
   afterEach(() => {
     if (root !== undefined) act(() => { root!.unmount() })
     root = undefined
@@ -55,6 +60,10 @@ describe('TreePanel entry deletion', () => {
   })
 
   it('confirms before deleting, refreshes, and reports the deleted path', async () => {
+    let finishRefresh!: (listing: { entries: typeof entries }) => void
+    const refreshed = new Promise<{ entries: typeof entries }>((resolve) => { finishRefresh = resolve })
+    fsTree.mockResolvedValueOnce({ entries })
+    fsTree.mockReturnValueOnce(refreshed)
     const container = document.createElement('div')
     document.body.append(container)
     root = createRoot(container)
@@ -102,6 +111,55 @@ describe('TreePanel entry deletion', () => {
     expect(onPathDeleted).toHaveBeenCalledWith({ path: '/workspace/delete-me.ts', kind: 'file' })
     expect(container.textContent).toContain('Deleted delete-me.ts')
     expect(fsTree).toHaveBeenCalledTimes(2)
+    // The old row is gone before the refreshed listing has returned, so it
+    // cannot reopen a path that the host has already deleted.
+    expect(container.querySelector('[title="/workspace/delete-me.ts"]')).toBeNull()
+
+    await act(async () => {
+      finishRefresh({ entries: entries.filter(entry => entry.path !== '/workspace/delete-me.ts') })
+      await refreshed
+    })
+    expect(container.querySelector('[title="/workspace/delete-me.ts"]')).toBeNull()
+  })
+
+  it('ignores an obsolete directory response that finishes after refresh', async () => {
+    let finishInitial!: (listing: { entries: typeof entries }) => void
+    let finishRefresh!: (listing: { entries: typeof entries }) => void
+    const initial = new Promise<{ entries: typeof entries }>((resolve) => { finishInitial = resolve })
+    const refreshed = new Promise<{ entries: typeof entries }>((resolve) => { finishRefresh = resolve })
+    fsTree.mockReset()
+    fsTree.mockReturnValueOnce(initial)
+    fsTree.mockReturnValueOnce(refreshed)
+
+    const container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    await act(async () => {
+      root!.render(createElement(TreePanel, {
+        sessionId: 'refresh-race-session',
+        cwd: '/workspace',
+        expanded: [],
+        onToggle: () => {},
+        onOpenFile: () => {},
+        onReferenceFile: () => {},
+        initialScrollTop: 0,
+        onScrollTopChange: () => {},
+      }))
+    })
+
+    const refresh = container.querySelector<HTMLButtonElement>('button[aria-label="Refresh"]')!
+    await act(async () => { refresh.click() })
+    expect(fsTree).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      finishRefresh({ entries: [] })
+      await refreshed
+    })
+    await act(async () => {
+      finishInitial({ entries })
+      await initial
+    })
+    expect(container.querySelector('[title="/workspace/delete-me.ts"]')).toBeNull()
   })
 
   it('warns that a folder deletion includes every nested entry', async () => {
