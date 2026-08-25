@@ -855,6 +855,41 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: nowrap;
 }
 
+/* File identity is shared by explorer rows and editor/diff tabs. The four
+   semantic tones follow every DSH skin; the icon shape still carries the
+   distinction when color perception is limited. */
+.fileTypeIcon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.fileTypeIcon svg {
+  display: block;
+}
+
+.fileIconCode {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.fileIconDocument {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.fileIconConfig {
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.fileIconSpecial {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.fileIconNeutral {
+  color: var(--dsw-alias-label-tertiary);
+}
+
 /* One tab's descriptor badge (a count capped at 99+, or a short text). */
 .tabBadge {
   flex: none;

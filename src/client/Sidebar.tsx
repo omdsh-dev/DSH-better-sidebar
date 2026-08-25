@@ -52,6 +52,7 @@ import type { NewTabOption } from './TabBar.tsx'
 import { TAB_DRAG_TYPE, parseDrag, type TabDragPayload } from './TabBar.tsx'
 import { FreeWindow } from './FreeWindow.tsx'
 import { relativeTo } from './paths.ts'
+import { FileTypeIcon } from './file-icons.tsx'
 import { OrphanedTab } from './OrphanedTab.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { tabContentCompare, type TabContentMemoKey } from './tab-content-memo.ts'
@@ -1322,6 +1323,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    */
   /** The tab icon from the tab-type registry (shared by every workbench). */
   const tabIconOf = (tab: SidebarTab): ReactNode => {
+    if (tab.type === 'editor' && tab.path !== undefined) return <FileTypeIcon path={tab.path} />
+    if (tab.type === 'diff' && tab.diff !== undefined && 'path' in tab.diff) return <FileTypeIcon path={tab.diff.path} />
     const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
     if (descriptor === undefined) return null
     return typeof descriptor.icon === 'function' ? descriptor.icon(14) : descriptor.icon
