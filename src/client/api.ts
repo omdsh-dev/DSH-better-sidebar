@@ -210,6 +210,9 @@ export const api = {
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
+  /** Delete a file or directory (recursive) inside the workspace. */
+  fsRemove: (scope: SessionScope, path: string) =>
+    call<{ ok: true }>('fs.remove', scopePayload(scope, { path })),
   /** Upload one file's raw bytes into `dir` (keeps the folder tree via
    *  `relativePath`); the host streams it under the session workspace. */
   uploadFile: (scope: SessionScope, dir: string, relativePath: string, body: Blob, signal?: AbortSignal) =>
@@ -318,7 +321,7 @@ export const api = {
    *  the OS file manager, or hand a custom-scheme URL (vscode://, cursor://,
    *  zed://, custom editors) to its registered handler. The host launches
    *  the platform opener (argv, no shell). */
-  openExternal: (payload: { action: 'reveal'; path: string } | { action: 'url'; url: string }) =>
+  openExternal: (payload: { action: 'open'; path: string } | { action: 'reveal'; path: string } | { action: 'url'; url: string }) =>
     call<{ started: boolean }>('open.external', payload),
 }
 

@@ -939,6 +939,20 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   box-shadow: inset 2px 0 0 var(--dsw-alias-interactive-bg-hover-accent);
 }
 
+/* A selected row (multi-select / delete target). */
+.explorerRowSelected {
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover) 80%, transparent);
+}
+
+/* The rubber-band selection rectangle (fixed, viewer coords). */
+.explorerSelectRect {
+  position: fixed;
+  z-index: 999;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent) 12%, transparent);
+  border: 1px solid var(--dsw-alias-interactive-bg-hover-accent);
+}
+
 .explorerDir {
   font: var(--dsw-font-s-strong-14);
 }

@@ -158,6 +158,7 @@ export const it: Record<string, string> = {
   uploadFiles: 'Carica file',
   uploadFolder: 'Carica cartella',
   uploadHere: 'Carica qui',
+  delete: 'Elimina',
   uploadDropHint: 'Trascini file/cartelle qui per caricarli',
   uploadDropChat: 'Trascini sulla chat per aggiungere immagini alla conversazione',
   uploadTo: 'Carica in {dir}',

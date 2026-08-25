@@ -150,6 +150,7 @@ export const pt: Record<string, string> = {
   uploadFiles: 'Enviar arquivos',
   uploadFolder: 'Enviar pasta',
   uploadHere: 'Enviar aqui',
+  delete: 'Excluir',
   uploadDropHint: 'Solte arquivos/pastas aqui para enviar',
   uploadDropChat: 'Solte no chat para adicionar imagens',
   uploadTo: 'Enviar para {dir}',

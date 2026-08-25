@@ -20,7 +20,7 @@
  * (VSCode semantics — a drop on a file row targets its parent directory),
  * and `busy` gates new drags while one upload is in flight.
  */
-import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
@@ -28,7 +28,7 @@ import {
   IconLinkOutline16, Menu, type MenuEntry, type MenuItem, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
-import { VscFile, VscFolder, VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
+import { VscFile, VscFolder, VscFolderOpened, VscLinkExternal, VscPin, VscPinned, VscTrash } from 'react-icons/vsc'
 import { api, downloadUrl, type FsEntry } from './api.ts'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
 import type { OpenWithTarget } from './open-with.ts'
@@ -142,7 +142,19 @@ export function FileTree(props: {
   /** The row whose path was just copied ("copied" label replaces its button). */
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
-  const [rowMenu, setRowMenu] = useState<{ path: string; isDir: boolean; x: number; y: number } | null>(null)
+  const [rowMenu, setRowMenu] = useState<{ path: string; isDir: boolean; targets: string[]; x: number; y: number } | null>(null)
+  /** Paths currently selected (multi-select / delete targets). */
+  const [selected, setSelected] = useState<string[]>([])
+  /** Rubber-band selection rectangle (viewer coords) while dragging. */
+  const [dragRect, setDragRect] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
+  /** Local bump that wipes the level cache and forces a reload after a mutation. */
+  const [reloadTick, setReloadTick] = useState(0)
+  /** Mouse-down origin for rubber-band selection (null between gestures). */
+  const dragStart = useRef<{ x: number; y: number } | null>(null)
+  /** A drag grew into a band; suppress the click that follows the mouseup. */
+  const dragWasActive = useRef(false)
+  /** Suppress the click-after-drag so rows don't open after a rubber band. */
+  const suppressClick = useRef(false)
   /** Whether a file drag hovers the tree (drives the portaled drop zone). */
   const [dropOver, setDropOver] = useState(false)
   /** The directory a drag is hovering right now (null = body, drop to root). */
@@ -274,7 +286,51 @@ export function FileTree(props: {
     if (root === undefined) return
     loadDir(root)
     for (const dir of expanded) loadDir(dir)
-  }, [cwd, expanded, refreshTick, loadDir])
+  }, [cwd, expanded, refreshTick, reloadTick, loadDir])
+
+  // Rubber-band selection: the move/up listeners live on window so the
+  // band keeps tracking even when the pointer leaves the tree body.
+  useEffect(() => {
+    const onMove = (event: globalThis.MouseEvent): void => {
+      const start = dragStart.current
+      if (start === null) return
+      const x = event.clientX
+      const y = event.clientY
+      if (!dragWasActive.current && Math.abs(x - start.x) < 4 && Math.abs(y - start.y) < 4) return
+      dragWasActive.current = true
+      setDragRect({ x1: start.x, y1: start.y, x2: x, y2: y })
+      // Select every row intersecting the band (viewer coords, inclusive edges).
+      const rows = bodyRef.current?.querySelectorAll<HTMLElement>('[data-dsh-path]')
+      if (rows === undefined || rows.length === 0) return
+      const x1 = Math.min(start.x, x)
+      const y1 = Math.min(start.y, y)
+      const x2 = Math.max(start.x, x)
+      const y2 = Math.max(start.y, y)
+      const hit: string[] = []
+      for (const row of rows) {
+        const rect = row.getBoundingClientRect()
+        if (rect.left <= x2 && rect.right >= x1 && rect.top <= y2 && rect.bottom >= y1) {
+          const path = row.dataset.dshPath
+          if (path !== undefined) hit.push(path)
+        }
+      }
+      setSelected(hit)
+    }
+    const onUp = (): void => {
+      if (dragStart.current !== null && dragWasActive.current) {
+        suppressClick.current = true
+      }
+      dragStart.current = null
+      dragWasActive.current = false
+      setDragRect(null)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [])
 
   // Bring a "Show in folder" reveal into view: the ancestors expand above
   // (revealPaths), but the row may not be scrolled into sight — a reveal on
@@ -297,31 +353,97 @@ export function FileTree(props: {
     })
   }, [])
 
-  /** The row's trailing actions: the @-reference button, or the copied label. */
+  /** Open `path` in the OS file manager through the host route: directories
+   *  open directly, files open with the parent folder and the file focused. */
+  const openInExplorer = (path: string, isDir: boolean): void => {
+    void api.openExternal(isDir
+      ? { action: 'open', path }
+      : { action: 'reveal', path },
+    ).catch((error: unknown) => {
+      console.error('open in explorer failed', error)
+    })
+  }
+
+  /** Wipe the level cache and force the visible set to reload. */
+  const reloadTree = useCallback((): void => {
+    dataRef.current = {}
+    setData({})
+    setReloadTick((tick) => tick + 1)
+  }, [])
+
+  /** Delete every path (files or directories) and reload the tree. */
+  const deletePaths = useCallback((paths: string[]): void => {
+    if (paths.length === 0) return
+    void Promise.all(paths.map((path) => api.fsRemove({ sessionId, cwd }, path))).then(() => {
+      setSelected([])
+      reloadTree()
+    }).catch((error: unknown) => {
+      console.error('delete failed', error)
+    })
+  }, [sessionId, cwd, reloadTree])
+
+  /** Left-click on a row: select it, then run the row's normal action
+   *  (toggle / open); Ctrl/Cmd toggles it in the multi-selection instead. */
+  const handleRowClick = (event: ReactMouseEvent, path: string, action: () => void): void => {
+    if (suppressClick.current) {
+      suppressClick.current = false
+      return
+    }
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault()
+      setSelected((current) => current.includes(path)
+        ? current.filter((p) => p !== path)
+        : [...current, path])
+      return
+    }
+    setSelected([path])
+    action()
+  }
+
+  /** Right-click on a row: open the context menu. When the clicked row is
+   *  already in the multi-selection, the delete action targets the whole
+   *  selection; otherwise it targets just this row. */
+  const openRowMenu = (event: ReactMouseEvent, path: string, isDir: boolean): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    const targets = selected.includes(path) ? [...selected] : [path]
+    setSelected(targets)
+    setRowMenu({ path, isDir, targets, x: event.clientX, y: event.clientY })
+  }
+
+  /** The row's trailing actions: the @-reference button plus the open-in-explorer button, or the copied label. */
   const rowActions = (entry: FsEntry): ReactNode => {
     if (copiedPath === entry.path) {
       return <span className={css.explorerCopied}>{t('copied')}</span>
     }
     return (
-      <button
-        type="button"
-        className={css.explorerRef}
-        aria-label={t('referenceFile')}
-        title={t('referenceFile')}
-        onClick={(event) => {
-          event.stopPropagation()
-          onReferenceFile(entry.path)
-        }}
-      >
-        {t('referenceFile')}
-      </button>
+      <>
+        <button
+          type="button"
+          className={css.explorerRef}
+          aria-label={t('referenceFile')}
+          title={t('referenceFile')}
+          onClick={(event) => {
+            event.stopPropagation()
+            onReferenceFile(entry.path)
+          }}
+        >
+          {t('referenceFile')}
+        </button>
+        <button
+          type="button"
+          className={css.explorerRef}
+          aria-label={t('openWithExplorer')}
+          title={t('openWithExplorer')}
+          onClick={(event) => {
+            event.stopPropagation()
+            openInExplorer(entry.path, entry.isDir)
+          }}
+        >
+          {t('openWithExplorer')}
+        </button>
+      </>
     )
-  }
-
-  const openRowMenu = (event: MouseEvent, path: string, isDir: boolean): void => {
-    event.preventDefault()
-    event.stopPropagation()
-    setRowMenu({ path, isDir, x: event.clientX, y: event.clientY })
   }
 
   /** Download a file through the host route (raw bytes, binary-safe). */
@@ -444,10 +566,12 @@ export function FileTree(props: {
                 css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden,
                 dropTarget === entry.path && css.explorerRowDropTarget,
                 revealed.includes(entry.path) && css.explorerRowRevealed,
+                selected.includes(entry.path) && css.explorerRowSelected,
               )}
               data-dsh-revealed={revealed.includes(entry.path) ? 'true' : undefined}
+              data-dsh-path={entry.path}
               style={{ paddingLeft: depth * 22 + 6 }}
-              onClick={() => { onToggle(entry.path) }}
+              onClick={(event) => { handleRowClick(event, entry.path, () => onToggle(entry.path)) }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault()
@@ -476,11 +600,13 @@ export function FileTree(props: {
             css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken,
             dropTarget === parentOf(entry.path) && css.explorerRowDropTarget,
             revealed.includes(entry.path) && css.explorerRowRevealed,
+            selected.includes(entry.path) && css.explorerRowSelected,
           )}
           data-dsh-revealed={revealed.includes(entry.path) ? 'true' : undefined}
+          data-dsh-path={entry.path}
           style={{ paddingLeft: depth * 22 + 6 }}
           title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
-          onClick={() => { onOpenFile(entry.path) }}
+          onClick={(event) => { handleRowClick(event, entry.path, () => onOpenFile(entry.path)) }}
           onKeyDown={(event) => {
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault()
@@ -504,6 +630,19 @@ export function FileTree(props: {
     <div
       ref={bodyRef}
       className={css.explorerBody}
+      onMouseDown={(event: ReactMouseEvent) => {
+        if (event.button !== 0) return
+        const target = event.target as Element
+        if (target.closest('button, input') !== null) return
+        if (target.closest('[data-dsh-path]') === null) event.preventDefault()
+        dragStart.current = { x: event.clientX, y: event.clientY }
+        dragWasActive.current = false
+        suppressClick.current = false
+      }}
+      onClick={(event: ReactMouseEvent) => {
+        if (suppressClick.current) { suppressClick.current = false; return }
+        if (!(event.target as Element).closest('[data-dsh-path]')) setSelected([])
+      }}
       onDragEnter={handleBodyDragEnter}
       onDragOver={handleBodyDragOver}
       onDragLeave={handleBodyDragLeave}
@@ -525,22 +664,45 @@ export function FileTree(props: {
             {copiedPath === root
               ? <span className={css.explorerCopied}>{t('copied')}</span>
               : (
-                <button
-                  type="button"
-                  className={css.explorerRef}
-                  aria-label={t('referenceFile')}
-                  title={t('referenceFile')}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onReferenceFile(root)
-                  }}
-                >
-                  {t('referenceFile')}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className={css.explorerRef}
+                    aria-label={t('referenceFile')}
+                    title={t('referenceFile')}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onReferenceFile(root)
+                    }}
+                  >
+                    {t('referenceFile')}
+                  </button>
+                  <button
+                    type="button"
+                    className={css.explorerRef}
+                    aria-label={t('openWithExplorer')}
+                    title={t('openWithExplorer')}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      openInExplorer(root, true)
+                    }}
+                  >
+                    {t('openWithExplorer')}
+                  </button>
+                </>
               )}
           </div>
           {data[root] !== undefined && renderLevel(root, 1)}
         </>
+      )}
+      {/* Rubber-band selection rectangle (fixed, viewer coords). */}
+      {dragRect !== null && (
+        <div className={css.explorerSelectRect} style={{
+          left: Math.min(dragRect.x1, dragRect.x2),
+          top: Math.min(dragRect.y1, dragRect.y2),
+          width: Math.abs(dragRect.x2 - dragRect.x1),
+          height: Math.abs(dragRect.y2 - dragRect.y1),
+        }} />
       )}
       {dropOver && dropRect !== null && createPortal(
         /*
@@ -628,6 +790,10 @@ export function FileTree(props: {
             : []),
           { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={16} /> },
           { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutline16 size={16} /> },
+          // Delete acts on the whole multi-selection; never on the workspace root.
+          ...(rowMenu !== null && rowMenu.path !== root
+            ? [{ id: 'delete', label: t('delete'), icon: <VscTrash size={16} /> }]
+            : []),
         ]}
         onSelect={(id) => {
           const target = rowMenu
@@ -652,6 +818,10 @@ export function FileTree(props: {
           if (id === 'upload-here') {
             pendingUploadDir.current = target.path
             fileInputRef.current?.click()
+            return
+          }
+          if (id === 'delete') {
+            deletePaths(target.targets)
             return
           }
           copyPath(

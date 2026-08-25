@@ -165,6 +165,7 @@ export const nl: Record<string, string> = {
   uploadFiles: 'Bestanden uploaden',
   uploadFolder: 'Map uploaden',
   uploadHere: 'Hier uploaden',
+  delete: 'Verwijderen',
   uploadDropHint: 'Sleep bestanden/mappen hierheen om te uploaden',
   uploadDropChat: 'Sleep naar de chat om afbeeldingen toe te voegen',
   uploadTo: 'Uploaden naar {dir}',

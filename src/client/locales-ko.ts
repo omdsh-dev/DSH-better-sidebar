@@ -159,6 +159,7 @@ export const ko: Record<string, string> = {
   uploadFiles: '파일 업로드',
   uploadFolder: '폴더 업로드',
   uploadHere: '여기에 업로드',
+  delete: '삭제',
   uploadDropHint: '파일/폴더를 여기로 끌어다 놓아 업로드',
   uploadDropChat: '채팅 영역에 끌어다 놓기: 대화에 이미지 추가',
   uploadTo: '{dir}에 업로드',

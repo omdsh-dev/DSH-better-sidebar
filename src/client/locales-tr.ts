@@ -167,6 +167,7 @@ export const tr: Record<string, string> = {
   uploadFiles: 'Dosyaları yükle',
   uploadFolder: 'Klasör yükle',
   uploadHere: 'Buraya yükle',
+  delete: 'Sil',
   uploadDropHint: 'Yüklemek için dosyaları/klasörleri buraya bırakın',
   uploadDropChat: 'Resim eklemek için sohbet alanına bırakın',
   uploadTo: '{dir} içine yükle',

@@ -167,6 +167,7 @@ export const th: Record<string, string> = {
   uploadFiles: 'อัปโหลดไฟล์',
   uploadFolder: 'อัปโหลดโฟลเดอร์',
   uploadHere: 'อัปโหลดที่นี่',
+  delete: 'ลบ',
   uploadDropHint: 'ลากไฟล์/โฟลเดอร์มาที่นี่เพื่ออัปโหลด',
   uploadDropChat: 'ลากไปที่แชทเพื่อเพิ่มรูปภาพ',
   uploadTo: 'อัปโหลดไปยัง {dir}',
