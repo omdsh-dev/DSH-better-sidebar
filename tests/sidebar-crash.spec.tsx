@@ -142,7 +142,7 @@ describe('layout-push variable cleanup', () => {
     removeSpy.mockRestore()
   })
 
-  it('code focus takes over the conversation area without overwriting the saved width', () => {
+  it('fullscreen takes over the conversation area without overwriting the saved width', () => {
     const { container, store } = mountSidebar()
     const savedWidth = store.getSnapshot().state!.width
     const enter = container.querySelector<HTMLButtonElement>(`[aria-label="${t('enterCodeFocus')}"]`)

@@ -202,7 +202,7 @@ test('bottom panel tracks the center column during the right-panel toggle transi
   trackMiss(expandSamples, 'expand')
 })
 
-test('code focus covers the conversation area and restores the saved width', async ({ page }) => {
+test('fullscreen covers the conversation area and restores the saved width', async ({ page }) => {
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
   const sidebar = page.locator('[data-dsh-better-sidebar]')
@@ -228,7 +228,7 @@ test('code focus covers the conversation area and restores the saved width', asy
     }
   })
 
-  await sidebar.getByRole('button', { name: 'Enter code focus' }).click()
+  await sidebar.getByRole('button', { name: 'Fullscreen' }).click()
   await expect(sidebar.locator('[data-dsh-code-focus="true"]')).toHaveCount(1)
   await expect
     .poll(async () => page.evaluate(() => {
@@ -246,7 +246,7 @@ test('code focus covers the conversation area and restores the saved width', asy
   expect(Math.abs(focused.rootWidth - normal.rootWidth), 'focus must preserve the DSH workspace rail').toBeLessThanOrEqual(2)
   expect(focused.separator, 'the saved-width handle is unavailable during transient focus').toBe(false)
 
-  await sidebar.getByRole('button', { name: 'Exit code focus' }).click()
+  await sidebar.getByRole('button', { name: 'Exit fullscreen' }).click()
   await expect(sidebar.locator('[data-dsh-code-focus="true"]')).toHaveCount(0)
   await expect
     .poll(async () => page.evaluate(() =>
