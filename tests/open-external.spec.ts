@@ -5,8 +5,22 @@
  * OS outcome is not testable here.
  */
 import { describe, expect, it } from 'vitest'
-import { launchExternal, revealCommand, urlCommand, validateExternalUrl } from '../src/open-external.ts'
+import { openCommand, launchExternal, revealCommand, urlCommand, validateExternalUrl } from '../src/open-external.ts'
 import { SidebarError } from '../src/wire.ts'
+
+describe('openCommand', () => {
+  it('darwin: `open <path>` opens the folder in Finder', () => {
+    expect(openCommand('/a/b', 'darwin')).toEqual({ command: 'open', args: ['/a/b'] })
+  })
+
+  it('win32: a bare `explorer <path>` enters the folder (no /select,)', () => {
+    expect(openCommand('C:\\a\\b', 'win32')).toEqual({ command: 'explorer.exe', args: ['C:\\a\\b'] })
+  })
+
+  it('linux: `xdg-open <path>` opens the folder', () => {
+    expect(openCommand('/a/b', 'linux')).toEqual({ command: 'xdg-open', args: ['/a/b'] })
+  })
+})
 
 describe('revealCommand', () => {
   it('darwin: `open -R <path>` selects the file in Finder', () => {

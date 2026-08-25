@@ -584,8 +584,9 @@ function buildApi(
       const record = payload as { action?: unknown } | null
       const action = record?.action
       if (action === 'reveal') return launchExternal('reveal', requireString(payload, 'path'))
+      if (action === 'open') return launchExternal('open', requireString(payload, 'path'))
       if (action === 'url') return launchExternal('url', requireString(payload, 'url'))
-      throw new SidebarError('bad-request', 'action must be "reveal" or "url"')
+      throw new SidebarError('bad-request', 'action must be "open", "reveal" or "url"')
     },
     // Side Chat: create a side-thread child seeded with the parent's full
     // log up to now, deliver follow-ups (cold-resuming when the thread's

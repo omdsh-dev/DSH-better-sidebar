@@ -297,24 +297,49 @@ export function FileTree(props: {
     })
   }, [])
 
-  /** The row's trailing actions: the @-reference button, or the copied label. */
+  /** Open `path` in the OS file manager through the host route: directories
+   *  open directly, files open with the parent folder and the file focused. */
+  const openInExplorer = (path: string, isDir: boolean): void => {
+    void api.openExternal(isDir
+      ? { action: 'open', path }
+      : { action: 'reveal', path },
+    ).catch((error: unknown) => {
+      console.error('open in explorer failed', error)
+    })
+  }
+
+  /** The row's trailing actions: the @-reference button plus the open-in-explorer button, or the copied label. */
   const rowActions = (entry: FsEntry): ReactNode => {
     if (copiedPath === entry.path) {
       return <span className={css.explorerCopied}>{t('copied')}</span>
     }
     return (
-      <button
-        type="button"
-        className={css.explorerRef}
-        aria-label={t('referenceFile')}
-        title={t('referenceFile')}
-        onClick={(event) => {
-          event.stopPropagation()
-          onReferenceFile(entry.path)
-        }}
-      >
-        {t('referenceFile')}
-      </button>
+      <>
+        <button
+          type="button"
+          className={css.explorerRef}
+          aria-label={t('referenceFile')}
+          title={t('referenceFile')}
+          onClick={(event) => {
+            event.stopPropagation()
+            onReferenceFile(entry.path)
+          }}
+        >
+          {t('referenceFile')}
+        </button>
+        <button
+          type="button"
+          className={css.explorerRef}
+          aria-label={t('openWithExplorer')}
+          title={t('openWithExplorer')}
+          onClick={(event) => {
+            event.stopPropagation()
+            openInExplorer(entry.path, entry.isDir)
+          }}
+        >
+          {t('openWithExplorer')}
+        </button>
+      </>
     )
   }
 
@@ -525,18 +550,32 @@ export function FileTree(props: {
             {copiedPath === root
               ? <span className={css.explorerCopied}>{t('copied')}</span>
               : (
-                <button
-                  type="button"
-                  className={css.explorerRef}
-                  aria-label={t('referenceFile')}
-                  title={t('referenceFile')}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onReferenceFile(root)
-                  }}
-                >
-                  {t('referenceFile')}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className={css.explorerRef}
+                    aria-label={t('referenceFile')}
+                    title={t('referenceFile')}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onReferenceFile(root)
+                    }}
+                  >
+                    {t('referenceFile')}
+                  </button>
+                  <button
+                    type="button"
+                    className={css.explorerRef}
+                    aria-label={t('openWithExplorer')}
+                    title={t('openWithExplorer')}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      openInExplorer(root, true)
+                    }}
+                  >
+                    {t('openWithExplorer')}
+                  </button>
+                </>
               )}
           </div>
           {data[root] !== undefined && renderLevel(root, 1)}
