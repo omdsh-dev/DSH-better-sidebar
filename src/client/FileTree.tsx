@@ -14,8 +14,9 @@
  * opens a context menu: file rows offer the caller's open escapes
  * (new tab / to the side, only when the callbacks exist) and a download
  * action (the host serves raw bytes, binary-safe); directory rows offer
- * "upload here"; every row can copy the relative or absolute path (with a
- * brief "copied" label replacing the button after a successful write).
+ * inline direct-child creation and file/folder import; every row can copy the
+ * relative or absolute path (with a brief "copied" label replacing the
+ * button after a successful write).
  *
  * Uploads start here (drag-drop or the context menu picker) but run in the
  * caller: every request is reported through `onUploadRequest(dir, items)`
@@ -30,14 +31,16 @@ import {
   IconLinkOutline16, IconTrashOutline16, Menu, type MenuEntry, type MenuItem, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
-import { VscFolder, VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
+import {
+  VscFolder, VscFolderOpened, VscLinkExternal, VscNewFile, VscNewFolder, VscPin, VscPinned,
+} from 'react-icons/vsc'
 import { api, downloadUrl, type FsEntry } from './api.ts'
 import { FileTypeIcon } from './file-icons.tsx'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
 import type { OpenWithTarget } from './open-with.ts'
 import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
-import { uploadItemsFromDrop, uploadItemsFromFiles, type UploadItem } from './upload.ts'
+import { uploadItemsFromDrop, type UploadItem } from './upload.ts'
 import css from './sidebar.module.css'
 
 interface LevelData {
@@ -153,6 +156,9 @@ export interface FileTreeDeleteTarget {
   kind: 'file' | 'directory' | 'symlink'
 }
 
+/** Kind of an empty entry requested from a directory context menu. */
+export type FileTreeCreateKind = 'file' | 'directory'
+
 export function FileTree(props: {
   sessionId: string
   cwd: string | undefined
@@ -182,6 +188,12 @@ export function FileTree(props: {
   onToggleOpenWithPin?: (targetId: string) => void
   /** Insert `@<relative path>` into the composer draft. */
   onReferenceFile: (path: string) => void
+  /** Create one empty direct child; resolves with its absolute path. */
+  onCreateEntry?: (dir: string, name: string, kind: FileTreeCreateKind) => Promise<{ path: string }>
+  /** Open the OS file picker and import its selection into `dir`. */
+  onImportFiles?: (dir: string) => void
+  /** Open the OS folder picker and import its selection into `dir`. */
+  onImportFolder?: (dir: string) => void
   /** Bump to wipe the level cache and reload the visible set. */
   refreshTick: number
   /** Upload into `dir` (absolute, inside the workspace); runs in the caller. */
@@ -193,7 +205,7 @@ export function FileTree(props: {
   /** Reports navigation movement so the owning editor tab can persist it. */
   onScrollTopChange?: (scrollTop: number) => void
 }) {
-  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onDeleteEntry, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy, initialScrollTop = 0, onScrollTopChange } = props
+  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onDeleteEntry, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onCreateEntry, onImportFiles, onImportFolder, refreshTick, onUploadRequest, busy, initialScrollTop = 0, onScrollTopChange } = props
   const cacheKey = levelCacheKey(sessionId, cwd)
   const [data, setData] = useState<Record<string, LevelData>>(() => readLevelCache(cacheKey) ?? {})
   const dataRef = useRef(data)
@@ -210,6 +222,16 @@ export function FileTree(props: {
     x: number
     y: number
   } | null>(null)
+  /** Inline direct-child name editor opened from one directory menu. */
+  const [createDraft, setCreateDraft] = useState<{
+    dir: string
+    kind: FileTreeCreateKind
+    name: string
+    submitting: boolean
+    error: string | null
+  } | null>(null)
+  /** Synchronous guard against two Enter events before React commits state. */
+  const createSubmissionRef = useRef(false)
   /** Whether a file drag hovers the tree (drives the portaled drop zone). */
   const [dropOver, setDropOver] = useState(false)
   /** The directory a drag is hovering right now (null = body, drop to root). */
@@ -228,9 +250,6 @@ export function FileTree(props: {
   const desiredScrollTopRef = useRef(initialScrollTop)
   /** The body's viewport rect captured at drag entry (null = not measured). */
   const [dropRect, setDropRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null)
-  /** Context-menu "upload here" target directory. */
-  const pendingUploadDir = useRef<string | undefined>(undefined)
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   /** Reset all drag state (drop landed, the drag left, or a new drag begins). */
   const resetDrop = (): void => {
@@ -539,87 +558,190 @@ export function FileTree(props: {
     onOpenFile(path)
   }
 
+  /** Reveal an inline direct-child name editor under the selected directory. */
+  const startCreate = (dir: string, kind: FileTreeCreateKind): void => {
+    if (busy || onCreateEntry === undefined) return
+    if (dir !== root && !expanded.includes(dir)) onToggle(dir)
+    setCreateDraft({ dir, kind, name: '', submitting: false, error: null })
+  }
+
+  /** Validate and create the current inline draft without overwriting. */
+  const submitCreate = async (): Promise<void> => {
+    const draft = createDraft
+    if (draft === null || draft.submitting || createSubmissionRef.current || onCreateEntry === undefined) return
+    const name = draft.name.trim()
+    if (name === '') {
+      setCreateDraft({ ...draft, error: t('createNameRequired') })
+      return
+    }
+    if (name === '.' || name === '..' || /[\\/]/.test(name)) {
+      setCreateDraft({ ...draft, error: t('createNameInvalid') })
+      return
+    }
+    createSubmissionRef.current = true
+    setCreateDraft({ ...draft, name, submitting: true, error: null })
+    try {
+      const created = await onCreateEntry(draft.dir, name, draft.kind)
+      setCreateDraft(null)
+      if (draft.kind === 'file') openFileAtCurrentViewport(created.path)
+      else if (!expanded.includes(created.path)) onToggle(created.path)
+    } catch (reason) {
+      setCreateDraft({
+        ...draft,
+        name,
+        submitting: false,
+        error: t('createFailed', { error: reason instanceof Error ? reason.message : String(reason) }),
+      })
+    } finally {
+      createSubmissionRef.current = false
+    }
+  }
+
+  /** One inline name row at the first child position of its parent. */
+  const renderCreateRow = (dir: string, depth: number): ReactNode => {
+    const draft = createDraft
+    if (draft === null || draft.dir !== dir) return null
+    const errorId = 'dsh-file-tree-create-error'
+    return (
+      <div className={css.explorerCreateBlock}>
+        <div className={css.explorerRow} style={{ paddingLeft: depth * 22 + 6 }}>
+          {draft.kind === 'directory' ? <VscNewFolder size={14} /> : <VscNewFile size={14} />}
+          <input
+            autoFocus
+            className={css.explorerCreateInput}
+            value={draft.name}
+            maxLength={255}
+            aria-label={draft.kind === 'directory' ? t('newFolderName') : t('newFileName')}
+            aria-invalid={draft.error !== null}
+            aria-describedby={draft.error === null ? undefined : errorId}
+            placeholder={draft.kind === 'directory' ? t('newFolderName') : t('newFileName')}
+            disabled={draft.submitting}
+            onClick={(event) => { event.stopPropagation() }}
+            onChange={(event) => {
+              setCreateDraft(current => current === null
+                ? current
+                : { ...current, name: event.target.value, error: null })
+            }}
+            onKeyDown={(event) => {
+              event.stopPropagation()
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                void submitCreate()
+              } else if (event.key === 'Escape' && !draft.submitting) {
+                event.preventDefault()
+                setCreateDraft(null)
+              }
+            }}
+          />
+        </div>
+        {draft.error !== null && (
+          <div
+            id={errorId}
+            className={css.explorerCreateError}
+            style={{ paddingLeft: depth * 22 + 24 }}
+          >
+            {draft.error}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
+    const createRow = renderCreateRow(dir, depth)
     if (level === undefined) {
-      return <div className={css.explorerRow} style={{ paddingLeft: depth * 22 + 6 }}>{t('loading')}</div>
+      return (
+        <>
+          {createRow}
+          <div className={css.explorerRow} style={{ paddingLeft: depth * 22 + 6 }}>{t('loading')}</div>
+        </>
+      )
     }
     if (level.error !== undefined) {
       return (
-        <div className={clsx(css.explorerRow, css.explorerError)} style={{ paddingLeft: depth * 22 + 6 }}>
-          {level.error}
-        </div>
+        <>
+          {createRow}
+          <div className={clsx(css.explorerRow, css.explorerError)} style={{ paddingLeft: depth * 22 + 6 }}>
+            {level.error}
+          </div>
+        </>
       )
     }
     const entries = level.entries ?? []
-    return entries.map(entry => {
-      if (entry.isDir) {
-        const isOpen = expanded.includes(entry.path)
-        return (
-          <div key={entry.path}>
+    return (
+      <>
+        {createRow}
+        {entries.map(entry => {
+          if (entry.isDir) {
+            const isOpen = expanded.includes(entry.path)
+            return (
+              <div key={entry.path}>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className={clsx(
+                    css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden,
+                    dropTarget === entry.path && css.explorerRowDropTarget,
+                    revealed.includes(entry.path) && css.explorerRowRevealed,
+                  )}
+                  data-dsh-revealed={revealed.includes(entry.path) ? 'true' : undefined}
+                  style={{ paddingLeft: depth * 22 + 6 }}
+                  onMouseDown={preserveTreeViewportOnMouseDown}
+                  onClick={() => { onToggle(entry.path) }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      onToggle(entry.path)
+                    }
+                  }}
+                  onDragOver={(event) => { handleRowDragOver(event, entry.path) }}
+                  onDrop={(event) => { handleDirDrop(event, entry.path) }}
+                  onContextMenu={(event) => { openRowMenu(event, entry) }}
+                >
+                  {isOpen ? <VscFolderOpened size={14} /> : <VscFolder size={14} />}
+                  <span className={css.explorerName}>{entry.name}</span>
+                  {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
+                  {rowActions(entry)}
+                </div>
+                {isOpen && renderLevel(entry.path, depth + 1)}
+              </div>
+            )
+          }
+          return (
             <div
+              key={entry.path}
               role="button"
               tabIndex={0}
               className={clsx(
-                css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden,
-                dropTarget === entry.path && css.explorerRowDropTarget,
+                css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken,
+                dropTarget === parentOf(entry.path) && css.explorerRowDropTarget,
                 revealed.includes(entry.path) && css.explorerRowRevealed,
               )}
               data-dsh-revealed={revealed.includes(entry.path) ? 'true' : undefined}
               style={{ paddingLeft: depth * 22 + 6 }}
+              title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
               onMouseDown={preserveTreeViewportOnMouseDown}
-              onClick={() => { onToggle(entry.path) }}
+              onClick={() => { openFileAtCurrentViewport(entry.path) }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault()
-                  onToggle(entry.path)
+                  openFileAtCurrentViewport(entry.path)
                 }
               }}
-              onDragOver={(event) => { handleRowDragOver(event, entry.path) }}
-              onDrop={(event) => { handleDirDrop(event, entry.path) }}
+              onDragOver={(event) => { handleRowDragOver(event, parentOf(entry.path)) }}
+              onDrop={(event) => { handleFileDrop(event, entry.path) }}
               onContextMenu={(event) => { openRowMenu(event, entry) }}
             >
-              {isOpen ? <VscFolderOpened size={14} /> : <VscFolder size={14} />}
+              <FileTypeIcon path={entry.path} />
               <span className={css.explorerName}>{entry.name}</span>
               {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
               {rowActions(entry)}
             </div>
-            {isOpen && renderLevel(entry.path, depth + 1)}
-          </div>
-        )
-      }
-      return (
-        <div
-          key={entry.path}
-          role="button"
-          tabIndex={0}
-          className={clsx(
-            css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken,
-            dropTarget === parentOf(entry.path) && css.explorerRowDropTarget,
-            revealed.includes(entry.path) && css.explorerRowRevealed,
-          )}
-          data-dsh-revealed={revealed.includes(entry.path) ? 'true' : undefined}
-          style={{ paddingLeft: depth * 22 + 6 }}
-          title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
-          onMouseDown={preserveTreeViewportOnMouseDown}
-          onClick={() => { openFileAtCurrentViewport(entry.path) }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault()
-              openFileAtCurrentViewport(entry.path)
-            }
-          }}
-          onDragOver={(event) => { handleRowDragOver(event, parentOf(entry.path)) }}
-          onDrop={(event) => { handleFileDrop(event, entry.path) }}
-          onContextMenu={(event) => { openRowMenu(event, entry) }}
-        >
-          <FileTypeIcon path={entry.path} />
-          <span className={css.explorerName}>{entry.name}</span>
-          {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
-          {rowActions(entry)}
-        </div>
-      )
-    })
+          )
+        })}
+      </>
+    )
   }
 
   return (
@@ -723,18 +845,6 @@ export function FileTree(props: {
         The one shared context menu, positioned at the right-click cursor
         (portal so the tree's overflow clip cannot crop it).
       */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        style={{ display: 'none' }}
-        onChange={(event) => {
-          const dir = pendingUploadDir.current ?? root
-          pendingUploadDir.current = undefined
-          if (dir !== undefined && !busy) onUploadRequest(dir, uploadItemsFromFiles(event.target.files ?? []))
-          event.target.value = ''
-        }}
-      />
       <Menu
         open={rowMenu !== null}
         onClose={() => { setRowMenu(null) }}
@@ -751,9 +861,23 @@ export function FileTree(props: {
           ...(rowMenu?.isDir === false
             ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutline16 size={16} /> }]
             : []),
-          // Upload into a directory (incl. the workspace root row).
+          // Direct-child creation and imports belong to the selected folder
+          // (including the workspace root), never to a global toolbar target.
+          ...(rowMenu?.isDir === true && onCreateEntry !== undefined
+            ? [
+                { id: 'create-file', label: t('createFile'), icon: <VscNewFile size={16} />, ...(busy ? { disabled: true } : {}) },
+                { id: 'create-folder', label: t('createFolder'), icon: <VscNewFolder size={16} />, ...(busy ? { disabled: true } : {}) },
+              ]
+            : []),
+          ...(rowMenu?.isDir === true && onImportFiles !== undefined
+            ? [{ id: 'import-files', label: t('importFiles'), icon: <IconUploadOutline16 size={16} />, ...(busy ? { disabled: true } : {}) }]
+            : []),
+          ...(rowMenu?.isDir === true && onImportFolder !== undefined
+            ? [{ id: 'import-folder', label: t('importFolder'), icon: <VscFolderOpened size={16} />, ...(busy ? { disabled: true } : {}) }]
+            : []),
           ...(rowMenu?.isDir === true
-            ? [{ id: 'upload-here', label: t('uploadHere'), icon: <IconUploadOutline16 size={16} /> }]
+            && (onCreateEntry !== undefined || onImportFiles !== undefined || onImportFolder !== undefined)
+            ? [{ type: 'separator' as const, id: 'directory-actions-separator' }]
             : []),
           { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={16} /> },
           { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutline16 size={16} /> },
@@ -798,9 +922,16 @@ export function FileTree(props: {
             })
             return
           }
-          if (id === 'upload-here') {
-            pendingUploadDir.current = target.path
-            fileInputRef.current?.click()
+          if (id === 'create-file' || id === 'create-folder') {
+            startCreate(target.path, id === 'create-file' ? 'file' : 'directory')
+            return
+          }
+          if (id === 'import-files') {
+            onImportFiles?.(target.path)
+            return
+          }
+          if (id === 'import-folder') {
+            onImportFolder?.(target.path)
             return
           }
           copyPath(

@@ -1,19 +1,16 @@
 /**
- * Workspace-safe file mutations for the sidebar (upload and file deletion).
+ * Workspace-safe file mutations for the sidebar (create, upload and delete).
  *
- * Every write is confined to the real session workspace: the upload
- * directory is resolved absolute and its target is checked through existing
- * filesystem ancestors, the relative path is sanitized (absolute paths, '.',
- * '..' and empty segments are refused), and the final target must stay inside
- * the workspace after symlink resolution. Bytes stream from the request body
- * to a uniquely named temp sibling
- * and are renamed into place, so a failed, aborted, or oversized upload never
- * leaves a partial file at the target path.
+ * Every mutation is confined to the real session workspace. Create and
+ * recursive-delete operations resolve their selected targets so a symlinked
+ * parent cannot redirect them outside it. Upload paths are sanitized and
+ * checked through existing ancestors before bytes stream to a unique temp
+ * sibling, so failed, aborted, or oversized requests leave no partial file.
  */
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { createWriteStream } from 'node:fs'
-import { lstat, mkdir, realpath, rename, rm, stat } from 'node:fs/promises'
+import { lstat, mkdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { SidebarHttpRequest } from './context-types.ts'
 import { isWithin, requireAbsolute } from './fs-tree.ts'
@@ -32,6 +29,71 @@ export interface WorkspaceUploadInput {
   chunks: AsyncIterable<string | Uint8Array>
   /** Byte cap; an oversized upload is refused without touching the target. */
   limit: number
+}
+
+/** Kind of one empty entry created directly below an explorer directory. */
+export type WorkspaceEntryKind = 'file' | 'directory'
+
+/** Inputs for one non-overwriting explorer create operation. */
+export interface WorkspaceCreateInput {
+  /** Session workspace root. */
+  cwd: string
+  /** Existing parent directory selected in the explorer. */
+  dir: string
+  /** One child name; separators and traversal segments are refused. */
+  name: string
+  /** Empty file or empty directory. */
+  kind: WorkspaceEntryKind
+}
+
+/**
+ * Create one empty file or directory immediately below `dir`. The selected
+ * directory must resolve inside the real workspace, so a symlinked parent
+ * cannot redirect the mutation outside it. Existing entries are never
+ * overwritten.
+ *
+ * @param input - Workspace scope, selected parent, child name, and kind.
+ * @returns The absolute lexical path and created kind.
+ * @throws SidebarError for invalid names, containment failures, non-directory
+ * parents, existing entries, and filesystem failures.
+ */
+export async function createWorkspaceEntry(input: WorkspaceCreateInput): Promise<{ path: string; kind: WorkspaceEntryKind }> {
+  const root = requireAbsolute(input.cwd)
+  const dir = requireAbsolute(input.dir)
+  const name = input.name.trim()
+  if (name === '' || name === '.' || name === '..' || /[\\/]/.test(name)) {
+    throw new SidebarError('bad-request', 'entry name must be one child name', 400)
+  }
+  if (!isWithin(root, dir)) {
+    throw new SidebarError('forbidden', 'create directory escapes the session workspace', 403)
+  }
+  const target = join(dir, name)
+  if (!isWithin(root, target) || !isWithin(dir, target)) {
+    throw new SidebarError('forbidden', 'create target escapes the session workspace', 403)
+  }
+  try {
+    const [realRoot, realDir, parentInfo] = await Promise.all([realpath(root), realpath(dir), stat(dir)])
+    if (!parentInfo.isDirectory()) {
+      throw new SidebarError('bad-request', 'create parent is not a directory', 400)
+    }
+    if (!isWithin(realRoot, realDir)) {
+      throw new SidebarError('forbidden', 'create directory resolves outside the session workspace', 403)
+    }
+    if (input.kind === 'directory') await mkdir(target)
+    else await writeFile(target, '', { encoding: 'utf8', flag: 'wx' })
+    return { path: target, kind: input.kind }
+  } catch (error) {
+    if (error instanceof SidebarError) throw error
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'EEXIST') {
+      throw new SidebarError('fs-error', `"${name}" already exists`, 409)
+    }
+    throw new SidebarError(
+      'fs-error',
+      `cannot create "${target}": ${error instanceof Error ? error.message : String(error)}`,
+      400,
+    )
+  }
 }
 
 /**

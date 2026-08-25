@@ -4,7 +4,7 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { deleteWorkspaceEntry, writeWorkspaceUpload } from '../src/fs-operations.ts'
+import { createWorkspaceEntry, deleteWorkspaceEntry, writeWorkspaceUpload } from '../src/fs-operations.ts'
 
 /** The test workspace root (each suite gets its own temp tree). */
 const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-'))
@@ -150,6 +150,50 @@ describe('writeWorkspaceUpload', () => {
       cwd: root, dir: root, relativePath: 'keep.txt', chunks: chunksOf('0123456789'), limit: 2,
     })).rejects.toMatchObject({ code: 'too-large' })
     expect(readFileSync(target, 'utf8')).toBe('original')
+  })
+})
+
+describe('createWorkspaceEntry', () => {
+  it('creates one empty file or folder directly below the selected directory', async () => {
+    const parent = join(root, 'create-parent')
+    mkdirSync(parent, { recursive: true })
+    const file = await createWorkspaceEntry({ cwd: root, dir: parent, name: 'new-file.ts', kind: 'file' })
+    const directory = await createWorkspaceEntry({ cwd: root, dir: parent, name: 'new-folder', kind: 'directory' })
+    expect(file).toEqual({ path: join(parent, 'new-file.ts'), kind: 'file' })
+    expect(directory).toEqual({ path: join(parent, 'new-folder'), kind: 'directory' })
+    expect(readFileSync(file.path, 'utf8')).toBe('')
+    expect(existsSync(directory.path)).toBe(true)
+  })
+
+  it('never overwrites an existing entry', async () => {
+    const parent = join(root, 'create-existing')
+    const target = join(parent, 'keep.txt')
+    mkdirSync(parent, { recursive: true })
+    writeFileSync(target, 'keep')
+    await expect(createWorkspaceEntry({ cwd: root, dir: parent, name: 'keep.txt', kind: 'file' }))
+      .rejects.toMatchObject({ code: 'fs-error', status: 409 })
+    expect(readFileSync(target, 'utf8')).toBe('keep')
+  })
+
+  it('refuses invalid names, outside parents, and symlink-parent escapes', async () => {
+    const parent = join(root, 'create-validation')
+    mkdirSync(parent, { recursive: true })
+    for (const name of ['', '  ', '.', '..', '../escape', 'nested/child']) {
+      await expect(createWorkspaceEntry({ cwd: root, dir: parent, name, kind: 'file' }))
+        .rejects.toMatchObject({ code: 'bad-request' })
+    }
+    const outside = mkdtempSync(join(tmpdir(), 'dsh-sidebar-create-outside-'))
+    const link = join(root, 'create-outside-link')
+    symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir')
+    try {
+      await expect(createWorkspaceEntry({ cwd: root, dir: outside, name: 'outside.txt', kind: 'file' }))
+        .rejects.toMatchObject({ code: 'forbidden' })
+      await expect(createWorkspaceEntry({ cwd: root, dir: link, name: 'through-link.txt', kind: 'file' }))
+        .rejects.toMatchObject({ code: 'forbidden' })
+      expect(existsSync(join(outside, 'through-link.txt'))).toBe(false)
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
   })
 })
 

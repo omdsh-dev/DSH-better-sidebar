@@ -1092,6 +1092,49 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   cursor: default;
 }
 
+/* Inline direct-child creation lives in the tree position it will occupy.
+   Keeping naming in context makes the destination unambiguous and avoids a
+   modal for a short, reversible input step. */
+.explorerCreateBlock .explorerRow {
+  cursor: default;
+}
+
+.explorerCreateBlock .explorerRow:hover {
+  background: transparent;
+}
+
+.explorerCreateInput {
+  min-width: 0;
+  flex: 1;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 5px;
+  outline: none;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.explorerCreateInput:focus {
+  border-color: var(--dsw-alias-border-l2);
+}
+
+.explorerCreateInput[aria-invalid='true'] {
+  border-color: var(--dsw-alias-state-error-primary);
+}
+
+.explorerCreateInput:disabled {
+  opacity: 0.6;
+}
+
+.explorerCreateError {
+  padding: 0 8px 5px;
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxxs-11);
+  overflow-wrap: anywhere;
+}
+
 /* Mount fade for tree rows (the app's session-row reveal). */
 @keyframes dsh-row-in {
   from { opacity: 0; }

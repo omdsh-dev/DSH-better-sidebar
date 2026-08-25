@@ -213,7 +213,10 @@ export const api = {
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
-  /** Permanently delete one workspace file (directories are refused). */
+  /** Create one empty direct child without overwriting an existing entry. */
+  fsCreate: (scope: SessionScope, dir: string, name: string, kind: 'file' | 'directory') =>
+    call<{ path: string; kind: 'file' | 'directory' }>('fs.create', scopePayload(scope, { dir, name, kind })),
+  /** Permanently delete one workspace file, directory, or symbolic link. */
   fsDelete: (scope: SessionScope, path: string) =>
     call<{ path: string }>('fs.delete', scopePayload(scope, { path })),
   /** Upload one file's raw bytes into `dir` (keeps the folder tree via
