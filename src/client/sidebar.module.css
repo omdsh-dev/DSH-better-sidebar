@@ -928,10 +928,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .tabBarPlus {
   flex: none;
   align-self: center;
-  /* Adjacent to the rightmost tab; sticky so overflowing tab rows keep it
-     visible at the right edge of the scrollport. */
-  position: sticky;
-  right: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;

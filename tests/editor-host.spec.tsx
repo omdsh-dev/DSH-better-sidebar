@@ -47,7 +47,12 @@ function setup(): {
 }
 
 /** Mount the host for one tab; returns the container and an unmount helper. */
-function mountHost(ctx: Context, store: ReturnType<typeof createSidebarStore>, tab: () => SidebarTab): {
+function mountHost(
+  ctx: Context,
+  store: ReturnType<typeof createSidebarStore>,
+  tab: () => SidebarTab,
+  visible: () => boolean = () => true,
+): {
   container: HTMLDivElement
   rerender: () => void
   unmount: () => void
@@ -61,6 +66,7 @@ function mountHost(ctx: Context, store: ReturnType<typeof createSidebarStore>, t
       store,
       scope: { sessionId: 'editor-home-session' },
       tab: tab(),
+      visible: visible(),
       expanded: [],
       revealed: [],
       onToggleDir: () => {},
@@ -159,6 +165,38 @@ describe('EditorHost (files window)', () => {
       expect(container.querySelector<HTMLDivElement>('[class*="explorerBody"]')!.scrollTop).toBe(275)
     } finally {
       unmount()
+    }
+  })
+
+  it('applies a hidden existing tab\'s inherited tree position when it becomes visible', () => {
+    const { store, ctx } = setup()
+    store.setPrefs({ ...store.getPrefs(), editorExplorer: false })
+    ctx.betterSidebar.openTab({
+      type: 'editor',
+      title: 'existing.ts',
+      path: '/tmp/existing.ts',
+      id: 'editor:/tmp/existing.ts',
+      meta: { treeOpen: true, treeScrollTop: 0 },
+    })
+    const existingTab = (): SidebarTab =>
+      allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+        .find(tab => tab.id === 'editor:/tmp/existing.ts')!
+    let visible = false
+    const host = mountHost(ctx, store, existingTab, () => visible)
+    try {
+      expect(host.container.querySelector<HTMLDivElement>('[class*="explorerBody"]')!.scrollTop).toBe(0)
+
+      act(() => {
+        ctx.betterSidebar.updateTab(existingTab().id, {
+          meta: { treeOpen: true, treeScrollTop: 418 },
+        })
+        visible = true
+        host.rerender()
+      })
+
+      expect(host.container.querySelector<HTMLDivElement>('[class*="explorerBody"]')!.scrollTop).toBe(418)
+    } finally {
+      host.unmount()
     }
   })
 

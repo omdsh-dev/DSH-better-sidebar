@@ -65,12 +65,14 @@ export function TreePanel(props: {
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean
+  /** Whether the owning editor tab is currently visible. */
+  visible?: boolean
   /** File-tree scroll position owned by the editor tab. */
   initialScrollTop: number
   /** Reports file-tree navigation movement to the editor tab. */
   onScrollTopChange: (scrollTop: number) => void
 }) {
-  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onPathDeleted, full, initialScrollTop, onScrollTopChange } = props
+  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onPathDeleted, full, visible = true, initialScrollTop, onScrollTopChange } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -301,6 +303,7 @@ export function TreePanel(props: {
           refreshTick={refreshTick}
           onUploadRequest={startUpload}
           busy={busy}
+          visible={visible}
           initialScrollTop={initialScrollTop}
           onScrollTopChange={onScrollTopChange}
         />

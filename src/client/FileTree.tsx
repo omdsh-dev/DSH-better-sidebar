@@ -200,12 +200,15 @@ export function FileTree(props: {
   onUploadRequest: (dir: string, items: UploadItem[]) => void
   /** True while an upload is in flight (drops are ignored). */
   busy: boolean
+  /** Whether this tree's editor tab is currently visible. Hidden tab cells
+   *  stay mounted, but their scrollports must not overwrite the live viewport. */
+  visible?: boolean
   /** Scroll position restored after the lazy visible levels finish loading. */
   initialScrollTop?: number
   /** Reports navigation movement so the owning editor tab can persist it. */
   onScrollTopChange?: (scrollTop: number) => void
 }) {
-  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onDeleteEntry, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onCreateEntry, onImportFiles, onImportFolder, refreshTick, onUploadRequest, busy, initialScrollTop = 0, onScrollTopChange } = props
+  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onDeleteEntry, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onCreateEntry, onImportFiles, onImportFolder, refreshTick, onUploadRequest, busy, visible = true, initialScrollTop = 0, onScrollTopChange } = props
   const cacheKey = levelCacheKey(sessionId, cwd)
   const [data, setData] = useState<Record<string, LevelData>>(() => readLevelCache(cacheKey) ?? {})
   const dataRef = useRef(data)
@@ -248,6 +251,20 @@ export function FileTree(props: {
   /** Desired position stays independent from the DOM while lazy directories
    *  are still too short to accept the restored scrollTop. */
   const desiredScrollTopRef = useRef(initialScrollTop)
+  /** The persisted input already folded into `desiredScrollTopRef`. React can
+   *  batch a hidden tab's meta update with its activation, so this sync must
+   *  happen during render — a passive effect runs after the layout restore
+   *  and would leave the old tab's previous (often zero) viewport on screen. */
+  const restoredScrollInputRef = useRef({ sessionId, cwd, initialScrollTop })
+  const restoredScrollInput = restoredScrollInputRef.current
+  if (
+    restoredScrollInput.sessionId !== sessionId
+    || restoredScrollInput.cwd !== cwd
+    || restoredScrollInput.initialScrollTop !== initialScrollTop
+  ) {
+    restoredScrollInputRef.current = { sessionId, cwd, initialScrollTop }
+    desiredScrollTopRef.current = initialScrollTop
+  }
   /** The body's viewport rect captured at drag entry (null = not measured). */
   const [dropRect, setDropRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null)
 
@@ -390,29 +407,25 @@ export function FileTree(props: {
   // a long tree should surface the highlighted file. Re-runs when the tree
   // data or reveal set changes (the row appears after its level loads).
   useEffect(() => {
-    if (revealed.length === 0) return
+    if (!visible || revealed.length === 0) return
     const row = bodyRef.current?.querySelector('[data-dsh-revealed]')
     row?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-  }, [revealed, data])
-
-  useEffect(() => {
-    desiredScrollTopRef.current = initialScrollTop
-  }, [sessionId, cwd, initialScrollTop])
+  }, [visible, revealed, data])
 
   useLayoutEffect(() => {
     const body = bodyRef.current
-    if (body === null) return
+    if (body === null || !visible) return
     // A restored position can only be applied after every expanded level has
     // produced rows. Applying it against the initial loading placeholders
     // would clamp it to zero and lose the user's navigation context.
-    const visible = cwd === undefined ? [] : [cwd, ...expanded]
-    const loaded = visible.every((dir) => {
+    const visibleDirs = cwd === undefined ? [] : [cwd, ...expanded]
+    const loaded = visibleDirs.every((dir) => {
       const level = data[dir]
       return level?.entries !== undefined || level?.error !== undefined
     })
     if (!loaded) return
     body.scrollTop = desiredScrollTopRef.current
-  }, [cwd, expanded, data, initialScrollTop])
+  }, [cwd, expanded, data, initialScrollTop, visible])
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
   const copyPath = useCallback((text: string, path: string): void => {
@@ -749,6 +762,9 @@ export function FileTree(props: {
       ref={bodyRef}
       className={css.explorerBody}
       onScroll={(event) => {
+        // Browsers may report a zeroed scrollport while an inactive tab is
+        // display:none. That is layout fallout, not user navigation.
+        if (!visible) return
         const scrollTop = event.currentTarget.scrollTop
         desiredScrollTopRef.current = scrollTop
         onScrollTopChange?.(scrollTop)

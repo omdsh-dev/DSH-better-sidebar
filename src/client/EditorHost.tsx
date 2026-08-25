@@ -115,12 +115,14 @@ export function EditorHost(props: {
   store: SidebarStore
   scope: SessionScope
   tab: SidebarTab
+  /** Whether this tab is active in its pane. Inactive tabs stay mounted. */
+  visible?: boolean
   expanded: string[]
   revealed: string[]
   onToggleDir: (path: string) => void
   onReferenceFile: (path: string) => void
 }) {
-  const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile } = props
+  const { ctx, store, scope, tab, visible = true, expanded, revealed, onToggleDir, onReferenceFile } = props
   const path = tab.path ?? ''
   const title = tab.title
   // A folder window: the model's `sidebar_open` (or any caller) opens a
@@ -176,11 +178,13 @@ export function EditorHost(props: {
   // commit persists it; file opens and the hide button flush it synchronously.
   const currentTabRef = useRef(tab)
   currentTabRef.current = tab
-  const scrollOwnerRef = useRef(tab.id)
-  const treeScrollTopRef = useRef(treeScrollTopOf(tab))
-  if (scrollOwnerRef.current !== tab.id) {
-    scrollOwnerRef.current = tab.id
-    treeScrollTopRef.current = treeScrollTopOf(tab)
+  const persistedTreeScrollTop = treeScrollTopOf(tab)
+  const treeScrollTopRef = useRef(persistedTreeScrollTop)
+  const scrollInputRef = useRef({ tabId: tab.id, scrollTop: persistedTreeScrollTop })
+  const scrollInput = scrollInputRef.current
+  if (scrollInput.tabId !== tab.id || scrollInput.scrollTop !== persistedTreeScrollTop) {
+    scrollInputRef.current = { tabId: tab.id, scrollTop: persistedTreeScrollTop }
+    treeScrollTopRef.current = persistedTreeScrollTop
   }
   const scrollPersistTimerRef = useRef<number | null>(null)
   const persistTreeScroll = useCallback((): void => {
@@ -497,6 +501,7 @@ export function EditorHost(props: {
           onToggleOpenWithPin={toggleOpenWithPin}
           onReferenceFile={onReferenceFile}
           onPathDeleted={pathDeleted}
+          visible={visible}
           initialScrollTop={treeScrollTopRef.current}
           onScrollTopChange={rememberTreeScroll}
         />
@@ -631,6 +636,7 @@ export function EditorHost(props: {
               onToggleOpenWithPin={toggleOpenWithPin}
               onReferenceFile={onReferenceFile}
               onPathDeleted={pathDeleted}
+              visible={visible}
               initialScrollTop={treeScrollTopRef.current}
               onScrollTopChange={rememberTreeScroll}
             />

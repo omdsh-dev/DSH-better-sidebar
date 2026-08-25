@@ -34,6 +34,7 @@ vi.mock('../src/client/api.ts', () => ({
 function renderTree(root: Root, initialScrollTop = 0, callbacks: {
   onOpenFile?: (path: string) => void
   onScrollTopChange?: (scrollTop: number) => void
+  visible?: boolean
 } = {}): void {
   root.render(createElement(FileTree, {
     sessionId: 'cache-continuity-session',
@@ -45,6 +46,7 @@ function renderTree(root: Root, initialScrollTop = 0, callbacks: {
     refreshTick: 0,
     onUploadRequest: () => {},
     busy: false,
+    visible: callbacks.visible,
     initialScrollTop,
     onScrollTopChange: callbacks.onScrollTopChange,
   }))
@@ -94,6 +96,41 @@ describe('FileTree cache continuity', () => {
     const secondaryDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 2 })
     act(() => { row.dispatchEvent(secondaryDown) })
     expect(secondaryDown.defaultPrevented).toBe(false)
+    act(() => { root.unmount() })
+  })
+
+  it('restores the viewport when a kept-alive tab becomes visible again', async () => {
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    await act(async () => { renderTree(root, 0, { visible: true }) })
+    const body = container.querySelector<HTMLDivElement>('[class*="explorerBody"]')!
+
+    act(() => {
+      body.scrollTop = 320
+      body.dispatchEvent(new Event('scroll', { bubbles: true }))
+      renderTree(root, 0, { visible: false })
+    })
+    // Simulate the browser clearing a display:none scrollport while the tab
+    // is inactive. Showing the tab must reapply the remembered viewport.
+    body.scrollTop = 0
+    act(() => { renderTree(root, 0, { visible: true }) })
+    expect(body.scrollTop).toBe(320)
+
+    act(() => { root.unmount() })
+  })
+
+  it('uses a hidden tab\'s new persisted viewport in the same render that activates it', async () => {
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    await act(async () => { renderTree(root, 0, { visible: false }) })
+    const body = container.querySelector<HTMLDivElement>('[class*="explorerBody"]')!
+    expect(body.scrollTop).toBe(0)
+
+    // React batches the target tab's meta patch and activation. The layout
+    // restore must see 418 immediately, before passive effects run.
+    act(() => { renderTree(root, 418, { visible: true }) })
+    expect(body.scrollTop).toBe(418)
+
     act(() => { root.unmount() })
   })
 })

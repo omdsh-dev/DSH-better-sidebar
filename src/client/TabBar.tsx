@@ -1,7 +1,7 @@
 /**
  * The tab strip of one pane: tabs capped at TAB_MAX_WIDTH (ellipsized),
  * overflow scrolls horizontally, a close button per tab, a four-way split
- * button cluster, and the + menu that opens new tabs (explorer / git /
+ * button cluster, and a fixed + menu that opens new tabs (explorer / git /
  * terminal). Tabs are draggable; dropping onto another tab inserts before it,
  * dropping on the strip background appends to this pane. Right-clicking a
  * tab opens the tab context menu (float as a free window / close / close
@@ -232,38 +232,6 @@ export function TabBar(props: {
           </div>
         ))}
         {/*
-          The + sits immediately after the rightmost tab (sticky at the
-          right edge of the scrollport when the tabs overflow, so it stays
-          reachable no matter how many tabs are open).
-        */}
-        <Menu
-          open={menuOpen}
-          onClose={() => { setMenuOpen(false) }}
-          items={newTabOptions.map(option => ({
-            id: option.id,
-            label: option.label,
-            ...(option.disabled === true ? { disabled: true } : {}),
-            ...(option.icon !== undefined ? { icon: option.icon } : {}),
-          }))}
-          onSelect={(id) => {
-            onNewTab(id)
-            setMenuOpen(false)
-          }}
-          portal
-          align="end"
-          anchor={(
-            <button
-              type="button"
-              className={css.tabBarPlus}
-              aria-label={t('newTab')}
-              title={t('newTab')}
-              onClick={() => { setMenuOpen(v => !v); setTabMenu(null) }}
-            >
-              <IconPlusOutline16 />
-            </button>
-          )}
-        />
-        {/*
           The tab context menu, positioned at the right-click cursor (portal
           so the panel's overflow clip cannot crop it). Close operations are
           scoped to THIS pane: "close others/left/right" walk the render-time
@@ -307,6 +275,35 @@ export function TabBar(props: {
           anchor={<span />}
         />
       </div>
+      {/* The + is a sibling of the scrolling tab list, so it stays pinned to
+          the strip's right edge regardless of the list's scroll position. */}
+      <Menu
+        open={menuOpen}
+        onClose={() => { setMenuOpen(false) }}
+        items={newTabOptions.map(option => ({
+          id: option.id,
+          label: option.label,
+          ...(option.disabled === true ? { disabled: true } : {}),
+          ...(option.icon !== undefined ? { icon: option.icon } : {}),
+        }))}
+        onSelect={(id) => {
+          onNewTab(id)
+          setMenuOpen(false)
+        }}
+        portal
+        align="end"
+        anchor={(
+          <button
+            type="button"
+            className={css.tabBarPlus}
+            aria-label={t('newTab')}
+            title={t('newTab')}
+            onClick={() => { setMenuOpen(v => !v); setTabMenu(null) }}
+          >
+            <IconPlusOutline16 />
+          </button>
+        )}
+      />
     </div>
   )
 }
