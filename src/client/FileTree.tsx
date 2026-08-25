@@ -2,10 +2,12 @@
  * The controlled file tree behind the files window's tree panel (TreePanel
  * wraps it with the search box): a lazy VSCode-style tree rooted at the
  * session's working directory. Levels load on expansion (one API call per
- * directory), directories sort first, hidden entries render dimmed. The
+ * directory), directories sort first, hidden entries render dimmed. Loaded
+ * levels are cached per session/workspace so opening another file tab paints
+ * the same tree immediately instead of flashing through a loading frame. The
  * expansion set lives in the per-session state (owned by the caller); the
  * caller also owns the refresh affordance — a `refreshTick` bump wipes the
- * level cache so the visible set reloads.
+ * shared level cache so the visible set reloads.
  *
  * Row actions: hovering a row reveals an @-reference button on the far
  * right (appends `@<relative path>` to the composer draft), and right-click
@@ -20,7 +22,7 @@
  * (VSCode semantics — a drop on a file row targets its parent directory),
  * and `busy` gates new drags while one upload is in flight.
  */
-import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
@@ -41,6 +43,39 @@ import css from './sidebar.module.css'
 interface LevelData {
   entries?: FsEntry[]
   error?: string
+}
+
+/** Resolved lazy levels shared by file-tree instances in the same workspace.
+ *  Loading placeholders stay instance-local so a tab never waits on another
+ *  tab's in-flight request without receiving its completion. */
+const LEVEL_CACHE_LIMIT = 12
+const levelCache = new Map<string, Record<string, LevelData>>()
+
+/** Stable cache identity for one session workspace. */
+function levelCacheKey(sessionId: string, cwd: string | undefined): string {
+  return JSON.stringify([sessionId, cwd ?? null])
+}
+
+/** Read and touch one cache entry so the bounded map evicts inactive scopes. */
+function readLevelCache(key: string): Record<string, LevelData> | undefined {
+  const cached = levelCache.get(key)
+  if (cached === undefined) return undefined
+  levelCache.delete(key)
+  levelCache.set(key, cached)
+  return cached
+}
+
+/** Store one resolved level and evict the least-recently-used scope. */
+function writeLevelCache(key: string, path: string, level: LevelData): Record<string, LevelData> {
+  const next = { ...(levelCache.get(key) ?? {}), [path]: level }
+  levelCache.delete(key)
+  levelCache.set(key, next)
+  while (levelCache.size > LEVEL_CACHE_LIMIT) {
+    const oldest = levelCache.keys().next().value as string | undefined
+    if (oldest === undefined) break
+    levelCache.delete(oldest)
+  }
+  return next
 }
 
 /** Root label: the last path segment (mirror of the host rootLabel). */
@@ -142,7 +177,8 @@ export function FileTree(props: {
   onScrollTopChange?: (scrollTop: number) => void
 }) {
   const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy, initialScrollTop = 0, onScrollTopChange } = props
-  const [data, setData] = useState<Record<string, LevelData>>({})
+  const cacheKey = levelCacheKey(sessionId, cwd)
+  const [data, setData] = useState<Record<string, LevelData>>(() => readLevelCache(cacheKey) ?? {})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
@@ -250,20 +286,32 @@ export function FileTree(props: {
     setDropTarget(dir)
   }
 
-  const storeLevel = useCallback((path: string, level: LevelData) => {
-    dataRef.current = { ...dataRef.current, [path]: level }
+  const markLevelLoading = useCallback((path: string) => {
+    dataRef.current = { ...dataRef.current, [path]: {} }
     setData(dataRef.current)
   }, [])
 
+  const storeLevel = useCallback((path: string, level: LevelData) => {
+    const shared = writeLevelCache(cacheKey, path, level)
+    dataRef.current = { ...dataRef.current, ...shared, [path]: level }
+    setData(dataRef.current)
+  }, [cacheKey])
+
   const loadDir = useCallback((dir: string) => {
     if (dataRef.current[dir] !== undefined) return
-    storeLevel(dir, {})
+    const cached = readLevelCache(cacheKey)
+    if (cached?.[dir] !== undefined) {
+      dataRef.current = { ...dataRef.current, ...cached }
+      setData(dataRef.current)
+      return
+    }
+    markLevelLoading(dir)
     api.fsTree({ sessionId, cwd }, dir).then((listing) => {
       storeLevel(dir, { entries: listing.entries })
     }).catch((error: unknown) => {
       storeLevel(dir, { error: error instanceof Error ? error.message : String(error) })
     })
-  }, [sessionId, cwd, storeLevel])
+  }, [sessionId, cwd, cacheKey, markLevelLoading, storeLevel])
 
   // The caller's refresh tick wipes the cache (declared BEFORE the load
   // effect so the reload below sees the empty cache).
@@ -271,9 +319,10 @@ export function FileTree(props: {
   useEffect(() => {
     if (lastTick.current === refreshTick) return
     lastTick.current = refreshTick
+    levelCache.delete(cacheKey)
     dataRef.current = {}
     setData({})
-  }, [refreshTick])
+  }, [cacheKey, refreshTick])
 
   useEffect(() => {
     // Load the visible set; already-loaded levels (kept in the cache) are
@@ -298,7 +347,7 @@ export function FileTree(props: {
     desiredScrollTopRef.current = initialScrollTop
   }, [sessionId, cwd, initialScrollTop])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const body = bodyRef.current
     if (body === null) return
     // A restored position can only be applied after every expanded level has
