@@ -14,12 +14,29 @@ import { parentOf, requireAbsolute } from './fs-tree.ts'
 import { SidebarError } from './wire.ts'
 
 /** The two external open actions the route accepts. */
-export type OpenExternalAction = 'reveal' | 'url'
+export type OpenExternalAction = 'open' | 'reveal' | 'url'
 
 /** One platform opener invocation (argv array — never a shell string). */
 export interface ExternalCommand {
   command: string
   args: string[]
+}
+
+/** Open a path in the OS file manager: directories open directly, files open
+ *  in their containing folder (Explorer/Finder enter the folder for a
+ *  directory argument; a file argument lands the manager on its parent with
+ *  the file focused). */
+export function openCommand(path: string, platform: NodeJS.Platform = process.platform): ExternalCommand {
+  switch (platform) {
+    case 'darwin':
+      return { command: 'open', args: [path] }
+    case 'win32':
+      // No `/select,` here — a bare directory path makes Explorer ENTER the
+      // folder (a file path still lands on its parent with the file focused).
+      return { command: 'explorer.exe', args: [path] }
+    default:
+      return { command: 'xdg-open', args: [path] }
+  }
 }
 
 /** Reveal/select a path in the OS file manager. On Linux there is no common
@@ -82,7 +99,9 @@ export function launchExternal(action: OpenExternalAction, value: string): { sta
   const platform = process.platform
   const spec = action === 'reveal'
     ? revealCommand(requireAbsolute(value), platform)
-    : urlCommand(validateExternalUrl(value), platform)
+    : action === 'open'
+      ? openCommand(requireAbsolute(value), platform)
+      : urlCommand(validateExternalUrl(value), platform)
   const child = spawn(spec.command, spec.args, { detached: true, stdio: 'ignore' })
   child.on('error', () => { /* opener missing/denied: handled by the OS */ })
   child.unref()
