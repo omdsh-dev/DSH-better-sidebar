@@ -276,6 +276,8 @@ export const th: Record<string, string> = {
   subagent: 'งาน',
   openSubagent: 'งาน',
   subagentMainAgent: 'ตัวแทนหลัก',
+  subagentActiveOnly: "เฉพาะที่กำลังทำงาน",
+  subagentActiveOnlyTitle: "ย่อซับเอเจนต์ที่ว่างงาน แสดงเฉพาะตัวที่กำลังทำงานและบรรพบุรุษของมัน",
   subagentEmpty: 'ไม่มีตัวแทนย่อย',
   subagentEmptyDesc: 'ตัวแทนย่อยที่สร้างภายใต้ตัวแทนหลักจะปรากฏที่นี่',
   subagentRunning: 'กำลังทำงาน',

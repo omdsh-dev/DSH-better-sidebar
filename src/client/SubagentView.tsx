@@ -40,6 +40,7 @@ import {
   countSubagentDescendants,
   isSideThreadSummary,
   rootAncestor,
+  runningVisibilitySet,
 } from './subagent-detect.ts'
 import { type LastActivity } from '../subagent-activity.ts'
 import { SIDE_LABEL_PREFIX } from '../sidechat-core.ts'
@@ -65,6 +66,26 @@ const ARGS_PREVIEW = 60
 const JOB_POLL_MS = 2000
 /** How long the kill button stays armed before it needs re-confirming. */
 const JOB_KILL_ARM_MS = 3000
+/** localStorage key of the "active only" toggle (a pure view preference). */
+const ACTIVE_ONLY_KEY = 'dsh-better-sidebar.subagent.activeOnly'
+
+/** Read the persisted "active only" preference; failures fall back to off. */
+function readActiveOnlyPref(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(ACTIVE_ONLY_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+/** Persist the "active only" preference; storage failures are non-fatal. */
+function writeActiveOnlyPref(value: boolean): void {
+  try {
+    globalThis.localStorage?.setItem(ACTIVE_ONLY_KEY, value ? '1' : '0')
+  } catch {
+    // Private mode / quota errors must never break the page.
+  }
+}
 
 /** The direct subagent children of one parent (durable `origin` rows;
  *  Side Chat threads ride the same origin but are tab-strip conversations,
@@ -240,6 +261,13 @@ interface RowsProps {
   currentSessionId: string
   /** The batch live-preview map (child id → latest activity). */
   live: Readonly<Record<string, LastActivity>>
+  /**
+   * Active-only filter (`null` = off): session ids worth showing — running
+   * nodes plus ancestors with running descendants. Entries outside the set
+   * (and diagnostics) are hidden; `entry.activity === 'running'` always
+   * passes so a catalog row never lags its own summary flag.
+   */
+  activeKeepSet: ReadonlySet<string> | null
   openChild: (address: SidebarSubagentAddress) => void
   refresh: (parentSessionId: string) => void
 }
@@ -247,6 +275,7 @@ interface RowsProps {
 /** Render one topology level; branches are always expanded (lazy catalogs). */
 function CatalogRows({
   parentSessionId, catalog, catalogs, byId, level, currentSessionId, live,
+  activeKeepSet,
   openChild, refresh,
 }: RowsProps) {
   const emptyLoading = catalog?.state === 'loading' && catalog.entries.length === 0
@@ -255,6 +284,10 @@ function CatalogRows({
   // strip owns them). Legacy threads created before the descriptor fix still
   // arrive as corrupt diagnostics; they are recognized by summary title.
   const visibleEntries = (catalog?.entries ?? []).filter((entry) => {
+    if (activeKeepSet !== null && !(activeKeepSet.has(entry.id)
+      || (entry.kind === 'child' && entry.activity === 'running'))) {
+      return false
+    }
     if (entry.kind === 'child') return !(entry.label?.startsWith(SIDE_LABEL_PREFIX) ?? false)
     return !(byId[entry.id]?.displayTitle.startsWith(SIDE_LABEL_PREFIX) ?? false)
   })
@@ -361,6 +394,7 @@ function CatalogRows({
                       level={level + 1}
                       currentSessionId={currentSessionId}
                       live={live}
+                      activeKeepSet={activeKeepSet}
                       openChild={openChild}
                       refresh={refresh}
                     />
@@ -664,6 +698,22 @@ export function SubagentView(props: {
   const rootSummary = rootId === undefined ? undefined : byId[rootId]
   const live = useSubagentLive(rootId, active)
 
+  // "Active only" view mode: hide idle topology branches so a busy tree
+  // surfaces just the running subagents (and the ancestors that own them).
+  // A pure view preference — persisted client-side, defaulting to off.
+  const [activeOnly, setActiveOnly] = useState(readActiveOnlyPref)
+  const toggleActiveOnly = useCallback(() => {
+    setActiveOnly(value => {
+      const next = !value
+      writeActiveOnlyPref(next)
+      return next
+    })
+  }, [])
+  const activeKeepSet = useMemo(
+    () => (rootId === undefined || !activeOnly ? null : runningVisibilitySet(byId, rootId)),
+    [byId, rootId, activeOnly],
+  )
+
   /** Catalog owners currently consuming live membership updates. */
   const observedRef = useRef(new Set<string>())
 
@@ -844,6 +894,19 @@ export function SubagentView(props: {
               </span>
             </div>
           )}
+          {rootId !== undefined && totals.count > 0 && (
+            <div className={css.subagentToolbar}>
+              <button
+                type="button"
+                aria-pressed={activeOnly}
+                title={t('subagentActiveOnlyTitle')}
+                className={clsx(css.subagentToggle, activeOnly && css.subagentToggleOn)}
+                onClick={toggleActiveOnly}
+              >
+                {activeOnly ? `✓ ${t('subagentActiveOnly')}` : t('subagentActiveOnly')}
+              </button>
+            </div>
+          )}
           {rootId !== undefined && (
             <div className={css.subagentChildren} role="group" aria-busy={summaryBackedLoading || undefined}>
               {summaryBackedLoading && (
@@ -858,6 +921,7 @@ export function SubagentView(props: {
                   level={1}
                   currentSessionId={sessionId}
                   live={live}
+                  activeKeepSet={activeKeepSet}
                   openChild={openChild}
                   refresh={refresh}
                 />

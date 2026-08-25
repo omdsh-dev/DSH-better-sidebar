@@ -276,6 +276,8 @@ export const vi: Record<string, string> = {
   subagent: 'Quản lý tác vụ',
   openSubagent: 'Quản lý tác vụ',
   subagentMainAgent: 'Tác nhân chính',
+  subagentActiveOnly: "Chỉ mục đang chạy",
+  subagentActiveOnlyTitle: "Thu gọn subagent nhàn rỗi; chỉ hiện mục đang chạy và chuỗi cha của nó",
   subagentEmpty: 'Không có tác nhân con',
   subagentEmptyDesc: 'Tác nhân con do tác nhân chính tạo ra sẽ hiển thị ở đây',
   subagentRunning: 'Đang chạy',

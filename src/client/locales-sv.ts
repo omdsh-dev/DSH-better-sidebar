@@ -259,6 +259,8 @@ export const sv: Record<string, string> = {
   subagent: 'Uppgifter',
   openSubagent: 'Uppgifter',
   subagentMainAgent: 'Huvudagent',
+  subagentActiveOnly: "Endast aktiva",
+  subagentActiveOnlyTitle: "Fäll ihop inaktiva underagenter; visa endast körande och deras förfäder",
   subagentEmpty: 'Inga subagenter',
   subagentEmptyDesc: 'Subagenter skapade under huvudagenten visas här',
   subagentRunning: 'Kör',

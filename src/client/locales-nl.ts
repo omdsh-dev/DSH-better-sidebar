@@ -274,6 +274,8 @@ export const nl: Record<string, string> = {
   subagent: 'Taken',
   openSubagent: 'Taken',
   subagentMainAgent: 'Hoofdagent',
+  subagentActiveOnly: "Alleen actief",
+  subagentActiveOnlyTitle: "Inactieve subagenten inklappen; alleen draaiende en hun voorouders tonen",
   subagentEmpty: 'Geen subagents',
   subagentEmptyDesc: 'Subagents voortgebracht door de hoofdagent verschijnen hier',
   subagentRunning: 'Actief',

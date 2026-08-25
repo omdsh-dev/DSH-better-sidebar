@@ -276,6 +276,8 @@ export const tr: Record<string, string> = {
   subagent: 'Görevler',
   openSubagent: 'Görevler',
   subagentMainAgent: 'Ana aracı',
+  subagentActiveOnly: "Sadece aktif",
+  subagentActiveOnlyTitle: "Boşta bekleyen alt ajanları daralt; yalnızca çalışanlar ve üst zincirlerini göster",
   subagentEmpty: 'Alt aracı yok',
   subagentEmptyDesc: 'Ana aracının altında doğan alt aracılar burada görünür',
   subagentRunning: 'Çalışıyor',

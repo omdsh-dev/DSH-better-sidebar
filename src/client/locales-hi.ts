@@ -276,6 +276,8 @@ export const hi: Record<string, string> = {
   subagent: 'कार्य',
   openSubagent: 'कार्य',
   subagentMainAgent: 'मुख्य एजेंट',
+  subagentActiveOnly: "केवल सक्रिय",
+  subagentActiveOnlyTitle: "निष्क्रिय सब-एजेंट समेटें; केवल चल रहे और उनके पूर्वज दिखाएँ",
   subagentEmpty: 'कोई सबएजेंट नहीं',
   subagentEmptyDesc: 'मुख्य एजेंट के अंतर्गत बने सबएजेंट यहाँ दिखेंगे',
   subagentRunning: 'चल रहा',

@@ -276,6 +276,8 @@ export const ja: Record<string, string> = {
   subagent: 'タスク管理',
   openSubagent: 'タスク管理',
   subagentMainAgent: 'メインエージェント',
+  subagentActiveOnly: 'アクティブのみ',
+  subagentActiveOnlyTitle: 'アイドル中のサブエージェントを折りたたみ、実行中のものとその親チェーンのみを表示',
   subagentEmpty: 'サブエージェントなし',
   subagentEmptyDesc: 'メインエージェントが派生したサブエージェントはここに表示されます',
   subagentRunning: '実行中',
