@@ -136,8 +136,12 @@ export function FileTree(props: {
   onUploadRequest: (dir: string, items: UploadItem[]) => void
   /** True while an upload is in flight (drops are ignored). */
   busy: boolean
+  /** Scroll position restored after the lazy visible levels finish loading. */
+  initialScrollTop?: number
+  /** Reports navigation movement so the owning editor tab can persist it. */
+  onScrollTopChange?: (scrollTop: number) => void
 }) {
-  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy } = props
+  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy, initialScrollTop = 0, onScrollTopChange } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
@@ -157,6 +161,9 @@ export function FileTree(props: {
   const dropDepth = useRef(0)
   /** Explorer body element; its viewport rect anchors the portaled drop zone. */
   const bodyRef = useRef<HTMLDivElement>(null)
+  /** Desired position stays independent from the DOM while lazy directories
+   *  are still too short to accept the restored scrollTop. */
+  const desiredScrollTopRef = useRef(initialScrollTop)
   /** The body's viewport rect captured at drag entry (null = not measured). */
   const [dropRect, setDropRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null)
   /** Context-menu "upload here" target directory. */
@@ -286,6 +293,25 @@ export function FileTree(props: {
     const row = bodyRef.current?.querySelector('[data-dsh-revealed]')
     row?.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }, [revealed, data])
+
+  useEffect(() => {
+    desiredScrollTopRef.current = initialScrollTop
+  }, [sessionId, cwd, initialScrollTop])
+
+  useEffect(() => {
+    const body = bodyRef.current
+    if (body === null) return
+    // A restored position can only be applied after every expanded level has
+    // produced rows. Applying it against the initial loading placeholders
+    // would clamp it to zero and lose the user's navigation context.
+    const visible = cwd === undefined ? [] : [cwd, ...expanded]
+    const loaded = visible.every((dir) => {
+      const level = data[dir]
+      return level?.entries !== undefined || level?.error !== undefined
+    })
+    if (!loaded) return
+    body.scrollTop = desiredScrollTopRef.current
+  }, [cwd, expanded, data, initialScrollTop])
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
   const copyPath = useCallback((text: string, path: string): void => {
@@ -505,6 +531,11 @@ export function FileTree(props: {
     <div
       ref={bodyRef}
       className={css.explorerBody}
+      onScroll={(event) => {
+        const scrollTop = event.currentTarget.scrollTop
+        desiredScrollTopRef.current = scrollTop
+        onScrollTopChange?.(scrollTop)
+      }}
       onDragEnter={handleBodyDragEnter}
       onDragOver={handleBodyDragOver}
       onDragLeave={handleBodyDragLeave}

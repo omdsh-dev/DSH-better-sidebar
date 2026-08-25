@@ -10,8 +10,9 @@
  * toggling it re-renders without a reload):
  * - merged (in-place): tree click / path-input Enter switch the CURRENT
  *   tab in place (updateTab rewrites path/title; the tab keeps its id and
- *   meta, so treeOpen/treeWidth survive the switch);
+ *   meta, so treeOpen/treeWidth/treeScrollTop survive the switch);
  * - split: they open through `openSidebarFile` (a per-path dedupe tab),
+ *   inheriting the source tree's visibility, width, and scroll position;
  *   and a PATH-LESS window is the standalone explorer — it renders ONLY
  *   the tree panel (search + FileTree, full-window), no editor chrome.
  *   Editor tabs (with a path) keep the full chrome in both modes.
@@ -40,7 +41,7 @@ import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
-import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, type SidebarStore, type SidebarTab } from './state.ts'
+import { allLeaves, firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, type SidebarStore, type SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
 
 type EditorLoad =
@@ -79,6 +80,21 @@ function treeWidthOf(tab: SidebarTab): number {
   return typeof width === 'number' && Number.isFinite(width)
     ? Math.min(TREE_WIDTH_MAX, Math.max(TREE_WIDTH_MIN, Math.round(width)))
     : TREE_WIDTH_DEFAULT
+}
+
+/** Read one editor tab's persisted file-tree position. */
+function treeScrollTopOf(tab: SidebarTab): number {
+  const scrollTop = metaOf(tab).treeScrollTop
+  return typeof scrollTop === 'number' && Number.isFinite(scrollTop)
+    ? Math.max(0, Math.round(scrollTop))
+    : 0
+}
+
+/** Only add a zero scroll position when the tab already owns that field. */
+function treeScrollMetaOf(tab: SidebarTab, scrollTop: number): Record<string, number> {
+  return scrollTop > 0 || typeof metaOf(tab).treeScrollTop === 'number'
+    ? { treeScrollTop: scrollTop }
+    : {}
 }
 
 /** Merge a patch into the tab's persisted meta (rides the layout). */
@@ -151,6 +167,60 @@ export function EditorHost(props: {
   const treeOnly = showEmpty && !inPlace
   const folderRoot = isDir ? path : undefined
 
+  // Tree navigation is tab-owned, but scrolling stays local while active so
+  // the whole sidebar is not re-rendered for every wheel event. A short idle
+  // commit persists it; file opens and the hide button flush it synchronously.
+  const currentTabRef = useRef(tab)
+  currentTabRef.current = tab
+  const scrollOwnerRef = useRef(tab.id)
+  const treeScrollTopRef = useRef(treeScrollTopOf(tab))
+  if (scrollOwnerRef.current !== tab.id) {
+    scrollOwnerRef.current = tab.id
+    treeScrollTopRef.current = treeScrollTopOf(tab)
+  }
+  const scrollPersistTimerRef = useRef<number | null>(null)
+  const persistTreeScroll = useCallback((): void => {
+    if (scrollPersistTimerRef.current !== null) {
+      window.clearTimeout(scrollPersistTimerRef.current)
+      scrollPersistTimerRef.current = null
+    }
+    const owner = currentTabRef.current
+    const scrollTop = treeScrollTopRef.current
+    if (scrollTop === treeScrollTopOf(owner)) return
+    patchMeta(ctx, owner, { treeScrollTop: scrollTop })
+  }, [ctx])
+  const rememberTreeScroll = useCallback((scrollTop: number): void => {
+    treeScrollTopRef.current = Math.max(0, Math.round(scrollTop))
+    if (scrollPersistTimerRef.current !== null) window.clearTimeout(scrollPersistTimerRef.current)
+    scrollPersistTimerRef.current = window.setTimeout(persistTreeScroll, 120)
+  }, [persistTreeScroll])
+  useEffect(() => () => { persistTreeScroll() }, [persistTreeScroll])
+
+  /** Navigation state carried from the visible tree into a newly opened tab. */
+  const inheritedTreeMeta = (): Record<string, unknown> => ({
+    treeOpen: treeOpenOf(tab),
+    treeWidth: treeWidthOf(tab),
+    ...treeScrollMetaOf(tab, treeScrollTopRef.current),
+  })
+
+  /** Open or focus a file tab without dropping the tree context that led to it. */
+  const openFileTab = (absolute: string): void => {
+    persistTreeScroll()
+    const targetId = `editor:${absolute}`
+    const state = store.getSnapshot().state
+    const existing = state === undefined
+      ? undefined
+      : [...allLeaves(state.splits), ...allLeaves(state.bottomSplits)]
+          .flatMap(leaf => leaf.tabs)
+          .find(candidate => candidate.id === targetId)
+    const navigation = inheritedTreeMeta()
+    const meta = { ...metaOf(existing ?? tab), ...navigation }
+    // Dedupe focuses an existing tab without applying the new seed, so patch
+    // that tab first; a new tab receives the same state through its seed.
+    if (existing !== undefined) ctx.betterSidebar?.updateTab(existing.id, { meta })
+    openSidebarFile(ctx, store, scope.sessionId, absolute, meta)
+  }
+
   /**
    * Open a file from THIS window (tree click / search row / path input):
    * merged mode switches this tab in place (stable id, meta survives);
@@ -160,13 +230,13 @@ export function EditorHost(props: {
     if (inPlace) {
       ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) })
     } else {
-      openSidebarFile(ctx, store, scope.sessionId, absolute)
+      openFileTab(absolute)
     }
   }
 
   /** The context menu's explicit "new tab" escape (per-path dedupe). */
   const openFileNewTab = (absolute: string): void => {
-    openSidebarFile(ctx, store, scope.sessionId, absolute)
+    openFileTab(absolute)
   }
 
   /**
@@ -183,7 +253,7 @@ export function EditorHost(props: {
         type: 'editor',
         title: baseName(absolute),
         path: absolute,
-        meta: { treeOpen: false },
+        meta: inheritedTreeMeta(),
       }
       const { node, leafId } = insertLeafAt(state[key], pane.id, 'row', fresh, false)
       return { ...state, [key]: node, activePane: leafId }
@@ -274,7 +344,9 @@ export function EditorHost(props: {
     dragRef.current = null
     setDragWidth(null)
     const finalWidth = clampTreeWidth(drag.startWidth + (drag.startX - event.clientX))
-    if (finalWidth !== treeWidthOf(tab)) patchMeta(ctx, tab, { treeWidth: finalWidth })
+    if (finalWidth !== treeWidthOf(tab)) {
+      patchMeta(ctx, tab, { treeWidth: finalWidth, ...treeScrollMetaOf(tab, treeScrollTopRef.current) })
+    }
   }
 
   useEffect(() => {
@@ -353,7 +425,16 @@ export function EditorHost(props: {
 
   const treeOpen = treeOpenOf(tab)
   /** Persist the panel flag on the tab (survives reloads with the layout). */
-  const toggleTree = (): void => { patchMeta(ctx, tab, { treeOpen: !treeOpen }) }
+  const toggleTree = (): void => {
+    if (scrollPersistTimerRef.current !== null) {
+      window.clearTimeout(scrollPersistTimerRef.current)
+      scrollPersistTimerRef.current = null
+    }
+    patchMeta(ctx, tab, {
+      treeOpen: !treeOpen,
+      ...treeScrollMetaOf(tab, treeScrollTopRef.current),
+    })
+  }
   const saveLabel = toolbar === null ? ''
     : toolbar.saveState === 'saving' ? t('loading')
       : toolbar.saveState === 'saved' ? t('saved')
@@ -383,6 +464,8 @@ export function EditorHost(props: {
           onOpenWith={openWith}
           onToggleOpenWithPin={toggleOpenWithPin}
           onReferenceFile={onReferenceFile}
+          initialScrollTop={treeScrollTopRef.current}
+          onScrollTopChange={rememberTreeScroll}
         />
       </div>
     )
@@ -502,6 +585,8 @@ export function EditorHost(props: {
               onOpenWith={openWith}
               onToggleOpenWithPin={toggleOpenWithPin}
               onReferenceFile={onReferenceFile}
+              initialScrollTop={treeScrollTopRef.current}
+              onScrollTopChange={rememberTreeScroll}
             />
           </div>
         )}
