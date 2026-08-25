@@ -97,9 +97,9 @@ function fire(target: Element, type: string, dataTypes?: string[]): Event {
 
 const dropZone = (): HTMLElement | null => document.body.querySelector<HTMLElement>('[class*="uploadDropZone"]')
 
-/** The row whose label text matches (rows are role="button" divs). */
+/** The visual row whose label text matches (folder toggles are child buttons). */
 function rowByName(container: HTMLElement, name: string): HTMLElement {
-  const row = [...container.querySelectorAll<HTMLElement>('[role="button"]')]
+  const row = [...container.querySelectorAll<HTMLElement>('[class*="explorerRow"]')]
     .find(el => el.querySelector('[class*="explorerName"]')?.textContent === name)
   if (row === undefined) throw new Error(`row not found: ${name}`)
   return row

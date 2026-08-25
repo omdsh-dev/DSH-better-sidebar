@@ -139,6 +139,8 @@ export function FileTree(props: {
   const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
+  /** The workspace root is a visible tree node too; it starts open per cwd. */
+  const [rootOpen, setRootOpen] = useState(true)
   /** The row whose path was just copied ("copied" label replaces its button). */
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
@@ -275,6 +277,17 @@ export function FileTree(props: {
     loadDir(root)
     for (const dir of expanded) loadDir(dir)
   }, [cwd, expanded, refreshTick, loadDir])
+
+  useEffect(() => {
+    setRootOpen(true)
+  }, [cwd])
+
+  // "Show in folder" must remain able to surface its target even when the
+  // user previously collapsed the workspace root. A later manual collapse
+  // stays respected until a new reveal payload arrives.
+  useEffect(() => {
+    if (revealed.length > 0) setRootOpen(true)
+  }, [revealed])
 
   // Bring a "Show in folder" reveal into view: the ancestors expand above
   // (revealPaths), but the row may not be scrolled into sight — a reveal on
@@ -438,8 +451,6 @@ export function FileTree(props: {
         return (
           <div key={entry.path}>
             <div
-              role="button"
-              tabIndex={0}
               className={clsx(
                 css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden,
                 dropTarget === entry.path && css.explorerRowDropTarget,
@@ -447,20 +458,20 @@ export function FileTree(props: {
               )}
               data-dsh-revealed={revealed.includes(entry.path) ? 'true' : undefined}
               style={{ paddingLeft: depth * 22 + 6 }}
-              onClick={() => { onToggle(entry.path) }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault()
-                  onToggle(entry.path)
-                }
-              }}
               onDragOver={(event) => { handleRowDragOver(event, entry.path) }}
               onDrop={(event) => { handleDirDrop(event, entry.path) }}
               onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
             >
-              {isOpen ? <VscFolderOpened size={14} /> : <VscFolder size={14} />}
-              <span className={css.explorerName}>{entry.name}</span>
-              {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
+              <button
+                type="button"
+                className={css.explorerDirToggle}
+                aria-expanded={isOpen}
+                onClick={() => { onToggle(entry.path) }}
+              >
+                {isOpen ? <VscFolderOpened size={14} /> : <VscFolder size={14} />}
+                <span className={css.explorerName}>{entry.name}</span>
+                {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
+              </button>
               {rowActions(entry)}
             </div>
             {isOpen && renderLevel(entry.path, depth + 1)}
@@ -520,8 +531,15 @@ export function FileTree(props: {
             onDrop={(event) => { handleDirDrop(event, root) }}
             onContextMenu={(event) => { openRowMenu(event, root, true) }}
           >
-            <VscFolderOpened size={14} />
-            <span className={css.explorerName}>{baseName(root)}</span>
+            <button
+              type="button"
+              className={css.explorerDirToggle}
+              aria-expanded={rootOpen}
+              onClick={() => { setRootOpen(open => !open) }}
+            >
+              {rootOpen ? <VscFolderOpened size={14} /> : <VscFolder size={14} />}
+              <span className={css.explorerName}>{baseName(root)}</span>
+            </button>
             {copiedPath === root
               ? <span className={css.explorerCopied}>{t('copied')}</span>
               : (
@@ -539,7 +557,7 @@ export function FileTree(props: {
                 </button>
               )}
           </div>
-          {data[root] !== undefined && renderLevel(root, 1)}
+          {rootOpen && data[root] !== undefined && renderLevel(root, 1)}
         </>
       )}
       {dropOver && dropRect !== null && createPortal(

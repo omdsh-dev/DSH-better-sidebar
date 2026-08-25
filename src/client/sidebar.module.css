@@ -943,6 +943,30 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   font: var(--dsw-font-s-strong-14);
 }
 
+/* Keep the directory toggle and the hover-only @ action as sibling controls.
+   A role=button row containing a real button creates overlapping interactive
+   targets. The native button owns the remaining row width and exposes
+   aria-expanded; clicking it a second time always collapses the directory. */
+.explorerDirToggle {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.explorerDirToggle .explorerName {
+  flex: 1;
+}
+
 .explorerHidden {
   opacity: 0.45;
 }
@@ -2652,6 +2676,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .tabBarPlus:focus-visible,
 .paneCard:focus-visible,
 .explorerRow:focus-visible,
+.explorerDirToggle:focus-visible,
 .explorerRef:focus-visible,
 .gitRowMain:focus-visible,
 .gitLink:focus-visible,
