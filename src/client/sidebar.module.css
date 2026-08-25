@@ -54,8 +54,8 @@
   left: 0;
 }
 
-/* The persistent expand/collapse cluster at the top-right corner: two rail
-   controls side by side (bottom panel's glyph LEFT of the right panel's).
+/* The persistent layout cluster at the top-right corner: focus, bottom-panel
+   and right-panel controls side by side while the panel is open.
    Always pinned to the viewport corner — inside the right panel's top-right
    while it is open, sitting flush in the 34px tab strip (28px buttons at
    top: 3) whose right end it really squeezes. Host-internal z-index 45
@@ -81,7 +81,7 @@
    right end, so the tabs and the + menu genuinely yield space to the cluster
    (never hiding under it). */
 .panel:not(.panelHidden) .tabBar {
-  padding-right: 72px;
+  padding-right: 104px;
 }
 
 /* The closed-state affordance is the native rail icon control: a plain
@@ -107,6 +107,11 @@
 
 .toggleButton:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.toggleButtonActive {
+  background: var(--dsw-alias-interactive-bg-active);
   color: var(--dsw-alias-label-primary);
 }
 
@@ -181,8 +186,54 @@
   touch-action: none;
 }
 
+/* The hit strip stays generous while a short centered rail makes the resize
+   affordance discoverable without drawing a full-height divider. */
+.panelResize::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 2px;
+  height: 40px;
+  border-radius: 2px;
+  background: transparent;
+  transform: translateY(-50%);
+}
+
+.panelResize:hover::after,
+.panelResize:focus-visible::after,
+.panelResizeActive::after {
+  background: var(--dsw-alias-border-l2);
+}
+
+.panelResize:focus-visible {
+  outline: none;
+}
+
 .panelResizeActive {
   background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.panelResizeCollapseReady::after {
+  width: 4px;
+  left: 2px;
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.panelCollapseHint {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  z-index: 3;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  font: var(--dsw-font-xxs-12);
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translateY(-50%);
 }
 
 .panelBody {

@@ -141,6 +141,54 @@ describe('layout-push variable cleanup', () => {
       call[0] === '--dsh-sidebar-width' || call[0] === '--dsh-sidebar-height')).toBe(true)
     removeSpy.mockRestore()
   })
+
+  it('code focus takes over the conversation area without overwriting the saved width', () => {
+    const { container, store } = mountSidebar()
+    const savedWidth = store.getSnapshot().state!.width
+    const enter = container.querySelector<HTMLButtonElement>(`[aria-label="${t('enterCodeFocus')}"]`)
+    expect(enter).not.toBeNull()
+
+    act(() => { enter!.click() })
+    expect(container.querySelector('[data-dsh-code-focus="true"]')).not.toBeNull()
+    expect(container.querySelector<HTMLElement>('[data-dsh-panel]')!.style.width).toBe(`${window.innerWidth}px`)
+    expect(document.documentElement.style.getPropertyValue('--dsh-sidebar-width')).toBe(`${savedWidth}px`)
+    expect(store.getSnapshot().state!.width).toBe(savedWidth)
+
+    const exit = container.querySelector<HTMLButtonElement>(`[aria-label="${t('exitCodeFocus')}"]`)
+    expect(exit).not.toBeNull()
+    act(() => { exit!.click() })
+    expect(container.querySelector('[data-dsh-code-focus="true"]')).toBeNull()
+    expect(document.documentElement.style.getPropertyValue('--dsh-sidebar-width')).toBe(`${savedWidth}px`)
+    expect(store.getSnapshot().state!.width).toBe(savedWidth)
+  })
+
+  it('dragging the width edge to the far right hides the panel and preserves its width', () => {
+    const { container, store } = mountSidebar()
+    const savedWidth = store.getSnapshot().state!.width
+    const separator = container.querySelector<HTMLElement>(`[aria-label="${t('resizeSidebar')}"]`)
+    expect(separator).not.toBeNull()
+
+    let captured = false
+    separator!.setPointerCapture = () => { captured = true }
+    separator!.hasPointerCapture = () => captured
+    separator!.releasePointerCapture = () => { captured = false }
+    const pointer = (type: string, clientX: number): Event => {
+      const event = new Event(type, { bubbles: true })
+      Object.defineProperties(event, {
+        pointerId: { value: 1 },
+        clientX: { value: clientX },
+        clientY: { value: 0 },
+      })
+      return event
+    }
+
+    act(() => { separator!.dispatchEvent(pointer('pointerdown', window.innerWidth - savedWidth)) })
+    act(() => { separator!.dispatchEvent(pointer('pointerup', window.innerWidth)) })
+
+    expect(store.getSnapshot().state!.panelOpen).toBe(false)
+    expect(store.getSnapshot().state!.width).toBe(savedWidth)
+    expect(container.querySelector(`[aria-label="${t('expand')}"]`)).not.toBeNull()
+  })
 })
 
 describe('tab crash containment', () => {

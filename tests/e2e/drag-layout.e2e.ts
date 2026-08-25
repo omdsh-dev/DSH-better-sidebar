@@ -627,6 +627,35 @@ test('bottom panel never flashes full-width after a width drag release (issue #2
   }
 })
 
+test('dragging the width edge to the far right hides the panel without losing its width', async ({ page }) => {
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
+  const sidebar = page.locator('[data-dsh-better-sidebar]')
+  await expect(sidebar).toBeAttached({ timeout: 90_000 })
+  await dismissOnboarding(page)
+  await expandSidebar(page, sidebar)
+  const { startX, startY } = await settleWidthStrip(page)
+  const savedWidth = await page.evaluate(() =>
+    parseFloat(document.documentElement.style.getPropertyValue('--dsh-sidebar-width')))
+
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move((await page.evaluate(() => window.innerWidth)) - 5, startY, { steps: 12 })
+  await page.mouse.up()
+
+  await expect(sidebar.getByRole('button', { name: 'Expand sidebar' })).toHaveCount(1)
+  await expect
+    .poll(async () => page.evaluate(() =>
+      document.documentElement.style.getPropertyValue('--dsh-sidebar-width')))
+    .toBe('0px')
+
+  await expandSidebar(page, sidebar)
+  await expect
+    .poll(async () => page.evaluate(() =>
+      parseFloat(document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))))
+    .toBe(savedWidth)
+})
+
 test('the bottom-push anchor resolves through the composite selectors (at least one; same element when both)', async ({ page }) => {
   // layout.css pushes the bottom panel via the center column. The selector
   // is COMPOSITE on purpose: `[data-pane="conversation"]` (0.1.x naming)
