@@ -165,9 +165,10 @@ describe('layout-push variable cleanup', () => {
     expect(enter).not.toBeNull()
     expect(enter!.closest('[data-dsh-toggle-cluster]')).toBeNull()
     expect(enter!.closest('[class*="editorHeader"]')).not.toBeNull()
-    const headerPlus = [...container.querySelectorAll<HTMLButtonElement>(`[aria-label="${t('newTab')}"]`)]
-      .find(button => button.closest('[class*="editorHeader"]') !== null)
-    expect(headerPlus).toBeDefined()
+    const newTabButtons = [...container.querySelectorAll<HTMLButtonElement>(`[aria-label="${t('newTab')}"]`)]
+    expect(newTabButtons.length).toBeGreaterThan(0)
+    expect(newTabButtons.every(button => button.closest('[class*="tabBar"]') !== null)).toBe(true)
+    expect(newTabButtons.every(button => button.closest('[class*="editorHeader"]') === null)).toBe(true)
 
     act(() => { enter!.click() })
     expect(container.querySelector('[data-dsh-code-focus="true"]')).not.toBeNull()
