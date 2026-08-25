@@ -13,7 +13,7 @@ import type {
 } from './service.ts'
 
 interface PaneMount {
-  readonly target: BetterSidebarPaneTarget
+  target: BetterSidebarPaneTarget
   readonly root: Root
   readonly host: HTMLElement
   readonly detachStore: () => void
@@ -31,9 +31,15 @@ export function createPaneCapability(
 ): BetterSidebarPaneCapability & { dispose(): void } {
   const mounts = new Map<string, PaneMount>()
 
+  const syncFocusedSession = (): void => {
+    const focused = [...mounts.values()].find(mount => mount.target.focused)?.target.sessionId
+    primaryStore.setSession(focused ?? ctx.sessions.list.getSnapshot().current)
+  }
+
   const disposeMount = (sessionId: string, mount: PaneMount): void => {
     if (mounts.get(sessionId) !== mount) return
     mounts.delete(sessionId)
+    syncFocusedSession()
     mount.disposePrefs()
     mount.detachStore()
     mount.root.unmount()
@@ -88,16 +94,17 @@ export function createPaneCapability(
         bottomReservation,
       }
       mounts.set(target.sessionId, mount)
+      syncFocusedSession()
       onActiveChange()
-      let current = target
       return {
         update(next): void {
-          if (next.sessionId !== current.sessionId) {
+          if (next.sessionId !== mount.target.sessionId) {
             throw new Error('[dsh-better-sidebar] Pane attachment cannot change Session identity')
           }
-          current = next
+          mount.target = next
           if (next.focused) host.setAttribute('data-focused', '')
           else host.removeAttribute('data-focused')
+          syncFocusedSession()
         },
         dispose(): void { disposeMount(target.sessionId, mount) },
       }

@@ -72,4 +72,34 @@ describe('Better Sidebar Pane capability', () => {
     expect(paneTarget.pane.querySelector('[data-dsh-better-sidebar-pane]')).toBeNull()
     expect(changed).toHaveBeenCalledTimes(2)
   })
+
+  it('routes unscoped service opens to the focused Pane store', async () => {
+    const primary = createSidebarStore()
+    primary.setSession('s1')
+    const service = createBetterSidebarService(primary)
+    const onOpen = vi.fn()
+    service.registerTab({ id: 'probe', title: 'Probe', component: () => null, onOpen })
+    const panes = createPaneCapability(context(), primary, service, () => {})
+    const first = target('s1', true)
+    const second = target('s2')
+    let firstAttachment: ReturnType<typeof panes.mountPane>
+    let secondAttachment: ReturnType<typeof panes.mountPane>
+    await act(async () => {
+      firstAttachment = panes.mountPane(first)
+      secondAttachment = panes.mountPane(second)
+    })
+
+    service.openTab({ type: 'probe' })
+    expect(onOpen).toHaveBeenLastCalledWith(expect.anything(), { sessionId: 's1' })
+
+    firstAttachment!.update({ ...first, focused: false })
+    secondAttachment!.update({ ...second, focused: true })
+    service.openTab({ type: 'probe' })
+    expect(onOpen).toHaveBeenLastCalledWith(expect.anything(), { sessionId: 's2' })
+
+    await act(async () => {
+      firstAttachment!.dispose()
+      secondAttachment!.dispose()
+    })
+  })
 })
