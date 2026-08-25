@@ -149,7 +149,7 @@ export function mintTabId(): string {
 
 /**
  * The largest numeric suffix across a raw persisted state's counter ids
- * (`pane:N` / `tab:N` / `split:N`). The uid counter is module-global and
+ * (`pane:N` / `tab:N` / `split:N` / `float:N`). The uid counter is module-global and
  * resets on every reload, so a split minted AFTER a reload would collide
  * with the persisted ids (a fresh "pane:1" beside the persisted "pane:1");
  * mapLeaf would then visit BOTH leaves and every open would land in both
@@ -160,7 +160,7 @@ function maxCounterId(parsed: unknown): number {
   let max = 0
   const consider = (id: unknown): void => {
     if (typeof id !== 'string') return
-    const match = /^(?:pane|tab|split):(\d+)$/.exec(id)
+    const match = /^(?:pane|tab|split|float):(\d+)$/.exec(id)
     if (match !== null) max = Math.max(max, Number(match[1]))
   }
   const walk = (node: unknown): void => {
