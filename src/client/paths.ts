@@ -61,3 +61,23 @@ export function isWithinWorkspace(base: string, target: string): boolean {
   const lt = t.toLowerCase()
   return lt === lb || lt.startsWith(`${lb}/`)
 }
+
+/**
+ * Whether `path` names `parent` itself or one of its descendants. Both
+ * separators and path casing follow the explorer's cross-platform matching
+ * policy used by {@link relativeTo}.
+ *
+ * @param parent - Absolute directory path selected in the explorer.
+ * @param path - Candidate absolute path.
+ * @returns True for the directory itself and paths below it.
+ */
+export function isSameOrDescendant(parent: string, path: string): boolean {
+  const normalize = (value: string): string => {
+    const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '')
+    return normalized === '' ? '/' : normalized
+  }
+  const base = normalize(parent).toLowerCase()
+  const candidate = normalize(path).toLowerCase()
+  if (candidate === base) return true
+  return candidate.startsWith(base === '/' ? '/' : `${base}/`)
+}

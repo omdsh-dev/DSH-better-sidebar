@@ -17,14 +17,20 @@ beforeAll(() => {
 const { fsDelete, fsTree } = vi.hoisted(() => ({
   fsDelete: vi.fn(async (_scope: unknown, path: string) => ({ path })),
   fsTree: vi.fn(async () => ({
-    entries: [{
-      name: 'delete-me.ts',
-      path: '/workspace/delete-me.ts',
-      isDir: false,
-      hidden: false,
-      isSymlink: false,
-      broken: false,
-    }],
+    entries: [
+      {
+        name: 'delete-me.ts', path: '/workspace/delete-me.ts', isDir: false,
+        hidden: false, isSymlink: false, broken: false,
+      },
+      {
+        name: 'delete-folder', path: '/workspace/delete-folder', isDir: true,
+        hidden: false, isSymlink: false, broken: false,
+      },
+      {
+        name: 'delete-link', path: '/workspace/delete-link', isDir: true,
+        hidden: false, isSymlink: true, broken: false,
+      },
+    ],
   })),
 }))
 
@@ -37,7 +43,7 @@ vi.mock('../src/client/api.ts', () => ({
   downloadUrl: () => '/sidebar/file',
 }))
 
-describe('TreePanel file deletion', () => {
+describe('TreePanel entry deletion', () => {
   let root: Root | undefined
 
   afterEach(() => {
@@ -52,7 +58,7 @@ describe('TreePanel file deletion', () => {
     const container = document.createElement('div')
     document.body.append(container)
     root = createRoot(container)
-    const onFileDeleted = vi.fn()
+    const onPathDeleted = vi.fn()
     await act(async () => {
       root!.render(createElement(TreePanel, {
         sessionId: 'delete-session',
@@ -61,7 +67,7 @@ describe('TreePanel file deletion', () => {
         onToggle: () => {},
         onOpenFile: () => {},
         onReferenceFile: () => {},
-        onFileDeleted,
+        onPathDeleted,
         initialScrollTop: 0,
         onScrollTopChange: () => {},
       }))
@@ -93,8 +99,122 @@ describe('TreePanel file deletion', () => {
       { sessionId: 'delete-session', cwd: '/workspace' },
       '/workspace/delete-me.ts',
     )
-    expect(onFileDeleted).toHaveBeenCalledWith('/workspace/delete-me.ts')
+    expect(onPathDeleted).toHaveBeenCalledWith({ path: '/workspace/delete-me.ts', kind: 'file' })
     expect(container.textContent).toContain('Deleted delete-me.ts')
     expect(fsTree).toHaveBeenCalledTimes(2)
+  })
+
+  it('warns that a folder deletion includes every nested entry', async () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    const onPathDeleted = vi.fn()
+    await act(async () => {
+      root!.render(createElement(TreePanel, {
+        sessionId: 'delete-session',
+        cwd: '/workspace',
+        expanded: [],
+        onToggle: () => {},
+        onOpenFile: () => {},
+        onReferenceFile: () => {},
+        onPathDeleted,
+        initialScrollTop: 0,
+        onScrollTopChange: () => {},
+      }))
+    })
+
+    const folderRow = [...container.querySelectorAll<HTMLElement>('[role="button"]')]
+      .find(row => row.querySelector('span')?.textContent === 'delete-folder')
+    expect(folderRow).toBeDefined()
+    act(() => {
+      folderRow!.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true, cancelable: true, clientX: 20, clientY: 30,
+      }))
+    })
+    const menuDelete = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+      .find(item => item.textContent?.includes('Delete Folder'))
+    expect(menuDelete).toBeDefined()
+    act(() => { menuDelete!.click() })
+    expect(fsDelete).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('and everything inside it')
+
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .find(button => button.textContent?.trim() === 'Delete Folder')
+    expect(confirm).toBeDefined()
+    await act(async () => {
+      confirm!.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(fsDelete).toHaveBeenCalledWith(
+      { sessionId: 'delete-session', cwd: '/workspace' },
+      '/workspace/delete-folder',
+    )
+    expect(onPathDeleted).toHaveBeenCalledWith({ path: '/workspace/delete-folder', kind: 'directory' })
+  })
+
+  it('explains that deleting a symbolic link preserves its target', async () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    await act(async () => {
+      root!.render(createElement(TreePanel, {
+        sessionId: 'delete-session',
+        cwd: '/workspace',
+        expanded: [],
+        onToggle: () => {},
+        onOpenFile: () => {},
+        onReferenceFile: () => {},
+        initialScrollTop: 0,
+        onScrollTopChange: () => {},
+      }))
+    })
+
+    const linkRow = [...container.querySelectorAll<HTMLElement>('[role="button"]')]
+      .find(row => row.querySelector('span')?.textContent === 'delete-link')
+    expect(linkRow).toBeDefined()
+    act(() => {
+      linkRow!.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true, cancelable: true, clientX: 20, clientY: 30,
+      }))
+    })
+    const menuDelete = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+      .find(item => item.textContent?.includes('Delete Symbolic Link'))
+    expect(menuDelete).toBeDefined()
+    act(() => { menuDelete!.click() })
+    expect(document.body.textContent).toContain('Its target will not be deleted')
+    expect(fsDelete).not.toHaveBeenCalled()
+  })
+
+  it('never offers deletion for the workspace root row', async () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    await act(async () => {
+      root!.render(createElement(TreePanel, {
+        sessionId: 'delete-session',
+        cwd: '/workspace',
+        expanded: [],
+        onToggle: () => {},
+        onOpenFile: () => {},
+        onReferenceFile: () => {},
+        initialScrollTop: 0,
+        onScrollTopChange: () => {},
+      }))
+    })
+
+    const rootName = [...container.querySelectorAll('span')]
+      .find(label => label.textContent === 'workspace')
+    expect(rootName?.parentElement).not.toBeNull()
+    act(() => {
+      rootName!.parentElement!.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true, cancelable: true, clientX: 20, clientY: 30,
+      }))
+    })
+    const menuText = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+      .map(item => item.textContent).join(' ')
+    expect(menuText).not.toContain('Delete Folder')
+    expect(menuText).not.toContain('Delete File')
   })
 })

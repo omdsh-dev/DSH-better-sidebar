@@ -13,7 +13,7 @@
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { createWriteStream } from 'node:fs'
-import { lstat, mkdir, rename, rm, stat } from 'node:fs/promises'
+import { lstat, mkdir, realpath, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { SidebarHttpRequest } from './context-types.ts'
 import { isWithin, requireAbsolute } from './fs-tree.ts'
@@ -95,43 +95,39 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
 }
 
 /**
- * Permanently delete one file below the session workspace. Directories are
- * refused: the explorer intentionally has no recursive-delete operation.
- * Symlinks are removed as links rather than following their targets.
+ * Permanently delete one entry below the session workspace. Regular
+ * directories are removed recursively; symlinks are removed as links rather
+ * than following their targets. Resolving the real target before recursive
+ * deletion prevents a symlinked parent from escaping the workspace.
  *
  * @param cwd - Session workspace root.
- * @param path - Absolute file path selected in the explorer.
+ * @param path - Absolute entry path selected in the explorer.
  * @returns The normalized path that was removed.
- * @throws SidebarError when the target escapes the workspace, is a
- * directory, is missing, or cannot be removed.
+ * @throws SidebarError when the target escapes the workspace, is missing,
+ * or cannot be removed.
  */
-export async function deleteWorkspaceFile(cwd: string, path: string): Promise<{ path: string }> {
+export async function deleteWorkspaceEntry(cwd: string, path: string): Promise<{ path: string }> {
   const root = requireAbsolute(cwd)
   const target = requireAbsolute(path)
   if (target === root || !isWithin(root, target)) {
     throw new SidebarError('forbidden', 'delete target escapes the session workspace', 403)
   }
-  let info
   try {
-    info = await lstat(target)
+    const [realRoot, info] = await Promise.all([realpath(root), lstat(target)])
+    if (!info.isSymbolicLink()) {
+      const realTarget = await realpath(target)
+      if (!isWithin(realRoot, realTarget)) {
+        throw new SidebarError('forbidden', 'delete target resolves outside the session workspace', 403)
+      }
+    }
+    await rm(target, { recursive: info.isDirectory() })
+    return { path: target }
   } catch (error) {
+    if (error instanceof SidebarError) throw error
     throw new SidebarError(
       'fs-error',
       `cannot delete "${target}": ${error instanceof Error ? error.message : String(error)}`,
       400,
     )
   }
-  if (info.isDirectory()) {
-    throw new SidebarError('bad-request', 'directory deletion is not supported', 400)
-  }
-  try {
-    await rm(target)
-  } catch (error) {
-    throw new SidebarError(
-      'fs-error',
-      `cannot delete "${target}": ${error instanceof Error ? error.message : String(error)}`,
-      400,
-    )
-  }
-  return { path: target }
 }

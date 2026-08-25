@@ -33,14 +33,14 @@ import type { Context } from '../context-types.ts'
 import { api, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
-import { baseName } from './FileTree.tsx'
+import { baseName, type FileTreeDeleteTarget } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
 import { openSidebarFile } from './intercept.tsx'
 import { openWithSshActive, openWithUrl, parseOpenWithConfig, resolveOpenWithTargets } from './open-with.ts'
 import { updatePluginSettings } from './plugin-settings.ts'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
-import { relativeTo } from './paths.ts'
+import { isSameOrDescendant, relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
 import { allLeaves, firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, type SidebarStore, type SidebarTab } from './state.ts'
@@ -265,21 +265,31 @@ export function EditorHost(props: {
     })
   }
 
-  /** Clear the deleted file from every editor tab in this workbench. The
-   *  tab that hosted the delete becomes a Files view so its pane survives;
+  /** Clear a deleted entry from every editor tab in this workbench. The tab
+   *  that hosted the delete becomes a Files view so its pane survives;
    *  duplicate editors close instead of reopening a missing path. */
-  const fileDeleted = (absolute: string): void => {
+  const pathDeleted = (target: FileTreeDeleteTarget): void => {
     const state = store.getSnapshot().state
     if (state === undefined) return
     const matches = [...allLeaves(state.splits), ...allLeaves(state.bottomSplits)]
       .flatMap(leaf => leaf.tabs)
-      .filter(candidate => candidate.type === 'editor' && candidate.path === absolute)
+      .filter(candidate => candidate.type === 'editor'
+        && candidate.path !== undefined
+        && (target.kind === 'directory'
+          ? isSameOrDescendant(target.path, candidate.path)
+          : relativeTo(target.path, candidate.path) === '.'))
     for (const candidate of matches) {
       if (candidate.id === tab.id) {
         ctx.get('betterSidebar')?.updateTab(candidate.id, { path: '', title: t('files') })
       } else {
         ctx.get('betterSidebar')?.closeTab(candidate.id, scope)
       }
+    }
+    if (target.kind === 'directory') {
+      store.reduce(current => ({
+        ...current,
+        expanded: current.expanded.filter(expanded => !isSameOrDescendant(target.path, expanded)),
+      }))
     }
   }
 
@@ -487,7 +497,7 @@ export function EditorHost(props: {
           onOpenWith={openWith}
           onToggleOpenWithPin={toggleOpenWithPin}
           onReferenceFile={onReferenceFile}
-          onFileDeleted={fileDeleted}
+          onPathDeleted={pathDeleted}
           initialScrollTop={treeScrollTopRef.current}
           onScrollTopChange={rememberTreeScroll}
         />
@@ -650,7 +660,7 @@ export function EditorHost(props: {
               onOpenWith={openWith}
               onToggleOpenWithPin={toggleOpenWithPin}
               onReferenceFile={onReferenceFile}
-              onFileDeleted={fileDeleted}
+              onPathDeleted={pathDeleted}
               initialScrollTop={treeScrollTopRef.current}
               onScrollTopChange={rememberTreeScroll}
             />

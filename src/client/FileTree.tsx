@@ -147,6 +147,12 @@ const ChatDropIllustration = () => (
   </svg>
 )
 
+/** One explorer entry selected for permanent deletion. */
+export interface FileTreeDeleteTarget {
+  path: string
+  kind: 'file' | 'directory' | 'symlink'
+}
+
 export function FileTree(props: {
   sessionId: string
   cwd: string | undefined
@@ -159,8 +165,8 @@ export function FileTree(props: {
   onOpenFileNewTab?: (path: string) => void
   /** Context-menu "open to the side" (file rows; absent → no entry). */
   onOpenFileSide?: (path: string) => void
-  /** Context-menu delete request (file rows only; caller confirms and runs it). */
-  onDeleteFile?: (path: string) => void
+  /** Context-menu delete request; caller confirms and runs it. */
+  onDeleteEntry?: (target: FileTreeDeleteTarget) => void
   /**
    * The "open with" menu: resolved external targets (already SSH-filtered
    * and in menu order). Absent → the whole section is hidden.
@@ -187,14 +193,21 @@ export function FileTree(props: {
   /** Reports navigation movement so the owning editor tab can persist it. */
   onScrollTopChange?: (scrollTop: number) => void
 }) {
-  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onDeleteFile, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy, initialScrollTop = 0, onScrollTopChange } = props
+  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onDeleteEntry, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy, initialScrollTop = 0, onScrollTopChange } = props
   const cacheKey = levelCacheKey(sessionId, cwd)
   const [data, setData] = useState<Record<string, LevelData>>(() => readLevelCache(cacheKey) ?? {})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
-  const [rowMenu, setRowMenu] = useState<{ path: string; isDir: boolean; x: number; y: number } | null>(null)
+  const [rowMenu, setRowMenu] = useState<{
+    path: string
+    isDir: boolean
+    isSymlink: boolean
+    isRoot: boolean
+    x: number
+    y: number
+  } | null>(null)
   /** Whether a file drag hovers the tree (drives the portaled drop zone). */
   const [dropOver, setDropOver] = useState(false)
   /** The directory a drag is hovering right now (null = body, drop to root). */
@@ -405,10 +418,13 @@ export function FileTree(props: {
     )
   }
 
-  const openRowMenu = (event: MouseEvent, path: string, isDir: boolean): void => {
+  const openRowMenu = (
+    event: MouseEvent,
+    target: { path: string; isDir: boolean; isSymlink: boolean; isRoot?: boolean },
+  ): void => {
     event.preventDefault()
     event.stopPropagation()
-    setRowMenu({ path, isDir, x: event.clientX, y: event.clientY })
+    setRowMenu({ ...target, isRoot: target.isRoot === true, x: event.clientX, y: event.clientY })
   }
 
   /** Download a file through the host route (raw bytes, binary-safe). */
@@ -552,7 +568,7 @@ export function FileTree(props: {
               }}
               onDragOver={(event) => { handleRowDragOver(event, entry.path) }}
               onDrop={(event) => { handleDirDrop(event, entry.path) }}
-              onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
+              onContextMenu={(event) => { openRowMenu(event, entry) }}
             >
               {isOpen ? <VscFolderOpened size={14} /> : <VscFolder size={14} />}
               <span className={css.explorerName}>{entry.name}</span>
@@ -586,7 +602,7 @@ export function FileTree(props: {
           }}
           onDragOver={(event) => { handleRowDragOver(event, parentOf(entry.path)) }}
           onDrop={(event) => { handleFileDrop(event, entry.path) }}
-          onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
+          onContextMenu={(event) => { openRowMenu(event, entry) }}
         >
           <FileTypeIcon path={entry.path} />
           <span className={css.explorerName}>{entry.name}</span>
@@ -620,7 +636,9 @@ export function FileTree(props: {
             style={{ paddingLeft: 6 }}
             onDragOver={(event) => { handleRowDragOver(event, root) }}
             onDrop={(event) => { handleDirDrop(event, root) }}
-            onContextMenu={(event) => { openRowMenu(event, root, true) }}
+            onContextMenu={(event) => {
+              openRowMenu(event, { path: root, isDir: true, isSymlink: false, isRoot: true })
+            }}
           >
             <VscFolderOpened size={14} />
             <span className={css.explorerName}>{baseName(root)}</span>
@@ -730,11 +748,15 @@ export function FileTree(props: {
             : []),
           { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={16} /> },
           { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutline16 size={16} /> },
-          ...(rowMenu?.isDir === false && onDeleteFile !== undefined
+          ...(rowMenu !== null && !rowMenu.isRoot && onDeleteEntry !== undefined
             ? [
                 { type: 'separator' as const, id: 'delete-separator' },
                 {
-                  id: 'delete', label: t('deleteFile'), icon: <IconTrashOutline16 size={16} />,
+                  id: 'delete',
+                  label: rowMenu.isSymlink
+                    ? t('deleteSymlink')
+                    : rowMenu.isDir ? t('deleteFolder') : t('deleteFile'),
+                  icon: <IconTrashOutline16 size={16} />,
                   danger: true, ...(busy ? { disabled: true } : {}),
                 },
               ]
@@ -761,7 +783,10 @@ export function FileTree(props: {
             return
           }
           if (id === 'delete') {
-            onDeleteFile?.(target.path)
+            onDeleteEntry?.({
+              path: target.path,
+              kind: target.isSymlink ? 'symlink' : target.isDir ? 'directory' : 'file',
+            })
             return
           }
           if (id === 'upload-here') {

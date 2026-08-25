@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isAbsolutePath, relativeTo } from '../src/client/paths.ts'
+import { isAbsolutePath, isSameOrDescendant, relativeTo } from '../src/client/paths.ts'
 import { resolveSidebarPath } from '../src/client/produced-files.ts'
 import { htmlUrl } from '../src/client/api.ts'
 
@@ -26,6 +26,17 @@ describe('path helpers', () => {
     expect(relativeTo('/Users/Me/code', '/users/me/code/src/main.ts')).toBe('src/main.ts')
     // The returned relative text keeps the caller's own casing.
     expect(relativeTo('C:\\Users\\me', 'C:\\Users\\Me\\SRC\\a.ts')).toBe('SRC/a.ts')
+  })
+
+  it('matches a directory and its descendants without prefix collisions', () => {
+    expect(isSameOrDescendant('/workspace/src', '/workspace/src')).toBe(true)
+    expect(isSameOrDescendant('/workspace/src', '/workspace/src/deep/file.ts')).toBe(true)
+    expect(isSameOrDescendant('/workspace/src', '/workspace/source/file.ts')).toBe(false)
+  })
+
+  it('normalizes separators, trailing slashes, and casing for descendants', () => {
+    expect(isSameOrDescendant('C:\\Users\\Me\\src\\', 'c:/users/me/src/file.ts')).toBe(true)
+    expect(isSameOrDescendant('/Users/Me/src', '/users/me/src/deep')).toBe(true)
   })
 
   it('resolves produced paths against windows cwds', () => {
