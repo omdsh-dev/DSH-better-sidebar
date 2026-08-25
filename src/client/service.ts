@@ -416,7 +416,7 @@ export interface BetterSidebarService {
   /** Subscribe to snapshot changes (session switch, state changes, prefs changes). Returns the disposer. */
   subscribeState(listener: () => void): () => void
   /** Update an open tab's display fields (title / path / meta); a missing tab id is a no-op. */
-  updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void
+  updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }, scope?: SessionScope): void
   /**
    * Activate an open tab (the tab-bar activation path; fires
    * descriptor.onActivate). An unknown tab id is a strict no-op. `scope`
@@ -425,6 +425,32 @@ export interface BetterSidebarService {
   activateTab(tabId: string, scope?: SessionScope): void
   /** Open a file in the sidebar editor of `scope`'s session (title defaults to the file name). */
   openFile(scope: SessionScope, path: string, title?: string): void
+  /** Register a live Pane store so scoped service calls reach its mounted UI. */
+  attachPaneStore(sessionId: string, store: SidebarStore): () => void
+  /** Optional multi-Pane mounting capability supplied by the browser plugin. */
+  panes?: BetterSidebarPaneCapability
+}
+
+/** DOM hosts owned by one visible Workbench Session Pane. */
+export interface BetterSidebarPaneTarget {
+  readonly sessionId: string
+  readonly pane: HTMLElement
+  readonly rightHost: HTMLElement
+  readonly bottomHost: HTMLElement
+  readonly focused: boolean
+}
+
+/** One live Better Sidebar attachment for a Workbench Pane. */
+export interface BetterSidebarPaneAttachment {
+  update(target: BetterSidebarPaneTarget): void
+  dispose(): void
+}
+
+/** Versioned capability consumed by Workbench panel compatibility packages. */
+export interface BetterSidebarPaneCapability {
+  readonly protocol: 1
+  readonly activeCount: number
+  mountPane(target: BetterSidebarPaneTarget): BetterSidebarPaneAttachment
 }
 
 /** Extract the lowercase extension without leading dot from a path. */
@@ -503,6 +529,7 @@ export const SIDEBAR_FEATURES = [
   'urlTarget',
   'settingSelect',
   'floatWindows',
+  'paneMount',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -523,6 +550,23 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   const tabs = new Map<string, TabDescriptor>()
   const viewers = new Map<string, FileViewerDescriptor>()
   const listeners = new Set<() => void>()
+  const paneStores = new Map<string, SidebarStore>()
+
+  const storeFor = (scope?: SessionScope): SidebarStore => {
+    const sessionId = scope?.sessionId ?? store.getSnapshot().sessionId
+    return sessionId === undefined ? store : paneStores.get(sessionId) ?? store
+  }
+
+  const attachPaneStore = (sessionId: string, paneStore: SidebarStore): (() => void) => {
+    const occupied = paneStores.get(sessionId)
+    if (occupied !== undefined && occupied !== paneStore) {
+      throw new Error(`[dsh-better-sidebar] Pane store for session "${sessionId}" is already attached`)
+    }
+    paneStores.set(sessionId, paneStore)
+    return () => {
+      if (paneStores.get(sessionId) === paneStore) paneStores.delete(sessionId)
+    }
+  }
 
   const notify = (): void => {
     for (const fn of [...listeners]) fn()
@@ -612,14 +656,17 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     if (descriptor === undefined) return
     // A scope targets another session: the open lands in THAT session's
     // state (loaded on demand) without switching the UI's active session.
-    const targetSessionId = scope?.sessionId ?? store.getSnapshot().sessionId
+    const targetStore = storeFor(scope)
+    const targetSessionId = scope?.sessionId ?? targetStore.getSnapshot().sessionId
     if (targetSessionId === undefined) return
     const callbackScope: SessionScope = scope ?? { sessionId: targetSessionId }
     // Whether this open targets a session that is NOT the one on screen: a
     // targeted open must not auto-expand panels the user cannot see (the
     // expansion is about landing "in sight" for the CURRENT viewer).
     const activeSessionId = store.getSnapshot().sessionId
-    const targetsInactiveSession = scope !== undefined && scope.sessionId !== activeSessionId
+    const targetsInactiveSession = scope !== undefined
+      && scope.sessionId !== activeSessionId
+      && !paneStores.has(scope.sessionId)
     // Lifecycle capture: `created` when the open minted a NEW tab (a
     // dedupe/id-safety-net focus is an ACTIVATION, not an open).
     let created: SidebarTab | undefined
@@ -735,7 +782,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     if (targetsInactiveSession) {
       store.reduceFor(scope.sessionId, reducer)
     } else {
-      store.reduce(reducer)
+      targetStore.reduce(reducer)
     }
     if (created !== undefined) safeCall(() => descriptor.onOpen?.(created!, callbackScope))
     else if (activated !== undefined) safeCall(() => descriptor.onActivate?.(activated!, callbackScope))
@@ -743,7 +790,8 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
 
   const closeTab = (tabId: string, scope?: SessionScope): void => {
     let closed: SidebarTab | undefined
-    store.reduce((state) => {
+    const targetStore = storeFor(scope)
+    targetStore.reduce((state) => {
       // Unknown tab ids are a strict no-op: no state churn, no notify, no
       // pointless localStorage rewrite (mirrors updateTab's short-circuit).
       if (!tabOpenIn(state, tabId)) return state
@@ -759,7 +807,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       return closeTabReducer(state, paneId, tabId)
     })
     if (closed !== undefined) {
-      const sessionId = scope?.sessionId ?? store.getSnapshot().sessionId
+      const sessionId = scope?.sessionId ?? targetStore.getSnapshot().sessionId
       if (sessionId !== undefined) {
         const descriptor = tabs.get(closed.type)
         // An explicit scope (with its optional cwd) rides to the callback.
@@ -775,8 +823,8 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   const subscribeState = (listener: () => void): (() => void) => store.subscribe(listener)
 
   /** Patch an open tab's display fields (a missing tab id is a no-op). */
-  const updateTab = (tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void => {
-    store.reduce((state) => patchTab(state, tabId, {
+  const updateTab = (tabId: string, patch: { title?: string; path?: string; meta?: unknown }, scope?: SessionScope): void => {
+    storeFor(scope).reduce((state) => patchTab(state, tabId, {
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.path !== undefined ? { path: patch.path } : {}),
       ...(patch.meta !== undefined ? { meta: patch.meta } : {}),
@@ -786,7 +834,8 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   /** Activate an open tab (the tab-bar activation path; fires onActivate). */
   const activateTab = (tabId: string, scope?: SessionScope): void => {
     let activated: SidebarTab | undefined
-    store.reduce((state) => {
+    const targetStore = storeFor(scope)
+    targetStore.reduce((state) => {
       // Unknown tab ids are a strict no-op (no state churn / notify).
       if (!tabOpenIn(state, tabId)) return state
       // A floating tab "activates" by raising its window — no pane switch.
@@ -801,7 +850,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       return activateTabReducer(state, paneId, tabId)
     })
     if (activated !== undefined) {
-      const sessionId = scope?.sessionId ?? store.getSnapshot().sessionId
+      const sessionId = scope?.sessionId ?? targetStore.getSnapshot().sessionId
       if (sessionId !== undefined) {
         const descriptor = tabs.get(activated.type)
         // An explicit scope (with its optional cwd) rides to the callback.
@@ -836,6 +885,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     updateTab,
     activateTab,
     openFile,
+    attachPaneStore,
   }
 }
 

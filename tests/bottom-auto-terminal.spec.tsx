@@ -40,6 +40,11 @@ interface MountedSidebar {
   container: HTMLDivElement
   store: SidebarStore
   service: BetterSidebarService
+  paneTarget?: {
+    pane: HTMLElement
+    rightHost: HTMLElement
+    bottomHost: HTMLElement
+  }
   unmount: () => void
 }
 
@@ -47,10 +52,9 @@ interface MountedSidebar {
 /** Unique per-test session ids (see the comment inside). */
 let sessionSeq = 0
 
-function mountSidebar(): MountedSidebar {
+function mountSidebar(paneMode = false): MountedSidebar {
   vi.stubGlobal('WebSocket', FakeWebSocket)
   const container = document.createElement('div')
-  document.body.append(container)
   const store = createSidebarStore()
   const service = createBetterSidebarService(store)
   // Fresh-session seed: the right panel starts OPEN, the bottom panel closed
@@ -74,15 +78,46 @@ function mountSidebar(): MountedSidebar {
     betterSidebar: service,
     get: (name: string) => name === 'betterSidebar' ? service : undefined,
   }
+  let paneTarget: MountedSidebar['paneTarget']
+  if (paneMode) {
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      disconnect(): void {}
+    })
+    const pane = document.createElement('section')
+    Object.defineProperty(pane, 'getBoundingClientRect', {
+      value: () => ({
+        x: 0, y: 0, top: 0, left: 0, right: 884, bottom: 1180,
+        width: 884, height: 1180, toJSON: () => ({}),
+      }),
+    })
+    const rightHost = document.createElement('aside')
+    const bottomHost = document.createElement('aside')
+    pane.append(rightHost, bottomHost, container)
+    document.body.append(pane)
+    paneTarget = { pane, rightHost, bottomHost }
+  } else {
+    document.body.append(container)
+  }
   const root: Root = createRoot(container)
-  act(() => { root.render(createElement(Sidebar, { ctx: ctx as never, store })) })
+  act(() => {
+    root.render(createElement(Sidebar, {
+      ctx: ctx as never,
+      store,
+      ...(paneTarget === undefined
+        ? {}
+        : { paneTarget: { sessionId, focused: true, ...paneTarget } }),
+    }))
+  })
   return {
     container,
     store,
     service,
+    ...(paneTarget === undefined ? {} : { paneTarget }),
     unmount: () => {
       act(() => { root.unmount() })
-      container.remove()
+      if (paneTarget === undefined) container.remove()
+      else paneTarget.pane.remove()
     },
   }
 }
@@ -115,6 +150,20 @@ function registerStubTerminal(service: BetterSidebarService, renders: { count: n
 }
 
 describe('bottom-panel first-expand auto terminal (issue #42 trigger chain)', () => {
+  it('Pane mode reserves the bottom row once and keeps legacy layout variables inside the panel host', () => {
+    const { container, store, service, paneTarget } = mountSidebar(true)
+    registerStubTerminal(service, { count: 0 })
+
+    act(() => { store.reduce(toggleBottomPanel) })
+
+    const height = `${store.getSnapshot().state!.bottomHeight}px`
+    const panelHost = container.querySelector<HTMLElement>('[data-dsh-pane-host]')!
+    expect(panelHost.style.getPropertyValue('--dsh-sidebar-height')).toBe(height)
+    expect(paneTarget!.bottomHost.style.height).toBe(height)
+    expect(paneTarget!.pane.style.getPropertyValue('--dsh-sidebar-height')).toBe('')
+    expect(document.documentElement.style.getPropertyValue('--dsh-sidebar-height')).toBe('')
+  })
+
   it('auto-opens exactly one terminal tab in the bottom workbench on the FIRST expansion', () => {
     const { container, store, service } = mountSidebar()
     const renders = { count: 0 }

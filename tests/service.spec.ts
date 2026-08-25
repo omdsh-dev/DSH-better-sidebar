@@ -693,6 +693,38 @@ describe('state subscription (v0.12.0)', () => {
   })
 })
 
+describe('Pane store routing', () => {
+  it('routes scoped open, update and close calls to the attached Pane store', () => {
+    const primary = createSidebarStore()
+    const pane = createSidebarStore()
+    primary.setSession('s1')
+    pane.setSession('s2')
+    const service = createBetterSidebarService(primary)
+    service.registerTab({ id: 'doc', title: 'Doc', component: () => null })
+    const detach = service.attachPaneStore('s2', pane)
+
+    service.openTab({ type: 'doc', id: 'doc:2', title: 'Two' }, { sessionId: 's2' })
+    expect(allLeaves(primary.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs).filter(tab => tab.type === 'doc')).toHaveLength(0)
+    expect(allLeaves(pane.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs).filter(tab => tab.type === 'doc').map(tab => tab.id)).toEqual(['doc:2'])
+
+    service.updateTab('doc:2', { title: 'Updated' }, { sessionId: 's2' })
+    expect(allLeaves(pane.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs).find(tab => tab.id === 'doc:2')?.title).toBe('Updated')
+    service.closeTab('doc:2', { sessionId: 's2' })
+    expect(allLeaves(pane.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs).filter(tab => tab.type === 'doc')).toHaveLength(0)
+    detach()
+  })
+
+  it('rejects two live stores for the same Session and allows replacement after disposal', () => {
+    const service = createBetterSidebarService(createSidebarStore())
+    const first = createSidebarStore()
+    const second = createSidebarStore()
+    const detach = service.attachPaneStore('s', first)
+    expect(() => service.attachPaneStore('s', second)).toThrow(/already attached/)
+    detach()
+    expect(() => service.attachPaneStore('s', second)).not.toThrow()
+  })
+})
+
 describe('updateTab (v0.12.0)', () => {
   it('patches title / path / meta of an open tab', () => {
     const store = createSidebarStore()

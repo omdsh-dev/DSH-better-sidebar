@@ -48,6 +48,19 @@
   overflow: hidden;
 }
 
+:global([data-dsh-panel-host][data-dsh-pane-host]) {
+  position: absolute;
+  top: 32px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+}
+
+:global([data-dsh-panel-host][data-dsh-pane-host]) .toggleCluster {
+  top: 15px;
+}
+
 :global([data-dsh-panel-host][data-dsh-panel-host-degraded]) {
   position: absolute;
   top: 0;
@@ -249,7 +262,9 @@
 }
 
 body[data-dsh-sidebar-dragging] .panel,
-body[data-dsh-sidebar-dragging] .bottomPanel {
+body[data-dsh-sidebar-dragging] .bottomPanel,
+:global([data-dsh-pane-sidebar-dragging]) .panel,
+:global([data-dsh-pane-sidebar-dragging]) .bottomPanel {
   will-change: transform;
 }
 

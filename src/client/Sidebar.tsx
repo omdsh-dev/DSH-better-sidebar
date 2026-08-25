@@ -59,11 +59,20 @@ import { detectNewDirectSubagent } from './subagent-detect.ts'
 import { detectNewJob } from './subagent-jobs.ts'
 import { t } from './locales.ts'
 import { api, type SessionScope } from './api.ts'
+import type { BetterSidebarPaneTarget } from './service.ts'
 import css from './sidebar.module.css'
 
 /** How many consecutive reconnect failures stop the agent-terminals push loop
  * (mirror of the terminal view's own cap; the loop restarts on session switch). */
 const FAILURE_LIMIT = 3
+const PANE_PANEL_MIN = 220
+const PANE_CONTENT_MIN = 260
+
+/** Preserve a usable conversation column when a saved global width enters a Pane. */
+function panePanelWidth(width: number, viewportWidth: number): number {
+  const maximum = Math.max(PANE_PANEL_MIN, viewportWidth - PANE_CONTENT_MIN)
+  return Math.min(Math.max(PANE_PANEL_MIN, Math.round(width)), maximum)
+}
 
 /**
  * Subagent auto-open debounce (ms). The host delivers a new child's origin
@@ -178,8 +187,9 @@ function buildNewTabOptions(state: SidebarState, ctx: Context, scope: SessionSco
     }))
 }
 
-export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
-  const { ctx, store } = props
+export function Sidebar(props: { ctx: Context; store: SidebarStore; paneTarget?: BetterSidebarPaneTarget }) {
+  const { ctx, store, paneTarget } = props
+  const paneMode = paneTarget !== undefined
 
   // Copy freshness: re-render the whole tree when the DSH locale switches.
   // The module-level t() reads the active locale at call time, so a root
@@ -244,8 +254,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // — the merged display is the right sidebar alone, the bottom tabs thrown
   // into its strips. Widening never rewrites the migrated state: the tabs
   // keep living in the right tree.
-  const viewport = useViewportSize()
-  const narrow = isNarrowWidth(viewport.width)
+  const viewport = useViewportSize(paneTarget?.pane)
+  const narrow = paneMode ? false : isNarrowWidth(viewport.width)
 
   // On-screen keyboard / visual-viewport inset (mobile, split-screen, …):
   // when the visual viewport shrinks below the layout viewport, bottom-
@@ -260,6 +270,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   const [keyboardInset, setKeyboardInset] = useState(0)
   const [visualViewportHeight, setVisualViewportHeight] = useState<number | null>(null)
   useEffect(() => {
+    if (paneMode) return
     const vv = window.visualViewport
     if (vv === null || vv === undefined) return
     let frame: number | null = null
@@ -278,7 +289,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       vv.removeEventListener('scroll', onResize)
       if (frame !== null) cancelAnimationFrame(frame)
     }
-  }, [])
+  }, [paneMode])
   // The bottom panel is offset above the on-screen keyboard. Cap its height
   // against that same visible area, not the taller layout viewport, so the
   // conversation keeps PANEL_MIN even on wide touch devices.
@@ -289,7 +300,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     useMemo(() => (callback: () => void) => ctx.sessions.list.subscribe(callback), [ctx]),
     useCallback(() => ctx.sessions.list.getSnapshot(), [ctx]),
   )
-  const current = sessionList.current
+  const current = paneTarget?.sessionId ?? sessionList.current
 
   // Per-session sidebar state.
   const snapshot = useSyncExternalStore(
@@ -318,10 +329,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // it — an open panel already squeezes `#root` left, moving the header clear.
   const collapsed = state === undefined || !state.panelOpen
   useEffect(() => {
+    if (paneMode) return
     if (collapsed) document.body.setAttribute('data-dsh-sidebar-collapsed', '')
     else document.body.removeAttribute('data-dsh-sidebar-collapsed')
     return () => { document.body.removeAttribute('data-dsh-sidebar-collapsed') }
-  }, [collapsed])
+  }, [collapsed, paneMode])
 
   // Title-bar / shell compatibility (the "位置兼容模式" scheme):
   //   auto    — CONSERVATIVE: only the standard Window Controls Overlay
@@ -349,6 +361,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   )
   const titleBarCompat = titleBarStrip > 0
   useEffect(() => {
+    if (paneMode) return
     const root = document.documentElement
     if (titleBarCompat) {
       document.body.setAttribute('data-dsh-title-bar-compat', '')
@@ -361,7 +374,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       document.body.removeAttribute('data-dsh-title-bar-compat')
       root.style.removeProperty('--dsh-title-bar-strip')
     }
-  }, [titleBarCompat, titleBarStrip])
+  }, [titleBarCompat, titleBarStrip, paneMode])
 
   // User-space CSS injection (the escape hatch): preset CSS (scheme
   // `preset`) and free-form custom CSS (scheme `custom`) are appended AFTER
@@ -373,11 +386,12 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   const presetCss = scheme === 'preset' ? preset?.css ?? '' : ''
   const customCss = scheme === 'custom' ? snapshot.prefs.customCss : ''
   useEffect(() => {
+    if (paneMode) return
     const tags: HTMLStyleElement[] = []
     if (presetCss !== '') tags.push(injectUserCss('data-dsh-preset-css', preset?.id ?? '', presetCss))
     if (customCss !== '') tags.push(injectUserCss('data-dsh-custom-css', 'custom', customCss))
     return () => { for (const tag of tags) tag.remove() }
-  }, [presetCss, customCss, preset?.id])
+  }, [presetCss, customCss, preset?.id, paneMode])
 
   /**
    * Bottom-panel merge on narrow viewports: whenever a session is current
@@ -666,19 +680,22 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       return
     }
     const rect = col.getBoundingClientRect()
+    const localRight = paneMode
+      ? Math.max(0, rect.width - (state?.panelOpen === true ? panePanelWidth(state.width, rect.width) : 0))
+      : rect.right
     // Ref + direct DOM write (see the centerRectRef comment): the bottom
     // panel keeps tracking the center column per frame during the right
     // panel's open/close animation without re-rendering the shell. The
     // one-shot measured flip renders the panel visible once (a stale
     // {0,0} fallback would flash full-width).
-    centerRectRef.current = { left: rect.left, right: rect.right }
+    centerRectRef.current = { left: paneMode ? 0 : rect.left, right: localRight }
     const bottom = bottomRef.current
     if (bottom !== null) {
-      bottom.style.setProperty('left', `${rect.left}px`)
-      bottom.style.setProperty('right', `${window.innerWidth - rect.right}px`)
+      bottom.style.setProperty('left', `${paneMode ? 0 : rect.left}px`)
+      bottom.style.setProperty('right', `${paneMode ? Math.max(0, rect.width - localRight) : window.innerWidth - rect.right}px`)
     }
     setCenterMeasured(prev => (prev ? prev : true))
-  }, [])
+  }, [paneMode, state?.panelOpen, state?.width])
   useEffect(() => {
     let disposed = false
     let observer: ResizeObserver | undefined
@@ -694,7 +711,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // (observed: a 1px sliver at the viewport's left edge).
     const locate = (): void => {
       if (disposed) return
-      const col = document.querySelector('#root [data-slot="conversation"]')
+      const col = paneTarget?.pane ?? document.querySelector('#root [data-slot="conversation"]')
         ?.parentElement as HTMLElement | undefined
       if (col === undefined || !col.isConnected) {
         if (centerColRef.current !== null) {
@@ -737,7 +754,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       })
     }
     const watcher = new MutationObserver(scheduleLocate)
-    const root = document.getElementById('root')
+    const root = paneTarget?.pane ?? document.getElementById('root')
     if (root !== null) watcher.observe(root, { childList: true, subtree: true })
     // The layout push writes --dsh-sidebar-* on <html>. A HMR re-activation
     // clears those variables on teardown and re-writes them on setup — and
@@ -748,7 +765,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // rewrite re-locates and re-measures, so the bottom panel recovers
     // instead of staying hidden on a stale {0,0} center rect.
     const htmlStyleWatcher = new MutationObserver(scheduleLocate)
-    htmlStyleWatcher.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] })
+    if (!paneMode) htmlStyleWatcher.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] })
     // Last-resort safety net (issue #248): no watcher is guaranteed to fire
     // for every HMR teardown/setup interleaving (e.g. the style attribute
     // may end up byte-identical, and the col may be swapped before the
@@ -770,7 +787,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // panel opened before the center column was ever found must not stay
     // invisible forever (the HMR recovery path depends on the observers
     // above, this is the belt-and-braces retry for the open moment itself).
-  }, [measureCenter, state?.bottomOpen])
+  }, [measureCenter, state?.bottomOpen, paneMode, paneTarget?.pane])
 
   /**
    * Free windows — drag-out detection. The tab strips already drive HTML5
@@ -888,6 +905,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // a store reduce re-renders both workbenches (terminals, editors…) per
   // move, which is the visible drag lag. The store is committed once on
   // pointer up (clamping + persistence).
+  const panelHostRef = useRef<HTMLDivElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const widthDrag = useRef({ startX: 0, startWidth: 0 })
@@ -910,17 +928,24 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // Clamp mirrors of setWidth/setBottomHeight for mid-drag values (the store
   // re-clamps on commit; these keep the panels from overshooting mid-drag).
   const clampWidth = (width: number): number =>
-    Math.min(Math.max(PANEL_MIN, Math.round(width)), Math.max(PANEL_MIN, window.innerWidth))
+    paneMode
+      ? panePanelWidth(width, viewport.width)
+      : Math.min(Math.max(PANEL_MIN, Math.round(width)), Math.max(PANEL_MIN, viewport.width))
   const clampHeight = (height: number): number =>
-    Math.min(Math.max(BOTTOM_MIN, Math.round(height)), Math.max(BOTTOM_MIN, window.innerHeight - PANEL_MIN))
+    Math.min(Math.max(BOTTOM_MIN, Math.round(height)), Math.max(BOTTOM_MIN, viewport.height - PANEL_MIN))
 
   /** Single writer for the layout-push variables: the app shell gives up
    *  the panel's width/height while open (0 while collapsed) through
    *  layout.css's margins. Every size change — drag frames and committed
    *  state — flows through here so the push never forks between paths. */
   const writeGeometry = (width: number, height: number): void => {
-    document.documentElement.style.setProperty('--dsh-sidebar-width', `${width}px`)
-    document.documentElement.style.setProperty('--dsh-sidebar-height', `${height}px`)
+    const geometryRoot = paneMode ? panelHostRef.current : document.documentElement
+    geometryRoot?.style.setProperty('--dsh-sidebar-width', `${width}px`)
+    geometryRoot?.style.setProperty('--dsh-sidebar-height', `${height}px`)
+    if (paneTarget !== undefined) {
+      paneTarget.rightHost.style.width = `${width}px`
+      paneTarget.bottomHost.style.height = `${height}px`
+    }
     // The corner handle positions itself relative to the panel (CSS
     // `bottom: calc(var(--dsh-sidebar-height) + 6px)`), so these two layout
     // variables are all it needs — no viewport coordinates written here
@@ -947,7 +972,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // width (innerWidth - state.width - detailsWidth), so this equals
     // `width + detailsWidth` — derived from the measured column, keeping the
     // drag write-only (no React re-render mid-drag).
-    bottomRef.current?.style.setProperty('right', `${(window.innerWidth - centerRectRef.current.right) + (width - (state?.width ?? 0))}px`)
+    bottomRef.current?.style.setProperty('right', paneMode
+      ? `${width}px`
+      : `${(window.innerWidth - centerRectRef.current.right) + (width - (state?.width ?? 0))}px`)
     const bottomPush = !narrow && state?.bottomOpen === true ? height + keyboardInset : 0
     writeGeometry(width, bottomPush)
   }
@@ -1048,7 +1075,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         width = clampWidth(widthDrag.current.startWidth + (widthDrag.current.startX - event.clientX))
         height = pushedBottomHeight(state?.bottomOpen === true, state?.bottomHeight ?? 0)
       } else if (draggingBottom) {
-        width = Math.min(state?.width ?? 0, window.innerWidth)
+        width = Math.min(state?.width ?? 0, viewport.width)
         height = pushedBottomHeight(true, clampHeight(bottomDrag.current.startHeight + (bottomDrag.current.startY - event.clientY)))
       } else if (draggingCorner) {
         width = clampWidth(cornerDrag.current.startWidth + (cornerDrag.current.startX - event.clientX))
@@ -1105,7 +1132,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       narrow,
       panelOpen: snapshot.state?.panelOpen === true,
       bottomOpen: snapshot.state?.bottomOpen === true,
-      width: snapshot.state?.width ?? 0,
+      width: paneMode
+        ? panePanelWidth(snapshot.state?.width ?? PANE_PANEL_MIN, viewport.width)
+        : snapshot.state?.width ?? 0,
       bottomHeight: snapshot.state?.bottomHeight ?? 0,
       viewportWidth: viewport.width,
       viewportHeight: layoutViewportHeight,
@@ -1114,7 +1143,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       ? height + keyboardInset
       : 0
     writeGeometry(width, bottomPush)
-  }, [narrow, snapshot.state?.panelOpen, snapshot.state?.width, snapshot.state?.bottomOpen, snapshot.state?.bottomHeight, viewport.width, layoutViewportHeight, keyboardInset])
+  }, [narrow, paneMode, snapshot.state?.panelOpen, snapshot.state?.width, snapshot.state?.bottomOpen, snapshot.state?.bottomHeight, viewport.width, layoutViewportHeight, keyboardInset])
   // Unmount must release the push (issue #31): when the boundary swaps the
   // whole sidebar after a render crash (or the plugin fiber is disposed /
   // HMR), the CSS variables would otherwise stay on <html> and layout.css
@@ -1129,14 +1158,22 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // mounted makes the push invisible to mid-flush style recals.
   useEffect(() => {
     return () => {
-      document.documentElement.style.removeProperty('--dsh-sidebar-width')
-      document.documentElement.style.removeProperty('--dsh-sidebar-height')
+      const geometryRoot = paneMode ? panelHostRef.current : document.documentElement
+      geometryRoot?.style.removeProperty('--dsh-sidebar-width')
+      geometryRoot?.style.removeProperty('--dsh-sidebar-height')
+      if (paneTarget !== undefined) {
+        paneTarget.rightHost.style.removeProperty('width')
+        paneTarget.bottomHost.style.removeProperty('height')
+      }
     }
-  }, [])
+  }, [paneMode, paneTarget])
   useEffect(() => {
-    if (anyDragging) document.body.setAttribute('data-dsh-sidebar-dragging', '')
-    else document.body.removeAttribute('data-dsh-sidebar-dragging')
-  }, [anyDragging])
+    const target = paneTarget?.pane ?? document.body
+    const attribute = paneMode ? 'data-dsh-pane-sidebar-dragging' : 'data-dsh-sidebar-dragging'
+    if (anyDragging) target.setAttribute(attribute, '')
+    else target.removeAttribute(attribute)
+    return () => { target.removeAttribute(attribute) }
+  }, [anyDragging, paneMode, paneTarget?.pane])
 
 
   const actions: WorkbenchActions = useMemo(() => ({
@@ -1223,7 +1260,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // Keep the unavailable controls focusable: touch users have no hover, so
     // focus is the only way the existing Tooltip can explain what is missing.
     return (
-      <div data-dsh-panel-host {...osFileDragShield}>
+      <div ref={panelHostRef} data-dsh-panel-host data-dsh-pane-host={paneMode ? '' : undefined} {...osFileDragShield}>
         <div className={css.toggleCluster} data-dsh-toggle-cluster>
           {!narrow && (
             <Tooltip label={t('noSession')} side="bottom" delayMs={500}>
@@ -1337,7 +1374,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   )
 
   return (
-    <div data-dsh-panel-host {...osFileDragShield}>
+    <div ref={panelHostRef} data-dsh-panel-host data-dsh-pane-host={paneMode ? '' : undefined} {...osFileDragShield}>
       {/*
         The persistent toggle cluster at the top-right corner: the bottom
         panel's button (bottom glyph) LEFT of the right panel's (side glyph).
@@ -1388,7 +1425,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         className={clsx(css.panel, !state.panelOpen && css.panelHidden)}
         data-dsh-panel
         style={{
-          width: narrow ? '100vw' : Math.min(state.width, window.innerWidth),
+          width: narrow
+            ? '100vw'
+            : paneMode ? panePanelWidth(state.width, viewport.width) : Math.min(state.width, window.innerWidth),
           // Narrow drawer: keep the bottom-anchored sheet above the on-screen
           // keyboard (visualViewport inset); desktop panels are full-height
           // and unaffected.
@@ -1405,7 +1444,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
                 event.preventDefault()
                 event.currentTarget.setPointerCapture(event.pointerId)
                 dragCommitted.current = false
-                widthDrag.current = { startX: event.clientX, startWidth: state.width }
+                widthDrag.current = { startX: event.clientX, startWidth: clampWidth(state.width) }
                 setDraggingWidth(true)
               }}
               onPointerMove={(event) => {
@@ -1467,7 +1506,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
               cornerDrag.current = {
                 startX: event.clientX,
                 startY: event.clientY,
-                startWidth: state.width,
+                startWidth: clampWidth(state.width),
                 startHeight: state.bottomHeight,
               }
               setDraggingCorner(true)
@@ -1521,7 +1560,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         data-dsh-bottom-panel
         style={{
           height: bottomPanelHeight,
-          left: centerRectRef.current.left,
+          left: paneMode ? 0 : centerRectRef.current.left,
           // Keep the panel above the on-screen keyboard when the visual
           // viewport shrinks (see the keyboardInset effect).
           bottom: keyboardInset > 0 ? `${keyboardInset}px` : undefined,
@@ -1530,7 +1569,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           // details column's left edge (the details column sits between the
           // center and the right panel, and the right panel's margin-right
           // push is already baked into centerRect.right).
-          right: window.innerWidth - centerRectRef.current.right,
+          right: paneMode
+            ? (state.panelOpen ? panePanelWidth(state.width, viewport.width) : 0)
+            : window.innerWidth - centerRectRef.current.right,
           // The seam against the open right panel needs its own hairline
           // (the right panel's border-left alone is covered by this panel's
           // fill — without it the corner looks cut off).

@@ -50,6 +50,7 @@
 - **🪟 Dual Workbench**: right sidebar + bottom panel; drag tabs to split / merge panes (cross-panel), mobile auto-merges into a full-width drawer
 - **🪟 Free Windows**: drag any tab onto the main conversation area to turn it into a movable / resizable / raiseable floating window (default 390×780); drag it back onto a pane to dock; persisted per session. `features` includes `'floatWindows'` and plugin tabs are supported identically
 - **🔁 Session Isolation**: layout / tabs / panels persisted per session, stale state auto-purged
+- **🪟 Workbench Pane integration**: optional `ctx.betterSidebar.panes` protocol 1 mounts an independent React root and store for each Session Pane; both Panes may keep right and bottom panels open while focus only routes commands
 - **⚙️ Declarative Settings**: per-item toggles in the "Side Cards" settings section, secondary settings via the gear dialog
 - **⚡ On-demand Loading**: only ~325KB core at startup; heavy deps (terminal / editor / mermaid diagrams) load on demand ([design](docs/plans/2026-08-12-lazy-chunks-design.md))
 - **🌏 i18n**: UI text follows DSH's language (zh / en) with live switching; with the optional `@huanlin/dsh-plugin-better-locale` peer, 19 third-language overlays (ja / de / fr / …) are available

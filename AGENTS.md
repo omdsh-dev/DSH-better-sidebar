@@ -44,6 +44,12 @@ better-sidebar 从 v0.4.0 起暴露 `ctx.betterSidebar` 服务（Cordis context 
 
 > ⚠️ **host 半不发布此服务**：`ctx.betterSidebar` 只在 client 侧存在。如果你的插件 host 半需要读 better-sidebar 状态，走 better-sidebar 自己的 HTTP/WS 路由（`/sidebar/api/*`），不走服务。
 
+### 1.1 Workbench Pane 挂载
+
+`ctx.betterSidebar.panes` 是可选的浏览器端多实例能力，`protocol === 1` 时可由布局兼容插件调用 `mountPane(target)`。每个挂载拥有独立 `SidebarStore` 和 React Root，Session 状态继续写入原有 `dsh-sidebar:v1:<sessionId>` 文档；右侧和底部宿主分别由 `target.rightHost`、`target.bottomHost` 占位，因此一个 Pane 的尺寸不会推挤兄弟 Pane。Pane 模式把 `--dsh-sidebar-width/height` 写在自身 `[data-dsh-pane-host]`，只供面板内部几何继承，禁止写到 Pane 根并再次触发 viewport 模式的 Conversation margin。Focus 更新只路由命令，不改变任何 Pane 的展开状态。
+
+第一个 Pane 挂载会暂停全局 viewport Root，最后一个 Pane 释放后恢复它。Scoped `openTab`、`updateTab`、`activateTab` 和 `closeTab` 路由到对应 Pane Store；未提供 `panes` 或协议不匹配的消费者必须保持 stock 全局布局，不能搬运 DOM 或访问私有 Store。
+
 ---
 
 ## 2. 消费插件的最小骨架

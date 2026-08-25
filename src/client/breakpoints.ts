@@ -32,27 +32,37 @@ export interface ViewportSize {
  * resize listener is equally exact for a breakpoint that never changes
  * while the page is open.
  */
-export function useViewportSize(): ViewportSize {
+export function useViewportSize(target?: HTMLElement): ViewportSize {
   const [size, setSize] = useState<ViewportSize>(() => ({
-    width: typeof window === 'undefined' ? 0 : window.innerWidth,
-    height: typeof window === 'undefined' ? 0 : window.innerHeight,
+    width: target?.getBoundingClientRect().width ?? (typeof window === 'undefined' ? 0 : window.innerWidth),
+    height: target?.getBoundingClientRect().height ?? (typeof window === 'undefined' ? 0 : window.innerHeight),
   }))
   useEffect(() => {
     if (typeof window === 'undefined') return
+    const element = target
     let frame: number | null = null
     const measure = (): void => {
       frame = null
-      setSize({ width: window.innerWidth, height: window.innerHeight })
+      if (element === undefined) {
+        setSize({ width: window.innerWidth, height: window.innerHeight })
+      } else {
+        const rect = element.getBoundingClientRect()
+        setSize({ width: rect.width, height: rect.height })
+      }
     }
     const onResize = (): void => {
       if (frame === null) frame = requestAnimationFrame(measure)
     }
-    window.addEventListener('resize', onResize)
+    if (element === undefined) window.addEventListener('resize', onResize)
+    const observer = element === undefined ? undefined : new ResizeObserver(onResize)
+    if (element !== undefined) observer?.observe(element)
+    measure()
     return () => {
-      window.removeEventListener('resize', onResize)
+      if (element === undefined) window.removeEventListener('resize', onResize)
+      observer?.disconnect()
       if (frame !== null) cancelAnimationFrame(frame)
     }
-  }, [])
+  }, [target])
   return size
 }
 

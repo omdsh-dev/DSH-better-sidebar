@@ -17,6 +17,9 @@ import {
 } from '../src/client/service.ts'
 import type {
   BetterSidebarService,
+  BetterSidebarPaneAttachment,
+  BetterSidebarPaneCapability,
+  BetterSidebarPaneTarget,
   FileFetchStrategy,
   FileViewerDescriptor,
   FileViewerProps,
@@ -122,8 +125,20 @@ const snapshot: SidebarSnapshot | undefined = service.getSnapshot()
 void snapshot
 service.subscribeState(() => {})
 service.updateTab('tab:1', { title: 'T', path: '/p', meta: 1 })
+service.updateTab('tab:1', { title: 'Scoped' }, { sessionId: 's1' })
 service.activateTab('tab:1')
 service.openFile({ sessionId: 's1', cwd: '/p' }, '/p/a.csv', 'Data')
+const paneTarget: BetterSidebarPaneTarget = {
+  sessionId: 's1',
+  pane: document.createElement('section'),
+  rightHost: document.createElement('aside'),
+  bottomHost: document.createElement('aside'),
+  focused: true,
+}
+const paneCapability: BetterSidebarPaneCapability | undefined = service.panes
+const paneAttachment: BetterSidebarPaneAttachment | undefined = paneCapability?.mountPane(paneTarget)
+paneAttachment?.update({ ...paneTarget, focused: false })
+paneAttachment?.dispose()
 
 /** Named state vocabulary stays importable (the pre-0.12 gap). */
 const diff: SidebarDiffRef = { kind: 'worktree', path: '/p/a.ts', staged: false }

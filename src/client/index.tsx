@@ -23,6 +23,7 @@ import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { loadExternalDisable, loadPrefs } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
+import { createPaneCapability } from './pane-mount.tsx'
 import { api } from './api.ts'
 import { LOCALE_NS, attachLocale, attachBetterLocale, t, zh, en,
   ja, de, fr, pt, ko, ar, hi, id, tr, vi, th, ru, it, nl, sv, pl,
@@ -121,7 +122,11 @@ export function apply(ctx: Context): void {
   // Published before the panel mounts so consumers injecting 'betterSidebar'
   // are ready by the time the sidebar renders.
   const service = createBetterSidebarService(sidebarStore)
+  let reconcileGlobalMount = (): void => {}
+  const paneCapability = createPaneCapability(ctx, sidebarStore, service, () => { reconcileGlobalMount() })
+  service.panes = paneCapability
   ctx.provide('betterSidebar', service)
+  ctx.effect(() => () => { paneCapability.dispose() }, 'dsh-better-sidebar: Pane mounts')
   // Terminal tab titles use the host's effective shell name (e.g. bash/zsh)
   // instead of "Terminal 1". Start with a safe fallback and replace it as
   // soon as the host shell info resolves. Tabs created before the response
@@ -181,6 +186,7 @@ export function apply(ctx: Context): void {
       let root: Root | undefined
       let host: HTMLDivElement | undefined
       let mounted = false
+      let suspended = false
       let bodyObserver: MutationObserver | undefined
       let hostCheckFrame: number | null = null
       const unmount = (): void => {
@@ -271,6 +277,11 @@ export function apply(ctx: Context): void {
           fail('mount', error)
         }
       }
+      const reconcile = (): void => {
+        if (suspended || paneCapability.activeCount > 0) unmount()
+        else mount()
+      }
+      reconcileGlobalMount = reconcile
       const sync = async (): Promise<void> => {
         if (disposed) return
         // Resolve the user's side card prefs BEFORE the first session seeds,
@@ -287,11 +298,10 @@ export function apply(ctx: Context): void {
         // Mutual exclusion with the dsh-web-ui family right panel: while the
         // aionui-panel provider is selected, the sidebar must not mount at
         // all. Re-evaluated on every settings-document update (live switch).
-        const suspended = await loadExternalDisable(api)
+        suspended = await loadExternalDisable(api)
         if (disposed) return
         sidebarStore.setSuspended(suspended)
-        if (suspended) unmount()
-        else mount()
+        reconcile()
       }
       void sync()
       // Live re-evaluation: the runtime broadcasts settings-document updates
@@ -302,6 +312,7 @@ export function apply(ctx: Context): void {
       const offRemote = remote?.$on?.('settings/document-updated', () => { void sync() })
       return () => {
         disposed = true
+        reconcileGlobalMount = () => {}
         offRemote?.()
         unmount()
       }
