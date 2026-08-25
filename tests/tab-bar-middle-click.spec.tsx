@@ -47,6 +47,7 @@ function mountBar(): {
       onClose,
       onNewTab: () => {},
       newTabOptions: [],
+      onFloatTab: () => {},
       onDropTab: () => {},
     }))
   })

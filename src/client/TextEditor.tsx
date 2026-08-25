@@ -14,7 +14,6 @@
  * renders the controls instead.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ComponentType } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { EditorState } from '@codemirror/state'
@@ -22,6 +21,7 @@ import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/v
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, htmlUrl } from './api.ts'
+import { rewriteLocalImageUrls } from './markdown-images.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
@@ -29,7 +29,10 @@ import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { appendToDraft } from './conversation-draft.ts'
 import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
 import { lazyChunkComponent } from './lazy-chunk.tsx'
-import { splitMermaidBlocks, type MermaidMarkdownProps } from './mermaid-blocks.ts'
+import { analyzeMarkdownHtml } from './markdown-html.ts'
+import { LazyMermaidMarkdown, MarkdownDocument, type MarkdownHtmlMedia } from './MarkdownHtml.tsx'
+import { MdToc } from './md-toc.tsx'
+import { splitMermaidBlocks } from './mermaid-blocks.ts'
 import { t } from './locales.ts'
 import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
@@ -43,16 +46,6 @@ interface SelectionPopup {
   left: number
   top: number
 }
-
-/**
- * The chunk-resident markdown preview renderer (mermaid lazy chunk): one
- * MarkdownText pass over the whole source, with rendered mermaid fences
- * swapped for diagrams. Module-level `pick` keeps the load effect stable.
- */
-const LazyMermaidMarkdown = lazyChunkComponent<MermaidMarkdownProps>(
-  'mermaid',
-  (mod) => mod.MermaidMarkdown as ComponentType<MermaidMarkdownProps> | undefined,
-)
 
 /**
  * The sandbox tokens of the HTML preview iframe. NO allow-same-origin (the
@@ -252,15 +245,41 @@ export function TextEditor(props: FileViewerProps) {
   const html = viewerId === 'html'
   /** The markdown source the preview renders (draft wins over saved content). */
   const mdText = draft ?? content ?? ''
+  /** The preview source: `mdText` with local image destinations rewritten to
+   *  absolute media URLs (see {@link rewriteLocalImageUrls}); the raw
+   *  `mdText` stays untouched for selection/line lookup and for mermaid-block
+   *  detection, which are unaffected by image syntax. */
+  const previewText = markdown
+    ? rewriteLocalImageUrls(mdText, scope, path, window.location.origin)
+    : mdText
   /** md/mermaid block split for the preview (mermaid fences lift out). Split
    *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
   const mdBlocks = useMemo(
     () => (markdown && mode === 'preview' ? splitMermaidBlocks(mdText) : []),
     [markdown, mode, mdText],
   )
+  /** Raw-HTML analysis (block runs lifted out + inline gate). Non-null only
+   *  for documents that actually contain HTML — plain markdown keeps the
+   *  legacy single-pass render path below, byte-for-byte. */
+  const htmlInfo = useMemo(
+    () => (markdown && mode === 'preview' ? analyzeMarkdownHtml(mdText) : null),
+    [markdown, mode, mdText],
+  )
   const hasMermaid = useMemo(
-    () => mdBlocks.some(block => block.kind === 'mermaid'),
-    [mdBlocks],
+    () => htmlInfo !== null
+      ? htmlInfo.segments.some((segment) => segment.kind === 'markdown'
+        && splitMermaidBlocks(segment.text).some((block) => block.kind === 'mermaid'))
+      : mdBlocks.some((block) => block.kind === 'mermaid'),
+    [htmlInfo, mdBlocks],
+  )
+  /** The media context for the split renderer (local-src rewriting inside
+   *  sanitized HTML). Memoized on primitives: MarkdownDocument sanitizes per
+   *  `media` identity, so a fresh object per render would re-sanitize every
+   *  keystroke. */
+  const htmlMedia = useMemo<MarkdownHtmlMedia>(
+    () => ({ scope, path, origin: window.location.origin }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scope.sessionId, scope.cwd, path],
   )
   const codeLabels = { copyLabel: t('copy'), copiedLabel: t('copied') }
 
@@ -387,13 +406,23 @@ export function TextEditor(props: FileViewerProps) {
               dictionary: the DSH MarkdownText/CodeBlock are cordis-free and
               fall back to hardcoded Chinese otherwise (same pattern as the
               chat's AssistantMarkdown). Render-time t() keeps them following
-              the active locale on live switches. Mermaid fences hand the
-              whole document to the mermaid lazy chunk (single markdown
-              parse; cross-fence references/footnotes stay intact); files
-              without one render exactly as before. */}
-          {hasMermaid
-            ? <LazyMermaidMarkdown text={mdText} codeLabels={codeLabels} />
-            : <MarkdownText text={mdText} codeLabels={codeLabels} />}
+              the active locale on live switches. Plain markdown (no HTML)
+              renders exactly as before — one MarkdownText pass for the whole
+              document, or the mermaid lazy chunk (single markdown parse;
+              cross-fence references/footnotes stay intact) when a mermaid
+              fence exists. Documents containing HTML (block runs or inline
+              tags) render through the split document renderer: markdown runs
+              keep the MarkdownText/mermaid path while raw-HTML runs render
+              as sanitized DOM (see markdown-html.tsx). */}
+          {/* The outline button rides on top of the preview scroll container
+              (sticky, zero-height — first child so it pins from the very
+              top) once the document has enough headings. */}
+          <MdToc />
+          {htmlInfo !== null
+            ? <MarkdownDocument info={htmlInfo} media={htmlMedia} codeLabels={codeLabels} />
+            : hasMermaid
+              ? <LazyMermaidMarkdown text={previewText} codeLabels={codeLabels} />
+              : <MarkdownText text={previewText} codeLabels={codeLabels} />}
         </div>
       )}
       {html && mode === 'preview' && (

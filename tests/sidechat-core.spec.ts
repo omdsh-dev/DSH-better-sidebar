@@ -12,12 +12,14 @@ import {
   buildOpenTurnSnapshot,
   buildSidechatInheritance,
   hasDanglingToolCall,
+  isContextInjectionMessage,
   resolvePresetId,
   sideLabel,
   sideThreadRows,
   threadHasCompletedTurn,
   threadTrailingPending,
   SIDE_BOUNDARY_PROMPT,
+  SIDE_INJECTION_PLUGIN,
   SIDE_LABEL_PREFIX,
   type SeedEvent,
   type SidechatLogEvent,
@@ -331,5 +333,33 @@ describe('boundaryDelivered', () => {
     expect(boundaryDelivered([ev('user/message', 0, {
       content: `${SIDE_BOUNDARY_PROMPT}\n\nfirst`,
     })])).toBe(true)
+  })
+})
+
+describe('isContextInjectionMessage', () => {
+  it('recognizes plugin-stamped sources structurally', () => {
+    expect(isContextInjectionMessage({
+      content: [{ type: 'text', text: 'runtime context' }],
+      source: { kind: 'plugin', plugin: SIDE_INJECTION_PLUGIN },
+    })).toBe(true)
+    expect(isContextInjectionMessage({
+      content: [{ type: 'text', text: 'q' }],
+      source: { kind: 'user' },
+    })).toBe(false)
+  })
+
+  it('falls back to the boundary prefix for pre-split logs and sourceless rows', () => {
+    expect(isContextInjectionMessage({
+      content: [{ type: 'text', text: `${SIDE_BOUNDARY_PROMPT}\n\nlegacy question` }],
+      source: { kind: 'user' },
+    })).toBe(true)
+    expect(isContextInjectionMessage({
+      content: `${SIDE_BOUNDARY_PROMPT}\n\nlegacy`,
+    })).toBe(true)
+    expect(isContextInjectionMessage({
+      content: [{ type: 'text', text: 'ordinary question' }],
+      source: { kind: 'user' },
+    })).toBe(false)
+    expect(isContextInjectionMessage({ content: [{ type: 'text', text: 'no source row' }] })).toBe(false)
   })
 })

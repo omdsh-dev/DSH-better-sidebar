@@ -16,13 +16,14 @@ import { act } from 'react-dom/test-utils'
 
 vi.mock('mermaid', () => ({
   default: {
-    initialize: () => {},
+    initialize: vi.fn(),
     render: async () => ({
       svg: '<svg xmlns="http://www.w3.org/2000/svg"><text>MOCK-DIAGRAM</text></svg>',
     }),
   },
 }))
 
+import mermaid from 'mermaid'
 import { MermaidMarkdown } from '../src/client/mermaid.tsx'
 
 const codeLabels = { copyLabel: 'Copy', copiedLabel: 'Copied' }
@@ -53,6 +54,15 @@ describe('MermaidMarkdown', () => {
     const diagram = container.querySelector('[data-mermaid-diagram] svg')
     expect(diagram, 'the mermaid fence must be swapped for a diagram').not.toBeNull()
     expect(diagram?.textContent).toContain('MOCK-DIAGRAM')
+    await unmount(root)
+  })
+
+  it('suppresses Mermaid global error rendering', async () => {
+    vi.mocked(mermaid.initialize).mockClear()
+    const { root } = await renderMarkdown('```mermaid\ngraph TD\n  A-->B\n```')
+    expect(mermaid.initialize).toHaveBeenCalledWith(expect.objectContaining({
+      suppressErrorRendering: true,
+    }))
     await unmount(root)
   })
 

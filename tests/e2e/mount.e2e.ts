@@ -48,6 +48,11 @@ const SEEDED_FILE = 'hello.txt'
  *  and render a sanitized SVG diagram. */
 const SEEDED_MD_FILE = 'diagram.md'
 
+/** A GitHub-style README markdown (badge div, <details> nesting markdown,
+ *  inline tags in table cells), opened through the Files window's tree to
+ *  prove raw-HTML runs render as sanitized DOM and the TOC outline works. */
+const SEEDED_README_FILE = 'readme-style.md'
+
 /**
  * The plugin's crash markers. The client mounts inside an error boundary that
  * renders a strip whose text starts with these prefixes instead of crashing
@@ -56,7 +61,7 @@ const SEEDED_MD_FILE = 'diagram.md'
 const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 
 /** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Side Chat', 'Terminal', 'Browser']
+const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Side Chat (beta)', 'Terminal', 'Browser']
 
 let api: APIRequestContext
 /** The seeded session id (captured by seedSession; the Side Chat smoke's parent). */
@@ -85,6 +90,41 @@ async function seedSession(): Promise<void> {
     '[shared]: https://example.com',
     '',
     'tail text',
+    '',
+  ].join('\n'))
+  // The README-style probe file: raw-HTML runs (badge wall div with an
+  // embedded script, a <details> nesting a fence + heading) plus inline tags
+  // inside a table cell. The script must be sanitized away in the preview.
+  writeFileSync(join(WORKSPACE_PATH, SEEDED_README_FILE), [
+    '# Readme Style',
+    '',
+    '<div align="center">',
+    '  <img alt="badge" src="https://img.shields.io/badge/x-y-blue" />',
+    '  <script>alert(1)</script>',
+    '</div>',
+    '',
+    '## Setup',
+    '',
+    '[docs link][def]',
+    '',
+    '<details>',
+    '<summary><b>Steps</b></summary>',
+    '',
+    '### Inside',
+    '',
+    '```sh',
+    'dsh plugin --profile web add x',
+    '```',
+    '',
+    '</details>',
+    '',
+    '## Table',
+    '',
+    '| col | note |',
+    '| --- | --- |',
+    '| alpha | line one<br/>line two |',
+    '',
+    '[def]: https://example.com/def',
     '',
   ].join('\n'))
   const workspace = await api.post(`${BASE_URL}/api/workspace.create`, {
@@ -143,6 +183,15 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // The unified panel host: the fixed containing block every panel lives in
   // (data-dsh-panel-host). Its presence is part of the injection contract.
   await expect(page.locator('[data-dsh-panel-host]')).toBeAttached({ timeout: 90_000 })
+  // The host's global z-index is part of the layering contract: it must
+  // sit above the AppFrame overlay layer (20) and below DSH's ui-cordis
+  // dynamic-plugin panel (fixed, 30) so that surface is never hidden behind
+  // the workbench, and below the DSH float stack (100+).
+  const hostZ = await page.locator('[data-dsh-panel-host]').evaluate(
+    (el) => Number.parseFloat(getComputedStyle(el).zIndex),
+  )
+  expect(hostZ).toBeGreaterThan(20)
+  expect(hostZ).toBeLessThan(30)
 
   // A keyless boot stacks onboarding takeovers that mask the whole shell: a
   // versioned welcome notice ("Continue", persists its acknowledgement to
@@ -181,6 +230,26 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // shell renders a disabled toggle cluster and the tab sweep is impossible.
   const tabBar = sidebar.locator('[title]')
   await expect(tabBar.first()).toBeAttached({ timeout: 90_000 })
+
+  // Regression: with the panels still COLLAPSED, the document must not grow
+  // beyond the viewport. Collapsed panels are slid off-screen with
+  // `transform: translate(102%)`, and a transformed element still
+  // contributes to its ancestors' scrollable overflow — unclipped, the
+  // hidden panels extended the document's scroll area and the whole page
+  // became draggable left-right and up-down. The panel host clips at the
+  // viewport edge (overflow: hidden), so scrollWidth/scrollHeight must stay
+  // within the viewport here. (Assert <= not == : a classic scrollbar
+  // narrows clientWidth, so scrollWidth may sit slightly under innerWidth.)
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => ({
+          overflowX: document.documentElement.scrollWidth <= window.innerWidth,
+          overflowY: document.documentElement.scrollHeight <= window.innerHeight,
+        })),
+      { timeout: 30_000 },
+    )
+    .toEqual({ overflowX: true, overflowY: true })
 
   // openByDefault defaults OFF: a fresh session's panel starts collapsed.
   // Expand it through the toggle cluster before the layout push can apply.
@@ -402,6 +471,75 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     sidebar.locator('.cm-editor').first(),
     'preview mode must hide the CodeMirror editor (mutually exclusive toggle)',
   ).toBeHidden()
+  await assertNoCrash()
+
+  // README-style markdown (raw-HTML runs + TOC): open the seeded file and
+  // require the full round-trip — sanitized HTML leaves (badge image as a
+  // real element, active content stripped), markdown nested inside the
+  // unclosed <details> run, the inline pass turning the table cell's <br/>
+  // into an element, the reference link resolving across the HTML run, and
+  // the TOC outline jumping into the collapsed details (auto-expanding it).
+  await sidebar.locator('[title="Files"][draggable="true"]').first().click()
+  const readmeRow = sidebar.locator(`[role="button"][title$="${SEEDED_README_FILE}"]:visible`)
+  await expect(
+    readmeRow,
+    `the seeded "${SEEDED_README_FILE}" file must appear in the files window's tree`,
+  ).toHaveCount(1, { timeout: 30_000 })
+  await readmeRow.click({ position: { x: 8, y: 8 } })
+  await expect(
+    sidebar.locator(`[title="${SEEDED_README_FILE}"][draggable="true"]`),
+    'separate mode opens a new tab for the README-style markdown file',
+  ).toHaveCount(1, { timeout: 30_000 })
+  // The hero div renders as a sanitized leaf with the badge image as a real
+  // element (the remote src may not load in the sandboxed lane; the ELEMENT
+  // is the proof of rendering, not the bytes).
+  await expect(
+    sidebar.locator('[data-dsh-html-segment] img[src*="img.shields.io"]'),
+    'the badge-wall div must render its image as a real element',
+  ).toHaveCount(1, { timeout: 30_000 })
+  // Active content never survives sanitization.
+  await expect(
+    sidebar.locator('script'),
+    'the embedded <script> must be sanitized away',
+  ).toHaveCount(0)
+  // The unclosed <details> run lowers the following markdown inside itself.
+  const details = sidebar.locator('details')
+  await expect(
+    details,
+    'the details run must render as a real element',
+  ).toHaveCount(1, { timeout: 30_000 })
+  await expect(details.locator('summary'), 'the details summary must render').toHaveCount(1)
+  await expect(
+    details.locator('h3', { hasText: 'Inside' }),
+    'the heading between the details tags must nest inside the element',
+  ).toHaveCount(1)
+  // The inline pass: the table cell's literal <br/> became a real element.
+  await expect(
+    sidebar.locator('[data-html-inline] br'),
+    'the table cell <br/> must render as a real element',
+  ).toHaveCount(1, { timeout: 30_000 })
+  // The reference link resolves although its definition sits after an HTML run.
+  await expect(
+    sidebar.locator('a[href="https://example.com/def"]'),
+    'reference links must resolve across lifted HTML runs',
+  ).toHaveCount(1, { timeout: 30_000 })
+  // TOC: the outline button appears (4 headings), opens the panel, and
+  // jumping into the collapsed details expands it.
+  const tocButton = sidebar.locator('[data-dsh-md-toc]')
+  await expect(
+    tocButton,
+    'the TOC button must appear once the document has enough headings',
+  ).toHaveCount(1, { timeout: 30_000 })
+  await tocButton.click()
+  const tocPanel = sidebar.locator('[data-dsh-md-toc-panel]')
+  await expect(tocPanel, 'the TOC panel must open').toHaveCount(1)
+  const insideItem = tocPanel.locator('button', { hasText: 'Inside' })
+  await expect(insideItem, 'the nested heading must appear in the outline').toHaveCount(1)
+  await insideItem.click()
+  await expect(
+    details,
+    'jumping into a collapsed details must expand it',
+  ).toHaveAttribute('open', '')
   await assertNoCrash()
 
   // The plugin's own console prefix must never appear in errors, and no

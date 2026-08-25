@@ -22,6 +22,10 @@ trap 'rm -rf "$WORK"' EXIT
 
 mkdir -p "$WORK/node_modules"
 ln -s "$(pwd)" "$WORK/node_modules/dsh-better-sidebar"
+# The vendored cordis base (and, through its realpath, cosmokit / standard-schema)
+# must resolve so the consumer can type `Context` against the DSH runtime scope.
+mkdir -p "$WORK/node_modules/@deepseek-ai"
+ln -s "$(pwd)/node_modules/@deepseek-ai/cordis" "$WORK/node_modules/@deepseek-ai/cordis"
 
 cat > "$WORK/check.ts" <<'EOF'
 import { SIDEBAR_FEATURES, SIDEBAR_SERVICE_VERSION } from 'dsh-better-sidebar/client/service'
@@ -32,6 +36,10 @@ import type {
 } from 'dsh-better-sidebar/client/service'
 import type { SessionScope, SidebarSnapshot, SidebarState, SidebarStore, SidebarTab } from 'dsh-better-sidebar/client/service'
 import type { SidebarPrefs } from 'dsh-better-sidebar/client/service'
+// The vendored-cordis path: `Context` from '@deepseek-ai/cordis' plus the
+// side-effect type import above must expose `ctx.betterSidebar` — the consumer
+// never needs to import this package's own Context type.
+import type { Context as VendoredContext } from '@deepseek-ai/cordis'
 
 declare const ctx: { betterSidebar: BetterSidebarService }
 const tab: TabDescriptor = {
@@ -65,6 +73,11 @@ const prefs: SidebarPrefs = snap.prefs
 const store: SidebarStore = null as unknown as SidebarStore
 void prefs; void store; void ctx.betterSidebar.version; void ctx.betterSidebar.features
 void SIDEBAR_SERVICE_VERSION; void SIDEBAR_FEATURES
+// Vendored-cordis augmentation path.
+declare const vctx: VendoredContext
+vctx.betterSidebar.registerTab(tab)
+vctx.betterSidebar.registerFileViewer(viewer)
+void vctx.betterSidebar.getSnapshot()
 EOF
 
 cat > "$WORK/tsconfig.json" <<'EOF'
@@ -88,14 +101,16 @@ set +e
 STATUS=$?
 set -e
 # Fail only on errors that mention OUR package / declarations / the fixture.
-if grep -E "dsh-better-sidebar|lib/types|check\.ts" "$WORK/strict.log" | grep -v "node_modules/cordis\|node_modules/cosmokit"; then
+# Upstream noise (vendored cordis / cosmokit declaration warnings under the
+# repo's pinned TS lib) lives anywhere under node_modules and is filtered.
+if grep -E "dsh-better-sidebar|lib/types|check\.ts" "$WORK/strict.log" | grep -vE "node_modules/[^ ]*(cordis|cosmokit)"; then
   echo "[check-consumer-types] FAIL: errors in the dsh-better-sidebar declaration surface:" >&2
   grep -E "dsh-better-sidebar|lib/types|check\.ts" "$WORK/strict.log" >&2
   exit 1
 fi
 if [ "$STATUS" -ne 0 ]; then
   echo "[check-consumer-types] pass 2 note: strict mode only reports upstream declaration noise:"
-  grep -v "dsh-better-sidebar\|lib/types\|check\.ts" "$WORK/strict.log" | head -5
+  grep -v "dsh-better-sidebar\|lib/types\|check\.ts" "$WORK/strict.log" | head -5 || true
 fi
 echo "[check-consumer-types] OK: the client/service declaration surface is node-free and self-contained."
 

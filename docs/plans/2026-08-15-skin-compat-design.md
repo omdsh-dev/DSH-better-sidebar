@@ -63,5 +63,6 @@ dsh-web-ui（`zhu1090093659/dsh-web-ui`）的皮肤机制：
 
 - **首版契约（已回退）**：初版围绕第三方皮肤插件设计了 `--dsh-sidebar-surface`/`--dsh-resize-strip-offset` 自有令牌（review 后已删）、panel 家族类名 kebab-case 改名（breaking）与 `data-bs-*` 语义钩子。确认主目标是 dsh-web-ui 皮肤中心后，按 KISS 全部回退：令牌驱动下这些都不需要，改名还引入无谓 breaking。最终契约 = 消费标准令牌 + 透明度阈值，无自有概念。
 - **角手柄 `z-index` 语义变化**：移入面板后 z-index 为面板内层叠（2，与拖条一致），对外绝对层级由面板（40）决定；两面板同开时手柄盒与底面板上沿无重叠（≥6px 间隙），行为不变。
+- **z-index 层级修正（2026-08-22）**：上文 "30–99 无任何 DSH 元素" 的假设不成立——DSH 的 ui-cordis 动态插件面板（`CordisPanel`，`position:fixed; z-index:30`，挂 `sidebar.footer.action` 槽）正落在该区间，且其清单/审批面会被 better-sidebar 的底部面板遮挡。修正：面板宿主层 40 → **25**（仍在 AppFrame overlayLayer 20 之上、ui-cordis 面板 30 与 DSH 浮层栈 100+ 之下），折叠按钮簇保持 host 内部 45（绝对层级随宿主 = 25）。
 - **拖拽禁用断言修正**：`transition: none` 的 computed 值为 `transition-property: none`（非 `all`），已按实测修正。
 - **面板默认表面色阶微调**：±8 RGB，未做像素级补偿（e2e 不依赖具体颜色）。

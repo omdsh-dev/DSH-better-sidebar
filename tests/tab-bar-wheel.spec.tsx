@@ -36,6 +36,7 @@ function mountBar(overflow: boolean): { list: HTMLElement; unmount: () => void }
       onClose: () => {},
       onNewTab: () => {},
       newTabOptions: [],
+      onFloatTab: () => {},
       onDropTab: () => {},
     }))
   })

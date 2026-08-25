@@ -5,15 +5,30 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { apply, mediaTypeForPath } from '../src/index.ts'
+import { encodeHtmlUrl } from '../src/html-route.ts'
 import * as git from '../src/git.ts'
 import { listDirectory } from '../src/fs-tree.ts'
 import { defaultShell, PtyManager, type SidebarPty } from '../src/pty-manager.ts'
 import type { SidebarWebRoute, SidebarWebUpgradeRoute } from '../src/context-types.ts'
+
+/** Symlink creation may require elevated privileges on Windows. */
+const canCreateSymlink = (() => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-security-probe-'))
+  try {
+    mkdirSync(join(dir, 'target'))
+    symlinkSync(join(dir, 'target'), join(dir, 'link'))
+    return true
+  } catch {
+    return false
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})()
 
 interface FakeContext {
   webRuntime: { trustedHosts: readonly string[] }
@@ -95,9 +110,61 @@ describe('host plugin smoke', () => {
       '/sidebar/file',
       '/sidebar/html',
     ])
-    expect(upgrades.map(route => route.path)).toEqual(['/sidebar/ws/terminal', '/sidebar/ws/agent-terminals'])
+    expect(upgrades.map(route => route.path)).toEqual(['/sidebar/ws/terminal', '/sidebar/ws/agent-terminals', '/sidebar/ws/agent-opens'])
     // Teardown runs without throwing (pty manager has nothing open).
     for (const cleanup of effects) cleanup()
+  })
+
+  it('serves HTML previews as UTF-8 without changing the file bytes', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dsh-sidebar-html-utf8-'))
+    const path = join(directory, 'fragment.html')
+    const source = Buffer.from('<div>排序算法可视化</div>', 'utf8')
+    writeFileSync(path, source)
+    const routes: SidebarWebRoute[] = []
+    const effects: Array<() => void | (() => void)> = []
+    const ctx: FakeContext = {
+      webRuntime: { trustedHosts: [] },
+      webServer: {
+        register: (route) => { routes.push(route); return () => {} },
+        registerUpgrade: () => () => {},
+      },
+      sessions: { get: () => ({ header: { cwd: directory } }) },
+      tools: { register: () => () => {} },
+      effect: (fn) => {
+        const cleanup = fn()
+        if (typeof cleanup === 'function') effects.push(cleanup)
+      },
+      inject: () => () => {},
+      get: () => undefined,
+    }
+    try {
+      apply(ctx as never)
+      const route = routes.find(candidate => candidate.path === '/sidebar/html')!
+      const req = {
+        method: 'GET',
+        url: encodeHtmlUrl('s-html', path),
+        headers: { host: '127.0.0.1:3080' },
+      } as never
+      const response: { status?: number; headers?: Record<string, string>; chunks: Buffer[] } = { chunks: [] }
+      const res = {
+        writeHead: (status: number, headers?: Record<string, string>) => {
+          response.status = status
+          response.headers = headers
+        },
+        end: (chunk?: string | Buffer) => {
+          if (chunk !== undefined) response.chunks.push(Buffer.from(chunk))
+        },
+      } as never
+
+      await route.handler(req, res)
+
+      expect(response.status).toBe(200)
+      expect(Buffer.concat(response.chunks)).toEqual(source)
+      expect(response.headers?.['content-type']).toBe('text/html; charset=utf-8')
+    } finally {
+      for (const cleanup of effects) cleanup()
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it('runs git status/log/branches against this repository', async () => {
@@ -196,6 +263,60 @@ describe('host plugin smoke', () => {
     } finally {
       manager.disposeAll()
     }
+  })
+
+  it('pty manager: a parked pty survives past the reconnect grace (session switch)', async () => {
+    const manager = new PtyManager(defaultShell(), 3)
+    try {
+      const handle = manager.open('s2', 't1', process.cwd(), 80, 24)
+      manager.park(handle.key)
+      expect(manager.isParked(handle.key)).toBe(true)
+      // A parked pty does NOT enter the grace countdown — it stays alive
+      // well past any realistic reconnectGraceMs.
+      await new Promise(resolve => setTimeout(resolve, 300))
+      expect(manager.get(handle.key)).toBeDefined()
+      expect(manager.isParked(handle.key)).toBe(true)
+    } finally {
+      manager.disposeAll()
+    }
+  })
+
+  it('pty manager: a reconnecting view clears the parked state (switch back)', () => {
+    const manager = new PtyManager(defaultShell(), 3)
+    try {
+      const handle = manager.open('s2', 't1', process.cwd(), 80, 24)
+      manager.park(handle.key)
+      expect(manager.isParked(handle.key)).toBe(true)
+      // open() calls cancelClose(), which clears the parked state — the
+      // user switched back to the session and the view reattached.
+      manager.open('s2', 't1', process.cwd(), 80, 24)
+      expect(manager.isParked(handle.key)).toBe(false)
+      expect(manager.get(handle.key)).toBeDefined()
+    } finally {
+      manager.disposeAll()
+    }
+  })
+
+  it('pty manager: an explicit close frame on a parked pty still kills it', async () => {
+    const manager = new PtyManager(defaultShell(), 3)
+    try {
+      const handle = manager.open('s2', 't1', process.cwd(), 80, 24)
+      manager.park(handle.key)
+      // The user switched back and closed the tab — scheduleClose (the
+      // close-frame handler) clears the parked state and kills the pty.
+      manager.scheduleClose(handle.key, 0)
+      expect(manager.isParked(handle.key)).toBe(false)
+      await new Promise(resolve => setTimeout(resolve, 50))
+      expect(manager.get(handle.key)).toBeUndefined()
+    } finally {
+      manager.disposeAll()
+    }
+  })
+
+  it('pty manager: park on an unknown key is a no-op', () => {
+    const manager = new PtyManager(defaultShell(), 3)
+    expect(() => manager.park('s2:nonexistent')).not.toThrow()
+    expect(manager.isParked('s2:nonexistent')).toBe(false)
   })
 
   it('pty manager: reopening with a different cwd respawns in the new directory', async () => {
@@ -366,7 +487,7 @@ describe('session cwd resolution over the API route', () => {
     sessions?: { get: (id: string) => { header: { cwd?: string } } | undefined }
   }
 
-  const mount = (overrides: CtxOverrides = {}): SidebarWebRoute => {
+  const mountAll = (overrides: CtxOverrides = {}): SidebarWebRoute[] => {
     const routes: SidebarWebRoute[] = []
     const ctx = {
       webRuntime: { trustedHosts: [] },
@@ -384,14 +505,16 @@ describe('session cwd resolution over the API route', () => {
       get: () => undefined,
     }
     apply(ctx as never)
-    return routes.find(route => route.path === '/sidebar/api')!
+    return routes
   }
+
+  const mount = (overrides: CtxOverrides = {}): SidebarWebRoute => mountAll(overrides).find(route => route.path === '/sidebar/api')!
 
   const invoke = async (
     route: SidebarWebRoute,
     method: string,
     payload: unknown,
-  ): Promise<{ ok: boolean; value?: { cwd: string }; error?: { message: string } }> => {
+  ): Promise<{ ok: boolean; status: number; value?: { cwd: string }; error?: { code?: string; message: string } }> => {
     const body = Buffer.from(JSON.stringify(payload))
     const req = {
       method: 'POST',
@@ -405,7 +528,18 @@ describe('session cwd resolution over the API route', () => {
       end: (chunk: unknown) => { out.body += String(chunk ?? '') },
     } as never
     await route.handler(req, res)
-    return JSON.parse(out.body) as { ok: boolean; value?: { cwd: string }; error?: { message: string } }
+    return { ...JSON.parse(out.body) as { ok: boolean; value?: { cwd: string }; error?: { code?: string; message: string } }, status: out.status }
+  }
+
+  const invokeGet = async (route: SidebarWebRoute, url: string): Promise<{ status: number; body: string }> => {
+    const out: { status: number; body: string } = { status: 200, body: '' }
+    const req = { method: 'GET', url, headers: { host: '127.0.0.1:3080' } } as never
+    const res = {
+      writeHead: (status: number) => { out.status = status },
+      end: (chunk: unknown) => { out.body += String(chunk ?? '') },
+    } as never
+    await route.handler(req, res)
+    return out
   }
 
   it('uses the client summary cwd while the session is detached', async () => {
@@ -477,6 +611,158 @@ describe('session cwd resolution over the API route', () => {
     const value = result as unknown as { ok: boolean; value?: { kind: string; content: string } }
     expect(value.value?.kind).toBe('text')
     expect(value.value?.content).toContain('runGit')
+  })
+
+  it('rejects repo-root-relative fs.read paths outside a nested session workspace', async () => {
+    const route = mount({
+      sessions: {
+        get: () => ({ header: { cwd: join(process.cwd(), 'src') } }),
+      },
+    })
+    const result = await invoke(route, 'fs.read', { sessionId: 's-sub', path: 'package.json' })
+    expect(result).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+  })
+
+  it('rejects fs.tree paths outside the session workspace', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-security-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    const outsideFile = join(outside, 'secret.txt')
+    writeFileSync(outsideFile, 'secret')
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const tree = await invoke(route, 'fs.tree', { sessionId: 'security', path: outside })
+      expect(tree).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects fs.read paths outside the session workspace', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-security-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    const outsideFile = join(outside, 'secret.txt')
+    writeFileSync(outsideFile, 'secret')
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const read = await invoke(route, 'fs.read', { sessionId: 'security', path: outsideFile })
+      expect(read).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects fs.write paths outside the session workspace', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-security-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const write = await invoke(route, 'fs.write', { sessionId: 'security', path: join(outside, 'written.txt'), content: 'hack' })
+      expect(write).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects media and HTML reads through a workspace symlink', async () => {
+    if (!canCreateSymlink) return
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-route-symlink-security-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    const mediaPath = join(outside, 'secret.png')
+    const htmlPath = join(outside, 'secret.html')
+    writeFileSync(mediaPath, 'not an image')
+    writeFileSync(htmlPath, '<p>secret</p>')
+    try {
+      symlinkSync(outside, join(workspace, 'link'))
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const media = routes.find(route => route.path === '/sidebar/file')!
+      const html = routes.find(route => route.path === '/sidebar/html')!
+      const mediaResult = await invokeGet(media, `/sidebar/file?sessionId=security&path=${encodeURIComponent(join(workspace, 'link', 'secret.png'))}`)
+      // Use the production encoder so the URL is well-formed on every
+      // platform (a Windows drive path needs the leading slash separator
+      // that a naive join-without-separator drops).
+      const htmlResult = await invokeGet(html, encodeHtmlUrl('security', join(workspace, 'link', 'secret.html')))
+      expect(mediaResult).toMatchObject({ status: 403 })
+      expect(JSON.parse(mediaResult.body)).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+      expect(htmlResult).toMatchObject({ status: 403 })
+      expect(JSON.parse(htmlResult.body)).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps fs.tree missing-path failures as fs errors', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-security-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const tree = await invoke(route, 'fs.tree', { sessionId: 'security', path: join(workspace, 'missing') })
+      expect(tree).toMatchObject({ ok: false, status: 400, error: { code: 'fs-error' } })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(!canCreateSymlink)('rejects workspace symlinks that resolve outside the workspace', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-symlink-security-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    writeFileSync(join(outside, 'secret.txt'), 'secret')
+    try {
+      symlinkSync(outside, join(workspace, 'link'))
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const tree = await invoke(route, 'fs.tree', { sessionId: 'security', path: join(workspace, 'link') })
+      expect(tree).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(!canCreateSymlink)('rejects fs.read through a workspace symlink', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-symlink-security-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    writeFileSync(join(outside, 'secret.txt'), 'secret')
+    try {
+      symlinkSync(outside, join(workspace, 'link'))
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const read = await invoke(route, 'fs.read', { sessionId: 'security', path: join(workspace, 'link', 'secret.txt') })
+      expect(read).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(!canCreateSymlink)('rejects fs.write through a workspace symlink', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-symlink-security-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    try {
+      symlinkSync(outside, join(workspace, 'link'))
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const write = await invoke(route, 'fs.write', { sessionId: 'security', path: join(workspace, 'link', 'new.txt'), content: 'hack' })
+      expect(write).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 
@@ -605,7 +891,7 @@ describe('side card settings routes', () => {
         defaultWidthPercent: 35,
         autoOpenSubagent: true,
         autoOpenJobs: true,
-        agentTerminalTools: false,
+        agentTerminalTools: false, agentOpenTools: false,
         bottomPanelAutoTerminal: true,
         terminalFontFamily: '',
         terminalFontSize: 13,
@@ -621,6 +907,7 @@ describe('side card settings routes', () => {
         browserInterceptLinks: true,
         browserInterceptHttp: true,
         browserInterceptHttps: false,
+        browserAllowedLoopback: '',
         // The enable-switch maps default to {} (everything on).
         tabsEnabled: {},
         viewersEnabled: {},
@@ -781,6 +1068,59 @@ describe('agent terminal tool gating', () => {
     expect(live()).toBe(8)
     expect(registered).toBe(16)
   })
+})
 
-
+describe('agent sidebar-open tool gating', () => {
+  it('injects the one open tool only when the side-card setting is enabled (default off)', () => {
+    let registered = 0
+    let disposed = 0
+    const live = (): number => registered - disposed
+    const watcherRef: { current: (() => void) | null } = { current: null }
+    let enabled = false
+    const settings = {
+      register() {
+        return {
+          get: () => ({ agentOpenTools: enabled, tabsEnabled: {} }),
+          watch: (callback: () => void) => { watcherRef.current = callback; return () => {} },
+          update: async () => {},
+          replace: async () => {},
+        }
+      },
+      describe: () => [],
+      async update() {},
+    }
+    const ctx = {
+      webRuntime: { trustedHosts: [] },
+      webServer: {
+        register: (route: SidebarWebRoute) => { void route; return () => {} },
+        registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
+      },
+      sessions: { get: () => undefined },
+      tools: { register: () => { registered += 1; return () => { disposed += 1 } } },
+      effect: (fn: () => void | (() => void)) => { fn() },
+      inject: (deps: readonly string[], callback: (sctx: { settings: unknown }) => void) => {
+        if (deps.includes('settings')) callback({ settings })
+        return () => {}
+      },
+      get: () => undefined,
+    }
+    apply(ctx as never)
+    // Default off: no open tool is registered even though the settings service is mounted.
+    expect(live()).toBe(0)
+    // Flipping the setting on registers the single sidebar_open tool.
+    enabled = true
+    watcherRef.current?.()
+    expect(live()).toBe(1)
+    expect(disposed).toBe(0)
+    // Flipping it back off unregisters it (and drains the undelivered queue).
+    enabled = false
+    watcherRef.current?.()
+    expect(live()).toBe(0)
+    expect(disposed).toBe(1)
+    // And a redundant toggle registers it fresh (no double-registration).
+    enabled = true
+    watcherRef.current?.()
+    expect(live()).toBe(1)
+    expect(registered).toBe(2)
+  })
 })

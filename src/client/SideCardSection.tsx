@@ -21,13 +21,15 @@
  * one-line intro (the DSH section heading+intro recipe).
  *
  * A card's on/off state is its VISUAL STATE: enabled = highlighted (brand
- * border + tinted fill + a circular check badge pinned to the card's far
- * right), disabled = neutral and dimmed. Features that declare
- * `settings.toggles` carry a gear corner button that opens a native Modal
- * (wider than the primitive default) with the related settings as
- * title/desc + custom-switch rows and a Done footer. The toggles
- * themselves are custom switches: a real checkbox (native semantics and
- * focus) driving a styled track/thumb.
+ * border + tinted fill + a compact switch knob at the card's far right),
+ * disabled = neutral and dimmed. Features that declare
+ * `settings.toggles` carry a labeled settings strip at the card's bottom
+ * edge that opens a native Modal (wider than the primitive default) with
+ * the related settings as title/desc + custom-switch rows and a Done
+ * footer; the popup body scrolls internally when a feature declares many
+ * rows (e.g. Terminal's six). The toggles themselves are custom
+ * switches: a real checkbox (native semantics and focus) driving a styled
+ * track/thumb.
  *
  * Writes ride the plugin's own fenced settings route (the host calls the
  * settings seam in-process — the DSH settings RPC domain does not serve
@@ -40,7 +42,6 @@
  */
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
-  IconCheckOutline16,
   IconChevronDownOutline14,
   IconPlusOutline16,
   IconSettingsOutline16,
@@ -491,12 +492,13 @@ function SelectRow(props: {
 
 /**
  * The secondary settings popup body of one feature (tab or viewer):
- * - `settings.render` (custom panel) when declared — rendered with the
- *   shared store/service, the live prefs, the descriptor's own plugin
- *   settings blob, a persistence helper, and a close callback;
- * - otherwise the host-prefs `toggles` rows, then the plugin-owned
- *   `pluginToggles` rows (their values live in `pluginSettings[feature.id]`,
- *   projected onto the prefs face so the shared row renderer reads them).
+ * - the host-prefs `toggles` rows, then the plugin-owned `pluginToggles`
+ *   rows (their values live in `pluginSettings[feature.id]`, projected onto
+ *   the prefs face so the shared row renderer reads them);
+ * - `settings.render` (custom panel) AFTER those rows when declared — the
+ *   custom panel is an extension of the row list, not a replacement, so a
+ *   feature can keep its declarative rows (e.g. the editor's
+ *   open-behavior picker) and still ship a custom configuration area.
  */
 export function SettingsBody(props: {
   feature: TabDescriptor | FileViewerDescriptor
@@ -514,48 +516,50 @@ export function SettingsBody(props: {
 }) {
   const { feature, prefs, store, service, onToggle, onCommit, onSelectValue, onPluginToggle, onPluginCommit, onPluginSelectValue, onPluginWrite, onClose } = props
   const render = feature.settings?.render
-  if (render !== undefined) {
-    return (
-      <SettingsRender
-        render={render}
-        renderProps={{
-          store,
-          service,
-          prefs,
-          pluginSettings: prefs.pluginSettings[feature.id] ?? {},
-          updatePluginSetting: onPluginWrite,
-          close: onClose,
-        }}
-      />
-    )
-  }
   const toggles = feature.settings?.toggles ?? []
   const pluginToggles = feature.settings?.pluginToggles ?? []
-  if (toggles.length === 0 && pluginToggles.length === 0) return null
+  if (render === undefined && toggles.length === 0 && pluginToggles.length === 0) return null
   // Plugin rows read their values from the descriptor's OWN blob through
   // an explicit value source — no projection onto the prefs face, so a
   // plugin key can never collide with (or silently read) a host pref of
   // the same name.
   const pluginBlob = prefs.pluginSettings[feature.id] ?? {}
   return (
-    <div className={css.popupRows}>
-      {toggles.length > 0 && (
-        <FeatureSettingsRows
-          toggles={toggles}
-          prefs={prefs}
-          onToggle={onToggle}
-          onCommit={onCommit}
-          onSelectValue={onSelectValue}
-        />
+    <div>
+      {(toggles.length > 0 || pluginToggles.length > 0) && (
+        <div className={css.popupRows}>
+          {toggles.length > 0 && (
+            <FeatureSettingsRows
+              toggles={toggles}
+              prefs={prefs}
+              onToggle={onToggle}
+              onCommit={onCommit}
+              onSelectValue={onSelectValue}
+            />
+          )}
+          {pluginToggles.length > 0 && (
+            <FeatureSettingsRows
+              toggles={pluginToggles}
+              prefs={prefs}
+              onToggle={onPluginToggle}
+              onCommit={onPluginCommit}
+              onSelectValue={onPluginSelectValue}
+              valueSource={(key) => pluginBlob[key]}
+            />
+          )}
+        </div>
       )}
-      {pluginToggles.length > 0 && (
-        <FeatureSettingsRows
-          toggles={pluginToggles}
-          prefs={prefs}
-          onToggle={onPluginToggle}
-          onCommit={onPluginCommit}
-          onSelectValue={onPluginSelectValue}
-          valueSource={(key) => pluginBlob[key]}
+      {render !== undefined && (
+        <SettingsRender
+          render={render}
+          renderProps={{
+            store,
+            service,
+            prefs,
+            pluginSettings: prefs.pluginSettings[feature.id] ?? {},
+            updatePluginSetting: onPluginWrite,
+            close: onClose,
+          }}
         />
       )}
     </div>
@@ -793,8 +797,9 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
    * One SMALL toggle card for the responsive inventory grid: the card's main
    * area is the switch (click to flips, visual state IS the state), the icon
    * sits in a rounded chip, the check badge pins to the far right, and a
-   * feature that declares related settings carries a gear corner button
-   * opening its settings popup.
+   * feature that declares related settings gets a labeled SETTINGS STRIP
+   * across the card's bottom edge (gear icon + text) opening its settings
+   * popup — discoverable at rest, not a hover-only ghost corner button.
    */
   const renderCard = (props: {
     title: string
@@ -802,13 +807,13 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     icon?: ReactNode
     enabled: boolean
     onToggle: (next: boolean) => void
-    /** A feature with declared related settings shows the gear corner button. */
+    /** A feature with declared related settings shows the settings strip. */
     onOpenSettings?: () => void
   }) => {
     const hasSettings = props.onOpenSettings !== undefined
     return (
       <div
-        className={clsx(css.card, props.enabled && css.cardOn, hasSettings && css.cardWithGear)}
+        className={clsx(css.card, props.enabled && css.cardOn)}
       >
         <button
           type="button"
@@ -823,8 +828,10 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
             )}
             <span className={css.cardTitle}>{props.title}</span>
             {props.enabled && (
-              <span className={css.cardCheck}>
-                <IconCheckOutline16 size={12} />
+              <span className={css.cardSwitch} aria-hidden="true">
+                <span className={css.cardSwitchTrack}>
+                  <span className={css.cardSwitchThumb} />
+                </span>
               </span>
             )}
           </span>
@@ -833,12 +840,12 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
         {hasSettings && (
           <button
             type="button"
-            className={css.cardGear}
+            className={css.cardSettings}
             aria-label={`${props.title} ${t('settingsPopup')}`}
-            title={t('settingsPopup')}
             onClick={props.onOpenSettings}
           >
             <IconSettingsOutline16 size={12} />
+            <span>{t('settingsPopup')}</span>
           </button>
         )}
       </div>
@@ -904,6 +911,17 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
             label={t('settingsOpenPathTitle')}
             checked={prefs.interceptOpenPath}
             onChange={(next) => { applyPref({ interceptOpenPath: next }) }}
+          />
+        </div>
+        <div className={css.row}>
+          <span className={css.rowText}>
+            <span className={css.title}>{t('settingsOpenToolsTitle')}</span>
+            <span className={css.desc}>{t('settingsOpenToolsDesc')}</span>
+          </span>
+          <Switch
+            label={t('settingsOpenToolsTitle')}
+            checked={prefs.agentOpenTools}
+            onChange={(next) => { applyPref({ agentOpenTools: next }) }}
           />
         </div>
         <div className={css.row}>
@@ -1041,9 +1059,9 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
           feature is open — the Modal primitive runs hooks unconditionally,
           so a closed-but-mounted Modal would break SSR (and the
           renderToString spec) under the test dual-react split.
-          Content: `settings.render` (custom panel) when declared, else the
-          host-prefs `toggles` rows followed by the plugin-owned
-          `pluginToggles` rows (their values live in pluginSettings[id]). */}
+          Content: the host-prefs `toggles` rows, the plugin-owned
+          `pluginToggles` rows (their values live in pluginSettings[id]),
+          then the custom `settings.render` panel when declared. */}
       {settingsFor !== null && (
         <Modal
           open

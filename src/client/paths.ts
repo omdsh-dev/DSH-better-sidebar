@@ -45,3 +45,19 @@ export function relativeTo(cwd: string, path: string): string {
   if (nPath.toLowerCase().startsWith(`${nBase.toLowerCase()}/`)) return nPath.slice(nBase.length + 1)
   return path
 }
+
+/**
+ * Whether `target` lies under `base` (or equals it), tolerant of separator
+ * style and — on Windows-style drive paths — of letter case. A client-side
+ * mirror of the host's `isWithin` (fs-tree.ts) used to decide whether a
+ * git-derived path can be opened in the editor (a linked worktree outside
+ * the session workspace cannot: the host's workspace fence would reject it).
+ */
+export function isWithinWorkspace(base: string, target: string): boolean {
+  const norm = (value: string): string => value.replace(/[\\/]+/g, '/').replace(/\/$/, '')
+  const b = norm(base)
+  const t = norm(target)
+  const lb = b.toLowerCase()
+  const lt = t.toLowerCase()
+  return lt === lb || lt.startsWith(`${lb}/`)
+}

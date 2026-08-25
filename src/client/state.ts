@@ -22,8 +22,8 @@ export type TabType = string
 
 /** What a diff tab shows: a worktree/index change of one path, or one commit's full patch. */
 export type SidebarDiffRef =
-  | { kind: 'worktree'; path: string; staged: boolean; untracked?: boolean }
-  | { kind: 'commit'; hash: string; hashFull: string; subject: string }
+  | { kind: 'worktree'; path: string; staged: boolean; untracked?: boolean; worktree?: string; repoRoot?: string }
+  | { kind: 'commit'; hash: string; hashFull: string; subject: string; worktree?: string; repoRoot?: string }
 
 /** One open tab. `path` carries the file (editor) or is absent (git/terminal);
  *  `diff` carries the change a diff tab shows; `meta` (v0.12.0+) carries
@@ -58,6 +58,23 @@ export interface SidebarSplit {
 
 export type SplitNode = SidebarLeaf | SidebarSplit
 
+/**
+ * One free window: a tab dragged out of the workbench onto the conversation
+ * area floats in the panel host at viewport coordinates. The tab is OWNED by
+ * the window exactly like a pane owns its tabs (moved, not copied); geometry
+ * persists with the session so a reload restores the window in place.
+ * Stacking order is the array order (last = topmost).
+ */
+export interface FloatWindow {
+  id: string
+  tab: SidebarTab
+  /** Viewport coordinates of the window's top-left corner. */
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 /** The full per-session state. */
 export interface SidebarState {
   panelOpen: boolean
@@ -72,6 +89,12 @@ export interface SidebarState {
   nextBrowser: number
   /** Explorer expansion set (absolute directory paths). */
   expanded: string[]
+  /**
+   * Explorer rows highlighted by a "Show in folder" reveal (absolute paths).
+   * Transient by design: sanitizeState never restores it, so a reload starts
+   * unhighlighted.
+   */
+  revealed: string[]
   /** The right sidebar's split tree (the original workbench). */
   splits: SplitNode
   /** Whether the bottom panel (a second, independent workbench) is open. */
@@ -87,6 +110,8 @@ export interface SidebarState {
   /** The bottom panel's own split tree (panes/tabs live only in ONE tree;
    *  tabs never cross panels — the two panels only share panel-size drags). */
   bottomSplits: SplitNode
+  /** Free windows (tabs dragged out onto the conversation area). */
+  floats: FloatWindow[]
 }
 
 export const PANEL_MIN = 280
@@ -94,9 +119,19 @@ export const PANEL_MAX = 640
 export const PANEL_DEFAULT = 400
 export const TAB_MAX_WIDTH = 160
 /** Bottom panel geometry contract (mirrors the width contract; the upper
- * bound is the viewport, enforced by {@link setBottomHeight}). */
+ *  bound is the viewport, enforced by {@link setBottomHeight}). */
 export const BOTTOM_MIN = 120
 export const BOTTOM_DEFAULT = 220
+/** Free-window geometry contract: the floor keeps the window usable (a
+ *  header plus some content), the ceiling is the viewport. */
+export const FLOAT_MIN_W = 320
+export const FLOAT_MIN_H = 200
+/** Geometry a fresh free window starts with: a phone-like portrait ratio
+ *  (390×780 ≈ 1:2). The creation path additionally caps the size to the
+ *  viewport (minus a 24px margin), so a short viewport gets a shorter —
+ *  not overflowing — window instead of an exact ratio. */
+export const FLOAT_DEFAULT_W = 390
+export const FLOAT_DEFAULT_H = 780
 
 let nextIdCounter = 0
 /** Unique pane/tab id within one state instance. */
@@ -143,6 +178,14 @@ function maxCounterId(parsed: unknown): number {
   }
   walk((parsed as Record<string, unknown> | null)?.splits)
   walk((parsed as Record<string, unknown> | null)?.bottomSplits)
+  // Free windows mint through the same shared counter; their ids must seed it
+  // too (a persisted float:N with a lower pane max would collide otherwise).
+  const floats = (parsed as Record<string, unknown> | null)?.floats
+  if (Array.isArray(floats)) {
+    for (const float of floats) {
+      if (float !== null && typeof float === 'object') consider((float as Record<string, unknown>).id)
+    }
+  }
   return max
 }
 
@@ -176,11 +219,13 @@ export function makeDefaultState(width = PANEL_DEFAULT, panelOpen = true, seed: 
     nextTerminal: 1,
     nextBrowser: 1,
     expanded: [],
+    revealed: [],
     splits: leaf,
     bottomOpen: false,
     bottomHeight: BOTTOM_DEFAULT,
     bottomOpenedOnce: false,
     bottomSplits: bottomLeaf,
+    floats: [],
   }
 }
 
@@ -280,10 +325,22 @@ export function allLeaves(node: SplitNode): SidebarLeaf[] {
   return node.children.flatMap(allLeaves)
 }
 
-/** Whether a tab exists anywhere in a state (either tree, any pane). */
+/** Whether a tab exists anywhere in a state (either tree, any pane, or any
+ *  free window — a floating tab is as open as a docked one). */
 export function tabOpenIn(state: SidebarState, tabId: string): boolean {
   return allLeaves(state.splits).some(leaf => leaf.tabs.some(tab => tab.id === tabId))
     || allLeaves(state.bottomSplits).some(leaf => leaf.tabs.some(tab => tab.id === tabId))
+    || state.floats.some(float => float.tab.id === tabId)
+}
+
+/** The free window holding a tab id, if any. */
+export function floatWithTab(state: SidebarState, tabId: string): FloatWindow | undefined {
+  return state.floats.find(float => float.tab.id === tabId)
+}
+
+/** The free window with the given window id, if any. */
+export function floatById(state: SidebarState, floatId: string): FloatWindow | undefined {
+  return state.floats.find(float => float.id === floatId)
 }
 
 /** Replace a leaf with a split of it plus a fresh empty leaf. */
@@ -453,25 +510,26 @@ export function activateTab(state: SidebarState, paneId: string, tabId: string):
 /** Update the display fields of one open tab (title / path / meta) without
  *  re-opening it. The browser tab persists its current URL and hostname
  *  title through this reducer so a reload restores the visited page. A
- *  missing tab id is a no-op. The tab may live in either tree. */
+ *  missing tab id is a no-op. The tab may live in either tree or a free
+ *  window. */
 export function patchTab(
   state: SidebarState,
   tabId: string,
   patch: { title?: string; path?: string; meta?: unknown },
 ): SidebarState {
   let changed = false
+  const apply = (tab: SidebarTab): SidebarTab => {
+    changed = true
+    return {
+      ...tab,
+      ...(patch.title !== undefined ? { title: patch.title } : {}),
+      ...(patch.path !== undefined ? { path: patch.path } : {}),
+      ...(patch.meta !== undefined ? { meta: patch.meta } : {}),
+    }
+  }
   const walk = (node: SplitNode): SplitNode => {
     if (node.kind === 'leaf') {
-      const tabs = node.tabs.map(tab => {
-        if (tab.id !== tabId) return tab
-        changed = true
-        return {
-          ...tab,
-          ...(patch.title !== undefined ? { title: patch.title } : {}),
-          ...(patch.path !== undefined ? { path: patch.path } : {}),
-          ...(patch.meta !== undefined ? { meta: patch.meta } : {}),
-        }
-      })
+      const tabs = node.tabs.map(tab => (tab.id === tabId ? apply(tab) : tab))
       return tabs === node.tabs ? node : { ...node, tabs }
     }
     const children = node.children.map(walk)
@@ -479,7 +537,8 @@ export function patchTab(
   }
   const splits = walk(state.splits)
   const bottomSplits = walk(state.bottomSplits)
-  return changed ? { ...state, splits, bottomSplits } : state
+  const floats = state.floats.map(float => (float.tab.id === tabId ? { ...float, tab: apply(float.tab) } : float))
+  return changed ? { ...state, splits, bottomSplits, floats } : state
 }
 
 /**
@@ -504,11 +563,14 @@ export function openTabInActivePane(state: SidebarState, tab: SidebarTab): Sideb
     targetId = firstLeaf(state.splits).id
   }
   const targetKey = treeOf(state, targetId)
-  // Id-based safety net: if a tab with the same id exists, focus it.
+  // Id-based safety net: if a tab with the same id exists, focus it — in a
+  // pane (activate) or in a free window (raise, no panel switch).
   for (const leaf of allLeaves(state.splits).concat(allLeaves(state.bottomSplits))) {
     const existing = leaf.tabs.find(candidate => candidate.id === tab.id)
     if (existing !== undefined) return activateTab(state, leaf.id, existing.id)
   }
+  const floated = floatWithTab(state, tab.id)
+  if (floated !== undefined) return raiseFloat(state, floated.id)
   return {
     ...state,
     activePane: targetId,
@@ -649,6 +711,38 @@ export function toggleExpanded(state: SidebarState, path: string): SidebarState 
   return { ...state, expanded }
 }
 
+/**
+ * Reveal files in the explorer: expand every ancestor directory between the
+ * explorer root and each file (so the lazy tree actually shows the row) and
+ * record the paths for highlighting. The reveal set is transient —
+ * sanitizeState never restores it, so a reload starts unhighlighted.
+ * @param state - current sidebar state.
+ * @param cwd - the explorer's root (session working directory).
+ * @param files - absolute paths to highlight (parent dirs are expanded).
+ * @returns the next state, or the same reference when nothing is revealed.
+ */
+export function revealPaths(state: SidebarState, cwd: string | undefined, files: readonly string[]): SidebarState {
+  const expanded = new Set(state.expanded)
+  const revealed: string[] = []
+  const rootParts = (cwd ?? '').split(/[\\/]+/).filter(part => part !== '')
+  for (const file of files) {
+    if (typeof file !== 'string' || file === '') continue
+    revealed.push(file)
+    const parts = file.split(/[\\/]+/).filter(part => part !== '' && part !== '.')
+    const separator = file.includes('\\') ? '\\' : '/'
+    // Keep the original leading separator(s) when rebuilding ancestor dirs:
+    // FileTree matches expansion against ABSOLUTE paths, so dropping the
+    // root (POSIX `/w/src` �W `w/src`) or a UNC prefix (`\\server\share`)
+    // would leave every ancestor collapsed and the row unreachable.
+    const prefix = file.startsWith('/') ? '/' : file.startsWith('\\\\') ? '\\\\' : file.startsWith('\\') ? '\\' : ''
+    for (let i = rootParts.length; i < parts.length - 1; i++) {
+      expanded.add(prefix + parts.slice(0, i + 1).join(separator))
+    }
+  }
+  if (revealed.length === 0) return state
+  return { ...state, expanded: [...expanded], revealed }
+}
+
 /** Adjust one split divider: `i` is the left/top child index, delta in fractions. */
 export function resizeSplit(node: SplitNode, splitId: string, index: number, delta: number): SplitNode {
   if (node.kind === 'leaf') return node
@@ -672,6 +766,143 @@ export function resizeSplit(node: SplitNode, splitId: string, index: number, del
 export function resizeSplitIn(state: SidebarState, splitId: string, index: number, delta: number): SidebarState {
   const key = treeOf(state, splitId)
   return { ...state, [key]: resizeSplit(state[key], splitId, index, delta) }
+}
+
+// ── Free windows ────────────────────────────────────────────────────────────
+
+/** The viewport size, or Infinity where there is no (usable) window — unit
+ *  tests stub partial window objects, and a NaN bound would poison geometry. */
+function viewportW(): number {
+  return typeof window !== 'undefined' && Number.isFinite(window.innerWidth) ? window.innerWidth : Infinity
+}
+
+function viewportH(): number {
+  return typeof window !== 'undefined' && Number.isFinite(window.innerHeight) ? window.innerHeight : Infinity
+}
+
+/** Clamp free-window geometry: sizes respect the floor and the viewport, and
+ *  the position keeps the whole window inside the viewport. Without a window
+ *  (unit tests) only the floor applies — the caller's values pass through. */
+export function clampFloatGeometry(x: number, y: number, w: number, h: number): Pick<FloatWindow, 'x' | 'y' | 'w' | 'h'> {
+  const vw = viewportW()
+  const vh = viewportH()
+  const width = Math.round(Math.min(Math.max(w, FLOAT_MIN_W), Math.max(FLOAT_MIN_W, vw)))
+  const height = Math.round(Math.min(Math.max(h, FLOAT_MIN_H), Math.max(FLOAT_MIN_H, vh)))
+  return {
+    x: Math.round(Math.min(Math.max(x, 0), Math.max(0, vw - width))),
+    y: Math.round(Math.min(Math.max(y, 0), Math.max(0, vh - height))),
+    w: width,
+    h: height,
+  }
+}
+
+/**
+ * Float a docked tab: remove it from its pane (either tree; an emptied pane
+ * collapses like any move) and append a free window centered on the drop
+ * point, with the default size clamped to the viewport. The stacking order
+ * is the array order, so a fresh window is born topmost. An unknown tab id
+ * (or one already floating) is a strict no-op.
+ */
+export function floatTab(state: SidebarState, tabId: string, x: number, y: number): SidebarState {
+  let source: SidebarLeaf | undefined
+  let key: 'splits' | 'bottomSplits' | undefined
+  for (const treeKey of ['splits', 'bottomSplits'] as const) {
+    source = leafWithTab(state[treeKey], tabId)
+    if (source !== undefined) { key = treeKey; break }
+  }
+  if (key === undefined || source === undefined) return state
+  const tab = source.tabs.find(candidate => candidate.id === tabId)!
+  let emptied = false
+  let node = mapLeaf(state[key], source.id, (leaf) => {
+    leaf.tabs = leaf.tabs.filter(candidate => candidate.id !== tabId)
+    if (leaf.active === tabId) leaf.active = leaf.tabs[leaf.tabs.length - 1]?.id ?? null
+    if (leaf.tabs.length === 0) emptied = true
+  })
+  if (emptied) node = removeLeafAt(node, source.id)
+  // Phone-ratio default, capped to the viewport before centering so the
+  // clamped position never leaves the window's bottom past the fold.
+  const vw = viewportW()
+  const vh = viewportH()
+  const width = Math.min(FLOAT_DEFAULT_W, Math.max(FLOAT_MIN_W, vw - 24))
+  const height = Math.min(FLOAT_DEFAULT_H, Math.max(FLOAT_MIN_H, vh - 24))
+  const window = clampFloatGeometry(
+    x - width / 2,
+    y - height / 2,
+    width,
+    height,
+  )
+  const next: SidebarState = {
+    ...state,
+    [key]: node,
+    floats: [...state.floats, { id: uid('float'), tab, ...window }],
+  }
+  // The pane the user was working in may have just collapsed with the tab.
+  if (emptied && state.activePane === source.id) next.activePane = firstLeaf(next.splits).id
+  return next
+}
+
+/** Move a free window (clamped to the viewport); unknown ids are a no-op. */
+export function moveFloat(state: SidebarState, floatId: string, x: number, y: number): SidebarState {
+  const float = floatById(state, floatId)
+  if (float === undefined) return state
+  const geo = clampFloatGeometry(x, y, float.w, float.h)
+  if (geo.x === float.x && geo.y === float.y) return state
+  return { ...state, floats: state.floats.map(f => (f.id === floatId ? { ...f, ...geo } : f)) }
+}
+
+/** Resize a free window from its SE corner: the top-left corner stays
+ *  anchored, sizes clamp to the floor and to the viewport's remaining room. */
+export function resizeFloat(state: SidebarState, floatId: string, w: number, h: number): SidebarState {
+  const float = floatById(state, floatId)
+  if (float === undefined) return state
+  const vw = viewportW()
+  const vh = viewportH()
+  const width = Math.round(Math.min(Math.max(w, FLOAT_MIN_W), Math.max(FLOAT_MIN_W, vw - float.x)))
+  const height = Math.round(Math.min(Math.max(h, FLOAT_MIN_H), Math.max(FLOAT_MIN_H, vh - float.y)))
+  if (width === float.w && height === float.h) return state
+  return { ...state, floats: state.floats.map(f => (f.id === floatId ? { ...f, w: width, h: height } : f)) }
+}
+
+/** Bring a free window to the top (the array's end). Already topmost (or the
+ *  only window) returns the same reference — no persist churn on every click. */
+export function raiseFloat(state: SidebarState, floatId: string): SidebarState {
+  if (state.floats.length < 2) return state
+  const index = state.floats.findIndex(f => f.id === floatId)
+  if (index < 0 || index === state.floats.length - 1) return state
+  const floats = [...state.floats]
+  const [raised] = floats.splice(index, 1)
+  floats.push(raised!)
+  return { ...state, floats }
+}
+
+/** Dock a free window back into a pane (center merge): the tab joins the
+ *  target pane and activates. `toPane` defaults to the active pane with the
+ *  right tree's first leaf as the stale-id fallback (mirrors
+ *  {@link openTabInActivePane}). Unknown window ids are a no-op. */
+export function dockFloat(state: SidebarState, floatId: string, toPane?: string): SidebarState {
+  const float = floatById(state, floatId)
+  if (float === undefined) return state
+  let targetId = toPane ?? state.activePane ?? firstLeaf(state.splits).id
+  if (!allLeaves(state[treeOf(state, targetId)]).some(leaf => leaf.id === targetId)) {
+    targetId = firstLeaf(state.splits).id
+  }
+  const targetKey = treeOf(state, targetId)
+  return {
+    ...state,
+    floats: state.floats.filter(f => f.id !== floatId),
+    activePane: targetId,
+    [targetKey]: mapLeaf(state[targetKey], targetId, (leaf) => {
+      leaf.tabs = [...leaf.tabs, float.tab]
+      leaf.active = float.tab.id
+    }),
+  }
+}
+
+/** Close the free window holding a tab (the tab closes WITH the window —
+ *  the caller fires the descriptor's onClose lifecycle). */
+export function closeFloatByTab(state: SidebarState, tabId: string): SidebarState {
+  if (!state.floats.some(f => f.tab.id === tabId)) return state
+  return { ...state, floats: state.floats.filter(f => f.tab.id !== tabId) }
 }
 
 /** Prefix marking a tab id as an agent-owned terminal (suffix is the uuid). */
@@ -709,6 +940,7 @@ export function reconcileAgentTerminals(
   agentTerminals: ReadonlyArray<{ uuid: string; title: string }>,
 ): SidebarState {
   const existingTabs = allLeaves(state.splits).concat(allLeaves(state.bottomSplits)).flatMap(leaf => leaf.tabs)
+    .concat(state.floats.map(float => float.tab))
   const existingAgentTabs = existingTabs.filter(tab => isAgentTabId(tab.id))
   const existingUuids = new Set(existingAgentTabs.map(tab => agentUuidOf(tab.id)))
   const serverUuids = new Set(agentTerminals.map(t => t.uuid))
@@ -716,17 +948,22 @@ export function reconcileAgentTerminals(
   const toRemove = existingAgentTabs.filter(tab => !serverUuids.has(agentUuidOf(tab.id)))
   if (toAdd.length === 0 && toRemove.length === 0) return state
   // Remove tabs whose uuids vanished from the server list (the agent closed
-  // them, or the pty exited and was reaped). Reuse closeTab's leaf cleanup.
+  // them, or the pty exited and was reaped). Reuse closeTab's leaf cleanup;
+  // a FLOATED agent terminal leaves with its window.
   let splits = state.splits
+  let floats = state.floats
   for (const tab of toRemove) {
     const leaf = leafWithTab(splits, tab.id)
     if (leaf !== undefined) {
       splits = closeTab({ ...state, splits }, leaf.id, tab.id).splits
     }
+    if (floats.some(float => float.tab.id === tab.id)) {
+      floats = floats.filter(float => float.tab.id !== tab.id)
+    }
   }
   // Add tabs for new uuids (the agent created a terminal). They land in the
   // active pane via openTabInActivePane; the next reconcile is a no-op for them.
-  let next: SidebarState = { ...state, splits }
+  let next: SidebarState = { ...state, splits, floats }
   for (const terminal of toAdd) {
     const tab: SidebarTab = {
       id: agentTabId(terminal.uuid),
@@ -741,6 +978,44 @@ export function reconcileAgentTerminals(
 // ── The per-session store ──────────────────────────────────────────────────
 
 const STORAGE_PREFIX = 'dsh-sidebar:v1'
+
+/**
+ * Cross-session panel width: the last dragged width, shared by EVERY
+ * conversation (the panel width is a layout preference, not per-session
+ * content). Written on every persist, read at session load and on
+ * cache-hit session switches, so a drag in one conversation carries to all
+ * the others (last drag wins).
+ */
+const GLOBAL_WIDTH_KEY = 'dsh-sidebar:v1:width'
+
+/** Clamp one width to the contract and the current viewport (mirror of {@link setWidth}). */
+function clampWidth(width: number): number {
+  const max = typeof window !== 'undefined' ? Math.max(PANEL_MIN, window.innerWidth) : PANEL_MAX
+  return Math.min(max, Math.max(PANEL_MIN, Math.round(width)))
+}
+
+/** Read the cross-session panel width (undefined when never dragged). */
+function readGlobalWidth(): number | undefined {
+  try {
+    const raw = localStorage.getItem(GLOBAL_WIDTH_KEY)
+    if (raw !== null) {
+      const parsed = Number(raw)
+      if (Number.isFinite(parsed) && parsed > 0) return clampWidth(parsed)
+    }
+  } catch {
+    // Storage unavailable: fall back to the per-session behavior.
+  }
+  return undefined
+}
+
+/** Persist the cross-session panel width (best-effort, like the session states). */
+function writeGlobalWidth(width: number): void {
+  try {
+    localStorage.setItem(GLOBAL_WIDTH_KEY, String(width))
+  } catch {
+    // Storage full or unavailable: layout memory is best-effort.
+  }
+}
 
 /** Immutable snapshot handed to React (replaced only on real changes). */
 export interface SidebarSnapshot {
@@ -761,19 +1036,55 @@ export function defaultWidthFor(viewport: number, percent: number): number {
   return Math.min(viewport, Math.max(PANEL_MIN, Math.round(viewport * percent / 100)))
 }
 
-function loadState(sessionId: string, prefs: SidebarPrefs): SidebarState {
+/**
+ * URL escape hatch (#369): loading the app with `?dsh-sidebar-reset` drops
+ * the persisted layout for the session instead of restoring it. When a
+ * restored tab hangs the page on mount (the #369 freeze loop), reloading
+ * into the same state replays the hang forever; this param starts from the
+ * default layout and clears the stored copy, breaking the loop. Persisting
+ * resumes as soon as the param is gone from the URL.
+ */
+const RESET_PARAM = 'dsh-sidebar-reset'
+
+/** Whether the current page load asked for a persisted-state reset. */
+function resetRequested(): boolean {
   try {
-    const raw = localStorage.getItem(`${STORAGE_PREFIX}:${sessionId}`)
-    if (raw !== null) {
-      const parsed = JSON.parse(raw) as unknown
-      // Seed the uid counter past the persisted ids (it resets on reload);
-      // sanitize re-ids any duplicates the pre-seeding counter left behind.
-      nextIdCounter = maxCounterId(parsed)
-      const sanitized = sanitizeState(parsed)
-      if (sanitized !== undefined) return sanitized
-    }
+    return new URLSearchParams(window.location.search).has(RESET_PARAM)
   } catch {
-    // Corrupt or unavailable storage: fall through to the default.
+    return false
+  }
+}
+
+function loadState(sessionId: string, prefs: SidebarPrefs): SidebarState {
+  const reset = resetRequested()
+  if (reset) {
+    try {
+      localStorage.removeItem(`${STORAGE_PREFIX}:${sessionId}`)
+      localStorage.removeItem(GLOBAL_WIDTH_KEY)
+    } catch {
+      // Storage unavailable: the default layout below is still the escape.
+    }
+  }
+  // The panel width is a cross-session preference: the last dragged width
+  // wins over a session's own persisted value, so switching conversations
+  // keeps the width the user chose anywhere.
+  const globalWidth = reset ? undefined : readGlobalWidth()
+  if (!reset) {
+    try {
+      const raw = localStorage.getItem(`${STORAGE_PREFIX}:${sessionId}`)
+      if (raw !== null) {
+        const parsed = JSON.parse(raw) as unknown
+        // Seed the uid counter past the persisted ids (it resets on reload);
+        // sanitize re-ids any duplicates the pre-seeding counter left behind.
+        nextIdCounter = maxCounterId(parsed)
+        const sanitized = sanitizeState(parsed)
+        if (sanitized !== undefined) {
+          return globalWidth === undefined ? sanitized : { ...sanitized, width: globalWidth }
+        }
+      }
+    } catch {
+      // Corrupt or unavailable storage: fall through to the default.
+    }
   }
   // New sessions seed from the user's side card prefs: the width is the
   // chosen percent of the window (clamped to the panel floor and the
@@ -787,9 +1098,9 @@ function loadState(sessionId: string, prefs: SidebarPrefs): SidebarState {
   // user expands the drawer, `panelOpen: true` persists like any other
   // state.
   const viewport = typeof window !== 'undefined' ? window.innerWidth : undefined
-  const width = viewport === undefined
+  const width = globalWidth ?? (viewport === undefined
     ? PANEL_DEFAULT
-    : defaultWidthFor(viewport, prefs.defaultWidthPercent)
+    : defaultWidthFor(viewport, prefs.defaultWidthPercent))
   const openByDefault = prefs.openByDefault && (viewport === undefined || !isNarrowWidth(viewport))
   const seed: DefaultSeed = prefs.tabsEnabled['editor'] === false ? 'none' : 'editor-home'
   return makeDefaultState(width, openByDefault, seed)
@@ -825,8 +1136,9 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
   // bottom tree.
   const seen = new Set<string>()
   const reid = new Map<string, string>()
-  const splits = sanitizeNode(record.splits, seen, reid)
-  if (splits === undefined) return undefined
+  const restoredSplits = sanitizeNode(record.splits, seen, reid)
+  if (restoredSplits === undefined) return undefined
+  const splits = pruneEmptyPanes(restoredSplits)
   // Bottom-panel fields arrived in a later build: a missing or malformed
   // value on an OLDER persisted state defaults (closed / default height /
   // empty pane) so existing layouts keep loading, like nextBrowser.
@@ -840,18 +1152,52 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     ? record.bottomHeight
     : BOTTOM_DEFAULT
   const bottomHeight = Math.min(bottomCap, Math.max(BOTTOM_MIN, Math.round(rawHeight)))
-  const bottomSplits = sanitizeNode(record.bottomSplits, seen, reid)
-    ?? { kind: 'leaf' as const, id: uid('pane'), tabs: [], active: null }
+  const bottomSplits = pruneEmptyPanes(sanitizeNode(record.bottomSplits, seen, reid)
+    ?? { kind: 'leaf' as const, id: uid('pane'), tabs: [], active: null })
+  // Free windows arrived with the float feature: a missing field on an older
+  // persisted state defaults to none (like the bottom-panel fields above).
+  // Malformed ENTRIES drop individually — unlike the split trees, where
+  // corruption resets the whole state, a bad window must not cost the user
+  // their whole layout. Geometry clamps into the CURRENT viewport so a stale
+  // off-screen window stays reachable; the window ids join the same
+  // uniqueness set as the pane/split ids (the uid counter mints for both).
+  const floats: FloatWindow[] = []
+  if (Array.isArray(record.floats)) {
+    for (const entry of record.floats) {
+      if (entry === null || typeof entry !== 'object') continue
+      const candidate = entry as Record<string, unknown>
+      if (typeof candidate.id !== 'string' || seen.has(candidate.id)) continue
+      const tab = sanitizePersistedTab(candidate.tab)
+      if (tab === undefined || tab === 'diff') continue
+      if (
+        typeof candidate.x !== 'number' || !Number.isFinite(candidate.x)
+        || typeof candidate.y !== 'number' || !Number.isFinite(candidate.y)
+        || typeof candidate.w !== 'number' || !Number.isFinite(candidate.w)
+        || typeof candidate.h !== 'number' || !Number.isFinite(candidate.h)
+      ) continue
+      seen.add(candidate.id)
+      floats.push({ id: candidate.id, tab, ...clampFloatGeometry(candidate.x, candidate.y, candidate.w, candidate.h) })
+    }
+  }
+  const requestedActivePane = typeof record.activePane === 'string'
+    ? (reid.get(record.activePane) ?? record.activePane)
+    : null
+  const activePane = requestedActivePane === null
+    ? null
+    : treeHasId(splits, requestedActivePane) || treeHasId(bottomSplits, requestedActivePane)
+      ? requestedActivePane
+      : firstLeaf(splits).id
   const maxWidth = typeof window !== 'undefined' ? window.innerWidth : Infinity
   return {
     panelOpen: record.panelOpen,
     width: Math.max(PANEL_MIN, Math.min(record.width, maxWidth)),
     // A stale duplicate pane id may have been re-ided; follow the rename so
     // new tabs still land in the pane the user was using.
-    activePane: typeof record.activePane === 'string' ? (reid.get(record.activePane) ?? record.activePane) : null,
+    activePane,
     nextTerminal: record.nextTerminal,
     nextBrowser,
     expanded: record.expanded as string[],
+    revealed: [],
     splits,
     bottomOpen,
     bottomHeight,
@@ -860,7 +1206,18 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     // auto-terminal exactly once after the upgrade.
     bottomOpenedOnce: record.bottomOpenedOnce === true,
     bottomSplits,
+    floats,
   }
+}
+
+/** Collapse persisted split panes left empty after ephemeral diff tabs are dropped. */
+function pruneEmptyPanes(node: SplitNode): SplitNode {
+  const leaves = allLeaves(node)
+  if (!leaves.some(leaf => leaf.tabs.length > 0)) return node
+  return leaves.reduce(
+    (tree, leaf) => leaf.tabs.length === 0 ? removeLeafAt(tree, leaf.id) : tree,
+    node,
+  )
 }
 
 /**
@@ -883,6 +1240,42 @@ function uniqueNodeId(id: string, seen: Set<string>, reid: Map<string, string>):
   return fresh
 }
 
+/**
+ * Validate one persisted tab record. @returns the clean tab, `'diff'` for an
+ * ephemeral diff tab (dropped everywhere — diff tabs never survive a reload),
+ * or undefined when the record is malformed (structural corruption when it
+ * comes from a split-tree leaf; a malformed FLOAT tab only drops the window).
+ */
+function sanitizePersistedTab(tab: unknown): SidebarTab | 'diff' | undefined {
+  if (tab === null || typeof tab !== 'object') return undefined
+  const candidate = tab as Record<string, unknown>
+  if (typeof candidate.id !== 'string' || typeof candidate.title !== 'string') return undefined
+  if (candidate.type === 'diff') return 'diff'
+  // Tab types are an open set (external plugins register their own); accept
+  // any string type here — an unregistered type renders an <OrphanedTab/> at
+  // view time and recovers if its plugin loads later.
+  if (typeof candidate.type !== 'string') return undefined
+  // The standalone explorer tab type merged INTO the editor (the single
+  // files window): a persisted explorer tab reopens as an editor home tab —
+  // no path, tree panel open (an existing meta object survives).
+  if (candidate.type === 'explorer') {
+    const meta = candidate.meta !== null && typeof candidate.meta === 'object' && !Array.isArray(candidate.meta)
+      ? candidate.meta as Record<string, unknown>
+      : undefined
+    return { id: candidate.id, type: 'editor', title: 'Files', meta: { treeOpen: true, ...meta } }
+  }
+  // `meta` is plugin-owned JSON-serializable state (v0.12.0+): the persisted
+  // value already went through JSON.parse, so it is inherently serializable —
+  // carry it through verbatim (absent on older states).
+  return {
+    id: candidate.id,
+    type: candidate.type,
+    title: candidate.title,
+    ...(typeof candidate.path === 'string' ? { path: candidate.path } : {}),
+    ...(candidate.meta !== undefined ? { meta: candidate.meta } : {}),
+  }
+}
+
 /** Validate one split-tree node (leaf or split) and rebuild it cleanly. */
 function sanitizeNode(node: unknown, seen: Set<string>, reid: Map<string, string>): SplitNode | undefined {
   if (node === null || typeof node !== 'object') return undefined
@@ -892,46 +1285,13 @@ function sanitizeNode(node: unknown, seen: Set<string>, reid: Map<string, string
     const tabs: SidebarTab[] = []
     let droppedDiff = false
     for (const tab of record.tabs) {
-      if (tab === null || typeof tab !== 'object') return undefined
-      const candidate = tab as Record<string, unknown>
-      if (typeof candidate.id !== 'string' || typeof candidate.title !== 'string') return undefined
-      // Diff tabs are ephemeral by nature (like VSCode's diff editors):
-      // they never survive a reload, so a stale ref (e.g. a wrong staged
-      // side persisted by an older build) cannot resurface as a dead tab
-      // showing "no text changes" after every refresh.
-      if (candidate.type === 'diff') {
+      const clean = sanitizePersistedTab(tab)
+      if (clean === undefined) return undefined
+      if (clean === 'diff') {
         droppedDiff = true
         continue
       }
-      // Tab types are an open set (external plugins register their own);
-      // accept any string type here — an unregistered type renders an
-      // <OrphanedTab/> at view time and recovers if its plugin loads later.
-      if (typeof candidate.type !== 'string') return undefined
-      // The standalone explorer tab type merged INTO the editor (the single
-      // files window): a persisted explorer tab reopens as an editor home
-      // tab — no path, tree panel open (an existing meta object survives).
-      if (candidate.type === 'explorer') {
-        const meta = candidate.meta !== null && typeof candidate.meta === 'object' && !Array.isArray(candidate.meta)
-          ? candidate.meta as Record<string, unknown>
-          : undefined
-        tabs.push({
-          id: candidate.id,
-          type: 'editor',
-          title: 'Files',
-          meta: { treeOpen: true, ...meta },
-        })
-        continue
-      }
-      // `meta` is plugin-owned JSON-serializable state (v0.12.0+): the
-      // persisted value already went through JSON.parse, so it is inherently
-      // serializable — carry it through verbatim (absent on older states).
-      tabs.push({
-        id: candidate.id,
-        type: candidate.type,
-        title: candidate.title,
-        ...(typeof candidate.path === 'string' ? { path: candidate.path } : {}),
-        ...(candidate.meta !== undefined ? { meta: candidate.meta } : {}),
-      })
+      tabs.push(clean)
     }
     const active = typeof record.active === 'string' ? record.active : null
     // An active pointer into a dropped diff tab is expected after the drop;
@@ -1027,6 +1387,13 @@ export class SidebarStore {
         // counter below THIS session's persisted ids — re-seed so fresh
         // pane/split ids can never collide with its tree.
         nextIdCounter = maxCounterId(state)
+        // The panel width is cross-session: adopt the latest dragged width
+        // (a cached session keeps its own layout otherwise).
+        const globalWidth = readGlobalWidth()
+        if (globalWidth !== undefined && state.width !== globalWidth) {
+          state = { ...state, width: globalWidth }
+          this.bySession.set(sessionId, state)
+        }
       }
       this.snapshot = { sessionId, state, prefs: this.prefs }
     }
@@ -1121,6 +1488,14 @@ export class SidebarStore {
   }
 
   private schedulePersist(sessionId: string, state: SidebarState): void {
+    // Keep the cross-session width in sync: any width change (drag, fullscreen
+    // toggle) on the ACTIVE session becomes the shared width for every
+    // conversation. A targeted open persists an INACTIVE session (reduceFor)
+    // and must not clobber that global — its width is stale by definition,
+    // so writing it would break "last drag wins".
+    if (sessionId === this.snapshot.sessionId) {
+      writeGlobalWidth(state.width)
+    }
     // Per-session debounce timers: one session's pending write must never
     // cancel another's (targeted opens schedule writes for INACTIVE
     // sessions while the active session may already have one pending —

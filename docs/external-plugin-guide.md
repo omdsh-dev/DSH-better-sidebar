@@ -24,12 +24,12 @@ better-sidebar 从 v0.4.0 起把自己改造成一个**注册表服务**：
 
 ## 2. 前置：类型合并与依赖声明
 
-### 2.1 双 cordis 实例问题
+### 2.1 类型合并（统一 `@deepseek-ai/cordis`）
 
-外部插件在 DSH monorepo 之外解析，拿不到官方 cordis 的 augmentation，因此 `ctx.betterSidebar` 不会自动出现在你的 `Context` 类型上。解法由 better-sidebar 自己提供：
+DSH 运行时和生态的类型正主是 vendored `@deepseek-ai/cordis`。你的插件解析到它的 `Context` 时，`ctx.betterSidebar` 不会自动出现——由 better-sidebar 用 `declare module '@deepseek-ai/cordis'` 补上：
 
 ```ts
-import type {} from 'dsh-better-sidebar'  // 触发 declare module 'cordis' 类型合并
+import type {} from 'dsh-better-sidebar'  // 触发 declare module '@deepseek-ai/cordis' 类型合并
 ```
 
 这个 **type-only import** 在编译时被擦除，不产生任何运行时依赖，也不会触发构建纯度门（见 §10）。
@@ -40,7 +40,7 @@ import type {} from 'dsh-better-sidebar'  // 触发 declare module 'cordis' 类�
 {
   "name": "my-plugin",
   "peerDependencies": {
-    "cordis": "^4.0.0-rc.8",
+    "@deepseek-ai/cordis": "^4.0.1",
     "dsh-better-sidebar": "workspace:*"
   },
   "peerDependenciesMeta": {
@@ -78,7 +78,7 @@ import type {
 } from 'dsh-better-sidebar/client/service'
 ```
 
-> 💡 **类型合并触发路径**：`import type {} from 'dsh-better-sidebar/client/service'` 同样会加载 `Context` 的 augmentation（`declare module 'cordis'` 在 context-types.d.ts 中）——**纯浏览器侧插件建议走 `client/service` 路径**，避免拉进宿主半的 Node 类型图（主入口 `dsh-better-sidebar` 的声明面含宿主代码；宿主消费者本就处于 Node 环境则无所谓）。client 可达声明图（`client/*` + context-types + html-route + prefs-shared）自 v0.12.0 起**零 Node 依赖**（`scripts/check-consumer-types.sh` 守护），没有 `@types/node`、`skipLibCheck: false` 也能编译。
+> 💡 **类型合并触发路径**：`import type {} from 'dsh-better-sidebar/client/service'` 同样会加载 `Context` 的 augmentation（`declare module '@deepseek-ai/cordis'` 在 context-types.d.ts 中）——**纯浏览器侧插件建议走 `client/service` 路径**，避免拉进宿主半的 Node 类型图（主入口 `dsh-better-sidebar` 的声明面含宿主代码；宿主消费者本就处于 Node 环境则无所谓）。client 可达声明图（`client/*` + context-types + html-route + prefs-shared）自 v0.12.0 起**零 Node 依赖**（`scripts/check-consumer-types.sh` 守护），没有 `@types/node`、`skipLibCheck: false` 也能编译。
 
 ---
 
@@ -87,7 +87,7 @@ import type {
 ```ts
 // my-plugin/src/client/index.ts
 import type {} from 'dsh-better-sidebar'          // 触发 ctx.betterSidebar 类型合并
-import type { Context } from 'cordis'
+import type { Context } from '@deepseek-ai/cordis'
 
 export const inject = ['betterSidebar', 'slots']   // 声明服务依赖（slots 可选，按需）
 
@@ -487,6 +487,8 @@ const { value } = await res.json()   // 错误时 { ok: false, error: { code, me
 | `pty.close` / `agent-pty.close` | 释放终端（外部 tab 一般用不到） |
 | `settings.get` / `settings.update` | 侧边栏偏好读写（revision 守卫） |
 
+> **文件路径安全边界**：`fs.tree`、`fs.read`、`fs.write`、`/sidebar/file`、`/sidebar/html` 和 `/sidebar/upload` 都以请求对应 session 的权威 `cwd` 作为 workspace 根目录。路径会按真实文件系统路径检查，越界绝对路径、`..` 解析结果和指向 workspace 外部的符号链接都会被拒绝；消费插件不应把 `cwd` 当作可由用户扩大权限范围的参数。
+
 媒体/下载字节走 `/sidebar/file` 路由（`?sessionId=&path=&cwd=&download=1`）：
 
 ```ts
@@ -664,7 +666,7 @@ ctx.effect(() =>
 | 陷阱 | 说明 |
 |---|---|
 | **构建纯度门** | client bundle 禁止 value-import `@dsh-external/*` 或非白名单的 `@deepseek-ai/*`（`tsdown.config.ts` 的 `dsh-client-bundle-purity` 插件）；**类型 `import type {}` 会被擦除，不触发门禁**——类型可自由共享，运行时符号不行。所有跨插件交互走 `ctx.betterSidebar` 方法调用 |
-| **双 cordis 实例** | 外部插件解析不到 DSH monorepo 的 cordis augmentation；better-sidebar 自己重述了 `interface Context { betterSidebar: ... }`（`src/context-types.ts`），你 `import type {} from 'dsh-better-sidebar'` 即拿到类型 |
+| **统一 cordis 分支（v0.15.2+）** | 类型基底与 augmentation 全部在 DSH 运行时正主 `@deepseek-ai/cordis` 上（`src/context-types.ts`：真实 cordis `Context` 与结构化服务面做**交集**，不再重述 `declare module 'cordis'`）。消费者 `import type {} from 'dsh-better-sidebar'` 即拿到 `ctx.betterSidebar`，或直接 `import type { Context } from 'dsh-better-sidebar'`。公开版 `cordis` 不再被依赖 |
 | **ModuleLoader 不跨插件** | 运行时 `require()` 虽支持跨 bundle，但被构建门挡；所有交互走 `ctx.betterSidebar` 方法调用 |
 | **host 半无此服务** | `ctx.betterSidebar` 只在 client 侧存在；host 半需要 better-sidebar 数据走 `/sidebar/api/*` HTTP 路由 |
 | **portal 限制** | 整面板 slot 由 ui-layout 独占，外部 tab 只能进入 better-sidebar 的 portal 内部，无法全屏替换整个面板 |
@@ -690,7 +692,7 @@ ctx.effect(() =>
     "./client": { "types": "./lib/types/client/index.d.ts", "default": "./lib/client.js" }
   },
   "peerDependencies": {
-    "cordis": "^4.0.0-rc.8",
+    "@deepseek-ai/cordis": "^4.0.1",
     "dsh-better-sidebar": "workspace:*",
     "@deepseek-ai/dsh-client-runtime": "^0.0.1",
     "react": "^18.2.0"
@@ -706,7 +708,7 @@ ctx.effect(() =>
 ```tsx
 import { createElement } from 'react'
 import type {} from 'dsh-better-sidebar'  // 触发 ctx.betterSidebar 类型合并
-import type { Context } from 'cordis'
+import type { Context } from '@deepseek-ai/cordis'
 
 export const inject = ['betterSidebar']
 

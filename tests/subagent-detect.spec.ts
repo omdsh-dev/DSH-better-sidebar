@@ -98,6 +98,33 @@ describe('subagent detection over the sessions list feed', () => {
     expect(detectNewDirectSubagent(before, after, 'p2')).toBe(false)
   })
 
+  it('documents the title-frame race the Sidebar auto-open debounce absorbs', () => {
+    // The host delivers a new child's origin and title in SEPARATE frames:
+    // a Side Chat thread's FIRST visible frame still shows a fallback title
+    // (the cwd basename — no 'Side: ' prefix), so an immediate 0→N check
+    // misreads it as a genuine subagent. Sidebar.tsx therefore debounces
+    // AUTO_OPEN_DEBOUNCE_MS and re-evaluates the ORIGINAL baseline against
+    // the live snapshot; once the title frame has landed the same baseline
+    // yields no trigger. These two assertions pin exactly that dependency.
+    const baseline: SidebarSessionList = { current: 'p2', byId: { p2: { id: 'p2', displayTitle: 'P2' } } }
+    const firstFrame: SidebarSessionList = {
+      current: 'p2',
+      byId: {
+        p2: { id: 'p2', displayTitle: 'P2' },
+        s2: { id: 's2', displayTitle: 'DSH-better-sidebar', origin: 'subagent', parentId: 'p2' },
+      },
+    }
+    expect(detectNewDirectSubagent(baseline, firstFrame, 'p2')).toBe(true) // the race
+    const settled: SidebarSessionList = {
+      current: 'p2',
+      byId: {
+        p2: { id: 'p2', displayTitle: 'P2' },
+        s2: { id: 's2', displayTitle: 'Side: New thread', origin: 'subagent', parentId: 'p2' },
+      },
+    }
+    expect(detectNewDirectSubagent(baseline, settled, 'p2')).toBe(false) // after the debounce
+  })
+
   it('resolves the main-agent root of the current session tree', () => {
     const byId: SidebarSessionList['byId'] = {
       main: { id: 'main', displayTitle: 'Main' },

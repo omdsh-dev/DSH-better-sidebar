@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
-  activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, createSidebarStore,
-  insertLeafAt, makeDefaultState, migrateBottomTabs, moveTab, moveTabToEdge, openDiffTab,
-  openTabInActivePane, patchTab, resizeSplit, resizeSplitIn, sanitizeState, setBottomHeight,
+  activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeFloatByTab, closeTab, createSidebarStore,
+  dockFloat, FLOAT_MIN_H, FLOAT_MIN_W, floatTab, floatWithTab, insertLeafAt, makeDefaultState,
+  migrateBottomTabs, moveFloat, moveTab, moveTabToEdge, openDiffTab,
+  openTabInActivePane, patchTab, raiseFloat, reconcileAgentTerminals, resizeFloat, resizeSplit,
+  resizeSplitIn, revealPaths, sanitizeState, setBottomHeight,
   splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded, togglePanel,
-  type SidebarState, type SidebarTab, type SplitNode,
+  type SidebarLeaf, type SidebarState, type SidebarTab, type SplitNode,
 } from '../src/client/state.ts'
 
 describe('sidebar state', () => {
@@ -186,6 +188,29 @@ describe('sidebar state', () => {
     })
     expect(onlyDiff?.splits.kind).toBe('leaf')
     expect((onlyDiff?.splits as { tabs: SidebarTab[] }).tabs).toEqual([])
+  })
+
+  it('sanitize removes a pane emptied by ephemeral diff tabs', () => {
+    const valid = sanitizeState({
+      panelOpen: true,
+      width: 400,
+      nextTerminal: 1,
+      activePane: 'pane:diff',
+      expanded: [],
+      splits: {
+        kind: 'split',
+        id: 'split:1',
+        dir: 'col',
+        sizes: [0.5, 0.5],
+        children: [
+          { kind: 'leaf', id: 'pane:git', active: 'git', tabs: [{ id: 'git', type: 'git', title: 'Git' }] },
+          { kind: 'leaf', id: 'pane:diff', active: 'd1', tabs: [{ id: 'd1', type: 'diff', title: 'a.ts' }] },
+        ],
+      },
+    })
+    expect(valid?.splits.kind).toBe('leaf')
+    expect((valid?.splits as { id: string; tabs: SidebarTab[] }).id).toBe('pane:git')
+    expect(valid?.activePane).toBe('pane:git')
   })
 
   it('dedupes the single-instance subagent tab (focuses instead of duplicating)', () => {
@@ -716,11 +741,11 @@ describe('persisted state sanitization', () => {
     const clean = sanitizeState(corrupted)
     expect(clean).toBeDefined()
     const leaves = allLeaves(clean!.splits)
-    // The first occurrence keeps its id; the repeat gets a fresh unique one
-    // (exact suffix depends on the module-level uid counter, so assert shape).
-    expect(leaves[0]!.id).toBe('pane:1')
-    expect(new Set(leaves.map(leaf => leaf.id)).size).toBe(2)
-    expect(clean!.activePane).toBe(leaves[1]!.id)
+    // The empty first occurrence is pruned; the populated repeat keeps its
+    // fresh unique id and becomes active.
+    expect(leaves).toHaveLength(1)
+    expect(leaves[0]!.id).not.toBe('pane:1')
+    expect(clean!.activePane).toBe(leaves[0]!.id)
     // And an open must land in exactly one pane of the healed tree.
     const opened = openTabInActivePane(clean!, { id: 'editor:/a.ts', type: 'editor', title: 'a.ts', path: '/a.ts' })
     const owners = allLeaves(opened.splits).filter(leaf => leaf.tabs.some(tab => tab.path === '/a.ts'))
@@ -846,7 +871,10 @@ describe('v0.12.0 store additions', () => {
         // timers BOTH writes are pending and both land when they fire.
         expect(timers.size).toBe(2)
         for (const [, fn] of [...timers]) fn()
-        expect(writes).toEqual(['dsh-sidebar:v1:a', 'dsh-sidebar:v1:b'])
+        // Each persist also syncs the shared cross-session width key (PR #36).
+        expect(writes.filter(key => key !== 'dsh-sidebar:v1:width'))
+          .toEqual(['dsh-sidebar:v1:a', 'dsh-sidebar:v1:b'])
+        expect(writes).toContain('dsh-sidebar:v1:width')
       } finally {
         delete g.window
         delete g.localStorage
@@ -871,5 +899,387 @@ describe('v0.12.0 store additions', () => {
       const tabs = allLeaves(sanitized!.splits).flatMap(leaf => leaf.tabs)
       expect(tabs[0]?.meta).toEqual({ q: [1, 2], n: 0 })
     })
+  })
+})
+
+describe('free windows (v0.16.0)', () => {
+  // Node environment: no window → the viewport clamps are Infinity and only
+  // the size floors apply; the geometry tests stub a window where clamping
+  // is the point under test.
+  const state = (): SidebarState => makeDefaultState()
+
+  it('floatTab moves a docked tab into floats (pane keeps its other tabs)', () => {
+    let s = state()
+    const git = { id: 'git', type: 'git' as const, title: 'Git' }
+    const term = { id: 'term:1', type: 'terminal' as const, title: 'Term' }
+    s = openTabInActivePane(s, git)
+    s = openTabInActivePane(s, term)
+    const floated = floatTab(s, git.id, 300, 200)
+    const leaf = floated.splits as SidebarLeaf
+    expect(leaf.tabs).toHaveLength(2)
+    expect(leaf.tabs.some(tab => tab.id === 'git')).toBe(false)
+    // The pane's active pointer fell to the last remaining tab.
+    expect(leaf.active).toBe('term:1')
+    expect(floated.floats).toHaveLength(1)
+    expect(floated.floats[0]!.tab).toEqual(git)
+    // Phone-ratio default (390x780) centered on the drop point (no viewport
+    // → size cap never bites; only the negative y clamps to 0).
+    expect(floated.floats[0]).toMatchObject({ x: 300 - 195, y: 0, w: 390, h: 780 })
+    expect(floated.activePane).toBe(leaf.id)
+  })
+
+  it('floatTab collapses a pane it empties and repoints the active pane', () => {
+    let s = state()
+    const paneId = (s.splits as SidebarLeaf).id
+    s = splitPane(s, 'row')
+    const fresh = allLeaves(s.splits).find(leaf => leaf.id !== paneId)!
+    s = { ...s, activePane: fresh.id }
+    s = openTabInActivePane(s, { id: 'term:1', type: 'terminal', title: 'T' })
+    expect(allLeaves(s.splits).find(leaf => leaf.id === fresh.id)!.tabs).toHaveLength(1)
+    const floated = floatTab(s, 'term:1', 100, 100)
+    expect(floated.floats).toHaveLength(1)
+    expect(allLeaves(floated.splits).some(leaf => leaf.id === fresh.id)).toBe(false)
+    expect(floated.activePane).toBe(paneId)
+  })
+
+  it('floatTab with an unknown or already-floating tab id is a strict no-op', () => {
+    let s = state()
+    const git = { id: 'git', type: 'git' as const, title: 'Git' }
+    s = openTabInActivePane(s, git)
+    expect(floatTab(s, 'nope', 0, 0)).toBe(s)
+    const floated = floatTab(s, 'git', 50, 50)
+    expect(floatTab(floated, 'git', 60, 60)).toBe(floated)
+  })
+
+  it('moveFloat / resizeFloat clamp to the viewport (floors always)', () => {
+    const g = globalThis as Record<string, unknown>
+    const previous = g.window
+    g.window = { innerWidth: 1024, innerHeight: 768 }
+    try {
+      let s = state()
+      const git = { id: 'git', type: 'git' as const, title: 'Git' }
+      s = floatTab(openTabInActivePane(s, git), 'git', 512, 384)
+      const id = s.floats[0]!.id
+      // Negative position clamps to 0; the window stays fully inside.
+      let moved = moveFloat(s, id, -50, -50)
+      expect(moved.floats[0]).toMatchObject({ x: 0, y: 0 })
+      // Beyond the right/bottom edge clamps the top-left so the window fits.
+      moved = moveFloat(moved, id, 5000, 5000)
+      // The float was CREATED capped to the viewport: w 390, h 768-24=744.
+      expect(moved.floats[0]!.x).toBe(1024 - 390)
+      expect(moved.floats[0]!.y).toBe(768 - 744)
+      // No-op move returns the same reference (no persist churn).
+      expect(moveFloat(moved, id, moved.floats[0]!.x, moved.floats[0]!.y)).toBe(moved)
+      // Resize: floors, viewport ceiling, and the SE-corner anchor (x/y keep).
+      let resized = resizeFloat(moved, id, 10, 10)
+      expect(resized.floats[0]).toMatchObject({ w: FLOAT_MIN_W, h: FLOAT_MIN_H })
+      resized = resizeFloat(resized, id, 5000, 5000)
+      expect(resized.floats[0]!.w).toBe(1024 - resized.floats[0]!.x)
+      expect(resized.floats[0]!.h).toBe(768 - resized.floats[0]!.y)
+      // No-op resize and unknown ids return the same reference.
+      expect(resizeFloat(resized, id, resized.floats[0]!.w, resized.floats[0]!.h)).toBe(resized)
+      expect(resizeFloat(resized, 'nope', 400, 400)).toBe(resized)
+    } finally {
+      if (previous === undefined) delete g.window
+      else g.window = previous
+    }
+  })
+
+  it('raiseFloat moves a window to the top and is idempotent at the top', () => {
+    let s = state()
+    s = floatTab(openTabInActivePane(s, { id: 'a', type: 'db', title: 'a' }), 'a', 100, 100)
+    s = floatTab(openTabInActivePane(s, { id: 'b', type: 'db', title: 'b' }), 'b', 100, 100)
+    s = floatTab(openTabInActivePane(s, { id: 'c', type: 'db', title: 'c' }), 'c', 100, 100)
+    expect(s.floats.map(f => f.tab.id)).toEqual(['a', 'b', 'c'])
+    const raised = raiseFloat(s, s.floats[0]!.id)
+    expect(raised.floats.map(f => f.tab.id)).toEqual(['b', 'c', 'a'])
+    // Already topmost / unknown id → same reference (no notify churn).
+    expect(raiseFloat(raised, raised.floats[2]!.id)).toBe(raised)
+    expect(raiseFloat(raised, 'float:none')).toBe(raised)
+    // A single window has nothing to raise: same reference.
+    let single = state()
+    single = floatTab(single, (single.splits as SidebarLeaf).tabs[0]!.id, 0, 0)
+    expect(single.floats).toHaveLength(1)
+    expect(raiseFloat(single, single.floats[0]!.id)).toBe(single)
+  })
+
+  it('dockFloat lands the tab in the target pane (or the active pane) and activates it', () => {
+    let s = state()
+    const git = { id: 'git', type: 'git' as const, title: 'Git' }
+    s = floatTab(openTabInActivePane(s, git), 'git', 100, 100)
+    const floatId = s.floats[0]!.id
+    // Explicit target pane.
+    s = splitPane(s, 'row')
+    const target = allLeaves(s.splits).find(leaf => leaf.tabs.length === 0)!
+    const docked = dockFloat(s, floatId, target.id)
+    expect(docked.floats).toHaveLength(0)
+    expect(allLeaves(docked.splits).find(leaf => leaf.id === target.id)!.tabs.map(tab => tab.id)).toEqual(['git'])
+    expect(docked.activePane).toBe(target.id)
+    // Default target: the active pane.
+    let s2 = state()
+    const home = (s2.splits as SidebarLeaf).tabs[0]!
+    s2 = splitPane(s2, 'row')
+    s2 = floatTab(s2, home.id, 100, 100)
+    const active = s2.activePane!
+    const docked2 = dockFloat(s2, s2.floats[0]!.id)
+    expect(docked2.floats).toHaveLength(0)
+    expect(allLeaves(docked2.splits).find(leaf => leaf.id === active)!.tabs.some(tab => tab.id === home.id)).toBe(true)
+    expect(docked2.activePane).toBe(active)
+    // Stale target falls back to the right tree's first leaf.
+    let s3 = state()
+    const home3 = (s3.splits as SidebarLeaf).tabs[0]!
+    s3 = floatTab(s3, home3.id, 0, 0)
+    const docked3 = dockFloat(s3, s3.floats[0]!.id, 'pane:gone')
+    expect(docked3.floats).toHaveLength(0)
+    expect(allLeaves(docked3.splits).some(leaf => leaf.tabs.some(tab => tab.id === home3.id))).toBe(true)
+    // Unknown float id is a strict no-op.
+    expect(dockFloat(docked3, 'float:gone')).toBe(docked3)
+  })
+
+  it('tabOpenIn / patchTab / floatWithTab see floating tabs', () => {
+    let s = state()
+    const git = { id: 'git', type: 'git' as const, title: 'Git' }
+    s = floatTab(openTabInActivePane(s, git), 'git', 100, 100)
+    expect(tabOpenIn(s, 'git')).toBe(true)
+    expect(floatWithTab(s, 'git')!.id).toBe(s.floats[0]!.id)
+    const patched = patchTab(s, 'git', { title: 'Git 2', path: '/x' })
+    expect(patched.floats[0]!.tab).toMatchObject({ title: 'Git 2', path: '/x' })
+    expect(allLeaves(patched.splits).some(leaf => leaf.tabs.some(tab => tab.id === 'git'))).toBe(false)
+  })
+
+  it('closeFloatByTab removes exactly the window holding the tab', () => {
+    let s = state()
+    const git = { id: 'git', type: 'git' as const, title: 'Git' }
+    const term = { id: 'term:1', type: 'terminal' as const, title: 'T' }
+    s = openTabInActivePane(s, git)
+    s = openTabInActivePane(s, term)
+    s = floatTab(s, 'git', 50, 50)
+    s = floatTab(s, 'term:1', 60, 60)
+    expect(s.floats).toHaveLength(2)
+    const after = closeFloatByTab(s, 'git')
+    expect(after.floats.map(f => f.tab.id)).toEqual(['term:1'])
+    expect(closeFloatByTab(after, 'git')).toBe(after)
+  })
+
+  it('openTabInActivePane focuses a floating tab by raising (id safety net)', () => {
+    let s = state()
+    const git = { id: 'git', type: 'git' as const, title: 'Git' }
+    const term = { id: 'term:1', type: 'terminal' as const, title: 'T' }
+    s = floatTab(openTabInActivePane(s, git), 'git', 50, 50)
+    s = floatTab(openTabInActivePane(s, term), 'term:1', 60, 60)
+    // Reopening the floated id must NOT duplicate: it raises the window.
+    const after = openTabInActivePane(s, { id: 'git', type: 'git', title: 'Git' })
+    expect(after.floats.map(f => f.tab.id)).toEqual(['term:1', 'git'])
+    expect(allLeaves(after.splits).some(leaf => leaf.tabs.some(tab => tab.id === 'git'))).toBe(false)
+  })
+
+  it('reconcileAgentTerminals removes a vanished FLOATED agent terminal with its window', () => {
+    let s = state()
+    s = openTabInActivePane(s, { id: 'agent:u1', type: 'terminal', title: 'A1' })
+    s = floatTab(s, 'agent:u1', 50, 50)
+    s = openTabInActivePane(s, { id: 'agent:u2', type: 'terminal', title: 'A2' })
+    expect(s.floats).toHaveLength(1)
+    const after = reconcileAgentTerminals(s, [{ uuid: 'u2', title: 'A2' }])
+    expect(after.floats).toHaveLength(0)
+    expect(allLeaves(after.splits).flatMap(leaf => leaf.tabs).some(tab => tab.id === 'agent:u2')).toBe(true)
+  })
+
+  describe('revealPaths (show in folder)', () => {
+    it('expands ancestors with their ABSOLUTE path (leading separator preserved)', () => {
+      // POSIX: the root (/w/src) is not itself expanded, but the subdirs
+      // below it must be recorded as ABSOLUTE paths so FileTree's
+      // `expanded.includes(entry.path)` matches.
+      const base = makeDefaultState()
+      const next = revealPaths(base, '/w/src', ['/w/src/sub/deep/a.ts'])
+      expect(next.revealed).toEqual(['/w/src/sub/deep/a.ts'])
+      expect(next.expanded).toContain('/w/src/sub')
+      expect(next.expanded).toContain('/w/src/sub/deep')
+      expect(next.expanded).not.toContain('w/src/sub')
+      expect(next.expanded).not.toContain('/w/src')
+    })
+
+    it('keeps a Windows drive-letter root and a UNC prefix', () => {
+      const drive = revealPaths(makeDefaultState(), 'C:\\work', ['C:\\work\\src\\a.ts'])
+      expect(drive.expanded).toContain('C:\\work\\src')
+      const unc = revealPaths(makeDefaultState(), '\\\\server\\share', ['\\\\server\\share\\sub\\a.ts'])
+      expect(unc.expanded).toContain('\\\\server\\share\\sub')
+    })
+
+    it('resolves nothing to the same reference (no churn)', () => {
+      const base = makeDefaultState()
+      expect(revealPaths(base, '/w', [])).toBe(base)
+    })
+  })
+
+  describe('sanitizeState (floats)', () => {
+    const g = globalThis as Record<string, unknown>
+    beforeEach(() => {
+      g.window = { clearTimeout: () => {}, setTimeout: () => 0, innerWidth: 1024, innerHeight: 768 }
+      g.localStorage = { getItem: () => null, setItem: () => {} }
+    })
+    afterEach(() => {
+      delete g.window
+      delete g.localStorage
+    })
+
+    const base = (): Record<string, unknown> => ({
+      panelOpen: true,
+      width: 400,
+      nextTerminal: 1,
+      activePane: 'pane:1',
+      expanded: [],
+      splits: { kind: 'leaf', id: 'pane:1', active: null, tabs: [] },
+    })
+
+    it('a missing floats field defaults to none (older persisted states load)', () => {
+      const restored = sanitizeState(base())!
+      expect(restored.floats).toEqual([])
+    })
+
+    it('drops malformed entries individually and keeps the layout (unlike tree corruption)', () => {
+      const parsed = base()
+      parsed.floats = [
+        'garbage',
+        { id: 'float:1' }, // no tab
+        { id: 'float:2', tab: { id: 't', type: 'git', title: 'G' }, x: 10, y: 10 }, // no w/h
+        { id: 'float:3', tab: { id: 't3', type: 'git', title: 'G3' }, x: 10, y: 10, w: 500, h: 400 },
+        { id: 'float:3', tab: { id: 't3b', type: 'git', title: 'G3b' }, x: 0, y: 0, w: 400, h: 300 }, // duplicate id
+      ]
+      const restored = sanitizeState(parsed)!
+      expect(restored.floats).toHaveLength(1)
+      expect(restored.floats[0]).toMatchObject({ id: 'float:3', tab: { id: 't3' }, x: 10, y: 10 })
+      expect(restored.splits).toBeDefined()
+    })
+
+    it('drops ephemeral diff tabs and migrates explorer tabs inside floats', () => {
+      const parsed = base()
+      parsed.floats = [
+        { id: 'float:1', tab: { id: 'd', type: 'diff', title: 'D' }, x: 0, y: 0, w: 400, h: 300 },
+        { id: 'float:2', tab: { id: 'ex', type: 'explorer', title: 'Explorer' }, x: 0, y: 0, w: 400, h: 300 },
+      ]
+      const restored = sanitizeState(parsed)!
+      expect(restored.floats.map(f => f.tab.type)).toEqual(['editor'])
+      expect(restored.floats[0]!.tab).toMatchObject({ title: 'Files', meta: { treeOpen: true } })
+    })
+
+    it('clamps stale off-screen geometry into the current viewport', () => {
+      const parsed = base()
+      parsed.floats = [
+        { id: 'float:1', tab: { id: 't', type: 'git', title: 'G' }, x: -200, y: 900, w: 5000, h: 5000 },
+      ]
+      const restored = sanitizeState(parsed)!
+      // Sizes cap at the viewport, and the capped window lands at 0,0 (the
+      // position clamp sees no room beyond it).
+      expect(restored.floats[0]).toMatchObject({ x: 0, y: 0, w: 1024, h: 768 })
+    })
+
+    it('the uid counter seeds past persisted float ids (no collision on re-float)', () => {
+      // Persisted: the pane max is 1, but floats reach float:2 — the counter
+      // must seed to 2 so a fresh float mints float:3+, never a duplicate
+      // float:2. (Intermediate mints during sanitize may raise it further;
+      // the guarantee under test is uniqueness, not an exact value.)
+      const parsed = base()
+      parsed.floats = [
+        { id: 'float:2', tab: { id: 't2', type: 'git', title: 'G2' }, x: 0, y: 0, w: 400, h: 300 },
+      ]
+      const saved = new Map<string, string>()
+      saved.set('dsh-sidebar:v1:seedtest', JSON.stringify(parsed))
+      g.localStorage = {
+        getItem: (key: string) => saved.get(key) ?? null,
+        setItem: (key: string, value: string) => { saved.set(key, value) },
+      }
+      const store = createSidebarStore()
+      store.setSession('seedtest')
+      const s = store.getSnapshot().state!
+      expect(s.floats[0]!.id).toBe('float:2')
+      store.reduce(cur => openTabInActivePane(cur, { id: 'tab:9', type: 'git', title: 'G9' }))
+      store.reduce(cur => floatTab(cur, 'tab:9', 30, 30))
+      const next = store.getSnapshot().state!
+      expect(next.floats).toHaveLength(2)
+      expect(new Set(next.floats.map(f => f.id)).size).toBe(2)
+      const freshId = next.floats.map(f => f.id).find(id => id !== 'float:2')!
+      expect(freshId).toMatch(/^float:\d+$/)
+      expect(Number(freshId.slice('float:'.length))).toBeGreaterThan(2)
+    })
+
+    it('floats survive a full persist round-trip (geometry verbatim when in-viewport)', () => {
+      const parsed = base()
+      parsed.floats = [
+        { id: 'float:1', tab: { id: 't', type: 'git', title: 'G', meta: { k: 1 } }, x: 12, y: 34, w: 480, h: 360 },
+      ]
+      const restored = sanitizeState(parsed)!
+      const again = sanitizeState(JSON.parse(JSON.stringify(restored)))!
+      expect(again.floats).toEqual(restored.floats)
+    })
+  })
+})
+
+describe('URL reset escape hatch (issue #369)', () => {
+  // Same browser-global stubs as the v0.12.0 block above; loadState reads
+  // window.location.search (reset param) and localStorage (persisted state).
+  beforeEach(() => {
+    const g = globalThis as Record<string, unknown>
+    g.window = { clearTimeout: () => {}, setTimeout: () => 0, innerWidth: 1024, innerHeight: 800, location: { search: '' } }
+    g.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} }
+  })
+  afterEach(() => {
+    const g = globalThis as Record<string, unknown>
+    delete g.window
+    delete g.localStorage
+  })
+
+  /** A persisted layout whose restored git tab would re-hang the page. */
+  const frozenState = JSON.stringify({
+    panelOpen: true,
+    width: 400,
+    nextTerminal: 1,
+    activePane: 'pane:1',
+    expanded: [],
+    splits: { kind: 'leaf', id: 'pane:1', active: 'g1', tabs: [{ id: 'g1', type: 'git', title: 'Git' }] },
+    bottomSplits: { kind: 'leaf', id: 'pane:b', active: null, tabs: [] },
+  })
+
+  const searchOf = (): { search: string } =>
+    (globalThis as unknown as { window: { location: { search: string } } }).window.location
+
+  it('restores the persisted layout when the param is absent', () => {
+    const g = globalThis as Record<string, unknown>
+    g.localStorage = {
+      getItem: (key: string) => (key === 'dsh-sidebar:v1:s1' ? frozenState : null),
+      setItem: () => {},
+      removeItem: () => {},
+    }
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const leaf = store.getSnapshot().state!.splits as { tabs: { type: string }[] }
+    expect(leaf.tabs.map(tab => tab.type)).toEqual(['git'])
+  })
+
+  it('?dsh-sidebar-reset drops the persisted layout and clears the stored copy', () => {
+    const g = globalThis as Record<string, unknown>
+    const removed: string[] = []
+    g.localStorage = {
+      getItem: (key: string) => (key === 'dsh-sidebar:v1:s1' ? frozenState : null),
+      setItem: () => {},
+      removeItem: (key: string) => { removed.push(key) },
+    }
+    searchOf().search = '?dsh-sidebar-reset'
+    const store = createSidebarStore()
+    store.setSession('s1')
+    // The default layout (editor home tab) — NOT the frozen git-only state.
+    const leaf = store.getSnapshot().state!.splits as { tabs: { type: string }[] }
+    expect(leaf.tabs.map(tab => tab.type)).toEqual(['editor'])
+    // The stored copy is gone, so reloading without the param cannot restore
+    // the hanging layout either.
+    expect(removed).toContain('dsh-sidebar:v1:s1')
+    expect(removed).toContain('dsh-sidebar:v1:width')
+  })
+
+  it('the reset param tolerates a value (?dsh-sidebar-reset=1)', () => {
+    searchOf().search = '?foo=bar&dsh-sidebar-reset=1'
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const leaf = store.getSnapshot().state!.splits as { tabs: { type: string }[] }
+    expect(leaf.tabs.map(tab => tab.type)).toEqual(['editor'])
   })
 })

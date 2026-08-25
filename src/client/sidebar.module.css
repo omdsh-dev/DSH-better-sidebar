@@ -24,16 +24,28 @@
    containing block for every panel element. Panels are ABSOLUTE within it
    (not fixed), so a desktop shell's intermediate wrapper transform can
    never hijack their containing block — the host itself is the only fixed
-   element, appended directly to document.body. The layer sits at z-index 40
-   (below the app's overlay stack at 100+); each panel re-enables pointer
+   element, appended directly to document.body. The layer sits at z-index 25:
+   above the app's shell overlay (AppFrame overlayLayer, 20) and in-flow
+   content, below DSH's ui-cordis dynamic-plugin panel (fixed, 30 — the
+   inventory/surfacing surface must never be hidden behind the workbench),
+   and below the app's overlay stack at 100+; each panel re-enables pointer
    events on itself. Degraded mode ([data-dsh-panel-host-degraded]) covers
    the rare shell that transforms <html>/<body> itself: the host becomes
    absolute and the mount self-check pins it to the viewport every frame. */
 :global([data-dsh-panel-host]) {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: 25;
   pointer-events: none;
+  /* Clip at the viewport edge: collapsed panels slide off-screen with
+     `transform: translate(102%)`, and a transformed element still
+     contributes to its ancestors' scrollable overflow — without this the
+     hidden panels extended the document's scrollable area, making the whole
+     page draggable left-right and up-down while any panel was collapsed.
+     The host is exactly viewport-sized (inset: 0), so the clip is invisible
+     until a panel slides in from the edge; internal scroll containers and
+     the app's fixed overlay stack are unaffected. */
+  overflow: hidden;
 }
 
 :global([data-dsh-panel-host][data-dsh-panel-host-degraded]) {
@@ -46,11 +58,13 @@
    controls side by side (bottom panel's glyph LEFT of the right panel's).
    Always pinned to the viewport corner — inside the right panel's top-right
    while it is open, sitting flush in the 34px tab strip (28px buttons at
-   top: 3) whose right end it really squeezes. z-index 45: above the panels
-   (40) but below the app's overlay stack (menus/tooltips/modals sit at
-   100+), so a cordis approval popup is never hidden behind the workbench
-   (issue #52). Absolute within the panel host (the host's inset: 0 makes
-   viewport coordinates identical). */
+   top: 3) whose right end it really squeezes. Host-internal z-index 45
+   (above the panels' 40); the host's global layer is z-index 25, so the
+   whole cluster stays below DSH's ui-cordis dynamic-plugin panel (30) and
+   the app's overlay stack (menus/tooltips/modals sit at 100+), so a cordis
+   approval popup is never hidden behind the workbench (issue #52). Absolute
+   within the panel host (the host's inset: 0 makes viewport coordinates
+   identical). */
 .toggleCluster {
   position: absolute;
   /* env() resolves to 0 on devices without a top inset (desktops). */
@@ -91,27 +105,33 @@
     color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
-.toggleButton:hover:not(:disabled) {
+.toggleButton:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
 }
 
-.toggleButton:disabled {
+.toggleButton:disabled,
+.toggleButton[aria-disabled='true'] {
   opacity: 0.4;
   cursor: default;
 }
 
 .panel {
+  box-sizing: border-box;
   position: absolute;
   top: 0;
   right: 0;
   /* Full height: the bottom panel squeezes only the center column, so the
      right panel never gives up any vertical position. */
   bottom: 0;
-  /* z-index 40: above the app's in-flow content, below the app's overlay
-     stack (100+), so menus/tooltips/modals always win over the panels
-     (issue #52). The toggle cluster (45) sits above it; the corner handle
-     is a child and stacks within the panel. */
+  /* Host-internal z-index 40 (sibling of the bottom panel's 40; the two
+     never overlap — the bottom panel's right edge is this panel's left
+     edge — and both sit below the toggle cluster's 45). The absolute
+     global layer comes from the host ([data-dsh-panel-host], 25) — the
+     whole stack stays above the app's in-flow content and below DSH's
+     ui-cordis dynamic-plugin panel (30) and the app's overlay stack (100+),
+     so menus/tooltips/modals always win over the panels (issue #52). The
+     corner handle is a child and stacks within the panel. */
   z-index: 40;
   display: flex;
   flex-direction: column;
@@ -178,9 +198,11 @@
    column only (the Sidebar shell writes left/right inline: from the app's
    own left sidebar to the right panel's left edge) — the sidebars never
    give up any position. Same surface as the right panel, with a top
-   hairline instead of the left one. z-index 40 mirrors the right panel
-   (issue #52: below the app's overlay stack so popups win over the
-   workbench). */
+   hairline instead of the left one. Host-internal z-index 40 mirrors the
+   right panel; the absolute global layer comes from the host (25), below
+   DSH's ui-cordis dynamic-plugin panel (30) so the cordis inventory
+   surface floats above the workbench, and below the app's overlay stack
+   (100+) so popups win over the workbench (issue #52). */
 .bottomPanel {
   position: absolute;
   bottom: 0;
@@ -282,6 +304,148 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding-right: 40px;
 }
 
+/* ── Free windows ──────────────────────────────────────────────────────── */
+
+/* One floating tab: the same card surface as the panels, at viewport
+   coordinates inside the panel host (immune to shell transforms). z-index
+   42: above the panels (40) so a window drags across them, below the
+   toggle cluster (45) and the app's overlay stack (100+, issue #52).
+   Stacking among windows is the floats array order (siblings share the
+   z-index; DOM order wins). Deliberately NO box transition — the header/
+   resize drags write left/top/width/height per frame. Elevated surface,
+   so unlike the flat panels it earns a shadow token. */
+.floatWindow {
+  position: absolute;
+  z-index: 42;
+  display: flex;
+  flex-direction: column;
+  /* Re-enable interaction inside the click-transparent panel host. */
+  pointer-events: auto;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  box-shadow: var(--dsw-shadow-lv3);
+  overflow: hidden;
+  contain: layout style;
+}
+
+.floatWindowDragging {
+  will-change: left, top, width, height;
+}
+
+/* The header: the move/dock-back drag handle, mirroring the tab strip's
+   chrome (34px, hairline bottom, secondary label). */
+.floatHeader {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 34px;
+  padding: 0 4px 0 10px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-1);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  cursor: grab;
+  user-select: none;
+}
+
+.floatWindowDragging .floatHeader {
+  cursor: grabbing;
+}
+
+.floatTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Mirrors .tabClose. */
+.floatClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  flex: none;
+}
+
+.floatClose:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* Mirrors .paneContent's column-flex contract: the tab cell must hand its
+   child a definite WIDTH via align-stretch. A row flex (the default) sizes
+   the main axis (width) from content — intrinsic-zero hosts (e.g. a plugin
+   tab UI) collapse to a 0px-wide sliver and paint nothing (the blank
+   whale-report window). */
+.floatContent {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* The SE resize corner (mirror of .cornerHandle). */
+.floatResize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  z-index: 2;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.floatResize:hover {
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+/* A pane highlighted as the dock target while a float header drag hovers it
+   (the attribute is written directly by the drag at pointer cadence;
+   skin-addressable via [data-dsh-pane][data-dsh-float-dock-over]). */
+.pane[data-dsh-float-dock-over] {
+  outline: 2px dashed var(--dsw-alias-interactive-bg-hover-accent);
+  outline-offset: -2px;
+}
+
+/* The drag-out hint over the conversation column: a dashed frame marking
+   the drop zone, pointer-transparent so it never disturbs the drag it
+   describes. z-index 46: above the windows (42) for unambiguous feedback,
+   still below the app's overlay stack. */
+.floatDropHint {
+  position: absolute;
+  z-index: 46;
+  pointer-events: none;
+  border: 2px dashed var(--dsw-alias-interactive-bg-hover-accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent) 12%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.floatDropHintLabel {
+  padding: 4px 12px;
+  border-radius: 999px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+}
+
 /* ── Desktop drag-region opt-out ──────────────────────────────────────── */
 
 /* Frameless desktop shells make the top strip of the web content draggable
@@ -293,7 +457,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    browsers and in shells without drag regions — safe everywhere. */
 .toggleCluster,
 .toggleButton,
-.tabBar {
+.tabBar,
+.floatHeader {
   -webkit-app-region: no-drag;
 }
 
@@ -752,7 +917,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   overflow-y: auto;
   /* Deep trees truncate their labels instead of scrolling horizontally. */
   overflow-x: hidden;
-  padding: 2px 6px 8px;
+  padding: 4px 8px 8px;
 }
 
 /* One tree row: the app's session-row cell (34px, radius 8, inset, hover
@@ -784,6 +949,13 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 .explorerRow:hover {
   background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* A "Show in folder" reveal highlight: the target row stays tinted until
+   the transient reveal set is cleared (a reload starts unhighlighted). */
+.explorerRowRevealed {
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent) 18%, transparent);
+  box-shadow: inset 2px 0 0 var(--dsw-alias-interactive-bg-hover-accent);
 }
 
 .explorerDir {
@@ -1072,7 +1244,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
+  padding: 6px 8px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
@@ -1091,6 +1263,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .editorPathInput {
   flex: 1;
   min-width: 0;
+  box-sizing: border-box;
   height: 28px;
   padding: 0 10px;
   border: 1px solid var(--dsw-alias-border-l1);
@@ -1173,7 +1346,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   padding: 6px 8px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
@@ -1306,7 +1479,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 .editorBanner {
   flex: none;
-  padding: 4px 12px;
+  padding: 4px 8px;
   font: var(--dsw-font-xxxs-11);
   color: var(--dsw-alias-state-warn-label);
   background: var(--dsw-alias-state-warn-tertiary);
@@ -1509,6 +1682,12 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   height: 100%;
 }
 
+/* Code lines get the same 12/16 inset as the markdown preview, so toggling
+   preview/edit never jumps the text's resting position. */
+.editorCm :global(.cm-scroller) {
+  padding: 12px 16px;
+}
+
 .editorCm :global(.cm-editor.cm-focused) {
   outline: none;
 }
@@ -1564,7 +1743,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px 14px;
+  padding: 12px 16px;
   font: var(--dsw-font-xs-13);
 }
 
@@ -1993,6 +2172,20 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding: 0 8px 0 12px;
 }
 
+.gitWorktreeRow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 0 12px;
+}
+
+.gitWorktreeLabel {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+}
+
 .gitBranchSelect {
   flex: 1;
   min-width: 0;
@@ -2151,10 +2344,34 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 /* One changed file's section: path header, hunk headers, aligned lines. */
 .gitDiffFile {
+  width: 100%;
   display: flex;
   align-items: baseline;
   gap: 6px;
   padding: 8px 2px 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gitDiffFile:disabled {
+  cursor: default;
+}
+
+.gitDiffFile:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.gitDiffFileChevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  transform: rotate(0deg);
+}
+
+.gitDiffFileChevronExpanded {
+  transform: rotate(90deg);
 }
 
 .gitDiffFilePath {
@@ -2460,6 +2677,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .gitCommitButton:focus-visible,
 .gitLogRow:focus-visible,
 .gitLogMore:focus-visible,
+.gitDiffFile:focus-visible,
 .gitDiffExpand:focus-visible,
 .terminalRetry:focus-visible,
 .editorModeButton:focus-visible,
@@ -2514,4 +2732,187 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
     min-width: 48px;
     max-width: 128px;
   }
+}
+
+/* The file tree "open with" menu rows: the label area is a BLOCK-level flex
+   row that fills the primitives `.itemLabel` span (which is itself `flex: 1`
+   inside the row), so the trailing control — the pushpin on submenu rows,
+   the chevron on the submenu parent — docks at the row's far right, exactly
+   like the trailing check on selected rows of every other menu. */
+.openWithLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.openWithName {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The trailing "expands into a submenu" chevron on the open-with parent row
+   (the primitives Menu renders no arrow for submenu parents). */
+.openWithChevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The pushpin toggle on an "open with" submenu row: brand ink once the
+   target is pinned to the menu's top level. */
+.openWithPin {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.openWithPin:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.openWithPinActive {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+/* ── Markdown preview: raw-HTML runs + table of contents ─────────────────
+   The HTML runs lifted out of the markdown source (MarkdownHtml.tsx) render
+   as sanitized block leaves; the TOC is a zero-height sticky bar keeping the
+   outline button pinned at the preview's top-right without consuming layout.
+   All visuals ride the alias tokens (skin system follows automatically). */
+
+/* A sanitized HTML run leaf (block-level box; content is DOMPurify output). */
+.editorHtmlBlock {
+  margin: 8px 0;
+}
+
+.editorHtmlBlock img,
+.editorHtmlBlock video {
+  max-width: 100%;
+}
+
+.editorHtmlBlock details {
+  margin: 4px 0;
+  padding: 4px 0;
+}
+
+.editorHtmlBlock summary {
+  cursor: pointer;
+}
+
+/* The zero-height sticky bar: occupies no layout, keeps the button visible
+   while the preview scrolls, and lets pointer events pass through the bar
+   itself (only the interactive children re-enable them). */
+.tocBar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: flex-end;
+  height: 0;
+  pointer-events: none;
+}
+
+.tocButton {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin: 4px 2px 0 0;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.tocButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The outline popover, anchored under the button (the bar is the containing
+   block; its height is 0, so the panel drops below the pinned button row). */
+.tocPanel {
+  position: absolute;
+  top: 32px;
+  right: 2px;
+  display: flex;
+  flex-direction: column;
+  width: min(300px, 82%);
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv2);
+  pointer-events: auto;
+}
+
+.tocItem {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tocItem:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* Indent by heading level (h2 = one step, h3 = two steps…). */
+.tocItem[data-level='2'] { padding-left: 18px; }
+.tocItem[data-level='3'] { padding-left: 28px; }
+.tocItem[data-level='4'] { padding-left: 38px; }
+.tocItem[data-level='5'] { padding-left: 48px; }
+.tocItem[data-level='6'] { padding-left: 58px; }
+
+/* The tiny level number keeps deep outlines scannable. */
+.tocItemLevel {
+  flex: none;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.tocItemText {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The jumped-to heading flashes once (the class is added to the host-rendered
+   heading element by md-toc.tsx; @keyframes rides the CSS module). */
+@keyframes dsh-toc-flash {
+  0%, 60% { background: var(--dsw-alias-interactive-bg-hover); }
+  100% { background: transparent; }
+}
+
+.tocFlash {
+  animation: dsh-toc-flash 1.2s ease-out;
+  border-radius: 4px;
 }

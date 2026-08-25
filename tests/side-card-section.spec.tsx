@@ -28,8 +28,9 @@ beforeAll(() => {
   })
 })
 import { createBetterSidebarService, type BetterSidebarService } from '../src/client/service.ts'
+import type { TabDescriptor } from '../src/client/service.ts'
+import { FeatureSettingsRows, mergePluginSetting, SettingsBody, SideCardSection, type SideCardSectionProps } from '../src/client/SideCardSection.tsx'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
-import { FeatureSettingsRows, mergePluginSetting, SideCardSection, type SideCardSectionProps } from '../src/client/SideCardSection.tsx'
 
 /** One tab + one viewer + the subagent-style nested toggle under a tab. */
 function mount(): { store: SidebarStore; service: BetterSidebarService } {
@@ -177,10 +178,10 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('Pick the title-bar compatibility scheme: auto-detect (default, conservative) / DSH official web / known desktop shells / custom (shift distance + custom CSS)')
     expect(html).not.toContain('<select')
     expect(html).toContain('>Auto-detect<')
-    // Two general-row switches remain (openByDefault + interceptOpenPath),
-    // only interceptOpenPath checked by default — the scheme row is a
-    // dropdown, not a switch.
-    expect(html.match(/type="checkbox"/g)?.length).toBe(2)
+    // Three general-row switches remain (openByDefault + interceptOpenPath
+    // + agentOpenTools), only interceptOpenPath checked by default — the
+    // scheme row is a dropdown, not a switch.
+    expect(html.match(/type="checkbox"/g)?.length).toBe(3)
     expect(html.match(/checked=""/g)?.length).toBe(1)
     // Auto (default) needs no further settings → no gear.
     expect(html).not.toContain('Position compatibility mode Feature settings')
@@ -345,5 +346,70 @@ describe('FeatureSettingsRows valueSource (v0.12.0, independent CR fix)', () => 
       onToggle: () => {},
     }))
     expect(html).toContain('checked=""')
+  })
+})
+
+describe('SettingsBody rows + custom render panel (open-with seam)', () => {
+  it('renders the declarative rows AND the custom panel when both are declared', () => {
+    const { store, service } = mount()
+    const feature = {
+      id: 'demo',
+      title: () => 'Demo',
+      component: () => null,
+      settings: {
+        toggles: [{
+          key: 'autoOpenSubagent',
+          title: () => 'Auto row',
+          desc: () => 'row description',
+        }],
+        render: () => createElement('div', { 'data-custom-panel': true }, 'custom panel'),
+      },
+    } as unknown as TabDescriptor
+    const html = renderToString(createElement(SettingsBody, {
+      feature,
+      prefs: SIDEBAR_PREFS_DEFAULTS,
+      store,
+      service,
+      onToggle: () => {},
+      onCommit: () => '',
+      onSelectValue: () => {},
+      onPluginToggle: () => {},
+      onPluginCommit: () => '',
+      onPluginSelectValue: () => {},
+      onPluginWrite: () => {},
+      onClose: () => {},
+    }))
+    expect(html).toContain('Auto row')
+    expect(html).toContain('row description')
+    expect(html).toContain('data-custom-panel')
+    expect(html).toContain('custom panel')
+  })
+
+  it('renders ONLY the custom panel when no rows are declared (unchanged behavior)', () => {
+    const { store, service } = mount()
+    const feature = {
+      id: 'demo',
+      title: () => 'Demo',
+      component: () => null,
+      settings: {
+        render: () => createElement('div', { 'data-custom-panel': true }, 'custom panel'),
+      },
+    } as unknown as TabDescriptor
+    const html = renderToString(createElement(SettingsBody, {
+      feature,
+      prefs: SIDEBAR_PREFS_DEFAULTS,
+      store,
+      service,
+      onToggle: () => {},
+      onCommit: () => '',
+      onSelectValue: () => {},
+      onPluginToggle: () => {},
+      onPluginCommit: () => '',
+      onPluginSelectValue: () => {},
+      onPluginWrite: () => {},
+      onClose: () => {},
+    }))
+    expect(html).toContain('custom panel')
+    expect(html).not.toContain('Auto row')
   })
 })

@@ -57,7 +57,7 @@ export function encodeHtmlUrl(sessionId: string, path: string): string {
  * Decode a route pathname into the session + absolute file path. Rejects
  * a wrong prefix (404), an empty path, malformed percent encoding, and a
  * missing sessionId or file path (400). The caller still must bound the
- * decoded path with requireAbsolute + isWithin(cwd) — a decoded `..`
+ * decoded path with the workspace real-path guard — a decoded `..`
  * segment resolves outside the cwd and is refused there.
  */
 export function decodeHtmlUrl(pathname: string): HtmlDecodeResult {
@@ -96,7 +96,7 @@ export function decodeHtmlUrl(pathname: string): HtmlDecodeResult {
     // A Windows drive segment ('D:') is the FIRST path segment of an encoded
     // drive path. Rejoining it with a leading slash would yield '/D:/work/...'
     // which node's path.resolve() mangles into 'D:\D:\work\...' on Windows —
-    // the html route's isWithin(cwd) fence would then reject every drive path.
+    // the html route's workspace fence would then reject every drive path.
     // Keep the drive form slash-free so requireAbsolute() resolves it verbatim.
     path = tail.join('/')
   } else {

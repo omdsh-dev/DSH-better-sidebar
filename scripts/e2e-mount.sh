@@ -51,9 +51,12 @@ if ! command -v "$DSH_CMD" >/dev/null 2>&1; then
   fi
 fi
 
-# tarball 解析
+# tarball 解析（多个候选时取 mtime 最新——`ls | head -1` 的字典序会拿到
+# 旧版本号的历史 tarball，把冒烟挂到过期产物上）
 if [ -z "$TARBALL" ]; then
-  TARBALL="$(ls "$ROOT"/dsh-better-sidebar-*.tgz 2>/dev/null | head -1 || true)"
+  TARBALL="$(ls -t "$ROOT"/dsh-better-sidebar-*.tgz 2>/dev/null | head -1 || true)"
+  COUNT="$(ls "$ROOT"/dsh-better-sidebar-*.tgz 2>/dev/null | wc -l | tr -d ' ')"
+  [ "$COUNT" -le 1 ] || warn "发现 $COUNT 个 tarball，按 mtime 选用最新：$(basename "$TARBALL")（建议清理其余）"
 fi
 [ -n "$TARBALL" ] && [ -f "$TARBALL" ] || die "找不到 tarball（TARBALL 或 \$ROOT/dsh-better-sidebar-*.tgz）——先运行 pnpm build && pnpm pack"
 TARBALL="$(cd "$(dirname "$TARBALL")" && pwd)/$(basename "$TARBALL")"

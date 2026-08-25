@@ -5,8 +5,9 @@
  *
  * A thread child's log starts with the ENTIRE inherited parent log as its
  * fork seed. The mapping therefore cuts everything up to the LAST
- * `session/end-seed` marker and drops the "Side conversation boundary"
- * prompt row, so the view shows only the thread's own conversation.
+ * `session/end-seed` marker and maps context injections (the "Side
+ * conversation boundary" prompt, plugin-sourced context) onto a collapsible
+ * injection row, so the view shows only the thread's own conversation.
  *
  * Live streaming: `assistant/message` events only land when a step
  * completes, but `assistant/chunk` events stream token-level text and
@@ -14,7 +15,7 @@
  * them with the assembled message once it lands (settled rows).
  */
 import type { SidebarHistoryEntry } from '../context-types.ts'
-import { SIDE_BOUNDARY_PREFIX } from '../sidechat-core.ts'
+import { isContextInjectionMessage, SIDE_BOUNDARY_PROMPT } from '../sidechat-core.ts'
 
 /** One compact transcript row rendered in the thread view. `seq` is the
  *  source event's log sequence — stable row identity for React keys across
@@ -22,6 +23,10 @@ import { SIDE_BOUNDARY_PREFIX } from '../sidechat-core.ts'
  *  rows). */
 export type SidechatTranscriptRow =
   | { kind: 'user'; seq: number; text: string }
+  /** A context injection (the side boundary prompt + the parked in-progress
+   *  snapshot, or any plugin-sourced context): rendered as one collapsible
+   *  row, never as a user bubble. */
+  | { kind: 'injection'; seq: number; text: string }
   /** `settled` distinguishes an assembled message from a still-streaming
    *  chunk accumulation (streaming rows are superseded by the settle). */
   | { kind: 'assistant'; seq: number; text: string; settled: boolean }
@@ -52,6 +57,39 @@ export function blockText(content: readonly unknown[]): string {
   }
   const text = parts.join('\n\n')
   return text === '' ? '…' : text
+}
+
+/** Cap for a tool row's one-line argument summary (display only). */
+const ARGS_SUMMARY_MAX = 80
+
+/** The most identifying argument keys, in priority order (bash's command,
+ *  fs tools' paths, search's pattern, …). */
+const ARGS_SUMMARY_KEYS = ['command', 'file_path', 'path', 'pattern', 'query', 'url', 'prompt'] as const
+
+function flatTruncate(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  return flat.length > ARGS_SUMMARY_MAX ? `${flat.slice(0, ARGS_SUMMARY_MAX - 1)}…` : flat
+}
+
+/**
+ * One-line summary of a tool call's raw arguments JSON for the collapsed
+ * row: the first identifying string field when the JSON parses, else the
+ * flattened raw text; empty when there is nothing worth showing.
+ */
+export function toolArgsSummary(args: string | undefined): string {
+  if (args === undefined) return ''
+  try {
+    const parsed = JSON.parse(args) as Record<string, unknown> | null
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      for (const key of ARGS_SUMMARY_KEYS) {
+        const value = parsed[key]
+        if (typeof value === 'string' && value.trim() !== '') return flatTruncate(value)
+      }
+    }
+  } catch {
+    // Raw text fallthrough.
+  }
+  return flatTruncate(args)
 }
 
 /** The plain text of a tool/result message (text blocks inside its
@@ -141,12 +179,12 @@ export async function collectOwnEvents(
 
 /**
  * Map a thread child's history rows onto compact transcript rows: the
- * inherited fork seed is cut at the last `session/end-seed`, the boundary
- * prompt row is dropped, `assistant/chunk` deltas accumulate into streaming
- * rows per (turn, step, block) and are superseded by the assembled
- * `assistant/message`, and tool invocations render one expandable line each
- * (arguments, paired result text, failure marker; a still-executing call is
- * marked until its result lands).
+ * inherited fork seed is cut at the last `session/end-seed`, context
+ * injections map onto a collapsible injection row, `assistant/chunk`
+ * deltas accumulate into streaming rows per (turn, step, block) and are
+ * superseded by the assembled `assistant/message`, and tool invocations
+ * render one expandable line each (arguments, paired result text, failure
+ * marker; a still-executing call is marked until its result lands).
  * @param entries - history rows (event + host-computed view) in seq order.
  * @returns display rows in log order.
  */
@@ -166,7 +204,26 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[]): Sidecha
     switch (event.type) {
       case 'user/message': {
         const text = blockText(Array.isArray(data.content) ? data.content : [])
-        if (text.startsWith(SIDE_BOUNDARY_PREFIX)) break
+        // Context injections (the boundary prompt + snapshot, plugin-sourced
+        // context) collapse into an injection row; genuine user messages —
+        // including the FIRST one, which the host now delivers as its own
+        // event — render as user rows.
+        if (isContextInjectionMessage(data)) {
+          const source = data.source as { kind?: unknown } | undefined
+          // Threads logged BEFORE the host split carry boundary(+snapshot)+
+          // question in ONE 'user' message. The boundary prompt is a known
+          // constant, so the message splits THERE: the injection row keeps
+          // the prompt, the remainder (snapshot + question if any — pure
+          // question in the common case) renders as the user's real message.
+          if (source?.kind === 'user' && text.startsWith(`${SIDE_BOUNDARY_PROMPT}\n\n`)) {
+            rows.push({ kind: 'injection', seq: event.seq, text: SIDE_BOUNDARY_PROMPT })
+            const body = text.slice(SIDE_BOUNDARY_PROMPT.length + 2)
+            if (body !== '') rows.push({ kind: 'user', seq: event.seq, text: body })
+            break
+          }
+          rows.push({ kind: 'injection', seq: event.seq, text })
+          break
+        }
         rows.push({ kind: 'user', seq: event.seq, text })
         break
       }

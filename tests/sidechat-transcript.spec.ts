@@ -1,13 +1,14 @@
 /**
  * Unit tests for the Side Chat transcript mapping (src/client/sidechat-
- * transcript.ts): the seed cut at session/end-seed, the boundary-row drop,
- * chunk streaming accumulation superseded by assembled messages, tool
- * call/result pairing, and orphan failed results.
+ * transcript.ts): the seed cut at session/end-seed, context-injection rows
+ * (plugin-stamped sources and the legacy boundary-prefix blob), chunk
+ * streaming accumulation superseded by assembled messages, tool call/result
+ * pairing, and orphan failed results.
  */
 import { describe, expect, it } from 'vitest'
 import type { SidebarHistoryEntry, SidebarSessionEvent } from '../src/context-types.ts'
-import { SIDE_BOUNDARY_PREFIX } from '../src/sidechat-core.ts'
-import { collectOwnEvents, transcriptRows, type SidechatTranscriptRow } from '../src/client/sidechat-transcript.ts'
+import { SIDE_BOUNDARY_PREFIX, SIDE_BOUNDARY_PROMPT, SIDE_INJECTION_PLUGIN } from '../src/sidechat-core.ts'
+import { collectOwnEvents, toolArgsSummary, transcriptRows, type SidechatTranscriptRow } from '../src/client/sidechat-transcript.ts'
 
 /** One history entry (event + optional view). */
 function entry(event: SidebarSessionEvent): SidebarHistoryEntry {
@@ -29,15 +30,48 @@ function textBlocks(...texts: string[]): unknown[] {
 }
 
 describe('transcriptRows', () => {
-  it('cuts the inherited seed at the last end-seed and drops the boundary row', () => {
+  it('cuts the inherited seed at the last end-seed and renders the boundary as an injection row', () => {
     const entries = [
       entry(ev('user/message', 0, { content: textBlocks('inherited'), source: { kind: 'user' } })),
       entry(ev('session/end-seed', 1)),
-      entry(ev('user/message', 2, { content: textBlocks(`${SIDE_BOUNDARY_PREFIX}\n\nmode`), source: { kind: 'user' } })),
+      entry(ev('user/message', 2, { content: textBlocks(`${SIDE_BOUNDARY_PREFIX}\n\nmode`), source: { kind: 'plugin', plugin: SIDE_INJECTION_PLUGIN } })),
       entry(ev('user/message', 3, { content: textBlocks('the side question'), source: { kind: 'user' } })),
     ]
     const rows = transcriptRows(entries)
-    expect(rows).toEqual([{ kind: 'user', seq: 3, text: 'the side question' }])
+    expect(rows).toEqual([
+      { kind: 'injection', seq: 2, text: `${SIDE_BOUNDARY_PREFIX}\n\nmode` },
+      { kind: 'user', seq: 3, text: 'the side question' },
+    ])
+  })
+
+  it('splits the LEGACY wrapped first message (boundary + question in one user row) at the boundary prompt', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('user/message', 1, {
+        content: textBlocks(`${SIDE_BOUNDARY_PROMPT}\n\nthe first question`),
+        source: { kind: 'user' },
+      })),
+      entry(ev('user/message', 2, { content: textBlocks('follow-up'), source: { kind: 'user' } })),
+    ]
+    const rows = transcriptRows(entries)
+    expect(rows).toEqual([
+      { kind: 'injection', seq: 1, text: SIDE_BOUNDARY_PROMPT },
+      { kind: 'user', seq: 1, text: 'the first question' },
+      { kind: 'user', seq: 2, text: 'follow-up' },
+    ])
+  })
+
+  it('renders any plugin-sourced context message as an injection row, boundary prefix or not', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('user/message', 1, { content: textBlocks('runtime context'), source: { kind: 'plugin', plugin: 'other-plugin' } })),
+      entry(ev('user/message', 2, { content: textBlocks('q'), source: { kind: 'user' } })),
+    ]
+    const rows = transcriptRows(entries)
+    expect(rows).toEqual([
+      { kind: 'injection', seq: 1, text: 'runtime context' },
+      { kind: 'user', seq: 2, text: 'q' },
+    ])
   })
 
   it('accumulates chunk deltas per block and supersedes them on settle', () => {
@@ -190,5 +224,25 @@ describe('collectOwnEvents', () => {
     expect(calls).toEqual([undefined, 25])
     expect(result.seedBoundary).toBe(0)
     expect(result.entries.map(e => e.event.seq)).toEqual([20, 21, 22, 23, 24, 25, 26, 27, 28, 29])
+  })
+})
+
+describe('toolArgsSummary', () => {
+  it('picks the most identifying string field', () => {
+    expect(toolArgsSummary('{"command":"ls -la","timeout":1000}')).toBe('ls -la')
+    expect(toolArgsSummary('{"file_path":"/a/b.ts","old_string":"x"}')).toBe('/a/b.ts')
+    expect(toolArgsSummary('{"pattern":"foo","path":"/repo"}')).toBe('/repo')
+  })
+
+  it('flattens and truncates raw text when no known key parses', () => {
+    expect(toolArgsSummary('{"custom":"v"}')).toBe('{"custom":"v"}')
+    expect(toolArgsSummary('not json at all')).toBe('not json at all')
+    expect(toolArgsSummary(`{"command":"${'x'.repeat(200)}"`)).toHaveLength(80)
+    expect(toolArgsSummary(`{"command":"${'x'.repeat(200)}"`)).toMatch(/…$/)
+  })
+
+  it('reads empty for missing or blank input', () => {
+    expect(toolArgsSummary(undefined)).toBe('')
+    expect(toolArgsSummary('{"command":"   "}')).toBe('{"command":" "}')
   })
 })

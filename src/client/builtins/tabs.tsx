@@ -13,6 +13,7 @@ import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
 import { openSidebarFile } from '../intercept.tsx'
 import { EditorHost } from '../EditorHost.tsx'
+import { OpenWithSettings } from '../open-with-settings.tsx'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
 import { GitView } from '../GitView.tsx'
 import { DiffTab } from '../DiffTab.tsx'
@@ -90,7 +91,9 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       dedupeKey: (tab) => tab.path,
       // Declarative settings: the file-open behavior picker (in-place switch
       // vs per-path windows) renders as an iconed select row under the
-      // editor card's gear in the Side card settings page.
+      // editor card's gear in the Side card settings page; the "open with"
+      // configuration (SSH host + custom editors) is the custom panel BELOW
+      // those rows — the settings seam renders rows first, custom panel after.
       settings: {
         toggles: [{
           key: 'editorExplorer',
@@ -112,14 +115,18 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
             },
           ],
         }],
+        render: ({ pluginSettings, updatePluginSetting }) => (
+          <OpenWithSettings pluginSettings={pluginSettings} updatePluginSetting={updatePluginSetting} />
+        ),
       },
-      component: ({ ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile }) => (
+      component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile }) => (
         <EditorHost
           ctx={ctx}
           store={store}
           scope={scope}
           tab={tab}
           expanded={expanded ?? []}
+          revealed={revealed ?? []}
           onToggleDir={onToggleDir ?? (() => { /* no-op */ })}
           onReferenceFile={onReferenceFile ?? (() => { /* no-op */ })}
         />
@@ -131,9 +138,10 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       icon: (size: number) => <IconBranchOutline16 size={size} />,
       order: 20,
       single: true,
-      component: ({ ctx, store, scope, onOpenDiff }) => (
+      component: ({ ctx, store, scope, visible, onOpenDiff }) => (
         <GitView
           scope={scope}
+          visible={visible}
           onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}
           onOpenDiff={onOpenDiff ?? (() => { /* no-op */ })}
         />
@@ -302,6 +310,12 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           key: 'browserInterceptHttps',
           title: () => t('settingsBrowserHttpsTitle'),
           desc: () => t('settingsBrowserHttpsDesc'),
+        }, {
+          key: 'browserAllowedLoopback',
+          type: 'text',
+          title: () => t('settingsBrowserLoopbackTitle'),
+          desc: () => t('settingsBrowserLoopbackDesc'),
+          placeholder: t('settingsBrowserLoopbackPlaceholder'),
         }],
       },
       createTab: (state) => ({

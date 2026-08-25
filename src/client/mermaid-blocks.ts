@@ -32,13 +32,13 @@ export interface MermaidMarkdownProps {
 }
 
 /** CommonMark opening fence: 0-3 spaces indent + a run of 3+ backticks or tildes. */
-const OPEN_FENCE_RE = /^ {0,3}(`{3,}|~{3,})/
+export const OPEN_FENCE_RE = /^ {0,3}(`{3,}|~{3,})/
 
 /** A closing-fence line: 0-3 spaces indent + 3+ backticks/tildes + trailing spaces only. */
-const CLOSE_FENCE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/
+export const CLOSE_FENCE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/
 
 /** Parse the info string from the line tail after the fence run; null when invalid. */
-function fenceInfo(rest: string, fence: string): string | null {
+export function fenceInfo(rest: string, fence: string): string | null {
   const info = rest.trimStart().split(/\s+/)[0] ?? ''
   // CommonMark: a backtick fence's info string may not contain backticks —
   // such a line is not an opening fence at all.

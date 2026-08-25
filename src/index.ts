@@ -23,18 +23,21 @@ import {
   Config,
   PrefsSchema,
   resolveSidebarConfig,
+  SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
   type ResolvedSidebarConfig,
   type SidebarConfig,
   type SidebarPrefs,
 } from './config.ts'
-import { isWithin, parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import { parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
 import { writeWorkspaceUpload } from './fs-operations.ts'
+import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
 import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
+import { launchExternal } from './open-external.ts'
 import * as git from './git.ts'
 import { SettingsConflictError, settingsNamespace, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { defaultShell, ensureSpawnHelper, PtyManager, shellDisplayName } from './pty-manager.ts'
@@ -46,6 +49,7 @@ import {
   PTY_DEPS_MISSING,
 } from './pty-deps.ts'
 import { registerTools } from './tools.ts'
+import { AgentOpenRegistry, registerOpenTool, type AgentOpenRequest } from './agent-opens.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
 import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
 import { buildSidechatApi } from './sidechat-routes.ts'
@@ -53,8 +57,10 @@ import { readJsonBody, requireString, SidebarError, writeError, writeJson, write
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
-// Re-export the Context augmentation (declare module 'cordis') so consumers
-// `import type {} from 'dsh-better-sidebar'` and gain `ctx.betterSidebar`.
+// Re-export the Context augmentation (`declare module '@deepseek-ai/cordis'`)
+// so consumers `import type {} from 'dsh-better-sidebar'` and gain
+// `ctx.betterSidebar`; the Context re-export below is the vendored cordis
+// Context intersected with the structural service faces.
 // Also re-export the service descriptor types so consumers can type their
 // registerTab / registerFileViewer arguments without reaching into /client.
 export type { Context } from './context-types.ts'
@@ -118,6 +124,13 @@ function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string): stri
   return process.cwd()
 }
 
+/** Optional repository selected by the Git panel when cwd is a container. */
+function selectedRepoOf(payload: unknown): string | undefined {
+  const record = payload as { repoRoot?: unknown }
+  if (record.repoRoot === undefined) return undefined
+  return requireAbsolute(requireString(payload, 'repoRoot'))
+}
+
 /**
  * Resolve a path that a git command reported — `git status`/`git diff`
  * print paths RELATIVE TO THE REPO TOP LEVEL, which may sit above the
@@ -125,9 +138,15 @@ function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string): stri
  * paths pass through; relative ones join the repo root (falling back to the
  * cwd when the root cannot be resolved, e.g. a bare directory).
  */
-async function resolveGitPath(cwd: string, raw: string): Promise<string> {
+async function resolveGitPath(cwd: string, raw: string, selected?: string): Promise<string> {
   if (isAbsolute(raw)) return requireAbsolute(raw)
-  const root = await git.repoRoot(cwd).catch(() => cwd)
+  // Prefer the session-relative interpretation when it names an existing
+  // path. Git status reports repository-root-relative names, but the sidebar
+  // security boundary is the session workspace; this preference keeps files
+  // inside a nested session readable without reopening the repository root.
+  const sessionPath = requireAbsolute(join(cwd, raw))
+  if (await stat(sessionPath).then(() => true).catch(() => false)) return sessionPath
+  const root = await git.repoRoot(cwd, selected).catch(() => cwd)
   return requireAbsolute(join(root, raw))
 }
 
@@ -163,7 +182,13 @@ async function readText(path: string, readLimit: number): Promise<{
     const head = binary
       ? slice.subarray(0, Math.min(slice.length, READ_HEAD_LIMIT)).toString('base64')
       : undefined
-    return { content: binary ? '' : slice.toString('utf8'), truncated, binary, size, head }
+    return {
+      content: binary ? '' : slice.toString('utf8'),
+      truncated,
+      binary,
+      size,
+      head,
+    }
   } finally {
     await handle.close()
   }
@@ -215,6 +240,26 @@ function shellOverridesOf(getSettings: () => SidebarSettingsFace | undefined): {
   }
 }
 
+/**
+ * Parse the browser tab's `browserAllowedLoopback` allowlist into a matcher
+ * over host:port (same contract as the client-side helper in
+ * src/client/browser.ts — kept in sync). Bare hosts (`localhost`,
+ * `127.0.0.1`) match every port; `host:port` entries match exactly.
+ */
+function parseLoopbackAllowlist(allowlist: string): (host: string, port: string) => boolean {
+  const entries = allowlist.split(',').map(entry => entry.trim().toLowerCase()).filter(entry => entry !== '')
+  const exact = new Set(entries)
+  const hosts = new Set<string>()
+  for (const entry of entries) {
+    if (!entry.includes(':')) hosts.add(entry.replace(/^\[|\]$/g, ''))
+  }
+  return (host, port) => {
+    const key = `${host}:${port}`
+    if (exact.has(key) || exact.has(host)) return true
+    return port !== '' && hosts.has(host)
+  }
+}
+
 function buildApi(
   ctx: Context,
   ptyManager: PtyManager | null,
@@ -228,6 +273,14 @@ function buildApi(
     const record = payload as { cwd?: unknown } | null
     const clientCwd = typeof record?.cwd === 'string' && record.cwd !== '' ? record.cwd : undefined
     return { sessionId, cwd: sessionCwdOf(ctx, sessionId, clientCwd) }
+  }
+  /** Resolve the optional Git-panel checkout selector against the authoritative
+   * session repository. Unlike `cwd`, `worktree` is never trusted directly. */
+  const gitCwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
+    const base = cwdOf(payload)
+    const record = payload as { worktree?: unknown } | null
+    const requested = typeof record?.worktree === 'string' && record.worktree !== '' ? record.worktree : undefined
+    return { sessionId: base.sessionId, cwd: await git.resolveWorktree(base.cwd, requested) }
   }
   // Background jobs: the LIST rides the harness's `session/jobs` push
   // mirror, so these routes only replay output the model has read (from the
@@ -247,7 +300,7 @@ function buildApi(
     'fs.tree': async (payload) => {
       const { cwd } = cwdOf(payload)
       const record = payload as { path?: unknown }
-      const target = record.path === undefined ? cwd : requireAbsolute(requireString(payload, 'path'))
+      const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'))
       return listDirectory(target, resolved.listLimit)
     },
     'fs.search': async (payload) => {
@@ -261,15 +314,18 @@ function buildApi(
     'fs.read': async (payload) => {
       const { cwd } = cwdOf(payload)
       // Relative paths are git-derived (status/diff report repo-root-relative
-      // names; the untracked diff view reads the file through this route).
-      const path = await resolveGitPath(cwd, requireString(payload, 'path'))
+      // names; the untracked diff view reads the file through this route). A
+      // child-repo path is relative to the selected repoRoot, not the session
+      // cwd; thread it so the path resolves inside the authorized workspace.
+      const selected = selectedRepoOf(payload)
+      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected))
       const { content, truncated, binary, size, head } = await readText(path, resolved.readLimit)
       if (binary) return { kind: 'binary', size, truncated, head }
       return { kind: 'text', content, truncated }
     },
     'fs.write': async (payload) => {
       const { cwd } = cwdOf(payload)
-      const path = requireAbsolute(requireString(payload, 'path'))
+      const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'))
       const content = requireString(payload, 'content')
       const tmp = `${path}.dsh-sidebar-tmp-${process.pid}`
       try {
@@ -282,47 +338,57 @@ function buildApi(
       }
       return { ok: true }
     },
+    'git.worktrees': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      const selected = selectedRepoOf(payload)
+      // A workspace container (no repo at cwd) has child repos; the worktree
+      // list belongs to the SELECTED child, not the container. Thread the
+      // validated repoRoot so linked checkouts of a chosen child appear.
+      const base = selected !== undefined ? await git.repoRoot(cwd, selected).catch(() => cwd) : cwd
+      return git.worktrees(base)
+    },
     'git.status': async (payload) => {
-      const { cwd } = cwdOf(payload)
-      return git.status(cwd)
+      const { cwd } = await gitCwdOf(payload)
+      return git.status(cwd, selectedRepoOf(payload))
     },
     'git.diff': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       const record = payload as { path?: unknown; staged?: unknown }
-      const path = record.path === undefined ? undefined : await resolveGitPath(cwd, requireString(payload, 'path'))
-      return { diff: await git.diff(cwd, path, record.staged === true) }
+      const repoRoot = selectedRepoOf(payload)
+      const path = record.path === undefined ? undefined : await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot)
+      return { diff: await git.diff(cwd, path, record.staged === true, repoRoot) }
     },
     'git.stage': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       const record = payload as { path?: unknown }
       const path = record.path === undefined ? undefined : requireString(payload, 'path')
-      await git.stage(cwd, path)
+      await git.stage(cwd, path, selectedRepoOf(payload))
       return { ok: true }
     },
     'git.unstage': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       const record = payload as { path?: unknown }
       const path = record.path === undefined ? undefined : requireString(payload, 'path')
-      await git.unstage(cwd, path)
+      await git.unstage(cwd, path, selectedRepoOf(payload))
       return { ok: true }
     },
     'git.commit': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       const message = requireString(payload, 'message')
-      await git.commit(cwd, message)
+      await git.commit(cwd, message, selectedRepoOf(payload))
       return { ok: true }
     },
     'git.branch': async (payload) => {
-      const { cwd } = cwdOf(payload)
-      return git.branches(cwd)
+      const { cwd } = await gitCwdOf(payload)
+      return git.branches(cwd, selectedRepoOf(payload))
     },
     'git.checkout': async (payload) => {
-      const { cwd } = cwdOf(payload)
-      await git.checkout(cwd, requireString(payload, 'branch'))
+      const { cwd } = await gitCwdOf(payload)
+      await git.checkout(cwd, requireString(payload, 'branch'), selectedRepoOf(payload))
       return { ok: true }
     },
     'git.log': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await gitCwdOf(payload)
       const record = payload as { count?: unknown; skip?: unknown }
       const count = typeof record.count === 'number' && Number.isInteger(record.count) && record.count > 0
         ? record.count
@@ -330,32 +396,34 @@ function buildApi(
       const skip = typeof record.skip === 'number' && Number.isInteger(record.skip) && record.skip >= 0
         ? record.skip
         : undefined
-      return git.log(cwd, count, skip)
+      return git.log(cwd, count, skip, selectedRepoOf(payload))
     },
     'git.commit-diff': async (payload) => {
-      const { cwd } = cwdOf(payload)
-      return { diff: await git.commitDiff(cwd, requireString(payload, 'hash')) }
+      const { cwd } = await gitCwdOf(payload)
+      return { diff: await git.commitDiff(cwd, requireString(payload, 'hash'), selectedRepoOf(payload)) }
     },
     'git.discard': async (payload) => {
-      const { cwd } = cwdOf(payload)
-      await git.discard(cwd, await resolveGitPath(cwd, requireString(payload, 'path')))
+      const { cwd } = await gitCwdOf(payload)
+      const repoRoot = selectedRepoOf(payload)
+      await git.discard(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot), repoRoot)
       return { ok: true }
     },
     'git.revert': async (payload) => {
-      const { cwd } = cwdOf(payload)
-      await git.revert(cwd, requireString(payload, 'hash'))
+      const { cwd } = await gitCwdOf(payload)
+      await git.revert(cwd, requireString(payload, 'hash'), selectedRepoOf(payload))
       return { ok: true }
     },
     'git.cherry-pick': async (payload) => {
-      const { cwd } = cwdOf(payload)
-      await git.cherryPick(cwd, requireString(payload, 'hash'))
+      const { cwd } = await gitCwdOf(payload)
+      await git.cherryPick(cwd, requireString(payload, 'hash'), selectedRepoOf(payload))
       return { ok: true }
     },
     'git.show': async (payload) => {
-      const { cwd } = cwdOf(payload)
-      const path = await resolveGitPath(cwd, requireString(payload, 'path'))
+      const { cwd } = await gitCwdOf(payload)
+      const repoRoot = selectedRepoOf(payload)
+      const path = await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot)
       const rev = requireString(payload, 'rev')
-      return { content: await git.show(cwd, rev, path) }
+      return { content: await git.show(cwd, rev, path, repoRoot) }
     },
     // Release a terminal immediately. The WebSocket close frame already does
     // this while the socket is open; this route covers the tab-close that
@@ -448,9 +516,16 @@ function buildApi(
         throw new SidebarError('bad-request', 'only http/https urls can be probed', 400)
       }
       // Mirror the browser tab's address-bar policy: loopback stays unreachable
-      // from the sidebar, so probing it would leak nothing the tab could use.
+      // from the sidebar (unless the user allowlisted it), so probing it would
+      // leak nothing the tab could use.
       if (isLoopbackHostname(parsed.hostname)) {
-        throw new SidebarError('bad-request', 'local addresses are not probed', 400)
+        const prefs = getSettings()?.get()?.value as SidebarPrefs | undefined
+        const allowlist = typeof prefs?.browserAllowedLoopback === 'string' ? prefs.browserAllowedLoopback : ''
+        const allowed = allowlist.trim() !== ''
+          && parseLoopbackAllowlist(allowlist)(parsed.hostname, parsed.port)
+        if (!allowed) {
+          throw new SidebarError('bad-request', 'local addresses are not probed', 400)
+        }
       }
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), 8000)
@@ -458,12 +533,32 @@ function buildApi(
         let response = await fetch(parsed, { method: 'HEAD', redirect: 'follow', signal: controller.signal })
         // Some servers answer HEAD with 405/501; retry once as GET (the
         // body is discarded — only the headers matter).
+        let retriedFromHeadRejection = false
         if (response.status === 405 || response.status === 501) {
+          response = await fetch(parsed, { method: 'GET', redirect: 'follow', signal: controller.signal })
+          retriedFromHeadRejection = true
+        }
+        // Some servers (e.g. aliyun consoles) answer HEAD without the
+        // X-Frame-Options / CSP headers that only their GET response
+        // carries. Without those signals the embeddability check below
+        // would wrongly report the site as embeddable and the plain iframe
+        // would surface the browser's misleading "refused to connect".
+        // Retry once as GET when both signals are absent (body discarded).
+        // A 405/501 retry already fetched the GET response, so the signals
+        // are either there or genuinely absent — another GET adds nothing.
+        const hasEmbedSignals = response.headers.get('content-security-policy') !== null
+          || response.headers.get('x-frame-options') !== null
+        if (!hasEmbedSignals && !retriedFromHeadRejection && response.status !== 405 && response.status !== 501) {
           response = await fetch(parsed, { method: 'GET', redirect: 'follow', signal: controller.signal })
         }
         const csp = response.headers.get('content-security-policy')
         const frameAncestors = extractFrameAncestors(csp)
         const xFrameOptions = response.headers.get('x-frame-options')
+        // The GET fallbacks stream a real body that nothing reads; "body
+        // discarded" is not automatic with fetch, so cancel it explicitly to
+        // release the socket (a large/streaming response would otherwise stay
+        // pinned after the timer clears).
+        void response.body?.cancel()
         return {
           reachable: true,
           url: response.url,
@@ -478,6 +573,19 @@ function buildApi(
       } finally {
         clearTimeout(timer)
       }
+    },
+    // External open for the file tree's "open with" menu: reveal a path in
+    // the OS file manager, or hand a custom-scheme URL (vscode://,
+    // cursor://, zed://, custom editors) to its registered handler. The
+    // client is a browser renderer where raw scheme navigation is
+    // unreliable, so the launch always goes through the host — the same
+    // fence as every other route, argv-only (no shell interpolation).
+    'open.external': (payload) => {
+      const record = payload as { action?: unknown } | null
+      const action = record?.action
+      if (action === 'reveal') return launchExternal('reveal', requireString(payload, 'path'))
+      if (action === 'url') return launchExternal('url', requireString(payload, 'url'))
+      throw new SidebarError('bad-request', 'action must be "reveal" or "url"')
     },
     // Side Chat: create a side-thread child seeded with the parent's full
     // log up to now, deliver follow-ups (cold-resuming when the thread's
@@ -535,6 +643,11 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   const agentPtyRegistry = nodePty !== null
     ? new AgentPtyRegistry(terminalShell, resolved.shellArgs, nodePty)
     : null
+  // The model-facing open-request registry: queues `sidebar_open` requests
+  // per session and pushes them to connected sidebar views over the
+  // `/sidebar/ws/agent-opens` socket. Unlike the pty registry it has no
+  // native dependencies — the tool works even in node-pty degraded mode.
+  const agentOpenRegistry = new AgentOpenRegistry()
 
   // ── User-facing "Side card" preferences ──────────────────────────────────
   // Register the namespace with the settings provider so the Settings page
@@ -550,6 +663,10 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // turns the feature on, and turning it off mid-session unregisters the
   // tools and releases the agent terminals they created.
   let toolsDisposers: (() => void) | null = null
+  // The model-facing `sidebar_open` tool is gated the same way (see
+  // syncOpenToolsGate below); separate disposer (no native deps, and turning
+  // the feature off must not release user terminals).
+  let openToolsDisposers: (() => void) | null = null
   const syncToolsGate = (scope: { get(): SidebarPrefs }): void => {
     if (scope.get().agentTerminalTools) {
       if (toolsDisposers === null) {
@@ -604,7 +721,38 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     // Register (or unregister) the terminal tools from the current setting,
     // and keep them in sync with every settings commit.
     syncToolsGate(scope)
-    scope.watch(() => { syncToolsGate(scope) })
+    // The model-facing open tool is gated the same way on `agentOpenTools`
+    // (default off): nothing is injected until the user turns the feature
+    // on, and turning it off mid-session unregisters the tool and drops the
+    // queued (undelivered) open requests. Already-delivered opens keep their
+    // tabs — the tools' only lever is the queue, not the rendered state.
+    const syncOpenToolsGate = (): void => {
+      if (scope.get().agentOpenTools) {
+        if (openToolsDisposers === null) {
+          openToolsDisposers = registerOpenTool(
+            ctx,
+            agentOpenRegistry,
+            (sessionId) => sessionCwdOf(ctx, sessionId),
+            () => {
+              const view = settingsFace?.get()
+              const value = view?.value
+              return value !== null && typeof value === 'object'
+                ? value as SidebarPrefs
+                : SIDEBAR_PREFS_DEFAULTS
+            },
+          )
+        }
+      } else if (openToolsDisposers !== null) {
+        openToolsDisposers()
+        openToolsDisposers = null
+        agentOpenRegistry.drainAll()
+      }
+    }
+    syncOpenToolsGate()
+    // ONE watch subscription drives both gates: settings commits re-evaluate
+    // the terminal tools AND the open tool together (each gate is idempotent
+    // and owns its own disposer).
+    scope.watch(() => { syncToolsGate(scope); syncOpenToolsGate() })
   })
 
   // ── JSON API ────────────────────────────────────────────────────────────
@@ -708,14 +856,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
         const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
-        const path = requireAbsolute(raw)
-        if (!isWithin(cwd, path)) {
-          // Only files under the session cwd are served as media (the editor
-          // opens images from the explorer; produced files go through read).
-          // isWithin (not a raw startsWith) so case-mismatched Windows paths
-          // and mixed separators cannot be misclassified.
-          throw new SidebarError('fs-error', 'media path outside the session working directory', 403)
-        }
+        const path = await ensureWorkspacePath(cwd, raw)
         const info = await stat(path)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)
@@ -770,13 +911,11 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const { sessionId, path } = decoded.ref
         // The session's authoritative cwd (client cwd cannot ride in the URL
         // — the path encoding has no query; a detached first request falls
-        // back to the process cwd and is normally refused by isWithin, same
-        // semantics as the media route's fallback).
+        // back to the process cwd and is normally refused by the workspace
+        // real-path guard, with the same semantics as the media route's
+        // fallback.
         const cwd = sessionCwdOf(ctx, sessionId)
-        const absolute = requireAbsolute(path)
-        if (!isWithin(cwd, absolute)) {
-          throw new SidebarError('fs-error', 'html path outside the session working directory', 403)
-        }
+        const absolute = await ensureWorkspacePath(cwd, path)
         const info = await stat(absolute)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)
@@ -784,7 +923,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const type = mediaTypeForPath(absolute)
         const body = await readFile(absolute)
         res.writeHead(200, {
-          'content-type': type,
+          'content-type': type === 'text/html' ? 'text/html; charset=utf-8' : type,
           'cache-control': 'no-cache',
           'x-content-type-options': 'nosniff',
           'referrer-policy': 'no-referrer',
@@ -846,13 +985,65 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     },
   }), 'dsh-better-sidebar: agent-terminals push WebSocket')
 
+  // ── Agent opens push WebSocket ─────────────────────────────────────────
+  // Pushes `sidebar_open` requests for one session to the sidebar view: the
+  // host queues each request in the registry (consume-on-send), so a
+  // connected view applies it immediately and a disconnected one gets the
+  // replay when it attaches. The client mirrors each request into an
+  // editor / folder-window / browser tab open.
+  const agentOpenWss = new WebSocketServer({ noServer: true })
+  ctx.effect(() => ctx.webServer.registerUpgrade({
+    path: '/sidebar/ws/agent-opens',
+    handler: (req, socket, head) => {
+      if (!fence(req)) {
+        socket.destroy()
+        return
+      }
+      agentOpenWss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
+        void attachAgentOpen(agentOpenRegistry, ws, req)
+      })
+    },
+  }), 'dsh-better-sidebar: agent-opens push WebSocket')
+
   ctx.effect(() => () => {
     toolsDisposers?.()
+    openToolsDisposers?.()
     ptyManager?.disposeAll()
     agentPtyRegistry?.disposeAll()
+    agentOpenRegistry.dispose()
     wss.close()
     agentListWss.close()
+    agentOpenWss.close()
   }, 'dsh-better-sidebar: teardown')
+}
+
+/** Push queued `sidebar_open` requests for one session to a connected view. */
+async function attachAgentOpen(
+  registry: AgentOpenRegistry,
+  ws: WebSocket,
+  req: SidebarHttpRequest,
+): Promise<void> {
+  try {
+    const url = new URL(req.url ?? '/', 'http://dsh.internal')
+    const sessionId = url.searchParams.get('sessionId')
+    if (sessionId === null) {
+      ws.close(1008, 'sessionId is required')
+      return
+    }
+    const send = (request: AgentOpenRequest): void => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(request))
+      }
+    }
+    // Attach replays the queued (undelivered) requests for this session; the
+    // disposer detaches the view on socket close/error so later opens queue
+    // instead of accumulating on a dead socket.
+    const unsubscribe = registry.attach(sessionId, send)
+    ws.on('close', () => { unsubscribe() })
+    ws.on('error', () => { unsubscribe() })
+  } catch (error) {
+    ws.close(1011, error instanceof Error ? error.message : String(error))
+  }
 }
 
 /** Push the live agent-terminal list for one session to a connected sidebar view. */
@@ -895,6 +1086,10 @@ async function attachAgentList(
  * - `?tab=...&sessionId=...` attaches to a UI-tab terminal (the user
  *   created it from the + menu). The close frame schedules a 0-ms close
  *   (the host's reconnect grace keeps the shell alive across a refresh).
+ *   The park frame (sent when the user switches to another conversation)
+ *   marks the pty as parked so the upcoming bare socket drop does NOT start
+ *   the grace countdown — the tab is still open in its session's state, so
+ *   the shell must survive until the user switches back or closes the tab.
  */
 async function attachTerminal(
   ctx: Context,
@@ -971,6 +1166,16 @@ async function attachTerminal(
         ptyManager.scheduleClose(handle.key, 0)
         return
       }
+      if (control !== null && control.type === 'park') {
+        // The user switched to another conversation: the tab is still open in
+        // its session's persisted state, but its view unmounted. Park the pty
+        // so the upcoming bare socket drop does NOT start the reconnect-grace
+        // countdown — the pty stays alive until the user switches back (a
+        // reconnecting view clears the parked state) or explicitly closes the
+        // tab (a close frame's scheduleClose clears it).
+        ptyManager.park(handle.key)
+        return
+      }
       if (handle.exited) return
       if (
         control !== null
@@ -986,10 +1191,14 @@ async function attachTerminal(
     ws.on('close', () => {
       dataSub.dispose()
       exitSub.dispose()
-      // A bare socket drop (refresh, tab switch) leaves the process alive
-      // for a grace period so a quick reconnect keeps it; the reconnect's
-      // open() cancels the pending close.
-      ptyManager.scheduleClose(handle.key, resolved.reconnectGraceMs)
+      // A parked pty (the user switched conversations and sent `{type:'park'}`)
+      // stays alive indefinitely — do NOT start the grace countdown. A bare
+      // socket drop without a prior park (refresh, crash) starts the grace
+      // period so a quick reconnect keeps the process; the reconnect's open()
+      // cancels the pending close.
+      if (!ptyManager.isParked(handle.key)) {
+        ptyManager.scheduleClose(handle.key, resolved.reconnectGraceMs)
+      }
     })
   } catch (error) {
     ws.close(1011, error instanceof Error ? error.message : String(error))

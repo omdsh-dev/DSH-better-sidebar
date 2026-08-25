@@ -3,14 +3,14 @@
  * Streams the tree with opendir and matches the query as a case-insensitive
  * substring of each entry's NAME (paths stay relative to the search root —
  * the client resolves them against the session cwd). No .gitignore semantics
- * (this is a name lookup, not a code search), but `.git` directories are
- * skipped outright (VCS internals are never useful results) and symlink
- * directories are NOT descended (cycle safety).
+ * (this is a name lookup, not a code search), but known noise directories
+ * (`.git`, `node_modules`, package-manager stores, build caches) are
+ * skipped outright and symlink directories are NOT descended (cycle safety).
  *
  * Two performance budgets bound the walk: `maxMatches` (the client renders
- * the flat list) and `maxVisited` (a runaway tree — a home directory root,
- * a node_modules forest — must not stall the host). Exceeding either stops
- * early with `truncated: true`.
+ * the flat list) and `maxVisited` (a runaway tree — a home directory root
+ * — must not stall the host). Exceeding either stops early with
+ * `truncated: true`.
  */
 import { opendir } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
@@ -32,6 +32,33 @@ export interface FsSearchOptions {
 
 const DEFAULT_MAX_MATCHES = 200
 const DEFAULT_MAX_VISITED = 100_000
+
+/**
+ * Directory names that are never useful filename-search results and would
+ * burn the visit budget before the walk reaches project files. Compared
+ * case-insensitively so `Node_Modules` / `.GIT` stay skipped on every
+ * platform. The directory itself is neither matched nor descended.
+ */
+const SEARCH_SKIP_DIRS = new Set([
+  '.git',
+  'node_modules',
+  '.pnpm-store',
+  '.yarn',
+  '.turbo',
+  '.turbopack',
+  '.next',
+  '.nuxt',
+  '.output',
+  '.cache',
+  '.parcel-cache',
+  'coverage',
+  'dist',
+  'build',
+  'out',
+  '.umi',
+  '.umi-production',
+  '.dumi',
+])
 
 /**
  * Search `root` recursively for entries whose name contains `query`
@@ -63,8 +90,8 @@ export async function searchFiles(root: string, query: string, opts: FsSearchOpt
         truncated = true
         return
       }
-      // .git is VCS-internal noise: never matched, never descended.
-      if (dirent.isDirectory() && dirent.name === '.git') continue
+      // Dependency / VCS / build-output forests: never matched, never descended.
+      if (dirent.isDirectory() && SEARCH_SKIP_DIRS.has(dirent.name.toLowerCase())) continue
       if (dirent.name.toLowerCase().includes(needle)) {
         matches.push(join(relative(root, dir), dirent.name))
         if (matches.length >= maxMatches) {

@@ -1,13 +1,12 @@
 /**
  * Workspace-safe file mutations for the sidebar (the upload route today).
  *
- * Every write is lexically confined to the session workspace: the upload
- * directory is resolved absolute and must sit inside the session cwd, the
- * relative path is sanitized (absolute paths, '.', '..' and empty segments
- * are refused), and the final target must stay inside both. Containment is
- * lexical (no symlink resolution) — a symlinked directory inside the cwd can
- * redirect writes outside, matching the trust model of the other /sidebar/*
- * routes. Bytes stream from the request body to a uniquely named temp sibling
+ * Every write is confined to the real session workspace: the upload
+ * directory is resolved absolute and its target is checked through existing
+ * filesystem ancestors, the relative path is sanitized (absolute paths, '.',
+ * '..' and empty segments are refused), and the final target must stay inside
+ * the workspace after symlink resolution. Bytes stream from the request body
+ * to a uniquely named temp sibling
  * and are renamed into place, so a failed, aborted, or oversized upload never
  * leaves a partial file at the target path.
  */
@@ -17,7 +16,8 @@ import { createWriteStream } from 'node:fs'
 import { mkdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { SidebarHttpRequest } from './context-types.ts'
-import { isWithin, requireAbsolute } from './fs-tree.ts'
+import { requireAbsolute } from './fs-tree.ts'
+import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
 import { SidebarError } from './wire.ts'
 
 /** Inputs of one upload: the session scope plus the request body stream. */
@@ -48,9 +48,7 @@ export interface WorkspaceUploadInput {
 export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise<{ path: string; size: number }> {
   const { cwd, dir, relativePath, chunks, limit } = input
   const base = requireAbsolute(dir)
-  if (!isWithin(cwd, base)) {
-    throw new SidebarError('forbidden', 'upload directory escapes the session workspace', 403)
-  }
+  await ensureWorkspacePath(cwd, base)
   if (relativePath === '' || relativePath.startsWith('/') || relativePath.startsWith('\\')) {
     throw new SidebarError('bad-request', 'relativePath must stay below the upload directory', 400)
   }
@@ -59,11 +57,9 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
     throw new SidebarError('bad-request', 'relativePath must stay below the upload directory', 400)
   }
   const target = join(base, ...segments)
-  if (!isWithin(cwd, target) || !isWithin(base, target)) {
-    throw new SidebarError('forbidden', 'target escapes the session workspace', 403)
-  }
-  const tmp = join(dirname(target), `.${basename(target)}.dsh-upload-${randomUUID()}.tmp`)
-  await mkdir(dirname(target), { recursive: true })
+  const safeTarget = await ensureWorkspaceWritePath(cwd, target)
+  const tmp = join(dirname(safeTarget), `.${basename(safeTarget)}.dsh-upload-${randomUUID()}.tmp`)
+  await mkdir(dirname(safeTarget), { recursive: true })
   const stream = createWriteStream(tmp, { flags: 'wx' })
   // Resolves once the stream fully closes; created up front so a stream that
   // already closed (successful end, later failure) cannot leave the wait hanging.
@@ -85,8 +81,8 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
       stream.end((error?: Error | null) => (error === undefined || error === null ? resolve() : reject(error)))
     })
     if (streamError !== undefined) throw streamError
-    await rename(tmp, target)
-    const info = await stat(target)
+    await rename(tmp, safeTarget)
+    const info = await stat(safeTarget)
     return { path: target, size: info.size }
   } catch (error) {
     // Wait for the stream to fully close before unlinking (Windows locks open

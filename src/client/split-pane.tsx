@@ -15,6 +15,7 @@ import clsx from 'clsx'
 import type { SidebarState, SidebarTab, SplitNode } from './state.ts'
 import type { DropZone } from './state.ts'
 import { TabBar, type NewTabOption, parseDrag, type TabDragPayload } from './TabBar.tsx'
+import { createFrameBatcher } from './frame-batcher.ts'
 import css from './sidebar.module.css'
 
 /** Actions the workbench needs (bound to the store by the sidebar shell). */
@@ -30,13 +31,26 @@ export interface WorkbenchActions {
   /** Reorder within a pane (drop onto another tab inserts before it). */
   moveTabBefore: (payload: TabDragPayload, toPane: string, beforeTabId: string) => void
   resizeSplit: (splitId: string, index: number, deltaFrac: number) => void
+  /** Float a docked tab out as a free window (tab context menu entry). */
+  floatTab: (tabId: string) => void
 }
 
 /** One divider: pointer-capture drag translating px deltas into fractions.
  * Deltas are incremental — each move reports the displacement since the
  * previous move — because the store adds every reported delta to the pane
  * sizes; a cumulative (since-pointer-down) delta would be re-added on each
- * move and the divider would run away from the cursor. */
+ * move and the divider would run away from the cursor.
+ *
+ * The moves are BATCHED per frame (createFrameBatcher): a pointer stream
+ * fires faster than the display refresh, and applying each move is a store
+ * reduce that re-renders both workbenches (terminals, editors, trees) per
+ * event — the visible drag lag on slower CPUs (#315). The batch accumulates
+ * the incremental deltas in a ref and applies the summed fraction at most
+ * once per frame; the sum equals what the per-event application would have
+ * produced (the reducer clamps each application, and at a settled position
+ * a clamped sum is clamped to the same boundary), so the result is
+ * indistinguishable at rest and at most one frame behind the cursor.
+ */
 function Divider(props: { dir: 'row' | 'col'; onResize: (deltaFrac: number) => void }) {
   const { dir, onResize } = props
   // `last` is the previous pointer position while dragging; `size` is the
@@ -44,6 +58,9 @@ function Divider(props: { dir: 'row' | 'col'; onResize: (deltaFrac: number) => v
   // normalize the px delta into a fraction.
   const last = useRef({ x: 0, y: 0, size: 0 })
   const [dragging, setDragging] = useState(false)
+  const pendingDelta = useRef(0)
+  const batcher = useRef(createFrameBatcher()).current
+  useEffect(() => () => batcher.dispose(), [batcher])
 
   return (
     <div
@@ -62,12 +79,20 @@ function Divider(props: { dir: 'row' | 'col'; onResize: (deltaFrac: number) => v
       onPointerMove={(event) => {
         if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
         const delta = dir === 'row' ? event.clientX - last.current.x : event.clientY - last.current.y
-        onResize(delta / Math.max(1, last.current.size))
+        pendingDelta.current += delta
+        batcher.schedule(() => {
+          const accumulated = pendingDelta.current
+          pendingDelta.current = 0
+          if (accumulated !== 0) onResize(accumulated / Math.max(1, last.current.size))
+        })
         last.current.x = event.clientX
         last.current.y = event.clientY
       }}
       onPointerUp={(event) => {
         if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+        // Flush any pending baked delta so the final pointer position lands
+        // (the release event is not a move; dropping it would lose the tail).
+        batcher.flushNow()
         event.currentTarget.releasePointerCapture(event.pointerId)
         setDragging(false)
       }}
@@ -148,6 +173,7 @@ function LeafView(props: {
   return (
     <div
       className={clsx(css.pane, dropZone !== null && css.paneDrop)}
+      data-dsh-pane={leaf.id}
       onPointerDown={() => { actions.focusPane(leaf.id) }}
       onDragOver={(event) => {
         event.preventDefault()
@@ -190,6 +216,7 @@ function LeafView(props: {
           if (before === null) actions.moveTabToEdge(payload, leaf.id, 'center')
           else actions.moveTabBefore(payload, leaf.id, before)
         }}
+        onFloatTab={actions.floatTab}
       />
       {leaf.tabs.length > 0 ? (
         /*

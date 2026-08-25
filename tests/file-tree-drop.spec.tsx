@@ -14,6 +14,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { FileTree } from '../src/client/FileTree.tsx'
+import { TAB_DRAG_TYPE } from '../src/client/TabBar.tsx'
 import type { UploadItem } from '../src/client/upload.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
@@ -55,6 +56,7 @@ async function mountTree(busy = false): Promise<Harness> {
       sessionId: 's1',
       cwd: '/tmp',
       expanded: [],
+      revealed: [],
       onToggle: () => {},
       onOpenFile: () => {},
       onReferenceFile: () => {},
@@ -72,12 +74,12 @@ async function mountTree(busy = false): Promise<Harness> {
 }
 
 /** A bubbling drag event carrying a stub dataTransfer (jsdom has no DragEvent). */
-function dragEvent(type: string): Event {
+function dragEvent(type: string, dataTypes: string[] = ['Files']): Event {
   const event = new Event(type, { bubbles: true, cancelable: true })
   Object.defineProperty(event, 'dataTransfer', {
     // No entry API on the items, so drops fall back to the flat file list.
     value: {
-      types: ['Files'],
+      types: dataTypes,
       items: [],
       files: [new File(['x'], 'dropped.txt')],
       dropEffect: '',
@@ -87,8 +89,8 @@ function dragEvent(type: string): Event {
 }
 
 /** Dispatch inside act() so React flushes the state update. */
-function fire(target: Element, type: string): Event {
-  const event = dragEvent(type)
+function fire(target: Element, type: string, dataTypes?: string[]): Event {
+  const event = dragEvent(type, dataTypes)
   act(() => { target.dispatchEvent(event) })
   return event
 }
@@ -178,5 +180,27 @@ describe('FileTree drag-drop surface', () => {
     await act(async () => {})
     expect(busyHarness.uploads).toHaveLength(0)
     busyHarness.unmount()
+  })
+
+  it('ignores an in-app tab drag: no upload drop zone and events pass through', () => {
+    const enter = fire(harness.body, 'dragenter', [TAB_DRAG_TYPE])
+    expect(enter.defaultPrevented).toBe(false)
+    expect(dropZone()).toBeNull()
+    const over = fire(harness.body, 'dragover', [TAB_DRAG_TYPE])
+    expect(over.defaultPrevented).toBe(false)
+    expect(dropZone()).toBeNull()
+    // A row hover must not retarget the drop directory either.
+    const dir = rowByName(harness.container, 'src')
+    const rowOver = fire(dir, 'dragover', [TAB_DRAG_TYPE])
+    expect(rowOver.defaultPrevented).toBe(false)
+    expect(dir.className).not.toContain('explorerRowDropTarget')
+  })
+
+  it('passes an in-app tab drop through without reporting an upload', async () => {
+    const drop = fire(harness.body, 'drop', [TAB_DRAG_TYPE])
+    await act(async () => {})
+    expect(drop.defaultPrevented).toBe(false)
+    expect(harness.uploads).toHaveLength(0)
+    expect(dropZone()).toBeNull()
   })
 })

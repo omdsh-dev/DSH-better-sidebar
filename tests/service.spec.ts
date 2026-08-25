@@ -2,7 +2,7 @@
  * Tests for the BetterSidebar service registry: register/dispose lifecycle,
  * matchFileViewer priority/exts/detect algorithm, and openTab dedupe.
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 
 // Mock browser globals (SidebarStore.reduce → schedulePersist uses window.setTimeout)
 const g = globalThis as Record<string, unknown>
@@ -21,7 +21,7 @@ if (g.localStorage === undefined) {
 }
 
 import { createBetterSidebarService, matchUrlTarget, SIDEBAR_FEATURES, SIDEBAR_SERVICE_VERSION } from '../src/client/service.ts'
-import { createSidebarStore, allLeaves, makeDefaultState, openDiffTab, openTabInActivePane, sanitizeState } from '../src/client/state.ts'
+import { createSidebarStore, allLeaves, floatTab, makeDefaultState, openDiffTab, openTabInActivePane, sanitizeState } from '../src/client/state.ts'
 
 describe('BetterSidebar service', () => {
   it('registerTab adds to the registry and dispose removes it', () => {
@@ -1054,5 +1054,71 @@ describe('independent CR follow-up fixes', () => {
     const service = createBetterSidebarService(store)
     service.registerFileViewer({ id: 'csv', exts: ['csv'], fetchStrategy: 'custom', component: () => null })
     expect(() => service.registerFileViewer({ id: 'csv', exts: ['csv'], fetchStrategy: 'custom', component: () => null })).toThrow(/already registered/)
+  })
+
+  describe('free windows (v0.16.0)', () => {
+    it('openTab dedupe focuses a FLOATING tab by raising its window (no duplicate, no panel expansion)', () => {
+      const store = createSidebarStore()
+      const service = createBetterSidebarService(store)
+      service.registerTab({ id: 'singleton', title: 'S', dedupeKey: () => 'singleton', component: () => null })
+      store.setSession('s1')
+      service.openTab({ type: 'singleton', title: 'S' })
+      // Float the singleton out, then float a second tab above it and
+      // collapse the panel — the focus must raise the window in place
+      // without reopening a tab or expanding anything.
+      store.reduce(s => floatTab(s, 'singleton', 100, 100))
+      service.openTab({ type: 'singleton', title: 'S' })
+      store.reduce(s => floatTab(s, (s.splits as { tabs: Array<{ id: string }> }).tabs[0]!.id, 100, 100))
+      const before = store.getSnapshot().state!
+      expect(before.floats).toHaveLength(2)
+      store.reduce(s => ({ ...s, panelOpen: false }))
+      service.openTab({ type: 'singleton', title: 'S' })
+      const after = store.getSnapshot().state!
+      // Raised to the top, not duplicated.
+      expect(after.floats).toHaveLength(2)
+      expect(after.floats.at(-1)!.tab.type).toBe('singleton')
+      // The panel stays collapsed (a floating tab is already in sight).
+      expect(after.panelOpen).toBe(false)
+      expect(allLeaves(after.splits).some(l => l.tabs.some(t => t.type === 'singleton'))).toBe(false)
+    })
+
+    it('closeTab on a floating tab closes it WITH the window and fires onClose', () => {
+      const store = createSidebarStore()
+      const service = createBetterSidebarService(store)
+      const onClose = vi.fn()
+      service.registerTab({ id: 'notes', title: 'Notes', single: true, onClose, component: () => null })
+      store.setSession('s1')
+      service.openTab({ type: 'notes', title: 'Notes' })
+      store.reduce(s => floatTab(s, 'notes', 50, 50))
+      expect(store.getSnapshot().state!.floats).toHaveLength(1)
+      service.closeTab('notes', { sessionId: 's1' })
+      const after = store.getSnapshot().state!
+      expect(after.floats).toHaveLength(0)
+      expect(onClose).toHaveBeenCalledTimes(1)
+      // Unknown ids stay a strict no-op.
+      service.closeTab('notes')
+      expect(store.getSnapshot().state).toBe(after)
+    })
+
+    it('activateTab on a floating tab raises the window and fires onActivate', () => {
+      const store = createSidebarStore()
+      const service = createBetterSidebarService(store)
+      const onActivate = vi.fn()
+      service.registerTab({ id: 'notes', title: 'Notes', single: true, onActivate, component: () => null })
+      store.setSession('s1')
+      service.openTab({ type: 'notes', title: 'Notes' })
+      service.openTab({ type: 'notes', title: 'Notes' })
+      store.reduce(s => floatTab(s, 'notes', 50, 50))
+      store.reduce(s => floatTab(s, (s.splits as { tabs: Array<{ id: string }> }).tabs[0]!.id, 60, 60))
+      const before = store.getSnapshot().state!
+      expect(before.floats).toHaveLength(2)
+      expect(before.floats.at(-1)!.tab.type).not.toBe('notes')
+      service.activateTab('notes')
+      const after = store.getSnapshot().state!
+      expect(after.floats.at(-1)!.tab.type).toBe('notes')
+      // Two activations total: the second openTab's dedupe focus (before the
+      // float) plus THIS explicit activateTab — both legitimate focuses.
+      expect(onActivate).toHaveBeenCalledTimes(2)
+    })
   })
 })

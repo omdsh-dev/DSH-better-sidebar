@@ -26,7 +26,7 @@ import { act } from 'react-dom/test-utils'
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
 
 import { Sidebar } from '../src/client/Sidebar.tsx'
-import { createSidebarStore, type SidebarStore } from '../src/client/state.ts'
+import { createSidebarStore, setBottomHeight, toggleBottomPanel, type SidebarStore } from '../src/client/state.ts'
 import { createBetterSidebarService, type BetterSidebarService } from '../src/client/service.ts'
 import { t } from '../src/client/locales.ts'
 
@@ -47,6 +47,9 @@ interface MountedSidebar {
 }
 
 /** Mount the real Sidebar shell against a minimal context (real store + service). */
+/** Unique per-test session ids (see the comment inside). */
+let sessionSeq = 0
+
 function mountSidebar(): MountedSidebar {
   vi.stubGlobal('WebSocket', FakeWebSocket)
   const container = document.createElement('div')
@@ -55,19 +58,24 @@ function mountSidebar(): MountedSidebar {
   const service = createBetterSidebarService(store)
   // Fresh-session seed: open the panel explicitly (openByDefault defaults off).
   store.setPrefs({ ...store.getPrefs(), openByDefault: true })
-  store.setSession('s1')
+  // Unique session per test — the store persists per-session state to
+  // localStorage (200ms debounce); a shared id lets a previous test's late
+  // write leak into this store's setSession restore.
+  const sessionId = `s1-${++sessionSeq}`
+  store.setSession(sessionId)
   // useSyncExternalStore requires STABLE snapshots across calls (the real DSH
   // services return stable objects) — a fresh object per call loops forever.
   const localeSnapshot = { active: 'en' }
   const sessionsSnapshot = {
-    current: 's1',
+    current: sessionId,
     // cwd present → api.sessionCwd is never called in these tests.
-    byId: { s1: { cwd: '/tmp' } },
+    byId: { [sessionId]: { cwd: '/tmp' } },
   }
   const ctx = {
     locale: { subscribe: () => () => {}, getSnapshot: () => localeSnapshot },
     sessions: { list: { subscribe: () => () => {}, getSnapshot: () => sessionsSnapshot } },
     betterSidebar: service,
+    get: (name: string) => name === 'betterSidebar' ? service : undefined,
   }
   const root: Root = createRoot(container)
   act(() => { root.render(createElement(Sidebar, { ctx: ctx as never, store })) })
@@ -84,6 +92,9 @@ function mountSidebar(): MountedSidebar {
 
 afterEach(() => {
   document.body.innerHTML = ''
+  // Belt and braces: drop any persisted layout a pending 200ms debounce
+  // write left behind between tests (unique session ids already isolate).
+  localStorage.clear()
   vi.unstubAllGlobals()
 })
 
@@ -99,6 +110,36 @@ describe('layout-push variable cleanup', () => {
     unmount()
     expect(htmlStyle.getPropertyValue('--dsh-sidebar-width')).toBe('')
     expect(htmlStyle.getPropertyValue('--dsh-sidebar-height')).toBe('')
+  })
+
+  it('a size change (release commit) re-applies the variables without removing them mid-commit', () => {
+    const { store, unmount } = mountSidebar()
+    const htmlStyle = document.documentElement.style
+    const width = store.getSnapshot().state!.width
+    const removeSpy = vi.spyOn(htmlStyle, 'removeProperty')
+    // Simulate a drag release: the bottom panel opens and its height commits.
+    act(() => { store.reduce(toggleBottomPanel) })
+    act(() => { store.reduce(s => setBottomHeight(s, 300)) })
+    expect(htmlStyle.getPropertyValue('--dsh-sidebar-width')).toBe(`${width}px`)
+    expect(htmlStyle.getPropertyValue('--dsh-sidebar-height')).toBe('300px')
+    // The commit must NOT have removed the variables at any point. React
+    // runs every effect cleanup before every effect setup in a commit, so a
+    // cleanup here would remove the variables before the draggingRef effect
+    // (declared above the layout push) forces a layout in measureCenter
+    // (getBoundingClientRect). That forced recalc resolves #root's
+    // margin-right to the 0px fallback, caches it as the transition start
+    // value, and measures centerRect too wide; once transitions re-enable on
+    // release, the shell animates margin-right 0 → width — the "expand to
+    // the full page then bounce back" flash.
+    const removalProps = removeSpy.mock.calls
+      .map(call => call[0] as string)
+      .filter(prop => prop === '--dsh-sidebar-width' || prop === '--dsh-sidebar-height')
+    expect(removalProps).toHaveLength(0)
+    // Only unmounting may remove them (issue #31).
+    unmount()
+    expect(removeSpy.mock.calls.some(call =>
+      call[0] === '--dsh-sidebar-width' || call[0] === '--dsh-sidebar-height')).toBe(true)
+    removeSpy.mockRestore()
   })
 })
 

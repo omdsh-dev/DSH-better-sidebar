@@ -24,6 +24,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import {
+  IconChevronRightOutline14,
   IconNewChatOutline16,
   IconPlusOutline16,
   IconSendOutline16,
@@ -43,7 +44,7 @@ import {
   threadTrailingPending,
   type SidechatThreadInfo,
 } from '../sidechat-core.ts'
-import { collectOwnEvents, transcriptRows, type SidechatTranscriptRow } from './sidechat-transcript.ts'
+import { collectOwnEvents, toolArgsSummary, transcriptRows, type SidechatTranscriptRow } from './sidechat-transcript.ts'
 import { api } from './api.ts'
 import { t } from './locales.ts'
 import type { SessionScope } from './api.ts'
@@ -102,6 +103,7 @@ interface RowLabels {
   copyLabel: string
   copiedLabel: string
   thinkLabel: string
+  injectionLabel: string
 }
 
 /** Merge history entries by event seq (newest wins), log order preserved. */
@@ -122,48 +124,112 @@ function threadDisplayTitle(title: string): string {
   return title.startsWith(SIDE_LABEL_PREFIX) ? title.slice(SIDE_LABEL_PREFIX.length) : title
 }
 
+/**
+ * One collapsible context row — the shared Codex-style chrome of tool
+ * calls, thinking and context injections: a single quiet line (chevron +
+ * label + one-line summary) that expands into an indented body hung on a
+ * hairline thread. Rows with nothing to reveal render as a static line.
+ */
+function CollapsibleRow(props: {
+  label: string
+  meta?: string
+  mono?: boolean
+  streaming?: boolean
+  failed?: boolean
+  children?: React.ReactNode
+}): React.ReactNode {
+  const label = (
+    <span
+      className={clsx(
+        css.sidechatRowLabel,
+        props.mono === true && css.sidechatRowMono,
+        props.streaming === true && css.sidechatShimmerText,
+      )}
+    >
+      {props.label}
+    </span>
+  )
+  const meta = props.meta !== undefined && props.meta !== ''
+    ? <span className={css.sidechatRowMeta}>{props.meta}</span>
+    : null
+  if (props.children === undefined) {
+    return (
+      <div className={clsx(css.sidechatRowLine, css.sidechatRowStatic, props.failed === true && css.sidechatRowFailed)}>
+        {label}
+        {meta}
+      </div>
+    )
+  }
+  return (
+    <details className={css.sidechatRow}>
+      <summary
+        className={clsx(
+          css.sidechatRowLine,
+          css.sidechatRowSummary,
+          props.failed === true && css.sidechatRowFailed,
+        )}
+      >
+        <span className={css.sidechatRowChevron}>
+          <IconChevronRightOutline14 size={12} />
+        </span>
+        {label}
+        {meta}
+      </summary>
+      <div className={css.sidechatRowBody}>{props.children}</div>
+    </details>
+  )
+}
+
 /** One row renderer (React keys ride the source event seq). */
 function renderRow(row: SidechatTranscriptRow, labels: RowLabels): React.ReactNode {
   switch (row.kind) {
     case 'user':
       return (
-        <div key={row.seq} className={css.sidechatUser}>
+        <div key={`${row.kind}:${row.seq}`} className={css.sidechatUser}>
           <MarkdownText text={row.text} codeLabels={labels} />
         </div>
       )
     case 'assistant':
       return (
-        <div key={row.seq} className={css.sidechatAssistant}>
+        <div key={`${row.kind}:${row.seq}`} className={css.sidechatAssistant}>
           <MarkdownText text={row.text} codeLabels={labels} />
         </div>
       )
     case 'reasoning':
       return (
-        <details key={row.seq} className={css.sidechatReasoning}>
-          <summary className={css.sidechatReasoningSummary}>{labels.thinkLabel}</summary>
-          <div className={css.sidechatReasoningBody}>{row.text}</div>
-        </details>
+        <CollapsibleRow
+          key={`${row.kind}:${row.seq}`}
+          label={labels.thinkLabel}
+          streaming={!row.settled}
+        >
+          <div className={css.sidechatRowProse}>{row.text}</div>
+        </CollapsibleRow>
       )
-    case 'tool':
+    case 'injection':
       return (
-        <details key={row.seq} className={css.sidechatTool}>
-          <summary
-            className={clsx(
-              css.sidechatToolSummary,
-              row.executing === true && css.sidechatToolExecuting,
-              row.failed && css.sidechatToolFailed,
-            )}
-          >
-            <StateDot
-              state={row.executing === true ? 'ongoing' : row.failed ? 'error' : 'done'}
-              size={8}
-            />
-            <span className={css.sidechatToolName}>{row.name}</span>
-          </summary>
-          {row.args !== undefined && <pre className={css.sidechatToolArgs}>{row.args}</pre>}
-          {row.resultText !== undefined && <pre className={css.sidechatToolResult}>{row.resultText}</pre>}
-        </details>
+        <CollapsibleRow key={`${row.kind}:${row.seq}`} label={labels.injectionLabel}>
+          <div className={css.sidechatRowProse}>{row.text}</div>
+        </CollapsibleRow>
       )
+    case 'tool': {
+      const body = (
+        <>
+          {row.args !== undefined && <pre className={css.sidechatRowCode}>{row.args}</pre>}
+          {row.resultText !== undefined && <pre className={css.sidechatRowCode}>{row.resultText}</pre>}
+        </>
+      )
+      return (
+        <CollapsibleRow
+          key={`${row.kind}:${row.seq}`}
+          label={row.name}
+          meta={toolArgsSummary(row.args)}
+          mono
+          streaming={row.executing === true}
+          failed={row.failed}
+          {...(row.args === undefined && row.resultText === undefined ? {} : { children: body })}
+        />
+      )
+    }
   }
 }
 
@@ -176,7 +242,12 @@ export function SideChatView(props: {
 }): React.ReactNode {
   const { ctx, scope, tab, visible } = props
   const rowLabels = useMemo<RowLabels>(
-    () => ({ copyLabel: t('copy'), copiedLabel: t('copied'), thinkLabel: t('sideChatThink') }),
+    () => ({
+      copyLabel: t('copy'),
+      copiedLabel: t('copied'),
+      thinkLabel: t('sideChatThink'),
+      injectionLabel: t('sideChatInjection'),
+    }),
     [],
   )
 
@@ -224,7 +295,7 @@ export function SideChatView(props: {
     setError(null)
     try {
       const { childId } = await api.sidechatStart(scope.sessionId)
-      ctx.betterSidebar?.updateTab(tab.id, { meta: { threadId: childId } })
+      ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { threadId: childId } })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -248,7 +319,7 @@ export function SideChatView(props: {
     const title = threadDisplayTitle(display)
     if (title !== '' && title !== tab.title) {
       try {
-        ctx.betterSidebar?.updateTab(tab.id, { title })
+        ctx.get('betterSidebar')?.updateTab(tab.id, { title })
       } catch {
         // A stale title is cosmetic; the thread keeps working.
       }
@@ -351,7 +422,7 @@ export function SideChatView(props: {
    *  creates the thread on mount). */
   const openNewThread = (): void => {
     setMenuOpen(false)
-    ctx.betterSidebar?.openTab({ type: 'sidechat' }, scope)
+    ctx.get('betterSidebar')?.openTab({ type: 'sidechat' }, scope)
   }
 
   /** Switch to an existing thread: parked for createTab, deduped to the
@@ -360,7 +431,7 @@ export function SideChatView(props: {
     setMenuOpen(false)
     if (id === threadId) return
     parkSidechatReopen(id)
-    ctx.betterSidebar?.openTab({ type: 'sidechat' }, scope)
+    ctx.get('betterSidebar')?.openTab({ type: 'sidechat' }, scope)
   }
 
   const menuItems = useMemo<MenuEntry[]>(() => {
@@ -448,7 +519,12 @@ export function SideChatView(props: {
       <div className={css.sidechat}>
         <div className={css.sidechatHero}>
           <IconNewChatOutline16 />
-          <div className={css.sidechatHeroTitle}>
+          <div
+            className={clsx(
+              css.sidechatHeroTitle,
+              busy === 'starting' && css.sidechatShimmerText,
+            )}
+          >
             {busy === 'starting' ? t('sideChatCreating') : t('sideChatEmpty')}
           </div>
           <div className={css.sidechatHeroDesc}>{t('sideChatEmptyDesc')}</div>

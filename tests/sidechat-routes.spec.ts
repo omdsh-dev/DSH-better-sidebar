@@ -8,10 +8,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { buildSidechatApi } from '../src/sidechat-routes.ts'
 import { SidebarError } from '../src/wire.ts'
-import { SIDE_BOUNDARY_PROMPT, SIDE_NEW_THREAD_TITLE, sideLabel } from '../src/sidechat-core.ts'
+import { SIDE_BOUNDARY_PROMPT, SIDE_INJECTION_PLUGIN, SIDE_NEW_THREAD_TITLE, sideLabel } from '../src/sidechat-core.ts'
 import type { Context } from '../src/context-types.ts'
 
-/** A fake live agent (followup/cancel spied). */
+/** A fake live agent (inject/followup/cancel spied). */
 function agent(id: string, over: { events?: unknown[]; header?: Record<string, unknown>; provider?: string; model?: string } = {}) {
   return {
     id,
@@ -22,6 +22,7 @@ function agent(id: string, over: { events?: unknown[]; header?: Record<string, u
       header: { cwd: '/p', delegationDepth: 0, agentPreset: 'preset-a', ...over.header },
       events: over.events ?? [],
     },
+    inject: vi.fn(),
     followup: vi.fn(),
     cancel: vi.fn(),
   }
@@ -138,12 +139,17 @@ describe('sidechat.start', () => {
       agentProvider: 'test',
       agentModel: 'model-x',
     })
+    // First contact is SPLIT: the boundary rides agent.inject (plugin-stamped
+    // context, no wake), the question is the follow-up that wakes the driver.
+    expect(child.inject).toHaveBeenCalledTimes(1)
+    const injection = child.inject.mock.calls[0]![0] as { content: Array<{ type: string; text: string }>; source: { kind: string; plugin: string } }
+    expect(injection.source).toEqual({ kind: 'plugin', plugin: SIDE_INJECTION_PLUGIN })
+    expect(injection.content[0]!.text.startsWith(SIDE_BOUNDARY_PROMPT)).toBe(true)
+    expect(injection.content[0]!.text).not.toContain('explain the event flow')
     expect(child.followup).toHaveBeenCalledTimes(1)
     const message = child.followup.mock.calls[0]![0] as { content: Array<{ type: string; text: string }>; source: { kind: string } }
     expect(message.source).toEqual({ kind: 'user' })
-    const promptText = message.content[0]!.text
-    expect(promptText.startsWith(SIDE_BOUNDARY_PROMPT)).toBe(true)
-    expect(promptText).toContain('explain the event flow')
+    expect(message.content[0]!.text).toBe('explain the event flow')
     expect(services.rename).toHaveBeenCalledWith(child.session, sideLabel('explain the event flow'))
   })
 
@@ -188,8 +194,11 @@ describe('sidechat.start', () => {
     const options = services.create.mock.calls[0]![0] as { seed: Array<{ type: string }> }
     // Cut BEFORE the open turn: only the pending user message is inherited.
     expect(options.seed.map(event => event.type)).toEqual(['user/message', 'subagent/descriptor'])
+    // The snapshot rides the injection, not the follow-up question.
+    const injection = child.inject.mock.calls[0]![0] as { content: Array<{ text: string }> }
+    expect(injection.content[0]!.text).toContain('`bash` (executing)')
     const message = child.followup.mock.calls[0]![0] as { content: Array<{ text: string }> }
-    expect(message.content[0]!.text).toContain('`bash` (executing)')
+    expect(message.content[0]!.text).toBe('what now?')
   })
 
   it('creates an EMPTY thread on a blank question (Codex-style immediate create)', async () => {
@@ -209,18 +218,22 @@ describe('sidechat.start', () => {
 
     // No prompt yet: the composer owns the first message; the placeholder
     // label is pinned and the in-progress snapshot is parked for it.
+    expect(child.inject).not.toHaveBeenCalled()
     expect(child.followup).not.toHaveBeenCalled()
     expect(services.rename).toHaveBeenCalledWith(child.session, SIDE_NEW_THREAD_TITLE)
 
-    // The first prompt carries the boundary + the parked snapshot and earns
-    // the thread its real label.
+    // The first prompt injects the boundary + the parked snapshot (split
+    // from the question) and earns the thread its real label.
     services.agents.get = vi.fn((id: unknown) => (id === childId ? child : parent))
     await api['sidechat.prompt']({ childId, text: 'explain the event flow' })
+    expect(child.inject).toHaveBeenCalledTimes(1)
+    const injection = child.inject.mock.calls[0]![0] as { content: Array<{ text: string }>; source: { kind: string } }
+    expect(injection.source.kind).toBe('plugin')
+    expect(injection.content[0]!.text.startsWith(SIDE_BOUNDARY_PROMPT)).toBe(true)
+    expect(injection.content[0]!.text).toContain('`bash` (executing)')
     expect(child.followup).toHaveBeenCalledTimes(1)
     const message = child.followup.mock.calls[0]![0] as { content: Array<{ text: string }> }
-    expect(message.content[0]!.text.startsWith(SIDE_BOUNDARY_PROMPT)).toBe(true)
-    expect(message.content[0]!.text).toContain('`bash` (executing)')
-    expect(message.content[0]!.text).toContain('explain the event flow')
+    expect(message.content[0]!.text).toBe('explain the event flow')
     expect(services.rename).toHaveBeenCalledWith(child.session, sideLabel('explain the event flow'))
   })
 
@@ -256,6 +269,7 @@ describe('sidechat.prompt', () => {
     const api = buildSidechatApi(ctxWith(services))
     const result = await api['sidechat.prompt']({ childId: 'child', text: 'tell me more' })
     expect(result).toEqual({ accepted: true })
+    expect(child.inject).not.toHaveBeenCalled()
     expect(child.followup).toHaveBeenCalledTimes(1)
     const message = child.followup.mock.calls[0]![0] as { content: Array<{ text: string }> }
     expect(message.content[0]!.text).toBe('tell me more')

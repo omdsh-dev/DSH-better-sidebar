@@ -3,7 +3,10 @@
  * overflow scrolls horizontally, a close button per tab, a four-way split
  * button cluster, and the + menu that opens new tabs (explorer / git /
  * terminal). Tabs are draggable; dropping onto another tab inserts before it,
- * dropping on the strip background appends to this pane.
+ * dropping on the strip background appends to this pane. Right-clicking a
+ * tab opens the tab context menu (float as a free window / close / close
+ * others / close to the left / close to the right, the close ones scoped to
+ * this pane).
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
@@ -61,6 +64,9 @@ export function TabBar(props: {
   newTabOptions: NewTabOption[]
   /** Drop of a tab from any pane: (payload, insertBeforeTabId | null). */
   onDropTab: (payload: TabDragPayload, before: string | null) => void
+  /** Float a tab out as a free window (the tab context menu's entry; the
+   *  drag-to-conversation gesture is handled at the Sidebar shell level). */
+  onFloatTab: (tabId: string) => void
   /** Icon resolver for tab labels (reads from the tab descriptor registry). */
   getTabIcon?: (tab: SidebarTab) => ReactNode
   /** Badge resolver for tab labels (reads the descriptor's `badge`; the
@@ -73,10 +79,13 @@ export function TabBar(props: {
   onRename?: (tabId: string, title: string) => void
 }) {
   const {
-    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge,
+    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, onFloatTab, getTabIcon, getTabBadge,
     canRenameTab, onRename,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
+  // The tab right-click context menu: the target tab plus the cursor
+  // position (the portaled Menu anchors there, following GitView/FileTree).
+  const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   // Inline rename: the tab id being edited + the draft text. A ref mirrors
@@ -116,6 +125,9 @@ export function TabBar(props: {
     if (next.length === 0 || next === tab.title) return
     onRename?.(tab.id, next)
   }
+  // The context target's index in the render-time tab snapshot; -1 when the
+  // tab disappeared since the menu opened (the menu hides then).
+  const tabMenuIndex = tabMenu === null ? -1 : tabs.findIndex(tab => tab.id === tabMenu.tabId)
 
   // Middle-click close: the press target is recorded on middle mousedown
   // (preventDefaulted to disarm Chrome's middle-click autoscroll — its
@@ -237,6 +249,14 @@ export function TabBar(props: {
                 middlePressed.current = { id: tab.id, node: event.currentTarget }
               }
             }}
+            onContextMenu={(event) => {
+              // Take over the browser menu: the tab context menu offers the
+              // close operations for this pane. Opening it also dismisses
+              // the + menu (only one menu at a time).
+              event.preventDefault()
+              setMenuOpen(false)
+              setTabMenu({ tabId: tab.id, x: event.clientX, y: event.clientY })
+            }}
           >
             {getTabIcon?.(tab) ?? null}
             {getTabBadge?.(tab) ?? null}
@@ -316,11 +336,54 @@ export function TabBar(props: {
               className={css.tabBarPlus}
               aria-label={t('newTab')}
               title={t('newTab')}
-              onClick={() => { setMenuOpen(v => !v) }}
+              onClick={() => { setMenuOpen(v => !v); setTabMenu(null) }}
             >
               <IconPlusOutline16 />
             </button>
           )}
+        />
+        {/*
+          The tab context menu, positioned at the right-click cursor (portal
+          so the panel's overflow clip cannot crop it). Close operations are
+          scoped to THIS pane: "close others/left/right" walk the render-time
+          tab snapshot and reuse the per-tab onClose path (which routes
+          through the service and releases terminals), so the target tab is
+          never closed and the pane never empties mid-loop.
+        */}
+        <Menu
+          open={tabMenu !== null && tabMenuIndex >= 0}
+          onClose={() => { setTabMenu(null) }}
+          items={[
+            { id: 'float', label: t('moveToFreeWindow') },
+            { id: 'close', label: t('close') },
+            { id: 'closeOthers', label: t('closeOtherTabs'), ...(tabs.length <= 1 ? { disabled: true } : {}) },
+            { id: 'closeLeft', label: t('closeLeftTabs'), ...(tabMenuIndex <= 0 ? { disabled: true } : {}) },
+            { id: 'closeRight', label: t('closeRightTabs'), ...(tabMenuIndex >= tabs.length - 1 ? { disabled: true } : {}) },
+          ]}
+          onSelect={(id) => {
+            const target = tabMenu
+            if (target === null) return
+            setTabMenu(null)
+            const index = tabs.findIndex(tab => tab.id === target.tabId)
+            if (index < 0) return
+            if (id === 'float') {
+              onFloatTab(target.tabId)
+            } else if (id === 'close') {
+              onClose(target.tabId)
+            } else if (id === 'closeOthers') {
+              for (const tab of tabs) {
+                if (tab.id !== target.tabId) onClose(tab.id)
+              }
+            } else if (id === 'closeLeft') {
+              for (const tab of tabs.slice(0, index)) onClose(tab.id)
+            } else if (id === 'closeRight') {
+              for (const tab of tabs.slice(index + 1)) onClose(tab.id)
+            }
+          }}
+          portal
+          align="start"
+          getAnchorRect={() => (tabMenu === null ? null : new DOMRect(tabMenu.x, tabMenu.y, 0, 0))}
+          anchor={<span />}
         />
       </div>
     </div>
