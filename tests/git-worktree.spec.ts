@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {realpathSync,  mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { parseWorktreeList, resolveWorktree, status, worktrees } from '../src/git.ts'
@@ -56,7 +56,7 @@ describe('linked Git worktrees', () => {
   })
 
   it('discovers dirty linked checkouts and fences selected targets', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-worktrees-'))
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'dsh-sidebar-worktrees-')))
     const main = join(root, 'main')
     const agent = join(root, 'agent worktree')
     try {

@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import {realpath,  mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -13,7 +13,7 @@ const normalizePath = (path: string): string => path.replaceAll('\\', '/')
 
 describe('git parsing', () => {
   it('discovers and selects direct child repositories under a workspace directory', async () => {
-    const workspace = await mkdtemp(join(tmpdir(), 'dsh-better-sidebar-git-'))
+    const workspace = await realpath(await mkdtemp(join(tmpdir(), 'dsh-better-sidebar-git-')))
     const first = join(workspace, 'first-repo')
     const second = join(workspace, 'second-repo')
     try {
