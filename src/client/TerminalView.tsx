@@ -142,7 +142,14 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
     // guard.
     const linkProvider = term.registerLinkProvider({
       provideLinks: (lineNumber, callback) => {
-        const line = term.buffer.active.getLine(lineNumber)
+        // xterm's `provideLinks` hands us a 1-based buffer line number
+        // (its own built-in ILinkProvider does `buffer.lines.get(e - 1)`,
+        // i.e. the public `bufferLineNumber` is 1-based while `getLine`
+        // takes a 0-based index). Passing `lineNumber` straight through
+        // would fetch the row *below* the one xterm asked us to scan, so
+        // the URL text would come from the wrong row while `range.y` still
+        // pointed at the requested row — links landed one line too high.
+        const line = term.buffer.active.getLine(lineNumber - 1)
         if (line === undefined) {
           callback(undefined)
           return
