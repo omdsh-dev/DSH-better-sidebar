@@ -34,8 +34,8 @@ import type { TabDescriptor } from '../service.ts'
  * wrapper keeps the descriptor contract `(props) => ReactNode` — Sidebar
  * calls it as a plain function.
  *
- * TerminalView's props are { scope, tabId, store } — `tabId` is NOT part of
- * TabComponentProps (it carries `tab: SidebarTab` instead), so the
+ * TerminalView's props are { ctx, scope, tabId, store } — `tabId` is NOT
+ * part of TabComponentProps (it carries `tab: SidebarTab` instead), so the
  * descriptor maps it explicitly; a bare pass-through would leave tabId
  * undefined and TerminalView's isAgentTabId(tabId) would crash on
  * `undefined.startsWith` (regression-pinned in tests/lazy-chunk.spec.tsx).
@@ -47,6 +47,7 @@ const LazyTerminal = lazyChunkComponent<TerminalViewProps>(
 
 /** The terminal view's props (mirror of TerminalView's own signature). */
 interface TerminalViewProps {
+  ctx: Context
   scope: SessionScope
   tabId: string
   store: SidebarStore
@@ -282,7 +283,9 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           patch: { nextTerminal: state.nextTerminal + 1 },
         }
       },
-      component: ({ tab, scope, store }) => <LazyTerminal scope={scope} store={store} tabId={tab.id} />,
+      component: ({ ctx, tab, scope, store }) => (
+        <LazyTerminal ctx={ctx} scope={scope} store={store} tabId={tab.id} />
+      ),
     },
     {
       id: 'browser',

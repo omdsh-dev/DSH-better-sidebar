@@ -2008,11 +2008,47 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .terminal {
   flex: 1;
   min-height: 0;
+  position: relative; /* containing block for the block layer overlay */
   padding: 6px 4px 6px 8px;
 }
 
 .terminal :global(.xterm) {
   height: 100%;
+}
+
+/* The block layer: absolutely fills the terminal host, pointer-transparent
+   (only the pill inside receives clicks). Dividers/highlight/pill positions
+   are computed per render from the xterm screen's live geometry. */
+.terminalBlockLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* One hairline per CLI block boundary (at each block's echo row). */
+.terminalBlockDivider {
+  position: absolute;
+  height: 1px;
+  background: var(--dsw-alias-border-l1);
+  pointer-events: none;
+}
+
+/* The hovered block's span, tinted under the text (text stays readable). */
+.terminalBlockHover {
+  position: absolute;
+  background: var(--dsw-alias-interactive-bg-hover);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* The per-block "add to conversation" pill: the shared selectionPopup
+   chrome, anchored at the hovered row instead of a selection. */
+.terminalBlockPill {
+  position: absolute;
+  transform: none;
+  pointer-events: auto;
+  z-index: 6;
 }
 
 .terminalBanner {
