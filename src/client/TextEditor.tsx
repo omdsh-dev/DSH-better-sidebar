@@ -250,7 +250,7 @@ export function TextEditor(props: FileViewerProps) {
    *  `mdText` stays untouched for selection/line lookup and for mermaid-block
    *  detection, which are unaffected by image syntax. */
   const previewText = markdown
-    ? rewriteLocalImageUrls(mdText, scope, path, window.location.origin)
+    ? rewriteLocalImageUrls(mdText, scope, path, document.baseURI)
     : mdText
   /** md/mermaid block split for the preview (mermaid fences lift out). Split
    *  only in preview mode: edit-mode keystrokes must not re-scan the source. */

@@ -47,6 +47,7 @@ import {
   shouldActivateTerminalLink,
   openTerminalUrl,
 } from './terminal-links.ts'
+import { hostWebSocketUrl } from './host-route-url.ts'
 import css from './sidebar.module.css'
 
 /** How many consecutive unreasoned failures before showing the error banner. */
@@ -182,8 +183,7 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
     let failures = 0
 
     const wsUrl = (): string => {
-      const url = new URL('/sidebar/ws/terminal', location.origin)
-      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+      const url = hostWebSocketUrl('sidebar/ws/terminal')
       // Agent terminals attach by uuid (the host looks them up in the agent
       // pty registry); UI-tab terminals attach by sessionId+tab (the host
       // uses the UI-tab pty manager). Same upgrade endpoint, different query.
@@ -194,9 +194,7 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
         if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
         url.search = params.toString()
       }
-      // Same construction the app's own downlink WebSockets use (new URL
-      // over location.origin + protocol swap): whatever the environment
-      // does to the app's websockets applies identically here.
+      // The injected document base keeps the socket under the same reverse-proxy prefix as the page.
       return url.toString()
     }
 

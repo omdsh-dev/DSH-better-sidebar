@@ -103,7 +103,7 @@ describe('production path (script injection + global registry + externals requir
       simulateScript('editor', (require) => ({ TextEditor: `view:${String(require('react'))}` }))
     })
     const exports = await loadChunk('editor')
-    expect(loaded).toEqual(['/sidebar/bundle/editor.js'])
+    expect(loaded).toEqual(['http://localhost/sidebar/bundle/editor.js'])
     expect(exports).toEqual({ TextEditor: 'view:[object Object]' })
     expect(modules.import).toHaveBeenCalledTimes(CHUNK_EXTERNALS.length)
     // The injection also lands on a plugin-owned global so chunk-bundle
@@ -128,7 +128,7 @@ describe('production path (script injection + global registry + externals requir
       simulateScript('editor', (require) => ({ TextEditor: `view:${String(require('react'))}` }))
     })
     const exports = await loadChunk('editor')
-    expect(loaded).toEqual(['/sidebar/bundle/editor.js'])
+    expect(loaded).toEqual(['http://localhost/sidebar/bundle/editor.js'])
     expect(exports).toEqual({ TextEditor: 'view:[object Object]' })
     // Externals resolved through the module system's seed branch, once.
     expect(modules.import).toHaveBeenCalledTimes(CHUNK_EXTERNALS.length)
@@ -147,7 +147,7 @@ describe('production path (script injection + global registry + externals requir
     })
     await loadChunk('terminal')
     await loadChunk('editor')
-    expect(seen).toEqual(['/sidebar/bundle/terminal.js', '/sidebar/bundle/editor.js'])
+    expect(seen).toEqual(['http://localhost/sidebar/bundle/terminal.js', 'http://localhost/sidebar/bundle/editor.js'])
     expect(modules.import).toHaveBeenCalledTimes(CHUNK_EXTERNALS.length)
   })
 
@@ -237,8 +237,10 @@ describe('revalidateChunksOnReactivate (HMR re-activation keeps unchanged chunks
     }))
   }
 
-  /** Let the fire-and-forget ETag recorder (recordEtag) settle. */
-  const settleEtag = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 5))
+  /** Wait until the fire-and-forget ETag recorder has issued its HEAD request. */
+  const settleEtag = async (): Promise<void> => {
+    await vi.waitFor(() => { expect(vi.mocked(globalThis.fetch)).toHaveBeenCalled() })
+  }
 
   it('keeps the resolved exports of an unchanged chunk — no re-inject / re-execute', async () => {
     installModuleSystem()

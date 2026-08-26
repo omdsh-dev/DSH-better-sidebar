@@ -11,6 +11,7 @@
  */
 
 import type { SessionScope } from './api.ts'
+import { hostRouteUrl } from './host-route-url.ts'
 import { isAbsolutePath } from './paths.ts'
 
 /**
@@ -90,7 +91,7 @@ export function resolveLocalMediaDest(
   // absolute so the shared MarkdownText http(s) allowlist accepts it.
   const params = new URLSearchParams({ sessionId: scope.sessionId, path: normalizeLocalPath(candidate) })
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
-  return `${origin}/sidebar/file?${params.toString()}`
+  return hostRouteUrl(`sidebar/file?${params.toString()}`, origin).href
 }
 
 export function rewriteLocalImageUrls(

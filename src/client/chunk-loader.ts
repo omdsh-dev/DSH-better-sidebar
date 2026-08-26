@@ -49,6 +49,8 @@
  * client.js); an edit that does land while a core HMR happens is caught by
  * the ETag comparison on the next activation.
  */
+import { hostRouteUrl } from './host-route-url.ts'
+
 export type ChunkName = 'terminal' | 'editor' | 'mermaid'
 
 /** The module exports a chunk factory provides (namespace-ish record). */
@@ -80,7 +82,7 @@ export const CHUNK_EXTERNALS: readonly string[] = [
 ]
 
 /** Chunk script endpoint served by the plugin host half (src/bundle-route.ts). */
-const CHUNK_URL = (name: ChunkName): string => `/sidebar/bundle/${name}.js`
+const CHUNK_URL = (name: ChunkName): string => hostRouteUrl(`sidebar/bundle/${name}.js`).href
 
 /** Bound on the revalidation HEAD round-trip. A timeout fails open (drop +
  *  re-fetch on the next open) so a stuck bundle route can never wedge lazy
