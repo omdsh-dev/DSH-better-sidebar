@@ -1000,7 +1000,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // shell's normal saved-width push so its own workspace navigation does
     // not cross a responsive breakpoint and collapse underneath the code.
     const bottomPush = !narrow && state?.bottomOpen === true ? height + keyboardInset : 0
-    writeGeometry(codeFocusRef.current ? width : renderedWidth, bottomPush)
+    writeGeometry(width, bottomPush)
   }
 
   // Drags write at most once per frame: pointer events fire several times
@@ -1287,7 +1287,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     if (sessionId === undefined) return
     const service = ctx.get('betterSidebar')
     const descriptor = service?.getTab(optionId)
-    if (descriptor === undefined) return
+    if (service === undefined || descriptor === undefined) return
     const title = typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title
     service.openTab({ type: optionId, title }, { sessionId, cwd })
   }, [ctx, sessionId, cwd])
@@ -1469,7 +1469,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           bottom: narrow && keyboardInset > 0
             ? `${keyboardInset}px`
             : codeFocus && state.bottomOpen
-              ? `${Math.min(state.bottomHeight, window.innerHeight) + keyboardInset}px`
+              ? `${bottomPanelHeight + keyboardInset}px`
               : undefined,
         }}
         data-code-focus={codeFocus || undefined}

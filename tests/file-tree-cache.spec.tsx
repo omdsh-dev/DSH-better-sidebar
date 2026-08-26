@@ -40,6 +40,7 @@ function renderTree(root: Root, initialScrollTop = 0, callbacks: {
     sessionId: 'cache-continuity-session',
     cwd: '/workspace',
     expanded: [],
+    revealed: [],
     onToggle: () => {},
     onOpenFile: callbacks.onOpenFile ?? (() => {}),
     onReferenceFile: () => {},

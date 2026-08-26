@@ -45,6 +45,7 @@ describe('EditorHost deleted-path cleanup', () => {
     const sessionsSnapshot = { byId: { 'delete-session': { cwd: '/tmp' } }, current: 'delete-session' }
     const ctx = {
       betterSidebar: service,
+      get: (name: string) => name === 'betterSidebar' ? service : undefined,
       sessions: { list: { subscribe: () => () => {}, getSnapshot: () => sessionsSnapshot } },
     } as unknown as Context
     const container = document.createElement('div')
@@ -57,6 +58,7 @@ describe('EditorHost deleted-path cleanup', () => {
         scope: { sessionId: 'delete-session', cwd: '/tmp' },
         tab: currentTab(),
         expanded: ['/tmp/deleted'],
+        revealed: [],
         onToggleDir: () => {},
         onReferenceFile: () => {},
       }))

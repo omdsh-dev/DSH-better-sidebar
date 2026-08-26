@@ -110,7 +110,7 @@ afterEach(() => {
   document.body.innerHTML = ''
   // Belt and braces: drop any persisted layout a pending 200ms debounce
   // write left behind between tests (unique session ids already isolate).
-  localStorage.clear()
+  window.localStorage?.clear()
   vi.unstubAllGlobals()
 })
 

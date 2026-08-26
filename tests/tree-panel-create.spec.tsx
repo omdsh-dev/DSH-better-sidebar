@@ -88,6 +88,7 @@ describe('TreePanel directory actions', () => {
         sessionId: `create-session-${expect.getState().currentTestName}`,
         cwd: '/workspace',
         expanded: [target],
+        revealed: [],
         onToggle,
         onOpenFile,
         onReferenceFile: () => {},
