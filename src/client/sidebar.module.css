@@ -54,8 +54,8 @@
   left: 0;
 }
 
-/* The persistent expand/collapse cluster at the top-right corner: two rail
-   controls side by side (bottom panel's glyph LEFT of the right panel's).
+/* The persistent layout cluster at the top-right corner: bottom-panel and
+   right-panel controls side by side while the panel is open.
    Always pinned to the viewport corner — inside the right panel's top-right
    while it is open, sitting flush in the 34px tab strip (28px buttons at
    top: 3) whose right end it really squeezes. Host-internal z-index 45
@@ -107,6 +107,11 @@
 
 .toggleButton:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.toggleButtonActive {
+  background: var(--dsw-alias-interactive-bg-active);
   color: var(--dsw-alias-label-primary);
 }
 
@@ -181,8 +186,54 @@
   touch-action: none;
 }
 
+/* The hit strip stays generous while a short centered rail makes the resize
+   affordance discoverable without drawing a full-height divider. */
+.panelResize::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 2px;
+  height: 40px;
+  border-radius: 2px;
+  background: transparent;
+  transform: translateY(-50%);
+}
+
+.panelResize:hover::after,
+.panelResize:focus-visible::after,
+.panelResizeActive::after {
+  background: var(--dsw-alias-border-l2);
+}
+
+.panelResize:focus-visible {
+  outline: none;
+}
+
 .panelResizeActive {
   background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.panelResizeCollapseReady::after {
+  width: 4px;
+  left: 2px;
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.panelCollapseHint {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  z-index: 3;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  font: var(--dsw-font-xxs-12);
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translateY(-50%);
 }
 
 .panelBody {
@@ -804,6 +855,41 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: nowrap;
 }
 
+/* File identity is shared by explorer rows and editor/diff tabs. The four
+   semantic tones follow every DSH skin; the icon shape still carries the
+   distinction when color perception is limited. */
+.fileTypeIcon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.fileTypeIcon svg {
+  display: block;
+}
+
+.fileIconCode {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.fileIconDocument {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.fileIconConfig {
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.fileIconSpecial {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.fileIconNeutral {
+  color: var(--dsw-alias-label-tertiary);
+}
+
 /* One tab's descriptor badge (a count capped at 99+, or a short text). */
 .tabBadge {
   flex: none;
@@ -842,10 +928,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .tabBarPlus {
   flex: none;
   align-self: center;
-  /* Adjacent to the rightmost tab; sticky so overflowing tab rows keep it
-     visible at the right edge of the scrollport. */
-  position: sticky;
-  right: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -896,15 +978,15 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-anchor: none;
   /* Deep trees truncate their labels instead of scrolling horizontally. */
   overflow-x: hidden;
   padding: 4px 8px 8px;
 }
 
 /* One tree row: the app's session-row cell (34px, radius 8, inset, hover
-   fill, 22px indent step, 14px ink) with a mount fade so expanding a
-   directory reveals its children gently (stable keys keep existing rows from
-   replaying it). */
+   fill, 22px indent step, 14px ink). Rows intentionally have no mount
+   animation: editor-tab changes remount the tree and must not flash it. */
 .explorerRow {
   display: flex;
   align-items: center;
@@ -925,7 +1007,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   cursor: pointer;
   white-space: nowrap;
   border-radius: 8px;
-  animation: dsh-row-in 150ms var(--ds-ease-in-out);
 }
 
 .explorerRow:hover {
@@ -1005,6 +1086,49 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-state-error-primary);
   cursor: default;
+}
+
+/* Inline direct-child creation lives in the tree position it will occupy.
+   Keeping naming in context makes the destination unambiguous and avoids a
+   modal for a short, reversible input step. */
+.explorerCreateBlock .explorerRow {
+  cursor: default;
+}
+
+.explorerCreateBlock .explorerRow:hover {
+  background: transparent;
+}
+
+.explorerCreateInput {
+  min-width: 0;
+  flex: 1;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 5px;
+  outline: none;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.explorerCreateInput:focus {
+  border-color: var(--dsw-alias-border-l2);
+}
+
+.explorerCreateInput[aria-invalid='true'] {
+  border-color: var(--dsw-alias-state-error-primary);
+}
+
+.explorerCreateInput:disabled {
+  opacity: 0.6;
+}
+
+.explorerCreateError {
+  padding: 0 8px 5px;
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxxs-11);
+  overflow-wrap: anywhere;
 }
 
 /* Mount fade for tree rows (the app's session-row reveal). */
@@ -1259,9 +1383,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   border-color: var(--dsw-alias-border-l2);
 }
 
-/* The tree-panel toggle in the header: active = panel open (the selected
-   fill of the tab strip). */
-.editorTreeToggleActive {
+/* Selected header controls share the tab strip's active fill. */
+.editorTreeToggleActive,
+.editorHeaderButtonActive {
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-interactive-bg-active);
 }
@@ -1353,6 +1477,20 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding: 8px 12px;
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-label-tertiary);
+}
+
+.editorDeleteDesc {
+  margin: 0;
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.editorDeleteDesc + .editorDeleteDesc {
+  margin-top: 8px;
+}
+
+.editorDeleteError {
+  color: var(--dsw-alias-state-error-primary);
 }
 
 .editorSearchResult {

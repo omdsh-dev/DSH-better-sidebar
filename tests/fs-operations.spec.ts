@@ -1,8 +1,10 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
+import {
+  existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { writeWorkspaceUpload } from '../src/fs-operations.ts'
+import { createWorkspaceEntry, deleteWorkspaceEntry, writeWorkspaceUpload } from '../src/fs-operations.ts'
 
 /** The test workspace root (each suite gets its own temp tree). */
 const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-'))
@@ -148,5 +150,95 @@ describe('writeWorkspaceUpload', () => {
       cwd: root, dir: root, relativePath: 'keep.txt', chunks: chunksOf('0123456789'), limit: 2,
     })).rejects.toMatchObject({ code: 'too-large' })
     expect(readFileSync(target, 'utf8')).toBe('original')
+  })
+})
+
+describe('createWorkspaceEntry', () => {
+  it('creates one empty file or folder directly below the selected directory', async () => {
+    const parent = join(root, 'create-parent')
+    mkdirSync(parent, { recursive: true })
+    const file = await createWorkspaceEntry({ cwd: root, dir: parent, name: 'new-file.ts', kind: 'file' })
+    const directory = await createWorkspaceEntry({ cwd: root, dir: parent, name: 'new-folder', kind: 'directory' })
+    expect(file).toEqual({ path: join(parent, 'new-file.ts'), kind: 'file' })
+    expect(directory).toEqual({ path: join(parent, 'new-folder'), kind: 'directory' })
+    expect(readFileSync(file.path, 'utf8')).toBe('')
+    expect(existsSync(directory.path)).toBe(true)
+  })
+
+  it('never overwrites an existing entry', async () => {
+    const parent = join(root, 'create-existing')
+    const target = join(parent, 'keep.txt')
+    mkdirSync(parent, { recursive: true })
+    writeFileSync(target, 'keep')
+    await expect(createWorkspaceEntry({ cwd: root, dir: parent, name: 'keep.txt', kind: 'file' }))
+      .rejects.toMatchObject({ code: 'fs-error', status: 409 })
+    expect(readFileSync(target, 'utf8')).toBe('keep')
+  })
+
+  it('refuses invalid names, outside parents, and symlink-parent escapes', async () => {
+    const parent = join(root, 'create-validation')
+    mkdirSync(parent, { recursive: true })
+    for (const name of ['', '  ', '.', '..', '../escape', 'nested/child']) {
+      await expect(createWorkspaceEntry({ cwd: root, dir: parent, name, kind: 'file' }))
+        .rejects.toMatchObject({ code: 'bad-request' })
+    }
+    const outside = mkdtempSync(join(tmpdir(), 'dsh-sidebar-create-outside-'))
+    const link = join(root, 'create-outside-link')
+    symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir')
+    try {
+      await expect(createWorkspaceEntry({ cwd: root, dir: outside, name: 'outside.txt', kind: 'file' }))
+        .rejects.toMatchObject({ code: 'forbidden' })
+      await expect(createWorkspaceEntry({ cwd: root, dir: link, name: 'through-link.txt', kind: 'file' }))
+        .rejects.toMatchObject({ code: 'forbidden' })
+      expect(existsSync(join(outside, 'through-link.txt'))).toBe(false)
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('deleteWorkspaceEntry', () => {
+  it('deletes one file inside the workspace', async () => {
+    const { path } = await writeWorkspaceUpload({
+      cwd: root, dir: root, relativePath: 'delete-me.txt', chunks: chunksOf('temporary'), limit: 1024,
+    })
+    await expect(deleteWorkspaceEntry(root, path)).resolves.toEqual({ path })
+    expect(existsSync(path)).toBe(false)
+  })
+
+  it('recursively deletes a populated directory', async () => {
+    const directory = join(root, 'delete-dir')
+    mkdirSync(join(directory, 'nested'), { recursive: true })
+    writeFileSync(join(directory, 'nested', 'file.txt'), 'temporary')
+    await expect(deleteWorkspaceEntry(root, directory)).resolves.toEqual({ path: directory })
+    expect(existsSync(directory)).toBe(false)
+  })
+
+  it('removes a directory symlink without deleting its target', async () => {
+    const target = join(root, 'symlink-target')
+    const link = join(root, 'delete-link')
+    mkdirSync(target, { recursive: true })
+    writeFileSync(join(target, 'keep.txt'), 'keep')
+    symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir')
+    await expect(deleteWorkspaceEntry(root, link)).resolves.toEqual({ path: link })
+    expect(existsSync(link)).toBe(false)
+    expect(readFileSync(join(target, 'keep.txt'), 'utf8')).toBe('keep')
+  })
+
+  it('refuses the workspace root, lexical escapes, and symlink-parent escapes', async () => {
+    await expect(deleteWorkspaceEntry(root, root)).rejects.toMatchObject({ code: 'forbidden' })
+    await expect(deleteWorkspaceEntry(root, join(tmpdir(), 'outside.txt'))).rejects.toMatchObject({ code: 'forbidden' })
+    const outside = mkdtempSync(join(tmpdir(), 'dsh-sidebar-delete-outside-'))
+    const outsideNested = join(outside, 'nested')
+    const link = join(root, 'outside-link')
+    mkdirSync(outsideNested)
+    writeFileSync(join(outsideNested, 'keep.txt'), 'keep')
+    symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir')
+    try {
+      await expect(deleteWorkspaceEntry(root, join(link, 'nested'))).rejects.toMatchObject({ code: 'forbidden' })
+      expect(readFileSync(join(outsideNested, 'keep.txt'), 'utf8')).toBe('keep')
+    } finally {
+      rmSync(outside, { recursive: true, force: true })
+    }
   })
 })

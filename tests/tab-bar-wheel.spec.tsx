@@ -19,7 +19,7 @@ import { act } from 'react-dom/test-utils'
 import { TabBar } from '../src/client/TabBar.tsx'
 import type { SidebarTab } from '../src/client/state.ts'
 
-function mountBar(overflow: boolean): { list: HTMLElement; unmount: () => void } {
+function mountBar(overflow: boolean): { list: HTMLElement; plus: HTMLElement; unmount: () => void } {
   const container = document.createElement('div')
   document.body.append(container)
   const tabs: SidebarTab[] = [
@@ -41,12 +41,15 @@ function mountBar(overflow: boolean): { list: HTMLElement; unmount: () => void }
     }))
   })
   const list = container.querySelector('[class*="tabList"]') as HTMLElement
+  const plus = container.querySelector('[class*="tabBarPlus"]') as HTMLElement
   expect(list).not.toBeNull()
+  expect(plus).not.toBeNull()
   // jsdom has no layout: stub the scrollport geometry to simulate overflow.
   Object.defineProperty(list, 'scrollWidth', { value: overflow ? 600 : 200, configurable: true })
   Object.defineProperty(list, 'clientWidth', { value: 200, configurable: true })
   return {
     list,
+    plus,
     unmount: () => {
       act(() => { root.unmount() })
       container.remove()
@@ -66,6 +69,15 @@ afterEach(() => {
 })
 
 describe('TabBar wheel → horizontal scroll', () => {
+  it('keeps the new-tab control outside the scrolling tab list', () => {
+    const { list, plus, unmount } = mountBar(true)
+    try {
+      expect(list.contains(plus)).toBe(false)
+    } finally {
+      unmount()
+    }
+  })
+
   it('translates a vertical wheel delta into scrollLeft when the strip overflows', () => {
     const { list, unmount } = mountBar(true)
     try {

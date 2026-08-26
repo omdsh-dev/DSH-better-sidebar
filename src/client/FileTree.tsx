@@ -2,44 +2,83 @@
  * The controlled file tree behind the files window's tree panel (TreePanel
  * wraps it with the search box): a lazy VSCode-style tree rooted at the
  * session's working directory. Levels load on expansion (one API call per
- * directory), directories sort first, hidden entries render dimmed. The
+ * directory), directories sort first, hidden entries render dimmed. Loaded
+ * levels are cached per session/workspace so opening another file tab paints
+ * the same tree immediately instead of flashing through a loading frame. The
  * expansion set lives in the per-session state (owned by the caller); the
  * caller also owns the refresh affordance — a `refreshTick` bump wipes the
- * level cache so the visible set reloads.
+ * shared level cache so the visible set reloads.
  *
  * Row actions: hovering a row reveals an @-reference button on the far
  * right (appends `@<relative path>` to the composer draft), and right-click
  * opens a context menu: file rows offer the caller's open escapes
  * (new tab / to the side, only when the callbacks exist) and a download
  * action (the host serves raw bytes, binary-safe); directory rows offer
- * "upload here"; every row can copy the relative or absolute path (with a
- * brief "copied" label replacing the button after a successful write).
+ * inline direct-child creation and file/folder import; every row can copy the
+ * relative or absolute path (with a brief "copied" label replacing the
+ * button after a successful write).
  *
  * Uploads start here (drag-drop or the context menu picker) but run in the
  * caller: every request is reported through `onUploadRequest(dir, items)`
  * (VSCode semantics — a drop on a file row targets its parent directory),
  * and `busy` gates new drags while one upload is in flight.
  */
-import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
   IconChevronRightOutline14, IconCodeOutline16, IconCopyOutline16, IconDownloadOutline16,
-  IconLinkOutline16, Menu, type MenuEntry, type MenuItem, writeClipboard,
+  IconLinkOutline16, IconTrashOutline16, Menu, type MenuEntry, type MenuItem, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
-import { VscFile, VscFolder, VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
+import {
+  VscFolder, VscFolderOpened, VscLinkExternal, VscNewFile, VscNewFolder, VscPin, VscPinned,
+} from 'react-icons/vsc'
 import { api, downloadUrl, type FsEntry } from './api.ts'
+import { FileTypeIcon } from './file-icons.tsx'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
 import type { OpenWithTarget } from './open-with.ts'
 import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
-import { uploadItemsFromDrop, uploadItemsFromFiles, type UploadItem } from './upload.ts'
+import { uploadItemsFromDrop, type UploadItem } from './upload.ts'
 import css from './sidebar.module.css'
 
 interface LevelData {
   entries?: FsEntry[]
   error?: string
+}
+
+/** Resolved lazy levels shared by file-tree instances in the same workspace.
+ *  Loading placeholders stay instance-local so a tab never waits on another
+ *  tab's in-flight request without receiving its completion. */
+const LEVEL_CACHE_LIMIT = 12
+const levelCache = new Map<string, Record<string, LevelData>>()
+
+/** Stable cache identity for one session workspace. */
+function levelCacheKey(sessionId: string, cwd: string | undefined): string {
+  return JSON.stringify([sessionId, cwd ?? null])
+}
+
+/** Read and touch one cache entry so the bounded map evicts inactive scopes. */
+function readLevelCache(key: string): Record<string, LevelData> | undefined {
+  const cached = levelCache.get(key)
+  if (cached === undefined) return undefined
+  levelCache.delete(key)
+  levelCache.set(key, cached)
+  return cached
+}
+
+/** Store one resolved level and evict the least-recently-used scope. */
+function writeLevelCache(key: string, path: string, level: LevelData): Record<string, LevelData> {
+  const next = { ...(levelCache.get(key) ?? {}), [path]: level }
+  levelCache.delete(key)
+  levelCache.set(key, next)
+  while (levelCache.size > LEVEL_CACHE_LIMIT) {
+    const oldest = levelCache.keys().next().value as string | undefined
+    if (oldest === undefined) break
+    levelCache.delete(oldest)
+  }
+  return next
 }
 
 /** Root label: the last path segment (mirror of the host rootLabel). */
@@ -60,6 +99,15 @@ function parentOf(path: string): string {
  *  (mirror of Sidebar.tsx's panel-host shield gate). */
 function isFileDrag(event: DragEvent): boolean {
   return event.dataTransfer?.types.includes('Files') ?? false
+}
+
+/** Keep primary-pointer row selection from focusing and auto-scrolling the
+ *  row. Keyboard focus remains available through tabIndex and key handlers. */
+function preserveTreeViewportOnMouseDown(event: MouseEvent<HTMLElement>): void {
+  if (event.button !== 0) return
+  const target = event.target
+  if (target instanceof Element && target.closest('button') !== null) return
+  event.preventDefault()
 }
 
 /** How long the row's "copied" label stays after a successful write. */
@@ -102,6 +150,15 @@ const ChatDropIllustration = () => (
   </svg>
 )
 
+/** One explorer entry selected for permanent deletion. */
+export interface FileTreeDeleteTarget {
+  path: string
+  kind: 'file' | 'directory' | 'symlink'
+}
+
+/** Kind of an empty entry requested from a directory context menu. */
+export type FileTreeCreateKind = 'file' | 'directory'
+
 export function FileTree(props: {
   sessionId: string
   cwd: string | undefined
@@ -114,6 +171,8 @@ export function FileTree(props: {
   onOpenFileNewTab?: (path: string) => void
   /** Context-menu "open to the side" (file rows; absent → no entry). */
   onOpenFileSide?: (path: string) => void
+  /** Context-menu delete request; caller confirms and runs it. */
+  onDeleteEntry?: (target: FileTreeDeleteTarget) => void
   /**
    * The "open with" menu: resolved external targets (already SSH-filtered
    * and in menu order). Absent → the whole section is hidden.
@@ -129,20 +188,53 @@ export function FileTree(props: {
   onToggleOpenWithPin?: (targetId: string) => void
   /** Insert `@<relative path>` into the composer draft. */
   onReferenceFile: (path: string) => void
+  /** Create one empty direct child; resolves with its absolute path. */
+  onCreateEntry?: (dir: string, name: string, kind: FileTreeCreateKind) => Promise<{ path: string }>
+  /** Open the OS file picker and import its selection into `dir`. */
+  onImportFiles?: (dir: string) => void
+  /** Open the OS folder picker and import its selection into `dir`. */
+  onImportFolder?: (dir: string) => void
   /** Bump to wipe the level cache and reload the visible set. */
   refreshTick: number
   /** Upload into `dir` (absolute, inside the workspace); runs in the caller. */
   onUploadRequest: (dir: string, items: UploadItem[]) => void
   /** True while an upload is in flight (drops are ignored). */
   busy: boolean
+  /** Whether this tree's editor tab is currently visible. Hidden tab cells
+   *  stay mounted, but their scrollports must not overwrite the live viewport. */
+  visible?: boolean
+  /** Scroll position restored after the lazy visible levels finish loading. */
+  initialScrollTop?: number
+  /** Reports navigation movement so the owning editor tab can persist it. */
+  onScrollTopChange?: (scrollTop: number) => void
 }) {
-  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy } = props
-  const [data, setData] = useState<Record<string, LevelData>>({})
+  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, onDeleteEntry, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onCreateEntry, onImportFiles, onImportFolder, refreshTick, onUploadRequest, busy, visible = true, initialScrollTop = 0, onScrollTopChange } = props
+  const cacheKey = levelCacheKey(sessionId, cwd)
+  const [data, setData] = useState<Record<string, LevelData>>(() => readLevelCache(cacheKey) ?? {})
   const dataRef = useRef(data)
+  /** Invalidates directory requests started before a refresh/workspace switch. */
+  const requestEpochRef = useRef(0)
   /** The row whose path was just copied ("copied" label replaces its button). */
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
-  const [rowMenu, setRowMenu] = useState<{ path: string; isDir: boolean; x: number; y: number } | null>(null)
+  const [rowMenu, setRowMenu] = useState<{
+    path: string
+    isDir: boolean
+    isSymlink: boolean
+    isRoot: boolean
+    x: number
+    y: number
+  } | null>(null)
+  /** Inline direct-child name editor opened from one directory menu. */
+  const [createDraft, setCreateDraft] = useState<{
+    dir: string
+    kind: FileTreeCreateKind
+    name: string
+    submitting: boolean
+    error: string | null
+  } | null>(null)
+  /** Synchronous guard against two Enter events before React commits state. */
+  const createSubmissionRef = useRef(false)
   /** Whether a file drag hovers the tree (drives the portaled drop zone). */
   const [dropOver, setDropOver] = useState(false)
   /** The directory a drag is hovering right now (null = body, drop to root). */
@@ -156,11 +248,25 @@ export function FileTree(props: {
   const dropDepth = useRef(0)
   /** Explorer body element; its viewport rect anchors the portaled drop zone. */
   const bodyRef = useRef<HTMLDivElement>(null)
+  /** Desired position stays independent from the DOM while lazy directories
+   *  are still too short to accept the restored scrollTop. */
+  const desiredScrollTopRef = useRef(initialScrollTop)
+  /** The persisted input already folded into `desiredScrollTopRef`. React can
+   *  batch a hidden tab's meta update with its activation, so this sync must
+   *  happen during render — a passive effect runs after the layout restore
+   *  and would leave the old tab's previous (often zero) viewport on screen. */
+  const restoredScrollInputRef = useRef({ sessionId, cwd, initialScrollTop })
+  const restoredScrollInput = restoredScrollInputRef.current
+  if (
+    restoredScrollInput.sessionId !== sessionId
+    || restoredScrollInput.cwd !== cwd
+    || restoredScrollInput.initialScrollTop !== initialScrollTop
+  ) {
+    restoredScrollInputRef.current = { sessionId, cwd, initialScrollTop }
+    desiredScrollTopRef.current = initialScrollTop
+  }
   /** The body's viewport rect captured at drag entry (null = not measured). */
   const [dropRect, setDropRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null)
-  /** Context-menu "upload here" target directory. */
-  const pendingUploadDir = useRef<string | undefined>(undefined)
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   /** Reset all drag state (drop landed, the drag left, or a new drag begins). */
   const resetDrop = (): void => {
@@ -242,30 +348,50 @@ export function FileTree(props: {
     setDropTarget(dir)
   }
 
-  const storeLevel = useCallback((path: string, level: LevelData) => {
-    dataRef.current = { ...dataRef.current, [path]: level }
+  const markLevelLoading = useCallback((path: string) => {
+    dataRef.current = { ...dataRef.current, [path]: {} }
     setData(dataRef.current)
   }, [])
 
+  const storeLevel = useCallback((path: string, level: LevelData, requestEpoch: number) => {
+    if (requestEpoch !== requestEpochRef.current) return
+    const shared = writeLevelCache(cacheKey, path, level)
+    dataRef.current = { ...dataRef.current, ...shared, [path]: level }
+    setData(dataRef.current)
+  }, [cacheKey])
+
   const loadDir = useCallback((dir: string) => {
     if (dataRef.current[dir] !== undefined) return
-    storeLevel(dir, {})
+    const cached = readLevelCache(cacheKey)
+    if (cached?.[dir] !== undefined) {
+      dataRef.current = { ...dataRef.current, ...cached }
+      setData(dataRef.current)
+      return
+    }
+    markLevelLoading(dir)
+    const requestEpoch = requestEpochRef.current
     api.fsTree({ sessionId, cwd }, dir).then((listing) => {
-      storeLevel(dir, { entries: listing.entries })
+      storeLevel(dir, { entries: listing.entries }, requestEpoch)
     }).catch((error: unknown) => {
-      storeLevel(dir, { error: error instanceof Error ? error.message : String(error) })
+      storeLevel(dir, { error: error instanceof Error ? error.message : String(error) }, requestEpoch)
     })
-  }, [sessionId, cwd, storeLevel])
+  }, [sessionId, cwd, cacheKey, markLevelLoading, storeLevel])
 
-  // The caller's refresh tick wipes the cache (declared BEFORE the load
-  // effect so the reload below sees the empty cache).
-  const lastTick = useRef(refreshTick)
-  useEffect(() => {
-    if (lastTick.current === refreshTick) return
-    lastTick.current = refreshTick
-    dataRef.current = {}
-    setData({})
-  }, [refreshTick])
+  // Clear stale rows before paint so a deleted entry cannot still be clicked
+  // while the authoritative listing reloads. The epoch also prevents a
+  // slower pre-refresh request from restoring an obsolete directory level.
+  const lastLoadContext = useRef({ cacheKey, refreshTick })
+  useLayoutEffect(() => {
+    const previous = lastLoadContext.current
+    if (previous.cacheKey === cacheKey && previous.refreshTick === refreshTick) return
+    lastLoadContext.current = { cacheKey, refreshTick }
+    requestEpochRef.current += 1
+    const refreshed = previous.refreshTick !== refreshTick
+    if (refreshed) levelCache.delete(cacheKey)
+    const next = refreshed ? {} : readLevelCache(cacheKey) ?? {}
+    dataRef.current = next
+    setData(next)
+  }, [cacheKey, refreshTick])
 
   useEffect(() => {
     // Load the visible set; already-loaded levels (kept in the cache) are
@@ -281,10 +407,25 @@ export function FileTree(props: {
   // a long tree should surface the highlighted file. Re-runs when the tree
   // data or reveal set changes (the row appears after its level loads).
   useEffect(() => {
-    if (revealed.length === 0) return
+    if (!visible || revealed.length === 0) return
     const row = bodyRef.current?.querySelector('[data-dsh-revealed]')
     row?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-  }, [revealed, data])
+  }, [visible, revealed, data])
+
+  useLayoutEffect(() => {
+    const body = bodyRef.current
+    if (body === null || !visible) return
+    // A restored position can only be applied after every expanded level has
+    // produced rows. Applying it against the initial loading placeholders
+    // would clamp it to zero and lose the user's navigation context.
+    const visibleDirs = cwd === undefined ? [] : [cwd, ...expanded]
+    const loaded = visibleDirs.every((dir) => {
+      const level = data[dir]
+      return level?.entries !== undefined || level?.error !== undefined
+    })
+    if (!loaded) return
+    body.scrollTop = desiredScrollTopRef.current
+  }, [cwd, expanded, data, initialScrollTop, visible])
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
   const copyPath = useCallback((text: string, path: string): void => {
@@ -318,10 +459,13 @@ export function FileTree(props: {
     )
   }
 
-  const openRowMenu = (event: MouseEvent, path: string, isDir: boolean): void => {
+  const openRowMenu = (
+    event: MouseEvent,
+    target: { path: string; isDir: boolean; isSymlink: boolean; isRoot?: boolean },
+  ): void => {
     event.preventDefault()
     event.stopPropagation()
-    setRowMenu({ path, isDir, x: event.clientX, y: event.clientY })
+    setRowMenu({ ...target, isRoot: target.isRoot === true, x: event.clientX, y: event.clientY })
   }
 
   /** Download a file through the host route (raw bytes, binary-safe). */
@@ -419,91 +563,212 @@ export function FileTree(props: {
 
   const root = cwd
 
+  /** Capture the live viewport before the owning editor switches tabs. */
+  const openFileAtCurrentViewport = (path: string): void => {
+    const scrollTop = bodyRef.current?.scrollTop ?? desiredScrollTopRef.current
+    desiredScrollTopRef.current = scrollTop
+    onScrollTopChange?.(scrollTop)
+    onOpenFile(path)
+  }
+
+  /** Reveal an inline direct-child name editor under the selected directory. */
+  const startCreate = (dir: string, kind: FileTreeCreateKind): void => {
+    if (busy || onCreateEntry === undefined) return
+    if (dir !== root && !expanded.includes(dir)) onToggle(dir)
+    setCreateDraft({ dir, kind, name: '', submitting: false, error: null })
+  }
+
+  /** Validate and create the current inline draft without overwriting. */
+  const submitCreate = async (): Promise<void> => {
+    const draft = createDraft
+    if (draft === null || draft.submitting || createSubmissionRef.current || onCreateEntry === undefined) return
+    const name = draft.name.trim()
+    if (name === '') {
+      setCreateDraft({ ...draft, error: t('createNameRequired') })
+      return
+    }
+    if (name === '.' || name === '..' || /[\\/]/.test(name)) {
+      setCreateDraft({ ...draft, error: t('createNameInvalid') })
+      return
+    }
+    createSubmissionRef.current = true
+    setCreateDraft({ ...draft, name, submitting: true, error: null })
+    try {
+      const created = await onCreateEntry(draft.dir, name, draft.kind)
+      setCreateDraft(null)
+      if (draft.kind === 'file') openFileAtCurrentViewport(created.path)
+      else if (!expanded.includes(created.path)) onToggle(created.path)
+    } catch (reason) {
+      setCreateDraft({
+        ...draft,
+        name,
+        submitting: false,
+        error: t('createFailed', { error: reason instanceof Error ? reason.message : String(reason) }),
+      })
+    } finally {
+      createSubmissionRef.current = false
+    }
+  }
+
+  /** One inline name row at the first child position of its parent. */
+  const renderCreateRow = (dir: string, depth: number): ReactNode => {
+    const draft = createDraft
+    if (draft === null || draft.dir !== dir) return null
+    const errorId = 'dsh-file-tree-create-error'
+    return (
+      <div className={css.explorerCreateBlock}>
+        <div className={css.explorerRow} style={{ paddingLeft: depth * 22 + 6 }}>
+          {draft.kind === 'directory' ? <VscNewFolder size={14} /> : <VscNewFile size={14} />}
+          <input
+            autoFocus
+            className={css.explorerCreateInput}
+            value={draft.name}
+            maxLength={255}
+            aria-label={draft.kind === 'directory' ? t('newFolderName') : t('newFileName')}
+            aria-invalid={draft.error !== null}
+            aria-describedby={draft.error === null ? undefined : errorId}
+            placeholder={draft.kind === 'directory' ? t('newFolderName') : t('newFileName')}
+            disabled={draft.submitting}
+            onClick={(event) => { event.stopPropagation() }}
+            onChange={(event) => {
+              setCreateDraft(current => current === null
+                ? current
+                : { ...current, name: event.target.value, error: null })
+            }}
+            onKeyDown={(event) => {
+              event.stopPropagation()
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                void submitCreate()
+              } else if (event.key === 'Escape' && !draft.submitting) {
+                event.preventDefault()
+                setCreateDraft(null)
+              }
+            }}
+          />
+        </div>
+        {draft.error !== null && (
+          <div
+            id={errorId}
+            className={css.explorerCreateError}
+            style={{ paddingLeft: depth * 22 + 24 }}
+          >
+            {draft.error}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
+    const createRow = renderCreateRow(dir, depth)
     if (level === undefined) {
-      return <div className={css.explorerRow} style={{ paddingLeft: depth * 22 + 6 }}>{t('loading')}</div>
+      return (
+        <>
+          {createRow}
+          <div className={css.explorerRow} style={{ paddingLeft: depth * 22 + 6 }}>{t('loading')}</div>
+        </>
+      )
     }
     if (level.error !== undefined) {
       return (
-        <div className={clsx(css.explorerRow, css.explorerError)} style={{ paddingLeft: depth * 22 + 6 }}>
-          {level.error}
-        </div>
+        <>
+          {createRow}
+          <div className={clsx(css.explorerRow, css.explorerError)} style={{ paddingLeft: depth * 22 + 6 }}>
+            {level.error}
+          </div>
+        </>
       )
     }
     const entries = level.entries ?? []
-    return entries.map(entry => {
-      if (entry.isDir) {
-        const isOpen = expanded.includes(entry.path)
-        return (
-          <div key={entry.path}>
+    return (
+      <>
+        {createRow}
+        {entries.map(entry => {
+          if (entry.isDir) {
+            const isOpen = expanded.includes(entry.path)
+            return (
+              <div key={entry.path}>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className={clsx(
+                    css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden,
+                    dropTarget === entry.path && css.explorerRowDropTarget,
+                    revealed.includes(entry.path) && css.explorerRowRevealed,
+                  )}
+                  data-dsh-revealed={revealed.includes(entry.path) ? 'true' : undefined}
+                  style={{ paddingLeft: depth * 22 + 6 }}
+                  onMouseDown={preserveTreeViewportOnMouseDown}
+                  onClick={() => { onToggle(entry.path) }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      onToggle(entry.path)
+                    }
+                  }}
+                  onDragOver={(event) => { handleRowDragOver(event, entry.path) }}
+                  onDrop={(event) => { handleDirDrop(event, entry.path) }}
+                  onContextMenu={(event) => { openRowMenu(event, entry) }}
+                >
+                  {isOpen ? <VscFolderOpened size={14} /> : <VscFolder size={14} />}
+                  <span className={css.explorerName}>{entry.name}</span>
+                  {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
+                  {rowActions(entry)}
+                </div>
+                {isOpen && renderLevel(entry.path, depth + 1)}
+              </div>
+            )
+          }
+          return (
             <div
+              key={entry.path}
               role="button"
               tabIndex={0}
               className={clsx(
-                css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden,
-                dropTarget === entry.path && css.explorerRowDropTarget,
+                css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken,
+                dropTarget === parentOf(entry.path) && css.explorerRowDropTarget,
                 revealed.includes(entry.path) && css.explorerRowRevealed,
               )}
               data-dsh-revealed={revealed.includes(entry.path) ? 'true' : undefined}
               style={{ paddingLeft: depth * 22 + 6 }}
-              onClick={() => { onToggle(entry.path) }}
+              title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
+              onMouseDown={preserveTreeViewportOnMouseDown}
+              onClick={() => { openFileAtCurrentViewport(entry.path) }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault()
-                  onToggle(entry.path)
+                  openFileAtCurrentViewport(entry.path)
                 }
               }}
-              onDragOver={(event) => { handleRowDragOver(event, entry.path) }}
-              onDrop={(event) => { handleDirDrop(event, entry.path) }}
-              onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
+              onDragOver={(event) => { handleRowDragOver(event, parentOf(entry.path)) }}
+              onDrop={(event) => { handleFileDrop(event, entry.path) }}
+              onContextMenu={(event) => { openRowMenu(event, entry) }}
             >
-              {isOpen ? <VscFolderOpened size={14} /> : <VscFolder size={14} />}
+              <FileTypeIcon path={entry.path} />
               <span className={css.explorerName}>{entry.name}</span>
               {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
               {rowActions(entry)}
             </div>
-            {isOpen && renderLevel(entry.path, depth + 1)}
-          </div>
-        )
-      }
-      return (
-        <div
-          key={entry.path}
-          role="button"
-          tabIndex={0}
-          className={clsx(
-            css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken,
-            dropTarget === parentOf(entry.path) && css.explorerRowDropTarget,
-            revealed.includes(entry.path) && css.explorerRowRevealed,
-          )}
-          data-dsh-revealed={revealed.includes(entry.path) ? 'true' : undefined}
-          style={{ paddingLeft: depth * 22 + 6 }}
-          title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
-          onClick={() => { onOpenFile(entry.path) }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault()
-              onOpenFile(entry.path)
-            }
-          }}
-          onDragOver={(event) => { handleRowDragOver(event, parentOf(entry.path)) }}
-          onDrop={(event) => { handleFileDrop(event, entry.path) }}
-          onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
-        >
-          <VscFile size={14} />
-          <span className={css.explorerName}>{entry.name}</span>
-          {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
-          {rowActions(entry)}
-        </div>
-      )
-    })
+          )
+        })}
+      </>
+    )
   }
 
   return (
     <div
       ref={bodyRef}
       className={css.explorerBody}
+      onScroll={(event) => {
+        // Browsers may report a zeroed scrollport while an inactive tab is
+        // display:none. That is layout fallout, not user navigation.
+        if (!visible) return
+        const scrollTop = event.currentTarget.scrollTop
+        desiredScrollTopRef.current = scrollTop
+        onScrollTopChange?.(scrollTop)
+      }}
       onDragEnter={handleBodyDragEnter}
       onDragOver={handleBodyDragOver}
       onDragLeave={handleBodyDragLeave}
@@ -518,7 +783,9 @@ export function FileTree(props: {
             style={{ paddingLeft: 6 }}
             onDragOver={(event) => { handleRowDragOver(event, root) }}
             onDrop={(event) => { handleDirDrop(event, root) }}
-            onContextMenu={(event) => { openRowMenu(event, root, true) }}
+            onContextMenu={(event) => {
+              openRowMenu(event, { path: root, isDir: true, isSymlink: false, isRoot: true })
+            }}
           >
             <VscFolderOpened size={14} />
             <span className={css.explorerName}>{baseName(root)}</span>
@@ -594,18 +861,6 @@ export function FileTree(props: {
         The one shared context menu, positioned at the right-click cursor
         (portal so the tree's overflow clip cannot crop it).
       */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        style={{ display: 'none' }}
-        onChange={(event) => {
-          const dir = pendingUploadDir.current ?? root
-          pendingUploadDir.current = undefined
-          if (dir !== undefined && !busy) onUploadRequest(dir, uploadItemsFromFiles(event.target.files ?? []))
-          event.target.value = ''
-        }}
-      />
       <Menu
         open={rowMenu !== null}
         onClose={() => { setRowMenu(null) }}
@@ -622,12 +877,39 @@ export function FileTree(props: {
           ...(rowMenu?.isDir === false
             ? [{ id: 'download', label: t('download'), icon: <IconDownloadOutline16 size={16} /> }]
             : []),
-          // Upload into a directory (incl. the workspace root row).
+          // Direct-child creation and imports belong to the selected folder
+          // (including the workspace root), never to a global toolbar target.
+          ...(rowMenu?.isDir === true && onCreateEntry !== undefined
+            ? [
+                { id: 'create-file', label: t('createFile'), icon: <VscNewFile size={16} />, ...(busy ? { disabled: true } : {}) },
+                { id: 'create-folder', label: t('createFolder'), icon: <VscNewFolder size={16} />, ...(busy ? { disabled: true } : {}) },
+              ]
+            : []),
+          ...(rowMenu?.isDir === true && onImportFiles !== undefined
+            ? [{ id: 'import-files', label: t('importFiles'), icon: <IconUploadOutline16 size={16} />, ...(busy ? { disabled: true } : {}) }]
+            : []),
+          ...(rowMenu?.isDir === true && onImportFolder !== undefined
+            ? [{ id: 'import-folder', label: t('importFolder'), icon: <VscFolderOpened size={16} />, ...(busy ? { disabled: true } : {}) }]
+            : []),
           ...(rowMenu?.isDir === true
-            ? [{ id: 'upload-here', label: t('uploadHere'), icon: <IconUploadOutline16 size={16} /> }]
+            && (onCreateEntry !== undefined || onImportFiles !== undefined || onImportFolder !== undefined)
+            ? [{ type: 'separator' as const, id: 'directory-actions-separator' }]
             : []),
           { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={16} /> },
           { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutline16 size={16} /> },
+          ...(rowMenu !== null && !rowMenu.isRoot && onDeleteEntry !== undefined
+            ? [
+                { type: 'separator' as const, id: 'delete-separator' },
+                {
+                  id: 'delete',
+                  label: rowMenu.isSymlink
+                    ? t('deleteSymlink')
+                    : rowMenu.isDir ? t('deleteFolder') : t('deleteFile'),
+                  icon: <IconTrashOutline16 size={16} />,
+                  danger: true, ...(busy ? { disabled: true } : {}),
+                },
+              ]
+            : []),
         ]}
         onSelect={(id) => {
           const target = rowMenu
@@ -649,9 +931,23 @@ export function FileTree(props: {
             downloadFile(target.path)
             return
           }
-          if (id === 'upload-here') {
-            pendingUploadDir.current = target.path
-            fileInputRef.current?.click()
+          if (id === 'delete') {
+            onDeleteEntry?.({
+              path: target.path,
+              kind: target.isSymlink ? 'symlink' : target.isDir ? 'directory' : 'file',
+            })
+            return
+          }
+          if (id === 'create-file' || id === 'create-folder') {
+            startCreate(target.path, id === 'create-file' ? 'file' : 'directory')
+            return
+          }
+          if (id === 'import-files') {
+            onImportFiles?.(target.path)
+            return
+          }
+          if (id === 'import-folder') {
+            onImportFolder?.(target.path)
             return
           }
           copyPath(

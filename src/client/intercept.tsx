@@ -14,15 +14,22 @@ import { resolveSidebarPath, selectProducedFiles } from './produced-files.ts'
 import { wrapOpenPath } from './openpath-intercept.ts'
 import css from './sidebar.module.css'
 
-/** Open a file in the sidebar's editor (used by the intercepted row and the explorer). */
-export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: string, path: string): void {
+/** Open a file in the sidebar's editor (used by the intercepted row and the explorer).
+ *  `meta` seeds navigation state when the caller opens from an existing file tree. */
+export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: string, path: string, meta?: unknown): void {
   const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
   const absolute = resolveSidebarPath(summary?.cwd, path)
   const at = Math.max(absolute.lastIndexOf('/'), absolute.lastIndexOf('\\'))
   const title = at === -1 ? absolute : absolute.slice(at + 1)
   // Route through the sidebar service so the editor descriptor's dedupeKey
   // (per-path) applies; the id is path-derived so multiple editors coexist.
-  ctx.get('betterSidebar')?.openTab({ type: 'editor', title, path: absolute, id: `editor:${absolute}` })
+  ctx.get('betterSidebar')?.openTab({
+    type: 'editor',
+    title,
+    path: absolute,
+    id: `editor:${absolute}`,
+    ...(meta !== undefined ? { meta } : {}),
+  })
 }
 
 /**

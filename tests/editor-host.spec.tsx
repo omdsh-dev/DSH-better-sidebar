@@ -47,7 +47,12 @@ function setup(): {
 }
 
 /** Mount the host for one tab; returns the container and an unmount helper. */
-function mountHost(ctx: Context, store: ReturnType<typeof createSidebarStore>, tab: () => SidebarTab): {
+function mountHost(
+  ctx: Context,
+  store: ReturnType<typeof createSidebarStore>,
+  tab: () => SidebarTab,
+  visible: () => boolean = () => true,
+): {
   container: HTMLDivElement
   rerender: () => void
   unmount: () => void
@@ -61,6 +66,7 @@ function mountHost(ctx: Context, store: ReturnType<typeof createSidebarStore>, t
       store,
       scope: { sessionId: 'editor-home-session' },
       tab: tab(),
+      visible: visible(),
       expanded: [],
       revealed: [],
       onToggleDir: () => {},
@@ -139,6 +145,61 @@ describe('EditorHost (files window)', () => {
     }
   })
 
+  it('restores the file-tree scroll position after hiding and reopening it', () => {
+    const { store, ctx, homeTab } = setup()
+    store.setPrefs({ ...store.getPrefs(), editorExplorer: true })
+    const { container, rerender, unmount } = mountHost(ctx, store, homeTab)
+    try {
+      const tree = container.querySelector<HTMLDivElement>('[class*="explorerBody"]')!
+      act(() => {
+        tree.scrollTop = 275
+        tree.dispatchEvent(new Event('scroll', { bubbles: true }))
+        container.querySelector<HTMLButtonElement>('button[aria-pressed]')!.click()
+      })
+      expect(homeTab().meta).toEqual({ treeOpen: false, treeScrollTop: 275 })
+
+      rerender()
+      act(() => { container.querySelector<HTMLButtonElement>('button[aria-pressed]')!.click() })
+      rerender()
+      expect(homeTab().meta).toEqual({ treeOpen: true, treeScrollTop: 275 })
+      expect(container.querySelector<HTMLDivElement>('[class*="explorerBody"]')!.scrollTop).toBe(275)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('applies a hidden existing tab\'s inherited tree position when it becomes visible', () => {
+    const { store, ctx } = setup()
+    store.setPrefs({ ...store.getPrefs(), editorExplorer: false })
+    ctx.betterSidebar.openTab({
+      type: 'editor',
+      title: 'existing.ts',
+      path: '/tmp/existing.ts',
+      id: 'editor:/tmp/existing.ts',
+      meta: { treeOpen: true, treeScrollTop: 0 },
+    })
+    const existingTab = (): SidebarTab =>
+      allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+        .find(tab => tab.id === 'editor:/tmp/existing.ts')!
+    let visible = false
+    const host = mountHost(ctx, store, existingTab, () => visible)
+    try {
+      expect(host.container.querySelector<HTMLDivElement>('[class*="explorerBody"]')!.scrollTop).toBe(0)
+
+      act(() => {
+        ctx.betterSidebar.updateTab(existingTab().id, {
+          meta: { treeOpen: true, treeScrollTop: 418 },
+        })
+        visible = true
+        host.rerender()
+      })
+
+      expect(host.container.querySelector<HTMLDivElement>('[class*="explorerBody"]')!.scrollTop).toBe(418)
+    } finally {
+      host.unmount()
+    }
+  })
+
   it('in-place mode: the path input Enter switches the CURRENT tab (stable id, meta kept)', () => {
     const { store, ctx, homeTab } = setup()
     store.setPrefs({ ...store.getPrefs(), editorExplorer: true })
@@ -179,6 +240,30 @@ describe('EditorHost (files window)', () => {
       expect(opened.type).toBe('editor')
       expect(opened.title).toBe('b.ts')
       expect(opened.id).toBe('editor:/tmp/b.ts')
+    } finally {
+      unmount()
+    }
+  })
+
+  it('split mode: a newly opened file inherits the source tree navigation state', () => {
+    const { store, ctx } = setup()
+    store.setPrefs({ ...store.getPrefs(), editorExplorer: false })
+    ctx.betterSidebar.openTab({
+      type: 'editor',
+      title: 'a.ts',
+      path: '/tmp/a.ts',
+      id: 'editor:/tmp/a.ts',
+      meta: { treeOpen: true, treeWidth: 360, treeScrollTop: 418 },
+    })
+    const sourceTab = (): SidebarTab =>
+      allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+        .find(tab => tab.path === '/tmp/a.ts')!
+    const { container, unmount } = mountHost(ctx, store, sourceTab)
+    try {
+      typeAndCommit(container.querySelector('input[placeholder^="File path"]')!, '/tmp/b.ts')
+      const opened = allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+        .find(tab => tab.path === '/tmp/b.ts')!
+      expect(opened.meta).toEqual({ treeOpen: true, treeWidth: 360, treeScrollTop: 418 })
     } finally {
       unmount()
     }

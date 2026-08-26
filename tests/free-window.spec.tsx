@@ -145,7 +145,7 @@ afterEach(() => {
   // Belt and braces (after unstub, so a test's storage stub never sees it):
   // drop any persisted layout a pending 200ms debounce write left behind
   // between tests — unique session ids already isolate the stores.
-  localStorage.clear()
+  window.localStorage?.clear()
 })
 
 describe('free windows: drag-out detection', () => {
