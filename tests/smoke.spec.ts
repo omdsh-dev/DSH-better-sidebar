@@ -806,7 +806,7 @@ describe('side card settings routes', () => {
     }
   }
 
-  const mountWithSettings = (settings?: unknown): SidebarWebRoute => {
+  const mountWithSettings = (settings?: unknown, sessions?: { get: (id: string) => { header: { cwd?: string } } | undefined }): SidebarWebRoute => {
     const routes: SidebarWebRoute[] = []
     const ctx = {
       webRuntime: { trustedHosts: [] },
@@ -814,7 +814,7 @@ describe('side card settings routes', () => {
         register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
       },
-      sessions: { get: () => undefined },
+      sessions: sessions ?? { get: () => undefined },
       tools: { register: () => () => {} },
       effect: (fn: () => void | (() => void)) => { fn() },
       inject: (deps: string[], callback: (sctx: { settings: unknown }) => void) => {
@@ -897,6 +897,7 @@ describe('side card settings routes', () => {
         terminalFontSize: 13,
         interceptOpenPath: true,
         editorExplorer: false,
+        allowOutsideFiles: false,
         terminalShell: '',
         terminalShellArgs: '',
         titleBarCompat: false,
@@ -924,6 +925,37 @@ describe('side card settings routes', () => {
     expect(view.value.openByDefault).toBe(true)
     expect(view.value.defaultWidthPercent).toBe(35)
     expect(view.revision).toBe(1)
+  })
+
+  it('keeps outside files blocked until the read-only escape hatch is enabled', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-outside-read-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    const outsideFile = join(outside, 'secret.txt')
+    writeFileSync(outsideFile, 'secret')
+    try {
+      const route = mountWithSettings(createFakeSettings(), { get: () => ({ header: { cwd: workspace } }) })
+      // Default: the #328 fence still rejects outside reads.
+      const before = await invoke(route, 'fs.read', { sessionId: 'security', path: outsideFile })
+      expect(before.ok).toBe(false)
+      expect(before.error?.code).toBe('forbidden')
+
+      // Explicit opt-in: read/tree relax, write stays fenced.
+      const updated = await invoke(route, 'settings.update', { patch: { allowOutsideFiles: true } })
+      expect(updated.ok).toBe(true)
+      const read = await invoke(route, 'fs.read', { sessionId: 'security', path: outsideFile })
+      expect(read.ok).toBe(true)
+      expect(read.value).toMatchObject({ kind: 'text', content: 'secret' })
+      const tree = await invoke(route, 'fs.tree', { sessionId: 'security', path: outside })
+      expect(tree.ok).toBe(true)
+      const write = await invoke(route, 'fs.write', { sessionId: 'security', path: join(outside, 'written.txt'), content: 'hack' })
+      expect(write.ok).toBe(false)
+      expect(write.error?.code).toBe('forbidden')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('refuses a stale write with settings-conflict (409)', async () => {

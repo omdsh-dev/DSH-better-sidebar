@@ -267,6 +267,7 @@ function buildApi(
   resolved: ResolvedSidebarConfig,
   terminalShell: string,
   getSettings: () => SidebarSettingsFace | undefined,
+  allowOutsideFiles: () => boolean,
 ): Record<string, ApiMethod> {
   const cwdOf = (payload: unknown): { sessionId: string; cwd: string } => {
     const sessionId = requireString(payload, 'sessionId')
@@ -300,7 +301,7 @@ function buildApi(
     'fs.tree': async (payload) => {
       const { cwd } = cwdOf(payload)
       const record = payload as { path?: unknown }
-      const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'))
+      const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'), { allowOutside: allowOutsideFiles() })
       return listDirectory(target, resolved.listLimit)
     },
     'fs.search': async (payload) => {
@@ -318,7 +319,7 @@ function buildApi(
       // child-repo path is relative to the selected repoRoot, not the session
       // cwd; thread it so the path resolves inside the authorized workspace.
       const selected = selectedRepoOf(payload)
-      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected))
+      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected), { allowOutside: allowOutsideFiles() })
       const { content, truncated, binary, size, head } = await readText(path, resolved.readLimit)
       if (binary) return { kind: 'binary', size, truncated, head }
       return { kind: 'text', content, truncated }
@@ -658,6 +659,16 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // which call the seam in-process. Deployments without a settings service
   // simply never fill the face and the client falls back to the defaults.
   let settingsFace: SidebarSettingsFace | undefined
+  // Read-side escape hatch (#383): whether the user opted into viewing files
+  // outside the session workspace. Reads resolve through realpath and skip the
+  // containment check only while this is true; writes/uploads never consult it.
+  const allowOutsideFiles = (): boolean => {
+    const value = settingsFace?.get().value
+    if (value !== null && typeof value === 'object') {
+      return (value as Record<string, unknown>).allowOutsideFiles === true
+    }
+    return SIDEBAR_PREFS_DEFAULTS.allowOutsideFiles
+  }
   // The model-facing terminal tools are gated on the side-card setting
   // `agentTerminalTools` (default off): nothing is injected until the user
   // turns the feature on, and turning it off mid-session unregisters the
@@ -756,7 +767,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   })
 
   // ── JSON API ────────────────────────────────────────────────────────────
-  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace)
+  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace, allowOutsideFiles)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -856,7 +867,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
         const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
-        const path = await ensureWorkspacePath(cwd, raw)
+        const path = await ensureWorkspacePath(cwd, raw, { allowOutside: allowOutsideFiles() })
         const info = await stat(path)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)
@@ -915,7 +926,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // real-path guard, with the same semantics as the media route's
         // fallback.
         const cwd = sessionCwdOf(ctx, sessionId)
-        const absolute = await ensureWorkspacePath(cwd, path)
+        const absolute = await ensureWorkspacePath(cwd, path, { allowOutside: allowOutsideFiles() })
         const info = await stat(absolute)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)

@@ -114,6 +114,10 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
               desc: () => t('editorExplorerSplitDesc'),
             },
           ],
+        }, {
+          key: 'allowOutsideFiles',
+          title: () => t('allowOutsideFiles'),
+          desc: () => t('allowOutsideFilesDesc'),
         }],
         render: ({ pluginSettings, updatePluginSetting }) => (
           <OpenWithSettings pluginSettings={pluginSettings} updatePluginSetting={updatePluginSetting} />

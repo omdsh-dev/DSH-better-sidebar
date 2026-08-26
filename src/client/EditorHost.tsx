@@ -37,7 +37,7 @@ import { openWithSshActive, openWithUrl, parseOpenWithConfig, resolveOpenWithTar
 import { updatePluginSettings } from './plugin-settings.ts'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
-import { relativeTo } from './paths.ts'
+import { isWithinWorkspace, relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
 import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, type SidebarStore, type SidebarTab } from './state.ts'
@@ -150,6 +150,18 @@ export function EditorHost(props: {
   const showEmpty = path === ''
   const treeOnly = showEmpty && !inPlace
   const folderRoot = isDir ? path : undefined
+  // Outside-workspace files opened through the explicit read-only escape hatch
+  // (#383) keep the viewer read-only. The host still enforces the real write
+  // fence, this only removes edit affordances the server would refuse anyway.
+  const external = path !== '' && scope.cwd !== undefined && !isWithinWorkspace(scope.cwd, path)
+  const readOnly = external
+  /** Title for a file opened from this window: outside files carry the badge. */
+  const titleFor = (absolute: string): string => {
+    const name = baseName(absolute)
+    return scope.cwd !== undefined && !isWithinWorkspace(scope.cwd, absolute)
+      ? `${name} · ${t('externalReadonly')}`
+      : name
+  }
 
   /**
    * Open a file from THIS window (tree click / search row / path input):
@@ -158,7 +170,7 @@ export function EditorHost(props: {
    */
   const openFile = (absolute: string): void => {
     if (inPlace) {
-      ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) })
+      ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: titleFor(absolute) })
     } else {
       openSidebarFile(ctx, store, scope.sessionId, absolute)
     }
@@ -181,7 +193,7 @@ export function EditorHost(props: {
       const fresh: SidebarTab = {
         id: mintTabId(),
         type: 'editor',
-        title: baseName(absolute),
+        title: titleFor(absolute),
         path: absolute,
         meta: { treeOpen: false },
       }
@@ -469,6 +481,7 @@ export function EditorHost(props: {
             truncated: load.truncated,
             mediaUrl: load.mediaUrl,
             customData: load.customData,
+            readOnly,
             // The viewer's toolbar always hoists into this host's header.
             toolbar: 'host',
             onToolbarState,

@@ -78,6 +78,13 @@ export interface SidebarPrefs {
    */
   editorExplorer: boolean
   /**
+   * Whether the sidebar may READ files/directories outside the session
+   * workspace (the issue #328 fence is relaxed for reads only). Off by
+   * default: the fence stays intact until the user explicitly opts in.
+   * Writes/edits/uploads remain workspace-only in every mode.
+   */
+  allowOutsideFiles: boolean
+  /**
    * The shell the UI and agent terminals spawn (absolute path or bare
    * executable name). Empty (default) keeps the legacy resolution order:
    * `cordis.patch.yml` `config.shell`, then `$SHELL` / login shell /
@@ -253,6 +260,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
   interceptOpenPath: true,
   editorExplorer: false,
+  allowOutsideFiles: false,
   terminalShell: '',
   terminalShellArgs: '',
   titleBarScheme: 'auto',

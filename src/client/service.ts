@@ -265,6 +265,10 @@ export interface FileViewerProps {
   mediaUrl?: string
   /** custom load() return value (fetchStrategy='custom'). */
   customData?: unknown
+  /** Internal (built-in text editor): an outside-workspace file opened through
+   *  the read-only escape hatch (#383). The built-in text viewer hides edit/save;
+   *  other viewers can use it for their own read-only chrome. */
+  readOnly?: boolean
   /** Internal (built-in text editor): 'host' asks the viewer to skip its own
    *  toolbar row — the editor host's merged-mode header renders it instead,
    *  fed through the two callbacks below. Viewers that ignore these fields

@@ -83,10 +83,10 @@ describe('built-in tab registrations', () => {
     expect(toggles.map(t => t.key)).toEqual(['autoOpenSubagent', 'autoOpenJobs'])
   })
 
-  it('the editor tab declares its merged-mode (embedded file tree) setting', () => {
+  it('the editor tab declares its merged-mode setting and the outside-file read-only escape hatch', () => {
     const { service } = setup()
     const toggles = service.getTab('editor')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual(['editorExplorer'])
+    expect(toggles.map(t => t.key)).toEqual(['editorExplorer', 'allowOutsideFiles'])
     expect(toggles[0]?.title).toBeDefined()
     expect(toggles[0]?.desc).toBeDefined()
     // The merged mode is an iconed select (merged vs separate), not a switch.
@@ -94,6 +94,10 @@ describe('built-in tab registrations', () => {
     const options = toggles[0]?.options ?? []
     expect(options.map(o => o.value)).toEqual([true, false])
     expect(options.every(o => o.icon !== undefined && o.title !== undefined)).toBe(true)
+    // The outside-file setting is a plain default-off switch.
+    expect(toggles[1]?.type).toBeUndefined()
+    expect(toggles[1]?.title).toBeDefined()
+    expect(toggles[1]?.desc).toBeDefined()
     // The open-with configuration (SSH host + custom editors) is the custom
     // panel rendered below the declarative rows.
     expect(service.getTab('editor')?.settings?.render).toBeDefined()

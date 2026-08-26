@@ -57,7 +57,7 @@ interface SelectionPopup {
 export const HTML_IFRAME_SANDBOX = 'allow-scripts allow-popups allow-downloads allow-modals'
 
 export function TextEditor(props: FileViewerProps) {
-  const { ctx, scope, path, viewerId, content, truncated } = props
+  const { ctx, scope, path, viewerId, content, truncated, readOnly } = props
   const [mode, setMode] = useState<ViewMode>('preview')
   /** The editor's current text (null while clean); preview renders this. */
   const [draft, setDraft] = useState<string | null>(null)
@@ -130,6 +130,8 @@ export function TextEditor(props: FileViewerProps) {
       extensions: [
         CodeMirrorView.lineWrapping,
         lineNumbers(),
+        EditorState.readOnly.of(readOnly === true),
+        CodeMirrorView.editable.of(readOnly !== true),
         history(),
         EditorState.tabSize.of(2),
         CodeMirrorView.contentAttributes.of({ spellcheck: 'false' }),
@@ -146,7 +148,7 @@ export function TextEditor(props: FileViewerProps) {
           {
             key: 'Mod-s',
             preventDefault: true,
-            run: () => { save(); return true },
+            run: () => { if (readOnly !== true) save(); return true },
           },
           ...defaultKeymap,
           ...historyKeymap,
@@ -206,7 +208,7 @@ export function TextEditor(props: FileViewerProps) {
     // The keymap's save() reads live refs; scope/path are stable for a
     // tab's lifetime, and the dark flip is handled by the reconfigure
     // effect below (recreating the view here would drop the draft).
-  }, [content, path])
+  }, [content, path, readOnly])
 
   // Scheme flip: re-theme in place (the compartment holds only the
   // scheme-dependent extensions; everything else is untouched).
@@ -227,7 +229,7 @@ export function TextEditor(props: FileViewerProps) {
 
   const save = (): void => {
     const view = viewRef.current
-    if (view === null || savingRef.current) return
+    if (readOnly === true || view === null || savingRef.current) return
     savingRef.current = true
     setSaveState('saving')
     api.fsWrite(scope, path, view.state.doc.toString()).then(() => {
@@ -315,7 +317,8 @@ export function TextEditor(props: FileViewerProps) {
       rect.top,
     )
   }
-  const editable = content !== undefined
+  const hasContent = content !== undefined
+  const editable = hasContent && readOnly !== true
   const saveLabel = saveState === 'saving' ? t('loading') : saveState === 'saved' ? t('saved') : saveState === 'failed' ? t('saveFailed') : ''
   // Per-feature sandbox escape hatch: the global side card setting (warned)
   // plus a per-surface temporary unlock. The unlock state starts at the
@@ -353,7 +356,7 @@ export function TextEditor(props: FileViewerProps) {
     <>
       {!hostToolbar && (
       <div className={css.editorHeader}>
-        {(markdown || html) && (
+        {(markdown || html) && readOnly !== true && (
           <div className={css.editorModeToggle}>
             <button
               type="button"
@@ -386,7 +389,7 @@ export function TextEditor(props: FileViewerProps) {
         {saveLabel !== '' && <span className={clsx(css.editorStatus, saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>}
       </div>
       )}
-      {editable && (
+      {hasContent && (
         <>
           {truncated === true && mode === 'edit' && <div className={css.editorBanner}>{t('truncation')}</div>}
           <div
