@@ -242,6 +242,11 @@ export const api = {
   /** Full patch text of one commit (diff display for the history rows). */
   gitCommitDiff: (scope: SessionScope, hash: string, worktree?: string, signal?: AbortSignal) =>
     call<{ diff: string }>('git.commit-diff', gitPayload(scope, worktree, { hash }), signal),
+  /** Ask the host to generate a commit-message suggestion from the pending
+   *  changes (the host streams the diff through the conversation's LLM).
+   *  `language` follows the sidebar's active locale ('zh' | 'en'). */
+  gitSuggestMessage: (scope: SessionScope, language: 'zh' | 'en', worktree?: string, signal?: AbortSignal) =>
+    call<{ message: string }>('git.suggest-message', gitPayload(scope, worktree, { language }), signal),
   /** Discard the worktree changes of one file (the index is untouched). */
   gitDiscard: (scope: SessionScope, path: string, worktree?: string) =>
     call<{ ok: true }>('git.discard', gitPayload(scope, worktree, { path })),

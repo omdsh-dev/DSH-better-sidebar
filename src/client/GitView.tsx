@@ -15,10 +15,11 @@ import {
   IconTrashOutline16, Input, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from './api.ts'
-import { api } from './api.ts'
+import { api, SidebarApiError } from './api.ts'
 import { isWithinWorkspace, relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
-import { relativeTime, t } from './locales.ts'
+import { isZh, relativeTime, t } from './locales.ts'
+import { VscSparkle } from 'react-icons/vsc'
 import type { SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
 
@@ -101,6 +102,8 @@ export function GitView(props: {
   const [commitMsg, setCommitMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
+  /** Whether a commit-message suggestion is streaming from the host LLM. */
+  const [suggesting, setSuggesting] = useState(false)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
@@ -320,7 +323,7 @@ export function GitView(props: {
 
   const commit = async (): Promise<void> => {
     const message = commitMsg.trim()
-    if (message === '' || busy) return
+    if (message === '' || busy || suggesting) return
     setBusy(true)
     setCommitError(null)
     try {
@@ -331,6 +334,26 @@ export function GitView(props: {
       setCommitError(reason instanceof Error ? reason.message : String(reason))
     } finally {
       setBusy(false)
+    }
+  }
+
+  /** Ask the host to generate a commit-message suggestion from the pending
+   *  changes, then fill the message box (still editable; regenerate allowed). */
+  const suggestMessage = async (): Promise<void> => {
+    if (busy || suggesting) return
+    setSuggesting(true)
+    setCommitError(null)
+    try {
+      const { message } = await api.gitSuggestMessage(gitScope, isZh() ? 'zh' : 'en', selectedWorktree)
+      setCommitMsg(message)
+    } catch (reason) {
+      if (reason instanceof SidebarApiError && reason.code === 'git-suggest-empty') {
+        setCommitError(t('suggestCommitEmpty'))
+      } else {
+        setCommitError(`${t('suggestCommitError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+      }
+    } finally {
+      setSuggesting(false)
     }
   }
 
@@ -471,6 +494,41 @@ export function GitView(props: {
 
       {status !== null && status.isRepo && (
         <>
+          {/* The commit row sits at the TOP of the panel: message box first,
+              then the AI suggest button, then Commit. Pending changes and
+              history scroll beneath it. */}
+          <div className={css.gitCommit}>
+            <Input
+              className={css.gitCommitInput}
+              placeholder={t('commitPlaceholder')}
+              value={commitMsg}
+              disabled={busy || suggesting}
+              onChange={(event) => { setCommitMsg(event.target.value); setCommitError(null) }}
+              onKeyDown={(event) => {
+                if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
+              }}
+            />
+            <button
+              type="button"
+              className={css.gitSuggestButton}
+              aria-label={t('generateCommitMessage')}
+              title={t('generateCommitMessage')}
+              disabled={busy || suggesting || (stagedEntries.length === 0 && unstagedEntries.length === 0)}
+              onClick={() => { void suggestMessage() }}
+            >
+              {suggesting ? <span className={css.gitSuggestSpinner} /> : <VscSparkle size={14} />}
+            </button>
+            <button
+              type="button"
+              className={css.gitCommitButton}
+              disabled={busy || suggesting || commitMsg.trim() === '' || stagedEntries.length === 0}
+              onClick={() => { void commit() }}
+            >
+              {t('commit')}
+            </button>
+          </div>
+          {commitError !== null && <div className={css.gitError}>{commitError}</div>}
+
           {status.truncated === true && (
             <div className={css.gitEmpty}>{t('statusTruncated')}</div>
           )}
@@ -498,28 +556,6 @@ export function GitView(props: {
             {unstagedEntries.length === 0 && <div className={css.gitEmpty}>{t('noChanges')}</div>}
             {unstagedEntries.map(entry => renderEntry(entry, false))}
           </div>
-
-          <div className={css.gitCommit}>
-            <Input
-              className={css.gitCommitInput}
-              placeholder={t('commitPlaceholder')}
-              value={commitMsg}
-              disabled={busy}
-              onChange={(event) => { setCommitMsg(event.target.value); setCommitError(null) }}
-              onKeyDown={(event) => {
-                if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
-              }}
-            />
-            <button
-              type="button"
-              className={css.gitCommitButton}
-              disabled={busy || commitMsg.trim() === '' || stagedEntries.length === 0}
-              onClick={() => { void commit() }}
-            >
-              {t('commit')}
-            </button>
-          </div>
-          {commitError !== null && <div className={css.gitError}>{commitError}</div>}
 
           <div className={css.gitSection}>
             <div className={css.gitSectionHeader}><span>{t('history')}</span></div>
