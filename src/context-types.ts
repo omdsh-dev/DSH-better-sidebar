@@ -30,6 +30,11 @@
  */
 import type { Context as CordisContext } from '@deepseek-ai/cordis'
 import type { BetterSidebarService } from './client/service.ts'
+import type {
+  SessionBackendBinaryResult,
+  SessionBackendResult,
+  SidebarSessionBackendRegistry,
+} from './session-backend.ts'
 
 /** The request face route handlers see (structural subset of node's
  *  IncomingMessage: the URL/method/header reads and the async body
@@ -566,12 +571,46 @@ export interface SidebarContextShape {
    */
   betterSidebar: BetterSidebarService
   /**
+   * The host-side session backend registry: plugins whose sessions live
+   * elsewhere (SSH, container, another node) claim them here and serve the
+   * session-scoped API for them. Provided by the host half; undefined on the
+   * client side. See ./session-backend.ts.
+   */
+  sidebarSessionBackends: SidebarSessionBackendRegistry
+  /**
+   * The owner half of the same seam: the real file / Git / terminal
+   * implementations behind an owner-strict cwd resolver, so a backend's owner
+   * node borrows them instead of reimplementing them. Host side only.
+   */
+  sidebarHostApi: SidebarHostApiService
+  /**
    * String-keyed session feed subscribe (the vendored cordis `on` is keyed
    * to its typed Events map; the harness session feed is a plain string
    * event). The listener receives every appended session event with the
    * LIVE Session instance that appended it.
    */
   on(event: string, listener: (session: unknown, event: SidebarSessionEvent) => void): () => void
+}
+
+/**
+ * The owner half of the session backend seam: the sidebar's own file / Git /
+ * terminal implementations, bound to a cwd resolver that trusts only the
+ * session header. A remote backend's owner node consumes this instead of
+ * reimplementing the workspace surface.
+ */
+export interface SidebarHostApiService {
+  createSessionApi(): {
+    /** Run one session-scoped JSON method against the owner-local workspace. */
+    invoke(method: string, sessionId: string, payload: unknown): Promise<SessionBackendResult>
+    /** Run one session-scoped binary read (`file.read` / `html.read`). */
+    invokeBinary(method: string, sessionId: string, payload: unknown): Promise<SessionBackendBinaryResult>
+    /** The routable method names, for a backend declaring its capabilities. */
+    readonly methods: {
+      readonly read: readonly string[]
+      readonly write: readonly string[]
+      readonly binary: readonly string[]
+    }
+  }
 }
 
 /**
@@ -590,5 +629,7 @@ export type Context = CordisContext & SidebarContextShape
 declare module '@deepseek-ai/cordis' {
   interface Context {
     betterSidebar: BetterSidebarService
+    sidebarSessionBackends: SidebarSessionBackendRegistry
+    sidebarHostApi: SidebarHostApiService
   }
 }
