@@ -444,3 +444,18 @@ export async function revert(cwd: string, hash: string, selected?: string): Prom
 export async function cherryPick(cwd: string, hash: string, selected?: string): Promise<void> {
   await runGit(await repoRoot(cwd, selected), ['cherry-pick', hash])
 }
+
+/** Push the current branch to its upstream (`git push`). A branch without an
+ *  upstream fails loudly with git's own message — the panel shows it and the
+ *  user fixes the tracking in the terminal. */
+export async function push(cwd: string, selected?: string): Promise<void> {
+  await runGit(await repoRoot(cwd, selected), ['push'])
+}
+
+/** Pull upstream changes into the current branch (`git pull --ff-only`).
+ *  Fast-forward-only keeps a headless panel out of merge/conflict editors: a
+ *  diverged branch fails with git's message instead of opening an interactive
+ *  merge, so the user resolves it in the terminal. */
+export async function pull(cwd: string, selected?: string): Promise<void> {
+  await runGit(await repoRoot(cwd, selected), ['pull', '--ff-only'])
+}

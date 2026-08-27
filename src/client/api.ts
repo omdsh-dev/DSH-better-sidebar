@@ -229,6 +229,10 @@ export const api = {
     call<{ ok: true }>('git.unstage', gitPayload(scope, worktree, { ...(path !== undefined ? { path } : {}) })),
   gitCommit: (scope: SessionScope, message: string, worktree?: string) =>
     call<{ ok: true }>('git.commit', gitPayload(scope, worktree, { message })),
+  gitPush: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
+    call<{ ok: true }>('git.push', gitPayload(scope, worktree, {}), signal),
+  gitPull: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
+    call<{ ok: true }>('git.pull', gitPayload(scope, worktree, {}), signal),
   gitBranch: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
     call<{ current: string; names: string[] }>('git.branch', gitPayload(scope, worktree, {}), signal),
   gitCheckout: (scope: SessionScope, branch: string, worktree?: string) =>

@@ -2588,6 +2588,14 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   }
 }
 
+/* Push / Pull: a thin action row under the commit box, same hairline
+   text-button style as the stage/unstage links. */
+.gitRemoteRow {
+  display: flex;
+  gap: 10px;
+  padding: 0 16px 8px;
+}
+
 /* A history row: line 1 = hash + subject, line 2 = ref badges + author/date
    (badges live on the second line so they never crowd the subject). */
 .gitLogRow {

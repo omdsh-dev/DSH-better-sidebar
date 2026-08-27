@@ -102,6 +102,7 @@ export function GitView(props: {
   const [commitMsg, setCommitMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
+  const [remoteError, setRemoteError] = useState<string | null>(null)
   /** Whether a commit-message suggestion is streaming from the host LLM. */
   const [suggesting, setSuggesting] = useState(false)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
@@ -357,6 +358,39 @@ export function GitView(props: {
     }
   }
 
+  /** Push the current branch to its upstream. Failures (no upstream, auth,
+   *  divergence) surface under the commit row, kept separate from local
+   *  commit errors. */
+  const push = async (): Promise<void> => {
+    if (busy || suggesting) return
+    setBusy(true)
+    setRemoteError(null)
+    try {
+      await api.gitPush(gitScope, selectedWorktree)
+      await refresh()
+    } catch (reason) {
+      setRemoteError(`${t('pushError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** Pull upstream changes (fast-forward only — a diverged branch fails with
+   *  git's message instead of opening a merge editor on the headless panel). */
+  const pull = async (): Promise<void> => {
+    if (busy || suggesting) return
+    setBusy(true)
+    setRemoteError(null)
+    try {
+      await api.gitPull(gitScope, selectedWorktree)
+      await refresh()
+    } catch (reason) {
+      setRemoteError(`${t('pullError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const checkout = async (branch: string): Promise<void> => {
     if (branch === status?.branch || busy) return
     setBusy(true)
@@ -527,7 +561,18 @@ export function GitView(props: {
               {t('commit')}
             </button>
           </div>
+          {/* Push / Pull: thin text buttons under the commit row, so a commit
+              can be shipped immediately without leaving the panel. */}
+          <div className={css.gitRemoteRow}>
+            <button type="button" className={css.gitLink} disabled={busy || suggesting} onClick={() => { void push() }}>
+              {t('push')}
+            </button>
+            <button type="button" className={css.gitLink} disabled={busy || suggesting} onClick={() => { void pull() }}>
+              {t('pull')}
+            </button>
+          </div>
           {commitError !== null && <div className={css.gitError}>{commitError}</div>}
+          {remoteError !== null && <div className={css.gitError}>{remoteError}</div>}
 
           {status.truncated === true && (
             <div className={css.gitEmpty}>{t('statusTruncated')}</div>
