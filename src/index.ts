@@ -1513,12 +1513,12 @@ async function attachAgentList(
 }
 
 /** Subscribe an explorer socket to host fs.watch notifications for its cwd. */
-function attachFsEvents(
+async function attachFsEvents(
   ctx: Context,
   hub: FsWatchHub,
   ws: WebSocket,
   req: SidebarHttpRequest,
-): void {
+): Promise<void> {
   try {
     const url = new URL(req.url ?? '/', 'http://dsh.internal')
     const sessionId = url.searchParams.get('sessionId')
@@ -1526,7 +1526,7 @@ function attachFsEvents(
       ws.close(1008, 'sessionId is required')
       return
     }
-    const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+    const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(String(data)) as { type?: unknown; path?: unknown }
