@@ -33,15 +33,18 @@ describe('subagent detection over the sessions list feed', () => {
     expect(directSubagentCount(snapshot.byId, 'p1-nobody')).toBe(0)
   })
 
-  it('fires only on the 0 → N transition of the current session', () => {
+  it('fires on any new direct subagent id (per-id diff, not 0 → N)', () => {
     const empty = list('p1', [])
     const one = list('p1', ['c1'])
     const two = list('p1', ['c1', 'c2'])
     expect(detectNewDirectSubagent(empty, empty, 'p1')).toBe(false)
     expect(detectNewDirectSubagent(empty, one, 'p1')).toBe(true)
-    // Already-present children never re-trigger (session switch, reload).
-    expect(detectNewDirectSubagent(one, two, 'p1')).toBe(false)
+    // Any new id triggers, even when some already existed (1 → 2 with c2 new).
+    expect(detectNewDirectSubagent(one, two, 'p1')).toBe(true)
+    // Removing a child does not trigger (no new id).
     expect(detectNewDirectSubagent(two, one, 'p1')).toBe(false)
+    // Same ids, different order, no new id.
+    expect(detectNewDirectSubagent(one, list('p1', ['c1']), 'p1')).toBe(false)
     // A child arriving under ANOTHER session does not trigger this one.
     expect(detectNewDirectSubagent(empty, list('p2', ['x']), 'p1')).toBe(false)
   })

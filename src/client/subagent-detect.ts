@@ -41,6 +41,26 @@ export function directSubagentCount(
 }
 
 /**
+ * Collect the ids of direct subagent children of one session, excluding Side
+ * Chat threads. Stable under the same `isSideThreadSummary` filter as the
+ * count helper.
+ * @param byId - session map from the list snapshot.
+ * @param sessionId - parent session whose children are collected.
+ * @returns set of direct subagent session ids.
+ */
+export function directSubagentIds(
+  byId: SidebarSessionList['byId'],
+  sessionId: string,
+): Set<string> {
+  const ids = new Set<string>()
+  for (const summary of Object.values(byId)) {
+    if (summary.origin === 'subagent' && summary.parentId === sessionId
+      && !isSideThreadSummary(summary)) ids.add(summary.id)
+  }
+  return ids
+}
+
+/**
  * The main agent of the current session's tree: walk the durable parent
  * chain upward until the first non-subagent session. The Subagent page shows
  * THIS root's full topology regardless of how deep the current selection is
@@ -89,17 +109,28 @@ export function collectBranchIds(
 
 /**
  * Whether a new direct subagent appeared under `sessionId` between two
- * consecutive list snapshots (the count crossed 0 → >0). Switching to a
- * session that already has subagents yields `false` (its baseline starts at
- * the current count), so the auto-open never fights an existing layout.
+ * consecutive list snapshots. Triggers when any direct subagent id present
+ * in `next` was absent in `prev` (per-id diff, matching `detectNewJob`).
+ * Side Chat threads (`Side: ` prefix) are excluded, and switching to a
+ * session that already has subagents yields false until a genuinely new id
+ * arrives.
+ * @param prev - previous list snapshot.
+ * @param next - next list snapshot.
+ * @param sessionId - parent session to inspect.
+ * @returns true when a new direct subagent id appeared.
  */
 export function detectNewDirectSubagent(
   prev: SidebarSessionList,
   next: SidebarSessionList,
   sessionId: string,
 ): boolean {
-  return directSubagentCount(prev.byId, sessionId) === 0
-    && directSubagentCount(next.byId, sessionId) > 0
+  const prevIds = directSubagentIds(prev.byId, sessionId)
+  for (const summary of Object.values(next.byId)) {
+    if (summary.origin !== 'subagent' || summary.parentId !== sessionId) continue
+    if (isSideThreadSummary(summary)) continue
+    if (!prevIds.has(summary.id)) return true
+  }
+  return false
 }
 
 /** Descendant totals of one session through an uninterrupted subagent-origin chain. */

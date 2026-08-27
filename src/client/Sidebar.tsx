@@ -551,6 +551,14 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    * a new subagent and pop this page on every thread creation. The timer
    * re-evaluates the ORIGINAL baseline against the live snapshot; by then
    * the title filter (isSideThreadSummary) sees the settled label.
+   *
+   * Multiple new subagents that appear within the debounce window are merged
+   * into one trigger: a pending timer is reset with the ORIGINAL baseline
+   * kept, so any new id that arrived while waiting is still detected on the
+   * re-evaluation (per-id diff semantics, matching detectNewJob). The
+   * alternative discard would miss a second new id that arrived during the
+   * wait. This merge choice preserves the title-debounce while surfacing
+   * every burst of subagents as a single auto-open.
    */
   const listBaselineRef = useRef<SidebarSessionList | undefined>(undefined)
   const autoOpenPendingRef = useRef<{ baseline: SidebarSessionList; timer: number } | null>(null)
@@ -558,8 +566,25 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     const prev = listBaselineRef.current
     listBaselineRef.current = sessionList
     if (sessionId === undefined || prev === undefined) return
-    if (autoOpenPendingRef.current !== null) return
     if (!detectNewDirectSubagent(prev, sessionList, sessionId)) return
+    // Debounce-window merge: if a timer is already armed, keep the ORIGINAL
+    // baseline (so all ids since the first trigger are considered) and reset
+    // the window instead of discarding the new trigger.
+    if (autoOpenPendingRef.current !== null) {
+      const baseline = autoOpenPendingRef.current.baseline
+      window.clearTimeout(autoOpenPendingRef.current.timer)
+      const timer = window.setTimeout(() => {
+        autoOpenPendingRef.current = null
+        if (!detectNewDirectSubagent(baseline, ctx.sessions.list.getSnapshot(), sessionId)) return
+        if (!store.getPrefs().autoOpenSubagent) return
+        if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
+        store.reduce(s => s.panelOpen ? s : togglePanel(s))
+        store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
+        ctx.get('betterSidebar')?.openTab({ type: 'subagent', title: t('subagent') })
+      }, AUTO_OPEN_DEBOUNCE_MS)
+      autoOpenPendingRef.current = { baseline, timer }
+      return
+    }
     const baseline = prev
     const timer = window.setTimeout(() => {
       autoOpenPendingRef.current = null
