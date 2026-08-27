@@ -356,7 +356,7 @@ ctx.effect(() => {
 | `git` | 20 | 是 | 否 | Git 面板 |
 | `subagent` | 30 | 是 | 否 | 子代理拓扑 |
 | `sidechat` | 35 | 否（createTab 铸造 `sidechat:<uuid>`/按 `meta.threadId` 去重） | 否 | 侧边对话（Codex 风格，**每个对话一个独立 Tab**）：打开 Tab 即自动创建空线程（composer 拥有首条消息，host 侧包裹边界提示 + 创建时停泊的进行中快照，首条消息赢得真实标签并同步 Tab 标题）；线程 = 插件自建子会话（自定义种子继承父会话完整上下文，进行中回合以 `interrupted` 冻结诚实闭合；种子尾部带合法 `subagent/descriptor`——否则 cold 线程在宿主 subagents.list 里是 corrupt 诊断行——SubagentView/subagent-detect 按 `Side: ` 前缀过滤保持拓扑零噪音），`origin:'subagent'` 隐藏于主列表；生命周期走自有 `/sidebar/api/sidechat.*` 路由（`ctx.agents.create/resume` + `agent.followup/cancel` + `sidechat.info` 读 Agent 身份/状态）；头部菜单可切换/重开既有线程（`parkSidechatReopen` + `sidechat:<threadId>` 确定性 id），关闭 Tab 释放 live agent（历史保留）；重开 Tab 经 `collectOwnEvents` 大页回源到种子边界（cold 读会展开 chunk 压缩行，小窗口会丢早期 tool/call 行）；「保存为新会话」= `session.fork` 提升顶层会话（必须方法调用形态，`this` 敏感）。UI 对齐主对话区（用户气泡 `--dsw-specific-bubble`、assistant 通栏 markdown、胶囊 composer + 圆形发送/停止钮、运行扫光状态行）。见 [设计文档](docs/plans/2026-08-20-sidechat-tab-design.md) |
-| `terminal` | 40 | 否 | 否 | 终端（nextTerminal 自增） |
+| `terminal` | 40 | 否 | 否 | 终端（nextTerminal 自增）。v0.17.0+ 支持右键「固定到工作区 / 固定到全局」：固定后切换会话不消失，在 TabBar 内联呈现为虚拟 Tab（跨会话注入第一个 leaf 的 tabs 尾部，virtual id = `pinned:<homeSessionId>:<tabId>`，meta 携带 home scope）；点击就地激活（TerminalView 按 home sessionId+tab 连接宿主 PTY，不跳转会话）；global 任意会话可见；workspace 仅同 cwd 会话可见；Agent 终端（`agent:<uuid>`）被 reconcile 移除时豁免；pin 元数据 `tab.pin = { scope, homeCwd? }` 随宿主会话 state 持久化，渲染期跨会话解析（`collectPinnedTabs` → `createPinnedVirtualTab` → `injectPinnedIntoTree`），不写跨会话投影 |
 | `browser` | 50 | 否（createTab 铸造 browser:`<n>`，nextBrowser 自增） | 否 | 内嵌网页浏览器（沙箱 iframe；可设置关闭沙箱） |
 | `diff` | -1 | 否（按 id 去重） | 是 | 差异查看（由 GitView 触发） |
 
