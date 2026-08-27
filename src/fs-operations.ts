@@ -22,9 +22,9 @@ import { SidebarError } from './wire.ts'
 
 /** Inputs of one upload: the session scope plus the request body stream. */
 export interface WorkspaceUploadInput {
-  /** The session workspace root; target and directory must stay inside it. */
+  /** The session workspace root; target and directory must stay inside it (or an extra root). */
   cwd: string
-  /** Absolute upload directory chosen by the client (inside `cwd`). */
+  /** Absolute upload directory chosen by the client (inside `cwd` or an extra root). */
   dir: string
   /** Relative path below `dir` (absolute paths, '.', '..' and empty segments refused). */
   relativePath: string
@@ -32,6 +32,8 @@ export interface WorkspaceUploadInput {
   chunks: AsyncIterable<string | Uint8Array>
   /** Byte cap; an oversized upload is refused without touching the target. */
   limit: number
+  /** Additional allowed roots (absolute paths, resolved per call). */
+  extraRoots?: string[]
 }
 
 /**
@@ -46,9 +48,9 @@ export interface WorkspaceUploadInput {
  * failures; the temp file is always removed on failure.
  */
 export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise<{ path: string; size: number }> {
-  const { cwd, dir, relativePath, chunks, limit } = input
+  const { cwd, dir, relativePath, chunks, limit, extraRoots = [] } = input
   const base = requireAbsolute(dir)
-  await ensureWorkspacePath(cwd, base)
+  await ensureWorkspacePath(cwd, base, extraRoots)
   if (relativePath === '' || relativePath.startsWith('/') || relativePath.startsWith('\\')) {
     throw new SidebarError('bad-request', 'relativePath must stay below the upload directory', 400)
   }
@@ -57,7 +59,7 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
     throw new SidebarError('bad-request', 'relativePath must stay below the upload directory', 400)
   }
   const target = join(base, ...segments)
-  const safeTarget = await ensureWorkspaceWritePath(cwd, target)
+  const safeTarget = await ensureWorkspaceWritePath(cwd, target, extraRoots)
   const tmp = join(dirname(safeTarget), `.${basename(safeTarget)}.dsh-upload-${randomUUID()}.tmp`)
   await mkdir(dirname(safeTarget), { recursive: true })
   const stream = createWriteStream(tmp, { flags: 'wx' })
