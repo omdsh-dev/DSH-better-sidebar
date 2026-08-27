@@ -368,4 +368,7 @@ export const tr: Record<string, string> = {
   pluginVideoPreviewDesc: 'better-sidebar düzenleyicisinde satır içi video önizlemesi (.mp4/.webm/.mov/.mkv/.avi vb.); HTTP Range (206) destekli özel /video sunucu rotasıyla — ilerleme çubuğu sürükleme çalışır ve 20MB mediaLimit ile sınırlanmaz',
   pluginDocsPanelDesc: 'DSH kenar çubuğunda «Genel belgeler»: herhangi bir çalışma alanından kendi Markdown notlarınızı okuyun — dosya listesi, ana hat, Chrome / VS Code’da açma ve kopyalama düğmeleri; belgeler dizini yapılandırılabilir (varsayılan ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'DeepSeek Harness için aracı tarayıcı: 32 ego_* aracı gerçek bir Chromium’u yönetir; kenar çubuğundaki yerel «ego tarayıcı» sekmesi aracının ziyaret ettiği her sayfayı canlı gösterir — tıklayarak, sürükleyerek ve yazarak kontrolü devralabilirsiniz. better-sidebar varsa sekme otomatik kaydedilir, yoksa yüzen baloncuğa düşer',
+
+  renameTab: 'Sekmeyi yeniden adland\u0131r',
+  renameTabHint: 'Yeniden adland\u0131rmak i\u00e7in \u00e7ift t\u0131klay\u0131n',
 }

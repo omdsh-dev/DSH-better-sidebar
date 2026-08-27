@@ -368,4 +368,7 @@ export const th: Record<string, string> = {
   pluginVideoPreviewDesc: 'พรีวิววิดีโอแบบอินไลน์ (.mp4/.webm/.mov/.mkv/.avi ฯลฯ) สำหรับตัวแก้ไข better-sidebar โดยสนับสนุนด้วย route /video โฮสต์เฉพาะพร้อมรองรับ HTTP Range (206) — การ scrub ทำงานได้และไฟล์ไม่จำกัดโดย mediaLimit 20MB',
   pluginDocsPanelDesc: 'เอกสารส่วนกลางในแถบด้านข้าง DSH: อ่านบันทึก Markdown ของคุณเองจากพื้นที่ทำงานใดๆ — รายการไฟล์, เค้าโครง, เปิดใน Chrome / VS Code และปุ่มคัดลอก; ไดเรกทอรีเอกสารสามารถกำหนดค่าได้ (ค่าเริ่มต้น ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'เบราว์เซอร์เอเจนต์สำหรับ DeepSeek Harness: เครื่องมือ ego_* 32 ตัวขับเคลื่อน Chromium จริง แท็บ «ego browser» เนทีฟในแถบด้านข้างแสดงทุกหน้าที่เอเจนต์เยี่ยมชมแบบสด — คลิก ลาก และพิมพ์เพื่อเข้าไปควบคุมแทนได้ ลงทะเบียนแท็บอัตโนมัติเมื่อมี better-sidebar มิฉะนั้นจะใช้บับเบิลลอย',
+
+  renameTab: 'เปลี่ยนชื่อแท็บ',
+  renameTabHint: 'ดับเบิลคลิกเพื่อเปลี่ยนชื่อ',
 }

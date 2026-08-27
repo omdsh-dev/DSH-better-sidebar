@@ -360,4 +360,7 @@ export const ko: Record<string, string> = {
   pluginVideoPreviewDesc: 'better-sidebar 편집기에서 비디오 파일(.mp4/.webm/.mov/.mkv/.avi 등)을 인라인 미리보기합니다. HTTP Range(206)를 지원하는 /video 호스트 라우트를 내장하며, 진행 바를 드래그할 수 있고 20MB mediaLimit 제한을 받지 않습니다',
   pluginDocsPanelDesc: 'DSH 사이드바의 "전역 문서": 전역 Markdown 메모로, 어떤 작업 공간에서든 언제든 읽을 수 있습니다. 목록을 클릭해 읽기, 마우스를 올리면 개요로 이동, Chrome / VS Code에서 외부 열기, 코드 복사. 디렉터리를 설정할 수 있습니다(기본 ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'DeepSeek Harness용 에이전트 브라우저: 32개의 ego_* 도구가 실제 Chromium을 구동하며, 사이드바의 네이티브 «ego 브라우저» 탭에서 에이전트가 방문하는 모든 페이지를 실시간으로 볼 수 있습니다 — 클릭, 드래그, 타이핑으로 직접 조작할 수 있습니다. better-sidebar가 있으면 탭을 자동 등록하고, 없으면 플로팅 버블로 대체합니다',
+
+  renameTab: '탭 이름 바꾸기',
+  renameTabHint: '더블 클릭으로 이름 바꾸기',
 }

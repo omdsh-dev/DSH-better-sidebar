@@ -370,4 +370,7 @@ export const pl: Record<string, string> = {
   pluginVideoPreviewDesc: 'Wbudowany podgląd plików wideo (.mp4/.webm/.mov/.mkv/.avi itp.) w edytorze better-sidebar, wspierany przez dedykowaną trasę hosta /video z obsługą HTTP Range (206) — przewijanie działa, a pliki nie są ograniczane przez mediaLimit 20 MB',
   pluginDocsPanelDesc: 'Globalne dokumenty w panelu bocznym DSH: globalne notatki Markdown, czytelne z dowolnego obszaru roboczego — lista z kliknięciem, kontur z przejściami, otwieranie w Chrome / VS Code i przyciski kopiowania kodu; katalog konfigurowalny (domyślnie ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'Przeglądarka agenta dla DeepSeek Harness: 32 narzędzia ego_* sterują prawdziwym Chromium; natywna karta «ego browser» na pasku bocznym pokazuje na żywo każdą stronę odwiedzaną przez agenta — możesz klikać, przeciągać i pisać, aby przejąć kontrolę. Karta rejestruje się automatycznie, gdy better-sidebar jest zainstalowany; w przeciwnym razie pływający dymek',
+
+  renameTab: 'Zmie\u0144 nazw\u0119 karty',
+  renameTabHint: 'Kliknij dwukrotnie, aby zmieni\u0107 nazw\u0119',
 }

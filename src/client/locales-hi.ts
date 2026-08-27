@@ -368,4 +368,7 @@ export const hi: Record<string, string> = {
   pluginVideoPreviewDesc: 'better-sidebar एडिटर के लिए इनलाइन वीडियो पूर्वावलोकन (.mp4/.webm/.mov/.mkv/.avi आदि), HTTP Range (206) समर्थन के साथ समर्पित /video होस्ट रूट द्वारा समर्थित — स्क्रबिंग काम करता है और फ़ाइलें 20MB mediaLimit द्वारा सीमित नहीं हैं',
   pluginDocsPanelDesc: 'DSH साइडबार में ग्लोबल डॉक्स: किसी भी वर्कस्पेस से अपने Markdown नोट्स पढ़ें — फ़ाइल सूची, रूपरेखा, Chrome / VS Code में खोलें, और कॉपी बटन; docs डायरेक्टरी कॉन्फ़िगर करने योग्य (डिफ़ॉल्ट ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'DeepSeek Harness के लिए एजेंट ब्राउज़र: 32 ego_* टूल असली Chromium चलाते हैं; साइडबार में नेटिव «ego browser» टैब एजेंट के हर विज़िट किए गए पेज को लाइव दिखाता है — आप क्लिक, ड्रैग और टाइप करके नियंत्रण ले सकते हैं। better-sidebar मौजूद होने पर टैब स्वतः रजिस्टर होता है, अन्यथा फ्लोटिंग बबल के रूप में दिखता है',
+
+  renameTab: 'टैब का नाम बदलें',
+  renameTabHint: 'नाम बदलने के लिए डबल-क्लिक करें',
 }

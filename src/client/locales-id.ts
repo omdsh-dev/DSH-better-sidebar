@@ -366,4 +366,7 @@ export const id: Record<string, string> = {
   pluginVideoPreviewDesc: 'Pratinjau video inline (.mp4/.webm/.mov/.mkv/.avi dll.) untuk editor better-sidebar, didukung oleh rute host /video khusus dengan dukungan HTTP Range (206) — scrubbing berfungsi dan berkas tidak dibatasi oleh mediaLimit 20MB',
   pluginDocsPanelDesc: 'Dokumen global di sidebar DSH: baca catatan Markdown Anda sendiri dari ruang kerja apa pun — daftar berkas, kerangka, buka di Chrome / VS Code, dan tombol salin; direktori docs dapat dikonfigurasi (default ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'Browser agen untuk DeepSeek Harness: 32 alat ego_* menggerakkan Chromium sungguhan; tab «ego browser» native di bilah samping menampilkan langsung setiap halaman yang dikunjungi agen — Anda bisa mengklik, menyeret, dan mengetik untuk mengambil alih. Tab terdaftar otomatis jika better-sidebar terpasang; jika tidak, jatuh ke gelembung mengambang',
+
+  renameTab: 'Ubah nama tab',
+  renameTabHint: 'Klik dua kali untuk mengubah nama',
 }
