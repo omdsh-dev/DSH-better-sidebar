@@ -174,16 +174,57 @@ const READ_HEAD_LIMIT = 4096
 
 /** Debounce for batched fs.watch notifications per directory. */
 const FS_WATCH_DEBOUNCE_MS = 120
+/** How long to wait before retrying a per-directory fs.watch after an error. */
+const FS_WATCH_RETRY_MS = 1000
 
 /**
- * Directories whose contents do not need to drive live file-tree refreshes.
- * These are heavyweight/generated/system paths; the tree can still be
- * refreshed manually when the user is working inside one of them.
+ * Directory names whose contents do not need to drive live file-tree
+ * refreshes. These are heavyweight/generated/system paths; the tree can
+ * still be refreshed manually when the user is working inside one of them.
+ * The workspace root itself is never ignored based on its absolute path,
+ * so a session whose cwd happens to live under `tmp/` or `build/` still gets
+ * auto-refresh.
  */
-const WATCH_IGNORED = /(^|[\\/])(\.git|node_modules|dist|build|\.next|out|coverage|\.cache|\.config|\.vscode|\.idea|\.vs|\.svn|\.hg|AppData|Application Data|Local Settings|\.venv|venv|__pycache__|obj|Temp|tmp)([\\/]|$)/i
+const IGNORED_DIRECTORY_NAMES = new Set([
+  '.git', 'node_modules', 'dist', 'build', '.next', 'out', 'coverage',
+  '.cache', '.config', '.vscode', '.idea', '.vs', '.svn', '.hg',
+  'appdata', 'application data', 'local settings', '.venv', 'venv',
+  '__pycache__', 'obj', 'temp', 'tmp',
+])
 
-function isIgnoredWatchPath(path: string): boolean {
-  return WATCH_IGNORED.test(path)
+function normalizedPath(path: string): string {
+  return path.replace(/[\\/]+/g, '/').replace(/\/$/, '')
+}
+
+function pathSegmentsRelativeToCwd(path: string, cwd: string): string[] {
+  const normalized = normalizedPath(path)
+  const normalizedCwd = normalizedPath(cwd)
+  if (normalized.toLowerCase() === normalizedCwd.toLowerCase()) return []
+  const prefix = `${normalizedCwd.toLowerCase()}/`
+  if (!normalized.toLowerCase().startsWith(prefix)) {
+    return normalized.split('/').filter(Boolean)
+  }
+  return normalized.slice(normalizedCwd.length + 1).split('/').filter(Boolean)
+}
+
+function isIgnoredDirectoryName(name: string): boolean {
+  return IGNORED_DIRECTORY_NAMES.has(name.toLowerCase())
+}
+
+function isIgnoredWatchPath(path: string, cwd: string): boolean {
+  return pathSegmentsRelativeToCwd(path, cwd).some(isIgnoredDirectoryName)
+}
+
+/**
+ * Whether a filesystem event should be suppressed. Creation/removal/rename
+ * of an ignored directory itself is still relevant to its parent (e.g. a new
+ * `node_modules` folder changes the root listing), so only events strictly
+ * inside an ignored subtree are dropped.
+ */
+function isIgnoredChangeEvent(path: string, cwd: string): boolean {
+  const segments = pathSegmentsRelativeToCwd(path, cwd)
+  if (segments.length === 0) return false
+  return segments.slice(0, -1).some(isIgnoredDirectoryName)
 }
 
 interface DirWatchEntry {
@@ -217,58 +258,80 @@ interface WindowsRootWatch {
  * subfolders" failures while still mapping recursive events back to the
  * individual directories the client asked to watch.
  */
-class FsWatchHub {
+export class FsWatchHub {
+  private readonly platform: NodeJS.Platform
+  private readonly subscriptions = new Map<string, Set<WebSocket>>()
   private readonly directories = new Map<string, DirWatchEntry>()
   private readonly windowsRoots = new Map<string, WindowsRootWatch>()
+  private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private disposed = false
 
-  watch(dir: string, socket: WebSocket): void {
-    if (isIgnoredWatchPath(dir)) return
-    if (process.platform === 'win32') {
-      this.watchWindows(dir, socket)
+  constructor(platform: NodeJS.Platform = process.platform) {
+    this.platform = platform
+  }
+
+  watch(dir: string, socket: WebSocket, cwd: string): void {
+    if (this.disposed || isIgnoredWatchPath(dir, cwd)) return
+    this.subscribe(dir, socket)
+    if (this.platform === 'win32') {
+      this.watchWindows(dir, socket, cwd)
     } else {
       this.watchDirectory(dir, socket)
     }
   }
 
   unwatch(dir: string, socket: WebSocket): void {
-    if (process.platform === 'win32') {
-      for (const [root, entry] of this.windowsRoots) {
-        const watched = entry.sockets.get(socket)
-        if (watched === undefined) continue
-        watched.delete(dir)
-        if (watched.size === 0) {
-          entry.sockets.delete(socket)
-          if (entry.sockets.size === 0) this.dropWindowsRoot(root)
-        }
-      }
-      return
+    if (this.disposed) return
+    if (this.platform === 'win32') {
+      this.unwatchWindows(dir, socket)
+    } else {
+      this.unwatchDirectory(dir, socket)
     }
-    const entry = this.directories.get(dir)
-    if (entry === undefined) return
-    entry.sockets.delete(socket)
-    if (entry.sockets.size === 0) this.dropDirectory(dir)
+    this.unsubscribe(dir, socket)
   }
 
   removeSocket(socket: WebSocket): void {
-    if (process.platform === 'win32') {
-      for (const [root, entry] of this.windowsRoots) {
-        if (!entry.sockets.has(socket)) continue
-        entry.sockets.delete(socket)
-        if (entry.sockets.size === 0) this.dropWindowsRoot(root)
+    if (this.disposed) return
+    for (const [dir, sockets] of this.subscriptions) {
+      if (sockets.delete(socket) && sockets.size === 0) {
+        this.subscriptions.delete(dir)
+        this.clearRetry(dir)
+        const entry = this.directories.get(dir)
+        if (entry !== undefined) this.dropActiveDirectory(dir)
       }
-      return
     }
-    for (const [dir, entry] of this.directories) {
-      if (entry.sockets.delete(socket) && entry.sockets.size === 0) this.dropDirectory(dir)
+    if (this.platform !== 'win32') return
+    for (const [root, entry] of this.windowsRoots) {
+      if (!entry.sockets.has(socket)) continue
+      entry.sockets.delete(socket)
+      if (entry.sockets.size === 0) this.dropWindowsRoot(root)
     }
   }
 
   dispose(): void {
-    if (process.platform === 'win32') {
-      for (const root of [...this.windowsRoots.keys()]) this.dropWindowsRoot(root)
-      return
+    if (this.disposed) return
+    this.disposed = true
+    for (const timer of this.retryTimers.values()) clearTimeout(timer)
+    this.retryTimers.clear()
+    for (const dir of [...this.directories.keys()]) this.dropActiveDirectory(dir)
+    for (const root of [...this.windowsRoots.keys()]) this.dropWindowsRoot(root)
+    this.subscriptions.clear()
+  }
+
+  private subscribe(dir: string, socket: WebSocket): void {
+    const sockets = this.subscriptions.get(dir) ?? new Set<WebSocket>()
+    sockets.add(socket)
+    this.subscriptions.set(dir, sockets)
+  }
+
+  private unsubscribe(dir: string, socket: WebSocket): void {
+    const sockets = this.subscriptions.get(dir)
+    if (sockets === undefined) return
+    sockets.delete(socket)
+    if (sockets.size === 0) {
+      this.subscriptions.delete(dir)
+      this.clearRetry(dir)
     }
-    for (const dir of [...this.directories.keys()]) this.dropDirectory(dir)
   }
 
   private watchDirectory(dir: string, socket: WebSocket): void {
@@ -277,6 +340,12 @@ class FsWatchHub {
       existing.sockets.add(socket)
       return
     }
+    this.tryStartDirectory(dir)
+  }
+
+  private tryStartDirectory(dir: string): void {
+    if (this.disposed || this.directories.has(dir) || !this.hasSubscribers(dir)) return
+    this.clearRetry(dir)
     let watcher: FSWatcher
     try {
       watcher = fsWatch(dir, { persistent: false }, (eventType) => {
@@ -285,37 +354,58 @@ class FsWatchHub {
         if (eventType === 'rename') this.scheduleDirectory(dir)
       })
     } catch {
+      this.scheduleRetry(dir)
       return
     }
     watcher.on('error', () => {
       this.notifyDirectory(dir)
-      this.dropDirectory(dir)
+      this.dropActiveDirectory(dir)
+      this.scheduleRetry(dir)
     })
-    this.directories.set(dir, { watcher, sockets: new Set([socket]), timer: null })
+    this.directories.set(dir, { watcher, sockets: new Set(this.subscriptions.get(dir) ?? []), timer: null })
   }
 
-  private watchWindows(dir: string, socket: WebSocket): void {
-    // The client's first watch is always the session cwd; use it as the
-    // recursive root and allow later expanded subdirectories to share it.
-    const existing = this.findWindowsRoot(socket, dir)
-    if (existing !== undefined) {
-      const watched = existing.sockets.get(socket) ?? new Set<string>()
-      watched.add(dir)
-      existing.sockets.set(socket, watched)
-      return
+  private unwatchDirectory(dir: string, socket: WebSocket): void {
+    const entry = this.directories.get(dir)
+    if (entry !== undefined) entry.sockets.delete(socket)
+    if (!this.hasSubscribers(dir)) {
+      this.clearRetry(dir)
+      this.dropActiveDirectory(dir)
     }
-    const root = dir
-    let entry = this.windowsRoots.get(root)
+  }
+
+  private scheduleRetry(dir: string): void {
+    if (this.disposed || !this.hasSubscribers(dir) || this.retryTimers.has(dir)) return
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(dir)
+      this.tryStartDirectory(dir)
+    }, FS_WATCH_RETRY_MS)
+    this.retryTimers.set(dir, timer)
+  }
+
+  private clearRetry(dir: string): void {
+    const timer = this.retryTimers.get(dir)
+    if (timer === undefined) return
+    clearTimeout(timer)
+    this.retryTimers.delete(dir)
+  }
+
+  private hasSubscribers(dir: string): boolean {
+    return (this.subscriptions.get(dir)?.size ?? 0) > 0
+  }
+
+  private watchWindows(dir: string, socket: WebSocket, cwd: string): void {
+    let entry = this.windowsRoots.get(cwd)
     if (entry === undefined) {
-      const created: WindowsRootWatch = { root, watcher: undefined as unknown as FSWatcher, sockets: new Map(), pending: new Set(), timer: null }
+      const created: WindowsRootWatch = { root: cwd, watcher: undefined as unknown as FSWatcher, sockets: new Map(), pending: new Set(), timer: null }
       try {
-        const watcher = fsWatch(root, { persistent: false, recursive: true }, (_eventType, filename) => {
+        const watcher = fsWatch(cwd, { persistent: false, recursive: true }, (_eventType, filename) => {
           if (_eventType !== 'rename') return
           if (filename == null || typeof filename !== 'string' || filename === '') {
-            created.pending.add(root)
+            created.pending.add(cwd)
           } else {
-            const eventPath = join(root, filename)
-            if (isIgnoredWatchPath(eventPath)) return
+            const eventPath = join(cwd, filename)
+            if (isIgnoredChangeEvent(eventPath, cwd)) return
             const parent = parentOf(eventPath)
             for (const watched of this.windowsWatchedDirectories(created)) {
               if (eventPath === watched || parent === watched) created.pending.add(watched)
@@ -330,12 +420,24 @@ class FsWatchHub {
       created.watcher.on('error', () => {
         this.dropWindowsRoot(created.root)
       })
-      this.windowsRoots.set(root, created)
+      this.windowsRoots.set(cwd, created)
       entry = created
     }
     const watched = entry.sockets.get(socket) ?? new Set<string>()
     watched.add(dir)
     entry.sockets.set(socket, watched)
+  }
+
+  private unwatchWindows(dir: string, socket: WebSocket): void {
+    for (const [root, entry] of this.windowsRoots) {
+      const watched = entry.sockets.get(socket)
+      if (watched === undefined) continue
+      watched.delete(dir)
+      if (watched.size === 0) {
+        entry.sockets.delete(socket)
+        if (entry.sockets.size === 0) this.dropWindowsRoot(root)
+      }
+    }
   }
 
   private scheduleDirectory(dir: string): void {
@@ -350,10 +452,10 @@ class FsWatchHub {
   }
 
   private notifyDirectory(dir: string): void {
-    const entry = this.directories.get(dir)
-    if (entry === undefined) return
+    const sockets = this.subscriptions.get(dir)
+    if (sockets === undefined || sockets.size === 0) return
     const message = JSON.stringify({ type: 'change', path: dir })
-    for (const socket of [...entry.sockets]) {
+    for (const socket of [...sockets]) {
       if (socket.readyState === WebSocket.OPEN) socket.send(message)
     }
   }
@@ -387,14 +489,7 @@ class FsWatchHub {
     return watched
   }
 
-  private findWindowsRoot(socket: WebSocket, dir: string): WindowsRootWatch | undefined {
-    for (const entry of this.windowsRoots.values()) {
-      if (isWithin(entry.root, dir) && entry.sockets.has(socket)) return entry
-    }
-    return undefined
-  }
-
-  private dropDirectory(dir: string): void {
+  private dropActiveDirectory(dir: string): void {
     const entry = this.directories.get(dir)
     if (entry === undefined) return
     if (entry.timer !== null) clearTimeout(entry.timer)
@@ -1438,8 +1533,17 @@ function attachFsEvents(
         if (typeof msg?.path !== 'string') return
         const absolute = requireAbsolute(msg.path)
         if (!isWithin(cwd, absolute)) return
-        if (msg.type === 'watch') hub.watch(absolute, ws)
-        else if (msg.type === 'unwatch') hub.unwatch(absolute, ws)
+        if (msg.type === 'watch') {
+          // Resolve through realpath so a symlink inside the workspace cannot
+          // make fs.watch follow a directory that escapes the session cwd.
+          void ensureWorkspacePath(cwd, absolute).then(() => {
+            if (ws.readyState === WebSocket.OPEN) hub.watch(absolute, ws, cwd)
+          }).catch(() => {
+            // The path is outside the workspace (or vanished); skip it.
+          })
+        } else if (msg.type === 'unwatch') {
+          hub.unwatch(absolute, ws)
+        }
       } catch {
         // Malformed message: ignore.
       }
