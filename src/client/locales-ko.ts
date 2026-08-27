@@ -181,6 +181,8 @@ export const ko: Record<string, string> = {
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: '채팅 영역 파일을 사이드바에서 열기',
   settingsOpenPathDesc: '채팅에서 파일 링크(도구 행, 산출물 목록, 파일 언급)를 클릭하면 사이드바 편집기에서 열고, 시스템 기본 앱은 호출하지 않습니다',
+  settingsEditDiffTitle: 'Open edited files as diff',
+  settingsEditDiffDesc: 'When on, clicking an edit-tool file link opens the git worktree diff view in the sidebar instead of the file editor; non-git workspaces fall back to the file',
   settingsOpenToolsTitle: '모델에 사이드바 열기 도구 주입',
   settingsOpenToolsDesc: '켜면 모델이 sidebar_open 도구로 사이드바에서 파일·폴더·HTTP(S) 페이지를 열 수 있습니다(기본 꺼짐)',
   settingsTitleBarTitle: '위치 호환 모드',

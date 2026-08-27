@@ -10,7 +10,7 @@
  * user.name/user.email).
  */
 import { readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { resolve } from 'node:path'
 
@@ -222,6 +222,34 @@ async function directRepoRoot(cwd: string): Promise<string> {
   return out.trim()
 }
 
+/**
+ * Resolve the repository root that contains `path`. The lookup runs
+ * `git rev-parse --show-toplevel` against the directory that holds `path`
+ * (and, when `path` itself is a repository root, against `path` itself), so
+ * callers can map an arbitrary absolute file path to its owning checkout
+ * without first guessing the session's discovered roots.
+ *
+ * @param path - Absolute file or directory path whose repository is desired.
+ * @returns The canonical repository root, or undefined when `path` is not
+ * inside a git work tree or the git probe fails. Never throws.
+ */
+export async function repoRootOf(path: string): Promise<string | undefined> {
+  const candidates: string[] = []
+  const dir = dirname(path)
+  candidates.push(dir)
+  if (dir !== path) candidates.push(path)
+  for (const cwd of candidates) {
+    try {
+      const out = await runGit(cwd, ['rev-parse', '--show-toplevel'], DISCOVERY_TIMEOUT_MS)
+      const trimmed = out.trim()
+      if (trimmed !== '') return trimmed
+    } catch {
+      // Not a repository at this candidate — try the next one.
+    }
+  }
+  return undefined
+}
+
 /** Discover the current repository or direct child repositories. Results are
  *  cached per cwd and concurrent callers share one in-flight scan, so opening
  *  the panel (three parallel git.* requests) costs a single discovery pass. */
@@ -318,7 +346,7 @@ export async function status(cwd: string, selected?: string): Promise<GitStatusR
 }
 
 /** Platform-aware identity used only for comparing absolute checkout roots. */
-function pathIdentity(path: string): string {
+export function pathIdentity(path: string): string {
   const absolute = resolve(path).replace(/[\\/]+$/, '')
   return process.platform === 'win32' ? absolute.toLowerCase() : absolute
 }

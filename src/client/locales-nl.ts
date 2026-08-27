@@ -187,6 +187,8 @@ export const nl: Record<string, string> = {
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Chatbestanden in de zijbalk openen',
   settingsOpenPathDesc: 'Bestandslinks in de chat (toolrijen, geproduceerde bestanden, vermeldingen) openen in de zijbalk-editor in plaats van de standaard systeemapp',
+  settingsEditDiffTitle: 'Open edited files as diff',
+  settingsEditDiffDesc: 'When on, clicking an edit-tool file link opens the git worktree diff view in the sidebar instead of the file editor; non-git workspaces fall back to the file',
   settingsOpenToolsTitle: 'Zijbalk-openen-tool voor het model injecteren',
   settingsOpenToolsDesc: 'Indien ingeschakeld kan het model bestanden, mappen en HTTP(S)-pagina\'s in de zijbalk openen via de sidebar_open-tool (standaard uit)',
   settingsTitleBarTitle: 'Positiecompatibiliteitsmodus',

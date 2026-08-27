@@ -204,6 +204,8 @@ export const zhMO: Record<string, string> = {
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: '聊天區檔案在側邊欄開啟',
   settingsOpenPathDesc: '在聊天裡點擊檔案連結（工具行、產物列表、檔案提及）時，在側邊欄編輯器中開啟，不再呼叫系統預設應用程式',
+  settingsEditDiffTitle: 'Open edited files as diff',
+  settingsEditDiffDesc: 'When on, clicking an edit-tool file link opens the git worktree diff view in the sidebar instead of the file editor; non-git workspaces fall back to the file',
   settingsOpenToolsTitle: '為模型注入側邊欄開啟工具',
   settingsOpenToolsDesc: '開啟後，模型可透過 sidebar_open 工具在側邊欄主動開啟檔案、資料夾和 HTTP(S) 網頁（預設關閉）',
   settingsTitleBarTitle: '位置相容模式',

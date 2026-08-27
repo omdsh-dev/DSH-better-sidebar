@@ -351,11 +351,45 @@ function buildApi(
       const { cwd } = await gitCwdOf(payload)
       return git.status(cwd, selectedRepoOf(payload))
     },
+    'git.status-at': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const raw = requireString(payload, 'path')
+      const absolute = await ensureWorkspacePath(cwd, raw, resolved.extraRoots)
+      const root = await git.repoRootOf(absolute)
+      if (root === undefined) return { isRepo: false, entries: [] }
+      return git.status(root)
+    },
     'git.diff': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       const record = payload as { path?: unknown; staged?: unknown }
       const repoRoot = selectedRepoOf(payload)
-      const path = record.path === undefined ? undefined : await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot)
+      const hasPath = record.path !== undefined
+      const rawPath = hasPath ? requireString(payload, 'path') : undefined
+      if (repoRoot !== undefined) {
+        const roots = await git.repoRoots(cwd)
+        const isKnown = roots.some(root => git.pathIdentity(root) === git.pathIdentity(repoRoot))
+        if (!isKnown) {
+          await ensureWorkspacePath(cwd, repoRoot, resolved.extraRoots)
+          const actual = await git.repoRootOf(repoRoot)
+          if (actual === undefined) {
+            throw new git.GitCommandError(`not a git repository: ${repoRoot}`, 'not-repo', 'rev-parse')
+          }
+          let path: string | undefined
+          if (rawPath !== undefined) {
+            if (isAbsolute(rawPath)) {
+              path = requireAbsolute(rawPath)
+            } else {
+              // Attempts to resolve relative paths against the external repo root
+              // directly, instead of the session cwd, so a file like
+              // "src/a.ts" inside the external checkout does not silently fall
+              // back to the session's first discovered root.
+              path = requireAbsolute(join(actual, rawPath))
+            }
+          }
+          return { diff: await git.diff(actual, path, record.staged === true) }
+        }
+      }
+      const path = rawPath === undefined ? undefined : await resolveGitPath(cwd, rawPath, repoRoot)
       return { diff: await git.diff(cwd, path, record.staged === true, repoRoot) }
     },
     'git.stage': async (payload) => {

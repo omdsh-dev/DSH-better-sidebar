@@ -189,6 +189,8 @@ export const th: Record<string, string> = {
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'เปิดไฟล์แชทในแถบด้านข้าง',
   settingsOpenPathDesc: 'เปิดลิงก์ไฟล์ในแชท (แถวเครื่องมือ, ไฟล์ที่สร้าง, การกล่าวถึง) ในตัวแก้ไขแถบด้านข้างแทนแอปเริ่มต้นของระบบ',
+  settingsEditDiffTitle: 'Open edited files as diff',
+  settingsEditDiffDesc: 'When on, clicking an edit-tool file link opens the git worktree diff view in the sidebar instead of the file editor; non-git workspaces fall back to the file',
   settingsOpenToolsTitle: 'ฉีดเครื่องมือเปิดแถบด้านข้างสำหรับโมเดล',
   settingsOpenToolsDesc: 'เมื่อเปิดใช้ โมเดลสามารถเปิดไฟล์ โฟลเดอร์ และหน้า HTTP(S) ในแถบด้านข้างผ่านเครื่องมือ sidebar_open (ปิดเป็นค่าเริ่มต้น)',
   settingsTitleBarTitle: 'โหมดความเข้ากันได้ของตำแหน่ง',

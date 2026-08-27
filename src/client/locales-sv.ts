@@ -172,6 +172,8 @@ export const sv: Record<string, string> = {
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Öppna chattfiler i sidopanelen',
   settingsOpenPathDesc: 'Öppna fillänkar i chatten (verktygsrader, producerade filer, omnämnanden) i sidopanelens editor i stället för systemets standardapp',
+  settingsEditDiffTitle: 'Open edited files as diff',
+  settingsEditDiffDesc: 'When on, clicking an edit-tool file link opens the git worktree diff view in the sidebar instead of the file editor; non-git workspaces fall back to the file',
   settingsOpenToolsTitle: 'Injicera sidopanel-öppningsverktyg för modellen',
   settingsOpenToolsDesc: 'När aktiverat kan modellen öppna filer, mappar och HTTP(S)-sidor i sidopanelen via sidebar_open-verktyget (av som standard)',
   settingsTitleBarTitle: 'Positions kompatibilitetsläge',

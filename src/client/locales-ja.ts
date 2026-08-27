@@ -189,6 +189,8 @@ export const ja: Record<string, string> = {
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'チャット内ファイルをサイドバーで開く',
   settingsOpenPathDesc: 'チャット内のファイルリンク（ツール行、産物リスト、ファイル言及）クリック時に、システム既定アプリではなくサイドバーエディターで開く',
+  settingsEditDiffTitle: 'Open edited files as diff',
+  settingsEditDiffDesc: 'When on, clicking an edit-tool file link opens the git worktree diff view in the sidebar instead of the file editor; non-git workspaces fall back to the file',
   settingsOpenToolsTitle: 'モデルにサイドバー開くツールを注入',
   settingsOpenToolsDesc: 'オンにすると、モデルは sidebar_open ツールでサイドバーにファイル・フォルダー・HTTP(S) ページを開ける（デフォルトオフ）',
   settingsTitleBarTitle: '位置互換モード',

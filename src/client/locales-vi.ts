@@ -189,6 +189,8 @@ export const vi: Record<string, string> = {
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Mở tệp chat trong thanh bên',
   settingsOpenPathDesc: 'Khi nhấp link tệp trong chat (dòng công cụ, danh sách sản phẩm, nhắc tệp), mở trong trình soạn thảo thanh bên thay vì ứng dụng mặc định hệ thống',
+  settingsEditDiffTitle: 'Open edited files as diff',
+  settingsEditDiffDesc: 'When on, clicking an edit-tool file link opens the git worktree diff view in the sidebar instead of the file editor; non-git workspaces fall back to the file',
   settingsOpenToolsTitle: 'Tiêm công cụ mở thanh bên cho mô hình',
   settingsOpenToolsDesc: 'Khi bật, mô hình có thể mở tệp, thư mục và trang HTTP(S) trong thanh bên qua công cụ sidebar_open (mặc định tắt)',
   settingsTitleBarTitle: 'Chế độ tương thích thanh tiêu đề',

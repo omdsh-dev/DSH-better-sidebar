@@ -189,6 +189,8 @@ export const hi: Record<string, string> = {
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'चैट फ़ाइलें साइडबार में खोलें',
   settingsOpenPathDesc: 'चैट में फ़ाइल लिंक (टूल पंक्ति, उत्पादित फ़ाइलें, उल्लेख) क्लिक करने पर सिस्टम डिफ़ॉल्ट ऐप के बजाय साइडबार एडिटर में खोलें',
+  settingsEditDiffTitle: 'Open edited files as diff',
+  settingsEditDiffDesc: 'When on, clicking an edit-tool file link opens the git worktree diff view in the sidebar instead of the file editor; non-git workspaces fall back to the file',
   settingsOpenToolsTitle: 'मॉडल के लिए साइडबार ओपन टूल इंजेक्ट करें',
   settingsOpenToolsDesc: 'चालू होने पर, मॉडल sidebar_open टूल से साइडबार में फ़ाइलें, फ़ोल्डर और HTTP(S) पेज खोल सकता है (डिफ़ॉल्ट रूप से बंद)',
   settingsTitleBarTitle: 'स्थिति संगतता मोड',

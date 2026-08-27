@@ -175,6 +175,8 @@ export const de: Record<string, string> = {
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Chat-Dateien in der Seitenleiste öffnen',
   settingsOpenPathDesc: 'Dateilinks im Chat (Werkzeugzeilen, erstellte Dateien, Erwähnungen) werden im Seitenleisten-Editor geöffnet statt in der System-Standardanwendung',
+  settingsEditDiffTitle: 'Open edited files as diff',
+  settingsEditDiffDesc: 'When on, clicking an edit-tool file link opens the git worktree diff view in the sidebar instead of the file editor; non-git workspaces fall back to the file',
   settingsOpenToolsTitle: 'Seitenleisten-Öffnungswerkzeug für das Modell bereitstellen',
   settingsOpenToolsDesc: 'Wenn aktiviert, kann das Modell über das sidebar_open-Werkzeug Dateien, Ordner und HTTP(S)-Seiten in der Seitenleiste öffnen (standardmäßig deaktiviert)',
   settingsTitleBarTitle: 'Kompatibilitätsmodus der Position',

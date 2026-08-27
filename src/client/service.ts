@@ -707,14 +707,17 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       // own panel opens — the bottom panel when the active pane lives in the
       // bottom tree, else the right panel. Type-only opens (+ menu,
       // agent-terminal auto-tabs) never expand (the panel behavior is their
-      // caller's business). The check runs on the post-dedupe state, so a
-      // content open that merely FOCUSES an existing tab expands the panel
-      // too — the open must never land out of sight. Opens targeted at an
-      // INACTIVE session never expand (nothing is in sight for the user).
+      // caller's business). A diff seed is content too (it carries `diff`,
+      // not `path`/`url`) — an edit-tool open that lands the diff tab in a
+      // collapsed panel would otherwise stay out of sight. The check runs
+      // on the post-dedupe state, so a content open that merely FOCUSES an
+      // existing tab expands the panel too — the open must never land out
+      // of sight. Opens targeted at an INACTIVE session never expand
+      // (nothing is in sight for the user).
       if (
         !targetsInactiveSession
         && typeof window !== 'undefined'
-        && (seed.path !== undefined || seed.url !== undefined)
+        && (seed.path !== undefined || seed.url !== undefined || seed.diff !== undefined)
       ) {
         if (isNarrowWidth(window.innerWidth)) {
           if (!landed.panelOpen) return togglePanel(landed)

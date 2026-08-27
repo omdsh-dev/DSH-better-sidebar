@@ -114,10 +114,14 @@ describe('open-path interception wiring', () => {
         : undefined,
     } as unknown as Context
     const store = createSidebarStore()
+    // The edit→diff pref defaults on, but this wiring spec pins the legacy
+    // editor routing (the diff path is async and needs a git probe). Disable
+    // the diff pref so the open lands synchronously in the editor as before.
+    store.setPrefs({ ...store.getPrefs(), editOpensDiff: false })
     const original = ctx.workspaces.openPath
     const restore = registerOpenPathInterception(ctx, store)
 
-    // Default prefs: the takeover routes the open into the sidebar editor
+    // Default prefs (with edit diff off): the takeover routes the open into the sidebar editor
     // with the session-scoped absolute path (chat already resolved it).
     await ctx.workspaces.openPath('/w/src/a.ts')
     expect(opened).toEqual([{

@@ -170,6 +170,7 @@ describe('turn-tail interception registration (issue #15)', () => {
     const fake = fakeSlots(true)
     const ctx = clientCtx(fake.slots)
     const store = createSidebarStore()
+    store.setPrefs({ ...store.getPrefs(), editOpensDiff: false })
     const restore = registerTurnTailInterception(ctx, store)
     const inject = fake.registered[0]!.options.inject as (sessionId: string) => {
       openInSidebar: (path: string) => void

@@ -899,6 +899,7 @@ describe('side card settings routes', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
+        editOpensDiff: true,
         editorExplorer: false,
         terminalShell: '',
         terminalShellArgs: '',

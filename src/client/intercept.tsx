@@ -12,10 +12,20 @@ import { firstLeaf, revealPaths, togglePanel, type SidebarStore } from './state.
 import { t } from './locales.ts'
 import { resolveSidebarPath, selectProducedFiles } from './produced-files.ts'
 import { wrapOpenPath } from './openpath-intercept.ts'
+import { api } from './api.ts'
+import { buildEditDiffTab, deriveEditDiffTarget } from './edit-diff.ts'
 import css from './sidebar.module.css'
 
-/** Open a file in the sidebar's editor (used by the intercepted row and the explorer). */
-export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: string, path: string): void {
+/**
+ * Open a file in the sidebar's editor (used by the explorer and explicit
+ * "open in editor" actions). Unlike {@link openSidebarFile}, this path never
+ * opens a diff — it always routes to the editor tab.
+ * @param ctx - client cordis context.
+ * @param store - per-session sidebar store.
+ * @param sessionId - owning session.
+ * @param path - file path (relative to the session cwd or absolute).
+ */
+export function openSidebarEditorFile(ctx: Context, store: SidebarStore, sessionId: string, path: string): void {
   const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
   const absolute = resolveSidebarPath(summary?.cwd, path)
   const at = Math.max(absolute.lastIndexOf('/'), absolute.lastIndexOf('\\'))
@@ -23,6 +33,52 @@ export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: st
   // Route through the sidebar service so the editor descriptor's dedupeKey
   // (per-path) applies; the id is path-derived so multiple editors coexist.
   ctx.get('betterSidebar')?.openTab({ type: 'editor', title, path: absolute, id: `editor:${absolute}` })
+}
+
+/**
+ * Open a file triggered by the chat's edit-tool path links (via
+ * `ctx.workspaces.openPath`). When the `editOpensDiff` pref is on (default)
+ * the file opens as a git worktree diff tab instead of the editor; when off
+ * — or when the file is not inside a git repository — it falls back to the
+ * editor. The diff attempt probes the file's owning repository directly
+ * (`git.status-at`), so edits in external checkouts (outside the session
+ * workspace but inside an allowed extra root) still surface their diff.
+ * The probe is async but callers do not await it: a fire-and-forget probe is
+ * safe because the fallback is still the editor and the workspaces wrapper
+ * already resolved as success.
+ * @param ctx - client cordis context.
+ * @param store - per-session sidebar store.
+ * @param sessionId - owning session.
+ * @param path - file path (relative to the session cwd or absolute).
+ */
+export async function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: string, path: string): Promise<void> {
+  const prefs = store.getPrefs()
+  // Pref off → editor exactly as before.
+  if (prefs.editOpensDiff === false) {
+    openSidebarEditorFile(ctx, store, sessionId, path)
+    return
+  }
+  // Diff tab itself disabled → nothing to open as diff, fall back to editor.
+  if (prefs.tabsEnabled['diff'] === false) {
+    openSidebarEditorFile(ctx, store, sessionId, path)
+    return
+  }
+  const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
+  const cwd = summary?.cwd
+  const absolute = resolveSidebarPath(cwd, path)
+  try {
+    const scope = { sessionId, ...(cwd !== undefined ? { cwd } : {}) } as { sessionId: string; cwd?: string }
+    const status = await api.gitStatusAt(scope, absolute)
+    const target = deriveEditDiffTarget(absolute, status)
+    if (target !== null) {
+      const tab = buildEditDiffTab(target.relative, target.repoRoot, target.untracked)
+      ctx.get('betterSidebar')?.openTab(tab)
+      return
+    }
+  } catch {
+    // Probe failed (network, not a repo, host degraded): fall through to editor.
+  }
+  openSidebarEditorFile(ctx, store, sessionId, path)
 }
 
 /**
@@ -144,7 +200,7 @@ export function registerTurnTailInterception(ctx: Context, store: SidebarStore):
     priority: -1,
     registrant: 'dsh-better-sidebar',
     inject: (sessionId: string) => ({
-      openInSidebar: (path: string) => { openSidebarFile(ctx, store, sessionId, path) },
+      openInSidebar: (path: string) => { void openSidebarFile(ctx, store, sessionId, path) },
       onShowInFolder: (files: readonly string[]) => { revealInExplorer(ctx, store, sessionId, files) },
     }),
   }, SidebarProducedFiles))
@@ -166,7 +222,7 @@ export function registerOpenPathInterception(ctx: Context, store: SidebarStore):
       && store.getPrefs().interceptOpenPath !== false
       && store.getPrefs().tabsEnabled['editor'] !== false,
     currentSessionId: () => ctx.sessions.list.getSnapshot().current,
-    openInSidebar: (path, sessionId) => { openSidebarFile(ctx, store, sessionId, path) },
+    openInSidebar: (path, sessionId) => { void openSidebarFile(ctx, store, sessionId, path) },
     revealInExplorer: (_path, sessionId) => { revealInExplorer(ctx, store, sessionId, lastProduced) },
   })
 }

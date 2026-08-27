@@ -221,6 +221,8 @@ export const api = {
     call<GitWorktree[]>('git.worktrees', scopePayload(scope, {}), signal),
   gitStatus: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
     call<GitStatusResult>('git.status', gitPayload(scope, worktree, {}), signal),
+  gitStatusAt: (scope: SessionScope, path: string, signal?: AbortSignal) =>
+    call<GitStatusResult>('git.status-at', scopePayload(scope, { path }), signal),
   gitDiff: (scope: SessionScope, path: string | undefined, staged: boolean, worktree?: string, signal?: AbortSignal) =>
     call<{ diff: string }>('git.diff', gitPayload(scope, worktree, { ...(path !== undefined ? { path } : {}), staged }), signal),
   gitStage: (scope: SessionScope, path?: string, worktree?: string) =>

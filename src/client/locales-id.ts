@@ -187,6 +187,8 @@ export const id: Record<string, string> = {
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Buka berkas obrolan di sidebar',
   settingsOpenPathDesc: 'Buka tautan berkas di obrolan (baris alat, berkas yang dihasilkan, mention) di editor sidebar alih-alih aplikasi default sistem',
+  settingsEditDiffTitle: 'Open edited files as diff',
+  settingsEditDiffDesc: 'When on, clicking an edit-tool file link opens the git worktree diff view in the sidebar instead of the file editor; non-git workspaces fall back to the file',
   settingsOpenToolsTitle: 'Suntik alat buka sidebar untuk model',
   settingsOpenToolsDesc: 'Saat diaktifkan, model dapat membuka file, folder, dan halaman HTTP(S) di sidebar melalui alat sidebar_open (nonaktif secara default)',
   settingsTitleBarTitle: 'Mode kompatibilitas posisi',

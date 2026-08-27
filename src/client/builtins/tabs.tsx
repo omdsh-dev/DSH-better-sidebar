@@ -11,7 +11,7 @@ import { IconBranchOutline16, IconCodeOutline16, IconFolderOpen16, IconNewChatOu
 import type { Context } from '../../context-types.ts'
 import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
-import { openSidebarFile } from '../intercept.tsx'
+import { openSidebarEditorFile } from '../intercept.tsx'
 import { EditorHost } from '../EditorHost.tsx'
 import { OpenWithSettings } from '../open-with-settings.tsx'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
@@ -142,7 +142,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
         <GitView
           scope={scope}
           visible={visible}
-          onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}
+          onOpenFile={(path) => { openSidebarEditorFile(ctx, store, scope.sessionId, path) }}
           onOpenDiff={onOpenDiff ?? (() => { /* no-op */ })}
         />
       ),
