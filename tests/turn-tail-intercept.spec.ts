@@ -15,6 +15,14 @@ import { createSidebarStore } from '../src/client/state.ts'
 import { registerTurnTailInterception } from '../src/client/intercept.tsx'
 import type { Context } from '../src/context-types.ts'
 
+const g = globalThis as Record<string, unknown>
+if (g.window === undefined) {
+  g.window = { clearTimeout: () => {}, setTimeout: (_fn: () => void) => 0, innerWidth: 1024, innerHeight: 800 } as unknown as Window
+}
+if (g.localStorage === undefined) {
+  g.localStorage = { getItem: () => null, setItem: () => {} } as unknown as Storage
+}
+
 interface RegisteredSlot {
   options: Record<string, unknown>
   component: unknown
@@ -166,10 +174,11 @@ describe('turn-tail interception registration (issue #15)', () => {
     restore()
   })
 
-  it('wires the openInSidebar and onShowInFolder seats', () => {
+  it('wires the openInSidebar and onShowInFolder seats', async () => {
     const fake = fakeSlots(true)
     const ctx = clientCtx(fake.slots)
     const store = createSidebarStore()
+    store.setSession('s1')
     store.setPrefs({ ...store.getPrefs(), editOpensDiff: false })
     const restore = registerTurnTailInterception(ctx, store)
     const inject = fake.registered[0]!.options.inject as (sessionId: string) => {
@@ -177,21 +186,26 @@ describe('turn-tail interception registration (issue #15)', () => {
       onShowInFolder: (files: readonly string[]) => void
     }
 
-    // The seat hands the session-scoped opener to the chips row.
+    // The seat hands the session-scoped opener to the chips row — chat opens land in the single preview tab.
     const seat = inject('s1')
     expect(seat.openInSidebar).toBeTypeOf('function')
     seat.openInSidebar('/w/src/a.ts')
-    expect(ctx.betterSidebar.openTab).toHaveBeenCalledWith({
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+    const state = store.getSnapshot().state!
+    const preview = (state.splits as { tabs: Array<{ id: string }> }).tabs.find(t => t.id === 'chat-preview')
+    expect(preview).toBeDefined()
+    expect(preview).toMatchObject({
       type: 'editor',
       title: 'a.ts',
       path: '/w/src/a.ts',
-      id: 'editor:/w/src/a.ts',
+      id: 'chat-preview',
     })
 
     // The show-in-folder seat reveals the produced files in the files window
     // (the editor home tab) — the panel expands and the rows highlight.
     expect(seat.onShowInFolder).toBeTypeOf('function')
     seat.onShowInFolder(['/w/src/a.ts'])
+    // Reveal uses the editor home tab (Files), not the preview.
     expect(ctx.betterSidebar.openTab).toHaveBeenLastCalledWith(expect.objectContaining({
       type: 'editor',
     }))

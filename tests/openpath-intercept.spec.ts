@@ -4,6 +4,14 @@ import { wrapOpenPath, type OpenPathInterceptDeps, type OpenPathService } from '
 import { createSidebarStore } from '../src/client/state.ts'
 import type { Context } from '../src/context-types.ts'
 
+const g = globalThis as Record<string, unknown>
+if (g.window === undefined) {
+  g.window = { clearTimeout: () => {}, setTimeout: (_fn: () => void) => 0, innerWidth: 1024, innerHeight: 800 } as unknown as Window
+}
+if (g.localStorage === undefined) {
+  g.localStorage = { getItem: () => null, setItem: () => {} } as unknown as Storage
+}
+
 describe('open-path interception', () => {
   /** A minimal fake of the workspaces.openPath service method. */
   const service = (): OpenPathService & { calls: string[]; opened: string[] } => {
@@ -98,38 +106,43 @@ describe('open-path interception', () => {
 })
 
 describe('open-path interception wiring', () => {
-  it('registerOpenPathInterception routes chat opens into the editor tab and restores on dispose', async () => {
+  it('registerOpenPathInterception routes chat opens into the preview tab and restores on dispose', async () => {
     // A realistic client-context fake: the sessions list feed (current + cwd),
     // the workspaces funnel, and the sidebar service the editor goes through.
-    const opened: Array<Record<string, unknown>> = []
     const funnel = { openPath: async (): Promise<void> => {} }
     const ctx = {
       sessions: {
         list: { getSnapshot: () => ({ current: 's1', byId: { s1: { cwd: '/w' } } }) },
       },
       workspaces: funnel,
-      betterSidebar: { openTab: (seed: unknown) => { opened.push(seed as Record<string, unknown>) } },
-      get: (name: string) => name === 'betterSidebar'
-        ? { openTab: (seed: unknown) => { opened.push(seed as Record<string, unknown>) } }
-        : undefined,
+      betterSidebar: { openTab: () => {} },
+      get: (name: string) => name === 'betterSidebar' ? { openTab: () => {} } : undefined,
     } as unknown as Context
     const store = createSidebarStore()
-    // The edit→diff pref defaults on, but this wiring spec pins the legacy
-    // editor routing (the diff path is async and needs a git probe). Disable
-    // the diff pref so the open lands synchronously in the editor as before.
+    store.setSession('s1')
+    // The edit→diff pref defaults on, but this wiring spec pins the
+    // preview editor routing (the diff path is async and needs a git probe).
+    // Disable the diff pref so the open lands synchronously in the preview
+    // editor as before.
     store.setPrefs({ ...store.getPrefs(), editOpensDiff: false })
     const original = ctx.workspaces.openPath
     const restore = registerOpenPathInterception(ctx, store)
 
-    // Default prefs (with edit diff off): the takeover routes the open into the sidebar editor
-    // with the session-scoped absolute path (chat already resolved it).
+    // Default prefs (with edit diff off): the takeover routes the open into the single preview tab
+    // with the session-scoped absolute path (chat already resolved it). The preview uses the fixed id.
     await ctx.workspaces.openPath('/w/src/a.ts')
-    expect(opened).toEqual([{
+    // Allow the fire-and-forget preview to settle (no await in the wrapper).
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+    const state = store.getSnapshot().state!
+    const preview = state.splits.kind === 'leaf'
+      ? (state.splits as { tabs: Array<{ id: string; type: string; title: string; path?: string }> }).tabs.find(t => t.id === 'chat-preview')
+      : undefined
+    expect(preview).toEqual(expect.objectContaining({
       type: 'editor',
       title: 'a.ts',
       path: '/w/src/a.ts',
-      id: 'editor:/w/src/a.ts',
-    }])
+      id: 'chat-preview',
+    }))
 
     // The interceptOpenPath pref off → the original funnel runs untouched.
     store.setPrefs({ ...store.getPrefs(), interceptOpenPath: false })
@@ -137,7 +150,9 @@ describe('open-path interception wiring', () => {
     ctx.workspaces.openPath = async (path: string) => { calls.push(path) }
     await ctx.workspaces.openPath('/w/src/b.ts')
     expect(calls).toEqual(['/w/src/b.ts'])
-    expect(opened).toHaveLength(1)
+    // Preview still single.
+    const tabsAfter = (store.getSnapshot().state!.splits as { tabs: Array<{ id: string }> }).tabs
+    expect(tabsAfter.filter(t => t.id === 'chat-preview')).toHaveLength(1)
 
     // The editor tab disabled → falls through too (an editor that cannot
     // open must not swallow opens).

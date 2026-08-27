@@ -14,6 +14,7 @@ import { resolveSidebarPath, selectProducedFiles } from './produced-files.ts'
 import { wrapOpenPath } from './openpath-intercept.ts'
 import { api } from './api.ts'
 import { buildEditDiffTab, deriveEditDiffTarget } from './edit-diff.ts'
+import { applyChatPreview, CHAT_PREVIEW_TAB_ID } from './chat-preview.ts'
 import css from './sidebar.module.css'
 
 /**
@@ -37,15 +38,17 @@ export function openSidebarEditorFile(ctx: Context, store: SidebarStore, session
 
 /**
  * Open a file triggered by the chat's edit-tool path links (via
- * `ctx.workspaces.openPath`). When the `editOpensDiff` pref is on (default)
- * the file opens as a git worktree diff tab instead of the editor; when off
- * — or when the file is not inside a git repository — it falls back to the
- * editor. The diff attempt probes the file's owning repository directly
- * (`git.status-at`), so edits in external checkouts (outside the session
- * workspace but inside an allowed extra root) still surface their diff.
- * The probe is async but callers do not await it: a fire-and-forget probe is
- * safe because the fallback is still the editor and the workspaces wrapper
- * already resolved as success.
+ * `ctx.workspaces.openPath`). Chat opens always reuse a single preview tab
+ * (`chat-preview`): switching files replaces its content in place instead of
+ * creating a new tab. The preview bypasses the editor's per-path dedupe so
+ * the seed never lands in an existing resident editor tab. When the
+ * `editOpensDiff` pref is on (default) the preview opens as a git worktree
+ * diff tab; otherwise it falls back to the editor. The diff probe reaches
+ * the file's owning repository directly (`git.status-at`). The preview type
+ * cannot be patched for diff (DiffTab reloads on diff reference), so a diff
+ * replacement closes and recreates the tab. Panel visibility is ensured for
+ * pane-hosted previews (expand + pin to the right panel); a floating preview
+ * stays floating only for editor→editor replacements.
  * @param ctx - client cordis context.
  * @param store - per-session sidebar store.
  * @param sessionId - owning session.
@@ -53,32 +56,33 @@ export function openSidebarEditorFile(ctx: Context, store: SidebarStore, session
  */
 export async function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: string, path: string): Promise<void> {
   const prefs = store.getPrefs()
-  // Pref off → editor exactly as before.
-  if (prefs.editOpensDiff === false) {
-    openSidebarEditorFile(ctx, store, sessionId, path)
-    return
-  }
-  // Diff tab itself disabled → nothing to open as diff, fall back to editor.
-  if (prefs.tabsEnabled['diff'] === false) {
-    openSidebarEditorFile(ctx, store, sessionId, path)
-    return
-  }
   const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
   const cwd = summary?.cwd
   const absolute = resolveSidebarPath(cwd, path)
-  try {
-    const scope = { sessionId, ...(cwd !== undefined ? { cwd } : {}) } as { sessionId: string; cwd?: string }
-    const status = await api.gitStatusAt(scope, absolute)
-    const target = deriveEditDiffTarget(absolute, status)
-    if (target !== null) {
-      const tab = buildEditDiffTab(target.relative, target.repoRoot, target.untracked)
-      ctx.get('betterSidebar')?.openTab(tab)
-      return
+  let previewTab: import('./state.ts').SidebarTab | null = null
+  const canProbeDiff = prefs.editOpensDiff !== false && prefs.tabsEnabled['diff'] !== false
+  if (canProbeDiff) {
+    try {
+      const scope = { sessionId, ...(cwd !== undefined ? { cwd } : {}) } as { sessionId: string; cwd?: string }
+      const status = await api.gitStatusAt(scope, absolute)
+      const target = deriveEditDiffTarget(absolute, status)
+      if (target !== null) {
+        const seed = buildEditDiffTab(target.relative, target.repoRoot, target.untracked)
+        previewTab = { ...seed, id: CHAT_PREVIEW_TAB_ID, title: seed.title ?? target.relative.split('/').pop() ?? target.relative } as import('./state.ts').SidebarTab
+      }
+    } catch {
+      // Probe failed (network, not a repo, host degraded): fall through to editor preview.
     }
-  } catch {
-    // Probe failed (network, not a repo, host degraded): fall through to editor.
   }
-  openSidebarEditorFile(ctx, store, sessionId, path)
+  if (previewTab === null) {
+    const at = Math.max(absolute.lastIndexOf('/'), absolute.lastIndexOf('\\'))
+    const title = at === -1 ? absolute : absolute.slice(at + 1)
+    previewTab = { id: CHAT_PREVIEW_TAB_ID, type: 'editor', title, path: absolute }
+  }
+  // Bypass service.openTab's dedupe (editor dedupes by path) and manipulate
+  // the store directly so the fixed preview id always reuses the same tab.
+  applyChatPreview(store, previewTab)
+  void ctx
 }
 
 /**
