@@ -50,7 +50,7 @@ describe('HTML preview iframe sandbox', () => {
     expect(HTML_IFRAME_SANDBOX).not.toContain('allow-same-origin')
     expect(HTML_IFRAME_SANDBOX).not.toContain('allow-top-navigation')
     // Cross-origin framing by construction: route-src (never srcdoc).
-    expect(iframe).toContain('src="/sidebar/html/s1/p/a/index.html"')
+    expect(iframe).toContain('src="http://localhost/sidebar/html/s1/p/a/index.html"')
     expect(iframe).not.toContain('srcdoc=')
     // Referrer + permissions policy stay locked even when sandboxed.
     // (React SSR renders the referrerPolicy prop camelCase as written.)

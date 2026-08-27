@@ -62,14 +62,14 @@ function normalizeLocalPath(path: string): string {
  * @param text - The raw markdown source (inline + reference images).
  * @param scope - The session scope (sessionId + cwd) for the media route.
  * @param filePath - The absolute path of the opened `.md` file.
- * @param origin - The GUI's own origin (`window.location.origin`); injected
- * so the core rewrite stays pure and unit-testable.
+ * @param baseUrl - The injected document base URL; supplied explicitly so
+ * mounted reverse-proxy prefixes are preserved and the rewrite stays pure.
  * @returns The markdown with local image destinations rewritten in place.
  */
 /**
  * Resolve one media destination against the session's media route: local
- * (relative or absolute) paths become absolute `/sidebar/file` URLs (prefixed
- * with the GUI's own origin so the shared MarkdownText http(s) allowlist
+ * (relative or absolute) paths become absolute `/sidebar/file` URLs resolved
+ * against the injected document base so the shared MarkdownText http(s) allowlist
  * accepts them), while remote URLs, `#`-anchors and empty destinations are
  * returned untouched. Shared by the markdown image rewriter below and by the
  * preview's raw-HTML sanitizer (`markdown-html.tsx`, which meets the same
@@ -79,7 +79,7 @@ export function resolveLocalMediaDest(
   dest: string,
   scope: SessionScope,
   filePath: string,
-  origin: string,
+  baseUrl: string,
 ): string {
   const trimmed = dest.trim()
   if (trimmed === '' || trimmed.startsWith('#')) return dest
@@ -91,16 +91,16 @@ export function resolveLocalMediaDest(
   // absolute so the shared MarkdownText http(s) allowlist accepts it.
   const params = new URLSearchParams({ sessionId: scope.sessionId, path: normalizeLocalPath(candidate) })
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
-  return hostRouteUrl(`sidebar/file?${params.toString()}`, origin).href
+  return hostRouteUrl(`sidebar/file?${params.toString()}`, baseUrl).href
 }
 
 export function rewriteLocalImageUrls(
   text: string,
   scope: SessionScope,
   filePath: string,
-  origin: string,
+  baseUrl: string,
 ): string {
-  const resolve = (dest: string): string => resolveLocalMediaDest(dest, scope, filePath, origin)
+  const resolve = (dest: string): string => resolveLocalMediaDest(dest, scope, filePath, baseUrl)
 
   // Mask fenced code blocks and inline code spans so image-looking text
   // inside documentation examples is never rewritten. The sentinel uses a

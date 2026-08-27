@@ -20,7 +20,7 @@ import { analyzeMarkdownHtml } from '../src/client/markdown-html.ts'
 const media: MarkdownHtmlMedia = {
   scope: { sessionId: 's1', cwd: '/ws' },
   path: '/ws/docs/README.md',
-  origin: 'http://gui.origin',
+  baseUrl: 'http://gui.origin/dsh/',
 }
 const codeLabels = { copyLabel: 'Copy', copiedLabel: 'Copied' }
 
@@ -83,7 +83,7 @@ describe('MarkdownDocument (HTML leaves)', () => {
   it('rewrites local media sources through the /sidebar/file route', async () => {
     const { container, root } = await renderDocument('<picture><img src="./shot.png" alt="shot"/></picture>')
     const img = container.querySelector('img')
-    expect(img?.getAttribute('src')).toBe('http://gui.origin/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fshot.png&cwd=%2Fws')
+    expect(img?.getAttribute('src')).toBe('http://gui.origin/dsh/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fshot.png&cwd=%2Fws')
     await unmount(root)
   })
 })

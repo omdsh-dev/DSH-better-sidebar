@@ -40,7 +40,7 @@ export const LazyMermaidMarkdown = lazyChunkComponent<MermaidMarkdownProps>(
 export interface MarkdownHtmlMedia {
   scope: SessionScope
   path: string
-  origin: string
+  baseUrl: string
 }
 
 /** Tag-like text in a rendered text node — the inline pass gate. */
@@ -67,7 +67,7 @@ function postProcessSanitized(root: Element, media: MarkdownHtmlMedia): void {
   for (const element of root.querySelectorAll('img, video, audio, source')) {
     const src = element.getAttribute('src')
     if (src === null) continue
-    element.setAttribute('src', resolveLocalMediaDest(src, media.scope, media.path, media.origin))
+    element.setAttribute('src', resolveLocalMediaDest(src, media.scope, media.path, media.baseUrl))
   }
 }
 
