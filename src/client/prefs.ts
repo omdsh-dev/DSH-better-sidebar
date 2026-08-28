@@ -125,6 +125,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     browserAllowedLoopback: typeof record.browserAllowedLoopback === 'string'
       ? record.browserAllowedLoopback
       : SIDEBAR_PREFS_DEFAULTS.browserAllowedLoopback,
+    fileIconThemeId: typeof record.fileIconThemeId === 'string'
+      ? record.fileIconThemeId
+      : SIDEBAR_PREFS_DEFAULTS.fileIconThemeId,
     tabsEnabled: booleanMapOf(record.tabsEnabled),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
     pluginSettings: pluginSettingsMapOf(record.pluginSettings),

@@ -194,6 +194,13 @@ export interface SidebarPrefs {
    */
   browserAllowedLoopback: string
   /**
+   * The active file-icon theme id (v0.18.0+). `'builtin'` (default) uses the
+   * built-in Seti/brand icon mapping; an external plugin's registered theme
+   * id switches to that plugin's icon set. An unknown id falls back to the
+   * built-in theme.
+   */
+  fileIconThemeId: string
+  /**
    * Per-tab enable switches, keyed by tab descriptor id (`'explorer'`,
    * `'my-plugin:db'`). An ABSENT key means enabled — only an explicit
    * `false` disables a tab type (hidden from the + menu, `openTab` refuses,
@@ -267,6 +274,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   browserInterceptHttp: true,
   browserInterceptHttps: false,
   browserAllowedLoopback: '',
+  fileIconThemeId: 'none',
   tabsEnabled: {},
   viewersEnabled: {},
   pluginSettings: {},

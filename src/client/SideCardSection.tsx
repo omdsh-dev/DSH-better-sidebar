@@ -71,6 +71,7 @@ import { getShellPreset, getShellPresets } from './shell-presets.ts'
 import type { SidebarStore } from './state.ts'
 import type {
   BetterSidebarService,
+  FileIconTheme,
   FileViewerDescriptor,
   SidebarSettingsRenderProps,
   SidebarSettingToggle,
@@ -601,9 +602,11 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
   // load/unload — so a plain effect is enough; no external-store ceremony).
   const [tabs, setTabs] = useState<TabDescriptor[]>(() => [...service.getTabs()].sort(tabOrder))
   const [viewers, setViewers] = useState<FileViewerDescriptor[]>(() => [...service.getFileViewers()].sort(viewerOrder))
+  const [iconThemes, setIconThemes] = useState<readonly FileIconTheme[]>(() => service.getFileIconThemes())
   useEffect(() => service.subscribe(() => {
     setTabs([...service.getTabs()].sort(tabOrder))
     setViewers([...service.getFileViewers()].sort(viewerOrder))
+    setIconThemes(service.getFileIconThemes())
   }), [service])
 
   // The settings document revision (guards concurrent writes). A ref: commits
@@ -966,6 +969,29 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
                 <IconSettingsOutline16 size={14} />
               </button>
             )}
+          </span>
+        </div>
+        {/* File-icon theme selector: lists all registered themes (the
+            built-in + any external plugin themes). Selecting one writes
+            fileIconThemeId to prefs; the Sidebar shell syncs the active
+            theme to the file-icons module on the next subscribe tick. */}
+        <div className={css.row}>
+          <span className={css.rowText}>
+            <span className={css.title}>{t('settingsFileIconsTitle')}</span>
+            <span className={css.desc}>{t('settingsFileIconsDesc')}</span>
+          </span>
+          <span className={css.control}>
+            <SelectMenu
+              label={t('settingsFileIconsTitle')}
+              value={prefs.fileIconThemeId}
+              options={iconThemes.map(theme => ({
+                value: theme.id,
+                title: textOf(theme.name),
+              }))}
+              onSelect={(next) => {
+                if (typeof next === 'string') applyPref({ fileIconThemeId: next })
+              }}
+            />
           </span>
         </div>
       </div>

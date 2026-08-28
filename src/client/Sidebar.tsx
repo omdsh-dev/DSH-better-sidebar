@@ -61,6 +61,7 @@ import { tabContentCompare, type TabContentMemoKey } from './tab-content-memo.ts
 import { detectNewDirectSubagent } from './subagent-detect.ts'
 import { detectNewJob } from './subagent-jobs.ts'
 import { t } from './locales.ts'
+import { fileIcon } from './file-icons.tsx'
 import { api, type SessionScope } from './api.ts'
 import css from './sidebar.module.css'
 
@@ -1397,8 +1398,15 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    * ctx and the conversation input service at click time; a missing service
    * or scope degrades to a logged no-op, never a crash.
    */
-  /** The tab icon from the tab-type registry (shared by every workbench). */
+  /** The tab icon from the tab-type registry (shared by every workbench).
+   *  For editor tabs with a file path, use the file-type icon (colored,
+   *  matching the file tree) instead of the generic type-level icon. */
   const tabIconOf = (tab: SidebarTab): ReactNode => {
+    // Editor tabs with a path: show the file-type icon (e.g. .tsx → React).
+    // Folder tabs and path-less tabs keep the type-level icon.
+    if (tab.type === 'editor' && tab.path !== undefined && tab.path !== '') {
+      return fileIcon(tab.title)
+    }
     const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
     if (descriptor === undefined) return null
     return typeof descriptor.icon === 'function' ? descriptor.icon(14) : descriptor.icon

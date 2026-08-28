@@ -20,7 +20,7 @@
  * (VSCode semantics — a drop on a file row targets its parent directory),
  * and `busy` gates new drags while one upload is in flight.
  */
-import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type DragEvent, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
@@ -28,7 +28,7 @@ import {
   IconLinkOutline16, Menu, type MenuEntry, type MenuItem, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
-import { VscFile, VscFolder, VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
+import { VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
 import { api, downloadUrl, type FsEntry } from './api.ts'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
 import type { OpenWithTarget } from './open-with.ts'
@@ -36,6 +36,7 @@ import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
 import { uploadItemsFromDrop, uploadItemsFromFiles, type UploadItem } from './upload.ts'
 import css from './sidebar.module.css'
+import { fileIcon, folderIcon, subscribeFileIconTheme, getFileIconThemeRevision } from './file-icons.tsx'
 
 interface LevelData {
   entries?: FsEntry[]
@@ -137,6 +138,10 @@ export function FileTree(props: {
   busy: boolean
 }) {
   const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy } = props
+  // Force re-render when the file-icon theme changes (the module-level
+  // activeTheme pointer is not React state, so memoized subtrees like
+  // TabContent would skip re-rendering without this subscription).
+  useSyncExternalStore(subscribeFileIconTheme, getFileIconThemeRevision)
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
@@ -458,7 +463,7 @@ export function FileTree(props: {
               onDrop={(event) => { handleDirDrop(event, entry.path) }}
               onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
             >
-              {isOpen ? <VscFolderOpened size={14} /> : <VscFolder size={14} />}
+              {folderIcon(entry.name, isOpen)}
               <span className={css.explorerName}>{entry.name}</span>
               {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
               {rowActions(entry)}
@@ -491,7 +496,7 @@ export function FileTree(props: {
           onDrop={(event) => { handleFileDrop(event, entry.path) }}
           onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
         >
-          <VscFile size={14} />
+          {fileIcon(entry.name)}
           <span className={css.explorerName}>{entry.name}</span>
           {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
           {rowActions(entry)}
@@ -520,7 +525,7 @@ export function FileTree(props: {
             onDrop={(event) => { handleDirDrop(event, root) }}
             onContextMenu={(event) => { openRowMenu(event, root, true) }}
           >
-            <VscFolderOpened size={14} />
+            {folderIcon(baseName(root), true)}
             <span className={css.explorerName}>{baseName(root)}</span>
             {copiedPath === root
               ? <span className={css.explorerCopied}>{t('copied')}</span>

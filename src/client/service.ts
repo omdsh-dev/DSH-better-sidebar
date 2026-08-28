@@ -343,6 +343,23 @@ export interface OpenTabSeed {
 /**
  * The registry service published as `ctx.betterSidebar`.
  */
+/**
+ * One file-icon theme: a pair of resolver functions that return a colored
+ * ReactNode for a filename / folder name, or `undefined` to fall through
+ * to the built-in default. Register via
+ * {@link BetterSidebarService.registerFileIconTheme}.
+ */
+export interface FileIconTheme {
+  /** Unique id: `'builtin'` or `'my-plugin:material-icons'`. */
+  id: string
+  /** Display name for the settings dropdown (i18n friendly). */
+  name: string | (() => string)
+  /** Returns a colored icon for one filename, or undefined to fall through. */
+  fileIcon?: (name: string) => ReactNode | undefined
+  /** Returns a (possibly colored) icon for one folder name, or undefined. */
+  folderIcon?: (name: string, isOpen: boolean) => ReactNode | undefined
+}
+
 export interface BetterSidebarService {
   registerTab(descriptor: TabDescriptor): () => void
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
@@ -425,6 +442,27 @@ export interface BetterSidebarService {
   activateTab(tabId: string, scope?: SessionScope): void
   /** Open a file in the sidebar editor of `scope`'s session (title defaults to the file name). */
   openFile(scope: SessionScope, path: string, title?: string): void
+  // ── File icon themes (v0.18.0+) ──────────────────────────────────────
+  /**
+   * Register a file-icon theme: a pair of resolver functions that return a
+   * colored ReactNode for a filename / folder name, or `undefined` to fall
+   * through to the next theme (the built-in default). The sidebar's file
+   * tree calls the ACTIVE theme's resolvers on every row render; a theme
+   * that returns `undefined` for an unknown type lets the built-in mapping
+   * handle it, so a theme can partially override (e.g. only brand icons).
+   *
+   * The built-in theme (`id: 'builtin'`) is always registered; external
+   * plugins register alternatives (e.g. a Material Icon Theme plugin). The
+   * user picks the active theme in the Side card settings page
+   * (`fileIconThemeId` pref).
+   *
+   * Returns a disposer (HMR-safe via `ctx.effect`). Throws on a duplicate id.
+   */
+  registerFileIconTheme(theme: FileIconTheme): () => void
+  /** All registered file-icon themes (including the built-in). */
+  getFileIconThemes(): readonly FileIconTheme[]
+  /** The active theme (selected by `prefs.fileIconThemeId`), or undefined. */
+  getActiveFileIconTheme(): FileIconTheme | undefined
 }
 
 /** Extract the lowercase extension without leading dot from a path. */
@@ -503,6 +541,7 @@ export const SIDEBAR_FEATURES = [
   'urlTarget',
   'settingSelect',
   'floatWindows',
+  'fileIconThemes',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -559,6 +598,28 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
         notify()
       }
     }
+  }
+
+  // File-icon theme registry (v0.18.0+): external plugins register
+  // alternative icon themes; the user picks the active one in settings.
+  const iconThemes = new Map<string, FileIconTheme>()
+  const registerFileIconTheme = (theme: FileIconTheme): (() => void) => {
+    if (iconThemes.has(theme.id)) {
+      throw new Error(`[dsh-better-sidebar] file icon theme "${theme.id}" already registered`)
+    }
+    iconThemes.set(theme.id, theme)
+    notify()
+    return () => {
+      if (iconThemes.get(theme.id) === theme) {
+        iconThemes.delete(theme.id)
+        notify()
+      }
+    }
+  }
+  const getFileIconThemes = (): readonly FileIconTheme[] => [...iconThemes.values()]
+  const getActiveFileIconTheme = (): FileIconTheme | undefined => {
+    const id = store.getPrefs().fileIconThemeId
+    return iconThemes.get(id) ?? undefined
   }
 
   const getTabs = (): readonly TabDescriptor[] => Array.from(tabs.values())
@@ -836,6 +897,9 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     updateTab,
     activateTab,
     openFile,
+    registerFileIconTheme,
+    getFileIconThemes,
+    getActiveFileIconTheme,
   }
 }
 

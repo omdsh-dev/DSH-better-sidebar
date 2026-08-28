@@ -15,6 +15,7 @@ import { allLeaves, createSidebarStore, isAgentTabId } from './state.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
 import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
+import { BUILTIN_FILE_ICON_THEME, NONE_FILE_ICON_THEME, setActiveFileIconTheme } from './file-icons.tsx'
 import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
@@ -149,6 +150,39 @@ export function apply(ctx: Context): void {
     () => registerBuiltins(ctx, service, { terminalTitle: () => terminalTitle }),
     'dsh-better-sidebar: register built-in tabs and viewers',
   )
+  // Register the built-in file-icon themes so they appear in the settings
+  // dropdown alongside any external plugin themes. Two built-in themes:
+  // - 'none' (default): original look — generic VscFile for all files,
+  //   plain VscFolder for all folders, no color tints. Users who never
+  //   touch the setting see zero change from before this feature.
+  // - 'builtin': brand-colored file icons + per-folder-name color tints.
+  // External themes can return undefined from their resolvers to fall
+  // through to the built-in mapping.
+  ctx.effect(
+    () => service.registerFileIconTheme(NONE_FILE_ICON_THEME),
+    'dsh-better-sidebar: register none file-icon theme',
+  )
+  ctx.effect(
+    () => service.registerFileIconTheme(BUILTIN_FILE_ICON_THEME),
+    'dsh-better-sidebar: register built-in file-icon theme',
+  )
+  // Keep the file-icons module's active-theme pointer in sync with the
+  // service. Two subscription channels are needed:
+  // - service.subscribe: fires when a theme is registered/disposed (plugin
+  //   load/unload) — the active theme might become available/unavailable.
+  // - service.subscribeState: fires when the user's prefs change (theme
+  //   selection in settings) — getActiveFileIconTheme reads
+  //   prefs.fileIconThemeId, so the pointer must update on every prefs write.
+  // The file tree reads the module-level pointer on every row render, so
+  // the Sidebar's re-render (triggered by the same store update) picks up
+  // the new theme immediately — no page refresh needed.
+  ctx.effect(() => {
+    const sync = (): void => { setActiveFileIconTheme(service.getActiveFileIconTheme()) }
+    sync()
+    const unsubRegistry = service.subscribe(sync)
+    const unsubState = service.subscribeState(sync)
+    return () => { unsubRegistry(); unsubState() }
+  }, 'dsh-better-sidebar: sync active file-icon theme')
   // A failure anywhere in the client lifecycle must never take the app down
   // silently: log with the plugin prefix and pin a visible diagnostic strip
   // to the page so a blank panel is never the only symptom.
