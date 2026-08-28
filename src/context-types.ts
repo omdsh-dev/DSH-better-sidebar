@@ -423,12 +423,19 @@ export interface SidebarLocaleService {
 
 /** The composer draft face the sidebar reaches through `ctx.conversation.input`. */
 export interface SidebarSessionInput {
-  /** The live input store (draft read for append). */
+  /** The live input store (draft read for append; draftRev for the caret-span CAS). */
   state: {
-    getSnapshot(): { draft: string }
+    getSnapshot(): { draft: string; draftRev?: number }
   }
   /** Replace the draft text (the input machine's single public write path). */
   setDraft(text: string): void
+  /**
+   * Splice `text` over a draftRev-CAS'd span at the caret — the native
+   * @-mention pick verb. Present on the per-session shell; optional here
+   * because the published SessionInput contract does not carry it, so an
+   * older DSH simply falls back to the append path.
+   */
+  insertText?(text: string, span: { start: number; end: number; draftRev: number }, keepCompleting?: boolean): boolean
 }
 
 /** The composer draft face the sidebar reaches through `ctx.get('conversation')`. */
