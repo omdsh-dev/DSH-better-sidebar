@@ -28,7 +28,7 @@ import {
   IconLinkOutline16, Menu, type MenuEntry, type MenuItem, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
-import { VscFile, VscFolder, VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
+import { VscEdit, VscFile, VscFolder, VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
 import { api, downloadUrl, type FsEntry } from './api.ts'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
 import type { OpenWithTarget } from './open-with.ts'
@@ -129,6 +129,8 @@ export function FileTree(props: {
   onToggleOpenWithPin?: (targetId: string) => void
   /** Insert `@<relative path>` into the composer draft. */
   onReferenceFile: (path: string) => void
+  /** A rename committed through the context menu (old absolute path → new). */
+  onRenamed?: (from: string, to: string) => void
   /** Bump to wipe the level cache and reload the visible set. */
   refreshTick: number
   /** Upload into `dir` (absolute, inside the workspace); runs in the caller. */
@@ -136,11 +138,18 @@ export function FileTree(props: {
   /** True while an upload is in flight (drops are ignored). */
   busy: boolean
 }) {
-  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy } = props
+  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onRenamed, refreshTick, onUploadRequest, busy } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
+  /** The row being renamed in place ({ path: absolute path, name: old basename }).
+   *  Null = not renaming (the name span shows normally). */
+  const [rename, setRename] = useState<{ path: string; name: string } | null>(null)
+  /** Error from the last rename attempt (shown above the tree, stays visible
+   *  until the next rename action clears it). */
+  const [renameError, setRenameError] = useState<string | null>(null)
+  const renameInputRef = useRef<HTMLInputElement>(null)
   /** Open context menu: the row path (and whether it is a directory) plus the cursor position. */
   const [rowMenu, setRowMenu] = useState<{ path: string; isDir: boolean; x: number; y: number } | null>(null)
   /** Whether a file drag hovers the tree (drives the portaled drop zone). */
@@ -308,6 +317,40 @@ export function FileTree(props: {
     })
   }, [])
 
+  /** Commit the in-place rename through the host route; on success the caller
+   *  refreshes the tree (and remaps open tabs). On failure the input stays
+   *  open (re-selected) and the error shows above the tree. */
+  const commitRename = (): void => {
+    const current = rename
+    if (current === null) return
+    const nextName = renameInputRef.current?.value.trim() ?? ''
+    if (nextName === '' || nextName === baseName(current.path)) {
+      setRename(null)
+      return
+    }
+    void api.fsRename({ sessionId, cwd }, current.path, nextName).then((result) => {
+      setRename(null)
+      setRenameError(null)
+      onRenamed?.(current.path, result.path)
+    }).catch((error: unknown) => {
+      setRenameError(error instanceof Error ? error.message : String(error))
+      renameInputRef.current?.select()
+    })
+  }
+
+  /** Abandon the in-place rename (Escape or focus loss). */
+  const cancelRename = (): void => {
+    setRename(null)
+  }
+
+  // The rename input mounts after a menu pick: focus it and select the old
+  // basename so the user can retype it immediately (VSCode-style).
+  useEffect(() => {
+    if (rename === null) return
+    renameInputRef.current?.focus()
+    renameInputRef.current?.select()
+  }, [rename])
+
   /** The row's trailing actions: the @-reference button, or the copied label. */
   const rowActions = (entry: FsEntry): ReactNode => {
     if (copiedPath === entry.path) {
@@ -470,7 +513,24 @@ export function FileTree(props: {
               onContextMenu={(event) => { openRowMenu(event, entry.path, true) }}
             >
               {isOpen ? <VscFolderOpened size={14} /> : <VscFolder size={14} />}
-              <span className={css.explorerName}>{entry.name}</span>
+              {rename === null || rename.path !== entry.path
+                ? <span className={css.explorerName}>{entry.name}</span>
+                : (
+                  <input
+                    ref={renameInputRef}
+                    className={css.explorerRenameInput}
+                    defaultValue={rename.name}
+                    spellCheck={false}
+                    onClick={(event) => { event.stopPropagation() }}
+                    onDoubleClick={(event) => { event.stopPropagation() }}
+                    onKeyDown={(event) => {
+                      event.stopPropagation()
+                      if (event.key === 'Enter') { event.preventDefault(); commitRename() }
+                      if (event.key === 'Escape') { event.preventDefault(); cancelRename() }
+                    }}
+                    onBlur={cancelRename}
+                  />
+                )}
               {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
               {rowActions(entry)}
             </div>
@@ -503,7 +563,24 @@ export function FileTree(props: {
           onContextMenu={(event) => { openRowMenu(event, entry.path, false) }}
         >
           <VscFile size={14} />
-          <span className={css.explorerName}>{entry.name}</span>
+          {rename === null || rename.path !== entry.path
+            ? <span className={css.explorerName}>{entry.name}</span>
+            : (
+              <input
+                ref={renameInputRef}
+                className={css.explorerRenameInput}
+                defaultValue={rename.name}
+                spellCheck={false}
+                onClick={(event) => { event.stopPropagation() }}
+                onDoubleClick={(event) => { event.stopPropagation() }}
+                onKeyDown={(event) => {
+                  event.stopPropagation()
+                  if (event.key === 'Enter') { event.preventDefault(); commitRename() }
+                  if (event.key === 'Escape') { event.preventDefault(); cancelRename() }
+                }}
+                onBlur={cancelRename}
+              />
+            )}
           {entry.isSymlink && <IconLinkOutline16 size={12} className={css.explorerSymlink} />}
           {rowActions(entry)}
         </div>
@@ -524,6 +601,9 @@ export function FileTree(props: {
         <div className={css.explorerEmpty}>{t('noSession')}</div>
       ) : (
         <>
+          {renameError !== null && (
+            <div className={clsx(css.explorerRow, css.editorError)} title={renameError}>{renameError}</div>
+          )}
           <div
             className={clsx(css.explorerRow, dropTarget === root && css.explorerRowDropTarget)}
             style={{ paddingLeft: 6 }}
@@ -637,6 +717,11 @@ export function FileTree(props: {
           ...(rowMenu?.isDir === true
             ? [{ id: 'upload-here', label: t('uploadHere'), icon: <IconUploadOutline16 size={16} /> }]
             : []),
+          // Rename applies to every row except the workspace root itself
+          // (renaming the session cwd is meaningless and would strand the tree).
+          ...(rowMenu !== null && rowMenu.path !== root
+            ? [{ id: 'rename', label: t('rename'), icon: <VscEdit size={16} /> }]
+            : []),
           { id: 'relative', label: t('copyRelative'), icon: <IconCopyOutline16 size={16} /> },
           { id: 'absolute', label: t('copyAbsolute'), icon: <IconCopyOutline16 size={16} /> },
         ]}
@@ -663,6 +748,10 @@ export function FileTree(props: {
           if (id === 'upload-here') {
             pendingUploadDir.current = target.path
             fileInputRef.current?.click()
+            return
+          }
+          if (id === 'rename') {
+            setRename({ path: target.path, name: baseName(target.path) })
             return
           }
           copyPath(

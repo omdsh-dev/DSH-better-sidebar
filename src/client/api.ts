@@ -213,6 +213,9 @@ export const api = {
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
+  /** Rename a file or directory inside the workspace (single path segment). */
+  fsRename: (scope: SessionScope, path: string, newName: string) =>
+    call<{ ok: true; path: string }>('fs.rename', scopePayload(scope, { path, newName })),
   /** Upload one file's raw bytes into `dir` (keeps the folder tree via
    *  `relativePath`); the host streams it under the session workspace. */
   uploadFile: (scope: SessionScope, dir: string, relativePath: string, body: Blob, signal?: AbortSignal) =>
@@ -229,6 +232,10 @@ export const api = {
     call<{ ok: true }>('git.unstage', gitPayload(scope, worktree, { ...(path !== undefined ? { path } : {}) })),
   gitCommit: (scope: SessionScope, message: string, worktree?: string) =>
     call<{ ok: true }>('git.commit', gitPayload(scope, worktree, { message })),
+  gitPush: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
+    call<{ ok: true }>('git.push', gitPayload(scope, worktree, {}), signal),
+  gitPull: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
+    call<{ ok: true }>('git.pull', gitPayload(scope, worktree, {}), signal),
   gitBranch: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
     call<{ current: string; names: string[] }>('git.branch', gitPayload(scope, worktree, {}), signal),
   gitCheckout: (scope: SessionScope, branch: string, worktree?: string) =>
@@ -242,6 +249,11 @@ export const api = {
   /** Full patch text of one commit (diff display for the history rows). */
   gitCommitDiff: (scope: SessionScope, hash: string, worktree?: string, signal?: AbortSignal) =>
     call<{ diff: string }>('git.commit-diff', gitPayload(scope, worktree, { hash }), signal),
+  /** Ask the host to generate a commit-message suggestion from the pending
+   *  changes (the host streams the diff through the conversation's LLM).
+   *  `language` follows the sidebar's active locale ('zh' | 'en'). */
+  gitSuggestMessage: (scope: SessionScope, language: 'zh' | 'en', worktree?: string, signal?: AbortSignal) =>
+    call<{ message: string }>('git.suggest-message', gitPayload(scope, worktree, { language }), signal),
   /** Discard the worktree changes of one file (the index is untouched). */
   gitDiscard: (scope: SessionScope, path: string, worktree?: string) =>
     call<{ ok: true }>('git.discard', gitPayload(scope, worktree, { path })),

@@ -40,7 +40,7 @@ import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
-import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, type SidebarStore, type SidebarTab } from './state.ts'
+import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, type SidebarStore, type SidebarTab, type SplitNode } from './state.ts'
 import css from './sidebar.module.css'
 
 type EditorLoad =
@@ -89,6 +89,27 @@ function patchMeta(ctx: Context, tab: SidebarTab, patch: Record<string, unknown>
 /** Clamp one dock width into the contract range. */
 function clampTreeWidth(value: number): number {
   return Math.min(TREE_WIDTH_MAX, Math.max(TREE_WIDTH_MIN, Math.round(value)))
+}
+
+/** Map one tab whose path sits under the renamed path `from` to `to`
+ *  (absolutely or as a descendant — separators on either platform). */
+function remapRenamedTab(from: string, to: string): (tab: SidebarTab) => SidebarTab {
+  return (tab) => {
+    const p = tab.path ?? ''
+    if (p === from || p.startsWith(from + '/') || p.startsWith(from + '\\')) {
+      const next = to + p.slice(from.length)
+      return { ...tab, path: next, title: next === '' ? tab.title : baseName(next) }
+    }
+    return tab
+  }
+}
+
+/** Rewrite every tab in a split tree whose path matches a rename. */
+function remapSplitTabs(node: SplitNode, from: string, to: string): SplitNode {
+  if (node.kind === 'leaf') {
+    return { ...node, tabs: node.tabs.map(remapRenamedTab(from, to)) }
+  }
+  return { ...node, children: node.children.map(child => remapSplitTabs(child, from, to)) }
 }
 
 export function EditorHost(props: {
@@ -354,6 +375,26 @@ export function EditorHost(props: {
   const treeOpen = treeOpenOf(tab)
   /** Persist the panel flag on the tab (survives reloads with the layout). */
   const toggleTree = (): void => { patchMeta(ctx, tab, { treeOpen: !treeOpen }) }
+
+  /**
+   * A rename committed in the tree: every open tab whose path sits under the
+   * old path follows the rename (ids stay stable; titles re-derive from the
+   * new basename). Editor tabs keep working instead of pointing at a path
+   * that no longer exists after a folder rename.
+   */
+  const handleRenamed = (from: string, to: string): void => {
+    store.reduce((state) => {
+      let next = state
+      if (state.floats.length > 0) {
+        next = { ...next, floats: next.floats.map(float => ({ ...float, tab: remapRenamedTab(from, to)(float.tab) })) }
+      }
+      return {
+        ...next,
+        splits: remapSplitTabs(next.splits, from, to),
+        bottomSplits: remapSplitTabs(next.bottomSplits, from, to),
+      }
+    })
+  }
   const saveLabel = toolbar === null ? ''
     : toolbar.saveState === 'saving' ? t('loading')
       : toolbar.saveState === 'saved' ? t('saved')
@@ -383,6 +424,7 @@ export function EditorHost(props: {
           onOpenWith={openWith}
           onToggleOpenWithPin={toggleOpenWithPin}
           onReferenceFile={onReferenceFile}
+          onRenamed={handleRenamed}
         />
       </div>
     )
@@ -502,6 +544,7 @@ export function EditorHost(props: {
               onOpenWith={openWith}
               onToggleOpenWithPin={toggleOpenWithPin}
               onReferenceFile={onReferenceFile}
+              onRenamed={handleRenamed}
             />
           </div>
         )}

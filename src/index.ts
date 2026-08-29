@@ -13,7 +13,7 @@
  * session's authoritative cwd comes from the session store, and terminal
  * processes are keyed by session.
  */
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
@@ -31,7 +31,7 @@ import {
 } from './config.ts'
 import { parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
 import { writeWorkspaceUpload } from './fs-operations.ts'
-import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
+import { ensureWorkspacePath, ensureWorkspaceWritePath, validateRenameName } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
@@ -39,6 +39,7 @@ import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
 import { launchExternal } from './open-external.ts'
 import * as git from './git.ts'
+import { BlockAssembler, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { SettingsConflictError, settingsNamespace, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { defaultShell, ensureSpawnHelper, PtyManager, shellDisplayName } from './pty-manager.ts'
 import { AgentPtyRegistry, clampDims, type AgentTerminalHandle } from './agent-pty.ts'
@@ -167,8 +168,43 @@ async function resolveGitPath(cwd: string, raw: string, selected?: string): Prom
   return requireAbsolute(join(root, raw))
 }
 
+/**
+ * Resolve the provider/model route the current conversation runs on, read
+ * from the session's latest `request/header` event (the same record the
+ * agent loop writes). The commit-message suggestion reuses that route so it
+ * follows the user's configured LLM without spawning an agent: credentials
+ * and endpoints stay inside the harness's LLM service, the sidebar never
+ * touches API keys. Returns undefined while the session is unavailable or
+ * has no header yet (e.g. a cold, not-yet-attached conversation).
+ */
+function sessionModelRoute(
+  ctx: Context,
+  sessionId: string,
+): { provider: string; model: string } | undefined {
+  const events = ctx.sessions.get(sessionId)?.events
+  if (events === undefined || events.length === 0) return undefined
+  for (let index = events.length - 1; index >= 0; index--) {
+    if (events[index]!.type !== 'request/header') continue
+    const config = (events[index]!.data as { header?: { config?: unknown } } | undefined)?.header?.config
+    if (typeof config !== 'object' || config === null) continue
+    const provider = (config as { provider?: unknown }).provider
+    const model = (config as { model?: unknown }).model
+    if (typeof provider === 'string' && provider !== '' && typeof model === 'string' && model !== '') {
+      return { provider, model }
+    }
+  }
+  return undefined
+}
+
 /** How many leading bytes a binary read returns for client-side detect sniffing. */
 const READ_HEAD_LIMIT = 4096
+
+/**
+ * Max diff characters fed to the commit-message suggestion model. A huge
+ * change set is truncated (with an explicit marker) so the prompt stays
+ * within a reasonable context even for bulk renames or generated-file diffs.
+ */
+const SUGGEST_DIFF_LIMIT = 12_000
 
 /** Text read of a file with the size cap; binary detection via NUL probe.
  *  Binary reads also return the first {@link READ_HEAD_LIMIT} bytes (base64)
@@ -340,6 +376,31 @@ function buildApi(
       if (binary) return { kind: 'binary', size, truncated, head }
       return { kind: 'text', content, truncated }
     },
+    'fs.rename': async (payload) => {
+      const { cwd } = await cwdOf(payload)
+      // The source is an existing workspace path (symlink-resolved so a
+      // rename can never relocate a symlink out of the workspace).
+      const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'))
+      const name = requireString(payload, 'newName').trim()
+      validateRenameName(name)
+      try {
+        const target = join(dirname(path), name)
+        if (target !== path) {
+          // Refuse to silently overwrite an existing target (POSIX rename
+          // clobbers it); a same-file hit is fine — Windows case-only
+          // renames resolve to the same canonical path as the source.
+          const existing = await realpath(target).catch(() => null)
+          if (existing !== null && existing !== path) {
+            throw new SidebarError('fs-error', `cannot rename "${path}" to "${target}": target already exists`, 409)
+          }
+          await rename(path, target)
+        }
+        return { ok: true, path: target }
+      } catch (error) {
+        if (error instanceof SidebarError) throw error
+        throw new SidebarError('fs-error', `cannot rename "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+      }
+    },
     'fs.write': async (payload) => {
       const { cwd } = await cwdOf(payload)
       const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'))
@@ -395,6 +456,16 @@ function buildApi(
       await git.commit(cwd, message, selectedRepoOf(payload))
       return { ok: true }
     },
+    'git.push': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      await git.push(cwd, selectedRepoOf(payload))
+      return { ok: true }
+    },
+    'git.pull': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      await git.pull(cwd, selectedRepoOf(payload))
+      return { ok: true }
+    },
     'git.branch': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       return git.branches(cwd, selectedRepoOf(payload))
@@ -441,6 +512,77 @@ function buildApi(
       const path = await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot)
       const rev = requireString(payload, 'rev')
       return { content: await git.show(cwd, rev, path, repoRoot) }
+    },
+    // Commit-message suggestion: build a prompt from the pending changes and
+    // stream it through the harness's LLM service (`ctx.llm`, the same
+    // provider/model route the conversation runs on — no agent is spawned,
+    // no session event is written, and the sidebar never sees a credential).
+    // Staged changes win because they are exactly what `git commit` records;
+    // with nothing staged the unstaged diff is used, and a lone untracked
+    // set still yields a file-list-based message. The diff is truncated so a
+    // bulk change cannot flood the model context.
+    'git.suggest-message': async (payload) => {
+      const { cwd, sessionId } = await gitCwdOf(payload)
+      const repoRoot = selectedRepoOf(payload)
+      const record = payload as { language?: unknown }
+      const language = record.language === 'zh' ? 'zh' : 'en'
+      const status = await git.status(cwd, repoRoot)
+      const staged = status.entries.filter((entry) => entry.xy[0] !== ' ' && entry.xy[0] !== '?')
+      const untracked = status.entries.filter((entry) => entry.xy === '??')
+      const unstaged = status.entries.filter((entry) => entry.xy !== '??' && entry.xy[1] !== ' ' && entry.xy[1] !== '?')
+      if (staged.length === 0 && unstaged.length === 0 && untracked.length === 0) {
+        throw new SidebarError('git-suggest-empty', 'no pending changes', 400)
+      }
+      const focus = staged.length > 0
+        ? { diff: await git.diff(cwd, undefined, true, repoRoot), files: staged }
+        : unstaged.length > 0
+          ? { diff: await git.diff(cwd, undefined, false, repoRoot), files: unstaged }
+          : { diff: '', files: untracked }
+      const route = sessionModelRoute(ctx, sessionId)
+      if (route === undefined) {
+        throw new SidebarError('git-suggest-error', 'cannot resolve the session model route', 503)
+      }
+      const diffText = focus.diff.length > SUGGEST_DIFF_LIMIT
+        ? `${focus.diff.slice(0, SUGGEST_DIFF_LIMIT)}\n…(diff truncated)`
+        : focus.diff
+      const fileList = focus.files.map((entry) => entry.path).join('\n')
+      const system = language === 'zh'
+        ? '你是 git 提交信息生成助手。根据给定的文件清单与差异，生成一行 Conventional Commits 风格的中文提交信息（类型前缀：feat/fix/refactor/chore/docs/test/perf/style，必要时可附简短正文）。只输出提交信息本身，不要解释。'
+        : 'You are a git commit message assistant. Based on the given file list and diff, write a one-line Conventional Commits style commit message in English (type prefix: feat/fix/refactor/chore/docs/test/perf/style, with a short body when needed). Output only the commit message itself, no explanation.'
+      const user = language === 'zh'
+        ? `改动的文件：\n${fileList}\n\n差异：\n${diffText}`
+        : `Changed files:\n${fileList}\n\nDiff:\n${diffText}`
+      // The LLM service is a harness-provided service this plugin does not
+      // inject, so it is read through `ctx.get` and checked before use — a
+      // deployment without the LLM surface gets a clean 503 instead of a
+      // TypeError, and the stream is assembled with the harness's own
+      // BlockAssembler (the same chunk-to-message algorithm the agent loop
+      // uses, so tool/text assembly stays aligned with DSH).
+      const llm = ctx.get('llm') as { stream(options: GenerateOptions): AsyncIterable<StreamChunk> } | undefined
+      if (llm === undefined) {
+        throw new SidebarError('git-suggest-error', 'the harness LLM service is unavailable', 503)
+      }
+      const assembler = new BlockAssembler()
+      for await (const chunk of llm.stream({
+        provider: route.provider,
+        model: route.model,
+        messages: [createUserMessage({
+          content: [{ type: 'text', text: user }],
+          source: { kind: 'plugin', plugin: 'dsh-better-sidebar' },
+        })],
+        system,
+        maxTokens: 200,
+      })) {
+        assembler.push(chunk)
+      }
+      const message = assembler.blocks()
+        .map((block) => (block.type === 'text' ? block.text : ''))
+        .join('')
+        .trim()
+      if (message === '') {
+        throw new SidebarError('git-suggest-error', 'the model returned an empty message', 500)
+      }
+      return { message }
     },
     // Release a terminal immediately. The WebSocket close frame already does
     // this while the socket is open; this route covers the tab-close that

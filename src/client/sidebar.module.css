@@ -1003,6 +1003,27 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: nowrap;
 }
 
+/* The in-place rename input: a compact token-driven edit box replacing the
+   row's name span while renaming (Enter commits / Escape cancels / blur
+   cancels). Inherits the row's ink family; row clicks are stopped at the
+   input so the tree row itself never opens on accident. */
+.explorerRenameInput {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-14);
+  outline: none;
+}
+
+.explorerRenameInput:focus {
+  border-color: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
 /* The hover-revealed @-reference button at the row's far right (and the
    transient "copied" label that replaces it after a copy). Hidden rows
    keep the name at full width; hovering or focusing the row reveals it. */
@@ -2515,7 +2536,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   display: flex;
   gap: 6px;
   padding: 8px 12px;
-  border-top: 1px solid var(--dsw-alias-border-l1);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
   align-items: center;
 }
 
@@ -2543,6 +2564,57 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .gitCommitButton:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+/* The AI commit-message suggest button: a compact sparkle icon beside the
+   message box, disabled while nothing is pending or generation is running. */
+.gitSuggestButton {
+  flex: none;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.gitSuggestButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.gitSuggestButton:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Inline spinner while a suggestion is streaming from the host LLM. */
+.gitSuggestSpinner {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--dsw-alias-border-l2);
+  border-top-color: var(--dsw-alias-label-primary);
+  border-radius: 50%;
+  animation: dshSidebarSpin 0.8s linear infinite;
+}
+
+@keyframes dshSidebarSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Push / Pull: a thin action row under the commit box, same hairline
+   text-button style as the stage/unstage links. */
+.gitRemoteRow {
+  display: flex;
+  gap: 10px;
+  padding: 0 16px 8px;
 }
 
 /* A history row: line 1 = hash + subject, line 2 = ref badges + author/date

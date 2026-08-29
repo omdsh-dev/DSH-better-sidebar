@@ -60,11 +60,14 @@ export function TreePanel(props: {
   onOpenWith?: (targetId: string, path: string) => void
   onToggleOpenWithPin?: (targetId: string) => void
   onReferenceFile: (path: string) => void
+  /** A rename committed in the tree (old absolute path → new); the caller
+   *  remaps open tabs. */
+  onRenamed?: (from: string, to: string) => void
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean
 }) {
-  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, full } = props
+  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onRenamed, full } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -233,6 +236,10 @@ export function TreePanel(props: {
           onOpenWith={onOpenWith}
           onToggleOpenWithPin={onToggleOpenWithPin}
           onReferenceFile={onReferenceFile}
+          onRenamed={(from, to) => {
+            setRefreshTick(tick => tick + 1)
+            onRenamed?.(from, to)
+          }}
           refreshTick={refreshTick}
           onUploadRequest={startUpload}
           busy={busy}
