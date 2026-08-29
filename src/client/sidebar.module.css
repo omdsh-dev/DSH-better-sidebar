@@ -44,8 +44,12 @@
      page draggable left-right and up-down while any panel was collapsed.
      The host is exactly viewport-sized (inset: 0), so the clip is invisible
      until a panel slides in from the edge; internal scroll containers and
-     the app's fixed overlay stack are unaffected. */
-  overflow: hidden;
+     the app's fixed overlay stack are unaffected. `clip`, not `hidden`: a
+     hidden box stays a PROGRAMMATICALLY scrollable container, and a
+     scrollIntoView fired from panel content (the file tree's "Show in
+     folder" reveal) scrolled the host itself — shifting the whole panel,
+     tab bar included, out of the viewport with no way to scroll back. */
+  overflow: clip;
 }
 
 :global([data-dsh-panel-host][data-dsh-panel-host-degraded]) {
@@ -947,10 +951,27 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 /* A "Show in folder" reveal highlight: the target row stays tinted until
-   the transient reveal set is cleared (a reload starts unhighlighted). */
+   the transient reveal set is cleared (a reload starts unhighlighted).
+   The DSH business-blue surface (the same source the host's nav items use
+   for their active accent) — a flat tint, deliberately no left bar. */
 .explorerRowRevealed {
-  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent) 18%, transparent);
-  box-shadow: inset 2px 0 0 var(--dsw-alias-interactive-bg-hover-accent);
+  background: var(--dsw-alias-state-business-tertiary);
+}
+
+/* Reveal sets usually list sibling files — consecutive tinted rows merge
+   into ONE rounded block: the touching edges square off, so a multi-file
+   highlight has no per-row radius notches. A solo revealed row (or the
+   first/last of a run) keeps its full radius. Rows are flat siblings in
+   the tree body (depth is inline padding), so the sibling combinator sees
+   every adjacency. */
+.explorerRowRevealed + .explorerRowRevealed {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.explorerRowRevealed:has(+ .explorerRowRevealed) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 .explorerDir {
