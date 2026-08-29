@@ -35,6 +35,17 @@
     width var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
+/* DSH Desktop 2.0.4 advanced mode installs its shell stylesheet at runtime
+   after plugins may already have loaded. Its `#root { width: 100% }` has the
+   same specificity as the generic rule above, so a later Desktop style can
+   re-expand the root while our margin-right remains active and make the
+   fixed sidebar cover the conversation. Scope the stronger width ownership
+   only to Desktop's explicit advanced-mode marker instead of using
+   !important or overriding every host shell. */
+body[data-dsh-desktop-mode="advanced"] #root {
+  width: calc(100% - var(--dsh-sidebar-width, 0px));
+}
+
 /* The AppFrame's center column, anchored by data attributes (see above).
    Composite selector: DSH 0.1.x versions name the center grid item
    `[data-pane="conversation"]`, while rc.8-era shells put a
