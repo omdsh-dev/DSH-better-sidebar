@@ -4,7 +4,7 @@ import {
   dockFloat, FLOAT_MIN_H, FLOAT_MIN_W, floatTab, floatWithTab, insertLeafAt, makeDefaultState,
   migrateBottomTabs, moveFloat, moveTab, moveTabToEdge, openDiffTab,
   openTabInActivePane, patchTab, raiseFloat, reconcileAgentTerminals, resizeFloat, resizeSplit,
-  resizeSplitIn, revealPaths, sanitizeState, setBottomHeight,
+  resizeSplitIn, revealPaths, sanitizeState, setBottomHeight, setTabPin,
   splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded, togglePanel,
   type SidebarLeaf, type SidebarState, type SidebarTab, type SplitNode,
 } from '../src/client/state.ts'
@@ -1211,6 +1211,120 @@ describe('free windows (v0.16.0)', () => {
       const again = sanitizeState(JSON.parse(JSON.stringify(restored)))!
       expect(again.floats).toEqual(restored.floats)
     })
+  })
+})
+
+describe('pinned terminals (v0.17.0)', () => {
+  // setTabPin reads neither window nor localStorage directly, but the
+  // pinnedTab-aware sanitize round-trip below uses JSON.parse/stringify
+  // only — keep this block window-less for parity with the main describe.
+  const state = (): SidebarState => makeDefaultState()
+
+  it('setTabPin marks a docked terminal in the right tree', () => {
+    let s = state()
+    s = openTabInActivePane(s, { id: 'terminal:1', type: 'terminal', title: 'T' })
+    s = setTabPin(s, 'terminal:1', { scope: 'workspace', homeCwd: '/proj' })
+    const tab = allLeaves(s.splits).flatMap(l => l.tabs).find(t => t.id === 'terminal:1')!
+    expect(tab.pin).toEqual({ scope: 'workspace', homeCwd: '/proj' })
+  })
+
+  it('setTabPin marks a terminal in the bottom tree and a floated terminal', () => {
+    let s = state()
+    s = toggleBottomPanel(s)
+    const bottomPane = (s.bottomSplits as { id: string }).id
+    s = { ...s, activePane: bottomPane }
+    s = openTabInActivePane(s, { id: 'terminal:b', type: 'terminal', title: 'B' })
+    s = setTabPin(s, 'terminal:b', { scope: 'global' })
+    const bottomTab = allLeaves(s.bottomSplits).flatMap(l => l.tabs).find(t => t.id === 'terminal:b')!
+    expect(bottomTab.pin).toEqual({ scope: 'global' })
+    // Float path: a pinned tab that is then floated keeps its pin marker.
+    s = floatTab(s, 'terminal:b', 50, 50)
+    s = setTabPin(s, 'terminal:b', { scope: 'workspace', homeCwd: '/x' })
+    expect(s.floats.find(f => f.tab.id === 'terminal:b')!.tab.pin).toEqual({ scope: 'workspace', homeCwd: '/x' })
+  })
+
+  it('setTabPin with null clears the pin marker but keeps the tab', () => {
+    let s = state()
+    s = openTabInActivePane(s, { id: 'terminal:1', type: 'terminal', title: 'T' })
+    s = setTabPin(s, 'terminal:1', { scope: 'global' })
+    s = setTabPin(s, 'terminal:1', null)
+    const tab = allLeaves(s.splits).flatMap(l => l.tabs).find(t => t.id === 'terminal:1')!
+    expect(tab.pin).toBeUndefined()
+    expect(tabOpenIn(s, 'terminal:1')).toBe(true)
+  })
+
+  it('setTabPin on an unknown tab id is a strict same-reference no-op', () => {
+    const s = state()
+    expect(setTabPin(s, 'ghost', { scope: 'global' })).toBe(s)
+    expect(setTabPin(s, 'ghost', null)).toBe(s)
+  })
+
+  it('setTabPin is idempotent: setting the same pin twice returns the same reference', () => {
+    let s = state()
+    s = openTabInActivePane(s, { id: 'terminal:1', type: 'terminal', title: 'T' })
+    s = setTabPin(s, 'terminal:1', { scope: 'workspace', homeCwd: '/p' })
+    const once = s
+    s = setTabPin(s, 'terminal:1', { scope: 'workspace', homeCwd: '/p' })
+    expect(s).toBe(once)
+  })
+
+  it('sanitizeState preserves a legal pin and strips an illegal scope (keeps the tab)', () => {
+    const g = globalThis as Record<string, unknown>
+    g.window = { clearTimeout: () => {}, setTimeout: () => 0, innerWidth: 1024, innerHeight: 768 }
+    g.localStorage = { getItem: () => null, setItem: () => {} }
+    try {
+      const legal = JSON.parse(JSON.stringify(makeDefaultState())) as {
+        splits: { kind: 'leaf'; id: string; tabs: SidebarTab[]; active: string | null }
+      }
+      legal.splits.tabs.push({
+        id: 'terminal:1', type: 'terminal', title: 'T',
+        pin: { scope: 'workspace', homeCwd: '/proj' },
+      } as SidebarTab)
+      legal.splits.active = 'terminal:1'
+      const restored = sanitizeState(legal)!
+      const tab = (restored.splits as { tabs: SidebarTab[] }).tabs.find(t => t.id === 'terminal:1')!
+      expect(tab.pin).toEqual({ scope: 'workspace', homeCwd: '/proj' })
+
+      // Illegal scope drops the pin, keeps the tab.
+      const illegal = JSON.parse(JSON.stringify(makeDefaultState())) as {
+        splits: { kind: 'leaf'; id: string; tabs: SidebarTab[]; active: string | null }
+      }
+      illegal.splits.tabs.push({
+        id: 'terminal:2', type: 'terminal', title: 'T2',
+        pin: { scope: 'bogus', homeCwd: '/x' },
+      } as unknown as SidebarTab)
+      illegal.splits.active = 'terminal:2'
+      const cleaned = sanitizeState(illegal)!
+      const tab2 = (cleaned.splits as { tabs: SidebarTab[] }).tabs.find(t => t.id === 'terminal:2')!
+      expect(tab2.pin).toBeUndefined()
+      expect(tab2.id).toBe('terminal:2')
+
+      // Non-string homeCwd drops homeCwd but keeps a global pin.
+      const weirdHome = JSON.parse(JSON.stringify(makeDefaultState())) as {
+        splits: { kind: 'leaf'; id: string; tabs: SidebarTab[]; active: string | null }
+      }
+      weirdHome.splits.tabs.push({
+        id: 'terminal:3', type: 'terminal', title: 'T3',
+        pin: { scope: 'global', homeCwd: 42 },
+      } as unknown as SidebarTab)
+      weirdHome.splits.active = 'terminal:3'
+      const weird = sanitizeState(weirdHome)!
+      const tab3 = (weird.splits as { tabs: SidebarTab[] }).tabs.find(t => t.id === 'terminal:3')!
+      expect(tab3.pin).toEqual({ scope: 'global' })
+
+      // Older state without pin loads unchanged.
+      const legacy = JSON.parse(JSON.stringify(makeDefaultState())) as {
+        splits: { kind: 'leaf'; id: string; tabs: SidebarTab[]; active: string | null }
+      }
+      legacy.splits.tabs.push({ id: 'terminal:4', type: 'terminal', title: 'T4' } as SidebarTab)
+      legacy.splits.active = 'terminal:4'
+      const legacyRestored = sanitizeState(legacy)!
+      const tab4 = (legacyRestored.splits as { tabs: SidebarTab[] }).tabs.find(t => t.id === 'terminal:4')!
+      expect(tab4.pin).toBeUndefined()
+    } finally {
+      delete g.window
+      delete g.localStorage
+    }
   })
 })
 

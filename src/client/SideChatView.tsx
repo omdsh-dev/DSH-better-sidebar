@@ -34,6 +34,7 @@ import {
   StateDot,
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { markdownTextProps } from './markdown-labels.tsx'
 import { IconHistoryOutline16, IconSaveOutline16 } from './icons.tsx'
 import type { Context, SidebarHistoryEntry } from '../context-types.ts'
 import {
@@ -186,13 +187,13 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels): React.ReactNo
     case 'user':
       return (
         <div key={`${row.kind}:${row.seq}`} className={css.sidechatUser}>
-          <MarkdownText text={row.text} codeLabels={labels} />
+          <MarkdownText {...markdownTextProps(row.text, labels)} />
         </div>
       )
     case 'assistant':
       return (
         <div key={`${row.kind}:${row.seq}`} className={css.sidechatAssistant}>
-          <MarkdownText text={row.text} codeLabels={labels} />
+          <MarkdownText {...markdownTextProps(row.text, labels)} />
         </div>
       )
     case 'reasoning':

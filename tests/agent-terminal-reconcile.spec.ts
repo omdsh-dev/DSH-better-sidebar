@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   allLeaves, makeDefaultState, openTabInActivePane, reconcileAgentTerminals,
-  tabOpenIn, toggleBottomPanel,
+  setTabPin, tabOpenIn, toggleBottomPanel,
 } from '../src/client/state.ts'
 
 describe('agent terminal reconciliation', () => {
@@ -68,5 +68,62 @@ describe('agent terminal reconciliation', () => {
     expect(tabOpenIn(s, 'agent:aaa-111')).toBe(true)
     expect(allLeaves(s.bottomSplits).flatMap(l => l.tabs).some(t => t.id === 'agent:aaa-111')).toBe(true)
     expect(allLeaves(s.splits).flatMap(l => l.tabs).some(t => t.id === 'agent:aaa-111')).toBe(false)
+  })
+
+  describe('pinned agent terminal exemption (v0.17.0)', () => {
+    it('keeps a pinned agent tab when its uuid vanishes from the server list', () => {
+      let s = makeDefaultState(400, true)
+      s = reconcileAgentTerminals(s, [
+        { uuid: 'aaa-111', title: 'keep' },
+        { uuid: 'bbb-222', title: 'pinned' },
+      ])
+      // Pin bbb-222, then drop it from the server list.
+      s = setTabPin(s, 'agent:bbb-222', { scope: 'global' })
+      s = reconcileAgentTerminals(s, [{ uuid: 'aaa-111', title: 'keep' }])
+      // aaa-111 (unpinned) survived; bbb-222 (pinned) survived too.
+      expect(tabOpenIn(s, 'agent:aaa-111')).toBe(true)
+      expect(tabOpenIn(s, 'agent:bbb-222')).toBe(true)
+      // The pin marker is intact.
+      const tabs = allLeaves(s.splits).flatMap(l => l.tabs)
+      const pinned = tabs.find(t => t.id === 'agent:bbb-222')!
+      expect(pinned.pin).toEqual({ scope: 'global' })
+    })
+
+    it('still removes an unpinned agent tab when the uuid vanishes', () => {
+      let s = makeDefaultState(400, true)
+      s = reconcileAgentTerminals(s, [
+        { uuid: 'aaa-111', title: 'pinned' },
+        { uuid: 'bbb-222', title: 'unpinned' },
+      ])
+      s = setTabPin(s, 'agent:aaa-111', { scope: 'workspace', homeCwd: '/p' })
+      s = reconcileAgentTerminals(s, []) // both vanish
+      // Pinned stays, unpinned goes.
+      expect(tabOpenIn(s, 'agent:aaa-111')).toBe(true)
+      expect(tabOpenIn(s, 'agent:bbb-222')).toBe(false)
+    })
+
+    it('a pinned tab whose uuid RETURNS in a later push is a no-op (already exists)', () => {
+      let s = makeDefaultState(400, true)
+      s = reconcileAgentTerminals(s, [{ uuid: 'aaa-111', title: 'gone' }])
+      s = setTabPin(s, 'agent:aaa-111', { scope: 'global' })
+      // First push without it: exempted, stays.
+      s = reconcileAgentTerminals(s, [])
+      expect(tabOpenIn(s, 'agent:aaa-111')).toBe(true)
+      // Later push brings it back: reconcile sees the uuid already exists,
+      // does not re-add, does not touch the pin.
+      const before = s
+      s = reconcileAgentTerminals(s, [{ uuid: 'aaa-111', title: 'gone' }])
+      expect(s).toBe(before)
+    })
+
+    it('exemption does not block the toAdd path (new uuids still land)', () => {
+      let s = makeDefaultState(400, true)
+      s = reconcileAgentTerminals(s, [{ uuid: 'aaa-111', title: 'first' }])
+      s = setTabPin(s, 'agent:aaa-111', { scope: 'global' })
+      // aaa-111 vanishes (exempted), bbb-222 is brand-new.
+      s = reconcileAgentTerminals(s, [{ uuid: 'bbb-222', title: 'second' }])
+      expect(tabOpenIn(s, 'agent:aaa-111')).toBe(true) // pinned, kept
+      expect(tabOpenIn(s, 'agent:bbb-222')).toBe(true) // new, added
+    })
   })
 })

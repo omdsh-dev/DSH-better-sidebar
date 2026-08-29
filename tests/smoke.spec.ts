@@ -485,6 +485,7 @@ describe('git destructive operations (scratch repository)', () => {
 describe('session cwd resolution over the API route', () => {
   interface CtxOverrides {
     sessions?: { get: (id: string) => { header: { cwd?: string } } | undefined }
+    sessionPersistence?: { inspect: (id: string) => Promise<{ meta: { cwd?: string } }> }
   }
 
   const mountAll = (overrides: CtxOverrides = {}): SidebarWebRoute[] => {
@@ -502,7 +503,7 @@ describe('session cwd resolution over the API route', () => {
       // No settings service: the namespace registration never runs.
       inject: () => () => {},
       // No jobs/agents services in the smoke context: the routes degrade.
-      get: () => undefined,
+      get: (key: string) => key === 'sessionPersistence' ? overrides.sessionPersistence : undefined,
     }
     apply(ctx as never)
     return routes
@@ -554,6 +555,51 @@ describe('session cwd resolution over the API route', () => {
   it('falls back to the process cwd with no summary cwd', async () => {
     const route = mount()
     const result = await invoke(route, 'session.cwd', { sessionId: 's-unknown' })
+    expect(result.ok).toBe(true)
+    expect(result.value?.cwd).toBe(process.cwd())
+  })
+
+  it('resolves a cold (detached) session cwd through the persistence index', async () => {
+    // Regression: a detached first request (session not yet attached, no
+    // client cwd) must resolve the cwd from the session-persistence index
+    // instead of the host process cwd. On Windows the host process cwd is
+    // the DSH source root (dsh.cmd's `pushd`), so every user-project path
+    // was misclassified as "outside workspace" by the realpath guard.
+    const coldCwd = resolvePath('/cold-project-cwd')
+    const route = mount({
+      sessionPersistence: {
+        inspect: async (id) => ({
+          meta: id === 's-cold' ? { cwd: coldCwd } : {},
+        }),
+      },
+    })
+    const result = await invoke(route, 'session.cwd', { sessionId: 's-cold' })
+    expect(result.ok).toBe(true)
+    expect(result.value?.cwd).toBe(coldCwd)
+  })
+
+  it('rejects a relative cwd from the persistence index', async () => {
+    // A buggy / corrupt persistence layer that stored a relative cwd must
+    // be rejected by requireAbsolute instead of flowing into the workspace
+    // guard, where it would be resolved against the host process cwd and
+    // potentially recreate the original "outside workspace" misclassification.
+    const route = mount({
+      sessionPersistence: {
+        inspect: async () => ({ meta: { cwd: 'relative/path' } }),
+      },
+    })
+    const result = await invoke(route, 'session.cwd', { sessionId: 's-bad' })
+    expect(result.ok).toBe(false)
+    expect(result.error?.message).toMatch(/invalid working directory/)
+  })
+
+  it('falls back to the process cwd when persistence has no cwd for the session', async () => {
+    const route = mount({
+      sessionPersistence: {
+        inspect: async () => ({ meta: {} }),
+      },
+    })
+    const result = await invoke(route, 'session.cwd', { sessionId: 's-blank' })
     expect(result.ok).toBe(true)
     expect(result.value?.cwd).toBe(process.cwd())
   })

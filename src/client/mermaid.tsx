@@ -30,6 +30,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import mermaid from 'mermaid'
 import { IconCopyOutline16, MarkdownText, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
+import { markdownTextProps } from './markdown-labels.tsx'
 import { t } from './locales.ts'
 import { sanitizeSvg } from './mermaid-sanitize.ts'
 import type { MermaidMarkdownProps } from './mermaid-blocks.ts'
@@ -399,7 +400,7 @@ export function MermaidMarkdown({ text, codeLabels }: MermaidMarkdownProps): Rea
 
   return (
     <div className={css.mermaidMarkdown} ref={containerRef}>
-      <MarkdownText text={text} codeLabels={codeLabels} />
+      <MarkdownText {...markdownTextProps(text, codeLabels)} />
     </div>
   )
 }

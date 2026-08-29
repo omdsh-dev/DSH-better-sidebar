@@ -81,6 +81,10 @@ jobs:
       # Pin the DSH CLI the lane mounts into; the profile's bundle stack
       # (dsh-base / dsh-web-app) resolves from this installation. Keep in
       # step with the plugin's @deepseek-ai/* peer range when bumping.
+      # NOTE: DSH 0.1.2-alpha.1 (Remote gateway slash endpoints + one-time-
+      # token browser auth) is NOT on npm yet — the lanes speak BOTH dialects
+      # (tests/e2e/host-protocol.ts, dot-first with slash fallback), so bump
+      # this pin once @deepseek-ai/dsh@0.1.2-alpha.1 publishes.
       - name: Install dsh CLI (pinned)
         run: npm install -g @deepseek-ai/dsh@0.1.1-rc.2
 

@@ -70,6 +70,17 @@ export const IconUploadOutline16 = ({ size = 16, className }: IconProps) => (
   </svg>
 )
 
+/**
+ * Pin glyph in the app's outline style (1.5px stroke, currentColor): a pushpin
+ * tilted to the lower-right. Used by the PinnedRail and the tab context menu's
+ * pin entry (v0.17.0+).
+ */
+export const IconPinOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M9.5 1.5 14.5 6.5 12.5 8.5 10 6 5.5 10.5 6 12 4.5 13.5 2.5 11.5 4 10 5.5 10.5 10 6 7.5 8.5 6.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+  </svg>
+)
+
 // ── File-viewer inventory glyphs (Side card settings page) ────────────────
 
 /** Image viewer glyph: a picture frame with a sun and a mountain. */

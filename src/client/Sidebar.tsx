@@ -35,11 +35,14 @@ import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
-  BOTTOM_MIN, PANEL_MIN, agentUuidOf, dockFloat, firstLeaf, floatTab, isAgentTabId, leafWithTab, migrateBottomTabs,
-  moveFloat, moveTab, moveTabToEdge, openDiffTab, raiseFloat, reconcileAgentTerminals,
-  resizeFloat, resizeSplitIn, setBottomHeight, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
+  BOTTOM_MIN, PANEL_MIN, activateTab, agentUuidOf, allLeaves, closeFloatByTab, closeTab, dockFloat, firstLeaf, floatTab,
+  floatWithTab, isAgentTabId, leafWithTab, migrateBottomTabs,
+  moveFloat, moveTab, moveTabToEdge, openDiffTab, openTabInActivePane, raiseFloat, reconcileAgentTerminals,
+  resizeFloat, resizeSplitIn, setBottomHeight, setTabPin, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
 } from './state.ts'
+import { collectPinnedTabs, createPinnedVirtualTab, getPinnedHomeScope, injectPinnedIntoTree, isPinnedVirtualId, isPinnedVirtualTab, parsePinnedVirtualId, type PinnedTabEntry } from './pinned.ts'
+import { IconPinOutline16 } from './icons.tsx'
 import { IconPanelBottomOutline16, IconPanelRightOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { isNarrowWidth, useViewportSize } from './breakpoints.ts'
@@ -135,25 +138,22 @@ interface TabContentProps extends TabContentMemoKey {
 
 /** Render the content of one tab (dispatched by type). */
 const TabContent = memo(function TabContent(props: TabContentProps) {
-  const { tab, sessionId, cwd, expanded, revealed, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff } = props
+  const { tab, effectiveTabId, sessionId, cwd, expanded, revealed, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff } = props
   const scope = { sessionId, cwd }
   const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
   if (descriptor === undefined) {
     return <OrphanedTab ctx={ctx} store={store} scope={scope} tab={tab} visible={visible} />
   }
-  // One boundary per tab: a render crash in a viewer/editor shows a strip in
-  // THIS tab's pane only — the toggle cluster, the other tabs, and the panel
-  // stay alive (issue #31). The tab strip (close button) lives outside, so a
-  // crashing tab stays closable; the root boundary in index.tsx remains the
-  // last resort for errors in the sidebar shell itself. The descriptor is
-  // rendered as a REAL element (not called directly): a direct call would
-  // throw inside TabContent's own render, which the boundary cannot catch —
-  // as a child fiber, every render error (top-level or deep) lands in it.
+  // For pinned virtual tabs, the tab descriptor's component (e.g. TerminalView)
+  // must receive the ORIGINAL tab id so it connects to the home session's PTY.
+  // The virtual tab's own id is a unique display key (prefixed); effectiveTabId
+  // restores the real id at the component boundary.
+  const componentTab = effectiveTabId !== undefined ? { ...tab, id: effectiveTabId } : tab
   return createElement(
     RenderBoundary,
     { className: css.tabBoundaryError },
     createElement(descriptor.component, {
-      ctx, store, scope, tab, visible, expanded, revealed,
+      ctx, store, scope, tab: componentTab, visible, expanded, revealed,
       onToggleDir, onReferenceFile, onOpenDiff, onSubagentJump,
     }),
   )
@@ -650,6 +650,50 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
     ctx.get('betterSidebar')?.openTab({ type: 'subagent', title: t('subagent') })
   }, [sessionId, store, ctx])
+
+  /**
+   /**
+    * Inline pinned terminals (v0.17.0+): pinned tabs from OTHER sessions
+    * inject as VIRTUAL tabs into the first leaf of the right panel's split
+    * tree. The virtual tabs have unique ids (prefixed with the home session)
+    * and carry the home scope in meta. Clicking a virtual tab sets
+    * `activePinnedTabId` — the augmented tree overrides the leaf's `active`
+    * so the pinned tab's content renders in-place (TerminalView connects to
+    * the home session's PTY via WS, no session jump).
+    *
+    * Closing/unpinning a virtual tab targets the HOME session via reduceFor
+    * (which doesn't notify — targeted opens must not re-render the active
+    * session). The `pinnedRevision` state bump forces the pinnedEntries
+    * useMemo to recompute after such an action.
+    */
+  const [activePinnedTabId, setActivePinnedTabId] = useState<string | null>(null)
+  const [pinnedRevision, setPinnedRevision] = useState(0)
+
+  /**
+   * Cross-session pinned-tab collection. Recomputed on every store notify,
+   * session-list change, and pinned action (the revision bump covers
+   * reduceFor updates that don't notify). Only tabs from OTHER sessions —
+   * the viewer's own pinned tabs are already on its tab strip.
+   */
+  const pinnedEntries: readonly PinnedTabEntry[] = useMemo(() => {
+    if (sessionId === undefined) return []
+    return collectPinnedTabs(store.getSessionStates(), { sessionId, cwd })
+  }, [store, sessionId, cwd, snapshot, pinnedRevision])
+
+  /** Virtual SidebarTab objects for the pinned entries (stable references
+   *  via useMemo so TabContent's memo comparator holds). */
+  const pinnedVirtualTabs = useMemo(
+    () => pinnedEntries.map(createPinnedVirtualTab),
+    [pinnedEntries],
+  )
+
+  /** The right panel's split tree with pinned virtual tabs injected into the
+   *  first leaf. When `activePinnedTabId` is set, that leaf's `active` is
+   *  overridden so the pinned tab's content is visible. */
+  const augmentedTree = useMemo(
+    () => state === undefined ? undefined : injectPinnedIntoTree(state.splits, pinnedVirtualTabs, activePinnedTabId),
+    [state, pinnedVirtualTabs, activePinnedTabId],
+  )
 
   // The app shell's center column: the bottom panel spans ONLY that column
   // ("squeezes the agent output area") — it starts at the app sidebar's
@@ -1228,7 +1272,90 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       const y = rect !== null ? (rect.top + rect.bottom) / 2 : window.innerHeight / 2
       store.reduce(s => floatTab(s, tabId, x, y))
     },
+    // Pin/unpin a terminal tab (v0.17.0+): the home cwd is snapshotted at
+    // pin time so a workspace-scoped pin only resurfaces in sessions whose
+    // cwd matches. Unpin passes null — the tab stays open in its home
+    // session, just unmarked.
+    pinTab: (tabId, scope) => {
+      store.reduce(s => setTabPin(s, tabId, scope === null ? null : { scope, homeCwd: cwd }))
+    },
   }), [store, sessionId, cwd])
+
+  /**
+   * Wrap the base actions to intercept pinned VIRTUAL tab ids (injected from
+   * other sessions). Regular tab ids pass through unchanged. Virtual ids are
+   * detected by the `pinned:` prefix and routed to the HOME session via
+   * reduceFor (which doesn't notify — the revision bump is the local signal).
+   */
+  const wrappedActions = useMemo<WorkbenchActions>(() => {
+    if (pinnedVirtualTabs.length === 0) return actions
+    const closePinnedInHome = (virtualId: string): void => {
+      const { homeSessionId, tabId: originalId } = parsePinnedVirtualId(virtualId)
+      // The home cwd lives in the virtual tab's meta (snapshotted at pin
+      // time) — pass it to ptyClose so the host resolves the PTY in the
+      // correct workspace container (same scope the WS open used).
+      const vtab = pinnedVirtualTabs.find(t => t.id === virtualId)
+      const homeCwd = vtab !== undefined ? getPinnedHomeScope(vtab)?.cwd : undefined
+      store.reduceFor(homeSessionId, s => {
+        const leaf = leafWithTab(s.splits, originalId) ?? leafWithTab(s.bottomSplits, originalId)
+        if (leaf !== undefined) return closeTab(s, leaf.id, originalId)
+        if (s.floats.some(f => f.tab.id === originalId)) return closeFloatByTab(s, originalId)
+        return s
+      })
+      if (isAgentTabId(originalId)) {
+        void api.agentPtyClose(agentUuidOf(originalId)).catch(() => { /* already released */ })
+      } else {
+        void api.ptyClose({ sessionId: homeSessionId, ...(homeCwd !== undefined ? { cwd: homeCwd } : {}) }, originalId).catch(() => { /* already released */ })
+      }
+      if (activePinnedTabId === virtualId) setActivePinnedTabId(null)
+      setPinnedRevision(v => v + 1)
+    }
+    return {
+      ...actions,
+      activateTab: (paneId, tabId) => {
+        if (isPinnedVirtualId(tabId)) {
+          setActivePinnedTabId(tabId)
+        } else {
+          setActivePinnedTabId(null)
+          actions.activateTab(paneId, tabId)
+        }
+      },
+      closeTab: (paneId, tabId) => {
+        if (isPinnedVirtualId(tabId)) {
+          closePinnedInHome(tabId)
+        } else {
+          actions.closeTab(paneId, tabId)
+        }
+      },
+      moveTabBefore: (payload, toPane, beforeTabId) => {
+        if (isPinnedVirtualId(payload.tabId)) return
+        if (isPinnedVirtualId(beforeTabId)) {
+          actions.moveTabToEdge(payload, toPane, 'center')
+        } else {
+          actions.moveTabBefore(payload, toPane, beforeTabId)
+        }
+      },
+      moveTabToEdge: (payload, toPane, zone) => {
+        if (isPinnedVirtualId(payload.tabId)) return
+        actions.moveTabToEdge(payload, toPane, zone)
+      },
+      floatTab: (tabId) => {
+        if (isPinnedVirtualId(tabId)) return
+        actions.floatTab(tabId)
+      },
+      pinTab: (tabId, scope) => {
+        if (isPinnedVirtualId(tabId)) {
+          if (scope !== null) return
+          const { homeSessionId, tabId: originalId } = parsePinnedVirtualId(tabId)
+          store.reduceFor(homeSessionId, s => setTabPin(s, originalId, null))
+          if (activePinnedTabId === tabId) setActivePinnedTabId(null)
+          setPinnedRevision(v => v + 1)
+        } else {
+          actions.pinTab?.(tabId, scope)
+        }
+      },
+    }
+  }, [actions, pinnedVirtualTabs, activePinnedTabId, store])
 
   /**
    * The explorer's @-reference button: append `@<relative path>` to the
@@ -1335,31 +1462,40 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // the panels do (the AGENTS §7.5 contract; plugin components honor
   // `visible` to pause work, so tying floats to panelOpen would blank them
   // the moment the sidebar collapses).
-  const renderTab = (tab: SidebarTab, active: boolean, paneId: string, placement: 'top' | 'bottom' | 'float' = 'top') => (
-    <TabContent
-      tab={tab}
-      paneId={paneId}
-      sessionId={sessionId}
-      cwd={cwd}
-      expanded={state.expanded}
-      revealed={state.revealed ?? []}
-      onToggleDir={(path) => { store.reduce(s => toggleExpanded(s, path)) }}
-      onReferenceFile={referenceInChat}
-      ctx={ctx}
-      store={store}
-      visible={
-        placement === 'float'
-          ? true
-          : placement === 'bottom'
-            ? state.bottomOpen && active
-            : state.panelOpen && active
-      }
-      onSubagentJump={(childSessionId) => { subagentJumpRef.current = childSessionId }}
-      onOpenDiff={(diffTab) => { store.reduce(s => openDiffTab(s, paneId, diffTab)) }}
-      localeRevision={localeRevision}
-      tabsVersion={tabsVersion}
-    />
-  )
+  const renderTab = (tab: SidebarTab, active: boolean, paneId: string, placement: 'top' | 'bottom' | 'float' = 'top') => {
+    // Pinned virtual tabs: pass the home session's scope (sessionId + cwd) so
+    // TerminalView's WS URL resolves to the home PTY, and effectiveTabId so
+    // the descriptor component receives the ORIGINAL tab id (the virtual id
+    // is only a display key). Regular tabs: effectiveTabId is undefined (no
+    // override), scope is the current session's.
+    const home = getPinnedHomeScope(tab)
+    return (
+      <TabContent
+        tab={tab}
+        effectiveTabId={home?.tabId}
+        paneId={paneId}
+        sessionId={home?.sessionId ?? sessionId}
+        cwd={home?.cwd ?? cwd}
+        expanded={state.expanded}
+        revealed={state.revealed ?? []}
+        onToggleDir={(path) => { store.reduce(s => toggleExpanded(s, path)) }}
+        onReferenceFile={referenceInChat}
+        ctx={ctx}
+        store={store}
+        visible={
+          placement === 'float'
+            ? true
+            : placement === 'bottom'
+              ? state.bottomOpen && active
+              : state.panelOpen && active
+        }
+        onSubagentJump={(childSessionId) => { subagentJumpRef.current = childSessionId }}
+        onOpenDiff={(diffTab) => { store.reduce(s => openDiffTab(s, paneId, diffTab)) }}
+        localeRevision={localeRevision}
+        tabsVersion={tabsVersion}
+      />
+    )
+  }
 
   return (
     <div data-dsh-panel-host {...osFileDragShield}>
@@ -1462,8 +1598,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         <div className={css.panelBody}>
           <Workbench
             state={state}
+            tree={augmentedTree}
             newTabOptions={buildNewTabOptions(state, ctx, { sessionId, cwd })}
-            actions={actions}
+            actions={wrappedActions}
             onNewTab={onNewTab}
             renderTab={renderTab}
             getTabIcon={tabIconOf}

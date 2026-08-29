@@ -29,12 +29,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test, expect, request, type APIRequestContext, type Locator, type Page } from '@playwright/test'
-
-const BASE_URL = process.env.DSH_E2E_URL
-if (!BASE_URL) {
-  throw new Error('DSH_E2E_URL is not set — boot a DSH web instance with the plugin mounted and point this lane at it (see scripts/e2e-mount.sh)')
-}
+import { test, expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
+import { PAGE_URL, createHostApi, hostRpc } from './host'
 
 /** This lane's own workspace (distinct from mount.e2e.ts's, lanes run serially
  *  but against the same server — never share seed paths). */
@@ -42,28 +38,17 @@ const WORKSPACE_PATH = process.env.DSH_E2E_DRAG_WORKSPACE ?? join(tmpdir(), 'dsh
 
 let api: APIRequestContext
 
-/** Seed one workspace + one session through the host's unary RPC surface. */
+/** Seed one workspace + one session through the host's unary RPC surface
+ *  (dual-protocol helper — see ./host-protocol.ts). */
 async function seedSession(): Promise<void> {
   mkdirSync(WORKSPACE_PATH, { recursive: true })
   writeFileSync(join(WORKSPACE_PATH, 'seed.txt'), 'drag lane\n')
-  const workspace = await api.post(`${BASE_URL}/api/workspace.create`, {
-    data: { type: 'client-request', rpcId: 'e2e-drag-workspace', method: 'workspace.create', payload: { path: WORKSPACE_PATH } },
-  })
-  expect(workspace.ok(), `workspace.create: ${workspace.status()} ${await workspace.text()}`).toBe(true)
-  const workspaceBody = (await workspace.json()) as {
-    result: { ok: true; value: { workspace: { workspaceId: string } } } | { ok: false; error: unknown }
-  }
-  expect(workspaceBody.result.ok).toBe(true)
-  const workspaceId = (workspaceBody.result as { value: { workspace: { workspaceId: string } } }).value.workspace.workspaceId
-
-  const session = await api.post(`${BASE_URL}/api/session.create`, {
-    data: { type: 'client-request', rpcId: 'e2e-drag-session', method: 'session.create', payload: { workspaceId } },
-  })
-  expect(session.ok(), `session.create: ${session.status()} ${await session.text()}`).toBe(true)
+  const workspace = await hostRpc<{ workspace: { workspaceId: string } }>(api, 'workspace.create', { path: WORKSPACE_PATH })
+  await hostRpc(api, 'session.create', { workspaceId: workspace.value.workspace.workspaceId })
 }
 
 test.beforeAll(async () => {
-  api = await request.newContext({ baseURL: BASE_URL })
+  api = await createHostApi()
   await seedSession()
 })
 
@@ -81,7 +66,7 @@ interface FrameSample {
 }
 
 test('width drag tracks the shell 1:1 with transitions disabled (issue #92)', async ({ page }) => {
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
   const sidebar = page.locator('[data-dsh-better-sidebar]')
   await expect(sidebar).toBeAttached({ timeout: 90_000 })
@@ -258,7 +243,7 @@ test('width drag tracks the shell 1:1 with transitions disabled (issue #92)', as
 })
 
 test('a very fast width drag still commits the dragged position (no rollback on quick release)', async ({ page }) => {
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
   const sidebar = page.locator('[data-dsh-better-sidebar]')
   await expect(sidebar).toBeAttached({ timeout: 90_000 })
@@ -470,7 +455,7 @@ async function dispatchPointerOnStrip(
 }
 
 test('an interrupted fast drag (pointercancel → lostpointercapture) keeps the dragged width (issue #247)', async ({ page }) => {
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
   const sidebar = page.locator('[data-dsh-better-sidebar]')
   await expect(sidebar).toBeAttached({ timeout: 90_000 })
@@ -505,7 +490,7 @@ test('an interrupted fast drag (pointercancel → lostpointercapture) keeps the 
 })
 
 test('a capture-lost drag with no usable coordinates keeps the last applied width (issue #247)', async ({ page }) => {
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
   const sidebar = page.locator('[data-dsh-better-sidebar]')
   await expect(sidebar).toBeAttached({ timeout: 90_000 })
@@ -540,7 +525,7 @@ test('a capture-lost drag with no usable coordinates keeps the last applied widt
       drag release ─────────────────────────────────────────────────────── */
 
 test('bottom panel never flashes full-width after a width drag release (issue #258)', async ({ page }) => {
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
   const sidebar = page.locator('[data-dsh-better-sidebar]')
   await expect(sidebar).toBeAttached({ timeout: 90_000 })
@@ -634,7 +619,7 @@ test('the bottom-push anchor resolves through the composite selectors (at least 
   // VERSIONS MAY RENAME THE ATTRIBUTE (issue #208 comment / PR #226), so
   // the contract is "at least one resolves", and when both resolve they
   // must hit the SAME element (otherwise the push would land twice).
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
   const anchors = await page.evaluate(() => {
     const a = document.querySelector('#root [data-dsh-frame] > [data-pane="conversation"]')

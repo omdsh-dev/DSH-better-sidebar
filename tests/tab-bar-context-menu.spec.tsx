@@ -31,11 +31,12 @@ function stubZh(): void {
 
 const MENU_LABELS = ['移动到自由窗口', '关闭', '关闭其他页签', '关闭左侧页签', '关闭右侧页签']
 
-function mountBar(tabs: SidebarTab[]): {
+function mountBar(tabs: SidebarTab[], opts: { onPinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void } = {}): {
   tabEls: HTMLElement[]
   onClose: ReturnType<typeof vi.fn>
   onActivate: ReturnType<typeof vi.fn>
   onFloatTab: ReturnType<typeof vi.fn>
+  onPinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void
   unmount: () => void
 } {
   const container = document.createElement('div')
@@ -43,6 +44,7 @@ function mountBar(tabs: SidebarTab[]): {
   const onClose = vi.fn()
   const onActivate = vi.fn()
   const onFloatTab = vi.fn()
+  const onPinTab = opts.onPinTab
   const root: Root = createRoot(container)
   act(() => {
     root.render(createElement(TabBar, {
@@ -54,6 +56,7 @@ function mountBar(tabs: SidebarTab[]): {
       onNewTab: () => {},
       newTabOptions: [],
       onFloatTab,
+      ...(onPinTab !== undefined ? { onPinTab } : {}),
       onDropTab: () => {},
     }))
   })
@@ -63,6 +66,7 @@ function mountBar(tabs: SidebarTab[]): {
     onClose,
     onActivate,
     onFloatTab,
+    ...(onPinTab !== undefined ? { onPinTab } : {}),
     unmount: () => {
       act(() => { root.unmount() })
       container.remove()
@@ -205,6 +209,102 @@ describe('TabBar right-click context menu', () => {
       expect(menuItems().map(item => (item as HTMLButtonElement).disabled)).toEqual([false, false, false, false, true])
     } finally {
       four.unmount()
+    }
+  })
+})
+
+describe('TabBar pin submenu (v0.17.0)', () => {
+  /** The portaled submenu rows (aria-expanded parent + nested menuitem rows). */
+  function submenuItems(): HTMLElement[] {
+    return [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"], [role="menuitem"]')]
+  }
+
+  it('hides the pin entry when onPinTab is not provided (legacy callers)', () => {
+    stubZh()
+    const { tabEls, unmount } = mountBar(fourTabs())
+    try {
+      act(() => { rightClick(tabEls[2]!) }) // t3 = terminal
+      // Exactly the legacy 5-item menu, no pin row.
+      expect(menuItems().map(item => item.textContent)).toEqual(MENU_LABELS)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('adds a "Pin Terminal ▸" submenu for an unpinned UI terminal', () => {
+    stubZh()
+    const onPinTab = vi.fn<(tabId: string, scope: 'workspace' | 'global' | null) => void>()
+    const { tabEls, unmount } = mountBar(fourTabs(), { onPinTab })
+    try {
+      act(() => { rightClick(tabEls[2]!) }) // t3 = UI terminal
+      const labels = menuItems().map(item => item.textContent)
+      // float | pin (with submenu indicator) | close | closeOthers | closeLeft | closeRight
+      expect(labels[0]).toBe('移动到自由窗口')
+      expect(labels[1]).toBe('固定终端')
+      expect(labels[2]).toBe('关闭')
+      // Hovering the pin row reveals the submenu items. React synthesizes
+      // onMouseEnter from the bubbling mouseover event, so dispatch that.
+      act(() => { menuItems()[1]!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
+      const sub = submenuItems().map(item => item.textContent)
+      expect(sub).toContain('固定到工作区')
+      expect(sub).toContain('固定到全局')
+      // Clicking "pin to workspace" fires the callback.
+      const wsItem = submenuItems().find(item => item.textContent === '固定到工作区')!
+      act(() => { wsItem.click() })
+      expect(onPinTab).toHaveBeenCalledWith('t3', 'workspace')
+    } finally {
+      unmount()
+    }
+  })
+
+  it('uses the "Pin Agent Terminal" label for an agent terminal tab', () => {
+    stubZh()
+    const onPinTab = vi.fn<(tabId: string, scope: 'workspace' | 'global' | null) => void>()
+    const tabs: SidebarTab[] = [
+      { id: 'agent:abc-123', type: 'terminal', title: 'Agent T' },
+    ]
+    const { tabEls, unmount } = mountBar(tabs, { onPinTab })
+    try {
+      act(() => { rightClick(tabEls[0]!) })
+      const labels = menuItems().map(item => item.textContent)
+      expect(labels[1]).toBe('固定 Agent 终端')
+    } finally {
+      unmount()
+    }
+  })
+
+  it('shows "Unpin" instead of the submenu for an already-pinned terminal', () => {
+    stubZh()
+    const onPinTab = vi.fn<(tabId: string, scope: 'workspace' | 'global' | null) => void>()
+    const tabs: SidebarTab[] = [
+      { id: 'terminal:1', type: 'terminal', title: 'T', pin: { scope: 'global' } },
+    ]
+    const { tabEls, unmount } = mountBar(tabs, { onPinTab })
+    try {
+      act(() => { rightClick(tabEls[0]!) })
+      const labels = menuItems().map(item => item.textContent)
+      expect(labels).toContain('取消固定')
+      expect(labels).not.toContain('固定终端')
+      const unpinItem = menuItems().find(item => item.textContent === '取消固定')!
+      act(() => { unpinItem.click() })
+      expect(onPinTab).toHaveBeenCalledWith('terminal:1', null)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('does not add a pin entry for non-terminal tabs even with onPinTab provided', () => {
+    stubZh()
+    const onPinTab = vi.fn<(tabId: string, scope: 'workspace' | 'global' | null) => void>()
+    const { tabEls, unmount } = mountBar(fourTabs(), { onPinTab })
+    try {
+      act(() => { rightClick(tabEls[0]!) }) // t1 = editor
+      expect(menuItems().map(item => item.textContent)).toEqual(MENU_LABELS)
+      act(() => { rightClick(tabEls[1]!) }) // t2 = git
+      expect(menuItems().map(item => item.textContent)).toEqual(MENU_LABELS)
+      expect(onPinTab).not.toHaveBeenCalled()
+    } finally {
+      unmount()
     }
   })
 })

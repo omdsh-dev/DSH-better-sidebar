@@ -865,6 +865,20 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-primary);
 }
 
+/* ── Pinned-terminal tab (v0.17.0+) ───────────────────────────────────── */
+
+/* Pinned virtual tabs (injected from other sessions) render inline in the
+   tab bar with a pin icon and a subtle tint to distinguish them from the
+   session's own tabs. Token-driven so skins follow. */
+.pinnedTab {
+  color: var(--dsw-alias-label-tertiary);
+  font-style: italic;
+}
+
+.pinnedTab:hover {
+  color: var(--dsw-alias-label-secondary);
+}
+
 /* ── Explorer ──────────────────────────────────────────────────────────── */
 
 .explorer {

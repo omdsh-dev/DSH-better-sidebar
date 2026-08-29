@@ -29,12 +29,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test, expect, request, type APIRequestContext } from '@playwright/test'
-
-const BASE_URL = process.env.DSH_E2E_URL
-if (!BASE_URL) {
-  throw new Error('DSH_E2E_URL is not set — boot a DSH web instance with the plugin mounted and point this lane at it (see scripts/e2e-mount.sh)')
-}
+import { test, expect, type APIRequestContext } from '@playwright/test'
+import { PAGE_URL, createHostApi, gotoPage, hostRpc, sidebarApi } from './host'
 
 /** Workspace the sidebar renders against (created by the lane's seeding). */
 const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-workspace')
@@ -127,29 +123,17 @@ async function seedSession(): Promise<void> {
     '[def]: https://example.com/def',
     '',
   ].join('\n'))
-  const workspace = await api.post(`${BASE_URL}/api/workspace.create`, {
-    data: { type: 'client-request', rpcId: 'e2e-workspace', method: 'workspace.create', payload: { path: WORKSPACE_PATH } },
-  })
-  expect(workspace.ok(), `workspace.create: ${workspace.status()} ${await workspace.text()}`).toBe(true)
-  const workspaceBody = (await workspace.json()) as {
-    result: { ok: true; value: { workspace: { workspaceId: string } } } | { ok: false; error: unknown }
-  }
-  expect(workspaceBody.result.ok).toBe(true)
-  const workspaceId = (workspaceBody.result as { value: { workspace: { workspaceId: string } } }).value.workspace.workspaceId
-
-  const session = await api.post(`${BASE_URL}/api/session.create`, {
-    data: { type: 'client-request', rpcId: 'e2e-session', method: 'session.create', payload: { workspaceId } },
-  })
-  expect(session.ok(), `session.create: ${session.status()} ${await session.text()}`).toBe(true)
-  const sessionBody = (await session.json()) as {
-    result: { ok: true; value: { sessionId: string } } | { ok: false; error: unknown }
-  }
-  expect(sessionBody.result.ok).toBe(true)
-  seededSessionId = (sessionBody.result as { value: { sessionId: string } }).value.sessionId
+  // Seeded through the lanes' dual-protocol RPC helper (./host): 0.1.1-rc.x
+  // dot endpoints first, 0.1.2-alpha.1+ slash endpoints on 404 fallback, and
+  // the request context carries the auth cookie when the launch URL had a
+  // one-time token.
+  const workspace = await hostRpc<{ workspace: { workspaceId: string } }>(api, 'workspace.create', { path: WORKSPACE_PATH })
+  const session = await hostRpc<{ sessionId: string }>(api, 'session.create', { workspaceId: workspace.value.workspace.workspaceId })
+  seededSessionId = session.value.sessionId
 }
 
 test.beforeAll(async () => {
-  api = await request.newContext({ baseURL: BASE_URL })
+  api = await createHostApi()
   await seedSession()
 })
 
@@ -176,7 +160,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     (response) => response.url().includes('/sidebar/bundle/editor.js'),
     { timeout: 120_000 },
   )
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
   const sidebar = page.locator('[data-dsh-better-sidebar]')
   await expect(sidebar).toBeAttached({ timeout: 90_000 })
@@ -257,7 +241,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await expect(expandButton, 'the collapsed toggle cluster must offer the expand button').toHaveCount(1)
   await expandButton.click()
 
-  // The skinning contract is token-driven (AGENTS.md §8): the panels consume
+  // The skinning contract is token-driven (docs/external-plugin-guide.md §12): the panels consume
   // `--dsw-alias-bg-layer-1`, so switching a skin re-skins the sidebar with
   // no per-skin code. The layout push variable must be live once the panel
   // mounts (its absence would mean the panel never opened with the session).
@@ -310,7 +294,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // (keyless boot has no model route), but admission + creation + the wire
   // envelope must all succeed — this is the deepest functional proof the
   // mount lane can make without a provider.
-  const start = await api.post(`${BASE_URL}/sidebar/api/sidechat.start`, {
+  const start = await api.post(sidebarApi('sidechat.start'), {
     data: { sessionId: seededSessionId, question: 'mount lane smoke' },
   })
   expect(start.ok(), `sidechat.start: ${start.status()} ${await start.text()}`).toBe(true)
@@ -325,21 +309,14 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // The child must be a REAL session in the host's store (provider-free
   // proof of the custom-seed creation; the boundary message itself only
   // becomes durable when a turn claims it, which needs a model route).
-  const list = await api.post(`${BASE_URL}/api/session.list`, {
-    data: { type: 'client-request', rpcId: 'e2e-sidechat-list', method: 'session.list', payload: {} },
-  })
-  expect(list.ok(), `session.list: ${list.status()} ${await list.text()}`).toBe(true)
-  const listBody = (await list.json()) as {
-    result: { ok: true; value: { items: Array<{ sessionId: string }> } } | { ok: false; error: unknown }
-  }
-  expect(listBody.result.ok, `session.list envelope: ${JSON.stringify(listBody)}`).toBe(true)
-  const listedItems = (listBody.result as { value: { items: Array<{ sessionId: string }> } }).value.items
+  const list = await hostRpc<{ items: Array<{ sessionId: string }> }>(api, 'session.list', {})
+  const listedItems = list.value.items
   expect(
     listedItems.some(item => item.sessionId === childId),
     'the thread child must appear in the host session list',
   ).toBe(true)
   for (const method of ['sidechat.prompt', 'sidechat.cancel', 'sidechat.dispose']) {
-    const response = await api.post(`${BASE_URL}/sidebar/api/${method}`, {
+    const response = await api.post(sidebarApi(method), {
       data: method === 'sidechat.prompt' ? { childId, text: 'follow-up' } : { childId },
     })
     expect(response.ok(), `${method}: ${response.status()} ${await response.text()}`).toBe(true)
@@ -348,14 +325,14 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // The Codex-style immediate-create flow: a blank question creates an
   // EMPTY thread (no prompt admitted), sidechat.info reports the live
   // agent, and the first prompt delivers the boundary host-side.
-  const empty = await api.post(`${BASE_URL}/sidebar/api/sidechat.start`, {
+  const empty = await api.post(sidebarApi('sidechat.start'), {
     data: { sessionId: seededSessionId, question: '' },
   })
   expect(empty.ok(), `sidechat.start (empty): ${empty.status()} ${await empty.text()}`).toBe(true)
   const emptyBody = (await empty.json()) as { ok: boolean; value?: { childId?: string } }
   const emptyChildId = emptyBody.value?.childId
   expect(emptyChildId, 'immediate create must return a child session id').toMatch(/^session-/)
-  const info = await api.post(`${BASE_URL}/sidebar/api/sidechat.info`, {
+  const info = await api.post(sidebarApi('sidechat.info'), {
     data: { childId: emptyChildId },
   })
   expect(info.ok(), `sidechat.info: ${info.status()} ${await info.text()}`).toBe(true)
@@ -363,7 +340,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   expect(infoBody.ok, `sidechat.info envelope: ${JSON.stringify(infoBody)}`).toBe(true)
   expect(infoBody.value?.live, 'the fresh thread must have a live agent').toBe(true)
   for (const method of ['sidechat.prompt', 'sidechat.dispose']) {
-    const response = await api.post(`${BASE_URL}/sidebar/api/${method}`, {
+    const response = await api.post(sidebarApi(method), {
       data: method === 'sidechat.prompt' ? { childId: emptyChildId, text: 'first message' } : { childId: emptyChildId },
     })
     expect(response.ok(), `${method} (immediate thread): ${response.status()} ${await response.text()}`).toBe(true)
@@ -559,7 +536,7 @@ test('conservative auto: URL stamps alone never modify the layout; plugin chrome
   // Window Controls Overlay API the layout must stay untouched (plain-web
   // semantics) — the strip/body attribute appear only for real standard
   // geometry (see the WCO scenario below) or an opt-in preset.
-  await page.goto(`${BASE_URL}?dsh-desktop-mode=advanced&dsh-desktop-platform=win32`, { waitUntil: 'domcontentloaded' })
+  await gotoPage(page, { 'dsh-desktop-mode': 'advanced', 'dsh-desktop-platform': 'win32' })
   await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
   await expect(
     page.locator('body[data-dsh-title-bar-compat]'),
@@ -607,7 +584,7 @@ test('standard WCO geometry drives the strip reactively (issue #257)', async ({ 
       },
     }
   })
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
   // Real reported height (36px, not a hardcoded 32) drives the strip.
   await expect(page.locator('body[data-dsh-title-bar-compat]')).toBeAttached({ timeout: 90_000 })
@@ -629,12 +606,12 @@ test('opt-in shell preset applies its strip when WCO is absent (data-driven, man
   // The anywhere-labs DSH Desktop preset (shell-presets.ts) is OPT-IN: under
   // the preset scheme the win32 advanced stamp resolves to its 32px fallback
   // even without the WCO API; auto never does this.
-  const update = await request.post(`${BASE_URL}/sidebar/api/settings.update`, {
+  const update = await request.post(sidebarApi('settings.update'), {
     data: { patch: { titleBarScheme: 'preset', titleBarPresetId: 'dsh-desktop', titleBarCompat: true } },
   })
   expect(update.ok(), `settings.update: ${update.status()}`).toBe(true)
   try {
-    await page.goto(`${BASE_URL}?dsh-desktop-mode=advanced&dsh-desktop-platform=win32`, { waitUntil: 'domcontentloaded' })
+    await gotoPage(page, { 'dsh-desktop-mode': 'advanced', 'dsh-desktop-platform': 'win32' })
     await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
     await expect(page.locator('body[data-dsh-title-bar-compat]')).toBeAttached({ timeout: 90_000 })
     await expect
@@ -647,26 +624,26 @@ test('opt-in shell preset applies its strip when WCO is absent (data-driven, man
     await expect(page.locator('style[data-dsh-preset-css]')).toHaveCount(0)
   } finally {
     // Restore the shared server state for the lanes after this one.
-    await request.post(`${BASE_URL}/sidebar/api/settings.update`, {
+    await request.post(sidebarApi('settings.update'), {
       data: { patch: { titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false } },
     })
   }
 })
 
 test('custom scheme injects the user stylesheet live', async ({ request, page }) => {
-  const update = await request.post(`${BASE_URL}/sidebar/api/settings.update`, {
+  const update = await request.post(sidebarApi('settings.update'), {
     data: { patch: { titleBarScheme: 'custom', customCss: 'html { --dsh-e2e-marker: 1; }', titleBarCompat: true } },
   })
   expect(update.ok(), `settings.update: ${update.status()}`).toBe(true)
   try {
-    await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+    await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
     await expect(page.locator('[data-dsh-better-sidebar]')).toBeAttached({ timeout: 90_000 })
     await expect(page.locator('style[data-dsh-custom-css="custom"]')).toBeAttached()
     // The injected CSS is live (a custom property the page can read back).
     const marker = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--dsh-e2e-marker').trim())
     expect(marker).toBe('1')
   } finally {
-    await request.post(`${BASE_URL}/sidebar/api/settings.update`, {
+    await request.post(sidebarApi('settings.update'), {
       data: { patch: { titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false } },
     })
   }
