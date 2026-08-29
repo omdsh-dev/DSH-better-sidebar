@@ -182,6 +182,7 @@ export const th: Record<string, string> = {
   gitDetail: 'ดูรายละเอียดการเปลี่ยนแปลง',
   referenceFile: '@ไฟล์',
   addToConversation: 'เพิ่มไปยังแชท',
+  rename: 'เปลี่ยนชื่อ',
   copyRelative: 'คัดลอกพาธสัมพัทธ์',
   copyAbsolute: 'คัดลอกพาธ absolute',
   download: 'ดาวน์โหลด',

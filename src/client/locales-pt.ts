@@ -165,6 +165,7 @@ export const pt: Record<string, string> = {
   gitDetail: 'Ver detalhes das alterações',
   referenceFile: '@arquivo',
   addToConversation: 'Adicionar à conversa',
+  rename: 'Renomear',
   copyRelative: 'Copiar caminho relativo',
   copyAbsolute: 'Copiar caminho absoluto',
   download: 'Baixar',

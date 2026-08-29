@@ -184,6 +184,7 @@ export const pl: Record<string, string> = {
   gitDetail: 'Zobacz szczegóły zmian',
   referenceFile: '@plik',
   addToConversation: 'Dodaj do rozmowy',
+  rename: 'Zmień nazwę',
   copyRelative: 'Kopiuj ścieżkę względną',
   copyAbsolute: 'Kopiuj ścieżkę bezwzględną',
   download: 'Pobierz',

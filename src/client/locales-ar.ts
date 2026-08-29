@@ -183,6 +183,7 @@ export const ar: Record<string, string> = {
   gitDetail: 'عرض تفاصيل التغيير',
   referenceFile: '@ملف',
   addToConversation: 'إضافة إلى المحادثة',
+  rename: 'إعادة تسمية',
   copyRelative: 'نسخ المسار النسبي',
   copyAbsolute: 'نسخ المسار المطلق',
   download: 'تنزيل',

@@ -180,6 +180,7 @@ export const id: Record<string, string> = {
   gitDetail: 'Lihat detail perubahan',
   referenceFile: '@berkas',
   addToConversation: 'Tambahkan ke obrolan',
+  rename: 'Ganti nama',
   copyRelative: 'Salin path relatif',
   copyAbsolute: 'Salin path absolut',
   download: 'Unduh',

@@ -165,6 +165,7 @@ export const sv: Record<string, string> = {
   gitDetail: 'Visa ändringsdetaljer',
   referenceFile: '@fil',
   addToConversation: 'Lägg till i konversation',
+  rename: 'Byt namn',
   copyRelative: 'Kopiera relativ sökväg',
   copyAbsolute: 'Kopiera absolut sökväg',
   download: 'Ladda ner',

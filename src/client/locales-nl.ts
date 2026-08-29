@@ -180,6 +180,7 @@ export const nl: Record<string, string> = {
   gitDetail: 'Wijzigingsdetails bekijken',
   referenceFile: '@bestand',
   addToConversation: 'Aan conversatie toevoegen',
+  rename: 'Hernoemen',
   copyRelative: 'Relatief pad kopiëren',
   copyAbsolute: 'Absoluut pad kopiëren',
   download: 'Downloaden',

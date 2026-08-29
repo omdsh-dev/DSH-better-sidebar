@@ -182,6 +182,7 @@ export const vi: Record<string, string> = {
   gitDetail: 'Xem chi tiết thay đổi',
   referenceFile: '@tệp',
   addToConversation: 'Thêm vào cuộc trò chuyện',
+  rename: 'Đổi tên',
   copyRelative: 'Sao chép đường dẫn tương đối',
   copyAbsolute: 'Sao chép đường dẫn tuyệt đối',
   download: 'Tải xuống',

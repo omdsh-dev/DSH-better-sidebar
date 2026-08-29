@@ -38,6 +38,20 @@ export async function ensureWorkspacePath(cwd: string, target: string): Promise<
 }
 
 /**
+ * Reject a rename target name that would escape its directory or be
+ * meaningless: must be a single non-empty path segment (no separators), and
+ * not `.` / `..`. The name is a *segment*, never a path — the caller joins
+ * it under the source's parent directory.
+ */
+export function validateRenameName(name: string): void {
+  if (name === '') throw new SidebarError('fs-error', 'rename name must not be empty', 400)
+  if (name === '.' || name === '..') throw new SidebarError('fs-error', `invalid rename name "${name}"`, 400)
+  if (name.includes('/') || name.includes('\\')) {
+    throw new SidebarError('fs-error', 'rename name must not contain path separators', 400)
+  }
+}
+
+/**
  * Validate a write destination, including destinations that do not exist yet.
  * Existing targets are resolved to catch symlinks; missing targets are checked
  * against the nearest existing ancestor before the caller creates or renames.

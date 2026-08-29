@@ -1003,6 +1003,27 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: nowrap;
 }
 
+/* The in-place rename input: a compact token-driven edit box replacing the
+   row's name span while renaming (Enter commits / Escape cancels / blur
+   cancels). Inherits the row's ink family; row clicks are stopped at the
+   input so the tree row itself never opens on accident. */
+.explorerRenameInput {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-14);
+  outline: none;
+}
+
+.explorerRenameInput:focus {
+  border-color: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
 /* The hover-revealed @-reference button at the row's far right (and the
    transient "copied" label that replaces it after a copy). Hidden rows
    keep the name at full width; hovering or focusing the row reveals it. */

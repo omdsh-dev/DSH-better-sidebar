@@ -182,6 +182,7 @@ export const tr: Record<string, string> = {
   gitDetail: 'Değişiklik ayrıntılarını görüntüle',
   referenceFile: '@dosya',
   addToConversation: 'Sohbete ekle',
+  rename: 'Yeniden adlandır',
   copyRelative: 'Göreli yolu kopyala',
   copyAbsolute: 'Mutlak yolu kopyala',
   download: 'İndir',

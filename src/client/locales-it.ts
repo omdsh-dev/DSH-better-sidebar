@@ -173,6 +173,7 @@ export const it: Record<string, string> = {
   gitDetail: 'Vedi i dettagli delle modifiche',
   referenceFile: '@file',
   addToConversation: 'Aggiungi alla conversazione',
+  rename: 'Rinomina',
   copyRelative: 'Copia percorso relativo',
   copyAbsolute: 'Copia percorso assoluto',
   download: 'Scarica',

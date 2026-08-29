@@ -174,6 +174,7 @@ export const ko: Record<string, string> = {
   gitDetail: '변경 사항 세부 정보 보기',
   referenceFile: '@파일',
   addToConversation: '대화에 추가',
+  rename: '이름 바꾸기',
   copyRelative: '상대 경로 복사',
   copyAbsolute: '절대 경로 복사',
   download: '다운로드',

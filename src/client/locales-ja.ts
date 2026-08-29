@@ -182,6 +182,7 @@ export const ja: Record<string, string> = {
   gitDetail: '変更詳細を表示',
   referenceFile: '@ファイル',
   addToConversation: '会話に追加',
+  rename: '名前を変更',
   copyRelative: '相対パスをコピー',
   copyAbsolute: '絶対パスをコピー',
   download: 'ダウンロード',

@@ -197,6 +197,7 @@ export const zhMO: Record<string, string> = {
   gitDetail: '檢視變更詳情',
   referenceFile: '@檔案',
   addToConversation: '新增到對話',
+  rename: '重新命名',
   copyRelative: '複製相對位址',
   copyAbsolute: '複製絕對位址',
   download: '下載',

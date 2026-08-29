@@ -13,7 +13,7 @@
  * session's authoritative cwd comes from the session store, and terminal
  * processes are keyed by session.
  */
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
@@ -31,7 +31,7 @@ import {
 } from './config.ts'
 import { parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
 import { writeWorkspaceUpload } from './fs-operations.ts'
-import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
+import { ensureWorkspacePath, ensureWorkspaceWritePath, validateRenameName } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
@@ -375,6 +375,31 @@ function buildApi(
       const { content, truncated, binary, size, head } = await readText(path, resolved.readLimit)
       if (binary) return { kind: 'binary', size, truncated, head }
       return { kind: 'text', content, truncated }
+    },
+    'fs.rename': async (payload) => {
+      const { cwd } = await cwdOf(payload)
+      // The source is an existing workspace path (symlink-resolved so a
+      // rename can never relocate a symlink out of the workspace).
+      const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'))
+      const name = requireString(payload, 'newName').trim()
+      validateRenameName(name)
+      try {
+        const target = join(dirname(path), name)
+        if (target !== path) {
+          // Refuse to silently overwrite an existing target (POSIX rename
+          // clobbers it); a same-file hit is fine — Windows case-only
+          // renames resolve to the same canonical path as the source.
+          const existing = await realpath(target).catch(() => null)
+          if (existing !== null && existing !== path) {
+            throw new SidebarError('fs-error', `cannot rename "${path}" to "${target}": target already exists`, 409)
+          }
+          await rename(path, target)
+        }
+        return { ok: true, path: target }
+      } catch (error) {
+        if (error instanceof SidebarError) throw error
+        throw new SidebarError('fs-error', `cannot rename "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+      }
     },
     'fs.write': async (payload) => {
       const { cwd } = await cwdOf(payload)
