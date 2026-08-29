@@ -241,9 +241,12 @@ export const api = {
       ...(count !== undefined ? { count } : {}),
       ...(skip !== undefined ? { skip } : {}),
     }), signal),
-  /** Full patch text of one commit (diff display for the history rows). */
-  gitCommitDiff: (scope: SessionScope, hash: string, worktree?: string, signal?: AbortSignal) =>
-    call<{ diff: string }>('git.commit-diff', gitPayload(scope, worktree, { hash }), signal),
+  /** Full patch text of one commit (diff display for the history rows). When `path` is given the diff is limited to that file. */
+  gitCommitDiff: (scope: SessionScope, hash: string, worktree?: string, path?: string, signal?: AbortSignal) =>
+    call<{ diff: string }>('git.commit-diff', gitPayload(scope, worktree, { ...(path !== undefined ? { path } : {}), hash }), signal),
+  /** The most recent commit that touched `path` (file-limited last-commit probe for the edit→commit fallback). */
+  gitLastCommitAt: (scope: SessionScope, path: string, signal?: AbortSignal) =>
+    call<{ commit: { hash: string; hashFull: string; subject: string; repoRoot: string } | null }>('git.last-commit-at', scopePayload(scope, { path }), signal),
   /** Discard the worktree changes of one file (the index is untouched). */
   gitDiscard: (scope: SessionScope, path: string, worktree?: string) =>
     call<{ ok: true }>('git.discard', gitPayload(scope, worktree, { path })),

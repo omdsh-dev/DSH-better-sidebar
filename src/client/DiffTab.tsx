@@ -41,7 +41,7 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
     const load = async (): Promise<void> => {
       try {
         if (diff.kind === 'commit') {
-          const result = await api.gitCommitDiff(scope, diff.hashFull, diff.worktree)
+          const result = await api.gitCommitDiff(scope, diff.hashFull, diff.worktree, diff.kind === 'commit' ? diff.path : undefined)
           if (!cancelled) setData({ diff: result.diff })
           return
         }

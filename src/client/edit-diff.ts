@@ -69,3 +69,36 @@ export function buildEditDiffTab(relative: string, repoRoot: string, untracked: 
     diff: { kind: 'worktree', path: relative, staged: false, untracked, repoRoot },
   }
 }
+
+/**
+ * Build the commit-diff tab seed for the edit→commit fallback. When the file
+ * has no unstaged change, the most recent commit that touched it is shown
+ * instead, limited to that single file.
+ *
+ * @param input.relative - Repo-root-relative path of the edited file.
+ * @param input.repoRoot - Absolute repository root that owns the file.
+ * @param input.hash - Short hash of the last touching commit.
+ * @param input.hashFull - Full hash of the last touching commit.
+ * @param input.subject - Subject line of the last touching commit.
+ * @returns The openTab seed (id is overwritten by the caller to `chat-preview`).
+ */
+export function buildCommitDiffTab(input: {
+  relative: string
+  repoRoot: string
+  hash: string
+  hashFull: string
+  subject: string
+}): OpenTabSeed {
+  return {
+    type: 'diff',
+    title: baseName(input.relative),
+    diff: {
+      kind: 'commit',
+      hash: input.hash,
+      hashFull: input.hashFull,
+      subject: input.subject,
+      path: input.relative,
+      repoRoot: input.repoRoot,
+    },
+  }
+}

@@ -13,7 +13,8 @@ import { t } from './locales.ts'
 import { resolveSidebarPath, selectProducedFiles } from './produced-files.ts'
 import { wrapOpenPath } from './openpath-intercept.ts'
 import { api } from './api.ts'
-import { buildEditDiffTab, deriveEditDiffTarget } from './edit-diff.ts'
+import { buildCommitDiffTab, buildEditDiffTab, deriveEditDiffTarget } from './edit-diff.ts'
+import { relativeTo } from './paths.ts'
 import { applyChatPreview, CHAT_PREVIEW_TAB_ID } from './chat-preview.ts'
 import css from './sidebar.module.css'
 
@@ -69,6 +70,25 @@ export async function openSidebarFile(ctx: Context, store: SidebarStore, session
       if (target !== null) {
         const seed = buildEditDiffTab(target.relative, target.repoRoot, target.untracked)
         previewTab = { ...seed, id: CHAT_PREVIEW_TAB_ID, title: seed.title ?? target.relative.split('/').pop() ?? target.relative } as import('./state.ts').SidebarTab
+      } else {
+        try {
+          const last = await api.gitLastCommitAt(scope, absolute)
+          if (last.commit !== null) {
+            const rel = relativeTo(last.commit.repoRoot, absolute)
+            if (rel !== '.' && rel !== absolute) {
+              const seed = buildCommitDiffTab({
+                relative: rel,
+                repoRoot: last.commit.repoRoot,
+                hash: last.commit.hash,
+                hashFull: last.commit.hashFull,
+                subject: last.commit.subject,
+              })
+              previewTab = { ...seed, id: CHAT_PREVIEW_TAB_ID, title: seed.title ?? rel.split('/').pop() ?? rel } as import('./state.ts').SidebarTab
+            }
+          }
+        } catch {
+          // Last-commit probe failed (network, not a repo, fence): fall through to editor.
+        }
       }
     } catch {
       // Probe failed (network, not a repo, host degraded): fall through to editor preview.

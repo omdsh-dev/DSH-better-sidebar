@@ -14,7 +14,7 @@
  * processes are keyed by session.
  */
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, extname, isAbsolute, join } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -282,6 +282,30 @@ function buildApi(
     const requested = typeof record?.worktree === 'string' && record.worktree !== '' ? record.worktree : undefined
     return { sessionId: base.sessionId, cwd: await git.resolveWorktree(base.cwd, requested) }
   }
+  /**
+   * Resolve an externally-selected repository that is not in the discovered
+   * list but still inside the workspace fence. When `repoRoot` names an
+   * external checkout, the fence is checked via `ensureWorkspacePath` and the
+   * canonical root is resolved via `repoRootOf`; callers then run git
+   * directly against that root instead of silently falling back to the
+   * session's first discovered repository. Returns the canonical external
+   * root when the fence passes, or undefined when the selection is known or
+   * absent (caller uses the discovered-root path).
+   */
+  const resolveDiffRepo = async (cwd: string, payload: unknown): Promise<string | undefined> => {
+    const repoRoot = selectedRepoOf(payload)
+    if (repoRoot === undefined) return undefined
+    const roots = await git.repoRoots(cwd)
+    const isKnown = roots.some(root => git.pathIdentity(root) === git.pathIdentity(repoRoot))
+    if (isKnown) return undefined
+    await ensureWorkspacePath(cwd, repoRoot, resolved.extraRoots)
+    const actual = await git.repoRootOf(repoRoot)
+    if (actual === undefined) {
+      throw new git.GitCommandError(`not a git repository: ${repoRoot}`, 'not-repo', 'rev-parse')
+    }
+    return actual
+  }
+
   // Background jobs: the LIST rides the harness's `session/jobs` push
   // mirror, so these routes only replay output the model has read (from the
   // session's own event log — no DSH source is touched, the model's
@@ -362,35 +386,30 @@ function buildApi(
     'git.diff': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       const record = payload as { path?: unknown; staged?: unknown }
-      const repoRoot = selectedRepoOf(payload)
-      const hasPath = record.path !== undefined
-      const rawPath = hasPath ? requireString(payload, 'path') : undefined
-      if (repoRoot !== undefined) {
-        const roots = await git.repoRoots(cwd)
-        const isKnown = roots.some(root => git.pathIdentity(root) === git.pathIdentity(repoRoot))
-        if (!isKnown) {
-          await ensureWorkspacePath(cwd, repoRoot, resolved.extraRoots)
-          const actual = await git.repoRootOf(repoRoot)
-          if (actual === undefined) {
-            throw new git.GitCommandError(`not a git repository: ${repoRoot}`, 'not-repo', 'rev-parse')
-          }
-          let path: string | undefined
-          if (rawPath !== undefined) {
-            if (isAbsolute(rawPath)) {
-              path = requireAbsolute(rawPath)
-            } else {
-              // Attempts to resolve relative paths against the external repo root
-              // directly, instead of the session cwd, so a file like
-              // "src/a.ts" inside the external checkout does not silently fall
-              // back to the session's first discovered root.
-              path = requireAbsolute(join(actual, rawPath))
-            }
-          }
-          return { diff: await git.diff(actual, path, record.staged === true) }
+      const rawPath = record.path !== undefined ? requireString(payload, 'path') : undefined
+      const actual = await resolveDiffRepo(cwd, payload)
+      if (actual !== undefined) {
+        let path: string | undefined
+        if (rawPath !== undefined) {
+          path = isAbsolute(rawPath) ? requireAbsolute(rawPath) : requireAbsolute(join(actual, rawPath))
         }
+        return { diff: await git.diff(actual, path, record.staged === true) }
       }
+      const repoRoot = selectedRepoOf(payload)
       const path = rawPath === undefined ? undefined : await resolveGitPath(cwd, rawPath, repoRoot)
       return { diff: await git.diff(cwd, path, record.staged === true, repoRoot) }
+    },
+    'git.last-commit-at': async (payload) => {
+      const { cwd } = cwdOf(payload)
+      const raw = requireString(payload, 'path')
+      const absolute = await ensureWorkspacePath(cwd, raw, resolved.extraRoots)
+      const root = await git.repoRootOf(absolute)
+      if (root === undefined) return { commit: null }
+      const rel = relative(root, absolute).replace(/\\/g, '/')
+      if (rel === '' || rel === '.' ) return { commit: null }
+      const commit = await git.lastCommitTouching(root, rel)
+      if (commit === undefined) return { commit: null }
+      return { commit: { ...commit, repoRoot: root } }
     },
     'git.stage': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
@@ -434,7 +453,26 @@ function buildApi(
     },
     'git.commit-diff': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
-      return { diff: await git.commitDiff(cwd, requireString(payload, 'hash'), selectedRepoOf(payload)) }
+      const hash = requireString(payload, 'hash')
+      const record = payload as { path?: unknown }
+      const rawPath = typeof record.path === 'string' ? record.path : undefined
+      const actual = await resolveDiffRepo(cwd, payload)
+      if (actual !== undefined) {
+        let path: string | undefined
+        if (rawPath !== undefined) {
+          path = isAbsolute(rawPath) ? requireAbsolute(rawPath) : requireAbsolute(join(actual, rawPath))
+        }
+        return { diff: await git.commitDiff(actual, hash, undefined, path) }
+      }
+      const repoRoot = selectedRepoOf(payload)
+      const path = rawPath === undefined ? undefined : await resolveGitPath(cwd, rawPath, repoRoot)
+      // `path` is already resolved to an absolute workspace path; pass it through
+      // so `commitDiff` appends `-- <path>` with option-injection protection.
+      // For the non-external case `resolveGitPath` collapses repo-relative
+      // names (e.g. `src/a.ts`) against the selected repository root, so the
+      // git command still receives a concrete file filter.
+      const commitPath = rawPath === undefined ? undefined : path
+      return { diff: await git.commitDiff(cwd, hash, repoRoot, commitPath) }
     },
     'git.discard': async (payload) => {
       const { cwd } = await gitCwdOf(payload)

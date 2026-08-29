@@ -69,6 +69,17 @@ function terminalUuid(): string {
   return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
 }
 
+/**
+ * A client-side uuid safe on plain-HTTP LAN pages: crypto.randomUUID is a
+ * secure-context API, so fall back to a time/random id when absent.
+ */
+function clientUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
+}
+
 /** Count UI-owned terminals (agent:` tabs excluded — they are the model's). */
 function uiTerminalCount(state: SidebarState): number {
   return allLeaves(state.splits)
@@ -198,7 +209,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
         }
         return {
           tab: {
-            id: `sidechat:new-${crypto.randomUUID()}`,
+            id: `sidechat:new-${clientUuid()}`,
             type: 'sidechat',
             title: t('sideChatUntitled'),
             meta: { autoCreate: true },

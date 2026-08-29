@@ -454,8 +454,39 @@ export async function show(cwd: string, rev: string, path: string, selected?: st
 /** Full patch text of one commit (`git show` with the commit header suppressed).
  *  Merge commits show their diff against the first parent (`-m --first-parent`
  *  is a no-op for regular commits), so a history click always has content. */
-export async function commitDiff(cwd: string, hash: string, selected?: string): Promise<string> {
-  return runGit(await repoRoot(cwd, selected), ['show', '--no-ext-diff', '--no-color', '--format=', '-m', '--first-parent', hash])
+export async function commitDiff(cwd: string, hash: string, selected?: string, path?: string): Promise<string> {
+  const args = ['show', '--no-ext-diff', '--no-color', '--format=', '-m', '--first-parent', hash]
+  if (path !== undefined) args.push('--', path)
+  return runGit(await repoRoot(cwd, selected), args)
+}
+
+/**
+ * The most recent commit that touched `relativePath` inside `root`.
+ *
+ * Runs `git -C <root> log -1 --pretty=format:%h%x1f%H%x1f%s -- <relativePath>`
+ * (the `--` separator prevents option injection when the path starts with `-`).
+ * Returns the short hash, full hash, and subject of that commit, or undefined
+ * when the repository has no commit touching the path or the git probe fails.
+ *
+ * @param root - Absolute repository root (already validated via `repoRootOf`).
+ * @param relativePath - Repository-root-relative path with `/` separators.
+ * @returns The most recent touching commit, or undefined when none exists.
+ */
+export async function lastCommitTouching(
+  root: string,
+  relativePath: string,
+): Promise<{ hash: string; hashFull: string; subject: string } | undefined> {
+  try {
+    const output = await runGit(root, ['log', '-1', '--pretty=format:%h%x1f%H%x1f%s', '--', relativePath])
+    const trimmed = output.trim()
+    if (trimmed === '') return undefined
+    const [hash, hashFull, subject] = trimmed.split('\x1f')
+    if (hash === undefined || hashFull === undefined || subject === undefined) return undefined
+    if (hash === '' || hashFull === '') return undefined
+    return { hash, hashFull, subject }
+  } catch {
+    return undefined
+  }
 }
 
 /** Discard the worktree changes of one path (`git checkout -- <path>`; the index is untouched). */
