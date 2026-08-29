@@ -34,6 +34,15 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/Fisfzy/ego-browser.git',
   },
   {
+    id: 'dsh-better-overleaf',
+    name: 'dsh-better-overleaf Overleaf 标签页',
+    url: 'https://github.com/Hoemr/dsh-better-overleaf',
+    description: () => t('pluginBetterOverleafDesc'),
+    // Published on npm; peer-depends on dsh-better-sidebar (Overleaf tab),
+    // so the install line installs the prerequisite first.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-better-overleaf',
+  },
+  {
     id: 'dsh-docs-panel',
     name: 'dsh-docs-panel 全局文档',
     url: 'https://github.com/mlosun/dsh-docs-panel',
@@ -68,6 +77,16 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/yq04/dsh-git-remotes.git',
   },
   {
+    id: 'dsh-github-workbench',
+    name: 'dsh-github-workbench GitHub 工作台',
+    url: 'https://github.com/meyaomiao/dsh-github-workbench',
+    description: () => t('pluginGithubWorkbenchDesc'),
+    // Full GitHub workbench tab: remote repo tree + Issues/PRs/Actions tabs
+    // with write support (create/comment/merge/re-run). lib/ is committed,
+    // so the pinned github:-form install works without a local build.
+    install: 'cd ~/.dsh && dsh plugin --profile web add "github:meyaomiao/dsh-github-workbench#v0.1.0"',
+  },
+  {
     id: 'dsh-sidebar-qa',
     name: 'dsh-sidebar-qa 划选追问',
     url: 'https://github.com/ChenRuoT/dsh-sidebar-qa',
@@ -75,6 +94,34 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     // dsh-sidebar-qa hard-depends on dsh-better-sidebar (required peer), so
     // the install line installs the prerequisite first, then the plugin.
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/ChenRuoT/dsh-sidebar-qa.git',
+  },
+  {
+    id: 'dsh-sidenote',
+    name: 'dsh-sidenote 侧边聊天',
+    url: 'https://github.com/g-yixuan/dsh-sidenote',
+    description: () => t('pluginSidenoteDesc'),
+    // dsh-sidenote hard-depends on dsh-better-sidebar (required peer), so
+    // the install line installs the prerequisite first, then the plugin.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-sidenote',
+  },
+  {
+    id: 'dsh-server-deck',
+    name: 'dsh-server-deck 服务器甲板',
+    url: 'https://github.com/meyaomiao/DSH-server-deck',
+    description: () => t('pluginServerDeckDesc'),
+    // Published on npm; dual-mount like flowglass — registers the native
+    // "Servers" tab when better-sidebar is present, standalone drawer
+    // otherwise. Install the prerequisite first.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-server-deck@latest',
+  },
+  {
+    id: 'dsh-suhuang-scroll',
+    name: 'dsh-suhuang-scroll 苏黄共阅',
+    url: 'https://github.com/YZDame/dsh-suhuang-scroll',
+    description: () => t('pluginSuhuangScrollDesc'),
+    // Suhuang Scroll is a DSH Web plugin whose runtime console registers in
+    // better-sidebar. Install the sidebar prerequisite before the npm package.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-suhuang-scroll',
   },
   {
     id: 'dsh-ssh-tunnel',
@@ -92,5 +139,15 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     description: () => t('pluginTurnReviewDesc'),
     // Needs dsh-better-sidebar (optional peer) for the tab; no model tools.
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/yq04/dsh-turn-review.git',
+  },
+  {
+    id: 'dsh-bilingual-reader',
+    name: 'dsh-bilingual-reader 双语阅读',
+    url: 'https://github.com/Johnblur/dsh-bilingual-reader',
+    description: () => t('pluginBilingualReaderDesc'),
+    // Bilingual paper reading: a native-PDF tab with LLM selection translation,
+    // isolated from the main conversation context. Hard-depends on the
+    // better-sidebar tab service, so install the prerequisite first.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add github:Johnblur/dsh-bilingual-reader',
   },
 ]
