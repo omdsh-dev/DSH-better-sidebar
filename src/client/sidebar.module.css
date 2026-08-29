@@ -1546,6 +1546,13 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: nowrap;
 }
 
+.sandboxActions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .sandboxAction {
   flex: none;
   padding: 2px 8px;
@@ -1557,8 +1564,13 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   cursor: pointer;
 }
 
-.sandboxAction:hover {
+.sandboxAction:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.sandboxAction:disabled {
+  opacity: 0.5;
+  cursor: wait;
 }
 
 /* The HTML preview iframe: fills the editor body. Route-src (never srcdoc)

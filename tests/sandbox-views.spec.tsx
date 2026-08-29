@@ -5,7 +5,8 @@
  * boundary of both features; these tests pin the exact attribute so a
  * refactor cannot silently widen it. The side card settings can drop the
  * sandbox per-feature (warned); those paths render the warning bar and no
- * sandbox attribute.
+ * sandbox attribute. The browser status row also exposes that setting as a
+ * persistent/global switch.
  */
 import { describe, expect, it, beforeEach } from 'vitest'
 import { renderToString } from 'react-dom/server'
@@ -157,11 +158,12 @@ describe('browser tab iframe sandbox', () => {
     expect(iframeSandboxFor('https://example.com/', '', guiOrigin)).toBe(BROWSER_IFRAME_SANDBOX)
   })
 
-  it('renders the live sandbox status row with the temporary unlock action', () => {
+  it('renders the live sandbox status row with temporary and global controls', () => {
     const store = createSidebarStore()
     const html = renderToString(createElement(BrowserView, tabProps(store, 'https://example.com/')))
     expect(html).toContain('沙箱模式：已启用')
     expect(html).toContain('临时解锁（不安全）')
+    expect(html).toContain('关闭浏览器沙箱（不安全）')
   })
 
   it('offers the open-in-browser action once a URL is loaded (disabled before navigation)', () => {
@@ -176,7 +178,7 @@ describe('browser tab iframe sandbox', () => {
     expect(loaded).not.toContain('title="在浏览器中打开" disabled=""')
   })
 
-  it('drops the sandbox attribute with the red warning when the setting is on (no restore action — the global setting owns it)', () => {
+  it('drops the sandbox attribute with the red warning and offers a global restore', () => {
     const store = createSidebarStore()
     store.setPrefs({ ...store.getPrefs(), browserNoSandbox: true })
     const html = renderToString(createElement(BrowserView, tabProps(store, 'https://example.com/')))
@@ -185,7 +187,7 @@ describe('browser tab iframe sandbox', () => {
     expect(iframe).not.toContain('sandbox=')
     expect(html).toContain('沙箱已关闭')
     expect(html).not.toContain('临时解锁（不安全）')
-    expect(html).not.toContain('恢复沙箱')
+    expect(html).toContain('恢复沙箱')
   })
 })
 
