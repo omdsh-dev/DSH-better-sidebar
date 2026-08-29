@@ -172,6 +172,61 @@
   transition: none;
 }
 
+/* ── Narrow (mobile) toggle button visibility ─────────────────────────── */
+/* On narrow viewports the right panel is a full-width drawer. The persistent
+   toggle cluster at the top-right corner uses a 28px transparent circle with
+   a secondary-color panel glyph — nearly invisible on touch devices. Bump it
+   to a 40×40 touch target styled like the native header buttons. */
+@media (max-width: 767px) {
+  /* Hide the shell's "new session" button on mobile — the sidebar toggle
+     takes its place so there's exactly one button in the top-right corner. */
+  :global(.dsh-header-new-btn) {
+    display: none !important;
+  }
+
+  :global([data-dsh-toggle-cluster]).toggleCluster {
+    /* The DSH shell hides div[class*="toggleCluster"] on mobile with
+       display:none!important. The attribute+class selector has higher
+       specificity (0,2,0 > 0,1,1) so our !important wins regardless of
+       cascade order. Position: top-right, exactly where the hidden
+       new-session button was. */
+    display: flex !important;
+    top: calc(6px + env(safe-area-inset-top));
+    right: 16px;
+  }
+
+  .toggleButton {
+    width: 40px;
+    height: 40px;
+    background: transparent;
+    color: var(--dsw-alias-label-primary);
+    justify-content: flex-end;
+    opacity: 0.6;
+  }
+
+  .toggleButton svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .toggleButton:hover:not(:disabled):not([aria-disabled='true']) {
+    background: transparent;
+    color: var(--dsw-alias-label-primary);
+    opacity: 1;
+  }
+
+  /* The toggle button at right:16px + 40px width occupies right:16-56px;
+     52px keeps tab close buttons clear of it. */
+  .panel:not(.panelHidden) .tabBar {
+    padding-right: 52px;
+  }
+
+  /* Make room for the toggle button in the file tree search bar. */
+  .editorTreeSearch {
+    padding-right: 60px;
+  }
+}
+
 .panelResize {
   position: absolute;
   /* Centered on the panel edge (an 8px hit strip straddling the border, the
@@ -2736,10 +2791,12 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 @media (max-width: 767px) {
   /* The toggle cluster holds a single button on narrow viewports (the
      bottom panel button is not rendered), so the open panel's tab strip
-     reserves 40px instead of the desktop 72px — the tabs and + menu still
-     yield space to the one remaining control. */
+     reserves 52px instead of the desktop 72px — the tabs and + menu still
+     yield space to the one remaining control. The 40px toggle button at
+     right:16px occupies 56px from the edge; 52px keeps tab close buttons
+     clear of it. */
   .panel:not(.panelHidden) .tabBar {
-    padding-right: 40px;
+    padding-right: 52px;
   }
 
   /* Narrower tabs: a phone-width drawer fits more open tabs before the
