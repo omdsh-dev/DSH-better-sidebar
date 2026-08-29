@@ -19,6 +19,7 @@ import { createElement, type ReactNode } from 'react'
 import DOMPurify from 'dompurify'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ComponentType } from 'react'
+import { markdownTextProps } from './markdown-labels.tsx'
 import { lazyChunkComponent } from './lazy-chunk.tsx'
 import { resolveLocalMediaDest } from './markdown-images.ts'
 import {
@@ -193,7 +194,7 @@ function MarkdownSegment({ text, hasMermaid, media, codeLabels }: MarkdownSegmen
     <div ref={containerRef}>
       {hasMermaid
         ? <LazyMermaidMarkdown text={text} codeLabels={codeLabels} />
-        : <MarkdownText text={text} codeLabels={codeLabels} />}
+        : <MarkdownText {...markdownTextProps(text, codeLabels)} />}
     </div>
   )
 }

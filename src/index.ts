@@ -105,12 +105,17 @@ export function mediaTypeForPath(path: string): string {
  * header wins; while the session is still hydrating from persistence (the
  * web client attaches the current conversation a moment after page load, so
  * the very first sidebar requests can arrive detached) the caller's own
- * list-summary cwd is used; the process cwd is the last resort (blank
- * sessions have no cwd anywhere yet). Never throws for a missing cwd, so
- * explorer/git/terminal work from first paint instead of surfacing
- * "session ... has no working directory".
+ * list-summary cwd is used; the session-persistence index is queried as a
+ * last resort for cold (not-yet-attached) sessions so a detached first
+ * request still resolves the correct project instead of the host process
+ * cwd (which on Windows is the DSH source root after `dsh.cmd`'s `pushd`,
+ * causing every user-project path to be misclassified as "outside
+ * workspace"). The host process cwd is the FINAL fallback for deployments
+ * without persistence (tests / stripped-down hosts); production always
+ * provides persistence, so the bug-fix path (header → client → persistence)
+ * always resolves the real session cwd before reaching it.
  */
-function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string): string {
+async function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string): Promise<string> {
   const session = ctx.sessions.get(sessionId)
   const headerCwd = session?.header.cwd
   if (headerCwd !== undefined && headerCwd !== '') return headerCwd
@@ -119,6 +124,18 @@ function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string): stri
       return requireAbsolute(clientCwd)
     } catch {
       throw new SidebarError('bad-request', `invalid working directory "${clientCwd}"`)
+    }
+  }
+  const persistence = ctx.get('sessionPersistence')
+  if (persistence !== undefined) {
+    const inspected = await persistence.inspect(sessionId)
+    const metaCwd = inspected.meta.cwd
+    if (metaCwd !== undefined && metaCwd !== '') {
+      try {
+        return requireAbsolute(metaCwd)
+      } catch {
+        throw new SidebarError('bad-request', `invalid working directory "${metaCwd}"`)
+      }
     }
   }
   return process.cwd()
@@ -268,16 +285,16 @@ function buildApi(
   terminalShell: string,
   getSettings: () => SidebarSettingsFace | undefined,
 ): Record<string, ApiMethod> {
-  const cwdOf = (payload: unknown): { sessionId: string; cwd: string } => {
+  const cwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
     const sessionId = requireString(payload, 'sessionId')
     const record = payload as { cwd?: unknown } | null
     const clientCwd = typeof record?.cwd === 'string' && record.cwd !== '' ? record.cwd : undefined
-    return { sessionId, cwd: sessionCwdOf(ctx, sessionId, clientCwd) }
+    return { sessionId, cwd: await sessionCwdOf(ctx, sessionId, clientCwd) }
   }
   /** Resolve the optional Git-panel checkout selector against the authoritative
    * session repository. Unlike `cwd`, `worktree` is never trusted directly. */
   const gitCwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
-    const base = cwdOf(payload)
+    const base = await cwdOf(payload)
     const record = payload as { worktree?: unknown } | null
     const requested = typeof record?.worktree === 'string' && record.worktree !== '' ? record.worktree : undefined
     return { sessionId: base.sessionId, cwd: await git.resolveWorktree(base.cwd, requested) }
@@ -293,12 +310,12 @@ function buildApi(
   // subagent runtime is absent (the page has no topology to show anyway).
   const subagentLiveApi: SidebarSubagentLiveRoutes = buildSubagentLiveApi(ctx)
   return {
-    'session.cwd': (payload) => {
-      const { sessionId, cwd } = cwdOf(payload)
+    'session.cwd': async (payload) => {
+      const { sessionId, cwd } = await cwdOf(payload)
       return { sessionId, cwd, root: rootLabel(cwd), parent: parentOf(cwd) ?? null }
     },
     'fs.tree': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await cwdOf(payload)
       const record = payload as { path?: unknown }
       const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'))
       return listDirectory(target, resolved.listLimit)
@@ -307,12 +324,12 @@ function buildApi(
       // The editor side panel's global name search: rooted at the session
       // cwd (not caller-targetable — the walk is unbounded by design and
       // must never escape the workspace), budgeted inside searchFiles.
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await cwdOf(payload)
       const query = requireString(payload, 'query')
       return searchFiles(cwd, query)
     },
     'fs.read': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await cwdOf(payload)
       // Relative paths are git-derived (status/diff report repo-root-relative
       // names; the untracked diff view reads the file through this route). A
       // child-repo path is relative to the selected repoRoot, not the session
@@ -324,7 +341,7 @@ function buildApi(
       return { kind: 'text', content, truncated }
     },
     'fs.write': async (payload) => {
-      const { cwd } = cwdOf(payload)
+      const { cwd } = await cwdOf(payload)
       const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'))
       const content = requireString(payload, 'content')
       const tmp = `${path}.dsh-sidebar-tmp-${process.pid}`
@@ -814,7 +831,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         if (sessionId === null || dir === null || relativePath === null || relativePath.trim() === '') {
           throw new SidebarError('bad-request', 'sessionId, dir, and relativePath are required')
         }
-        const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+        const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
         const { path, size } = await writeWorkspaceUpload({
           cwd,
           dir,
@@ -855,7 +872,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const sessionId = url.searchParams.get('sessionId')
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
-        const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+        const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
         const path = await ensureWorkspacePath(cwd, raw)
         const info = await stat(path)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
@@ -914,7 +931,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // back to the process cwd and is normally refused by the workspace
         // real-path guard, with the same semantics as the media route's
         // fallback.
-        const cwd = sessionCwdOf(ctx, sessionId)
+        const cwd = await sessionCwdOf(ctx, sessionId)
         const absolute = await ensureWorkspacePath(cwd, path)
         const info = await stat(absolute)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
@@ -1131,7 +1148,7 @@ async function attachTerminal(
       ws.close(1011, PTY_DEPS_MISSING)
       return
     }
-    const cwd = sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+    const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
     // Settings-page shell overrides win over the yaml/auto shell for
     // terminals opened from now on (existing pty handles keep their shell).
     const overrides = shellOverridesOf(getSettings)

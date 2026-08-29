@@ -137,7 +137,10 @@ say "启动 dsh web（--port ${PORT}，日志 ${LOG_DIR}）…"
 $DSH_CMD web --port "$PORT" >"$OUT_LOG" 2>"$ERR_LOG" &
 SERVER_PID=$!
 
-# 等待启动 URL 或进程退出（最多 120s）
+# 等待启动 URL 或进程退出（最多 120s）。这里有意只取 origin：0.1.2-alpha.1+
+# 的就绪行是 `…/?token=<43字符>` 鉴权 URL，但下方的探活全部打插件的
+# `/sidebar/api/*` 路由——webserver carrier 不做鉴权（只有 /api、index 与
+# remote.mux 升级在 browser auth 之后），origin 拼路径即正确且两版通用。
 URL=""
 for _ in $(seq 1 120); do
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then break; fi

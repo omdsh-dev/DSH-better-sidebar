@@ -21,6 +21,20 @@ export const builtinViewerPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add @huanlin/dsh-plugin-better-sidebar-plugin-office',
   },
   {
+    id: 'dsh-md-export',
+    name: 'Markdown 导出插件',
+    url: 'https://github.com/AnakinCao/dsh-md-export',
+    description: () => t('pluginMdExportDesc'),
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-md-export',
+  },
+  {
+    id: 'dsh-code-nav',
+    name: '代码预览导航',
+    url: 'https://github.com/AnakinCao/dsh-code-nav',
+    description: () => t('pluginCodeNavDesc'),
+    install: 'cd ~/.dsh && dsh plugin --profile web add https://github.com/AnakinCao/dsh-code-nav.git',
+  },
+  {
     id: 'dsh-video-preview',
     name: '视频预览插件',
     url: 'https://github.com/zemul/dsh-video-preview',

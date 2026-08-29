@@ -28,7 +28,7 @@ function exec(sessionId: string): ToolRunContext {
 }
 
 /** Register the tool against a fake service + real registry. */
-function mount(overrides: { prefs?: Partial<SidebarPrefs>; resolveCwd?: (sessionId: string) => string } = {}) {
+function mount(overrides: { prefs?: Partial<SidebarPrefs>; resolveCwd?: (sessionId: string) => Promise<string> } = {}) {
   const captured: CapturedTool[] = []
   let disposeCount = 0
   const ctx = {
@@ -44,7 +44,7 @@ function mount(overrides: { prefs?: Partial<SidebarPrefs>; resolveCwd?: (session
   const dispose = registerOpenTool(
     ctx,
     registry,
-    overrides.resolveCwd ?? (() => '/cwd'),
+    overrides.resolveCwd ?? (async () => '/cwd'),
     () => prefs,
   )
   return { captured, registry, prefs, dispose: () => { dispose(); return disposeCount } }
@@ -135,7 +135,7 @@ describe('sidebar_open tool', () => {
     try {
       const file = join(dir, 'a.txt')
       writeFileSync(file, 'hello')
-      const { captured, registry } = mount({ resolveCwd: () => dir })
+      const { captured, registry } = mount({ resolveCwd: async () => dir })
       const received: unknown[] = []
       const detach = registry.attach('s1', (request) => { received.push(request) })
       const tool = toolOf(captured, 'sidebar_open')
@@ -153,7 +153,7 @@ describe('sidebar_open tool', () => {
     const dir = mkdtempSync(join(tmpdir(), 'sidebar-open-'))
     try {
       writeFileSync(join(dir, 'note.md'), '# hi')
-      const { captured, registry } = mount({ resolveCwd: () => dir })
+      const { captured, registry } = mount({ resolveCwd: async () => dir })
       const tool = toolOf(captured, 'sidebar_open')
       const value = await tool.execute({ target: 'note.md' }, exec('s1'))
       expect(value).toMatchObject({ kind: 'file', target: join(dir, 'note.md'), title: 'note.md', delivered: false })
@@ -172,7 +172,7 @@ describe('sidebar_open tool', () => {
     try {
       const sub = join(dir, 'src')
       mkdirSync(sub)
-      const { captured } = mount({ resolveCwd: () => dir })
+      const { captured } = mount({ resolveCwd: async () => dir })
       const tool = toolOf(captured, 'sidebar_open')
       const value = await tool.execute({ target: sub, title: 'Sources' }, exec('s1'))
       expect(value).toEqual({ kind: 'folder', target: sub, title: 'Sources', delivered: false })
@@ -198,7 +198,7 @@ describe('sidebar_open tool', () => {
   })
 
   it('reports a missing local path instead of opening it', async () => {
-    const { captured } = mount({ resolveCwd: () => '/definitely/missing' })
+    const { captured } = mount({ resolveCwd: async () => '/definitely/missing' })
     const tool = toolOf(captured, 'sidebar_open')
     await expect(tool.execute({ target: '/definitely/missing/nope.txt' }, exec('s1')))
       .rejects.toThrow(/does not exist/)
@@ -213,7 +213,7 @@ describe('sidebar_open tool', () => {
     const dir = mkdtempSync(join(tmpdir(), 'sidebar-open-'))
     try {
       writeFileSync(join(dir, 'f.txt'), 'x')
-      const { captured: fileCaptured } = mount({ resolveCwd: () => dir, prefs: { tabsEnabled: { editor: false } } })
+      const { captured: fileCaptured } = mount({ resolveCwd: async () => dir, prefs: { tabsEnabled: { editor: false } } })
       const fileTool = toolOf(fileCaptured, 'sidebar_open')
       // A URL is unaffected by the editor gate; a path is refused with cause.
       await expect(fileTool.execute({ target: 'https://example.com/' }, exec('s1'))).resolves.toMatchObject({ kind: 'url' })

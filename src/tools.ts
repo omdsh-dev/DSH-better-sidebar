@@ -73,14 +73,17 @@ function sessionIdOf(exec: ToolRunContext): string {
  * session's terminals.
  * @param ctx - host plugin context (carries the tools service).
  * @param registry - the agent-owned terminal registry.
- * @param resolveCwd - live cwd resolver for one session id.
+ * @param resolveCwd - async cwd resolver for one session id. Resolves through
+ *  the session header, the client-supplied cwd, and the persistence index
+ *  before falling back to the host process cwd (production always provides
+ *  persistence, so the fallback is reached only in tests / stripped-down hosts).
  * @returns a disposer that unregisters all eight tools (the caller gates
  * registration on the side-card setting and calls this to turn them off).
  */
 export function registerTools(
   ctx: Context,
   registry: AgentPtyRegistry,
-  resolveCwd: (sessionId: string) => string,
+  resolveCwd: (sessionId: string) => Promise<string>,
   readShellOverrides: () => { shell?: string; shellArgs?: string[] },
 ): () => void {
   const disposers: Array<() => void> = []
@@ -124,13 +127,13 @@ export function registerTools(
         `Opened terminal "${v.title}" (uuid: ${v.uuid}). The sidebar tab appears automatically; use terminal_read to see output and terminal_send (with submit=true) to run more commands.`,
       ),
     },
-    execute: (args: { title: string; command: string }, exec) => {
+    execute: async (args: { title: string; command: string }, exec) => {
       exec.signal.throwIfAborted()
       const sessionId = sessionIdOf(exec)
-      const cwd = resolveCwd(sessionId)
+      const cwd = await resolveCwd(sessionId)
       const { shell, shellArgs } = readShellOverrides()
       const uuid = registry.create(sessionId, args.title, args.command, cwd, 80, 24, shell, shellArgs)
-      return Promise.resolve({ uuid, title: args.title })
+      return { uuid, title: args.title }
     },
   }))
 

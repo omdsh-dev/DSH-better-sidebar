@@ -18,12 +18,8 @@
 import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test, expect, request, type APIRequestContext, type Page } from '@playwright/test'
-
-const BASE_URL = process.env.DSH_E2E_URL
-if (!BASE_URL) {
-  throw new Error('DSH_E2E_URL is not set — boot a DSH web instance with the plugin mounted and point this lane at it (see scripts/e2e-mount.sh)')
-}
+import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { PAGE_URL, createHostApi, hostRpc } from './host'
 
 const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-float-workspace')
 
@@ -33,27 +29,12 @@ let api: APIRequestContext
 
 async function seedSession(): Promise<void> {
   mkdirSync(WORKSPACE_PATH, { recursive: true })
-  const workspace = await api.post(`${BASE_URL}/api/workspace.create`, {
-    data: { type: 'client-request', rpcId: 'e2e-float-workspace', method: 'workspace.create', payload: { path: WORKSPACE_PATH } },
-  })
-  expect(workspace.ok(), `workspace.create: ${workspace.status()} ${await workspace.text()}`).toBe(true)
-  const workspaceBody = (await workspace.json()) as {
-    result: { ok: true; value: { workspace: { workspaceId: string } } } | { ok: false; error: unknown }
-  }
-  expect(workspaceBody.result.ok).toBe(true)
-  const workspaceId = (workspaceBody.result as { value: { workspace: { workspaceId: string } } }).value.workspace.workspaceId
-  const session = await api.post(`${BASE_URL}/api/session.create`, {
-    data: { type: 'client-request', rpcId: 'e2e-float-session', method: 'session.create', payload: { workspaceId } },
-  })
-  expect(session.ok(), `session.create: ${session.status()} ${await session.text()}`).toBe(true)
-  const sessionBody = (await session.json()) as {
-    result: { ok: true; value: { sessionId: string } } | { ok: false; error: unknown }
-  }
-  expect(sessionBody.result.ok).toBe(true)
+  const workspace = await hostRpc<{ workspace: { workspaceId: string } }>(api, 'workspace.create', { path: WORKSPACE_PATH })
+  await hostRpc(api, 'session.create', { workspaceId: workspace.value.workspace.workspaceId })
 }
 
 test.beforeAll(async () => {
-  api = await request.newContext({ baseURL: BASE_URL })
+  api = await createHostApi()
   await seedSession()
 })
 
@@ -93,7 +74,7 @@ async function dismissTakeovers(page: Page): Promise<void> {
 
 /** Load the shell, dismiss onboarding takeovers, and expand the panel.
  *  Returns the sidebar host locator. (An arrow const, not a hoisted function
- *  declaration, so the module-level BASE_URL narrowing carries in.) */
+ *  declaration, so the module-level PAGE_URL narrowing carries in.) */
 const bootExpanded = async (page: Page): Promise<ReturnType<Page['locator']>> => {
   const pageErrors: string[] = []
   const consoleErrors: string[] = []
@@ -101,7 +82,7 @@ const bootExpanded = async (page: Page): Promise<ReturnType<Page['locator']>> =>
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text())
   })
-  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('#root > *')).not.toHaveCount(0, { timeout: 90_000 })
   const sidebar = page.locator('[data-dsh-better-sidebar]')
   await expect(sidebar).toBeAttached({ timeout: 90_000 })
