@@ -94,7 +94,7 @@
 ```
 document.body
 └─ div[data-dsh-better-sidebar]           ← 唯一锚点（属性不变，兼容既有契约/皮肤）
-   └─ div[data-dsh-panel-host]            ← 新增：position:fixed; inset:0; pointer-events:none; z-index:40
+   └─ div[data-dsh-panel-host]            ← 新增：position:fixed; inset:0; pointer-events:none; z-index:25（v0.15.x 起；初版为 40，2026-08-22 下调：ui-cordis 动态插件面板固定层 30，须在其上）
       ├─ 右侧面板（absolute; right:0; pointer-events:auto）
       └─ 底部面板（absolute; bottom:0; pointer-events:auto）
 ```
@@ -210,7 +210,7 @@ document.body
 
 **实施方式（2026-08-19 定稿）**：单分支 `feat/injection-unified-host`、按步骤顺序提交（每步 CI 绿）；原 PR1/PR2 拆分为内部步骤，合并为**一个 PR** 交付（改动彼此耦合，且路线 B 关闭后无外部依赖）。各步骤：
 
-1. **挂载层**（`src/client/index.tsx`、`src/client/Sidebar.tsx`、`src/client/sidebar.module.css`）：`Sidebar` 渲染根包 `data-dsh-panel-host`（`position:fixed; inset:0; pointer-events:none; z-index:40`）；`.panel/.toggleCluster/.bottomPanel` 由 fixed 改 absolute（层 inset:0 即视口坐标）+ `pointer-events:auto`；挂载后一次性几何自检（偏差 >8px → `data-dsh-panel-host-degraded` + rAF 视口同步 + warn 一次）；`MutationObserver`（body childList）守卫锚点被清空时重挂。✅ 已实施（commit 9a4c160）
+1. **挂载层**（`src/client/index.tsx`、`src/client/Sidebar.tsx`、`src/client/sidebar.module.css`）：`Sidebar` 渲染根包 `data-dsh-panel-host`（`position:fixed; inset:0; pointer-events:none; z-index:25`，初版 40，2026-08-22 起 25）；`.panel/.toggleCluster/.bottomPanel` 由 fixed 改 absolute（层 inset:0 即视口坐标）+ `pointer-events:auto`；挂载后一次性几何自检（偏差 >8px → `data-dsh-panel-host-degraded` + rAF 视口同步 + warn 一次）；`MutationObserver`（body childList）守卫锚点被清空时重挂。✅ 已实施（commit 9a4c160）
 2. **几何层**（`Sidebar.tsx`、`sidebar.module.css`）：`writeGeometry` 统一拖拽/打开态两条推挤写路径；面板 `contain: layout style`；拖拽期（`body[data-dsh-sidebar-dragging]`）`will-change: transform`。✅ 已实施（commit 553e650）
 3. **chunk 缓存**（`chunk-loader.ts`、`index.tsx`）：`revalidateChunksOnReactivate()`——激活时 HEAD 每个已加载 chunk 对比 ETag，未变保留已解析 exports（跳过重注入/重执行），变更/不可达 fail-open 重取；测试夹具与孤儿缓存不跨激活存活。✅ 已实施（commit 0264625）
 4. **锚点与防溢出**（`layout.css`）：底部推挤锚点 `nth-child(2)` → `#root [data-dsh-frame] > [data-pane="conversation"]`（§3.4 实证）；`#root` 加 `width: calc(100% - var(...))` 与 margin 锁步过渡（实测 1140+300=1440 无溢出；#226 桌面溢出根因吸收）。✅ 已实施（commit 9c9515d）
@@ -258,3 +258,4 @@ document.body
   - 测试环境为 Node + 手写 shim（非 jsdom）：`browser-globals.ts` 补 `location`；desktop-env 剥除 `location.search` 前导 `?`（真实 bug，顺带修复）。
   - 本地 Node 24 跑 `test:mount` 需 `node --expose-internals` 启动 dsh CLI（HMR 服务要求，CI Node 22 无此问题）——本地用 DSH_CMD 包装，不改仓库脚本。
   - **CR #232 修复（2026-08-19）**：① 降级同步改为按**未修正几何**判定（跟踪自身补偿量，祖先 transform 消失才退出循环）；② chunk 重验证成为 `loadChunk` 屏障（重验证挂起期间不提供缓存，杜绝 HMR 竞态陈旧 exports）；③ 键盘 inset 公式补 `visualViewport.offsetTop` 并监听 `scroll`。
+  - **z-index 40→25（2026-08-22）**：设计初稿的"30–99 无任何 DSH 元素"（源自 #52 修复记录）低估了官方 ui-cordis 的动态插件面板（fixed z-index 30，挂 `sidebar.footer.action` 槽）——better-sidebar 底部面板曾盖住其清单/审批面。下调宿主层至 25（AppFrame overlayLayer 20 之上、ui-cordis 30 与 DSH 浮层栈 100+ 之下），折叠按钮簇 45 保留为 host 内部层叠；`AGENTS.md` §8 与 `2026-08-15-skin-compat-design.md` 已同步。

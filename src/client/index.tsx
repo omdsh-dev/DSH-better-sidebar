@@ -24,7 +24,10 @@ import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { loadExternalDisable, loadPrefs } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
-import { LOCALE_NS, attachLocale, t, zh, en } from './locales.ts'
+import { LOCALE_NS, attachLocale, attachBetterLocale, t, zh, en,
+  ja, de, fr, pt, ko, ar, hi, id, tr, vi, th, ru, it, nl, sv, pl,
+  zhHK, zhTW, zhMO,
+} from './locales.ts'
 import css from './sidebar.module.css'
 import './layout.css'
 
@@ -57,6 +60,57 @@ export function apply(ctx: Context): void {
     const offEn = ctx.locale.register(LOCALE_NS, 'en', en)
     return () => { offZh(); offEn() }
   }, 'dsh-better-sidebar: dictionaries')
+
+  // Opt-in third-language support through @huanlin/dsh-plugin-better-locale.
+  // When that plugin is installed, it publishes `ctx.betterLocale` (the
+  // override store) and patches LocaleRuntime.prototype.lookup to consult
+  // it. We mirror the same override awareness into the sidebar's own `t()`:
+  // attachBetterLocale() makes t() consult the store's getOverride first,
+  // so the sidebar's chrome (which bypasses ctx.locale and calls t()
+  // directly) also switches to the override language. We also register
+  // the ja dict with the better-locale store so external callers of
+  // ctx.locale.lookup('betterSidebar', key) get the override text too.
+  //
+  // Activation-order-safe: ctx.get('betterLocale') is a non-reactive read
+  // (cordis only re-evaluates declared `inject` deps). If better-locale
+  // activates after better-sidebar, the initial read returns undefined.
+  // We subscribe to the locale revision — better-locale bumps it on
+  // activation (when a persisted override exists) and on every override
+  // switch — and re-check ctx.get on each bump, attaching + registering
+  // the ja dict once the store becomes available.
+  ctx.effect(() => {
+    let dispose: (() => void) | undefined
+    const sync = (): void => {
+      dispose?.()
+      dispose = undefined
+      const store = ctx.get('betterLocale') as
+        | {
+            readonly active: string | undefined
+            getOverride(dshActive: string, ns: string, key: string): string | undefined
+            isOverrideActive(dshActive: string): boolean
+            register(ns: string, dicts: Record<string, Record<string, string>>): () => void
+            subscribe(listener: () => void): () => void
+          }
+        | undefined
+      attachBetterLocale(store)
+      if (store !== undefined) {
+        dispose = store.register(LOCALE_NS, {
+          ja, de, fr, pt, ko, ar, hi, id, tr, vi, th, ru, it, nl, sv, pl,
+          'zh-HK': zhHK, 'zh-TW': zhTW, 'zh-MO': zhMO,
+        })
+      }
+    }
+    // Initial check (picks up the store if better-locale activated first).
+    sync()
+    // Re-check on every locale revision bump (better-locale bumps when it
+    // activates with a persisted override, and when the user switches).
+    const unsubscribe = ctx.locale.subscribe(sync)
+    return () => {
+      unsubscribe()
+      dispose?.()
+      attachBetterLocale(undefined)
+    }
+  }, 'dsh-better-sidebar: better-locale lazy integration')
   // One store instance per activation: production code creates it only here,
   // then hands it to the mounted panel and closes over it in the slot
   // registrations (the official createXXXStore() factory rule — no
@@ -259,7 +313,7 @@ export function apply(ctx: Context): void {
           return registerTurnTailInterception(ctx, sidebarStore)
         } catch (error) {
           fail('interception', error)
-          return undefined
+          return () => {}
         }
       },
       'dsh-better-sidebar: turn-tail interception',
@@ -271,7 +325,7 @@ export function apply(ctx: Context): void {
           return registerOpenPathInterception(ctx, sidebarStore)
         } catch (error) {
           fail('interception', error)
-          return undefined
+          return () => {}
         }
       },
       'dsh-better-sidebar: open-path interception',
@@ -309,13 +363,13 @@ export function apply(ctx: Context): void {
               let title: string | undefined
               try { title = new URL(url).hostname } catch { /* keep the default title */ }
               const type = urlTargetOf(new URL(url)) ?? 'browser'
-              ctx.betterSidebar?.openTab({ type, url, title })
+              ctx.get('betterSidebar')?.openTab({ type, url, title })
             },
             selfOrigin: window.location.origin,
           })
         } catch (error) {
           fail('interception', error)
-          return undefined
+          return () => {}
         }
       },
       'dsh-better-sidebar: link interception',
@@ -335,7 +389,7 @@ export function apply(ctx: Context): void {
           return registerImeGuard()
         } catch (error) {
           fail('ime guard', error)
-          return undefined
+          return () => {}
         }
       },
       'dsh-better-sidebar: IME composition guard',

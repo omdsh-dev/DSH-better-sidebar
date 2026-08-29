@@ -75,13 +75,17 @@ const producedOwner = (paths: string[]): unknown => ({
 const emptyOwner = (): unknown => ({ nodes: [{ kind: 'assistant', seq: 1, turn: 1 }], seq: 1 })
 
 /** The minimal client-context fake the registration (and its seats) touch. */
-const clientCtx = (slots: unknown): Context => ({
-  slots,
-  sessions: {
-    list: { getSnapshot: () => ({ current: 's1', byId: { s1: { id: 's1', cwd: '/w', displayTitle: 's1' } } }) },
-  },
-  betterSidebar: { openTab: vi.fn() },
-} as unknown as Context)
+const clientCtx = (slots: unknown): Context => {
+  const betterSidebar = { openTab: vi.fn() }
+  return {
+    slots,
+    sessions: {
+      list: { getSnapshot: () => ({ current: 's1', byId: { s1: { id: 's1', cwd: '/w', displayTitle: 's1' } } }) },
+    },
+    betterSidebar,
+    get: (name: string) => name === 'betterSidebar' ? betterSidebar : undefined,
+  } as unknown as Context
+}
 
 describe('turn-tail interception registration (issue #15)', () => {
   it('registers through slots.inject and lands once the slot is already declared', () => {
@@ -147,6 +151,12 @@ describe('turn-tail interception registration (issue #15)', () => {
     // Enabled (default): a produced turn claims the chain; an empty one declines.
     expect(select(producedOwner(['a.ts', 'b.ts']))).toEqual(['a.ts', 'b.ts'])
     expect(select(emptyOwner())).toBeNull()
+    // The engine Turn data path (the real owner currency: { turn, seq,
+    // openFile }) claims through the deliverables record too.
+    expect(select({
+      turn: { data: { get: (key: string) => key === 'deliverables' ? { produced: [{ seq: 1, path: 'a.ts' }] } : undefined } },
+      seq: 1,
+    })).toEqual(['a.ts'])
 
     // Editor tab disabled: even a produced turn falls back to the default
     // deliverables row (chips that cannot open must not be offered).
@@ -156,13 +166,14 @@ describe('turn-tail interception registration (issue #15)', () => {
     restore()
   })
 
-  it('wires the openInSidebar seat to the sidebar editor tab', () => {
+  it('wires the openInSidebar and onShowInFolder seats', () => {
     const fake = fakeSlots(true)
     const ctx = clientCtx(fake.slots)
     const store = createSidebarStore()
     const restore = registerTurnTailInterception(ctx, store)
     const inject = fake.registered[0]!.options.inject as (sessionId: string) => {
       openInSidebar: (path: string) => void
+      onShowInFolder: (files: readonly string[]) => void
     }
 
     // The seat hands the session-scoped opener to the chips row.
@@ -175,6 +186,14 @@ describe('turn-tail interception registration (issue #15)', () => {
       path: '/w/src/a.ts',
       id: 'editor:/w/src/a.ts',
     })
+
+    // The show-in-folder seat reveals the produced files in the files window
+    // (the editor home tab) — the panel expands and the rows highlight.
+    expect(seat.onShowInFolder).toBeTypeOf('function')
+    seat.onShowInFolder(['/w/src/a.ts'])
+    expect(ctx.betterSidebar.openTab).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: 'editor',
+    }))
 
     restore()
   })

@@ -56,6 +56,7 @@ async function mountTree(busy = false): Promise<Harness> {
       sessionId: 's1',
       cwd: '/tmp',
       expanded: [],
+      revealed: [],
       onToggle: () => {},
       onOpenFile: () => {},
       onReferenceFile: () => {},

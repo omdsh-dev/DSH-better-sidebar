@@ -29,6 +29,14 @@ export interface WorkbenchActions {
   /** Reorder within a pane (drop onto another tab inserts before it). */
   moveTabBefore: (payload: TabDragPayload, toPane: string, beforeTabId: string) => void
   resizeSplit: (splitId: string, index: number, deltaFrac: number) => void
+  /** Float a docked tab out as a free window (tab context menu entry). */
+  floatTab: (tabId: string) => void
+  /**
+   * Pin/unpin a terminal tab (v0.17.0+). The shell snapshots the home cwd
+   * at pin time; null clears the pin. Optional: when undefined the tab
+   * context menu hides the pin entry (legacy callers).
+   */
+  pinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void
 }
 
 /** One divider: pointer-capture drag translating px deltas into fractions.
@@ -167,6 +175,7 @@ function LeafView(props: {
   return (
     <div
       className={clsx(css.pane, dropZone !== null && css.paneDrop)}
+      data-dsh-pane={leaf.id}
       onPointerDown={() => { actions.focusPane(leaf.id) }}
       onDragOver={(event) => {
         event.preventDefault()
@@ -207,6 +216,8 @@ function LeafView(props: {
           if (before === null) actions.moveTabToEdge(payload, leaf.id, 'center')
           else actions.moveTabBefore(payload, leaf.id, before)
         }}
+        onFloatTab={actions.floatTab}
+        onPinTab={actions.pinTab}
       />
       {leaf.tabs.length > 0 ? (
         /*

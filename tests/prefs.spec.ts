@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { loadExternalDisable, loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
-import { allLeaves, createSidebarStore, defaultWidthFor, makeDefaultState } from '../src/client/state.ts'
+import { allLeaves, createSidebarStore, defaultWidthFor, makeDefaultState, setWidth } from '../src/client/state.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 
 /** A fake settings wire face whose settingsGet resolves to one raw value. */
@@ -37,7 +37,7 @@ describe('side card preferences', () => {
         defaultWidthPercent: 60,
         autoOpenSubagent: false,
         autoOpenJobs: true,
-        agentTerminalTools: true,
+        agentTerminalTools: true, agentOpenTools: false,
         bottomPanelAutoTerminal: true,
         terminalFontFamily: '',
         terminalFontSize: 13,
@@ -57,6 +57,7 @@ describe('side card preferences', () => {
         browserInterceptLinks: true,
         browserInterceptHttp: true,
         browserInterceptHttps: false,
+        browserAllowedLoopback: '',
         tabsEnabled: {},
         viewersEnabled: {},
         pluginSettings: {},
@@ -70,7 +71,7 @@ describe('side card preferences', () => {
         defaultWidthPercent: 33,
         autoOpenSubagent: true,
         autoOpenJobs: true,
-        agentTerminalTools: false,
+        agentTerminalTools: false, agentOpenTools: false,
         bottomPanelAutoTerminal: true,
         terminalFontFamily: '',
         terminalFontSize: 13,
@@ -90,6 +91,7 @@ describe('side card preferences', () => {
         browserInterceptLinks: true,
         browserInterceptHttp: true,
         browserInterceptHttps: false,
+        browserAllowedLoopback: '',
         tabsEnabled: {},
         viewersEnabled: {},
         pluginSettings: {},
@@ -103,7 +105,7 @@ describe('side card preferences', () => {
         defaultWidthPercent: 40,
         autoOpenSubagent: true,
         autoOpenJobs: true,
-        agentTerminalTools: false,
+        agentTerminalTools: false, agentOpenTools: false,
         bottomPanelAutoTerminal: true,
         terminalFontFamily: '',
         terminalFontSize: 13,
@@ -123,6 +125,7 @@ describe('side card preferences', () => {
         browserInterceptLinks: true,
         browserInterceptHttp: true,
         browserInterceptHttps: false,
+        browserAllowedLoopback: '',
         tabsEnabled: {},
         viewersEnabled: {},
         pluginSettings: {},
@@ -135,6 +138,13 @@ describe('side card preferences', () => {
     expect((await loadPrefs(wire({ openByDefault: true, defaultWidthPercent: 40, agentTerminalTools: 1 }))).agentTerminalTools)
       .toBe(false)
     expect((await loadPrefs(wire({ openByDefault: true, defaultWidthPercent: 40, agentTerminalTools: true }))).agentTerminalTools)
+      .toBe(true)
+    // The sidebar-open tool is OFF by default too; only an explicit true turns it on.
+    expect((await loadPrefs(wire({ openByDefault: true, defaultWidthPercent: 40 }))).agentOpenTools)
+      .toBe(false)
+    expect((await loadPrefs(wire({ openByDefault: true, defaultWidthPercent: 40, agentOpenTools: 1 }))).agentOpenTools)
+      .toBe(false)
+    expect((await loadPrefs(wire({ openByDefault: true, defaultWidthPercent: 40, agentOpenTools: true }))).agentOpenTools)
       .toBe(true)
     // The job auto-open is ON by default; only an explicit false turns it off.
     expect((await loadPrefs(wire({ openByDefault: true, defaultWidthPercent: 40, autoOpenJobs: 1 }))).autoOpenJobs)
@@ -285,9 +295,9 @@ describe('side card preferences', () => {
     const store = createSidebarStore()
     // Node environment: no window → the width falls back to PANEL_DEFAULT,
     // while the open flag still follows the preference.
-    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: "", tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     store.setSession('fresh-session')
-    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: "", tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     const snapshot = store.getSnapshot()
     expect(snapshot.sessionId).toBe('fresh-session')
     expect(snapshot.state?.panelOpen).toBe(false)
@@ -323,7 +333,7 @@ describe('side card preferences', () => {
 
   it('skips the default seed tab when the editor (files window) type is disabled', () => {
     const store = createSidebarStore()
-    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: { editor: false }, viewersEnabled: {}, pluginSettings: {} })
+    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: "", tabsEnabled: { editor: false }, viewersEnabled: {}, pluginSettings: {} })
     store.setSession('no-editor')
     const state = store.getSnapshot().state!
     const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs)
@@ -333,7 +343,7 @@ describe('side card preferences', () => {
     // editorExplorer modes.
     for (const editorExplorer of [true, false]) {
       const openStore = createSidebarStore()
-      openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+      openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: "", tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
       openStore.setSession(`with-editor-${editorExplorer}`)
       const openTabs = allLeaves(openStore.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
       expect(openTabs.map(tab => tab.type)).toEqual(['editor'])
@@ -343,7 +353,7 @@ describe('side card preferences', () => {
   it('seeds the empty editor home tab (files window) in both editorExplorer modes', () => {
     for (const editorExplorer of [true, false]) {
       const store = createSidebarStore()
-      store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+      store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, explorerExclude: ['.DS_Store', 'Thumbs.db'], terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: "", tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
       store.setSession(`fresh-${editorExplorer}`)
       const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
       expect(tabs).toHaveLength(1)
@@ -367,6 +377,41 @@ describe('side card preferences', () => {
     // The 'none' seed starts with an empty pane (no default tab).
     expect(makeDefaultState(400, true, 'none').splits.kind).toBe('leaf')
     expect((makeDefaultState(400, true, 'none').splits as { tabs: unknown[] }).tabs).toHaveLength(0)
+  })
+
+  it('shares the panel width across sessions (last drag wins)', () => {
+    // A real localStorage stub so the cross-session width actually persists
+    // (the default no-op mock would silently drop the write).
+    const storage = new Map<string, string>()
+    const savedWindow = (globalThis as Record<string, unknown>).window
+    const savedStorage = (globalThis as Record<string, unknown>).localStorage
+    ;(globalThis as Record<string, unknown>).window = {
+      innerWidth: 1280,
+      clearTimeout: () => {},
+      setTimeout: () => 0,
+    }
+    ;(globalThis as Record<string, unknown>).localStorage = {
+      getItem: (k: string) => storage.get(k) ?? null,
+      setItem: (k: string, v: string) => { storage.set(k, String(v)) },
+      removeItem: (k: string) => { storage.delete(k) },
+      key: () => null,
+      get length() { return storage.size },
+    }
+    try {
+      const store = createSidebarStore()
+      store.setSession('A')
+      store.reduce(s => setWidth(s, 500))
+      // A fresh session adopts the width dragged in A, not its own default.
+      store.setSession('B')
+      expect(store.getSnapshot().state?.width).toBe(500)
+      // A later drag in B carries back to the cached session A.
+      store.reduce(s => setWidth(s, 600))
+      store.setSession('A')
+      expect(store.getSnapshot().state?.width).toBe(600)
+    } finally {
+      ;(globalThis as Record<string, unknown>).window = savedWindow
+      ;(globalThis as Record<string, unknown>).localStorage = savedStorage
+    }
   })
 })
 

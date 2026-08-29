@@ -34,6 +34,7 @@ import {
   StateDot,
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { markdownTextProps } from './markdown-labels.tsx'
 import { IconHistoryOutline16, IconSaveOutline16 } from './icons.tsx'
 import type { Context, SidebarHistoryEntry } from '../context-types.ts'
 import {
@@ -186,13 +187,13 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels): React.ReactNo
     case 'user':
       return (
         <div key={`${row.kind}:${row.seq}`} className={css.sidechatUser}>
-          <MarkdownText text={row.text} codeLabels={labels} />
+          <MarkdownText {...markdownTextProps(row.text, labels)} />
         </div>
       )
     case 'assistant':
       return (
         <div key={`${row.kind}:${row.seq}`} className={css.sidechatAssistant}>
-          <MarkdownText text={row.text} codeLabels={labels} />
+          <MarkdownText {...markdownTextProps(row.text, labels)} />
         </div>
       )
     case 'reasoning':
@@ -295,7 +296,7 @@ export function SideChatView(props: {
     setError(null)
     try {
       const { childId } = await api.sidechatStart(scope.sessionId)
-      ctx.betterSidebar?.updateTab(tab.id, { meta: { threadId: childId } })
+      ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { threadId: childId } })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -319,7 +320,7 @@ export function SideChatView(props: {
     const title = threadDisplayTitle(display)
     if (title !== '' && title !== tab.title) {
       try {
-        ctx.betterSidebar?.updateTab(tab.id, { title })
+        ctx.get('betterSidebar')?.updateTab(tab.id, { title })
       } catch {
         // A stale title is cosmetic; the thread keeps working.
       }
@@ -422,7 +423,7 @@ export function SideChatView(props: {
    *  creates the thread on mount). */
   const openNewThread = (): void => {
     setMenuOpen(false)
-    ctx.betterSidebar?.openTab({ type: 'sidechat' }, scope)
+    ctx.get('betterSidebar')?.openTab({ type: 'sidechat' }, scope)
   }
 
   /** Switch to an existing thread: parked for createTab, deduped to the
@@ -431,7 +432,7 @@ export function SideChatView(props: {
     setMenuOpen(false)
     if (id === threadId) return
     parkSidechatReopen(id)
-    ctx.betterSidebar?.openTab({ type: 'sidechat' }, scope)
+    ctx.get('betterSidebar')?.openTab({ type: 'sidechat' }, scope)
   }
 
   const menuItems = useMemo<MenuEntry[]>(() => {

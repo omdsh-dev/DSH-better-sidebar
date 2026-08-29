@@ -65,6 +65,7 @@ async function mountTree(overrides: {
       sessionId: 's1',
       cwd: '/tmp',
       expanded: [],
+      revealed: [],
       onToggle: () => {},
       onOpenFile: () => {},
       onOpenFileNewTab: () => {},

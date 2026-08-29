@@ -25,6 +25,15 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add "github:fuhefei/dsh-sentinel#v0.7.0"',
   },
   {
+    id: '@dsh-external/ego-browser',
+    name: 'ego-browser Agent 浏览器',
+    url: 'https://github.com/Fisfzy/ego-browser',
+    description: () => t('pluginEgoBrowserDesc'),
+    // Registers a sidebar tab for the agent browser; optional peer of
+    // better-sidebar (auto-tab when present, floating bubble when not).
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/Fisfzy/ego-browser.git',
+  },
+  {
     id: 'dsh-docs-panel',
     name: 'dsh-docs-panel 全局文档',
     url: 'https://github.com/mlosun/dsh-docs-panel',

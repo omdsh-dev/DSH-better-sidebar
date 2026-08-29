@@ -137,6 +137,7 @@ describe('built-in tab registrations', () => {
       'browserInterceptLinks',
       'browserInterceptHttp',
       'browserInterceptHttps',
+      'browserAllowedLoopback',
     ])
     for (const toggle of toggles) {
       expect(toggle.title).toBeDefined()

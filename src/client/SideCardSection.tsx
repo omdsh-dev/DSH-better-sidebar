@@ -1008,6 +1008,17 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
         </div>
         <div className={css.row}>
           <span className={css.rowText}>
+            <span className={css.title}>{t('settingsOpenToolsTitle')}</span>
+            <span className={css.desc}>{t('settingsOpenToolsDesc')}</span>
+          </span>
+          <Switch
+            label={t('settingsOpenToolsTitle')}
+            checked={prefs.agentOpenTools}
+            onChange={(next) => { applyPref({ agentOpenTools: next }) }}
+          />
+        </div>
+        <div className={css.row}>
+          <span className={css.rowText}>
             <span className={css.title}>{t('settingsTitleBarTitle')}</span>
             <span className={css.desc}>{t('settingsTitleBarDesc')}</span>
           </span>

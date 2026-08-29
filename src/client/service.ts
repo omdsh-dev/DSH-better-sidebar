@@ -22,8 +22,8 @@
 import type { ReactNode } from 'react'
 import type { Context } from '../context-types.ts'
 import {
-  activateTab as activateTabReducer, allLeaves, closeTab as closeTabReducer, leafWithTab,
-  openTabInActivePane, patchTab, tabOpenIn, togglePanel, treeOf,
+  activateTab as activateTabReducer, allLeaves, closeTab as closeTabReducer, closeFloatByTab, floatWithTab,
+  leafWithTab, openTabInActivePane, patchTab, raiseFloat, tabOpenIn, togglePanel, treeOf,
   type SidebarSnapshot, type SidebarState, type SidebarStore, type SidebarTab,
 } from './state.ts'
 import { isNarrowWidth } from './breakpoints.ts'
@@ -122,8 +122,8 @@ export interface SidebarSettingsDeclaration {
    * Extra settings rows rendered under the feature's own row in the
    * settings page (only while the feature is enabled). Keys must be fields
    * of the host's PrefsSchema (built-ins: 'autoOpenSubagent',
-   * 'agentTerminalTools', 'terminalFontFamily'); unknown keys are dropped
-   * by the settings seam.
+   * 'agentTerminalTools', 'agentOpenTools', 'terminalFontFamily'); unknown
+   * keys are dropped by the settings seam.
    */
   toggles?: readonly SidebarSettingToggle[]
   /**
@@ -153,6 +153,8 @@ export interface TabComponentProps {
   visible: boolean
   /** The explorer's expanded directory set (ExplorerView). */
   expanded?: string[]
+  /** The explorer's reveal-highlight set (ExplorerView; "Show in folder" targets). */
+  revealed?: string[]
   onToggleDir?: (path: string) => void
   onReferenceFile?: (path: string) => void
   onOpenFile?: (path: string) => void
@@ -475,7 +477,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.15.2'
+export const SIDEBAR_SERVICE_VERSION = '0.17.1'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -491,6 +493,9 @@ export const SIDEBAR_SERVICE_VERSION = '0.15.2'
  * - 'urlTarget' (v0.13.0): TabDescriptor.urlTarget (external-link claims)
  * - 'settingSelect': SidebarSettingToggle type 'select' (options/multi)
  * - 'settingPatterns': SidebarSettingToggle type 'patterns' (string-list editor)
+ * - 'floatWindows' (v0.16.0): tabs float as free windows — openTab's dedupe/
+ *   id focus targets RAISE the floating window (never duplicate the tab or
+ *   expand panels), closeTab on a floating tab closes it with its window.
  */
 export const SIDEBAR_FEATURES = [
   'badge',
@@ -504,6 +509,7 @@ export const SIDEBAR_FEATURES = [
   'urlTarget',
   'settingSelect',
   'settingPatterns',
+  'floatWindows',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -658,6 +664,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       const dedupeKey = descriptor.dedupeKey ?? (descriptor.single === true ? () => descriptor.id : undefined)
       const key = dedupeKey?.(tab)
       const inputTabs = allLeaves(state.splits).concat(allLeaves(state.bottomSplits)).flatMap(leaf => leaf.tabs)
+        .concat(state.floats.map(f => f.tab))
       const existedByKey = key !== undefined
         && inputTabs.some(candidate => candidate.type === tab.type && dedupeKey!(candidate) === key)
       const existedById = tabOpenIn(state, tab.id)
@@ -682,11 +689,23 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       } else {
         // A focus happened: resolve the tab that is actually active now and
         // report THAT to onActivate (never the caller's un-inserted seed).
+        // The pool covers free windows too — a floating instance focuses by
+        // raising, and the callback must see the real (patched) tab.
         const candidates = allLeaves(landed.splits).concat(allLeaves(landed.bottomSplits)).flatMap(leaf => leaf.tabs)
+          .concat(landed.floats.map(f => f.tab))
         activated = key !== undefined
           ? candidates.find(candidate => candidate.type === tab.type && dedupeKey!(candidate) === key)
           : candidates.find(candidate => candidate.id === tab.id)
         activated ??= tab
+      }
+      // A CONTENT open that focuses an existing FLOATING tab is already in
+      // sight (free windows render regardless of panel state): expanding a
+      // panel for it would point the user at a pane the content is not in.
+      if (
+        !isCreation
+        && floatWithTab(landed, activated?.id ?? tab.id) !== undefined
+      ) {
+        return landed
       }
       // A CONTENT open (file / browser) must land in sight: when the panel
       // hosting the landing pane is collapsed, expand it. On narrow
@@ -735,6 +754,12 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       // Unknown tab ids are a strict no-op: no state churn, no notify, no
       // pointless localStorage rewrite (mirrors updateTab's short-circuit).
       if (!tabOpenIn(state, tabId)) return state
+      // A floating tab closes WITH its window — the float is the tab's pane.
+      const float = floatWithTab(state, tabId)
+      if (float !== undefined) {
+        closed = float.tab
+        return closeFloatByTab(state, tabId)
+      }
       const paneId = findPaneIdOf(state, tabId)
       const leaf = leafWithTab(state[treeOf(state, paneId)], tabId)
       closed = leaf?.tabs.find(tab => tab.id === tabId)
@@ -771,6 +796,12 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     store.reduce((state) => {
       // Unknown tab ids are a strict no-op (no state churn / notify).
       if (!tabOpenIn(state, tabId)) return state
+      // A floating tab "activates" by raising its window — no pane switch.
+      const float = floatWithTab(state, tabId)
+      if (float !== undefined) {
+        activated = float.tab
+        return raiseFloat(state, float.id)
+      }
       const paneId = findPaneIdOf(state, tabId)
       const leaf = leafWithTab(state[treeOf(state, paneId)], tabId)
       activated = leaf?.tabs.find(tab => tab.id === tabId)
@@ -832,6 +863,10 @@ function applyDedupe(state: SidebarState, tab: SidebarTab, descriptor: TabDescri
       const existing = leaf.tabs.find(t => t.type === tab.type && dedupeKey!(t) === key)
       if (existing !== undefined) return activateTabReducer(state, leaf.id, existing.id)
     }
+    // A floating instance focuses by raising its window (no duplicate tab,
+    // no panel expansion — the window is the tab's pane).
+    const floated = state.floats.find(f => f.tab.type === tab.type && dedupeKey!(f.tab) === key)
+    if (floated !== undefined) return raiseFloat(state, floated.id)
   }
   return openTabInActivePane(state, tab)
 }

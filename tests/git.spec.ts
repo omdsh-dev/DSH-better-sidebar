@@ -1,12 +1,42 @@
-import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFile, execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
-import { parseLogLines, parsePorcelainZ, status } from '../src/git.ts'
+import { parseLogLines, parsePorcelainZ, repoRoots, status } from '../src/git.ts'
+
+const execFileAsync = promisify(execFile)
+const normalizePath = (path: string): string => path.replaceAll('\\', '/')
+// macOS tmpdir() is the /var symlink while git reports the resolved
+// /private/var prefix — canonicalize both sides before comparing.
+const canonical = (path: string): string => normalizePath(realpathSync(path))
 
 describe('git parsing', () => {
+  it('discovers and selects direct child repositories under a workspace directory', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-better-sidebar-git-'))
+    const first = join(workspace, 'first-repo')
+    const second = join(workspace, 'second-repo')
+    try {
+      await Promise.all([mkdir(first), mkdir(second)])
+      await Promise.all([
+        execFileAsync('git', ['-C', first, 'init']),
+        execFileAsync('git', ['-C', second, 'init']),
+      ])
+
+      await expect(repoRoots(workspace)).resolves.toEqual([canonical(first), canonical(second)])
+      await expect(status(workspace, canonical(second))).resolves.toMatchObject({
+        isRepo: true,
+        root: canonical(second),
+        repositories: [canonical(first), canonical(second)],
+      })
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('parses porcelain -z entries including renames', () => {
     const output = ['M  src/a.ts', ' M src/b.ts', '?? src/c.ts', 'R  src/new.ts', 'src/old.ts', ''].join('\0')
     const entries = parsePorcelainZ(output)
@@ -45,6 +75,60 @@ describe('git parsing', () => {
       expect(paths.some(path => path.endsWith('/'))).toBe(false)
     } finally {
       rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('caps status entries at the truncation limit (issue #369)', async () => {
+    // A pathological untracked set — e.g. a repository discovered under a
+    // home-directory cwd — must ship a bounded payload: the browser main
+    // thread froze when one status response carried tens of thousands of
+    // rows into response.json() and the unvirtualized change list.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-git-truncate-'))
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: root })
+      const many = join(root, 'many')
+      mkdirSync(many)
+      for (let index = 0; index <= 2_000; index += 1) writeFileSync(join(many, `f${index}.ts`), 'x')
+      const result = await status(root)
+      expect(result.entries).toHaveLength(2_000)
+      expect(result.truncated).toBe(true)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves ordinary statuses untruncated', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-git-untruncated-'))
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: root })
+      for (const name of ['a.ts', 'b.ts', 'c.ts']) writeFileSync(join(root, name), 'x')
+      const result = await status(root)
+      expect(result.entries).toHaveLength(3)
+      expect(result.truncated).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('shares one in-flight discovery scan between concurrent callers and caches the result (issue #369)', async () => {
+    // The panel fires gitStatus/gitBranch/gitLog in parallel and then polls
+    // every 2s; without sharing/caching, each call re-probed every visible
+    // child directory of the cwd (the home-directory spawn storm of #369).
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-git-cache-'))
+    const repo = join(workspace, 'a-repo')
+    try {
+      await mkdir(repo)
+      await execFileAsync('git', ['-C', repo, 'init'])
+      const first = repoRoots(workspace)
+      // A second call while the first scan is still running joins it…
+      expect(repoRoots(workspace)).toBe(first)
+      const roots = await first
+      expect(roots).toEqual([canonical(repo)])
+      // …and once settled, the cached array (same reference) is served
+      // without re-probing for the TTL window.
+      await expect(repoRoots(workspace)).resolves.toBe(roots)
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
     }
   })
 

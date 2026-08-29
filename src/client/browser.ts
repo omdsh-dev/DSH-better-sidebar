@@ -68,6 +68,11 @@ export function isLoopbackHostname(hostname: string): boolean {
  * @param selfOrigin - the GUI's own origin (window.location.origin). The GUI
  * itself may be browsed in the sidebar (the sandbox keeps it opaque), so it
  * is let through BEFORE the loopback check — its host is normally loopback.
+ * @param allowedLoopback - comma-separated loopback allowlist from the side
+ * card prefs (`browserAllowedLoopback`): bare hosts (`localhost`,
+ * `127.0.0.1`) allow every port, `host:port` entries allow exactly that
+ * authority. Entries are matched case-insensitively; portless entries match
+ * the host on any port. Empty allowlist keeps the default loopback block.
  */
 /** Schemes that must never reach the iframe, even without `//` (javascript:,
  *  data:, file:, ...). Host:port lookalikes (example.com:8080) are NOT here —
@@ -78,7 +83,41 @@ const FORBIDDEN_SCHEMES = new Set([
   'chrome', 'chrome-extension', 'moz-extension', 'edge', 'opera', 'resource', 'view-source',
 ])
 
-export function normalizeBrowserUrl(input: string, selfOrigin: string): BrowserNavigateResult {
+/** Parse the loopback allowlist into a matcher predicate over host:port. */
+export function parseLoopbackAllowlist(allowlist: string): (host: string, port: string) => boolean {
+  const entries = allowlist.split(',').map(entry => entry.trim().toLowerCase()).filter(entry => entry !== '')
+  const exact = new Set(entries)
+  const hosts = new Set<string>()
+  for (const entry of entries) {
+    if (!entry.includes(':')) hosts.add(entry.replace(/^\[|\]$/g, ''))
+  }
+  return (host, port) => {
+    const key = `${host}:${port}`
+    if (exact.has(key) || exact.has(host)) return true
+    return port !== '' && hosts.has(host)
+  }
+}
+
+/**
+ * Whether a loopback URL is explicitly allowlisted by the side card prefs
+ * (`browserAllowedLoopback`). Only allowlisted local addresses may run with
+ * `allow-same-origin` in the sidebar iframe — needed for local dev servers
+ * (Vite etc.) whose module/HMR/fetch pipeline requires a real origin, while
+ * the page stays cross-origin to the GUI and to every other site.
+ */
+export function isAllowedLoopbackUrl(url: string, allowlist: string): boolean {
+  if (allowlist.trim() === '') return false
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  if (!isLoopbackHostname(parsed.hostname)) return false
+  return parseLoopbackAllowlist(allowlist)(parsed.hostname, parsed.port)
+}
+
+export function normalizeBrowserUrl(input: string, selfOrigin: string, allowedLoopback = ''): BrowserNavigateResult {
   const trimmed = input.trim()
   if (trimmed === '') return { kind: 'invalid' }
   // Distinguish an explicit scheme from a bare host:port. "example.com:8080"
@@ -114,6 +153,15 @@ export function normalizeBrowserUrl(input: string, selfOrigin: string): BrowserN
   } catch {
     // Unparsable selfOrigin (never in practice): fall through to the loopback gate.
   }
-  if (isLoopbackHostname(url.hostname)) return { kind: 'blocked', reason: 'loopback' }
+  if (isLoopbackHostname(url.hostname)) {
+    // An explicit user allowlist (browserAllowedLoopback) can lift the
+    // loopback block for trusted local dev servers. The sandbox still
+    // renders them in an opaque origin — no GUI access, exactly like any
+    // other browsed site.
+    if (allowedLoopback.trim() !== '' && parseLoopbackAllowlist(allowedLoopback)(url.hostname, url.port)) {
+      return { kind: 'ok', url: url.href }
+    }
+    return { kind: 'blocked', reason: 'loopback' }
+  }
   return { kind: 'ok', url: url.href }
 }

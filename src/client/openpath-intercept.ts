@@ -30,13 +30,29 @@ export interface OpenPathInterceptDeps {
   currentSessionId(): string | undefined
   /** Route the open into the sidebar editor (the established openSidebarFile). */
   openInSidebar(path: string, sessionId: string): void
+  /** Route a folder-reveal gesture ("Show in folder" passes '.') into the sidebar explorer. */
+  revealInExplorer(path: string, sessionId: string): void
+}
+
+/**
+ * Whether a path is the "Show in folder" folder-reveal gesture. The stock
+ * ui-deliverables row passes `'.'` (the session workspace root, resolved by
+ * the chat view to `"<cwd>/."`); any path whose final segment is `.` is the
+ * same gesture. A directory has no editor content, so these opens must reach
+ * the explorer instead of an editor tab.
+ */
+export function isFolderRevealPath(path: string): boolean {
+  if (path === '.' || path === './') return true
+  const trimmed = path.replace(/[\\/]+$/, '')
+  return trimmed === '.' || /[\\/]\.$/.test(trimmed)
 }
 
 /**
  * Wrap `workspaces.openPath`: intercepted calls open the file in the sidebar
  * editor instead of the Host OS and resolve as success (the original's
  * callers ignore the result); anything that declines falls through to the
- * original method untouched.
+ * original method untouched. The one exception is the folder-reveal gesture,
+ * which is routed to {@link OpenPathInterceptDeps.revealInExplorer} instead.
  * @param workspaces - the client workspaces service to wrap.
  * @param deps - per-call takeover decisions.
  * @returns the disposer restoring the original method (HMR-safe).
@@ -50,7 +66,8 @@ export function wrapOpenPath(workspaces: OpenPathService, deps: OpenPathIntercep
     if (deps.takeoverEnabled()) {
       const sessionId = deps.currentSessionId()
       if (sessionId !== undefined) {
-        deps.openInSidebar(path, sessionId)
+        if (isFolderRevealPath(path)) deps.revealInExplorer(path, sessionId)
+        else deps.openInSidebar(path, sessionId)
         return Promise.resolve()
       }
     }

@@ -18,8 +18,10 @@ function makeKey(overrides: Partial<TabContentMemoKey> = {}): TabContentMemoKey 
     cwd: '/workspace',
     visible: true,
     expanded: [],
+    revealed: [],
     localeRevision: 'en-US',
     tabsVersion: 0,
+    effectiveTabId: undefined,
     ...overrides,
   }
 }

@@ -178,10 +178,10 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('Pick the title-bar compatibility scheme: auto-detect (default, conservative) / DSH official web / known desktop shells / custom (shift distance + custom CSS)')
     expect(html).not.toContain('<select')
     expect(html).toContain('>Auto-detect<')
-    // Two general-row switches remain (openByDefault + interceptOpenPath),
-    // only interceptOpenPath checked by default — the scheme row is a
-    // dropdown, not a switch.
-    expect(html.match(/type="checkbox"/g)?.length).toBe(2)
+    // Three general-row switches remain (openByDefault + interceptOpenPath
+    // + agentOpenTools), only interceptOpenPath checked by default — the
+    // scheme row is a dropdown, not a switch.
+    expect(html.match(/type="checkbox"/g)?.length).toBe(3)
     expect(html.match(/checked=""/g)?.length).toBe(1)
     // Auto (default) needs no further settings → no gear.
     expect(html).not.toContain('Position compatibility mode Feature settings')

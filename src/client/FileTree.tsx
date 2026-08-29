@@ -109,6 +109,8 @@ export function FileTree(props: {
   sessionId: string
   cwd: string | undefined
   expanded: string[]
+  /** Files highlighted by a "Show in folder" reveal (absolute paths). */
+  revealed: string[]
   onToggle: (path: string) => void
   onOpenFile: (path: string) => void
   /** Context-menu "open in a new tab" (file rows; absent → no entry). */
@@ -141,7 +143,7 @@ export function FileTree(props: {
   /** True while an upload is in flight (drops are ignored). */
   busy: boolean
 }) {
-  const { sessionId, cwd, expanded, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, exclude, refreshTick, onUploadRequest, busy } = props
+  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, exclude, refreshTick, onUploadRequest, busy } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
@@ -300,6 +302,27 @@ export function FileTree(props: {
     if (cwd === undefined) return
     for (const dir of compactLoadTargets(data)) loadDir(dir)
   }, [cwd, data, loadDir])
+
+  // Bring a "Show in folder" reveal into view: the ancestors expand above
+  // (revealPaths), but the row may not be scrolled into sight — a reveal on
+  // a long tree should surface the highlighted file. Re-runs when the tree
+  // data or reveal set changes (the row appears after its level loads).
+  // Scrolls ONLY this tree's body: scrollIntoView would scroll every
+  // scrollable ancestor, and the clipping panel host
+  // ([data-dsh-panel-host]) is still programmatically scrollable — a deep
+  // reveal shifted the whole panel, tab bar included, out of the viewport.
+  useEffect(() => {
+    if (revealed.length === 0) return
+    const body = bodyRef.current
+    if (body === null) return
+    const row = body.querySelector<HTMLElement>('[data-dsh-revealed]')
+    if (row === null) return
+    const bodyTop = body.getBoundingClientRect().top
+    const rowRect = row.getBoundingClientRect()
+    const target = body.scrollTop + (rowRect.top + rowRect.height / 2) - (bodyTop + body.clientHeight / 2)
+    const max = Math.max(body.scrollHeight - body.clientHeight, 0)
+    body.scrollTo({ top: Math.min(Math.max(target, 0), max), behavior: 'smooth' })
+  }, [revealed, data])
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
   const copyPath = useCallback((text: string, path: string): void => {
@@ -474,7 +497,13 @@ export function FileTree(props: {
               className={clsx(
                 css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden,
                 dropTarget === tail.path && css.explorerRowDropTarget,
+                chain.some(link => revealed.includes(link.path)) && css.explorerRowRevealed,
               )}
+              // Reveal-anchor: any chain segment being revealed marks THIS
+              // row (a folded `a/b/c` line renders the whole chain), so the
+              // reveal scroll finds it even when the target is a mid-chain
+              // dir rather than the chain head.
+              data-dsh-revealed={chain.some(link => revealed.includes(link.path)) ? 'true' : undefined}
               style={{ paddingLeft: depth * 22 + 6 }}
               title={chain.length > 1 ? tail.path : undefined}
               onClick={() => { toggleChain(chain, isOpen) }}
@@ -507,7 +536,9 @@ export function FileTree(props: {
           className={clsx(
             css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken,
             dropTarget === parentOf(entry.path) && css.explorerRowDropTarget,
+            revealed.includes(entry.path) && css.explorerRowRevealed,
           )}
+          data-dsh-revealed={revealed.includes(entry.path) ? 'true' : undefined}
           style={{ paddingLeft: depth * 22 + 6 }}
           title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
           onClick={() => { onOpenFile(entry.path) }}

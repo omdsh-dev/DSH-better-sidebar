@@ -5,7 +5,7 @@
  * the SAME generic strip variable and CSS-injection mechanism — adding a
  * shell is adding data, never a code path.
  *
- * Inclusion rule (maintained in AGENTS.md §8): only shells that (a) appear
+ * Inclusion rule (maintained in docs/external-plugin-guide.md §12): only shells that (a) appear
  * in this repo's issues/PRs (a user actually hit a problem) and (b) have
  * 100+ GitHub stars (a real user base). The mechanism is opt-in: auto
  * detection never applies a preset — the settings badge only SUGGESTS it.

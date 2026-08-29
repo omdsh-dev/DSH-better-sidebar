@@ -126,13 +126,14 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           <OpenWithSettings pluginSettings={pluginSettings} updatePluginSetting={updatePluginSetting} />
         ),
       },
-      component: ({ ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile }) => (
+      component: ({ ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile }) => (
         <EditorHost
           ctx={ctx}
           store={store}
           scope={scope}
           tab={tab}
           expanded={expanded ?? []}
+          revealed={revealed ?? []}
           onToggleDir={onToggleDir ?? (() => { /* no-op */ })}
           onReferenceFile={onReferenceFile ?? (() => { /* no-op */ })}
         />
@@ -144,9 +145,10 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       icon: (size: number) => <IconBranchOutline16 size={size} />,
       order: 20,
       single: true,
-      component: ({ ctx, store, scope, onOpenDiff }) => (
+      component: ({ ctx, store, scope, visible, onOpenDiff }) => (
         <GitView
           scope={scope}
+          visible={visible}
           onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}
           onOpenDiff={onOpenDiff ?? (() => { /* no-op */ })}
         />
@@ -315,6 +317,12 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           key: 'browserInterceptHttps',
           title: () => t('settingsBrowserHttpsTitle'),
           desc: () => t('settingsBrowserHttpsDesc'),
+        }, {
+          key: 'browserAllowedLoopback',
+          type: 'text',
+          title: () => t('settingsBrowserLoopbackTitle'),
+          desc: () => t('settingsBrowserLoopbackDesc'),
+          placeholder: t('settingsBrowserLoopbackPlaceholder'),
         }],
       },
       createTab: (state) => ({

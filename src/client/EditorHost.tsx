@@ -25,7 +25,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
-import { IconCheckOutline16, IconFolderOpen16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutline16, IconFolderOpen16, IconRefreshOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { api, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
@@ -83,7 +83,7 @@ function treeWidthOf(tab: SidebarTab): number {
 
 /** Merge a patch into the tab's persisted meta (rides the layout). */
 function patchMeta(ctx: Context, tab: SidebarTab, patch: Record<string, unknown>): void {
-  ctx.betterSidebar?.updateTab(tab.id, { meta: { ...metaOf(tab), ...patch } })
+  ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { ...metaOf(tab), ...patch } })
 }
 
 /** Clamp one dock width into the contract range. */
@@ -97,13 +97,34 @@ export function EditorHost(props: {
   scope: SessionScope
   tab: SidebarTab
   expanded: string[]
+  revealed: string[]
   onToggleDir: (path: string) => void
   onReferenceFile: (path: string) => void
 }) {
-  const { ctx, store, scope, tab, expanded, onToggleDir, onReferenceFile } = props
+  const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile } = props
   const path = tab.path ?? ''
   const title = tab.title
+  // A folder window: the model's `sidebar_open` (or any caller) opens a
+  // directory as an editor tab carrying `meta.dir: true` with the directory
+  // as its path. It renders the file tree rooted at that folder instead of
+  // the viewer loading flow (a directory is not a file).
+  const isDir = metaOf(tab).dir === true
   const [load, setLoad] = useState<EditorLoad>({ status: 'loading' })
+  // Manual refresh (issue #167): bumping the sequence re-runs the load effect
+  // with the same path/scope — the only reload entry besides open/close.
+  const [reloadSeq, setReloadSeq] = useState(0)
+
+  // Manual refresh (issue #167 + PR #228): a dirty draft is dropped by the
+  // reload (the editor instance remounts), so confirm before discarding it.
+  const refreshFile = (): void => {
+    if (toolbar?.dirty === true) {
+      const confirmed = typeof window.confirm === 'function'
+        ? window.confirm(t('refreshUnsavedConfirm'))
+        : false
+      if (!confirmed) return
+    }
+    setReloadSeq(sequence => sequence + 1)
+  }
 
   // Reactive prefs read: flipping editorExplorer re-renders this tab with no
   // reload. The snapshot is the bare boolean so unrelated store churn never
@@ -131,9 +152,12 @@ export function EditorHost(props: {
   const openWithConfig = useMemo(() => parseOpenWithConfig(editorBlob.openWith), [editorBlob])
   const openWithTargets = useMemo(() => resolveOpenWithTargets(openWithConfig), [openWithConfig])
   // A path-less tab shows the empty-state hint in merged mode — and in split
-  // mode it is the standalone explorer (tree-only, see the render below).
+  // mode it is the standalone explorer (tree-only, see the render below). A
+  // folder tab is a folder window in BOTH modes: the tree rooted at the
+  // folder, no editor chrome.
   const showEmpty = path === ''
   const treeOnly = showEmpty && !inPlace
+  const folderRoot = isDir ? path : undefined
 
   /**
    * Open a file from THIS window (tree click / search row / path input):
@@ -142,7 +166,7 @@ export function EditorHost(props: {
    */
   const openFile = (absolute: string): void => {
     if (inPlace) {
-      ctx.betterSidebar?.updateTab(tab.id, { path: absolute, title: baseName(absolute) })
+      ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) })
     } else {
       openSidebarFile(ctx, store, scope.sessionId, absolute)
     }
@@ -266,8 +290,9 @@ export function EditorHost(props: {
     // fresh viewer re-registers its own.
     setToolbar(null)
     // The seeded home tab (no path) never loads a viewer — the empty-state
-    // hint renders until the user picks a file.
-    if (showEmpty) return
+    // hint renders until the user picks a file. A folder tab never loads a
+    // viewer either — its tree is rooted at the folder.
+    if (showEmpty || isDir) return
     let cancelled = false
     // Aborts the matched viewer's `load` when the editor tears down (tab
     // closed, path changed, session switched) or re-matches the viewer.
@@ -308,7 +333,7 @@ export function EditorHost(props: {
               content: result.kind === 'text' ? result.content : '',
               truncated: result.truncated,
               head: result.kind === 'binary' ? result.head : undefined,
-            }, (head) => ctx.betterSidebar?.matchFileViewer(path, head), mediaUrlOf)
+            }, (head) => ctx.get('betterSidebar')?.matchFileViewer(path, head), mediaUrlOf)
             apply(outcome)
           }).catch((error: unknown) => {
             if (cancelled) return
@@ -317,9 +342,22 @@ export function EditorHost(props: {
           return
       }
     }
-    apply(planFirstMatch(ctx.betterSidebar?.matchFileViewer(path), mediaUrlOf))
+    apply(planFirstMatch(ctx.get('betterSidebar')?.matchFileViewer(path), mediaUrlOf))
     return () => { cancelled = true; controller.abort() }
-  }, [scope.sessionId, scope.cwd, path, ctx, showEmpty])
+  }, [scope.sessionId, scope.cwd, path, ctx, showEmpty, isDir, reloadSeq])
+
+  // Save-then-refresh in preview mode (issue #167 part C): the edge into
+  // 'saved' (never a lingering 'saved' state) triggers exactly one reload, so
+  // a preview-mode Ctrl+S shows the fresh content immediately. Edit mode is
+  // left alone — reloading would remount the editor and drop the caret.
+  const prevSaveState = useRef<EditorToolbarState['saveState'] | undefined>(undefined)
+  useEffect(() => {
+    const current = toolbar?.saveState
+    if (prevSaveState.current !== 'saved' && current === 'saved' && toolbar?.mode === 'preview') {
+      setReloadSeq(sequence => sequence + 1)
+    }
+    prevSaveState.current = current
+  }, [toolbar?.saveState, toolbar?.mode])
 
   const treeOpen = treeOpenOf(tab)
   /** Persist the panel flag on the tab (survives reloads with the layout). */
@@ -332,15 +370,18 @@ export function EditorHost(props: {
   // Split mode: the path-less window IS the standalone explorer — the tree
   // panel fills the whole tab (search + FileTree, full form), no editor
   // chrome. File opens land in new per-path tabs through openFile above.
-  if (treeOnly) {
+  // A folder window (meta.dir, any mode) renders the SAME surface rooted
+  // at the folder instead of the session cwd.
+  if (treeOnly || folderRoot !== undefined) {
     return (
       <div className={css.editor}>
         <TreePanel
           full
           sessionId={scope.sessionId}
-          cwd={scope.cwd}
+          cwd={folderRoot ?? scope.cwd}
           expanded={expanded}
           exclude={exclude}
+          revealed={revealed}
           onToggle={onToggleDir}
           onOpenFile={openFile}
           onOpenFileNewTab={openFileNewTab}
@@ -365,7 +406,16 @@ export function EditorHost(props: {
             <button
               type="button"
               className={clsx(css.editorModeButton, toolbar.mode === 'preview' && css.editorModeActive)}
-              onClick={() => { controlsRef.current?.setMode('preview') }}
+              onClick={() => {
+                // Issue #167 part B: returning from edit to preview reloads so
+                // the preview renders the just-saved content. A dirty draft
+                // (or a failed save) suppresses the reload — the draft only
+                // lives in the editor instance and a remount would drop it.
+                if (toolbar.mode === 'edit' && toolbar.dirty !== true && toolbar.saveState !== 'failed') {
+                  setReloadSeq(sequence => sequence + 1)
+                }
+                controlsRef.current?.setMode('preview')
+              }}
             >
               {t('preview')}
             </button>
@@ -392,6 +442,17 @@ export function EditorHost(props: {
         )}
         {saveLabel !== '' && (
           <span className={clsx(css.editorStatus, toolbar?.saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>
+        )}
+        {toolbar !== null && (
+          <button
+            type="button"
+            className={css.iconButton}
+            aria-label={t('refresh')}
+            title={t('refresh')}
+            onClick={refreshFile}
+          >
+            <IconRefreshOutline14 size={14} />
+          </button>
         )}
         <button
           type="button"
@@ -440,6 +501,7 @@ export function EditorHost(props: {
               cwd={scope.cwd}
               expanded={expanded}
               exclude={exclude}
+              revealed={revealed}
               onToggle={onToggleDir}
               onOpenFile={openFile}
               onOpenFileNewTab={openFileNewTab}
