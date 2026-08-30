@@ -230,6 +230,9 @@ export function FeatureSettingsRows(props: {
    *  of picked values (`multi: true`). Optional: rows with no handler are
    *  display-only. */
   onSelectValue?: (toggle: SidebarSettingToggle, next: unknown) => void
+  /** Commit one patterns row: the whole string list after an add/remove.
+   *  Optional: rows with no handler are display-only. */
+  onPatterns?: (toggle: SidebarSettingToggle, next: string[]) => void
   /** Explicit value source (v0.12.0+): when given, rows read their values
    *  from it instead of the `prefs` face — plugin-owned rows read their
    *  own blob, so a plugin key can never collide with (or silently read)
@@ -237,12 +240,23 @@ export function FeatureSettingsRows(props: {
    *  the latter collides with the inherited Object.prototype.valueOf.) */
   valueSource?: (key: string) => unknown
 }) {
-  const { toggles, prefs, onToggle, onCommit, onSelectValue, valueSource } = props
+  const { toggles, prefs, onToggle, onCommit, onSelectValue, onPatterns, valueSource } = props
   const read = valueSource ?? ((key: string): unknown => (prefs as unknown as Record<string, unknown>)[key])
   return (
     <div className={css.popupRows}>
       {toggles.map(toggle => {
         const title = textOf(toggle.title)
+        if (toggle.type === 'patterns') {
+          return (
+            <PatternsRow
+              key={toggle.key}
+              toggle={toggle}
+              title={title}
+              value={read(toggle.key)}
+              onPatterns={onPatterns}
+            />
+          )
+        }
         if (toggle.type === 'select') {
           return (
             <SelectRow
@@ -361,6 +375,76 @@ function CssDraft(props: {
         if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) event.currentTarget.blur()
       }}
     />
+  )
+}
+
+/**
+ * One patterns row (`type: 'patterns'`): an editable string list — the
+ * committed values render as removable chips, and a permanently-present
+ * input adds new entries (Enter or the add button; blanks and duplicates
+ * are dropped). Every add/remove commits the WHOLE list through the
+ * parent's onPatterns — the list is one atomic pref value.
+ */
+function PatternsRow(props: {
+  toggle: SidebarSettingToggle
+  title: string
+  value: unknown
+  onPatterns?: (toggle: SidebarSettingToggle, next: string[]) => void
+}) {
+  const { toggle, title, value, onPatterns } = props
+  const patterns = Array.isArray(value) ? value.filter(item => typeof item === 'string') as string[] : []
+  const [draft, setDraft] = useState('')
+  const commitAdd = (): void => {
+    const next = draft.trim()
+    setDraft('')
+    if (next === '' || patterns.includes(next)) return
+    onPatterns?.(toggle, [...patterns, next])
+  }
+  return (
+    <div className={css.patternsRow}>
+      <span className={css.rowText}>
+        <span className={css.title}>{title}</span>
+        {textOf(toggle.desc) !== '' && <span className={css.desc}>{textOf(toggle.desc)}</span>}
+      </span>
+      {patterns.length > 0 && (
+        <div className={css.patternsChips}>
+          {patterns.map((pattern, index) => (
+            <span key={`${pattern}:${index}`} className={css.patternsChip}>
+              {pattern}
+              <button
+                type="button"
+                className={css.patternsChipRemove}
+                aria-label={`${t('explorerExcludeRemove')} ${pattern}`}
+                title={t('explorerExcludeRemove')}
+                onClick={() => { onPatterns?.(toggle, patterns.filter((_, at) => at !== index)) }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className={css.patternsAdd}>
+        <Input
+          type="text"
+          className={css.patternsInput}
+          value={draft}
+          placeholder={toggle.patternsPlaceholder ?? toggle.placeholder}
+          aria-label={title}
+          spellCheck={false}
+          onChange={event => { setDraft(event.currentTarget.value) }}
+          onKeyDown={event => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              commitAdd()
+            }
+          }}
+        />
+        <button type="button" className={css.done} onClick={commitAdd}>
+          {t('explorerExcludeAdd')}
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -508,13 +592,15 @@ export function SettingsBody(props: {
   onToggle: (toggle: SidebarSettingToggle, next: boolean) => void
   onCommit: (toggle: SidebarSettingToggle, raw: string) => string
   onSelectValue: (toggle: SidebarSettingToggle, next: unknown) => void
+  onPatterns: (toggle: SidebarSettingToggle, next: string[]) => void
   onPluginToggle: (toggle: SidebarSettingToggle, next: boolean) => void
   onPluginCommit: (toggle: SidebarSettingToggle, raw: string) => string
   onPluginSelectValue: (toggle: SidebarSettingToggle, next: unknown) => void
+  onPluginPatterns: (toggle: SidebarSettingToggle, next: string[]) => void
   onPluginWrite: (key: string, value: unknown) => void
   onClose: () => void
 }) {
-  const { feature, prefs, store, service, onToggle, onCommit, onSelectValue, onPluginToggle, onPluginCommit, onPluginSelectValue, onPluginWrite, onClose } = props
+  const { feature, prefs, store, service, onToggle, onCommit, onSelectValue, onPatterns, onPluginToggle, onPluginCommit, onPluginSelectValue, onPluginPatterns, onPluginWrite, onClose } = props
   const render = feature.settings?.render
   const toggles = feature.settings?.toggles ?? []
   const pluginToggles = feature.settings?.pluginToggles ?? []
@@ -535,6 +621,7 @@ export function SettingsBody(props: {
               onToggle={onToggle}
               onCommit={onCommit}
               onSelectValue={onSelectValue}
+              onPatterns={onPatterns}
             />
           )}
           {pluginToggles.length > 0 && (
@@ -544,6 +631,7 @@ export function SettingsBody(props: {
               onToggle={onPluginToggle}
               onCommit={onPluginCommit}
               onSelectValue={onPluginSelectValue}
+              onPatterns={onPluginPatterns}
               valueSource={(key) => pluginBlob[key]}
             />
           )}
@@ -695,6 +783,11 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
   /** Commit one declaratively-declared select row (the option's value, or an
    *  array of values under `multi`). */
   const onSelectSetting = (toggle: SidebarSettingToggle, next: unknown): void => {
+    applyPref({ [toggle.key]: next })
+  }
+
+  /** Commit one declaratively-declared patterns row (the whole string list). */
+  const onPatternsSetting = (toggle: SidebarSettingToggle, next: string[]): void => {
     applyPref({ [toggle.key]: next })
   }
 
@@ -1082,9 +1175,11 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
             onToggle={onToggleSetting}
             onCommit={onCommitSetting}
             onSelectValue={onSelectSetting}
+            onPatterns={onPatternsSetting}
             onPluginToggle={(toggle, next) => { onPluginToggle(settingsFor.id, toggle, next) }}
             onPluginCommit={(toggle, raw) => onPluginCommitSetting(settingsFor.id, toggle, raw)}
             onPluginSelectValue={(toggle, next) => { applyPluginSetting(settingsFor.id, toggle.key, next) }}
+            onPluginPatterns={(toggle, next) => { applyPluginSetting(settingsFor.id, toggle.key, next) }}
             onPluginWrite={(key, value) => { applyPluginSetting(settingsFor.id, key, value) }}
             onClose={() => { setSettingsFor(null) }}
             store={store}

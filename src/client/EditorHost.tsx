@@ -133,6 +133,14 @@ export function EditorHost(props: {
     useCallback((callback: () => void) => store.subscribe(callback), [store]),
     useCallback(() => store.getSnapshot().prefs.editorExplorer, [store]),
   )
+  // The exclude-pattern list (VS Code files.exclude style): the host filters
+  // the listing with it, so a change reloads the tree (FileTree wipes its
+  // cache when the list changes). The snapshot array identity is stable
+  // until prefs are rewritten, so useSyncExternalStore stays quiet.
+  const exclude = useSyncExternalStore(
+    useCallback((callback: () => void) => store.subscribe(callback), [store]),
+    useCallback(() => store.getSnapshot().prefs.explorerExclude, [store]),
+  )
   // The file tree's "open with" configuration (pluginSettings['editor']): a
   // blob subscription, so a pin click or a settings-page edit re-renders the
   // menu immediately. The parsed config also drives which targets are shown
@@ -372,6 +380,7 @@ export function EditorHost(props: {
           sessionId={scope.sessionId}
           cwd={folderRoot ?? scope.cwd}
           expanded={expanded}
+          exclude={exclude}
           revealed={revealed}
           onToggle={onToggleDir}
           onOpenFile={openFile}
@@ -491,6 +500,7 @@ export function EditorHost(props: {
               sessionId={scope.sessionId}
               cwd={scope.cwd}
               expanded={expanded}
+              exclude={exclude}
               revealed={revealed}
               onToggle={onToggleDir}
               onOpenFile={openFile}

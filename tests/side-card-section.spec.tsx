@@ -373,9 +373,11 @@ describe('SettingsBody rows + custom render panel (open-with seam)', () => {
       onToggle: () => {},
       onCommit: () => '',
       onSelectValue: () => {},
+      onPatterns: () => {},
       onPluginToggle: () => {},
       onPluginCommit: () => '',
       onPluginSelectValue: () => {},
+      onPluginPatterns: () => {},
       onPluginWrite: () => {},
       onClose: () => {},
     }))
@@ -403,9 +405,11 @@ describe('SettingsBody rows + custom render panel (open-with seam)', () => {
       onToggle: () => {},
       onCommit: () => '',
       onSelectValue: () => {},
+      onPatterns: () => {},
       onPluginToggle: () => {},
       onPluginCommit: () => '',
       onPluginSelectValue: () => {},
+      onPluginPatterns: () => {},
       onPluginWrite: () => {},
       onClose: () => {},
     }))

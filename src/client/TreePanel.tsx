@@ -60,11 +60,14 @@ export function TreePanel(props: {
   onOpenWith?: (targetId: string, path: string) => void
   onToggleOpenWithPin?: (targetId: string) => void
   onReferenceFile: (path: string) => void
+  /** The explorerExclude pref patterns (the host filters tree AND search with
+   *  them; passed through to FileTree and the search route). */
+  exclude?: readonly string[]
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean
 }) {
-  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, full } = props
+  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, exclude, full } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -128,6 +131,7 @@ export function TreePanel(props: {
   const folderInputProps = { webkitdirectory: '' } as InputHTMLAttributes<HTMLInputElement>
 
   const needle = query.trim()
+  const matches = results === null ? [] : results.matches
   useEffect(() => {
     if (needle === '') {
       setResults(null)
@@ -136,7 +140,7 @@ export function TreePanel(props: {
     }
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
-      api.fsSearch({ sessionId, cwd }, needle, controller.signal).then((found) => {
+      api.fsSearch({ sessionId, cwd }, needle, exclude, controller.signal).then((found) => {
         setResults(found)
         setError(null)
       }).catch((failure: unknown) => {
@@ -149,7 +153,10 @@ export function TreePanel(props: {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [sessionId, cwd, needle])
+    // The joined key keeps the dependency value-based: a changed exclude
+    // list re-runs the in-flight search with the new filters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, cwd, needle, (exclude ?? []).join('\n')])
 
   const busy = upload !== null
 
@@ -222,6 +229,7 @@ export function TreePanel(props: {
           sessionId={sessionId}
           cwd={cwd}
           expanded={expanded}
+          exclude={exclude}
           revealed={revealed}
           onToggle={onToggle}
           onOpenFile={onOpenFile}
@@ -241,10 +249,10 @@ export function TreePanel(props: {
         <div className={css.explorerBody}>
           {error !== null && <div className={clsx(css.editorSearchHint, css.editorError)}>{error}</div>}
           {error === null && results === null && <div className={css.editorSearchHint}>{t('loading')}</div>}
-          {error === null && results !== null && results.matches.length === 0 && (
+          {error === null && results !== null && matches.length === 0 && (
             <div className={css.editorSearchHint}>{t('editorSearchNoResults')}</div>
           )}
-          {error === null && results !== null && results.matches.map(rel => (
+          {error === null && results !== null && matches.map(rel => (
             <button
               key={rel}
               type="button"

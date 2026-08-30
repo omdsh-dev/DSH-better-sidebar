@@ -33,6 +33,7 @@ import { parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.t
 import { writeWorkspaceUpload } from './fs-operations.ts'
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
+import { compileExcludePatterns } from './exclude-patterns.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
 import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
@@ -316,17 +317,21 @@ function buildApi(
     },
     'fs.tree': async (payload) => {
       const { cwd } = await cwdOf(payload)
-      const record = payload as { path?: unknown }
+      const record = payload as { path?: unknown; exclude?: unknown }
       const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'))
-      return listDirectory(target, resolved.listLimit)
+      // The client's explorerExclude pref rides the request (compiled here so
+      // the listing and the singleton fold probe share one matcher).
+      const exclude = compileExcludePatterns(record.exclude, cwd)
+      return listDirectory(target, resolved.listLimit, exclude)
     },
     'fs.search': async (payload) => {
       // The editor side panel's global name search: rooted at the session
       // cwd (not caller-targetable — the walk is unbounded by design and
       // must never escape the workspace), budgeted inside searchFiles.
       const { cwd } = await cwdOf(payload)
+      const record = payload as { exclude?: unknown }
       const query = requireString(payload, 'query')
-      return searchFiles(cwd, query)
+      return searchFiles(cwd, query, { exclude: compileExcludePatterns(record.exclude, cwd) })
     },
     'fs.read': async (payload) => {
       const { cwd } = await cwdOf(payload)

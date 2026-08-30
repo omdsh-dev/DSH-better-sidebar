@@ -13,6 +13,7 @@ import {
   clampTerminalFontSize,
   clampTitleBarStrip,
   clampWidthPercent,
+  EXPLORER_EXCLUDE_DEFAULTS,
   SIDEBAR_PREFS_DEFAULTS,
   TITLE_BAR_SCHEMES,
   TITLE_BAR_STRIP_DEFAULT,
@@ -21,6 +22,7 @@ import {
 } from '../prefs-shared.ts'
 
 export {
+  EXPLORER_EXCLUDE_DEFAULTS,
   SIDEBAR_PREFS_DEFAULTS,
   TITLE_BAR_SCHEMES,
   TITLE_BAR_STRIP_DEFAULT,
@@ -82,6 +84,7 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     editorExplorer: typeof record.editorExplorer === 'boolean'
       ? record.editorExplorer
       : SIDEBAR_PREFS_DEFAULTS.editorExplorer,
+    explorerExclude: stringArrayOf(record.explorerExclude),
     // The title-bar scheme (auto | web | preset | custom). The schema
     // declares the field WITHOUT a default, so documents written by older
     // plugin versions resolve without it — migrate from the legacy fields:
@@ -144,6 +147,23 @@ function pluginSettingsMapOf(value: unknown): Record<string, Record<string, unkn
     if (blob !== null && typeof blob === 'object' && !Array.isArray(blob)) {
       out[id] = blob as Record<string, unknown>
     }
+  }
+  return out
+}
+
+/**
+ * Validate the exclude-pattern list: a JSON array whose string entries
+ * survive (trimmed; blanks dropped). Anything else falls back to the stock
+ * list — the schema defaults already guard the wire shape, this is the
+ * client's second line.
+ */
+function stringArrayOf(value: unknown): string[] {
+  if (!Array.isArray(value)) return [...EXPLORER_EXCLUDE_DEFAULTS]
+  const out: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const trimmed = item.trim()
+    if (trimmed !== '') out.push(trimmed)
   }
   return out
 }
