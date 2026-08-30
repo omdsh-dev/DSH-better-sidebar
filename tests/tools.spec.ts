@@ -98,6 +98,50 @@ function toolOf(captured: CapturedTool[], name: string): ToolDefinition {
   return found.definition
 }
 
+function descriptionOf(captured: CapturedTool[], name: string): string {
+  return toolOf(captured, name).description
+}
+
+describe('agent terminal tool descriptions', () => {
+  it('explains session cwd, tool selection, and terminal lifecycle', () => {
+    const { captured } = mount()
+    const description = descriptionOf(captured, 'terminal_create')
+    expect(description).toContain("this session's working directory")
+    expect(description).toContain('no separate cwd argument')
+    expect(description).toContain('use pwsh')
+    expect(description).toContain('background job')
+    expect(description).toContain('remain alive across calls until terminal_close')
+    expect(description).toContain('command=""')
+    expect(description).toContain('cannot be used from another session')
+  })
+
+  it('documents Windows control and termination semantics without the obsolete limitation', () => {
+    const { captured } = mount()
+    const description = descriptionOf(captured, 'terminal_signal')
+    expect(description).toContain('SIGINT represents Ctrl+C')
+    expect(description).toContain('SIGTSTP represents the Ctrl+Z byte')
+    expect(description).toContain('Windows ConPTY')
+    expect(description).toContain('Ctrl+Z is commonly interpreted as EOF')
+    expect(description).toContain('TerminateProcess')
+    expect(description).not.toContain('On Windows, only SIGKILL and SIGTERM are effective')
+    expect(description).toContain('Do NOT send control characters')
+  })
+
+  it('distinguishes non-blocking reads from waits over retained history', () => {
+    const { captured } = mount()
+    const read = descriptionOf(captured, 'terminal_read')
+    const wait = descriptionOf(captured, 'terminal_wait_for')
+    expect(read).toContain('non-blocking snapshot')
+    expect(read).toContain('500 lines')
+    expect(read).toContain('256 KiB')
+    expect(read).toContain('negative offset')
+    expect(wait).toContain('blocks the tool call')
+    expect(wait).toContain('case-sensitive substring')
+    expect(wait).toContain('retained history')
+    expect(wait).toContain('instead of polling terminal_read')
+  })
+})
+
 describe('agent terminal tools', () => {
   it('registers all eight tools and the combined disposer unregisters them all', () => {
     const { captured, dispose } = mount()
