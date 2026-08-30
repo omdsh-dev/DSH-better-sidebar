@@ -94,14 +94,13 @@ export function registerTools(
   register(defineTool({
     name: 'terminal_create',
     description:
-      'Open a persistent terminal in the sidebar and run a command in it. '
-      + 'Spawns an interactive shell, writes the command + Enter to its stdin, and returns a uuid handle. '
-      + 'The terminal stays alive after the command exits — send more input with terminal_send (set submit=true to run a command), '
-      + 'read output with terminal_read, send Ctrl+C with terminal_signal(signal="SIGINT"), '
-      + 'and close it with terminal_close when done. '
-      + 'Use this for interactive shells, REPLs, long-running dev servers, '
-      + 'or any work that needs persistent terminal state across tool calls. '
-      + 'The terminal appears as a new tab in the right sidebar (titled with the `title` you provide) so the user can watch and interact with it.',
+      'Open a persistent interactive shell in the sidebar, starting in this session\'s working directory, and optionally run an initial command. '
+      + 'There is no separate cwd argument: the shell inherits the calling session\'s cwd. '
+      + 'Use this only when you need ongoing interactive state, later input, or a process you intend to control interactively (for example a REPL or server). '
+      + 'For a one-shot command whose output should be returned immediately, use pwsh; for non-interactive long-running work collected later, use a background job. '
+      + 'The required title labels the sidebar tab and the required command is sent with Enter automatically; pass command="" to open a bare shell. '
+      + 'The terminal handle belongs to this calling session and cannot be used from another session. '
+      + 'The shell and its processes remain alive across calls until terminal_close.',
     parameters: {
       title: {
         type: 'string',
@@ -230,11 +229,10 @@ export function registerTools(
   register(defineTool({
     name: 'terminal_read',
     description:
-      'Read a bounded page of retained output from an agent terminal without sending input. '
-      + 'The host keeps up to ~1 MiB of scrollback; this tool returns up to 500 lines per call. '
-      + 'Use `offset` to paginate forward ( 0-based from the start of the retained transcript ) or backward ( negative reads from the end, e.g. -50 reads the last 50 lines ). '
-      + 'Returns `totalLines` so you know how much scrollback remains. '
-      + 'Output is bounded to 256 KiB per call; longer pages are truncated with the `truncated` flag.',
+      'Take a non-blocking snapshot of retained terminal output without sending input. '
+      + 'The host keeps up to ~1 MiB of scrollback; this tool returns at most 500 lines and 256 KiB per call. '
+      + 'Use `offset` to paginate from the start of the retained transcript (0-based), or use a negative offset to read from the tail (for example, -50 reads the last 50 lines). '
+      + 'Returns `totalLines` so you know how much retained history remains; oversized pages set `truncated`.',
     parameters: {
       uuid: {
         type: 'string',
@@ -287,13 +285,12 @@ export function registerTools(
   register(defineTool({
     name: 'terminal_wait_for',
     description:
-      'Block until a substring appears in a terminal\'s retained transcript, or until the timeout elapses, or until the terminal exits — whichever happens first. '
-      + 'Use this to synchronize on command completion cues ( e.g. a shell prompt, "done", "Listening on", "Build successful" ) '
-      + 'without busy-polling terminal_read. '
-      + 'The wait scans the FULL retained transcript (up to ~1 MiB) on every poll, so a needle that scrolled past the most recent chunk is still a match. '
+      'Wait for a case-sensitive substring in the terminal\'s retained transcript; this blocks the tool call until the needle appears, the terminal exits, or the timeout elapses. '
+      + 'Use this instead of polling terminal_read when a reliable completion marker exists. '
+      + 'The wait scans retained history (up to ~1 MiB), so choose a specific needle that will not match stale output. '
       + 'Returns `found` with the line/column of the first occurrence, `timeout` if the needle did not appear in time, or `exited` if the terminal process died before the needle appeared. '
-      + 'Default timeout is 10 seconds; raise it for long-running commands ( dev servers, test suites ). '
-      + 'The wait is cooperative: a tool-call cancel ( or agent turn end ) aborts it immediately.',
+      + 'Default timeout is 10 seconds; raise it for long-running commands (dev servers, test suites). '
+      + 'The wait is cooperative: a tool-call cancel (or agent turn end) aborts it immediately.',
     parameters: {
       uuid: {
         type: 'string',
@@ -407,12 +404,10 @@ export function registerTools(
   register(defineTool({
     name: 'terminal_signal',
     description:
-      'Send a POSIX signal to an agent terminal\'s foreground process — this is how you send Ctrl+C, Ctrl+Z, etc. '
-      + 'Use signal="SIGINT" for Ctrl+C (interrupt the running command), signal="SIGTERM" to request termination, '
-      + 'signal="SIGKILL" to force-kill the pty, signal="SIGHUP" to hang up (many shells exit), signal="SIGTSTP" for Ctrl+Z (suspend). '
-      + 'Do NOT try to send control characters (like "\\u0003") through terminal_send — use this tool instead. '
-      + 'On Windows, only SIGKILL and SIGTERM are effective — others are accepted but may no-op. '
-      + 'No-op if the terminal has already exited. Use terminal_close to dispose of the terminal entirely.',
+      'Send a control signal to the terminal\'s foreground process. SIGINT represents Ctrl+C and SIGTSTP represents the Ctrl+Z byte on the terminal input path. '
+      + 'SIGINT/Ctrl+C is delivered through terminal input and works through Windows ConPTY. On POSIX, SIGTSTP normally suspends the foreground process group; on Windows, Ctrl+Z is commonly interpreted as EOF, so do not promise process suspension. '
+      + 'SIGTERM, SIGKILL, and SIGHUP use pty.kill(); on Windows a named-signal failure falls back to the default TerminateProcess path, so graceful POSIX signal semantics are not guaranteed. '
+      + 'Do NOT send control characters (like "\\u0003" or "\\u001a") through terminal_send. No-op if the terminal has already exited; use terminal_close to dispose of it.',
     parameters: {
       uuid: { type: 'string', required: true, description: 'Terminal uuid from terminal_create or terminal_list.' },
       signal: {
