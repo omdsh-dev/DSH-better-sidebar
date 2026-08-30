@@ -5,8 +5,8 @@
  *    `--dsh-sidebar-width/--dsh-sidebar-height` on document.documentElement.
  *    Unmounting the Sidebar for ANY reason (error-boundary swap, plugin
  *    disable, HMR) must clear them — otherwise layout.css keeps squeezing
- *    `#root` with a stale margin and "the sidebar cannot be hidden" until a
- *    full page reload.
+ *    the center column with a stale margin and "the sidebar cannot be
+ *    hidden" until a full page reload.
  *
  * 2. Tab crash containment: a render error inside ONE tab's content must not
  *    take down the whole sidebar. The per-tab boundary shows a strip inside
@@ -126,11 +126,11 @@ describe('layout-push variable cleanup', () => {
     // runs every effect cleanup before every effect setup in a commit, so a
     // cleanup here would remove the variables before the draggingRef effect
     // (declared above the layout push) forces a layout in measureCenter
-    // (getBoundingClientRect). That forced recalc resolves #root's
-    // margin-right to the 0px fallback, caches it as the transition start
-    // value, and measures centerRect too wide; once transitions re-enable on
-    // release, the shell animates margin-right 0 → width — the "expand to
-    // the full page then bounce back" flash.
+    // (getBoundingClientRect). That forced recalc resolves the center
+    // column's margin-right to the 0px fallback, caches it as the
+    // transition start value, and measures centerRect too wide; once
+    // transitions re-enable on release, the shell animates margin-right 0 →
+    // width — the "expand to the full page then bounce back" flash.
     const removalProps = removeSpy.mock.calls
       .map(call => call[0] as string)
       .filter(prop => prop === '--dsh-sidebar-width' || prop === '--dsh-sidebar-height')

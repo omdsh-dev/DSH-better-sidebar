@@ -258,6 +258,10 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 
 **支持的 DSH 版本**：<a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="支持的 DSH 版本：0.1.0-rc.8 · 0.1.1-rc.1 · 0.1.1-rc.2 · 0.1.2-alpha.1" src="https://img.shields.io/badge/DSH-0.1.0--rc.8_%C2%B7_0.1.1--rc.1_%C2%B7_0.1.1--rc.2_%C2%B7_0.1.2--alpha.1-4d6bfe" /></a> · 完整发布历史见 [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)
 
+### v0.17.2
+
+- 🐛 **右侧面板打开不再隐藏官方左侧导航栏**（修复「面板打开/切换会话时左侧官方侧边栏自动折叠，切换会话需多一步展开」）：DSH 的 AppFrame 不用 `window.innerWidth` 判定窄视口，而是用 ResizeObserver **观察 frame 自身宽度**，跌破 1024px（`SIDEBAR_AUTO_COLLAPSE`）即自动把左侧导航栏折叠成窄 rail——旧版布局推挤直接压缩 `#root`，右侧面板一打开 frame 就跌破 1024，官方左侧导航栏被误伤隐藏（1280/1366 等常见笔记本宽度下必然复现）。修复：宽度推挤从 `#root` 整体改为**只推挤中心列**（`[data-pane="conversation"]` 的 `margin-right`，与底部面板同一锚点）——frame 宽度不再改变，官方断点永不触发，左侧导航栏常驻可见；会话区照旧被挤开（VSCode 式侧栏行为不变），拖拽 1:1 跟随与底部面板贴合由 e2e 回归守护
+
 ### v0.17.1
 
 - 🔗 **DSH 0.1.2-alpha.1 适配（双版本兼容）**：DSH 0.1.2-alpha.1 的 Remote gateway、一次性 token 浏览器鉴权与 `MarkdownText` labels 契约变更已全量适配，插件在 0.1.0-rc.8 ~ 0.1.1-rc.2 与 0.1.2-alpha.1 上一致工作（后者经 GitHub tag 源码构建的真机挂载冒烟 14/14 验证；该版本 npm 尚未发布，CI 钉版暂保持 0.1.1-rc.2，发布后平移）。要点：`MarkdownText` 四个渲染点统一改走双形状 labels helper（[markdown-labels.tsx](./src/client/markdown-labels.tsx)），修复 alpha.1 上 markdown/mermaid 预览的 `reading 'code'` 崩溃；e2e 冒烟双协议化（token URL 换 cookie、`/api` 斜杠端点 + 按参数名包装 args，[tests/e2e/host-protocol.ts](./tests/e2e/host-protocol.ts)）；移除已在 0.1.2-alpha.1 消亡的 `@deepseek-ai/dsh-client-runtime` peer
