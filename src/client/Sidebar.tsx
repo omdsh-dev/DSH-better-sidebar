@@ -57,6 +57,7 @@ import { FreeWindow } from './FreeWindow.tsx'
 import { relativeTo } from './paths.ts'
 import { OrphanedTab } from './OrphanedTab.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
+import { PromptOverview } from './PromptOverview.tsx'
 import { tabContentCompare, type TabContentMemoKey } from './tab-content-memo.ts'
 import { detectNewDirectSubagent } from './subagent-detect.ts'
 import { detectNewJob } from './subagent-jobs.ts'
@@ -1474,6 +1475,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   return (
     <div data-dsh-panel-host {...osFileDragShield}>
+      {/* Additive Codex-style prompt minimap over the conversation gutter. */}
+      <PromptOverview ctx={ctx} sessionId={sessionId} />
       {/*
         The persistent toggle cluster at the top-right corner: the bottom
         panel's button (bottom glyph) LEFT of the right panel's (side glyph).
