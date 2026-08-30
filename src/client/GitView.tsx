@@ -19,7 +19,7 @@ import { api } from './api.ts'
 import { isWithinWorkspace, relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import { relativeTime, t } from './locales.ts'
-import type { SidebarTab } from './state.ts'
+import type { SidebarStore, SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
 
 /** The XY status letters a row badge shows (X = index, Y = worktree). */
@@ -83,13 +83,15 @@ const LOG_BATCH = 20
 
 export function GitView(props: {
   scope: SessionScope
+  /** The sidebar store: reads the `workspaceFence` pref (see the open guard below). */
+  store: SidebarStore
   onOpenFile: (path: string) => void
   /** Open a diff tab (the shell places it below the git pane on first use). */
   onOpenDiff: (tab: SidebarTab) => void
   /** Poll only while the tab is actually visible. */
   visible: boolean
 }) {
-  const { scope, onOpenFile, onOpenDiff, visible } = props
+  const { scope, store, onOpenFile, onOpenDiff, visible } = props
   const [status, setStatus] = useState<GitStatusResult | null>(null)
   const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
   const [selectedWorktree, setSelectedWorktree] = useState<string | undefined>()
@@ -572,10 +574,12 @@ export function GitView(props: {
             onClose={() => { setFileMenu(null) }}
             items={[
               // A linked worktree outside the session workspace cannot be
-              // opened in the editor: the host's workspace fence rejects
-              // every path under it. Hide the action for that checkout so
-              // the menu does not offer a no-op that confuses the user.
-              ...(fileMenu !== null && isWithinWorkspace(scope.cwd ?? '', resolveSidebarPath(repoRoot ?? selectedWorktree ?? scope.cwd, fileMenu.entry.path))
+              // opened in the editor while the host's workspace fence is
+              // armed: it rejects every path under that checkout. Hide the
+              // action for that checkout so the menu does not offer a no-op
+              // that confuses the user; with the fence disarmed (the
+              // `workspaceFence` pref) the open is allowed through.
+              ...(fileMenu !== null && (store.getPrefs().workspaceFence === false || isWithinWorkspace(scope.cwd ?? '', resolveSidebarPath(repoRoot ?? selectedWorktree ?? scope.cwd, fileMenu.entry.path)))
                 ? [{ id: 'open', label: t('openEditor'), icon: <IconCodeOutline16 size={14} /> }]
                 : []),
               fileMenu?.staged === true
@@ -597,8 +601,9 @@ export function GitView(props: {
                 // Defense-in-depth: the menu hides this action when the
                 // resolved path escapes the session workspace, but a
                 // racing repo switch could still reach here with a path
-                // the host would reject. No-op in that case.
-                if (!isWithinWorkspace(scope.cwd ?? '', resolved)) return
+                // the host would reject. No-op in that case — unless the
+                // workspace fence is disarmed by pref.
+                if (store.getPrefs().workspaceFence !== false && !isWithinWorkspace(scope.cwd ?? '', resolved)) return
                 onOpenFile(resolved)
                 return
               }

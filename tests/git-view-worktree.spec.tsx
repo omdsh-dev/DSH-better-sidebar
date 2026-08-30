@@ -10,6 +10,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { GitView } from '../src/client/GitView.tsx'
+import { createSidebarStore } from '../src/client/state.ts'
 import { api, type GitLogEntry, type GitStatusResult, type GitWorktree } from '../src/client/api.ts'
 
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
@@ -72,6 +73,7 @@ describe('GitView linked-worktree consistency', () => {
       await act(async () => {
         root.render(createElement(GitView, {
           scope: { sessionId: 'session', cwd: MAIN },
+          store: createSidebarStore(),
           onOpenFile: () => {},
           onOpenDiff: () => {},
           visible: false,
@@ -129,6 +131,7 @@ describe('GitView linked-worktree consistency', () => {
       await act(async () => {
         root.render(createElement(GitView, {
           scope: { sessionId: 'session', cwd: MAIN },
+          store: createSidebarStore(),
           onOpenFile: () => {},
           onOpenDiff: () => {},
           visible: false,

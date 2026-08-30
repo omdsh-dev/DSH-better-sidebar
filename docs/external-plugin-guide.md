@@ -651,7 +651,7 @@ ctx.effect(() =>
 - 展示：小卡片网格（图标 + 标题 + 类型 id），**高亮 = 启用**，勾选徽标钉在卡片最右端；viewer 卡片额外显示扩展名。
 - 持久化：开关写入 `SidebarPrefs.tabsEnabled / viewersEnabled`（开放 map，**缺省 = 启用**，显式 `false` 才禁用）。
 - 关闭语义：tab 从 `+` 菜单消失、`openTab` 拒绝新开（`console.warn`）、派生流程（子代理自动展开、agent 终端自动补 tab）停止，**已打开的 tab 保留**；viewer 被 `matchFileViewer` 跳过，文件落到下一个匹配。
-- `settings.toggles`（可选）：在卡片行下追加**嵌套设置行**（仅父级启用时显示），绑定 `SidebarPrefs` 字段；通过卡片底部「功能设置」条在原生弹窗中编辑。行控件形状见 §4.1 的 `SettingRow`：`type: 'switch' | 'text' | 'number'`（v0.11.0+；text/number 行 blur/Enter 提交，number 行按 min/max 钳制，unit 渲染单位后缀）与 `type: 'select'`（v0.13.0+；`options` 支持 value/title/desc/icon，`multi` 多选存数组并按 options 顺序提交；任一项带 icon 时渲染大图标选项卡）。内置示例：subagent tab 的 `autoOpenSubagent`、terminal tab 的 `agentTerminalTools` + 自定义字体行、editor tab 的 `editorExplorer` 图标化下拉。
+- `settings.toggles`（可选）：在卡片行下追加**嵌套设置行**（仅父级启用时显示），绑定 `SidebarPrefs` 字段；通过卡片底部「功能设置」条在原生弹窗中编辑。行控件形状见 §4.1 的 `SettingRow`：`type: 'switch' | 'text' | 'number'`（v0.11.0+；text/number 行 blur/Enter 提交，number 行按 min/max 钳制，unit 渲染单位后缀）与 `type: 'select'`（v0.13.0+；`options` 支持 value/title/desc/icon，`multi` 多选存数组并按 options 顺序提交；任一项带 icon 时渲染大图标选项卡）。内置示例：subagent tab 的 `autoOpenSubagent`、terminal tab 的 `agentTerminalTools` + 自定义字体行、editor tab 的 `editorExplorer` 图标化下拉与 `workspaceFence` 开关（工作区路径围栏，见 §8.1）。
 - `settings.pluginToggles`（可选，v0.12.0+）：**插件自有设置行**，行控件与 toggles 相同，但 key 是插件局部的——持久化在 prefs 文档的 `pluginSettings[<descriptor id>]`（开放 map，无需宿主 schema 字段）。tab 与 viewer 都可用（v0.12.0 起 viewer 卡片也有设置条）。
 - `settings.render`（可选，v0.12.0+）：**自定义设置面板**——追加渲染在行列表之后，可单独存在。props 含 store/service/prefs、本 descriptor 的 `pluginSettings` blob、`updatePluginSetting(key, value)` 与 `close()`；抛错会被吞掉并显示内联错误。
 
@@ -691,7 +691,14 @@ ctx.effect(() =>
 )
 ```
 
-> ⚠️ **`toggles` 的 key 必须是宿主 PrefsSchema 的字段**（内置键：`autoOpenSubagent` / `agentTerminalTools` / `agentOpenTools` / `terminalFontFamily` / `terminalFontSize` / `editorExplorer` / `htmlViewerNoSandbox` / `htmlViewerDefaultUnsafe` / `browserNoSandbox` / `browserInterceptLinks` / `browserInterceptHttp` / `browserInterceptHttps`）。**v0.12.0 起设置 seam 已开放**：你自己的设置走 `pluginToggles`（声明式行）或 `render`（自定义面板），值持久化在 `pluginSettings[id]`——不再需要宿主 schema 字段，也不再被 seam 丢弃。值须 JSON 可序列化（行控件只产出 string/number/boolean；自定义面板自行负责）。
+> ⚠️ **`toggles` 的 key 必须是宿主 PrefsSchema 的字段**（内置键：`autoOpenSubagent` / `agentTerminalTools` / `agentOpenTools` / `terminalFontFamily` / `terminalFontSize` / `editorExplorer` / `workspaceFence` / `htmlViewerNoSandbox` / `htmlViewerDefaultUnsafe` / `browserNoSandbox` / `browserInterceptLinks` / `browserInterceptHttp` / `browserInterceptHttps`）。**v0.12.0 起设置 seam 已开放**：你自己的设置走 `pluginToggles`（声明式行）或 `render`（自定义面板），值持久化在 `pluginSettings[id]`——不再需要宿主 schema 字段，也不再被 seam 丢弃。值须 JSON 可序列化（行控件只产出 string/number/boolean；自定义面板自行负责）。
+
+### 8.1 内置键 `workspaceFence`（工作区路径围栏）
+
+所有侧栏文件系统路由（`fs.tree` / `fs.read` / `fs.write` / `/sidebar/file` 媒体 / `/sidebar/html` 预览 / `/sidebar/upload`）默认强制**工作区包含检查**：客户端提供的路径经 realpath 解析后必须落在会话工作区内，否则 403（wire 错误码 `forbidden`，消息 `path "..." is outside workspace`）。`workspaceFence: false`（默认 `true`）解除该包含检查——路径仍会解析符号链接得到 canonical 路径，但不再拒绝工作区外的目标（如全局 `~/.dsh/AGENTS.md`、会话 cwd 之外的 linked worktree）。
+
+- 开关位置：设置页「文件」卡片 →「功能设置」二级弹窗；编辑器加载失败与文件树列目录失败两个错误面在触发围栏拒绝时会显示原因 + 一键全局关闭按钮（`FenceErrorNotice`，写 `workspaceFence: false` 后自动重试失败的操作）。
+- ⚠️ **安全代价**：关闭期间，页面内任意同源脚本（**包括第三方消费插件**）都能通过上述路由读写主机上任意文件——开关文案已明示该风险，用完建议重新打开。
 
 ---
 

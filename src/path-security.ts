@@ -21,45 +21,24 @@ function assertWithinWorkspace(workspace: string, target: string): void {
 }
 
 /**
- * Whether a canonical target lies within the workspace or any extra root.
- * Each extra root is resolved via realpath at call time; unresolvable roots
- * are skipped without error.
- * @param realTarget - Canonical target path (already realpath-resolved).
- * @param realCwd - Canonical workspace path.
- * @param extraRoots - Configured extra roots (absolute paths, may be unresolvable).
- * @returns Whether the target is allowed.
- */
-async function isAllowedRealTarget(realTarget: string, realCwd: string, extraRoots: string[]): Promise<boolean> {
-  if (isWithin(realCwd, realTarget)) return true
-  for (const root of extraRoots) {
-    try {
-      const realRoot = await realpath(root)
-      if (isWithin(realRoot, realTarget)) return true
-    } catch {
-      // Unresolvable extra root (missing or unreadable) is skipped — only
-      // when no root contains the target is the request forbidden.
-      continue
-    }
-  }
-  return false
-}
-
-/**
- * Resolve an existing workspace path through symlinks and enforce containment.
+ * Resolve an existing workspace path through symlinks and (unless disarmed)
+ * enforce containment.
  *
  * @param cwd - Session workspace directory.
  * @param target - Client-supplied absolute path.
- * @param extraRoots - Additional allowed roots (absolute paths, resolved via realpath per call).
+ * @param fence - Whether containment is enforced (the settings-page
+ * `workspaceFence` switch). Even when false the paths are still resolved
+ * through symlinks so callers always receive the canonical target.
  * @returns The canonical absolute path used for the filesystem operation.
  */
-export async function ensureWorkspacePath(cwd: string, target: string, extraRoots: string[] = []): Promise<string> {
+export async function ensureWorkspacePath(cwd: string, target: string, fence = true): Promise<string> {
   const absolute = requireAbsolute(target)
   const [realCwd, realTarget] = await Promise.all([
     resolveRealPath(cwd, 'workspace'),
     resolveRealPath(absolute, 'target'),
   ])
-  if (await isAllowedRealTarget(realTarget, realCwd, extraRoots)) return realTarget
-  throw new SidebarError('forbidden', `path "${realTarget}" is outside workspace`, 403)
+  if (fence) assertWithinWorkspace(realCwd, realTarget)
+  return realTarget
 }
 
 /**
@@ -71,33 +50,20 @@ export async function ensureWorkspacePath(cwd: string, target: string, extraRoot
  *
  * @param cwd - Session workspace directory.
  * @param target - Client-supplied absolute destination path.
- * @param extraRoots - Additional allowed roots (absolute paths, resolved via realpath per call).
+ * @param fence - Whether containment is enforced (the settings-page
+ * `workspaceFence` switch). Resolution/canonicalization is identical either way.
  * @returns A canonical path for an existing target or its nearest existing ancestor.
  */
-export async function ensureWorkspaceWritePath(cwd: string, target: string, extraRoots: string[] = []): Promise<string> {
+export async function ensureWorkspaceWritePath(cwd: string, target: string, fence = true): Promise<string> {
   const absolute = requireAbsolute(target)
   const realCwd = await resolveRealPath(cwd, 'workspace')
-  // Resolve extra roots once per call; unresolvable roots are skipped.
-  const realExtraRoots: string[] = []
-  for (const root of extraRoots) {
-    try {
-      realExtraRoots.push(await realpath(root))
-    } catch {
-      continue
-    }
-  }
-  const isAllowed = (candidate: string): boolean =>
-    isWithin(realCwd, candidate) || realExtraRoots.some(root => isWithin(root, candidate))
-
   let existingPath = absolute
   const missingSegments: string[] = []
 
   for (;;) {
     try {
       const realTarget = await realpath(existingPath)
-      if (!isAllowed(realTarget)) {
-        throw new SidebarError('forbidden', `path "${realTarget}" is outside workspace`, 403)
-      }
+      if (fence) assertWithinWorkspace(realCwd, realTarget)
       return missingSegments.reduce((path, segment) => join(path, segment), realTarget)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {

@@ -11,6 +11,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { FileTree } from '../src/client/FileTree.tsx'
+import { createSidebarStore } from '../src/client/state.ts'
 import type { OpenWithTarget } from '../src/client/open-with.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
@@ -64,6 +65,7 @@ async function mountTree(overrides: {
     root.render(createElement(FileTree, {
       sessionId: 's1',
       cwd: '/tmp',
+      store: createSidebarStore(),
       expanded: [],
       revealed: [],
       onToggle: () => {},

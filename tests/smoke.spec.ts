@@ -947,6 +947,7 @@ describe('side card settings routes', () => {
         interceptOpenPath: true,
         editOpensDiff: true,
         editorExplorer: false,
+        workspaceFence: true,
         terminalShell: '',
         terminalShellArgs: '',
         titleBarCompat: false,
@@ -974,6 +975,34 @@ describe('side card settings routes', () => {
     expect(view.value.openByDefault).toBe(true)
     expect(view.value.defaultWidthPercent).toBe(35)
     expect(view.revision).toBe(1)
+  })
+
+  it('disarms the workspace fence for the fs routes when the pref is off', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fence-off-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    writeFileSync(join(outside, 'secret.txt'), 'global instructions')
+    try {
+      const route = mountWithSettings(createFakeSettings())
+      // Default (fence on): the outside read is refused as usual…
+      const refused = await invoke(route, 'fs.read', { sessionId: 'fence', cwd: workspace, path: join(outside, 'secret.txt') })
+      expect(refused).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+      // …then the settings-page switch (or the fence notice's one-click off)
+      // disarms every fs route for paths outside the workspace.
+      const off = await invoke(route, 'settings.update', { patch: { workspaceFence: false } })
+      expect(off.ok).toBe(true)
+      const read = await invoke(route, 'fs.read', { sessionId: 'fence', cwd: workspace, path: join(outside, 'secret.txt') })
+      expect(read).toMatchObject({ ok: true, value: { kind: 'text', content: 'global instructions' } })
+      const tree = await invoke(route, 'fs.tree', { sessionId: 'fence', cwd: workspace, path: outside })
+      expect(tree).toMatchObject({ ok: true })
+      const write = await invoke(route, 'fs.write', { sessionId: 'fence', cwd: workspace, path: join(outside, 'written.txt'), content: 'ok' })
+      expect(write).toMatchObject({ ok: true })
+      expect(readFileSync(join(outside, 'written.txt'), 'utf8')).toBe('ok')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('refuses a stale write with settings-conflict (409)', async () => {

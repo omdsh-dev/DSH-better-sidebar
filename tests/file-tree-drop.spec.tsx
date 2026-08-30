@@ -14,6 +14,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { FileTree } from '../src/client/FileTree.tsx'
+import { createSidebarStore } from '../src/client/state.ts'
 import { TAB_DRAG_TYPE } from '../src/client/TabBar.tsx'
 import type { UploadItem } from '../src/client/upload.ts'
 
@@ -55,6 +56,7 @@ async function mountTree(busy = false): Promise<Harness> {
     root.render(createElement(FileTree, {
       sessionId: 's1',
       cwd: '/tmp',
+      store: createSidebarStore(),
       expanded: [],
       revealed: [],
       onToggle: () => {},

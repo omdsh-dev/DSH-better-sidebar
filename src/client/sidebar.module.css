@@ -1493,6 +1493,18 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-state-error-primary);
 }
 
+/* The workspace-fence refusal row (FenceErrorNotice): reason text plus the
+ * one-click global-off button share one baseline, wrapping when narrow. */
+.fenceError {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 16px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-state-error-primary);
+}
+
 .editorBanner {
   flex: none;
   padding: 4px 8px;

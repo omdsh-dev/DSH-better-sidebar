@@ -258,6 +258,19 @@ function shellOverridesOf(getSettings: () => SidebarSettingsFace | undefined): {
 }
 
 /**
+ * Whether the workspace fence is armed for the sidebar's filesystem routes
+ * (the settings-page `workspaceFence` switch under the files card's gear).
+ * An absent settings service or a missing field keeps the fence ON — the
+ * containment default never depends on the settings surface being reachable.
+ */
+function fenceEnabledOf(getSettings: () => SidebarSettingsFace | undefined): boolean {
+  const settings = getSettings()
+  const value = settings?.get().value
+  if (value === null || typeof value !== 'object') return true
+  return (value as Record<string, unknown>).workspaceFence !== false
+}
+
+/**
  * Parse the browser tab's `browserAllowedLoopback` allowlist into a matcher
  * over host:port (same contract as the client-side helper in
  * src/client/browser.ts — kept in sync). Bare hosts (`localhost`,
@@ -317,7 +330,7 @@ function buildApi(
     'fs.tree': async (payload) => {
       const { cwd } = await cwdOf(payload)
       const record = payload as { path?: unknown }
-      const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'))
+      const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'), fenceEnabledOf(getSettings))
       return listDirectory(target, resolved.listLimit)
     },
     'fs.search': async (payload) => {
@@ -335,14 +348,14 @@ function buildApi(
       // child-repo path is relative to the selected repoRoot, not the session
       // cwd; thread it so the path resolves inside the authorized workspace.
       const selected = selectedRepoOf(payload)
-      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected))
+      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected), fenceEnabledOf(getSettings))
       const { content, truncated, binary, size, head } = await readText(path, resolved.readLimit)
       if (binary) return { kind: 'binary', size, truncated, head }
       return { kind: 'text', content, truncated }
     },
     'fs.write': async (payload) => {
       const { cwd } = await cwdOf(payload)
-      const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'))
+      const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'), fenceEnabledOf(getSettings))
       const content = requireString(payload, 'content')
       const tmp = `${path}.dsh-sidebar-tmp-${process.pid}`
       try {
@@ -838,6 +851,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
           relativePath,
           chunks: req,
           limit: resolved.uploadLimit,
+          fence: fenceEnabledOf(() => settingsFace),
         })
         writeOk(res, { path, size })
       } catch (error) {
@@ -873,7 +887,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
         const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
-        const path = await ensureWorkspacePath(cwd, raw)
+        const path = await ensureWorkspacePath(cwd, raw, fenceEnabledOf(() => settingsFace))
         const info = await stat(path)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)
@@ -932,7 +946,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // real-path guard, with the same semantics as the media route's
         // fallback.
         const cwd = await sessionCwdOf(ctx, sessionId)
-        const absolute = await ensureWorkspacePath(cwd, path)
+        const absolute = await ensureWorkspacePath(cwd, path, fenceEnabledOf(() => settingsFace))
         const info = await stat(absolute)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)

@@ -27,8 +27,9 @@ import { createElement } from 'react'
 import clsx from 'clsx'
 import { IconCheckOutline16, IconFolderOpen16, IconRefreshOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
-import { api, mediaUrl, type SessionScope } from './api.ts'
+import { api, isOutsideWorkspaceMessage, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
+import { FenceErrorNotice } from './FenceErrorNotice.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
 import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
@@ -369,6 +370,7 @@ export function EditorHost(props: {
       <div className={css.editor}>
         <TreePanel
           full
+          store={store}
           sessionId={scope.sessionId}
           cwd={folderRoot ?? scope.cwd}
           expanded={expanded}
@@ -460,7 +462,9 @@ export function EditorHost(props: {
         <div className={css.editorMain}>
           {showEmpty && <div className={css.editorPlaceholder}>{t('editorEmptyHint')}</div>}
           {!showEmpty && load.status === 'loading' && <div className={css.editorPlaceholder}>{t('loading')}</div>}
-          {!showEmpty && load.status === 'error' && <div className={css.editorError}>{load.message}</div>}
+          {!showEmpty && load.status === 'error' && (isOutsideWorkspaceMessage(load.message)
+            ? <FenceErrorNotice store={store} onDisabled={() => { setReloadSeq(sequence => sequence + 1) }} />
+            : <div className={css.editorError}>{load.message}</div>)}
           {!showEmpty && load.status === 'binary' && <BinaryDownload scope={scope} path={path} />}
           {!showEmpty && load.status === 'ready' && createElement(load.viewer.component, {
             ctx, store, scope, path, title,
@@ -488,6 +492,7 @@ export function EditorHost(props: {
               onPointerCancel={onResizeEnd}
             />
             <TreePanel
+              store={store}
               sessionId={scope.sessionId}
               cwd={scope.cwd}
               expanded={expanded}

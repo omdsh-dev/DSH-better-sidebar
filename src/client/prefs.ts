@@ -85,6 +85,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     editorExplorer: typeof record.editorExplorer === 'boolean'
       ? record.editorExplorer
       : SIDEBAR_PREFS_DEFAULTS.editorExplorer,
+    workspaceFence: typeof record.workspaceFence === 'boolean'
+      ? record.workspaceFence
+      : SIDEBAR_PREFS_DEFAULTS.workspaceFence,
     // The title-bar scheme (auto | web | preset | custom). The schema
     // declares the field WITHOUT a default, so documents written by older
     // plugin versions resolve without it — migrate from the legacy fields:
