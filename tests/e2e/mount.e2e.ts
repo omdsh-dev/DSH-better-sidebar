@@ -548,6 +548,55 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await page.screenshot({ path: 'test-results/mount-final.png' })
 })
 
+test('file tree "Open with" submenu stays inside the viewport (issue #490)', async ({ page }) => {
+  // #490 regression lane: the DSH Menu primitive opens submenus purely via CSS
+  // (always to the right of the parent row) and never clamps them to the
+  // viewport, so a context menu at the window's right edge used to spill its
+  // submenu off-screen and unclickable. The plugin's fit
+  // (src/client/menu-submenu-fit.ts) flips overflowing submenus left; this
+  // lane right-clicks a file row near the sidebar's right edge and requires
+  // the nested "Open with" submenu to stay fully in-view.
+  const sidebar = page.locator('[data-dsh-better-sidebar]')
+  await expect(sidebar).toBeAttached({ timeout: 90_000 })
+  // Re-activate the seeded Files explorer (later lanes leave other tabs
+  // active; its tree is the only one visible while it is active).
+  const filesTab = sidebar.locator('[title="Files"][draggable="true"]').first()
+  await expect(filesTab, 'the seeded files-window home tab must be in the tab strip').toHaveCount(1)
+  await filesTab.click()
+  // The tree row — NOT the same-named editor tab (tab-strip tabs carry
+  // draggable="true"; explorer rows do not).
+  const fileRow = sidebar.locator(`[role="button"][title$="${SEEDED_FILE}"]:visible:not([draggable])`)
+  await expect(fileRow, `the seeded "${SEEDED_FILE}" file must appear in the files window's tree`).toHaveCount(1, { timeout: 30_000 })
+  // Right-click near the row's RIGHT edge: the row menu opens at the cursor,
+  // and the sidebar hugs the window's right edge — the exact geometry that
+  // used to push the submenu off-screen. (x-60 stays clear of the
+  // hover-revealed @-reference button at the row's far right.)
+  const rowBox = await fileRow.boundingBox()
+  expect(rowBox, 'the seeded file row must have a measurable box').not.toBeNull()
+  await fileRow.click({ button: 'right', position: { x: Math.max(rowBox!.width - 60, 8), y: 8 } })
+  const openWith = page.getByRole('menuitem', { name: /open with/i })
+  await expect(openWith, 'the row menu must offer the "Open with" submenu parent').toBeVisible({ timeout: 10_000 })
+  await openWith.hover()
+  const submenu = page.locator('[role="menu"] [role="menu"]').filter({ hasText: /File Manager|VS Code/ })
+  await expect(submenu, 'hovering "Open with" must mount the nested submenu').toBeVisible({ timeout: 10_000 })
+  // The fit runs on the frame after the submenu mounts; poll until the whole
+  // card is inside the viewport (the bug left it hanging off the right edge).
+  const viewport = page.viewportSize() ?? { width: 1280, height: 720 }
+  await expect
+    .poll(
+      async () => {
+        const box = await submenu.boundingBox()
+        if (box === null) return false
+        return box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport.width && box.y + box.height <= viewport.height
+      },
+      { timeout: 5_000 },
+    )
+    .toBe(true)
+  // Leave the shell clean for the later lanes.
+  await page.keyboard.press('Escape')
+  await expect(openWith, 'Escape must close the row menu').not.toBeVisible()
+})
+
 test('conservative auto: URL stamps alone never modify the layout; plugin chrome carries the stable data attributes', async ({ page }) => {
   // The official DSH Desktop shell stamps every render URL with
   // dsh-desktop-mode / dsh-desktop-platform. Under the conservative AUTO

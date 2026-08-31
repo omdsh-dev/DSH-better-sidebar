@@ -37,6 +37,7 @@ import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
 import type { SidebarStore } from './state.ts'
 import { uploadItemsFromDrop, uploadItemsFromFiles, type UploadItem } from './upload.ts'
+import { useMenuSubmenuFit } from './menu-submenu-fit.ts'
 import css from './sidebar.module.css'
 
 interface LevelData {
@@ -165,6 +166,11 @@ export function FileTree(props: {
   /** Context-menu "upload here" target directory. */
   const pendingUploadDir = useRef<string | undefined>(undefined)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // #490: the DSH Menu primitive never clamps submenus to the viewport, so the
+  // "open with" submenu falls off the right edge when the tree (at the window's
+  // right edge) opens its menu there. While the menu is open, flip overflowing
+  // submenus left — see menu-submenu-fit.ts.
+  useMenuSubmenuFit(rowMenu !== null)
 
   /** Reset all drag state (drop landed, the drag left, or a new drag begins). */
   const resetDrop = (): void => {

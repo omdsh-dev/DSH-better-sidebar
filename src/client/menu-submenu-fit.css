@@ -1,0 +1,21 @@
+/*
+ * Submenu viewport flip for #490 — consumed via `data-dshb-submenu-side` set
+ * by src/client/menu-submenu-fit.ts on the DSH Menu primitive's submenu card.
+ * The primitive always opens submenus to the right of their parent row
+ * (`.submenu { left: calc(100% + 10px) }`); when the fit logic measured an
+ * overflow it flips the card LEFT, and this rule moves the hover bridge
+ * (`::before` — the primitive's gap-crossing hit area) to the opposite gap so
+ * moving the pointer diagonally does not close the submenu.
+ *
+ * Geometry only — no colors/tokens (skin contract untouched). `!important`
+ * keeps the correction independent of host stylesheet load order.
+ */
+[data-dshb-submenu-side='left'] {
+  left: auto !important;
+  right: calc(100% + 10px) !important;
+}
+[data-dshb-submenu-side='left']::before {
+  left: auto !important;
+  right: -10px !important;
+  width: 10px;
+}

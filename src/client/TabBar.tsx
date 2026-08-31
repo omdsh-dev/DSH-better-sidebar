@@ -18,6 +18,7 @@ import { isAgentTabId } from './state.ts'
 import { isPinnedVirtualTab } from './pinned.ts'
 import { IconPinOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
+import { useMenuSubmenuFit } from './menu-submenu-fit.ts'
 import css from './sidebar.module.css'
 
 /** One + menu option. */
@@ -95,6 +96,10 @@ export function TabBar(props: {
   // The context target's index in the render-time tab snapshot; -1 when the
   // tab disappeared since the menu opened (the menu hides then).
   const tabMenuIndex = tabMenu === null ? -1 : tabs.findIndex(tab => tab.id === tabMenu.tabId)
+  // #490: the DSH Menu primitive never clamps submenus to the viewport, so the
+  // terminal "Pin ▸" submenu can fall off the right edge. Flip overflowing
+  // submenus left while the tab menu is open — see menu-submenu-fit.ts.
+  useMenuSubmenuFit(tabMenu !== null && tabMenuIndex >= 0)
 
   // Middle-click close: the press target is recorded on middle mousedown
   // (preventDefaulted to disarm Chrome's middle-click autoscroll — its
