@@ -110,6 +110,29 @@ describe('prompt overview derivation', () => {
     ])
   })
 
+  it('reads pre-migration steering and assistant message envelopes', () => {
+    const durable = collectHistoryPromptEntries([
+      history('steering/message', 1, {
+        turn: 1,
+        message: { content: [{ type: 'input_text', text: 'Legacy follow-up' }] },
+      }),
+      history('assistant/message', 2, {
+        turn: 1,
+        step: 2,
+        content: [{ type: 'output_text', text: 'Legacy answer' }],
+      }),
+      history('user/message', 3, {
+        source: { kind: 'steering' },
+        message: { content: 'Human steering source' },
+      }),
+    ])
+
+    expect(durable.map(entry => [entry.question, entry.answer])).toEqual([
+      ['Legacy follow-up', 'Legacy answer'],
+      ['Human steering source', ''],
+    ])
+  })
+
   it('reconciles a rendered suffix without losing unloaded history prompts', () => {
     const firstRow = row('user', 'user:1', 'First question')
     const secondRow = row('user', 'user:2', 'Second question')
@@ -125,6 +148,36 @@ describe('prompt overview derivation', () => {
     expect(merged.map(entry => [entry.key, entry.answer, entry.row])).toEqual([
       ['history:1', 'Live answer', firstRow],
       ['history:2', 'Second answer', secondRow],
+    ])
+  })
+
+  it('falls back to suffix order when legacy durable text differs from rendered text', () => {
+    const oldRow = row('user', 'user:old', 'Rendered imported prompt')
+    const latestRow = row('user', 'user:latest', 'Exact latest prompt')
+    const merged = reconcilePromptOverviewEntries([
+      { key: 'history:1', question: '', answer: 'Imported answer', row: null },
+      { key: 'history:2', question: 'Exact latest prompt', answer: '', row: null },
+    ], [
+      { key: 'user:old', question: 'Rendered imported prompt', answer: '', row: oldRow },
+      { key: 'user:latest', question: 'Exact latest prompt', answer: '', row: latestRow },
+    ])
+
+    expect(merged.map(entry => entry.row)).toEqual([oldRow, latestRow])
+  })
+
+  it('keeps a newly rendered prompt separate while durable history catches up', () => {
+    const oldRow = row('user', 'user:old', 'Repeated prompt')
+    const newRow = row('user', 'user:new', 'Repeated prompt')
+    const merged = reconcilePromptOverviewEntries([
+      { key: 'history:1', question: 'Repeated prompt', answer: 'Old answer', row: null },
+    ], [
+      { key: 'user:old', question: 'Repeated prompt', answer: '', row: oldRow },
+      { key: 'user:new', question: 'Repeated prompt', answer: '', row: newRow },
+    ])
+
+    expect(merged.map(entry => [entry.key, entry.row])).toEqual([
+      ['history:1', oldRow],
+      ['user:new', newRow],
     ])
   })
 

@@ -11,7 +11,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { Context, SidebarHistoryEntry } from '../context-types.ts'
-import { isContextInjectionMessage } from '../sidechat-core.ts'
+import { SIDE_BOUNDARY_PREFIX } from '../sidechat-core.ts'
 import { t } from './locales.ts'
 import css from './PromptOverview.module.css'
 
@@ -30,8 +30,20 @@ interface PromptGeometry {
   height: number
 }
 
+/** Session-keyed state prevents the previous conversation's ticks flashing
+ * while a newly selected session's history request is still in flight. */
+interface HistoryPromptIndex {
+  sessionId: string | undefined
+  entries: readonly PromptOverviewEntry[]
+}
+
 const HUMAN_KINDS = new Set(['user', 'steering'])
 const ASSISTANT_KINDS = new Set(['assistant', 'assistant-step'])
+const USER_EVENT_TYPES = new Set(['user/message', 'steering/message'])
+const ASSISTANT_EVENT_TYPES = new Set(['assistant/message'])
+const EMPTY_PROMPTS: readonly PromptOverviewEntry[] = []
+const HISTORY_CACHE_LIMIT = 80
+const historyPromptCache = new Map<string, readonly PromptOverviewEntry[]>()
 const HISTORY_PAGE_MESSAGES = 200
 const HISTORY_PAGE_LIMIT = 40
 const MIN_RAIL_HEIGHT = 44
@@ -44,17 +56,81 @@ export function normalizePromptPreview(value: string | null | undefined): string
   return (value ?? '').replace(/\s+/gu, ' ').trim()
 }
 
-/** Extract visible text from a durable content-block list. */
-function contentText(content: unknown): string {
+/** Object-only structural read for legacy event envelopes. */
+function recordOf(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+/**
+ * Extract visible text from current and legacy message/content shapes. Older
+ * DSH logs used bare strings, `{content}`, `{message:{content}}`, and the
+ * pre-react-loop `steering/message` wrapper; imported provider histories may
+ * carry `input_text` / `output_text` blocks. Images intentionally return an
+ * empty string and receive the localized image fallback at render time.
+ */
+function contentText(content: unknown, depth = 0): string {
+  if (depth > 4) return ''
   if (typeof content === 'string') return normalizePromptPreview(content)
-  if (!Array.isArray(content)) return ''
-  const text = content.flatMap(block => {
-    if (block === null || typeof block !== 'object') return []
-    const candidate = block as { type?: unknown; kind?: unknown; text?: unknown }
-    const textKind = candidate.type === 'text' || candidate.kind === 'text'
-    return textKind && typeof candidate.text === 'string' ? [candidate.text] : []
-  }).join('\n\n')
-  return normalizePromptPreview(text)
+  if (Array.isArray(content)) {
+    return normalizePromptPreview(content
+      .map(block => contentText(block, depth + 1))
+      .filter(Boolean)
+      .join('\n\n'))
+  }
+  const candidate = recordOf(content)
+  if (candidate === undefined) return ''
+  const kind = candidate.type ?? candidate.kind
+  if ((kind === 'text' || kind === 'input_text' || kind === 'output_text')
+    && typeof candidate.text === 'string') {
+    return normalizePromptPreview(candidate.text)
+  }
+  if (typeof candidate.text === 'string' && kind === undefined) {
+    return normalizePromptPreview(candidate.text)
+  }
+  for (const nested of [candidate.content, candidate.message]) {
+    const text = contentText(nested, depth + 1)
+    if (text !== '') return text
+  }
+  return kind === undefined ? contentText(candidate.value, depth + 1) : ''
+}
+
+/** Read a user or assistant message across current and pre-migration envelopes. */
+function eventMessageText(data: Record<string, unknown>, assistant: boolean): string {
+  const wrapped = recordOf(data.message)
+  const candidates = assistant
+    ? [wrapped?.content, data.content, data.message, data.output, data.text]
+    : [data.content, wrapped?.content, data.message, data.prompt, data.text]
+  for (const candidate of candidates) {
+    const text = contentText(candidate)
+    if (text !== '') return text
+  }
+  return ''
+}
+
+/** Human sources used by historical DSH releases and imported transcripts. */
+function isHumanHistoryMessage(data: Record<string, unknown>): boolean {
+  const sourceKind = recordOf(data.source)?.kind
+  if (sourceKind !== undefined
+    && sourceKind !== 'user'
+    && sourceKind !== 'human'
+    && sourceKind !== 'steering') return false
+  // Very early side-thread logs delivered boundary+question as a nominal
+  // user message; keep that injected envelope out of the main prompt rail.
+  return !eventMessageText(data, false).startsWith(SIDE_BOUNDARY_PREFIX)
+}
+
+/** Store a bounded, row-free durable index for instant session revisits. */
+function cacheHistoryPrompts(sessionId: string, entries: readonly PromptOverviewEntry[]): void {
+  const durable = entries.map(entry => ({ ...entry, row: null }))
+  historyPromptCache.delete(sessionId)
+  historyPromptCache.set(sessionId, durable)
+  while (historyPromptCache.size > HISTORY_CACHE_LIMIT) {
+    const oldest = historyPromptCache.keys().next().value as string | undefined
+    if (oldest === undefined) break
+    historyPromptCache.delete(oldest)
+  }
 }
 
 /**
@@ -109,21 +185,23 @@ export function collectHistoryPromptEntries(history: readonly SidebarHistoryEntr
   let current: PromptOverviewEntry | undefined
   const ordered = [...history].sort((left, right) => left.event.seq - right.event.seq)
   for (const { event } of ordered) {
-    const data = event.data as Record<string, unknown>
-    if (event.type === 'user/message') {
-      if (isContextInjectionMessage(data)) continue
+    const data = recordOf(event.data) ?? {}
+    if (USER_EVENT_TYPES.has(event.type)) {
+      // Legacy steering/message is itself a human prompt wrapper. Current
+      // user/message rows need their source checked so goal/plugin/runtime
+      // injections never become fake questions in the rail.
+      if (event.type === 'user/message' && !isHumanHistoryMessage(data)) continue
       current = {
         key: `history:${event.seq}`,
-        question: contentText(data.content),
+        question: eventMessageText(data, false),
         answer: '',
         row: null,
       }
       entries.push(current)
       continue
     }
-    if (event.type === 'assistant/message' && current !== undefined) {
-      const message = data.message as { content?: unknown } | undefined
-      const answer = contentText(message?.content)
+    if (ASSISTANT_EVENT_TYPES.has(event.type) && current !== undefined) {
+      const answer = eventMessageText(data, true)
       if (answer !== '') current.answer = answer
     }
   }
@@ -143,9 +221,18 @@ export function reconcilePromptOverviewEntries(
   const merged: PromptOverviewEntry[] = history.map(entry => ({ ...entry, row: null }))
   const unmatched: PromptOverviewEntry[] = []
   const used = new Set<number>()
+  // A live prompt can appear before the history RPC catches up. Reserve that
+  // many newest rendered rows as unmatched instead of positionally binding
+  // them onto older durable prompts.
+  let unmatchedBudget = Math.max(0, rendered.length - history.length)
   let ceiling = merged.length - 1
   for (let renderedIndex = rendered.length - 1; renderedIndex >= 0; renderedIndex -= 1) {
     const live = rendered[renderedIndex]!
+    if (unmatchedBudget > 0) {
+      unmatchedBudget -= 1
+      unmatched.unshift(live)
+      continue
+    }
     let match = -1
     for (let historyIndex = ceiling; historyIndex >= 0; historyIndex -= 1) {
       if (used.has(historyIndex)) continue
@@ -153,6 +240,12 @@ export function reconcilePromptOverviewEntries(
         match = historyIndex
         break
       }
+    }
+    if (match === -1 && unmatchedBudget === 0 && ceiling >= 0) {
+      // Legacy event payloads can omit text or serialize attachments/references
+      // differently from the current DOM. The rendered window is an ordered
+      // suffix, so a newest-to-oldest positional fallback remains safe.
+      match = ceiling
     }
     if (match === -1) {
       unmatched.unshift(live)
@@ -273,11 +366,18 @@ function waitForHistoryPrepend(flow: HTMLElement, previousFirstKey: string | nul
 }
 
 /**
- * Past-prompt minimap. It hides for a missing session, fewer than two prompts,
- * narrow layouts, and while the official Chat view is not mounted.
+ * Past-prompt minimap. It hides for a missing/empty session, narrow layouts,
+ * and while the official Chat view is not mounted. A single old prompt still
+ * renders one marker — old one-turn sessions are useful navigation targets.
  */
 export function PromptOverview({ ctx, sessionId }: { ctx: Context; sessionId: string | undefined }) {
-  const [historyEntries, setHistoryEntries] = useState<PromptOverviewEntry[]>([])
+  const [historyIndex, setHistoryIndex] = useState<HistoryPromptIndex>(() => ({
+    sessionId,
+    entries: sessionId === undefined ? EMPTY_PROMPTS : historyPromptCache.get(sessionId) ?? EMPTY_PROMPTS,
+  }))
+  const historyEntries = historyIndex.sessionId === sessionId
+    ? historyIndex.entries
+    : sessionId === undefined ? EMPTY_PROMPTS : historyPromptCache.get(sessionId) ?? EMPTY_PROMPTS
   const [entries, setEntries] = useState<PromptOverviewEntry[]>([])
   const [active, setActive] = useState(-1)
   const [hoveredKey, setHoveredKey] = useState<string | null>(null)
@@ -288,9 +388,11 @@ export function PromptOverview({ ctx, sessionId }: { ctx: Context; sessionId: st
   useEffect(() => {
     const controller = new AbortController()
     if (sessionId === undefined) {
-      setHistoryEntries([])
+      setHistoryIndex({ sessionId: undefined, entries: EMPTY_PROMPTS })
       return () => { controller.abort() }
     }
+    const cached = historyPromptCache.get(sessionId) ?? EMPTY_PROMPTS
+    setHistoryIndex({ sessionId, entries: cached })
     void (async () => {
       const bySeq = new Map<number, SidebarHistoryEntry>()
       let beforeSeq: number | undefined
@@ -301,19 +403,25 @@ export function PromptOverview({ ctx, sessionId }: { ctx: Context; sessionId: st
             maxMessages: HISTORY_PAGE_MESSAGES,
             ...(beforeSeq === undefined ? {} : { beforeSeq }),
           }, controller.signal)
-          if (!response.result.ok) break
+          if (!response.result.ok) throw new Error(response.result.error.message)
           const value = response.result.value
           for (const entry of value.events) bySeq.set(entry.event.seq, entry)
           if (!value.hasMore || value.events.length === 0) break
-          const nextBefore = Math.min(...value.events.map(entry => entry.event.seq))
+          const seqs = value.events.map(entry => entry.event.seq).filter(Number.isFinite)
+          if (seqs.length === 0) break
+          const nextBefore = Math.min(...seqs)
           if (nextBefore === beforeSeq) break
           beforeSeq = nextBefore
         }
         if (!controller.signal.aborted) {
-          setHistoryEntries(collectHistoryPromptEntries([...bySeq.values()]))
+          const next = collectHistoryPromptEntries([...bySeq.values()])
+          cacheHistoryPrompts(sessionId, next)
+          setHistoryIndex({ sessionId, entries: historyPromptCache.get(sessionId) ?? EMPTY_PROMPTS })
         }
       } catch {
-        if (!controller.signal.aborted) setHistoryEntries([])
+        // Old/corrupt persistence may refuse its history page. Keep the
+        // session-keyed cache and visible DOM fallback instead of flashing an
+        // empty rail or, worse, retaining another session's markers.
       }
     })()
     return () => { controller.abort() }
@@ -398,7 +506,7 @@ export function PromptOverview({ ctx, sessionId }: { ctx: Context; sessionId: st
       entriesRef.current = next
       setEntries(previous => sameEntries(previous, next) ? previous : next)
       updateActive()
-      if (next.length < 2) {
+      if (next.length === 0) {
         setGeometry(previous => previous === null ? previous : null)
         return
       }
@@ -482,7 +590,7 @@ export function PromptOverview({ ctx, sessionId }: { ctx: Context; sessionId: st
     ? railHeight / 2
     : 5 + index * (railHeight - 10) / (entries.length - 1)), [entries, railHeight])
 
-  if (geometry === null || entries.length < 2) return null
+  if (geometry === null || entries.length === 0) return null
 
   return (
     <nav
