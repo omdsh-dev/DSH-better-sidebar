@@ -14,11 +14,11 @@
  * processes are keyed by session.
  */
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, extname, isAbsolute, join } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
-import type { Context, SidebarHttpRequest } from './context-types.ts'
+import type { Context, SidebarHttpRequest, SidebarSessionEvent } from './context-types.ts'
 import {
   Config,
   PrefsSchema,
@@ -381,6 +381,16 @@ function buildApi(
       const { cwd } = await gitCwdOf(payload)
       return git.status(cwd, selectedRepoOf(payload))
     },
+    'git.status-at': async (payload) => {
+      // Owning-repository probe for the chat file-link diff preview: the
+      // status is scoped to the repository that owns `path`, not the session
+      // cwd's discovery list (the file may sit in a nested child repo).
+      const { cwd } = await gitCwdOf(payload)
+      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path')), fenceEnabledOf(getSettings))
+      const root = await git.repoRootOf(path)
+      if (root === undefined) return { isRepo: false, entries: [], repositories: [] }
+      return git.status(root, root)
+    },
     'git.diff': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       const record = payload as { path?: unknown; staged?: unknown }
@@ -428,9 +438,24 @@ function buildApi(
         : undefined
       return git.log(cwd, count, skip, selectedRepoOf(payload))
     },
+    'git.last-commit-at': async (payload) => {
+      // File-limited last-commit probe for the edit→commit fallback: the most
+      // recent commit touching `path` inside its owning repository.
+      const { cwd } = await gitCwdOf(payload)
+      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path')), fenceEnabledOf(getSettings))
+      const root = await git.repoRootOf(path)
+      if (root === undefined) return { commit: null }
+      const rel = relative(root, path).split(sep).join('/')
+      if (rel === '' || rel.startsWith('..')) return { commit: null }
+      const commit = await git.lastCommitTouching(root, rel)
+      return { commit: commit === undefined ? null : { ...commit, repoRoot: root } }
+    },
     'git.commit-diff': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
-      return { diff: await git.commitDiff(cwd, requireString(payload, 'hash'), selectedRepoOf(payload)) }
+      const record = payload as { path?: unknown }
+      const repoRoot = selectedRepoOf(payload)
+      const path = record.path === undefined ? undefined : await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot)
+      return { diff: await git.commitDiff(cwd, requireString(payload, 'hash'), repoRoot, path) }
     },
     'git.discard': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
@@ -454,6 +479,44 @@ function buildApi(
       const path = await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot)
       const rev = requireString(payload, 'rev')
       return { content: await git.show(cwd, rev, path, repoRoot) }
+    },
+    // The session's file-tool events for the changes tab's session lens
+    // (and its badge): the CLIENT runtime's sessions face has no event-log
+    // access, so the events cross the wire here — live session log first,
+    // the persisted logical log for not-yet-hydrated sessions. Only the
+    // two event types the lens folds are sent, narrowed to `seq > afterSeq`
+    // so polling is a small delta, with the same recent-window cap the
+    // client accumulator applies.
+    'changes.ops': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      const rawAfter = (payload as { afterSeq?: unknown } | null)?.afterSeq
+      if (rawAfter !== undefined
+        && (typeof rawAfter !== 'number' || !Number.isSafeInteger(rawAfter) || rawAfter < 0)) {
+        throw new SidebarError('bad-request', 'afterSeq must be a non-negative integer')
+      }
+      // An absent cursor means "from the very first event" — a session whose
+      // log opens on a tool event (subagent seeds do) carries seq 0, which a
+      // literal `> 0` comparison would drop, so the absent case floors at -1.
+      const afterSeq = rawAfter ?? -1
+      let events: readonly SidebarSessionEvent[] | undefined = ctx.sessions.get(sessionId)?.events
+      if (events === undefined) {
+        const persistence = ctx.get('sessionPersistence')
+        if (persistence !== undefined) {
+          try {
+            events = (await persistence.inspect(sessionId)).events
+          } catch {
+            // Cold read unavailable (session never persisted): an empty
+            // window is the honest answer, not a wire error.
+          }
+        }
+      }
+      if (events === undefined) return { events: [], lastSeq: Math.max(afterSeq, 0) }
+      const CHANGES_EVENTS_CAP = 4000
+      const filtered = events.filter(
+        event => (event.type === 'tool/call' || event.type === 'tool/result') && event.seq > afterSeq,
+      )
+      const window = filtered.length > CHANGES_EVENTS_CAP ? filtered.slice(filtered.length - CHANGES_EVENTS_CAP) : filtered
+      return { events: window, lastSeq: window.at(-1)?.seq ?? afterSeq }
     },
     // Release a terminal immediately. The WebSocket close frame already does
     // this while the socket is open; this route covers the tab-close that

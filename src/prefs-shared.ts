@@ -84,6 +84,14 @@ export interface SidebarPrefs {
    */
   editorExplorer: boolean
   /**
+   * Where the changes tab's "expand to a diff tab" action lands the diff:
+   * true (default) floats it as a free window centered on the viewport;
+   * false docks it into the shell's diff pane below the source panel (the
+   * pre-float behavior). The select lives under the changes card's gear in
+   * the Side card settings.
+   */
+  changesDiffFloat: boolean
+  /**
    * Whether the sidebar's filesystem routes enforce the workspace fence:
    * every client-supplied path must resolve (through symlinks) inside the
    * session workspace, else the route answers 403 "outside workspace". On
@@ -274,6 +282,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   interceptOpenPath: true,
   editOpensDiff: true,
   editorExplorer: false,
+  changesDiffFloat: true,
   workspaceFence: true,
   terminalShell: '',
   terminalShellArgs: '',

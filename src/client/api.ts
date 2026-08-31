@@ -9,6 +9,7 @@
 import { encodeHtmlUrl } from '../html-route.ts'
 import type { LastActivity } from '../subagent-activity.ts'
 import type { SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
+import type { SidebarSessionEvent } from '../context-types.ts'
 import type { BrowserProbeResult } from './browser.ts'
 
 /** One wire failure. */
@@ -263,6 +264,14 @@ export const api = {
   /** The most recent commit that touched `path` (file-limited last-commit probe for the edit→commit fallback). */
   gitLastCommitAt: (scope: SessionScope, path: string, signal?: AbortSignal) =>
     call<{ commit: { hash: string; hashFull: string; subject: string; repoRoot: string } | null }>('git.last-commit-at', scopePayload(scope, { path }), signal),
+  /** The session's file-tool events for the changes tab's session lens: the
+   *  `tool/call` + `tool/result` rows past `afterSeq` (0 = whole window),
+   *  capped to the recent window host-side. The client runtime exposes no
+   *  event-log face, so the lens polls this delta route. */
+  changesOps: (scope: SessionScope, afterSeq?: number, signal?: AbortSignal) =>
+    call<{ events: SidebarSessionEvent[]; lastSeq: number }>('changes.ops', scopePayload(scope, {
+      ...(afterSeq !== undefined && afterSeq > 0 ? { afterSeq } : {}),
+    }), signal),
   /** Discard the worktree changes of one file (the index is untouched). */
   gitDiscard: (scope: SessionScope, path: string, worktree?: string) =>
     call<{ ok: true }>('git.discard', gitPayload(scope, worktree, { path })),

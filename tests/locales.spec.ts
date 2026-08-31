@@ -61,13 +61,13 @@ describe('locales (DSH i18n following)', () => {
     attachLocale(locale)
 
     locale.switchTo('zh')
-    expect(t('git')).toBe('源代码管理')
+    expect(t('changes')).toBe('文件变动')
     expect(isZh()).toBe(true)
 
     // Live switch: the service's active locale wins even though the
     // browser still asks for en-US.
     locale.switchTo('en')
-    expect(t('git')).toBe('Source Control')
+    expect(t('changes')).toBe('Changes')
     expect(isZh()).toBe(false)
   })
 
@@ -172,8 +172,8 @@ describe('locales (better-locale override)', () => {
     betterLocale.active = 'ja'
     attachBetterLocale(betterLocale)
 
-    // 'git' has no ja entry in this fake; should fall back to the en text.
-    expect(t('git')).toBe('Source Control')
+    // 'changes' has no ja entry in this fake; should fall back to the en text.
+    expect(t('changes')).toBe('Changes')
   })
 
   it('falls back to the zh/en chain when no override is active', () => {

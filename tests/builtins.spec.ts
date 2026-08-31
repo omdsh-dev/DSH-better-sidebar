@@ -4,7 +4,8 @@
  * the catch-all `code` viewer, the NUL-sniffing `binary-download` viewer,
  * and the html sandbox settings pin the registry's behavior. (Office
  * previews are NOT built in — they moved to the recommended office plugin,
- * see src/client/plugins-viewers.ts.)
+ * see src/client/plugins-viewers.ts.) The git tab is the unified changes
+ * tab (git lens + session lens, PR #471's file-trace merged in).
  */
 import { describe, expect, it } from 'vitest'
 // First import: browser globals before the xterm-carrying builtin graph loads.
@@ -32,6 +33,29 @@ describe('built-in tab registrations', () => {
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
       ['browser', 'diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal'],
     )
+  })
+
+  it('the git (changes) tab is a single-instance badge-carrying visible tab', () => {
+    const { service } = setup()
+    const changes = service.getTab('git')
+    expect(changes?.single).toBe(true)
+    expect(changes?.hidden).not.toBe(true)
+    expect(changes?.badge).toBeDefined()
+    expect(changes?.component).toBeDefined()
+  })
+
+  it('the changes tab declares the diff-open picker (free window default)', () => {
+    const { service } = setup()
+    const toggles = service.getTab('git')?.settings?.toggles ?? []
+    expect(toggles.map(t => t.key)).toEqual(['changesDiffFloat'])
+    const picker = toggles[0]
+    expect(picker?.type).toBe('select')
+    expect(picker?.title).toBeDefined()
+    expect(picker?.desc).toBeDefined()
+    const options = picker?.options ?? []
+    // Float first (the default the reducer and prefs ship), pane second.
+    expect(options.map(o => o.value)).toEqual([true, false])
+    expect(options.every(o => o.icon !== undefined && o.title !== undefined && o.desc !== undefined)).toBe(true)
   })
 
   it('only diff is hidden from the + menu; editor is the visible files window (order 10)', () => {

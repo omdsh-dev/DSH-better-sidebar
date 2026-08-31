@@ -17,8 +17,28 @@
  * reasoning deltas. The mapping accumulates both per block and supersedes
  * them with the assembled message once it lands (settled rows).
  */
+import type { DiffHunk, ReadBlockLine } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarHistoryEntry } from '../context-types.ts'
 import { isContextInjectionMessage, SIDE_BOUNDARY_PROMPT } from '../sidechat-core.ts'
+
+/**
+ * Structured render payload for a tool row that maps onto one of the host's
+ * ui-primitives Blocks (the same atoms the main conversation renders). Derived
+ * defensively from raw `tool/call` arguments and `tool/result` `meta` — the
+ * producing tool owns the meta shape, so every field is narrowed and any
+ * malformed input silently falls back to the generic text row.
+ */
+export type SidechatToolCard =
+  | {
+    type: 'terminal'
+    command: string
+    cwd?: string
+    output?: string
+    exitCode?: number
+    signal?: string
+  }
+  | { type: 'diff'; diffs: DiffHunk[] }
+  | { type: 'read'; label: string; lines: ReadBlockLine[]; totalLines: number; lang?: string }
 
 /** One compact transcript row rendered in the thread view. `seq` is the
  *  source event's log sequence — stable row identity for React keys across
@@ -45,7 +65,31 @@ export type SidechatTranscriptRow =
     resultText?: string
     /** True while the call's result has not landed yet. */
     executing?: boolean
+    /** Structured render payload (host Block atoms); absent = generic row. */
+    card?: SidechatToolCard
   }
+  /** One turn's tail metrics, emitted at `turn/end`: the turn's token usage
+   *  (aggregated from `assistant/message.usage`) and wall duration (envelope
+   *  time delta from `turn/start`), whichever are computable. */
+  | { kind: 'turnSummary'; seq: number; inputTokens?: number; outputTokens?: number; durationMs?: number }
+
+/** Compact token count the way the main conversation prints usage
+ *  (517 / 12.2K / 1.2M — the host's own formatter is not exported). */
+export function formatTokens(n: number): string {
+  const scaled = (v: number): string => (v >= 100 ? String(Math.round(v)) : String(Math.round(v * 10) / 10))
+  if (n < 1_000) return String(n)
+  if (n < 1_000_000) return `${scaled(n / 1_000)}K`
+  return `${scaled(n / 1_000_000)}M`
+}
+
+/** Compact duration the way the main conversation prints run times
+ *  (45.2s / 2m42s — sub-minute keeps one decimal). */
+export function formatDurationMs(ms: number): string {
+  const seconds = ms / 1_000
+  if (seconds < 60) return `${Math.round(seconds * 10) / 10}s`
+  const whole = Math.round(seconds)
+  return `${Math.floor(whole / 60)}m${whole % 60}s`
+}
 
 /** Extract the visible text of a content-block list (`text` blocks verbatim,
  *  joined by blank lines); empty reads `…` so rows never render blank. */
@@ -127,6 +171,131 @@ function lastSeedEnd(events: readonly { type: string }[]): number {
   return -1
 }
 
+/** Parse the tool's raw arguments JSON to an object, or undefined. */
+function parseArgsObject(args: string | undefined): Record<string, unknown> | undefined {
+  if (args === undefined) return undefined
+  try {
+    const parsed = JSON.parse(args) as unknown
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
+    return parsed as Record<string, unknown>
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Call-time card from the raw `tool/call` arguments — the same literal cards
+ * the host's own presenters derive before any result exists: bash shows the
+ * command line (foreground only), edit/write show the literal replacement.
+ * `read` has no call-time window (its structure only exists in the result).
+ */
+function callCard(name: string, args: string | undefined): SidechatToolCard | undefined {
+  const parsed = parseArgsObject(args)
+  if (parsed === undefined) return undefined
+  if (name === 'bash') {
+    const command = typeof parsed.command === 'string' && parsed.command !== '' ? parsed.command : undefined
+    if (command === undefined || parsed.run_in_background === true) return undefined
+    const cwd = typeof parsed.workdir === 'string' && parsed.workdir !== '' ? parsed.workdir : undefined
+    return { type: 'terminal', command, ...(cwd !== undefined ? { cwd } : {}) }
+  }
+  if (name === 'edit' || name === 'write') {
+    const path = typeof parsed.file_path === 'string' && parsed.file_path !== '' ? parsed.file_path : undefined
+    if (path === undefined) return undefined
+    if (name === 'edit') {
+      const oldText = typeof parsed.old_string === 'string' ? parsed.old_string : ''
+      const newText = typeof parsed.new_string === 'string' ? parsed.new_string : ''
+      return { type: 'diff', diffs: [{ path, oldText: oldText === '' ? null : oldText, newText }] }
+    }
+    const newText = typeof parsed.content === 'string' ? parsed.content : ''
+    return { type: 'diff', diffs: [{ path, oldText: null, newText }] }
+  }
+  return undefined
+}
+
+/** The `tool/result` `meta` as an object, or undefined (opaque tool payload). */
+function metaObject(data: Record<string, unknown>): Record<string, unknown> | undefined {
+  const meta = data.meta
+  if (meta === null || typeof meta !== 'object' || Array.isArray(meta)) return undefined
+  return meta as Record<string, unknown>
+}
+
+/** Narrow edit/write's contextual-diff meta (`{ diffs: FileDiff[] }`) to
+ *  DiffHunk[], declining on any malformed entry. */
+function diffCardFromMeta(meta: Record<string, unknown>): SidechatToolCard | undefined {
+  const diffs = meta.diffs
+  if (!Array.isArray(diffs) || diffs.length === 0) return undefined
+  const hunks: DiffHunk[] = []
+  for (const item of diffs) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) return undefined
+    const { path, oldText, newText } = item as Record<string, unknown>
+    if (typeof path !== 'string' || typeof newText !== 'string') return undefined
+    if (oldText !== null && typeof oldText !== 'string') return undefined
+    hunks.push({ path, oldText, newText })
+  }
+  return { type: 'diff', diffs: hunks }
+}
+
+/** Narrow read's line-window meta (`{ path, offset, lines, totalLines, lang? }`)
+ *  to a read card, enforcing the same semantic contract the host does: 1-based
+ *  strictly increasing line numbers that never exceed `totalLines`. */
+function readCardFromMeta(meta: Record<string, unknown>): SidechatToolCard | undefined {
+  const { path, offset, lines, totalLines, lang } = meta
+  if (typeof path !== 'string' || typeof offset !== 'number' || typeof totalLines !== 'number') return undefined
+  if (!Number.isInteger(offset) || offset < 1) return undefined
+  if (!Number.isInteger(totalLines) || totalLines < 0) return undefined
+  if (!Array.isArray(lines)) return undefined
+  const narrowed: ReadBlockLine[] = []
+  let previous = offset - 1
+  for (const line of lines) {
+    if (line === null || typeof line !== 'object' || Array.isArray(line)) return undefined
+    const candidate = line as { number?: unknown; text?: unknown }
+    if (typeof candidate.number !== 'number' || !Number.isInteger(candidate.number)) return undefined
+    if (candidate.number <= previous || candidate.number > totalLines) return undefined
+    if (typeof candidate.text !== 'string') return undefined
+    narrowed.push({ number: candidate.number, text: candidate.text })
+    previous = candidate.number
+  }
+  if (lang !== undefined && typeof lang !== 'string') return undefined
+  return { type: 'read', label: path, lines: narrowed, totalLines, ...(lang !== undefined ? { lang } : {}) }
+}
+
+/** The bash result's trailing exit markers (`[exit code: N]` /
+ *  `[killed by signal: X]` — the model-facing text the tool appends), stripped
+ *  the same way the host's parseExitStatus recovers the exit pill. */
+const EXIT_SIGNAL_RE = /\n\[killed by signal: ([^\]\n]+)\]$/
+const EXIT_CODE_RE = /\n\[exit code: (\d+)\]$/
+
+/**
+ * Result-time card refinement: `meta`-carrying structure wins (edit/write's
+ * applied hunks, read's line window), bash's output gets its exit marker
+ * stripped into the exit pill, and a failed result always falls back to the
+ * generic row (the host's isError path renders generic output too).
+ */
+function resultCard(
+  name: string,
+  previous: SidechatToolCard | undefined,
+  data: Record<string, unknown>,
+  resultText: string,
+): SidechatToolCard | undefined {
+  if (name === 'bash') {
+    if (previous === undefined || previous.type !== 'terminal' || resultText === '') return previous
+    const signal = EXIT_SIGNAL_RE.exec(resultText)
+    if (signal?.[1] !== undefined) {
+      return { ...previous, output: resultText.slice(0, signal.index), exitCode: undefined, signal: signal[1] }
+    }
+    const exit = EXIT_CODE_RE.exec(resultText)
+    if (exit?.[1] !== undefined) {
+      return { ...previous, output: resultText.slice(0, exit.index), exitCode: Number(exit[1]), signal: undefined }
+    }
+    return { ...previous, output: resultText, exitCode: 0, signal: undefined }
+  }
+  const meta = metaObject(data)
+  if (meta === undefined) return previous
+  if (name === 'edit' || name === 'write') return diffCardFromMeta(meta) ?? previous
+  if (name === 'read') return readCardFromMeta(meta)
+  return previous
+}
+
 /**
  * Map a thread child's history rows onto compact transcript rows: the
  * inherited fork seed is cut at the last `session/end-seed`, context
@@ -146,12 +315,40 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[]): Sidecha
   const streamRows = new Map<string, number>()
   /** tool callId → index of its tool row in `rows` (result pairing). */
   const callRows = new Map<string, number>()
+  /** turn → envelope time of its `turn/start` (turn-tail duration basis). */
+  const turnStarts = new Map<number, number>()
+  /** turn → usage aggregate: output accumulates across steps, input takes the
+   *  last request's prompt size (earlier steps' input is mostly the same
+   *  context re-sent, so summing would double-count). */
+  const turnUsage = new Map<number, { inputTokens: number; outputTokens: number }>()
   for (let index = 0; index < events.length; index++) {
     if (index <= seedEnd) continue
     const event = events[index]
     if (event === undefined) continue
     const data = event.data as Record<string, unknown>
     switch (event.type) {
+      case 'turn/start': {
+        const turn = data.turn
+        if (typeof turn === 'number' && Number.isInteger(turn)) turnStarts.set(turn, event.time)
+        break
+      }
+      case 'turn/end': {
+        const turn = data.turn
+        if (typeof turn !== 'number' || !Number.isInteger(turn)) break
+        const start = turnStarts.get(turn)
+        turnStarts.delete(turn)
+        const usage = turnUsage.get(turn)
+        turnUsage.delete(turn)
+        const durationMs = start !== undefined ? Math.max(0, event.time - start) : undefined
+        if (usage === undefined && durationMs === undefined) break
+        rows.push({
+          kind: 'turnSummary',
+          seq: event.seq,
+          ...(usage !== undefined ? { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } : {}),
+          ...(durationMs !== undefined ? { durationMs } : {}),
+        })
+        break
+      }
       case 'user/message': {
         const text = blockText(Array.isArray(data.content) ? data.content : [])
         // Context injections (the boundary prompt + snapshot, plugin-sourced
@@ -199,6 +396,19 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[]): Sidecha
         break
       }
       case 'assistant/message': {
+        // Turn-tail usage: each assembled message carries its step's token
+        // accounting (absent when the adapter reported none).
+        const usageTurn = data.turn
+        if (typeof usageTurn === 'number' && Number.isInteger(usageTurn)) {
+          const usage = data.usage as { inputTokens?: unknown; outputTokens?: unknown } | undefined
+          const input = typeof usage?.inputTokens === 'number' ? usage.inputTokens : undefined
+          const output = typeof usage?.outputTokens === 'number' ? usage.outputTokens : undefined
+          if (input !== undefined && output !== undefined) {
+            const aggregate = turnUsage.get(usageTurn)
+            if (aggregate === undefined) turnUsage.set(usageTurn, { inputTokens: input, outputTokens: output })
+            else turnUsage.set(usageTurn, { inputTokens: input, outputTokens: aggregate.outputTokens + output })
+          }
+        }
         const prefix = `${String(data.turn)}:${String(data.step)}:`
         const streamed = [...streamRows.entries()]
           .filter(([key]) => key.startsWith(prefix))
@@ -228,9 +438,10 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[]): Sidecha
         const callId = data.callId
         const name = typeof data.name === 'string' ? data.name : 'tool'
         const args = typeof data.arguments === 'string' ? data.arguments : undefined
+        const card = callCard(name, args)
         const rowIndex = rows.length
         if (typeof callId === 'string') callRows.set(callId, rowIndex)
-        rows.push({ kind: 'tool', seq: event.seq, name, failed: false, args, executing: true })
+        rows.push({ kind: 'tool', seq: event.seq, name, failed: false, args, executing: true, ...(card !== undefined ? { card } : {}) })
         break
       }
       case 'tool/result': {
@@ -242,11 +453,17 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[]): Sidecha
         if (rowIndex !== undefined) {
           const row = rows[rowIndex]
           if (row !== undefined && row.kind === 'tool') {
+            // Failed results render the generic row (the host's isError path
+            // skips its structured cards too); otherwise the result's own
+            // structure — meta hunks/windows, bash's exit marker — refines or
+            // replaces the call-time literal card.
+            const card = failed ? undefined : resultCard(row.name, row.card, data, resultText)
             rows[rowIndex] = {
               ...row,
               failed: row.failed || failed,
               resultText: resultText === '' ? row.resultText : resultText,
               executing: false,
+              ...(card !== undefined ? { card } : { card: undefined }),
             }
           }
         } else if (failed || resultText !== '') {

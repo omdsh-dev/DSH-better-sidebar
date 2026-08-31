@@ -27,15 +27,27 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import {
+  ConnectionIndicator,
+  DiffBlock,
+  IconApiOutline14,
+  IconBrowseOutline16,
   IconChevronRightOutline14,
+  IconEditOutline16,
   IconNewChatOutline16,
   IconPlusOutline16,
+  IconSearchOutline16,
   IconSendOutline16,
+  IconSparkle16,
   IconStopFill16,
   MarkdownText,
   Menu,
+  ReadBlock,
   StateDot,
+  TerminalBlock,
+  type DiffBlockLabels,
   type MenuEntry,
+  type ReadBlockLabels,
+  type TerminalBlockLabels,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
 import { IconHistoryOutline16, IconSaveOutline16 } from './icons.tsx'
@@ -48,7 +60,14 @@ import {
   threadTrailingPending,
   type SidechatThreadInfo,
 } from '../sidechat-core.ts'
-import { toolArgsSummary, transcriptRows, type SidechatTranscriptRow } from './sidechat-transcript.ts'
+import {
+  formatDurationMs,
+  formatTokens,
+  toolArgsSummary,
+  transcriptRows,
+  type SidechatToolCard,
+  type SidechatTranscriptRow,
+} from './sidechat-transcript.ts'
 import { api } from './api.ts'
 import { t } from './locales.ts'
 import type { SessionScope } from './api.ts'
@@ -100,6 +119,9 @@ interface RowLabels {
   copiedLabel: string
   thinkLabel: string
   injectionLabel: string
+  terminal: TerminalBlockLabels
+  diff: DiffBlockLabels
+  read: ReadBlockLabels
 }
 
 /** Merge history entries by event seq (newest wins), log order preserved. */
@@ -132,8 +154,13 @@ function CollapsibleRow(props: {
   mono?: boolean
   streaming?: boolean
   failed?: boolean
+  /** 16px leading glyph (tool-kind icon, the main conversation's row head). */
+  icon?: React.ReactNode
   children?: React.ReactNode
 }): React.ReactNode {
+  const leading = props.icon === undefined ? null : (
+    <span className={css.sidechatRowIcon}>{props.icon}</span>
+  )
   const label = (
     <span
       className={clsx(
@@ -151,6 +178,7 @@ function CollapsibleRow(props: {
   if (props.children === undefined) {
     return (
       <div className={clsx(css.sidechatRowLine, css.sidechatRowStatic, props.failed === true && css.sidechatRowFailed)}>
+        {leading}
         {label}
         {meta}
       </div>
@@ -168,12 +196,59 @@ function CollapsibleRow(props: {
         <span className={css.sidechatRowChevron}>
           <IconChevronRightOutline14 size={12} />
         </span>
+        {leading}
         {label}
         {meta}
       </summary>
       <div className={css.sidechatRowBody}>{props.children}</div>
     </details>
   )
+}
+
+/** The host Block body for a structured tool card (main-conversation atoms:
+ *  terminal surface, diff hunks, line-numbered read window). */
+function toolCardBody(card: SidechatToolCard, executing: boolean, labels: RowLabels): React.ReactNode {
+  if (card.type === 'terminal') {
+    return (
+      <TerminalBlock
+        command={card.command}
+        cwd={card.cwd}
+        output={card.output}
+        exitCode={card.exitCode}
+        signal={card.signal}
+        running={executing}
+        labels={labels.terminal}
+      />
+    )
+  }
+  if (card.type === 'diff') {
+    return <DiffBlock diffs={card.diffs} labels={labels.diff} />
+  }
+  return <ReadBlock label={card.label} lines={card.lines} totalLines={card.totalLines} lang={card.lang} labels={labels.read} />
+}
+
+/** The tool row's 16px leading slot, the way the main conversation draws it
+ *  (GenericToolCard's variant table): the tool-kind glyph at 14, replaced by
+ *  an error StateDot on failed rows. */
+function toolLeading(name: string, failed: boolean): React.ReactNode {
+  if (failed) return <StateDot state="error" />
+  switch (name) {
+    case 'bash':
+    case 'pwsh':
+      return <IconApiOutline14 size={14} />
+    case 'read':
+    case 'web_fetch':
+      return <IconBrowseOutline16 size={14} />
+    case 'edit':
+    case 'write':
+      return <IconEditOutline16 size={14} />
+    case 'grep':
+    case 'glob':
+    case 'web_search':
+      return <IconSearchOutline16 size={14} />
+    default:
+      return <IconSparkle16 size={14} />
+  }
 }
 
 /** One row renderer (React keys ride the source event seq). */
@@ -207,22 +282,40 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels): React.ReactNo
           <div className={css.sidechatRowProse}>{row.text}</div>
         </CollapsibleRow>
       )
-    case 'tool': {
-      const body = (
-        <>
-          {row.args !== undefined && <pre className={css.sidechatRowCode}>{row.args}</pre>}
-          {row.resultText !== undefined && <pre className={css.sidechatRowCode}>{row.resultText}</pre>}
-        </>
+    case 'turnSummary': {
+      // Quiet turn-tail metrics: token usage + wall duration, main-pane
+      // StatsLine formatting. Parts appear only when computable.
+      const parts: string[] = []
+      if (row.inputTokens !== undefined && row.outputTokens !== undefined) {
+        parts.push(t('sideChatTurnUsage', { input: formatTokens(row.inputTokens), output: formatTokens(row.outputTokens) }))
+      }
+      if (row.durationMs !== undefined) parts.push(formatDurationMs(row.durationMs))
+      if (parts.length === 0) return null
+      return (
+        <div key={`${row.kind}:${row.seq}`} className={css.sidechatTurnSummary}>
+          {parts.join(' · ')}
+        </div>
       )
+    }
+    case 'tool': {
+      const body = row.card !== undefined
+        ? toolCardBody(row.card, row.executing === true, labels)
+        : (
+          <>
+            {row.args !== undefined && <pre className={css.sidechatRowCode}>{row.args}</pre>}
+            {row.resultText !== undefined && <pre className={css.sidechatRowCode}>{row.resultText}</pre>}
+          </>
+        )
       return (
         <CollapsibleRow
           key={`${row.kind}:${row.seq}`}
           label={row.name}
           meta={toolArgsSummary(row.args)}
+          icon={toolLeading(row.name, row.failed)}
           mono
           streaming={row.executing === true}
           failed={row.failed}
-          {...(row.args === undefined && row.resultText === undefined ? {} : { children: body })}
+          {...(row.args === undefined && row.resultText === undefined && row.card === undefined ? {} : { children: body })}
         />
       )
     }
@@ -237,15 +330,35 @@ export function SideChatView(props: {
   visible: boolean
 }): React.ReactNode {
   const { ctx, scope, tab, visible } = props
-  const rowLabels = useMemo<RowLabels>(
-    () => ({
+  const rowLabels = useMemo<RowLabels>(() => {
+    // Shared Block chrome: copy buttons reuse the sidebar's copy pair, the
+    // collapse/expand family is common to every Block kind.
+    const shared = {
+      copy: t('copy'),
+      copied: t('copied'),
+      collapse: t('sideChatBlockCollapse'),
+      collapseAria: t('sideChatBlockCollapseAria'),
+      expand: (hidden: number) => t('sideChatBlockExpand', { hidden }),
+      expandAria: (hidden: number) => t('sideChatBlockExpandAria', { hidden }),
+    }
+    return {
       copyLabel: t('copy'),
       copiedLabel: t('copied'),
       thinkLabel: t('sideChatThink'),
       injectionLabel: t('sideChatInjection'),
-    }),
-    [],
-  )
+      terminal: {
+        ...shared,
+        signal: (signal: string) => t('sideChatBlockSignal', { signal }),
+        exitCode: (exitCode: number) => t('sideChatBlockExitCode', { code: exitCode }),
+        running: t('sideChatBlockRunning'),
+        failed: t('sideChatBlockFailed'),
+        done: t('sideChatBlockDone'),
+        noOutput: t('sideChatBlockNoOutput'),
+      },
+      diff: { ...shared, files: (count: number) => t('sideChatBlockFiles', { count }) },
+      read: { ...shared, window: (shown: number, total: number) => t('sideChatBlockWindow', { shown, total }) },
+    }
+  }, [])
 
   // The session list feed: thread rows (the header menu) + running states.
   const list = useSyncExternalStore(
@@ -276,6 +389,15 @@ export function SideChatView(props: {
 
   const summary = threadId === undefined ? undefined : list.byId[threadId]
   const running = summary?.running === true
+
+  // Connection recovery state (DSH 0.1.2-alpha.2+): drives the disconnect
+  // banner and an immediate catch-up pull when the wire comes back. The poll
+  // loop itself stays silent on wire failures; absent service (older host)
+  // reads as `undefined` = never show the banner.
+  const connectionState = useSyncExternalStore(
+    useMemo(() => (callback: () => void) => ctx.connection?.state.subscribe(callback) ?? (() => {}), [ctx]),
+    useCallback(() => ctx.connection?.state.getSnapshot(), [ctx]),
+  )
 
   /** The agent-identity badge of the thread header (preset · model). */
   const agentBadge = useMemo(() => {
@@ -381,6 +503,19 @@ export function SideChatView(props: {
   }, [visible, threadId, running, fetchThread, fetchInfo])
 
   useEffect(() => () => { controllerRef.current?.abort() }, [])
+
+  // When the wire recovers (disconnected → connected), pull immediately
+  // instead of waiting for the next poll tick — or, on an idle thread that
+  // stopped polling, forever.
+  const prevConnectionRef = useRef(connectionState)
+  useEffect(() => {
+    const previous = prevConnectionRef.current
+    prevConnectionRef.current = connectionState
+    if (previous === 'disconnected' && connectionState === 'connected' && threadId !== undefined) {
+      void fetchThread(threadId)
+      void fetchInfo(threadId)
+    }
+  }, [connectionState, threadId, fetchThread, fetchInfo])
 
   const rows = useMemo(
     () => (threadId === undefined ? [] : transcriptRows(cacheRef.current.entries)),
@@ -560,6 +695,18 @@ export function SideChatView(props: {
           <IconSaveOutline16 />
         </button>
       </div>
+      {connectionState !== undefined && connectionState !== 'connected' && (
+        <ConnectionIndicator
+          state={connectionState}
+          disconnectedLabel={t('sideChatConnDisconnected')}
+          reconnectLabel={t('sideChatConnReconnect')}
+          connectingLabel={t('sideChatConnConnecting')}
+          recoveredLabel={t('sideChatConnRecovered')}
+          reconnectActionLabel={t('sideChatConnReconnectAction')}
+          restartActionLabel={t('sideChatConnRestartAction')}
+          onReconnect={() => { ctx.connection?.reconnect() }}
+        />
+      )}
       {!canSave && !freshThread && <div className={css.sidechatHint}>{t('sideChatNoTurn')}</div>}
       {canSave && trailingPending
         && <div className={css.sidechatHint}>{t('sideChatPendingDrop')}</div>}

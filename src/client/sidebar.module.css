@@ -2177,141 +2177,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-state-error-primary);
 }
 
-/* ── Git ───────────────────────────────────────────────────────────────── */
-
-.git {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  /* Tab pages never scroll horizontally: content wraps or truncates to the
-     panel width instead of panning sideways. */
-  overflow-x: hidden;
-}
-
-.gitHeader {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 8px 0 12px;
-}
-
-.gitWorktreeRow {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px 0 12px;
-}
-
-.gitWorktreeLabel {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  font: var(--dsw-font-xxxs-11);
-}
-
-.gitBranchSelect {
-  flex: 1;
-  min-width: 0;
-  height: 26px;
-  padding: 0 6px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-primary);
-  font: var(--dsw-font-xxs-12);
-}
-
-.gitSection {
-  border-top: 1px solid var(--dsw-alias-border-l1);
-}
-
-.gitSectionHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 12px 4px;
-  font: var(--dsw-font-xxxs-strong-11);
-  color: var(--dsw-alias-label-tertiary);
-  text-transform: uppercase;
-}
-
-.gitLink {
-  border: none;
-  background: transparent;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-brand-primary);
-  cursor: pointer;
-  padding: 0;
-}
-
-.gitLink:hover:not(:disabled) {
-  text-decoration: underline;
-}
-
-.gitLink:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.gitRow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 34px;
-  margin: 0 6px;
-  padding: 0 8px;
-  border-radius: 8px;
-  animation: dsh-row-in 150ms var(--ds-ease-in-out);
-}
-
-.gitRow:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.gitRowSelected {
-  background: var(--dsw-alias-interactive-bg-active);
-}
-
-.gitRowMain {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: none;
-  background: transparent;
-  padding: 3px 0;
-  cursor: pointer;
-  text-align: left;
-}
-
-.gitBadge {
-  flex: none;
-  width: 20px;
-  height: 16px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  font: var(--dsw-font-xxxs-strong-11);
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
-}
-
-.gitName {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: var(--dsw-font-s-14);
-  color: var(--dsw-alias-label-primary);
-}
+/* ── Diff tab (generic states + shell; the changes tab owns the rest in
+   changes.module.css, and the diff rows themselves live in
+   diff/diff.module.css) ────────────────────────────────────────────────── */
 
 .gitEmpty {
   padding: 4px 12px 8px;
@@ -2333,13 +2201,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   white-space: pre-wrap;
 }
 
-.gitDiff {
-  border-top: 1px solid var(--dsw-alias-border-l1);
-  padding: 8px;
-}
-
-/* The diff tab (a change opened from the git panel, like VSCode's diff
-   editor): header + scrollable diff body, no horizontal panning. */
+/* The diff tab (a change expanded from the changes tab's preview, like
+   VSCode's diff editor): header + scrollable diff body, no horizontal
+   panning; rows render through the shared diff module. */
 .gitDiffTab {
   flex: 1;
   min-height: 0;
@@ -2370,276 +2234,12 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-primary);
 }
 
-/* One changed file's section: path header, hunk headers, aligned lines. */
-.gitDiffFile {
-  width: 100%;
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 8px 2px 2px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.gitDiffFile:disabled {
-  cursor: default;
-}
-
-.gitDiffFile:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.gitDiffFileChevron {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  transform: rotate(0deg);
-}
-
-.gitDiffFileChevronExpanded {
-  transform: rotate(90deg);
-}
-
-.gitDiffFilePath {
-  font: var(--dsw-font-xxs-strong-12);
-  color: var(--dsw-alias-label-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gitDiffFileOld {
-  flex: none;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 40%;
-}
-
-.gitDiffFileTag {
-  flex: none;
-  padding: 0 6px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 999px;
-  font: var(--dsw-font-xxxs-strong-11);
-  color: var(--dsw-alias-label-secondary);
-}
-
-.gitDiffHunk {
-  display: flex;
-  gap: 8px;
-  padding: 3px 2px;
-  font: var(--dsw-font-markdown-code-block-small);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.gitDiffHunkHeader {
-  flex: none;
-  color: var(--dsw-alias-label-secondary);
-}
-
-.gitDiffHunkSection {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* One aligned diff line: old gutter / new gutter / code. Lines WRAP instead
    of scrolling horizontally (the tab-page rule: fill the width adaptively),
    with the long-token fallback breaking anywhere a space never comes. */
-.gitDiffLine {
-  display: flex;
-  align-items: stretch;
-  font: var(--dsw-font-markdown-code-block-small);
-  line-height: 20px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  min-width: 0;
-}
-
-.gitDiffNum {
-  flex: none;
-  width: 36px;
-  padding-right: 8px;
-  text-align: right;
-  color: var(--dsw-alias-label-tertiary);
-  user-select: none;
-}
-
-.gitDiffCode {
-  flex: 1;
-  min-width: 0;
-  overflow: visible;
-}
-
-.gitDiffCtx {
-  color: var(--dsw-alias-label-primary);
-}
-
-.gitDiffDel {
-  color: var(--dsw-alias-state-error-primary);
-  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
-}
-
-.gitDiffAdd {
-  color: var(--dsw-alias-state-success-primary);
-  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent);
-}
-
-.gitDiffMeta {
-  padding-left: 2px;
-}
-
-.gitDiffMetaText {
-  font: var(--dsw-font-xxxs-11);
-  font-style: italic;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.gitDiffExpand {
-  display: block;
-  width: 100%;
-  margin: 4px 0;
-  border: none;
-  background: transparent;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-brand-primary);
-  cursor: pointer;
-  text-align: center;
-}
-
-.gitDiffExpand:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.gitConfirmDesc {
-  margin: 0;
-  font: var(--dsw-font-s-14);
-  color: var(--dsw-alias-label-primary);
-  white-space: pre-wrap;
-}
-
-.gitCommit {
-  display: flex;
-  gap: 6px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--dsw-alias-border-l1);
-  align-items: center;
-}
-
-.gitCommitInput {
-  flex: 1;
-  min-width: 0;
-}
-
-.gitCommitButton {
-  flex: none;
-  height: 26px;
-  padding: 0 12px;
-  border: none;
-  border-radius: 6px;
-  background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary-inverted);
-  font: var(--dsw-font-xxs-strong-12);
-  cursor: pointer;
-}
-
-.gitCommitButton:hover:not(:disabled) {
-  background: var(--dsw-alias-button-primary-hover);
-}
-
-.gitCommitButton:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
 
 /* A history row: line 1 = hash + subject, line 2 = ref badges + author/date
    (badges live on the second line so they never crowd the subject). */
-.gitLogRow {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 5px 12px;
-  cursor: pointer;
-  border-radius: 8px;
-}
-
-.gitLogRow:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.gitLogLine1 {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-
-.gitLogHash {
-  flex: none;
-  font: var(--dsw-font-markdown-code-block-small);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.gitLogLine2 {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
-.gitLogRef {
-  flex: none;
-  padding: 0 5px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 999px;
-  font: var(--dsw-font-xxxs-strong-11);
-  color: var(--dsw-alias-brand-primary);
-  white-space: nowrap;
-}
-
-.gitLogSubject {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: var(--dsw-font-s-14);
-  color: var(--dsw-alias-label-primary);
-}
-
-.gitLogMeta {
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.gitLogMore {
-  display: block;
-  width: calc(100% - 24px);
-  margin: 4px 12px 8px;
-  padding: 6px 0;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: transparent;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-}
-
-.gitLogMore:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-.gitLogMore:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
 
 /* ── Intercepted produced-files row ────────────────────────────────────── */
 
@@ -2700,13 +2300,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .paneCard:focus-visible,
 .explorerRow:focus-visible,
 .explorerRef:focus-visible,
-.gitRowMain:focus-visible,
-.gitLink:focus-visible,
-.gitCommitButton:focus-visible,
-.gitLogRow:focus-visible,
-.gitLogMore:focus-visible,
-.gitDiffFile:focus-visible,
-.gitDiffExpand:focus-visible,
 .terminalRetry:focus-visible,
 .editorModeButton:focus-visible,
 .editorDownloadLink:focus-visible,
@@ -2728,7 +2321,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   .tabBarPlus,
   .paneCard,
   .explorerRow,
-  .gitRow,
   .divider,
   .dividerRow::after,
   .dividerCol::after {

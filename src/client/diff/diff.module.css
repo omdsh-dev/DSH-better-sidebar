@@ -1,0 +1,86 @@
+/* The shared diff renderer (DiffRows / DiffFiles): one visual language for
+   every file-change surface — the changes tab's preview pane, the diff tab,
+   session-op diffs and git diffs alike. Semantic --dsw-alias tokens only
+   (skin contract); the syntax-token hues derive from the alias state tokens
+   via color-mix so they sit BETWEEN the diff colors (violet keywords, teal
+   strings, brand-tinted types, warn-family numbers/functions, magenta
+   macros) instead of colliding with red del / green add / blue mod. */
+
+.rows { padding: 4px 0 8px; font-family: var(--ds-font-family-code, monospace); font-size: 11px; }
+.row { display: flex; align-items: flex-start; gap: 5px; padding: 0 10px; line-height: 18px; cursor: default; }
+.row[data-folded='true'] { cursor: pointer; }
+.lineNo { flex: none; width: 2.5em; color: var(--dsw-alias-label-tertiary); text-align: right; user-select: none; font-size: 10px; }
+.sign { flex: none; width: 1em; text-align: center; user-select: none; font-weight: 700; }
+
+.row[data-kind='del'] .sign, .row[data-kind='del'] .text { color: var(--dsw-alias-state-error-primary); }
+.row[data-kind='add'] .sign, .row[data-kind='add'] .text { color: var(--dsw-alias-state-success-primary); }
+.row[data-kind='mod'] .sign, .row[data-kind='mod'] .text { color: var(--dsw-alias-state-business-primary); }
+.row[data-kind='context'] .sign, .row[data-kind='context'] .text { color: var(--dsw-alias-label-secondary); }
+.row[data-kind='read'] .text { color: var(--dsw-alias-label-primary); }
+
+/* Faint row tints under changed lines (GitHub-style, lighter than the text
+   hue so the syntax colors stay readable on top). */
+.row[data-kind='del'] { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 8%, transparent); }
+.row[data-kind='add'] { background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 8%, transparent); }
+.row[data-kind='mod'] { background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 8%, transparent); }
+
+.row .text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; }
+.row[data-folded='true'] .text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* The `\ No newline at end of file` marker row attached to a hunk's tail. */
+.row[data-kind='meta'] .metaText { color: var(--dsw-alias-label-tertiary); font-style: italic; }
+
+/* Intra-line changed substring inside a rewritten (mod) line. */
+.inlineChange { background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 26%, transparent); border-radius: 3px; padding: 0 1px; }
+
+/* Syntax-token colors: alias-token mixes between the diff hues. */
+.tokComment { color: var(--dsw-alias-label-tertiary); font-style: italic; }
+.tokKeyword { color: color-mix(in oklab, var(--dsw-alias-state-business-primary) 55%, var(--dsw-alias-state-error-primary)); }
+.tokString { color: color-mix(in oklab, var(--dsw-alias-state-success-primary) 45%, var(--dsw-alias-state-business-primary)); }
+.tokType { color: color-mix(in oklab, var(--dsw-alias-brand-primary) 60%, var(--dsw-alias-state-success-primary)); }
+.tokNumber { color: var(--dsw-alias-state-warn-primary); }
+.tokFunction { color: color-mix(in oklab, var(--dsw-alias-state-warn-primary) 55%, var(--dsw-alias-state-error-primary)); }
+.tokMacro { color: color-mix(in oklab, var(--dsw-alias-state-error-primary) 45%, var(--dsw-alias-state-business-primary)); }
+
+/* Hunk-fold row: collapsed marker chip; expanded padding drops to 0 so the
+   revealed rows keep the x-alignment of hunk rows (they carry their own).
+   Only an expandable fold (enough hidden rows to be worth a click) reads as
+   interactive — the › chevron matches the multi-file document's disclosure. */
+.foldRow { padding: 0 10px; }
+.foldRow[data-expandable='true'] { cursor: pointer; }
+.foldRow[data-expandable='true']:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.foldRow[data-expanded='true'] { padding: 0; }
+.foldRow[data-expanded='true'] { cursor: default; }
+.foldRow[data-expanded='true'] .foldMarker { display: none; }
+.foldMarker { display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: 4px; margin: 2px 0; color: var(--dsw-alias-label-tertiary); background: var(--dsw-alias-interactive-bg-hover); }
+.foldRow[data-expandable='true'] .foldMarker { color: var(--dsw-alias-label-secondary); }
+.foldRow[data-expandable='true'] .foldMarker::before { content: '›'; color: var(--dsw-alias-label-tertiary); transition: transform var(--ds-transition-duration-slow) var(--ds-ease-in-out); }
+
+/* The huge-file overflow reveal under a capped hunk. */
+.expand { display: block; width: calc(100% - 20px); margin: 4px 10px; padding: 4px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 6px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 11px; cursor: pointer; }
+.expand:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+
+/* Multi-file documents (commit patches): collapsible file headers. */
+.files { display: flex; flex-direction: column; }
+.fileBlock { display: flex; flex-direction: column; }
+.file { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px; border: 0; background: transparent; font: inherit; font-size: 11px; text-align: left; cursor: pointer; }
+.file:disabled { cursor: default; }
+.file:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.fileChevron { flex: none; width: 12px; color: var(--dsw-alias-label-tertiary); transition: transform var(--ds-transition-duration-slow) var(--ds-ease-in-out); }
+.fileChevronExpanded { transform: rotate(90deg); }
+.filePath { font-family: var(--ds-font-family-code, monospace); color: var(--dsw-alias-label-primary); word-break: break-all; min-width: 0; }
+.fileOld { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-tertiary); font-family: var(--ds-font-family-code, monospace); }
+.fileTag { flex: none; border-radius: 4px; font-size: 10px; line-height: 16px; padding: 0 5px; background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); }
+.fileStats { margin-left: auto; flex: none; display: inline-flex; gap: 5px; font-size: 10px; font-family: var(--ds-font-family-code, monospace); }
+.statAdd { color: var(--dsw-alias-state-success-primary); }
+.statDel { color: var(--dsw-alias-state-error-primary); }
+
+/* Keyboard focus rings match the shared sidebar convention. */
+.row:focus-visible, .foldRow:focus-visible, .file:focus-visible, .expand:focus-visible {
+  outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent);
+  outline-offset: -1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fileChevron { transition: none; }
+}

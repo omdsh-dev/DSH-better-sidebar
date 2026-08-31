@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
-import { DiffView } from '../src/client/DiffView.tsx'
+import { DiffFiles } from '../src/client/diff/DiffFiles.tsx'
 
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -30,13 +30,13 @@ const diff = [
 
 afterEach(() => { document.body.innerHTML = '' })
 
-describe('DiffView file folding', () => {
+describe('DiffFiles file folding', () => {
   it('expands source by default while tests and docs stay collapsed', () => {
     const container = document.createElement('div')
     document.body.append(container)
     const root: Root = createRoot(container)
     try {
-      act(() => { root.render(createElement(DiffView, { diff })) })
+      act(() => { root.render(createElement(DiffFiles, { diff })) })
       const headers = [...container.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
       expect(headers).toHaveLength(3)
       expect(headers.map(header => header.getAttribute('aria-expanded'))).toEqual(['true', 'false', 'false'])

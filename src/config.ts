@@ -197,6 +197,7 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   interceptOpenPath: z.boolean().default(true),
   editOpensDiff: z.boolean().default(true),
   editorExplorer: z.boolean().default(false),
+  changesDiffFloat: z.boolean().default(true),
   workspaceFence: z.boolean().default(true),
   terminalShell: z.string().default(''),
   terminalShellArgs: z.string().default(''),

@@ -88,7 +88,7 @@ export function TabBar(props: {
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   // The tab right-click context menu: the target tab plus the cursor
-  // position (the portaled Menu anchors there, following GitView/FileTree).
+  // position (the portaled Menu anchors there, following the git lens/FileTree).
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)

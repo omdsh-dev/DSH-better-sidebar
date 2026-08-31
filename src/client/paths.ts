@@ -61,3 +61,12 @@ export function isWithinWorkspace(base: string, target: string): boolean {
   const lt = t.toLowerCase()
   return lt === lb || lt.startsWith(`${lb}/`)
 }
+
+/**
+ * The last path segment of a '/'- or '\'-separated path (a diff tab title,
+ * a worktree label). Returns the whole string when no separator is present.
+ */
+export function baseName(path: string): string {
+  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return at === -1 ? path : path.slice(at + 1)
+}

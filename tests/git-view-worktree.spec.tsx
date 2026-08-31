@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
-import { GitView } from '../src/client/GitView.tsx'
+import { GitLens } from '../src/client/changes/GitLens.tsx'
 import { createSidebarStore } from '../src/client/state.ts'
 import { api, type GitLogEntry, type GitStatusResult, type GitWorktree } from '../src/client/api.ts'
 
@@ -56,7 +56,7 @@ async function flushEffects(): Promise<void> {
 
 afterEach(() => { vi.restoreAllMocks() })
 
-describe('GitView linked-worktree consistency', () => {
+describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
   it('refreshes status, branches and history together on auto and manual selection', async () => {
     vi.spyOn(api, 'gitWorktrees').mockResolvedValue(inventories)
     vi.spyOn(api, 'gitStatus').mockImplementation(async (_scope, target) => statusFor(target))
@@ -71,11 +71,12 @@ describe('GitView linked-worktree consistency', () => {
     const root: Root = createRoot(container)
     try {
       await act(async () => {
-        root.render(createElement(GitView, {
+        root.render(createElement(GitLens, {
           scope: { sessionId: 'session', cwd: MAIN },
           store: createSidebarStore(),
           onOpenFile: () => {},
-          onOpenDiff: () => {},
+          onPreview: () => {},
+          selectedRef: null,
           visible: false,
         }))
       })
@@ -129,11 +130,12 @@ describe('GitView linked-worktree consistency', () => {
     const root: Root = createRoot(container)
     try {
       await act(async () => {
-        root.render(createElement(GitView, {
+        root.render(createElement(GitLens, {
           scope: { sessionId: 'session', cwd: MAIN },
           store: createSidebarStore(),
           onOpenFile: () => {},
-          onOpenDiff: () => {},
+          onPreview: () => {},
+          selectedRef: null,
           visible: false,
         }))
       })

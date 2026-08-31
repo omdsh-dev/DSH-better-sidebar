@@ -3,7 +3,7 @@
  * outside workspace`) is never shown as-is: the editor / file-tree error
  * slots render the localized reason plus a one-click global off — the click
  * flips the `workspaceFence` pref through the settings route, adopts the
- * returned document into the store (so every prefs reader — GitView's open
+ * returned document into the store (so every prefs reader — the changes tab's open
  * guard, the settings page — flips with it), and calls `onDisabled` so the
  * caller retries the failed operation immediately.
  */
