@@ -406,14 +406,27 @@ export interface SidebarConversation {
 }
 
 /**
- * The client workspaces service face (mirror of the runtime IWorkspaces). Only
- * the chat's file-open funnel is touched: `openPath` hands an absolute path
- * to the Host OS's default application, and every chat-side file open
- * (tool rows, produced-files, prose mentions) funnels through it.
+ * The client `remote.session` namespace face (mirror of the gateway client's
+ * RemoteNamespaceService for the session-controller contribution on alpha
+ * hosts). The chat's file-open funnel is `openWorkspacePath`: the caller
+ * resolves the path against the session cwd, and the host hands it to the
+ * OS's default application. Namespace methods are accessor properties (see
+ * `client/openpath-intercept.ts` for how the interception shadows them).
  */
-export interface SidebarWorkspacesService {
-  /** Open a filesystem path with the Host operating system's default application. */
-  openPath(path: string): Promise<void>
+export interface SidebarRemoteSessionService {
+  /**
+   * Open an absolute path with the Host operating system's default
+   * application. Resolves with the typert `RemoteResult` envelope
+   * (`{ ok: true, value: { opened } }` / `{ ok: false, error }`), like every
+   * remote method — callers branch on `result.ok`.
+   */
+  openWorkspacePath(
+    request: { path: string },
+    signal?: AbortSignal,
+  ): Promise<
+    | { readonly ok: true; readonly value: { opened: boolean } }
+    | { readonly ok: false; readonly error: { readonly code: string; readonly message: string; readonly details: object } }
+  >
 }
 
 /**
@@ -498,8 +511,6 @@ export interface SidebarContextShape {
   webRuntime: SidebarWebRuntime
   /** The client slot registry (register/inject). */
   slots: SidebarSlotsService
-  /** The client workspaces service face (file-open funnel). */
-  workspaces: SidebarWorkspacesService
   /** The settings service face (prefs persistence + namespace reads). */
   settings: SidebarSettingsService
   /** The invariant registry face. */

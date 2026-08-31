@@ -37,6 +37,7 @@
 6. **`dsh-subagent` 的 `SUBAGENT_DESCRIPTOR_VERSION` 2 → 3**：sidechat 种子的 `subagent/descriptor` 版本由宿主包盖章，插件不硬编码；测试断言跟随常量（`tests/sidechat-routes.spec.ts`），勿钉字面量。
 7. **`@deepseek-ai/dsh-client-runtime` 包已消亡**（继任 seed 是裸名 `dsh-client-store`，无 `/client` 子路径）：peerDependencies、devDependencies、`dsh.client.inject`、chunk externals 白名单（`src/client/chunk-loader.ts` / `tsdown.config.ts` / `tests/chunk-loader.spec.ts` / `tests/manifest-consistency.spec.ts` 四处同步）均已无该条目。
 8. **e2e scratch profile 的 `minimumReleaseAgeExclude` 含 `'@deepseek-ai/*'`**（`scripts/e2e-mount.sh` / `e2e-aggregate-mount.sh`，与仓库根 `pnpm-workspace.yaml` 同策）：alpha 版本常在发布后 24h 内跑 lane，pnpm 11 的 `minimumReleaseAge` 默认会拒装新鲜包。
+9. **聊天文件打开漏斗是 `remote.session.openWorkspacePath`**（`ctx.workspaces.openPath` 已随 alpha 删除，`IWorkspaces` 无此方法）：「聊天区文件在侧边栏打开」拦截在 `ctx.inject(['remote.session'], …)` 内以 **defineProperty 数据属性遮蔽**该命名空间方法（gateway client 的方法是 accessor 属性、异步挂载、contribution 重挂载时服务重建——inject 回调重跑即自愈）；实现见 `src/client/openpath-intercept.ts`，设计见 [docs/plans/2026-08-31-openpath-intercept-alpha-design.md](docs/plans/2026-08-31-openpath-intercept-alpha-design.md)。
 
 ---
 

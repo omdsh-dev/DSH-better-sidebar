@@ -63,9 +63,9 @@ export interface SidebarPrefs {
   /**
    * Whether chat-side file opens (tool-row path links, the produced-files
    * row, prose file mentions — every path that funnels through the client
-   * runtime's `ctx.workspaces.openPath`) open in the sidebar editor instead
-   * of the Host OS's default application. On by default; the editor tab's
-   * own enable switch gates it too (both must be on for the takeover).
+   * runtime's `remote.session.openWorkspacePath`) open in the sidebar editor
+   * instead of the Host OS's default application. On by default; the editor
+   * tab's own enable switch gates it too (both must be on for the takeover).
    */
   interceptOpenPath: boolean
   /**
