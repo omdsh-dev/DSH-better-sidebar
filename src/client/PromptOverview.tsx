@@ -16,12 +16,15 @@ import { t } from './locales.ts'
 import css from './PromptOverview.module.css'
 
 /** One human prompt and its following assistant excerpt. `row` is null while
- * the prompt remains outside the native ChatView's rendered history window. */
+ * the prompt remains outside the native ChatView's rendered history window;
+ * `answerRow` is the last assistant row after the prompt — the final result,
+ * which is where a marker click lands. */
 export interface PromptOverviewEntry {
   key: string
   question: string
   answer: string
   row: HTMLElement | null
+  answerRow: HTMLElement | null
 }
 
 interface PromptGeometry {
@@ -123,7 +126,7 @@ function isHumanHistoryMessage(data: Record<string, unknown>): boolean {
 
 /** Store a bounded, row-free durable index for instant session revisits. */
 function cacheHistoryPrompts(sessionId: string, entries: readonly PromptOverviewEntry[]): void {
-  const durable = entries.map(entry => ({ ...entry, row: null }))
+  const durable = entries.map(entry => ({ ...entry, row: null, answerRow: null }))
   historyPromptCache.delete(sessionId)
   historyPromptCache.set(sessionId, durable)
   while (historyPromptCache.size > HISTORY_CACHE_LIMIT) {
@@ -153,7 +156,8 @@ function assistantText(row: HTMLElement): string {
 /**
  * Derive all currently rendered prompts. The native flow is already ordered,
  * so pairing is a single pass: the last assistant row before the next human
- * row becomes that prompt's live hover excerpt.
+ * row becomes that prompt's live hover excerpt and the jump target for its
+ * final result.
  */
 export function collectPromptOverviewEntries(flow: HTMLElement): PromptOverviewEntry[] {
   const entries: PromptOverviewEntry[] = []
@@ -167,6 +171,7 @@ export function collectPromptOverviewEntries(flow: HTMLElement): PromptOverviewE
         question: questionText(row),
         answer: '',
         row,
+        answerRow: null,
       }
       entries.push(current)
       continue
@@ -174,6 +179,9 @@ export function collectPromptOverviewEntries(flow: HTMLElement): PromptOverviewE
     if (ASSISTANT_KINDS.has(kind) && current !== undefined) {
       const answer = assistantText(row)
       if (answer !== '') current.answer = answer
+      // The last assistant row is the final result of this turn; earlier
+      // assistant rows are intermediate steps (reasoning/tool output).
+      current.answerRow = row
     }
   }
   return entries
@@ -196,6 +204,7 @@ export function collectHistoryPromptEntries(history: readonly SidebarHistoryEntr
         question: eventMessageText(data, false),
         answer: '',
         row: null,
+        answerRow: null,
       }
       entries.push(current)
       continue
@@ -257,6 +266,7 @@ export function reconcilePromptOverviewEntries(
       ...merged[match]!,
       answer: live.answer || merged[match]!.answer,
       row: live.row,
+      answerRow: live.answerRow ?? merged[match]!.answerRow,
     }
   }
   return merged.concat(unmatched)
@@ -284,11 +294,18 @@ export function activePromptIndex(entries: readonly PromptOverviewEntry[], scrol
   return active
 }
 
-/** Scroll one prompt through the native conversation scrollport. */
+/** Scroll one prompt through the native conversation scrollport, landing on
+ *  the final result rather than the prompt or intermediate tool output. */
 export function scrollToPrompt(row: HTMLElement, scroller: HTMLElement): void {
-  const rowRect = row.getBoundingClientRect()
+  const rect = row.getBoundingClientRect()
   const scrollRect = scroller.getBoundingClientRect()
-  const top = Math.max(0, scroller.scrollTop + rowRect.top - scrollRect.top - 24)
+  const viewport = scrollRect.height
+  const topOfTarget = scroller.scrollTop + rect.top - scrollRect.top
+  // When the answer is taller than the viewport, keep its final result
+  // visible instead of parking on the opening (tool/thinking) content.
+  const top = rect.height > viewport * 0.8
+    ? Math.max(0, topOfTarget + rect.height - Math.max(160, viewport * 0.4))
+    : Math.max(0, topOfTarget - 24)
   const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
   scroller.scrollTo({ top, behavior: reduceMotion ? 'auto' : 'smooth' })
   row.setAttribute('data-prompt-overview-target', '')
@@ -304,6 +321,7 @@ function sameEntries(left: readonly PromptOverviewEntry[], right: readonly Promp
       && entry.question === other.question
       && entry.answer === other.answer
       && entry.row === other.row
+      && entry.answerRow === other.answerRow
   })
 }
 
@@ -562,19 +580,21 @@ export function PromptOverview({ ctx, sessionId }: { ctx: Context; sessionId: st
   const revealPrompt = async (entry: PromptOverviewEntry, index: number): Promise<void> => {
     let candidate = entry
     for (let attempt = 0; attempt < HISTORY_PAGE_LIMIT; attempt += 1) {
-      if (candidate.row?.isConnected === true) {
+      const target = candidate.answerRow ?? candidate.row
+      if (target?.isConnected === true) {
         const flow = conversationFlow()
-        if (flow !== null) scrollToPrompt(candidate.row, conversationScroller(flow))
+        if (flow !== null) scrollToPrompt(target, conversationScroller(flow))
         return
       }
       const flow = conversationFlow()
       if (flow === null) return
       const next = reconcilePromptOverviewEntries(historyEntries, collectPromptOverviewEntries(flow))
       candidate = next.find(item => item.key === entry.key) ?? next[index] ?? entry
-      if (candidate.row?.isConnected === true) {
+      const retarget = candidate.answerRow ?? candidate.row
+      if (retarget?.isConnected === true) {
         entriesRef.current = next
         setEntries(next)
-        scrollToPrompt(candidate.row, conversationScroller(flow))
+        scrollToPrompt(retarget, conversationScroller(flow))
         return
       }
       const button = olderButton(flow)

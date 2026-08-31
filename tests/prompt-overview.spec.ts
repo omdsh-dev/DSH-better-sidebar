@@ -83,6 +83,10 @@ describe('prompt overview derivation', () => {
       },
     ])
     expect(entries[0]!.row).toBe(first)
+    // The jump target is the FINAL assistant row, not the first intermediate
+    // assistant (reasoning) row or the tool output.
+    expect(entries[0]!.answerRow).toBe(answer)
+    expect(entries[1]!.answerRow).toBe(secondAnswer)
   })
 
   it('derives the complete durable prompt list and ignores injected context', () => {
@@ -137,12 +141,12 @@ describe('prompt overview derivation', () => {
     const firstRow = row('user', 'user:1', 'First question')
     const secondRow = row('user', 'user:2', 'Second question')
     const durable: PromptOverviewEntry[] = [
-      { key: 'history:1', question: 'First question', answer: 'Old answer', row: null },
-      { key: 'history:2', question: 'Second question', answer: 'Second answer', row: null },
+      { key: 'history:1', question: 'First question', answer: 'Old answer', row: null, answerRow: null },
+      { key: 'history:2', question: 'Second question', answer: 'Second answer', row: null, answerRow: null },
     ]
     const merged = reconcilePromptOverviewEntries(durable, [
-      { key: 'user:1', question: 'First question', answer: 'Live answer', row: firstRow },
-      { key: 'user:2', question: 'Second question', answer: '', row: secondRow },
+      { key: 'user:1', question: 'First question', answer: 'Live answer', row: firstRow, answerRow: null },
+      { key: 'user:2', question: 'Second question', answer: '', row: secondRow, answerRow: null },
     ])
 
     expect(merged.map(entry => [entry.key, entry.answer, entry.row])).toEqual([
@@ -155,11 +159,11 @@ describe('prompt overview derivation', () => {
     const oldRow = row('user', 'user:old', 'Rendered imported prompt')
     const latestRow = row('user', 'user:latest', 'Exact latest prompt')
     const merged = reconcilePromptOverviewEntries([
-      { key: 'history:1', question: '', answer: 'Imported answer', row: null },
-      { key: 'history:2', question: 'Exact latest prompt', answer: '', row: null },
+      { key: 'history:1', question: '', answer: 'Imported answer', row: null, answerRow: null },
+      { key: 'history:2', question: 'Exact latest prompt', answer: '', row: null, answerRow: null },
     ], [
-      { key: 'user:old', question: 'Rendered imported prompt', answer: '', row: oldRow },
-      { key: 'user:latest', question: 'Exact latest prompt', answer: '', row: latestRow },
+      { key: 'user:old', question: 'Rendered imported prompt', answer: '', row: oldRow, answerRow: null },
+      { key: 'user:latest', question: 'Exact latest prompt', answer: '', row: latestRow, answerRow: null },
     ])
 
     expect(merged.map(entry => entry.row)).toEqual([oldRow, latestRow])
@@ -169,10 +173,10 @@ describe('prompt overview derivation', () => {
     const oldRow = row('user', 'user:old', 'Repeated prompt')
     const newRow = row('user', 'user:new', 'Repeated prompt')
     const merged = reconcilePromptOverviewEntries([
-      { key: 'history:1', question: 'Repeated prompt', answer: 'Old answer', row: null },
+      { key: 'history:1', question: 'Repeated prompt', answer: 'Old answer', row: null, answerRow: null },
     ], [
-      { key: 'user:old', question: 'Repeated prompt', answer: '', row: oldRow },
-      { key: 'user:new', question: 'Repeated prompt', answer: '', row: newRow },
+      { key: 'user:old', question: 'Repeated prompt', answer: '', row: oldRow, answerRow: null },
+      { key: 'user:new', question: 'Repeated prompt', answer: '', row: newRow, answerRow: null },
     ])
 
     expect(merged.map(entry => [entry.key, entry.row])).toEqual([
@@ -201,7 +205,7 @@ describe('prompt overview navigation', () => {
     const entries = [180, 240, 580].map((top, index) => {
       const prompt = row('user', `user:${index}`, `Question ${index}`)
       prompt.getBoundingClientRect = () => rect(top)
-      return { key: `user:${index}`, question: `Question ${index}`, answer: '', row: prompt }
+      return { key: `user:${index}`, question: `Question ${index}`, answer: '', row: prompt, answerRow: null }
     }) satisfies PromptOverviewEntry[]
 
     expect(activePromptIndex(entries, scroller)).toBe(1)
@@ -226,6 +230,25 @@ describe('prompt overview navigation', () => {
     expect(prompt.hasAttribute('data-prompt-overview-target')).toBe(true)
     vi.advanceTimersByTime(900)
     expect(prompt.hasAttribute('data-prompt-overview-target')).toBe(false)
+    vi.unstubAllGlobals()
+  })
+
+  it('lands tall answers on the final result instead of the tool/thinking start', () => {
+    const scroller = document.createElement('div')
+    Object.defineProperty(scroller, 'scrollTop', { configurable: true, writable: true, value: 300 })
+    scroller.getBoundingClientRect = () => rect(100, 600)
+    const scrollTo = vi.fn()
+    scroller.scrollTo = scrollTo
+    const answer = row('assistant-step', 'assistant:2', 'Long final result')
+    // A tall answer: 900px inside a 600px viewport.
+    answer.getBoundingClientRect = () => rect(460, 900)
+    vi.stubGlobal('matchMedia', () => ({ matches: false }))
+
+    scrollToPrompt(answer, scroller)
+
+    // topOfTarget = 300 + 460 - 100 = 660; result anchor =
+    // 660 + 900 - max(160, 240) = 1320.
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1320, behavior: 'smooth' })
     vi.unstubAllGlobals()
   })
 })
