@@ -35,7 +35,7 @@ import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft } from './conversation-draft.ts'
 import {
-  BOTTOM_MIN, PANEL_MIN, activateTab, agentUuidOf, allLeaves, closeFloatByTab, closeTab, dockFloat, firstLeaf, floatTab,
+  BOTTOM_MIN, PANEL_MIN, activateTab, agentUuidOf, allLeaves, closeFloatByTab, closeTab, dockFloat, firstLeaf, floatTab, maxPanelWidth,
   floatWithTab, isAgentTabId, leafWithTab, migrateBottomTabs,
   moveFloat, moveTab, moveTabToEdge, openDiffTab, openTabInActivePane, raiseFloat, reconcileAgentTerminals,
   resizeFloat, resizeSplitIn, setBottomHeight, setTabPin, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
@@ -954,7 +954,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // Clamp mirrors of setWidth/setBottomHeight for mid-drag values (the store
   // re-clamps on commit; these keep the panels from overshooting mid-drag).
   const clampWidth = (width: number): number =>
-    Math.min(Math.max(PANEL_MIN, Math.round(width)), Math.max(PANEL_MIN, window.innerWidth))
+    Math.min(Math.max(PANEL_MIN, Math.round(width)), maxPanelWidth(window.innerWidth))
   const clampHeight = (height: number): number =>
     Math.min(Math.max(BOTTOM_MIN, Math.round(height)), Math.max(BOTTOM_MIN, window.innerHeight - PANEL_MIN))
 

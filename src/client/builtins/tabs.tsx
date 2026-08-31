@@ -1,6 +1,6 @@
 /**
- * The 7 built-in tab descriptors: the plugin registers its own pages
- * (editor / git / subagent / sidechat / terminal / browser / diff) through
+ * The 8 built-in tab descriptors: the plugin registers its own pages
+ * (editor / git / review / subagent / sidechat / terminal / browser / diff) through
  * the same {@link BetterSidebarService} external plugins use — eating its
  * own dogfood. The terminal descriptor owns its quota (`TERMINAL_LIMIT`)
  * and mints `terminal:<uuid>` ids through `createTab`; the browser mints
@@ -16,6 +16,7 @@ import { EditorHost } from '../EditorHost.tsx'
 import { OpenWithSettings } from '../open-with-settings.tsx'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
 import { GitView } from '../GitView.tsx'
+import { ReviewView } from '../ReviewView.tsx'
 import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
 import { consumeSidechatSeed, SideChatView, sidechatThreadIdOf } from '../SideChatView.tsx'
@@ -151,6 +152,24 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           visible={visible}
           onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}
           onOpenDiff={onOpenDiff ?? (() => { /* no-op */ })}
+        />
+      ),
+    },
+    {
+      // Review sits beside source control, not inside it: GitView composes a
+      // commit (staged vs unstaged sections), this one walks the agent's
+      // changes file by file with an accept/reject decision. Order 21 keeps
+      // the pair adjacent in the + menu.
+      id: 'review',
+      title: () => t('review'),
+      icon: (size: number) => <IconDiffOutline16 size={size} />,
+      order: 21,
+      single: true,
+      component: ({ ctx, store, scope, visible }) => (
+        <ReviewView
+          scope={scope}
+          visible={visible}
+          onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}
         />
       ),
     },

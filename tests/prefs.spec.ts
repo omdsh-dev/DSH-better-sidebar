@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { loadExternalDisable, loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
-import { allLeaves, createSidebarStore, defaultWidthFor, makeDefaultState, setWidth } from '../src/client/state.ts'
-import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
+import { allLeaves, createSidebarStore, defaultWidthFor, makeDefaultState, maxPanelWidth, setWidth } from '../src/client/state.ts'
+import { SIDEBAR_PREFS_DEFAULTS, WIDTH_PERCENT_MAX } from '../src/prefs-shared.ts'
 
 /** A fake settings wire face whose settingsGet resolves to one raw value. */
 const wire = (value: unknown): SidebarSettingsClient => ({
@@ -354,7 +354,13 @@ describe('side card preferences', () => {
   it('derives the default width from the window percent with clamps', () => {
     expect(defaultWidthFor(1440, 30)).toBe(432)
     expect(defaultWidthFor(800, 30)).toBe(280) // the panel floor
-    expect(defaultWidthFor(1440, 100)).toBe(1440) // the viewport cap
+    // The widest the prefs contract allows is exactly the ceiling: the whole
+    // settings range stays reachable, none of it silently clamped away.
+    expect(defaultWidthFor(1440, WIDTH_PERCENT_MAX)).toBe(maxPanelWidth(1440))
+    expect(maxPanelWidth(1440)).toBe(864)
+    // Past the contract, a preset is capped to the same stop a drag obeys, so
+    // it can never open wider than the user could drag it.
+    expect(defaultWidthFor(1440, 100)).toBe(maxPanelWidth(1440))
   })
 
   it('makeDefaultState honors the open flag', () => {

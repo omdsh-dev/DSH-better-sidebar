@@ -16,9 +16,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
-import { EditorState } from '@codemirror/state'
+import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
+import { highlightSelectionMatches, openSearchPanel, search, searchKeymap } from '@codemirror/search'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
 import { api, htmlUrl } from './api.ts'
@@ -33,10 +34,50 @@ import { lazyChunkComponent } from './lazy-chunk.tsx'
 import { analyzeMarkdownHtml } from './markdown-html.ts'
 import { LazyMermaidMarkdown, MarkdownDocument, type MarkdownHtmlMedia } from './MarkdownHtml.tsx'
 import { MdToc } from './md-toc.tsx'
+import { MdFind } from './md-find.tsx'
 import { splitMermaidBlocks } from './mermaid-blocks.ts'
 import { t } from './locales.ts'
 import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
+
+/**
+ * Marks the editor root while the find panel should stay compact. CodeMirror's
+ * stock search panel carries ten controls, which wrap into five rows inside a
+ * 280px sidebar; the paired theme rules (cm-themes.ts) hide replace and the
+ * toggles while this class is set, leaving one row: field, next, back, close.
+ */
+const FIND_COMPACT_CLASS = 'dsh-find-compact'
+
+/**
+ * The compact flag rides a compartment, NOT a `classList.add` on the editor
+ * node. CodeMirror owns `view.dom.className` and rewrites it from the theme
+ * and editorAttributes facets on every update, so a hand-added class survives
+ * until the next keystroke and then silently vanishes. A compartment is the
+ * supported way to change an attribute facet after creation, and it also
+ * outlives the panel — which is destroyed and rebuilt on every close/open, so
+ * a flag stored beside the panel would forget the user's last choice.
+ */
+const findCompact = new Compartment()
+
+/** The editorAttributes payload for one compact state. */
+function findCompactAttrs(compact: boolean): Extension {
+  return CodeMirrorView.editorAttributes.of(compact ? { class: FIND_COMPACT_CLASS } : {})
+}
+
+/** Open the panel in one mode, reconfiguring only when the mode changes. */
+function openFind(view: CodeMirrorView, compact: boolean): boolean {
+  const isCompact = view.dom.classList.contains(FIND_COMPACT_CLASS)
+  if (isCompact !== compact) {
+    view.dispatch({ effects: findCompact.reconfigure(findCompactAttrs(compact)) })
+  }
+  return openSearchPanel(view)
+}
+
+/** Cmd/Ctrl+F: the one-row find panel. */
+const openCompactFind = (view: CodeMirrorView): boolean => openFind(view, true)
+
+/** Cmd/Ctrl+Alt+F: the full panel (replace, match case, regexp, by word). */
+const openFullFind = (view: CodeMirrorView): boolean => openFind(view, false)
 
 /** Previewable files (rendered output vs source editing). */
 type ViewMode = 'preview' | 'edit'
@@ -136,6 +177,14 @@ export function TextEditor(props: FileViewerProps) {
         CodeMirrorView.contentAttributes.of({ spellcheck: 'false' }),
         cmSurfaceTheme,
         themeComp.of(dark),
+        // Cmd/Ctrl+F in EDIT mode. The preview has its own find bar
+        // (md-find.tsx) because rendered markdown has no editor to search;
+        // the source side just uses CodeMirror's own, which brings match
+        // stepping, regex and replace for free. `top: true` puts the panel
+        // where the preview's bar sits, so the two modes agree.
+        search({ top: true }),
+        highlightSelectionMatches(),
+        findCompact.of(findCompactAttrs(true)),
         ...(language !== null ? [language] : []),
         CodeMirrorView.updateListener.of((update) => {
           if (update.docChanged) {
@@ -149,6 +198,15 @@ export function TextEditor(props: FileViewerProps) {
             preventDefault: true,
             run: () => { save(); return true },
           },
+          // Both find bindings sit ahead of searchKeymap, which binds a plain
+          // Mod-f of its own; the first match wins, so these must come first
+          // or the compact/full split would never be reached.
+          { key: 'Mod-f', preventDefault: true, run: openCompactFind },
+          { key: 'Mod-Alt-f', preventDefault: true, run: openFullFind },
+          // Before defaultKeymap: searchKeymap binds Escape (close the panel)
+          // and it must win that binding, or the panel could not be dismissed
+          // from inside the editor.
+          ...searchKeymap,
           ...defaultKeymap,
           ...historyKeymap,
         ]),
@@ -419,6 +477,10 @@ export function TextEditor(props: FileViewerProps) {
               (sticky, zero-height — first child so it pins from the very
               top) once the document has enough headings. */}
           <MdToc />
+          {/* Cmd/Ctrl+F find-in-document, same zero-height sticky contract as
+              the outline bar (both must be DIRECT children of this scroll
+              container — they locate it through their own parentElement). */}
+          <MdFind />
           {htmlInfo !== null
             ? <MarkdownDocument info={htmlInfo} media={htmlMedia} codeLabels={codeLabels} />
             : hasMermaid

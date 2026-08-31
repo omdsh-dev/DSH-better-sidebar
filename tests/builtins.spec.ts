@@ -27,11 +27,23 @@ function setup(options: BuiltinTabOptions = {}): { service: ReturnType<typeof cr
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 7 built-in tabs', () => {
+  it('registers the 8 built-in tabs', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['browser', 'diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal'],
+      ['browser', 'diff', 'editor', 'git', 'review', 'sidechat', 'subagent', 'terminal'],
     )
+  })
+
+  it('puts review next to source control in the + menu', () => {
+    const { service } = setup()
+    const review = service.getTab('review')
+    // Descriptors leave `hidden` unset rather than false; the + menu filters
+    // on truthiness, so "not hidden" is the assertion that matters.
+    expect(service.getTabs().filter(tab => tab.hidden).map(tab => tab.id)).not.toContain('review')
+    expect(review?.single).toBe(true)
+    // Order 21 sits immediately after git (20) so the pair stays adjacent.
+    expect(review?.order).toBe(21)
+    expect(service.getTab('git')?.order).toBe(20)
   })
 
   it('only diff is hidden from the + menu; editor is the visible files window (order 10)', () => {

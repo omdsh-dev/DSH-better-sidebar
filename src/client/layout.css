@@ -26,8 +26,23 @@
  * collapsed); expand/collapse animates both the margins and the panel
  * slides on the same theme duration. Drags disable the transition so the
  * layout tracks the pointer.
+ *
+ * Every push rule is anchored `html body #root` (0,1,0,2), NOT a bare
+ * `#root` (0,1,0,0). DSH Desktop injects its own shell sheet
+ * (`html, body, #root { width: 100% }`, dsh-plugin-desktop) at runtime, at
+ * the SAME specificity as a bare `#root` — so the winner came down to which
+ * plugin's <style> landed in <head> last, which no plugin controls. When the
+ * shell won, `width: 100%` beat the calc and `margin-right` merely pushed a
+ * full-width #root past the right edge: the conversation kept the whole
+ * viewport and the panel covered it instead of squeezing it (observed on
+ * DSH Desktop `mode: advanced`, where the shell's higher-specificity
+ * compatibility/extended rule does not apply). Two type selectors settle the
+ * cascade by specificity instead of by load order. Deliberately NOT
+ * `!important`: the compatibility/extended shell rule (0,1,1,1) legitimately
+ * makes #root a fixed box with `width: auto`, and the push still lands there
+ * through `margin-right` alone.
  */
-#root {
+html body #root {
   margin-right: var(--dsh-sidebar-width, 0px);
   width: calc(100% - var(--dsh-sidebar-width, 0px));
   transition:
@@ -41,8 +56,8 @@
    `[data-slot="conversation"]` child inside it — both selectors resolve to
    the SAME element on live pages (verified), and keeping both future-proofs
    the rule against a host rename without touching shell-specific markup. */
-#root [data-dsh-frame] > [data-pane="conversation"],
-#root :has(> [data-slot="conversation"]) {
+html body #root [data-dsh-frame] > [data-pane="conversation"],
+html body #root :has(> [data-slot="conversation"]) {
   margin-bottom: var(--dsh-sidebar-height, 0px);
   /* Grid/flex items default to min-height:auto. A long unbreakable token
      (OAuth URL) then grows this column past the viewport and clips the
@@ -92,10 +107,31 @@ body[data-dsh-sidebar-dragging] #root :has(> [data-slot="conversation"]) {
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 7v10'/%3E%3Cpath d='M6 5v14'/%3E%3Crect width='12' height='18' x='10' y='3' rx='2'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
+/* Same specificity as the bumped push rules above, and later in the file, so
+   it still wins. */
 @media (prefers-reduced-motion: reduce) {
-  #root,
-  #root [data-dsh-frame] > [data-pane="conversation"],
-  #root :has(> [data-slot="conversation"]) {
+  html body #root,
+  html body #root [data-dsh-frame] > [data-pane="conversation"],
+  html body #root :has(> [data-slot="conversation"]) {
     transition: none;
   }
+}
+
+/* Match highlights for the markdown preview's find bar (md-find.tsx).
+   These live in the GLOBAL sheet, not sidebar.module.css, on purpose: the
+   highlight names are entries in the document-wide `CSS.highlights` registry,
+   so `::highlight()` must name them verbatim — a CSS module would be free to
+   hash the identifier and the rule would then match nothing.
+   `color: inherit` keeps the reader's syntax highlighting and link colors
+   intact underneath the tint; only the background changes. */
+::highlight(dsh-md-find) {
+  background-color: color-mix(in srgb, var(--dsw-alias-brand-primary, #3b82f6) 26%, transparent);
+  color: inherit;
+}
+
+/* The current match reads as the stronger of the two so stepping through a
+   dense document is legible without moving the scroll position guesswork. */
+::highlight(dsh-md-find-current) {
+  background-color: color-mix(in srgb, var(--dsw-alias-brand-primary, #3b82f6) 60%, transparent);
+  color: inherit;
 }

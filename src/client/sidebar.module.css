@@ -2944,3 +2944,301 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   animation: dsh-toc-flash 1.2s ease-out;
   border-radius: 4px;
 }
+
+/* ── Markdown find bar ─────────────────────────────────────────────────── */
+
+/* Zero-height sticky row, same contract as .tocBar: no layout of its own, so
+   the preview never shifts when the bar opens. */
+.mdFindBar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  justify-content: flex-end;
+  height: 0;
+  pointer-events: none;
+}
+
+/* Right-inset by 34px so the bar sits BESIDE the outline button rather than
+   over it — the gap is the button's 26px plus its margin, and it reads as
+   padding on documents with too few headings to show that button. */
+.mdFindPanel {
+  position: absolute;
+  top: 4px;
+  right: 34px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 40px);
+  padding: 3px 4px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv2);
+  pointer-events: auto;
+}
+
+.mdFindIcon {
+  flex: none;
+  margin: 0 2px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.mdFindInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 150px;
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xs-13);
+  outline: none;
+}
+
+/* The type="search" clear affordance duplicates the bar's own close button. */
+.mdFindInput::-webkit-search-cancel-button {
+  display: none;
+}
+
+.mdFindCount {
+  flex: none;
+  min-width: 34px;
+  padding: 0 2px;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.mdFindButton {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.mdFindButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.mdFindButton:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* ── Review panel ──────────────────────────────────────────────────────── */
+
+.reviewRoot {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.reviewHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.reviewCount {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.reviewHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.reviewIconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.reviewIconButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.reviewList {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.reviewEmpty {
+  padding: 12px 10px;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.reviewError {
+  padding: 6px 10px;
+  color: var(--dsw-alias-status-error, #e5484d);
+  font: var(--dsw-font-xxs-12);
+  overflow-wrap: anywhere;
+}
+
+.reviewItem {
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.reviewRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px 3px 4px;
+}
+
+.reviewRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The whole left side is the expand affordance, so the pointer never has to
+   find a small chevron in a narrow panel. */
+.reviewDisclosure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  text-align: left;
+  cursor: pointer;
+}
+
+.reviewBadge {
+  flex: none;
+  width: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  text-align: center;
+}
+
+.reviewBadge[data-state='accepted'] { color: var(--dsw-alias-status-success, #30a46c); }
+.reviewBadge[data-state='partial'] { color: var(--dsw-alias-status-warning, #f5a524); }
+
+.reviewPath {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Long paths read tail-first: the file name matters more than the root. */
+  direction: rtl;
+  text-align: left;
+}
+
+.reviewStats {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  font: var(--dsw-font-xxxs-11);
+}
+
+.reviewAdded { color: var(--dsw-alias-status-success, #30a46c); }
+.reviewRemoved { color: var(--dsw-alias-status-error, #e5484d); }
+
+.reviewActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.reviewAccept,
+.reviewReject {
+  padding: 2px 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: transparent;
+  font: var(--dsw-font-xxxs-11);
+  cursor: pointer;
+}
+
+.reviewAccept {
+  color: var(--dsw-alias-status-success, #30a46c);
+}
+
+.reviewReject {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.reviewAccept:hover:not(:disabled),
+.reviewReject:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.reviewReject:hover:not(:disabled) {
+  color: var(--dsw-alias-status-error, #e5484d);
+}
+
+.reviewAccept:disabled,
+.reviewReject:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.reviewAcceptedTag {
+  padding: 2px 6px;
+  color: var(--dsw-alias-status-success, #30a46c);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.reviewDiff {
+  padding: 4px 6px 8px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.reviewOpen {
+  margin-top: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  cursor: pointer;
+}
+
+.reviewOpen:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}

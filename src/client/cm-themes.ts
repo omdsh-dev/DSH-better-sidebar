@@ -32,6 +32,81 @@ export const cmSurfaceTheme = EditorView.theme({
     color: 'var(--dsw-alias-label-tertiary)',
     border: 'none',
   },
+  // The find panel (@codemirror/search). Its stock chrome is a grey browser
+  // default that reads as broken against the DSH surfaces, so every part of
+  // it is re-tokenized here. Same visual language as the preview's find bar
+  // (md-find.tsx), so Cmd+F looks like one feature in both modes.
+  '.cm-panels': {
+    backgroundColor: 'transparent',
+    color: 'var(--dsw-alias-label-primary)',
+    border: 'none',
+  },
+  '.cm-panels.cm-panels-top': {
+    borderBottom: '1px solid var(--dsw-alias-border-l1)',
+  },
+  '.cm-panel.cm-search': {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '4px',
+    padding: '5px 6px',
+    backgroundColor: 'var(--dsw-alias-bg-layer-2)',
+    font: 'var(--dsw-font-xs-13)',
+  },
+  '.cm-panel.cm-search input': {
+    padding: '3px 6px',
+    border: '1px solid var(--dsw-alias-border-l1)',
+    borderRadius: '6px',
+    backgroundColor: 'var(--dsw-alias-bg-layer-1)',
+    color: 'var(--dsw-alias-label-primary)',
+    font: 'inherit',
+    outline: 'none',
+  },
+  '.cm-panel.cm-search input[type=checkbox]': {
+    padding: '0',
+    border: 'none',
+    verticalAlign: 'middle',
+  },
+  '.cm-panel.cm-search label': {
+    color: 'var(--dsw-alias-label-secondary)',
+    font: 'var(--dsw-font-xxs-12)',
+  },
+  '.cm-panel.cm-search button': {
+    padding: '3px 8px',
+    border: '1px solid var(--dsw-alias-border-l1)',
+    borderRadius: '6px',
+    backgroundColor: 'transparent',
+    backgroundImage: 'none',
+    color: 'var(--dsw-alias-label-secondary)',
+    font: 'var(--dsw-font-xxs-12)',
+    cursor: 'pointer',
+  },
+  '.cm-panel.cm-search button:hover': {
+    backgroundColor: 'var(--dsw-alias-interactive-bg-hover)',
+    color: 'var(--dsw-alias-label-primary)',
+  },
+  // The close affordance is an unlabelled glyph; give it a hit box.
+  '.cm-panel.cm-search button[name=close]': {
+    padding: '0 6px',
+    border: 'none',
+    color: 'var(--dsw-alias-label-tertiary)',
+    fontSize: '16px',
+    lineHeight: '1',
+  },
+  // Compact mode (the default, see FIND_COMPACT_CLASS in TextEditor.tsx).
+  // The stock panel carries ten controls, which wrap into five rows inside a
+  // 280px sidebar. Searching is the common case by a wide margin, so the
+  // default keeps one row — field, next, back, close — and Mod-Alt-f opens
+  // the full panel with replace and the toggles.
+  '&.dsh-find-compact .cm-panel.cm-search label': { display: 'none' },
+  '&.dsh-find-compact .cm-panel.cm-search br': { display: 'none' },
+  '&.dsh-find-compact .cm-panel.cm-search button[name=select]': { display: 'none' },
+  '&.dsh-find-compact .cm-panel.cm-search input[name=replace]': { display: 'none' },
+  '&.dsh-find-compact .cm-panel.cm-search button[name=replace]': { display: 'none' },
+  '&.dsh-find-compact .cm-panel.cm-search button[name=replaceAll]': { display: 'none' },
+  // The field takes the row; the three controls sit flush at its right.
+  '&.dsh-find-compact .cm-panel.cm-search': { flexWrap: 'nowrap' },
+  '&.dsh-find-compact .cm-panel.cm-search input[name=search]': { flex: '1 1 auto', minWidth: '0' },
 })
 
 /** Scheme-specific surface tints (selection, active line). */
@@ -42,6 +117,14 @@ function cmSurfaceTint(dark: boolean): ReturnType<typeof EditorView.theme> {
     },
     '.cm-activeLine, .cm-activeLineGutter': {
       backgroundColor: dark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+    },
+    // Find matches. The selected one is the stronger tint, mirroring the
+    // preview find bar's current-vs-other match pair.
+    '.cm-searchMatch': {
+      backgroundColor: dark ? 'rgba(96,165,250,0.28)' : 'rgba(59,130,246,0.24)',
+    },
+    '.cm-searchMatch.cm-searchMatch-selected': {
+      backgroundColor: dark ? 'rgba(96,165,250,0.62)' : 'rgba(59,130,246,0.52)',
     },
   })
 }

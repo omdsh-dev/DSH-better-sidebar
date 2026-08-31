@@ -9,7 +9,7 @@
  * divides the space row- or column-wise with fractional sizes. All tree
  * operations are pure functions over the node, unit-tested in tests/state.spec.ts.
  */
-import { SIDEBAR_PREFS_DEFAULTS, type SidebarPrefs } from '../prefs-shared.ts'
+import { SIDEBAR_PREFS_DEFAULTS, WIDTH_PERCENT_MAX, type SidebarPrefs } from '../prefs-shared.ts'
 import { isNarrowWidth } from './breakpoints.ts'
 
 /**
@@ -122,6 +122,39 @@ export interface SidebarState {
 
 export const PANEL_MIN = 280
 export const PANEL_MAX = 640
+
+/**
+ * The panel never takes more than this share of the window.
+ *
+ * Without a ceiling a width drag ran all the way to `window.innerWidth`: the
+ * layout push then squeezed the conversation column (and the app's own left
+ * nav with it) down to nothing, a state the user can only escape by dragging
+ * back. The bottom panel has had the equivalent rule since it shipped (see
+ * {@link setBottomHeight}); this is the missing horizontal half of it.
+ *
+ * The stop is the top of the Side card width contract rather than a second,
+ * independent number. `defaultWidthPercent` already tells the user the widest
+ * the panel is meant to open, so a drag that could go further contradicted
+ * the app's own settings page — and two constants would be free to drift.
+ * A ratio (not an absolute pixel cap) keeps it sensible from a 13" laptop to
+ * an ultrawide.
+ */
+export const PANEL_MAX_VIEWPORT_RATIO = WIDTH_PERCENT_MAX / 100
+
+/**
+ * The widest the panel may be on one viewport. The {@link PANEL_MIN} floor
+ * wins on a viewport too small for the ratio to clear it, so the panel stays
+ * usable rather than collapsing below its own minimum.
+ */
+export function maxPanelWidth(viewport: number): number {
+  if (!Number.isFinite(viewport)) return PANEL_MAX
+  return Math.max(PANEL_MIN, Math.round(viewport * PANEL_MAX_VIEWPORT_RATIO))
+}
+
+/** {@link maxPanelWidth} for the live window (PANEL_MAX outside the browser). */
+export function maxPanelWidthNow(): number {
+  return typeof window === 'undefined' ? PANEL_MAX : maxPanelWidth(window.innerWidth)
+}
 export const PANEL_DEFAULT = 400
 export const TAB_MAX_WIDTH = 160
 /** Bottom panel geometry contract (mirrors the width contract; the upper
@@ -765,10 +798,12 @@ export function toggleBottomPanel(state: SidebarState): SidebarState {
   return { ...state, bottomOpen: !state.bottomOpen }
 }
 
-/** Set the panel width (clamped to the contract range; the upper bound is
- * the viewport so the fullscreen expansion can fill the window). */
+/** Set the panel width, clamped to the contract range. The upper bound leaves
+ * the conversation column at least half the window (see
+ * {@link maxPanelWidth}) — without it a drag could swallow the whole viewport
+ * and squeeze the conversation to nothing. */
 export function setWidth(state: SidebarState, width: number): SidebarState {
-  const max = typeof window !== 'undefined' ? Math.max(PANEL_MIN, window.innerWidth) : PANEL_MAX
+  const max = maxPanelWidthNow()
   return { ...state, width: Math.min(max, Math.max(PANEL_MIN, Math.round(width))) }
 }
 
@@ -1075,8 +1110,7 @@ const GLOBAL_WIDTH_KEY = 'dsh-sidebar:v1:width'
 
 /** Clamp one width to the contract and the current viewport (mirror of {@link setWidth}). */
 function clampWidth(width: number): number {
-  const max = typeof window !== 'undefined' ? Math.max(PANEL_MIN, window.innerWidth) : PANEL_MAX
-  return Math.min(max, Math.max(PANEL_MIN, Math.round(width)))
+  return Math.min(maxPanelWidthNow(), Math.max(PANEL_MIN, Math.round(width)))
 }
 
 /** Read the cross-session panel width (undefined when never dragged). */
@@ -1116,9 +1150,11 @@ export interface SidebarSnapshot {
 
 /** Default panel width for one viewport: the prefs percent of the window,
  * clamped to the panel floor (a tiny percent must stay usable) and to the
- * viewport (a large one must never cover the whole window). */
+ * same ceiling a drag obeys. The two agree by construction — the ceiling IS
+ * the top of the percent contract — so this cap only ever catches a value
+ * from outside that contract. */
 export function defaultWidthFor(viewport: number, percent: number): number {
-  return Math.min(viewport, Math.max(PANEL_MIN, Math.round(viewport * percent / 100)))
+  return Math.min(maxPanelWidth(viewport), Math.max(PANEL_MIN, Math.round(viewport * percent / 100)))
 }
 
 /**
@@ -1272,7 +1308,10 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     : treeHasId(splits, requestedActivePane) || treeHasId(bottomSplits, requestedActivePane)
       ? requestedActivePane
       : firstLeaf(splits).id
-  const maxWidth = typeof window !== 'undefined' ? window.innerWidth : Infinity
+  // A width persisted on a wider window (or from a build before the ceiling
+  // existed) is clamped down here, so a stale value cannot reopen the panel
+  // at a size the user can no longer drag it to.
+  const maxWidth = maxPanelWidthNow()
   return {
     panelOpen: record.panelOpen,
     width: Math.max(PANEL_MIN, Math.min(record.width, maxWidth)),
