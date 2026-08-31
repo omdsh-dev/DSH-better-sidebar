@@ -9,7 +9,7 @@
  * only, no editor chrome); file tabs keep the full chrome in both modes.
  */
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createElement, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
@@ -17,6 +17,7 @@ import type { Context } from '../src/context-types.ts'
 import { EditorHost } from '../src/client/EditorHost.tsx'
 import { createBetterSidebarService } from '../src/client/service.ts'
 import { allLeaves, createSidebarStore, type SidebarTab } from '../src/client/state.ts'
+import { t } from '../src/client/locales.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
@@ -293,6 +294,62 @@ describe('EditorHost (files window)', () => {
       expect(calls).toEqual(['mode:edit', 'save'])
     } finally {
       unmount()
+    }
+  })
+
+  it('the header shows "open in browser" only for viewers declaring browserUrl, and it opens a new tab', () => {
+    const { store, ctx } = setup()
+    const service = ctx.betterSidebar
+    // fetchStrategy 'none' renders immediately (no fetch) — the ready state
+    // carries the descriptor, which is all the button consults.
+    service.registerFileViewer({
+      id: 'test:renderable',
+      exts: ['rdr'],
+      fetchStrategy: 'none',
+      browserUrl: (scope, path) => `/sidebar/file?sessionId=${scope.sessionId}&path=${encodeURIComponent(path)}`,
+      component: () => null,
+    })
+    service.registerFileViewer({
+      id: 'test:plain',
+      exts: ['pln'],
+      fetchStrategy: 'none',
+      component: () => null,
+    })
+    const openSpy = vi.fn().mockReturnValue(null)
+    vi.stubGlobal('open', openSpy)
+    try {
+      service.openTab({ type: 'editor', title: 'x.rdr', path: '/tmp/x.rdr', id: 'editor:/tmp/x.rdr' })
+      const fileTab = (): SidebarTab =>
+        allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+          .find(tab => tab.path === '/tmp/x.rdr')!
+      const { container, unmount } = mountHost(ctx, store, fileTab)
+      try {
+        const label = t('browserOpenExternal')
+        const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)
+        expect(button).not.toBeNull()
+        act(() => { button!.click() })
+        expect(openSpy).toHaveBeenCalledTimes(1)
+        const [url, target, features] = openSpy.mock.calls[0] as [string, string, string]
+        expect(url).toBe(`/sidebar/file?sessionId=editor-home-session&path=${encodeURIComponent('/tmp/x.rdr')}`)
+        expect(target).toBe('_blank')
+        expect(features).toContain('noopener')
+      } finally {
+        unmount()
+      }
+
+      // A viewer without browserUrl never shows the button.
+      service.openTab({ type: 'editor', title: 'x.pln', path: '/tmp/x.pln', id: 'editor:/tmp/x.pln' })
+      const plainTab = (): SidebarTab =>
+        allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+          .find(tab => tab.path === '/tmp/x.pln')!
+      const second = mountHost(ctx, store, plainTab)
+      try {
+        expect(second.container.querySelector(`button[aria-label="${t('browserOpenExternal')}"]`)).toBeNull()
+      } finally {
+        second.unmount()
+      }
+    } finally {
+      vi.unstubAllGlobals()
     }
   })
 

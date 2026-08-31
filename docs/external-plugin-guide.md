@@ -393,6 +393,12 @@ interface FileViewerDescriptor {
   /** fetchStrategy='custom' 时的加载函数；v0.12.0+ 第三参 signal 在 viewer
    *  卸载/重匹配时中止（忽略 signal 的 load 也照常工作） */
   load?: (path: string, scope: SessionScope, signal?: AbortSignal) => Promise<unknown>
+  /** 浏览器可直接渲染的 URL（v0.18.1+）：声明后编辑器 header 出现
+   *  「在浏览器中打开」按钮（真实新 Tab，window.open '_blank' noopener）。
+   *  仅当浏览器能原生渲染该类型时声明（内置：image/pdf → /sidebar/file
+   *  媒体 URL，html → 带 CSP sandbox 的 /sidebar/html URL）；文本/代码/
+   *  二进制不声明，按钮保持隐藏 */
+  browserUrl?: (scope: SessionScope, path: string) => string
   /** 声明式设置（v0.4.1+）：形状同 TabDescriptor.settings（§4.1 的
    *  toggles/pluginToggles/render；v0.12.0 起 viewer 卡片也有齿轮按钮） */
   settings?: SidebarSettingsDeclaration
@@ -445,6 +451,7 @@ interface FileViewerProps {
 
 > **内置 viewer**（不可重复注册，全部 6 个）：image(0) / pdf(0) / markdown(0, fsRead；内嵌 HTML 支持：DOMPurify 白名单消毒、`<details>` 跨段嵌套、本地媒体 src 重写走 `/sidebar/file`；≥3 标题时浮动目录大纲。实现 `markdown-html.ts` / `MarkdownHtml.tsx` / `md-toc.tsx`，[设计文档](plans/2026-08-24-markdown-html-toc-design.md)) / html(0, fsRead, 沙箱 iframe 预览) / code(-100, catch-all, fsRead) / binary-download(-50, exts doc/xls/ppt + NUL detect)。Office 三件套预览（.docx/.xlsx/.pptx）**不再内置**——已迁至推荐插件（设置页「添加插件」→ 文件预览弹窗里的 Office 预览插件），以相同 id 注册。
 > code 是兜底 viewer：任何其他 viewer 未认领的文件都会落到 code（CodeMirror 文本编辑）；二进制文件经 head 重匹配被 binary-download 的 NUL detect 认领（下载按钮）。外部 viewer 注册同扩展名 + 更高 priority 即可覆盖。
+> image / pdf / html 三个 viewer 声明了 `browserUrl`，编辑器 header 会出现「在浏览器中打开」按钮（真实新 Tab：image/pdf 走 `/sidebar/file` 媒体 URL，html 走带 CSP sandbox 的 `/sidebar/html` URL，顶层打开仍处 opaque origin，[设计文档](plans/2026-08-31-open-in-browser-design.md)）。
 
 ### 5.5 注册示例
 
@@ -527,12 +534,14 @@ const { value } = await res.json()   // 错误时 { ok: false, error: { code, me
 
 > **文件路径安全边界**：`fs.tree`、`fs.read`、`fs.write`、`/sidebar/file`、`/sidebar/html` 和 `/sidebar/upload` 都以请求对应 session 的权威 `cwd` 作为 workspace 根目录。路径会按真实文件系统路径检查，越界绝对路径、`..` 解析结果和指向 workspace 外部的符号链接都会被拒绝；消费插件不应把 `cwd` 当作可由用户扩大权限范围的参数。
 
-媒体/下载字节走 `/sidebar/file` 路由（`?sessionId=&path=&cwd=&download=1`）：
+媒体/下载字节走 `/sidebar/file` 路由（`?sessionId=&path=&cwd=`，可选 `&download=1`）：
 
 ```ts
-// 媒体 URL（图片等直接 <img src>）：/sidebar/file?sessionId=...&path=...
+// 媒体 URL（图片等直接 <img src>，或 image/pdf viewer 的「在浏览器中打开」）：/sidebar/file?sessionId=...&path=...
 const url = `/sidebar/file?${new URLSearchParams({ sessionId: scope.sessionId, path })}`
 ```
+
+> **inline 安全契约（v0.18.1+）**：不带 `download=1` 的响应除 `<img>`/iframe 内嵌外还会被**顶层新 Tab 导航**（编辑器 header 的「在浏览器中打开」），因此统一携带 `content-security-policy: sandbox allow-scripts allow-downloads; object-src 'none'` + `x-content-type-options: nosniff` + `referrer-policy: no-referrer`——即使工作区 SVG/HTML 被顶层打开也在 opaque origin 中执行，与 GUI 源隔离。`download=1`（attachment 强制落盘）分支不带这些头。
 
 > 注：内置的 `api.ts` 是 better-sidebar 内部模块，外部插件 **不要** value-import 它（构建纯度门会挡）；按上表模式自己 fetch 即可。所有路由带与 `/api` 相同的 Host 头信任围栏，浏览器同源访问天然通过。
 

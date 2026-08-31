@@ -34,6 +34,7 @@ import {
 } from '../icons.tsx'
 import type { ComponentType } from 'react'
 import type { FileViewerDescriptor, FileViewerProps } from '../service.ts'
+import { htmlUrl, mediaUrl } from '../api.ts'
 import { t } from '../locales.ts'
 import css from '../sidebar.module.css'
 
@@ -54,6 +55,9 @@ export function builtinViewers(): readonly FileViewerDescriptor[] {
       icon: (size: number) => <IconImageOutline16 size={size} />,
       exts: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'],
       fetchStrategy: 'mediaUrl',
+      // The browser renders images natively (svg included — the inline
+      // CSP sandbox on /sidebar/file is the top-level boundary).
+      browserUrl: (scope, path) => mediaUrl(scope, path),
       component: ({ mediaUrl: url, title }) => (
         <div className={css.editorImageWrap}>
           <img className={css.editorImage} src={url} alt={title} />
@@ -66,6 +70,8 @@ export function builtinViewers(): readonly FileViewerDescriptor[] {
       icon: (size: number) => <IconPdfOutline16 size={size} />,
       exts: ['pdf'],
       fetchStrategy: 'mediaUrl',
+      // The browser's own PDF viewer in a new tab.
+      browserUrl: (scope, path) => mediaUrl(scope, path),
       component: ({ scope, path, title }) => (
         <PdfView scope={scope} path={path} title={title} />
       ),
@@ -84,6 +90,10 @@ export function builtinViewers(): readonly FileViewerDescriptor[] {
       icon: (size: number) => <IconHtmlOutline16 size={size} />,
       exts: ['html', 'htm'],
       fetchStrategy: 'fsRead',
+      // The sandboxed /sidebar/html URL: its CSP header keeps even a
+      // top-level new-tab load in an opaque origin (the htmlViewerNoSandbox
+      // setting governs only the in-editor iframe ATTRIBUTE, never this).
+      browserUrl: (scope, path) => htmlUrl(scope, path),
       // Declarative settings: the sandbox escape hatch and the default-unsafe
       // start state render under this viewer's row in the Side card settings
       // page (both warned on).

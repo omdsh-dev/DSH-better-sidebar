@@ -316,6 +316,14 @@ export interface FileViewerDescriptor {
    *  teardown / re-match; loaders that ignore it keep working. */
   load?: (path: string, scope: SessionScope, signal?: AbortSignal) => Promise<unknown>
   /**
+   * Browser-renderable URL for the editor header's "open in browser" button
+   * (a REAL new browser tab). Declare it only when the browser can natively
+   * render the type (builtins: image/pdf → the /sidebar/file media URL, html
+   * → the sandboxed /sidebar/html URL); absent = the browser cannot
+   * meaningfully render it (text/code/binary) and the button stays hidden.
+   */
+  browserUrl?: (scope: SessionScope, path: string) => string
+  /**
    * Declarative settings shown in the Side card settings page: every
    * registered viewer gets an enable/disable switch (icon + title + exts).
    */

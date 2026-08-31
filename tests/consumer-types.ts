@@ -92,6 +92,9 @@ const viewer: FileViewerDescriptor = {
     void path; void scope; void signal
     return { rows: [] }
   },
+  // Browser-renderable URL for the editor header's "open in browser" button.
+  browserUrl: (scope: SessionScope, path: string) =>
+    `/sidebar/file?${new URLSearchParams({ sessionId: scope.sessionId, path })}`,
   settings: { pluginToggles: [{ key: 'delimiter', title: 'Delimiter', type: 'text', placeholder: ',' }] },
   component: (props: FileViewerProps) => {
     const { customData, content, truncated, mediaUrl, viewerId, path, title } = props

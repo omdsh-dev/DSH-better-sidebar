@@ -100,6 +100,34 @@ export function mediaTypeForPath(path: string): string {
   return MEDIA_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream'
 }
 
+/** CSP for INLINE /sidebar/file responses (opaque origin, scripts allowed so
+ *  previewed HTML still runs, downloads permitted for the browser's own save
+ *  affordance, plugin embeds blocked) — mirrors the /sidebar/html route. */
+export const MEDIA_INLINE_CSP = "sandbox allow-scripts allow-downloads; object-src 'none'"
+
+/**
+ * Response headers for one /sidebar/file serve. Raw bytes either way
+ * (binary-safe); `download` switches the disposition so the browser saves the
+ * file instead of showing it. INLINE responses are also navigated TOP-LEVEL
+ * (the editor header's "open in browser" button for the image/pdf viewers
+ * opens the media URL in a real new browser tab): without a boundary a
+ * workspace .svg (an image-viewer ext) would execute scripts SAME-ORIGIN
+ * with the GUI, so inline responses carry the CSP sandbox directive (opaque
+ * origin even on top-level loads) plus nosniff and no-referrer — the same
+ * defense-in-depth as the /sidebar/html route.
+ */
+export function mediaHeadersFor(path: string, download: boolean): Record<string, string> {
+  const headers: Record<string, string> = { 'content-type': mediaTypeForPath(path), 'cache-control': 'no-cache' }
+  if (download) {
+    headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(basename(path))}`
+  } else {
+    headers['x-content-type-options'] = 'nosniff'
+    headers['referrer-policy'] = 'no-referrer'
+    headers['content-security-policy'] = MEDIA_INLINE_CSP
+  }
+  return headers
+}
+
 /**
  * Resolve a session's authoritative working directory. The attached session
  * header wins; while the session is still hydrating from persistence (the
@@ -895,15 +923,10 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)
         }
-        const type = mediaTypeForPath(path)
         const body = await readFile(path)
-        // Raw bytes either way (binary-safe); ?download=1 switches the
-        // disposition so the browser saves the file instead of showing it.
-        const headers: Record<string, string> = { 'content-type': type, 'cache-control': 'no-cache' }
-        if (url.searchParams.get('download') === '1') {
-          headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(basename(path))}`
-        }
-        res.writeHead(200, headers)
+        // Raw bytes either way (binary-safe); the header helper owns the
+        // download-vs-inline split (see mediaHeadersFor).
+        res.writeHead(200, mediaHeadersFor(path, url.searchParams.get('download') === '1'))
         res.end(body)
       } catch (error) {
         writeError(res, error)
