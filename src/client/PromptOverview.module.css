@@ -136,8 +136,9 @@
 }
 
 .previewJumpDivider {
-  width: 1px;
-  background: var(--dsw-alias-border-l2);
+  width: 2px;
+  background: var(--dsw-alias-label-secondary);
+  opacity: 0.82;
 }
 
 :global([data-chat-flow-kind='user'][data-prompt-overview-target]),
