@@ -113,14 +113,14 @@
 }
 
 .previewJump {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   display: grid;
   grid-template-columns: 1fr 1px 1fr;
-  align-items: stretch;
-  min-height: 24px;
-  margin: 1px -5px -4px;
-  border-radius: 7px;
+  border-radius: inherit;
   overflow: hidden;
-  background: var(--dsw-alias-bg-layer-2);
+  pointer-events: auto;
 }
 
 .previewJumpSide {
