@@ -14,7 +14,9 @@
  * - a safe, bund-visible `dsh.bundle.patch` path (`./cordis.patch.yml`),
  * - a repository identity that normalizes to a credential-free HTTPS GitHub
  *   owner/repo URL (the catalog ↔ npm backlink comparison),
- * - an exact stable SemVer version (no ranges, no tags, no prerelease).
+ * - an exact SemVer version (no ranges, no tags; a prerelease suffix is
+ *   allowed — prerelease releases ride the npm `alpha` dist-tag and are not
+ *   the market's verified `latest` install target until a stable cut).
  *
  * The packed-manifest checks run `pnpm pack` into a temp dir (the `prepare`
  * script rebuilds the gitignored lib/, like the release flow does).
@@ -43,8 +45,9 @@ const pkg = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')) as {
 /** The market's lifecycle-script reject list (install-and-uninstall.zh.md). */
 const LIFECYCLE_SCRIPTS = ['preinstall', 'install', 'postinstall', 'prepare'] as const
 
-/** Stable exact SemVer: exactly three numeric segments (no tag / prerelease). */
-const STABLE_SEMVER = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u
+/** Exact SemVer: exactly three numeric segments, optional prerelease suffix
+ *  (no range / tag — prerelease cuts publish under the npm `alpha` dist-tag). */
+const EXACT_SEMVER = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u
 
 /** Read `package.json` from a fresh `pnpm pack` tarball (the publish surface). */
 function packedManifest(): Record<string, unknown> {
@@ -105,7 +108,7 @@ describe('DSH community-market manifest compatibility', () => {
     expect(url.pathname.split('/').filter(Boolean)).toHaveLength(2)
   })
 
-  it('declares an exact stable SemVer version (no range, tag, or prerelease)', () => {
-    expect(pkg.version).toMatch(STABLE_SEMVER)
+  it('declares an exact SemVer version (no range or tag; prerelease allowed for the alpha track)', () => {
+    expect(pkg.version).toMatch(EXACT_SEMVER)
   })
 })

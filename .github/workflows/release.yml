@@ -6,6 +6,11 @@ name: Release
 # Trigger: a GitHub Release is published (tag vX.Y.Z). The tag MUST match
 # package.json `version`; the workflow verifies this before publishing.
 #
+# Dist-tag policy: a PRERELEASE version (e.g. v0.18.0-alpha.0 — the DSH
+# 0.1.2-alpha adapter track) publishes under the npm `alpha` dist-tag so the
+# `latest` install target keeps pointing at the last stable cut (which
+# supports the stable DSH line); stable versions publish as `latest`.
+#
 # One-time npm-side setup (manual, on npmjs.com):
 #   1. package `dsh-better-sidebar` -> Settings -> Publishing access
 #      -> Trusted Publishers -> "Add Trusted Publisher".
@@ -94,4 +99,7 @@ jobs:
 
       - name: Publish to npm
         if: github.event_name == 'release' || github.event.inputs.dry_run != 'true'
-        run: pnpm publish --provenance --access public --no-git-checks
+        run: |
+          TAG=$(node -p "require('./package.json').version.includes('-') ? 'alpha' : 'latest'")
+          echo "publishing to npm dist-tag: ${TAG}"
+          pnpm publish --provenance --access public --no-git-checks --tag "$TAG"

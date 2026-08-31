@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
-import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { apply, mediaTypeForPath } from '../src/index.ts'
 import { encodeHtmlUrl } from '../src/html-route.ts'
 import * as git from '../src/git.ts'
@@ -847,7 +847,7 @@ describe('side card settings routes', () => {
         const entry = namespaces.get(ns)
         if (entry === undefined) throw new Error(`settings namespace "${ns}" is not registered`)
         if (expectedRevision !== undefined && expectedRevision !== entry.revision) {
-          throw new SettingsConflictError(settingsNamespace(ns), expectedRevision, entry.revision)
+          throw new SettingsConflictError(ns as SettingsNamespace, expectedRevision, entry.revision)
         }
         entry.value = { ...entry.value, ...patch }
         entry.revision += 1

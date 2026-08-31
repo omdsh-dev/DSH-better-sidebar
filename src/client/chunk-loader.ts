@@ -62,18 +62,11 @@ type ChunkFactory = (require: (spec: string) => unknown) => ChunkExports
  * CLIENT_EXTERNALS in tsdown.config.ts — the chunk builds keep these
  * external and the loader resolves them here). A superset is safe: the
  * require only answers what the chunk actually asks for. The shell's static
- * module table seeds React, Cordis, and the UI libraries (primitives/slots);
- * `dsh-client-runtime/client` normalizes onto the runtime package row
- * (stripClientSuffix). dsh-client-web-react / dsh-client-schema-form were
- * dropped in DSH 0.1.0-rc.8 (no rc.8 publish, nothing requires them) — the
- * chunks never asked for them, so they no longer belong here.
- *
- * DSH 0.1.2-alpha.1 removed the `dsh-client-runtime` package outright (the
- * seed table gained bare-name `@deepseek-ai/dsh-client-store` instead); the
- * runtime/client row below stays for 0.1.1-rc.x hosts — no chunk requires
- * it, and {@link buildExternalsRequire} keeps an unresolvable spec
- * undefined until a chunk actually asks (only then is it a loud error), so
- * the entry is inert on 0.1.2-alpha.1+.
+ * module table seeds React, Cordis, and the UI libraries (primitives/slots).
+ * `@deepseek-ai/dsh-client-runtime` was removed upstream in DSH 0.1.2-alpha
+ * (its seed row became bare-name `@deepseek-ai/dsh-client-store`) and no
+ * chunk ever required it, so its row is gone; so are dsh-client-web-react /
+ * dsh-client-schema-form, dropped back in DSH 0.1.0-rc.8.
  */
 export const CHUNK_EXTERNALS: readonly string[] = [
   'react',
@@ -83,7 +76,6 @@ export const CHUNK_EXTERNALS: readonly string[] = [
   'cordis',
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-runtime/client',
 ]
 
 /** Chunk script endpoint served by the plugin host half (src/bundle-route.ts). */

@@ -13,12 +13,15 @@
  *
  * Each side thread is a child session the plugin created itself with a
  * custom seed (the parent's full log up to the click moment — see
- * sidechat-core.ts). Transport: thread creation/follow-up/cancel/dispose/
- * info go through the plugin's own /sidebar/api sidechat.* routes
- * (subagent-origin identities are fenced from the generic session RPCs);
- * the transcript is polled from the generic session.history RPC (seed-cut
- * at session/end-seed, boundary row dropped, chunk streaming accumulated)
- * — see sidechat-transcript.ts.
+ * sidechat-core.ts). Transport: EVERY thread operation — creation,
+ * follow-up, cancel, dispose, info, and the transcript itself — goes
+ * through the plugin's own /sidebar/api sidechat.* routes (subagent-origin
+ * identities are fenced from the generic session RPCs, and DSH
+ * 0.1.2-alpha.1's Remote-gateway migration removed the client
+ * session-history face the transcript used to poll). The transcript route
+ * cuts the inherited seed host-side and answers afterSeq deltas; the
+ * mapping (boundary row dropped, chunk streaming accumulated) lives in
+ * sidechat-transcript.ts.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSyncExternalStore } from 'react'
@@ -36,7 +39,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
 import { IconHistoryOutline16, IconSaveOutline16 } from './icons.tsx'
-import type { Context, SidebarHistoryEntry } from '../context-types.ts'
+import type { Context, SidebarHistoryEntry, SidebarSessionEvent } from '../context-types.ts'
 import {
   SIDE_LABEL_PREFIX,
   SIDE_NEW_THREAD_TITLE,
@@ -45,20 +48,13 @@ import {
   threadTrailingPending,
   type SidechatThreadInfo,
 } from '../sidechat-core.ts'
-import { collectOwnEvents, toolArgsSummary, transcriptRows, type SidechatTranscriptRow } from './sidechat-transcript.ts'
+import { toolArgsSummary, transcriptRows, type SidechatTranscriptRow } from './sidechat-transcript.ts'
 import { api } from './api.ts'
 import { t } from './locales.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarTab } from './state.ts'
 import css from './SideChatView.module.css'
 
-/** Tail-page size for one transcript poll (events per page). Small on
- *  purpose: streaming polls ride the tail and merge by seq. */
-const PAGE_MESSAGES = 8
-/** First-attach walk page size: cold reads re-expand chunk-rows into one
- *  event per streamed delta, so a single answer can be hundreds of events —
- *  the walk must page big or earlier tool/call rows fall out of the window. */
-const WALK_PAGE_EVENTS = 200
 /** Poll cadence while the selected thread is running and the tab visible. */
 const POLL_MS = 2000
 /** Textarea auto-grow ceiling (px) — the composer scrolls beyond it. */
@@ -92,10 +88,9 @@ export function consumeSidechatSeed(): string | undefined {
  *  StrictMode / HMR must not mint two threads for one tab). */
 const inFlightStarts = new Set<string>()
 
-/** Per-thread transcript cache: seed boundary + thread-own events merged by
- *  seq (streaming polls never re-download the inherited seed). */
+/** Per-thread transcript cache: thread-own events merged by seq (polls ride
+ * the afterSeq delta and never re-download what they already hold). */
 interface ThreadCache {
-  seedBoundary: number | null
   entries: SidebarHistoryEntry[]
 }
 
@@ -274,7 +269,7 @@ export function SideChatView(props: {
   const [info, setInfo] = useState<SidechatThreadInfo | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
 
-  const cacheRef = useRef<ThreadCache>({ seedBoundary: null, entries: [] })
+  const cacheRef = useRef<ThreadCache>({ entries: [] })
   const controllerRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const composerRef = useRef<HTMLTextAreaElement | null>(null)
@@ -327,43 +322,28 @@ export function SideChatView(props: {
     }
   }, [summary, tab.id, tab.title, ctx])
 
-  /** One transcript pull: the first read walks back to the seed boundary
-   *  (big pages — chunk deltas re-expand on cold reads), later reads fetch
-   *  one tail page and merge (seq-deduped). */
+  /** One transcript pull: the thread's own events beyond the cached tail
+   *  (first attach = the whole seed-cut slice; polls = afterSeq deltas),
+   *  merged by seq. */
   const fetchThread = useCallback(async (childId: string): Promise<void> => {
     controllerRef.current?.abort()
     const controller = new AbortController()
     controllerRef.current = controller
-    const cache = cacheRef.current
     try {
-      if (cache.seedBoundary === null) {
-        const walk = await collectOwnEvents(async (beforeSeq) => {
-          const response = await ctx.connection.api.sessions.history(
-            {
-              sessionId: childId,
-              maxMessages: WALK_PAGE_EVENTS,
-              ...(beforeSeq === undefined ? {} : { beforeSeq }),
-            },
-            controller.signal,
-          )
-          if (!response.result.ok) throw new Error('history walk failed')
-          return response.result.value.events
-        })
-        cache.seedBoundary = walk.seedBoundary
-        cache.entries = mergeBySeq(cache.entries, walk.entries)
-      } else {
-        const response = await ctx.connection.api.sessions.history(
-          { sessionId: childId, maxMessages: PAGE_MESSAGES },
-          controller.signal,
-        )
-        if (!response.result.ok) return
-        cache.entries = mergeBySeq(cache.entries, response.result.value.events)
+      const cache = cacheRef.current
+      const afterSeq = cache.entries.at(-1)?.event.seq
+      const { events } = await api.sidechatEvents(childId, afterSeq, controller.signal)
+      if (events.length > 0) {
+        // Wire events arrive as parsed JSON; the mirror narrows data to the
+        // record the mapping reads.
+        const incoming = events.map(event => ({ event: event as SidebarSessionEvent }))
+        cache.entries = mergeBySeq(cache.entries, incoming)
+        setRevision(value => value + 1)
       }
-      setRevision(value => value + 1)
     } catch {
       // Aborted by a newer pull or a wire failure: keep the last rows.
     }
-  }, [ctx])
+  }, [])
 
   /** The thread header badge pull (live state + preset/model identity). */
   const fetchInfo = useCallback(async (childId: string): Promise<void> => {
@@ -377,7 +357,7 @@ export function SideChatView(props: {
   // Reset the transcript cache whenever the binding changes, then focus
   // the composer — it owns the first message of a fresh thread.
   useEffect(() => {
-    cacheRef.current = { seedBoundary: null, entries: [] }
+    cacheRef.current = { entries: [] }
     controllerRef.current?.abort()
     setError(null)
     setSaved(false)

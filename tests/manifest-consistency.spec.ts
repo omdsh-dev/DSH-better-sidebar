@@ -51,7 +51,6 @@ const CLIENT_REQUIRE_ALLOWED = new Set([
   'cordis',
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-runtime/client',
 ])
 
 /** The registered `__ModuleLoader__.load({ id })` value of a built client bundle. */

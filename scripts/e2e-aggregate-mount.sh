@@ -124,6 +124,7 @@ allowBuilds:
 
 minimumReleaseAgeExclude:
   - dsh-better-sidebar
+  - '@deepseek-ai/*'
 EOF
 
 # ── 组装 profile：聚合先行，插件后到 ──────────────────────────────────────

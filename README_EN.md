@@ -9,7 +9,7 @@
   <a href="https://github.com/omdsh-dev/DSH-better-sidebar/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/omdsh-dev/DSH-better-sidebar" /></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
   <a href="https://dshfind.com/en/plugins/omdsh-dev/DSH-better-sidebar?ref=badge"><img alt="dshfind" src="https://dshfind.com/api/badge/omdsh-dev/DSH-better-sidebar?lang=en" /></a><br /><br />
-  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions: 0.1.0-rc.8 · 0.1.1-rc.1 · 0.1.1-rc.2 · 0.1.2-alpha.1" src="https://img.shields.io/badge/DSH-0.1.0--rc.8_%C2%B7_0.1.1--rc.1_%C2%B7_0.1.1--rc.2_%C2%B7_0.1.2--alpha.1-4d6bfe" /></a>
+  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.0-alpha.0 alpha track): 0.1.2-alpha.2" src="https://img.shields.io/badge/DSH-0.1.2--alpha.2_(alpha%20track)-4d6bfe" /></a>
   <a href="https://github.com/topics/dsh-better-sidebar"><img alt="Plugin ecosystem: GitHub topic dsh-better-sidebar" src="https://img.shields.io/badge/plugin%20ecosystem-topic%20dsh--better--sidebar-4d6bfe" /></a><br /><br />
   <img alt="File management" src="https://img.shields.io/badge/-File%20management-4d6bfe" /> <img alt="Edit &amp; preview" src="https://img.shields.io/badge/-Edit%20%26%20preview-4d6bfe" /> <img alt="Embedded browser" src="https://img.shields.io/badge/-Embedded%20browser-4d6bfe" /> <img alt="Real terminal" src="https://img.shields.io/badge/-Real%20terminal-4d6bfe" /> <img alt="Git panel" src="https://img.shields.io/badge/-Git%20panel-4d6bfe" /> <img alt="Background tasks" src="https://img.shields.io/badge/-Background%20tasks-4d6bfe" /> <img alt="Side Chat" src="https://img.shields.io/badge/-Side%20Chat-4d6bfe" /> <img alt="Plugin integration" src="https://img.shields.io/badge/-Plugin%20integration-4d6bfe" /><br /><br />
   <b>A dual workbench (right sidebar + bottom panel)</b> that opens its <code>ctx.betterSidebar</code> service to every plugin —<br />
@@ -62,7 +62,9 @@
 **Prerequisites**: DSH installed (`dsh web` boots), Node.js ≥ 20, pnpm ≥ 10.
 
 **Supported DSH versions**:
-<a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions: 0.1.0-rc.8 · 0.1.1-rc.1 · 0.1.1-rc.2 · 0.1.2-alpha.1" src="https://img.shields.io/badge/DSH-0.1.0--rc.8_%C2%B7_0.1.1--rc.1_%C2%B7_0.1.1--rc.2_%C2%B7_0.1.2--alpha.1-4d6bfe" /></a>
+<a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.0-alpha.0 alpha track): 0.1.2-alpha.2" src="https://img.shields.io/badge/DSH-0.1.2--alpha.2_(alpha%20track)-4d6bfe" /></a>
+
+> 🧪 **Alpha track**: starting with `v0.18.0-alpha.0` the plugin targets DSH **0.1.2-alpha.x** (npm dist-tag `alpha`) and drops 0.1.0-rc.8 ~ 0.1.1-rc.2 — stable-DSH users should stay on `@latest` (v0.17.1); DSH 0.1.2-alpha.2 users install `dsh-better-sidebar@alpha`.
 
 ```sh
 dsh plugin --profile web add dsh-better-sidebar@latest   # first run fails: pnpm 11 blocks node-pty build scripts (the dependency is still written)
@@ -261,11 +263,19 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
   <a href="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0"><img width="33%" alt="Service API base screenshot" src="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0" /></a>
 </div>
 
-**Supported DSH versions**: <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions: 0.1.0-rc.8 · 0.1.1-rc.1 · 0.1.1-rc.2 · 0.1.2-alpha.1" src="https://img.shields.io/badge/DSH-0.1.0--rc.8_%C2%B7_0.1.1--rc.1_%C2%B7_0.1.1--rc.2_%C2%B7_0.1.2--alpha.1-4d6bfe" /></a> · full release history on the [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases) page
+**Supported DSH versions**: <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.0-alpha.0 alpha track): 0.1.2-alpha.2" src="https://img.shields.io/badge/DSH-0.1.2--alpha.2_(alpha%20track)-4d6bfe" /></a> · full release history on the [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases) page
+
+### v0.18.0-alpha.0
+
+> 🧪 **Alpha track**: this release targets **DSH 0.1.2-alpha.x only** (peer floor `^0.1.2-alpha.2`, npm dist-tag `alpha`, install `dsh-better-sidebar@alpha`); 0.1.0-rc.8 ~ 0.1.1-rc.2 are no longer supported — stable-DSH users should stay on v0.17.1 (npm `latest`).
+
+- 🔗 **Adapted to DSH 0.1.2-alpha.2 (published to npm, `alpha` dist-tag)**: the CI mount gate's pin and the `@deepseek-ai/*` devDependencies baseline moved up to it (verified by a real-host mount smoke 14/14). Adaptation points: `dsh-settings` dropped the runtime `settingsNamespace` export (namespaces are now validated at compile time — the host passes the constant directly); the `dsh-subagent` descriptor version went 2→3 (stamped by the host package; the test assertion follows the `SUBAGENT_DESCRIPTOR_VERSION` constant); the restored `SessionEvent.ignorable` and the Remote gateway's unified `RemoteError` wrapping were verified to not affect this plugin.
+- 🐛 **Fixed blank Side Chat transcripts on DSH 0.1.2-alpha.1+**: transcript polling still called the `ctx.connection.api` face removed in alpha.1 (the error was silently swallowed, so the tab rendered an empty transcript forever). Transcripts now come from the plugin's own `sidechat.events` route (live threads read the in-memory event log, cold threads read session persistence, with `afterSeq` delta pulls, [sidechat-routes.ts](./src/sidechat-routes.ts)).
+- 🧹 **Dropped the pre-alpha (0.1.1-rc.x and older) compatibility layer**: the e2e host RPC collapsed from the dot/slash dual dialect to slash-only (token URL required, [host-protocol.ts](./tests/e2e/host-protocol.ts)); `MarkdownText` labels collapsed to the nested single shape ([markdown-labels.tsx](./src/client/markdown-labels.tsx), no more dual prop names); peerDependencies / devDependencies / `dsh.client.inject` / the chunk externals allowlist all dropped the defunct `@deepseek-ai/dsh-client-runtime` (four synchronized spots).
 
 ### v0.17.1
 
-- 🔗 **DSH 0.1.2-alpha.1 adaptation (dual-version compatible)**: fully adapted to DSH 0.1.2-alpha.1's Remote gateway, one-time-token browser authentication, and the `MarkdownText` labels contract change — the plugin works identically on 0.1.0-rc.8 ~ 0.1.1-rc.2 and 0.1.2-alpha.1 (the latter verified by a real-host mount smoke 14/14 against a source build of the GitHub tag; that version is not on npm yet, so the CI pin stays at 0.1.1-rc.2 until it publishes). Highlights: all four `MarkdownText` render sites now go through the dual-shape labels helper ([markdown-labels.tsx](./src/client/markdown-labels.tsx)), fixing the `reading 'code'` crash in markdown/mermaid previews on alpha.1; the e2e mount smoke speaks both wire dialects (token-URL cookie exchange, slash `/api` endpoints with parameter-named args, [tests/e2e/host-protocol.ts](./tests/e2e/host-protocol.ts)); dropped the `@deepseek-ai/dsh-client-runtime` peer removed upstream in 0.1.2-alpha.1
+- 🔗 **DSH 0.1.2-alpha.1 adaptation (dual-version compatible)**: fully adapted to DSH 0.1.2-alpha.1's Remote gateway, one-time-token browser authentication, and the `MarkdownText` labels contract change — the plugin works identically on 0.1.0-rc.8 ~ 0.1.1-rc.2 and 0.1.2-alpha.1 (the latter verified by a real-host mount smoke 14/14 against a source build of the GitHub tag; alpha.1 was never published to npm, and the CI pin moved to the npm-published 0.1.2-alpha.2 in v0.18.0-alpha.0). Highlights: all four `MarkdownText` render sites now go through the dual-shape labels helper ([markdown-labels.tsx](./src/client/markdown-labels.tsx)), fixing the `reading 'code'` crash in markdown/mermaid previews on alpha.1; the e2e mount smoke speaks both wire dialects (token-URL cookie exchange, slash `/api` endpoints with parameter-named args, [tests/e2e/host-protocol.ts](./tests/e2e/host-protocol.ts)); dropped the `@deepseek-ai/dsh-client-runtime` peer removed upstream in 0.1.2-alpha.1
 
 ### v0.16.1
 
@@ -458,7 +468,7 @@ The dashed cards at the end of the "Sidebar content" / "File viewers" grids in t
 ## 🛠️ Development & Build
 
 ```sh
-pnpm install      # @deepseek-ai/* devDependencies resolve to 0.1.1-rc.1 (published) — no token needed
+pnpm install      # @deepseek-ai/* devDependencies resolve (baseline 0.1.2-alpha.2, alpha dist-tag) — no token needed
 pnpm typecheck    # tsc --noEmit
 pnpm build        # → lib/index.js + lib/invariant.js + lib/client.js + lib/client-registry.js + lib/types
 pnpm test         # vitest (includes manifest consistency guard; build first)

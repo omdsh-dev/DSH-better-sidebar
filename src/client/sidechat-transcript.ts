@@ -1,13 +1,16 @@
 /**
- * Side Chat transcript mapping (browser half): turns a thread child's
- * history rows (`session.history` — the generic RPC, which reads the durable
- * log without activating the child) into compact display rows.
+ * Side Chat transcript mapping (browser half): turns a thread child's own
+ * events (`sidechat.events` — the plugin route, which reads the log without
+ * activating the child and cuts the inherited seed host-side) into compact
+ * display rows.
  *
  * A thread child's log starts with the ENTIRE inherited parent log as its
- * fork seed. The mapping therefore cuts everything up to the LAST
- * `session/end-seed` marker and maps context injections (the "Side
- * conversation boundary" prompt, plugin-sourced context) onto a collapsible
- * injection row, so the view shows only the thread's own conversation.
+ * fork seed. The route already cuts everything up to the LAST
+ * `session/end-seed` marker; the mapping re-applies the same cut so any
+ * seed event that somehow crosses the wire still never renders, and maps
+ * context injections (the "Side conversation boundary" prompt,
+ * plugin-sourced context) onto a collapsible injection row, so the view
+ * shows only the thread's own conversation.
  *
  * Live streaming: `assistant/message` events only land when a step
  * completes, but `assistant/chunk` events stream token-level text and
@@ -122,59 +125,6 @@ function lastSeedEnd(events: readonly { type: string }[]): number {
     if (events[index]?.type === 'session/end-seed') return index
   }
   return -1
-}
-
-/**
- * Collect the thread's OWN events on first attach: walk backward from the
- * log tail (oldest-first accumulation) until the `session/end-seed` marker
- * surfaces, then keep everything after it.
- *
- * Page size matters: cold reads re-expand persisted chunk-rows into one
- * `assistant/chunk` event per delta, so a single streamed answer can be
- * HUNDREDS of events. A small walk window (the old 8×32 = 256 events) let
- * earlier `tool/call` events fall out of the loaded window — the tool rows
- * vanished on re-entry while the settled text survived. The walk therefore
- * pages big; tail polls stay small.
- *
- * Exhaustion (log start reached without a marker — a thread created before
- * seeding existed, or a pathological log) returns `seedBoundary: 0` so the
- * caller stops re-walking and renders the window as-is.
- *
- * @param fetchPage - one history page (newest-first window ending at
- *   `beforeSeq`, exclusive; omit for the tail page).
- * @param pageCap - safety bound on backward pages.
- */
-export async function collectOwnEvents(
-  fetchPage: (beforeSeq?: number) => Promise<readonly SidebarHistoryEntry[]>,
-  pageCap = 40,
-): Promise<{ seedBoundary: number; entries: SidebarHistoryEntry[] }> {
-  const collected: SidebarHistoryEntry[] = []
-  let beforeSeq: number | undefined
-  for (let page = 0; page < pageCap; page++) {
-    const events = await fetchPage(beforeSeq)
-    if (events.length === 0) {
-      // Log start reached without a marker: the window IS the whole log.
-      return { seedBoundary: 0, entries: collected }
-    }
-    const olderThan = collected.length > 0 ? collected[0]!.event.seq : undefined
-    const fresh = olderThan === undefined
-      ? [...events]
-      : events.filter(entry => entry.event.seq < olderThan)
-    const seedEnd = fresh.findLastIndex(entry => entry.event.type === 'session/end-seed')
-    if (seedEnd >= 0) {
-      collected.unshift(...fresh.slice(seedEnd + 1))
-      return { seedBoundary: fresh[seedEnd]!.event.seq, entries: collected }
-    }
-    collected.unshift(...fresh)
-    if (fresh.length === 0) {
-      // The page overlaps entirely with what we have: nothing older exists.
-      return { seedBoundary: 0, entries: collected }
-    }
-    beforeSeq = fresh[0]!.event.seq
-  }
-  // Cap hit: accept the window (it is overwhelmingly the thread's own tail)
-  // rather than re-walking on every poll.
-  return { seedBoundary: 0, entries: collected }
 }
 
 /**

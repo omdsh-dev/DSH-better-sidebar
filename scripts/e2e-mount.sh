@@ -95,7 +95,9 @@ trap cleanup EXIT
 
 # 步骤 1：引导 scratch profile（web 模板，镜像 dsh initProfile；先写
 # pnpm-workspace.yaml 的 allowBuilds / minimumReleaseAgeExclude，避免 pnpm 11
-# strict-dep-builds 拦截 node-pty/protobufjs 或拒绝 <24h 新版本——同 install.sh）
+# strict-dep-builds 拦截 node-pty/protobufjs 或拒绝 <24h 新版本——同 install.sh。
+# @deepseek-ai/* 通配与仓库根 pnpm-workspace.yaml 同策：钉的 DSH alpha 常在
+# 发布后 24h 内跑 lane，没有豁免会被 minimumReleaseAge 直接拒装）
 PROFILE_DIR="$DSH_HOME/profiles/web"
 cat > "$PROFILE_DIR/package.json" <<EOF
 {
@@ -123,6 +125,7 @@ allowBuilds:
 
 minimumReleaseAgeExclude:
   - dsh-better-sidebar
+  - '@deepseek-ai/*'
 EOF
 
 # 步骤 2：官方 CLI 安装 tarball + bundle 协调（真实挂载路径）

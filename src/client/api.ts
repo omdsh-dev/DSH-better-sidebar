@@ -8,7 +8,7 @@
  */
 import { encodeHtmlUrl } from '../html-route.ts'
 import type { LastActivity } from '../subagent-activity.ts'
-import type { SidechatThreadInfo } from '../sidechat-core.ts'
+import type { SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
 import type { BrowserProbeResult } from './browser.ts'
 
 /** One wire failure. */
@@ -322,6 +322,14 @@ export const api = {
   /** Live state + agent identity (provider/model/preset) of a thread. */
   sidechatInfo: (childId: string) =>
     call<SidechatThreadInfo>('sidechat.info', { childId }),
+  /** One transcript pull of a Side Chat thread: the thread's OWN events
+   *  (the inherited seed is cut host-side and never crosses the wire).
+   *  `afterSeq` narrows the response to the delta beyond it (poll tail). */
+  sidechatEvents: (childId: string, afterSeq?: number, signal?: AbortSignal) =>
+    call<{ events: SidechatLogEvent[] }>('sidechat.events', {
+      childId,
+      ...(afterSeq !== undefined ? { afterSeq } : {}),
+    }, signal),
   /** The effective terminal shell and its display name (plugin-global). */
   shellGet: () =>
     call<{ shell: string; name: string }>('shell.get', {}),
