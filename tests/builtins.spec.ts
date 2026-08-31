@@ -285,6 +285,22 @@ describe('built-in file viewer registrations', () => {
       expect(viewer.icon, viewer.id).toBeDefined()
     }
   })
+
+  it('image/pdf/html declare a browserUrl (open-in-browser); text/binary viewers do not', () => {
+    const { service } = setup()
+    const scope = { sessionId: 's1', cwd: '/tmp' }
+    const byId = (id: string) => service.getFileViewers().find(v => v.id === id)
+    // Browser-renderable types: the media route (image/pdf) and the sandboxed
+    // html route.
+    expect(byId('image')?.browserUrl?.(scope, '/tmp/a.png'))
+      .toBe(`/sidebar/file?${new URLSearchParams({ sessionId: 's1', path: '/tmp/a.png', cwd: '/tmp' })}`)
+    expect(byId('pdf')?.browserUrl?.(scope, '/tmp/a.pdf')).toContain('/sidebar/file?')
+    expect(byId('html')?.browserUrl?.(scope, '/tmp/a.html')).toBe('/sidebar/html/s1/tmp/a.html')
+    // The browser cannot meaningfully render these — the button stays hidden.
+    expect(byId('markdown')?.browserUrl).toBeUndefined()
+    expect(byId('code')?.browserUrl).toBeUndefined()
+    expect(byId('binary-download')?.browserUrl).toBeUndefined()
+  })
 })
 
 describe('built-in disposer', () => {
