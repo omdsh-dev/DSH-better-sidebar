@@ -577,10 +577,14 @@ export function PromptOverview({ ctx, sessionId }: { ctx: Context; sessionId: st
   }, [historyEntries, sessionId])
 
   /** Reveal even an unloaded prompt by paging through native Chat history. */
-  const revealPrompt = async (entry: PromptOverviewEntry, index: number): Promise<void> => {
+  const revealPrompt = async (
+    entry: PromptOverviewEntry,
+    index: number,
+    destination: 'question' | 'answer' = 'answer',
+  ): Promise<void> => {
     let candidate = entry
     for (let attempt = 0; attempt < HISTORY_PAGE_LIMIT; attempt += 1) {
-      const target = candidate.answerRow ?? candidate.row
+      const target = destination === 'question' ? candidate.row : candidate.answerRow ?? candidate.row
       if (target?.isConnected === true) {
         const flow = conversationFlow()
         if (flow !== null) scrollToPrompt(target, conversationScroller(flow))
@@ -590,7 +594,7 @@ export function PromptOverview({ ctx, sessionId }: { ctx: Context; sessionId: st
       if (flow === null) return
       const next = reconcilePromptOverviewEntries(historyEntries, collectPromptOverviewEntries(flow))
       candidate = next.find(item => item.key === entry.key) ?? next[index] ?? entry
-      const retarget = candidate.answerRow ?? candidate.row
+      const retarget = destination === 'question' ? candidate.row : candidate.answerRow ?? candidate.row
       if (retarget?.isConnected === true) {
         entriesRef.current = next
         setEntries(next)
@@ -642,10 +646,51 @@ export function PromptOverview({ ctx, sessionId }: { ctx: Context; sessionId: st
           >
             <span className={css.markerLine} aria-hidden="true" />
             {open && (
-              <span className={css.preview} role="tooltip">
+              <span
+                className={css.preview}
+                role="tooltip"
+                onClick={event => { event.stopPropagation() }}
+              >
                 <span className={css.previewQuestion}>{question}</span>
                 <span className={css.previewAnswer}>{entry.answer || t('loading')}</span>
                 <span className={css.previewIndex}>{index + 1}/{entries.length}</span>
+                <span className={css.previewJump} aria-label="Jump between question and answer">
+                  <span
+                    className={css.previewJumpSide}
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Jump to question"
+                    onClick={event => {
+                      event.stopPropagation()
+                      void revealPrompt(entry, index, 'question')
+                    }}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        void revealPrompt(entry, index, 'question')
+                      }
+                    }}
+                  />
+                  <span className={css.previewJumpDivider} aria-hidden="true" />
+                  <span
+                    className={css.previewJumpSide}
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Jump to answer result"
+                    onClick={event => {
+                      event.stopPropagation()
+                      void revealPrompt(entry, index, 'answer')
+                    }}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        void revealPrompt(entry, index, 'answer')
+                      }
+                    }}
+                  />
+                </span>
               </span>
             )}
           </button>

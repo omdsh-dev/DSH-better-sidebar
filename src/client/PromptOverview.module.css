@@ -112,6 +112,34 @@
   text-align: right;
 }
 
+.previewJump {
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr;
+  align-items: stretch;
+  min-height: 24px;
+  margin: 1px -5px -4px;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.previewJumpSide {
+  min-width: 0;
+  cursor: pointer;
+  transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.previewJumpSide:hover,
+.previewJumpSide:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  outline: none;
+}
+
+.previewJumpDivider {
+  width: 1px;
+  background: var(--dsw-alias-border-l2);
+}
+
 :global([data-chat-flow-kind='user'][data-prompt-overview-target]),
 :global([data-chat-flow-kind='steering'][data-prompt-overview-target]) {
   background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover) 68%, transparent);
