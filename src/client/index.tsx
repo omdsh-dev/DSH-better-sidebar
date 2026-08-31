@@ -23,6 +23,7 @@ import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { loadExternalDisable, loadPrefs } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
+import { RestartButton } from './RestartButton.tsx'
 import { api } from './api.ts'
 import { LOCALE_NS, attachLocale, attachBetterLocale, t, zh, en,
   ja, de, fr, pt, ko, ar, hi, id, tr, vi, th, ru, it, nl, sv, pl,
@@ -176,6 +177,27 @@ export function apply(ctx: Context): void {
     // unchanged chunks keep their resolved exports (no re-inject /
     // re-execute on HMR), changed ones are dropped for a clean re-fetch.
     void revalidateChunksOnReactivate()
+    // Always-visible one-click Host restart control. It is mounted separately
+    // from the side card so external right-panel mutual exclusion cannot hide
+    // the recovery affordance; HMR disposal removes both the React root and
+    // its body anchor before a replacement activation mounts.
+    ctx.effect(() => {
+      const host = document.createElement('div')
+      host.setAttribute('data-dsh-host-restart', '')
+      document.body.appendChild(host)
+      const root = createRoot(host)
+      root.render(createElement(RestartButton))
+      const observer = new MutationObserver(() => {
+        if (!document.body.contains(host)) document.body.appendChild(host)
+      })
+      observer.observe(document.body, { childList: true })
+      return () => {
+        observer.disconnect()
+        root.unmount()
+        host.remove()
+      }
+    }, 'dsh-better-sidebar: host restart control')
+
     ctx.effect(() => {
       let disposed = false
       let root: Root | undefined
