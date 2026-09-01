@@ -158,11 +158,18 @@ export class FileCommentStore {
   }
 
   remove(sessionId: string, id: string): boolean {
+    return this.removeMany(sessionId, [id]) > 0
+  }
+
+  removeMany(sessionId: string, ids: readonly string[]): number {
+    if (ids.length === 0) return 0
+    const selected = new Set(ids)
     const current = this.getSnapshot(sessionId)
-    const next = current.filter(comment => comment.id !== id || comment.sentAt !== undefined)
-    if (next.length === current.length) return false
+    const next = current.filter(comment => !selected.has(comment.id) || comment.sentAt !== undefined)
+    const removed = current.length - next.length
+    if (removed === 0) return 0
     this.commit(sessionId, next)
-    return true
+    return removed
   }
 
   markSent(sessionId: string, ids: readonly string[], sentAt = this.now(), batchId = this.makeId()): void {
