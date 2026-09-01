@@ -1,5 +1,5 @@
 /** Current-file review queue shown in the editor's independent side dock. */
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { LuCheck, LuHistory, LuInbox, LuPencil, LuSend, LuSquareCheck, LuSquareX, LuTrash2, LuX } from 'react-icons/lu'
 import type { Context } from '../context-types.ts'
 import { sendToConversation } from './conversation-draft.ts'
@@ -31,6 +31,7 @@ export function FileCommentsPanel(props: {
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set())
+  const deselectedByScope = useRef(new Map<string, Set<string>>())
 
   const current = useMemo(
     () => comments.filter(comment => comment.path === path && comment.sentAt === undefined),
@@ -43,30 +44,30 @@ export function FileCommentsPanel(props: {
     [comments, path],
   )
   const rows = view === 'current' ? current : history
-  const selectedCurrentIds = useMemo(
-    () => current.filter(comment => selectedIds.has(comment.id)).map(comment => comment.id),
-    [current, selectedIds],
+  const selectionScope = `${sessionId}\0${path}\0${view}`
+  const selectedRowIds = useMemo(
+    () => rows.filter(comment => selectedIds.has(comment.id)).map(comment => comment.id),
+    [rows, selectedIds],
   )
-  const allSelected = current.length > 0 && selectedCurrentIds.length === current.length
+  const allSelected = rows.length > 0 && selectedRowIds.length === rows.length
 
   useEffect(() => {
-    const currentIds = new Set(current.map(comment => comment.id))
-    setSelectedIds((selected) => {
-      const next = new Set([...selected].filter(id => currentIds.has(id)))
-      return next.size === selected.size ? selected : next
-    })
-  }, [current])
+    const deselected = deselectedByScope.current.get(selectionScope) ?? new Set<string>()
+    setSelectedIds(new Set(rows.filter(comment => !deselected.has(comment.id)).map(comment => comment.id)))
+  }, [rows, selectionScope])
 
-  const sendCurrent = async (): Promise<void> => {
-    if (sending || editingId !== null || current.length === 0) return
-    const ids = current.map(comment => comment.id)
+  const sendSelected = async (): Promise<void> => {
+    if (sending || (view === 'current' && editingId !== null) || selectedRowIds.length === 0) return
+    const selected = new Set(selectedRowIds)
+    const submitted = rows.filter(comment => selected.has(comment.id))
     setSending(true)
     setSendError('')
     try {
-      await sendToConversation(ctx, sessionId, formatFileCommentsPrompt(current, cwd))
-      fileCommentStore.markSent(sessionId, ids)
-      setSelectedIds(new Set())
-      setView('history')
+      await sendToConversation(ctx, sessionId, formatFileCommentsPrompt(submitted, cwd))
+      if (view === 'current') {
+        fileCommentStore.markSent(sessionId, selectedRowIds)
+        setView('history')
+      }
     } catch (error) {
       setSendError(t('fileCommentsSendFailed', { error: errorText(error) }))
     } finally {
@@ -87,12 +88,26 @@ export function FileCommentsPanel(props: {
   }
 
   const toggleSelected = (id: string, selected: boolean): void => {
+    const deselected = new Set(deselectedByScope.current.get(selectionScope) ?? [])
+    if (selected) deselected.delete(id)
+    else deselected.add(id)
+    deselectedByScope.current.set(selectionScope, deselected)
     setSelectedIds((currentSelection) => {
       const next = new Set(currentSelection)
       if (selected) next.add(id)
       else next.delete(id)
       return next
     })
+  }
+
+  const selectAll = (): void => {
+    deselectedByScope.current.delete(selectionScope)
+    setSelectedIds(new Set(rows.map(comment => comment.id)))
+  }
+
+  const clearSelection = (): void => {
+    deselectedByScope.current.set(selectionScope, new Set(rows.map(comment => comment.id)))
+    setSelectedIds(new Set())
   }
 
   const removeOne = (id: string): void => {
@@ -106,9 +121,10 @@ export function FileCommentsPanel(props: {
   }
 
   const removeSelected = (): void => {
-    if (sending || selectedCurrentIds.length === 0) return
-    fileCommentStore.removeMany(sessionId, selectedCurrentIds)
-    if (editingId !== null && selectedCurrentIds.includes(editingId)) {
+    if (sending || selectedRowIds.length === 0) return
+    if (view === 'current') fileCommentStore.removeMany(sessionId, selectedRowIds)
+    else fileCommentStore.removeHistoryMany(sessionId, selectedRowIds)
+    if (view === 'current' && editingId !== null && selectedRowIds.includes(editingId)) {
       setEditingId(null)
       setEditBody('')
     }
@@ -145,13 +161,12 @@ export function FileCommentsPanel(props: {
 
       {sendError !== '' && <div className={css.fileCommentsError} role="alert">{sendError}</div>}
 
-      {view === 'current' && (
-        <div className={css.fileCommentsBulkBar} aria-label={t('fileCommentsPanel')}>
+      <div className={css.fileCommentsBulkBar} aria-label={t('fileCommentsPanel')}>
           <button
             type="button"
             title={t('fileCommentsSelectAll')}
-            disabled={sending || current.length === 0 || allSelected}
-            onClick={() => { setSelectedIds(new Set(current.map(comment => comment.id))) }}
+            disabled={sending || rows.length === 0 || allSelected}
+            onClick={selectAll}
           >
             <LuSquareCheck size={13} />
             <span>{t('fileCommentsSelectAll')}</span>
@@ -161,16 +176,17 @@ export function FileCommentsPanel(props: {
             className={css.fileCommentsSend}
             aria-label={t('fileCommentsSend')}
             title={t('fileCommentsSend')}
-            disabled={sending || editingId !== null || current.length === 0}
-            onClick={() => { void sendCurrent() }}
+            disabled={sending || (view === 'current' && editingId !== null) || selectedRowIds.length === 0}
+            onClick={() => { void sendSelected() }}
           >
             <LuSend size={15} />
+            <span>{t('fileCommentsSendShort')}</span>
           </button>
           <button
             type="button"
             title={t('fileCommentsClearSelection')}
-            disabled={sending || selectedCurrentIds.length === 0}
-            onClick={() => { setSelectedIds(new Set()) }}
+            disabled={sending || selectedRowIds.length === 0}
+            onClick={clearSelection}
           >
             <LuSquareX size={13} />
             <span>{t('fileCommentsClearSelection')}</span>
@@ -179,14 +195,13 @@ export function FileCommentsPanel(props: {
             type="button"
             className={css.fileCommentsBulkDelete}
             title={t('fileCommentsDeleteSelected')}
-            disabled={sending || selectedCurrentIds.length === 0}
+            disabled={sending || selectedRowIds.length === 0}
             onClick={removeSelected}
           >
             <LuTrash2 size={13} />
             <span>{t('fileCommentsDeleteSelected')}</span>
           </button>
-        </div>
-      )}
+      </div>
 
       <div className={css.fileCommentsList} role="tabpanel">
         {rows.length === 0 && (
@@ -196,16 +211,14 @@ export function FileCommentsPanel(props: {
         )}
         {rows.map(comment => (
           <article key={comment.id} className={css.fileCommentRow}>
-            {view === 'current' && (
-              <input
-                className={css.fileCommentCheckbox}
-                type="checkbox"
-                aria-label={t('fileCommentsSelect')}
-                checked={selectedIds.has(comment.id)}
-                disabled={sending}
-                onChange={(event) => { toggleSelected(comment.id, event.currentTarget.checked) }}
-              />
-            )}
+            <input
+              className={css.fileCommentCheckbox}
+              type="checkbox"
+              aria-label={t('fileCommentsSelect')}
+              checked={selectedIds.has(comment.id)}
+              disabled={sending}
+              onChange={(event) => { toggleSelected(comment.id, event.currentTarget.checked) }}
+            />
             <div className={css.fileCommentContent}>
               <div className={css.fileCommentMeta}>
                 <span title={comment.path}>{headerOf(comment.path, cwd, comment.lines)}</span>
