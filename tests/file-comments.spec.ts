@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { FileCommentStore, formatFileCommentsPrompt } from '../src/client/file-comments.ts'
+import { FileCommentStore, formatFileCommentsPrompt, sharedFileCommentStore } from '../src/client/file-comments.ts'
 
 class MemoryStorage {
   readonly values = new Map<string, string>()
@@ -14,6 +14,26 @@ function makeStore(storage = new MemoryStorage()): FileCommentStore {
 }
 
 describe('FileCommentStore', () => {
+  it('shares one store when independently bundled module copies use the same page registry', () => {
+    const registry: Record<symbol, unknown> = {}
+    const first = makeStore()
+    const createFirst = vi.fn(() => first)
+    const createSecond = vi.fn(() => makeStore())
+
+    const fromCoreBundle = sharedFileCommentStore(registry, createFirst)
+    const fromEditorChunk = sharedFileCommentStore(registry, createSecond)
+
+    expect(fromEditorChunk).toBe(fromCoreBundle)
+    expect(createFirst).toHaveBeenCalledOnce()
+    expect(createSecond).not.toHaveBeenCalled()
+
+    const listener = vi.fn()
+    fromCoreBundle.subscribe('s1', listener)
+    fromEditorChunk.add('s1', { path: '/a.ts', selectedText: 'value', body: 'rename it' })
+    expect(listener).toHaveBeenCalledOnce()
+    expect(fromCoreBundle.getSnapshot('s1')).toHaveLength(1)
+  })
+
   it('persists pending comments per session and notifies subscribers', () => {
     const storage = new MemoryStorage()
     const store = makeStore(storage)

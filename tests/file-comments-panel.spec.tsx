@@ -34,6 +34,9 @@ describe('FileCommentsPanel', () => {
       act(() => {
         root.render(createElement(FileCommentsPanel, { ctx, sessionId, cwd: '/work', path }))
       })
+      expect(container.textContent).toContain('a.ts:1')
+      expect(container.querySelector('pre')?.textContent).toBe('const value = 1')
+      expect(container.textContent).toContain('rename this value')
       const sendButton = container.querySelector<HTMLButtonElement>('button[aria-label="Send current comments to Agent"]')!
 
       await act(async () => {

@@ -39,6 +39,7 @@ interface StorageFace {
 const STORAGE_PREFIX = 'dsh-sidebar:file-comments:v1'
 const HISTORY_LIMIT = 200
 const EMPTY_COMMENTS: readonly FileComment[] = []
+const FILE_COMMENT_STORE_KEY = Symbol.for('dsh-better-sidebar.file-comments.store.v1')
 let fallbackId = 0
 
 function normalizeComments(comments: readonly FileComment[]): readonly FileComment[] {
@@ -219,4 +220,22 @@ export function formatFileCommentsPrompt(comments: readonly FileComment[], cwd: 
   return `Please review and address the following comments for the current file.\n\n${rows.join('\n\n')}`
 }
 
-export const fileCommentStore = new FileCommentStore()
+/**
+ * Resolve the page-wide store shared by the core client bundle and the lazy
+ * editor chunk. Both bundles inline this module, so a module-local singleton
+ * would split writes from subscribers in production.
+ */
+export function sharedFileCommentStore(
+  registry: Record<symbol, unknown>,
+  create: () => FileCommentStore = () => new FileCommentStore(),
+): FileCommentStore {
+  const existing = registry[FILE_COMMENT_STORE_KEY]
+  if (existing !== undefined) return existing as FileCommentStore
+  const store = create()
+  registry[FILE_COMMENT_STORE_KEY] = store
+  return store
+}
+
+export const fileCommentStore = sharedFileCommentStore(
+  globalThis as unknown as Record<symbol, unknown>,
+)
