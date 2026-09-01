@@ -3,7 +3,9 @@
  * re-runs the load (A), returning from edit to preview reloads unless the
  * draft is dirty or the save failed (B), and a preview-mode save reloads on
  * the 'saved' edge (C). A mock viewer reports a hoisted toolbar so the host
- * chrome renders exactly like the real text editor.
+ * chrome renders exactly like the real text editor — and a toolbar-less
+ * viewer (pdf / image / binary-download) must see the same refresh button
+ * (D), since those previewers re-fetch on remount.
  */
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -32,6 +34,8 @@ function reads(): number {
 interface MockViewerProps {
   initialMode?: 'preview' | 'edit'
   dirty?: boolean
+  /** Report a hoisted toolbar (text-editor-like); false = pdf/image-like. */
+  reportToolbar?: boolean
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onToolbarState?: (state: any) => void
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -39,24 +43,26 @@ interface MockViewerProps {
 }
 
 /** A viewer that hoists a real toolbar (mode toggle + save state). */
-function MockTextViewer({ initialMode = 'preview', dirty = false, onToolbarState, onToolbarControls }: MockViewerProps) {
+function MockTextViewer({ initialMode = 'preview', dirty = false, reportToolbar = true, onToolbarState, onToolbarControls }: MockViewerProps) {
   const [mode, setMode] = useState(initialMode)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
   useEffect(() => {
-    onToolbarState?.({ modes: true, mode, dirty, editable: true, saveState })
-  }, [mode, saveState, dirty, onToolbarState])
+    if (reportToolbar) onToolbarState?.({ modes: true, mode, dirty, editable: true, saveState })
+  }, [mode, saveState, dirty, onToolbarState, reportToolbar])
   useEffect(() => {
-    onToolbarControls?.({
-      setMode,
-      // A synchronous save (saving then saved in one batch) drives the edge.
-      save: () => { setSaveState('saving'); setSaveState('saved') },
-    })
-    return () => { onToolbarControls?.(null) }
-  }, [onToolbarControls])
+    if (reportToolbar) {
+      onToolbarControls?.({
+        setMode,
+        // A synchronous save (saving then saved in one batch) drives the edge.
+        save: () => { setSaveState('saving'); setSaveState('saved') },
+      })
+      return () => { onToolbarControls?.(null) }
+    }
+  }, [onToolbarControls, reportToolbar])
   return createElement('div', null, `mock-${mode}`)
 }
 
-function setup(initialMode: 'preview' | 'edit' = 'preview', dirty = false): {
+function setup(initialMode: 'preview' | 'edit' = 'preview', dirty = false, reportToolbar = true): {
   ctx: Context
   fileTab: () => SidebarTab
 } {
@@ -71,6 +77,7 @@ function setup(initialMode: 'preview' | 'edit' = 'preview', dirty = false): {
     component: (props: FileViewerProps) => createElement(MockTextViewer, {
       initialMode,
       dirty,
+      reportToolbar,
       onToolbarState: props.onToolbarState,
       onToolbarControls: props.onToolbarControls,
     }),
@@ -180,6 +187,26 @@ describe('EditorHost refresh (issue #167)', () => {
       expect(reads()).toBe(1)
       const save = container.querySelector('button[aria-label="Save"]') as HTMLButtonElement
       click(save)
+      await act(async () => { await Promise.resolve() })
+      expect(reads()).toBe(2)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('D: the refresh button renders for a viewer without a toolbar (pdf/image-like) and re-runs the load', async () => {
+    const { ctx, fileTab } = setup('preview', false, false)
+    const { container, unmount } = mount(ctx, fileTab)
+    try {
+      await act(async () => { await Promise.resolve() })
+      expect(reads()).toBe(1)
+      const refresh = refreshButton(container)
+      expect(refresh).not.toBeNull()
+      // No toolbar -> the mode toggle / save controls stay absent, only the
+      // refresh (and the tree toggle) remain in the header.
+      expect(Array.from(container.querySelectorAll('button'))
+        .some(button => button.textContent === 'Preview')).toBe(false)
+      click(refresh!)
       await act(async () => { await Promise.resolve() })
       expect(reads()).toBe(2)
     } finally {

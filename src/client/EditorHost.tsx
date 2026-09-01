@@ -436,7 +436,13 @@ export function EditorHost(props: {
         {saveLabel !== '' && (
           <span className={clsx(css.editorStatus, toolbar?.saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>
         )}
-        {toolbar !== null && (
+        {/* Manual refresh is NOT toolbar-gated: viewers without a hoisted
+          toolbar (pdf / image / binary-download) see it too, so an on-disk
+          change to e.g. a PDF is one click away (issue #167 extends to every
+          file tab). The 'loading' pass unmounts the current viewer and the
+          fresh 'ready' pass remounts it, so even viewers that re-fetch by
+          path (PdfView) pick up the new bytes. */}
+        {!showEmpty && (
           <button
             type="button"
             className={css.iconButton}
