@@ -37,6 +37,13 @@ export interface WorkbenchActions {
    * context menu hides the pin entry (legacy callers).
    */
   pinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void
+  /**
+   * Reveal one absolute path in the OS file manager (the tab context menu's
+   * "show in folder", offered for tabs backed by a file). Optional: when
+   * undefined the entry is hidden — which is how the shell suppresses it in
+   * SSH-remote mode, where a host-local file manager cannot reach the path.
+   */
+  revealPath?: (path: string) => void
 }
 
 /** One divider: pointer-capture drag translating px deltas into fractions.
@@ -218,6 +225,7 @@ function LeafView(props: {
         }}
         onFloatTab={actions.floatTab}
         onPinTab={actions.pinTab}
+        onRevealPath={actions.revealPath}
       />
       {leaf.tabs.length > 0 ? (
         /*

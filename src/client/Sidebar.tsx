@@ -62,6 +62,7 @@ import { detectNewDirectSubagent } from './subagent-detect.ts'
 import { detectNewJob } from './subagent-jobs.ts'
 import { t } from './locales.ts'
 import { api, type SessionScope } from './api.ts'
+import { openWithSshActive, parseOpenWithConfig } from './open-with.ts'
 import css from './sidebar.module.css'
 
 /** How many consecutive reconnect failures stop the agent-terminals push loop
@@ -1183,6 +1184,16 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }, [anyDragging])
 
 
+  // SSH-remote mode (the file tree's "open with" configuration, shared via
+  // pluginSettings['editor']) decides whether a host-local file manager can
+  // reach an editor tab's path at all. When it cannot, the tab context menu's
+  // "show in folder" is withheld entirely rather than offered as a no-op —
+  // the same rule resolveOpenWithTargets applies to the tree's own menu.
+  const openWithSsh = useMemo(
+    () => openWithSshActive(parseOpenWithConfig(snapshot.prefs.pluginSettings['editor']?.openWith)),
+    [snapshot.prefs.pluginSettings],
+  )
+
   const actions: WorkbenchActions = useMemo(() => ({
     closeTab: (paneId, tabId) => {
       // A closed terminal releases its pty immediately — including when its
@@ -1254,7 +1265,19 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     pinTab: (tabId, scope) => {
       store.reduce(s => setTabPin(s, tabId, scope === null ? null : { scope, homeCwd: cwd }))
     },
-  }), [store, sessionId, cwd])
+    // The tab context menu's "show in folder": hand the tab's absolute path
+    // to the host's external opener, which reveals (and selects) it in the OS
+    // file manager. Withheld in SSH-remote mode so the entry never appears
+    // where it cannot work. Failures are logged only — a missing opener is
+    // the OS's dialog, not a sidebar error (same contract as EditorHost).
+    ...(openWithSsh ? {} : {
+      revealPath: (path: string) => {
+        void api.openExternal({ action: 'reveal', path }).catch(
+          (error: unknown) => { console.error('open external failed', error) },
+        )
+      },
+    }),
+  }), [store, sessionId, cwd, openWithSsh])
 
   /**
    * Wrap the base actions to intercept pinned VIRTUAL tab ids (injected from

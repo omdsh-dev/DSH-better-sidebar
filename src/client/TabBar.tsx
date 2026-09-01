@@ -4,9 +4,9 @@
  * button cluster, and the + menu that opens new tabs (explorer / git /
  * terminal). Tabs are draggable; dropping onto another tab inserts before it,
  * dropping on the strip background appends to this pane. Right-clicking a
- * tab opens the tab context menu (float as a free window / close / close
- * others / close to the left / close to the right, the close ones scoped to
- * this pane).
+ * tab opens the tab context menu (show in folder for a tab backed by a file /
+ * float as a free window / close / close others / close to the left / close
+ * to the right, the close ones scoped to this pane).
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
@@ -77,6 +77,14 @@ export function TabBar(props: {
    * menu hides the pin entry when unset (legacy callers).
    */
   onPinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void
+  /**
+   * Reveal the target tab's file in the OS file manager ("show in folder").
+   * Called with the tab's absolute `path`; tabs without one (git / terminal /
+   * browser) never trigger it. Optional: the menu hides the entry when unset,
+   * which is also how the shell withholds it in SSH-remote mode (a host-local
+   * file manager cannot reach a remote path).
+   */
+  onRevealPath?: (path: string) => void
   /** Icon resolver for tab labels (reads from the tab descriptor registry). */
   getTabIcon?: (tab: SidebarTab) => ReactNode
   /** Badge resolver for tab labels (reads the descriptor's `badge`; the
@@ -84,7 +92,7 @@ export function TabBar(props: {
   getTabBadge?: (tab: SidebarTab) => ReactNode
 }) {
   const {
-    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, onFloatTab, onPinTab, getTabIcon, getTabBadge,
+    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, onFloatTab, onPinTab, onRevealPath, getTabIcon, getTabBadge,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   // The tab right-click context menu: the target tab plus the cursor
@@ -301,6 +309,15 @@ export function TabBar(props: {
             const targetTab = tabMenuIndex >= 0 ? tabs[tabMenuIndex] : undefined
             const isTerminal = targetTab?.type === 'terminal'
             const isPinnedVirtual = targetTab !== undefined && isPinnedVirtualTab(targetTab)
+            // "Show in folder" rides on the tab's own path: editor tabs carry
+            // one, git/terminal/browser tabs do not, so the row surfaces only
+            // where a file backs the tab. Whether the OS file manager can be
+            // reached at all is the caller's call — the shell withholds the
+            // callback in SSH-remote mode (a host-local opener cannot reach a
+            // remote path), and no callback means no row.
+            const revealEntries = targetTab?.path !== undefined && onRevealPath !== undefined
+              ? [{ id: 'showInFolder', label: t('showInFolder') }]
+              : []
             const pinEntries = isTerminal && onPinTab !== undefined
               ? targetTab!.pin !== undefined
                 ? [{ id: 'unpin', label: t('unpinTerminal') }]
@@ -320,6 +337,7 @@ export function TabBar(props: {
               ]
             }
             return [
+              ...revealEntries,
               { id: 'float', label: t('moveToFreeWindow') },
               ...pinEntries,
               { id: 'close', label: t('close') },
@@ -334,7 +352,10 @@ export function TabBar(props: {
             setTabMenu(null)
             const index = tabs.findIndex(tab => tab.id === target.tabId)
             if (index < 0) return
-            if (id === 'float') {
+            if (id === 'showInFolder') {
+              const path = tabs[index]?.path
+              if (path !== undefined) onRevealPath?.(path)
+            } else if (id === 'float') {
               onFloatTab(target.tabId)
             } else if (id === 'pinWorkspace') {
               onPinTab?.(target.tabId, 'workspace')
