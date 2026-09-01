@@ -162,10 +162,22 @@ export class FileCommentStore {
   }
 
   removeMany(sessionId: string, ids: readonly string[]): number {
+    return this.removeMatching(sessionId, ids, comment => comment.sentAt === undefined)
+  }
+
+  removeHistoryMany(sessionId: string, ids: readonly string[]): number {
+    return this.removeMatching(sessionId, ids, comment => comment.sentAt !== undefined)
+  }
+
+  private removeMatching(
+    sessionId: string,
+    ids: readonly string[],
+    matches: (comment: FileComment) => boolean,
+  ): number {
     if (ids.length === 0) return 0
     const selected = new Set(ids)
     const current = this.getSnapshot(sessionId)
-    const next = current.filter(comment => !selected.has(comment.id) || comment.sentAt !== undefined)
+    const next = current.filter(comment => !selected.has(comment.id) || !matches(comment))
     const removed = current.length - next.length
     if (removed === 0) return 0
     this.commit(sessionId, next)
