@@ -110,6 +110,9 @@ describe('FileCommentsPanel', () => {
       const buttonWithText = (text: string) => [...container.querySelectorAll<HTMLButtonElement>('button')]
         .find(button => button.textContent === text)!
 
+      const bulkButtons = [...buttonWithText('Select all').parentElement!.querySelectorAll<HTMLButtonElement>('button')]
+      expect(bulkButtons[1]?.getAttribute('aria-label')).toBe('Send current comments to Agent')
+
       act(() => { buttonWithText('Select all').click() })
       expect(checkboxes()).toHaveLength(2)
       expect(checkboxes().every(checkbox => checkbox.checked)).toBe(true)

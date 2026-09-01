@@ -141,16 +141,6 @@ export function FileCommentsPanel(props: {
             <span>{t('history')}</span>
           </button>
         </div>
-        <button
-          type="button"
-          className={css.fileCommentsSend}
-          aria-label={t('fileCommentsSend')}
-          title={t('fileCommentsSend')}
-          disabled={sending || editingId !== null || current.length === 0}
-          onClick={() => { void sendCurrent() }}
-        >
-          <LuSend size={15} />
-        </button>
       </header>
 
       {sendError !== '' && <div className={css.fileCommentsError} role="alert">{sendError}</div>}
@@ -165,6 +155,16 @@ export function FileCommentsPanel(props: {
           >
             <LuSquareCheck size={13} />
             <span>{t('fileCommentsSelectAll')}</span>
+          </button>
+          <button
+            type="button"
+            className={css.fileCommentsSend}
+            aria-label={t('fileCommentsSend')}
+            title={t('fileCommentsSend')}
+            disabled={sending || editingId !== null || current.length === 0}
+            onClick={() => { void sendCurrent() }}
+          >
+            <LuSend size={15} />
           </button>
           <button
             type="button"
