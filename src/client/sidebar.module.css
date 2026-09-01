@@ -1492,6 +1492,55 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   overflow-wrap: anywhere;
 }
 
+.fileCommentsBulkBar {
+  flex: none;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.fileCommentsBulkBar button {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  letter-spacing: 0;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.fileCommentsBulkBar button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fileCommentsBulkBar button:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.fileCommentsBulkBar button.fileCommentsBulkDelete {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.fileCommentsBulkBar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .fileCommentsList {
   flex: 1;
   min-height: 0;
@@ -1508,8 +1557,30 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 .fileCommentRow {
   position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   padding: 10px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.fileCommentCheckbox {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 1px 0 0;
+  accent-color: var(--dsw-alias-brand-primary);
+  cursor: pointer;
+}
+
+.fileCommentCheckbox:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.fileCommentContent {
+  flex: 1;
+  min-width: 0;
 }
 
 .fileCommentMeta {

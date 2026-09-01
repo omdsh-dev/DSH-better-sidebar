@@ -73,6 +73,23 @@ describe('FileCommentStore', () => {
     expect(store.getSnapshot('s1')).toHaveLength(1)
   })
 
+  it('deletes multiple pending comments atomically without touching history', () => {
+    const store = makeStore()
+    const first = store.add('s1', { path: '/a.ts', selectedText: 'a', body: 'first' })
+    const sent = store.add('s1', { path: '/a.ts', selectedText: 'b', body: 'sent' })
+    const last = store.add('s1', { path: '/a.ts', selectedText: 'c', body: 'last' })
+    store.markSent('s1', [sent.id])
+    const listener = vi.fn()
+    store.subscribe('s1', listener)
+
+    expect(store.removeMany('s1', [first.id, sent.id, 'missing'])).toBe(1)
+    expect(listener).toHaveBeenCalledOnce()
+    expect(store.getSnapshot('s1').map(comment => comment.id)).toEqual([last.id, sent.id])
+
+    expect(store.removeMany('s1', [sent.id, 'missing'])).toBe(0)
+    expect(listener).toHaveBeenCalledOnce()
+  })
+
   it('marks only the submitted id snapshot when comments arrive during a send', () => {
     const store = makeStore()
     const first = store.add('s1', { path: '/a.ts', selectedText: 'a', body: 'first' })
