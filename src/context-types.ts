@@ -403,6 +403,8 @@ export interface SidebarConversation {
   input: {
     for(actx: Context): SidebarSessionInput
   }
+  /** Send one plain prompt into the caller scope's session (queued turn). */
+  send(text: string): Promise<void>
 }
 
 /**

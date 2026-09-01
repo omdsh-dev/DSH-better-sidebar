@@ -27,8 +27,8 @@ import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
-import { appendToDraft } from './conversation-draft.ts'
-import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
+import { fileCommentStore } from './file-comments.ts'
+import { headerOf, linesOfSelection, type SelectionLines } from './selection-payload.ts'
 import { lazyChunkComponent } from './lazy-chunk.tsx'
 import { analyzeMarkdownHtml } from './markdown-html.ts'
 import { LazyMermaidMarkdown, MarkdownDocument, type MarkdownHtmlMedia } from './MarkdownHtml.tsx'
@@ -41,11 +41,14 @@ import css from './sidebar.module.css'
 /** Previewable files (rendered output vs source editing). */
 type ViewMode = 'preview' | 'edit'
 
-/** The floating "add to conversation" action: payload + viewport anchor. */
+/** The floating review-comment editor: selection context + viewport anchor. */
 interface SelectionPopup {
-  insert: string
+  selectedText: string
+  lines?: SelectionLines
+  body: string
   left: number
   top: number
+  below: boolean
 }
 
 /**
@@ -58,7 +61,7 @@ interface SelectionPopup {
 export const HTML_IFRAME_SANDBOX = 'allow-scripts allow-popups allow-downloads allow-modals'
 
 export function TextEditor(props: FileViewerProps) {
-  const { ctx, scope, path, viewerId, content, truncated } = props
+  const { scope, path, viewerId, content, truncated } = props
   const [mode, setMode] = useState<ViewMode>('preview')
   /** The editor's current text (null while clean); preview renders this. */
   const [draft, setDraft] = useState<string | null>(null)
@@ -71,10 +74,11 @@ export function TextEditor(props: FileViewerProps) {
   const themeCompRef = useRef<CmThemeCompartment | null>(null)
   /** The app's resolved color scheme; the editor re-themes in place on flips. */
   const [dark, setDark] = useState(() => isDarkScheme())
-  /** The floating "add to conversation" popup (viewport-anchored; null = hidden). */
+  /** The floating review-comment popup (viewport-anchored; null = hidden). */
   const [popup, setPopup] = useState<SelectionPopup | null>(null)
   /** Live mirror of the popup state for click-time reads (no re-render race). */
   const popupRef = useRef<SelectionPopup | null>(null)
+  const popupHostRef = useRef<HTMLFormElement>(null)
   /** The markdown preview container (selection-containment + line lookup). */
   const mdRef = useRef<HTMLDivElement>(null)
 
@@ -84,22 +88,42 @@ export function TextEditor(props: FileViewerProps) {
   }
 
   /** Anchor the popup above the selection center; clamp inside the viewport. */
-  const showPopup = (insert: string, left: number, top: number): void => {
+  const showPopup = (selectedText: string, lines: SelectionLines | undefined, left: number, top: number): void => {
+    const popupWidth = Math.min(300, Math.max(0, window.innerWidth - 16))
+    const halfWidth = popupWidth / 2
+    const minLeft = 8 + halfWidth
+    const maxLeft = window.innerWidth - 8 - halfWidth
     const next: SelectionPopup = {
-      insert,
-      left: Math.min(Math.max(left, 80), window.innerWidth - 80),
-      top,
+      selectedText,
+      lines,
+      body: '',
+      left: maxLeft < minLeft ? window.innerWidth / 2 : Math.min(Math.max(left, minLeft), maxLeft),
+      top: top < 190 ? top + 24 : top,
+      below: top < 190,
     }
     popupRef.current = next
     setPopup(next)
   }
 
-  /** The popup button's click: insert the stored payload into the draft. */
+  /** Save one pending review row; EditorHost observes the store and opens it. */
   const commitPopup = (): void => {
     const current = popupRef.current
-    if (current === null) return
-    appendToDraft(ctx, scope.sessionId, current.insert)
+    if (current === null || current.body.trim() === '') return
+    fileCommentStore.add(scope.sessionId, {
+      path,
+      lines: current.lines,
+      selectedText: current.selectedText,
+      body: current.body,
+    })
     hidePopup()
+  }
+
+  const updatePopupBody = (body: string): void => {
+    const current = popupRef.current
+    if (current === null) return
+    const next = { ...current, body }
+    popupRef.current = next
+    setPopup(next)
   }
 
   useEffect(() => subscribeColorScheme(() => { setDark(isDarkScheme()) }), [])
@@ -153,16 +177,16 @@ export function TextEditor(props: FileViewerProps) {
           ...historyKeymap,
         ]),
         // Selection popup (the code and markdown editors): a non-empty
-        // selection anchors the floating "add to conversation" button above
-        // its head. Scrolling (geometry/viewport change) or losing focus
-        // hides it; typing collapses the selection and hides it too.
+        // selection anchors the review-comment editor above its head.
+        // Scrolling (geometry/viewport change) or leaving both the editor and
+        // popup hides it; typing collapses the selection and hides it too.
         ...(viewerId === 'code' || viewerId === 'markdown' ? [
           CodeMirrorView.updateListener.of((update) => {
             if (update.geometryChanged || update.viewportChanged) {
               hidePopup()
               return
             }
-            if (!update.view.hasFocus) {
+            if (!update.view.hasFocus && !popupHostRef.current?.contains(document.activeElement)) {
               hidePopup()
               return
             }
@@ -186,10 +210,11 @@ export function TextEditor(props: FileViewerProps) {
             }
             const doc = update.state.doc
             showPopup(
-              buildSelectionInsert(path, scope.cwd, {
+              text,
+              {
                 start: doc.lineAt(sel.from).number,
                 end: doc.lineAt(sel.to).number,
-              }, text),
+              },
               rect.left - window.scrollX + (rect.right - rect.left) / 2,
               rect.top - window.scrollY,
             )
@@ -311,7 +336,8 @@ export function TextEditor(props: FileViewerProps) {
     const rect = sel.getRangeAt(0).getBoundingClientRect()
     const lines = linesOfSelection(mdText, text)
     showPopup(
-      buildSelectionInsert(path, scope.cwd, lines ?? undefined, text),
+      text,
+      lines ?? undefined,
       rect.left + rect.width / 2,
       rect.top,
     )
@@ -450,17 +476,37 @@ export function TextEditor(props: FileViewerProps) {
         </>
       )}
       {popup !== null && createPortal(
-        <button
-          type="button"
-          className={css.selectionPopup}
+        <form
+          ref={popupHostRef}
+          className={clsx(css.selectionPopup, popup.below && css.selectionPopupBelow)}
           style={{ left: popup.left, top: popup.top }}
-          // Keep the selection (and CodeMirror focus) alive until the click
-          // commits — without this the popup unmounts before click lands.
-          onMouseDown={(event) => { event.preventDefault() }}
-          onClick={commitPopup}
+          onSubmit={(event) => { event.preventDefault(); commitPopup() }}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) hidePopup()
+          }}
         >
-          {t('addToConversation')}
-        </button>,
+          <div className={css.selectionPopupLocation}>{headerOf(path, scope.cwd, popup.lines)}</div>
+          <textarea
+            autoFocus
+            value={popup.body}
+            placeholder={t('fileCommentsPlaceholder')}
+            aria-label={t('fileCommentsPlaceholder')}
+            onChange={(event) => { updatePopupBody(event.currentTarget.value) }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                hidePopup()
+              } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault()
+                commitPopup()
+              }
+            }}
+          />
+          <div className={css.selectionPopupActions}>
+            <button type="button" onClick={hidePopup}>{t('cancel')}</button>
+            <button type="submit" disabled={popup.body.trim() === ''}>{t('save')}</button>
+          </div>
+        </form>,
         document.body,
       )}
     </>
