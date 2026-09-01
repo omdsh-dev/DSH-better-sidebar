@@ -1280,6 +1280,28 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   background: var(--dsw-alias-interactive-bg-active);
 }
 
+.editorCommentsToggle {
+  position: relative;
+}
+
+.editorCommentsBadge {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  min-width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  padding: 0 3px;
+  border: 1px solid var(--dsw-alias-bg-base);
+  border-radius: 7px;
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-base);
+  font: var(--dsw-font-xxxs-11);
+  line-height: 12px;
+  text-align: center;
+  letter-spacing: 0;
+}
+
 .editorBody {
   flex: 1;
   min-height: 0;
@@ -1335,6 +1357,226 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 /* The tree panel's full-window form (the `full` prop): fill the tab body. */
 .editorTreePanelFull {
   flex: 1;
+}
+
+/* Independent current-file review dock. It shares only the editor dock's
+   geometry with the tree; content and state are separate. */
+.fileCommentsPanel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--dsw-alias-bg-base);
+}
+
+.fileCommentsHeader {
+  flex: none;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.fileCommentsModes {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  padding: 2px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.fileCommentsModes > button {
+  min-width: 0;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.fileCommentsModes > button > span:not(.fileCommentsModeCount) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileCommentsModes > button.fileCommentsModeActive {
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+}
+
+.fileCommentsModeCount {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  line-height: 16px;
+  text-align: center;
+}
+
+.fileCommentsSend,
+.fileCommentActions button,
+.fileCommentEditActions button {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.fileCommentsSend:hover:not(:disabled),
+.fileCommentActions button:hover:not(:disabled),
+.fileCommentEditActions button:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.fileCommentsSend:disabled,
+.fileCommentActions button:disabled,
+.fileCommentEditActions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.fileCommentsError {
+  flex: none;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxxs-11);
+  overflow-wrap: anywhere;
+}
+
+.fileCommentsList {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.fileCommentsEmpty {
+  padding: 24px 14px;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  line-height: 1.6;
+  text-align: center;
+}
+
+.fileCommentRow {
+  position: relative;
+  padding: 10px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.fileCommentMeta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.fileCommentMeta > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileCommentMeta time {
+  flex: none;
+  white-space: nowrap;
+}
+
+.fileCommentSelection {
+  max-height: 112px;
+  margin: 8px 0;
+  padding: 7px 8px;
+  overflow: auto;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-markdown-code-block-small);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fileCommentSelectionOmitted {
+  margin: 7px 0;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.fileCommentBody {
+  padding: 7px 0 2px;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fileCommentActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+  margin-top: 3px;
+}
+
+.fileCommentEdit {
+  margin-top: 8px;
+}
+
+.fileCommentEdit textarea {
+  width: 100%;
+  min-height: 72px;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 7px 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  outline: none;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  line-height: 1.5;
+}
+
+.fileCommentEdit textarea:focus {
+  border-color: var(--dsw-alias-border-l2);
+}
+
+.fileCommentEditActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+  margin-top: 3px;
 }
 
 .editorTreeSearch {
@@ -1910,30 +2152,79 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   pointer-events: none;
 }
 
-/* The floating "add to conversation" button anchored above a text
-   selection in the preview/code viewers. Portalled to document.body and
-   position:fixed, so the editor's overflow clips cannot crop it; flat
-   chrome like the rest of the sidebar (hairline border, layer-2 fill,
-   hover fill — no shadow). */
+/* Floating review-comment editor anchored to a text selection. */
 .selectionPopup {
   position: fixed;
   z-index: 60;
   transform: translate(-50%, calc(-100% - 8px));
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  padding: 0 10px;
+  width: min(300px, calc(100vw - 16px));
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 6px;
   background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-primary);
-  font: var(--dsw-font-xxxs-strong-11);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.selectionPopupBelow {
+  transform: translate(-50%, 8px);
+}
+
+.selectionPopupLocation {
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.selectionPopup textarea {
+  width: 100%;
+  min-height: 76px;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 7px 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  outline: none;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  line-height: 1.5;
+}
+
+.selectionPopup textarea:focus {
+  border-color: var(--dsw-alias-border-l2);
+}
+
+.selectionPopupActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.selectionPopupActions button {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
   cursor: pointer;
 }
 
-.selectionPopup:hover {
+.selectionPopupActions button:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.selectionPopupActions button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .editorPdf {

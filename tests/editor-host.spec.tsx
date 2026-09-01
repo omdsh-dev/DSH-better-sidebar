@@ -15,6 +15,7 @@ import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import type { Context } from '../src/context-types.ts'
 import { EditorHost } from '../src/client/EditorHost.tsx'
+import { fileCommentStore } from '../src/client/file-comments.ts'
 import { createBetterSidebarService } from '../src/client/service.ts'
 import { allLeaves, createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 
@@ -124,7 +125,7 @@ describe('EditorHost (files window)', () => {
         container.querySelector('button[aria-pressed]')!
           .dispatchEvent(new MouseEvent('click', { bubbles: true }))
       })
-      expect(homeTab().meta).toEqual({ treeOpen: false })
+      expect(homeTab().meta).toEqual({ treeOpen: false, sidePanel: null })
       // The store change re-renders the host with the fresh tab (Sidebar's
       // subscription in the real app); the second click flips it back.
       rerender()
@@ -133,7 +134,7 @@ describe('EditorHost (files window)', () => {
         container.querySelector('button[aria-pressed]')!
           .dispatchEvent(new MouseEvent('click', { bubbles: true }))
       })
-      expect(homeTab().meta).toEqual({ treeOpen: true })
+      expect(homeTab().meta).toEqual({ treeOpen: true, sidePanel: 'tree' })
     } finally {
       unmount()
     }
@@ -217,6 +218,60 @@ describe('EditorHost (files window)', () => {
       expect(container.querySelector('button[aria-pressed]')?.getAttribute('aria-pressed')).toBe('true')
       expect(container.querySelector('[role="separator"]')).not.toBeNull()
     } finally {
+      unmount()
+    }
+  })
+
+  it('opens current-file comments from the button beside the tree toggle and keeps the views exclusive', () => {
+    const { store, ctx } = setup()
+    store.setPrefs({ ...store.getPrefs(), editorExplorer: true })
+    ctx.betterSidebar.openTab({
+      type: 'editor', title: 'a.ts', path: '/tmp/a.ts', id: 'editor:/tmp/a.ts', meta: { treeOpen: true },
+    })
+    const fileTab = (): SidebarTab =>
+      allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+        .find(tab => tab.path === '/tmp/a.ts')!
+    const { container, rerender, unmount } = mountHost(ctx, store, fileTab)
+    try {
+      const commentsToggle = container.querySelector<HTMLButtonElement>('button[aria-label="Current file comments"]')!
+      expect(commentsToggle).not.toBeNull()
+      expect(commentsToggle.previousElementSibling?.getAttribute('aria-label')).toBe('File tree panel')
+      expect(commentsToggle.getAttribute('aria-pressed')).toBe('false')
+
+      act(() => { commentsToggle.click() })
+      expect(fileTab().meta).toEqual({ treeOpen: false, sidePanel: 'comments' })
+      rerender()
+      expect(container.querySelector('section[aria-label="Current file comments"]')).not.toBeNull()
+      expect(container.querySelector('input[placeholder="Search files by name…"]')).toBeNull()
+
+      act(() => { container.querySelector<HTMLButtonElement>('button[aria-label="File tree panel"]')!.click() })
+      expect(fileTab().meta).toEqual({ treeOpen: true, sidePanel: 'tree' })
+      rerender()
+      expect(container.querySelector('section[aria-label="Current file comments"]')).toBeNull()
+      expect(container.querySelector('input[placeholder="Search files by name…"]')).not.toBeNull()
+    } finally {
+      unmount()
+    }
+  })
+
+  it('auto-opens comments when the first pending comment is saved for the mounted file', () => {
+    const { store, ctx } = setup()
+    store.setPrefs({ ...store.getPrefs(), editorExplorer: true })
+    const path = '/tmp/auto-comment.ts'
+    ctx.betterSidebar.openTab({ type: 'editor', title: 'auto-comment.ts', path, id: `editor:${path}`, meta: { treeOpen: true } })
+    const fileTab = (): SidebarTab =>
+      allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs).find(tab => tab.path === path)!
+    const { unmount } = mountHost(ctx, store, fileTab)
+    let commentId = ''
+    try {
+      act(() => {
+        commentId = fileCommentStore.add('editor-home-session', {
+          path, lines: { start: 1, end: 1 }, selectedText: 'const value = 1', body: 'rename this',
+        }).id
+      })
+      expect(fileTab().meta).toEqual({ treeOpen: false, sidePanel: 'comments' })
+    } finally {
+      if (commentId !== '') fileCommentStore.remove('editor-home-session', commentId)
       unmount()
     }
   })

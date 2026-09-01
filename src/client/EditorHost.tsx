@@ -25,10 +25,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
+import { LuMessageSquareText } from 'react-icons/lu'
 import { IconCheckOutline16, IconFolderOpen16, IconRefreshOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { api, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
+import { FileCommentsPanel } from './FileCommentsPanel.tsx'
+import { fileCommentStore } from './file-comments.ts'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
 import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
@@ -71,6 +74,16 @@ function metaOf(tab: SidebarTab): Record<string, unknown> {
 function treeOpenOf(tab: SidebarTab): boolean {
   const treeOpen = metaOf(tab).treeOpen
   return typeof treeOpen === 'boolean' ? treeOpen : (tab.path === undefined || tab.path === '')
+}
+
+type EditorSidePanel = 'tree' | 'comments' | null
+
+/** New sidePanel meta wins; legacy treeOpen remains the migration source. */
+function sidePanelOf(tab: SidebarTab): EditorSidePanel {
+  const sidePanel = metaOf(tab).sidePanel
+  if (sidePanel === 'tree' || sidePanel === 'comments') return sidePanel
+  if (sidePanel === null) return null
+  return treeOpenOf(tab) ? 'tree' : null
 }
 
 /** Read the persisted tree-panel width (clamped; default 240). */
@@ -143,6 +156,25 @@ export function EditorHost(props: {
   )
   const openWithConfig = useMemo(() => parseOpenWithConfig(editorBlob.openWith), [editorBlob])
   const openWithTargets = useMemo(() => resolveOpenWithTargets(openWithConfig), [openWithConfig])
+  const comments = useSyncExternalStore(
+    useCallback(listener => fileCommentStore.subscribe(scope.sessionId, listener), [scope.sessionId]),
+    useCallback(() => fileCommentStore.getSnapshot(scope.sessionId), [scope.sessionId]),
+  )
+  const pendingCommentCount = useMemo(
+    () => comments.filter(comment => comment.path === path && comment.sentAt === undefined).length,
+    [comments, path],
+  )
+  const previousPendingRef = useRef({ sessionId: scope.sessionId, path, count: pendingCommentCount })
+  useEffect(() => {
+    const previous = previousPendingRef.current
+    previousPendingRef.current = { sessionId: scope.sessionId, path, count: pendingCommentCount }
+    // Only a newly saved comment for the SAME file auto-opens the review
+    // panel. A file or session switch may expose a different count and must
+    // stay quiet.
+    if (path !== '' && previous.sessionId === scope.sessionId && previous.path === path && pendingCommentCount > previous.count) {
+      patchMeta(ctx, tab, { sidePanel: 'comments', treeOpen: false })
+    }
+  }, [ctx, tab, scope.sessionId, path, pendingCommentCount])
   // A path-less tab shows the empty-state hint in merged mode — and in split
   // mode it is the standalone explorer (tree-only, see the render below). A
   // folder tab is a folder window in BOTH modes: the tree rooted at the
@@ -351,9 +383,18 @@ export function EditorHost(props: {
     prevSaveState.current = current
   }, [toolbar?.saveState, toolbar?.mode])
 
-  const treeOpen = treeOpenOf(tab)
-  /** Persist the panel flag on the tab (survives reloads with the layout). */
-  const toggleTree = (): void => { patchMeta(ctx, tab, { treeOpen: !treeOpen }) }
+  const sidePanel = sidePanelOf(tab)
+  const treeOpen = sidePanel === 'tree'
+  const commentsOpen = sidePanel === 'comments'
+  /** Persist the mutually-exclusive side-panel mode with the editor tab. */
+  const toggleTree = (): void => {
+    const next = treeOpen ? null : 'tree'
+    patchMeta(ctx, tab, { sidePanel: next, treeOpen: next === 'tree' })
+  }
+  const toggleComments = (): void => {
+    const next = commentsOpen ? null : 'comments'
+    patchMeta(ctx, tab, { sidePanel: next, treeOpen: false })
+  }
   const saveLabel = toolbar === null ? ''
     : toolbar.saveState === 'saving' ? t('loading')
       : toolbar.saveState === 'saved' ? t('saved')
@@ -455,6 +496,18 @@ export function EditorHost(props: {
         >
           <IconFolderOpen16 size={14} />
         </button>
+        <button
+          type="button"
+          className={clsx(css.iconButton, css.editorCommentsToggle, commentsOpen && css.editorTreeToggleActive)}
+          aria-label={t('fileCommentsPanel')}
+          title={t('fileCommentsPanel')}
+          aria-pressed={commentsOpen}
+          disabled={path === ''}
+          onClick={toggleComments}
+        >
+          <LuMessageSquareText size={14} />
+          {pendingCommentCount > 0 && <span className={css.editorCommentsBadge}>{pendingCommentCount > 99 ? '99+' : pendingCommentCount}</span>}
+        </button>
       </div>
       <div className={css.editorBody}>
         <div className={css.editorMain}>
@@ -475,34 +528,38 @@ export function EditorHost(props: {
             onToolbarControls,
           })}
         </div>
-        {treeOpen && (
+        {sidePanel !== null && (
           <div className={css.editorTreeDock} style={{ width: treeWidth }}>
             <div
               className={css.editorTreeResize}
               role="separator"
               aria-orientation="vertical"
-              aria-label={t('editorTreeToggle')}
+              aria-label={sidePanel === 'tree' ? t('editorTreeToggle') : t('fileCommentsPanel')}
               onPointerDown={onResizeStart}
               onPointerMove={onResizeMove}
               onPointerUp={onResizeEnd}
               onPointerCancel={onResizeEnd}
             />
-            <TreePanel
-              sessionId={scope.sessionId}
-              cwd={scope.cwd}
-              expanded={expanded}
-              revealed={revealed}
-              onToggle={onToggleDir}
-              onOpenFile={openFile}
-              onOpenFileNewTab={openFileNewTab}
-              onOpenFileSide={openFileSide}
-              openWithTargets={openWithTargets}
-              openWithPinned={openWithConfig.pinned}
-              openWithSsh={openWithSshActive(openWithConfig)}
-              onOpenWith={openWith}
-              onToggleOpenWithPin={toggleOpenWithPin}
-              onReferenceFile={onReferenceFile}
-            />
+            {sidePanel === 'tree' ? (
+              <TreePanel
+                sessionId={scope.sessionId}
+                cwd={scope.cwd}
+                expanded={expanded}
+                revealed={revealed}
+                onToggle={onToggleDir}
+                onOpenFile={openFile}
+                onOpenFileNewTab={openFileNewTab}
+                onOpenFileSide={openFileSide}
+                openWithTargets={openWithTargets}
+                openWithPinned={openWithConfig.pinned}
+                openWithSsh={openWithSshActive(openWithConfig)}
+                onOpenWith={openWith}
+                onToggleOpenWithPin={toggleOpenWithPin}
+                onReferenceFile={onReferenceFile}
+              />
+            ) : (
+              <FileCommentsPanel key={`${scope.sessionId}:${path}`} ctx={ctx} sessionId={scope.sessionId} cwd={scope.cwd} path={path} />
+            )}
           </div>
         )}
       </div>

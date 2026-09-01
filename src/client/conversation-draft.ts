@@ -27,3 +27,17 @@ export function appendToDraft(ctx: Context, sessionId: string, text: string): bo
     return false
   }
 }
+
+/**
+ * Send one prompt directly to a session through the conversation service.
+ * The service is resolved from the session scope because conversation.send
+ * is scope-addressed; unlike draft insertion, the target is not an explicit
+ * method argument on the service itself.
+ */
+export async function sendToConversation(ctx: Context, sessionId: string, text: string): Promise<void> {
+  const actx = ctx.sessions.scope(sessionId)
+  if (actx === undefined) throw new Error(`conversation session is unavailable: ${sessionId}`)
+  const conversation = actx.get('conversation') as SidebarConversation | undefined
+  if (conversation === undefined) throw new Error('conversation service is unavailable')
+  await conversation.send(text)
+}
