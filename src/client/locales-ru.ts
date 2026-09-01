@@ -15,6 +15,8 @@ export const ru: Record<string, string> = {
   files: 'Файлы',
   changesSessionEmpty: 'В этой сессии пока нет файловых операций',
   changesRead: 'Чтение',
+  changesMdReading: 'Чтение',
+  changesMdRaw: 'Исходный текст',
   changesWrite: 'Запись',
   changesEdit: 'Изменение',
   changesRunning: 'выполняется',

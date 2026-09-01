@@ -342,6 +342,11 @@
 
 /* ── Shared preview pane ───────────────────────────────────────────────── */
 
+.mdToggle { flex: none; border: 1px solid var(--dsw-alias-border-l1); border-radius: 7px; background: transparent; color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-strong-11); padding: 2px 8px; cursor: pointer; }
+.mdToggle:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.mdToggle[data-on='true'] { border-color: var(--dsw-alias-state-business-primary); color: var(--dsw-alias-state-business-primary); }
+.mdBody { padding: 12px 16px 20px; font: var(--dsw-font-xs-regular-13); line-height: 1.6; min-height: 0; overflow-y: auto; }
+
 .diffPane { border-top: 1px solid var(--dsw-alias-border-l1); display: flex; flex-direction: column; flex: none; min-height: 0; }
 .dragHandle { flex: none; height: 8px; cursor: ns-resize; position: relative; background: var(--dsw-alias-bg-base); }
 .dragHandle::after { content: ''; position: absolute; left: calc(50% - 18px); top: 3px; width: 36px; height: 2px; border-radius: 1px; background: var(--dsw-alias-border-l2); }

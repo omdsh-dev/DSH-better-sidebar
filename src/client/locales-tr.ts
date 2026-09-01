@@ -19,6 +19,8 @@ export const tr: Record<string, string> = {
   files: 'Dosyalar',
   changesSessionEmpty: 'Bu oturumda henüz dosya işlemi yok',
   changesRead: 'Okuma',
+  changesMdReading: 'Okuma',
+  changesMdRaw: 'Ham',
   changesWrite: 'Yazma',
   changesEdit: 'Düzenleme',
   changesRunning: 'çalışıyor',

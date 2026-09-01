@@ -17,6 +17,8 @@ export const nl: Record<string, string> = {
   files: 'Bestanden',
   changesSessionEmpty: 'Nog geen bestandsbewerkingen in deze sessie',
   changesRead: 'Lezen',
+  changesMdReading: 'Lezen',
+  changesMdRaw: 'Brontekst',
   changesWrite: 'Schrijven',
   changesEdit: 'Bewerken',
   changesRunning: 'actief',

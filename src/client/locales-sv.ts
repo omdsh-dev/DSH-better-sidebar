@@ -2,6 +2,8 @@ export const sv: Record<string, string> = {
   files: 'Filer',
   changesSessionEmpty: 'Inga filoperationer i den här sessionen ännu',
   changesRead: 'Läs',
+  changesMdReading: 'Läsning',
+  changesMdRaw: 'Råtext',
   changesWrite: 'Skriv',
   changesEdit: 'Redigera',
   changesRunning: 'körs',

@@ -21,6 +21,8 @@ export const pl: Record<string, string> = {
   files: 'Pliki',
   changesSessionEmpty: 'Brak operacji na plikach w tej sesji',
   changesRead: 'Odczyt',
+  changesMdReading: 'Czytanie',
+  changesMdRaw: 'Źródło',
   changesWrite: 'Zapis',
   changesEdit: 'Edycja',
   changesRunning: 'w toku',

@@ -34,6 +34,8 @@ export const zhTW: Record<string, string> = {
   files: '檔案',
   changesSessionEmpty: '本作業階段還沒有檔案操作',
   changesRead: '讀取',
+  changesMdReading: '閱讀',
+  changesMdRaw: '原文',
   changesWrite: '寫入',
   changesEdit: '編輯',
   changesRunning: '執行中',

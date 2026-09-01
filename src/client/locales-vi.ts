@@ -19,6 +19,8 @@ export const vi: Record<string, string> = {
   files: 'Tệp',
   changesSessionEmpty: 'Chưa có thao tác tệp nào trong phiên này',
   changesRead: 'Đọc',
+  changesMdReading: 'Đọc',
+  changesMdRaw: 'Gốc',
   changesWrite: 'Ghi',
   changesEdit: 'Chỉnh sửa',
   changesRunning: 'đang chạy',

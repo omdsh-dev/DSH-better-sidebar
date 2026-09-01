@@ -9,7 +9,7 @@
  * diff tab via the shell.
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { IconCloseOutline16, IconRefreshOutline16, IconRightUpOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutline16, IconRefreshOutline16, IconRightUpOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionScope } from '../api.ts'
 import { api } from '../api.ts'
 import { t } from '../locales.ts'
@@ -20,7 +20,9 @@ import { DiffRows, ReadRows } from '../diff/DiffRows.tsx'
 import { DiffFiles } from '../diff/DiffFiles.tsx'
 import { langOfPath } from '../diff/highlight.ts'
 import { buildDiffSegments, diffLines, diffStats, parseUnifiedDiff, unifiedSegments, type DiffRow } from '../diff/rows.ts'
-import { parseReadLines, type FileOp } from './ops.ts'
+import { parseReadContent, parseReadLines, type FileOp } from './ops.ts'
+import { rewriteLocalImageUrls } from '../markdown-images.ts'
+import { markdownTextProps } from '../markdown-labels.tsx'
 import css from './changes.module.css'
 import diffCss from '../diff/diff.module.css'
 
@@ -157,6 +159,32 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
     [op],
   )
 
+  // ── Markdown reading mode: .md op targets (read/write/edit, non-error)
+  //    toggle between the raw/diff view and the rendered document — the same
+  //    shared MarkdownText pass the editor preview uses, with local image
+  //    destinations rewritten through the /sidebar/file media route. ──────
+  const mdOp = target.kind === 'op' && !target.op.isError && /\.(md|markdown|mdx)$/i.test(target.path)
+  const [reading, setReading] = useState(false)
+  const readingSrc = useMemo(() => {
+    if (!mdOp || op === null) return ''
+    if (op.kind === 'read') return parseReadContent(op.read ?? '')
+    if (op.kind === 'write') return op.content ?? ''
+    if (op.kind === 'edit' && op.edit !== undefined) {
+      if (prior !== undefined && prior.includes(op.edit.oldString)) {
+        return prior.replace(op.edit.oldString, op.edit.newString)
+      }
+      return op.edit.newString
+    }
+    return ''
+  }, [mdOp, op, prior])
+  const readingText = useMemo(
+    () => (mdOp && reading && readingSrc !== '' && target.kind === 'op'
+      ? rewriteLocalImageUrls(readingSrc, scope, target.path, window.location.origin)
+      : ''),
+    [mdOp, reading, readingSrc, scope, target],
+  )
+  const codeLabels = { copyLabel: t('copy'), copiedLabel: t('copied') }
+
   // Header stats for git targets come off the parsed patch text.
   const gitStats = useMemo(() => {
     if (target.kind !== 'git' || diffText === null || diffText === '') return null
@@ -257,6 +285,17 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
             </button>
           </>
         )}
+        {mdOp && (
+          <button
+            type="button"
+            className={css.mdToggle}
+            data-on={reading ? 'true' : undefined}
+            aria-pressed={reading}
+            onClick={() => { setReading(value => !value) }}
+          >
+            {t(reading ? 'changesMdRaw' : 'changesMdReading')}
+          </button>
+        )}
         <button
           type="button"
           className={css.iconButton}
@@ -267,7 +306,15 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
           <IconCloseOutline16 size={14} />
         </button>
       </div>
-      {target.kind === 'op' && op !== null && op.isError
+      {target.kind === 'op' && mdOp && reading && readingText !== ''
+        ? (
+          <div className={css.paneBody}>
+            <div className={css.mdBody}>
+              <MarkdownText {...markdownTextProps(readingText, codeLabels)} />
+            </div>
+          </div>
+        )
+        : target.kind === 'op' && op !== null && op.isError
         ? (
           <div className={css.paneBody}>
             <div className={css.readError} role="alert">

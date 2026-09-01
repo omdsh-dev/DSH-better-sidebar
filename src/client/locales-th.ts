@@ -19,6 +19,8 @@ export const th: Record<string, string> = {
   files: 'ไฟล์',
   changesSessionEmpty: 'ยังไม่มีการดำเนินการไฟล์ในเซสชันนี้',
   changesRead: 'อ่าน',
+  changesMdReading: 'อ่าน',
+  changesMdRaw: 'ดิบ',
   changesWrite: 'เขียน',
   changesEdit: 'แก้ไข',
   changesRunning: 'กำลังทำงาน',

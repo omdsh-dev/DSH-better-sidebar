@@ -12,6 +12,8 @@ export const fr: Record<string, string> = {
   files: 'Fichiers',
   changesSessionEmpty: 'Aucune opération de fichier dans cette session',
   changesRead: 'Lecture',
+  changesMdReading: 'Lecture',
+  changesMdRaw: 'Brut',
   changesWrite: 'Écriture',
   changesEdit: 'Modification',
   changesRunning: 'en cours',

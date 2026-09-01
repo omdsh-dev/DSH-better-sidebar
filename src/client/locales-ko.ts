@@ -11,6 +11,8 @@ export const ko: Record<string, string> = {
   files: '파일',
   changesSessionEmpty: '이 세션에 아직 파일 작업이 없습니다',
   changesRead: '읽기',
+  changesMdReading: '읽기',
+  changesMdRaw: '원문',
   changesWrite: '쓰기',
   changesEdit: '편집',
   changesRunning: '실행 중',

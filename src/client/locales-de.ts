@@ -5,6 +5,8 @@ export const de: Record<string, string> = {
   files: 'Dateien',
   changesSessionEmpty: 'Noch keine Dateioperationen in dieser Sitzung',
   changesRead: 'Lesen',
+  changesMdReading: 'Lesen',
+  changesMdRaw: 'Rohfassung',
   changesWrite: 'Schreiben',
   changesEdit: 'Bearbeiten',
   changesRunning: 'läuft',

@@ -20,6 +20,8 @@ export const ar: Record<string, string> = {
   files: 'الملفات',
   changesSessionEmpty: 'لا توجد عمليات ملفات في هذه الجلسة بعد',
   changesRead: 'قراءة',
+  changesMdReading: 'قراءة',
+  changesMdRaw: 'الخام',
   changesWrite: 'كتابة',
   changesEdit: 'تحرير',
   changesRunning: 'قيد التنفيذ',

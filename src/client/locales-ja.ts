@@ -19,6 +19,8 @@ export const ja: Record<string, string> = {
   files: 'ファイル',
   changesSessionEmpty: 'このセッションにはファイル操作がまだありません',
   changesRead: '読み取り',
+  changesMdReading: '閲覧',
+  changesMdRaw: '原文',
   changesWrite: '書き込み',
   changesEdit: '編集',
   changesRunning: '実行中',

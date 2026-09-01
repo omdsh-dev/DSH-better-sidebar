@@ -10,6 +10,8 @@ export const it: Record<string, string> = {
   files: 'File',
   changesSessionEmpty: 'Ancora nessuna operazione sui file in questa sessione',
   changesRead: 'Lettura',
+  changesMdReading: 'Lettura',
+  changesMdRaw: 'Grezzo',
   changesWrite: 'Scrittura',
   changesEdit: 'Modifica',
   changesRunning: 'in esecuzione',

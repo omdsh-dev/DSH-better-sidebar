@@ -2,6 +2,8 @@ export const pt: Record<string, string> = {
   files: 'Arquivos',
   changesSessionEmpty: 'Ainda sem operações de arquivo nesta sessão',
   changesRead: 'Leitura',
+  changesMdReading: 'Leitura',
+  changesMdRaw: 'Bruto',
   changesWrite: 'Escrita',
   changesEdit: 'Edição',
   changesRunning: 'em execução',

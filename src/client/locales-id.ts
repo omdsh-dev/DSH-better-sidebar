@@ -17,6 +17,8 @@ export const id: Record<string, string> = {
   files: 'Berkas',
   changesSessionEmpty: 'Belum ada operasi file di sesi ini',
   changesRead: 'Baca',
+  changesMdReading: 'Baca',
+  changesMdRaw: 'Mentah',
   changesWrite: 'Tulis',
   changesEdit: 'Edit',
   changesRunning: 'berjalan',

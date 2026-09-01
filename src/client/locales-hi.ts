@@ -19,6 +19,8 @@ export const hi: Record<string, string> = {
   files: 'फ़ाइलें',
   changesSessionEmpty: 'इस सत्र में अभी कोई फ़ाइल ऑपरेशन नहीं',
   changesRead: 'पढ़ना',
+  changesMdReading: 'पठन',
+  changesMdRaw: 'मूल पाठ',
   changesWrite: 'लिखना',
   changesEdit: 'संपादन',
   changesRunning: 'चल रहा है',
