@@ -102,6 +102,12 @@ describe('registry manifest consistency (dsh.plugin.json)', () => {
     }
   })
 
+  it('the core client and editor chunk resolve one page-wide file-comment store', () => {
+    const marker = /Symbol\.for\(["']dsh-better-sidebar\.file-comments\.store\.v1["']\)/
+    expect(readFileSync(resolve(ROOT, 'lib/client.js'), 'utf8')).toMatch(marker)
+    expect(readFileSync(resolve(ROOT, 'lib/client-editor.js'), 'utf8')).toMatch(marker)
+  })
+
   it('client bundles require only frozen module-table entries', () => {
     for (const file of ['lib/client.js', manifest.client!.main!, ...CHUNK_FILES]) {
       const source = readFileSync(resolve(ROOT, file), 'utf8')
