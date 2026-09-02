@@ -279,7 +279,13 @@ export interface FileViewerProps {
 
 /** The toolbar state a text editor reports to the host's merged-mode header. */
 export interface EditorToolbarState {
-  /** Whether the preview/edit mode toggle applies (markdown/html). */
+  /** Whether the built-in file/diff surface switch applies. External viewers
+   *  may omit this field and retain their existing header behavior. */
+  fileModes?: boolean
+  /** Active text surface when fileModes is enabled. */
+  fileMode?: 'file' | 'diff'
+  /** Whether the preview/edit mode toggle applies (currently HTML only;
+   *  visual Markdown is always editable and reports false). */
   modes: boolean
   mode: 'preview' | 'edit'
   dirty: boolean
@@ -290,6 +296,8 @@ export interface EditorToolbarState {
 
 /** The commands the host's merged-mode header sends back to the viewer. */
 export interface EditorToolbarControls {
+  /** Switch between the editable file surface and its HEAD comparison. */
+  setFileMode?(mode: 'file' | 'diff'): void
   setMode(mode: 'preview' | 'edit'): void
   save(): void
 }

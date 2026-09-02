@@ -1316,6 +1316,19 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   flex-direction: column;
 }
 
+/* The editable file surface stays mounted while a read-only comparison is
+   active so CodeMirror/MDXEditor preserve draft state and undo history. */
+.editorFileSurface {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.editorFileSurfaceHidden {
+  display: none;
+}
+
 /* The docked file tree: the wrapper owns the (drag-adjustable) width and
    the hairline separation; the resize handle is a wider invisible strip on
    its left edge with a hover affordance. */
@@ -2000,7 +2013,175 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   outline: none;
 }
 
-/* Preview / edit segmented toggle (markdown and other previewable files). */
+/* HEAD-vs-current comparison. The toolbar wraps as one compact workbench row
+   at wide widths and two rows in a narrow sidebar without horizontal crop. */
+.textDiffRoot {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  container-type: inline-size;
+  background: var(--dsw-alias-bg-base);
+}
+
+.textDiffToolbar {
+  flex: none;
+  min-height: 34px;
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.textDiffToolButton {
+  flex: none;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.textDiffToolButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.textDiffToolButton:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.textDiffToolActive {
+  border-color: var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+}
+
+.textDiffToolbarDivider {
+  width: 1px;
+  height: 18px;
+  margin: 0 3px;
+  background: var(--dsw-alias-border-l1);
+}
+
+.textDiffLayoutToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.textDiffCount {
+  margin-left: auto;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  white-space: nowrap;
+}
+
+.textDiffLabels {
+  flex: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.textDiffLabels > span {
+  min-width: 0;
+  padding: 3px 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.textDiffLabels > span + span {
+  border-left: 1px solid var(--dsw-alias-border-l1);
+}
+
+.textDiffLabelsUnified {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.textDiffSurface {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.textDiffSurface > :global(.cm-editor),
+.textDiffSurface > :global(.cm-mergeView) {
+  height: 100%;
+}
+
+.textDiffSurface :global(.cm-mergeView) {
+  overflow: auto;
+}
+
+.textDiffSurface :global(.cm-mergeViewEditors),
+.textDiffSurface :global(.cm-mergeViewEditor) {
+  min-width: 0;
+  min-height: 100%;
+}
+
+.textDiffSurface :global(.cm-mergeViewEditor + .cm-mergeViewEditor) {
+  border-left-color: var(--dsw-alias-border-l1);
+}
+
+.textDiffSurface :global(.cm-scroller) {
+  padding: 12px 16px;
+}
+
+.textDiffSurface :global(.cm-editor.cm-focused) {
+  outline: none;
+}
+
+.textDiffSurface :global(.cm-merge-a .cm-changedLine),
+.textDiffSurface :global(.cm-deletedChunk) {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
+}
+
+.textDiffSurface :global(.cm-merge-b .cm-changedLine),
+.textDiffSurface :global(.cm-inlineChangedLine) {
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent);
+}
+
+.textDiffSurface :global(.cm-collapsedLines) {
+  border-color: var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+@container (max-width: 320px) {
+  .textDiffToolbarDivider {
+    display: none;
+  }
+
+  .textDiffCount {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+
+  .textDiffToolButton span {
+    display: none;
+  }
+}
+
+/* Preview / source segmented toggle (HTML; Markdown is visually editable). */
 .editorModeToggle {
   flex: none;
   display: inline-flex;
@@ -2047,12 +2228,98 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   object-fit: contain;
 }
 
-.editorMd {
+.editorMarkdownVisual {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* MDXEditor is confined to the editor lazy chunk. Its semantic color scale
+   is remapped to the DSH skin contract here; the same class is copied onto
+   its portaled popup root, so dialogs/tooltips inherit the identical theme. */
+.markdownVisualRoot {
+  flex: 1;
+  min-height: 0;
+  --accentBase: var(--dsw-alias-bg-base);
+  --accentBgSubtle: var(--dsw-alias-state-business-tertiary);
+  --accentBg: var(--dsw-alias-state-business-tertiary);
+  --accentBgHover: var(--dsw-alias-interactive-bg-hover-accent);
+  --accentBgActive: var(--dsw-alias-interactive-bg-active);
+  --accentLine: var(--dsw-alias-border-l2);
+  --accentBorder: var(--dsw-alias-border-l2);
+  --accentBorderHover: var(--dsw-alias-brand-primary);
+  --accentSolid: var(--dsw-alias-state-business-primary);
+  --accentSolidHover: var(--dsw-alias-brand-primary);
+  --accentText: var(--dsw-alias-state-business-primary);
+  --accentTextContrast: var(--dsw-alias-label-primary);
+  --basePageBg: var(--dsw-alias-bg-base);
+  --baseBase: var(--dsw-alias-bg-layer-1);
+  --baseBgSubtle: var(--dsw-alias-bg-layer-1);
+  --baseBg: var(--dsw-alias-bg-layer-2);
+  --baseBgHover: var(--dsw-alias-interactive-bg-hover);
+  --baseBgActive: var(--dsw-alias-interactive-bg-active);
+  --baseLine: var(--dsw-alias-border-l1);
+  --baseBorder: var(--dsw-alias-border-l1);
+  --baseBorderHover: var(--dsw-alias-border-l2);
+  --baseSolid: var(--dsw-alias-label-tertiary);
+  --baseSolidHover: var(--dsw-alias-label-secondary);
+  --baseText: var(--dsw-alias-label-secondary);
+  --baseTextContrast: var(--dsw-alias-label-primary);
+  --admonitionTipBg: var(--dsw-alias-state-success-primary);
+  --admonitionTipBorder: var(--dsw-alias-state-success-primary);
+  --admonitionInfoBg: var(--dsw-alias-state-business-tertiary);
+  --admonitionInfoBorder: var(--dsw-alias-state-business-primary);
+  --admonitionCautionBg: var(--dsw-alias-state-warn-tertiary);
+  --admonitionCautionBorder: var(--dsw-alias-state-warn-primary);
+  --admonitionDangerBg: var(--dsw-alias-state-warn-tertiary);
+  --admonitionDangerBorder: var(--dsw-alias-state-error-primary);
+  --admonitionNoteBg: var(--dsw-alias-bg-layer-2);
+  --admonitionNoteBorder: var(--dsw-alias-border-l2);
+  --error-color: var(--dsw-alias-state-error-primary);
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+}
+
+.markdownVisualRoot :global(.mdxeditor-toolbar) {
+  gap: 2px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 0;
+  background: var(--dsw-alias-bg-layer-1);
+  overflow-x: hidden;
+}
+
+.markdownToolbarActions {
+  flex: 1 1 100%;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+
+.markdownVisualRoot :global(.mdxeditor-root-contenteditable) {
+  background: var(--dsw-alias-bg-base);
+}
+
+.markdownVisualContent {
+  min-height: 100%;
+  padding: 18px 28px;
+  color: var(--dsw-alias-label-primary);
   font: var(--dsw-font-xs-13);
+  line-height: 1.75;
+}
+
+.markdownVisualContent :global(pre),
+.markdownVisualContent :global(code) {
+  font: var(--dsw-font-markdown-code-block-small);
+}
+
+.markdownVisualContent :global(img) {
+  max-width: 100%;
+  height: auto;
 }
 
 /* ── Mermaid diagram block (markdown preview, mermaid lazy chunk) ────────

@@ -147,11 +147,12 @@ function clientBundle(pluginId: string, entryFile: string): UserConfig {
     },
     // CJS output otherwise makes some transitive packages resolve their
     // Node entry even though this bundle runs in the browser. Keep browser
-    // conditional exports authoritative for both source import() and
-    // generated require() edges.
+    // and static production exports authoritative for both source import()
+    // and generated require() edges (Lexical's Node entry uses top-level
+    // await, which cannot exist in this single-file CJS factory).
     inputOptions: {
       resolve: {
-        conditionNames: ['browser', 'import', 'require', 'default'],
+        conditionNames: ['browser', 'production', 'import', 'require', 'default'],
         alias: REACT_ICONS_ESM_ALIAS,
       },
     },
@@ -211,7 +212,7 @@ function chunkBundle(name: string): UserConfig {
     },
     inputOptions: {
       resolve: {
-        conditionNames: ['browser', 'import', 'require', 'default'],
+        conditionNames: ['browser', 'production', 'import', 'require', 'default'],
       },
     },
     noExternal: (id: string) => (CLIENT_EXTERNALS.includes(id) ? undefined : true),
@@ -219,6 +220,7 @@ function chunkBundle(name: string): UserConfig {
       purityGatePlugin(),
       makeCssPlugin('dsh-better-sidebar'),
       ...(name === 'mermaid' ? [mermaidChunkAliases()] : []),
+      ...(name === 'editor' ? [editorChunkAliases()] : []),
     ],
     outputOptions: {
       entryFileNames: `client-${name}.js`,
@@ -252,6 +254,29 @@ function mermaidChunkAliases(): BuildPlugin {
     name: 'dsh-mermaid-uuid-browser-alias',
     resolveId(source: string) {
       if (source === 'uuid') return uuidBrowserEntry
+      return null
+    },
+  }
+}
+
+/**
+ * Editor-chunk-only alias: MDXEditor's highlight-mark parser imports the CJS
+ * `uvu/assert`, whose diff helper uses `require('kleur')`. Shared condition
+ * names otherwise resolve that nested require to kleur's ESM default-only
+ * entry; uvu expects the CJS namespace (`kleur.dim`, `kleur.red`, ...), so
+ * materializing the browser factory crashes. Resolve from uvu's own tree and
+ * pin its require entry without changing conditions for the rest of the
+ * editor's ESM graph.
+ */
+function editorChunkAliases(): BuildPlugin {
+  const uvuRoot = dirname(dirname(require.resolve('uvu/diff', {
+    paths: [dirname(require.resolve('@mdxeditor/editor/package.json'))],
+  })))
+  const kleurCjsEntry = require.resolve('kleur', { paths: [uvuRoot] })
+  return {
+    name: 'dsh-editor-kleur-cjs-alias',
+    resolveId(source: string) {
+      if (source === 'kleur') return kleurCjsEntry
       return null
     },
   }

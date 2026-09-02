@@ -9,8 +9,8 @@
  * Commits use the user's git global identity untouched (never sets
  * user.name/user.email).
  */
-import { readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readdir, realpath } from 'node:fs/promises'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { spawn } from 'node:child_process'
 import { resolve } from 'node:path'
 
@@ -416,8 +416,29 @@ export async function log(cwd: string, count = 30, skip = 0, selected?: string):
  * revision has no such path (a new/untracked file has no HEAD side).
  */
 export async function show(cwd: string, rev: string, path: string, selected?: string): Promise<string | null> {
+  // `git show <rev>:<path>` only accepts a repository-root-relative Git
+  // path. Sidebar callers use absolute file paths, so resolve the containing
+  // repository first (important when the session cwd is a workspace
+  // container), then derive the slash-separated blob path explicitly.
+  const absolute = isAbsolute(path) ? resolve(path) : undefined
+  const root = selected !== undefined
+    ? await repoRoot(cwd, selected)
+    : absolute !== undefined
+      ? await directRepoRoot(dirname(absolute))
+      : await repoRoot(cwd)
+  const target = absolute ?? resolve(root, path)
+  // Windows callers may carry an 8.3 path (`ADMINI~1`) while Git reports the
+  // same checkout with its long spelling (`Administrator`). Canonicalize both
+  // existing endpoints before the containment comparison so path identity,
+  // not presentation, decides whether the file belongs to the repository.
+  const canonicalRoot = await realpath(root).catch(() => resolve(root))
+  const canonicalTarget = await realpath(target).catch(() => resolve(target))
+  const repoPath = relative(canonicalRoot, canonicalTarget)
+  if (repoPath === '' || repoPath === '..' || repoPath.startsWith(`..${sep}`) || isAbsolute(repoPath)) {
+    throw new GitCommandError(`path is outside repository: ${path}`, 'git-path', 'show')
+  }
   try {
-    return await runGit(await repoRoot(cwd, selected), ['show', `${rev}:${path}`])
+    return await runGit(canonicalRoot, ['show', `${rev}:${repoPath.split(sep).join('/')}`])
   } catch {
     return null
   }

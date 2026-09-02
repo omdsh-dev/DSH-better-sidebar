@@ -1,13 +1,12 @@
 /**
- * The code/markdown file viewer: a CodeMirror 6 editor with line wrapping,
- * syntax highlighting (extension-keyed language), a dirty dot and Ctrl/Cmd+S
- * save, and a preview/edit toggle for markdown files. Registered as the
- * `code` (catch-all) and `markdown` built-in viewers; the editor tab host
- * fetches the content through the fsRead strategy and passes it in props,
- * so this component never fetches or dispatches — it only edits.
+ * The text-file viewer: code and HTML source use CodeMirror 6, while Markdown
+ * uses a markdown-native visual editor that serializes edits back to source.
+ * Both paths share the dirty/save/comment-selection contract. Registered as
+ * the `code` (catch-all), `html`, and `markdown` built-in viewers; the editor
+ * tab host fetches content through the fsRead strategy and passes it in props.
  *
- * The toolbar (mode toggle / dirty dot / save / status) renders as its own
- * row below the host's title bar, VSCode-style — unless the host passes
+ * The toolbar (HTML mode toggle / dirty dot / save / status) renders as its
+ * own row below the host's title bar, VSCode-style — unless the host passes
  * `toolbar: 'host'` (the merged editor-explorer mode), in which case this
  * component skips the row and reports state + registers commands through
  * the FileViewerProps toolbar callbacks so the host's path-input header
@@ -19,27 +18,29 @@ import clsx from 'clsx'
 import { EditorState } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
-import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
-import { markdownTextProps } from './markdown-labels.tsx'
+import { IconCheckOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api, htmlUrl } from './api.ts'
-import { rewriteLocalImageUrls } from './markdown-images.ts'
+import { resolveLocalMediaDest } from './markdown-images.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { fileCommentStore } from './file-comments.ts'
 import { headerOf, linesOfSelection, type SelectionLines } from './selection-payload.ts'
-import { lazyChunkComponent } from './lazy-chunk.tsx'
-import { analyzeMarkdownHtml } from './markdown-html.ts'
-import { LazyMermaidMarkdown, MarkdownDocument, type MarkdownHtmlMedia } from './MarkdownHtml.tsx'
-import { MdToc } from './md-toc.tsx'
-import { splitMermaidBlocks } from './mermaid-blocks.ts'
+import { MarkdownVisualEditor, type MarkdownVisualEditorHandle } from './MarkdownVisualEditor.tsx'
+import { TextDiffView } from './TextDiffView.tsx'
 import { t } from './locales.ts'
 import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
 
-/** Previewable files (rendered output vs source editing). */
+/** HTML preview vs source editing. Markdown is always a visual edit surface. */
 type ViewMode = 'preview' | 'edit'
+type FileSurfaceMode = 'file' | 'diff'
+
+type DiffBaseline =
+  | { status: 'idle' | 'loading' }
+  | { status: 'ready'; content: string }
+  | { status: 'error'; message: string }
 
 /** The floating review-comment editor: selection context + viewport anchor. */
 interface SelectionPopup {
@@ -62,13 +63,21 @@ export const HTML_IFRAME_SANDBOX = 'allow-scripts allow-popups allow-downloads a
 
 export function TextEditor(props: FileViewerProps) {
   const { scope, path, viewerId, content, truncated } = props
+  const markdown = viewerId === 'markdown'
+  const html = viewerId === 'html'
   const [mode, setMode] = useState<ViewMode>('preview')
-  /** The editor's current text (null while clean); preview renders this. */
+  const [fileMode, setFileMode] = useState<FileSurfaceMode>('file')
+  const [diffBaseline, setDiffBaseline] = useState<DiffBaseline>({ status: 'idle' })
+  /** The editor's current text (null until the first visual/source edit). */
   const [draft, setDraft] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+  const [markdownError, setMarkdownError] = useState('')
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<CodeMirrorView | null>(null)
+  const markdownRef = useRef<MarkdownVisualEditorHandle | null>(null)
+  /** Saved baseline used to clear dirty when a visual edit returns to disk. */
+  const savedMarkdownRef = useRef(content ?? '')
   const savingRef = useRef(false)
   /** The theme compartment of the current view (reconfigured on scheme flip). */
   const themeCompRef = useRef<CmThemeCompartment | null>(null)
@@ -79,7 +88,7 @@ export function TextEditor(props: FileViewerProps) {
   /** Live mirror of the popup state for click-time reads (no re-render race). */
   const popupRef = useRef<SelectionPopup | null>(null)
   const popupHostRef = useRef<HTMLFormElement>(null)
-  /** The markdown preview container (selection-containment + line lookup). */
+  /** The visual markdown container (selection-containment + line lookup). */
   const mdRef = useRef<HTMLDivElement>(null)
 
   const hidePopup = (): void => {
@@ -128,23 +137,47 @@ export function TextEditor(props: FileViewerProps) {
 
   useEffect(() => subscribeColorScheme(() => { setDark(isDarkScheme()) }), [])
 
-  // A new file (tab switch) starts clean: fresh preview mode, no draft.
+  // A new file (tab switch/manual refresh) starts clean. Markdown updates its
+  // existing Lexical instance through the imperative API; the component's
+  // markdown prop is intentionally mount-only.
   useEffect(() => {
     setMode('preview')
+    setFileMode('file')
+    setDiffBaseline({ status: 'idle' })
     setDraft(null)
     setDirty(false)
     setSaveState('idle')
+    setMarkdownError('')
+    savedMarkdownRef.current = content ?? ''
+    if (markdown && content !== undefined) {
+      markdownRef.current?.setMarkdown(content)
+    }
     hidePopup()
-  }, [content])
+  }, [content, markdown])
 
-  // Create the CodeMirror editor once the content is loaded. The view owns
-  // the document; React only tracks dirty/draft state through the update
-  // listener. For markdown the view stays mounted while previewing (hidden),
-  // so unsaved edits survive the preview/edit toggle. The theme + syntax
+  // The comparison baseline is the blob at HEAD. It is loaded on each entry
+  // into diff mode so a commit made while the file view is open is reflected
+  // without remounting the editor. A null blob is a new/untracked file and
+  // compares against an empty original document.
+  useEffect(() => {
+    if (fileMode !== 'diff' || content === undefined) return
+    const controller = new AbortController()
+    setDiffBaseline({ status: 'loading' })
+    api.gitShow(scope, 'HEAD', path, controller.signal).then((result) => {
+      setDiffBaseline({ status: 'ready', content: result.content ?? '' })
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return
+      setDiffBaseline({ status: 'error', message: error instanceof Error ? error.message : String(error) })
+    })
+    return () => { controller.abort() }
+  }, [fileMode, content, scope.sessionId, scope.cwd, scope.repoRoot, path])
+
+  // Create CodeMirror once for code/HTML source. Markdown has its own rich
+  // document model and never mounts this source editor. The theme + syntax
   // colors live in a compartment so a scheme flip reconfigures only that
   // part — the document, undo history and scroll position survive.
   useEffect(() => {
-    if (content === undefined) return
+    if (content === undefined || markdown) return
     const host = hostRef.current
     if (host === null) return
     const language = languageForPath(path)
@@ -232,7 +265,7 @@ export function TextEditor(props: FileViewerProps) {
     // The keymap's save() reads live refs; scope/path are stable for a
     // tab's lifetime, and the dark flip is handled by the reconfigure
     // effect below (recreating the view here would drop the draft).
-  }, [content, path])
+  }, [content, path, markdown])
 
   // Scheme flip: re-theme in place (the compartment holds only the
   // scheme-dependent extensions; everything else is untouched).
@@ -243,22 +276,36 @@ export function TextEditor(props: FileViewerProps) {
     view.dispatch({ effects: themeComp.reconfigure(dark) })
   }, [dark])
 
-  // The editor may have been display:none while previewing; re-measure when
-  // it becomes visible again (CodeMirror sizes itself on reveal). A mode
-  // flip also invalidates any anchored selection popup.
+  // HTML source may have been display:none while previewing; re-measure when
+  // it becomes visible again. A mode flip also invalidates any selection.
   useEffect(() => {
     hidePopup()
     if (mode === 'edit') viewRef.current?.requestMeasure()
   }, [mode])
 
+  // CodeMirror remains mounted (hidden) while the comparison is visible so
+  // its draft, undo history, selection and scroll position survive. Ask it
+  // to measure once it becomes visible again.
+  useEffect(() => {
+    hidePopup()
+    if (fileMode === 'file') viewRef.current?.requestMeasure()
+  }, [fileMode])
+
   const save = (): void => {
-    const view = viewRef.current
-    if (view === null || savingRef.current) return
+    const text = markdown
+      ? markdownRef.current?.getMarkdown() ?? draft ?? content
+      : viewRef.current?.state.doc.toString()
+    if (text === undefined || savingRef.current) return
     savingRef.current = true
     setSaveState('saving')
-    api.fsWrite(scope, path, view.state.doc.toString()).then(() => {
+    api.fsWrite(scope, path, text).then(() => {
       savingRef.current = false
-      setDraft(null)
+      if (markdown) {
+        savedMarkdownRef.current = text
+        setDraft(text)
+      } else {
+        setDraft(null)
+      }
       setDirty(false)
       setSaveState('saved')
     }).catch(() => {
@@ -267,57 +314,40 @@ export function TextEditor(props: FileViewerProps) {
     })
   }
 
-  const markdown = viewerId === 'markdown'
-  const html = viewerId === 'html'
-  /** The markdown source the preview renders (draft wins over saved content). */
+  /** Current markdown source for saving and selection-to-line lookup. */
   const mdText = draft ?? content ?? ''
-  /** The preview source: `mdText` with local image destinations rewritten to
-   *  absolute media URLs (see {@link rewriteLocalImageUrls}); the raw
-   *  `mdText` stays untouched for selection/line lookup and for mermaid-block
-   *  detection, which are unaffected by image syntax. */
-  const previewText = markdown
-    ? rewriteLocalImageUrls(mdText, scope, path, window.location.origin)
-    : mdText
-  /** md/mermaid block split for the preview (mermaid fences lift out). Split
-   *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
-  const mdBlocks = useMemo(
-    () => (markdown && mode === 'preview' ? splitMermaidBlocks(mdText) : []),
-    [markdown, mode, mdText],
-  )
-  /** Raw-HTML analysis (block runs lifted out + inline gate). Non-null only
-   *  for documents that actually contain HTML — plain markdown keeps the
-   *  legacy single-pass render path below, byte-for-byte. */
-  const htmlInfo = useMemo(
-    () => (markdown && mode === 'preview' ? analyzeMarkdownHtml(mdText) : null),
-    [markdown, mode, mdText],
-  )
-  const hasMermaid = useMemo(
-    () => htmlInfo !== null
-      ? htmlInfo.segments.some((segment) => segment.kind === 'markdown'
-        && splitMermaidBlocks(segment.text).some((block) => block.kind === 'mermaid'))
-      : mdBlocks.some((block) => block.kind === 'mermaid'),
-    [htmlInfo, mdBlocks],
-  )
-  /** The media context for the split renderer (local-src rewriting inside
-   *  sanitized HTML). Memoized on primitives: MarkdownDocument sanitizes per
-   *  `media` identity, so a fresh object per render would re-sanitize every
-   *  keystroke. */
-  const htmlMedia = useMemo<MarkdownHtmlMedia>(
-    () => ({ scope, path, origin: window.location.origin }),
+  const currentText = markdown
+    ? mdText
+    : draft ?? viewRef.current?.state.doc.toString() ?? content ?? ''
+  const imagePreviewHandler = useMemo(
+    () => async (source: string) => resolveLocalMediaDest(source, scope, path, window.location.origin),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [scope.sessionId, scope.cwd, path],
   )
-  const codeLabels = { copyLabel: t('copy'), copiedLabel: t('copied') }
+
+  const handleMarkdownChange = (next: string, initialMarkdownNormalize: boolean): void => {
+    setDraft(next)
+    if (initialMarkdownNormalize) {
+      // The rich editor may normalize equivalent source during its initial
+      // import. Treat that serialized form as the clean visual baseline so
+      // editing and then reverting does not create a false dirty state.
+      savedMarkdownRef.current = next
+      return
+    }
+    setMarkdownError('')
+    setDirty(next !== savedMarkdownRef.current)
+    setSaveState('idle')
+  }
 
   /**
-   * Selection popup for the markdown preview: a mouse-up inside the preview
+   * Selection popup for the visual markdown editor: a mouse-up inside the
    * container anchors the floating "add to conversation" button above the
    * selection. Line numbers come from a best-effort reverse-search of the
    * selected text in the source ({@link linesOfSelection} — an ambiguous or
    * missing hit omits them). The button's own mousedown preventDefaults so
    * the selection survives until the click commits.
    */
-  const handlePreviewMouseUp = (): void => {
+  const handleMarkdownMouseUp = (): void => {
     const sel = window.getSelection()
     if (sel === null || sel.isCollapsed || sel.anchorNode === null || sel.focusNode === null) {
       hidePopup()
@@ -361,7 +391,15 @@ export function TextEditor(props: FileViewerProps) {
   const lastToolbarRef = useRef('')
   useEffect(() => {
     if (!hostToolbar) return
-    const state: EditorToolbarState = { modes: markdown || html, mode, dirty, editable, saveState }
+    const state: EditorToolbarState = {
+      fileModes: editable,
+      fileMode,
+      modes: html,
+      mode: markdown ? 'edit' : mode,
+      dirty,
+      editable,
+      saveState,
+    }
     const key = JSON.stringify(state)
     if (lastToolbarRef.current === key) return
     lastToolbarRef.current = key
@@ -371,7 +409,7 @@ export function TextEditor(props: FileViewerProps) {
     if (!hostToolbar) return
     // `save` reads live refs only, and `setMode` is the stable state setter —
     // registering this render's closures is safe for the mount's lifetime.
-    props.onToolbarControls?.({ setMode, save })
+    props.onToolbarControls?.({ setFileMode, setMode, save })
     return () => { props.onToolbarControls?.(null) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hostToolbar])
@@ -380,7 +418,27 @@ export function TextEditor(props: FileViewerProps) {
     <>
       {!hostToolbar && (
       <div className={css.editorHeader}>
-        {(markdown || html) && (
+        {editable && (
+          <div className={css.editorModeToggle} aria-label={t('editorFileMode')}>
+            <button
+              type="button"
+              className={clsx(css.editorModeButton, fileMode === 'file' && css.editorModeActive)}
+              aria-pressed={fileMode === 'file'}
+              onClick={() => { setFileMode('file') }}
+            >
+              {t('editorFile')}
+            </button>
+            <button
+              type="button"
+              className={clsx(css.editorModeButton, fileMode === 'diff' && css.editorModeActive)}
+              aria-pressed={fileMode === 'diff'}
+              onClick={() => { setFileMode('diff') }}
+            >
+              {t('editorDiff')}
+            </button>
+          </div>
+        )}
+        {html && fileMode === 'file' && (
           <div className={css.editorModeToggle}>
             <button
               type="button"
@@ -399,7 +457,7 @@ export function TextEditor(props: FileViewerProps) {
           </div>
         )}
         {dirty && <span className={css.dirtyDot} title={t('unsaved')} />}
-        {editable && (
+        {editable && fileMode === 'file' && (
           <button
             type="button"
             className={css.iconButton}
@@ -413,43 +471,38 @@ export function TextEditor(props: FileViewerProps) {
         {saveLabel !== '' && <span className={clsx(css.editorStatus, saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>}
       </div>
       )}
-      {editable && (
+      <div className={clsx(css.editorFileSurface, fileMode === 'diff' && css.editorFileSurfaceHidden)}>
+      {editable && !markdown && (
         <>
           {truncated === true && mode === 'edit' && <div className={css.editorBanner}>{t('truncation')}</div>}
           <div
-            className={clsx(css.editorCm, (markdown || html) && mode === 'preview' && css.editorCmHidden)}
+            className={clsx(css.editorCm, html && mode === 'preview' && css.editorCmHidden)}
             ref={hostRef}
           />
         </>
       )}
-      {markdown && mode === 'preview' && (
+      {markdown && editable && (
         <div
-          className={css.editorMd}
+          className={css.editorMarkdownVisual}
           ref={mdRef}
-          onMouseUp={handlePreviewMouseUp}
-          onScroll={hidePopup}
+          onMouseUp={handleMarkdownMouseUp}
+          onScrollCapture={hidePopup}
+          onKeyDownCapture={(event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+              event.preventDefault()
+              save()
+            }
+          }}
         >
-          {/* The fence copy-button labels must come from this plugin's own
-              dictionary: the DSH MarkdownText/CodeBlock are cordis-free and
-              fall back to hardcoded Chinese otherwise (same pattern as the
-              chat's AssistantMarkdown). Render-time t() keeps them following
-              the active locale on live switches. Plain markdown (no HTML)
-              renders exactly as before — one MarkdownText pass for the whole
-              document, or the mermaid lazy chunk (single markdown parse;
-              cross-fence references/footnotes stay intact) when a mermaid
-              fence exists. Documents containing HTML (block runs or inline
-              tags) render through the split document renderer: markdown runs
-              keep the MarkdownText/mermaid path while raw-HTML runs render
-              as sanitized DOM (see markdown-html.tsx). */}
-          {/* The outline button rides on top of the preview scroll container
-              (sticky, zero-height — first child so it pins from the very
-              top) once the document has enough headings. */}
-          <MdToc />
-          {htmlInfo !== null
-            ? <MarkdownDocument info={htmlInfo} media={htmlMedia} codeLabels={codeLabels} />
-            : hasMermaid
-              ? <LazyMermaidMarkdown text={previewText} codeLabels={codeLabels} />
-              : <MarkdownText {...markdownTextProps(previewText, codeLabels)} />}
+          {truncated === true && <div className={css.editorBanner}>{t('truncation')}</div>}
+          {markdownError !== '' && <div className={clsx(css.editorBanner, css.editorStatusError)}>{markdownError}</div>}
+          <MarkdownVisualEditor
+            ref={markdownRef}
+            markdown={content ?? ''}
+            imagePreviewHandler={imagePreviewHandler}
+            onChange={handleMarkdownChange}
+            onError={setMarkdownError}
+          />
         </div>
       )}
       {html && mode === 'preview' && (
@@ -475,7 +528,17 @@ export function TextEditor(props: FileViewerProps) {
           />
         </>
       )}
-      {popup !== null && createPortal(
+      </div>
+      {fileMode === 'diff' && diffBaseline.status === 'loading' && (
+        <div className={css.editorPlaceholder}>{t('loading')}</div>
+      )}
+      {fileMode === 'diff' && diffBaseline.status === 'error' && (
+        <div className={css.editorError}>{t('editorDiffLoadError', { error: diffBaseline.message })}</div>
+      )}
+      {fileMode === 'diff' && diffBaseline.status === 'ready' && (
+        <TextDiffView original={diffBaseline.content} current={currentText} path={path} dark={dark} />
+      )}
+      {fileMode === 'file' && popup !== null && createPortal(
         <form
           ref={popupHostRef}
           className={clsx(css.selectionPopup, popup.below && css.selectionPopupBelow)}

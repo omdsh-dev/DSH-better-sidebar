@@ -11,10 +11,13 @@
  * - merged (in-place): tree click / path-input Enter switch the CURRENT
  *   tab in place (updateTab rewrites path/title; the tab keeps its id and
  *   meta, so treeOpen/treeWidth survive the switch);
- * - split: they open through `openSidebarFile` (a per-path dedupe tab),
- *   and a PATH-LESS window is the standalone explorer — it renders ONLY
- *   the tree panel (search + FileTree, full-window), no editor chrome.
- *   Editor tabs (with a path) keep the full chrome in both modes.
+ * - split: the path input and standalone explorer open through
+ *   `openSidebarFile` (a per-path dedupe tab); the docked tree in an
+ *   existing file window navigates that window in place so its content
+ *   opens to the left of the tree. A PATH-LESS window is the standalone
+ *   explorer — it renders ONLY the tree panel (search + FileTree,
+ *   full-window), no editor chrome. Editor tabs (with a path) keep the full
+ *   chrome in both modes.
  * The tree's context menu offers the explicit escapes in both modes: open
  * in a new tab (per-path dedupe) or to the side (a fresh tab in a fresh
  * rightward split of the current pane).
@@ -194,6 +197,14 @@ export function EditorHost(props: {
     } else {
       openSidebarFile(ctx, store, scope.sessionId, absolute)
     }
+  }
+
+  /** A file window's docked tree is local navigation for the content area
+   *  immediately to its left. This is intentionally independent of the
+   *  explorer mode: the standalone explorer still opens per-path tabs, and
+   *  the context menu retains its explicit new-tab/side-open actions. */
+  const openDockedFile = (absolute: string): void => {
+    ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) })
   }
 
   /** The context menu's explicit "new tab" escape (per-path dedupe). */
@@ -433,7 +444,27 @@ export function EditorHost(props: {
     <div className={css.editor}>
       <div className={css.editorHeader}>
         <EditorPathInput key={path} path={path} cwd={scope.cwd} onOpen={openFile} />
-        {toolbar?.modes === true && (
+        {toolbar?.fileModes === true && (
+          <div className={css.editorModeToggle} aria-label={t('editorFileMode')}>
+            <button
+              type="button"
+              className={clsx(css.editorModeButton, toolbar.fileMode !== 'diff' && css.editorModeActive)}
+              aria-pressed={toolbar.fileMode !== 'diff'}
+              onClick={() => { controlsRef.current?.setFileMode?.('file') }}
+            >
+              {t('editorFile')}
+            </button>
+            <button
+              type="button"
+              className={clsx(css.editorModeButton, toolbar.fileMode === 'diff' && css.editorModeActive)}
+              aria-pressed={toolbar.fileMode === 'diff'}
+              onClick={() => { controlsRef.current?.setFileMode?.('diff') }}
+            >
+              {t('editorDiff')}
+            </button>
+          </div>
+        )}
+        {toolbar?.modes === true && toolbar.fileMode !== 'diff' && (
           <div className={css.editorModeToggle}>
             <button
               type="button"
@@ -461,7 +492,7 @@ export function EditorHost(props: {
           </div>
         )}
         {toolbar?.dirty === true && <span className={css.dirtyDot} title={t('unsaved')} />}
-        {toolbar?.editable === true && (
+        {toolbar?.editable === true && toolbar.fileMode !== 'diff' && (
           <button
             type="button"
             className={css.iconButton}
@@ -547,7 +578,7 @@ export function EditorHost(props: {
                 expanded={expanded}
                 revealed={revealed}
                 onToggle={onToggleDir}
-                onOpenFile={openFile}
+                onOpenFile={openDockedFile}
                 onOpenFileNewTab={openFileNewTab}
                 onOpenFileSide={openFileSide}
                 openWithTargets={openWithTargets}

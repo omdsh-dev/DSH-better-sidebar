@@ -242,6 +242,10 @@ export const api = {
   /** Full patch text of one commit (diff display for the history rows). */
   gitCommitDiff: (scope: SessionScope, hash: string, worktree?: string, signal?: AbortSignal) =>
     call<{ diff: string }>('git.commit-diff', gitPayload(scope, worktree, { hash }), signal),
+  /** Text content of one file at a Git revision. `null` means the revision
+   *  has no blob for the path (new or untracked file). */
+  gitShow: (scope: SessionScope, rev: string, path: string, signal?: AbortSignal) =>
+    call<{ content: string | null }>('git.show', scopePayload(scope, { rev, path }), signal),
   /** Discard the worktree changes of one file (the index is untouched). */
   gitDiscard: (scope: SessionScope, path: string, worktree?: string) =>
     call<{ ok: true }>('git.discard', gitPayload(scope, worktree, { path })),
