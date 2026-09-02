@@ -104,8 +104,9 @@ describe('HTML preview iframe sandbox', () => {
     })))
     expect(html).not.toContain('<iframe')
     expect(html).not.toContain('/sidebar/html/')
-    // The markdown is rendered into markup, not framed.
-    expect(html).toContain('<h1')
+    // MDXEditor with source/preview support hydrates its document on the
+    // client; SSR still pins the dedicated editor surface (never a frame).
+    expect(html).toContain('data-markdown-editor="true"')
   })
 })
 

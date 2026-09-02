@@ -8,6 +8,10 @@
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import * as React from 'react'
+import * as ReactJsxRuntime from 'react/jsx-runtime'
+import * as ReactDom from 'react-dom'
+import * as ReactDomClient from 'react-dom/client'
 // Browser globals first: chunk bodies probe `self`/`document` at evaluation
 // (xterm's UMD wrapper, CodeMirror's UA probe).
 import './browser-globals.ts'
@@ -37,6 +41,13 @@ describe('built chunk artifacts', () => {
   it('each chunk factory materializes through a require over the platform externals', () => {
     const registry = g.__dshChunks__ as Record<string, unknown>
     const table = new Map<string, unknown>(CHUNK_EXTERNALS.map(spec => [spec, { spec }]))
+    // Editor dependencies initialize React contexts at module evaluation.
+    // Use the real platform runtime for React externals while retaining
+    // sentinels for the DSH modules whose exports are only read on render.
+    table.set('react', React)
+    table.set('react/jsx-runtime', ReactJsxRuntime)
+    table.set('react-dom', ReactDom)
+    table.set('react-dom/client', ReactDomClient)
     for (const name of CHUNKS) {
       const factory = registry[name] as (require: (spec: string) => unknown) => Record<string, unknown>
       expect(() => factory((spec) => {

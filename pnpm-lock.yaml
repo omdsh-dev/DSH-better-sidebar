@@ -83,6 +83,9 @@ importers:
       '@mdxeditor/editor':
         specifier: 4.2.3
         version: 4.2.3(@codemirror/language@6.12.4)(@lezer/highlight@1.2.3)(@types/react-dom@18.3.1)(@types/react@18.3.31)(react-dom@18.2.0(react@18.2.0))(react@18.2.0)(typescript@5.6.2)(yjs@13.6.32)
+      '@mdxeditor/gurx':
+        specifier: 1.2.4
+        version: 1.2.4(react-dom@18.2.0(react@18.2.0))(react@18.2.0)
       clsx:
         specifier: ^2.1.1
         version: 2.1.1

@@ -444,6 +444,16 @@ export function EditorHost(props: {
     <div className={css.editor}>
       <div className={css.editorHeader}>
         <EditorPathInput key={path} path={path} cwd={scope.cwd} onOpen={openFile} />
+        {toolbar !== null && (
+          <div className={css.editorStateSlot} data-editor-status-slot>
+            <span className={css.editorStateIndicator}>
+              {toolbar.dirty === true && <span className={css.dirtyDot} title={t('unsaved')} />}
+            </span>
+            <span className={clsx(css.editorStatus, toolbar.saveState === 'failed' && css.editorStatusError)}>
+              {saveLabel}
+            </span>
+          </div>
+        )}
         {toolbar?.fileModes === true && (
           <div className={css.editorModeToggle} aria-label={t('editorFileMode')}>
             <button
@@ -491,8 +501,7 @@ export function EditorHost(props: {
             </button>
           </div>
         )}
-        {toolbar?.dirty === true && <span className={css.dirtyDot} title={t('unsaved')} />}
-        {toolbar?.editable === true && toolbar.fileMode !== 'diff' && (
+        {toolbar?.editable === true && (
           <button
             type="button"
             className={css.iconButton}
@@ -502,9 +511,6 @@ export function EditorHost(props: {
           >
             <IconCheckOutline16 size={14} />
           </button>
-        )}
-        {saveLabel !== '' && (
-          <span className={clsx(css.editorStatus, toolbar?.saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>
         )}
         {toolbar !== null && (
           <button

@@ -50,6 +50,7 @@ if (g.navigator === undefined) {
 
 if (g.window === undefined) {
   g.window = {
+    document: g.document,
     clearTimeout: () => {},
     setTimeout: (_fn: () => void) => 0,
     innerWidth: 1024,

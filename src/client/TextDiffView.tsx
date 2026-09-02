@@ -1,11 +1,13 @@
 /**
- * Read-only HEAD-vs-current text comparison for the built-in editor. Heavy
- * CodeMirror merge code stays in the existing editor lazy chunk because this
- * module is only imported by TextEditor.
+ * HEAD-vs-current text comparison for the built-in editor. HEAD stays
+ * read-only while the current document is editable and synchronized back to
+ * TextEditor. Heavy CodeMirror merge code stays in the existing editor lazy
+ * chunk because this module is only imported by TextEditor.
  */
 import { useEffect, useRef, useState } from 'react'
 import { EditorState, type Extension } from '@codemirror/state'
-import { EditorView, lineNumbers } from '@codemirror/view'
+import { EditorView, keymap, lineNumbers } from '@codemirror/view'
+import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import {
   MergeView,
   getChunks,
@@ -29,20 +31,25 @@ import css from './sidebar.module.css'
 
 export type TextDiffLayout = 'split' | 'unified'
 
+/** CodeMirror defaults to scanLimit=500, which falls back to a coarse diff
+ * for long prose blocks. Keep detailed character matching useful for normal
+ * source/Markdown files while bounding worst-case main-thread work. */
+export const TEXT_DIFF_CONFIG = { scanLimit: 10_000, timeout: 250 } as const
+
 export interface TextDiffViewProps {
   original: string
   current: string
   path: string
   dark: boolean
+  onCurrentChange: (current: string) => void
+  onSave: () => void
 }
 
-/** Common read-only editor extensions for both sides of the comparison. */
+/** Shared presentation extensions for both sides of the comparison. */
 function diffEditorExtensions(path: string, dark: boolean): Extension[] {
   const language = languageForPath(path)
   const theme = new CmThemeCompartment()
   return [
-    EditorState.readOnly.of(true),
-    EditorView.editable.of(false),
     EditorView.lineWrapping,
     lineNumbers(),
     cmSurfaceTheme,
@@ -51,27 +58,67 @@ function diffEditorExtensions(path: string, dark: boolean): Extension[] {
   ]
 }
 
-export function TextDiffView({ original, current, path, dark }: TextDiffViewProps) {
+/** HEAD is an immutable baseline, never an editing target. */
+function readOnlyExtensions(path: string, dark: boolean): Extension[] {
+  return [
+    ...diffEditorExtensions(path, dark),
+    EditorState.readOnly.of(true),
+    EditorView.editable.of(false),
+  ]
+}
+
+export function TextDiffView({ original, current, path, dark, onCurrentChange, onSave }: TextDiffViewProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const activeViewRef = useRef<EditorView | null>(null)
+  const currentDocumentRef = useRef(current)
+  const onCurrentChangeRef = useRef(onCurrentChange)
+  const onSaveRef = useRef(onSave)
+  const syncingExternalRef = useRef(false)
   const [layout, setLayout] = useState<TextDiffLayout>('split')
   const [collapse, setCollapse] = useState(false)
   const [chunkCount, setChunkCount] = useState(0)
+
+  onCurrentChangeRef.current = onCurrentChange
+  onSaveRef.current = onSave
 
   useEffect(() => {
     const host = hostRef.current
     if (host === null) return
     const collapseUnchanged = collapse ? { margin: 3, minSize: 4 } : undefined
     let destroy: () => void
+    const editableExtensions: Extension[] = [
+      ...diffEditorExtensions(path, dark),
+      history(),
+      EditorState.tabSize.of(2),
+      EditorView.contentAttributes.of({ spellcheck: 'false' }),
+      EditorView.updateListener.of((update) => {
+        if (!update.docChanged) return
+        const next = update.state.doc.toString()
+        currentDocumentRef.current = next
+        const chunks = getChunks(update.state)
+        if (chunks !== null) setChunkCount(chunks.chunks.length)
+        if (!syncingExternalRef.current) onCurrentChangeRef.current(next)
+      }),
+      keymap.of([
+        {
+          key: 'Mod-s',
+          preventDefault: true,
+          run: () => { onSaveRef.current(); return true },
+        },
+        ...defaultKeymap,
+        ...historyKeymap,
+      ]),
+    ]
 
     if (layout === 'split') {
       const merge = new MergeView({
-        a: { doc: original, extensions: diffEditorExtensions(path, dark) },
-        b: { doc: current, extensions: diffEditorExtensions(path, dark) },
+        a: { doc: original, extensions: readOnlyExtensions(path, dark) },
+        b: { doc: currentDocumentRef.current, extensions: editableExtensions },
         parent: host,
         highlightChanges: true,
         gutter: true,
         collapseUnchanged,
+        diffConfig: TEXT_DIFF_CONFIG,
       })
       activeViewRef.current = merge.b
       setChunkCount(merge.chunks.length)
@@ -79,15 +126,17 @@ export function TextDiffView({ original, current, path, dark }: TextDiffViewProp
     } else {
       const view = new EditorView({
         state: EditorState.create({
-          doc: current,
+          doc: currentDocumentRef.current,
           extensions: [
-            ...diffEditorExtensions(path, dark),
+            ...editableExtensions,
             unifiedMergeView({
               original,
               highlightChanges: true,
               gutter: true,
               mergeControls: false,
+              allowInlineDiffs: true,
               collapseUnchanged,
+              diffConfig: TEXT_DIFF_CONFIG,
             }),
           ],
         }),
@@ -102,7 +151,22 @@ export function TextDiffView({ original, current, path, dark }: TextDiffViewProp
       activeViewRef.current = null
       destroy()
     }
-  }, [original, current, path, dark, layout, collapse])
+  }, [original, path, dark, layout, collapse])
+
+  // Content may also change through the hidden primary editor (for example,
+  // a host refresh or another editor surface). Update the live diff document
+  // in place so external synchronization does not destroy its undo history.
+  useEffect(() => {
+    const view = activeViewRef.current
+    currentDocumentRef.current = current
+    if (view === null || view.state.doc.toString() === current) return
+    syncingExternalRef.current = true
+    try {
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: current } })
+    } finally {
+      syncingExternalRef.current = false
+    }
+  }, [current])
 
   const navigate = (direction: 'previous' | 'next'): void => {
     const view = activeViewRef.current

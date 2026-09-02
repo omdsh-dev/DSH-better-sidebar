@@ -320,10 +320,14 @@ describe('EditorHost (files window)', () => {
       component: (viewerProps) => {
         useEffect(() => {
           viewerProps.onToolbarControls?.({
+            setFileMode: (next) => { calls.push(`file:${next}`) },
             setMode: (next) => { calls.push(`mode:${next}`) },
             save: () => { calls.push('save') },
           })
-          viewerProps.onToolbarState?.({ modes: true, mode: 'preview', dirty: true, editable: true, saveState: 'idle' })
+          viewerProps.onToolbarState?.({
+            fileModes: true, fileMode: 'file', modes: true, mode: 'preview',
+            dirty: true, editable: true, saveState: 'idle',
+          })
           return () => { viewerProps.onToolbarControls?.(null) }
         }, [])
         return null
@@ -342,6 +346,9 @@ describe('EditorHost (files window)', () => {
       expect(buttons.map(b => b.textContent)).toContain('Edit')
       expect(header.querySelector('button[aria-label="Save"]')).not.toBeNull()
       expect(header.querySelector('[title="Unsaved"]')).not.toBeNull()
+      const status = header.querySelector('[data-editor-status-slot]')!
+      const fileMode = header.querySelector('[aria-label="File view mode"]')!
+      expect(status.compareDocumentPosition(fileMode) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
       // The header commands reach the viewer's registered controls.
       act(() => { buttons.find(b => b.textContent === 'Edit')!.click() })
       act(() => { header.querySelector<HTMLButtonElement>('button[aria-label="Save"]')!.click() })

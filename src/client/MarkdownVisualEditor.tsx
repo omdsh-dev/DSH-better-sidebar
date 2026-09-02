@@ -5,6 +5,8 @@
  * only the imperative surface TextEditor needs for refresh/save.
  */
 import { forwardRef, useImperativeHandle, useMemo, useRef } from 'react'
+import clsx from 'clsx'
+import { useCell } from '@mdxeditor/gurx'
 import {
   BlockTypeSelect,
   BoldItalicUnderlineToggles,
@@ -23,6 +25,7 @@ import {
   UndoRedo,
   codeBlockPlugin,
   codeMirrorPlugin,
+  diffSourcePlugin,
   frontmatterPlugin,
   headingsPlugin,
   imagePlugin,
@@ -34,13 +37,91 @@ import {
   tablePlugin,
   thematicBreakPlugin,
   toolbarPlugin,
+  viewMode$,
 } from '@mdxeditor/editor'
 import '@mdxeditor/editor/style.css'
+import { t } from './locales.ts'
 import css from './sidebar.module.css'
 
 export interface MarkdownVisualEditorHandle {
   getMarkdown(): string
   setMarkdown(markdown: string): void
+}
+
+/** Source/preview belongs to the content toolbar, not the file header. The
+ *  MDX realm remains the single document owner in both modes. */
+function MarkdownModeToggle() {
+  const [mode, setMode] = useCell(viewMode$)
+  return (
+    <div
+      className={clsx(css.editorModeToggle, css.markdownModeToggle)}
+      role="group"
+      aria-label={t('editorContentMode')}
+    >
+      <button
+        type="button"
+        className={clsx(css.editorModeButton, mode === 'source' && css.editorModeActive)}
+        aria-pressed={mode === 'source'}
+        onClick={() => { setMode('source') }}
+      >
+        {t('source')}
+      </button>
+      <button
+        type="button"
+        className={clsx(css.editorModeButton, mode === 'rich-text' && css.editorModeActive)}
+        aria-pressed={mode === 'rich-text'}
+        onClick={() => { setMode('rich-text') }}
+      >
+        {t('preview')}
+      </button>
+    </div>
+  )
+}
+
+function MarkdownToolbarContents() {
+  const [mode] = useCell(viewMode$)
+  return (
+    <>
+      <div
+        className={clsx(css.markdownToolbarActions, mode !== 'rich-text' && css.markdownToolbarActionsHidden)}
+        data-markdown-toolbar-actions
+        data-hidden={mode !== 'rich-text'}
+        aria-hidden={mode !== 'rich-text'}
+      >
+        <ConditionalContents options={[
+          {
+            when: editor => editor?.editorType === 'codeblock',
+            contents: () => (
+              <>
+                <ChangeCodeMirrorLanguage />
+                <Separator />
+                <UndoRedo />
+              </>
+            ),
+          },
+          {
+            fallback: () => (
+              <>
+                <UndoRedo />
+                <Separator />
+                <BlockTypeSelect />
+                <BoldItalicUnderlineToggles />
+                <CodeToggle />
+                <Separator />
+                <ListsToggle />
+                <CreateLink />
+                <InsertImage />
+                <InsertTable />
+                <InsertCodeBlock />
+                <InsertThematicBreak />
+              </>
+            ),
+          },
+        ]} />
+      </div>
+      <MarkdownModeToggle />
+    </>
+  )
 }
 
 export const MarkdownVisualEditor = forwardRef<MarkdownVisualEditorHandle, {
@@ -91,39 +172,9 @@ export const MarkdownVisualEditor = forwardRef<MarkdownVisualEditorHandle, {
       },
     }),
     markdownShortcutPlugin(),
+    diffSourcePlugin({ viewMode: 'rich-text' }),
     toolbarPlugin({
-      toolbarContents: () => (
-        <ConditionalContents options={[
-          {
-            when: editor => editor?.editorType === 'codeblock',
-            contents: () => (
-              <div className={css.markdownToolbarActions}>
-                <ChangeCodeMirrorLanguage />
-                <Separator />
-                <UndoRedo />
-              </div>
-            ),
-          },
-          {
-            fallback: () => (
-              <div className={css.markdownToolbarActions}>
-                <UndoRedo />
-                <Separator />
-                <BlockTypeSelect />
-                <BoldItalicUnderlineToggles />
-                <CodeToggle />
-                <Separator />
-                <ListsToggle />
-                <CreateLink />
-                <InsertImage />
-                <InsertTable />
-                <InsertCodeBlock />
-                <InsertThematicBreak />
-              </div>
-            ),
-          },
-        ]} />
-      ),
+      toolbarContents: MarkdownToolbarContents,
     }),
   ], [imagePreviewHandler])
 

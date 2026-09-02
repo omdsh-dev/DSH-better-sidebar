@@ -70,14 +70,16 @@ export function TextEditor(props: FileViewerProps) {
   const [diffBaseline, setDiffBaseline] = useState<DiffBaseline>({ status: 'idle' })
   /** The editor's current text (null until the first visual/source edit). */
   const [draft, setDraft] = useState<string | null>(null)
+  /** Synchronous draft mirror used by save shortcuts before React commits. */
+  const draftRef = useRef<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
   const [markdownError, setMarkdownError] = useState('')
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<CodeMirrorView | null>(null)
   const markdownRef = useRef<MarkdownVisualEditorHandle | null>(null)
-  /** Saved baseline used to clear dirty when a visual edit returns to disk. */
-  const savedMarkdownRef = useRef(content ?? '')
+  /** Saved baseline used to clear dirty when either editor returns to disk. */
+  const savedTextRef = useRef(content ?? '')
   const savingRef = useRef(false)
   /** The theme compartment of the current view (reconfigured on scheme flip). */
   const themeCompRef = useRef<CmThemeCompartment | null>(null)
@@ -144,11 +146,12 @@ export function TextEditor(props: FileViewerProps) {
     setMode('preview')
     setFileMode('file')
     setDiffBaseline({ status: 'idle' })
+    draftRef.current = null
     setDraft(null)
     setDirty(false)
     setSaveState('idle')
     setMarkdownError('')
-    savedMarkdownRef.current = content ?? ''
+    savedTextRef.current = content ?? ''
     if (markdown && content !== undefined) {
       markdownRef.current?.setMarkdown(content)
     }
@@ -196,8 +199,11 @@ export function TextEditor(props: FileViewerProps) {
         ...(language !== null ? [language] : []),
         CodeMirrorView.updateListener.of((update) => {
           if (update.docChanged) {
-            setDraft(update.state.doc.toString())
-            setDirty(true)
+            const next = update.state.doc.toString()
+            draftRef.current = next
+            setDraft(next)
+            setDirty(next !== savedTextRef.current)
+            setSaveState('idle')
           }
         }),
         keymap.of([
@@ -293,17 +299,19 @@ export function TextEditor(props: FileViewerProps) {
 
   const save = (): void => {
     const text = markdown
-      ? markdownRef.current?.getMarkdown() ?? draft ?? content
+      ? draftRef.current ?? markdownRef.current?.getMarkdown() ?? content
       : viewRef.current?.state.doc.toString()
     if (text === undefined || savingRef.current) return
     savingRef.current = true
     setSaveState('saving')
     api.fsWrite(scope, path, text).then(() => {
       savingRef.current = false
+      savedTextRef.current = text
       if (markdown) {
-        savedMarkdownRef.current = text
+        draftRef.current = text
         setDraft(text)
       } else {
+        draftRef.current = null
         setDraft(null)
       }
       setDirty(false)
@@ -326,17 +334,36 @@ export function TextEditor(props: FileViewerProps) {
   )
 
   const handleMarkdownChange = (next: string, initialMarkdownNormalize: boolean): void => {
+    draftRef.current = next
     setDraft(next)
     if (initialMarkdownNormalize) {
       // The rich editor may normalize equivalent source during its initial
       // import. Treat that serialized form as the clean visual baseline so
       // editing and then reverting does not create a false dirty state.
-      savedMarkdownRef.current = next
+      savedTextRef.current = next
       return
     }
     setMarkdownError('')
-    setDirty(next !== savedMarkdownRef.current)
+    setDirty(next !== savedTextRef.current)
     setSaveState('idle')
+  }
+
+  /** Keep the diff editor and the primary file document as two views over the
+   * same draft. Saving always reads the primary document model, so updating
+   * that model here is part of the editor contract rather than UI mirroring. */
+  const handleDiffCurrentChange = (next: string): void => {
+    draftRef.current = next
+    setDraft(next)
+    setDirty(next !== savedTextRef.current)
+    setSaveState('idle')
+    if (markdown) {
+      markdownRef.current?.setMarkdown(next)
+    } else {
+      const view = viewRef.current
+      if (view !== null && view.state.doc.toString() !== next) {
+        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: next } })
+      }
+    }
   }
 
   /**
@@ -418,6 +445,14 @@ export function TextEditor(props: FileViewerProps) {
     <>
       {!hostToolbar && (
       <div className={css.editorHeader}>
+        <div className={css.editorStateSlot} data-editor-status-slot>
+          <span className={css.editorStateIndicator}>
+            {dirty && <span className={css.dirtyDot} title={t('unsaved')} />}
+          </span>
+          <span className={clsx(css.editorStatus, saveState === 'failed' && css.editorStatusError)}>
+            {saveLabel}
+          </span>
+        </div>
         {editable && (
           <div className={css.editorModeToggle} aria-label={t('editorFileMode')}>
             <button
@@ -456,8 +491,7 @@ export function TextEditor(props: FileViewerProps) {
             </button>
           </div>
         )}
-        {dirty && <span className={css.dirtyDot} title={t('unsaved')} />}
-        {editable && fileMode === 'file' && (
+        {editable && (
           <button
             type="button"
             className={css.iconButton}
@@ -468,7 +502,6 @@ export function TextEditor(props: FileViewerProps) {
             <IconCheckOutline16 />
           </button>
         )}
-        {saveLabel !== '' && <span className={clsx(css.editorStatus, saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>}
       </div>
       )}
       <div className={clsx(css.editorFileSurface, fileMode === 'diff' && css.editorFileSurfaceHidden)}>
@@ -484,6 +517,7 @@ export function TextEditor(props: FileViewerProps) {
       {markdown && editable && (
         <div
           className={css.editorMarkdownVisual}
+          data-markdown-editor
           ref={mdRef}
           onMouseUp={handleMarkdownMouseUp}
           onScrollCapture={hidePopup}
@@ -536,7 +570,14 @@ export function TextEditor(props: FileViewerProps) {
         <div className={css.editorError}>{t('editorDiffLoadError', { error: diffBaseline.message })}</div>
       )}
       {fileMode === 'diff' && diffBaseline.status === 'ready' && (
-        <TextDiffView original={diffBaseline.content} current={currentText} path={path} dark={dark} />
+        <TextDiffView
+          original={diffBaseline.content}
+          current={currentText}
+          path={path}
+          dark={dark}
+          onCurrentChange={handleDiffCurrentChange}
+          onSave={save}
+        />
       )}
       {fileMode === 'file' && popup !== null && createPortal(
         <form

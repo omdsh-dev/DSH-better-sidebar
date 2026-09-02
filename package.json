@@ -132,6 +132,7 @@
     "@codemirror/view": "^6.43.8",
     "@lezer/highlight": "^1.2.3",
     "@mdxeditor/editor": "4.2.3",
+    "@mdxeditor/gurx": "1.2.4",
     "clsx": "^2.1.1",
     "dompurify": "^3.4.14",
     "mermaid": "^11.16.1",

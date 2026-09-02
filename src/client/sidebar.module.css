@@ -1716,6 +1716,10 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 .editorStatus {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font: var(--dsw-font-xxxs-11);
   color: var(--dsw-alias-label-tertiary);
 }
@@ -1730,6 +1734,28 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   border-radius: 50%;
   background: var(--dsw-alias-state-warn-primary);
   flex: none;
+}
+
+/* A fixed status lane before File/Diff. Dirty and save-state transitions only
+   change contents inside the lane, so the controls to its right never move. */
+.editorStateSlot {
+  flex: 0 0 88px;
+  width: 88px;
+  min-width: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.editorStateIndicator {
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .editorPlaceholder {
@@ -2152,12 +2178,26 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 .textDiffSurface :global(.cm-merge-a .cm-changedLine),
 .textDiffSurface :global(.cm-deletedChunk) {
-  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 7%, transparent);
 }
 
 .textDiffSurface :global(.cm-merge-b .cm-changedLine),
 .textDiffSurface :global(.cm-inlineChangedLine) {
-  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 7%, transparent);
+}
+
+/* Whole-line tint supplies context; these stronger marks identify the exact
+   characters that changed, matching dedicated desktop diff tools. */
+.textDiffSurface :global(.cm-merge-a .cm-changedText),
+.textDiffSurface :global(.cm-deletedChunk .cm-deletedText) {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 30%, transparent);
+}
+
+.textDiffSurface :global(.cm-merge-b .cm-changedText),
+.textDiffSurface :global(.cm-inlineChangedLine .cm-changedText) {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 30%, transparent);
 }
 
 .textDiffSurface :global(.cm-collapsedLines) {
@@ -2292,12 +2332,47 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 .markdownToolbarActions {
-  flex: 1 1 100%;
+  flex: 1 1 auto;
   min-width: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 2px;
+}
+
+/* Keep the preview toolbar's exact layout footprint in source mode. Removing
+   these controls would make the toolbar shrink and move the document up. */
+.markdownToolbarActionsHidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.markdownModeToggle {
+  position: sticky;
+  right: 0;
+  margin-left: auto;
+  background: var(--dsw-alias-bg-layer-1);
+  z-index: 1;
+}
+
+.markdownVisualRoot :global(.mdxeditor-diff-source-wrapper),
+.markdownVisualRoot :global(.mdxeditor-source-editor),
+.markdownVisualRoot :global(.mdxeditor-source-editor .cm-editor) {
+  min-height: 0;
+  height: 100%;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+}
+
+.markdownVisualRoot :global(.mdxeditor-source-editor .cm-gutters) {
+  border-right-color: var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.markdownVisualRoot :global(.mdxeditor-source-editor .cm-activeLine),
+.markdownVisualRoot :global(.mdxeditor-source-editor .cm-activeLineGutter) {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .markdownVisualRoot :global(.mdxeditor-root-contenteditable) {
