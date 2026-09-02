@@ -79,7 +79,9 @@
     "prepare": "tsdown",
     "test": "vitest run",
     "test:mount": "bash scripts/e2e-mount.sh",
-    "check:consumer-types": "bash scripts/check-consumer-types.sh"
+    "check:consumer-types": "bash scripts/check-consumer-types.sh",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "license": "MIT",
   "peerDependencies": {
@@ -171,6 +173,7 @@
     "cordis": "^4.0.0-rc.8",
     "jsdom": "^29.1.1",
     "lightningcss": "^1.32.0",
+    "prettier": "^3.9.6",
     "react": "^18.2.0",
     "react-dom": "18.2.0",
     "tsdown": "^0.22.2",

@@ -1,0 +1,8 @@
+node_modules
+lib
+dist
+coverage
+pnpm-lock.yaml
+.pnpm-store
+*.min.js
+*.min.css
