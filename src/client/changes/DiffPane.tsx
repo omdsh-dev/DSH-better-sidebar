@@ -23,6 +23,8 @@ import { buildDiffSegments, diffLines, diffStats, parseUnifiedDiff, unifiedSegme
 import { parseReadContent, parseReadLines, type FileOp } from './ops.ts'
 import { rewriteLocalImageUrls } from '../markdown-images.ts'
 import { markdownTextProps } from '../markdown-labels.tsx'
+import { splitMermaidBlocks } from '../mermaid-blocks.ts'
+import { LazyMermaidMarkdown } from '../mermaid-lazy.tsx'
 import css from './changes.module.css'
 import diffCss from '../diff/diff.module.css'
 
@@ -183,6 +185,13 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
       : ''),
     [mdOp, reading, readingSrc, scope, target],
   )
+  // Mermaid fences render through the same chunk-resident renderer the editor
+  // preview uses (one MarkdownText pass with the mermaid fences lifted out);
+  // the plain single-pass path stays byte-for-byte for documents without any.
+  const readingHasMermaid = useMemo(
+    () => (readingText !== '' ? splitMermaidBlocks(readingText).some((block) => block.kind === 'mermaid') : false),
+    [readingText],
+  )
   const codeLabels = { copyLabel: t('copy'), copiedLabel: t('copied') }
 
   // Header stats for git targets come off the parsed patch text.
@@ -310,7 +319,9 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
         ? (
           <div className={css.paneBody}>
             <div className={css.mdBody}>
-              <MarkdownText {...markdownTextProps(readingText, codeLabels)} />
+              {readingHasMermaid
+                ? <LazyMermaidMarkdown text={readingText} codeLabels={codeLabels} />
+                : <MarkdownText {...markdownTextProps(readingText, codeLabels)} />}
             </div>
           </div>
         )

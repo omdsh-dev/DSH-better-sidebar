@@ -31,11 +31,11 @@ import type { SessionScope } from './api.ts'
 import css from './sidebar.module.css'
 
 /** The chunk-resident markdown renderer (mermaid lazy chunk), shared with the
- *  legacy no-HTML preview path in TextEditor. */
-export const LazyMermaidMarkdown = lazyChunkComponent<MermaidMarkdownProps>(
-  'mermaid',
-  (mod) => mod.MermaidMarkdown as ComponentType<MermaidMarkdownProps> | undefined,
-)
+ *  legacy no-HTML preview path in TextEditor. Defined in mermaid-lazy.tsx (a
+ *  light module) so core-bundle consumers can import the stub without
+ *  dragging DOMPurify along. */
+export { LazyMermaidMarkdown } from './mermaid-lazy.tsx'
+import { LazyMermaidMarkdown } from './mermaid-lazy.tsx'
 
 /** Everything the sanitizers need to resolve local media + scope the route. */
 export interface MarkdownHtmlMedia {
