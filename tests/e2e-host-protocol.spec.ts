@@ -11,9 +11,9 @@
  *   the envelope method equal to the path endpoint).
  *
  * The shapes were transcribed from the deepseek-harness sources at tag
- * dsh-v0.1.2-alpha.1 and re-verified on the npm-published 0.1.2-alpha.2
- * and 0.1.2-alpha.3 (packages/client/connection, packages/api/gateway,
- * packages/bundle/web-app).
+ * dsh-v0.1.2-alpha.1 and re-verified on the npm-published 0.1.2-alpha.2,
+ * 0.1.2-alpha.3, and 0.1.2-alpha.5 (packages/client/connection,
+ * packages/api/gateway, packages/bundle/web-app).
  */
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import type { APIRequestContext } from '@playwright/test'

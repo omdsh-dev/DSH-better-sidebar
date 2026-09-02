@@ -76,6 +76,13 @@ interface ConfirmState {
  *  floods the panel at once (the end of the log is reached by paging). */
 const LOG_BATCH = 20
 
+/** Every Nth silent poll re-lists worktrees (and re-runs auto-selection): the
+ *  2s tick only needs the selected checkout's STATUS, and re-listing spawned
+ *  a second git process per tick for a list that almost never changes — a
+ *  linked checkout the agent creates mid-session is picked up within ~30s
+ *  instead of 2s. */
+const WORKTREE_RECHECK_TICKS = 15
+
 export interface GitLensProps {
   scope: SessionScope
   /** The sidebar store: reads the `workspaceFence` pref (see the open guard below). */
@@ -123,6 +130,8 @@ export function GitLens(props: GitLensProps) {
    *  callback and re-trigger the mount effect — an N→N+1 fetch loop). */
   const chosenPathRef = useRef<string | undefined>(undefined)
   useEffect(() => { chosenPathRef.current = selectedWorktree }, [selectedWorktree])
+  /** Silent polls since the last worktree re-list (see WORKTREE_RECHECK_TICKS). */
+  const silentTickCount = useRef(0)
 
   const gitScope: SessionScope = repoRoot === undefined ? scope : { ...scope, repoRoot }
 
@@ -160,6 +169,15 @@ export function GitLens(props: GitLensProps) {
     refreshInFlight.current = true
     let generation = refreshGeneration.current
     try {
+      // Fast path for the ordinary silent tick: the selected checkout's
+      // STATUS is all that changes between worktree re-lists (see
+      // WORKTREE_RECHECK_TICKS) — one git process instead of two.
+      if (silent && chosenPathRef.current !== undefined && (silentTickCount.current += 1) % WORKTREE_RECHECK_TICKS !== 0) {
+        const statusResult = await api.gitStatus(gitScope, chosenPathRef.current)
+        if (generation === refreshGeneration.current) setStatus(statusResult)
+        return
+      }
+      silentTickCount.current = 0
       const listed = await api.gitWorktrees(scope)
       if (generation !== refreshGeneration.current) return
       setWorktrees(listed)
@@ -214,6 +232,7 @@ export function GitLens(props: GitLensProps) {
     refreshInFlight.current = false
     worktreeChosenByUser.current = false
     chosenPathRef.current = undefined
+    silentTickCount.current = 0
     setSelectedWorktree(undefined)
   }, [scope.sessionId, scope.cwd])
   useEffect(() => { void refresh() }, [refresh])

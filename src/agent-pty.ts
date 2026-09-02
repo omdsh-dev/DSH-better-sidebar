@@ -41,6 +41,28 @@ export function clampDims(cols: number, rows: number): { cols: number; rows: num
 }
 
 /**
+ * Best-effort resize for WebSocket-driven terminal views. Layout animation
+ * can briefly produce unusable dimensions, and node-pty can reject a resize
+ * after the socket setup's outer try/catch has returned. Ignore that one
+ * frame so the host stays alive and a later valid measurement can retry.
+ * Returns whether node-pty accepted the resize.
+ */
+export function tryResizePty(
+  pty: Pick<IPty, 'resize'>,
+  cols: number,
+  rows: number,
+): boolean {
+  if (!Number.isFinite(cols) || !Number.isFinite(rows)) return false
+  const dims = clampDims(cols, rows)
+  try {
+    pty.resize(dims.cols, dims.rows)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * Serializable snapshot of one agent terminal — the shape the model sees
  * through `terminal_list` and the sidebar sees through the push endpoint.
  * Carries no pty reference and no transcript (those are reached through

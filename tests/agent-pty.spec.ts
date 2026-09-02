@@ -5,8 +5,14 @@
  * console noise from node-pty's ConPTY module on Windows is expected and
  * does not affect the assertions.
  */
-import { describe, expect, it } from 'vitest'
-import { AgentPtyRegistry, ALLOWED_SIGNALS, snapshotOf, type AgentTerminalSnapshot } from '../src/agent-pty.ts'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  AgentPtyRegistry,
+  ALLOWED_SIGNALS,
+  snapshotOf,
+  tryResizePty,
+  type AgentTerminalSnapshot,
+} from '../src/agent-pty.ts'
 
 /**
  * Resolve a shell binary for tests: on Windows use PowerShell (available on
@@ -32,6 +38,35 @@ async function waitForTranscript(
   const handle = registry.get(uuid)
   return handle?.transcript ?? ''
 }
+
+describe('tryResizePty', () => {
+  it('clamps valid dimensions before resizing', () => {
+    const resize = vi.fn()
+
+    expect(tryResizePty({ resize }, 5000, 80.9)).toBe(true)
+    expect(resize).toHaveBeenCalledWith(1024, 80)
+  })
+
+  it('contains a node-pty resize failure', () => {
+    const resize = vi.fn(() => {
+      throw new Error('Usage: pty.resize(fd, cols, rows, xPixel, yPixel)')
+    })
+
+    expect(tryResizePty({ resize }, 80, 24)).toBe(false)
+    expect(resize).toHaveBeenCalledWith(80, 24)
+  })
+
+  it.each([
+    [Number.NaN, 24],
+    [Number.POSITIVE_INFINITY, 24],
+    [80, Number.NEGATIVE_INFINITY],
+  ])('rejects non-finite dimensions without calling node-pty (%s, %s)', (cols, rows) => {
+    const resize = vi.fn()
+
+    expect(tryResizePty({ resize }, cols, rows)).toBe(false)
+    expect(resize).not.toHaveBeenCalled()
+  })
+})
 
 describe('AgentPtyRegistry', () => {
   it('creates a terminal with a uuid, writes the command to stdin, and lists it', async () => {

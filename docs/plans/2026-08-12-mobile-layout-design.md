@@ -51,7 +51,7 @@
 
 ### 4.4 行为修正
 
-- `state.ts` `loadState`：窄屏新会话默认 `panelOpen=false`（首开才生效；用户手动展开后照常持久化）。
+- `state.ts` `loadState`：窄屏加载一律以 `panelOpen=false` 开始（包括持久化布局恢复）；仅覆盖抽屉可见性，右侧/底部 pane、tab 与自由窗口状态原样恢复。宽屏仍按持久化值或新会话偏好决定展开状态。
 - `service.ts` `openTab`：窄屏且 seed 带 `path`/`url` 且面板收起 → 自动展开抽屉（dedupe-focus 分支同样生效）；纯类型打开不展开；宽屏行为不变。
 
 ### 4.5 样式（`sidebar.module.css`）
@@ -61,7 +61,7 @@
 ### 4.6 测试
 
 - `tests/breakpoints.spec.ts`：断点边界（767 窄 / 768 宽；1024 明确为宽）。
-- `tests/unit.spec.ts`：`migrateBottomTabs` 4 例（并入第一 leaf 且底部清空/面板关/activePane 重指、右树为 split 时并入最左 leaf、幂等性、空底部树但 activePane 在底部树时重指）+ 窄屏新会话默认收起（stub `window.innerWidth=390`）。
+- `tests/unit.spec.ts`：`migrateBottomTabs` 4 例（并入第一 leaf 且底部清空/面板关/activePane 重指、右树为 split 时并入最左 leaf、幂等性、空底部树但 activePane 在底部树时重指）+ 窄屏新会话默认收起；`tests/state.spec.ts` 守护窄屏恢复强制收起且 pane / free-window 状态不丢，768px 宽屏仍恢复持久化展开值。
 - `tests/service.spec.ts`：窄屏 auto-expand 5 例（390 < 768 仍窄）。
 
 ## 5. 边界情况

@@ -21,13 +21,11 @@ import { registerOpenPathInterception, registerTurnTailInterception } from './in
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
-import { loadExternalDisable, loadPrefs } from './prefs.ts'
+import { loadBootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
-import { LOCALE_NS, attachLocale, attachBetterLocale, t, zh, en,
-  ja, de, fr, pt, ko, ar, hi, id, tr, vi, th, ru, it, nl, sv, pl,
-  zhHK, zhTW, zhMO,
-} from './locales.ts'
+import { LOCALE_NS, attachLocale, attachBetterLocale, t, zh, en } from './locales.ts'
+import { loadChunk } from './chunk-loader.ts'
 import css from './sidebar.module.css'
 import './layout.css'
 
@@ -36,8 +34,10 @@ import './layout.css'
  *  (rc.8+) is the client module system the chunk loader resolves its
  *  externals through; `connection` (0.1.2-alpha.2+) is the Remote transport's
  *  recovery lifecycle the side chat's disconnect banner reads — Cordis guards
- *  service access without inject. */
-export const inject = ['slots', 'sessions', 'workspaces', 'locale', 'modules', 'connection']
+ *  service access without inject. The `remote.session` namespace is NOT here:
+ *  it mounts asynchronously, so the open-path interception reaches it through
+ *  `ctx.inject` (see intercept.tsx). */
+export const inject = ['slots', 'sessions', 'locale', 'modules', 'connection']
 
 /**
  * Error boundary over the sidebar tree (root scope): a render error in the
@@ -82,7 +82,12 @@ export function apply(ctx: Context): void {
   // the ja dict once the store becomes available.
   ctx.effect(() => {
     let dispose: (() => void) | undefined
+    // Guards the async chunk registration below: a sync() re-run (or fiber
+    // disposal) that lands while the chunk is still in flight must render
+    // that registration moot.
+    let generation = 0
     const sync = (): void => {
+      generation += 1
       dispose?.()
       dispose = undefined
       const store = ctx.get('betterLocale') as
@@ -96,10 +101,17 @@ export function apply(ctx: Context): void {
         | undefined
       attachBetterLocale(store)
       if (store !== undefined) {
-        dispose = store.register(LOCALE_NS, {
-          ja, de, fr, pt, ko, ar, hi, id, tr, vi, th, ru, it, nl, sv, pl,
-          'zh-HK': zhHK, 'zh-TW': zhTW, 'zh-MO': zhMO,
-        })
+        // The 19 override dictionaries ride the lazy `locale` chunk: until
+        // it lands, the store has no betterSidebar entries and t() keeps
+        // the zh/en chain; the store's own revision bump on register
+        // re-renders the chrome once the dicts arrive.
+        const myGeneration = generation
+        void loadChunk('locale')
+          .then(mod => {
+            if (myGeneration !== generation) return
+            dispose = store.register(LOCALE_NS, mod.localeDicts as Record<string, Record<string, string>>)
+          })
+          .catch(() => { /* the dicts stay unregistered; the zh/en chain runs */ })
       }
     }
     // Initial check (picks up the store if better-locale activated first).
@@ -108,6 +120,7 @@ export function apply(ctx: Context): void {
     // activates with a persisted override, and when the user switches).
     const unsubscribe = ctx.locale.subscribe(sync)
     return () => {
+      generation += 1
       unsubscribe()
       dispose?.()
       attachBetterLocale(undefined)
@@ -275,24 +288,26 @@ export function apply(ctx: Context): void {
       }
       const sync = async (): Promise<void> => {
         if (disposed) return
-        // Resolve the user's side card prefs BEFORE the first session seeds,
-        // so a brand-new conversation opens (or stays closed) at the chosen
-        // width from first paint. A settings route failure falls back to the
-        // schema defaults; the sidebar still mounts (a stalled wire gives up
-        // after the timeout and mounts on the defaults).
-        const prefs = await Promise.race([
-          loadPrefs(api),
+        // Resolve the user's side card prefs and the external-disable flag
+        // from ONE settings fetch BEFORE the first session seeds, so a
+        // brand-new conversation opens (or stays closed) at the chosen width
+        // from first paint. A settings route failure falls back to the schema
+        // defaults; the sidebar still mounts (a stalled wire gives up after
+        // the timeout and mounts on the defaults — the external-disable check
+        // rides the same fetch, so one round trip covers both decisions).
+        const decision = await Promise.race([
+          loadBootDecision(api),
           new Promise<null>(resolve => { const timer = window.setTimeout(() => resolve(null), 2000) }),
         ])
-        if (prefs !== null) sidebarStore.setPrefs(prefs)
         if (disposed) return
-        // Mutual exclusion with the dsh-web-ui family right panel: while the
-        // aionui-panel provider is selected, the sidebar must not mount at
-        // all. Re-evaluated on every settings-document update (live switch).
-        const suspended = await loadExternalDisable(api)
-        if (disposed) return
-        sidebarStore.setSuspended(suspended)
-        if (suspended) unmount()
+        if (decision !== null) {
+          sidebarStore.setPrefs(decision.prefs)
+          // Mutual exclusion with the dsh-web-ui family right panel: while the
+          // aionui-panel provider is selected, the sidebar must not mount at
+          // all. Re-evaluated on every settings-document update (live switch).
+          sidebarStore.setSuspended(decision.suspended)
+        }
+        if (decision?.suspended) unmount()
         else mount()
       }
       void sync()

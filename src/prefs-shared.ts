@@ -16,14 +16,17 @@ export interface SidebarPrefs {
   /** Default panel width as a percent of the window width (20–60). */
   defaultWidthPercent: number
   /**
-   * Whether the sidebar auto-activates (opens the panel) and expands the
-   * Subagent page when the current conversation spawns a new subagent.
+   * Whether the sidebar auto-activates the Tasks page when the current
+   * conversation spawns a new subagent. Wide viewports also open the panel;
+   * narrow viewports prepare the tab without opening the full-screen drawer.
    */
   autoOpenSubagent: boolean
   /**
-   * Whether the sidebar auto-activates (opens the panel) and expands the
-   * Jobs page when a NEW background job appears for the current
-   * conversation (any new job id, not just the first one).
+   * Whether the sidebar auto-activates the Tasks page containing the
+   * background-jobs section when a NEW job appears for the current
+   * conversation (any new job id, not just the first one). Wide viewports also
+   * open the panel; narrow viewports prepare the tab without opening the
+   * full-screen drawer.
    */
   autoOpenJobs: boolean
   /**
@@ -63,9 +66,9 @@ export interface SidebarPrefs {
   /**
    * Whether chat-side file opens (tool-row path links, the produced-files
    * row, prose file mentions — every path that funnels through the client
-   * runtime's `ctx.workspaces.openPath`) open in the sidebar editor instead
-   * of the Host OS's default application. On by default; the editor tab's
-   * own enable switch gates it too (both must be on for the takeover).
+   * runtime's `remote.session.openWorkspacePath`) open in the sidebar editor
+   * instead of the Host OS's default application. On by default; the editor
+   * tab's own enable switch gates it too (both must be on for the takeover).
    */
   interceptOpenPath: boolean
   /**

@@ -210,7 +210,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       order: 30,
       single: true,
       // Declarative settings: the auto-open switches render under this row in
-      // the Side card settings page (the Jobs page's own related settings).
+      // the Side card settings page (the Tasks page's related settings).
       settings: {
         toggles: [{
           key: 'autoOpenSubagent',

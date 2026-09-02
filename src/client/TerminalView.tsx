@@ -314,13 +314,23 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
     }
     host.addEventListener('keydown', onKeyDownPasteFallback as unknown as EventListener)
 
+    // Resize streams fire per layout frame during panel open/close
+    // animations; fit() measures glyphs, so coalesce to one fit per
+    // animation frame (same pattern as the core's frame-batcher, kept
+    // local — this view lives in the lazy terminal chunk and does not
+    // import core-bundle modules).
+    let resizeFrame: number | null = null
     const observer = new ResizeObserver(() => {
-      try {
-        fit.fit()
-        sendResize()
-      } catch {
-        // The terminal may be mid-dispose; ignore.
-      }
+      if (resizeFrame !== null) return
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null
+        try {
+          fit.fit()
+          sendResize()
+        } catch {
+          // The terminal may be mid-dispose; ignore.
+        }
+      })
     })
     observer.observe(host)
 
@@ -372,6 +382,7 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
       host.removeEventListener('click', onHostClick)
       host.removeEventListener('paste', onPaste)
       host.removeEventListener('keydown', onKeyDownPasteFallback as unknown as EventListener)
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
       fontSub()
       schemeSub()
       inputSub.dispose()

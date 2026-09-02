@@ -199,11 +199,42 @@ function usableBase(value: string | undefined): string {
 }
 
 /**
+ * Guarantee the stack ends in a generic family, so a font the browser cannot
+ * resolve degrades to a monospace one.
+ *
+ * Without this a stack of unresolvable names (a misspelled family, or one only
+ * installed on the machine running the shell rather than the one running the
+ * browser) falls through to the browser's *standard* font, which is
+ * proportional — xterm then measures its cell from a proportional advance and
+ * the whole grid breaks, rather than merely losing the requested typeface.
+ *
+ * This does not sniff whether the named families exist (an explicit non-goal
+ * of the terminal font design): it only terminates the stack. A stack that
+ * already names a generic family is returned untouched, so a user who
+ * deliberately wrote one keeps it. Generics are matched unquoted only — a
+ * quoted `"monospace"` is a family *name*, not the keyword.
+ *
+ * @param stack - the resolved font-family value.
+ * @returns the stack, ending in a generic family.
+ */
+export function withMonospaceFallback(stack: string): string {
+  const families = splitFamilies(stack)
+  if (families.length === 0) return DEFAULT_TERMINAL_FONT_FAMILY
+  const only = families.length === 1 ? families[0] : undefined
+  if (only !== undefined && CSS_WIDE_KEYWORDS.has(only.toLowerCase())) return DEFAULT_TERMINAL_FONT_FAMILY
+  if (families.some((family) => GENERIC_FAMILIES.has(family.toLowerCase()))) return families.join(', ')
+  return `${families.join(', ')}, monospace`
+}
+
+/**
  * Resolve the xterm font options for the given prefs.
  *
  * The base family keeps its existing precedence — user pref > theme code
- * font > built-in stack — and then {@link withIconFontFallbacks} tops it up
- * so prompt icons resolve regardless of which base won.
+ * font > built-in stack. {@link withMonospaceFallback} then terminates the
+ * stack with a generic family so an unresolvable name degrades to a
+ * monospace instead of the proportional standard font, and finally
+ * {@link withIconFontFallbacks} tops it up so prompt icons resolve
+ * regardless of which base won.
  *
  * @param prefs - the current side card preferences.
  * @param themeFontFamily - the app's theme code font (`--ds-font-family-code`
@@ -218,7 +249,7 @@ export function resolveTerminalFont(
     || usableBase(themeFontFamily)
     || DEFAULT_TERMINAL_FONT_FAMILY
   return {
-    fontFamily: withIconFontFallbacks(base),
+    fontFamily: withIconFontFallbacks(withMonospaceFallback(base)),
     fontSize: clampTerminalFontSize(prefs.terminalFontSize),
   }
 }

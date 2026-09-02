@@ -48,7 +48,18 @@
      hidden box stays a PROGRAMMATICALLY scrollable container, and a
      scrollIntoView fired from panel content (the file tree's "Show in
      folder" reveal) scrolled the host itself — shifting the whole panel,
-     tab bar included, out of the viewport with no way to scroll back. */
+     tab bar included, out of the viewport with no way to scroll back.
+     The same class covers any scroll-into-view fixup — focus moving into
+     an off-viewport region, a nested iframe/workbench claiming focus
+     while it loads — so the guard belongs on the layer itself, not per
+     call site. The `hidden` declaration BEFORE `clip` is an old-engine
+     fallback, not dead style: engines without `clip` support (Safari < 16)
+     drop the `clip` line, which would leave this box `overflow: visible`
+     — no clipping at all, and the page-draggable regression above
+     returns. With `hidden` first those engines keep the clipping (plus
+     its pre-clip scrollability) while every clip-aware engine applies
+     the later `clip`. */
+  overflow: hidden;
   overflow: clip;
 }
 
@@ -487,6 +498,25 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
      surface full-height and push the content (the tab strip) below the
      strip instead. .panelResize is absolutely positioned and unaffected. */
   padding-top: var(--dsh-title-bar-strip, 40px);
+}
+
+/* ── Collapsed cluster alignment with the DSH web session header ───────── */
+
+/* While the right panel is open, the cluster rides the panel's 34px tab
+   strip (28px buttons at top: 3). Collapsed, it floats over DSH's own
+   session header instead — whose controls (title, "Session log" capsule)
+   are vertically centered at 28px on both desktop and narrow viewports.
+   top: 3 then strands the cluster ~11px above that row; re-center the
+   28px buttons at 14px. The attribute disappears while the panel is open,
+   so the tab-strip alignment above is untouched. With position
+   compatibility active the DSH header sits below the caption strip, hence
+   strip + 14. */
+:global(body[data-dsh-sidebar-collapsed]) .toggleCluster {
+  top: calc(14px + env(safe-area-inset-top));
+}
+
+:global(body[data-dsh-sidebar-collapsed][data-dsh-title-bar-compat]) .toggleCluster {
+  top: calc(var(--dsh-title-bar-strip, 40px) + 14px);
 }
 
 /* The shared corner (both panels open): the intersection of the right
@@ -1004,8 +1034,16 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 /* The hover-revealed @-reference button at the row's far right (and the
-   transient "copied" label that replaces it after a copy). Hidden rows
-   keep the name at full width; hovering or focusing the row reveals it. */
+   transient "copied" label that replaces it after a copy). The only auto
+   margin in the row absorbs the filename's spare width, so a short name
+   cannot leave either affordance stranded in the middle. */
+.explorerRef,
+.explorerCopied {
+  margin-left: auto;
+}
+
+/* Hidden rows keep the name at full width; hovering or focusing the row
+   reveals the reference button. */
 .explorerRef {
   flex: none;
   display: none;

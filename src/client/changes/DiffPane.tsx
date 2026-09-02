@@ -21,6 +21,7 @@ import { DiffFiles } from '../diff/DiffFiles.tsx'
 import { langOfPath } from '../diff/highlight.ts'
 import { buildDiffSegments, diffLines, diffStats, parseUnifiedDiff, unifiedSegments, type DiffRow } from '../diff/rows.ts'
 import { parseReadLines, type FileOp } from './ops.ts'
+import { createFrameBatcher } from '../frame-batcher.ts'
 import css from './changes.module.css'
 import diffCss from '../diff/diff.module.css'
 
@@ -176,17 +177,23 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
   const paneHeight = dragHeight ?? height
   const clamp = (value: number): number => Math.min(Math.max(value, HEIGHT_MIN), Math.round(window.innerHeight * 0.7))
   const dragOrigin = useRef<{ y: number; h: number } | null>(null)
+  // Pointer streams fire several times per frame; one setState per event
+  // re-rendered the whole pane at event cadence (see frame-batcher).
+  const dragBatcher = useRef(createFrameBatcher()).current
+  useEffect(() => () => dragBatcher.dispose(), [dragBatcher])
   const onHandleDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
     event.preventDefault()
     dragOrigin.current = { y: event.clientY, h: paneHeight }
     const onMove = (ev: PointerEvent): void => {
       if (dragOrigin.current === null) return
-      setDragHeight(clamp(dragOrigin.current.h + (dragOrigin.current.y - ev.clientY)))
+      const next = clamp(dragOrigin.current.h + (dragOrigin.current.y - ev.clientY))
+      dragBatcher.schedule(() => { setDragHeight(next) })
     }
     const onUp = (): void => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       dragOrigin.current = null
+      dragBatcher.flushNow()
       setDragHeight(current => {
         if (current !== null) onHeightCommit(current)
         return null

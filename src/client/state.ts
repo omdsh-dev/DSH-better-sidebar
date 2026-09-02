@@ -155,7 +155,7 @@ export function mintTabId(): string {
 
 /**
  * The largest numeric suffix across a raw persisted state's counter ids
- * (`pane:N` / `tab:N` / `split:N`). The uid counter is module-global and
+ * (`pane:N` / `tab:N` / `split:N` / `float:N`). The uid counter is module-global and
  * resets on every reload, so a split minted AFTER a reload would collide
  * with the persisted ids (a fresh "pane:1" beside the persisted "pane:1");
  * mapLeaf would then visit BOTH leaves and every open would land in both
@@ -166,7 +166,7 @@ function maxCounterId(parsed: unknown): number {
   let max = 0
   const consider = (id: unknown): void => {
     if (typeof id !== 'string') return
-    const match = /^(?:pane|tab|split):(\d+)$/.exec(id)
+    const match = /^(?:pane|tab|split|float):(\d+)$/.exec(id)
     if (match !== null) max = Math.max(max, Number(match[1]))
   }
   const walk = (node: unknown): void => {
@@ -1142,6 +1142,7 @@ function resetRequested(): boolean {
 
 function loadState(sessionId: string, prefs: SidebarPrefs): SidebarState {
   const reset = resetRequested()
+  const viewport = typeof window !== 'undefined' ? window.innerWidth : undefined
   if (reset) {
     try {
       localStorage.removeItem(`${STORAGE_PREFIX}:${sessionId}`)
@@ -1164,7 +1165,15 @@ function loadState(sessionId: string, prefs: SidebarPrefs): SidebarState {
         nextIdCounter = maxCounterId(parsed)
         const sanitized = sanitizeState(parsed)
         if (sanitized !== undefined) {
-          return globalWidth === undefined ? sanitized : { ...sanitized, width: globalWidth }
+          const restored = globalWidth === undefined ? sanitized : { ...sanitized, width: globalWidth }
+          // A narrow panel is a full-screen drawer, so every page/session load
+          // starts it closed even when the prior desktop/mobile state persisted
+          // `panelOpen: true`. Preserve the entire restored workbench (panes,
+          // tabs, bottom panel, and free windows); visibility is the sole
+          // viewport-derived override.
+          return viewport !== undefined && isNarrowWidth(viewport) && restored.panelOpen
+            ? { ...restored, panelOpen: false }
+            : restored
         }
       }
     } catch {
@@ -1179,10 +1188,8 @@ function loadState(sessionId: string, prefs: SidebarPrefs): SidebarState {
   // disabled editor type seeds nothing. On a NARROW viewport a brand-new
   // session starts collapsed instead — the panel is a full-screen drawer
   // there, and auto-opening it on first paint would cover the conversation
-  // before the user asked. Only the first seeding is affected: once the
-  // user expands the drawer, `panelOpen: true` persists like any other
-  // state.
-  const viewport = typeof window !== 'undefined' ? window.innerWidth : undefined
+  // before the user asked. Persisted layouts follow the same narrow-load
+  // visibility rule above, while their workbench contents remain intact.
   const width = globalWidth ?? (viewport === undefined
     ? PANEL_DEFAULT
     : defaultWidthFor(viewport, prefs.defaultWidthPercent))

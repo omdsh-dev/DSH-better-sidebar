@@ -72,6 +72,21 @@ export function TreePanel(props: {
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshTick, setRefreshTick] = useState(0)
+
+  // The tree caches loaded directories per refresh tick, so content changed
+  // outside DSH (another editor, a sync tool) stays stale until the manual
+  // refresh click. Re-focusing the window bumps the tick automatically, and
+  // integrations can force a refresh by dispatching a bubbling
+  // `dsh-sidebar:refresh-files` event on `window`.
+  useEffect(() => {
+    const bump = (): void => { setRefreshTick(tick => tick + 1) }
+    window.addEventListener('focus', bump)
+    window.addEventListener('dsh-sidebar:refresh-files', bump)
+    return () => {
+      window.removeEventListener('focus', bump)
+      window.removeEventListener('dsh-sidebar:refresh-files', bump)
+    }
+  }, [])
   /** One-line upload status under the search row ('' hides the hint). */
   const [uploadStatus, setUploadStatus] = useState('')
   /** Whether the status line is a failure/cancel (error color, stays visible). */

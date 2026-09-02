@@ -351,11 +351,27 @@ export function pathIdentity(path: string): string {
   return process.platform === 'win32' ? absolute.toLowerCase() : absolute
 }
 
+/** Whether the current Git binary supports NUL-framed `worktree list` output.
+ * Git < 2.36 rejects `-z`; cache the capability after the first attempt so
+ * the SCM panel's polling does not repeatedly spawn a command known to fail. */
+let worktreeListSupportsZ: boolean | undefined
+
 /** Raw usable checkout records, shared by inventory and target validation.
  * Prunable records point at missing paths and are deliberately excluded from
  * both the selector and the command-target allowlist. */
 async function listedWorktrees(cwd: string): Promise<GitWorktreeRecord[]> {
-  const raw = await runGit(cwd, ['worktree', 'list', '--porcelain', '-z'])
+  let raw: string
+  if (worktreeListSupportsZ === false) {
+    raw = await runGit(cwd, ['worktree', 'list', '--porcelain'])
+  } else {
+    try {
+      raw = await runGit(cwd, ['worktree', 'list', '--porcelain', '-z'])
+      worktreeListSupportsZ = true
+    } catch {
+      worktreeListSupportsZ = false
+      raw = await runGit(cwd, ['worktree', 'list', '--porcelain'])
+    }
+  }
   return parseWorktreeList(raw).filter(entry => !entry.prunable)
 }
 

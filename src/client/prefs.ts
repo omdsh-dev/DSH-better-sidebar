@@ -220,3 +220,22 @@ export async function loadExternalDisable(settings: SidebarSettingsClient): Prom
     return false
   }
 }
+
+/** The boot decision both the prefs and the external-disable flag need:
+ *  ONE settings fetch answers both (the boot path used to await
+ *  {@link loadPrefs} and {@link loadExternalDisable} serially — two round
+ *  trips of the same document before the first paint, and the second had no
+ *  timeout, so a stalled wire could keep the sidebar unmounted forever). */
+export interface BootDecision {
+  prefs: SidebarPrefs
+  suspended: boolean
+}
+
+export async function loadBootDecision(settings: SidebarSettingsClient): Promise<BootDecision> {
+  try {
+    const view = await settings.settingsGet()
+    return { prefs: parsePrefs(view.value), suspended: view.externalDisable === true }
+  } catch {
+    return { prefs: { ...SIDEBAR_PREFS_DEFAULTS }, suspended: false }
+  }
+}

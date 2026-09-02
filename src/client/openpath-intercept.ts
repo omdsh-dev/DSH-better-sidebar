@@ -1,21 +1,57 @@
 /**
- * Interception of the chat's file-open funnel. The client runtime's
- * `ctx.workspaces.openPath` is the SINGLE door every chat-side file open goes
- * through — ui-conversation's apply.ts resolves the path against the session
- * cwd and calls it for tool-row path links, the produced-files row, and
- * prose file mentions alike (verified against the DSH source:
- * `packages/client/ui-conversation/src/client/apply.ts` is the only
- * production caller). Wrapping that one method reroutes those opens into the
- * sidebar editor instead of the Host OS — no DSH modification needed.
+ * Interception of the chat's file-open funnel (DSH 0.1.2-alpha hosts).
+ *
+ * The alpha funnel is the Typert remote namespace `remote.session`: every
+ * chat-side file open (tool-row path links, the produced-files row, prose
+ * file mentions, inline-code paths) funnels through ChatView's injected
+ * `openFile`, which calls `ctx.remote.session.openWorkspacePath({ path })`
+ * with the path ALREADY resolved against the session cwd (verified against
+ * the DSH source: `packages/client/ui-chat/src/client/apply.ts` is the only
+ * production caller). The host side (`api/session-controller`) hands the
+ * path to the OS's default application (`openNativePath` → xdg-open on
+ * Linux). The pre-alpha funnel `ctx.workspaces.openPath` is gone — the
+ * alpha `IWorkspaces` has no openPath at all.
+ *
+ * `remote.session` is a cordis service (the gateway client's
+ * RemoteNamespaceService, key `remote.session`) whose methods are installed
+ * as ACCESSOR properties (`Object.defineProperty(service, method, {
+ * configurable: true, get })`) — the getter reads the method table at
+ * ACCESS time and returns the invocation closure. A plain assignment would
+ * not stick (no setter), so the wrapper shadows the method with a data
+ * property and restores the captured accessor descriptor on dispose.
+ *
+ * The namespace service appears asynchronously (the session-controller
+ * contribution mounts after the connection is up) and is disposed/recreated
+ * on contribution remounts; the caller therefore enters through
+ * `ctx.inject(['remote.session'], …)`, which re-fires on every remount.
  *
  * The wrapper is dependency-free by design (no React / ui-primitives), so
- * the takeover logic is unit-testable and the file stays importable from the
- * test runtime.
+ * the takeover logic is unit-testable and the file stays importable from
+ * the test runtime.
  */
 
-/** The one service method the wrapper replaces (mirror of the runtime IWorkspaces). */
-export interface OpenPathService {
-  openPath(path: string): Promise<void>
+/** The one request shape the funnel method takes (mirror of the host's
+ *  SessionOpenWorkspacePathRequest). */
+export interface OpenWorkspacePathRequest {
+  /** Absolute path (the chat caller already resolved it against the cwd). */
+  path: string
+}
+
+/**
+ * What the funnel method resolves to (mirror of the typert `RemoteResult`
+ * envelope): EVERY remote method folds its business value into
+ * `{ ok: true, value }` / `{ ok: false, error }` — the chat caller branches
+ * on `result.ok`, so a bare business value would be misread as a failure
+ * (`result.error.message` reads `message` off undefined).
+ */
+export type OpenWorkspacePathResult =
+  | { readonly ok: true; readonly value: { opened: boolean } }
+  | { readonly ok: false; readonly error: { readonly code: string; readonly message: string; readonly details: object } }
+
+/** The namespace slice the wrapper shadows (mirror of the gateway client's
+ *  RemoteNamespaceService for the `session` namespace). */
+export interface OpenWorkspacePathService {
+  openWorkspacePath(request: OpenWorkspacePathRequest, signal?: AbortSignal): Promise<OpenWorkspacePathResult>
 }
 
 /** Per-call decisions the wrapper needs (wired to the store + ctx in the client half). */
@@ -48,32 +84,61 @@ export function isFolderRevealPath(path: string): boolean {
 }
 
 /**
- * Wrap `workspaces.openPath`: intercepted calls open the file in the sidebar
- * editor instead of the Host OS and resolve as success (the original's
- * callers ignore the result); anything that declines falls through to the
- * original method untouched. The one exception is the folder-reveal gesture,
- * which is routed to {@link OpenPathInterceptDeps.revealInExplorer} instead.
- * @param workspaces - the client workspaces service to wrap.
+ * Shadow `remote.session.openWorkspacePath`: intercepted calls open the file
+ * in the sidebar editor and resolve with the remote SUCCESS ENVELOPE
+ * (`{ ok: true, value: { opened: true } }`, so ChatView shows no error
+ * dialog); anything that declines falls through to the captured original
+ * closure (the host OS's default application) untouched.
+ * The one exception is the folder-reveal gesture, which is routed to
+ * {@link OpenPathInterceptDeps.revealInExplorer} instead.
+ *
+ * The original closure is captured by ACCESSING the accessor once at wrap
+ * time — it invokes whatever method records are mounted at that moment. If
+ * the contribution remounts its methods while the shadow is installed, the
+ * captured closure points at the old records; the session namespace is
+ * effectively permanent in practice, so this is accepted and the shadow is
+ * re-applied anyway when the remount recreates the service (the caller's
+ * `ctx.inject` re-fires).
+ *
+ * @param service - the `remote.session` namespace service.
  * @param deps - per-call takeover decisions.
- * @returns the disposer restoring the original method (HMR-safe).
+ * @returns the disposer restoring the original accessor descriptor (HMR-safe).
  */
-export function wrapOpenPath(workspaces: OpenPathService, deps: OpenPathInterceptDeps): () => void {
-  // The RAW method reference (never a bound copy): restore must put back the
-  // exact original so a chain of wrappers (other plugins wrapping the same
-  // method) keeps working across disposals in any order.
-  const original = workspaces.openPath
-  workspaces.openPath = (path: string): Promise<void> => {
+export function wrapOpenWorkspacePath(
+  service: OpenWorkspacePathService,
+  deps: OpenPathInterceptDeps,
+): () => void {
+  const KEY = 'openWorkspacePath'
+  const target = service as object
+  const descriptor = Object.getOwnPropertyDescriptor(target, KEY)
+  // Invoke the accessor once to capture the CURRENT invocation closure.
+  const original = service.openWorkspacePath
+  // The gateway installs the namespace's whole method group in the same
+  // synchronous window as the service registration, so an inject-observed
+  // service always has the method — but a hand-rolled composition might not;
+  // wrapping nothing would turn fall-throughs into crashes, so decline.
+  if (typeof original !== 'function') return () => {}
+  const wrapped = (request: OpenWorkspacePathRequest, signal?: AbortSignal): Promise<OpenWorkspacePathResult> => {
     if (deps.takeoverEnabled()) {
       const sessionId = deps.currentSessionId()
       if (sessionId !== undefined) {
-        if (isFolderRevealPath(path)) deps.revealInExplorer(path, sessionId)
-        else deps.openInSidebar(path, sessionId)
-        return Promise.resolve()
+        if (isFolderRevealPath(request.path)) deps.revealInExplorer(request.path, sessionId)
+        else deps.openInSidebar(request.path, sessionId)
+        return Promise.resolve({ ok: true, value: { opened: true } })
       }
     }
-    return original.call(workspaces, path)
+    return original.call(service, request, signal)
   }
+  Object.defineProperty(target, KEY, {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: wrapped,
+  })
   return () => {
-    workspaces.openPath = original
+    // Restore the exact original property (the gateway's accessor) so a
+    // chain of wrappers keeps working across disposals in any order.
+    if (descriptor !== undefined) Object.defineProperty(target, KEY, descriptor)
+    else Reflect.deleteProperty(target, KEY)
   }
 }

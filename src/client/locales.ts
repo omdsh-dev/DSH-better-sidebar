@@ -252,10 +252,10 @@ export const zh = {
   settingsConflict: '设置已被其他窗口修改，请重试',
   binaryNoPreview: '此文件类型不支持预览',
   downloadToView: '下载查看',
-  settingsSubagentTitle: '检测到子代理时自动展开任务管理页',
-  settingsSubagentDesc: '当前会话产生新的子代理时，自动展开侧边栏并打开任务管理页；关闭后需手动打开',
-  settingsJobsTitle: '有新后台任务时自动展开后台任务页',
-  settingsJobsDesc: '当前会话出现新的后台任务时，自动展开侧边栏并打开后台任务页（每个新任务都会触发）；关闭后需手动打开',
+  settingsSubagentTitle: '检测到子代理时自动激活任务管理页',
+  settingsSubagentDesc: '当前会话产生新的子代理时，自动激活任务管理页；宽屏同时展开侧边栏，窄屏不强制展开全屏抽屉；关闭后需手动打开',
+  settingsJobsTitle: '有新后台任务时自动激活任务管理页',
+  settingsJobsDesc: '当前会话出现新的后台任务时，自动激活任务管理页（每个新任务都会触发）；宽屏同时展开侧边栏，窄屏不强制展开全屏抽屉；关闭后需手动打开',
   settingsToolsTitle: '为模型注入终端工具',
   settingsToolsDesc: '开启后，模型可通过 terminal_create 等 8 个工具创建并操作侧边栏终端（默认关闭）',
   settingsFenceTitle: '工作区路径检测',
@@ -663,10 +663,10 @@ export const en: Record<keyof typeof zh, string> = {
   settingsConflict: 'The setting changed in another window — please retry',
   binaryNoPreview: 'This file type cannot be previewed',
   downloadToView: 'Download to view',
-  settingsSubagentTitle: 'Auto-open the Tasks page when a subagent appears',
-  settingsSubagentDesc: 'Expand the side card and open the Tasks page when the current conversation spawns a new subagent; turn off to open it manually',
-  settingsJobsTitle: 'Auto-open the Jobs page on a new background job',
-  settingsJobsDesc: 'Expand the side card and open the Jobs page whenever a new background job appears for the current conversation (every new job triggers); turn off to open it manually',
+  settingsSubagentTitle: 'Auto-activate the Tasks page when a subagent appears',
+  settingsSubagentDesc: 'Activate the Tasks page when the current conversation spawns a new subagent; wide viewports also expand the side card, while narrow full-screen drawers are not forced open; turn off to open it manually',
+  settingsJobsTitle: 'Auto-activate the Tasks page on a new background job',
+  settingsJobsDesc: 'Activate the Tasks page whenever a new background job appears for the current conversation (every new job triggers); wide viewports also expand the side card, while narrow full-screen drawers are not forced open; turn off to open it manually',
   settingsToolsTitle: 'Inject terminal tools for the model',
   settingsToolsDesc: 'When enabled, the model can create and drive sidebar terminals through the 8 terminal_* tools (off by default)',
   settingsFenceTitle: 'Workspace path fence',
@@ -849,49 +849,13 @@ export const en: Record<keyof typeof zh, string> = {
  */
 export const LOCALE_NS = 'betterSidebar'
 
-// The ja dictionary lives in a sibling file (326 keys) so this module
-// stays readable. Type-checked against the zh key set: a missing or extra
-// ja key is a compile error.
-import { ja as jaDict } from './locales-ja.ts'
-import { de as deDict } from './locales-de.ts'
-import { fr as frDict } from './locales-fr.ts'
-import { pt as ptDict } from './locales-pt.ts'
-import { ko as koDict } from './locales-ko.ts'
-import { ar as arDict } from './locales-ar.ts'
-import { hi as hiDict } from './locales-hi.ts'
-import { id as idDict } from './locales-id.ts'
-import { tr as trDict } from './locales-tr.ts'
-import { vi as viDict } from './locales-vi.ts'
-import { th as thDict } from './locales-th.ts'
-import { ru as ruDict } from './locales-ru.ts'
-import { it as itDict } from './locales-it.ts'
-import { nl as nlDict } from './locales-nl.ts'
-import { sv as svDict } from './locales-sv.ts'
-import { pl as plDict } from './locales-pl.ts'
-import { zhHK as zhHKDict } from './locales-zh-HK.ts'
-import { zhTW as zhTWDict } from './locales-zh-TW.ts'
-import { zhMO as zhMODict } from './locales-zh-MO.ts'
-
-/** The ja dictionary (key-set-equal to zh, enforced by the type annotation). */
-export const ja: Record<keyof typeof zh, string> = jaDict as Record<keyof typeof zh, string>
-export const de: Record<keyof typeof zh, string> = deDict as Record<keyof typeof zh, string>
-export const fr: Record<keyof typeof zh, string> = frDict as Record<keyof typeof zh, string>
-export const pt: Record<keyof typeof zh, string> = ptDict as Record<keyof typeof zh, string>
-export const ko: Record<keyof typeof zh, string> = koDict as Record<keyof typeof zh, string>
-export const ar: Record<keyof typeof zh, string> = arDict as Record<keyof typeof zh, string>
-export const hi: Record<keyof typeof zh, string> = hiDict as Record<keyof typeof zh, string>
-export const id: Record<keyof typeof zh, string> = idDict as Record<keyof typeof zh, string>
-export const tr: Record<keyof typeof zh, string> = trDict as Record<keyof typeof zh, string>
-export const vi: Record<keyof typeof zh, string> = viDict as Record<keyof typeof zh, string>
-export const th: Record<keyof typeof zh, string> = thDict as Record<keyof typeof zh, string>
-export const ru: Record<keyof typeof zh, string> = ruDict as Record<keyof typeof zh, string>
-export const it: Record<keyof typeof zh, string> = itDict as Record<keyof typeof zh, string>
-export const nl: Record<keyof typeof zh, string> = nlDict as Record<keyof typeof zh, string>
-export const sv: Record<keyof typeof zh, string> = svDict as Record<keyof typeof zh, string>
-export const pl: Record<keyof typeof zh, string> = plDict as Record<keyof typeof zh, string>
-export const zhHK: Record<keyof typeof zh, string> = zhHKDict as Record<keyof typeof zh, string>
-export const zhTW: Record<keyof typeof zh, string> = zhTWDict as Record<keyof typeof zh, string>
-export const zhMO: Record<keyof typeof zh, string> = zhMODict as Record<keyof typeof zh, string>
+// The 19 non-zh/en dictionaries live in the LAZY `locale` chunk
+// (src/client/chunks/locale.tsx → lib/client-locale.js): `t()` only ever
+// consults zh/en plus the better-locale override store, so those dicts are
+// needed only when better-locale is installed — the client apply fetches the
+// chunk there and registers its `localeDicts` into the override store. They
+// used to sit statically in the core bundle (≈ half its weight) for a code
+// path most sessions never enter.
 
 /** The DSH locale service attached by the client apply (absent → browser detection). */
 let localeService: { getSnapshot(): { active: string } } | undefined

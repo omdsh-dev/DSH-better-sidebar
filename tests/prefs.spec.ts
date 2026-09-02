@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { loadExternalDisable, loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
+import { loadBootDecision, loadExternalDisable, loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
 import { allLeaves, createSidebarStore, defaultWidthFor, makeDefaultState, setWidth } from '../src/client/state.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 
@@ -306,8 +306,8 @@ describe('side card preferences', () => {
     }
     try {
       const store = createSidebarStore()
-      // The narrow viewport keeps a fresh session collapsed for the FIRST
-      // seeding only (a later user expansion persists).
+      // The narrow viewport keeps a fresh session collapsed. Persisted
+      // sessions follow the same load-time visibility rule in state.spec.ts.
       store.setSession('narrow-fresh')
       expect(store.getSnapshot().state?.panelOpen).toBe(false)
       // The width seeding still follows the window (clamped to the floor).
@@ -414,5 +414,30 @@ describe('external disable (aionui-panel provider choice)', () => {
   it('reads false when the flag is absent or the wire rejects', async () => {
     expect(await loadExternalDisable(wire({}))).toBe(false)
     expect(await loadExternalDisable(rejecting())).toBe(false)
+  })
+})
+
+describe('boot decision (one fetch for prefs + external disable)', () => {
+  it('answers both decisions from a single settingsGet call', async () => {
+    let calls = 0
+    const counting = (): SidebarSettingsClient => ({
+      settingsGet: async () => { calls += 1; return { value: { openByDefault: true, defaultWidthPercent: 40 }, revision: 1, externalDisable: true } },
+      settingsUpdate: async () => ({ value: {}, revision: 2 }),
+    })
+    const decision = await loadBootDecision(counting())
+    expect(calls, 'the boot path must fetch the settings document exactly once').toBe(1)
+    expect(decision.suspended).toBe(true)
+    expect(decision.prefs.openByDefault).toBe(true)
+  })
+
+  it('falls back to the defaults + not suspended on any failure', async () => {
+    const decision = await loadBootDecision(rejecting())
+    expect(decision).toEqual({ prefs: SIDEBAR_PREFS_DEFAULTS, suspended: false })
+  })
+
+  it('reads suspended false when the flag is absent', async () => {
+    const decision = await loadBootDecision(wire({ defaultWidthPercent: 50 }))
+    expect(decision.suspended).toBe(false)
+    expect(decision.prefs.defaultWidthPercent).toBe(50)
   })
 })

@@ -11,7 +11,7 @@ import type { Context } from '../context-types.ts'
 import { firstLeaf, revealPaths, togglePanel, type SidebarStore } from './state.ts'
 import { t } from './locales.ts'
 import { resolveSidebarPath, selectProducedFiles } from './produced-files.ts'
-import { wrapOpenPath } from './openpath-intercept.ts'
+import { wrapOpenWorkspacePath, type OpenWorkspacePathService } from './openpath-intercept.ts'
 import { api } from './api.ts'
 import { buildCommitDiffTab, buildEditDiffTab, deriveEditDiffTarget } from './edit-diff.ts'
 import { relativeTo } from './paths.ts'
@@ -39,7 +39,7 @@ export function openSidebarEditorFile(ctx: Context, store: SidebarStore, session
 
 /**
  * Open a file triggered by the chat's edit-tool path links (via
- * `ctx.workspaces.openPath`). Chat opens always reuse a single preview tab
+ * `remote.session.openWorkspacePath`). Chat opens always reuse a single preview tab
  * (`chat-preview`): switching files replaces its content in place instead of
  * creating a new tab. The preview bypasses the editor's per-path dedupe so
  * the seed never lands in an existing resident editor tab. When the
@@ -231,22 +231,36 @@ export function registerTurnTailInterception(ctx: Context, store: SidebarStore):
 }
 
 /**
- * Register the chat file-open interception: wraps `ctx.workspaces.openPath`
- * — the single funnel every chat-side file open goes through (tool-row path
- * links, the produced-files row, prose mentions) — so opens land in the
- * sidebar editor instead of the Host OS. The folder-reveal gesture ("Show in
- * folder" passes `'.'`) is the one exception: it is routed to the explorer.
- * Gated by BOTH the `interceptOpenPath` pref and the editor tab's enable
- * switch; declined opens fall through to the original method. Returns the
- * disposer restoring the original (HMR-safe).
+ * Register the chat file-open interception: shadows
+ * `remote.session.openWorkspacePath` — the single funnel every chat-side
+ * file open goes through on alpha hosts (tool-row path links, the
+ * produced-files row, prose mentions, inline-code paths) — so opens land in
+ * the sidebar editor instead of the Host OS. The folder-reveal gesture
+ * ("Show in folder" passes `'.'`) is the one exception: it is routed to the
+ * explorer. Gated by BOTH the `interceptOpenPath` pref and the editor tab's
+ * enable switch; declined opens fall through to the original remote call.
+ *
+ * The `remote.session` namespace service mounts asynchronously (the gateway
+ * client creates it when the session-controller contribution arrives) and
+ * is recreated on contribution remounts, so the wrapper installs through
+ * `ctx.inject`: the callback runs once the service exists and re-runs after
+ * every remount, re-applying the shadow on the fresh instance. Returns the
+ * disposer (disposes the inject fiber, which restores the original method
+ * descriptor — HMR-safe).
  */
 export function registerOpenPathInterception(ctx: Context, store: SidebarStore): () => void {
-  return wrapOpenPath(ctx.workspaces, {
-    takeoverEnabled: () => !store.getSuspended()
-      && store.getPrefs().interceptOpenPath !== false
-      && store.getPrefs().tabsEnabled['editor'] !== false,
-    currentSessionId: () => ctx.sessions.list.getSnapshot().current,
-    openInSidebar: (path, sessionId) => { void openSidebarFile(ctx, store, sessionId, path) },
-    revealInExplorer: (_path, sessionId) => { revealInExplorer(ctx, store, sessionId, lastProduced) },
+  const fiber = ctx.inject(['remote.session'], (fctx) => {
+    fctx.effect(() => {
+      const service = fctx.get('remote.session') as OpenWorkspacePathService
+      return wrapOpenWorkspacePath(service, {
+        takeoverEnabled: () => !store.getSuspended()
+          && store.getPrefs().interceptOpenPath !== false
+          && store.getPrefs().tabsEnabled['editor'] !== false,
+        currentSessionId: () => ctx.sessions.list.getSnapshot().current,
+        openInSidebar: (path, sessionId) => { void openSidebarFile(ctx, store, sessionId, path) },
+        revealInExplorer: (_path, sessionId) => { revealInExplorer(ctx, store, sessionId, lastProduced) },
+      })
+    }, 'dsh-better-sidebar: open-path interception wrap')
   })
+  return () => { void fiber.dispose() }
 }

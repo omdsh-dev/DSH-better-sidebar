@@ -84,7 +84,7 @@ jobs:
       # DSH 0.1.2-alpha.x is published under the `alpha` dist-tag; the lanes
       # speak the slash-only RPC dialect (tests/e2e/host-protocol.ts).
       - name: Install dsh CLI (pinned)
-        run: npm install -g @deepseek-ai/dsh@0.1.2-alpha.3
+        run: npm install -g @deepseek-ai/dsh@0.1.2-alpha.5
 
       # lib/ is gitignored; the tarball is produced from this build.
       - name: Build and pack the npm tarball

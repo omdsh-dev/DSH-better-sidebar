@@ -73,14 +73,14 @@ describe('sidechat seed against the real dsh-session validator', () => {
     // The REAL validator: this throws when an envelope field was stripped
     // (the reported regression) or the turn balance is off.
     const child = Session.create('session-validator-test' as SessionId, seed as never)
-    const types = child.events.map(event => event.type)
+    const types = child.snapshotEvents().map(event => event.type)
     expect(types).toEqual([
       'user/message', 'turn/start', 'step/start', 'assistant/message', 'step/end', 'turn/end',
       'user/message', 'turn/start', 'step/start', 'assistant/chunk', 'step/end', 'turn/end',
       'session/end-seed',
     ])
     // The synthetic close is honest: the frozen turn ends interrupted.
-    const turnEnd = child.events.findLast(event => event.type === 'turn/end')
+    const turnEnd = child.snapshotEvents().findLast(event => event.type === 'turn/end')
     expect(turnEnd?.data).toEqual({ turn: 2, reason: { kind: 'interrupted' } })
   })
 
@@ -94,7 +94,7 @@ describe('sidechat seed against the real dsh-session validator', () => {
     const { seed, snapshot } = buildSidechatInheritance(log)
     expect(snapshot).not.toBeNull()
     const child = Session.create('session-validator-fallback' as SessionId, seed as never)
-    expect(child.events.map(event => event.type).at(-1)).toBe('session/end-seed')
+    expect(child.snapshotEvents().map(event => event.type).at(-1)).toBe('session/end-seed')
   })
 
   it('accepts the durable subagent descriptor the routes append to the seed', () => {
@@ -115,7 +115,7 @@ describe('sidechat seed against the real dsh-session validator', () => {
       { type: 'subagent/descriptor', seq: seed.length, time: Date.now(), data: descriptor },
     ]
     const child = Session.create('session-validator-descriptor' as SessionId, withDescriptor as never)
-    const types = child.events.map(event => event.type)
+    const types = child.snapshotEvents().map(event => event.type)
     expect(types.at(-2)).toBe('subagent/descriptor')
     expect(types.at(-1)).toBe('session/end-seed')
   })
