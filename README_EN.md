@@ -9,7 +9,7 @@
   <a href="https://github.com/omdsh-dev/DSH-better-sidebar/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/omdsh-dev/DSH-better-sidebar" /></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
   <a href="https://dshfind.com/en/plugins/omdsh-dev/DSH-better-sidebar?ref=badge"><img alt="dshfind" src="https://dshfind.com/api/badge/omdsh-dev/DSH-better-sidebar?lang=en" /></a><br /><br />
-  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.0-alpha.0 alpha track): 0.1.2-alpha.2" src="https://img.shields.io/badge/DSH-0.1.2--alpha.2_(alpha%20track)-4d6bfe" /></a>
+  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.1-alpha.0 alpha track): 0.1.2-alpha.3" src="https://img.shields.io/badge/DSH-0.1.2--alpha.3_(alpha%20track)-4d6bfe" /></a>
   <a href="https://github.com/topics/dsh-better-sidebar"><img alt="Plugin ecosystem: GitHub topic dsh-better-sidebar" src="https://img.shields.io/badge/plugin%20ecosystem-topic%20dsh--better--sidebar-4d6bfe" /></a><br /><br />
   <img alt="File management" src="https://img.shields.io/badge/-File%20management-4d6bfe" /> <img alt="Edit &amp; preview" src="https://img.shields.io/badge/-Edit%20%26%20preview-4d6bfe" /> <img alt="Embedded browser" src="https://img.shields.io/badge/-Embedded%20browser-4d6bfe" /> <img alt="Real terminal" src="https://img.shields.io/badge/-Real%20terminal-4d6bfe" /> <img alt="Changes" src="https://img.shields.io/badge/-Changes-4d6bfe" /> <img alt="Background tasks" src="https://img.shields.io/badge/-Background%20tasks-4d6bfe" /> <img alt="Side Chat" src="https://img.shields.io/badge/-Side%20Chat-4d6bfe" /> <img alt="Plugin integration" src="https://img.shields.io/badge/-Plugin%20integration-4d6bfe" /><br /><br />
   <b>A dual workbench (right sidebar + bottom panel)</b> that opens its <code>ctx.betterSidebar</code> service to every plugin —<br />
@@ -62,9 +62,9 @@
 **Prerequisites**: DSH installed (`dsh web` boots), Node.js ≥ 20, pnpm ≥ 10.
 
 **Supported DSH versions**:
-<a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.0-alpha.0 alpha track): 0.1.2-alpha.2" src="https://img.shields.io/badge/DSH-0.1.2--alpha.2_(alpha%20track)-4d6bfe" /></a>
+<a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.1-alpha.0 alpha track): 0.1.2-alpha.3" src="https://img.shields.io/badge/DSH-0.1.2--alpha.3_(alpha%20track)-4d6bfe" /></a>
 
-> 🧪 **Alpha track**: starting with `v0.18.0-alpha.0` the plugin targets DSH **0.1.2-alpha.x** (npm dist-tag `alpha`) and drops 0.1.0-rc.8 ~ 0.1.1-rc.2 — stable-DSH users should stay on `@latest` (v0.17.1); DSH 0.1.2-alpha.2 users install `dsh-better-sidebar@alpha`.
+> 🧪 **Alpha track**: starting with `v0.18.0-alpha.0` the plugin targets DSH **0.1.2-alpha.x** (npm dist-tag `alpha`) and drops 0.1.0-rc.8 ~ 0.1.1-rc.2 — stable-DSH users should stay on `@latest` (v0.17.1); DSH 0.1.2-alpha.3 users install `dsh-better-sidebar@alpha`.
 
 ```sh
 dsh plugin --profile web add dsh-better-sidebar@latest   # first run fails: pnpm 11 blocks node-pty build scripts (the dependency is still written)
@@ -263,7 +263,13 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
   <a href="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0"><img width="33%" alt="Service API base screenshot" src="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0" /></a>
 </div>
 
-**Supported DSH versions**: <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.0-alpha.0 alpha track): 0.1.2-alpha.2" src="https://img.shields.io/badge/DSH-0.1.2--alpha.2_(alpha%20track)-4d6bfe" /></a> · full release history on the [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases) page
+**Supported DSH versions**: <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.1-alpha.0 alpha track): 0.1.2-alpha.3" src="https://img.shields.io/badge/DSH-0.1.2--alpha.3_(alpha%20track)-4d6bfe" /></a> · full release history on the [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases) page
+
+### v0.18.1-alpha.0
+
+> 🧪 **Alpha track**: this release targets **DSH 0.1.2-alpha.x only** (peer floor `^0.1.2-alpha.3`, npm dist-tag `alpha`, install `dsh-better-sidebar@alpha`).
+
+- 🔗 **Adapted to DSH 0.1.2-alpha.3 (published to npm, `alpha` dist-tag)**: the CI mount gate's pin, the `dsh.plugin.json` engines floor, and the `@deepseek-ai/*` peer / devDependencies baseline moved up to 0.1.2-alpha.3 (verified by a real-host mount smoke 14/14). All 117 commits between alpha.2 and alpha.3 were audited point by point: every host contract this plugin relies on (token auth, slash RPC, `MarkdownText` labels, the event-stream and persistence APIs behind `sidechat.events`, `SettingsNamespaceInput`, `SUBAGENT_DESCRIPTOR_VERSION` (still 3), `dsh-client-store`, the profile loader, the node-pty pin) is unchanged, so no code adaptation was needed; alpha.3's breaking changes (the required `BeginSubmissionInput.mode`, the renamed `attachment-invalid` subagent error, the removed SQLite persistence backend, the identity-gated projection change feed) were all verified not to touch this plugin.
 
 ### v0.18.0-alpha.0
 
@@ -468,7 +474,7 @@ The dashed cards at the end of the "Sidebar content" / "File viewers" grids in t
 ## 🛠️ Development & Build
 
 ```sh
-pnpm install      # @deepseek-ai/* devDependencies resolve (baseline 0.1.2-alpha.2, alpha dist-tag) — no token needed
+pnpm install      # @deepseek-ai/* devDependencies resolve (baseline 0.1.2-alpha.3, alpha dist-tag) — no token needed
 pnpm typecheck    # tsc --noEmit
 pnpm build        # → lib/index.js + lib/invariant.js + lib/client.js + lib/client-registry.js + lib/types
 pnpm test         # vitest (includes manifest consistency guard; build first)
