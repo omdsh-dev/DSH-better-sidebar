@@ -433,6 +433,7 @@ export const zhTW: Record<string, string> = {
   pluginSshTunnelDesc: 'better-sidebar「SSH 隧道」Tab：多機主機清單 + 按專案授權 + 密鑰本地保管；模型工具 SSHManager（exec/SFTP/工作階段策略）；中央互動終端與雙欄 SFTP',
   pluginTurnReviewDesc: '對「剛剛這一回合」的 diff 做 Approve / Request changes 的人閘門：只審上一回合，不 fork 工作階段；檔案按主工作階段/子代理/未歸因分組，按檔案勾選打回 + 可選評語，點檔案先看回合開始快照 vs 現在的 diff。不是 /rewind',
   pluginVideoPreviewDesc: '在 better-sidebar 編輯器內聯預覽影片檔案（.mp4/.webm/.mov/.mkv/.avi 等），自帶支援 HTTP Range（206）的 /video 宿主路由，可拖曳進度條、不受 20MB mediaLimit 限制',
+  pluginDevGitGraphDesc: 'vscode-git-graph 忠实移植的提交图 Tab：自动绑定会话工作区，checkout/merge/rebase/push/tag/stash 全套 git 操作，明暗主题跟随；装了 better-sidebar 注册原生 Tab 并在其 DiffTab 打开文件 diff，未装回退右侧 overlay 面板',
   pluginDocsPanelDesc: 'DSH 側邊欄裡的「全域文件」：全域 Markdown 筆記，任何工作區隨時可讀——列表點選閱讀、懸浮大綱跳轉、Chrome / VS Code 外部開啟、程式碼複製，目錄可設定（預設 ~/.dsh/docs）',
   pluginEgoBrowserDesc: '將 CitroLabs/ego-lite 接進 DeepSeek Harness 的 agent 瀏覽器：32 個 ego_* 工具驅動真實 Chromium，側邊欄原生「ego 瀏覽器」Tab 實時觀察 agent 逛的每個頁面，可直接點擊/拖拽/輸入接管；裝 better-sidebar 時自動註冊 Tab，沒裝則退回浮動浮窗',
   pluginBilingualReaderDesc: '在 DSH 側邊欄讀論文 PDF：原生 PDF 顯示，選取一段文字即用大模型劃詞翻譯，結合上下文、完全隔離主對話，只作閱讀輔助',
