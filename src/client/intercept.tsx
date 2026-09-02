@@ -11,7 +11,7 @@ import type { Context } from '../context-types.ts'
 import { firstLeaf, revealPaths, togglePanel, type SidebarStore } from './state.ts'
 import { t } from './locales.ts'
 import { resolveSidebarPath, selectProducedFiles } from './produced-files.ts'
-import { wrapOpenPath } from './openpath-intercept.ts'
+import { wrapOpenWorkspacePath } from './openpath-intercept.ts'
 import css from './sidebar.module.css'
 
 /** Open a file in the sidebar's editor (used by the intercepted row and the explorer). */
@@ -151,17 +151,23 @@ export function registerTurnTailInterception(ctx: Context, store: SidebarStore):
 }
 
 /**
- * Register the chat file-open interception: wraps `ctx.workspaces.openPath`
- * — the single funnel every chat-side file open goes through (tool-row path
- * links, the produced-files row, prose mentions) — so opens land in the
- * sidebar editor instead of the Host OS. The folder-reveal gesture ("Show in
- * folder" passes `'.'`) is the one exception: it is routed to the explorer.
- * Gated by BOTH the `interceptOpenPath` pref and the editor tab's enable
- * switch; declined opens fall through to the original method. Returns the
- * disposer restoring the original (HMR-safe).
+ * Register the chat file-open interception: wraps
+ * `ctx.remote.session.openWorkspacePath` — the single funnel every chat-side
+ * file open goes through on DSH 0.1.2-alpha.x (tool-row path links, the
+ * produced-files row, prose mentions) — so opens land in the sidebar editor
+ * instead of the Host OS. The folder-reveal gesture ("Show in folder" passes
+ * `'.'`) is the one exception: it is routed to the explorer. Gated by BOTH
+ * the `interceptOpenPath` pref and the editor tab's enable switch; declined
+ * opens fall through to the original method. Returns the disposer restoring
+ * the original (HMR-safe). Hosts without the Remote session face (tests,
+ * older compositions) get a no-op disposer so the client half still mounts.
  */
 export function registerOpenPathInterception(ctx: Context, store: SidebarStore): () => void {
-  return wrapOpenPath(ctx.workspaces, {
+  const session = ctx.remote?.session
+  if (session === undefined || typeof session.openWorkspacePath !== 'function') {
+    return () => {}
+  }
+  return wrapOpenWorkspacePath(session, {
     takeoverEnabled: () => !store.getSuspended()
       && store.getPrefs().interceptOpenPath !== false
       && store.getPrefs().tabsEnabled['editor'] !== false,

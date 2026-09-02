@@ -265,6 +265,7 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 > 🧪 **alpha 通道**：本版仅支持 **DSH 0.1.2-alpha.x**（peer 下限 `^0.1.2-alpha.3`，npm dist-tag `alpha`，安装 `dsh-better-sidebar@alpha`）。
 
 - 🔗 **适配 DSH 0.1.2-alpha.3（npm 已发布，`alpha` dist-tag）**：CI 挂载门禁钉版、`dsh.plugin.json` engines 下限与 `@deepseek-ai/*` peer / devDependencies 基线升至 0.1.2-alpha.3（真机挂载冒烟 14/14 验证）。逐点核查了 alpha.2 → alpha.3 全部 117 个 commit：插件依赖的宿主契约（token 鉴权、斜杠 RPC、`MarkdownText` labels、`sidechat.events` 所依赖的事件流与持久化 API、`SettingsNamespaceInput`、`SUBAGENT_DESCRIPTOR_VERSION`（仍为 3）、`dsh-client-store`、profile 加载器、node-pty 钉版）均无变化，无需代码适配；alpha.3 的破坏性改动（`BeginSubmissionInput.mode` 必填、subagent 错误码改名 `attachment-invalid`、SQLite 持久化后端移除、投影 change feed 收紧为 identity-gated）经核实均不触及本插件。
+- 🐛 **修复「聊天区文件在侧边栏打开」在 alpha.2/alpha.3 上失效（[#500](https://github.com/omdsh-dev/DSH-better-sidebar/issues/500)）**：聊天文件打开拦截此前包装 `ctx.workspaces.openPath`——该入口在 0.1.2-alpha 宿主上**并不存在**（WorkspaceController 只有 create/rename/delete/archive，ui-chat 的 `openFile` 实际走 `ctx.remote.session.openWorkspacePath`），包装一个不会被调用的方法等于接管永不发生，`interceptOpenPath` 开关名存实亡。现改为包装 `ctx.remote.session.openWorkspacePath`（ui-chat apply.ts 的唯一生产调用方），client half 的 `inject` 同步由 `'workspaces'` 换成 `'remote'`；被接管调用以 `{ ok: true, value: { opened: true } }` 解析（调用方只检查 `result.ok`），"Show in folder" 折叠手势仍路由到资源管理器。
 
 ### v0.18.0-alpha.0
 

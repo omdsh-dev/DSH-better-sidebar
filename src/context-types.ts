@@ -406,14 +406,35 @@ export interface SidebarConversation {
 }
 
 /**
- * The client workspaces service face (mirror of the runtime IWorkspaces). Only
- * the chat's file-open funnel is touched: `openPath` hands an absolute path
- * to the Host OS's default application, and every chat-side file open
- * (tool rows, produced-files, prose mentions) funnels through it.
+ * The Remote session face the chat's file-open funnel reaches through
+ * `ctx.remote.session.openWorkspacePath` on DSH 0.1.2-alpha.x (ui-chat's
+ * apply.ts is the only production caller). The older
+ * `ctx.workspaces.openPath` face this plugin used to wrap never existed on
+ * the WorkspaceController and is not called by ui-chat, so the wrapper
+ * targets the Remote method instead.
  */
-export interface SidebarWorkspacesService {
-  /** Open a filesystem path with the Host operating system's default application. */
-  openPath(path: string): Promise<void>
+export interface SidebarRemoteSessionService {
+  /**
+   * Ask the Host to open one (already resolved) path with the system's
+   * default application. ui-chat inspects only `result.ok`; a failed open
+   * surfaces as `path open failed: ${error.message}` in the chat.
+   */
+  openWorkspacePath(request: { path: string }): Promise<{
+    ok: boolean
+    value?: { opened: true }
+    error?: { message: string }
+  }>
+}
+
+/**
+ * The client Remote gateway face (`ctx.remote`), restated structurally. Only
+ * the session methods this plugin touches are declared; `$on` mirrors the
+ * forwarded Host-event subscription used for live settings re-evaluation.
+ */
+export interface SidebarRemoteService {
+  session: SidebarRemoteSessionService
+  /** Subscribe to one forwarded Host event (settings/document-updated…). */
+  $on?(event: string, listener: (payload?: unknown) => void): () => void
 }
 
 /**
@@ -498,8 +519,8 @@ export interface SidebarContextShape {
   webRuntime: SidebarWebRuntime
   /** The client slot registry (register/inject). */
   slots: SidebarSlotsService
-  /** The client workspaces service face (file-open funnel). */
-  workspaces: SidebarWorkspacesService
+  /** The client Remote gateway face (session.openWorkspacePath funnel). */
+  remote: SidebarRemoteService
   /** The settings service face (prefs persistence + namespace reads). */
   settings: SidebarSettingsService
   /** The invariant registry face. */
