@@ -2,7 +2,9 @@
  * Tab-strip right-click context-menu tests. Right-clicking a tab takes over
  * the browser menu (preventDefault) and shows the tab context menu with
  * exactly five items: move to free window / close / close others / close to
- * the left / close to the right. All bulk operations are scoped to the
+ * the left / close to the right — plus a leading "show in folder" row when
+ * the tab carries a path AND the caller wired onRevealPath (the shell
+ * withholds it in SSH-remote mode). All bulk operations are scoped to the
  * CURRENT pane (the render time tab snapshot) and reuse the per-tab onClose
  * path, so the target tab is never closed and the pane never empties
  * mid-loop. The menu items gray out when there is nothing to close (single
@@ -31,7 +33,11 @@ function stubZh(): void {
 
 const MENU_LABELS = ['移动到自由窗口', '关闭', '关闭其他页签', '关闭左侧页签', '关闭右侧页签']
 
-function mountBar(tabs: SidebarTab[], opts: { onPinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void } = {}): {
+function mountBar(tabs: SidebarTab[], opts: {
+  onPinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void
+  /** Wire the "show in folder" entry (the shell withholds it in SSH mode). */
+  onRevealPath?: (path: string) => void
+} = {}): {
   tabEls: HTMLElement[]
   onClose: ReturnType<typeof vi.fn>
   onActivate: ReturnType<typeof vi.fn>
@@ -45,6 +51,7 @@ function mountBar(tabs: SidebarTab[], opts: { onPinTab?: (tabId: string, scope: 
   const onActivate = vi.fn()
   const onFloatTab = vi.fn()
   const onPinTab = opts.onPinTab
+  const onRevealPath = opts.onRevealPath
   const root: Root = createRoot(container)
   act(() => {
     root.render(createElement(TabBar, {
@@ -57,6 +64,7 @@ function mountBar(tabs: SidebarTab[], opts: { onPinTab?: (tabId: string, scope: 
       newTabOptions: [],
       onFloatTab,
       ...(onPinTab !== undefined ? { onPinTab } : {}),
+      ...(onRevealPath !== undefined ? { onRevealPath } : {}),
       onDropTab: () => {},
     }))
   })
@@ -288,6 +296,59 @@ describe('TabBar pin submenu (v0.17.0)', () => {
       const unpinItem = menuItems().find(item => item.textContent === '取消固定')!
       act(() => { unpinItem.click() })
       expect(onPinTab).toHaveBeenCalledWith('terminal:1', null)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('offers "show in folder" first for a tab backed by a file and reveals its path', () => {
+    stubZh()
+    const onRevealPath = vi.fn<(path: string) => void>()
+    const tabs: SidebarTab[] = [
+      { id: 'e1', type: 'editor', title: 'a.ts', path: '/tmp/pane/a.ts' },
+      { id: 'e2', type: 'editor', title: 'b.ts', path: '/tmp/pane/b.ts' },
+    ]
+    const { tabEls, unmount } = mountBar(tabs, { onRevealPath })
+    try {
+      act(() => { rightClick(tabEls[1]!) })
+      const labels = menuItems().map(item => item.textContent)
+      expect(labels[0]).toBe('在文件夹中显示')
+      expect(labels).toEqual(['在文件夹中显示', ...MENU_LABELS])
+      act(() => { menuItems()[0]!.click() })
+      // The path of the RIGHT-CLICKED tab, not the active one.
+      expect(onRevealPath).toHaveBeenCalledTimes(1)
+      expect(onRevealPath).toHaveBeenCalledWith('/tmp/pane/b.ts')
+      expect(menuItems()).toHaveLength(0)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('omits "show in folder" for tabs with no path (git / terminal / browser)', () => {
+    stubZh()
+    const onRevealPath = vi.fn<(path: string) => void>()
+    const { tabEls, unmount } = mountBar(fourTabs(), { onRevealPath })
+    try {
+      // t1 is an editor tab, but this fixture gives it no path.
+      for (const el of tabEls) {
+        act(() => { rightClick(el) })
+        expect(menuItems().map(item => item.textContent)).not.toContain('在文件夹中显示')
+      }
+      expect(onRevealPath).not.toHaveBeenCalled()
+    } finally {
+      unmount()
+    }
+  })
+
+  it('omits "show in folder" when the caller wires nothing (SSH-remote mode)', () => {
+    stubZh()
+    const tabs: SidebarTab[] = [
+      { id: 'e1', type: 'editor', title: 'a.ts', path: '/tmp/pane/a.ts' },
+    ]
+    const { tabEls, unmount } = mountBar(tabs)
+    try {
+      act(() => { rightClick(tabEls[0]!) })
+      expect(menuItems().map(item => item.textContent)).toEqual(MENU_LABELS)
     } finally {
       unmount()
     }
