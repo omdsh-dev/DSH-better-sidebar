@@ -1,7 +1,9 @@
 import { mkdir, open, opendir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, relative, sep } from 'node:path'
-import { compareEntries, type SidebarFsListing } from './fs-tree.ts'
+import { isAbsolute, dirname, join, relative, sep } from 'node:path'
+import { compareEntries, requireAbsolute, type SidebarFsListing } from './fs-tree.ts'
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
+import { resolveSessionPath } from './session-path.ts'
+import * as git from './git.ts'
 import { SidebarError } from './wire.ts'
 
 /** Version of the public host workspace-provider contract. */
@@ -31,6 +33,21 @@ export interface BetterSidebarWorkspaceSearchResult {
   truncated: boolean
 }
 
+/** Existing bounded Git operation vocabulary exposed to workspace providers. */
+export type BetterSidebarGitRequest =
+  | { operation: 'worktrees'; cwd: string; worktree?: string; repoRoot?: string }
+  | { operation: 'status'; cwd: string; worktree?: string; repoRoot?: string }
+  | { operation: 'diff'; cwd: string; worktree?: string; path?: string; staged: boolean; repoRoot?: string }
+  | { operation: 'stage' | 'unstage'; cwd: string; worktree?: string; path?: string; repoRoot?: string }
+  | { operation: 'commit'; cwd: string; worktree?: string; message: string; repoRoot?: string }
+  | { operation: 'branch'; cwd: string; worktree?: string; repoRoot?: string }
+  | { operation: 'checkout'; cwd: string; worktree?: string; branch: string; repoRoot?: string }
+  | { operation: 'log'; cwd: string; worktree?: string; count?: number; skip?: number; repoRoot?: string }
+  | { operation: 'commit-diff'; cwd: string; worktree?: string; hash: string; repoRoot?: string }
+  | { operation: 'discard'; cwd: string; worktree?: string; path: string; repoRoot?: string }
+  | { operation: 'revert' | 'cherry-pick'; cwd: string; worktree?: string; hash: string; repoRoot?: string }
+  | { operation: 'show'; cwd: string; worktree?: string; rev: string; path: string; repoRoot?: string }
+
 /** Transport-neutral workspace operations owned by Better Sidebar. */
 export interface BetterSidebarWorkspaceProvider {
   /** Stable registration identity. A new registration with the same id replaces the old one. */
@@ -44,6 +61,8 @@ export interface BetterSidebarWorkspaceProvider {
   writeText(scope: BetterSidebarWorkspaceScope, path: string, content: string): Promise<void>
   search(scope: BetterSidebarWorkspaceScope, query: string, options: { maxMatches: number; maxVisited: number }): Promise<BetterSidebarWorkspaceSearchResult>
   readBytes(scope: BetterSidebarWorkspaceScope, path: string, limit: number): Promise<BetterSidebarWorkspaceBytesResult>
+  /** Execute one existing Git action in the provider's execution world. */
+  git: { execute(request: BetterSidebarGitRequest): Promise<unknown> }
 }
 
 export interface BetterSidebarWorkspaceService {
@@ -200,6 +219,40 @@ export class LocalBetterSidebarWorkspaceProvider implements BetterSidebarWorkspa
     })
     if (!info.isFile() || info.size > limit) throw new SidebarError('fs-error', 'not a file or too large', 400)
     return { bytes: await readFile(path), path, size: info.size }
+  }
+
+  readonly git = { execute: (request: BetterSidebarGitRequest): Promise<unknown> => executeLocalGit(request) }
+}
+
+async function localGitPath(cwd: string, raw: string, selected?: string): Promise<string> {
+  if (isAbsolute(raw)) return requireAbsolute(resolveSessionPath(cwd, raw))
+  const sessionPath = requireAbsolute(join(cwd, raw))
+  if (await stat(sessionPath).then(() => true).catch(() => false)) return sessionPath
+  const root = await git.repoRoot(cwd, selected).catch(() => cwd)
+  return requireAbsolute(join(root, raw))
+}
+
+async function executeLocalGit(request: BetterSidebarGitRequest): Promise<unknown> {
+  const cwd = await git.resolveWorktree(request.cwd, request.worktree)
+  const { repoRoot } = request
+  switch (request.operation) {
+    case 'worktrees': {
+      const base = repoRoot !== undefined ? await git.repoRoot(cwd, repoRoot).catch(() => cwd) : cwd
+      return git.worktrees(base)
+    }
+    case 'status': return git.status(cwd, repoRoot)
+    case 'diff': return { diff: await git.diff(cwd, request.path === undefined ? undefined : await localGitPath(cwd, request.path, repoRoot), request.staged, repoRoot) }
+    case 'stage': await git.stage(cwd, request.path, repoRoot); return { ok: true }
+    case 'unstage': await git.unstage(cwd, request.path, repoRoot); return { ok: true }
+    case 'commit': await git.commit(cwd, request.message, repoRoot); return { ok: true }
+    case 'branch': return git.branches(cwd, repoRoot)
+    case 'checkout': await git.checkout(cwd, request.branch, repoRoot); return { ok: true }
+    case 'log': return git.log(cwd, request.count, request.skip, repoRoot)
+    case 'commit-diff': return { diff: await git.commitDiff(cwd, request.hash, repoRoot) }
+    case 'discard': await git.discard(cwd, await localGitPath(cwd, request.path, repoRoot), repoRoot); return { ok: true }
+    case 'revert': await git.revert(cwd, request.hash, repoRoot); return { ok: true }
+    case 'cherry-pick': await git.cherryPick(cwd, request.hash, repoRoot); return { ok: true }
+    case 'show': return { content: await git.show(cwd, request.rev, await localGitPath(cwd, request.path, repoRoot), repoRoot) }
   }
 }
 

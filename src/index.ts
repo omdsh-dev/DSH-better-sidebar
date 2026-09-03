@@ -35,6 +35,8 @@ import { writeWorkspaceUpload } from './fs-operations.ts'
 import {
   BetterSidebarWorkspaceRegistry,
   LocalBetterSidebarWorkspaceProvider,
+  type BetterSidebarGitRequest,
+  type BetterSidebarWorkspaceProvider,
   type BetterSidebarWorkspaceService,
 } from './workspace-provider.ts'
 import { decodeHtmlUrl } from './html-route.ts'
@@ -74,6 +76,7 @@ export {
   LocalBetterSidebarWorkspaceProvider,
 } from './workspace-provider.ts'
 export type {
+  BetterSidebarGitRequest,
   BetterSidebarWorkspaceProvider,
   BetterSidebarWorkspaceService,
   BetterSidebarWorkspaceScope,
@@ -322,13 +325,16 @@ function buildApi(
     const clientCwd = typeof record?.cwd === 'string' && record.cwd !== '' ? record.cwd : undefined
     return { sessionId, cwd: await sessionCwdOf(ctx, sessionId, clientCwd) }
   }
-  /** Resolve the optional Git-panel checkout selector against the authoritative
-   * session repository. Unlike `cwd`, `worktree` is never trusted directly. */
-  const gitCwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
-    const base = await cwdOf(payload)
+  type GitRouteRequest = BetterSidebarGitRequest extends infer Request
+    ? Request extends BetterSidebarGitRequest ? Omit<Request, 'cwd' | 'worktree'> : never
+    : never
+  const executeGit = async (payload: unknown, request: GitRouteRequest): Promise<unknown> => {
+    const { cwd } = await cwdOf(payload)
+    const scope = { cwd, fence: fenceEnabledOf(getSettings) }
+    const provider = workspace.resolve(scope)
     const record = payload as { worktree?: unknown } | null
-    const requested = typeof record?.worktree === 'string' && record.worktree !== '' ? record.worktree : undefined
-    return { sessionId: base.sessionId, cwd: await git.resolveWorktree(base.cwd, requested) }
+    const worktree = typeof record?.worktree === 'string' && record.worktree !== '' ? requireAbsolute(record.worktree) : undefined
+    return provider.git!.execute({ ...request, cwd, worktree } as BetterSidebarGitRequest)
   }
   // Background jobs: the LIST rides the harness's `session/jobs` push
   // mirror, so these routes only replay output the model has read (from the
@@ -375,93 +381,34 @@ function buildApi(
       await workspace.resolve(scope).writeText(scope, path, content)
       return { ok: true }
     },
-    'git.worktrees': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
-      const selected = selectedRepoOf(payload)
-      // A workspace container (no repo at cwd) has child repos; the worktree
-      // list belongs to the SELECTED child, not the container. Thread the
-      // validated repoRoot so linked checkouts of a chosen child appear.
-      const base = selected !== undefined ? await git.repoRoot(cwd, selected).catch(() => cwd) : cwd
-      return git.worktrees(base)
-    },
-    'git.status': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
-      return git.status(cwd, selectedRepoOf(payload))
-    },
-    'git.diff': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
+    'git.worktrees': payload => executeGit(payload, { operation: 'worktrees', repoRoot: selectedRepoOf(payload) }),
+    'git.status': payload => executeGit(payload, { operation: 'status', repoRoot: selectedRepoOf(payload) }),
+    'git.diff': (payload) => {
       const record = payload as { path?: unknown; staged?: unknown }
-      const repoRoot = selectedRepoOf(payload)
-      const path = record.path === undefined ? undefined : await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot)
-      return { diff: await git.diff(cwd, path, record.staged === true, repoRoot) }
+      return executeGit(payload, { operation: 'diff', path: record.path === undefined ? undefined : requireString(payload, 'path'), staged: record.staged === true, repoRoot: selectedRepoOf(payload) })
     },
-    'git.stage': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
+    'git.stage': (payload) => {
       const record = payload as { path?: unknown }
-      const path = record.path === undefined ? undefined : requireString(payload, 'path')
-      await git.stage(cwd, path, selectedRepoOf(payload))
-      return { ok: true }
+      return executeGit(payload, { operation: 'stage', path: record.path === undefined ? undefined : requireString(payload, 'path'), repoRoot: selectedRepoOf(payload) })
     },
-    'git.unstage': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
+    'git.unstage': (payload) => {
       const record = payload as { path?: unknown }
-      const path = record.path === undefined ? undefined : requireString(payload, 'path')
-      await git.unstage(cwd, path, selectedRepoOf(payload))
-      return { ok: true }
+      return executeGit(payload, { operation: 'unstage', path: record.path === undefined ? undefined : requireString(payload, 'path'), repoRoot: selectedRepoOf(payload) })
     },
-    'git.commit': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
-      const message = requireString(payload, 'message')
-      await git.commit(cwd, message, selectedRepoOf(payload))
-      return { ok: true }
-    },
-    'git.branch': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
-      return git.branches(cwd, selectedRepoOf(payload))
-    },
-    'git.checkout': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
-      await git.checkout(cwd, requireString(payload, 'branch'), selectedRepoOf(payload))
-      return { ok: true }
-    },
-    'git.log': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
+    'git.commit': payload => executeGit(payload, { operation: 'commit', message: requireString(payload, 'message'), repoRoot: selectedRepoOf(payload) }),
+    'git.branch': payload => executeGit(payload, { operation: 'branch', repoRoot: selectedRepoOf(payload) }),
+    'git.checkout': payload => executeGit(payload, { operation: 'checkout', branch: requireString(payload, 'branch'), repoRoot: selectedRepoOf(payload) }),
+    'git.log': (payload) => {
       const record = payload as { count?: unknown; skip?: unknown }
-      const count = typeof record.count === 'number' && Number.isInteger(record.count) && record.count > 0
-        ? record.count
-        : undefined
-      const skip = typeof record.skip === 'number' && Number.isInteger(record.skip) && record.skip >= 0
-        ? record.skip
-        : undefined
-      return git.log(cwd, count, skip, selectedRepoOf(payload))
+      const count = typeof record.count === 'number' && Number.isInteger(record.count) && record.count > 0 ? record.count : undefined
+      const skip = typeof record.skip === 'number' && Number.isInteger(record.skip) && record.skip >= 0 ? record.skip : undefined
+      return executeGit(payload, { operation: 'log', count, skip, repoRoot: selectedRepoOf(payload) })
     },
-    'git.commit-diff': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
-      return { diff: await git.commitDiff(cwd, requireString(payload, 'hash'), selectedRepoOf(payload)) }
-    },
-    'git.discard': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
-      const repoRoot = selectedRepoOf(payload)
-      await git.discard(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot), repoRoot)
-      return { ok: true }
-    },
-    'git.revert': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
-      await git.revert(cwd, requireString(payload, 'hash'), selectedRepoOf(payload))
-      return { ok: true }
-    },
-    'git.cherry-pick': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
-      await git.cherryPick(cwd, requireString(payload, 'hash'), selectedRepoOf(payload))
-      return { ok: true }
-    },
-    'git.show': async (payload) => {
-      const { cwd } = await gitCwdOf(payload)
-      const repoRoot = selectedRepoOf(payload)
-      const path = await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot)
-      const rev = requireString(payload, 'rev')
-      return { content: await git.show(cwd, rev, path, repoRoot) }
-    },
+    'git.commit-diff': payload => executeGit(payload, { operation: 'commit-diff', hash: requireString(payload, 'hash'), repoRoot: selectedRepoOf(payload) }),
+    'git.discard': payload => executeGit(payload, { operation: 'discard', path: requireString(payload, 'path'), repoRoot: selectedRepoOf(payload) }),
+    'git.revert': payload => executeGit(payload, { operation: 'revert', hash: requireString(payload, 'hash'), repoRoot: selectedRepoOf(payload) }),
+    'git.cherry-pick': payload => executeGit(payload, { operation: 'cherry-pick', hash: requireString(payload, 'hash'), repoRoot: selectedRepoOf(payload) }),
+    'git.show': payload => executeGit(payload, { operation: 'show', rev: requireString(payload, 'rev'), path: requireString(payload, 'path'), repoRoot: selectedRepoOf(payload) }),
     // The session's file-tool events for the changes tab's session lens
     // (and its badge): the CLIENT runtime's sessions face has no event-log
     // access, so the events cross the wire here — live session log first,

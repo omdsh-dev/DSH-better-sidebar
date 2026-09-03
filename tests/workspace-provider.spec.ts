@@ -16,6 +16,7 @@ function provider(id: string, priority: number, claim: (cwd: string) => boolean)
     writeText: vi.fn(),
     search: vi.fn(),
     readBytes: vi.fn(),
+    git: { execute: vi.fn() },
   }
 }
 
@@ -85,6 +86,9 @@ describe('BetterSidebarWorkspaceRegistry', () => {
     vi.mocked(external.writeText).mockResolvedValue(undefined)
     vi.mocked(external.search).mockResolvedValue({ matches: ['src/file.ts'], truncated: false })
     vi.mocked(external.readBytes).mockResolvedValue({ bytes: Buffer.from('<h1>remote</h1>'), path: '/virtual/page.html', size: 15 })
+    vi.mocked(external.git.execute).mockImplementation(async request => request.operation === 'status'
+      ? { isRepo: true, branch: 'main', entries: [] }
+      : { ok: true })
     const ctx = {
       webRuntime: { trustedHosts: [] },
       webServer: {
@@ -109,6 +113,16 @@ describe('BetterSidebarWorkspaceRegistry', () => {
     expect(await invoke(route, 'fs.read', { sessionId: 's', path: '/virtual/a.txt' })).toEqual({ ok: true, value: { kind: 'text', content: 'remote', truncated: false } })
     expect(await invoke(route, 'fs.write', { sessionId: 's', path: '/virtual/a.txt', content: 'next' })).toEqual({ ok: true, value: { ok: true } })
     expect(await invoke(route, 'fs.search', { sessionId: 's', query: 'file' })).toEqual({ ok: true, value: { matches: ['src/file.ts'], truncated: false } })
+    const gitCalls: Array<[string, Record<string, unknown>]> = [
+      ['git.worktrees', {}], ['git.status', {}], ['git.diff', { path: 'a.ts', staged: true }],
+      ['git.stage', { path: 'a.ts' }], ['git.unstage', { path: 'a.ts' }], ['git.commit', { message: 'done' }],
+      ['git.branch', {}], ['git.checkout', { branch: 'next' }], ['git.log', { count: 10, skip: 2 }],
+      ['git.commit-diff', { hash: 'abc' }], ['git.discard', { path: 'a.ts' }], ['git.revert', { hash: 'abc' }],
+      ['git.cherry-pick', { hash: 'abc' }], ['git.show', { rev: 'HEAD', path: 'a.ts' }],
+    ]
+    for (const [method, body] of gitCalls) await invoke(route, method, { sessionId: 's', worktree: '/virtual/linked', ...body })
+    expect(vi.mocked(external.git.execute).mock.calls.map(([request]) => request.operation)).toEqual(gitCalls.map(([method]) => method.slice(4)))
+    expect(external.git.execute).toHaveBeenCalledWith(expect.objectContaining({ operation: 'status', cwd: '/virtual', worktree: '/virtual/linked' }))
 
     expect(external.tree).toHaveBeenCalled()
     expect(external.readText).toHaveBeenCalled()

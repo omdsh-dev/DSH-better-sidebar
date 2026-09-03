@@ -557,12 +557,17 @@ export function apply(ctx: Context) {
     writeText: async (scope, path, content) => { /* ... */ },
     search: async (scope, query, budget) => { /* ... */ },
     readBytes: async (scope, path, limit) => { /* ... */ },
+    git: {
+      execute: async (request) => runWorkspaceGit(request),
+    },
   }
   ctx.effect(() => ctx.betterSidebarWorkspace.register(provider))
 }
 ```
 
 `betterSidebarWorkspace.version === 1`。注册表按 `priority` 从高到低选第一个 `claim({ cwd }) === true` 的 provider；没有匹配时使用内置 local adapter。同 `id` 的新注册会替换旧注册，旧 disposer 不会误删新实例（HMR-safe）。Provider 接收 `{ cwd, fence }`，负责路径解析、真实目标包含检查和 I/O；Better Sidebar 仍拥有既有 URL、JSON wire、大小预算、MIME、下载 disposition、Host trust fence 与 HTML CSP。上传和终端不经过此接口。
+
+`git.execute(request)` 使用封闭的现有操作词汇（`worktrees`、`status`、`diff`、`stage`、`unstage`、`commit`、`branch`、`checkout`、`log`、`commit-diff`、`discard`、`revert`、`cherry-pick`、`show`），不会暴露任意命令。`request.cwd` 始终是会话权威 cwd；可选 `worktree` / `repoRoot` 与现有 Git 面板选择器同形。被 provider 认领的工作区全部 Git 路由都委托此方法；内置 local provider 保持原有解析器、wire 返回形状、路径校验与子进程行为。
 
 ---
 
