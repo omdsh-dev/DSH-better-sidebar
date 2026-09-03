@@ -1813,6 +1813,19 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   font: var(--dsw-font-xs-13);
 }
 
+/* The DSH CodeBlock banner is position:sticky (top:0, z-index:6) so a block
+   keeps its copy action reachable inside a per-message scroll container —
+   the right call in chat, where each block owns its scroll box. In the file
+   preview every fence shares one `.editorMd` scroll container, so that sticky
+   banner pins to the top of the viewport until the *whole block* scrolls
+   past, which reads as a floating header over the document. Neutralize the
+   stickiness here (bannerWrap is the first element child of `.md-code-block`;
+   mermaid mounts are excluded since their own chrome replaces the banner). */
+.editorMd :global(.md-code-block:not([data-mermaid-processed])) > :global(div):first-child {
+  position: static;
+  z-index: auto;
+}
+
 /* ── Mermaid diagram block (markdown preview, mermaid lazy chunk) ────────
    Mirrors the md-code-block chrome the DSH CodeBlock renders, so a diagram
    reads as a peer of the surrounding fences: hairline border, layer-2
@@ -2470,11 +2483,15 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 /* The zero-height sticky bar: occupies no layout, keeps the button visible
    while the preview scrolls, and lets pointer events pass through the bar
-   itself (only the interactive children re-enable them). */
+   itself (only the interactive children re-enable them). The bar's stacking
+   context also frames the outline panel, so its z-index must clear the DSH
+   CodeBlock banner (z-index:6) or the popover paints beneath a sticky fence
+   header. 7 sits just above that banner and below the portalled selection
+   popup (60) / mermaid modal (1000). */
 .tocBar {
   position: sticky;
   top: 0;
-  z-index: 3;
+  z-index: 7;
   display: flex;
   justify-content: flex-end;
   height: 0;

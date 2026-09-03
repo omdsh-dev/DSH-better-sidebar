@@ -33,7 +33,7 @@ import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarSessionList } from '../context-types.ts'
-import { appendToDraft } from './conversation-draft.ts'
+import { appendToDraft, insertFileReference } from './conversation-draft.ts'
 import {
   BOTTOM_MIN, PANEL_MIN, activateTab, agentUuidOf, allLeaves, closeFloatByTab, closeTab, dockFloat, firstLeaf, floatTab,
   floatWithTab, isAgentTabId, leafWithTab, migrateBottomTabs,
@@ -128,7 +128,7 @@ function injectUserCss(attr: string, id: string, cssText: string): HTMLStyleElem
  *  pane; sessionId/cwd cover onReferenceFile). */
 interface TabContentProps extends TabContentMemoKey {
   onToggleDir: (path: string) => void
-  onReferenceFile: (path: string) => void
+  onReferenceFile: (path: string, isDir: boolean) => void
   ctx: Context
   store: SidebarStore
   /** Fired before a topology node jumps to its child session (see Sidebar). */
@@ -1401,17 +1401,26 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }, [actions, pinnedVirtualTabs, activePinnedTabId, store])
 
   /**
-   * The explorer's @-reference button: append `@<relative path>` to the
-   * session's composer draft (space-separated). The conversation service is
-   * resolved lazily through `ctx.get` (the inject-free read — the app's own
-   * plugins read 'conversation' the same way); a missing service or scope
-   * degrades to a logged no-op, never a crash. Defined above the no-session
-   * early return — a hook must never sit behind a conditional return
-   * (React counts hooks per render).
+   * The explorer's @-reference button. Directories append the folder mention
+   * (`@dir/`) as plain text so DSH's folder decoration and completion keep
+   * working; files insert a structured chip like the native `@` picker, so
+   * the whole reference stays one link instead of decorating only the
+   * leading folder. Resolves the session-scope ctx and the conversation
+   * input service at click time; a missing service or scope degrades to a
+   * logged no-op, never a crash. Defined above the no-session early return
+   * — a hook must never sit behind a conditional return (React counts hooks
+   * per render).
    */
-  const referenceInChat = useCallback((path: string): void => {
+  const referenceInChat = useCallback((path: string, isDir: boolean): void => {
     if (sessionId === undefined) return
-    appendToDraft(ctx, sessionId, `@${relativeTo(cwd ?? '', path)}`)
+    const rel = relativeTo(cwd ?? '', path)
+    if (isDir) {
+      appendToDraft(ctx, sessionId, `@${rel === '.' ? './' : `${rel}/`}`)
+      return
+    }
+    if (!insertFileReference(ctx, sessionId, rel)) {
+      appendToDraft(ctx, sessionId, `@${rel}`)
+    }
   }, [ctx, sessionId, cwd])
 
   if (state === undefined || sessionId === undefined) {

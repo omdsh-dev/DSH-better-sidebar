@@ -62,7 +62,7 @@ export function TreePanel(props: {
   openWithSsh?: boolean
   onOpenWith?: (targetId: string, path: string) => void
   onToggleOpenWithPin?: (targetId: string) => void
-  onReferenceFile: (path: string) => void
+  onReferenceFile: (path: string, isDir: boolean) => void
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean

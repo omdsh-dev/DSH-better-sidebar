@@ -50,6 +50,49 @@ jobs:
       - name: Check consumer type surface
         run: pnpm check:consumer-types
 
+  # Windows parity lane for the pure-logic suite. The codebase carries real
+  # win32 branches (shell parsing, WSL path projection, the PowerShell
+  # installer) that mock-injection tests alone cannot validate — this lane
+  # runs the same typecheck / test / build / consumer-type-surface steps on
+  # a real Windows runtime. The plugin-mount lane (real DSH + Playwright
+  # Chromium) stays ubuntu-only and is deliberately NOT mirrored here.
+  ci-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        # The runner ships Git Bash: multi-line steps and
+        # scripts/check-consumer-types.sh work verbatim.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Tests run git log against this repository and need the full history.
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      # Same rationale as the ci job: smoke tests spawn git without an
+      # identity and rely on ambient config, which the runner lacks.
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.name "dsh-better-sidebar-ci"
+          git config --global user.email "ci@dsh.invalid"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Test
+        run: pnpm test
+      - name: Build
+        run: pnpm build
+      - name: Check consumer type surface
+        run: pnpm check:consumer-types
+
   # Pack the plugin as an npm tarball, mount it into a REAL DSH instance
   # through the official `dsh plugin --profile web add` channel, and render
   # the DSH web UI headlessly (Playwright Chromium) to prove the plugin

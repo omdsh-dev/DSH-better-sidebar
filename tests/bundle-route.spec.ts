@@ -84,10 +84,12 @@ describe('/sidebar/bundle route', () => {
     try {
       const first = fakeRes()
       await handler(req('GET', '/sidebar/bundle/editor.js'), first as unknown as ServerResponse)
-      // Use a different size so the mtime+size memo invalidates even when the
-      // two writes land in the same mtimeMs tick (same-second write would
-      // otherwise return the memoized ETag and incorrectly 304).
-      writeFileSync(join(dir, 'client-editor.js'), 'window.__ModuleLoader__ && 1; // changed')
+      // The rewrite must change the LENGTH too: the ETag memo revalidates on
+      // stat (mtime+size), and Windows updates file timestamps lazily — an
+      // equal-size rewrite right after the first read can still look
+      // unchanged (stale 304). A size delta busts the memo deterministically
+      // on every platform.
+      writeFileSync(join(dir, 'client-editor.js'), 'window.__ModuleLoader__ && 1; // rotated')
       const second = fakeRes()
       await handler(req('GET', '/sidebar/bundle/editor.js', { 'if-none-match': first.headers.etag! }), second as unknown as ServerResponse)
       expect(second.status).toBe(200)

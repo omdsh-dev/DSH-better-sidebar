@@ -151,7 +151,7 @@ export interface TabComponentProps {
   /** The explorer's reveal-highlight set (ExplorerView; "Show in folder" targets). */
   revealed?: string[]
   onToggleDir?: (path: string) => void
-  onReferenceFile?: (path: string) => void
+  onReferenceFile?: (path: string, isDir: boolean) => void
   onOpenFile?: (path: string) => void
   onOpenDiff?: (tab: SidebarTab) => void
   onSubagentJump?: (childSessionId: string) => void

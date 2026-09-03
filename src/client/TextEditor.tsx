@@ -13,7 +13,7 @@
  * the FileViewerProps toolbar callbacks so the host's path-input header
  * renders the controls instead.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { EditorState } from '@codemirror/state'
@@ -52,6 +52,14 @@ type ViewMode = 'preview' | 'edit'
  */
 export const HTML_IFRAME_SANDBOX = 'allow-scripts allow-popups allow-downloads allow-modals'
 
+/** Per-file preview scroll memory. Module-level so it survives viewer
+ *  remounts: the save-then-switch-to-preview reload (EditorHost #215 case B)
+ *  rebuilds the whole TextEditor instance, and without this the preview
+ *  would remount at the top. Keyed by session + path; a fresh entry reads 0
+ *  (new file opens at the top), re-opens/toggles restore the last position. */
+const previewScrollMemory = new Map<string, number>()
+const previewScrollKey = (scope: { sessionId: string }, path: string): string => `${scope.sessionId}::${path}`
+
 export function TextEditor(props: FileViewerProps) {
   const { ctx, scope, path, viewerId, content, truncated } = props
   const [mode, setMode] = useState<ViewMode>('preview')
@@ -70,6 +78,22 @@ export function TextEditor(props: FileViewerProps) {
   const mdRef = useRef<HTMLDivElement>(null)
   const markdown = viewerId === 'markdown'
   const html = viewerId === 'html'
+  /** Preview scroll position across the preview<->edit toggle. The preview
+   *  container re-mounts on every mode switch and its scrollTop lives on that
+   *  element, so capture it on scroll and restore after each remount. Seeded
+   *  from the module-level per-file memory so a full viewer rebuild
+   *  (save-then-switch-to-preview reload) also keeps the position. */
+  const previewScrollRef = useRef(previewScrollMemory.get(previewScrollKey(scope, path)) ?? 0)
+  /** True while a programmatic restore is in flight; raw scroll events caused
+   *  by the restore (or by the browser clamping a collapsed reload container
+   *  to 0) must not overwrite the remembered position. */
+  const restoringRef = useRef(false)
+  /** Preview-side handoff data for the preview -> edit switch: the text at the
+   *  top of the preview viewport (best-effort) plus the scroll ratio. Captured
+   *  throttled on preview scroll; consumed when entering edit mode so the
+   *  editor opens where the reader was instead of at the file top. */
+  const previewSyncRef = useRef<{ text: string | null; ratio: number }>({ text: null, ratio: 0 })
+  const anchorThrottleRef = useRef(false)
 
   /**
    * The floating "add to conversation" popup (viewport-anchored; null =
@@ -94,6 +118,12 @@ export function TextEditor(props: FileViewerProps) {
     setSaveState('idle')
     selectionPopup.hide()
   }, [content])
+
+  // A different file switches the remembered preview scroll position to that
+  // file's own entry (first open: none, so the preview starts at the top).
+  useEffect(() => {
+    previewScrollRef.current = previewScrollMemory.get(previewScrollKey(scope, path)) ?? 0
+  }, [path])
 
   // Create the CodeMirror editor once the content is loaded. The view owns
   // the document; React only tracks dirty state through the update listener
@@ -203,10 +233,49 @@ export function TextEditor(props: FileViewerProps) {
 
   // The editor may have been display:none while previewing; re-measure when
   // it becomes visible again (CodeMirror sizes itself on reveal). A mode
-  // flip also invalidates any anchored selection popup.
+  // flip also invalidates any anchored selection popup. When entering edit
+  // from a scrolled preview, the editor opens where the reader was: the line
+  // mapped from the text anchored at the preview viewport top (or, failing a
+  // unique text match, the proportional scroll position).
   useEffect(() => {
     selectionPopup.hide()
-    if (mode === 'edit') viewRef.current?.requestMeasure()
+    if (mode !== 'edit') return
+    const view = viewRef.current
+    if (view === null) return
+    const sync = previewSyncRef.current
+    if (!markdown) return
+    const doc = view.state.doc
+    let target: number | undefined
+    if (sync.text !== null) {
+      const lines = linesOfSelection(mdText, sync.text)
+      if (lines !== null) target = doc.line(Math.min(lines.start, doc.lines)).from
+    }
+    // ratio === 1 means the reader was at the very bottom (e.g. the last
+    // block's text is a repeated filler line that linesOfSelection rejects
+    // as ambiguous) — it must still land the editor at the bottom.
+    if (target === undefined && sync.ratio > 0 && sync.ratio <= 1) {
+      target = Math.max(1, Math.min(doc.length - 1, Math.round(doc.length * sync.ratio)))
+    }
+    if (target === undefined) return
+    // Position the editor by writing its OWN scroller directly (after a fresh
+    // measure) instead of CodeMirror's scrollIntoView: that path walks every
+    // scrollable ancestor — and even the window when the browser is zoomed
+    // (visualViewport < innerHeight) — to reveal the target, which dragged
+    // the whole sidebar up when the reader was at the very end of the
+    // document. A plain scrollTop write on the editor scroller can never
+    // touch anything outside the editor.
+    view.requestMeasure()
+    view.dispatch({ selection: { anchor: target } })
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const block = view.lineBlockAt(target)
+        view.scrollDOM.scrollTop = Math.max(0, block.top - 8)
+        // Force CodeMirror to re-measure and re-render its virtualized
+        // viewport at the NEW scroll position (its scroll-observer is async
+        // and can lag a direct write).
+        view.requestMeasure()
+      })
+    })
   }, [mode])
 
   // Snapshot the live document into the draft whenever the preview needs
@@ -243,6 +312,23 @@ export function TextEditor(props: FileViewerProps) {
    *  lookup. All preview renderers share this source so plain Markdown,
    *  Mermaid, and documents containing raw HTML behave consistently. */
   const previewMdText = markdown ? markdownPreviewSource(mdText) : mdText
+
+  // Re-apply the remembered preview scroll position whenever the preview
+  // container mounts or its content changes (mode flip back to preview, or a
+  // same-file reload — e.g. the save-then-switch-to-preview reload — which
+  // temporarily collapses the container and clamps scrollTop to 0). Restored
+  // in a before-paint layout effect so the user never sees the top flash.
+  useLayoutEffect(() => {
+    if (mode !== 'preview') return
+    const el = mdRef.current
+    if (el === null || previewScrollRef.current <= 0) return
+    if (el.scrollHeight <= el.clientHeight) return
+    if (el.scrollTop === previewScrollRef.current) return
+    restoringRef.current = true
+    el.scrollTop = previewScrollRef.current
+    requestAnimationFrame(() => { restoringRef.current = false })
+  }, [mode, previewMdText])
+
   /** The preview source with local image destinations rewritten to absolute
    *  media URLs (see {@link rewriteLocalImageUrls}). */
   const previewText = markdown
@@ -396,7 +482,36 @@ export function TextEditor(props: FileViewerProps) {
           className={css.editorMd}
           ref={mdRef}
           onMouseUp={handlePreviewMouseUp}
-          onScroll={selectionPopup.hide}
+          onScroll={(event) => {
+            const el = event.currentTarget
+            if (!restoringRef.current && el.scrollHeight > el.clientHeight) {
+              previewScrollRef.current = el.scrollTop
+              previewScrollMemory.set(previewScrollKey(scope, path), el.scrollTop)
+            }
+            if (!anchorThrottleRef.current) {
+              anchorThrottleRef.current = true
+              setTimeout(() => { anchorThrottleRef.current = false }, 120)
+              const ratio = el.scrollHeight > el.clientHeight
+                ? el.scrollTop / (el.scrollHeight - el.clientHeight)
+                : 0
+              // The first block below the viewport's top edge, chosen with
+              // layout coordinates (caretRangeFromPoint needs an in-viewport
+              // point and returns null when the panel is partially off-screen).
+              // Its text is the anchor the editor syncs to on preview -> edit.
+              let text: string | null = null
+              const base = el.getBoundingClientRect()
+              const blocks = el.querySelectorAll('h1, h2, h3, h4, h5, h6, p, li')
+              for (const block of blocks) {
+                if (block.getBoundingClientRect().top - base.top + el.scrollTop >= el.scrollTop - 2) {
+                  const t = (block.textContent ?? '').replace(/[ \t\r\n]+/g, ' ').trim()
+                  if (t.length >= 8) text = t
+                  break
+                }
+              }
+              previewSyncRef.current = { text, ratio }
+            }
+            selectionPopup.hide()
+          }}
         >
           {/* The fence copy-button labels must come from this plugin's own
               dictionary: the DSH MarkdownText/CodeBlock are cordis-free and

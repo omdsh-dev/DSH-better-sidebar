@@ -7,7 +7,7 @@
  * tab is closed or the plugin tears down.
  */
 import { chmodSync, existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, win32 as win32Path } from 'node:path'
 import { createRequire } from 'node:module'
 import { userInfo } from 'node:os'
 import type { IPty } from 'node-pty'
@@ -148,12 +148,13 @@ export class PtyManager {
     if (this.keysOf(sessionId).length >= this.maxPerSession) {
       throw new SidebarError('pty-error', `terminal limit reached (${this.maxPerSession}) for this session`, 400)
     }
+    const executable = resolveShellExecutable(shell ?? this.shell)
     const handle: SidebarPty = {
       key,
       sessionId,
       tabId,
       cwd,
-      pty: this.nodePty.spawn(shell ?? this.shell, shellSpawnArgs(shellArgs ?? this.shellArgs), {
+      pty: this.nodePty.spawn(executable, shellSpawnArgs(shellArgs ?? this.shellArgs), {
         name: 'xterm-256color',
         cols: Math.max(2, Math.floor(cols)),
         rows: Math.max(2, Math.floor(rows)),
@@ -270,6 +271,32 @@ export interface ShellResolutionOptions {
   exists?: (path: string) => boolean
 }
 
+/** Inputs for resolving one configured shell into the executable path passed
+ * to node-pty. Injectable so the Windows-only search semantics stay covered
+ * on POSIX CI runners. */
+export interface ShellExecutableResolutionOptions {
+  /** Platform override (defaults to `process.platform`). */
+  platform?: NodeJS.Platform
+  /** Environment override; Windows reads PATH/PATHEXT/SystemRoot plus the
+   * PowerShell well-known-location variables. */
+  env?: NodeJS.ProcessEnv
+  /** File-existence probe override (defaults to `existsSync`). */
+  exists?: (path: string) => boolean
+}
+
+/** Read one Windows environment value case-insensitively. Real
+ * `process.env` has case-insensitive lookup on Windows, but injected objects
+ * and some embedders do not preserve that behavior. */
+function windowsEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const direct = env[name]
+  if (direct !== undefined) return direct
+  const lowered = name.toLowerCase()
+  for (const [key, value] of Object.entries(env)) {
+    if (key.toLowerCase() === lowered) return value
+  }
+  return undefined
+}
+
 /**
  * Candidate directories that may contain a `pwsh.exe` on Windows: PATH
  * entries first, then the well-known machine/user install locations
@@ -281,7 +308,7 @@ export interface ShellResolutionOptions {
  */
 function windowsPwshCandidateDirs(env: NodeJS.ProcessEnv): string[] {
   const dirs: string[] = []
-  const pathEntries = env.PATH
+  const pathEntries = windowsEnv(env, 'PATH')
   if (pathEntries !== undefined) {
     // The win32 branch always uses the Windows PATH separator; hardcoding it
     // keeps the function testable from POSIX runners without a delimiter
@@ -291,12 +318,12 @@ function windowsPwshCandidateDirs(env: NodeJS.ProcessEnv): string[] {
       if (trimmed !== '') dirs.push(trimmed)
     }
   }
-  for (const programFiles of [env.ProgramW6432, env.ProgramFiles]) {
+  for (const programFiles of [windowsEnv(env, 'ProgramW6432'), windowsEnv(env, 'ProgramFiles')]) {
     if (programFiles === undefined || programFiles.trim() === '') continue
     dirs.push(join(programFiles, 'PowerShell', '7'))
     dirs.push(join(programFiles, 'PowerShell', '7-preview'))
   }
-  const localAppData = env.LOCALAPPDATA
+  const localAppData = windowsEnv(env, 'LOCALAPPDATA')
   if (localAppData !== undefined && localAppData.trim() !== '') {
     dirs.push(join(localAppData, 'Microsoft', 'PowerShell', '7'))
     dirs.push(join(localAppData, 'Microsoft', 'PowerShell', '7-preview'))
@@ -304,6 +331,72 @@ function windowsPwshCandidateDirs(env: NodeJS.ProcessEnv): string[] {
     dirs.push(join(localAppData, 'Programs', 'PowerShell', '7-preview'))
   }
   return [...new Set(dirs)]
+}
+
+/**
+ * Resolve the configured shell executable before handing it to node-pty.
+ *
+ * POSIX node-pty uses `execvp`, so bare commands already follow PATH and are
+ * passed through unchanged. Windows' native backend does not consistently
+ * apply the shell's PATHEXT lookup to a bare value (`pwsh` / `cmd` can fail
+ * with the opaque `File not found:` error), so perform the lookup ourselves:
+ *
+ * - an explicit path is accepted as-is when it exists (or with a PATHEXT
+ *   suffix when the user omitted `.exe`),
+ * - a bare name is searched through PATH, System32, and PowerShell's known
+ *   install directories,
+ * - failure becomes a stable, actionable pty-error instead of a native
+ *   backend string with no mention of the configured shell.
+ */
+export function resolveShellExecutable(
+  shell: string,
+  options: ShellExecutableResolutionOptions = {},
+): string {
+  const configured = shell.trim()
+  const platform = options.platform ?? process.platform
+  if (platform !== 'win32' || configured === '') return configured
+
+  const env = options.env ?? process.env
+  const exists = options.exists ?? existsSync
+  const rawPathext = windowsEnv(env, 'PATHEXT')
+  const executableExts = (rawPathext ?? '.COM;.EXE')
+    .split(';')
+    .map(extension => extension.trim())
+    // node-pty ultimately calls CreateProcess; batch files need an
+    // intermediate cmd.exe and therefore are not valid shell executables.
+    .filter(extension => /^\.(?:com|exe)$/i.test(extension))
+  if (executableExts.length === 0) executableExts.push('.EXE', '.COM')
+
+  const hasExtension = win32Path.extname(configured) !== ''
+  const names = hasExtension
+    ? [configured]
+    : executableExts.map(extension => configured + extension.toLowerCase())
+  const hasPath = win32Path.isAbsolute(configured) || /[\\/]/.test(configured)
+  const candidates: string[] = []
+  if (hasPath) {
+    candidates.push(...names)
+  } else {
+    const path = windowsEnv(env, 'PATH')
+    if (path !== undefined) {
+      for (const dir of path.split(';').map(entry => entry.trim()).filter(Boolean)) {
+        for (const name of names) candidates.push(win32Path.join(dir, name))
+      }
+    }
+    const systemRoot = windowsEnv(env, 'SystemRoot')
+    if (systemRoot !== undefined && systemRoot.trim() !== '') {
+      for (const name of names) candidates.push(win32Path.join(systemRoot, 'System32', name))
+    }
+    if (/^pwsh(?:\.exe)?$/i.test(configured)) {
+      for (const dir of windowsPwshCandidateDirs(env)) {
+        candidates.push(win32Path.join(dir, 'pwsh.exe'))
+      }
+    }
+  }
+
+  for (const candidate of [...new Set(candidates)]) {
+    if (exists(candidate)) return candidate
+  }
+  throw new SidebarError('pty-error', `shell executable not found: "${configured}"`)
 }
 
 /**

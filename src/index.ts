@@ -42,7 +42,7 @@ import { launchExternal } from './open-external.ts'
 import * as git from './git.ts'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { defaultShell, ensureSpawnHelper, PtyManager, shellDisplayName } from './pty-manager.ts'
-import { AgentPtyRegistry, tryResizePty, type AgentTerminalHandle } from './agent-pty.ts'
+import { AgentPtyRegistry, armPtyResizeGate, tryResizePty, type AgentTerminalHandle } from './agent-pty.ts'
 import {
   DSH_NODE_PTY_RANGE,
   depsStatus,
@@ -1234,6 +1234,9 @@ async function attachTerminal(
     // terminals opened from now on (existing pty handles keep their shell).
     const overrides = shellOverridesOf(getSettings)
     const handle = ptyManager.open(sessionId, tabId, cwd, 80, 24, overrides.shell, overrides.shellArgs)
+    // Windows pre-ready gate for the resize frames this socket may deliver
+    // (see armPtyResizeGate; inert on POSIX).
+    armPtyResizeGate(handle.pty)
     // Replay the transcript, then follow live output.
     if (handle.transcript !== '') ws.send(handle.transcript)
     const onData = (data: string): void => {

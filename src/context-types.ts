@@ -391,9 +391,10 @@ export interface SidebarLocaleService {
 
 /** The composer draft face the sidebar reaches through `ctx.conversation.input`. */
 export interface SidebarSessionInput {
-  /** The live input store (draft read for append). */
+  /** The live input store (draft read for append). `draftRev` is the machine's
+   *  span-CAS revision — required to mint a structured file-reference chip. */
   state: {
-    getSnapshot(): { draft: string }
+    getSnapshot(): { draft: string; draftRev?: number }
   }
   /** Replace the draft text (the input machine's single public write path). */
   setDraft(text: string): void

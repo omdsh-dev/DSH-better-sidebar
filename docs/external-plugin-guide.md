@@ -256,7 +256,10 @@ interface TabComponentProps {
   // 以下由内置 tab 使用，外部 tab 可忽略：
   expanded?: string[]          // 文件树的展开目录集
   onToggleDir?: (path: string) => void
-  onReferenceFile?: (path: string) => void
+  // 在会话 composer 插入一条 @ 引用。isDir=true 为目录：纯文本 `@dir/`，
+  // 保留宿主文件夹装饰与补全；false 为文件：走宿主结构化引用 chip
+  // （显示 @basename、序列化为完整 @path），宿主拒绝时回退纯文本。
+  onReferenceFile?: (path: string, isDir: boolean) => void
   onOpenFile?: (path: string) => void
   onOpenDiff?: (tab: SidebarTab) => void
   onSubagentJump?: (childSessionId: string) => void

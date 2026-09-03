@@ -216,6 +216,51 @@ function gitPayload(scope: SessionScope, worktree: string | undefined, extra: Re
   return scopePayload(scope, { ...(worktree !== undefined && worktree !== '' ? { worktree } : {}), ...extra })
 }
 
+/** One external-open request from the file tree. */
+type OpenExternalPayload =
+  | { action: 'reveal'; path: string }
+  | { action: 'url'; url: string }
+
+/** The host route's success shape. */
+type OpenExternalResult = { started: boolean }
+
+/**
+ * Remote VSCode-family URLs must be consumed on the browser/client machine:
+ * the DSH host can be a headless remote server with no editor or DISPLAY.
+ * Local editor URLs and reveal actions still belong to the host opener.
+ */
+function shouldOpenExternalOnClient(payload: OpenExternalPayload): payload is { action: 'url'; url: string } {
+  if (payload.action !== 'url') return false
+  let parsed: URL
+  try {
+    parsed = new URL(payload.url)
+  } catch {
+    return false
+  }
+  return parsed.protocol !== 'http:'
+    && parsed.protocol !== 'https:'
+    && parsed.hostname === 'vscode-remote'
+    && parsed.pathname.startsWith('/ssh-remote+')
+}
+
+/**
+ * Dispatch an external-open request to the correct machine. SSH remote-editor
+ * URLs stay in the synchronous user-click chain and navigate the client so
+ * its registered vscode:// / cursor:// handler can launch. Everything else
+ * keeps using the DSH host route.
+ */
+function openExternal(payload: OpenExternalPayload): Promise<OpenExternalResult> {
+  if (!shouldOpenExternalOnClient(payload)) {
+    return call<OpenExternalResult>('open.external', payload)
+  }
+  try {
+    window.location.assign(payload.url)
+    return Promise.resolve({ started: true })
+  } catch (error) {
+    return Promise.reject(error)
+  }
+}
+
 /** The sidebar API surface (session scope threaded through every call). */
 export const api = {
   sessionCwd: (scope: SessionScope, signal?: AbortSignal) =>
@@ -355,12 +400,10 @@ export const api = {
    *  check; see the host's browser.probe route). */
   browserProbe: (url: string, signal?: AbortSignal) =>
     call<BrowserProbeResult>('browser.probe', { url }, signal),
-  /** External open for the file tree's "open with" menu: reveal a path in
-   *  the OS file manager, or hand a custom-scheme URL (vscode://, cursor://,
-   *  zed://, custom editors) to its registered handler. The host launches
-   *  the platform opener (argv, no shell). */
-  openExternal: (payload: { action: 'reveal'; path: string } | { action: 'url'; url: string }) =>
-    call<{ started: boolean }>('open.external', payload),
+  /** External open for the file tree's "open with" menu. Remote SSH editor
+   *  URLs are launched on the browser/client machine; reveal and local URLs
+   *  keep using the host's platform opener. */
+  openExternal,
 }
 
 /** Absolute URL of the media route for one path (images only). */

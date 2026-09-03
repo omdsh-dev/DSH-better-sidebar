@@ -131,8 +131,8 @@ export function FileTree(props: {
   onOpenWith?: (targetId: string, path: string) => void
   /** Toggle one target's pinned state (the submenu row's pushpin). */
   onToggleOpenWithPin?: (targetId: string) => void
-  /** Insert `@<relative path>` into the composer draft. */
-  onReferenceFile: (path: string) => void
+  /** Insert `@<relative path>` into the composer draft (file vs directory). */
+  onReferenceFile: (path: string, isDir: boolean) => void
   /** Bump to wipe the level cache and reload the visible set. */
   refreshTick: number
   /** Upload into `dir` (absolute, inside the workspace); runs in the caller. */
@@ -332,7 +332,7 @@ export function FileTree(props: {
         title={t('referenceFile')}
         onClick={(event) => {
           event.stopPropagation()
-          onReferenceFile(entry.path)
+          onReferenceFile(entry.path, entry.isDir)
         }}
       >
         {t('referenceFile')}
@@ -570,7 +570,7 @@ export function FileTree(props: {
                   title={t('referenceFile')}
                   onClick={(event) => {
                     event.stopPropagation()
-                    onReferenceFile(root)
+                    onReferenceFile(root, true)
                   }}
                 >
                   {t('referenceFile')}
