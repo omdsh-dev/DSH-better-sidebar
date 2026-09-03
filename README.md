@@ -289,6 +289,10 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 
 自 v0.16.0 以来的全部更改：
 
+**✨ 新功能**
+
+- 🧩 **子代理右键安全删除**（关闭 [#348](https://github.com/omdsh-dev/DSH-better-sidebar/issues/348)）：任务管理页对空闲子代理行右键提供「永久删除」——经可选安装的 `@michengai/dsh-archive-manager` 插件调用其 `remote.workspaceRegistry.deleteSession` 完成确认删除（删除会话、其子代理与全部记录，不可恢复）；未安装该插件时菜单置灰并提示，better-sidebar 不直接改动 DSH 会话文件
+
 **🐛 修复**
 
 - 🧊 **Git 面板卡死 + 重启死循环**（[#376](https://github.com/omdsh-dev/DSH-better-sidebar/pull/376)，修复 [#369](https://github.com/omdsh-dev/DSH-better-sidebar/issues/369)）：开启「源代码管理」面板可能整页冻结、重启后自动恢复冻结状态且无法退出——三层无上限操作叠加所致，现已全部设界：**① status 截断**——`git status --untracked-files=all` 响应上限 2000 条（超限置 `truncated`，面板显示截断提示，对齐 `fs.read` 截断语义；worktree 变更计数同步有界），海量未跟踪文件不再冻结浏览器主线程；**② 仓库发现限界**——cwd 非 Git 仓库（如家目录）时不再对每个可见子目录串行无界探测：探测超时 30s→5s、子目录探测上限 200 个、并发请求共享同一次扫描并按 60s TTL 缓存，家目录不再引发 `git rev-parse` 进程风暴；**③ 重置逃生通道**——带 `?dsh-sidebar-reset` 打开页面即丢弃持久化布局（含共享宽度）从默认布局启动，即使原页面已卡死也能自救，移除参数后恢复持久化；`statusTruncated` 文案同步全部 19 个词典

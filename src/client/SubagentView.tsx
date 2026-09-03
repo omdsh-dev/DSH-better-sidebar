@@ -19,11 +19,11 @@
  * straight into the child transcript (`openSubagent`); the page stays open
  * and the topology remains rooted at the main session.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import {
-  IconRefreshOutline14, StateDot,
+  Button, IconRefreshOutline14, IconTrashOutline16, Menu, Modal, StateDot,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
   Context,
@@ -53,6 +53,7 @@ import {
   type TreeJob,
 } from './subagent-jobs.ts'
 import { api, type JobOutputResult } from './api.ts'
+import { archiveDeleteAvailable, deleteSessionViaArchiveManager } from './archive-delete.ts'
 import { IconStopOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import css from './SubagentView.module.css'
@@ -242,12 +243,14 @@ interface RowsProps {
   live: Readonly<Record<string, LastActivity>>
   openChild: (address: SidebarSubagentAddress) => void
   refresh: (parentSessionId: string) => void
+  /** Right-click on a CHILD row: the tree-level owner opens the shared menu. */
+  onContextMenu: (event: ReactMouseEvent<HTMLDivElement>, entry: SidebarSubagentChildEntry, address: SidebarSubagentAddress) => void
 }
 
 /** Render one topology level; branches are always expanded (lazy catalogs). */
 function CatalogRows({
   parentSessionId, catalog, catalogs, byId, level, currentSessionId, live,
-  openChild, refresh,
+  openChild, refresh, onContextMenu,
 }: RowsProps) {
   const emptyLoading = catalog?.state === 'loading' && catalog.entries.length === 0
   // Side Chat threads are honest catalog citizens (durable descriptor, 'Side: '
@@ -322,6 +325,7 @@ function CatalogRows({
               {...knownLeaf ? {} : { 'aria-expanded': true }}
               className={clsx(css.subagentRow, current && css.subagentRowActive)}
               onClick={() => { openChild(address) }}
+              onContextMenu={(event) => { onContextMenu(event, entry, address) }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault()
@@ -363,6 +367,7 @@ function CatalogRows({
                       live={live}
                       openChild={openChild}
                       refresh={refresh}
+                      onContextMenu={onContextMenu}
                     />
                   )}
               </div>
@@ -664,6 +669,57 @@ export function SubagentView(props: {
   const rootSummary = rootId === undefined ? undefined : byId[rootId]
   const live = useSubagentLive(rootId, active)
 
+  // Optional safe-delete bridge: archive-manager owns permanent session removal.
+  // Availability is read from the mounted remote service right before the menu
+  // opens, so a late plugin apply can still enable the entry.
+  const [deleteAvailable, setDeleteAvailable] = useState<boolean>(() => archiveDeleteAvailable(ctx))
+
+  type RowMenu = {
+    address: SidebarSubagentAddress
+    entry: SidebarSubagentChildEntry
+    x: number
+    y: number
+  }
+  const [rowMenu, setRowMenu] = useState<RowMenu | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<RowMenu | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | undefined>(undefined)
+
+  const openRowMenu = useCallback((
+    event: ReactMouseEvent<HTMLDivElement>,
+    entry: SidebarSubagentChildEntry,
+    address: SidebarSubagentAddress,
+  ): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    setDeleteError(undefined)
+    setDeleteAvailable(archiveDeleteAvailable(ctx))
+    setRowMenu({ address, entry, x: event.clientX, y: event.clientY })
+  }, [ctx])
+
+  const closeMenus = useCallback((): void => {
+    setRowMenu(null)
+    if (!deleting) setConfirmDelete(null)
+  }, [deleting])
+
+  const runDelete = useCallback(async (): Promise<void> => {
+    const target = confirmDelete
+    if (target === null || deleting) return
+    setDeleting(true)
+    setDeleteError(undefined)
+    try {
+      await deleteSessionViaArchiveManager(ctx, target.entry.id)
+      setConfirmDelete(null)
+      // archive-manager removes the session and its records; ask the host to
+      // rehydrate the parent catalog so the row disappears promptly.
+      void sessions.refreshSubagents?.(target.address.parentSessionId)
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDeleting(false)
+    }
+  }, [confirmDelete, deleting, ctx, sessions])
+
   /** Catalog owners currently consuming live membership updates. */
   const observedRef = useRef(new Set<string>())
 
@@ -860,6 +916,7 @@ export function SubagentView(props: {
                   live={live}
                   openChild={openChild}
                   refresh={refresh}
+                  onContextMenu={openRowMenu}
                 />
               )}
             </div>
@@ -878,6 +935,71 @@ export function SubagentView(props: {
           active={active}
         />
       </div>
+
+      {/* One shared right-click menu for every child row (portal, so the tree's
+          overflow clip cannot crop it). The only action is the safe delete;
+          it is disabled while the recycle-bin plugin is missing or still
+          probing, and for running agents (the backend refuses them anyway). */}
+      <Menu
+        open={rowMenu !== null}
+        onClose={() => { setRowMenu(null) }}
+        items={[
+          {
+            id: 'delete',
+            label: deleteAvailable === false
+              ? t('subagentDeleteUnavailable')
+              : rowMenu?.entry.activity === 'running'
+                ? t('subagentDeleteRunning')
+                : t('subagentDelete'),
+            icon: <IconTrashOutline16 size={16} />,
+            ...(deleteAvailable !== true || rowMenu?.entry.activity === 'running'
+              ? { disabled: true }
+              : {}),
+          },
+        ]}
+        onSelect={(id) => {
+          const target = rowMenu
+          setRowMenu(null)
+          if (id !== 'delete' || target === null) return
+          if (deleteAvailable !== true || target.entry.activity === 'running') return
+          setConfirmDelete(target)
+        }}
+        portal
+        align="start"
+        getAnchorRect={() => (rowMenu === null ? null : new DOMRect(rowMenu.x, rowMenu.y, 0, 0))}
+        anchor={<span />}
+      />
+
+      {/* Destructive confirmation: archive-manager permanent delete. */}
+      <Modal
+        open={confirmDelete !== null}
+        onClose={closeMenus}
+        title={t('subagentDelete')}
+        closeLabel={t('cancel')}
+        footer={(
+          <>
+            <Button variant="outline" onClick={closeMenus}>{t('cancel')}</Button>
+            <Button
+              variant="primary"
+              disabled={deleting}
+              onClick={() => { void runDelete() }}
+            >
+              {t('subagentDeleteConfirm')}
+            </Button>
+          </>
+        )}
+      >
+        {confirmDelete !== null && (
+          <p className={css.subagentEmptyHint}>
+            {t('subagentDeleteDesc', {
+              name: childLabel(confirmDelete.entry, byId[confirmDelete.entry.id]),
+            })}
+          </p>
+        )}
+        {deleteError !== undefined && (
+          <p className={css.subagentError}>{deleteError}</p>
+        )}
+      </Modal>
     </div>
   )
 }
