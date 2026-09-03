@@ -26,6 +26,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { createElement } from 'react'
 import clsx from 'clsx'
 import { IconCheckOutline16, IconFolderOpen16, IconRefreshOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { VscLinkExternal } from 'react-icons/vsc'
 import type { Context } from '../context-types.ts'
 import { api, isOutsideWorkspaceMessage, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
@@ -446,6 +447,25 @@ export function EditorHost(props: {
             onClick={refreshFile}
           >
             <IconRefreshOutline14 size={14} />
+          </button>
+        )}
+        {/* Open-in-browser: only when the matched viewer declares a
+            browser-renderable URL (builtins: image/pdf → media route, html →
+            sandboxed html route). Text/code/binary viewers declare nothing —
+            the browser cannot meaningfully render them, so the button hides. */}
+        {load.status === 'ready' && load.viewer.browserUrl !== undefined && (
+          <button
+            type="button"
+            className={css.iconButton}
+            aria-label={t('browserOpenExternal')}
+            title={t('browserOpenExternal')}
+            onClick={() => {
+              if (load.status === 'ready' && load.viewer.browserUrl !== undefined) {
+                window.open(load.viewer.browserUrl(scope, path), '_blank', 'noopener')
+              }
+            }}
+          >
+            <VscLinkExternal size={14} />
           </button>
         )}
         <button
