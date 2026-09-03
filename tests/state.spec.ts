@@ -1328,6 +1328,105 @@ describe('pinned terminals (v0.17.0)', () => {
   })
 })
 
+describe('narrow persisted-layout visibility (issue #162)', () => {
+  const persistedLayout = JSON.stringify({
+    panelOpen: true,
+    width: 420,
+    nextTerminal: 2,
+    nextBrowser: 2,
+    activePane: 'pane:2',
+    expanded: ['/workspace/src'],
+    splits: {
+      kind: 'split',
+      id: 'split:1',
+      dir: 'row',
+      sizes: [0.5, 0.5],
+      children: [
+        {
+          kind: 'leaf',
+          id: 'pane:1',
+          active: 'editor:readme',
+          tabs: [{ id: 'editor:readme', type: 'editor', title: 'README.md', path: '/workspace/README.md' }],
+        },
+        {
+          kind: 'leaf',
+          id: 'pane:2',
+          active: 'terminal:1',
+          tabs: [{ id: 'terminal:1', type: 'terminal', title: 'Terminal 1' }],
+        },
+      ],
+    },
+    bottomOpen: true,
+    bottomHeight: 300,
+    bottomOpenedOnce: true,
+    bottomSplits: {
+      kind: 'leaf',
+      id: 'pane:3',
+      active: 'browser:1',
+      tabs: [{ id: 'browser:1', type: 'browser', title: 'Docs', path: 'https://example.com' }],
+    },
+    floats: [{
+      id: 'float:4',
+      tab: { id: 'notes:1', type: 'plugin:notes', title: 'Notes', meta: { draft: true } },
+      x: 16,
+      y: 24,
+      w: 320,
+      h: 240,
+    }],
+  })
+
+  afterEach(() => {
+    const g = globalThis as Record<string, unknown>
+    delete g.window
+    delete g.localStorage
+  })
+
+  it.each([
+    { width: 390, expectedOpen: false },
+    { width: 768, expectedOpen: true },
+  ])('restores panelOpen=$expectedOpen at $width px without changing pane or free-window state', ({ width, expectedOpen }) => {
+    const g = globalThis as Record<string, unknown>
+    g.window = {
+      clearTimeout: () => {},
+      setTimeout: () => 0,
+      innerWidth: width,
+      innerHeight: 800,
+      location: { search: '' },
+    }
+    g.localStorage = {
+      getItem: (key: string) => key === 'dsh-sidebar:v1:restored' ? persistedLayout : null,
+      setItem: () => {},
+      removeItem: () => {},
+    }
+
+    const store = createSidebarStore()
+    store.setSession('restored')
+    const state = store.getSnapshot().state!
+
+    expect(state.panelOpen).toBe(expectedOpen)
+    expect(state.activePane).toBe('pane:2')
+    expect(allLeaves(state.splits).map(leaf => ({
+      id: leaf.id,
+      active: leaf.active,
+      tabs: leaf.tabs.map(tab => tab.id),
+    }))).toEqual([
+      { id: 'pane:1', active: 'editor:readme', tabs: ['editor:readme'] },
+      { id: 'pane:2', active: 'terminal:1', tabs: ['terminal:1'] },
+    ])
+    expect(state.bottomOpen).toBe(true)
+    expect(allLeaves(state.bottomSplits).map(leaf => ({ id: leaf.id, tabs: leaf.tabs.map(tab => tab.id) })))
+      .toEqual([{ id: 'pane:3', tabs: ['browser:1'] }])
+    expect(state.floats).toEqual([{
+      id: 'float:4',
+      tab: { id: 'notes:1', type: 'plugin:notes', title: 'Notes', meta: { draft: true } },
+      x: 16,
+      y: 24,
+      w: 320,
+      h: 240,
+    }])
+  })
+})
+
 describe('URL reset escape hatch (issue #369)', () => {
   // Same browser-global stubs as the v0.12.0 block above; loadState reads
   // window.location.search (reset param) and localStorage (persisted state).

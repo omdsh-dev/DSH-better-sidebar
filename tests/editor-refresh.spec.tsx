@@ -8,15 +8,15 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement, useEffect, useState } from 'react'
-import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
+import { renderRoot, setupReactAct } from './test-utils.ts'
 import type { Context } from '../src/context-types.ts'
 import { EditorHost } from '../src/client/EditorHost.tsx'
 import { createBetterSidebarService, type FileViewerProps } from '../src/client/service.ts'
 import { allLeaves, createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+setupReactAct()
 
 const fsRead = vi.fn()
 vi.mock('../src/client/api.ts', () => ({
@@ -90,22 +90,10 @@ function setup(initialMode: 'preview' | 'edit' = 'preview', dirty = false): {
 }
 
 function mount(ctx: Context, tab: () => SidebarTab): { container: HTMLDivElement; unmount: () => void } {
-  const container = document.createElement('div')
-  document.body.append(container)
-  const root = createRoot(container)
-  act(() => {
-    root.render(createElement(EditorHost, {
-      ctx, store: ctx.betterSidebar as never, scope: { sessionId: 'editor-home-session' },
-      tab: tab(), expanded: [], revealed: [], onToggleDir: () => {}, onReferenceFile: () => {},
-    }))
-  })
-  return {
-    container,
-    unmount: () => {
-      act(() => { root.unmount() })
-      container.remove()
-    },
-  }
+  return renderRoot(createElement(EditorHost, {
+    ctx, store: ctx.betterSidebar as never, scope: { sessionId: 'editor-home-session' },
+    tab: tab(), expanded: [], revealed: [], onToggleDir: () => {}, onReferenceFile: () => {},
+  }))
 }
 
 /** The header's refresh button (locale-dependent aria-label), or null. */

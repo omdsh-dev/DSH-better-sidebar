@@ -1,6 +1,7 @@
 /**
  * Side Chat routes of the /sidebar JSON API ('sidechat.start' /
- * 'sidechat.prompt' / 'sidechat.cancel' / 'sidechat.dispose').
+ * 'sidechat.prompt' / 'sidechat.cancel' / 'sidechat.dispose' /
+ * 'sidechat.info' / 'sidechat.events').
  *
  * A side thread is a child session the plugin creates ITSELF with a custom
  * seed — the parent's full event log up to the click moment, honestly closed
@@ -43,10 +44,11 @@ import {
   type SeedEvent,
   type SidechatLogEvent,
   type SidechatThreadInfo,
+  threadOwnLogEvents,
 } from './sidechat-core.ts'
 import { requireString, SidebarError } from './wire.ts'
 
-/** The five Side Chat routes of the sidebar API (wire method names). */
+/** The six Side Chat routes of the sidebar API (wire method names). */
 export interface SidechatRoutes {
   /** Create a side thread child seeded with the parent's log up to now.
    *  `question` is optional: empty creates an EMPTY thread (Codex-style
@@ -61,11 +63,21 @@ export interface SidechatRoutes {
   'sidechat.dispose'(payload: unknown): Promise<{ accepted: true }>
   /** Live state + agent identity for the thread header. */
   'sidechat.info'(payload: unknown): Promise<SidechatThreadInfo>
+  /** The thread's OWN transcript events, seed-cut host-side (the inherited
+   *  parent log never crosses the wire); `afterSeq` narrows the response to
+   *  the delta beyond it (poll tail). */
+  'sidechat.events'(payload: unknown): Promise<{ events: SidechatLogEvent[] }>
 }
 
 /** Timeout guarding the create call (the registry detaches it before the
  *  handle becomes visible, so the child is never cancelled by it). */
 const CREATE_TIMEOUT_MS = 15_000
+
+/** Head cap of one `sidechat.events` response (the ceiling the old
+ *  client-side walk could load: 40 pages × 200 events). A pathological
+ *  thread beyond it renders its tail window — the same degradation the
+ *  capped walk had, never a failed poll. */
+const EVENTS_CAP = 8_000
 
 /** Per-activation disposers of created thread agents (the dispose route
  *  releases them; the session and its history always stay persisted). */
@@ -151,6 +163,39 @@ function liveThreadAgent(ctx: Context, childId: string): Agent | undefined {
   return agents?.get(childId)
 }
 
+/**
+ * The thread's event log (seed + its own events, already expanded): the live
+ * agent's in-memory log while the thread is attached — the freshest read,
+ * including events not yet flushed — else the persisted logical log. Both
+ * DSH generations expose these seams with the same shape (the 0.1.2
+ * persistence layer packs chunk rows on disk but expands them on inspect;
+ * the live log is `Session.snapshotEvents()`, the 0.1.2-alpha.4 rename of
+ * the `Session.events` property), which is why the transcript reads here
+ * instead of the client's session-history RPC: that face
+ * (`ctx.connection.api`) was removed in 0.1.2-alpha.1's Remote-gateway
+ * migration.
+ */
+async function threadLogEvents(ctx: Context, childId: string): Promise<readonly SidechatLogEvent[]> {
+  const agent = liveThreadAgent(ctx, childId)
+  if (agent !== undefined) {
+    return agent.session.snapshotEvents() as unknown as readonly SidechatLogEvent[]
+  }
+  const persistence = ctx.get('sessionPersistence') as SidebarSessionPersistenceService | undefined
+  if (persistence === undefined) {
+    throw new SidebarError('sidechat-error', 'the session persistence service is unavailable', 503)
+  }
+  try {
+    const inspected = await persistence.inspect(childId)
+    return inspected.events as unknown as readonly SidechatLogEvent[]
+  } catch (error: unknown) {
+    throw new SidebarError(
+      'not-found',
+      `thread "${childId}" is not available: ${error instanceof Error ? error.message : String(error)}`,
+      404,
+    )
+  }
+}
+
 /** Build the Side Chat routes (all optional services degrade to a wire
  *  error the tab surfaces inline). The record keys are the FULL wire method
  *  names the /sidebar/api dispatcher looks up (`api[method]`). */
@@ -166,11 +211,11 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
       }
       const parentSession = parent.session
       const inheritance = buildSidechatInheritance(
-        parentSession.events as unknown as readonly SidechatLogEvent[],
+        parentSession.snapshotEvents() as unknown as readonly SidechatLogEvent[],
       )
       const { agentPreset, setup } = await composeChildSetup(
         ctx,
-        resolvePresetId(parentSession.header, parentSession.events),
+        resolvePresetId(parentSession.header, parentSession.snapshotEvents()),
       )
       const childId = `session-${randomUUID()}` as SessionId
       const label = question === '' ? SIDE_NEW_THREAD_TITLE : sideLabel(question)
@@ -198,7 +243,6 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
         meta: {
           ...(parentSession.header.cwd === undefined ? {} : { cwd: parentSession.header.cwd }),
           parentSession: parentSession.id,
-          seedLength: seed.length,
           origin: 'subagent',
           delegationDepth: (parentSession.header.delegationDepth ?? 0) + 1,
           ...(agentPreset === undefined ? {} : { agentPreset }),
@@ -267,7 +311,7 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
           throw new SidebarError('sidechat-error', `thread resume failed: ${error instanceof Error ? error.message : String(error)}`, 500)
         }
       }
-      if (boundaryDelivered(agent.session.events as unknown as readonly SidechatLogEvent[])) {
+      if (boundaryDelivered(agent.session.snapshotEvents() as unknown as readonly SidechatLogEvent[])) {
         admitFollowup(agent, textPrompt(text))
       } else {
         // First message of an immediately-created thread: it carries the
@@ -339,6 +383,19 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
         }
       }
       return { live: false }
+    },
+
+    'sidechat.events': async (payload: unknown) => {
+      const childId = requireString(payload, 'childId')
+      const rawAfter = (payload as { afterSeq?: unknown }).afterSeq
+      if (rawAfter !== undefined
+        && (typeof rawAfter !== 'number' || !Number.isSafeInteger(rawAfter) || rawAfter < 0)) {
+        throw new SidebarError('bad-request', 'afterSeq must be a non-negative integer')
+      }
+      const events = await threadLogEvents(ctx, childId)
+      const own = threadOwnLogEvents(events)
+      const fresh = rawAfter === undefined ? own : own.filter(event => event.seq > rawAfter)
+      return { events: fresh.length > EVENTS_CAP ? fresh.slice(fresh.length - EVENTS_CAP) : fresh }
     },
   }
 }

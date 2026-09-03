@@ -35,6 +35,8 @@ const files = [
   'lib/client-terminal.js.map',
   'lib/client-editor.js',
   'lib/client-editor.js.map',
+  'lib/client-mermaid.js',
+  'lib/client-mermaid.js.map',
   'README.md',
   'LICENSE',
 ]

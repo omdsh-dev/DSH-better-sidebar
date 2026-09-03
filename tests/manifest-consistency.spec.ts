@@ -11,7 +11,9 @@
  *   bundles must never be swapped.
  *
  * Reads the built lib/ output, so run `pnpm build` first (the registry
- * install validates main/client.main existence the same way).
+ * install validates main/client.main existence the same way). A missing
+ * lib/ (fresh clone before the first build) skips the whole suite instead
+ * of crashing on ENOENT.
  */
 import { describe, expect, it } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
@@ -19,6 +21,13 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
+
+/** The build output is present (tsdown emits the whole lib/ in one run). */
+const libBuilt = existsSync(resolve(ROOT, 'lib/client.js'))
+
+if (!libBuilt) {
+  console.warn('[manifest-consistency] lib/ build output missing — run `pnpm build` first; skipping this suite')
+}
 
 /** The registry manifest face this spec touches (mirror of the registry's PluginManifest). */
 interface PluginManifest {
@@ -51,7 +60,6 @@ const CLIENT_REQUIRE_ALLOWED = new Set([
   'cordis',
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-runtime/client',
 ])
 
 /** The registered `__ModuleLoader__.load({ id })` value of a built client bundle. */
@@ -73,7 +81,7 @@ function chunkSlot(file: string): string {
   return match[1]!
 }
 
-describe('registry manifest consistency (dsh.plugin.json)', () => {
+describe.skipIf(!libBuilt)('registry manifest consistency (dsh.plugin.json)', () => {
   it('id is a valid two-segment registry id (native form)', () => {
     expect(manifest.id).toMatch(ID_PATTERN)
   })

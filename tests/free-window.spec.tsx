@@ -20,7 +20,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 import { Sidebar } from '../src/client/Sidebar.tsx'
 import { createSidebarStore, togglePanel, type SidebarStore, floatTab as floatTabReducer } from '../src/client/state.ts'

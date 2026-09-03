@@ -19,6 +19,7 @@ import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
 import { IconFolderOpen16, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
+import type { SidebarStore } from './state.ts'
 import { FileTree } from './FileTree.tsx'
 import { IconUploadOutline16 } from './icons.tsx'
 import type { OpenWithTarget } from './open-with.ts'
@@ -44,6 +45,8 @@ interface UploadSession {
 export function TreePanel(props: {
   sessionId: string
   cwd: string | undefined
+  /** The sidebar store (passed through to the tree's fence-refusal notice). */
+  store: SidebarStore
   expanded: string[]
   revealed: string[]
   onToggle: (path: string) => void
@@ -59,16 +62,31 @@ export function TreePanel(props: {
   openWithSsh?: boolean
   onOpenWith?: (targetId: string, path: string) => void
   onToggleOpenWithPin?: (targetId: string) => void
-  onReferenceFile: (path: string) => void
+  onReferenceFile: (path: string, isDir: boolean) => void
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean
 }) {
-  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, full } = props
+  const { sessionId, cwd, store, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, full } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshTick, setRefreshTick] = useState(0)
+
+  // The tree caches loaded directories per refresh tick, so content changed
+  // outside DSH (another editor, a sync tool) stays stale until the manual
+  // refresh click. Re-focusing the window bumps the tick automatically, and
+  // integrations can force a refresh by dispatching a bubbling
+  // `dsh-sidebar:refresh-files` event on `window`.
+  useEffect(() => {
+    const bump = (): void => { setRefreshTick(tick => tick + 1) }
+    window.addEventListener('focus', bump)
+    window.addEventListener('dsh-sidebar:refresh-files', bump)
+    return () => {
+      window.removeEventListener('focus', bump)
+      window.removeEventListener('dsh-sidebar:refresh-files', bump)
+    }
+  }, [])
   /** One-line upload status under the search row ('' hides the hint). */
   const [uploadStatus, setUploadStatus] = useState('')
   /** Whether the status line is a failure/cancel (error color, stays visible). */
@@ -221,6 +239,7 @@ export function TreePanel(props: {
         <FileTree
           sessionId={sessionId}
           cwd={cwd}
+          store={store}
           expanded={expanded}
           revealed={revealed}
           onToggle={onToggle}

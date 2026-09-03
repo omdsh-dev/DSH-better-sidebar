@@ -6,9 +6,9 @@
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createElement, type ReactNode } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createElement } from 'react'
 import { act } from 'react-dom/test-utils'
+import { renderRoot } from './test-utils.ts'
 import { SubagentView } from '../src/client/SubagentView.tsx'
 import type { Context, SidebarSessionList } from '../src/context-types.ts'
 
@@ -49,24 +49,6 @@ function makeCtx(store: Store, historySpy: ReturnType<typeof vi.fn>): Context {
       },
     },
   } as unknown as Context
-}
-
-/** Render `node` into a detached body container under React's act(). */
-function mount(node: ReactNode): {
-  container: HTMLDivElement
-  rerender: (next: ReactNode) => void
-  unmount: () => void
-} {
-  const container = document.createElement('div')
-  document.body.append(container)
-  const root: Root = createRoot(container)
-  const rerender = (next: ReactNode): void => { act(() => { root.render(next) }) }
-  act(() => { root.render(node) })
-  const unmount = (): void => {
-    act(() => { root.unmount() })
-    container.remove()
-  }
-  return { container, rerender, unmount }
 }
 
 function jsonResponse(value: unknown): Response {
@@ -156,7 +138,7 @@ describe('SubagentView live polling', () => {
     })
 
     const store = makeStore(runningSnapshot())
-    const { container, unmount } = mount(
+    const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store, historySpy) }),
     )
     // Initial load plus the first scheduled tick.
@@ -187,7 +169,7 @@ describe('SubagentView live polling', () => {
     })
 
     const store = makeStore(runningSnapshot())
-    const { unmount } = mount(
+    const { unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store, historySpy) }),
     )
     await act(async () => { await Promise.resolve() })
@@ -225,7 +207,7 @@ describe('SubagentView live polling', () => {
     })
 
     const store = makeStore(runningSnapshot())
-    const { rerender, unmount } = mount(
+    const { rerender, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store, historySpy) }),
     )
     await act(async () => { await Promise.resolve() })
@@ -264,7 +246,7 @@ describe('SubagentView live polling', () => {
     })
 
     const store = makeStore(runningSnapshot())
-    const { container, unmount } = mount(
+    const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store, historySpy) }),
     )
     await act(async () => { await Promise.resolve() })

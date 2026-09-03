@@ -2,11 +2,11 @@
  * The built-in catalog of TAB-registration plugins (sidebar pages),
  * shown in the "add tab plugin" modal (Side card settings → 侧边栏内容 grid
  * → the dashed card). Adding an entry: append one object here (unique
- * `id` = npm package name, `url` = GitHub repo, `description` =
- * i18n-friendly (add a `pluginXxxDesc` key in locales.ts), `install` = the
- * full one-line install script — it starts with `cd ~/.dsh` so the install
- * runs with the DSH home as the working directory). Data integrity is
- * guarded by `tests/plugin-list.spec.ts`.
+ * `id` = npm package name, `name` / `description` = i18n-friendly (add a
+ * `pluginXxxName` / `pluginXxxDesc` key in locales.ts), `url` = GitHub repo,
+ * `install` = the full one-line install script — it starts with `cd ~/.dsh`
+ * so the install runs with the DSH home as the working directory). Data
+ * integrity is guarded by `tests/plugin-list.spec.ts`.
  */
 import { t } from './locales.ts'
 import type { PluginEntry } from './plugins-shared.ts'
@@ -15,7 +15,7 @@ import type { PluginEntry } from './plugins-shared.ts'
 export const builtinTabPlugins: readonly PluginEntry[] = [
   {
     id: '@dsh-external/dsh-sentinel',
-    name: 'dsh-sentinel 唤醒系统',
+    name: () => t('pluginSentinelName'),
     url: 'https://github.com/fuhefei/dsh-sentinel',
     description: () => t('pluginSentinelDesc'),
     // The official one-line bundle-channel install (git source, build
@@ -26,7 +26,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
   },
   {
     id: '@dsh-external/ego-browser',
-    name: 'ego-browser Agent 浏览器',
+    name: () => t('pluginEgoBrowserName'),
     url: 'https://github.com/Fisfzy/ego-browser',
     description: () => t('pluginEgoBrowserDesc'),
     // Registers a sidebar tab for the agent browser; optional peer of
@@ -35,7 +35,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
   },
   {
     id: 'dsh-better-overleaf',
-    name: 'dsh-better-overleaf Overleaf 标签页',
+    name: () => t('pluginBetterOverleafName'),
     url: 'https://github.com/Hoemr/dsh-better-overleaf',
     description: () => t('pluginBetterOverleafDesc'),
     // Published on npm; peer-depends on dsh-better-sidebar (Overleaf tab),
@@ -44,7 +44,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
   },
   {
     id: 'dsh-docs-panel',
-    name: 'dsh-docs-panel 全局文档',
+    name: () => t('pluginDocsPanelName'),
     url: 'https://github.com/mlosun/dsh-docs-panel',
     description: () => t('pluginDocsPanelDesc'),
     // dsh-docs-panel hard-depends on dsh-better-sidebar (required peer), so
@@ -53,7 +53,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
   },
   {
     id: 'dsh-flowglass',
-    name: 'dsh-flowglass 流镜',
+    name: () => t('pluginFlowglassName'),
     url: 'https://github.com/Iwctwbh/dsh-flowglass',
     description: () => t('pluginFlowglassDesc'),
     // Flowglass keeps its standalone drawer as a fallback and registers the
@@ -62,7 +62,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
   },
   {
     id: 'dsh-git-forge',
-    name: 'dsh-git-forge Git 凭据',
+    name: () => t('pluginGitForgeName'),
     url: 'https://github.com/thirsty5034/dsh-git-forge',
     description: () => t('pluginGitForgeDesc'),
     // Peer-depends on dsh-better-sidebar (Git Forge tab). Install the
@@ -71,14 +71,14 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
   },
   {
     id: 'dsh-git-remotes',
-    name: 'dsh-git-remotes Git 远程',
+    name: () => t('pluginGitRemotesName'),
     url: 'https://github.com/yq04/dsh-git-remotes',
     description: () => t('pluginGitRemotesDesc'),
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/yq04/dsh-git-remotes.git',
   },
   {
     id: 'dsh-github-workbench',
-    name: 'dsh-github-workbench GitHub 工作台',
+    name: () => t('pluginGithubWorkbenchName'),
     url: 'https://github.com/meyaomiao/dsh-github-workbench',
     description: () => t('pluginGithubWorkbenchDesc'),
     // Full GitHub workbench tab: remote repo tree + Issues/PRs/Actions tabs
@@ -88,7 +88,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
   },
   {
     id: 'dsh-sidebar-qa',
-    name: 'dsh-sidebar-qa 划选追问',
+    name: () => t('pluginSidebarQaName'),
     url: 'https://github.com/ChenRuoT/dsh-sidebar-qa',
     description: () => t('pluginSidebarQaDesc'),
     // dsh-sidebar-qa hard-depends on dsh-better-sidebar (required peer), so
@@ -97,7 +97,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
   },
   {
     id: 'dsh-sidenote',
-    name: 'dsh-sidenote 侧边聊天',
+    name: () => t('pluginSidenoteName'),
     url: 'https://github.com/g-yixuan/dsh-sidenote',
     description: () => t('pluginSidenoteDesc'),
     // dsh-sidenote hard-depends on dsh-better-sidebar (required peer), so
@@ -106,7 +106,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
   },
   {
     id: 'dsh-server-deck',
-    name: 'dsh-server-deck 服务器甲板',
+    name: () => t('pluginServerDeckName'),
     url: 'https://github.com/meyaomiao/DSH-server-deck',
     description: () => t('pluginServerDeckDesc'),
     // Published on npm; dual-mount like flowglass — registers the native
@@ -116,7 +116,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
   },
   {
     id: 'dsh-suhuang-scroll',
-    name: 'dsh-suhuang-scroll 苏黄共阅',
+    name: () => t('pluginSuhuangScrollName'),
     url: 'https://github.com/YZDame/dsh-suhuang-scroll',
     description: () => t('pluginSuhuangScrollDesc'),
     // Suhuang Scroll is a DSH Web plugin whose runtime console registers in
@@ -125,7 +125,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
   },
   {
     id: 'dsh-ssh-tunnel',
-    name: 'dsh-ssh-tunnel SSH 隧道',
+    name: () => t('pluginSshTunnelName'),
     url: 'https://github.com/thirsty5034/dsh-ssh-tunnel',
     description: () => t('pluginSshTunnelDesc'),
     // Peer-depends on dsh-better-sidebar (SSH Tunnel tab + center terminal/SFTP).
@@ -134,7 +134,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
   },
   {
     id: 'dsh-turn-review',
-    name: 'dsh-turn-review 本轮审查',
+    name: () => t('pluginTurnReviewName'),
     url: 'https://github.com/yq04/dsh-turn-review',
     description: () => t('pluginTurnReviewDesc'),
     // Needs dsh-better-sidebar (optional peer) for the tab; no model tools.
@@ -142,7 +142,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
   },
   {
     id: 'dsh-bilingual-reader',
-    name: 'dsh-bilingual-reader 双语阅读',
+    name: () => t('pluginBilingualReaderName'),
     url: 'https://github.com/Johnblur/dsh-bilingual-reader',
     description: () => t('pluginBilingualReaderDesc'),
     // Bilingual paper reading: a native-PDF tab with LLM selection translation,

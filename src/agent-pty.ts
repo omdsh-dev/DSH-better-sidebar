@@ -13,7 +13,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import type { IPty } from 'node-pty'
-import { ensureSpawnHelper, shellSpawnArgs } from './pty-manager.ts'
+import { ensureSpawnHelper, resolveShellExecutable, shellSpawnArgs } from './pty-manager.ts'
 import { loadRequiredNodePty, type NodePtyModule } from './pty-deps.ts'
 import { SidebarError } from './wire.ts'
 
@@ -38,6 +38,79 @@ export function clampDims(cols: number, rows: number): { cols: number; rows: num
   const clamp = (value: number): number =>
     Math.min(TERMINAL_DIM_MAX, Math.max(TERMINAL_DIM_MIN, Math.floor(value)))
   return { cols: clamp(cols), rows: clamp(rows) }
+}
+
+/**
+ * Per-pty Windows resize-gate state (see {@link armPtyResizeGate}).
+ */
+interface ResizeGateState {
+  /** Whether the pty has produced any output yet (ConPTY flush completed). */
+  sawData: boolean
+  /** Latest dims requested before the first output; replayed once it arrives. */
+  pending?: { cols: number; rows: number }
+}
+
+/**
+ * node-pty's Windows terminal queues resize calls that arrive before the
+ * ConPTY control socket's first data flush (`_deferNoArgs` in
+ * windowsTerminal.js). If the pty exits before the queue flushes, the
+ * deferred resize throws inside the socket's 'data' handler — uncatchable
+ * by any caller and fatal to the host process. POSIX terminals have no such
+ * queue (resize is synchronous), so the gate is armed on Windows only:
+ * {@link tryResizePty} parks dims requested before the first output and
+ * replays them after the flush, when node-pty executes resizes
+ * synchronously (and the throw for an exited pty is catchable).
+ */
+const ptyResizeGates = new WeakMap<object, ResizeGateState>()
+
+/**
+ * Arm the Windows pre-ready resize gate for one freshly spawned pty.
+ * No-op on POSIX and for injected ptys without `onData`.
+ */
+export function armPtyResizeGate(pty: IPty): void {
+  if (process.platform !== 'win32') return
+  if (typeof pty.onData !== 'function' || ptyResizeGates.has(pty)) return
+  const state: ResizeGateState = { sawData: false }
+  ptyResizeGates.set(pty, state)
+  pty.onData(() => {
+    if (state.sawData) return
+    state.sawData = true
+    const dims = state.pending
+    state.pending = undefined
+    if (dims === undefined) return
+    // node-pty's deferred flush shares this very 'data' dispatch; hop past
+    // it so the replayed resize executes synchronously (catchable) instead
+    // of being queued into the same deferred list we are draining.
+    setImmediate(() => { tryResizePty(pty, dims.cols, dims.rows) })
+  })
+}
+
+/**
+ * Best-effort resize for WebSocket-driven terminal views. Layout animation
+ * can briefly produce unusable dimensions, and node-pty can reject a resize
+ * after the socket setup's outer try/catch has returned. Ignore that one
+ * frame so the host stays alive and a later valid measurement can retry.
+ * Returns whether node-pty accepted the resize (or parked it for replay on
+ * the first output — the Windows pre-ready window).
+ */
+export function tryResizePty(
+  pty: Pick<IPty, 'resize'>,
+  cols: number,
+  rows: number,
+): boolean {
+  if (!Number.isFinite(cols) || !Number.isFinite(rows)) return false
+  const dims = clampDims(cols, rows)
+  const gate = ptyResizeGates.get(pty)
+  if (gate !== undefined && !gate.sawData) {
+    gate.pending = dims
+    return true
+  }
+  try {
+    pty.resize(dims.cols, dims.rows)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -219,13 +292,15 @@ export class AgentPtyRegistry {
   ): string {
     const uuid = randomUUID()
     const dims = clampDims(cols, rows)
-    const pty = this.nodePty.spawn(shell ?? this.shell, shellSpawnArgs(shellArgs ?? this.shellArgs), {
+    const executable = resolveShellExecutable(shell ?? this.shell)
+    const pty = this.nodePty.spawn(executable, shellSpawnArgs(shellArgs ?? this.shellArgs), {
       name: 'xterm-256color',
       cols: dims.cols,
       rows: dims.rows,
       cwd,
       env: { ...process.env },
     })
+    armPtyResizeGate(pty)
     const handle: AgentTerminalHandle = {
       uuid,
       sessionId,
@@ -353,7 +428,11 @@ export class AgentPtyRegistry {
   resize(uuid: string, cols: number, rows: number): { cols: number; rows: number } {
     const handle = this.expect(uuid)
     const dims = clampDims(cols, rows)
-    if (!handle.exited) handle.pty.resize(dims.cols, dims.rows)
+    // Through tryResizePty: node-pty throws on a just-exited pty (the exit
+    // event may not have flipped `handle.exited` yet), and on Windows a
+    // pre-ready resize must go through the gate instead of node-pty's own
+    // deferred queue (which flushes uncatchably inside its socket handler).
+    if (!handle.exited) tryResizePty(handle.pty, dims.cols, dims.rows)
     return dims
   }
 

@@ -2,6 +2,7 @@
 import { realpath } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { isWithin, requireAbsolute } from './fs-tree.ts'
+import { resolveSessionPath } from './session-path.ts'
 import { SidebarError } from './wire.ts'
 
 /** Resolve a path and convert filesystem resolution failures to an API error. */
@@ -21,19 +22,23 @@ function assertWithinWorkspace(workspace: string, target: string): void {
 }
 
 /**
- * Resolve an existing workspace path through symlinks and enforce containment.
+ * Resolve an existing workspace path through symlinks and (unless disarmed)
+ * enforce containment.
  *
  * @param cwd - Session workspace directory.
- * @param target - Client-supplied absolute path.
+ * @param target - Client-supplied absolute path in the session's namespace.
+ * @param fence - Whether containment is enforced (the settings-page
+ * `workspaceFence` switch). Even when false the paths are still resolved
+ * through symlinks so callers always receive the canonical target.
  * @returns The canonical absolute path used for the filesystem operation.
  */
-export async function ensureWorkspacePath(cwd: string, target: string): Promise<string> {
-  const absolute = requireAbsolute(target)
+export async function ensureWorkspacePath(cwd: string, target: string, fence = true): Promise<string> {
+  const absolute = requireAbsolute(resolveSessionPath(cwd, target))
   const [realCwd, realTarget] = await Promise.all([
     resolveRealPath(cwd, 'workspace'),
     resolveRealPath(absolute, 'target'),
   ])
-  assertWithinWorkspace(realCwd, realTarget)
+  if (fence) assertWithinWorkspace(realCwd, realTarget)
   return realTarget
 }
 
@@ -45,11 +50,13 @@ export async function ensureWorkspacePath(cwd: string, target: string): Promise<
  * symlink is never left in the path passed to the write operation.
  *
  * @param cwd - Session workspace directory.
- * @param target - Client-supplied absolute destination path.
+ * @param target - Client-supplied absolute destination path in the session's namespace.
+ * @param fence - Whether containment is enforced (the settings-page
+ * `workspaceFence` switch). Resolution/canonicalization is identical either way.
  * @returns A canonical path for an existing target or its nearest existing ancestor.
  */
-export async function ensureWorkspaceWritePath(cwd: string, target: string): Promise<string> {
-  const absolute = requireAbsolute(target)
+export async function ensureWorkspaceWritePath(cwd: string, target: string, fence = true): Promise<string> {
+  const absolute = requireAbsolute(resolveSessionPath(cwd, target))
   const realCwd = await resolveRealPath(cwd, 'workspace')
   let existingPath = absolute
   const missingSegments: string[] = []
@@ -57,7 +64,7 @@ export async function ensureWorkspaceWritePath(cwd: string, target: string): Pro
   for (;;) {
     try {
       const realTarget = await realpath(existingPath)
-      assertWithinWorkspace(realCwd, realTarget)
+      if (fence) assertWithinWorkspace(realCwd, realTarget)
       return missingSegments.reduce((path, segment) => join(path, segment), realTarget)
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {

@@ -13,7 +13,8 @@ import { act } from 'react-dom/test-utils'
 import { MdToc, TOC_MIN_HEADINGS } from '../src/client/md-toc.tsx'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 const scrollIntoView = vi.fn()
 Element.prototype.scrollIntoView = scrollIntoView
@@ -147,6 +148,46 @@ describe('MdToc', () => {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     })
     expect(container.querySelector('[data-dsh-md-toc-panel]')).toBeNull()
+    await unmount(root)
+  })
+
+  it('closes the popover when a pointerdown lands outside the button and panel', async () => {
+    const { container, root } = await mountToc([
+      { tag: 'h1', text: 'Title' },
+      { tag: 'h2', text: 'A' },
+      { tag: 'h2', text: 'B' },
+    ])
+    const button = container.querySelector<HTMLButtonElement>('[data-dsh-md-toc]')!
+    await act(async () => { button.click() })
+    expect(container.querySelector('[data-dsh-md-toc-panel]')).not.toBeNull()
+    // A press on a heading that sits in the scroll container (a sibling of the
+    // TOC bar) is "blank space" to the outline: it must dismiss the popover.
+    const heading = container.querySelector('h2')!
+    await act(async () => {
+      heading.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    })
+    expect(container.querySelector('[data-dsh-md-toc-panel]'), 'outside press must close the panel').toBeNull()
+    await unmount(root)
+  })
+
+  it('keeps the toggle working: a press inside the bar does not dismiss, a click re-closes', async () => {
+    const { container, root } = await mountToc([
+      { tag: 'h1', text: 'Title' },
+      { tag: 'h2', text: 'A' },
+      { tag: 'h2', text: 'B' },
+    ])
+    const button = container.querySelector<HTMLButtonElement>('[data-dsh-md-toc]')!
+    await act(async () => { button.click() })
+    expect(container.querySelector('[data-dsh-md-toc-panel]')).not.toBeNull()
+    // A pointerdown on the toggle itself must not be swallowed by the dismiss
+    // handler (the button re-enables pointer events inside the pointer-events:
+    // none bar), so the subsequent click still toggles it closed.
+    await act(async () => {
+      button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    })
+    expect(container.querySelector('[data-dsh-md-toc-panel]'), 'press on the toggle must not dismiss').not.toBeNull()
+    await act(async () => { button.click() })
+    expect(container.querySelector('[data-dsh-md-toc-panel]'), 're-clicking the toggle must close').toBeNull()
     await unmount(root)
   })
 })

@@ -14,11 +14,13 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { FileTree } from '../src/client/FileTree.tsx'
+import { createSidebarStore } from '../src/client/state.ts'
 import { TAB_DRAG_TYPE } from '../src/client/TabBar.tsx'
 import type { UploadItem } from '../src/client/upload.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 // vitest 4.1.11+ follows the OS locale; pin en-US so hint assertions are
 // deterministic regardless of the developer machine.
@@ -55,6 +57,7 @@ async function mountTree(busy = false): Promise<Harness> {
     root.render(createElement(FileTree, {
       sessionId: 's1',
       cwd: '/tmp',
+      store: createSidebarStore(),
       expanded: [],
       revealed: [],
       onToggle: () => {},

@@ -6,6 +6,11 @@ name: Release
 # Trigger: a GitHub Release is published (tag vX.Y.Z). The tag MUST match
 # package.json `version`; the workflow verifies this before publishing.
 #
+# Dist-tag policy: a PRERELEASE version (e.g. v0.18.0-alpha.0 — the DSH
+# 0.1.2-alpha adapter track) publishes under the npm `alpha` dist-tag so the
+# `latest` install target keeps pointing at the last stable cut (which
+# supports the stable DSH line); stable versions publish as `latest`.
+#
 # One-time npm-side setup (manual, on npmjs.com):
 #   1. package `dsh-better-sidebar` -> Settings -> Publishing access
 #      -> Trusted Publishers -> "Add Trusted Publisher".
@@ -46,9 +51,10 @@ jobs:
           # Tests run git log against this repository and need full history.
           fetch-depth: 0
 
+      # pnpm version is pinned via packageManager in package.json; the action
+      # reads it from there (specifying both makes action-setup fail on
+      # purpose with ERR_PNPM_BAD_PM_VERSION).
       - uses: pnpm/action-setup@v6
-        with:
-          version: 11
 
       - uses: actions/setup-node@v7
         with:
@@ -79,14 +85,24 @@ jobs:
             exit 1
           fi
 
-      - name: Build
-        run: pnpm build
-
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Lint
+        run: pnpm lint
+
       - name: Test
         run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      # The consumer-facing declaration surface guard — mirrors the ci.yml
+      # verification order (typecheck → lint → test → build →
+      # check:consumer-types) so a release is gated on the same checks a PR
+      # runs.
+      - name: Check consumer type surface
+        run: pnpm check:consumer-types
 
       - name: Dry-run publish (validation only)
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true'
@@ -94,4 +110,7 @@ jobs:
 
       - name: Publish to npm
         if: github.event_name == 'release' || github.event.inputs.dry_run != 'true'
-        run: pnpm publish --provenance --access public --no-git-checks
+        run: |
+          TAG=$(node -p "require('./package.json').version.includes('-') ? 'alpha' : 'latest'")
+          echo "publishing to npm dist-tag: ${TAG}"
+          pnpm publish --provenance --access public --no-git-checks --tag "$TAG"

@@ -14,8 +14,10 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { FileTree } from '../src/client/FileTree.tsx'
+import { createSidebarStore } from '../src/client/state.ts'
 
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 // jsdom defines no scrollIntoView; counting calls needs a real function.
 const scrollIntoView = vi.fn()
@@ -54,6 +56,7 @@ async function mountTree(bodyScroll: { top: number; client: number; height: numb
     root.render(createElement(FileTree, {
       sessionId: 's1',
       cwd: '/tmp',
+      store: createSidebarStore(),
       expanded: [],
       revealed,
       onToggle: () => {},

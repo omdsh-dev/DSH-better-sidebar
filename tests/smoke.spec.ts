@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
-import { SettingsConflictError, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { apply, mediaTypeForPath } from '../src/index.ts'
 import { encodeHtmlUrl } from '../src/html-route.ts'
 import * as git from '../src/git.ts'
@@ -409,6 +409,12 @@ describe('git destructive operations (scratch repository)', () => {
   const makeScratchRepo = (): string => {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-git-'))
     gitRun(dir, ['init', '-q'])
+    // Pin the eol policy: Git for Windows defaults to core.autocrlf=true
+    // (system gitconfig on the CI runner, and many dev machines), which
+    // smudges LF→CRLF on every index restore and breaks the byte-exact
+    // assertions below. The destructive-op behavior under test is orthogonal
+    // to the machine's eol policy.
+    gitRun(dir, ['config', 'core.autocrlf', 'false'])
     gitRun(dir, ['checkout', '-q', '-b', 'main'])
     writeFileSync(join(dir, 'a.txt'), 'one\ntwo\nthree\n')
     gitRun(dir, ['add', '-A'])
@@ -844,7 +850,7 @@ describe('side card settings routes', () => {
         const entry = namespaces.get(ns)
         if (entry === undefined) throw new Error(`settings namespace "${ns}" is not registered`)
         if (expectedRevision !== undefined && expectedRevision !== entry.revision) {
-          throw new SettingsConflictError(settingsNamespace(ns), expectedRevision, entry.revision)
+          throw new SettingsConflictError(ns as SettingsNamespace, expectedRevision, entry.revision)
         }
         entry.value = { ...entry.value, ...patch }
         entry.revision += 1
@@ -943,6 +949,7 @@ describe('side card settings routes', () => {
         terminalFontSize: 13,
         interceptOpenPath: true,
         editorExplorer: false,
+        workspaceFence: true,
         terminalShell: '',
         terminalShellArgs: '',
         titleBarCompat: false,
@@ -954,6 +961,7 @@ describe('side card settings routes', () => {
         browserInterceptHttp: true,
         browserInterceptHttps: false,
         browserAllowedLoopback: '',
+        changesDiffFloat: true,
         // The enable-switch maps default to {} (everything on).
         tabsEnabled: {},
         viewersEnabled: {},
@@ -970,6 +978,34 @@ describe('side card settings routes', () => {
     expect(view.value.openByDefault).toBe(true)
     expect(view.value.defaultWidthPercent).toBe(35)
     expect(view.revision).toBe(1)
+  })
+
+  it('disarms the workspace fence for the fs routes when the pref is off', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fence-off-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    writeFileSync(join(outside, 'secret.txt'), 'global instructions')
+    try {
+      const route = mountWithSettings(createFakeSettings())
+      // Default (fence on): the outside read is refused as usual…
+      const refused = await invoke(route, 'fs.read', { sessionId: 'fence', cwd: workspace, path: join(outside, 'secret.txt') })
+      expect(refused).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+      // …then the settings-page switch (or the fence notice's one-click off)
+      // disarms every fs route for paths outside the workspace.
+      const off = await invoke(route, 'settings.update', { patch: { workspaceFence: false } })
+      expect(off.ok).toBe(true)
+      const read = await invoke(route, 'fs.read', { sessionId: 'fence', cwd: workspace, path: join(outside, 'secret.txt') })
+      expect(read).toMatchObject({ ok: true, value: { kind: 'text', content: 'global instructions' } })
+      const tree = await invoke(route, 'fs.tree', { sessionId: 'fence', cwd: workspace, path: outside })
+      expect(tree).toMatchObject({ ok: true })
+      const write = await invoke(route, 'fs.write', { sessionId: 'fence', cwd: workspace, path: join(outside, 'written.txt'), content: 'ok' })
+      expect(write).toMatchObject({ ok: true })
+      expect(readFileSync(join(outside, 'written.txt'), 'utf8')).toBe('ok')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('refuses a stale write with settings-conflict (409)', async () => {

@@ -20,8 +20,8 @@
 #   bash scripts/e2e-aggregate-mount.sh
 #
 # 环境变量（均可省略）：
-#   DSH_CMD        dsh 命令；缺省 `npx -y --package @deepseek-ai/dsh dsh`
-#                  （与 pm2 启动器同源，避免依赖可能失效的 PATH dsh）
+#   DSH_CMD        dsh 命令；缺省 PATH 上的 `dsh`，回退 npx 拉官方包
+#                  （同 e2e-mount.sh）
 #   TARBALL        插件 tarball；缺省仓库根 dsh-better-sidebar-*.tgz（须已 pack）
 #   PORT           固定端口（默认 0 = OS 分配，从日志解析 URL）
 #   DSH_HOME_BASE  scratch 根目录（默认系统临时目录）。脚本始终在其下新建
@@ -30,6 +30,8 @@
 #   KEEP_HOME      非空时保留 scratch 目录（调试用）
 #
 # 退出码 = 0 通过；非 0 失败。服务器与 scratch 目录由 trap 兜底清理。
+# 日志/前置校验/DSH_CMD 与 tarball 解析/scratch profile 三件套/清理 trap/
+# dsh web 启动与就绪轮询的共享骨架见 scripts/e2e-common.sh。
 # =============================================================================
 set -euo pipefail
 
@@ -37,55 +39,33 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 FIXTURE_DIR="$ROOT/tests/fixtures/aggregate-better-sidebar"
 
-DSH_CMD="${DSH_CMD:-npx -y --package @deepseek-ai/dsh dsh}"
+E2E_TAG=e2e-aggregate-mount
+source "$SCRIPT_DIR/e2e-common.sh"
+
+DSH_CMD="${DSH_CMD:-dsh}"
 TARBALL="${TARBALL:-}"
 PORT="${PORT:-0}"
 KEEP_HOME="${KEEP_HOME:-}"
 
-say()  { printf '\033[32m[e2e-aggregate-mount]\033[0m %s\n' "$*"; }
-warn() { printf '\033[33m[e2e-aggregate-mount]\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[31m[e2e-aggregate-mount]\033[0m %s\n' "$*" >&2; exit 1; }
+e2e_require_cmd node "DSH 运行需要 Node.js >= 20"
+e2e_require_cmd pnpm "dsh plugin 转发给 pnpm"
+e2e_require_cmd npm "打包 fixture 需要"
+e2e_require_cmd curl
 
-command -v node >/dev/null 2>&1 || die "未找到 node（DSH 运行需要 Node.js >= 20）"
-command -v pnpm >/dev/null 2>&1 || die "未找到 pnpm（dsh plugin 转发给 pnpm）"
-command -v npm >/dev/null 2>&1 || die "未找到 npm（打包 fixture 需要）"
-command -v curl >/dev/null 2>&1 || die "未找到 curl"
+e2e_resolve_dsh_cmd
 
-if [ -z "$TARBALL" ]; then
-  TARBALL="$(ls "$ROOT"/dsh-better-sidebar-*.tgz 2>/dev/null | head -1 || true)"
-fi
-[ -n "$TARBALL" ] && [ -f "$TARBALL" ] || die "未找到插件 tarball：先在本仓库跑 pnpm build && npm pack，或用 TARBALL 指定"
+e2e_resolve_tarball || die "未找到插件 tarball：先在本仓库跑 pnpm build && npm pack，或用 TARBALL 指定"
 
 # ── scratch home ────────────────────────────────────────────────────────────
-# 始终在本调用拥有的全新目录里运行：调用方给了 DSH_HOME_BASE（可能是真实
-# ~/.dsh）时，只在其下新建子目录并只删除该子目录；缺省时直接用系统临时
-# 目录。调用方提供的目录本身绝不写入或删除。
-DSH_HOME_BASE="${DSH_HOME_BASE:-}"
-if [ -n "$DSH_HOME_BASE" ]; then
-  SCRATCH="$(mktemp -d "$DSH_HOME_BASE/dsh-e2e-agg.XXXXXX")"
-else
-  SCRATCH="$(mktemp -d /tmp/dsh-e2e-agg.XXXXXX)"
-fi
+# DSH_HOME 直接用 $SCRATCH（mount lane 用子路径 home/——两 lane 既有差异）；
+# DSH_HOME_BASE 语义与清理 trap 见 e2e-common.sh。
+e2e_make_scratch dsh-e2e-agg
 export DSH_HOME="$SCRATCH"
 LOG_DIR="$DSH_HOME/logs"; mkdir -p "$LOG_DIR"
 OUT_LOG="$LOG_DIR/dsh-web.out.log"; ERR_LOG="$LOG_DIR/dsh-web.err.log"
 SERVER_PID=""
 TMP_DIR=""
-cleanup() {
-  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
-  fi
-  if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
-    rm -rf "$TMP_DIR"
-  fi
-  if [ -z "$KEEP_HOME" ] && [ -d "$SCRATCH" ]; then
-    rm -rf "$SCRATCH"
-  else
-    warn "KEEP_HOME 已设置，保留 $SCRATCH"
-  fi
-}
-trap cleanup EXIT
+trap e2e_cleanup EXIT
 
 # ── 打包 fixture 聚合包 ─────────────────────────────────────────────────────
 TMP_DIR="$(mktemp -d)"
@@ -94,37 +74,10 @@ FIXTURE_TGZ="$(ls "$TMP_DIR"/*.tgz 2>/dev/null | head -1 || true)"
 [ -n "$FIXTURE_TGZ" ] || die "fixture 打包失败"
 
 # ── 引导 scratch profile（web 模板）────────────────────────────────────────
-# 先写 pnpm-workspace.yaml 的 allowBuilds / minimumReleaseAgeExclude，避免
-# pnpm 11 strict-dep-builds 拦截 node-pty/protobufjs——同 e2e-mount.sh。
+# 三件套 heredoc 及 pnpm-workspace 的 allowBuilds / minimumReleaseAgeExclude
+# 理由见 e2e-common.sh 的 e2e_write_profile。
 PROFILE_DIR="$DSH_HOME/profiles/web"
-mkdir -p "$PROFILE_DIR"
-cat > "$PROFILE_DIR/package.json" <<EOF
-{
-  "name": "dsh-profile-web",
-  "private": true,
-  "dependencies": {},
-  "dsh": {
-    "profile": {
-      "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"]
-    }
-  }
-}
-EOF
-printf '[]\n' > "$PROFILE_DIR/cordis.patch.yml"
-cat > "$PROFILE_DIR/pnpm-workspace.yaml" <<'EOF'
-packages:
-  - .
-
-nodeLinker: hoisted
-autoInstallPeers: false
-
-allowBuilds:
-  node-pty: true
-  protobufjs: true
-
-minimumReleaseAgeExclude:
-  - dsh-better-sidebar
-EOF
+e2e_write_profile "$PROFILE_DIR"
 
 # ── 组装 profile：聚合先行，插件后到 ──────────────────────────────────────
 say "安装 fixture 聚合包（先行）…"
@@ -134,20 +87,15 @@ $DSH_CMD plugin --profile web add "file:$TARBALL"
 
 # ── 启动真实 dsh web ───────────────────────────────────────────────────────
 say "启动 dsh web（--port ${PORT}，日志 ${LOG_DIR}）…"
-$DSH_CMD web --port "$PORT" >"$OUT_LOG" 2>"$ERR_LOG" &
-SERVER_PID=$!
+e2e_start_dsh_web "$OUT_LOG" "$ERR_LOG"
 
 # 等待启动 URL 或进程退出（最多 120s）。这里有意只取 origin：0.1.2-alpha.1+
 # 的就绪行是 `…/?token=<43字符>` 鉴权 URL，但下方的探活全部打插件的
-# `/sidebar/api/*` 路由——webserver carrier 不做鉴权（只有 /api、index 与
+# /sidebar/api/* 路由——webserver carrier 不做鉴权（只有 /api、index 与
 # remote.mux 升级在 browser auth 之后），origin 拼路径即正确且两版通用。
-URL=""
-for _ in $(seq 1 120); do
-  if ! kill -0 "$SERVER_PID" 2>/dev/null; then break; fi
-  URL="$(grep -oE 'http://127\.0\.0\.1:[0-9]+' "$OUT_LOG" | tail -1 || true)"
-  [ -n "$URL" ] && break
-  sleep 1
-done
+E2E_READY_RE='http://127\.0\.0\.1:[0-9]+'
+E2E_READY_PICK=tail
+e2e_wait_dsh_web_ready "$OUT_LOG" || true
 if [ -z "$URL" ]; then
   warn "out log 尾部：$(tail -5 "$OUT_LOG" 2>/dev/null || true)"
   warn "err log 尾部：$(tail -5 "$ERR_LOG" 2>/dev/null || true)"

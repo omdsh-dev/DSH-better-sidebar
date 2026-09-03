@@ -158,9 +158,9 @@ async function classifyTarget(raw: string, cwd: string): Promise<{ kind: AgentOp
     info = await stat(target)
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
-    if (code === 'ENOENT') throw new Error(`"${raw}" does not exist (resolved to "${target}")`)
-    if (code === 'EACCES' || code === 'EPERM') throw new Error(`"${target}" is not readable`)
-    throw new Error(`cannot open "${target}": ${error instanceof Error ? error.message : String(error)}`)
+    if (code === 'ENOENT') throw new Error(`"${raw}" does not exist (resolved to "${target}")`, { cause: error })
+    if (code === 'EACCES' || code === 'EPERM') throw new Error(`"${target}" is not readable`, { cause: error })
+    throw new Error(`cannot open "${target}": ${error instanceof Error ? error.message : String(error)}`, { cause: error })
   }
   const title = basenameOf(target)
   return { kind: info.isDirectory() ? 'folder' : 'file', target, title: title === '' ? raw : title }

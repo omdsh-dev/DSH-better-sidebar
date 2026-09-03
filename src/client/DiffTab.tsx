@@ -1,18 +1,19 @@
 /**
- * The diff tab: one change opened from the git panel, like VSCode's diff
+ * The diff tab: one change opened from the changes tab, like VSCode's diff
  * editor. A worktree ref loads the file's unified diff (`git diff`, staged or
  * not; untracked files — which git diff never covers — render as a full-file
  * addition from their content), a commit ref loads the commit's full patch
  * (`git.show`-style). The header carries a refresh button because the tab
- * stays mounted while the git panel's staging/discard operations change the
- * very content it shows.
+ * stays mounted while the changes tab's staging/discard operations change the
+ * very content it shows. Rendering goes through the shared {@link DiffFiles}
+ * renderer — the same one the changes tab's inline preview uses.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionScope } from './api.ts'
 import { api } from './api.ts'
 import type { SidebarDiffRef } from './state.ts'
-import { DiffView } from './DiffView.tsx'
+import { DiffFiles } from './diff/DiffFiles.tsx'
 import { t } from './locales.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import css from './sidebar.module.css'
@@ -102,8 +103,8 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
       {!loading && error === null && data !== null && (
         <>
           {data.untracked !== undefined
-            ? <DiffView diff="" untrackedPath={diff.kind === 'worktree' ? diff.path : ''} untrackedContent={data.untracked} />
-            : <DiffView diff={data.diff} />}
+            ? <DiffFiles diff="" untrackedPath={diff.kind === 'worktree' ? diff.path : ''} untrackedContent={data.untracked} />
+            : <DiffFiles diff={data.diff} />}
           {data.diff === '' && data.untracked === undefined && (
             <div className={css.gitEmpty}>{t('diffEmpty')}</div>
           )}

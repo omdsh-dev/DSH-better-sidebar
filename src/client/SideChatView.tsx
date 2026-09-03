@@ -13,30 +13,45 @@
  *
  * Each side thread is a child session the plugin created itself with a
  * custom seed (the parent's full log up to the click moment — see
- * sidechat-core.ts). Transport: thread creation/follow-up/cancel/dispose/
- * info go through the plugin's own /sidebar/api sidechat.* routes
- * (subagent-origin identities are fenced from the generic session RPCs);
- * the transcript is polled from the generic session.history RPC (seed-cut
- * at session/end-seed, boundary row dropped, chunk streaming accumulated)
- * — see sidechat-transcript.ts.
+ * sidechat-core.ts). Transport: EVERY thread operation — creation,
+ * follow-up, cancel, dispose, info, and the transcript itself — goes
+ * through the plugin's own /sidebar/api sidechat.* routes (subagent-origin
+ * identities are fenced from the generic session RPCs, and DSH
+ * 0.1.2-alpha.1's Remote-gateway migration removed the client
+ * session-history face the transcript used to poll). The transcript route
+ * cuts the inherited seed host-side and answers afterSeq deltas; the
+ * mapping (boundary row dropped, chunk streaming accumulated) lives in
+ * sidechat-transcript.ts.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import {
+  ConnectionIndicator,
+  DiffBlock,
+  IconApiOutline14,
+  IconBrowseOutline16,
   IconChevronRightOutline14,
+  IconEditOutline16,
   IconNewChatOutline16,
   IconPlusOutline16,
+  IconSearchOutline16,
   IconSendOutline16,
+  IconSparkle16,
   IconStopFill16,
   MarkdownText,
   Menu,
+  ReadBlock,
   StateDot,
+  TerminalBlock,
+  type DiffBlockLabels,
   type MenuEntry,
+  type ReadBlockLabels,
+  type TerminalBlockLabels,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
 import { IconHistoryOutline16, IconSaveOutline16 } from './icons.tsx'
-import type { Context, SidebarHistoryEntry } from '../context-types.ts'
+import type { Context, SidebarHistoryEntry, SidebarSessionEvent } from '../context-types.ts'
 import {
   SIDE_LABEL_PREFIX,
   SIDE_NEW_THREAD_TITLE,
@@ -45,20 +60,21 @@ import {
   threadTrailingPending,
   type SidechatThreadInfo,
 } from '../sidechat-core.ts'
-import { collectOwnEvents, toolArgsSummary, transcriptRows, type SidechatTranscriptRow } from './sidechat-transcript.ts'
+import {
+  formatDurationMs,
+  formatTokens,
+  toolArgsSummary,
+  transcriptRows,
+  type SidechatToolCard,
+  type SidechatTranscriptRow,
+} from './sidechat-transcript.ts'
 import { api } from './api.ts'
+import { usePolling } from './use-polling.ts'
 import { t } from './locales.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarTab } from './state.ts'
 import css from './SideChatView.module.css'
 
-/** Tail-page size for one transcript poll (events per page). Small on
- *  purpose: streaming polls ride the tail and merge by seq. */
-const PAGE_MESSAGES = 8
-/** First-attach walk page size: cold reads re-expand chunk-rows into one
- *  event per streamed delta, so a single answer can be hundreds of events —
- *  the walk must page big or earlier tool/call rows fall out of the window. */
-const WALK_PAGE_EVENTS = 200
 /** Poll cadence while the selected thread is running and the tab visible. */
 const POLL_MS = 2000
 /** Textarea auto-grow ceiling (px) — the composer scrolls beyond it. */
@@ -92,10 +108,9 @@ export function consumeSidechatSeed(): string | undefined {
  *  StrictMode / HMR must not mint two threads for one tab). */
 const inFlightStarts = new Set<string>()
 
-/** Per-thread transcript cache: seed boundary + thread-own events merged by
- *  seq (streaming polls never re-download the inherited seed). */
+/** Per-thread transcript cache: thread-own events merged by seq (polls ride
+ * the afterSeq delta and never re-download what they already hold). */
 interface ThreadCache {
-  seedBoundary: number | null
   entries: SidebarHistoryEntry[]
 }
 
@@ -105,6 +120,9 @@ interface RowLabels {
   copiedLabel: string
   thinkLabel: string
   injectionLabel: string
+  terminal: TerminalBlockLabels
+  diff: DiffBlockLabels
+  read: ReadBlockLabels
 }
 
 /** Merge history entries by event seq (newest wins), log order preserved. */
@@ -137,8 +155,13 @@ function CollapsibleRow(props: {
   mono?: boolean
   streaming?: boolean
   failed?: boolean
+  /** 16px leading glyph (tool-kind icon, the main conversation's row head). */
+  icon?: React.ReactNode
   children?: React.ReactNode
 }): React.ReactNode {
+  const leading = props.icon === undefined ? null : (
+    <span className={css.sidechatRowIcon}>{props.icon}</span>
+  )
   const label = (
     <span
       className={clsx(
@@ -156,6 +179,7 @@ function CollapsibleRow(props: {
   if (props.children === undefined) {
     return (
       <div className={clsx(css.sidechatRowLine, css.sidechatRowStatic, props.failed === true && css.sidechatRowFailed)}>
+        {leading}
         {label}
         {meta}
       </div>
@@ -173,12 +197,59 @@ function CollapsibleRow(props: {
         <span className={css.sidechatRowChevron}>
           <IconChevronRightOutline14 size={12} />
         </span>
+        {leading}
         {label}
         {meta}
       </summary>
       <div className={css.sidechatRowBody}>{props.children}</div>
     </details>
   )
+}
+
+/** The host Block body for a structured tool card (main-conversation atoms:
+ *  terminal surface, diff hunks, line-numbered read window). */
+function toolCardBody(card: SidechatToolCard, executing: boolean, labels: RowLabels): React.ReactNode {
+  if (card.type === 'terminal') {
+    return (
+      <TerminalBlock
+        command={card.command}
+        cwd={card.cwd}
+        output={card.output}
+        exitCode={card.exitCode}
+        signal={card.signal}
+        running={executing}
+        labels={labels.terminal}
+      />
+    )
+  }
+  if (card.type === 'diff') {
+    return <DiffBlock diffs={card.diffs} labels={labels.diff} />
+  }
+  return <ReadBlock label={card.label} lines={card.lines} totalLines={card.totalLines} lang={card.lang} labels={labels.read} />
+}
+
+/** The tool row's 16px leading slot, the way the main conversation draws it
+ *  (GenericToolCard's variant table): the tool-kind glyph at 14, replaced by
+ *  an error StateDot on failed rows. */
+function toolLeading(name: string, failed: boolean): React.ReactNode {
+  if (failed) return <StateDot state="error" />
+  switch (name) {
+    case 'bash':
+    case 'pwsh':
+      return <IconApiOutline14 size={14} />
+    case 'read':
+    case 'web_fetch':
+      return <IconBrowseOutline16 size={14} />
+    case 'edit':
+    case 'write':
+      return <IconEditOutline16 size={14} />
+    case 'grep':
+    case 'glob':
+    case 'web_search':
+      return <IconSearchOutline16 size={14} />
+    default:
+      return <IconSparkle16 size={14} />
+  }
 }
 
 /** One row renderer (React keys ride the source event seq). */
@@ -212,22 +283,40 @@ function renderRow(row: SidechatTranscriptRow, labels: RowLabels): React.ReactNo
           <div className={css.sidechatRowProse}>{row.text}</div>
         </CollapsibleRow>
       )
-    case 'tool': {
-      const body = (
-        <>
-          {row.args !== undefined && <pre className={css.sidechatRowCode}>{row.args}</pre>}
-          {row.resultText !== undefined && <pre className={css.sidechatRowCode}>{row.resultText}</pre>}
-        </>
+    case 'turnSummary': {
+      // Quiet turn-tail metrics: token usage + wall duration, main-pane
+      // StatsLine formatting. Parts appear only when computable.
+      const parts: string[] = []
+      if (row.inputTokens !== undefined && row.outputTokens !== undefined) {
+        parts.push(t('sideChatTurnUsage', { input: formatTokens(row.inputTokens), output: formatTokens(row.outputTokens) }))
+      }
+      if (row.durationMs !== undefined) parts.push(formatDurationMs(row.durationMs))
+      if (parts.length === 0) return null
+      return (
+        <div key={`${row.kind}:${row.seq}`} className={css.sidechatTurnSummary}>
+          {parts.join(' · ')}
+        </div>
       )
+    }
+    case 'tool': {
+      const body = row.card !== undefined
+        ? toolCardBody(row.card, row.executing === true, labels)
+        : (
+          <>
+            {row.args !== undefined && <pre className={css.sidechatRowCode}>{row.args}</pre>}
+            {row.resultText !== undefined && <pre className={css.sidechatRowCode}>{row.resultText}</pre>}
+          </>
+        )
       return (
         <CollapsibleRow
           key={`${row.kind}:${row.seq}`}
           label={row.name}
           meta={toolArgsSummary(row.args)}
+          icon={toolLeading(row.name, row.failed)}
           mono
           streaming={row.executing === true}
           failed={row.failed}
-          {...(row.args === undefined && row.resultText === undefined ? {} : { children: body })}
+          {...(row.args === undefined && row.resultText === undefined && row.card === undefined ? {} : { children: body })}
         />
       )
     }
@@ -242,15 +331,35 @@ export function SideChatView(props: {
   visible: boolean
 }): React.ReactNode {
   const { ctx, scope, tab, visible } = props
-  const rowLabels = useMemo<RowLabels>(
-    () => ({
+  const rowLabels = useMemo<RowLabels>(() => {
+    // Shared Block chrome: copy buttons reuse the sidebar's copy pair, the
+    // collapse/expand family is common to every Block kind.
+    const shared = {
+      copy: t('copy'),
+      copied: t('copied'),
+      collapse: t('sideChatBlockCollapse'),
+      collapseAria: t('sideChatBlockCollapseAria'),
+      expand: (hidden: number) => t('sideChatBlockExpand', { hidden }),
+      expandAria: (hidden: number) => t('sideChatBlockExpandAria', { hidden }),
+    }
+    return {
       copyLabel: t('copy'),
       copiedLabel: t('copied'),
       thinkLabel: t('sideChatThink'),
       injectionLabel: t('sideChatInjection'),
-    }),
-    [],
-  )
+      terminal: {
+        ...shared,
+        signal: (signal: string) => t('sideChatBlockSignal', { signal }),
+        exitCode: (exitCode: number) => t('sideChatBlockExitCode', { code: exitCode }),
+        running: t('sideChatBlockRunning'),
+        failed: t('sideChatBlockFailed'),
+        done: t('sideChatBlockDone'),
+        noOutput: t('sideChatBlockNoOutput'),
+      },
+      diff: { ...shared, files: (count: number) => t('sideChatBlockFiles', { count }) },
+      read: { ...shared, window: (shown: number, total: number) => t('sideChatBlockWindow', { shown, total }) },
+    }
+  }, [])
 
   // The session list feed: thread rows (the header menu) + running states.
   const list = useSyncExternalStore(
@@ -274,13 +383,24 @@ export function SideChatView(props: {
   const [info, setInfo] = useState<SidechatThreadInfo | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
 
-  const cacheRef = useRef<ThreadCache>({ seedBoundary: null, entries: [] })
+  const cacheRef = useRef<ThreadCache>({ entries: [] })
+  // The previous poll's rows (see the mapping's reuse pass below).
+  const prevRowsRef = useRef<SidechatTranscriptRow[]>([])
   const controllerRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const composerRef = useRef<HTMLTextAreaElement | null>(null)
 
   const summary = threadId === undefined ? undefined : list.byId[threadId]
   const running = summary?.running === true
+
+  // Connection recovery state (DSH 0.1.2-alpha.2+): drives the disconnect
+  // banner and an immediate catch-up pull when the wire comes back. The poll
+  // loop itself stays silent on wire failures; absent service (older host)
+  // reads as `undefined` = never show the banner.
+  const connectionState = useSyncExternalStore(
+    useMemo(() => (callback: () => void) => ctx.connection?.state.subscribe(callback) ?? (() => {}), [ctx]),
+    useCallback(() => ctx.connection?.state.getSnapshot(), [ctx]),
+  )
 
   /** The agent-identity badge of the thread header (preset · model). */
   const agentBadge = useMemo(() => {
@@ -327,43 +447,28 @@ export function SideChatView(props: {
     }
   }, [summary, tab.id, tab.title, ctx])
 
-  /** One transcript pull: the first read walks back to the seed boundary
-   *  (big pages — chunk deltas re-expand on cold reads), later reads fetch
-   *  one tail page and merge (seq-deduped). */
+  /** One transcript pull: the thread's own events beyond the cached tail
+   *  (first attach = the whole seed-cut slice; polls = afterSeq deltas),
+   *  merged by seq. */
   const fetchThread = useCallback(async (childId: string): Promise<void> => {
     controllerRef.current?.abort()
     const controller = new AbortController()
     controllerRef.current = controller
-    const cache = cacheRef.current
     try {
-      if (cache.seedBoundary === null) {
-        const walk = await collectOwnEvents(async (beforeSeq) => {
-          const response = await ctx.connection.api.sessions.history(
-            {
-              sessionId: childId,
-              maxMessages: WALK_PAGE_EVENTS,
-              ...(beforeSeq === undefined ? {} : { beforeSeq }),
-            },
-            controller.signal,
-          )
-          if (!response.result.ok) throw new Error('history walk failed')
-          return response.result.value.events
-        })
-        cache.seedBoundary = walk.seedBoundary
-        cache.entries = mergeBySeq(cache.entries, walk.entries)
-      } else {
-        const response = await ctx.connection.api.sessions.history(
-          { sessionId: childId, maxMessages: PAGE_MESSAGES },
-          controller.signal,
-        )
-        if (!response.result.ok) return
-        cache.entries = mergeBySeq(cache.entries, response.result.value.events)
+      const cache = cacheRef.current
+      const afterSeq = cache.entries.at(-1)?.event.seq
+      const { events } = await api.sidechatEvents(childId, afterSeq, controller.signal)
+      if (events.length > 0) {
+        // Wire events arrive as parsed JSON; the mirror narrows data to the
+        // record the mapping reads.
+        const incoming = events.map(event => ({ event: event as SidebarSessionEvent }))
+        cache.entries = mergeBySeq(cache.entries, incoming)
+        setRevision(value => value + 1)
       }
-      setRevision(value => value + 1)
     } catch {
       // Aborted by a newer pull or a wire failure: keep the last rows.
     }
-  }, [ctx])
+  }, [])
 
   /** The thread header badge pull (live state + preset/model identity). */
   const fetchInfo = useCallback(async (childId: string): Promise<void> => {
@@ -377,7 +482,8 @@ export function SideChatView(props: {
   // Reset the transcript cache whenever the binding changes, then focus
   // the composer — it owns the first message of a fresh thread.
   useEffect(() => {
-    cacheRef.current = { seedBoundary: null, entries: [] }
+    cacheRef.current = { entries: [] }
+    prevRowsRef.current = []
     controllerRef.current?.abort()
     setError(null)
     setSaved(false)
@@ -388,22 +494,49 @@ export function SideChatView(props: {
     }
   }, [threadId, fetchInfo])
 
-  // Poll while the tab is visible and the thread runs.
+  // One transcript pull on every input change (attach, visibility flip,
+  // run-state flip — the last one catches a thread's terminal state once it
+  // stops running).
   useEffect(() => {
     if (!visible || threadId === undefined) return
     void fetchThread(threadId)
-    if (!running) return
-    const timer = window.setInterval(() => {
-      void fetchThread(threadId)
-      void fetchInfo(threadId)
-    }, POLL_MS)
-    return () => { window.clearInterval(timer) }
-  }, [visible, threadId, running, fetchThread, fetchInfo])
+    // `running` is not read here, but re-triggering this pull on run-state
+    // flips is load-bearing (see above); the badge fetch rides the ticks.
+  }, [visible, threadId, running, fetchThread])
+
+  // Poll while the tab is visible and the thread runs: transcript deltas +
+  // badge refresh on a fixed cadence. Each pull self-guards (fetchThread
+  // aborts its predecessor; a late settle keeps the last rows).
+  const pollTick = useCallback(async (): Promise<void> => {
+    if (threadId === undefined) return
+    void fetchThread(threadId)
+    void fetchInfo(threadId)
+  }, [threadId, fetchThread, fetchInfo])
+  usePolling(visible && running && threadId !== undefined, pollTick, { intervalMs: POLL_MS })
 
   useEffect(() => () => { controllerRef.current?.abort() }, [])
 
-  const rows = useMemo(
-    () => (threadId === undefined ? [] : transcriptRows(cacheRef.current.entries)),
+  // When the wire recovers (disconnected → connected), pull immediately
+  // instead of waiting for the next poll tick — or, on an idle thread that
+  // stopped polling, forever.
+  const prevConnectionRef = useRef(connectionState)
+  useEffect(() => {
+    const previous = prevConnectionRef.current
+    prevConnectionRef.current = connectionState
+    if (previous === 'disconnected' && connectionState === 'connected' && threadId !== undefined) {
+      void fetchThread(threadId)
+      void fetchInfo(threadId)
+    }
+  }, [connectionState, threadId, fetchThread, fetchInfo])
+
+  // The previous poll's rows ride into the mapping so unchanged rows keep
+  // their object identity (see reuseRows): the 2s poll re-renders only the
+  // changed tail instead of re-parsing markdown for the whole transcript.
+  const rows = useMemo(() => {
+    const next = threadId === undefined ? [] : transcriptRows(cacheRef.current.entries, prevRowsRef.current)
+    prevRowsRef.current = next
+    return next
+  },
     // The cache is a ref; revision bumps on every successful pull.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [threadId, revision],
@@ -450,7 +583,6 @@ export function SideChatView(props: {
       }
     }
     return items
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threads])
 
   const growComposer = (): void => {
@@ -564,7 +696,7 @@ export function SideChatView(props: {
           )}
           items={menuItems}
           selectedId={threadId}
-          onSelect={(id) => { id === '$new' ? openNewThread() : openExistingThread(id) }}
+          onSelect={(id) => { if (id === '$new') openNewThread(); else openExistingThread(id) }}
           onClose={() => { setMenuOpen(false) }}
           align="end"
           portal
@@ -580,6 +712,18 @@ export function SideChatView(props: {
           <IconSaveOutline16 />
         </button>
       </div>
+      {connectionState !== undefined && connectionState !== 'connected' && (
+        <ConnectionIndicator
+          state={connectionState}
+          disconnectedLabel={t('sideChatConnDisconnected')}
+          reconnectLabel={t('sideChatConnReconnect')}
+          connectingLabel={t('sideChatConnConnecting')}
+          recoveredLabel={t('sideChatConnRecovered')}
+          reconnectActionLabel={t('sideChatConnReconnectAction')}
+          restartActionLabel={t('sideChatConnRestartAction')}
+          onReconnect={() => { ctx.connection?.reconnect() }}
+        />
+      )}
       {!canSave && !freshThread && <div className={css.sidechatHint}>{t('sideChatNoTurn')}</div>}
       {canSave && trailingPending
         && <div className={css.sidechatHint}>{t('sideChatPendingDrop')}</div>}

@@ -1,0 +1,399 @@
+/* The unified changes tab: lens switcher + Git lens + session lens + the
+   shared preview pane. Semantic --dsw-alias tokens only (skin contract).
+   The git lens styles moved here from sidebar.module.css when the git panel
+   became a lens of this tab; the generic placeholder/empty/error trio stays
+   duplicated in both modules (the diff tab still owns its copy). */
+
+.root { display: flex; flex-direction: column; min-height: 0; height: 100%; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font-size: 12px; }
+
+/* ── Lens switcher ─────────────────────────────────────────────────────── */
+
+.lensBar { flex: none; display: flex; align-items: center; padding: 8px 8px 4px 12px; }
+.lensSwitch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; }
+.lensButton { border: 0; border-radius: 6px; padding: 2px 10px; background: transparent; color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-strong-11); cursor: pointer; }
+.lensButton:hover { color: var(--dsw-alias-label-primary); }
+.lensButton[data-active='true'] { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-label-primary); }
+
+/* ── Git lens (the former git panel) ───────────────────────────────────── */
+
+.git {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  /* Tab pages never scroll horizontally: content wraps or truncates to the
+     panel width instead of panning sideways. */
+  overflow-x: hidden;
+}
+
+.gitHeader {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px 0 12px;
+}
+
+.gitWorktreeRow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 0 12px;
+}
+
+.gitWorktreeLabel {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.gitBranchSelect {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.gitSection {
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.gitSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px 4px;
+  font: var(--dsw-font-xxxs-strong-11);
+  color: var(--dsw-alias-label-tertiary);
+  text-transform: uppercase;
+}
+
+.gitLink {
+  border: none;
+  background: transparent;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-brand-primary);
+  cursor: pointer;
+  padding: 0;
+}
+
+.gitLink:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.gitLink:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.gitRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  margin: 0 6px;
+  padding: 0 8px;
+  border-radius: 8px;
+  animation: dsh-row-in 150ms var(--ds-ease-in-out);
+}
+
+.gitRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.gitRow[data-selected='true'] {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.gitRowMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  padding: 3px 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.gitBadge {
+  flex: none;
+  width: 20px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font: var(--dsw-font-xxxs-strong-11);
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* Status-letter tint: A added / D deleted / M·R modified / C·U conflicts;
+   untracked '?' reads as a not-yet-added file, so it shares the added tint. */
+.gitBadge[data-letter='A'], .gitBadge[data-letter='?'] { color: var(--dsw-alias-state-success-primary); }
+.gitBadge[data-letter='D'] { color: var(--dsw-alias-state-error-primary); }
+.gitBadge[data-letter='M'], .gitBadge[data-letter='R'] { color: var(--dsw-alias-state-business-primary); }
+.gitBadge[data-letter='C'], .gitBadge[data-letter='U'] { color: var(--dsw-alias-state-warn-primary); }
+
+.gitName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-primary);
+}
+
+.gitEmpty {
+  padding: 4px 12px 8px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.gitPlaceholder {
+  padding: 16px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  text-align: center;
+}
+
+.gitError {
+  padding: 8px 12px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-state-error-primary);
+  white-space: pre-wrap;
+}
+
+.gitConfirmDesc {
+  margin: 0;
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-primary);
+  white-space: pre-wrap;
+}
+
+.gitCommit {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  align-items: center;
+}
+
+.gitCommitInput {
+  flex: 1;
+  min-width: 0;
+}
+
+.gitCommitButton {
+  flex: none;
+  height: 26px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 6px;
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-inverted);
+  font: var(--dsw-font-xxs-strong-12);
+  cursor: pointer;
+}
+
+.gitCommitButton:hover:not(:disabled) {
+  background: var(--dsw-alias-button-primary-hover);
+}
+
+.gitCommitButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* A history row: line 1 = hash + subject, line 2 = ref badges + author/date
+   (badges live on the second line so they never crowd the subject). */
+.gitLogRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 12px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.gitLogRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.gitLogRow[data-selected='true'] {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.gitLogLine1 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gitLogHash {
+  flex: none;
+  font: var(--dsw-font-markdown-code-block-small);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.gitLogLine2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.gitLogRef {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  font: var(--dsw-font-xxxs-strong-11);
+  color: var(--dsw-alias-brand-primary);
+  white-space: nowrap;
+}
+
+.gitLogSubject {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-primary);
+}
+
+.gitLogMeta {
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.gitLogMore {
+  display: block;
+  width: calc(100% - 24px);
+  margin: 4px 12px 8px;
+  padding: 6px 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: transparent;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.gitLogMore:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.gitLogMore:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ── Session lens (this round's files) ─────────────────────────────────── */
+
+.session { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+.filterRow { flex: none; display: flex; gap: 4px; padding: 2px 8px 6px 12px; flex-wrap: wrap; }
+.filterChip { border: 1px solid var(--dsw-alias-border-l2); border-radius: 999px; padding: 1px 8px; background: transparent; color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-11); cursor: pointer; }
+.filterChip:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
+.filterChip[data-active='true'] { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-label-primary); border-color: transparent; }
+
+.sessionList { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 10px; }
+.empty { color: var(--dsw-alias-label-tertiary); padding: 24px 8px; text-align: center; }
+.loadError { margin: 4px 8px; padding: 6px 10px; border-left: 3px solid var(--dsw-alias-state-warn-primary); border-radius: 0 6px 6px 0; color: var(--dsw-alias-label-secondary); font-size: 11px; }
+
+.fileGroup { margin-bottom: 6px; }
+/* The group label sits between op blocks: extra head padding separates it from
+   the previous file's rows, the first group starts flush. */
+.filePath { display: block; color: var(--dsw-alias-label-tertiary); font-family: var(--ds-font-family-code, monospace); font-size: 11px; padding: 6px 4px 2px; word-break: break-all; }
+.fileGroup:first-child .filePath { padding-top: 2px; }
+.opRow { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; border-radius: 6px; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 11px; padding: 3px 5px; cursor: pointer; text-align: left; }
+.opRow:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.opRow[data-selected='true'] { background: var(--dsw-alias-interactive-bg-active); }
+/* A failed op carries a quiet error inset bar (the flag chip names it). */
+.opRow[data-op-error='true'] { box-shadow: inset 2px 0 0 var(--dsw-alias-state-error-primary); }
+.opKind { border-radius: 4px; font-size: 10px; line-height: 16px; padding: 0 5px; background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); flex: none; }
+.opKind[data-kind='write'] { color: var(--dsw-alias-state-success-primary); }
+.opKind[data-kind='edit'] { color: var(--dsw-alias-state-business-primary); }
+/* Size + relative time ride as one right-aligned cluster so the kind chips
+   form a scannable left rail and the meta column stays flush right. */
+.opMeta { margin-left: auto; display: inline-flex; align-items: baseline; gap: 8px; flex: none; min-width: 0; }
+.opTime { color: var(--dsw-alias-label-tertiary); font-size: 10px; flex: none; }
+.opFlag { color: var(--dsw-alias-state-business-primary); font-size: 10px; flex: none; }
+.opFlagError { color: var(--dsw-alias-state-error-primary); font-size: 10px; flex: none; }
+.opSize { color: var(--dsw-alias-label-tertiary); font-size: 10px; flex: none; font-family: var(--ds-font-family-code, monospace); }
+
+/* ── Shared preview pane ───────────────────────────────────────────────── */
+
+.diffPane { border-top: 1px solid var(--dsw-alias-border-l1); display: flex; flex-direction: column; flex: none; min-height: 0; }
+.dragHandle { flex: none; height: 8px; cursor: ns-resize; position: relative; background: var(--dsw-alias-bg-base); }
+.dragHandle::after { content: ''; position: absolute; left: calc(50% - 18px); top: 3px; width: 36px; height: 2px; border-radius: 1px; background: var(--dsw-alias-border-l2); }
+.dragHandle:hover::after, .dragHandle:focus-visible::after { background: var(--dsw-alias-state-business-primary); }
+.diffHead { display: flex; align-items: center; gap: 6px; padding: 3px 8px 3px 10px; border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.diffKind { flex: none; border-radius: 4px; font-size: 10px; line-height: 16px; padding: 0 5px; background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); }
+.diffKind[data-kind='git'] { color: var(--dsw-alias-brand-primary); }
+.diffKind[data-kind='write'] { color: var(--dsw-alias-state-success-primary); }
+.diffKind[data-kind='edit'] { color: var(--dsw-alias-state-business-primary); }
+/* The path keeps its tail (the file name is the identity; directories are
+   context): an RTL paragraph renders an ASCII path in reading order while
+   clipping its HEAD under the ellipsis. */
+.diffPath { flex: 1; direction: rtl; font-family: var(--ds-font-family-code, monospace); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--dsw-alias-label-primary); min-width: 0; }
+.diffStats { flex: none; display: inline-flex; gap: 5px; font-size: 10px; font-family: var(--ds-font-family-code, monospace); }
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  flex: none;
+}
+.iconButton:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.iconButton:disabled { opacity: 0.4; cursor: default; }
+
+.paneBody { flex: 1; min-height: 0; overflow-y: auto; }
+.readError { color: var(--dsw-alias-state-error-primary); border-left: 3px solid var(--dsw-alias-state-error-primary); border-radius: 0 6px 6px 0; margin: 6px 8px; padding: 6px 10px; white-space: pre-wrap; word-break: break-word; }
+.priorUnknown { color: var(--dsw-alias-label-tertiary); font-size: 10px; padding: 3px 10px; }
+
+/* ── Shared bits ───────────────────────────────────────────────────────── */
+
+/* Mount fade for rows (the app's session-row reveal). */
+@keyframes dsh-row-in {
+  from { opacity: 0; }
+}
+
+/* Keyboard focus rings match the shared sidebar convention. */
+.gitLink:focus-visible, .gitRowMain:focus-visible, .gitLogRow:focus-visible,
+.gitCommitButton:focus-visible, .gitLogMore:focus-visible, .gitBranchSelect:focus-visible,
+.lensButton:focus-visible, .filterChip:focus-visible, .iconButton:focus-visible,
+.dragHandle:focus-visible {
+  outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent);
+  outline-offset: -1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gitRow { animation: none; }
+}

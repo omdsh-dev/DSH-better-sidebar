@@ -61,3 +61,25 @@ export function isWithinWorkspace(base: string, target: string): boolean {
   const lt = t.toLowerCase()
   return lt === lb || lt.startsWith(`${lb}/`)
 }
+
+/**
+ * The last path segment of a '/'- or '\'-separated path (a diff tab title,
+ * a worktree label). Returns the whole string when no separator is present.
+ */
+export function baseName(path: string): string {
+  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return at === -1 ? path : path.slice(at + 1)
+}
+
+/**
+ * The lowercased file extension of a path ('' when none). The dot must sit
+ * inside the last segment — a dot in a directory name is not an extension.
+ * Shared by the editor language mapping (lang.ts) and the viewer registry's
+ * extension matching (service.ts), which both live in the core bundle.
+ */
+export function extOf(path: string): string {
+  const at = path.lastIndexOf('.')
+  if (at === -1) return ''
+  const base = path.slice(at + 1).toLowerCase()
+  return base.includes('/') || base.includes('\\') ? '' : base
+}

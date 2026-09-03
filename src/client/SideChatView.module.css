@@ -221,6 +221,18 @@
   transform: rotate(90deg);
 }
 
+/* Tool-kind leading glyph (the main conversation's 16px slot; the icon
+ * itself renders at 14). Failed rows pass a StateDot instead. */
+.sidechatRowIcon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
 .sidechatRowLabel {
   flex: none;
   max-width: 60%;
@@ -278,6 +290,23 @@
 
 .sidechatRowCode + .sidechatRowCode {
   border-top: 1px solid var(--dsw-alias-hairline);
+}
+
+/* Host Block atoms (terminal/diff/read) inside a row body draw their own
+ * chrome; only a hair of breathing room is added on top. */
+.sidechatRowBody > * {
+  margin-top: 2px;
+}
+
+/* Turn-tail metrics line: quiet, right-aligned, ink-weight only. */
+.sidechatTurnSummary {
+  align-self: flex-end;
+  max-width: 88%;
+  padding: 0 2px;
+  font: var(--dsw-font-xxs-12);
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-tertiary);
+  user-select: none;
 }
 
 /* Shimmer sweep text: generating (streaming row labels, creating hero). */

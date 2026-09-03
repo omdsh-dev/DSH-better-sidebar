@@ -13,8 +13,11 @@ describe('revealCommand', () => {
     expect(revealCommand('/a/b.txt', 'darwin')).toEqual({ command: 'open', args: ['-R', '/a/b.txt'] })
   })
 
-  it('win32: `explorer /select,<path>` selects the file', () => {
-    expect(revealCommand('C:\\a\\b.txt', 'win32')).toEqual({ command: 'explorer.exe', args: ['/select,', 'C:\\a\\b.txt'] })
+  it('win32: passes /select,<path> as one shell-free Explorer argument', () => {
+    expect(revealCommand('C:\\work\\two words\\a.txt', 'win32')).toEqual({
+      command: 'explorer.exe',
+      args: ['/select,C:\\work\\two words\\a.txt'],
+    })
   })
 
   it('linux: `xdg-open` opens the containing directory (no common select protocol)', () => {

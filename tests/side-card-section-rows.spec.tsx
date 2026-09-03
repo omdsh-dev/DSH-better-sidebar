@@ -12,31 +12,15 @@
  */
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { createElement, type ReactNode } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createElement } from 'react'
 import { act } from 'react-dom/test-utils'
+import { renderRoot, setupReactAct } from './test-utils.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+setupReactAct()
 import type { SidebarSettingToggle } from '../src/client/service.ts'
 import { FeatureSettingsRows } from '../src/client/SideCardSection.tsx'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
-
-/** Render the rows into a detached container under React's act(). */
-function mount(node: ReactNode): { container: HTMLDivElement; rerender: (node: ReactNode) => void; unmount: () => void } {
-  const container = document.createElement('div')
-  document.body.append(container)
-  const root: Root = createRoot(container)
-  act(() => { root.render(node) })
-  return {
-    container,
-    rerender: (next) => { act(() => { root.render(next) }) },
-    unmount: () => {
-      act(() => { root.unmount() })
-      container.remove()
-    },
-  }
-}
 
 /** Type into an input and commit it via blur (React 18: input event +
  *  focusout). The native setter bypasses React's value tracker so the
@@ -60,7 +44,7 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
       type: 'text',
       title: () => 'Font family',
     }
-    const { container, unmount } = mount(createElement(FeatureSettingsRows, {
+    const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
       prefs,
       onToggle: () => {},
@@ -86,7 +70,7 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
       min: 9,
       max: 32,
     }
-    const { container, unmount } = mount(createElement(FeatureSettingsRows, {
+    const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
       prefs: { ...prefs, terminalFontSize: 13 },
       onToggle: () => {},
@@ -113,7 +97,7 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
       min: 9,
       max: 32,
     }
-    const { container, unmount } = mount(createElement(FeatureSettingsRows, {
+    const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
       prefs: { ...prefs, terminalFontSize: 13 },
       onToggle: () => {},
@@ -142,7 +126,7 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
     // The parent mirrors the real handler: the optimistic commit adopts the
     // typed value, and a FAILED write reverts prefs to the stored one.
     let prefsNow = { ...prefs, terminalFontFamily: 'Old' }
-    const { container, rerender, unmount } = mount(createElement(FeatureSettingsRows, {
+    const { container, rerender, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
       prefs: prefsNow,
       onToggle: () => {},
@@ -198,7 +182,7 @@ describe('FeatureSettingsRows select rows (interactive)', () => {
       title: () => 'Editor explorer',
       options,
     }
-    const { container, unmount } = mount(createElement(FeatureSettingsRows, {
+    const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
       // Merged is the selected option for this scenario (the default is now
       // separate — the anchor must render whatever value the prefs carry).
@@ -239,7 +223,7 @@ describe('FeatureSettingsRows select rows (interactive)', () => {
       onSelectValue: (t, next) => { commits.push([t.key, next]) },
       valueSource: () => value,
     })
-    const { container, rerender, unmount } = mount(rows(['c', 'a']))
+    const { container, rerender, unmount } = renderRoot(rows(['c', 'a']))
     // The anchor shows the picked titles; options follow the declared order.
     const items = openSelect(container)
     expect(items.map(item => item.textContent)).toEqual(['Alpha', 'Beta', 'Gamma'])
@@ -263,7 +247,7 @@ describe('FeatureSettingsRows select rows (interactive)', () => {
       title: () => 'Editor explorer',
       options,
     }
-    const { container, unmount } = mount(createElement(FeatureSettingsRows, {
+    const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
       prefs,
       onToggle: () => {},

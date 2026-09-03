@@ -82,6 +82,12 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     editorExplorer: typeof record.editorExplorer === 'boolean'
       ? record.editorExplorer
       : SIDEBAR_PREFS_DEFAULTS.editorExplorer,
+    changesDiffFloat: typeof record.changesDiffFloat === 'boolean'
+      ? record.changesDiffFloat
+      : SIDEBAR_PREFS_DEFAULTS.changesDiffFloat,
+    workspaceFence: typeof record.workspaceFence === 'boolean'
+      ? record.workspaceFence
+      : SIDEBAR_PREFS_DEFAULTS.workspaceFence,
     // The title-bar scheme (auto | web | preset | custom). The schema
     // declares the field WITHOUT a default, so documents written by older
     // plugin versions resolve without it — migrate from the legacy fields:
@@ -209,5 +215,24 @@ export async function loadExternalDisable(settings: SidebarSettingsClient): Prom
     return view.externalDisable === true
   } catch {
     return false
+  }
+}
+
+/** The boot decision both the prefs and the external-disable flag need:
+ *  ONE settings fetch answers both (the boot path used to await
+ *  {@link loadPrefs} and {@link loadExternalDisable} serially — two round
+ *  trips of the same document before the first paint, and the second had no
+ *  timeout, so a stalled wire could keep the sidebar unmounted forever). */
+export interface BootDecision {
+  prefs: SidebarPrefs
+  suspended: boolean
+}
+
+export async function loadBootDecision(settings: SidebarSettingsClient): Promise<BootDecision> {
+  try {
+    const view = await settings.settingsGet()
+    return { prefs: parsePrefs(view.value), suspended: view.externalDisable === true }
+  } catch {
+    return { prefs: { ...SIDEBAR_PREFS_DEFAULTS }, suspended: false }
   }
 }

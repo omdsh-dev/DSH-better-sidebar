@@ -20,7 +20,7 @@
  * (VSCode semantics — a drop on a file row targets its parent directory),
  * and `busy` gates new drags while one upload is in flight.
  */
-import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
@@ -29,11 +29,13 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
 import { VscFile, VscFolder, VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
-import { api, downloadUrl, type FsEntry } from './api.ts'
+import { api, downloadUrl, isOutsideWorkspaceMessage, type FsEntry } from './api.ts'
+import { FenceErrorNotice } from './FenceErrorNotice.tsx'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
 import type { OpenWithTarget } from './open-with.ts'
 import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
+import type { SidebarStore } from './state.ts'
 import { uploadItemsFromDrop, uploadItemsFromFiles, type UploadItem } from './upload.ts'
 import css from './sidebar.module.css'
 
@@ -105,6 +107,8 @@ const ChatDropIllustration = () => (
 export function FileTree(props: {
   sessionId: string
   cwd: string | undefined
+  /** The sidebar store: the fence-refusal notice writes the `workspaceFence` pref through it. */
+  store: SidebarStore
   expanded: string[]
   /** Files highlighted by a "Show in folder" reveal (absolute paths). */
   revealed: string[]
@@ -127,8 +131,8 @@ export function FileTree(props: {
   onOpenWith?: (targetId: string, path: string) => void
   /** Toggle one target's pinned state (the submenu row's pushpin). */
   onToggleOpenWithPin?: (targetId: string) => void
-  /** Insert `@<relative path>` into the composer draft. */
-  onReferenceFile: (path: string) => void
+  /** Insert `@<relative path>` into the composer draft (file vs directory). */
+  onReferenceFile: (path: string, isDir: boolean) => void
   /** Bump to wipe the level cache and reload the visible set. */
   refreshTick: number
   /** Upload into `dir` (absolute, inside the workspace); runs in the caller. */
@@ -136,7 +140,7 @@ export function FileTree(props: {
   /** True while an upload is in flight (drops are ignored). */
   busy: boolean
 }) {
-  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy } = props
+  const { sessionId, cwd, store, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, refreshTick, onUploadRequest, busy } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   const dataRef = useRef(data)
   /** The row whose path was just copied ("copied" label replaces its button). */
@@ -257,6 +261,13 @@ export function FileTree(props: {
     })
   }, [sessionId, cwd, storeLevel])
 
+  /** Drop one level from the cache and reload it (the fence notice's retry). */
+  const retryDir = useCallback((dir: string) => {
+    delete dataRef.current[dir]
+    setData({ ...dataRef.current })
+    loadDir(dir)
+  }, [loadDir])
+
   // The caller's refresh tick wipes the cache (declared BEFORE the load
   // effect so the reload below sees the empty cache).
   const lastTick = useRef(refreshTick)
@@ -321,7 +332,7 @@ export function FileTree(props: {
         title={t('referenceFile')}
         onClick={(event) => {
           event.stopPropagation()
-          onReferenceFile(entry.path)
+          onReferenceFile(entry.path, entry.isDir)
         }}
       >
         {t('referenceFile')}
@@ -430,12 +441,28 @@ export function FileTree(props: {
 
   const root = cwd
 
+  // Membership is tested per rendered row (deep trees run this thousands of
+  // times per render): includes() made every row O(expanded), the whole tree
+  // O(rows × expanded). One Set per render keeps it O(1) per row.
+  const expandedSet = useMemo(() => new Set(expanded), [expanded])
+  const revealedSet = useMemo(() => new Set(revealed), [revealed])
+
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
     if (level === undefined) {
       return <div className={css.explorerRow} style={{ paddingLeft: depth * 22 + 6 }}>{t('loading')}</div>
     }
     if (level.error !== undefined) {
+      // The fence refusal becomes the friendly notice (reason + one-click
+      // global off + immediate retry of this directory), never the raw
+      // `path "..." is outside workspace` wire text.
+      if (isOutsideWorkspaceMessage(level.error)) {
+        return (
+          <div style={{ paddingLeft: depth * 22 + 6 }}>
+            <FenceErrorNotice store={store} onDisabled={() => { retryDir(dir) }} />
+          </div>
+        )
+      }
       return (
         <div className={clsx(css.explorerRow, css.explorerError)} style={{ paddingLeft: depth * 22 + 6 }}>
           {level.error}
@@ -445,7 +472,7 @@ export function FileTree(props: {
     const entries = level.entries ?? []
     return entries.map(entry => {
       if (entry.isDir) {
-        const isOpen = expanded.includes(entry.path)
+        const isOpen = expandedSet.has(entry.path)
         return (
           <div key={entry.path}>
             <div
@@ -454,9 +481,9 @@ export function FileTree(props: {
               className={clsx(
                 css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden,
                 dropTarget === entry.path && css.explorerRowDropTarget,
-                revealed.includes(entry.path) && css.explorerRowRevealed,
+                revealedSet.has(entry.path) && css.explorerRowRevealed,
               )}
-              data-dsh-revealed={revealed.includes(entry.path) ? 'true' : undefined}
+              data-dsh-revealed={revealedSet.has(entry.path) ? 'true' : undefined}
               style={{ paddingLeft: depth * 22 + 6 }}
               onClick={() => { onToggle(entry.path) }}
               onKeyDown={(event) => {
@@ -486,9 +513,9 @@ export function FileTree(props: {
           className={clsx(
             css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken,
             dropTarget === parentOf(entry.path) && css.explorerRowDropTarget,
-            revealed.includes(entry.path) && css.explorerRowRevealed,
+            revealedSet.has(entry.path) && css.explorerRowRevealed,
           )}
-          data-dsh-revealed={revealed.includes(entry.path) ? 'true' : undefined}
+          data-dsh-revealed={revealedSet.has(entry.path) ? 'true' : undefined}
           style={{ paddingLeft: depth * 22 + 6 }}
           title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
           onClick={() => { onOpenFile(entry.path) }}
@@ -543,7 +570,7 @@ export function FileTree(props: {
                   title={t('referenceFile')}
                   onClick={(event) => {
                     event.stopPropagation()
-                    onReferenceFile(root)
+                    onReferenceFile(root, true)
                   }}
                 >
                   {t('referenceFile')}

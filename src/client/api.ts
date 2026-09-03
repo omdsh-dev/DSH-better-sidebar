@@ -8,7 +8,8 @@
  */
 import { encodeHtmlUrl } from '../html-route.ts'
 import type { LastActivity } from '../subagent-activity.ts'
-import type { SidechatThreadInfo } from '../sidechat-core.ts'
+import type { SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
+import type { SidebarSessionEvent } from '../context-types.ts'
 import type { BrowserProbeResult } from './browser.ts'
 
 /** One wire failure. */
@@ -19,6 +20,22 @@ export class SidebarApiError extends Error {
   ) {
     super(message)
   }
+}
+
+/**
+ * Whether a wire failure is the workspace fence refusing a path outside the
+ * session workspace (the host message reads `path "..." is outside
+ * workspace`). The request-trust fence answers code `forbidden` with the
+ * bare message 'forbidden', so the message fragment — not the code alone —
+ * identifies this case.
+ */
+export function isOutsideWorkspaceError(error: unknown): boolean {
+  return error instanceof SidebarApiError && isOutsideWorkspaceMessage(error.message)
+}
+
+/** Message-level variant for surfaces that stored the raw text (file-tree level errors). */
+export function isOutsideWorkspaceMessage(message: string): boolean {
+  return message.includes('outside workspace')
 }
 
 /** Explorer row (host fs-tree shape). */
@@ -112,6 +129,25 @@ export type TerminalDepsStatus =
     note?: string
   }
 
+/**
+ * Parse one `/sidebar` JSON response envelope into its value. A non-ok
+ * status, an unparseable body, or any shape other than `{ok: true, value}`
+ * surfaces as {@link SidebarApiError} carrying the wire code (falling back
+ * to the HTTP status). Shared by the JSON api route and the raw upload
+ * route, whose envelopes are identical.
+ */
+async function readEnvelope<T>(response: Response): Promise<T> {
+  const parsed: { ok?: boolean; value?: unknown; error?: { code?: string; message?: string } } | null
+    = await response.json().catch(() => null)
+  if (!response.ok || parsed === null || parsed.ok !== true || parsed.value === undefined) {
+    throw new SidebarApiError(
+      parsed?.error?.code ?? 'http',
+      parsed?.error?.message ?? `HTTP ${response.status}`,
+    )
+  }
+  return parsed.value as T
+}
+
 async function call<T>(method: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   let response: Response
   try {
@@ -124,15 +160,7 @@ async function call<T>(method: string, payload: Record<string, unknown>, signal?
   } catch (error) {
     throw new SidebarApiError('network', error instanceof Error ? error.message : String(error))
   }
-  const parsed: { ok?: boolean; value?: unknown; error?: { code?: string; message?: string } } | null
-    = await response.json().catch(() => null)
-  if (!response.ok || parsed === null || parsed.ok !== true || parsed.value === undefined) {
-    throw new SidebarApiError(
-      parsed?.error?.code ?? 'http',
-      parsed?.error?.message ?? `HTTP ${response.status}`,
-    )
-  }
-  return parsed.value as T
+  return readEnvelope<T>(response)
 }
 
 /**
@@ -163,15 +191,7 @@ async function fetchUpload<T>(
     if (error instanceof DOMException && error.name === 'AbortError') throw error
     throw new SidebarApiError('network', error instanceof Error ? error.message : String(error))
   }
-  const parsed: { ok?: boolean; value?: unknown; error?: { code?: string; message?: string } } | null
-    = await response.json().catch(() => null)
-  if (!response.ok || parsed === null || parsed.ok !== true || parsed.value === undefined) {
-    throw new SidebarApiError(
-      parsed?.error?.code ?? 'http',
-      parsed?.error?.message ?? `HTTP ${response.status}`,
-    )
-  }
-  return parsed.value as T
+  return readEnvelope<T>(response)
 }
 
 /** One request's session scope: the conversation id plus its cwd when known. */
@@ -197,6 +217,51 @@ function scopePayload(scope: SessionScope, extra: Record<string, unknown>): Reco
  * membership before using it as a command cwd. */
 function gitPayload(scope: SessionScope, worktree: string | undefined, extra: Record<string, unknown>): Record<string, unknown> {
   return scopePayload(scope, { ...(worktree !== undefined && worktree !== '' ? { worktree } : {}), ...extra })
+}
+
+/** One external-open request from the file tree. */
+type OpenExternalPayload =
+  | { action: 'reveal'; path: string }
+  | { action: 'url'; url: string }
+
+/** The host route's success shape. */
+type OpenExternalResult = { started: boolean }
+
+/**
+ * Remote VSCode-family URLs must be consumed on the browser/client machine:
+ * the DSH host can be a headless remote server with no editor or DISPLAY.
+ * Local editor URLs and reveal actions still belong to the host opener.
+ */
+function shouldOpenExternalOnClient(payload: OpenExternalPayload): payload is { action: 'url'; url: string } {
+  if (payload.action !== 'url') return false
+  let parsed: URL
+  try {
+    parsed = new URL(payload.url)
+  } catch {
+    return false
+  }
+  return parsed.protocol !== 'http:'
+    && parsed.protocol !== 'https:'
+    && parsed.hostname === 'vscode-remote'
+    && parsed.pathname.startsWith('/ssh-remote+')
+}
+
+/**
+ * Dispatch an external-open request to the correct machine. SSH remote-editor
+ * URLs stay in the synchronous user-click chain and navigate the client so
+ * its registered vscode:// / cursor:// handler can launch. Everything else
+ * keeps using the DSH host route.
+ */
+function openExternal(payload: OpenExternalPayload): Promise<OpenExternalResult> {
+  if (!shouldOpenExternalOnClient(payload)) {
+    return call<OpenExternalResult>('open.external', payload)
+  }
+  try {
+    window.location.assign(payload.url)
+    return Promise.resolve({ started: true })
+  } catch (error) {
+    return Promise.reject(error)
+  }
 }
 
 /** The sidebar API surface (session scope threaded through every call). */
@@ -242,6 +307,14 @@ export const api = {
   /** Full patch text of one commit (diff display for the history rows). */
   gitCommitDiff: (scope: SessionScope, hash: string, worktree?: string, signal?: AbortSignal) =>
     call<{ diff: string }>('git.commit-diff', gitPayload(scope, worktree, { hash }), signal),
+  /** The session's file-tool events for the changes tab's session lens: the
+   *  `tool/call` + `tool/result` rows past `afterSeq` (0 = whole window),
+   *  capped to the recent window host-side. The client runtime exposes no
+   *  event-log face, so the lens polls this delta route. */
+  changesOps: (scope: SessionScope, afterSeq?: number, signal?: AbortSignal) =>
+    call<{ events: SidebarSessionEvent[]; lastSeq: number }>('changes.ops', scopePayload(scope, {
+      ...(afterSeq !== undefined && afterSeq > 0 ? { afterSeq } : {}),
+    }), signal),
   /** Discard the worktree changes of one file (the index is untouched). */
   gitDiscard: (scope: SessionScope, path: string, worktree?: string) =>
     call<{ ok: true }>('git.discard', gitPayload(scope, worktree, { path })),
@@ -301,6 +374,14 @@ export const api = {
   /** Live state + agent identity (provider/model/preset) of a thread. */
   sidechatInfo: (childId: string) =>
     call<SidechatThreadInfo>('sidechat.info', { childId }),
+  /** One transcript pull of a Side Chat thread: the thread's OWN events
+   *  (the inherited seed is cut host-side and never crosses the wire).
+   *  `afterSeq` narrows the response to the delta beyond it (poll tail). */
+  sidechatEvents: (childId: string, afterSeq?: number, signal?: AbortSignal) =>
+    call<{ events: SidechatLogEvent[] }>('sidechat.events', {
+      childId,
+      ...(afterSeq !== undefined ? { afterSeq } : {}),
+    }, signal),
   /** The effective terminal shell and its display name (plugin-global). */
   shellGet: () =>
     call<{ shell: string; name: string }>('shell.get', {}),
@@ -317,12 +398,10 @@ export const api = {
    *  check; see the host's browser.probe route). */
   browserProbe: (url: string, signal?: AbortSignal) =>
     call<BrowserProbeResult>('browser.probe', { url }, signal),
-  /** External open for the file tree's "open with" menu: reveal a path in
-   *  the OS file manager, or hand a custom-scheme URL (vscode://, cursor://,
-   *  zed://, custom editors) to its registered handler. The host launches
-   *  the platform opener (argv, no shell). */
-  openExternal: (payload: { action: 'reveal'; path: string } | { action: 'url'; url: string }) =>
-    call<{ started: boolean }>('open.external', payload),
+  /** External open for the file tree's "open with" menu. Remote SSH editor
+   *  URLs are launched on the browser/client machine; reveal and local URLs
+   *  keep using the host's platform opener. */
+  openExternal,
 }
 
 /** Absolute URL of the media route for one path (images only). */

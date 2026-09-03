@@ -37,8 +37,8 @@ function diagnostic(id: string): SidebarSubagentDescendantEntry {
 }
 
 /** A session with the given raw events. */
-function session(events: SidebarSessionEvent[]): { header: { cwd: string }; events: SidebarSessionEvent[] } {
-  return { header: { cwd: '/p' }, events }
+function session(events: SidebarSessionEvent[]): { header: { cwd: string }; snapshotEvents(): readonly SidebarSessionEvent[] } {
+  return { header: { cwd: '/p' }, snapshotEvents: () => events }
 }
 
 /** A context whose `get` serves only the subagents face, with a session store. */

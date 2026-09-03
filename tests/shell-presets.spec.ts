@@ -1,12 +1,20 @@
 /**
  * Built-in shell-preset data tests: registry integrity (unique ids, non-empty
- * titles, pure strip/detect functions) and the anywhere-labs DSH Desktop
- * entry's strip values (darwin advanced 20px, win32 advanced 32px as the
- * no-WCO fallback, compatibility/plain browser nothing).
+ * titles, non-empty localized descs, pure strip/detect functions) and the
+ * anywhere-labs DSH Desktop entry's strip values (darwin advanced 20px,
+ * win32 advanced 32px as the no-WCO fallback, compatibility/plain browser
+ * nothing).
  */
 import { describe, expect, it } from 'vitest'
 import { getShellPreset, getShellPresets, presetStripFor } from '../src/client/shell-presets.ts'
 import type { DesktopEnv } from '../src/client/desktop-env.ts'
+
+/** Resolve an i18n-friendly string-or-function value (mirror of textOf).
+ *  Preset descs went through the same union as the plugin catalog's texts,
+ *  so they resolve through t() in the active (test: en) locale. */
+function textOf(value: string | (() => string)): string {
+  return typeof value === 'function' ? value() : value
+}
 
 const env = (partial: Partial<DesktopEnv>): DesktopEnv => ({
   desktop: false,
@@ -25,7 +33,8 @@ describe('shell presets', () => {
       expect(ids.has(preset.id)).toBe(false)
       ids.add(preset.id)
       expect(preset.title.length).toBeGreaterThan(0)
-      expect(preset.desc.length).toBeGreaterThan(0)
+      // Descs are i18n-friendly now (string or () => string) — resolve first.
+      expect(textOf(preset.desc).length).toBeGreaterThan(0)
       // The strip function must be total — an unknown environment yields
       // undefined, never a throw.
       expect(() => presetStripFor(preset, env({ desktop: false, mode: null, platform: null }))).not.toThrow()

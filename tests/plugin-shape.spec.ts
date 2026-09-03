@@ -88,12 +88,15 @@ describe('dsh-better-sidebar plugin export shape', () => {
     // The separate file-window mode is the default (each file opens its own
     // tab; the merged editor-explorer is opt-in).
     expect(resolved.editorExplorer).toBe(false)
+    // The workspace fence (containment over the sidebar fs routes) defaults
+    // ON — the safe default never depends on the stored document.
+    expect(resolved.workspaceFence).toBe(true)
     // A stored overridden value resolves through (the range contract is
     // enforced by the settings service on write); the new pref keeps its
     // default when the stored document predates it.
     const overridden = (PrefsSchema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
     })({ openByDefault: false, defaultWidthPercent: 45 })
-    expect(overridden).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: false, terminalShell: '', terminalShellArgs: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: '', tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    expect(overridden).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: false, workspaceFence: true, terminalShell: '', terminalShellArgs: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: '', changesDiffFloat: true, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
   })
 })

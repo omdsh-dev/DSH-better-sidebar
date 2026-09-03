@@ -27,6 +27,7 @@ import {
   type SidebarSnapshot, type SidebarState, type SidebarStore, type SidebarTab,
 } from './state.ts'
 import { isNarrowWidth } from './breakpoints.ts'
+import { extOf } from './paths.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 
@@ -151,7 +152,7 @@ export interface TabComponentProps {
   /** The explorer's reveal-highlight set (ExplorerView; "Show in folder" targets). */
   revealed?: string[]
   onToggleDir?: (path: string) => void
-  onReferenceFile?: (path: string) => void
+  onReferenceFile?: (path: string, isDir: boolean) => void
   onOpenFile?: (path: string) => void
   onOpenDiff?: (tab: SidebarTab) => void
   onSubagentJump?: (childSessionId: string) => void
@@ -427,14 +428,6 @@ export interface BetterSidebarService {
   openFile(scope: SessionScope, path: string, title?: string): void
 }
 
-/** Extract the lowercase extension without leading dot from a path. */
-function extOfPath(path: string): string {
-  const at = path.lastIndexOf('.')
-  if (at === -1) return ''
-  const base = path.slice(at + 1).toLowerCase()
-  return base.includes('/') || base.includes('\\') ? '' : base
-}
-
 /** The file name of a path (both separators). */
 function baseNameOf(path: string): string {
   const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
@@ -456,7 +449,7 @@ function baseNameOf(path: string): string {
 export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDescriptor | undefined {
   for (const tab of tabs) {
     if (tab.urlTarget === undefined) continue
-    let claimed = false
+    let claimed: boolean
     try {
       claimed = tab.urlTarget(url) === true
     } catch (error) {
@@ -472,7 +465,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.17.1'
+export const SIDEBAR_SERVICE_VERSION = '0.18.0'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -571,7 +564,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   const isViewerEnabled = (id: string): boolean => store.getPrefs().viewersEnabled[id] !== false
 
   const matchFileViewer = (path: string, head?: Uint8Array): FileViewerDescriptor | undefined => {
-    const ext = extOfPath(path)
+    const ext = extOf(path)
     // Single pass in priority order (descending; stable for equal
     // priorities — insertion order). Each descriptor gets first refusal in
     // its own turn: `detect` (when head bytes are available) beats its own

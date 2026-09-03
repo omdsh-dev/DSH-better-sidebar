@@ -5,14 +5,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
-import { parseUnifiedDiff } from '../src/client/DiffView.tsx'
+import { parseUnifiedDiff } from '../src/client/diff/rows.ts'
 import { parseLogLines, parsePorcelainZ, repoRoots, status } from '../src/git.ts'
 
 const execFileAsync = promisify(execFile)
 const normalizePath = (path: string): string => path.replaceAll('\\', '/')
 // macOS tmpdir() is the /var symlink while git reports the resolved
-// /private/var prefix — canonicalize both sides before comparing.
-const canonical = (path: string): string => normalizePath(realpathSync(path))
+// /private/var prefix; on Windows TEMP is often the 8.3 short form
+// (C:\Users\RUNNER~1\...) while git reports the long path. The NATIVE
+// realpath resolves both aliasings (libuv canonicalizes on Windows via
+// GetFinalPathNameByHandle, which expands 8.3 names) — canonicalize both
+// sides before comparing.
+const canonical = (path: string): string => normalizePath(realpathSync.native(path))
 
 describe('git parsing', () => {
   it('discovers and selects direct child repositories under a workspace directory', async () => {

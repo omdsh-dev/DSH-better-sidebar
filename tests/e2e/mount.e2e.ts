@@ -14,7 +14,7 @@
  *  3. asserts the plugin's crash markers never appear (no RenderBoundary /
  *     fail() strips, no `pageerror`, no plugin-prefixed console errors);
  *  4. expands the collapsed panel (openByDefault defaults off), sweeps every
- *     built-in tab (Files / Source Control / Tasks / Terminal / Browser) —
+ *     built-in tab (Files / Changes / Tasks / Terminal / Browser) —
  *     including the lazily-fetched terminal chunk — and then opens seeded
  *     files through the Files window's tree (separate mode: each file opens
  *     its own new tab, the seeded home "Files" tab stays the explorer),
@@ -57,7 +57,7 @@ const SEEDED_README_FILE = 'readme-style.md'
 const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 
 /** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Side Chat (beta)', 'Terminal', 'Browser']
+const BUILTIN_TABS = ['Files', 'Changes', 'Tasks', 'Side Chat (beta)', 'Terminal', 'Browser']
 
 let api: APIRequestContext
 /** The seeded session id (captured by seedSession; the Side Chat smoke's parent). */
@@ -288,6 +288,13 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     await assertNoCrash()
   }
 
+  // The sweep opened the Side Chat tab, whose view auto-creates a thread and
+  // polls the transcript — that poll MUST ride the plugin's own
+  // sidechat.events route (the DSH-0.1.2-safe transport this lane locks).
+  const polledTranscript = await page.evaluate(() =>
+    performance.getEntriesByType('resource').some(entry => entry.name.includes('/sidebar/api/sidechat.events')))
+  expect(polledTranscript, 'the Side Chat tab must poll sidechat.events for its transcript').toBe(true)
+
   // Side Chat host-route smoke against the REAL host: create a thread child
   // under the seeded session (custom-seed creation through AgentRegistry),
   // deliver a follow-up, cancel, and release it. The turn itself cannot run
@@ -315,12 +322,24 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     listedItems.some(item => item.sessionId === childId),
     'the thread child must appear in the host session list',
   ).toBe(true)
+  // Transcript read from the LIVE agent's log (the transport the tab polls;
+  // the inherited seed is cut host-side, so with no model route the own
+  // slice carries no message events).
+  const eventsLive = await api.post(sidebarApi('sidechat.events'), { data: { childId } })
+  expect(eventsLive.ok(), `sidechat.events (live): ${eventsLive.status()} ${await eventsLive.text()}`).toBe(true)
+  const eventsLiveBody = (await eventsLive.json()) as { ok: boolean; value?: { events?: Array<{ type: string }> } }
+  expect(eventsLiveBody.ok, `sidechat.events envelope: ${JSON.stringify(eventsLiveBody)}`).toBe(true)
+  expect(Array.isArray(eventsLiveBody.value?.events), 'sidechat.events must answer an events array').toBe(true)
   for (const method of ['sidechat.prompt', 'sidechat.cancel', 'sidechat.dispose']) {
     const response = await api.post(sidebarApi(method), {
       data: method === 'sidechat.prompt' ? { childId, text: 'follow-up' } : { childId },
     })
     expect(response.ok(), `${method}: ${response.status()} ${await response.text()}`).toBe(true)
   }
+  // After dispose the agent is gone: the same read must fall back to the
+  // PERSISTED log (the cold path a re-opened tab polls).
+  const eventsCold = await api.post(sidebarApi('sidechat.events'), { data: { childId } })
+  expect(eventsCold.ok(), `sidechat.events (cold): ${eventsCold.status()} ${await eventsCold.text()}`).toBe(true)
 
   // The Codex-style immediate-create flow: a blank question creates an
   // EMPTY thread (no prompt admitted), sidechat.info reports the live

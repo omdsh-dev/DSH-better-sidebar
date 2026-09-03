@@ -245,11 +245,6 @@ export function buildSidechatInheritance(events: readonly SidechatLogEvent[]): S
   return { seed, snapshot: null }
 }
 
-/** The seed half of {@link buildSidechatInheritance} (test convenience). */
-export function sidechatSeed(events: readonly SidechatLogEvent[]): SeedEvent[] {
-  return buildSidechatInheritance(events).seed
-}
-
 /**
  * Structured text snapshot of the parent's OPEN turn (from its `turn/start`
  * to the log tail): the accumulated assistant/reasoning output verbatim
@@ -264,7 +259,6 @@ export function buildOpenTurnSnapshot(events: readonly SidechatLogEvent[]): stri
   let reasoning = ''
   const tools: string[] = []
   const pendingCalls = new Map<string, { name: string; args: string }>()
-  let total = 0
   for (let index = boundary + 1; index < events.length; index++) {
     const event = events[index]
     if (event === undefined) continue
@@ -304,13 +298,11 @@ export function buildOpenTurnSnapshot(events: readonly SidechatLogEvent[]): stri
         ...(result === '' ? [] : [`  Result: ${result}`]),
       ].join('\n')
       tools.push(line)
-      total += line.length
     }
   }
   for (const [, call] of pendingCalls) {
     const line = `- \`${call.name}\` (executing) — arguments: \`${call.args}\``
     tools.push(line)
-    total += line.length
   }
   const sections: string[] = []
   if (text.trim() !== '') sections.push(`Assistant output so far:\n\n${text}`)
@@ -416,13 +408,18 @@ export interface SidechatThreadInfo {
 }
 
 /** The events a thread produced itself: everything after the LAST
- *  `session/end-seed` marker (the fork-seed boundary). */
-export function threadOwnEvents(entries: readonly SidebarHistoryEntry[]): SidechatLogEvent[] {
-  const events = entries.map(entry => entry.event)
+ *  `session/end-seed` marker (the fork-seed boundary). A log with no marker
+ *  (a thread created before seeding existed) is returned whole. */
+export function threadOwnLogEvents(events: readonly SidechatLogEvent[]): SidechatLogEvent[] {
   for (let index = events.length - 1; index >= 0; index--) {
     if (events[index]?.type === 'session/end-seed') return events.slice(index + 1)
   }
-  return events
+  return [...events]
+}
+
+/** {@link threadOwnLogEvents} over history rows (the client cache shape). */
+export function threadOwnEvents(entries: readonly SidebarHistoryEntry[]): SidechatLogEvent[] {
+  return threadOwnLogEvents(entries.map(entry => entry.event))
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { loadExternalDisable, loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
+import { loadBootDecision, loadExternalDisable, loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
 import { allLeaves, createSidebarStore, defaultWidthFor, makeDefaultState, setWidth } from '../src/client/state.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 
@@ -42,7 +42,8 @@ describe('side card preferences', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
-        editorExplorer: false,
+        editorExplorer: false, changesDiffFloat: true,
+        workspaceFence: true,
         terminalShell: '',
         terminalShellArgs: '',
         titleBarScheme: 'auto',
@@ -75,7 +76,8 @@ describe('side card preferences', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
-        editorExplorer: false,
+        editorExplorer: false, changesDiffFloat: true,
+        workspaceFence: true,
         terminalShell: '',
         terminalShellArgs: '',
         titleBarScheme: 'auto',
@@ -108,7 +110,8 @@ describe('side card preferences', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
-        editorExplorer: false,
+        editorExplorer: false, changesDiffFloat: true,
+        workspaceFence: true,
         terminalShell: '',
         terminalShellArgs: '',
         titleBarScheme: 'auto',
@@ -168,6 +171,15 @@ describe('side card preferences', () => {
     // Explicit booleans survive verbatim.
     expect((await loadPrefs(wire({ editorExplorer: false }))).editorExplorer).toBe(false)
     expect((await loadPrefs(wire({ editorExplorer: true }))).editorExplorer).toBe(true)
+  })
+
+  it('defaults workspaceFence to true; only an explicit false disarms the containment guard', async () => {
+    // Absent or malformed → on (the fs routes keep refusing outside paths).
+    expect((await loadPrefs(wire({}))).workspaceFence).toBe(true)
+    expect((await loadPrefs(wire({ workspaceFence: 'no' }))).workspaceFence).toBe(true)
+    expect((await loadPrefs(wire({ workspaceFence: 0 }))).workspaceFence).toBe(true)
+    // An explicit false survives (the one-click off in the fence error notice).
+    expect((await loadPrefs(wire({ workspaceFence: false }))).workspaceFence).toBe(false)
   })
 
   it('defaults the title-bar scheme to the conservative auto with no preset or custom CSS', async () => {
@@ -270,9 +282,9 @@ describe('side card preferences', () => {
     const store = createSidebarStore()
     // Node environment: no window → the width falls back to PANEL_DEFAULT,
     // while the open flag still follows the preference.
-    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: "", tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    store.setPrefs({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, changesDiffFloat: true, workspaceFence: true, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: "", tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     store.setSession('fresh-session')
-    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: "", tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    expect(store.getPrefs()).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, changesDiffFloat: true, workspaceFence: true, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: "", tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
     const snapshot = store.getSnapshot()
     expect(snapshot.sessionId).toBe('fresh-session')
     expect(snapshot.state?.panelOpen).toBe(false)
@@ -294,8 +306,8 @@ describe('side card preferences', () => {
     }
     try {
       const store = createSidebarStore()
-      // The narrow viewport keeps a fresh session collapsed for the FIRST
-      // seeding only (a later user expansion persists).
+      // The narrow viewport keeps a fresh session collapsed. Persisted
+      // sessions follow the same load-time visibility rule in state.spec.ts.
       store.setSession('narrow-fresh')
       expect(store.getSnapshot().state?.panelOpen).toBe(false)
       // The width seeding still follows the window (clamped to the floor).
@@ -308,7 +320,7 @@ describe('side card preferences', () => {
 
   it('skips the default seed tab when the editor (files window) type is disabled', () => {
     const store = createSidebarStore()
-    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: "", tabsEnabled: { editor: false }, viewersEnabled: {}, pluginSettings: {} })
+    store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: true, changesDiffFloat: true, workspaceFence: true, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: "", tabsEnabled: { editor: false }, viewersEnabled: {}, pluginSettings: {} })
     store.setSession('no-editor')
     const state = store.getSnapshot().state!
     const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs)
@@ -318,7 +330,7 @@ describe('side card preferences', () => {
     // editorExplorer modes.
     for (const editorExplorer of [true, false]) {
       const openStore = createSidebarStore()
-      openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: "", tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+      openStore.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, changesDiffFloat: true, workspaceFence: true, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: "", tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
       openStore.setSession(`with-editor-${editorExplorer}`)
       const openTabs = allLeaves(openStore.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
       expect(openTabs.map(tab => tab.type)).toEqual(['editor'])
@@ -328,7 +340,7 @@ describe('side card preferences', () => {
   it('seeds the empty editor home tab (files window) in both editorExplorer modes', () => {
     for (const editorExplorer of [true, false]) {
       const store = createSidebarStore()
-      store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: "", tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+      store.setPrefs({ openByDefault: true, defaultWidthPercent: 30, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer, changesDiffFloat: true, workspaceFence: true, terminalShell: '', terminalShellArgs: '', titleBarScheme: 'auto', titleBarPresetId: '', customCss: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: "", tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
       store.setSession(`fresh-${editorExplorer}`)
       const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
       expect(tabs).toHaveLength(1)
@@ -402,5 +414,30 @@ describe('external disable (aionui-panel provider choice)', () => {
   it('reads false when the flag is absent or the wire rejects', async () => {
     expect(await loadExternalDisable(wire({}))).toBe(false)
     expect(await loadExternalDisable(rejecting())).toBe(false)
+  })
+})
+
+describe('boot decision (one fetch for prefs + external disable)', () => {
+  it('answers both decisions from a single settingsGet call', async () => {
+    let calls = 0
+    const counting = (): SidebarSettingsClient => ({
+      settingsGet: async () => { calls += 1; return { value: { openByDefault: true, defaultWidthPercent: 40 }, revision: 1, externalDisable: true } },
+      settingsUpdate: async () => ({ value: {}, revision: 2 }),
+    })
+    const decision = await loadBootDecision(counting())
+    expect(calls, 'the boot path must fetch the settings document exactly once').toBe(1)
+    expect(decision.suspended).toBe(true)
+    expect(decision.prefs.openByDefault).toBe(true)
+  })
+
+  it('falls back to the defaults + not suspended on any failure', async () => {
+    const decision = await loadBootDecision(rejecting())
+    expect(decision).toEqual({ prefs: SIDEBAR_PREFS_DEFAULTS, suspended: false })
+  })
+
+  it('reads suspended false when the flag is absent', async () => {
+    const decision = await loadBootDecision(wire({ defaultWidthPercent: 50 }))
+    expect(decision.suspended).toBe(false)
+    expect(decision.prefs.defaultWidthPercent).toBe(50)
   })
 })

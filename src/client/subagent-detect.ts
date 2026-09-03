@@ -9,23 +9,20 @@
  * - {@link countSubagentDescendants}: uninterrupted subagent-origin lineage
  *   totals (mirror of the official `indexSubagentDescendants` over the
  *   plugin's own summary rows).
+ *
+ * The lineage walks themselves ({@link isSideThreadSummary}, {@link
+ * rootAncestor}, {@link countSubagentDescendants}) live in
+ * ./subagent-lineage.ts — the single shared walk implementation — and are
+ * re-exported below for their established import sites.
  */
 import type {
   SidebarSessionList,
-  SidebarSessionSummary,
   SidebarSubagentCatalog,
 } from '../context-types.ts'
-import { SIDE_LABEL_PREFIX } from '../sidechat-core.ts'
+import { countSubagentDescendants, isSideThreadSummary, rootAncestor } from './subagent-lineage.ts'
 
-/**
- * Side Chat threads ride the subagent origin (main-list hiding + the RPC
- * ownership fence) but they are NOT subagent topology: they carry the
- * durable 'Side: ' label and live as sidebar tabs. Excluding them here
- * keeps the auto-open trigger and the Subagent page counts clean.
- */
-export function isSideThreadSummary(summary: SidebarSessionSummary): boolean {
-  return summary.origin === 'subagent' && summary.displayTitle.startsWith(SIDE_LABEL_PREFIX)
-}
+export { countSubagentDescendants, isSideThreadSummary, rootAncestor }
+export type { SubagentDescendantTotals } from './subagent-lineage.ts'
 
 /** Count the direct subagent children of one session (durable `origin` rows). */
 export function directSubagentCount(
@@ -38,28 +35,6 @@ export function directSubagentCount(
       && !isSideThreadSummary(summary)) count += 1
   }
   return count
-}
-
-/**
- * The main agent of the current session's tree: walk the durable parent
- * chain upward until the first non-subagent session. The Subagent page shows
- * THIS root's full topology regardless of how deep the current selection is
- * (a session whose row is still hydrating, or a broken chain, degrades to
- * the session itself).
- */
-export function rootAncestor(
-  byId: SidebarSessionList['byId'],
-  sessionId: string | undefined,
-): string | undefined {
-  if (sessionId === undefined) return undefined
-  const seen = new Set<string>()
-  let current: SidebarSessionSummary | undefined = byId[sessionId]
-  while (current !== undefined && current.origin === 'subagent'
-    && current.parentId !== undefined && !seen.has(current.id)) {
-    seen.add(current.id)
-    current = byId[current.parentId]
-  }
-  return current?.id ?? sessionId
 }
 
 /**
@@ -100,38 +75,4 @@ export function detectNewDirectSubagent(
 ): boolean {
   return directSubagentCount(prev.byId, sessionId) === 0
     && directSubagentCount(next.byId, sessionId) > 0
-}
-
-/** Descendant totals of one session through an uninterrupted subagent-origin chain. */
-export interface SubagentDescendantTotals {
-  count: number
-  runningCount: number
-}
-
-/**
- * Index every subagent descendant under each ancestor it reaches through an
- * uninterrupted subagent-origin chain (same semantics as the official
- * `indexSubagentDescendants`; cycles fail soft).
- */
-export function countSubagentDescendants(
-  byId: SidebarSessionList['byId'],
-  sessionId: string,
-): SubagentDescendantTotals {
-  const totals: SubagentDescendantTotals = { count: 0, runningCount: 0 }
-  for (const descendant of Object.values(byId)) {
-    if (descendant.origin !== 'subagent' || isSideThreadSummary(descendant)) continue
-    const seen = new Set<string>()
-    let current: SidebarSessionSummary | undefined = descendant
-    while (current?.origin === 'subagent' && current.parentId !== undefined
-      && !seen.has(current.id)) {
-      seen.add(current.id)
-      if (current.parentId === sessionId) {
-        totals.count += 1
-        if (descendant.running === true) totals.runningCount += 1
-        break
-      }
-      current = byId[current.parentId]
-    }
-  }
-  return totals
 }

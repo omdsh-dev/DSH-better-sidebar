@@ -68,13 +68,30 @@ export function MdToc(): ReactNode {
 
   // Esc closes the popover (the panel is a sibling of the button, so focus
   // stays wherever the user came from — a document listener is the simplest).
+  // A document pointerdown also closes it when the click lands outside the
+  // button and the panel, so clicking blank preview space dismisses the
+  // outline instead of requiring a second click on the toggle. The check runs
+  // at pointerdown (before the button's own click toggles), and the button and
+  // panel are exempt so a re-click on the toggle keeps working as a toggle
+  // rather than being eaten by the dismiss.
   useLayoutEffect(() => {
     if (!open) return
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') setOpen(false)
     }
+    const onPointerDown = (event: Event): void => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      const bar = barRef.current
+      if (bar !== null && bar.contains(target)) return
+      setOpen(false)
+    }
     document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('keydown', onKey) }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('pointerdown', onPointerDown)
+    }
   }, [open])
 
   const jump = (entry: TocEntry): void => {

@@ -8,6 +8,15 @@ allowBuilds:
   node-pty: true
   protobufjs: true
 
+# The @deepseek-ai/* packages declare their dsh-* siblings as peerDependencies
+# (the DSH host bundle provides them all at mount time). This repo installs
+# every peer the dev tree needs as a direct devDependency pinned to the
+# baseline (see package.json), so pnpm resolves them instead of floating to
+# stale copies — e.g. dsh-attachment 0.1.1-rc.1 predates the
+# `admitPromptContent` export that dsh-subagent's artifacts import. When
+# bumping the DSH baseline, audit with `pnpm peers check` and hoist any
+# newly-unmet transitive peers into devDependencies too.
+
 minimumReleaseAgeExclude:
   - '@deepseek-ai/*'
   - '@deepseek-ai/cordis-plugin-include@1.0.5-rc.1 || 1.0.6'
