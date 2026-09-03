@@ -462,5 +462,7 @@ export const zhHK: Record<string, string> = {
   pluginMdExportName: 'Markdown 匯出插件',
   pluginCodeNavName: '程式碼預覽導航',
   pluginVideoPreviewName: '影片預覽插件',
+  pluginTurnOutlineName: "dsh-turn-outline 輪次軌跡",
+  pluginTurnOutlineDesc: "把會話按用戶輪次摺疊成「輸入 + 工具步驟 + 輸出」摘要，點擊任意步驟一鍵跳回對話原位；零 LLM 調用、唯讀",
   presetDshDesktopDesc: 'Electron 進階模式（無邊框）：macOS 頂欄 20px、Windows 無 WCO 時 32px 標題欄讓位',
 }

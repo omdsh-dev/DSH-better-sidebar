@@ -433,5 +433,7 @@ export const de: Record<string, string> = {
   pluginMdExportName: 'Markdown-Export',
   pluginCodeNavName: 'Code-Vorschau-Navigation',
   pluginVideoPreviewName: 'Video-Vorschau',
+  pluginTurnOutlineName: "dsh-turn-outline Runden-Gliederung",
+  pluginTurnOutlineDesc: "Faltet die Sitzung in Benutzerrunden (Eingabe + Tool-Schritte + Ausgabe); Klick auf einen Schritt springt an die genaue Stelle im Gespräch — ohne LLM, nur lesend",
   presetDshDesktopDesc: 'Elektronischer Erweiterte-Modus (rahmenlos): macOS reserviert oben 20px; Windows reserviert ohne WCO 32px für die Titelleiste',
 }

@@ -440,5 +440,7 @@ export const fr: Record<string, string> = {
   pluginMdExportName: 'Exportation Markdown',
   pluginCodeNavName: 'Navigateur d’aperçu de code',
   pluginVideoPreviewName: 'Aperçu vidéo',
+  pluginTurnOutlineName: "dsh-turn-outline Plan des tours",
+  pluginTurnOutlineDesc: "Plie la session en tours utilisateur (entrée + étapes d'outil + sortie) ; un clic sur une étape ramène à l'endroit exact de la conversation — sans LLM, en lecture seule",
   presetDshDesktopDesc: 'Mode avancé Electron (sans bordure) : macOS réserve 20px en haut ; Windows réserve 32px pour la barre de titre sans WCO',
 }

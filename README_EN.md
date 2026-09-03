@@ -198,7 +198,7 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
 ### 📑 Tab Plugins (sidebar pages)
 
 <details>
-<summary><b>24 plugins (click to expand)</b></summary>
+<summary><b>26 plugins (click to expand)</b></summary>
 
 | Plugin | ⭐ | Description |
 |---|---|---|
@@ -227,6 +227,7 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
 | [dong-victor/dsh-better-sidebar-starter](https://github.com/dong-victor/dsh-better-sidebar-starter) | <img alt="stars" src="https://img.shields.io/github/stars/dong-victor/dsh-better-sidebar-starter?style=flat&color=4d6bfe" /> | Run-configurations tab: IDEA-style Run/Debug configs (npm / springboot / python / custom) — one-click launch, history, WebSocket live logs (ANSI colors), parallel instances, cross-platform process-tree kill |
 | [baosfeng/my-dsh-plugins](https://github.com/baosfeng/my-dsh-plugins) | <img alt="stars" src="https://img.shields.io/github/stars/baosfeng/my-dsh-plugins?style=flat&color=4d6bfe" /> | Personal multi-plugin collection (`dsh-file-activity`): a sidebar file-activity tab recording read / added / modified history and stats, flat-browsed by folder, opened with the native preview |
 | [Hoemr/dsh-better-overleaf](https://github.com/Hoemr/dsh-better-overleaf) | <img alt="stars" src="https://img.shields.io/github/stars/Hoemr/dsh-better-overleaf?style=flat&color=4d6bfe" /> | Overleaf tab: direct-CDP browser login (third-party Chromium supported), project switching, local git mirrors under the workspace with two-way sync |
+| [Andor-Z/dsh-turn-outline](https://github.com/Andor-Z/dsh-turn-outline) | <img alt="stars" src="https://img.shields.io/github/stars/Andor-Z/dsh-turn-outline?style=flat&color=4d6bfe" /> | Turn-outline tab: folds the session by user turns (input + tool steps + output) with one-click jump-back to the exact spot in the conversation; zero-LLM, read-only |
 
 </details>
 

@@ -447,5 +447,7 @@ export const th: Record<string, string> = {
   pluginMdExportName: 'ส่งออก Markdown',
   pluginCodeNavName: 'ตัวนำทางพรีวิวโค้ด',
   pluginVideoPreviewName: 'พรีวิววิดีโอ',
+  pluginTurnOutlineName: "dsh-turn-outline โครงร่างรอบ",
+  pluginTurnOutlineDesc: "พับเซสชันเป็นรอบของผู้ใช้ (อินพุต + ขั้นตอนเครื่องมือ + เอาต์พุต) คลิกขั้นตอนใดก็ได้เพื่อข้ามไปยังตำแหน่งที่แน่นอนในบทสนทนา — ไม่มีการเรียก LLM อ่านอย่างเดียว",
   presetDshDesktopDesc: 'โหมดขั้นสูงของ Electron (ไร้กรอบ): macOS จองแถบด้านบน 20px; Windows จอง 32px ให้แถบหัวเรื่องเมื่อไม่มี WCO',
 }

@@ -150,4 +150,17 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     // better-sidebar tab service, so install the prerequisite first.
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add github:Johnblur/dsh-bilingual-reader',
   },
+  {
+    id: 'dsh-turn-outline',
+    name: () => t('pluginTurnOutlineName'),
+    url: 'https://github.com/Andor-Z/dsh-turn-outline',
+    description: () => t('pluginTurnOutlineDesc'),
+    // Turn-outline tab: folds the session by user turns (input + tool steps
+    // + output) with one-click jump-back into the conversation. Optional
+    // peer of better-sidebar, published on npm. Stable-line policy: the
+    // plugin validates against better-sidebar 0.17.x + DSH 0.1.1-rc.x; npm
+    // latest (0.18.0) targets DSH 0.1.2-rc.1+ and is not co-tested yet, so
+    // the prerequisite is pinned to 0.17.1.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar@0.17.1 && dsh plugin --profile web add dsh-turn-outline',
+  },
 ]
