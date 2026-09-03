@@ -300,6 +300,8 @@ export const de: Record<string, string> = {
   subagent: 'Aufgaben',
   openSubagent: 'Aufgaben',
   subagentMainAgent: 'Hauptagent',
+  subagentActiveOnly: "Nur aktive",
+  subagentActiveOnlyTitle: "Untätige Subagenten einklappen; nur laufende und deren Vorfahren anzeigen",
   subagentEmpty: 'Keine Subagenten',
   subagentEmptyDesc: 'Subagenten, die unter dem Hauptagenten erzeugt werden, erscheinen hier',
   subagentRunning: 'Läuft',

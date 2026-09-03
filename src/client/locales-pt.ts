@@ -297,6 +297,8 @@ export const pt: Record<string, string> = {
   subagent: 'Tarefas',
   openSubagent: 'Tarefas',
   subagentMainAgent: 'Agente principal',
+  subagentActiveOnly: "Somente ativos",
+  subagentActiveOnlyTitle: "Recolher subagentes ociosos; mostrar apenas os ativos e seus ancestrais",
   subagentEmpty: 'Nenhum subagente',
   subagentEmptyDesc: 'Subagentes gerados sob o agente principal aparecerão aqui',
   subagentRunning: 'Executando',

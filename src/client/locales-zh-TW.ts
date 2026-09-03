@@ -329,6 +329,8 @@ export const zhTW: Record<string, string> = {
   subagent: '任務管理',
   openSubagent: '任務管理',
   subagentMainAgent: '主代理',
+  subagentActiveOnly: "只看活躍",
+  subagentActiveOnlyTitle: "摺疊閒置子代理，僅顯示執行中的子代理及其父鏈",
   subagentEmpty: '暫無子代理',
   subagentEmptyDesc: '目前主代理派生的子代理將顯示在這裡',
   subagentRunning: '執行中',

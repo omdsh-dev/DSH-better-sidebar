@@ -307,6 +307,8 @@ export const fr: Record<string, string> = {
   subagent: 'Gestion des tâches',
   openSubagent: 'Gestion des tâches',
   subagentMainAgent: 'Agent principal',
+  subagentActiveOnly: "Actifs uniquement",
+  subagentActiveOnlyTitle: "Replier les sous-agents inactifs ; garder les actifs et leurs ancêtres",
   subagentEmpty: 'Aucun sous-agent pour l’instant',
   subagentEmptyDesc: 'Les sous-agents dérivés de l’agent principal actuel s’afficheront ici',
   subagentRunning: 'En cours',

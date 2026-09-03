@@ -545,3 +545,30 @@
 .jobsPaneError {
   color: var(--dsw-alias-state-error-primary);
 }
+
+/* "Active only" toolbar row under the main agent card: collapses idle
+   topology branches so busy trees surface just the running subagents. */
+.subagentToolbar {
+  padding: 2px 10px 4px;
+}
+
+.subagentToggle {
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font: var(--dsw-font-xxxs-11);
+  padding: 2px 10px;
+}
+
+.subagentToggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.subagentToggleOn,
+.subagentToggleOn:hover {
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+}

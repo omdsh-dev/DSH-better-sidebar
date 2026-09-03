@@ -312,6 +312,8 @@ export const id: Record<string, string> = {
   subagent: 'Tasks',
   openSubagent: 'Tasks',
   subagentMainAgent: 'Agen utama',
+  subagentActiveOnly: "Hanya aktif",
+  subagentActiveOnlyTitle: "Ciutkan subagen menganggur; tampilkan yang sedang berjalan dan leluhurnya",
   subagentEmpty: 'Tidak ada subagen',
   subagentEmptyDesc: 'Subagen yang dibangkitkan di bawah agen utama akan muncul di sini',
   subagentRunning: 'Berjalan',

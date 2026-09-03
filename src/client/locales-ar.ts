@@ -315,6 +315,8 @@ export const ar: Record<string, string> = {
   subagent: 'المهام',
   openSubagent: 'المهام',
   subagentMainAgent: 'الوكيل الرئيسي',
+  subagentActiveOnly: "للنشطين فقط",
+  subagentActiveOnlyTitle: "طيّ الوكلاء الفرعيين الخاملين؛ إظهار الوكلاء قيد التشغيل وسلسلة آبائهم فقط",
   subagentEmpty: 'لا وكلاء فرعيون',
   subagentEmptyDesc: 'الوكلاء الفرعيون المُنتَجون تحت الوكيل الرئيسي سيظهرون هنا',
   subagentRunning: 'قيد التشغيل',

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   collectBranchIds, countSubagentDescendants, detectNewDirectSubagent,
-  directSubagentCount, rootAncestor,
+  directSubagentCount, rootAncestor, runningVisibilitySet,
 } from '../src/client/subagent-detect.ts'
 import type { SidebarSessionList, SidebarSubagentCatalog } from '../src/context-types.ts'
 
@@ -158,5 +158,63 @@ describe('subagent detection over the sessions list feed', () => {
       a: { entries: [child('root', true)], parentAvailable: true, state: 'ready', error: null },
     }
     expect(collectBranchIds(cyclic, 'root')).toEqual(['a', 'root'])
+  })
+
+  describe('runningVisibilitySet (the "active only" view filter)', () => {
+    it('returns an empty set when every subagent is idle', () => {
+      const byId = list('p1', ['c1', 'c2']).byId
+      const keep = runningVisibilitySet(byId, 'p1')
+      // The root row is rendered separately (never through this filter), so
+      // an all-idle tree yields an empty set: every catalog entry hides.
+      expect(keep.size).toBe(0)
+      expect(keep.has('c1')).toBe(false)
+      expect(keep.has('c2')).toBe(false)
+    })
+
+    it('keeps a running child and the ancestors that own it', () => {
+      const byId = list('p1', ['c1', 'c2', 'c3'], ['c2']).byId
+      const keep = runningVisibilitySet(byId, 'p1')
+      expect(keep.has('p1')).toBe(true) // ancestor of the running child
+      expect(keep.has('c2')).toBe(true) // running
+      expect(keep.has('c1')).toBe(false) // idle sibling
+      expect(keep.has('c3')).toBe(false)
+    })
+
+    it('keeps an idle parent only when a deeper descendant runs', () => {
+      const byId: SidebarSessionList['byId'] = {
+        p1: { id: 'p1', displayTitle: 'P1' },
+        c1: { id: 'c1', displayTitle: 'C1', origin: 'subagent', parentId: 'p1' },
+        g1: { id: 'g1', displayTitle: 'G1', origin: 'subagent', parentId: 'c1', running: true },
+        c2: { id: 'c2', displayTitle: 'C2', origin: 'subagent', parentId: 'p1' },
+      }
+      const keep = runningVisibilitySet(byId, 'p1')
+      expect(keep.has('c1')).toBe(true) // idle itself, owns the running g1
+      expect(keep.has('g1')).toBe(true)
+      expect(keep.has('p1')).toBe(true)
+      expect(keep.has('c2')).toBe(false)
+    })
+
+    it('ignores Side Chat threads when deciding what stays visible', () => {
+      const byId: SidebarSessionList['byId'] = {
+        p1: { id: 'p1', displayTitle: 'P1' },
+        c1: { id: 'c1', displayTitle: 'C1', origin: 'subagent', parentId: 'p1' },
+        s1: {
+          id: 's1', displayTitle: 'Side: refactor plan', origin: 'subagent',
+          parentId: 'p1', running: true,
+        },
+      }
+      const keep = runningVisibilitySet(byId, 'p1')
+      expect(keep.has('s1')).toBe(false)
+      expect(keep.has('c1')).toBe(false)
+    })
+
+    it('terminates on lineage cycles (fail soft)', () => {
+      const cyclic: SidebarSessionList['byId'] = {
+        a: { id: 'a', displayTitle: 'A', origin: 'subagent', parentId: 'b', running: true },
+        b: { id: 'b', displayTitle: 'B', origin: 'subagent', parentId: 'a' },
+      }
+      expect(() => runningVisibilitySet(cyclic, 'a')).not.toThrow()
+      expect(runningVisibilitySet(cyclic, 'a').has('a')).toBe(true)
+    })
   })
 })

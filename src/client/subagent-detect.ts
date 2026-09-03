@@ -135,3 +135,44 @@ export function countSubagentDescendants(
   }
   return totals
 }
+
+/**
+ * The session ids worth showing under "active only" mode: every running
+ * subagent plus each ancestor whose subtree contains one (hiding an idle
+ * parent must never orphan its running descendants). The root itself joins
+ * only when its subtree runs — the page renders it separately regardless.
+ * Cycles fail soft (same discipline as {@link countSubagentDescendants}).
+ */
+export function runningVisibilitySet(
+  byId: SidebarSessionList['byId'],
+  rootId: string,
+): Set<string> {
+  const keep = new Set<string>()
+  const childrenOf = new Map<string, string[]>()
+  for (const summary of Object.values(byId)) {
+    if (summary.origin !== 'subagent' || isSideThreadSummary(summary)
+      || summary.parentId === undefined) continue
+    const list = childrenOf.get(summary.parentId)
+    if (list) list.push(summary.id)
+    else childrenOf.set(summary.parentId, [summary.id])
+  }
+  const visit = (id: string): boolean => {
+    const seen = new Set<string>()
+    const walk = (current: string): boolean => {
+      if (seen.has(current)) return false
+      seen.add(current)
+      let subtreeRuns = false
+      for (const childId of childrenOf.get(current) ?? []) {
+        if (walk(childId)) subtreeRuns = true
+      }
+      if (subtreeRuns || byId[current]?.running === true) {
+        keep.add(current)
+        return true
+      }
+      return false
+    }
+    return walk(id)
+  }
+  visit(rootId)
+  return keep
+}

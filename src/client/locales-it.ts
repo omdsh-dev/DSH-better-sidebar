@@ -305,6 +305,8 @@ export const it: Record<string, string> = {
   subagent: 'Attività',
   openSubagent: 'Attività',
   subagentMainAgent: 'Agente principale',
+  subagentActiveOnly: "Solo attivi",
+  subagentActiveOnlyTitle: "Comprimi i sotto-agenti inattivi; mostra solo quelli attivi e i loro antenati",
   subagentEmpty: 'Nessun sottoagente',
   subagentEmptyDesc: 'I sottoagenti generati dall’agente principale compariranno qui',
   subagentRunning: 'In esecuzione',

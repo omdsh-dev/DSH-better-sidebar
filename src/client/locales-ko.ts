@@ -306,6 +306,8 @@ export const ko: Record<string, string> = {
   subagent: '작업 관리',
   openSubagent: '작업 관리',
   subagentMainAgent: '주 에이전트',
+  subagentActiveOnly: "활성만",
+  subagentActiveOnlyTitle: "유휴 상태의 하위 에이전트는 접고, 실행 중인 것과 그 조상 체인만 표시",
   subagentEmpty: '서브 에이전트 없음',
   subagentEmptyDesc: '현재 주 에이전트에서 파생된 서브 에이전트가 여기에 표시됩니다',
   subagentRunning: '실행 중',

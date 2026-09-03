@@ -312,6 +312,8 @@ export const ru: Record<string, string> = {
   subagent: 'Задачи',
   openSubagent: 'Задачи',
   subagentMainAgent: 'Главный агент',
+  subagentActiveOnly: "Только активные",
+  subagentActiveOnlyTitle: "Свернуть простаивающие субагенты; показывать только выполняющиеся и их предков",
   subagentEmpty: 'Нет субагентов',
   subagentEmptyDesc: 'Субагенты, порождённые главным агентом, появятся здесь',
   subagentRunning: 'Выполняется',
