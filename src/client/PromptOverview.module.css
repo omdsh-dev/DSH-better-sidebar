@@ -1,0 +1,162 @@
+/**
+ * Past-prompt minimap. Every visual value follows the DSH theme contract;
+ * the rail is intentionally flat and translucent, matching native chat chrome.
+ */
+
+.overview {
+  position: absolute;
+  z-index: 35;
+  width: 42px;
+  margin: 0;
+  padding: 0;
+  pointer-events: auto;
+  transform: translateY(-50%);
+}
+
+.marker {
+  --prompt-marker-width: 16px;
+  position: absolute;
+  left: 0;
+  display: flex;
+  align-items: center;
+  width: 42px;
+  height: 12px;
+  padding: 0;
+  color: var(--dsw-alias-label-caption);
+  background: transparent;
+  border: 0;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.markerLine {
+  display: block;
+  width: var(--prompt-marker-width);
+  height: 2px;
+  background: currentColor;
+  border-radius: 2px;
+  opacity: 0.58;
+  transform-origin: left center;
+  transition:
+    width var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    opacity var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.marker:hover,
+.marker:focus-visible {
+  color: var(--dsw-alias-label-secondary);
+  outline: none;
+}
+
+.marker:hover .markerLine,
+.marker:focus-visible .markerLine {
+  min-width: 26px;
+  opacity: 1;
+}
+
+.marker[data-active] {
+  color: var(--dsw-alias-label-primary);
+}
+
+.marker[data-active] .markerLine {
+  width: 36px;
+  opacity: 1;
+}
+
+.preview {
+  position: absolute;
+  left: 44px;
+  top: 50%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: min(360px, calc(100vw - 92px));
+  padding: 13px 15px 11px;
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+  white-space: normal;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  transform: translateY(-50%);
+  cursor: default;
+}
+
+.previewQuestion {
+  display: -webkit-box;
+  overflow: hidden;
+  font: var(--dsw-font-s-strong-14);
+  line-height: 20px;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.previewAnswer {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xs-13);
+  line-height: 20px;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.previewIndex {
+  color: var(--dsw-alias-label-caption);
+  font: var(--dsw-font-xxs-12);
+  line-height: 16px;
+  text-align: right;
+}
+
+.previewJump {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.previewJumpSide {
+  min-width: 0;
+  cursor: pointer;
+  transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.previewJumpSide:hover,
+.previewJumpSide:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  outline: none;
+}
+
+.previewJumpDivider {
+  width: 2px;
+  background: var(--dsw-alias-label-secondary);
+  opacity: 0.82;
+}
+
+:global([data-chat-flow-kind='user'][data-prompt-overview-target]),
+:global([data-chat-flow-kind='steering'][data-prompt-overview-target]) {
+  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover) 68%, transparent);
+  border-radius: 10px;
+  transition: background var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+@media (max-width: 900px) {
+  .overview {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .markerLine,
+  :global([data-prompt-overview-target]) {
+    transition: none;
+  }
+}
