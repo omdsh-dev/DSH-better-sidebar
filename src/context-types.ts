@@ -507,6 +507,24 @@ export interface SidebarAgent {
 export interface SidebarContextShape {
   /** The webServer service face this plugin uses. */
   webServer: SidebarWebServer
+  /**
+   * DSH filesystem abstraction. Explorer listing uses it so workspace anchors
+   * contributed by remote-runtime plugins resolve in their execution world.
+   */
+  fs: {
+    resolve(path: string): Promise<{ targetKey: unknown; displayPath: string }>
+    contains(
+      parent: { targetKey: unknown; displayPath: string },
+      child: { targetKey: unknown; displayPath: string },
+    ): boolean
+    lstat(path: string): Promise<{ type: 'file' | 'directory' | 'symlink' | 'other' } | undefined>
+    stat(target: { targetKey: unknown; displayPath: string }): Promise<{ type: 'file' | 'directory' | 'other' } | undefined>
+    listDir(target: { targetKey: unknown; displayPath: string }): Promise<Array<{
+      name: string
+      type: 'file' | 'directory' | 'other'
+      target: { targetKey: unknown; displayPath: string }
+    }>>
+  }
   /** The session store (host `.get`) and the client list feed (`.list`) faces. */
   sessions: SidebarSessionStore & SidebarSessionsService
   /** The web runtime trust list (bind-derived). */
