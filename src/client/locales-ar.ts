@@ -293,6 +293,8 @@ export const ar: Record<string, string> = {
   sandboxStatusOn: 'وضع الحماية: مفعّل · لا يمكن للصفحات الوصول إلى بيانات الواجهة أو الملفات المحلية؛ قد لا تعمل تسجيلات الدخول وملفات الارتباط التابعة لجهات خارجية',
   sandboxUnlock: 'تعطيل مؤقت (غير آمن)',
   sandboxRestore: 'استعادة الحماية',
+  settingsEditorVimTitle: 'اختصارات vim في المحرر',
+  settingsEditorVimDesc: 'عند التشغيل، يفعّل محرر الأكواد/Markdown اختصارات vim (أوضاع normal/insert/visual — hjkl، dd، yy، p وغيرها)؛ الحفظ يبقى Ctrl/Cmd+S ويسري المفتاح فورًا على المحررات المفتوحة',
   settingsHtmlDefaultUnsafeTitle: 'فتح معاينات HTML بدون حماية افتراضياً (غير آمن)',
   settingsHtmlDefaultUnsafeDesc: 'عند التفعيل، تبدأ كل معاينة HTML مفتوحة حديثاً في الحالة غير المحمية (نفس أصل الواجهة — يمكنها قراءة ملفات الجلسة وواجهات API الداخلية)؛ يوفر صف الحالة استعادة بلمسة واحدة',
   settingsHtmlSandboxTitle: 'تعطيل حماية معاينة HTML (غير آمن)',

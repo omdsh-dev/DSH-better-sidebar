@@ -290,6 +290,8 @@ export const id: Record<string, string> = {
   sandboxStatusOn: 'Mode sandbox: aktif · halaman tidak dapat mengakses data GUI atau berkas lokal; login dan cookie pihak ketiga mungkin tidak berfungsi',
   sandboxUnlock: 'Nonaktifkan sementara (tidak aman)',
   sandboxRestore: 'Pulihkan sandbox',
+  settingsEditorVimTitle: 'Pintasan vim di editor',
+  settingsEditorVimDesc: 'Saat aktif, editor kode/Markdown mengaktifkan pintasan vim (mode normal/insert/visual — hjkl, dd, yy, p, dst.); menyimpan tetap Ctrl/Cmd+S dan tombolnya langsung berlaku pada editor yang terbuka',
   settingsHtmlDefaultUnsafeTitle: 'Buka pratinjau HTML tanpa sandbox secara default (tidak aman)',
   settingsHtmlDefaultUnsafeDesc: 'Saat aktif, setiap pratinjau HTML yang baru dibuka dimulai dalam keadaan tanpa sandbox (asal yang sama dengan GUI — dapat membaca berkas sesi dan API internal); baris status masih menawarkan pemulihan sekali ketuk',
   settingsHtmlSandboxTitle: 'Nonaktifkan sandbox pratinjau HTML (tidak aman)',

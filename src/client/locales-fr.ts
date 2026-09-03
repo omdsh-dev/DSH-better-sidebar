@@ -285,6 +285,8 @@ export const fr: Record<string, string> = {
   sandboxStatusOn: 'Mode bac à sable : activé · la page ne peut pas accéder aux données de l’interface ni aux fichiers locaux ; l’état de connexion et les cookies tiers peuvent être indisponibles',
   sandboxUnlock: 'Déverrouiller temporairement (non sécurisé)',
   sandboxRestore: 'Restaurer le bac à sable',
+  settingsEditorVimTitle: 'Raccourcis vim dans l’éditeur',
+  settingsEditorVimDesc: 'Activé, l’éditeur de code/Markdown utilise les raccourcis vim (modes normal/insertion/visuel — hjkl, dd, yy, p, etc.) ; l’enregistrement reste Ctrl/Cmd+S et le commutateur s’applique immédiatement aux éditeurs ouverts',
   settingsHtmlDefaultUnsafeTitle: 'Ouvrir l’aperçu HTML en mode non bac à sable par défaut (non sécurisé)',
   settingsHtmlDefaultUnsafeDesc: 'Une fois activé, chaque ouverture d’un fichier HTML démarre l’aperçu en état non bac à sable (même origine que l’interface, pouvant lire les fichiers de session et les interfaces internes) ; la barre d’état permet de restaurer temporairement le bac à sable',
   settingsHtmlSandboxTitle: 'Désactiver le bac à sable de l’aperçu HTML (non sécurisé)',

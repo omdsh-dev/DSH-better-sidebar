@@ -292,6 +292,8 @@ export const th: Record<string, string> = {
   sandboxStatusOn: 'โหมดแซนด์บ็อกซ์: เปิด · หน้าเว็บไม่สามารถเข้าถึงข้อมูลหรือไฟล์ภายในของ GUI ได้; การล็อกอินและคุกกี้ของบุคคลที่สามอาจไม่ทำงาน',
   sandboxUnlock: 'ปิดใช้ชั่วคราว (ไม่ปลอดภัย)',
   sandboxRestore: 'คืนค่าแซนด์บ็อกซ์',
+  settingsEditorVimTitle: 'การจัดปุม vim ในตัวแก้ไข',
+  settingsEditorVimDesc: 'เมื่อเปิด ตัวแก้ไขโค้ด/Markdown จะเปิดใช้ปุม vim (โหมดปกติ/แทรก/วิชวล — hjkl, dd, yy, p ฯลฯ) การบันทึกยังเป็น Ctrl/Cmd+S และสวิตช์มีผลทันทีกับตัวแก้ไขที่เปิดอยู่',
   settingsHtmlDefaultUnsafeTitle: 'เปิดพรีวิว HTML โดยไม่มีแซนด์บ็อกซ์เป็นค่าเริ่มต้น (ไม่ปลอดภัย)',
   settingsHtmlDefaultUnsafeDesc: 'เมื่อเปิด พรีวิว HTML ที่เปิดใหม่ทุกครั้งจะเริ่มในสถานะไม่มีแซนด์บ็อกซ์ (origin เดียวกับ GUI — สามารถอ่านไฟล์เซสชันและ API ภายในได้); แถวสถานะยังคงเสนอการคืนค่าแบบแตะครั้งเดียว',
   settingsHtmlSandboxTitle: 'ปิดแซนด์บ็อกซ์พรีวิว HTML (ไม่ปลอดภัย)',

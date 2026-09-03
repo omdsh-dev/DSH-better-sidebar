@@ -128,6 +128,7 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   terminalFontSize: z.number().step(1).min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX).default(TERMINAL_FONT_SIZE_DEFAULT),
   interceptOpenPath: z.boolean().default(true),
   editorExplorer: z.boolean().default(false),
+  editorVim: z.boolean().default(false),
   changesDiffFloat: z.boolean().default(true),
   workspaceFence: z.boolean().default(true),
   terminalShell: z.string().default(''),
