@@ -6,6 +6,7 @@
  * deliverables entry; when nothing was produced the selector returns null
  * and the original row renders unchanged.
  */
+import { useEffect } from 'react'
 import { IconCodeOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { firstLeaf, revealPaths, togglePanel, type SidebarStore } from './state.ts'
@@ -75,8 +76,13 @@ export function SidebarProducedFiles(props: {
   openInSidebar: (path: string) => void
   /** Reveal the produced files in the explorer ("Show in folder" twin). */
   onShowInFolder: (files: readonly string[]) => void
+  recordProduced: (paths: readonly string[]) => void
 }) {
-  const { matched, openInSidebar, onShowInFolder } = props
+  const { matched, openInSidebar, onShowInFolder, recordProduced } = props
+  // Publish the produced paths to the sidebar store exactly once per mount:
+  // the row only mounts for turns that produced files, so this IS the
+  // "turn ended with file writes" signal the editor's auto-refresh consumes.
+  useEffect(() => { recordProduced(matched) }, [recordProduced, matched])
   const shown = matched.slice(0, 6)
   const hidden = matched.length - shown.length
   return (
@@ -146,6 +152,7 @@ export function registerTurnTailInterception(ctx: Context, store: SidebarStore):
     inject: (sessionId: string) => ({
       openInSidebar: (path: string) => { openSidebarFile(ctx, store, sessionId, path) },
       onShowInFolder: (files: readonly string[]) => { revealInExplorer(ctx, store, sessionId, files) },
+      recordProduced: (paths: readonly string[]) => { store.recordProduced(sessionId, paths) },
     }),
   }, SidebarProducedFiles))
 }

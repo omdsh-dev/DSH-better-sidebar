@@ -1438,6 +1438,15 @@ export class SidebarStore {
     prefs: { ...SIDEBAR_PREFS_DEFAULTS },
   }
   private readonly listeners = new Set<() => void>()
+  /**
+   * The latest turn's produced-file notification (issue #167 auto-refresh):
+   * recorded by the turn-tail interception when a closing turn produced
+   * files, consumed by EditorHost to silently reload a matching preview.
+   * Not part of the snapshot — a transient event, not view state; consumers
+   * read the getter from a store subscription.
+   */
+  private lastProduced: { sessionId: string; paths: readonly string[]; seq: number } | null = null
+  private producedSeq = 0
   /** Per-session persist debounce timers (v0.12.0+: one per session, so a
    *  targeted open never cancels another session's pending write). */
   private readonly persistTimers = new Map<string, number>()
@@ -1462,6 +1471,22 @@ export class SidebarStore {
   /** Whether the sidebar is externally disabled (aionui-panel chosen). */
   getSuspended(): boolean {
     return this.suspended
+  }
+
+  /**
+   * Record one turn's produced-file notification (the turn-tail interception
+   * calls this when its row mounts, i.e. only for turns that produced files).
+   * The seq is monotonic so consumers can ignore repeats.
+   */
+  recordProduced(sessionId: string, paths: readonly string[]): void {
+    this.producedSeq += 1
+    this.lastProduced = { sessionId, paths: [...paths], seq: this.producedSeq }
+    this.notify()
+  }
+
+  /** The latest produced-file notification, or null before the first one. */
+  getLastProduced(): { sessionId: string; paths: readonly string[]; seq: number } | null {
+    return this.lastProduced
   }
 
   /**

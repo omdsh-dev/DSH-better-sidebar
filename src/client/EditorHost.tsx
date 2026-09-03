@@ -353,6 +353,29 @@ export function EditorHost(props: {
     prevSaveState.current = current
   }, [toolbar?.saveState, toolbar?.mode])
 
+  // Auto-refresh when the conversation's closing turn produced the previewed
+  // file (issue #167 extension): the turn-tail interception records produced
+  // paths into the store; a matching path silently reloads. Edit mode is
+  // left alone for the same draft reason as B.
+  const toolbarRef = useRef(toolbar)
+  toolbarRef.current = toolbar
+  const handledProducedSeq = useRef(0)
+  useEffect(() => {
+    const onStore = (): void => {
+      const last = store.getLastProduced()
+      if (last === null || last.sessionId !== scope.sessionId) return
+      if (last.seq === handledProducedSeq.current) return
+      handledProducedSeq.current = last.seq
+      if (toolbarRef.current?.mode === 'edit') return
+      const hit = last.paths.some(produced => resolveSidebarPath(scope.cwd, produced) === path)
+      if (!hit) return
+      setReloadSeq(sequence => sequence + 1)
+    }
+    const off = store.subscribe(onStore)
+    onStore()
+    return off
+  }, [store, scope.sessionId, scope.cwd, path])
+
   const treeOpen = treeOpenOf(tab)
   /** Persist the panel flag on the tab (survives reloads with the layout). */
   const toggleTree = (): void => { patchMeta(ctx, tab, { treeOpen: !treeOpen }) }
