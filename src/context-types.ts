@@ -30,6 +30,7 @@
  */
 import type { Context as CordisContext } from '@deepseek-ai/cordis'
 import type { BetterSidebarService } from './client/service.ts'
+import type { BetterSidebarWorkspaceService } from './workspace-provider.ts'
 
 /** The request face route handlers see (structural subset of node's
  *  IncomingMessage: the URL/method/header reads and the async body
@@ -568,6 +569,8 @@ export interface SidebarContextShape {
   }
   /** The composer draft face (client ui-conversation, lazy `ctx.get` probe). */
   conversation: SidebarConversation
+  /** The host-side transport-neutral workspace provider registry. */
+  betterSidebarWorkspace: BetterSidebarWorkspaceService
   /**
    * The client-side sidebar registry: external plugins register tab types
    * and file previewers here. Provided by the client half (see

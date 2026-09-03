@@ -539,6 +539,31 @@ const url = `/sidebar/file?${new URLSearchParams({ sessionId: scope.sessionId, p
 
 > 注：内置的 `api.ts` 是 better-sidebar 内部模块，外部插件 **不要** value-import 它（构建纯度门会挡）；按上表模式自己 fetch 即可。所有路由带与 `/api` 相同的 Host 头信任围栏，浏览器同源访问天然通过。
 
+### 6.1 Host workspace provider（v1）
+
+Host 侧兼容插件可注入 `betterSidebarWorkspace`，为非本地执行环境接管文件路由。公共类型从包根导出，禁止引用 `src/*`：
+
+```ts
+import type { BetterSidebarWorkspaceProvider, Context } from 'dsh-better-sidebar'
+
+export const inject = ['betterSidebarWorkspace']
+export function apply(ctx: Context) {
+  const provider: BetterSidebarWorkspaceProvider = {
+    id: 'my-runtime',
+    priority: 100,
+    claim: ({ cwd }) => isMyWorkspace(cwd), // 同步；false 时继续匹配
+    tree: async (scope, path, limit) => { /* ... */ },
+    readText: async (scope, path, limit, headLimit) => { /* ... */ },
+    writeText: async (scope, path, content) => { /* ... */ },
+    search: async (scope, query, budget) => { /* ... */ },
+    readBytes: async (scope, path, limit) => { /* ... */ },
+  }
+  ctx.effect(() => ctx.betterSidebarWorkspace.register(provider))
+}
+```
+
+`betterSidebarWorkspace.version === 1`。注册表按 `priority` 从高到低选第一个 `claim({ cwd }) === true` 的 provider；没有匹配时使用内置 local adapter。同 `id` 的新注册会替换旧注册，旧 disposer 不会误删新实例（HMR-safe）。Provider 接收 `{ cwd, fence }`，负责路径解析、真实目标包含检查和 I/O；Better Sidebar 仍拥有既有 URL、JSON wire、大小预算、MIME、下载 disposition、Host trust fence 与 HTML CSP。上传和终端不经过此接口。
+
 ---
 
 ## 7. 服务方法完整清单

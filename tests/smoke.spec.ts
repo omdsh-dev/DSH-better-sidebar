@@ -711,38 +711,6 @@ describe('session cwd resolution over the API route', () => {
     expect(result).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
   })
 
-  it('lists a routed SSH workspace instead of the empty local anchor', async () => {
-    const anchor = resolvePath('/home/me/.dsh/ssh-workspace-anchors/project')
-    const remoteRoot = 'ssh://gpu/work/project'
-    const fs = {
-      resolve: vi.fn(async (path: string) => ({
-        targetKey: path === anchor ? remoteRoot : `${remoteRoot}/${path.slice(anchor.length + 1)}`,
-        displayPath: path === anchor ? 'gpu:/work/project' : `gpu:/work/project/${path.slice(anchor.length + 1)}`,
-      })),
-      contains: vi.fn((parent: { targetKey: string }, child: { targetKey: string }) => child.targetKey === parent.targetKey || child.targetKey.startsWith(`${parent.targetKey}/`)),
-      lstat: vi.fn(async () => ({ type: 'directory' as const })),
-      stat: vi.fn(async () => ({ type: 'directory' as const })),
-      listDir: vi.fn(async () => [{
-        name: 'docs',
-        type: 'directory' as const,
-        target: { targetKey: `${remoteRoot}/docs`, displayPath: 'gpu:/work/project/docs' },
-      }]),
-    }
-    const route = mount({
-      sessions: { get: () => ({ header: { cwd: anchor } }) },
-      fs,
-    })
-
-    const tree = await invoke(route, 'fs.tree', { sessionId: 'ssh' }) as unknown as {
-      ok: boolean
-      value?: { entries: Array<{ name: string; path: string }> }
-    }
-
-    expect(tree.ok).toBe(true)
-    expect(tree.value?.entries).toEqual([expect.objectContaining({ name: 'docs', path: join(anchor, 'docs') })])
-    expect(fs.listDir).toHaveBeenCalledWith(expect.objectContaining({ targetKey: remoteRoot }))
-  })
-
   it('rejects fs.tree paths outside the session workspace', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-security-'))
     const workspace = join(root, 'workspace')

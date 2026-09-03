@@ -13,7 +13,7 @@
  * session's authoritative cwd comes from the session store, and terminal
  * processes are keyed by session.
  */
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { open, stat } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
@@ -29,11 +29,14 @@ import {
   type SidebarConfig,
   type SidebarPrefs,
 } from './config.ts'
-import { parentOf, requireAbsolute, listDirectoryWith, rootLabel } from './fs-tree.ts'
+import { parentOf, requireAbsolute, rootLabel } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
 import { writeWorkspaceUpload } from './fs-operations.ts'
-import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
-import { searchFiles } from './fs-search.ts'
+import {
+  BetterSidebarWorkspaceRegistry,
+  LocalBetterSidebarWorkspaceProvider,
+  type BetterSidebarWorkspaceService,
+} from './workspace-provider.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
 import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
@@ -65,6 +68,19 @@ export type { SidebarConfig, ResolvedSidebarConfig }
 // Also re-export the service descriptor types so consumers can type their
 // registerTab / registerFileViewer arguments without reaching into /client.
 export type { Context } from './context-types.ts'
+export {
+  BETTER_SIDEBAR_WORKSPACE_VERSION,
+  BetterSidebarWorkspaceRegistry,
+  LocalBetterSidebarWorkspaceProvider,
+} from './workspace-provider.ts'
+export type {
+  BetterSidebarWorkspaceProvider,
+  BetterSidebarWorkspaceService,
+  BetterSidebarWorkspaceScope,
+  BetterSidebarWorkspaceReadResult,
+  BetterSidebarWorkspaceBytesResult,
+  BetterSidebarWorkspaceSearchResult,
+} from './workspace-provider.ts'
 export type {
   BetterSidebarService,
   TabDescriptor,
@@ -297,6 +313,7 @@ function buildApi(
   agentPtyRegistry: AgentPtyRegistry | null,
   resolved: ResolvedSidebarConfig,
   terminalShell: string,
+  workspace: BetterSidebarWorkspaceService,
   getSettings: () => SidebarSettingsFace | undefined,
 ): Record<string, ApiMethod> {
   const cwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
@@ -332,53 +349,30 @@ function buildApi(
       const { cwd } = await cwdOf(payload)
       const record = payload as { path?: unknown }
       const requested = record.path === undefined ? cwd : requireAbsolute(requireString(payload, 'path'))
-      try {
-        const target = await ctx.fs.resolve(requested)
-        if (fenceEnabledOf(getSettings)) {
-          const workspaceTarget = await ctx.fs.resolve(cwd)
-          if (!ctx.fs.contains(workspaceTarget, target)) {
-            throw new SidebarError('forbidden', `path "${requested}" is outside workspace`, 403)
-          }
-        }
-        return listDirectoryWith(ctx.fs, requested, resolved.listLimit, target)
-      } catch (error) {
-        if (error instanceof SidebarError) throw error
-        throw new SidebarError('fs-error', `cannot list "${requested}": ${error instanceof Error ? error.message : String(error)}`, 400)
-      }
+      const scope = { cwd, fence: fenceEnabledOf(getSettings) }
+      return workspace.resolve(scope).tree(scope, requested, resolved.listLimit)
     },
     'fs.search': async (payload) => {
-      // The editor side panel's global name search: rooted at the session
-      // cwd (not caller-targetable — the walk is unbounded by design and
-      // must never escape the workspace), budgeted inside searchFiles.
       const { cwd } = await cwdOf(payload)
       const query = requireString(payload, 'query')
-      return searchFiles(cwd, query)
+      const scope = { cwd, fence: fenceEnabledOf(getSettings) }
+      return workspace.resolve(scope).search(scope, query, { maxMatches: 200, maxVisited: 100_000 })
     },
     'fs.read': async (payload) => {
       const { cwd } = await cwdOf(payload)
-      // Relative paths are git-derived (status/diff report repo-root-relative
-      // names; the untracked diff view reads the file through this route). A
-      // child-repo path is relative to the selected repoRoot, not the session
-      // cwd; thread it so the path resolves inside the authorized workspace.
       const selected = selectedRepoOf(payload)
-      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected), fenceEnabledOf(getSettings))
-      const { content, truncated, binary, size, head } = await readText(path, resolved.readLimit)
+      const requested = await resolveGitPath(cwd, requireString(payload, 'path'), selected)
+      const scope = { cwd, fence: fenceEnabledOf(getSettings) }
+      const { content, truncated, binary, size, head } = await workspace.resolve(scope).readText(scope, requested, resolved.readLimit, READ_HEAD_LIMIT)
       if (binary) return { kind: 'binary', size, truncated, head }
       return { kind: 'text', content, truncated }
     },
     'fs.write': async (payload) => {
       const { cwd } = await cwdOf(payload)
-      const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'), fenceEnabledOf(getSettings))
+      const path = requireString(payload, 'path')
       const content = requireString(payload, 'content')
-      const tmp = `${path}.dsh-sidebar-tmp-${process.pid}`
-      try {
-        await mkdir(dirname(path), { recursive: true })
-        await writeFile(tmp, content, 'utf8')
-        await rename(tmp, path)
-      } catch (error) {
-        await rm(tmp, { force: true }).catch(() => {})
-        throw new SidebarError('fs-error', `cannot write "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
-      }
+      const scope = { cwd, fence: fenceEnabledOf(getSettings) }
+      await workspace.resolve(scope).writeText(scope, path, content)
       return { ok: true }
     },
     'git.worktrees': async (payload) => {
@@ -691,6 +685,11 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // restore it before any terminal can spawn (idempotent).
   ensureSpawnHelper()
   const resolved = resolveSidebarConfig(config)
+  const localWorkspace = new LocalBetterSidebarWorkspaceProvider()
+  const workspaceRegistry = new BetterSidebarWorkspaceRegistry(localWorkspace)
+  ctx.effect(() => typeof ctx.provide === 'function'
+    ? ctx.provide('betterSidebarWorkspace', workspaceRegistry)
+    : () => {}, 'dsh-better-sidebar: workspace provider service')
   // One shell resolution feeds BOTH terminal surfaces: the UI tabs and the
   // model-facing terminal_* tools. They must stay in lockstep, otherwise a
   // configured shell fixes one surface and silently leaves the other on the
@@ -840,7 +839,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   })
 
   // ── JSON API ────────────────────────────────────────────────────────────
-  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace)
+  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, workspaceRegistry, () => settingsFace)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -941,18 +940,15 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
         const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
-        const path = await ensureWorkspacePath(cwd, raw, fenceEnabledOf(() => settingsFace))
-        const info = await stat(path)
-        if (!info.isFile() || info.size > resolved.mediaLimit) {
-          throw new SidebarError('fs-error', 'not a file or too large', 400)
-        }
-        const type = mediaTypeForPath(path)
-        const body = await readFile(path)
+        const scope = { cwd, fence: fenceEnabledOf(() => settingsFace) }
+        const file = await workspaceRegistry.resolve(scope).readBytes(scope, raw, resolved.mediaLimit)
+        const type = mediaTypeForPath(file.path)
+        const body = file.bytes
         // Raw bytes either way (binary-safe); ?download=1 switches the
         // disposition so the browser saves the file instead of showing it.
         const headers: Record<string, string> = { 'content-type': type, 'cache-control': 'no-cache' }
         if (url.searchParams.get('download') === '1') {
-          headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(basename(path))}`
+          headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(basename(file.path))}`
         }
         res.writeHead(200, headers)
         res.end(body)
@@ -1000,13 +996,10 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // real-path guard, with the same semantics as the media route's
         // fallback.
         const cwd = await sessionCwdOf(ctx, sessionId)
-        const absolute = await ensureWorkspacePath(cwd, path, fenceEnabledOf(() => settingsFace))
-        const info = await stat(absolute)
-        if (!info.isFile() || info.size > resolved.mediaLimit) {
-          throw new SidebarError('fs-error', 'not a file or too large', 400)
-        }
-        const type = mediaTypeForPath(absolute)
-        const body = await readFile(absolute)
+        const scope = { cwd, fence: fenceEnabledOf(() => settingsFace) }
+        const file = await workspaceRegistry.resolve(scope).readBytes(scope, path, resolved.mediaLimit)
+        const type = mediaTypeForPath(file.path)
+        const body = file.bytes
         res.writeHead(200, {
           'content-type': type === 'text/html' ? 'text/html; charset=utf-8' : type,
           'cache-control': 'no-cache',
