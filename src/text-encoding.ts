@@ -105,6 +105,26 @@ function tryDecode(decoder: TextDecoder, bytes: Uint8Array): string | undefined 
   }
 }
 
+/** Detect the GB18030 four-byte sequences that are outside the GBK subset. */
+function hasGb18030FourByteSequence(bytes: Uint8Array): boolean {
+  for (let i = 0; i + 3 < bytes.length; i += 1) {
+    const b1 = bytes[i]!
+    const b2 = bytes[i + 1]!
+    const b3 = bytes[i + 2]!
+    const b4 = bytes[i + 3]!
+
+    if (
+      b1 >= 0x81 && b1 <= 0xfe &&
+      b2 >= 0x30 && b2 <= 0x39 &&
+      b3 >= 0x81 && b3 <= 0xfe &&
+      b4 >= 0x30 && b4 <= 0x39
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
 export function decodeTextBytes(bytes: Buffer): DecodedText | null {
   if (startsWith(bytes, UTF32LE_BOM)) {
     return { content: decodeUtf32(bytes.subarray(4), true), encoding: 'utf32le-bom' }
@@ -131,13 +151,16 @@ export function decodeTextBytes(bytes: Buffer): DecodedText | null {
   const utf8 = tryDecode(UTF8_DECODER, bytes)
   if (utf8 !== undefined) return { content: utf8, encoding: 'utf8' }
 
-  // WHATWG's "gbk" decoder is CP936-compatible (including the Windows 0x80
-  // euro extension), matching the ANSI encoding used on Simplified Chinese
-  // Windows. Prefer it before GB18030 so ordinary legacy files keep GBK on save.
+  const gb18030 = tryDecode(GB18030_DECODER, bytes)
+  if (gb18030 !== undefined && hasGb18030FourByteSequence(bytes)) {
+    return { content: gb18030, encoding: 'gb18030' }
+  }
+
+  // WHATWG defines GBK as the GB18030 decoder, so a successful GBK decode
+  // alone cannot distinguish ordinary CP936 data from GB18030's subset.
   const gbk = tryDecode(GBK_DECODER, bytes)
   if (gbk !== undefined) return { content: gbk, encoding: 'gbk' }
 
-  const gb18030 = tryDecode(GB18030_DECODER, bytes)
   if (gb18030 !== undefined) return { content: gb18030, encoding: 'gb18030' }
 
   // Keep the previous replacement-character behavior for unknown non-NUL
