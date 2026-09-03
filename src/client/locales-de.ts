@@ -406,6 +406,9 @@ export const de: Record<string, string> = {
   pluginVideoPreviewDesc: 'Inline-Videovorschau (.mp4/.webm/.mov/.mkv/.avi usw.) für den better-sidebar-Editor, gestützt auf eine eigene /video-Hostroute mit HTTP-Range-Unterstützung (206) – das Scrubbing funktioniert und Dateien unterliegen nicht dem 20MB-mediaLimit',
   pluginDocsPanelDesc: '„Globale Dokumente“ in der DSH-Seitenleiste: eigene Markdown-Notizen aus jedem Arbeitsbereich lesen – Dateiliste, Gliederung, Öffnen in Chrome / VS Code und Kopieren-Buttons; das Dokumentenverzeichnis ist konfigurierbar (Standard ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'Der Agent-Browser für DeepSeek Harness: 32 ego_*-Tools steuern ein echtes Chromium; ein nativer „ego-Browser“-Tab in der Seitenleiste zeigt live jede Seite, die der Agent besucht – Klicken, Ziehen und Tippen zum Übernehmen. Registriert den Tab automatisch, wenn better-sidebar vorhanden ist, sonst eine schwebende Blase',
+
+  renameTab: 'Tab umbenennen',
+  renameTabHint: 'Doppelklick zum Umbenennen',
   pluginBilingualReaderDesc: 'PDFs im DSH-Seitenbereich lesen: native PDF-Anzeige, Text auswählen und mit dem LLM übersetzen — mit Kontext, vollständig vom Hauptgespräch isoliert',
   pluginSentinelName: 'dsh-sentinel Wecksystem',
   pluginEgoBrowserName: 'ego-browser Agent-Browser',

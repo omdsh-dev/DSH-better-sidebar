@@ -403,6 +403,9 @@ export const sv: Record<string, string> = {
   pluginVideoPreviewDesc: 'Inline videoförhandsgranskning (.mp4/.webm/.mov/.mkv/.avi etc.) för better-sidebar-editorn, backad av en dedikerad /video-värdroute med HTTP Range (206)-stöd — sökning fungerar och filer begränsas inte av 20MB mediaLimit',
   pluginDocsPanelDesc: 'Globala dokument i DSH-sidopanelen: läs era egna Markdown-anteckningar från valfri arbetsyta — en fillista, en översikt, öppna i Chrome / VS Code och kopieringsknappar; dokumentkatalogen är konfigurerbar (standard ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'Agentwebbläsaren för DeepSeek Harness: 32 ego_*-verktyg styr en riktig Chromium; en inbyggd «ego browser»-flik i sidopanelen visar varje sida agenten besöker i realtid — du kan klicka, dra och skriva för att ta över. Registrerar fliken automatiskt när better-sidebar finns, annars en flytande bubbla',
+
+  renameTab: 'Byt namn p\u00e5 flik',
+  renameTabHint: 'Dubbelklicka f\u00f6r att byta namn',
   pluginBilingualReaderDesc: 'Läs PDF-filer i DSH-sidopanelen: inbyggd PDF-visning, markera text för att översätta med LLM, med kontext och helt isolerad från huvudkonversationen',
   pluginSentinelName: 'dsh-sentinel Väcksystem',
   pluginEgoBrowserName: 'ego-browser Agentwebbläsare',

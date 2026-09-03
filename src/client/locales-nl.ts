@@ -418,6 +418,9 @@ export const nl: Record<string, string> = {
   pluginVideoPreviewDesc: 'Inline videovoorbeeld (.mp4/.webm/.mov/.mkv/.avi enz.) voor de better-sidebar-editor, ondersteund door een toegewijde /video-host-route met HTTP Range (206)-ondersteuning — scrubben werkt en bestanden worden niet beperkt door de 20MB mediaLimit',
   pluginDocsPanelDesc: 'Globale docs in de DSH-zijbalk: lees uw eigen Markdown-notities vanuit elke werkruimte — een bestandslijst, een outline, openen in Chrome / VS Code, en kopieerknoppen; de docs-map is configureerbaar (standaard ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'De agentbrowser voor DeepSeek Harness: 32 ego_*-tools besturen een echt Chromium; een native «ego-browser»-tab in de zijbalk toont live elke pagina die de agent bezoekt — u kunt klikken, slepen en typen om over te nemen. Registreert de tab automatisch als better-sidebar aanwezig is, anders een zwevende bel',
+
+  renameTab: 'Tab hernoemen',
+  renameTabHint: 'Dubbelklik om te hernoemen',
   pluginBilingualReaderDesc: 'Lees PDF’s in de DSH-zijbalk: native PDF-weergave, selecteer tekst om te vertalen met de LLM, met context en volledig geïsoleerd van het hoofdgesprek',
   pluginSentinelName: 'dsh-sentinel Weksysteem',
   pluginEgoBrowserName: 'ego-browser Agentbrowser',

@@ -420,6 +420,8 @@ export const ja: Record<string, string> = {
   pluginCodeNavDesc: 'コードプレビューナビゲーター：ファイルタイプから言語を自動判定してシンタックスハイライト、シンボルアウトライン（クラス/メソッド/変数のフィルタ＆ワンクリックジャンプ）、ファイル内検索（全一致ハイライト、前/次へ、大文字小文字区別）。better-sidebar のコードファイルプレビューを引き継ぎます',
   pluginDocsPanelDesc: 'DSH サイドバー内の「グローバルドキュメント」：任意のワークスペースから読めるグローバル Markdown ノート。リストで選んで閲覧、ホバーでアウトラインジャンプ、Chrome / VS Code で外部オープン、コードコピー。ディレクトリは設定可（デフォルト ~/.dsh/docs）',
   pluginEgoBrowserDesc: 'DeepSeek Harness 用エージェントブラウザ：32 個の ego_* ツールが本物の Chromium を操作し、サイドバーのネイティブ「ego ブラウザ」Tab がエージェントの訪れる全ページをライブ表示。クリック・ドラッグ・入力で操作を引き継げます。better-sidebar があれば Tab を自動登録、なければフローティングバブルにフォールバック',
+  renameTab: 'タブ名を変更',
+  renameTabHint: 'ダブルクリックで変更',
   pluginBilingualReaderDesc: 'DSH サイドバーで論文 PDF を読む：ネイティブ PDF 表示、テキストを選択して LLM で翻訳。コンテキストを使い、メイン会話から完全に分離',
   pluginSentinelName: 'dsh-sentinel ウェイクアップシステム',
   pluginEgoBrowserName: 'ego-browser エージェントブラウザー',

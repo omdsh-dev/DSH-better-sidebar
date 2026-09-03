@@ -421,6 +421,9 @@ export const ar: Record<string, string> = {
   pluginVideoPreviewDesc: 'معاينة فيديو مضمّنة (.mp4/.webm/.mov/.mkv/.avi إلخ) في محرّر better-sidebar، مدعومة بمسار /video مخصّص يدعم HTTP Range (206) — التحكم بالتشغيل يعمل والملفات غير مقيدة بحد mediaLimit البالغ 20MB',
   pluginDocsPanelDesc: '«وثائق عامة» في شريط DSH الجانبي: ملاحظات Markdown عامة، قابلة للقراءة من أي مساحة عمل — قائمة ملفات، مخطط تفصيلي، فتح في Chrome / VS Code، وأزرار نسخ؛ دليل الوثائق قابل للتكوين (الافتراضي ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'متصفح الوكيل لـ DeepSeek Harness: 32 أداة ego_* تقود متصفح Chromium حقيقي، مع تبويب «متصفح ego» أصلي في الشريط الجانبي يعرض مباشرة كل صفحة يزورها الوكيل — يمكنك النقر والسحب والكتابة لتولي التحكم. يسجّل التبويب تلقائيًا عند وجود better-sidebar، وإلا يظهر كفقاعة عائمة',
+
+  renameTab: 'إعادة تسمية علامة التبويب',
+  renameTabHint: 'انقر نقرًا مزدوجًا لإعادة التسمية',
   pluginBilingualReaderDesc: 'اقرأ ملفات PDF في الشريط الجانبي لـ DSH: عرض PDF أصلي، حدد نصًا لترجمته بواسطة النموذج اللغوي مع السياق، معزولًا تمامًا عن المحادثة الرئيسية',
   pluginSentinelName: 'dsh-sentinel نظام الاستيقاظ',
   pluginEgoBrowserName: 'ego-browser متصفح الوكيل',

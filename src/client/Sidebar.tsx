@@ -35,9 +35,9 @@ import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context, SidebarSessionList } from '../context-types.ts'
 import { appendToDraft, insertFileReference } from './conversation-draft.ts'
 import {
-  BOTTOM_MIN, PANEL_MIN, agentUuidOf, closeFloatByTab, closeTab, dockFloat, firstLeaf, floatTab,
-  isAgentTabId, leafWithTab, migrateBottomTabs,
-  moveFloat, moveTab, moveTabToEdge, openDiffTab, raiseFloat, reconcileAgentTerminals,
+  BOTTOM_MIN, PANEL_MIN, activateTab, agentUuidOf, allLeaves, closeFloatByTab, closeTab, dockFloat, firstLeaf, floatTab,
+  floatWithTab, isAgentTabId, leafWithTab, migrateBottomTabs,
+  moveFloat, moveTab, moveTabToEdge, openDiffTab, openTabInActivePane, patchTab, raiseFloat, reconcileAgentTerminals,
   resizeFloat, resizeSplitIn, setBottomHeight, setTabPin, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
   type DropZone, type SidebarState, type SidebarStore, type SidebarTab,
 } from './state.ts'
@@ -77,6 +77,14 @@ const FAILURE_LIMIT = 3
  * title frame has had time to land.
  */
 const AUTO_OPEN_DEBOUNCE_MS = 500
+
+/**
+ * Which tabs accept an inline rename (double-click their label in the tab
+ * strip). Scoped to terminal tabs: editor tabs derive their label from the
+ * file path, browser tabs from the visited page — only terminals own a
+ * stable, user-meaningful name (终端 1 / 终端 2 …).
+ */
+const canRenameTab = (tab: SidebarTab): boolean => tab.type === 'terminal'
 
 /**
  * OS file drags over the sidebar belong to the sidebar, not to the chat:
@@ -1263,6 +1271,13 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       // session scope (with its cwd) rides to the callback.
       ctx.get('betterSidebar')?.activateTab(tabId, sessionId === undefined ? undefined : { sessionId, cwd })
     },
+    // Rename the label of one open tab (patchTab persists it with the
+    // layout, so a reload keeps the custom name). Pane id is not needed by
+    // the reducer (it locates the tab across both trees) but kept in the
+    // action signature for symmetry with the other tab actions.
+    renameTab: (_paneId, tabId, title) => {
+      store.reduce(s => patchTab(s, tabId, { title }))
+    },
     focusPane: (paneId) => { store.reduce(s => ({ ...s, activePane: paneId })) },
     moveTabToEdge: (payload: TabDragPayload, toPane: string, zone: DropZone) => {
       store.reduce(s => moveTabToEdge(s, payload.paneId, payload.tabId, toPane, zone))
@@ -1633,6 +1648,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={renderTab}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            canRenameTab={canRenameTab}
           />
         </div>
         {/*
@@ -1788,6 +1804,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={(tab, active, paneId) => renderTab(tab, active, paneId, 'bottom')}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            canRenameTab={canRenameTab}
           />
         </div>
       </div>
