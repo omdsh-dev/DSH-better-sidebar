@@ -41,7 +41,7 @@
 ## ✨ 功能一览
 
 - **🗂️ 文件工作台**：资源管理器（懒加载目录树；软链接按目标类型展示——目录软链接可展开、失效链接标红）+ CodeMirror 编辑器；图片 / Markdown（含 Mermaid 图表，strict 安全渲染 + 点击放大；README 级内嵌 HTML——徽章墙 / `<details>` 折叠 / 表格内联标签经 DOMPurify 消毒真实渲染；浮动目录大纲一键跳转）/ HTML / PDF
-- **🌐 内嵌浏览器**：多开网页 tab，后退 / 前进 / 刷新；内容运行在沙箱 iframe；外链默认按协议分流——HTTP 在侧边栏打开、HTTPS 走系统浏览器（设置页可分别调整）
+- **🌐 内嵌浏览器**：多开网页 tab，支持后退、前进和刷新；内容运行在沙箱 iframe。输入 `localhost:5173` 等本地应用地址，再点「信任并打开」，即可授权该地址和端口。外链按协议分流，默认 HTTP 在侧边栏打开，HTTPS 走系统浏览器。
 - **💻 真实终端**：xterm.js + node-pty 真实 shell，断线重连回放；可选为模型注入 `terminal_*` 工具
 - **📂 模型侧边栏打开（可选）**：全局设置开启后注入 `sidebar_open` 工具——模型可主动在侧边栏打开文件 / 文件夹（树以该目录为根）/ HTTP(S) 网页
 - **🌿 Git 面板**：真 diff + VSCode 式 diff tab、历史、右键暂存 / 提交 / 还原；工作区容器下自动发现子仓库并显示**仓库选择器**，支持 linked worktree 变更发现
@@ -267,6 +267,7 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 - 🔗 **适配 DSH 0.1.2-alpha.2（npm 已发布，`alpha` dist-tag）**：CI 挂载门禁钉版与 `@deepseek-ai/*` devDependencies 基线升至 0.1.2-alpha.2（真机挂载冒烟 14/14 验证）。适配点：`dsh-settings` 移除运行时导出 `settingsNamespace`（命名空间改为编译期校验，宿主侧直接传常量）；`dsh-subagent` 描述符版本 2→3（由宿主包盖章，测试断言跟随 `SUBAGENT_DESCRIPTOR_VERSION` 常量）；`SessionEvent.ignorable` 恢复与 Remote 网关 `RemoteError` 封装经核实对本插件无破坏。
 - 🐛 **修复 DSH 0.1.2-alpha.1+ 上侧边对话转录空白**：转录轮询此前仍走 alpha.1 已移除的 `ctx.connection.api`（错误被静默吞掉，tab 永远渲染空转录），现改由插件自有 `sidechat.events` 路由供给（活线程读内存事件日志、冷线程读会话持久化，`afterSeq` 增量拉取，[sidechat-routes.ts](./src/sidechat-routes.ts)）。
 - 🧹 **删除对 0.1.1-rc.x 及更早的兼容层**：e2e 宿主 RPC 从点分/斜杠双方言收敛为斜杠单方言（token URL 必选，[host-protocol.ts](./tests/e2e/host-protocol.ts)）；`MarkdownText` labels 收敛为嵌套单形状（[markdown-labels.tsx](./src/client/markdown-labels.tsx)，不再双 prop 名）；peerDependencies / devDependencies / `dsh.client.inject` / chunk externals 白名单四处同步清除已消亡的 `@deepseek-ai/dsh-client-runtime`。
+- **浏览器可直接打开本地 Web 应用**：输入 `localhost:5173` 或完整回环地址。浏览器会请求信任该地址和端口，保存后使用 Vite 模块、fetch 和热更新所需的源权限加载应用。恢复的 URL 也走同一检查。服务端不会探测任何回环地址。
 
 ### v0.17.1
 
@@ -291,7 +292,7 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 - 📝 **Markdown README 级内嵌 HTML + 目录大纲（TOC）**（[#360](https://github.com/omdsh-dev/DSH-better-sidebar/pull/360)）：Markdown 预览现在真实渲染**块级内嵌 HTML**——徽章墙 `<div align=center>`、`<details>` 折叠块内嵌 markdown、表格单元格 `<br/>`/`<sub>`/`<img>`、`<video>`/`<picture>` 全部经 DOMPurify 白名单消毒（`<script>` 等活性内容剥除、`<a>` 强制 `_blank rel=noopener`），本地媒体 src 重写为会话媒体路由；≥3 标题出现浮动**目录大纲**按钮，点击平滑滚动并自动展开折叠 `<details>`，HTML 段内标题同样收录；渲染器仍是宿主 `MarkdownText`（shiki / KaTeX / GFM 保留），纯 markdown（零 HTML）文档走原路径零回归（[设计文档](docs/plans/2026-08-24-markdown-html-toc-design.md)）
 - 🌏 **第三语言覆盖（19 语言）**（[#339](https://github.com/omdsh-dev/DSH-better-sidebar/pull/339)）：接入可选 peer `@huanlin/dsh-plugin-better-locale`——ja / de / fr / pt / ko / ar / hi / id / tr / vi / th / ru / it / nl / sv / pl / zh-HK / zh-TW / zh-MO 全量词典（每种约 340 keys）；覆盖**借用 DSH 英文槽位**（DSH active=en 时生效，zh 下完全惰性、界面不混语言）；19 语言词典同时注册进 better-locale，外部 `ctx.locale.lookup('betterSidebar', key)` 调用者同样可拿覆盖文本；未安装时 `ctx.get('betterLocale')` 为 undefined、整段 no-op，zh/en 行为不变
 - 🌿 **Git 多仓库选择 + linked worktree 变更发现**（[#326](https://github.com/omdsh-dev/DSH-better-sidebar/pull/326) [#285](https://github.com/omdsh-dev/DSH-better-sidebar/pull/285)）：会话 cwd 是工作区容器（非 Git 仓库）时自动发现直接子仓库并显示**仓库选择器**——status / 分支 / 历史 / diff / 暂存 / 提交 / 还原 / cherry-pick / 文件打开全部按所选仓库线程化；linked worktree 的变更发现与按工作树操作（含延迟分页响应的事务一致性），并拒绝过期 / 可修剪的 worktree 命令目标、对单库存取失败降级
-- 🖥️ **浏览器本地回环允许清单**（[#365](https://github.com/omdsh-dev/DSH-better-sidebar/pull/365)）：新增侧边卡设置 `browserAllowedLoopback`（逗号分隔 host 或 host:port；裸 host 匹配任意端口、带有端口精确匹配）——显式信任的本地开发服务器（如 Vite）可导航，并额外获得 iframe `allow-same-origin` 令牌（模块 / HMR / fetch 管线需要真实 origin，否则白屏）；页面相对 GUI 与其他站点仍是跨源；服务端 `browser.probe` 镜像同一允许清单，本地服务器不再被误拒
+- 🖥️ **浏览器本地回环允许清单**（[#365](https://github.com/omdsh-dev/DSH-better-sidebar/pull/365)）：侧边卡设置 `browserAllowedLoopback` 接受逗号分隔的 host 或 host:port。裸 host 匹配任意端口，带端口的条目只匹配该端口。信任的本地页面获得 iframe `allow-same-origin` 令牌，供 Vite 模块、热更新和 fetch 使用。页面相对 GUI 仍是跨源。浏览器现在可通过「信任并打开」添加精确条目，服务端则拒绝所有回环探测。
 - 📝 **编辑器 Vue + 28 种 legacy 语言语法高亮**（[#202](https://github.com/omdsh-dev/DSH-better-sidebar/pull/202)）：`.vue` 映射 `@codemirror/lang-vue`（template / script / style 按 `lang` 属性分派、`<style lang="scss">` 预处理器）；零新依赖用 legacy-modes 补齐 scss/sass/less/stylus/ruby/lua/perl/r/dart/scala/groovy/powershell/diff/protobuf/cmake/pug/tcl/haskell/clojure/erlang/julia/pascal/vb/vhdl/stex/objectivecpp；语言工厂抛错降级纯文本（console.warn），不再炸编辑器；`.v` / `.m` 跨语言歧义故意不映射
 - 🔄 **编辑器预览刷新三件套**（[#215](https://github.com/omdsh-dev/DSH-better-sidebar/pull/215) [#228](https://github.com/omdsh-dev/DSH-better-sidebar/pull/228)，修复 [#167](https://github.com/omdsh-dev/DSH-better-sidebar/issues/167)）：文本预览新增**手动刷新**按钮；编辑保存后切回预览自动重载（dirty 时抑制，草稿不丢）；预览模式下保存成功边沿自动重载；移除自动轮询与 `fs.stat` 版本端点（后台 API 零流量）
 - 🖼️ **Markdown 本地 / 相对图片**（[#292](https://github.com/omdsh-dev/DSH-better-sidebar/pull/292)）：`![alt](./img.png)`、`/cwd/img.png` 与引用式 `[id]: url` 目标重写为 `/sidebar/file` 媒体 URL（会话 cwd 边界不变）——预览不再只显示 alt 文本
@@ -484,7 +485,7 @@ pnpm watch        # tsdown --watch
 ## 🔐 安全
 
 - 路由受 Host 头信任围栏保护（与 `/api` 一致）；`fs.write` 原子写入；媒体/预览路由仅限会话 cwd 内文件；git 只调 CLI、绝不设置身份
-- HTML 预览与浏览器 tab 的内容在**不透明源沙箱 iframe** 中渲染（无 `allow-same-origin`/`allow-top-navigation`、`no-referrer`、权限策略全禁）；`/sidebar/html` 路由带 CSP `sandbox` + 大小/路径边界；地址栏拒绝 `javascript:`/`data:`/`file:` 与 localhost 等本机地址
+- HTML 预览和远程浏览器页面在不透明源沙箱 iframe 中渲染。沙箱无 `allow-top-navigation`，不发送 referrer，也不授予权限。信任的本地 Web 应用获得自身地址的 `allow-same-origin`，但与 DSH GUI 仍是跨源。地址栏拒绝 `javascript:`、`data:` 和 `file:` URL。本机地址必须通过「信任并打开」授权具体地址和端口。服务端不会探测回环地址。
 - 界面实时显示沙箱状态（关闭时红色警示），可临时解锁当前页面；设置页可按功能关闭沙箱（默认关闭该设置，带警告文案）——关闭后内容与界面同源，仅建议对完全可信内容使用
 
 ## ⚠️ 已知限制

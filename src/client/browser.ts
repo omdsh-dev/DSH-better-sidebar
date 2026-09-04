@@ -5,8 +5,8 @@
  *
  * The iframe sandbox (opaque origin, no allow-same-origin / top-navigation)
  * is the primary security boundary; this module is the address-bar gate on
- * top of it: only http/https may be navigated, and loopback addresses are
- * refused so a browsed page cannot probe local services by user action.
+ * top of it: only http/https may be navigated, and loopback addresses need
+ * explicit user trust before they may load.
  * The GUI's OWN origin is explicitly ALLOWED — the user may open the GUI
  * itself in the sidebar (debugging, mirroring); the sandbox still renders
  * it in an opaque origin with no same-origin privileges, exactly like any
@@ -19,7 +19,8 @@ export type BrowserBlockReason = 'scheme' | 'loopback'
 /** Result of normalizing one address-bar input. */
 export type BrowserNavigateResult =
   | { kind: 'ok'; url: string }
-  | { kind: 'blocked'; reason: BrowserBlockReason }
+  | { kind: 'blocked'; reason: 'scheme' }
+  | { kind: 'blocked'; reason: 'loopback'; url: string; authority: string }
   | { kind: 'invalid' }
 
 /** One browser.probe wire result (host fetch of the target's headers). */
@@ -83,18 +84,55 @@ const FORBIDDEN_SCHEMES = new Set([
   'chrome', 'chrome-extension', 'moz-extension', 'edge', 'opera', 'resource', 'view-source',
 ])
 
-/** Parse the loopback allowlist into a matcher predicate over host:port. */
+function normalizedHostname(hostname: string): string {
+  return hostname.replace(/^\[|\]$/g, '').toLowerCase()
+}
+
+function effectivePort(url: URL): string {
+  if (url.port !== '') return url.port
+  return url.protocol === 'https:' ? '443' : '80'
+}
+
+/** The exact allowlist authority for a loopback URL, including default ports. */
+export function loopbackAuthorityOf(url: string): string | undefined {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return undefined
+  }
+  if (!isLoopbackHostname(parsed.hostname)) return undefined
+  const host = normalizedHostname(parsed.hostname)
+  const printableHost = host.includes(':') ? `[${host}]` : host
+  return `${printableHost}:${effectivePort(parsed)}`
+}
+
+/** Whether a parsed or raw URL points at this machine's loopback interface. */
+export function isLoopbackUrl(url: string): boolean {
+  try {
+    return isLoopbackHostname(new URL(url).hostname)
+  } catch {
+    return false
+  }
+}
+
+/** Parse the loopback allowlist into a matcher predicate over host and port. */
 export function parseLoopbackAllowlist(allowlist: string): (host: string, port: string) => boolean {
   const entries = allowlist.split(',').map(entry => entry.trim().toLowerCase()).filter(entry => entry !== '')
-  const exact = new Set(entries)
+  const exact = new Set<string>()
   const hosts = new Set<string>()
   for (const entry of entries) {
-    if (!entry.includes(':')) hosts.add(entry.replace(/^\[|\]$/g, ''))
+    const bracketed = /^\[([^\]]+)\](?::(\d+))?$/.exec(entry)
+    const hostAndPort = /^([^:]+):(\d+)$/.exec(entry)
+    const host = normalizedHostname(bracketed?.[1] ?? hostAndPort?.[1] ?? entry)
+    const port = bracketed?.[2] ?? hostAndPort?.[2]
+    if (!isLoopbackHostname(host)) continue
+    if (port === undefined) hosts.add(host)
+    else if (Number(port) >= 1 && Number(port) <= 65_535) exact.add(`${host}:${Number(port)}`)
   }
   return (host, port) => {
-    const key = `${host}:${port}`
-    if (exact.has(key) || exact.has(host)) return true
-    return port !== '' && hosts.has(host)
+    const normalizedHost = normalizedHostname(host)
+    return exact.has(`${normalizedHost}:${port}`) || hosts.has(normalizedHost)
   }
 }
 
@@ -114,7 +152,15 @@ export function isAllowedLoopbackUrl(url: string, allowlist: string): boolean {
     return false
   }
   if (!isLoopbackHostname(parsed.hostname)) return false
-  return parseLoopbackAllowlist(allowlist)(parsed.hostname, parsed.port)
+  return parseLoopbackAllowlist(allowlist)(parsed.hostname, effectivePort(parsed))
+}
+
+/** Add one loopback URL's exact authority to the persisted allowlist. */
+export function addAllowedLoopbackUrl(allowlist: string, url: string): string {
+  const authority = loopbackAuthorityOf(url)
+  if (authority === undefined || isAllowedLoopbackUrl(url, allowlist)) return allowlist.trim()
+  const entries = allowlist.split(',').map(entry => entry.trim()).filter(entry => entry !== '')
+  return [...entries, authority].join(', ')
 }
 
 export function normalizeBrowserUrl(input: string, selfOrigin: string, allowedLoopback = ''): BrowserNavigateResult {
@@ -126,13 +172,19 @@ export function normalizeBrowserUrl(input: string, selfOrigin: string, allowedLo
   // scheme; anything else is treated as a host and gets https://.
   const schemeMatch = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(trimmed)
   let withScheme: string
-  if (schemeMatch === null) {
-    withScheme = `https://${trimmed}`
-  } else {
+  if (schemeMatch !== null) {
     const scheme = schemeMatch[1]!.toLowerCase()
     if (scheme === 'http' || scheme === 'https') withScheme = trimmed
     else if (FORBIDDEN_SCHEMES.has(scheme)) return { kind: 'blocked', reason: 'scheme' }
-    else withScheme = `https://${trimmed}`
+    else {
+      // A bare host with a port looks like an unknown scheme. Local dev
+      // servers normally speak plain HTTP, so loopback shorthand gets HTTP.
+      const localCandidate = `http://${trimmed}`
+      withScheme = isLoopbackUrl(localCandidate) ? localCandidate : `https://${trimmed}`
+    }
+  } else {
+    const localCandidate = `http://${trimmed}`
+    withScheme = isLoopbackUrl(localCandidate) ? localCandidate : `https://${trimmed}`
   }
   let url: URL
   try {
@@ -155,13 +207,17 @@ export function normalizeBrowserUrl(input: string, selfOrigin: string, allowedLo
   }
   if (isLoopbackHostname(url.hostname)) {
     // An explicit user allowlist (browserAllowedLoopback) can lift the
-    // loopback block for trusted local dev servers. The sandbox still
-    // renders them in an opaque origin — no GUI access, exactly like any
-    // other browsed site.
-    if (allowedLoopback.trim() !== '' && parseLoopbackAllowlist(allowedLoopback)(url.hostname, url.port)) {
+    // loopback block for trusted local dev servers. They receive their own
+    // origin but remain cross-origin to the GUI.
+    if (isAllowedLoopbackUrl(url.href, allowedLoopback)) {
       return { kind: 'ok', url: url.href }
     }
-    return { kind: 'blocked', reason: 'loopback' }
+    return {
+      kind: 'blocked',
+      reason: 'loopback',
+      url: url.href,
+      authority: loopbackAuthorityOf(url.href)!,
+    }
   }
   return { kind: 'ok', url: url.href }
 }

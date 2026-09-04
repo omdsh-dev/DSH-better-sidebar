@@ -27,6 +27,7 @@
  * assertion.
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, expect, type APIRequestContext } from '@playwright/test'
@@ -62,6 +63,37 @@ const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Side Chat (beta)', 'T
 let api: APIRequestContext
 /** The seeded session id (captured by seedSession; the Side Chat smoke's parent). */
 let seededSessionId: string
+let localAppServer: Server
+let localAppUrl: string
+
+/** Start a small module-and-fetch app that fails under an opaque origin. */
+async function startLocalApp(): Promise<void> {
+  localAppServer = createServer((request, response) => {
+    if (request.url === '/app.js') {
+      response.writeHead(200, { 'content-type': 'text/javascript' })
+      response.end([
+        "const value = await fetch('/data.json').then(response => response.json())",
+        "document.querySelector('#status').textContent = value.message",
+        "document.querySelector('#run').addEventListener('click', () => { document.querySelector('#status').textContent = 'app ran' })",
+      ].join('\n'))
+      return
+    }
+    if (request.url === '/data.json') {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ message: 'local module and fetch loaded' }))
+      return
+    }
+    response.writeHead(200, { 'content-type': 'text/html' })
+    response.end('<!doctype html><html><body><div id="status">starting</div><button id="run">Run app</button><script type="module" src="/app.js"></script></body></html>')
+  })
+  await new Promise<void>((resolve, reject) => {
+    localAppServer.once('error', reject)
+    localAppServer.listen(0, () => resolve())
+  })
+  const address = localAppServer.address()
+  if (address === null || typeof address === 'string') throw new Error('local app server did not bind a TCP port')
+  localAppUrl = `http://localhost:${address.port}/`
+}
 
 /** Seed one workspace + one session (plus files for the editor/mermaid-chunk
  *  probes) through the host's unary RPC surface. */
@@ -134,11 +166,15 @@ async function seedSession(): Promise<void> {
 
 test.beforeAll(async () => {
   api = await createHostApi()
+  await startLocalApp()
   await seedSession()
 })
 
 test.afterAll(async () => {
   await api?.dispose()
+  await new Promise<void>((resolve, reject) => {
+    localAppServer.close(error => { if (error === undefined) resolve(); else reject(error) })
+  })
 })
 
 test('plugin mounts into the DSH shell and survives a built-in tab sweep', async ({ page }) => {
@@ -546,6 +582,67 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
 
   // Final screenshot: the rendered panel with a session is the lane's proof.
   await page.screenshot({ path: 'test-results/mount-final.png' })
+})
+
+test('trusted localhost app loads modules, fetches data, and runs inside the Browser tab', async ({ page }) => {
+  test.setTimeout(180_000)
+  const reset = await api.post(sidebarApi('settings.update'), {
+    data: { patch: { browserAllowedLoopback: '' } },
+  })
+  expect(reset.ok(), `settings.update reset: ${reset.status()}`).toBe(true)
+  try {
+    await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
+    const sidebar = page.locator('[data-dsh-better-sidebar]')
+    await expect(sidebar).toBeAttached({ timeout: 90_000 })
+
+    try {
+      await expect
+        .poll(() => page.getByRole('button', { name: /^(Continue|Configure later)$/ }).count(), { timeout: 60_000 })
+        .toBeGreaterThan(0)
+    } catch {
+      console.warn('[e2e-local-app] no onboarding takeover appeared; proceeding')
+    }
+    for (let round = 0; round < 8; round++) {
+      let dismissed = false
+      for (const name of ['Continue', 'Configure later']) {
+        const button = page.getByRole('button', { name, exact: true }).first()
+        if ((await button.count()) === 0) continue
+        try {
+          await button.click({ timeout: 4_000 })
+          dismissed = true
+          await page.waitForTimeout(1_000)
+        } catch {
+          // A stacked takeover can mask this button. Try the other one.
+        }
+      }
+      if (!dismissed) break
+    }
+
+    const expand = sidebar.getByRole('button', { name: 'Expand sidebar' })
+    if ((await expand.count()) > 0) await expand.click()
+    const newTab = sidebar.getByRole('button', { name: 'New tab' }).first()
+    await newTab.click()
+    await page.getByRole('menuitem', { name: 'Browser' }).first().click()
+
+    const port = new URL(localAppUrl).port
+    const address = sidebar.locator('input[placeholder^="Enter a URL"]:visible')
+    await address.fill(`localhost:${port}`)
+    await address.press('Enter')
+    await expect(sidebar.getByText(`Trust and open localhost:${port}?`)).toBeVisible()
+    await sidebar.getByRole('button', { name: 'Trust and open', exact: true }).click()
+
+    const iframe = sidebar.locator(`iframe[src="${localAppUrl}"]`)
+    await expect(iframe).toBeVisible({ timeout: 30_000 })
+    expect(await iframe.getAttribute('sandbox')).toContain('allow-same-origin')
+    const app = page.frameLocator(`iframe[src="${localAppUrl}"]`)
+    await expect(app.locator('#status')).toHaveText('local module and fetch loaded', { timeout: 30_000 })
+    await app.getByRole('button', { name: 'Run app' }).click()
+    await expect(app.locator('#status')).toHaveText('app ran')
+  } finally {
+    await api.post(sidebarApi('settings.update'), {
+      data: { patch: { browserAllowedLoopback: '' } },
+    })
+  }
 })
 
 test('conservative auto: URL stamps alone never modify the layout; plugin chrome carries the stable data attributes', async ({ page }) => {

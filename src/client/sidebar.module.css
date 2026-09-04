@@ -1693,6 +1693,11 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
+.browserBlockedButton:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .editorCm {
   flex: 1;
   min-height: 0;

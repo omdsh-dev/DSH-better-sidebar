@@ -270,26 +270,6 @@ function fenceEnabledOf(getSettings: () => SidebarSettingsFace | undefined): boo
   return (value as Record<string, unknown>).workspaceFence !== false
 }
 
-/**
- * Parse the browser tab's `browserAllowedLoopback` allowlist into a matcher
- * over host:port (same contract as the client-side helper in
- * src/client/browser.ts — kept in sync). Bare hosts (`localhost`,
- * `127.0.0.1`) match every port; `host:port` entries match exactly.
- */
-function parseLoopbackAllowlist(allowlist: string): (host: string, port: string) => boolean {
-  const entries = allowlist.split(',').map(entry => entry.trim().toLowerCase()).filter(entry => entry !== '')
-  const exact = new Set(entries)
-  const hosts = new Set<string>()
-  for (const entry of entries) {
-    if (!entry.includes(':')) hosts.add(entry.replace(/^\[|\]$/g, ''))
-  }
-  return (host, port) => {
-    const key = `${host}:${port}`
-    if (exact.has(key) || exact.has(host)) return true
-    return port !== '' && hosts.has(host)
-  }
-}
-
 function buildApi(
   ctx: Context,
   ptyManager: PtyManager | null,
@@ -545,17 +525,12 @@ function buildApi(
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
         throw new SidebarError('bad-request', 'only http/https urls can be probed', 400)
       }
-      // Mirror the browser tab's address-bar policy: loopback stays unreachable
-      // from the sidebar (unless the user allowlisted it), so probing it would
-      // leak nothing the tab could use.
-      if (isLoopbackHostname(parsed.hostname)) {
-        const prefs = getSettings()?.get()?.value as SidebarPrefs | undefined
-        const allowlist = typeof prefs?.browserAllowedLoopback === 'string' ? prefs.browserAllowedLoopback : ''
-        const allowed = allowlist.trim() !== ''
-          && parseLoopbackAllowlist(allowlist)(parsed.hostname, parsed.port)
-        if (!allowed) {
-          throw new SidebarError('bad-request', 'local addresses are not probed', 400)
-        }
+      // Local web apps load directly in the user's iframe after explicit
+      // client-side trust. The host must never fetch them on the user's
+      // behalf because that would turn this display helper into a local
+      // network request endpoint.
+      if (isLoopbackHostname(parsed.hostname) || parsed.hostname === '0.0.0.0') {
+        throw new SidebarError('bad-request', 'local addresses are not probed', 400)
       }
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), 8000)

@@ -140,6 +140,25 @@ describe('browser tab iframe sandbox', () => {
     expect(iframe).toContain('allow=""')
   })
 
+  it('applies the address policy to a restored local URL before creating an iframe', () => {
+    const store = createSidebarStore()
+    const html = renderToString(createElement(BrowserView, tabProps(store, 'http://localhost:5173/')))
+    expect(html).not.toContain('<iframe')
+    expect(html).toContain('信任并打开 localhost:5173？')
+    expect(html).toContain('此权限只授予这个地址和端口')
+    expect(html).toContain('信任并打开</button>')
+  })
+
+  it('runs a trusted restored local app with its own origin privileges', () => {
+    const store = createSidebarStore()
+    store.setPrefs({ ...store.getPrefs(), browserAllowedLoopback: 'localhost:5173' })
+    const html = renderToString(createElement(BrowserView, tabProps(store, 'http://localhost:5173/')))
+    const iframe = /<iframe[^>]*>/.exec(html)?.[0]
+    expect(iframe).toBeDefined()
+    expect(iframe).toContain('src="http://localhost:5173/"')
+    expect(iframe).toContain('allow-same-origin')
+  })
+
   it('never grants allow-same-origin to the GUI\'s own origin, even when allowlisted', () => {
     // A bare-host allowlist entry covers every port, so an allowlisted GUI
     // host also matches the GUI's exact origin — but a page at the GUI's

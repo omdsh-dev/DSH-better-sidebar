@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { loadExternalDisable, loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
+import { allowLoopbackUrl, loadExternalDisable, loadPrefs, type SidebarSettingsClient } from '../src/client/prefs.ts'
 import { allLeaves, createSidebarStore, defaultWidthFor, makeDefaultState, maxPanelWidth, setWidth } from '../src/client/state.ts'
 import { SIDEBAR_PREFS_DEFAULTS, WIDTH_PERCENT_MAX } from '../src/prefs-shared.ts'
 
@@ -247,6 +247,31 @@ describe('side card preferences', () => {
     // false stays "never take over" regardless of the flags).
     expect((await loadPrefs(wire({ browserInterceptLinks: false, browserInterceptHttp: true, browserInterceptHttps: true }))))
       .toMatchObject({ browserInterceptLinks: false, browserInterceptHttp: true, browserInterceptHttps: true })
+  })
+
+  it('persists one exact local authority with the current settings revision', async () => {
+    let receivedPatch: Record<string, unknown> | undefined
+    let receivedRevision: number | undefined
+    const settings: SidebarSettingsClient = {
+      settingsGet: async () => ({
+        value: { browserAllowedLoopback: '127.0.0.1:8080' },
+        revision: 7,
+      }),
+      settingsUpdate: async (patch, expectedRevision) => {
+        receivedPatch = patch
+        receivedRevision = expectedRevision
+        return {
+          value: { browserAllowedLoopback: patch.browserAllowedLoopback },
+          revision: 8,
+        }
+      },
+    }
+
+    const prefs = await allowLoopbackUrl(settings, 'http://localhost:5173/')
+
+    expect(receivedPatch).toEqual({ browserAllowedLoopback: '127.0.0.1:8080, localhost:5173' })
+    expect(receivedRevision).toBe(7)
+    expect(prefs.browserAllowedLoopback).toBe('127.0.0.1:8080, localhost:5173')
   })
 
   it('resolves the terminal font prefs (family passthrough, size clamp)', async () => {

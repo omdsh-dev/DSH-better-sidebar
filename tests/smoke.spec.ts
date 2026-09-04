@@ -1075,10 +1075,24 @@ describe('side card settings routes', () => {
 
   it('refuses non-http(s) and loopback URLs', async () => {
     const route = mountWithSettings(undefined)
-    for (const url of ['javascript:alert(1)', 'file:///etc/passwd', 'http://127.0.0.1:8080/', 'http://localhost/']) {
-      const result = await invoke(route, 'browser.probe', { url })
-      expect(result.ok, url).toBe(false)
-      expect(result.error?.code, url).toBe('bad-request')
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      for (const url of [
+        'javascript:alert(1)',
+        'file:///etc/passwd',
+        'http://127.0.0.1:8080/',
+        'http://localhost/',
+        'http://[::1]:5173/',
+        'http://0.0.0.0:4173/',
+      ]) {
+        const result = await invoke(route, 'browser.probe', { url })
+        expect(result.ok, url).toBe(false)
+        expect(result.error?.code, url).toBe('bad-request')
+      }
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
     }
   })
 })

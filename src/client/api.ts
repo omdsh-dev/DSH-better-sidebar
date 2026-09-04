@@ -337,8 +337,8 @@ export const api = {
       patch,
       ...(expectedRevision !== undefined ? { expectedRevision } : {}),
     }),
-  /** Probe a URL's response headers (the sidebar browser's embeddability
-   *  check; see the host's browser.probe route). */
+  /** Probe a remote URL's response headers for iframe restrictions. Local
+   *  addresses load directly after client-side trust and are never probed. */
   browserProbe: (url: string, signal?: AbortSignal) =>
     call<BrowserProbeResult>('browser.probe', { url }, signal),
   /** External open for the file tree's "open with" menu: reveal a path in

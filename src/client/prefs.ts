@@ -9,6 +9,7 @@
  * must keep working exactly as composed when the settings surface is missing.
  */
 import type { api } from './api.ts'
+import { addAllowedLoopbackUrl, loopbackAuthorityOf } from './browser.ts'
 import {
   clampTerminalFontSize,
   clampTitleBarStrip,
@@ -194,6 +195,24 @@ export async function loadPrefs(settings: SidebarSettingsClient): Promise<Sideba
     // Transport/fence rejection or a malformed response: keep the defaults.
     return { ...SIDEBAR_PREFS_DEFAULTS }
   }
+}
+
+/**
+ * Persist trust for one exact local web-app authority. The fresh read and
+ * revision-guarded write keep this button from overwriting settings changed
+ * in another sidebar or settings panel.
+ */
+export async function allowLoopbackUrl(
+  settings: SidebarSettingsClient,
+  url: string,
+): Promise<SidebarPrefs> {
+  if (loopbackAuthorityOf(url) === undefined) throw new Error('url is not a loopback address')
+  const current = await settings.settingsGet()
+  const prefs = parsePrefs(current.value)
+  const browserAllowedLoopback = addAllowedLoopbackUrl(prefs.browserAllowedLoopback, url)
+  if (browserAllowedLoopback === prefs.browserAllowedLoopback.trim()) return prefs
+  const updated = await settings.settingsUpdate({ browserAllowedLoopback }, current.revision)
+  return parsePrefs(updated.value)
 }
 
 /**

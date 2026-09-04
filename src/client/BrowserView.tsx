@@ -1,22 +1,21 @@
 /**
  * The built-in browser tab: an address bar plus a sandboxed iframe.
  *
- * Security model (see browser.ts + the sandbox tokens below): the iframe is
- * ALWAYS sandboxed without `allow-same-origin` (opaque origin — the visited
- * page can never sit on the GUI's origin, read its storage, or reach
- * /sidebar/api) and without `allow-top-navigation` (a page must not hijack
- * the GUI). The address bar only accepts http(s) and refuses loopback /
- * the GUI's own origin. The side card setting "关闭浏览器沙箱" drops the
- * sandbox attribute entirely for fully trusted sites — the visited page then
- * runs with the GUI's own origin and full session access, so a persistent
- * warning bar renders while it is off.
+ * Security model (see browser.ts and the sandbox tokens below): every iframe
+ * is sandboxed without `allow-top-navigation`. Remote pages get an opaque
+ * origin. A loopback page gets its own origin only after the user trusts its
+ * exact address and port, which local module and fetch pipelines need. The
+ * GUI's exact origin never gets that permission. The address bar accepts
+ * only http(s). The side card setting "关闭浏览器沙箱" can remove the sandbox
+ * for fully trusted sites, so a persistent warning bar renders while it is
+ * off.
  *
  * The URL is persisted onto the tab (path/title via the patchTab reducer)
  * so a reload restores the visited page; the back/forward stack only tracks
  * address-bar navigations (in-frame link clicks are cross-origin and
  * invisible — a documented limitation).
  */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import {
   IconChevronLeftOutline14,
   IconChevronRightOutline14,
@@ -26,7 +25,14 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { VscLinkExternal } from 'react-icons/vsc'
 import { api } from './api.ts'
-import { embeddabilityOf, isAllowedLoopbackUrl, normalizeBrowserUrl } from './browser.ts'
+import {
+  embeddabilityOf,
+  isAllowedLoopbackUrl,
+  isLoopbackUrl,
+  normalizeBrowserUrl,
+  type BrowserNavigateResult,
+} from './browser.ts'
+import { allowLoopbackUrl } from './prefs.ts'
 import { patchTab } from './state.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { t } from './locales.ts'
@@ -81,21 +87,42 @@ export function iframeSandboxFor(url: string | undefined, allowedLoopback: strin
 
 export function BrowserView(props: TabComponentProps) {
   const { store, tab } = props
+  const subscribe = useCallback((listener: () => void) => store.subscribe(listener), [store])
+  const getSnapshot = useCallback(() => store.getSnapshot(), [store])
+  const prefs = useSyncExternalStore(subscribe, getSnapshot, getSnapshot).prefs
+  const [initialNavigation] = useState<BrowserNavigateResult | undefined>(() => (
+    tab.path === undefined
+      ? undefined
+      : normalizeBrowserUrl(tab.path, window.location.origin, prefs.browserAllowedLoopback)
+  ))
   // The current address (initialized from the persisted tab.path so a
-  // reload restores the visited page).
-  const [url, setUrl] = useState<string | undefined>(tab.path)
+  // reload restores the visited page after applying the same policy as the
+  // address bar).
+  const [url, setUrl] = useState<string | undefined>(
+    initialNavigation?.kind === 'ok' ? initialNavigation.url : undefined,
+  )
   const [input, setInput] = useState<string>(tab.path ?? '')
   /** Blocked/invalid hint shown under the address bar (null = none). */
-  const [message, setMessage] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(() => {
+    if (initialNavigation?.kind === 'invalid') return t('browserInvalid')
+    if (initialNavigation?.kind === 'blocked' && initialNavigation.reason === 'scheme') return t('browserBlockedScheme')
+    return null
+  })
+  const [pendingLocal, setPendingLocal] = useState<Extract<BrowserNavigateResult, { reason: 'loopback' }> | null>(
+    initialNavigation?.kind === 'blocked' && initialNavigation.reason === 'loopback'
+      ? initialNavigation
+      : null,
+  )
+  const [trustingLocal, setTrustingLocal] = useState(false)
   /** Address-bar navigation history (in-frame clicks are not tracked). */
-  const [history, setHistory] = useState<string[]>(tab.path !== undefined ? [tab.path] : [])
-  const [cursor, setCursor] = useState<number>(tab.path !== undefined ? 0 : -1)
+  const [history, setHistory] = useState<string[]>(url !== undefined ? [url] : [])
+  const [cursor, setCursor] = useState<number>(url !== undefined ? 0 : -1)
   /** Bumped on reload to remount the iframe (also remounts on sandbox flip). */
   const [reloadKey, setReloadKey] = useState(0)
   /** TEMPORARY sandbox unlock for THIS surface only (never writes the global
    *  side card setting; lasts until the tab unmounts or the user restores). */
   const [localUnlock, setLocalUnlock] = useState(false)
-  const noSandbox = store.getPrefs().browserNoSandbox === true || localUnlock
+  const noSandbox = prefs.browserNoSandbox === true || localUnlock
   /** A site that refuses to be embedded (X-Frame-Options / frame-ancestors):
    *  the probe verdict shown instead of the blank iframe. */
   const [embedBlocked, setEmbedBlocked] = useState<string | null>(null)
@@ -108,6 +135,11 @@ export function BrowserView(props: TabComponentProps) {
   // (unreachable) keeps the plain iframe.
   useEffect(() => {
     if (url === undefined) return
+    if (isLoopbackUrl(url)) {
+      setEmbedBlocked(null)
+      setForceEmbed(false)
+      return
+    }
     let cancelled = false
     setEmbedBlocked(null)
     setForceEmbed(false)
@@ -123,43 +155,90 @@ export function BrowserView(props: TabComponentProps) {
     store.reduce(state => patchTab(state, tab.id, { path: nextUrl, title: host }))
   }
 
-  const navigateTo = (raw: string): void => {
-    const result = normalizeBrowserUrl(raw, window.location.origin, store.getPrefs().browserAllowedLoopback)
-    if (result.kind === 'ok') {
-      const next = result.url
-      setUrl(next)
-      setInput(next)
+  const showRefusal = (result: Exclude<BrowserNavigateResult, { kind: 'ok' }>): void => {
+    if (result.kind === 'blocked' && result.reason === 'loopback') {
+      setInput(result.url)
       setMessage(null)
-      // Push onto the stack, dropping any stale forward entries.
-      setHistory(previous => [...previous.slice(0, cursor + 1), next])
-      setCursor(previous => previous + 1)
-      setReloadKey(key => key + 1)
-      persist(next)
+      setPendingLocal(result)
       return
     }
-    setMessage(result.kind === 'invalid'
-      ? t('browserInvalid')
-      : result.reason === 'scheme' ? t('browserBlockedScheme')
-      : t('browserBlockedLoopback'))
+    setPendingLocal(null)
+    setMessage(result.kind === 'invalid' ? t('browserInvalid') : t('browserBlockedScheme'))
   }
 
-  const goBack = (): void => {
-    if (cursor <= 0) return
-    const next = history[cursor - 1]!
-    setCursor(cursor - 1)
+  const commitNavigation = (next: string): void => {
     setUrl(next)
     setInput(next)
+    setMessage(null)
+    setPendingLocal(null)
+    // Push onto the stack, dropping any stale forward entries.
+    setHistory(previous => [...previous.slice(0, cursor + 1), next])
+    setCursor(previous => previous + 1)
     setReloadKey(key => key + 1)
+    persist(next)
   }
 
-  const goForward = (): void => {
-    if (cursor >= history.length - 1) return
-    const next = history[cursor + 1]!
-    setCursor(cursor + 1)
-    setUrl(next)
-    setInput(next)
-    setReloadKey(key => key + 1)
+  const navigateTo = (raw: string): void => {
+    const result = normalizeBrowserUrl(raw, window.location.origin, prefs.browserAllowedLoopback)
+    if (result.kind === 'ok') {
+      commitNavigation(result.url)
+      return
+    }
+    showRefusal(result)
   }
+
+  const trustAndOpen = async (): Promise<void> => {
+    if (pendingLocal === null || trustingLocal) return
+    setTrustingLocal(true)
+    setMessage(null)
+    try {
+      const nextPrefs = await allowLoopbackUrl(api, pendingLocal.url)
+      store.setPrefs(nextPrefs)
+      commitNavigation(pendingLocal.url)
+    } catch {
+      setMessage(t('browserTrustFailed'))
+    } finally {
+      setTrustingLocal(false)
+    }
+  }
+
+  const moveInHistory = (nextCursor: number): void => {
+    const raw = history[nextCursor]
+    if (raw === undefined) return
+    const result = normalizeBrowserUrl(raw, window.location.origin, prefs.browserAllowedLoopback)
+    setCursor(nextCursor)
+    if (result.kind !== 'ok') {
+      setUrl(undefined)
+      showRefusal(result)
+      return
+    }
+    setUrl(result.url)
+    setInput(result.url)
+    setPendingLocal(null)
+    setMessage(null)
+    setReloadKey(key => key + 1)
+    persist(result.url)
+  }
+
+  const goBack = (): void => { moveInHistory(cursor - 1) }
+
+  const goForward = (): void => { moveInHistory(cursor + 1) }
+
+  // A settings edit can revoke a local grant while its tab is open. Apply
+  // the updated policy immediately instead of leaving the old document in
+  // an iframe until the next navigation.
+  useEffect(() => {
+    if (url === undefined || !isLoopbackUrl(url)) return
+    const result = normalizeBrowserUrl(url, window.location.origin, prefs.browserAllowedLoopback)
+    if (result.kind === 'blocked' && result.reason === 'loopback') {
+      setUrl(undefined)
+      showRefusal(result)
+    }
+  }, [prefs.browserAllowedLoopback, url])
+
+  const iframeSandbox = url === undefined || noSandbox
+    ? undefined
+    : iframeSandboxFor(url, prefs.browserAllowedLoopback, window.location.origin)
 
   return (
     <div className={css.browser}>
@@ -217,9 +296,10 @@ export function BrowserView(props: TabComponentProps) {
           className={css.iconButton}
           aria-label={t('browserOpenExternal')}
           title={t('browserOpenExternal')}
-          disabled={url === undefined}
+          disabled={url === undefined && pendingLocal === null}
           onClick={() => {
-            if (url !== undefined) window.open(url, '_blank', 'noopener')
+            const next = pendingLocal?.url ?? url
+            if (next !== undefined) window.open(next, '_blank', 'noopener')
           }}
         >
           <VscLinkExternal size={15} />
@@ -233,7 +313,13 @@ export function BrowserView(props: TabComponentProps) {
         onUnlock={() => { setLocalUnlock(true) }}
         onRestore={() => { setLocalUnlock(false) }}
       />
-      {url === undefined ? (
+      {pendingLocal !== null ? (
+        <BrowserLocalTrust
+          authority={pendingLocal.authority}
+          busy={trustingLocal}
+          onTrust={() => { void trustAndOpen() }}
+        />
+      ) : url === undefined ? (
         <div className={css.browserStart}>{t('browserStart')}</div>
       ) : embedBlocked !== null && !forceEmbed ? (
         <BrowserEmbedBlocked
@@ -243,15 +329,41 @@ export function BrowserView(props: TabComponentProps) {
         />
       ) : (
         <iframe
-          key={`${reloadKey}:${noSandbox ? 'ns' : 'sb'}`}
+          key={`${reloadKey}:${iframeSandbox ?? 'ns'}`}
           className={css.browserFrame}
           src={url}
-          sandbox={noSandbox ? undefined : iframeSandboxFor(url, store.getPrefs().browserAllowedLoopback, window.location.origin)}
+          sandbox={iframeSandbox}
           referrerPolicy="no-referrer"
           allow=""
           title={url}
         />
       )}
+    </div>
+  )
+}
+
+/** Confirm and persist one exact local dev-server authority before loading it. */
+export function BrowserLocalTrust(props: {
+  authority: string
+  busy: boolean
+  onTrust: () => void
+}) {
+  const { authority, busy, onTrust } = props
+  return (
+    <div className={css.browserBlocked}>
+      <IconWarningOutline16 size={16} />
+      <div className={css.browserBlockedTitle}>{t('browserLocalBlockedTitle', { authority })}</div>
+      <div className={css.browserBlockedDesc}>{t('browserLocalBlockedDesc')}</div>
+      <div className={css.browserBlockedActions}>
+        <button
+          type="button"
+          className={css.browserBlockedButton}
+          disabled={busy}
+          onClick={onTrust}
+        >
+          {busy ? t('browserTrusting') : t('browserTrustAndOpen')}
+        </button>
+      </div>
     </div>
   )
 }
