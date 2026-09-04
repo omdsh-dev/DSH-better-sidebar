@@ -425,7 +425,7 @@ export const zh = {
   pluginTurnReviewDesc: '对「刚刚这一回合」的 diff 做 Approve / Request changes 的人闸门：只审上一回合，不 fork 会话；文件按主会话/子代理/未归因分组，按文件勾选打回 + 可选评语，点文件先看回合开始快照 vs 现在的 diff。不是 /rewind',
   pluginVideoPreviewDesc: '在 better-sidebar 编辑器内联预览视频文件（.mp4/.webm/.mov/.mkv/.avi 等），自带支持 HTTP Range（206）的 /video 宿主路由，可拖动进度条、不受 20MB mediaLimit 限制',
   pluginCodeNavDesc: '代码预览导航：按文件类型自动识别语言并高亮语法，符号大纲（类/方法/变量筛选 + 一键跳转），文件内查找（全部匹配高亮、上/下一处、区分大小写），接管 better-sidebar 的代码文件预览',
-  pluginDevGitGraphDesc: 'vscode-git-graph 忠实移植的提交图 Tab：自动绑定会话工作区，checkout/merge/rebase/push/tag/stash 全套 git 操作，明暗主题跟随；装了 better-sidebar 注册原生 Tab 并在其 DiffTab 打开文件 diff，未装回退右侧 overlay 面板',
+  pluginDevGitGraphDesc: 'vscode-git-graph 忠实移植的提交图 Tab：唯一入口为 better-sidebar 原生 tab，自动绑定会话工作区，checkout/merge/rebase/push/tag/stash 全套 git 操作，明暗主题跟随，点文件 diff 直接打开内置 DiffTab；需先安装 dsh-better-sidebar',
   pluginDocsPanelDesc: 'DSH 侧边栏里的「全局文档」：全局 Markdown 笔记，任何工作区随时可读——列表点选阅读、悬浮大纲跳转、Chrome / VS Code 外部打开、代码复制，目录可配置（默认 ~/.dsh/docs）',
   pluginEgoBrowserDesc: '把 CitroLabs/ego-lite 接进 DeepSeek Harness 的 agent 浏览器：32 个 ego_* 工具驱动真实 Chromium，侧边栏原生「ego 浏览器」Tab 实时观察 agent 逛的每个页面，可直接点击/拖拽/输入接管；装 better-sidebar 时自动注册 Tab，没装则退回浮动浮窗',
   pluginBilingualReaderDesc: '在 DSH 侧边栏读论文 PDF：原生 PDF 显示，选中一段文字即用大模型划词翻译，结合上下文、完全隔离主对话，只作阅读辅助',

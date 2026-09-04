@@ -410,7 +410,7 @@ export const ko: Record<string, string> = {
   pluginSshTunnelDesc: 'better-sidebar "SSH 터널" Tab: 다중 호스트 목록 + 프로젝트별 권한 + 키 로컬 보관. 모델 도구 SSHManager(exec/SFTP/세션 전략). 중앙 대화형 터미널과 이중 창 SFTP',
   pluginTurnReviewDesc: '방금 끝난 턴의 diff에 대해 Approve / Request changes를 하는 사람 게이트: 지난 턴만 검토하며 세션을 fork하지 않습니다. 파일을 주 세션/서브 에이전트/미귀속으로 그룹화하고, 파일별로 선택하여 반려 + 선택적 코멘트. 파일을 클릭하면 턴 시작 스냅샷 vs 현재 diff를 먼저 봅니다. /rewind가 아닙니다',
   pluginVideoPreviewDesc: 'better-sidebar 편집기에서 비디오 파일(.mp4/.webm/.mov/.mkv/.avi 등)을 인라인 미리보기합니다. HTTP Range(206)를 지원하는 /video 호스트 라우트를 내장하며, 진행 바를 드래그할 수 있고 20MB mediaLimit 제한을 받지 않습니다',
-  pluginDevGitGraphDesc: 'A faithful vscode-git-graph port as a sidebar tab: auto-bound to the session workspace, full git operations (checkout/merge/rebase/push/tag/stash), light/dark theming; registers a native tab with better-sidebar and opens file diffs in its DiffTab, falling back to an overlay panel without it',
+  pluginDevGitGraphDesc: 'A faithful vscode-git-graph port as a sidebar tab: the only entry is a native better-sidebar tab, auto-bound to the session workspace, full git operations (checkout/merge/rebase/push/tag/stash), light/dark theming, file diffs open in the built-in DiffTab; requires dsh-better-sidebar',
   pluginDocsPanelDesc: 'DSH 사이드바의 "전역 문서": 전역 Markdown 메모로, 어떤 작업 공간에서든 언제든 읽을 수 있습니다. 목록을 클릭해 읽기, 마우스를 올리면 개요로 이동, Chrome / VS Code에서 외부 열기, 코드 복사. 디렉터리를 설정할 수 있습니다(기본 ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'DeepSeek Harness용 에이전트 브라우저: 32개의 ego_* 도구가 실제 Chromium을 구동하며, 사이드바의 네이티브 «ego 브라우저» 탭에서 에이전트가 방문하는 모든 페이지를 실시간으로 볼 수 있습니다 — 클릭, 드래그, 타이핑으로 직접 조작할 수 있습니다. better-sidebar가 있으면 탭을 자동 등록하고, 없으면 플로팅 버블로 대체합니다',
   pluginBilingualReaderDesc: 'DSH 사이드바에서 PDF 읽기: 네이티브 PDF 표시, 텍스트를 선택해 LLM으로 번역, 컨텍스트 사용 및 메인 대화와 완전 격리',
