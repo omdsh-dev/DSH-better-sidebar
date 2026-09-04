@@ -48,7 +48,18 @@
      hidden box stays a PROGRAMMATICALLY scrollable container, and a
      scrollIntoView fired from panel content (the file tree's "Show in
      folder" reveal) scrolled the host itself — shifting the whole panel,
-     tab bar included, out of the viewport with no way to scroll back. */
+     tab bar included, out of the viewport with no way to scroll back.
+     The same class covers any scroll-into-view fixup — focus moving into
+     an off-viewport region, a nested iframe/workbench claiming focus
+     while it loads — so the guard belongs on the layer itself, not per
+     call site. The `hidden` declaration BEFORE `clip` is an old-engine
+     fallback, not dead style: engines without `clip` support (Safari < 16)
+     drop the `clip` line, which would leave this box `overflow: visible`
+     — no clipping at all, and the page-draggable regression above
+     returns. With `hidden` first those engines keep the clipping (plus
+     its pre-clip scrollability) while every clip-aware engine applies
+     the later `clip`. */
+  overflow: hidden;
   overflow: clip;
 }
 
@@ -79,6 +90,11 @@
   flex-direction: row;
   gap: 4px;
   pointer-events: auto;
+  /* The cluster recenters between the panel's tab strip (top: 3) and DSH's
+     session header row (top: 14, see the collapsed rule below) on every
+     expand/collapse — ride the panel slide's own duration/easing so the two
+     moves stay in lockstep instead of the cluster snapping. */
+  transition: top var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
 /* The tab strip of the OPEN right panel reserves the cluster's width at its
@@ -487,6 +503,25 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
      surface full-height and push the content (the tab strip) below the
      strip instead. .panelResize is absolutely positioned and unaffected. */
   padding-top: var(--dsh-title-bar-strip, 40px);
+}
+
+/* ── Collapsed cluster alignment with the DSH web session header ───────── */
+
+/* While the right panel is open, the cluster rides the panel's 34px tab
+   strip (28px buttons at top: 3). Collapsed, it floats over DSH's own
+   session header instead — whose controls (title, "Session log" capsule)
+   are vertically centered at 28px on both desktop and narrow viewports.
+   top: 3 then strands the cluster ~11px above that row; re-center the
+   28px buttons at 14px. The attribute disappears while the panel is open,
+   so the tab-strip alignment above is untouched. With position
+   compatibility active the DSH header sits below the caption strip, hence
+   strip + 14. */
+:global(body[data-dsh-sidebar-collapsed]) .toggleCluster {
+  top: calc(14px + env(safe-area-inset-top));
+}
+
+:global(body[data-dsh-sidebar-collapsed][data-dsh-title-bar-compat]) .toggleCluster {
+  top: calc(var(--dsh-title-bar-strip, 40px) + 14px);
 }
 
 /* The shared corner (both panels open): the intersection of the right
@@ -1004,8 +1039,16 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 /* The hover-revealed @-reference button at the row's far right (and the
-   transient "copied" label that replaces it after a copy). Hidden rows
-   keep the name at full width; hovering or focusing the row reveals it. */
+   transient "copied" label that replaces it after a copy). The only auto
+   margin in the row absorbs the filename's spare width, so a short name
+   cannot leave either affordance stranded in the middle. */
+.explorerRef,
+.explorerCopied {
+  margin-left: auto;
+}
+
+/* Hidden rows keep the name at full width; hovering or focusing the row
+   reveals the reference button. */
 .explorerRef {
   flex: none;
   display: none;
@@ -1775,6 +1818,19 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   font: var(--dsw-font-xs-13);
 }
 
+/* The DSH CodeBlock banner is position:sticky (top:0, z-index:6) so a block
+   keeps its copy action reachable inside a per-message scroll container —
+   the right call in chat, where each block owns its scroll box. In the file
+   preview every fence shares one `.editorMd` scroll container, so that sticky
+   banner pins to the top of the viewport until the *whole block* scrolls
+   past, which reads as a floating header over the document. Neutralize the
+   stickiness here (bannerWrap is the first element child of `.md-code-block`;
+   mermaid mounts are excluded since their own chrome replaces the banner). */
+.editorMd :global(.md-code-block:not([data-mermaid-processed])) > :global(div):first-child {
+  position: static;
+  z-index: auto;
+}
+
 /* ── Mermaid diagram block (markdown preview, mermaid lazy chunk) ────────
    Mirrors the md-code-block chrome the DSH CodeBlock renders, so a diagram
    reads as a peer of the surrounding fences: hairline border, layer-2
@@ -2432,11 +2488,15 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 /* The zero-height sticky bar: occupies no layout, keeps the button visible
    while the preview scrolls, and lets pointer events pass through the bar
-   itself (only the interactive children re-enable them). */
+   itself (only the interactive children re-enable them). The bar's stacking
+   context also frames the outline panel, so its z-index must clear the DSH
+   CodeBlock banner (z-index:6) or the popover paints beneath a sticky fence
+   header. 7 sits just above that banner and below the portalled selection
+   popup (60) / mermaid modal (1000). */
 .tocBar {
   position: sticky;
   top: 0;
-  z-index: 3;
+  z-index: 7;
   display: flex;
   justify-content: flex-end;
   height: 0;

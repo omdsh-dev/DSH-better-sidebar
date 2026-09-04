@@ -57,7 +57,10 @@ function packedManifest(): Record<string, unknown> {
     // spawn directly (ENOENT). Run it through the shell so the same call
     // works on every platform; `tar` is available on all supported OSes.
     execFileSync('pnpm', ['pack', '--pack-destination', dir], { cwd: ROOT, stdio: 'pipe', shell: process.platform === 'win32' })
-    execFileSync('tar', ['-xzf', join(dir, `${pkg.name}-${pkg.version}.tgz`), '-C', dir, 'package/package.json'], { stdio: 'pipe' })
+    // Never hand tar an absolute Windows path: Git Bash's GNU tar reads the
+    // drive-letter colon as a remote-host spec ("Cannot connect to C:").
+    // Run it from the pack dir with the bare tarball name instead.
+    execFileSync('tar', ['-xzf', `${pkg.name}-${pkg.version}.tgz`, 'package/package.json'], { cwd: dir, stdio: 'pipe' })
     return JSON.parse(readFileSync(join(dir, 'package/package.json'), 'utf8')) as Record<string, unknown>
   } finally {
     rmSync(dir, { recursive: true, force: true })

@@ -22,11 +22,16 @@
 #   KEEP_HOME      非空时保留 scratch home（调试用）
 #
 # 退出码 = playwright 的退出码；服务器与 scratch 目录由 trap 兜底清理。
+# 日志/前置校验/DSH_CMD 与 tarball 解析/scratch profile 三件套/清理 trap/
+# dsh web 启动与就绪轮询的共享骨架见 scripts/e2e-common.sh。
 # =============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+E2E_TAG=e2e-mount
+source "$SCRIPT_DIR/e2e-common.sh"
 
 DSH_CMD="${DSH_CMD:-dsh}"
 PORT="${PORT:-0}"
@@ -34,42 +39,20 @@ TARBALL="${TARBALL:-}"
 GREP_FILTER=""
 if [ "${1:-}" = "--grep" ]; then GREP_FILTER="${2:?--grep 需要参数}"; fi
 
-say()  { printf '\033[32m[e2e-mount]\033[0m %s\n' "$*"; }
-warn() { printf '\033[33m[e2e-mount]\033[0m %s\n' "$*" >&2; }
-die()  { printf '\033[31m[e2e-mount]\033[0m %s\n' "$*" >&2; exit 1; }
+e2e_require_cmd node "DSH 运行需要 Node.js >= 20"
+e2e_require_cmd pnpm "dsh plugin 转发给 pnpm"
 
-command -v node >/dev/null 2>&1 || die "未找到 node（DSH 运行需要 Node.js >= 20）"
-command -v pnpm >/dev/null 2>&1 || die "未找到 pnpm（dsh plugin 转发给 pnpm）"
+e2e_resolve_dsh_cmd
 
-# dsh CLI 解析：PATH 上的 dsh 优先，否则 npx 拉官方包（同 scripts/install.sh）
-if ! command -v "$DSH_CMD" >/dev/null 2>&1; then
-  if command -v npx >/dev/null 2>&1; then
-    say "PATH 上无 ${DSH_CMD}，回退 npx -y --package @deepseek-ai/dsh"
-    DSH_CMD="npx -y --package @deepseek-ai/dsh dsh"
-  else
-    die "未找到 $DSH_CMD 或 npx；请先安装 DSH CLI（npm i -g @deepseek-ai/dsh）或用 DSH_CMD 指定"
-  fi
-fi
-
-# tarball 解析（多个候选时取 mtime 最新——`ls | head -1` 的字典序会拿到
-# 旧版本号的历史 tarball，把冒烟挂到过期产物上）
-if [ -z "$TARBALL" ]; then
-  TARBALL="$(ls -t "$ROOT"/dsh-better-sidebar-*.tgz 2>/dev/null | head -1 || true)"
-  COUNT="$(ls "$ROOT"/dsh-better-sidebar-*.tgz 2>/dev/null | wc -l | tr -d ' ')"
-  [ "$COUNT" -le 1 ] || warn "发现 $COUNT 个 tarball，按 mtime 选用最新：$(basename "$TARBALL")（建议清理其余）"
-fi
-[ -n "$TARBALL" ] && [ -f "$TARBALL" ] || die "找不到 tarball（TARBALL 或 \$ROOT/dsh-better-sidebar-*.tgz）——先运行 pnpm build && pnpm pack"
+e2e_resolve_tarball || die "找不到 tarball（TARBALL 或 \$ROOT/dsh-better-sidebar-*.tgz）——先运行 pnpm build && pnpm pack"
 TARBALL="$(cd "$(dirname "$TARBALL")" && pwd)/$(basename "$TARBALL")"
 say "tarball: $TARBALL"
 
-# scratch home（每次全新，绝不触碰真实 ~/.dsh）：调用方给了 DSH_HOME_BASE
-# 时，只在其下新建本调用拥有的子目录并只删除该子目录；缺省时直接用系统
-# 临时目录。
-if [ -n "${DSH_HOME_BASE:-}" ]; then
-  SCRATCH="$(mktemp -d "$DSH_HOME_BASE/dsh-e2e-mount.XXXXXX")"
-else
-  SCRATCH="$(mktemp -d /tmp/dsh-e2e-mount.XXXXXX)"
-fi
+# scratch home（每次全新，绝不触碰真实 ~/.dsh；DSH_HOME_BASE 语义见
+# e2e-common.sh）。DSH_HOME 用子路径 home/（aggregate lane 直接用 $SCRATCH，
+# 两 lane 既有差异）：playwright lane 还需要独立的 workspace 目录，与
+# DSH_HOME 的 profiles 布局分开。
+e2e_make_scratch dsh-e2e-mount
 export DSH_HOME="$SCRATCH/home"
 WORKSPACE_DIR="$SCRATCH/workspace"
 LOG_DIR="$SCRATCH"
@@ -78,55 +61,12 @@ mkdir -p "$DSH_HOME/profiles/web" "$WORKSPACE_DIR"
 say "scratch home: ${DSH_HOME}（DSH_HOME=${DSH_HOME}）"
 
 SERVER_PID=""
-cleanup() {
-  local code=$?
-  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
-  fi
-  if [ -z "${KEEP_HOME:-}" ]; then
-    rm -rf "$SCRATCH"
-  else
-    warn "KEEP_HOME 已设置，保留 $SCRATCH"
-  fi
-  exit "$code"
-}
-trap cleanup EXIT
+trap e2e_cleanup EXIT
 
-# 步骤 1：引导 scratch profile（web 模板，镜像 dsh initProfile；先写
-# pnpm-workspace.yaml 的 allowBuilds / minimumReleaseAgeExclude，避免 pnpm 11
-# strict-dep-builds 拦截 node-pty/protobufjs 或拒绝 <24h 新版本——同 install.sh。
-# @deepseek-ai/* 通配与仓库根 pnpm-workspace.yaml 同策：钉的 DSH alpha 常在
-# 发布后 24h 内跑 lane，没有豁免会被 minimumReleaseAge 直接拒装）
+# 步骤 1：引导 scratch profile（三件套 heredoc 及其理由见 e2e-common.sh
+# 的 e2e_write_profile）
 PROFILE_DIR="$DSH_HOME/profiles/web"
-cat > "$PROFILE_DIR/package.json" <<EOF
-{
-  "name": "dsh-profile-web",
-  "private": true,
-  "dependencies": {},
-  "dsh": {
-    "profile": {
-      "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"]
-    }
-  }
-}
-EOF
-printf '[]\n' > "$PROFILE_DIR/cordis.patch.yml"
-cat > "$PROFILE_DIR/pnpm-workspace.yaml" <<'EOF'
-packages:
-  - .
-
-nodeLinker: hoisted
-autoInstallPeers: false
-
-allowBuilds:
-  node-pty: true
-  protobufjs: true
-
-minimumReleaseAgeExclude:
-  - dsh-better-sidebar
-  - '@deepseek-ai/*'
-EOF
+e2e_write_profile "$PROFILE_DIR"
 
 # 步骤 2：官方 CLI 安装 tarball + bundle 协调（真实挂载路径）
 say "执行 dsh plugin --profile web add file:$TARBALL ..."
@@ -147,8 +87,7 @@ say "挂载已注册：dsh.profile.bundles 包含 dsh-better-sidebar"
 
 # 步骤 4：启动 dsh web（--port 0 = OS 分配，避免端口冲突；keyless 可起）
 say "启动 dsh web（port=${PORT}）..."
-$DSH_CMD web --port "$PORT" > "$WEB_LOG" 2>&1 &
-SERVER_PID=$!
+e2e_start_dsh_web "$WEB_LOG"
 
 # 就绪行解析：DSH 0.1.2-alpha.1+ 打印的是带一次性 token 的鉴权 URL
 # （`dsh web: http://127.0.0.1:<port>/?token=<43字符>`，页面导航用它换取
@@ -156,19 +95,20 @@ SERVER_PID=$!
 # 匹配必须延伸到空白（`[^ ]*`）——在 `/` 处截断会丢掉 token，alpha.1+
 # 宿主上的整条 lane 都会挂在首屏 401。LAN 后缀 `(LAN: …)` 是下一个
 # 空格分段，不会被并进来。
-URL=""
-for _ in $(seq 1 120); do
-  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    echo "=== dsh web 提前退出，日志尾部 ===" >&2
-    tail -30 "$WEB_LOG" >&2 || true
-    exit 1
-  fi
-  if URL="$(grep -oE 'dsh web: http://127\.0\.0\.1:[0-9]+[^ ]*' "$WEB_LOG" | head -1 | awk '{print $3}')" && [ -n "$URL" ]; then
-    break
-  fi
-  sleep 1
-done
-[ -n "$URL" ] || { echo "=== 120s 内未等到 dsh web 就绪，日志尾部 ===" >&2; tail -40 "$WEB_LOG" >&2 || true; exit 1; }
+E2E_READY_RE='dsh web: http://127\.0\.0\.1:[0-9]+[^ ]*'
+E2E_READY_PICK=head
+WAIT_RC=0
+e2e_wait_dsh_web_ready "$WEB_LOG" || WAIT_RC=$?
+if [ "$WAIT_RC" -eq 2 ]; then
+  echo "=== dsh web 提前退出，日志尾部 ===" >&2
+  tail -30 "$WEB_LOG" >&2 || true
+  exit 1
+fi
+if [ "$WAIT_RC" -ne 0 ]; then
+  echo "=== 120s 内未等到 dsh web 就绪，日志尾部 ===" >&2
+  tail -40 "$WEB_LOG" >&2 || true
+  exit 1
+fi
 say "dsh web 就绪：${URL}（pid ${SERVER_PID}）"
 
 # 步骤 5：运行无头渲染 lane

@@ -6,7 +6,9 @@
  *
  * On top of the base family, icon fonts (Nerd Font + color emoji) are
  * appended so shell prompts drawing from the Private Use Areas render real
- * glyphs instead of the missing-glyph box.
+ * glyphs instead of the missing-glyph box, and the stack is terminated with
+ * a generic family so an unresolvable name degrades to a monospace instead
+ * of the proportional standard font.
  */
 import { describe, expect, it } from 'vitest'
 import { SIDEBAR_PREFS_DEFAULTS, clampTerminalFontSize, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../src/prefs-shared.ts'
@@ -15,6 +17,7 @@ import {
   ICON_FONT_FALLBACKS,
   resolveTerminalFont,
   withIconFontFallbacks,
+  withMonospaceFallback,
 } from '../src/client/terminal-font.ts'
 
 describe('clampTerminalFontSize', () => {
@@ -132,10 +135,25 @@ describe('withIconFontFallbacks', () => {
 describe('resolveTerminalFont', () => {
   it('falls back to the theme code font when the family pref is empty', () => {
     const { fontFamily, fontSize } = resolveTerminalFont(SIDEBAR_PREFS_DEFAULTS, 'var-theme-font')
-    // The theme font stays the base (first) entry; icon fonts top it up.
-    expect(fontFamily).toBe(withIconFontFallbacks('var-theme-font'))
+    // The theme font stays the base (first) entry; the monospace tail keeps
+    // the grid alive, and icon fonts top it up.
+    expect(fontFamily).toBe(withIconFontFallbacks(withMonospaceFallback('var-theme-font')))
     expect(fontFamily.startsWith('var-theme-font')).toBe(true)
+    expect(fontFamily.endsWith('monospace')).toBe(true)
     expect(fontSize).toBe(13)
+  })
+
+  it('terminates a custom family that names no generic, keeping the grid monospaced', () => {
+    // The reported failure: a family installed only on the machine running the
+    // shell resolves to nothing in the browser, and without a generic tail the
+    // fallback is the proportional standard font (PingFang SC on macOS), whose
+    // advance xterm then measures the cell from.
+    const { fontFamily } = resolveTerminalFont(
+      { ...SIDEBAR_PREFS_DEFAULTS, terminalFontFamily: 'Maple Mono NF CN' },
+      undefined,
+    )
+    expect(fontFamily.startsWith('Maple Mono NF CN')).toBe(true)
+    expect(fontFamily.endsWith('monospace')).toBe(true)
   })
 
   it('falls back to the built-in monospace stack when neither the pref nor the theme provides one', () => {
@@ -156,7 +174,7 @@ describe('resolveTerminalFont', () => {
     }
     // Same guard on the user pref, which then defers to the theme font.
     expect(resolveTerminalFont({ ...SIDEBAR_PREFS_DEFAULTS, terminalFontFamily: 'inherit' }, 'var-theme-font').fontFamily)
-      .toBe(withIconFontFallbacks('var-theme-font'))
+      .toBe(withIconFontFallbacks(withMonospaceFallback('var-theme-font')))
   })
 
   it('prefers the custom family as the base and clamps the size', () => {
@@ -177,6 +195,54 @@ describe('resolveTerminalFont', () => {
       resolveTerminalFont({ ...SIDEBAR_PREFS_DEFAULTS, terminalFontFamily: 'Menlo' }, undefined),
     ]) {
       expect(resolved.fontFamily).toContain('"Symbols Nerd Font Mono"')
+      expect(resolved.fontFamily.endsWith('monospace')).toBe(true)
     }
+  })
+})
+describe('withMonospaceFallback', () => {
+  it('appends a monospace tail when the stack names no generic family', () => {
+    expect(withMonospaceFallback('"Maple Mono NF CN"')).toBe('"Maple Mono NF CN", monospace')
+    expect(withMonospaceFallback('Menlo, Consolas')).toBe('Menlo, Consolas, monospace')
+  })
+
+  it('leaves a stack that already names a generic family untouched', () => {
+    expect(withMonospaceFallback('"JetBrains Mono", monospace')).toBe('"JetBrains Mono", monospace')
+    expect(withMonospaceFallback('ui-monospace, "SF Mono"')).toBe('ui-monospace, "SF Mono"')
+    // A deliberate non-monospace generic is the user's call, not ours to override.
+    expect(withMonospaceFallback('"Foo", sans-serif')).toBe('"Foo", sans-serif')
+  })
+
+  it('matches generic families case-insensitively and only when unquoted', () => {
+    expect(withMonospaceFallback('"Foo", MONOSPACE')).toBe('"Foo", MONOSPACE')
+    // A quoted name merely containing the word is a family, not a generic.
+    expect(withMonospaceFallback('"My monospace Font"')).toBe('"My monospace Font", monospace')
+  })
+
+  it('splits on top-level commas only, keeping quoted names and var() intact', () => {
+    expect(withMonospaceFallback('"Foo, Bar"')).toBe('"Foo, Bar", monospace')
+    expect(withMonospaceFallback('var(--code, Menlo)')).toBe('var(--code, Menlo), monospace')
+    expect(withMonospaceFallback("'Esc\\'aped, Name'")).toBe("'Esc\\'aped, Name', monospace")
+  })
+
+  it('drops the empty entries a stray comma produces', () => {
+    expect(withMonospaceFallback('"Foo",')).toBe('"Foo", monospace')
+    expect(withMonospaceFallback('  "Foo" ,, Menlo  ')).toBe('"Foo", Menlo, monospace')
+  })
+
+  it('is idempotent', () => {
+    const once = withMonospaceFallback('"Maple Mono NF CN"')
+    expect(withMonospaceFallback(once)).toBe(once)
+    expect(withMonospaceFallback(DEFAULT_TERMINAL_FONT_FAMILY)).toBe(DEFAULT_TERMINAL_FONT_FAMILY)
+  })
+
+  it('falls back to the built-in stack for an empty value or a CSS-wide keyword', () => {
+    // Appending to a CSS-wide keyword yields invalid CSS the CSSOM drops
+    // wholesale, which would leave xterm with no font at all.
+    expect(withMonospaceFallback('')).toBe(DEFAULT_TERMINAL_FONT_FAMILY)
+    expect(withMonospaceFallback('   ,  ')).toBe(DEFAULT_TERMINAL_FONT_FAMILY)
+    expect(withMonospaceFallback('inherit')).toBe(DEFAULT_TERMINAL_FONT_FAMILY)
+    expect(withMonospaceFallback('REVERT-LAYER')).toBe(DEFAULT_TERMINAL_FONT_FAMILY)
+    // Only a lone keyword is one; as part of a stack it is just a family name.
+    expect(withMonospaceFallback('inherit, Menlo')).toBe('inherit, Menlo, monospace')
   })
 })

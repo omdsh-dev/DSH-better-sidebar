@@ -1,0 +1,15 @@
+# EditorConfig — https://editorconfig.org
+# 仓库统一编辑器基线；缩进等风格细节以各文件的既有约定为准。
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Makefile 的 recipe 必须用真实 tab（GNU Make 硬性要求）。
+[Makefile]
+indent_style = tab

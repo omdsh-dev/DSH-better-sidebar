@@ -5,8 +5,10 @@
  * be callable with a require that resolves the platform externals — the
  * exact shape the loader (src/client/chunk-loader.ts) depends on. Reads the
  * built lib/ output, so run `pnpm build` first (like manifest-consistency).
+ * A missing lib/ (fresh clone before the first build) skips the whole suite
+ * instead of crashing on ENOENT.
  */
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 // Browser globals first: chunk bodies probe `self`/`document` at evaluation
 // (xterm's UMD wrapper, CodeMirror's UA probe).
@@ -17,7 +19,14 @@ const g = globalThis as Record<string, unknown>
 
 const CHUNKS = ['terminal', 'editor', 'mermaid']
 
-describe('built chunk artifacts', () => {
+/** All chunk artifacts present (tsdown emits the whole lib/ in one run). */
+const chunksBuilt = CHUNKS.every(name => existsSync(`lib/client-${name}.js`))
+
+if (!chunksBuilt) {
+  console.warn('[chunk-artifact] lib/ chunk artifacts missing — run `pnpm build` first; skipping this suite')
+}
+
+describe.skipIf(!chunksBuilt)('built chunk artifacts', () => {
   it('each chunk assigns its global registry slot when executed as a script', () => {
     g.window = g // classic-script globals
     // mermaid's core hooks window.addEventListener('load') at module scope
@@ -27,7 +36,6 @@ describe('built chunk artifacts', () => {
     if (typeof g.removeEventListener !== 'function') g.removeEventListener = () => {}
     for (const name of CHUNKS) {
       const code = readFileSync(`lib/client-${name}.js`, 'utf8')
-      // eslint-disable-next-line no-new-func
       expect(() => new Function(code)(), name).not.toThrow()
       const registry = g.__dshChunks__ as Record<string, unknown>
       expect(typeof registry[name], name).toBe('function')

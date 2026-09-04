@@ -307,7 +307,7 @@ function resultCard(
  * @param entries - history rows (event + host-computed view) in seq order.
  * @returns display rows in log order.
  */
-export function transcriptRows(entries: readonly SidebarHistoryEntry[]): SidechatTranscriptRow[] {
+export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: readonly SidechatTranscriptRow[]): SidechatTranscriptRow[] {
   const events = entries.map(entry => entry.event)
   const seedEnd = lastSeedEnd(events)
   const rows: SidechatTranscriptRow[] = []
@@ -483,6 +483,60 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[]): Sidecha
         break
       }
     }
+  }
+  return reuseRows(rows, prev)
+}
+
+/** Whether two rows carry identical display content (identity fields plus
+ *  every rendered field of their kind). */
+function rowsEqual(a: SidechatTranscriptRow, b: SidechatTranscriptRow): boolean {
+  if (a.kind !== b.kind || a.seq !== b.seq) return false
+  switch (a.kind) {
+    case 'user':
+    case 'injection': {
+      const other = b as typeof a
+      return a.text === other.text
+    }
+    case 'assistant':
+    case 'reasoning': {
+      const other = b as typeof a
+      return a.text === other.text && a.settled === other.settled
+    }
+    case 'tool': {
+      // The card is NOT compared by value: its content is a pure function of
+      // the call-time args and the tool/result landing, and every transition
+      // (output/exit arriving) flips `executing`/`failed`/`resultText` —
+      // compared here — so a card whose content changed never slips through
+      // an equal compare, and an equal compare re-adopting the OLD card
+      // object (identical content, stale reference) only helps React skip.
+      const other = b as typeof a
+      return a.name === other.name && a.failed === other.failed && a.args === other.args
+        && a.resultText === other.resultText && a.executing === other.executing
+    }
+    case 'turnSummary': {
+      const other = b as typeof a
+      return a.inputTokens === other.inputTokens && a.outputTokens === other.outputTokens
+        && a.durationMs === other.durationMs
+    }
+  }
+}
+
+/** Re-adopt the PREVIOUS poll's row objects wherever the content is
+ *  unchanged (position-aligned, append-mostly): settled rows keep their
+ *  object identity across the 2s polls, so React's reconciler and the
+ *  markdown/DOMPurify caches downstream skip them instead of re-rendering
+ *  the whole transcript every poll. Comparing the strings is far cheaper
+ *  than what a fresh reference costs the row below. Rows past the first
+ *  mismatch (an inserted/superseded streaming row) rebuild as usual — that
+ *  is exactly the changed tail. */
+function reuseRows(rows: SidechatTranscriptRow[], prev: readonly SidechatTranscriptRow[] | undefined): SidechatTranscriptRow[] {
+  if (prev === undefined) return rows
+  const shared = Math.min(rows.length, prev.length)
+  for (let index = 0; index < shared; index++) {
+    const before = prev[index]
+    const after = rows[index]
+    if (before === undefined || after === undefined) continue
+    if (rowsEqual(before, after)) rows[index] = before
   }
   return rows
 }

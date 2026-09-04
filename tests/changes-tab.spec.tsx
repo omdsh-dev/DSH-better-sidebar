@@ -16,7 +16,8 @@ import { api, type GitStatusResult, type GitWorktree } from '../src/client/api.t
 import type { Context } from '../src/context-types.ts'
 import type { SidebarTab } from '../src/client/state.ts'
 
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 const MAIN = 'C:/repo/main'
 

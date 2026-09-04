@@ -12,8 +12,17 @@ vi.mock('node:os', async (importOriginal) => {
   }
 })
 
+import { existsSync, statSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
 import { resolveSidebarConfig } from '../src/config.ts'
-import { defaultShell, ensureSpawnHelper, shellDisplayName, shellSpawnArgs } from '../src/pty-manager.ts'
+import {
+  defaultShell,
+  ensureSpawnHelper,
+  resolveShellExecutable,
+  shellDisplayName,
+  shellSpawnArgs,
+} from '../src/pty-manager.ts'
 
 describe('pty helpers', () => {
   it('prefers an explicit shell, then SHELL, then the account login shell on POSIX', () => {
@@ -66,6 +75,47 @@ describe('pty helpers', () => {
     expect(defaultShell({ platform: 'win32', env: {}, exists: () => false })).toBe('powershell.exe')
   })
 
+  it('Windows: resolves bare custom shells through PATH/PATHEXT before node-pty spawn', () => {
+    const files = new Set([
+      'C:/Tools/PowerShell/pwsh.exe',
+      'C:/Windows/System32/cmd.exe',
+    ])
+    const options = {
+      platform: 'win32' as const,
+      // Mixed-case Path/PATHEXT pins the case-insensitive environment lookup
+      // that real Windows process.env provides but plain test objects do not.
+      env: {
+        Path: 'C:\\Tools\\PowerShell',
+        PathExt: '.COM;.EXE;.BAT;.CMD',
+        SystemRoot: 'C:\\Windows',
+      },
+      exists: (path: string) => files.has(path.replaceAll('\\', '/')),
+    }
+    expect(resolveShellExecutable('pwsh', options).replaceAll('\\', '/'))
+      .toBe('C:/Tools/PowerShell/pwsh.exe')
+    expect(resolveShellExecutable('cmd', options).replaceAll('\\', '/'))
+      .toBe('C:/Windows/System32/cmd.exe')
+  })
+
+  it('Windows: accepts .exe names and absolute paths, and names a missing configured shell', () => {
+    const options = {
+      platform: 'win32' as const,
+      env: { PATH: 'C:\\Tools' },
+      exists: (path: string) => path.replaceAll('\\', '/') === 'C:/Tools/pwsh.exe'
+        || path.replaceAll('\\', '/') === 'D:/Portable Shell/custom.exe',
+    }
+    expect(resolveShellExecutable('pwsh.exe', options).replaceAll('\\', '/'))
+      .toBe('C:/Tools/pwsh.exe')
+    expect(resolveShellExecutable('D:\\Portable Shell\\custom.exe', options).replaceAll('\\', '/'))
+      .toBe('D:/Portable Shell/custom.exe')
+    expect(() => resolveShellExecutable('missing-shell', options))
+      .toThrow('shell executable not found: "missing-shell"')
+  })
+
+  it('keeps POSIX bare shell resolution delegated to execvp', () => {
+    expect(resolveShellExecutable('  zsh  ', { platform: 'linux', env: {}, exists: () => false })).toBe('zsh')
+  })
+
   it('trims the configured shell and defaults it to auto for old documents', () => {
     expect(resolveSidebarConfig(undefined).shell).toBe('')
     expect(resolveSidebarConfig({ shell: '  pwsh.exe  ' }).shell).toBe('pwsh.exe')
@@ -94,9 +144,6 @@ describe('pty helpers', () => {
     if (process.platform !== 'darwin') return
     ensureSpawnHelper()
     ensureSpawnHelper()
-    const { existsSync, statSync } = require('node:fs') as typeof import('node:fs')
-    const { dirname, join } = require('node:path') as typeof import('node:path')
-    const { createRequire } = require('node:module') as typeof import('node:module')
     const entry = createRequire(import.meta.url).resolve('node-pty')
     const root = dirname(dirname(entry))
     // Prebuilt (tarball) or node-gyp-compiled (build/Release): mirror

@@ -371,3 +371,75 @@ describe('toolArgsSummary', () => {
     expect(toolArgsSummary('{"command":"   "}')).toBe('{"command":" "}')
   })
 })
+
+describe('transcriptRows row reuse (the poll-to-poll identity pass)', () => {
+  it('re-adopts the previous poll\'s row objects wherever content is unchanged', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('user/message', 1, { content: textBlocks('the side question'), source: { kind: 'user' } })),
+      entry(ev('assistant/message', 2, { message: { content: textBlocks('the answer') } })),
+    ]
+    const first = transcriptRows(entries)
+    const second = transcriptRows(entries, first)
+    expect(second).toEqual(first)
+    // Settled rows keep their object identity (fresh references defeat the
+    // downstream memo and re-render the whole transcript every 2s poll).
+    expect(second[1]).toBe(first[1])
+    expect(second[2]).toBe(first[2])
+  })
+
+  it('rebuilds changed rows and everything past the change', () => {
+    const before = transcriptRows([
+      entry(ev('session/end-seed', 0)),
+      entry(ev('user/message', 1, { content: textBlocks('q'), source: { kind: 'user' } })),
+    ])
+    const after = transcriptRows([
+      entry(ev('session/end-seed', 0)),
+      entry(ev('user/message', 1, { content: textBlocks('q'), source: { kind: 'user' } })),
+      entry(ev('user/message', 2, { content: textBlocks('q2'), source: { kind: 'user' } })),
+    ], before)
+    expect(after).toHaveLength(2)
+    expect(after[0]).toBe(before[0])
+    expect(after[1]).not.toBe(before[1])
+    expect(after[1]).toMatchObject({ kind: 'user', seq: 2, text: 'q2' })
+  })
+
+  it('never re-adopts a row whose rendered fields changed (tool result lands)', () => {
+    const call = entry(ev('tool/call', 1, { callId: 'c1', name: 'bash', arguments: '{"command":"ls"}' }))
+    const before = transcriptRows([entry(ev('session/end-seed', 0)), call])
+    expect(before[0]).toMatchObject({ kind: 'tool', executing: true })
+    const result = entry(ev('tool/result', 2, {
+      message: { source: { callId: 'c1' }, content: [{ type: 'tool-result', content: [{ type: 'text', text: 'out' }] }] },
+    }))
+    const after = transcriptRows([entry(ev('session/end-seed', 0)), call, result], before)
+    expect(after[0]).not.toBe(before[0])
+    expect(after[0]).toMatchObject({ kind: 'tool', executing: false, resultText: 'out' })
+  })
+})
+
+describe('transcriptRows row reuse (newer row kinds)', () => {
+  it('re-adopts settled turnSummary rows (token usage tail)', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('turn/start', 1, { turn: 1 })),
+      entry(ev('turn/end', 2, { turn: 1, reason: 'completed' })),
+    ]
+    const first = transcriptRows(entries)
+    const summary = first.find(row => row.kind === 'turnSummary')
+    expect(summary).toBeDefined()
+    const second = transcriptRows(entries, first)
+    expect(second[second.length - 1]).toBe(summary)
+  })
+
+  it('re-adopts a tool row whose card landed (executing flip forces the rebuild)', () => {
+    const call = entry(ev('tool/call', 1, { callId: 'c1', name: 'bash', arguments: '{"command":"ls"}' }))
+    const before = transcriptRows([entry(ev('session/end-seed', 0)), call])
+    expect(before[0]).toMatchObject({ kind: 'tool', executing: true })
+    const result = entry(ev('tool/result', 2, {
+      message: { source: { callId: 'c1' }, content: [{ type: 'tool-result', content: [{ type: 'text', text: 'out\n[exit 0]' }] }] },
+    }))
+    const after = transcriptRows([entry(ev('session/end-seed', 0)), call, result], before)
+    expect(after[0]).not.toBe(before[0])
+    expect(after[0]).toMatchObject({ kind: 'tool', executing: false })
+  })
+})

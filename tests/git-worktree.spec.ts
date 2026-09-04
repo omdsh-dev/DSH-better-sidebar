@@ -68,8 +68,11 @@ describe('linked Git worktrees', () => {
       git(main, ['worktree', 'add', '-q', '-b', 'agent', agent])
       writeFileSync(join(agent, 'tracked.txt'), 'changed by agent\n')
       // macOS tmpdir() keeps the /var symlink while git reports the resolved
-      // /private/var prefix — canonicalize every path handed to git APIs.
-      const agentPath = realpathSync(agent)
+      // /private/var prefix; on Windows TEMP is often the 8.3 short form
+      // (C:\Users\RUNNER~1\...) while git reports the long path. The NATIVE
+      // realpath resolves both aliasings (libuv's GetFinalPathNameByHandle
+      // expands 8.3 names) — canonicalize every path handed to git APIs.
+      const agentPath = realpathSync.native(agent)
 
       const listed = await worktrees(main)
       expect(listed).toHaveLength(2)
@@ -87,7 +90,7 @@ describe('linked Git worktrees', () => {
       rmSync(agent, { recursive: true, force: true })
       const remaining = await worktrees(main)
       expect(remaining).toHaveLength(1)
-      expect(resolve(remaining[0]!.path)).toBe(resolve(realpathSync(main)))
+      expect(resolve(remaining[0]!.path)).toBe(resolve(realpathSync.native(main)))
       expect(remaining[0]!.current).toBe(true)
       await expect(resolveWorktree(main, agentPath)).rejects.toThrow('unknown linked worktree')
     } finally {

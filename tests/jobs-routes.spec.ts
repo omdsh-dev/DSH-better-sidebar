@@ -71,7 +71,7 @@ function jobOutputResult(seq: number, callId: string, text: string, over: { isEr
 
 /** The owner session with the given event log. */
 function session(events: SidebarSessionEvent[]): unknown {
-  return { header: { cwd: '/p' }, events }
+  return { header: { cwd: '/p' }, snapshotEvents: () => events }
 }
 
 describe('jobs.output route (event replay)', () => {

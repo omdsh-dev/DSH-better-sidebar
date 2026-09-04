@@ -10,6 +10,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Git Bash (MSYS) `ln -s` deep-copies directories by default — copying this
+# repo (node_modules + full .git history) would be catastrophic. Force real
+# native symlinks instead: the GitHub Windows runners (Developer Mode, admin
+# user) can create them, and nativestrict makes ln fail loudly rather than
+# silently falling back to a copy. Inert on Linux/macOS.
+export MSYS="winsymlinks:nativestrict"
+
 # The check reads the BUILT declaration surface (lib/types) — fail loudly
 # instead of silently passing when the build output is missing.
 if [ ! -f lib/types/client/service.d.ts ]; then
@@ -21,11 +28,27 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 mkdir -p "$WORK/node_modules"
-ln -s "$(pwd)" "$WORK/node_modules/dsh-better-sidebar"
+# Resolve link targets to their PHYSICAL path first: under pnpm,
+# node_modules/@deepseek-ai/cordis is itself a symlink/junction into .pnpm,
+# and on Windows a native symlink pointing AT a junction does not traverse
+# for tsc (TS2307 on a link that visibly exists). Node's NATIVE realpath
+# (GetFinalPathNameByHandle on Windows) expands junctions, which bash-level
+# resolution may leave untouched; node is guaranteed here (tsc runs below).
+resolve_dir() { node -e 'process.stdout.write(require("node:fs").realpathSync.native(process.argv[1]))' "$1"; }
+ln -s "$(resolve_dir "$(pwd)")" "$WORK/node_modules/dsh-better-sidebar"
 # The vendored cordis base (and, through its realpath, cosmokit / standard-schema)
 # must resolve so the consumer can type `Context` against the DSH runtime scope.
 mkdir -p "$WORK/node_modules/@deepseek-ai"
-ln -s "$(pwd)/node_modules/@deepseek-ai/cordis" "$WORK/node_modules/@deepseek-ai/cordis"
+ln -s "$(resolve_dir "$(pwd)/node_modules/@deepseek-ai/cordis")" "$WORK/node_modules/@deepseek-ai/cordis"
+# Loud guard: both links must resolve to a package root, or tsc below would
+# report misleading module-resolution errors.
+for pkg_json in "$WORK/node_modules/dsh-better-sidebar/package.json" "$WORK/node_modules/@deepseek-ai/cordis/package.json"; do
+  if [ ! -f "$pkg_json" ]; then
+    echo "[check-consumer-types] FAIL: $pkg_json does not resolve (broken link). Link layer:" >&2
+    ls -la "$WORK/node_modules" "$WORK/node_modules/@deepseek-ai" >&2 || true
+    exit 1
+  fi
+done
 
 cat > "$WORK/check.ts" <<'EOF'
 import { SIDEBAR_FEATURES, SIDEBAR_SERVICE_VERSION } from 'dsh-better-sidebar/client/service'

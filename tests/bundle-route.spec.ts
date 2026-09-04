@@ -84,7 +84,12 @@ describe('/sidebar/bundle route', () => {
     try {
       const first = fakeRes()
       await handler(req('GET', '/sidebar/bundle/editor.js'), first as unknown as ServerResponse)
-      writeFileSync(join(dir, 'client-editor.js'), 'window.__ModuleLoader__ && 1;')
+      // The rewrite must change the LENGTH too: the ETag memo revalidates on
+      // stat (mtime+size), and Windows updates file timestamps lazily — an
+      // equal-size rewrite right after the first read can still look
+      // unchanged (stale 304). A size delta busts the memo deterministically
+      // on every platform.
+      writeFileSync(join(dir, 'client-editor.js'), 'window.__ModuleLoader__ && 1; // rotated')
       const second = fakeRes()
       await handler(req('GET', '/sidebar/bundle/editor.js', { 'if-none-match': first.headers.etag! }), second as unknown as ServerResponse)
       expect(second.status).toBe(200)
@@ -145,6 +150,6 @@ describe('/sidebar/bundle route', () => {
   })
 
   it('exports the chunk allowlist (mirror of src/client/chunk-loader.ts)', () => {
-    expect([...CHUNK_NAMES]).toEqual(['terminal', 'editor', 'mermaid'])
+    expect([...CHUNK_NAMES]).toEqual(['terminal', 'editor', 'mermaid', 'locale'])
   })
 })

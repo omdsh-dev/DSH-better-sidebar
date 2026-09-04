@@ -2,7 +2,7 @@
 
 > 面向 **消费插件开发者**：如何让你的插件向 better-sidebar 注册新的侧边栏页面（tab）和文件类型预览器。
 >
-> 适用版本：**v0.4.0+**（`ctx.betterSidebar` 服务）；声明式设置 **v0.4.1+**；text/number 设置行 **v0.11.0+**；badge/生命周期/定向打开/插件设置/版本探测 **v0.12.0+**；select 设置行（`settingSelect`）与外链认领（`urlTarget`）**v0.13.0+**；统一 `@deepseek-ai/cordis` 类型基底 **v0.15.2+**；自由窗口（`floatWindows`）**v0.16.0+**；终端固定（pin）**v0.17.0+**。当前版本 **v0.18.0-alpha.0**（alpha 通道，仅支持 DSH 0.1.2-alpha.x；stable 线为 v0.17.1）。
+> 适用版本：**v0.4.0+**（`ctx.betterSidebar` 服务）；声明式设置 **v0.4.1+**；text/number 设置行 **v0.11.0+**；badge/生命周期/定向打开/插件设置/版本探测 **v0.12.0+**；select 设置行（`settingSelect`）与外链认领（`urlTarget`）**v0.13.0+**；统一 `@deepseek-ai/cordis` 类型基底 **v0.15.2+**；自由窗口（`floatWindows`）**v0.16.0+**；终端固定（pin）**v0.17.0+**。当前版本 **v0.18.0**（正式版，仅支持 DSH 0.1.2-rc.1+；旧宿主 stable 线为 v0.17.1）。
 > 权威代码：`src/client/service.ts`（服务实现）、`src/client/builtins/`（内置 8 tab + 6 viewer 参考实现）、`lib/types/client/service.d.ts`（类型声明）。
 > 仓库开发规则（硬约束 / CI / 发版）见 [AGENTS.md](../AGENTS.md)。
 
@@ -256,7 +256,10 @@ interface TabComponentProps {
   // 以下由内置 tab 使用，外部 tab 可忽略：
   expanded?: string[]          // 文件树的展开目录集
   onToggleDir?: (path: string) => void
-  onReferenceFile?: (path: string) => void
+  // 在会话 composer 插入一条 @ 引用。isDir=true 为目录：纯文本 `@dir/`，
+  // 保留宿主文件夹装饰与补全；false 为文件：走宿主结构化引用 chip
+  // （显示 @basename、序列化为完整 @path），宿主拒绝时回退纯文本。
+  onReferenceFile?: (path: string, isDir: boolean) => void
   onOpenFile?: (path: string) => void
   onOpenDiff?: (tab: SidebarTab) => void
   onSubagentJump?: (childSessionId: string) => void
@@ -727,6 +730,7 @@ ctx.effect(() =>
 | **i18n 跟随** | 文案跟随 DSH `ctx.locale`（词典在 `betterSidebar` 命名空间；Host-backed `locale.preference` 优先于浏览器语言并实时切换；缺失回退浏览器）。消费插件**不要**依赖内部 `t()`——标题传字符串或 `() => string` |
 | **第三语言覆盖（ja 等）** | 可选 peer `@huanlin/dsh-plugin-better-locale`（optional）提供 ja/ko 覆盖，**借用 DSH 英文槽位**（仅 DSH=en 时生效，zh 下惰性）。经 `ctx.get('betterLocale')` 注入 `t()`；未安装整段 no-op |
 | **懒加载 chunk** | 重依赖（xterm/CodeMirror）在独立 bundle（`lib/client-<name>.js`），经 `/sidebar/bundle` 按需下发；factory 赋到 `globalThis.__dshChunks__[<name>]`，由 `src/client/chunk-loader.ts` 物化，**不经** `__ModuleLoader__`。对消费插件透明 |
+| **聊天文件打开漏斗（alpha 宿主）** | 聊天里一切文件打开（工具行 / 产物行 / 正文提及 / 行内代码路径）汇入 `ctx.remote.session.openWorkspacePath`（Typert remote 命名空间，cordis 服务 key `remote.session`，方法为 **accessor 属性**、异步挂载）。better-sidebar 的「聊天区文件在侧边栏打开」即在 `ctx.inject(['remote.session'], …)` 内以 defineProperty 遮蔽该方法（`src/client/openpath-intercept.ts`）。你的插件若要观测/旁路聊天文件打开，走同一服务；不要假设 pre-alpha 的 `ctx.workspaces.openPath` 存在（alpha 的 `IWorkspaces` 已无此方法） |
 
 ---
 
@@ -751,8 +755,8 @@ ctx.effect(() =>
 
 - **面板表面**：右/底面板背景 = `var(--dsw-alias-bg-layer-1)`。**绝不消费 `--dsw-specific-sidebar-fill`**（宿主左导航专属，皮肤按左导航语义覆盖它，面板消费会失去填充）。换面板表面 = 覆写 `--dsw-alias-bg-layer-1`。
 - **终端/编辑器表面**：`effectiveTokenValue` 读 `--dsw-alias-bg-base`——`transparent` 与 alpha < 0.9 的半透明值回退不透明底色（文字不叠背景画，issue #90）；≥ 0.9 放行。
-- **根锚点**：宿主 div 带 `data-dsh-better-sidebar`（append 到 body）；其内**面板宿主层** `[data-dsh-panel-host]`（`fixed; inset:0; z-25; pointer-events:none`，v0.13.1+），面板/开关簇 absolute 定位，免疫中间层 transform 劫持；页面级 transform 触发 `data-dsh-panel-host-degraded` 降级。皮肤作用域覆盖限定在 `[data-dsh-better-sidebar]` 内。
-- **布局变量**（`<html>` 上，面板打开时有效）：`--dsh-sidebar-width` / `--dsh-sidebar-height`。宿主推挤 = `#root` margin/width calc + centerCol `margin-bottom`；锚点用**复合选择器双保险**（禁止 `nth-child`）：`#root [data-dsh-frame] > [data-pane="conversation"]` 与 `#root :has(> [data-slot="conversation"])`（两代命名同元素，`drag-layout.e2e.ts` 断言）。
+- **根锚点**：宿主 div 带 `data-dsh-better-sidebar`（append 到 body）；其内**面板宿主层** `[data-dsh-panel-host]`（`fixed; inset:0; z-25; pointer-events:none; overflow:hidden+clip`，v0.13.1+），面板/开关簇 absolute 定位，免疫中间层 transform 劫持；页面级 transform 触发 `data-dsh-panel-host-degraded` 降级。`overflow` 级联是**契约**（`hidden` 兜底 + `clip` 收尾，`tests/panel-host-css.spec.ts` 守护）：`hidden` 盒子仍是滚动容器，脚本滚动或浏览器 scroll-into-view 修正（焦点移入视口外区域、嵌套 iframe/工作台加载时抢焦点、面板滑出动画中 focus() 落点）会沿最近可滚祖先滚走整层——面板与开关簇集体偏离视口角（computed left/right 仍"正确"，偏移藏在盒子自身 scroll offset 里）；`clip` 裁剪语义相同但不产生滚动盒，任何路径都滚不动这层。皮肤作用域覆盖限定在 `[data-dsh-better-sidebar]` 内。
+- **布局变量**（`<html>` 上，面板打开时有效）：`--dsh-sidebar-width` / `--dsh-sidebar-height`。右面板宽度 = AppFrame 的 `padding-right` 预留（新版 `#root [data-dsh-frame]` / rc.8 `#root > [data-slot="root"] > div` 双锚点），AppFrame border box 保持完整桌面视口宽度（Harness 以此判定桌面/窄屏布局，避免插件面板展开误入窄屏）；AppFrame 的 details 拖拽手柄按同一变量向左平移贴合列边缘。底部面板仍走 centerCol `margin-bottom`；centerCol 锚点 = **JS 标注**（禁止 `nth-child`）：侧栏 shell 的定位器给测得的 centerCol 节点打 `[data-dsh-center-col]` 标签（`Sidebar.tsx` locate，节点更换/HMR 时随 ref 迁移），`layout.css` 用 `#root [data-dsh-center-col]` 选中（`drag-layout.e2e.ts` 断言恰一节点且为 `[data-slot="conversation"]` 的父级；frame 宽度与桌面 Session Log 由 `desktop-layout.e2e.ts` 断言）。
 - **桌面信号与标题栏**（v0.14.1+ 四方案模型 `SidebarPrefs.titleBarScheme`，唯一决策点 `src/client/titlebar-strip.ts` 纯函数）：
   - 壳信号（只读，不自动触发修改）：URL `dsh-desktop-mode` / `dsh-desktop-platform` / 可选 `dsh-desktop-titlebar-inset`（0–120 clamp）。
   - **strip 取值链**：⓪ `web` 方案强制 0；① `navigator.windowControlsOverlay` 真实几何（`wco.ts` 订阅 `geometrychange`，**为 0 也权威**，`visible=false` 幽灵 API 视为缺失）；② URL inset；③ 壳预设 `stripFor`（仅 `preset`）；④ 手动 `titleBarStripPx`（仅 `custom`）；⑤ 0。驱动 `body[data-dsh-title-bar-compat]` + `--dsh-title-bar-strip`。

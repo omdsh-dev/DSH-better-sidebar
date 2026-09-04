@@ -23,8 +23,9 @@
  *    arbitrary file names, so the plugin's own host route serves the chunks),
  * 2. read the factory from the global registry,
  * 3. call it with a require that resolves the platform externals through
- *    `__DSH_MODULES__.import(spec)` — the seed-word branch, the one part of
- *    the module system that is stable across versions.
+ *    the injected module system's `import(spec)` (the `ctx.modules` service)
+ *    — the seed-word branch, the one part of the module system that is
+ *    stable across versions.
  *
  * Caching contract (three layers, each with a failure path):
  * - In-memory: one in-flight promise per chunk, memoized until
@@ -49,7 +50,7 @@
  * client.js); an edit that does land while a core HMR happens is caught by
  * the ETag comparison on the next activation.
  */
-export type ChunkName = 'terminal' | 'editor' | 'mermaid'
+export type ChunkName = 'terminal' | 'editor' | 'mermaid' | 'locale'
 
 /** The module exports a chunk factory provides (namespace-ish record). */
 export type ChunkExports = Record<string, unknown>
@@ -90,8 +91,7 @@ const CHUNK_REVALIDATE_TIMEOUT_MS = 5_000
  * The client module system surface this loader needs to resolve externals.
  * DSH 0.1.0-rc.8 provides it as the `ctx.modules` service (no page global
  * anymore); the plugin injects it at activation via
- * {@link setChunkModuleSystem}. The rc.7-era `window.__DSH_MODULES__` global
- * remains as a fallback so older hosts and the test harness keep working.
+ * {@link setChunkModuleSystem}.
  */
 export interface ChunkModuleSystem {
   import(specifier: string): Promise<unknown>
@@ -123,12 +123,11 @@ export function setChunkModuleSystem(system: ChunkModuleSystem | undefined): voi
 }
 
 /** Resolve the shell-installed module system (injected, then the plugin
- *  global shared with chunk-bundle copies, then the rc.7 page global). */
+ *  global shared with chunk-bundle copies). */
 function moduleSystem(): ChunkModuleSystem | undefined {
   const g = globalThis as Record<string, unknown>
   return injectedModuleSystem
     ?? g[MODULE_SYSTEM_GLOBAL] as ChunkModuleSystem | undefined
-    ?? (g as { __DSH_MODULES__?: ChunkModuleSystem }).__DSH_MODULES__
 }
 
 /** The plugin-owned chunk factory registry the chunk scripts populate. */
@@ -244,8 +243,7 @@ export async function loadChunk(name: ChunkName): Promise<ChunkExports> {
   if (revalidation !== null) await revalidation
   const cached = cache.get(name)
   if (cached !== undefined) return cached
-  let task: Promise<ChunkExports>
-  task = (async (): Promise<ChunkExports> => {
+  const task: Promise<ChunkExports> = (async (): Promise<ChunkExports> => {
     const test = testLoaders.get(name)
     if (test !== undefined) return test()
     const modules = moduleSystem()

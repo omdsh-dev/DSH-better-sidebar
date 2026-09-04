@@ -30,6 +30,7 @@ import {
   type SidebarPrefs,
 } from './config.ts'
 import { parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import { resolveSessionPath } from './session-path.ts'
 import { writeWorkspaceUpload } from './fs-operations.ts'
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
@@ -41,7 +42,7 @@ import { launchExternal } from './open-external.ts'
 import * as git from './git.ts'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { defaultShell, ensureSpawnHelper, PtyManager, shellDisplayName } from './pty-manager.ts'
-import { AgentPtyRegistry, clampDims, type AgentTerminalHandle } from './agent-pty.ts'
+import { AgentPtyRegistry, armPtyResizeGate, tryResizePty, type AgentTerminalHandle } from './agent-pty.ts'
 import {
   DSH_NODE_PTY_RANGE,
   depsStatus,
@@ -156,7 +157,7 @@ function selectedRepoOf(payload: unknown): string | undefined {
  * cwd when the root cannot be resolved, e.g. a bare directory).
  */
 async function resolveGitPath(cwd: string, raw: string, selected?: string): Promise<string> {
-  if (isAbsolute(raw)) return requireAbsolute(raw)
+  if (isAbsolute(raw)) return requireAbsolute(resolveSessionPath(cwd, raw))
   // Prefer the session-relative interpretation when it names an existing
   // path. Git status reports repository-root-relative names, but the sidebar
   // security boundary is the session workspace; this preference keeps files
@@ -473,7 +474,7 @@ function buildApi(
       // log opens on a tool event (subagent seeds do) carries seq 0, which a
       // literal `> 0` comparison would drop, so the absent case floors at -1.
       const afterSeq = rawAfter ?? -1
-      let events: readonly SidebarSessionEvent[] | undefined = ctx.sessions.get(sessionId)?.events
+      let events: readonly SidebarSessionEvent[] | undefined = ctx.sessions.get(sessionId)?.snapshotEvents()
       if (events === undefined) {
         const persistence = ctx.get('sessionPersistence')
         if (persistence !== undefined) {
@@ -1208,6 +1209,9 @@ async function attachTerminal(
     // terminals opened from now on (existing pty handles keep their shell).
     const overrides = shellOverridesOf(getSettings)
     const handle = ptyManager.open(sessionId, tabId, cwd, 80, 24, overrides.shell, overrides.shellArgs)
+    // Windows pre-ready gate for the resize frames this socket may deliver
+    // (see armPtyResizeGate; inert on POSIX).
+    armPtyResizeGate(handle.pty)
     // Replay the transcript, then follow live output.
     if (handle.transcript !== '') ws.send(handle.transcript)
     const onData = (data: string): void => {
@@ -1254,8 +1258,7 @@ async function attachTerminal(
         && control.type === 'resize'
         && typeof control.cols === 'number' && typeof control.rows === 'number'
       ) {
-        const dims = clampDims(control.cols, control.rows)
-        handle.pty.resize(dims.cols, dims.rows)
+        tryResizePty(handle.pty, control.cols, control.rows)
       } else {
         handle.pty.write(text)
       }
@@ -1323,8 +1326,7 @@ function pumpAgentTerminal(
       && control.type === 'resize'
       && typeof control.cols === 'number' && typeof control.rows === 'number'
     ) {
-      const dims = clampDims(control.cols, control.rows)
-      handle.pty.resize(dims.cols, dims.rows)
+      tryResizePty(handle.pty, control.cols, control.rows)
     } else if (control === null) {
       // Raw text input (a JSON-looking string the pty would have received
       // verbatim is reachable in theory but is exotic for an agent terminal;

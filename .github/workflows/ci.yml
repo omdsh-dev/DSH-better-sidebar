@@ -22,9 +22,10 @@ jobs:
         with:
           # Tests run git log against this repository and need the full history.
           fetch-depth: 0
+      # pnpm version is pinned via packageManager in package.json; the action
+      # reads it from there (specifying both makes action-setup fail on
+      # purpose with ERR_PNPM_BAD_PM_VERSION).
       - uses: pnpm/action-setup@v6
-        with:
-          version: 11
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -40,6 +41,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Typecheck
         run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
       - name: Test
         run: pnpm test
       - name: Build
@@ -47,6 +50,52 @@ jobs:
       # The consumer-facing declaration surface guard: a browser-only plugin
       # (no @types/node, skipLibCheck: false) must type-check against the
       # shipped lib/types. Runs AFTER build (it reads the built output).
+      - name: Check consumer type surface
+        run: pnpm check:consumer-types
+
+  # Windows parity lane for the pure-logic suite. The codebase carries real
+  # win32 branches (shell parsing, WSL path projection, the PowerShell
+  # installer) that mock-injection tests alone cannot validate — this lane
+  # runs the same typecheck / test / build / consumer-type-surface steps on
+  # a real Windows runtime. The plugin-mount lane (real DSH + Playwright
+  # Chromium) stays ubuntu-only and is deliberately NOT mirrored here.
+  ci-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        # The runner ships Git Bash: multi-line steps and
+        # scripts/check-consumer-types.sh work verbatim.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Tests run git log against this repository and need the full history.
+          fetch-depth: 0
+      # pnpm version is pinned via packageManager in package.json; the action
+      # reads it from there (specifying both makes action-setup fail on
+      # purpose with ERR_PNPM_BAD_PM_VERSION).
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      # Same rationale as the ci job: smoke tests spawn git without an
+      # identity and rely on ambient config, which the runner lacks.
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.name "dsh-better-sidebar-ci"
+          git config --global user.email "ci@dsh.invalid"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Lint
+        run: pnpm lint
+      - name: Test
+        run: pnpm test
+      - name: Build
+        run: pnpm build
       - name: Check consumer type surface
         run: pnpm check:consumer-types
 
@@ -66,9 +115,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # pnpm version is pinned via packageManager in package.json; the action
+      # reads it from there (specifying both makes action-setup fail on
+      # purpose with ERR_PNPM_BAD_PM_VERSION).
       - uses: pnpm/action-setup@v6
-        with:
-          version: 11
 
       - uses: actions/setup-node@v7
         with:
@@ -81,10 +131,10 @@ jobs:
       # Pin the DSH CLI the lane mounts into; the profile's bundle stack
       # (dsh-base / dsh-web-app) resolves from this installation. Keep in
       # step with the plugin's @deepseek-ai/* peer range when bumping.
-      # DSH 0.1.2-alpha.x is published under the `alpha` dist-tag; the lanes
+      # DSH 0.1.2-rc.1 is published under the `next` dist-tag; the lanes
       # speak the slash-only RPC dialect (tests/e2e/host-protocol.ts).
       - name: Install dsh CLI (pinned)
-        run: npm install -g @deepseek-ai/dsh@0.1.2-alpha.3
+        run: npm install -g @deepseek-ai/dsh@0.1.2-rc.1
 
       # lib/ is gitignored; the tarball is produced from this build.
       - name: Build and pack the npm tarball
@@ -103,7 +153,7 @@ jobs:
       - name: Aggregate double-mount regression
         env:
           DSH_CMD: dsh
-        run: bash scripts/e2e-aggregate-mount.sh
+        run: pnpm test:mount:aggregate
 
       - name: Upload Playwright report on failure
         if: failure()

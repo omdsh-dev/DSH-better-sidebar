@@ -409,6 +409,12 @@ describe('git destructive operations (scratch repository)', () => {
   const makeScratchRepo = (): string => {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-git-'))
     gitRun(dir, ['init', '-q'])
+    // Pin the eol policy: Git for Windows defaults to core.autocrlf=true
+    // (system gitconfig on the CI runner, and many dev machines), which
+    // smudges LF→CRLF on every index restore and breaks the byte-exact
+    // assertions below. The destructive-op behavior under test is orthogonal
+    // to the machine's eol policy.
+    gitRun(dir, ['config', 'core.autocrlf', 'false'])
     gitRun(dir, ['checkout', '-q', '-b', 'main'])
     writeFileSync(join(dir, 'a.txt'), 'one\ntwo\nthree\n')
     gitRun(dir, ['add', '-A'])

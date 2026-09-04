@@ -28,11 +28,10 @@ export function revealCommand(path: string, platform: NodeJS.Platform = process.
   switch (platform) {
     case 'darwin':
       return { command: 'open', args: ['-R', path] }
-    // `explorer /select,<path>` — the classic "show in folder" incantation.
-    // Passed as separate argv entries (no shell); verify on Windows, with
-    // `cmd /c start "" explorer.exe "/select,<path>"` as the fallback.
+    // Explorer expects `/select,<path>` as one argument. Keep the spawn
+    // shell-free: a command shell would reinterpret valid path characters.
     case 'win32':
-      return { command: 'explorer.exe', args: ['/select,', path] }
+      return { command: 'explorer.exe', args: [`/select,${path}`] }
     default: {
       const parent = parentOf(path)
       return { command: 'xdg-open', args: [parent ?? path] }

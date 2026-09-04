@@ -23,7 +23,7 @@ function agent(id: string, over: { events?: unknown[]; header?: Record<string, u
     session: {
       id,
       header: { cwd: '/p', delegationDepth: 0, agentPreset: 'preset-a', ...over.header },
-      events: over.events ?? [],
+      snapshotEvents: () => over.events ?? [],
     },
     inject: vi.fn(),
     followup: vi.fn(),
@@ -120,7 +120,6 @@ describe('sidechat.start', () => {
     expect(options.meta).toMatchObject({
       parentSession: 'parent',
       origin: 'subagent',
-      seedLength: 7,
       delegationDepth: 1,
       agentPreset: 'preset-a',
       cwd: '/p',

@@ -10,16 +10,17 @@
  */
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { createElement, useEffect } from 'react'
+import { createElement, useEffect, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import type { Context } from '../src/context-types.ts'
 import { EditorHost } from '../src/client/EditorHost.tsx'
-import { createBetterSidebarService } from '../src/client/service.ts'
+import { createBetterSidebarService, type FileViewerProps } from '../src/client/service.ts'
 import { allLeaves, createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 /** A store with the seeded editor-home tab (default prefs: separate mode;
  *  merged-mode scenarios re-enable editorExplorer explicitly). */
@@ -257,22 +258,26 @@ describe('EditorHost (files window)', () => {
     const service = ctx.betterSidebar
     const calls: string[] = []
     // A viewer with a hoisted toolbar (the TextEditor contract): register
-    // commands and report the state once on mount.
+    // commands and report the state once on mount. Capitalized so the hooks
+    // rules recognize it as a component.
+    const FakeViewer = (viewerProps: FileViewerProps): ReactNode => {
+      useEffect(() => {
+        viewerProps.onToolbarControls?.({
+          setMode: (next) => { calls.push(`mode:${next}`) },
+          save: () => { calls.push('save') },
+        })
+        viewerProps.onToolbarState?.({ modes: true, mode: 'preview', dirty: true, editable: true, saveState: 'idle' })
+        return () => { viewerProps.onToolbarControls?.(null) }
+        // Mount-only: re-running would re-fire the toolbar registration.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
+      return null
+    }
     service.registerFileViewer({
       id: 'test:fake',
       exts: ['fake'],
       fetchStrategy: 'none',
-      component: (viewerProps) => {
-        useEffect(() => {
-          viewerProps.onToolbarControls?.({
-            setMode: (next) => { calls.push(`mode:${next}`) },
-            save: () => { calls.push('save') },
-          })
-          viewerProps.onToolbarState?.({ modes: true, mode: 'preview', dirty: true, editable: true, saveState: 'idle' })
-          return () => { viewerProps.onToolbarControls?.(null) }
-        }, [])
-        return null
-      },
+      component: FakeViewer,
     })
     service.openTab({ type: 'editor', title: 'x.fake', path: '/tmp/x.fake', id: 'editor:/tmp/x.fake' })
     const fileTab = (): SidebarTab =>

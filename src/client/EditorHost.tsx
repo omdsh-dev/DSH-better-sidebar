@@ -100,7 +100,7 @@ export function EditorHost(props: {
   expanded: string[]
   revealed: string[]
   onToggleDir: (path: string) => void
-  onReferenceFile: (path: string) => void
+  onReferenceFile: (path: string, isDir: boolean) => void
 }) {
   const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile } = props
   const path = tab.path ?? ''
@@ -192,10 +192,11 @@ export function EditorHost(props: {
   }
 
   /** The context menu's "open with" action: reveal the path in the OS file
-   *  manager, or hand the target's URL (a local `file` URL, or the SSH-remote
-   *  form for VSCode-family editors in remote mode) to the host's external
-   *  opener. Failures are logged only — a missing handler is the OS's
-   *  dialog, not a sidebar error. */
+   *  manager, or hand the target's URL to its opener — local `file` URLs go
+   *  to the host's external opener, while the SSH-remote form for
+   *  VSCode-family editors launches on the browser/client machine (see
+   *  api.openExternal). Failures are logged only — a missing handler is the
+   *  OS's/browser's dialog, not a sidebar error. */
   const openWith = (targetId: string, absolute: string): void => {
     const target = openWithTargets.find(item => item.id === targetId)
     if (target === undefined) return
@@ -337,6 +338,9 @@ export function EditorHost(props: {
     }
     apply(planFirstMatch(ctx.get('betterSidebar')?.matchFileViewer(path), mediaUrlOf))
     return () => { cancelled = true; controller.abort() }
+    // The deps are deliberately granular: the scope object's identity churns,
+    // only its sessionId / cwd fields gate the (re)fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope.sessionId, scope.cwd, path, ctx, showEmpty, isDir, reloadSeq])
 
   // Save-then-refresh in preview mode (issue #167 part C): the edge into

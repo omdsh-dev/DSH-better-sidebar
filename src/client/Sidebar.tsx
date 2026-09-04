@@ -28,21 +28,20 @@
  * drawer floats). Widening does not migrate back: the tabs keep living in
  * the right tree.
  */
-import { createElement, memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { Context, SidebarSessionList } from '../context-types.ts'
-import { appendToDraft } from './conversation-draft.ts'
+import type { Context } from '../context-types.ts'
+import { appendToDraft, insertFileReference } from './conversation-draft.ts'
 import {
-  BOTTOM_MIN, PANEL_MIN, activateTab, agentUuidOf, allLeaves, closeFloatByTab, closeTab, dockFloat, firstLeaf, floatTab,
-  floatWithTab, isAgentTabId, leafWithTab, migrateBottomTabs,
-  moveFloat, moveTab, moveTabToEdge, openDiffTab, openTabInActivePane, raiseFloat, reconcileAgentTerminals,
-  resizeFloat, resizeSplitIn, setBottomHeight, setTabPin, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
-  type DropZone, type SidebarState, type SidebarStore, type SidebarTab, type SplitNode,
+  BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, floatTab,
+  isAgentTabId, leafWithTab, migrateBottomTabs,
+  moveTab, moveTabToEdge, openDiffTab, resizeSplitIn,
+  setBottomHeight, setTabPin, setWidth, toggleBottomPanel, toggleExpanded, togglePanel,
+  type DropZone, type SidebarState, type SidebarStore, type SidebarTab,
 } from './state.ts'
-import { collectPinnedTabs, createPinnedVirtualTab, getPinnedHomeScope, injectPinnedIntoTree, isPinnedVirtualId, isPinnedVirtualTab, parsePinnedVirtualId, type PinnedTabEntry } from './pinned.ts'
-import { IconPinOutline16 } from './icons.tsx'
+import { getPinnedHomeScope } from './pinned.ts'
 import { IconPanelBottomOutline16, IconPanelRightOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { isNarrowWidth, useViewportSize } from './breakpoints.ts'
@@ -51,32 +50,16 @@ import { parseDesktopEnv } from './desktop-env.ts'
 import { getWcoSnapshot, subscribeWco } from './wco.ts'
 import { getShellPreset } from './shell-presets.ts'
 import { computeTitleBarStrip } from './titlebar-strip.ts'
-import type { NewTabOption } from './TabBar.tsx'
-import { TAB_DRAG_TYPE, parseDrag, type TabDragPayload } from './TabBar.tsx'
-import { FreeWindow } from './FreeWindow.tsx'
+import { TabContent, buildNewTabOptions } from './sidebar/TabContent.tsx'
+import { useCenterColumn } from './sidebar/use-center-column.ts'
+import { useHostFeeds } from './sidebar/use-host-feeds.ts'
+import { usePinnedTabs } from './sidebar/use-pinned-tabs.ts'
+import { FreeWindowLayer, useFloatDragout } from './sidebar/free-windows.tsx'
+import type { TabDragPayload } from './TabBar.tsx'
 import { relativeTo } from './paths.ts'
-import { OrphanedTab } from './OrphanedTab.tsx'
-import { RenderBoundary } from './RenderBoundary.tsx'
-import { tabContentCompare, type TabContentMemoKey } from './tab-content-memo.ts'
-import { detectNewDirectSubagent } from './subagent-detect.ts'
-import { detectNewJob } from './subagent-jobs.ts'
 import { t } from './locales.ts'
-import { api, type SessionScope } from './api.ts'
+import { api } from './api.ts'
 import css from './sidebar.module.css'
-
-/** How many consecutive reconnect failures stop the agent-terminals push loop
- * (mirror of the terminal view's own cap; the loop restarts on session switch). */
-const FAILURE_LIMIT = 3
-
-/**
- * Subagent auto-open debounce (ms). The host delivers a new child's origin
- * and its title in SEPARATE frames: a Side Chat thread's first visible
- * frame still shows a fallback title (no 'Side: ' prefix), so an immediate
- * 0→N decision mistakes it for a genuine subagent and pops the task page.
- * The trigger therefore re-evaluates against the live snapshot once the
- * title frame has had time to land.
- */
-const AUTO_OPEN_DEBOUNCE_MS = 500
 
 /**
  * OS file drags over the sidebar belong to the sidebar, not to the chat:
@@ -117,65 +100,6 @@ function injectUserCss(attr: string, id: string, cssText: string): HTMLStyleElem
   tag.textContent = cssText
   document.head.appendChild(tag)
   return tag
-}
-
-/** Props of one tab's content cell = the memo key (tab-content-memo.ts) plus
- *  the runtime objects/callbacks the cell renders with. The memo comparator
- *  is the pure `tabContentCompare`; anything in the key decides a re-render
- *  must propagate, anything outside it must be a stable object (ctx/store)
- *  or covered by a compared field (paneId covers onOpenDiff's captured
- *  pane; sessionId/cwd cover onReferenceFile). */
-interface TabContentProps extends TabContentMemoKey {
-  onToggleDir: (path: string) => void
-  onReferenceFile: (path: string) => void
-  ctx: Context
-  store: SidebarStore
-  /** Fired before a topology node jumps to its child session (see Sidebar). */
-  onSubagentJump: (childSessionId: string) => void
-  /** Open a diff tab from the git panel (placement handled by the store). */
-  onOpenDiff: (tab: SidebarTab) => void
-}
-
-/** Render the content of one tab (dispatched by type). */
-const TabContent = memo(function TabContent(props: TabContentProps) {
-  const { tab, effectiveTabId, sessionId, cwd, expanded, revealed, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff } = props
-  const scope = { sessionId, cwd }
-  const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
-  if (descriptor === undefined) {
-    return <OrphanedTab ctx={ctx} store={store} scope={scope} tab={tab} visible={visible} />
-  }
-  // For pinned virtual tabs, the tab descriptor's component (e.g. TerminalView)
-  // must receive the ORIGINAL tab id so it connects to the home session's PTY.
-  // The virtual tab's own id is a unique display key (prefixed); effectiveTabId
-  // restores the real id at the component boundary.
-  const componentTab = effectiveTabId !== undefined ? { ...tab, id: effectiveTabId } : tab
-  return createElement(
-    RenderBoundary,
-    { className: css.tabBoundaryError },
-    createElement(descriptor.component, {
-      ctx, store, scope, tab: componentTab, visible, expanded, revealed,
-      onToggleDir, onReferenceFile, onOpenDiff, onSubagentJump,
-    }),
-  )
-}, tabContentCompare)
-
-/** The + menu options for the current state, driven by the tab registry.
- * Hidden tabs (editor/diff) never show; `available` returning false shows
- * a disabled row (e.g. terminal at capacity) instead of hiding the option.
- * Tabs the user disabled in the side card settings are filtered out
- * entirely — re-enabling them is the settings page's job. */
-function buildNewTabOptions(state: SidebarState, ctx: Context, scope: SessionScope): NewTabOption[] {
-  const service = ctx.get('betterSidebar')
-  if (service === undefined) return []
-  return service.getTabs()
-    .filter(d => !d.hidden && service.isTabEnabled(d.id))
-    .sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
-    .map(d => ({
-      id: d.id,
-      label: typeof d.title === 'function' ? d.title() : d.title,
-      disabled: !(d.available?.(ctx, scope, state) ?? true),
-      icon: typeof d.icon === 'function' ? d.icon(16) : d.icon,
-    }))
 }
 
 export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
@@ -315,7 +239,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // session header's right-aligned utilities (the "Session log" download
   // capsule) must yield. layout.css keys off this body attribute to push the
   // header's right padding out past the cluster. Only the CLOSED panel needs
-  // it — an open panel already squeezes `#root` left, moving the header clear.
+  // it — an open panel reserves AppFrame padding, moving the header clear.
   const collapsed = state === undefined || !state.panelOpen
   useEffect(() => {
     if (collapsed) document.body.setAttribute('data-dsh-sidebar-collapsed', '')
@@ -407,493 +331,38 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }, [sessionId, summaryCwd])
   const cwd = summaryCwd ?? fetchedCwd
 
-  /**
-   * Agent terminals push: subscribe to the host's live list of agent-owned
-   * terminals for this session (created by the model through the
-   * `terminal_create` tool). The host pushes a JSON array on every
-   * create / close / exit; the sidebar reconciles the list into tabs
-   * (id `agent:<uuid>`, title from the agent). A disconnected socket
-   * retries with a short backoff so a refresh or transient drop reattaches
-   * the same shell without losing the agent's work — capped like the
-   * terminal view's own reconnect loop, so a refused endpoint never spins
-   * forever (the next session switch restarts the loop).
-   * While the terminal tab type is disabled in settings, pushes are
-   * ignored (no auto-added tabs); re-enabling makes the next push converge.
-   */
-  useEffect(() => {
-    if (sessionId === undefined) return
-    let socket: WebSocket | null = null
-    let retry: number | undefined
-    let closed = false
-    let failures = 0
-    const connect = (): void => {
-      if (closed) return
-      const url = new URL('/sidebar/ws/agent-terminals', location.origin)
-      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-      url.search = new URLSearchParams({ sessionId }).toString()
-      socket = new WebSocket(url.toString())
-      socket.onmessage = (event) => {
-        if (typeof event.data !== 'string') return
-        try {
-          const list = JSON.parse(event.data) as Array<{ uuid: string; title: string; command: string; exited: boolean }>
-          if (!Array.isArray(list)) return
-          store.reduce(s => ctx.get('betterSidebar')?.isTabEnabled('terminal') === false
-            ? s
-            : reconcileAgentTerminals(s, list))
-        } catch {
-          // Malformed push: ignore (the next push will reconcile).
-        }
-      }
-      socket.onclose = () => {
-        if (closed) return
-        failures += 1
-        if (failures >= FAILURE_LIMIT) {
-          console.error('[dsh-better-sidebar] agent-terminals connection failed; stopping reconnect loop', sessionId)
-          return
-        }
-        retry = window.setTimeout(connect, 2000)
-      }
-      socket.onerror = () => { socket?.close() }
-    }
-    connect()
-    return () => {
-      closed = true
-      window.clearTimeout(retry)
-      socket?.close()
-    }
-  }, [sessionId, store])
-
-  /**
-   * Agent opens push: subscribe to the host's `sidebar_open` requests for
-   * this session (the model actively opens a file / folder / HTTP(S) page).
-   * The host pushes one JSON request per open; the sidebar routes it to the
-   * matching built-in tab: a file opens in the editor (per-path dedupe), a
-   * folder opens a file window whose tree is rooted at the folder
-   * (`meta.dir`), and a URL opens in the browser tab. A disconnected socket
-   * retries with a short backoff (mirror of the agent-terminals loop): the
-   * host queue keeps undelivered requests and replays them on the first
-   * attach, so a refresh or a session switch lands the opens the model
-   * queued while no view was connected.
-   * While the side-card setting is off, pushes are ignored as a defensive
-   * gate — the host already unregisters the tool and drains the queue.
-   */
-  useEffect(() => {
-    if (sessionId === undefined) return
-    let socket: WebSocket | null = null
-    let retry: number | undefined
-    let closed = false
-    let failures = 0
-    const connect = (): void => {
-      if (closed) return
-      const url = new URL('/sidebar/ws/agent-opens', location.origin)
-      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-      url.search = new URLSearchParams({ sessionId }).toString()
-      socket = new WebSocket(url.toString())
-      socket.onmessage = (event) => {
-        if (typeof event.data !== 'string') return
-        try {
-          const request = JSON.parse(event.data) as { kind?: unknown; target?: unknown; title?: unknown }
-          if (request === null || typeof request !== 'object') return
-          if (request.kind !== 'file' && request.kind !== 'folder' && request.kind !== 'url') return
-          if (typeof request.target !== 'string' || request.target === '') return
-          if (store.getPrefs().agentOpenTools !== true) return
-          const scope = { sessionId }
-          const title = typeof request.title === 'string' && request.title !== '' ? request.title : undefined
-          if (request.kind === 'url') {
-            ctx.get('betterSidebar')?.openTab({ type: 'browser', url: request.target, title }, scope)
-          } else if (request.kind === 'folder') {
-            ctx.get('betterSidebar')?.openTab({
-              type: 'editor',
-              title,
-              path: request.target,
-              id: `editor:${request.target}`,
-              meta: { dir: true },
-            }, scope)
-          } else {
-            ctx.get('betterSidebar')?.openFile(scope, request.target, title)
-          }
-        } catch {
-          // Malformed push: ignore (the next push carries its own request).
-        }
-      }
-      socket.onclose = () => {
-        if (closed) return
-        failures += 1
-        if (failures >= FAILURE_LIMIT) {
-          console.error('[dsh-better-sidebar] agent-opens connection failed; stopping reconnect loop', sessionId)
-          return
-        }
-        retry = window.setTimeout(connect, 2000)
-      }
-      socket.onerror = () => { socket?.close() }
-    }
-    connect()
-    return () => {
-      closed = true
-      window.clearTimeout(retry)
-      socket?.close()
-    }
-  }, [sessionId, store])
-
-  /**
-   * Subagent auto-activation: the moment the current conversation spawns its
-   * FIRST direct subagent (a 0 → N transition on the list feed), the "auto
-   * open" pref is on, and the Subagent tab type is enabled in settings,
-   * open the panel (if collapsed) and focus the Subagent page
-   * (single-instance: an existing tab is focused, never duplicated).
-   * Switching to a session that already has subagents never triggers — its
-   * baseline starts at the current count — so a deliberate layout is never
-   * fought.
-   *
-   * The decision is DEBOUNCED (AUTO_OPEN_DEBOUNCE_MS): a Side Chat thread
-   * is also a subagent-origin child, and its 'Side: ' title lands one frame
-   * after its origin — an immediate check would misread that first frame as
-   * a new subagent and pop this page on every thread creation. The timer
-   * re-evaluates the ORIGINAL baseline against the live snapshot; by then
-   * the title filter (isSideThreadSummary) sees the settled label.
-   */
-  const listBaselineRef = useRef<SidebarSessionList | undefined>(undefined)
-  const autoOpenPendingRef = useRef<{ baseline: SidebarSessionList; timer: number } | null>(null)
-  useEffect(() => {
-    const prev = listBaselineRef.current
-    listBaselineRef.current = sessionList
-    if (sessionId === undefined || prev === undefined) return
-    if (autoOpenPendingRef.current !== null) return
-    if (!detectNewDirectSubagent(prev, sessionList, sessionId)) return
-    const baseline = prev
-    const timer = window.setTimeout(() => {
-      autoOpenPendingRef.current = null
-      if (!detectNewDirectSubagent(baseline, ctx.sessions.list.getSnapshot(), sessionId)) return
-      if (!store.getPrefs().autoOpenSubagent) return
-      if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
-      store.reduce(s => s.panelOpen ? s : togglePanel(s))
-      // Pin the landing to the right panel: the auto-opened Subagent page must
-      // appear where the panel just expanded, not in a bottom-panel pane the
-      // user last touched.
-      store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
-      ctx.get('betterSidebar')?.openTab({ type: 'subagent', title: t('subagent') })
-    }, AUTO_OPEN_DEBOUNCE_MS)
-    autoOpenPendingRef.current = { baseline, timer }
-  }, [sessionList, sessionId, store, ctx])
-
-  // A session switch (or unmount) voids any armed auto-open recheck.
-  useEffect(() => () => {
-    const pending = autoOpenPendingRef.current
-    if (pending !== null) window.clearTimeout(pending.timer)
-    autoOpenPendingRef.current = null
-  }, [sessionId])
-
-  /**
-   * Job auto-activation: the moment a NEW background job appears for the
-   * current conversation (a job id the previous snapshot lacked), the
-   * auto-open pref is on, and the Jobs tab type is enabled, open the panel
-   * (if collapsed) and focus the Jobs page. Unlike the subagent trigger
-   * (0 → N only), ANY new job id triggers: the agent may start several
-   * jobs in one session, and each should surface. A fresh page load never
-   * triggers — its baseline starts at the current snapshot.
-   */
-  const jobBaselineRef = useRef<SidebarSessionList | undefined>(undefined)
-  useEffect(() => {
-    const prev = jobBaselineRef.current
-    jobBaselineRef.current = sessionList
-    if (sessionId === undefined || prev === undefined) return
-    if (!detectNewJob(prev, sessionList, sessionId)) return
-    if (!store.getPrefs().autoOpenJobs) return
-    if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
-    store.reduce(s => s.panelOpen ? s : togglePanel(s))
-    store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
-    ctx.get('betterSidebar')?.openTab({ type: 'subagent', title: t('subagent') })
-  }, [sessionList, sessionId, store, ctx])
-
-  /**
-   * Topology jump-back: clicking a subagent node on the Subagent page calls
-   * the official `openSubagent`, which switches the sidebar to that child
-   * session's OWN layout (a fresh child session defaults to the explorer).
-   * The README contract says the Subagent page must stay open with the jumped
-   * node highlighted — so once the current session becomes the recorded jump
-   * target, re-open the Subagent page on top of the child's layout (expanding
-   * the panel first if it is collapsed). Only this explicit node click arms
-   * the flag, so switching to a subagent session by any other means keeps
-   * that session's own layout untouched.
-   */
-  const subagentJumpRef = useRef<string | undefined>(undefined)
-  useEffect(() => {
-    const pending = subagentJumpRef.current
-    if (pending === undefined || sessionId !== pending) return
-    subagentJumpRef.current = undefined
-    store.reduce(s => s.panelOpen ? s : togglePanel(s))
-    store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
-    ctx.get('betterSidebar')?.openTab({ type: 'subagent', title: t('subagent') })
-  }, [sessionId, store, ctx])
-
-  /**
-   /**
-    * Inline pinned terminals (v0.17.0+): pinned tabs from OTHER sessions
-    * inject as VIRTUAL tabs into the first leaf of the right panel's split
-    * tree. The virtual tabs have unique ids (prefixed with the home session)
-    * and carry the home scope in meta. Clicking a virtual tab sets
-    * `activePinnedTabId` — the augmented tree overrides the leaf's `active`
-    * so the pinned tab's content renders in-place (TerminalView connects to
-    * the home session's PTY via WS, no session jump).
-    *
-    * Closing/unpinning a virtual tab targets the HOME session via reduceFor
-    * (which doesn't notify — targeted opens must not re-render the active
-    * session). The `pinnedRevision` state bump forces the pinnedEntries
-    * useMemo to recompute after such an action.
-    */
-  const [activePinnedTabId, setActivePinnedTabId] = useState<string | null>(null)
-  const [pinnedRevision, setPinnedRevision] = useState(0)
-
-  /**
-   * Cross-session pinned-tab collection. Recomputed on every store notify,
-   * session-list change, and pinned action (the revision bump covers
-   * reduceFor updates that don't notify). Only tabs from OTHER sessions —
-   * the viewer's own pinned tabs are already on its tab strip.
-   */
-  const pinnedEntries: readonly PinnedTabEntry[] = useMemo(() => {
-    if (sessionId === undefined) return []
-    return collectPinnedTabs(store.getSessionStates(), { sessionId, cwd })
-  }, [store, sessionId, cwd, snapshot, pinnedRevision])
-
-  /** Virtual SidebarTab objects for the pinned entries (stable references
-   *  via useMemo so TabContent's memo comparator holds). */
-  const pinnedVirtualTabs = useMemo(
-    () => pinnedEntries.map(createPinnedVirtualTab),
-    [pinnedEntries],
+  // The + menu options ride a memo so the two Workbenches share ONE array
+  // identity across renders that did not change the store (drag state,
+  // viewport resize): fresh arrays per render re-rendered every LeafView's
+  // + affordance whether or not anything tab-related moved.
+  const newTabOptions = useMemo(
+    () => (state === undefined || sessionId === undefined ? [] : buildNewTabOptions(state, ctx, { sessionId, cwd })),
+    // state is the whole session state — every field it wraps is fair game
+    // for the descriptors' available() callbacks. (The render's own guard
+    // sits below every hook; this memo must handle the no-session case
+    // itself.)
+    [state, ctx, sessionId, cwd],
   )
 
-  /** The right panel's split tree with pinned virtual tabs injected into the
-   *  first leaf. When `activePinnedTabId` is set, that leaf's `active` is
-   *  overridden so the pinned tab's content is visible. */
-  const augmentedTree = useMemo(
-    () => state === undefined ? undefined : injectPinnedIntoTree(state.splits, pinnedVirtualTabs, activePinnedTabId),
-    [state, pinnedVirtualTabs, activePinnedTabId],
-  )
+  // Host feeds (sidebar/use-host-feeds.ts): the agent-terminals / agent-opens
+  // WebSocket pushes and the subagent / background-job auto-activation
+  // triggers, all keyed on the current session. The jump-back ref is the one
+  // piece the render side consumes (renderTab's onSubagentJump arms it).
+  const { subagentJumpRef } = useHostFeeds({ ctx, store, sessionList, sessionId })
 
-  // The app shell's center column: the bottom panel spans ONLY that column
-  // ("squeezes the agent output area") — it starts at the app sidebar's
-  // right edge and ends at the details column's left edge (the details
-  // column sits between the center and the right panel). Measured directly
-  // from the AppFrame's center column DOM (the parent of the
-  // [data-slot="conversation"] wrapper — layout.css's center column) so the
-  // bottom panel tracks the column's real
-  // horizontal edges — including the animated margin-right push while the
-  // right panel opens/closes; a frame that never appears keeps the initial
-  // zero-size fallback (the panel renders at 0 width until measured).
-  // The rect lives in a REF (not state): the open/close transition resizes
-  // the center column EVERY frame for its duration, and reacting per frame
-  // with setState re-renders the whole Sidebar (every mounted tab) at
-  // animation cadence — the visible toggle jank (#315). measureCenter
-  // writes the bottom panel's edges directly (same DOM-write pattern as
-  // applyDrag), so the panel still tracks the column per frame with zero
-  // React work; `centerMeasured` flips ONCE to gate the hidden→visible
-  // first-paint fallback.
-  const centerRectRef = useRef({ left: 0, right: 0 })
-  const [centerMeasured, setCenterMeasured] = useState(false)
-  // Refs keep the measure step stable across renders and let it skip work
-  // mid-drag: during a width/corner drag the layout push resizes the center
-  // column every frame, and reacting (setCenterRect → re-render) would
-  // re-introduce the drag lag this shell deliberately avoids. applyDrag
-  // writes the bottom panel's edges directly, so measurement pauses then.
-  const centerColRef = useRef<HTMLElement | null>(null)
-  const draggingRef = useRef(false)
-  const measureCenter = useCallback((): void => {
-    if (draggingRef.current) return
-    const col = centerColRef.current
-    if (col === null) return
-    if (!col.isConnected) {
-      // The observed column was detached (HMR re-render swapped the node
-      // in place): its rect is stale garbage. Drop the ref — the locate
-      // chain re-runs on the next mutation/interval tick and picks up the
-      // new column node (issue #248).
-      centerColRef.current = null
-      return
-    }
-    const rect = col.getBoundingClientRect()
-    // Ref + direct DOM write (see the centerRectRef comment): the bottom
-    // panel keeps tracking the center column per frame during the right
-    // panel's open/close animation without re-rendering the shell. The
-    // one-shot measured flip renders the panel visible once (a stale
-    // {0,0} fallback would flash full-width).
-    centerRectRef.current = { left: rect.left, right: rect.right }
-    const bottom = bottomRef.current
-    if (bottom !== null) {
-      bottom.style.setProperty('left', `${rect.left}px`)
-      bottom.style.setProperty('right', `${window.innerWidth - rect.right}px`)
-    }
-    setCenterMeasured(prev => (prev ? prev : true))
-  }, [])
-  useEffect(() => {
-    let disposed = false
-    let observer: ResizeObserver | undefined
-    // Locate the AppFrame's center column. DSH 0.1.x wraps slot hosts in
-    // [data-slot] containers: the conversation slot wrapper
-    // ([data-slot="conversation"]) sits directly inside the center column,
-    // so its parent IS that column — no hashed-class or positional
-    // dependency (layout.css uses the same anchor). The shell swaps the
-    // boot page for the AppFrame only AFTER boot settles, so the first
-    // query may miss it. Never give up: watch #root's subtree (the swap and
-    // HMR re-renders mutate it) and re-run this locator — querying once and
-    // bailing would strand the panel at the zero-size fallback forever
-    // (observed: a 1px sliver at the viewport's left edge).
-    const locate = (): void => {
-      if (disposed) return
-      const col = document.querySelector('#root [data-slot="conversation"]')
-        ?.parentElement as HTMLElement | undefined
-      if (col === undefined || !col.isConnected) {
-        if (centerColRef.current !== null) {
-          centerColRef.current = null
-          observer?.disconnect()
-          observer = undefined
-        }
-        return
-      }
-      if (centerColRef.current !== col) {
-        // A NEW column node (boot swap, HMR re-render, or a previous locate
-        // that found nothing): attach the ResizeObserver to THIS node and
-        // measure it once. Same-node size changes are the ResizeObserver's
-        // job — no forced measurement here, because a forced
-        // getBoundingClientRect per mutation would reflow the shell at
-        // mutation cadence.
-        centerColRef.current = col
-        observer?.disconnect()
-        observer = new ResizeObserver(measureCenter)
-        observer.observe(col)
-        measureCenter()
-      }
-    }
-    locate()
-    // rAF-debounce the mutation watchers: #root's subtree changes at chat
-    // cadence (streaming turns), and locate() itself must stay cheap.
-    let locateFrame: number | null = null
-    const scheduleLocate = (): void => {
-      if (locateFrame !== null) return
-      // Mid-drag every frame writes --dsh-sidebar-* on <html>'s style
-      // attribute, which is the mutation this watcher observes — relocating
-      // per drag frame is pointless (the center column node cannot change
-      // while the pointer is captured) and adds a querySelector to every
-      // frame's budget (#315). The 1.5s retry below still covers any node
-      // swap that somehow lands mid-drag.
-      if (draggingRef.current) return
-      locateFrame = requestAnimationFrame(() => {
-        locateFrame = null
-        locate()
-      })
-    }
-    const watcher = new MutationObserver(scheduleLocate)
-    const root = document.getElementById('root')
-    if (root !== null) watcher.observe(root, { childList: true, subtree: true })
-    // The layout push writes --dsh-sidebar-* on <html>. A HMR re-activation
-    // clears those variables on teardown and re-writes them on setup — and
-    // that is also the moment the shell may have re-created the center
-    // column under a REUSED #root child (React swaps nodes in place, so
-    // #root's childList never changes and the watcher above never fires).
-    // Watching <html>'s style attribute catches that re-sync: the push
-    // rewrite re-locates and re-measures, so the bottom panel recovers
-    // instead of staying hidden on a stale {0,0} center rect.
-    const htmlStyleWatcher = new MutationObserver(scheduleLocate)
-    htmlStyleWatcher.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] })
-    // Last-resort safety net (issue #248): no watcher is guaranteed to fire
-    // for every HMR teardown/setup interleaving (e.g. the style attribute
-    // may end up byte-identical, and the col may be swapped before the
-    // subtree watcher attaches). A slow unconditional re-locate makes the
-    // panel converge on the real column within a couple of seconds no
-    // matter what sequence the shell used. locate() is cheap when nothing
-    // changed (one querySelector + an identity compare; no forced layout).
-    const retry = window.setInterval(locate, 1500)
-    return () => {
-      disposed = true
-      if (locateFrame !== null) cancelAnimationFrame(locateFrame)
-      window.clearInterval(retry)
-      observer?.disconnect()
-      watcher.disconnect()
-      htmlStyleWatcher.disconnect()
-      centerColRef.current = null
-    }
-    // Opening the bottom panel re-runs the whole locate/measure chain: a
-    // panel opened before the center column was ever found must not stay
-    // invisible forever (the HMR recovery path depends on the observers
-    // above, this is the belt-and-braces retry for the open moment itself).
-  }, [measureCenter, state?.bottomOpen])
+  // Center-column tracking (sidebar/use-center-column.ts): the bottom panel
+  // spans ONLY the app shell's center column ("squeezes the agent output
+  // area"); the hook locates the AppFrame's center column DOM (host anchor
+  // observers + slow retry), measures its edges into a ref, and writes them
+  // straight to the bottom panel element — per-frame tracking without
+  // re-rendering the shell (the comments live with the hook now).
+  const bottomRef = useRef<HTMLDivElement | null>(null)
+  const { centerColRef, centerRectRef, centerMeasured, measureCenter, draggingRef } = useCenterColumn(bottomRef, state?.bottomOpen)
 
-  /**
-   * Free windows — drag-out detection. The tab strips already drive HTML5
-   * DnD (payload application/x-dsh-tab) with drops owned by the panes
-   * (split/merge); this shell watches the DOCUMENT (capture) for the same
-   * drag hovering OUTSIDE the panel host: while the pointer is over the
-   * conversation column it arms the drop (preventDefault) and shows a hint
-   * overlay there, and the drop floats the tab at the release point. Targets
-   * inside the host are ignored here, so pane drops keep their behavior
-   * untouched. Only OUR tab drags count (the body flag is the tab strip's;
-   * OS file drags and any DSH drags pass through). Narrow viewports skip
-   * the gesture — the merged drawer covers the conversation, leaving
-   * nothing to drop onto (the tab context menu entry still floats tabs).
-   */
-  const [floatHint, setFloatHint] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
-  const floatHintRef = useRef(false)
-  useEffect(() => {
-    if (narrow || sessionId === undefined) return
-    const inPanelHost = (target: EventTarget | null): boolean =>
-      target instanceof Element && target.closest('[data-dsh-panel-host]') !== null
-    /** The conversation column's rect when the pointer is over it (and not
-     *  over our own surfaces); null otherwise. */
-    const overConversation = (event: DragEvent): DOMRect | null => {
-      if (inPanelHost(event.target)) return null
-      const col = centerColRef.current
-      if (col === null || !col.isConnected) return null
-      const rect = col.getBoundingClientRect()
-      if (rect.width === 0 || rect.height === 0) return null
-      const { clientX: x, clientY: y } = event
-      if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return null
-      return rect
-    }
-    const onDragOver = (event: DragEvent): void => {
-      if (!document.body.hasAttribute('data-dsh-tab-dragging')) return
-      const rect = overConversation(event)
-      if (rect !== null) {
-        // preventDefault on dragover is what makes the browser deliver the
-        // drop (and drop the "no" cursor) over the conversation area.
-        event.preventDefault()
-        setFloatHint((prev) => {
-          const next = { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
-          if (prev !== null && prev.left === next.left && prev.top === next.top
-            && prev.width === next.width && prev.height === next.height) return prev
-          return next
-        })
-        floatHintRef.current = true
-      } else if (floatHintRef.current) {
-        floatHintRef.current = false
-        setFloatHint(null)
-      }
-    }
-    const onDrop = (event: DragEvent): void => {
-      if (!floatHintRef.current) return
-      floatHintRef.current = false
-      setFloatHint(null)
-      const rect = overConversation(event)
-      if (rect === null) return
-      event.preventDefault()
-      event.stopPropagation()
-      const payload = parseDrag(event.dataTransfer?.getData(TAB_DRAG_TYPE) ?? '')
-      if (payload === null) return
-      store.reduce(s => floatTab(s, payload.tabId, event.clientX, event.clientY))
-    }
-    const clear = (): void => {
-      if (!floatHintRef.current) return
-      floatHintRef.current = false
-      setFloatHint(null)
-    }
-    document.addEventListener('dragover', onDragOver, true)
-    document.addEventListener('drop', onDrop, true)
-    window.addEventListener('dragend', clear, true)
-    window.addEventListener('blur', clear)
-    return () => {
-      document.removeEventListener('dragover', onDragOver, true)
-      document.removeEventListener('drop', onDrop, true)
-      window.removeEventListener('dragend', clear, true)
-      window.removeEventListener('blur', clear)
-    }
-  }, [narrow, sessionId, store])
+  // Free-window drag-out gesture (sidebar/free-windows.tsx): watches the
+  // document for OUR tab drags hovering the conversation column and floats
+  // the tab on release. Returns the drop-zone hint geometry for the layer.
+  const { floatHint } = useFloatDragout({ narrow, sessionId, store, centerColRef })
 
   /**
    * Bottom-panel first-expansion auto terminal: the FIRST time the user
@@ -933,7 +402,6 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // move, which is the visible drag lag. The store is committed once on
   // pointer up (clamping + persistence).
   const panelRef = useRef<HTMLDivElement | null>(null)
-  const bottomRef = useRef<HTMLDivElement | null>(null)
   const widthDrag = useRef({ startX: 0, startWidth: 0 })
   const [draggingWidth, setDraggingWidth] = useState(false)
   const bottomDrag = useRef({ startY: 0, startHeight: 0 })
@@ -949,7 +417,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   useEffect(() => {
     draggingRef.current = anyDragging
     if (!anyDragging) measureCenter()
-  }, [anyDragging, measureCenter])
+    // draggingRef is a stable ref object from useCenterColumn (same
+    // provenance note as the float effect above).
+  }, [anyDragging, measureCenter, draggingRef])
 
   // Clamp mirrors of setWidth/setBottomHeight for mid-drag values (the store
   // re-clamps on commit; these keep the panels from overshooting mid-drag).
@@ -993,7 +463,14 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // drag write-only (no React re-render mid-drag).
     bottomRef.current?.style.setProperty('right', `${(window.innerWidth - centerRectRef.current.right) + (width - (state?.width ?? 0))}px`)
     const bottomPush = !narrow && state?.bottomOpen === true ? height + keyboardInset : 0
-    writeGeometry(width, bottomPush)
+    // The pushed width must ride the same gate as the committed push effect
+    // (layoutPushSize): a collapsed right panel pushes 0. The bottom strip is
+    // the only drag reachable with the panel closed — writing the panel's
+    // persisted width preference here squeezed #root mid-drag, dropped the
+    // host viewport across its 1024px auto-collapse breakpoint, and the
+    // native left sidebar snapped to its 56px rail (and back on release).
+    const pushWidth = !narrow && state?.panelOpen === true ? Math.min(width, window.innerWidth) : 0
+    writeGeometry(pushWidth, bottomPush)
   }
 
   // Drags write at most once per frame: pointer events fire several times
@@ -1254,96 +731,35 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     pinTab: (tabId, scope) => {
       store.reduce(s => setTabPin(s, tabId, scope === null ? null : { scope, homeCwd: cwd }))
     },
-  }), [store, sessionId, cwd])
+  }), [store, sessionId, cwd, ctx, centerColRef])
+
+  // Pinned virtual tabs (sidebar/use-pinned-tabs.ts): cross-session pinned
+  // tabs inject into the right panel's first leaf, and the actions are
+  // wrapped so pinned virtual ids route to the HOME session (reduceFor +
+  // revision bump).
+  const { augmentedTree, wrappedActions } = usePinnedTabs({ store, sessionId, cwd, snapshot, actions })
 
   /**
-   * Wrap the base actions to intercept pinned VIRTUAL tab ids (injected from
-   * other sessions). Regular tab ids pass through unchanged. Virtual ids are
-   * detected by the `pinned:` prefix and routed to the HOME session via
-   * reduceFor (which doesn't notify — the revision bump is the local signal).
+   * The explorer's @-reference button. Directories append the folder mention
+   * (`@dir/`) as plain text so DSH's folder decoration and completion keep
+   * working; files insert a structured chip like the native `@` picker, so
+   * the whole reference stays one link instead of decorating only the
+   * leading folder. Resolves the session-scope ctx and the conversation
+   * input service at click time; a missing service or scope degrades to a
+   * logged no-op, never a crash. Defined above the no-session early return
+   * — a hook must never sit behind a conditional return (React counts hooks
+   * per render).
    */
-  const wrappedActions = useMemo<WorkbenchActions>(() => {
-    if (pinnedVirtualTabs.length === 0) return actions
-    const closePinnedInHome = (virtualId: string): void => {
-      const { homeSessionId, tabId: originalId } = parsePinnedVirtualId(virtualId)
-      // The home cwd lives in the virtual tab's meta (snapshotted at pin
-      // time) — pass it to ptyClose so the host resolves the PTY in the
-      // correct workspace container (same scope the WS open used).
-      const vtab = pinnedVirtualTabs.find(t => t.id === virtualId)
-      const homeCwd = vtab !== undefined ? getPinnedHomeScope(vtab)?.cwd : undefined
-      store.reduceFor(homeSessionId, s => {
-        const leaf = leafWithTab(s.splits, originalId) ?? leafWithTab(s.bottomSplits, originalId)
-        if (leaf !== undefined) return closeTab(s, leaf.id, originalId)
-        if (s.floats.some(f => f.tab.id === originalId)) return closeFloatByTab(s, originalId)
-        return s
-      })
-      if (isAgentTabId(originalId)) {
-        void api.agentPtyClose(agentUuidOf(originalId)).catch(() => { /* already released */ })
-      } else {
-        void api.ptyClose({ sessionId: homeSessionId, ...(homeCwd !== undefined ? { cwd: homeCwd } : {}) }, originalId).catch(() => { /* already released */ })
-      }
-      if (activePinnedTabId === virtualId) setActivePinnedTabId(null)
-      setPinnedRevision(v => v + 1)
-    }
-    return {
-      ...actions,
-      activateTab: (paneId, tabId) => {
-        if (isPinnedVirtualId(tabId)) {
-          setActivePinnedTabId(tabId)
-        } else {
-          setActivePinnedTabId(null)
-          actions.activateTab(paneId, tabId)
-        }
-      },
-      closeTab: (paneId, tabId) => {
-        if (isPinnedVirtualId(tabId)) {
-          closePinnedInHome(tabId)
-        } else {
-          actions.closeTab(paneId, tabId)
-        }
-      },
-      moveTabBefore: (payload, toPane, beforeTabId) => {
-        if (isPinnedVirtualId(payload.tabId)) return
-        if (isPinnedVirtualId(beforeTabId)) {
-          actions.moveTabToEdge(payload, toPane, 'center')
-        } else {
-          actions.moveTabBefore(payload, toPane, beforeTabId)
-        }
-      },
-      moveTabToEdge: (payload, toPane, zone) => {
-        if (isPinnedVirtualId(payload.tabId)) return
-        actions.moveTabToEdge(payload, toPane, zone)
-      },
-      floatTab: (tabId) => {
-        if (isPinnedVirtualId(tabId)) return
-        actions.floatTab(tabId)
-      },
-      pinTab: (tabId, scope) => {
-        if (isPinnedVirtualId(tabId)) {
-          if (scope !== null) return
-          const { homeSessionId, tabId: originalId } = parsePinnedVirtualId(tabId)
-          store.reduceFor(homeSessionId, s => setTabPin(s, originalId, null))
-          if (activePinnedTabId === tabId) setActivePinnedTabId(null)
-          setPinnedRevision(v => v + 1)
-        } else {
-          actions.pinTab?.(tabId, scope)
-        }
-      },
-    }
-  }, [actions, pinnedVirtualTabs, activePinnedTabId, store])
-
-  /**
-   * The explorer's @-reference button: append `@<relative path>` to the
-   * session's composer draft (space-separated). The conversation service is
-   * resolved lazily through `ctx.get` (the inject-free read — the app's own
-   * plugins read 'conversation' the same way); a missing service or scope
-   * degrades to a logged no-op, never a crash. Defined above the no-session
-   * early return — a hook must never sit behind a conditional return
-   * (React counts hooks per render).
-   */
-  const referenceInChat = useCallback((path: string): void => {
+  const referenceInChat = useCallback((path: string, isDir: boolean): void => {
     if (sessionId === undefined) return
-    appendToDraft(ctx, sessionId, `@${relativeTo(cwd ?? '', path)}`)
+    const rel = relativeTo(cwd ?? '', path)
+    if (isDir) {
+      appendToDraft(ctx, sessionId, `@${rel === '.' ? './' : `${rel}/`}`)
+      return
+    }
+    if (!insertFileReference(ctx, sessionId, rel)) {
+      appendToDraft(ctx, sessionId, `@${rel}`)
+    }
   }, [ctx, sessionId, cwd])
 
   if (state === undefined || sessionId === undefined) {
@@ -1574,7 +990,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           <Workbench
             state={state}
             tree={augmentedTree}
-            newTabOptions={buildNewTabOptions(state, ctx, { sessionId, cwd })}
+            newTabOptions={newTabOptions}
             actions={wrappedActions}
             onNewTab={onNewTab}
             renderTab={renderTab}
@@ -1665,8 +1081,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           // Direct from the center column's measured right edge: the bottom
           // panel spans ONLY the center column, ending exactly at the
           // details column's left edge (the details column sits between the
-          // center and the right panel, and the right panel's margin-right
-          // push is already baked into centerRect.right).
+          // center and the right panel, and the right panel's reserved frame
+          // padding is already baked into centerRect.right).
           right: window.innerWidth - centerRectRef.current.right,
           // The seam against the open right panel needs its own hairline
           // (the right panel's border-left alone is covered by this panel's
@@ -1729,7 +1145,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           <Workbench
             state={state}
             tree={state.bottomSplits}
-            newTabOptions={buildNewTabOptions(state, ctx, { sessionId, cwd })}
+            newTabOptions={newTabOptions}
             actions={actions}
             onNewTab={onNewTab}
             renderTab={(tab, active, paneId) => renderTab(tab, active, paneId, 'bottom')}
@@ -1740,39 +1156,21 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       </div>
       )}
       {/*
-        Free windows: tabs dragged out onto the conversation area (or floated
-        from the tab context menu). They live in the panel host like the
-        panels (viewport coordinates, immune to desktop-shell transforms) but
-        are independent of panel state — a window stays up while panels
-        collapse. The floats array's order is the stacking order; the content
-        reuses the regular tab renderer, so every tab type floats unchanged.
+        Free windows + the drag-out hint: the layer renders the floats (the
+        array's order is the stacking order) reusing the regular tab
+        renderer, followed by the dashed drop-zone overlay (sidebar/
+        free-windows.tsx renders both as one fragment — DOM unchanged).
       */}
-      {state.floats.map(float => (
-        <FreeWindow
-          key={float.id}
-          float={float}
-          renderTab={(tab, active, paneId) => renderTab(tab, active, paneId, 'float')}
-          getTabIcon={tabIconOf}
-          onRaise={() => { store.reduce(s => raiseFloat(s, float.id)) }}
-          onMove={(x, y) => { store.reduce(s => moveFloat(s, float.id, x, y)) }}
-          onResize={(w, h) => { store.reduce(s => resizeFloat(s, float.id, w, h)) }}
-          onDock={(paneId) => { store.reduce(s => dockFloat(s, float.id, paneId ?? undefined)) }}
-          onClose={() => { ctx.get('betterSidebar')?.closeTab(float.tab.id, sessionId === undefined ? undefined : { sessionId, cwd }) }}
-        />
-      ))}
-      {/*
-        The drag-out hint: while a tab drag hovers the conversation column,
-        a dashed overlay marks the drop zone there (pointer-transparent — it
-        must not disturb the drag it describes).
-      */}
-      {floatHint !== null && (
-        <div
-          className={css.floatDropHint}
-          style={{ left: floatHint.left, top: floatHint.top, width: floatHint.width, height: floatHint.height }}
-        >
-          <span className={css.floatDropHintLabel}>{t('floatDropHint')}</span>
-        </div>
-      )}
+      <FreeWindowLayer
+        floats={state.floats}
+        hint={floatHint}
+        renderTab={renderTab}
+        getTabIcon={tabIconOf}
+        store={store}
+        ctx={ctx}
+        sessionId={sessionId}
+        cwd={cwd}
+      />
     </div>
   )
 }

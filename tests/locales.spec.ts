@@ -6,7 +6,8 @@
  * interpolation.
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { LOCALE_NS, attachBetterLocale, attachLocale, en, isZh, ja, relativeTime, t, zh, de, fr, pt, ko, ar, hi, id as idDict, tr, vi, th, ru, it as itDict, nl, sv, pl, zhHK, zhTW, zhMO } from '../src/client/locales.ts'
+import { LOCALE_NS, attachBetterLocale, attachLocale, en, isZh, relativeTime, t, zh } from '../src/client/locales.ts'
+import { localeDicts } from '../src/client/chunks/locale.tsx'
 
 /** Minimal structural fake of the DSH LocaleService face the sidebar uses. */
 class FakeLocale {
@@ -108,20 +109,15 @@ describe('locales (DSH i18n following)', () => {
     expect(Object.keys(en).sort()).toEqual(Object.keys(zh).sort())
   })
 
-  it('keeps the ja dictionary key-set-equal to zh', () => {
-    expect(Object.keys(ja).sort()).toEqual(Object.keys(zh).sort())
-  })
-
   it('keeps every shipped third-language dictionary key-set-equal to zh', () => {
-    // The third-language dicts are typed `Record<keyof typeof zh, string>` via
-    // an `as` cast (unchecked by tsc). This test catches missing/extra keys
-    // introduced when a zh key is added without updating every language.
-    const thirdLangs = {
-      de, fr, pt, ko, ar, hi, idDict, tr, vi, th, ru, itDict, nl, sv, pl, zhHK, zhTW, zhMO,
+    // The third-language dicts live in the lazy locale chunk typed as plain
+    // records (the chunk boundary has no key-set type tie to zh). This test
+    // catches missing/extra keys introduced when a zh key is added without
+    // updating every language — a missing key silently falls back to en.
+    for (const [lang, dict] of Object.entries(localeDicts)) {
+      expect(Object.keys(dict).sort(), lang).toEqual(Object.keys(zh).sort())
     }
-    for (const [lang, dict] of Object.entries(thirdLangs)) {
-      expect(Object.keys(dict as Record<string, string>).sort(), lang).toEqual(Object.keys(zh).sort())
-    }
+    expect(Object.keys(localeDicts), 'every shipped third language rides the locale chunk').toContain('ja')
   })
 })
 
@@ -247,7 +243,7 @@ describe('locales (better-locale override)', () => {
     locale.switchTo('en')
     attachLocale(locale)
 
-    const betterLocale = new FakeBetterLocale({ [LOCALE_NS]: { ja } })
+    const betterLocale = new FakeBetterLocale({ [LOCALE_NS]: { ja: localeDicts.ja! } })
     betterLocale.active = 'ja'
     attachBetterLocale(betterLocale)
 

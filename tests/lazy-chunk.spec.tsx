@@ -11,8 +11,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createElement, type ComponentType, type ReactNode } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
+import { renderRoot } from './test-utils.ts'
 import { builtinTabs } from '../src/client/builtins/tabs.tsx'
 import { builtinViewers } from '../src/client/builtins/viewers.tsx'
 import { registerChunkForTests, resetChunks } from '../src/client/chunk-loader.ts'
@@ -20,21 +20,6 @@ import { lazyChunkComponent } from '../src/client/lazy-chunk.tsx'
 import type { Context } from '../src/context-types.ts'
 import type { FileViewerProps, TabComponentProps } from '../src/client/service.ts'
 import css from '../src/client/sidebar.module.css'
-
-/** Render `node` into a detached body container under React's act(). */
-function mount(node: ReactNode): { container: HTMLDivElement; unmount: () => void } {
-  const container = document.createElement('div')
-  document.body.append(container)
-  const root: Root = createRoot(container)
-  // act() flushes the (concurrent) initial commit — the placeholder must be
-  // in the DOM before the async load flushes below.
-  act(() => { root.render(node) })
-  const unmount = (): void => {
-    act(() => { root.unmount() })
-    container.remove()
-  }
-  return { container, unmount }
-}
 
 const Marker = (): ReactNode => createElement('div', { 'data-testid': 'chunk-rendered' }, 'loaded')
 
@@ -55,7 +40,7 @@ describe('lazyChunkComponent', () => {
       return { TextEditor: Marker }
     })
     const Wrapper = lazyChunkComponent<{ label: string }>('editor', (mod) => mod.TextEditor as ComponentType<{ label: string }> | undefined)
-    const { container, unmount } = mount(createElement(Wrapper, { label: 'x' }))
+    const { container, unmount } = renderRoot(createElement(Wrapper, { label: 'x' }))
     // Initial paint: the loading placeholder (no chunk loaded yet).
     expect(container.querySelector(`.${css.editorPlaceholder}`)).not.toBeNull()
     await act(async () => {})
@@ -72,7 +57,7 @@ describe('lazyChunkComponent', () => {
       return { TextEditor: Marker }
     })
     const Wrapper = lazyChunkComponent<Record<string, never>>('editor', (mod) => mod.TextEditor as ComponentType<Record<string, never>> | undefined)
-    const { container, unmount } = mount(createElement(Wrapper, {}))
+    const { container, unmount } = renderRoot(createElement(Wrapper, {}))
     await act(async () => {})
     expect(container.textContent).toContain('boom')
     // The failed load cleared the loader cache; retry now succeeds.
@@ -89,7 +74,7 @@ describe('lazyChunkComponent', () => {
     const Recorder = (props: { label: string }): ReactNode => createElement('div', { 'data-testid': 'rec', 'data-label': props.label })
     registerChunkForTests('terminal', async () => ({ TerminalView: Recorder }))
     const Wrapper = lazyChunkComponent<{ label: string }>('terminal', (mod) => mod.TerminalView as ComponentType<{ label: string }> | undefined)
-    const { container, unmount } = mount(createElement(Wrapper, { label: 'hello' }))
+    const { container, unmount } = renderRoot(createElement(Wrapper, { label: 'hello' }))
     await act(async () => {})
     expect(container.querySelector('[data-testid="rec"]')?.getAttribute('data-label')).toBe('hello')
     unmount()
@@ -123,7 +108,7 @@ describe('built-in descriptor contract (render-prop functions)', () => {
     // load fails and the wrapper must degrade gracefully, never throw.
     const viewers = builtinViewers()
     const code = viewers.find(viewer => viewer.id === 'code')!
-    const { container, unmount } = mount(createElement(code.component, {} as FileViewerProps))
+    const { container, unmount } = renderRoot(createElement(code.component, {} as FileViewerProps))
     await act(async () => {})
     expect(container.querySelector(`.${css.editorError}`)).not.toBeNull()
     expect(container.querySelector('button')).not.toBeNull()
@@ -135,7 +120,7 @@ describe('built-in descriptor contract (render-prop functions)', () => {
     const viewers = builtinViewers()
     const markdown = viewers.find(viewer => viewer.id === 'markdown')!
     // EditorHost renders viewer components via createElement(component, props).
-    const { container, unmount } = mount(createElement(markdown.component, {
+    const { container, unmount } = renderRoot(createElement(markdown.component, {
       ctx: {},
       store: undefined,
       scope: { sessionId: 's1', cwd: '/p' },
@@ -165,7 +150,7 @@ describe('built-in descriptor contract (render-prop functions)', () => {
       tab: { id: 'terminal:2', type: 'terminal', title: '终端 2' },
       visible: true,
     } as unknown as TabComponentProps
-    const { container, unmount } = mount(createElement(terminal.component, props))
+    const { container, unmount } = renderRoot(createElement(terminal.component, props))
     await act(async () => {})
     expect(container.querySelector('[data-testid="terminal-tabid"]')?.textContent).toBe('terminal:2')
     expect(received).toBe('terminal:2')
@@ -181,11 +166,11 @@ describe('built-in descriptor contract (render-prop functions)', () => {
     const tabs = builtinTabs({} as Context)
     const terminal = tabs.find(tab => tab.id === 'terminal')!
     const props = { tab: { id: 'terminal:1', type: 'terminal', title: '终端 1' } } as unknown as TabComponentProps
-    const { container: first, unmount: unmountFirst } = mount(createElement(terminal.component, props))
+    const { container: first, unmount: unmountFirst } = renderRoot(createElement(terminal.component, props))
     await act(async () => {})
     expect(first.querySelector('[data-testid="chunk-rendered"]')).not.toBeNull()
     unmountFirst()
-    const { container: second, unmount: unmountSecond } = mount(createElement(terminal.component, props))
+    const { container: second, unmount: unmountSecond } = renderRoot(createElement(terminal.component, props))
     await act(async () => {})
     expect(second.querySelector('[data-testid="chunk-rendered"]')).not.toBeNull()
     unmountSecond()

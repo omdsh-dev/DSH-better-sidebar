@@ -18,6 +18,7 @@ import type { SidebarSessionEvent } from '../../context-types.ts'
 import type { TabComponentProps } from '../service.ts'
 import { t } from '../locales.ts'
 import { api } from '../api.ts'
+import { usePolling } from '../use-polling.ts'
 import { floatTab, type SidebarDiffRef } from '../state.ts'
 import { GitLens } from './GitLens.tsx'
 import { SessionLens } from './SessionLens.tsx'
@@ -63,6 +64,12 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
   //    up). The cursor is the last delivered seq, so each poll ships only
   //    what the accumulator lacks. ────────────────────────────────────────
   const eventsRef = useRef<readonly SidebarSessionEvent[]>([])
+  // The fold of eventsRef as of the last poll. extractFileOps parses every
+  // accumulated tool/call (up to EVENTS_CAP events); running it once per
+  // poll and REUSING the result across renders (the render used to re-fold
+  // the whole window, twice per tick, and the fresh array defeated the
+  // downstream memo on every poll) keeps the 2.5s tick at one fold.
+  const opsRef = useRef<readonly FileOp[]>([])
   const seqRef = useRef(0)
   const pollGen = useRef(0)
   const [opsError, setOpsError] = useState(false)
@@ -77,7 +84,9 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
         eventsRef.current = merged.length > EVENTS_CAP ? merged.slice(merged.length - EVENTS_CAP) : merged
       }
       if (lastSeq > seqRef.current) seqRef.current = lastSeq
-      opCounts.set(scope.sessionId, extractFileOps(eventsRef.current).length)
+      const folded = extractFileOps(eventsRef.current)
+      opsRef.current = folded
+      opCounts.set(scope.sessionId, folded.length)
       setOpsError(false)
       setTick(value => value + 1)
     } catch {
@@ -85,22 +94,25 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
       // only while nothing has ever loaded.
       if (generation === pollGen.current) setOpsError(true)
     }
+    // Granular scope fields: the scope object's identity churns, only its
+    // sessionId / cwd fields gate the poll target.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope.sessionId, scope.cwd])
   useEffect(() => {
     pollGen.current += 1
     eventsRef.current = []
+    opsRef.current = []
     seqRef.current = 0
     setOpsError(false)
   }, [scope.sessionId])
-  useEffect(() => {
-    void pull()
-    if (!visible) return
-    const timer = window.setInterval(() => { void pull() }, 2_500)
-    return () => { window.clearInterval(timer) }
-  }, [visible, pull])
+  // One pull on every input change — mount, scope change, and visibility
+  // flip all re-pull (a hidden tab still catches up on the flip); only the
+  // poll CADENCE below is gated by visibility.
+  useEffect(() => { void pull() }, [visible, pull])
+  usePolling(visible, pull, { intervalMs: 2_500 })
   // tick only forces the re-render; the fold reads the ref directly.
   void tick
-  const ops = extractFileOps(eventsRef.current)
+  const ops = opsRef.current
 
   /** Persist a meta patch onto the tab (lens choice, pane height). */
   const patchMeta = (patch: ChangesMeta): void => {

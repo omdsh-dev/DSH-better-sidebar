@@ -54,6 +54,20 @@ export function SessionLens({ ops, loadError, onPreview, selectedCallId }: Sessi
     </button>
   )
 
+  // Sizing a row's content constructs a Blob (a UTF-8 encode of the whole
+  // edit) — that was per row PER RENDER, re-encoding every field on every
+  // poll tick. ops keeps its identity between unchanged polls (see the
+  // tab's opsRef), so one pass per changed fold covers every render.
+  const opSizes = useMemo(() => {
+    const sizes = new Map<string, string>()
+    for (const op of ops) {
+      if (op.kind !== 'read' && !op.isError) {
+        sizes.set(op.callId, formatBytes(new Blob([op.edit?.newString ?? op.content ?? '']).size))
+      }
+    }
+    return sizes
+  }, [ops])
+
   return (
     <div className={css.session}>
       <div className={css.filterRow} role="group" aria-label={t('changesSessionLens')}>
@@ -85,9 +99,9 @@ export function SessionLens({ ops, loadError, onPreview, selectedCallId }: Sessi
                 {op.running && <span className={css.opFlag}>{t('changesRunning')}</span>}
                 {op.isError && <span className={css.opFlagError}>{t('changesError')}</span>}
                 <span className={css.opMeta}>
-                  {op.kind !== 'read' && !op.isError && (
+                  {opSizes.get(op.callId) !== undefined && (
                     <span className={css.opSize}>
-                      {formatBytes(new Blob([op.edit?.newString ?? op.content ?? '']).size)}
+                      {opSizes.get(op.callId)}
                     </span>
                   )}
                   <span className={css.opTime}>{relativeTime(new Date(op.time).toISOString())}</span>

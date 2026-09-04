@@ -87,10 +87,12 @@ Cursor             (SSH)
 - 校验：`reveal` 路径必须绝对（`requireAbsolute`）；`url` 必须是 `scheme://` 自定义协议（拒绝 http/https）。
 - **Windows 平台命令为约定实现，需在 Windows 实机验证**（本机为 macOS；CI 覆盖 linux）。
 
+**实施偏差（2026-09，#517 / PR #522）**：SSH 远程编辑器链接**不再经宿主路由执行**。DSH 部署在无头远端服务器时，宿主侧 `xdg-open` 无 DISPLAY/无编辑器，`vscode://` 静默失败。`api.openExternal`（`src/client/api.ts`）现把 `<scheme>://vscode-remote/ssh-remote+…` 形态的 URL 在浏览器客户端同步触发 `window.location.assign`（处于用户点击链内，外部协议交给本机编辑器经 Remote-SSH 打开远端文件）；reveal 与本地编辑器 URL 仍走本节宿主路由。普通浏览器可处理自定义协议；禁止/未处理 `vscode://` 的 WebView 壳客户端需各自适配（见 #517 补充信息）。
+
 ## 已知限制
 
 - 路径含 `#`/`?` 的文件名经 URL 打开可能被浏览器当作 fragment/query（不处理，注释说明）。
-- 编辑器未安装/协议未注册：由 OS 弹提示或静默失败，不做安装检测。
+- 编辑器未安装/协议未注册：由 OS 弹提示或静默失败，不做安装检测。SSH 客户端分支同理——浏览器端 `location.assign` 无法探测协议 handler 是否存在，仍返回 `{started: true}`。
 - 自定义编辑器仅支持 URL 模板式，不支持 CLI 命令式；无 `{dir}` 占位符。
 - Linux reveal 退化为打开所在目录（精确 select 需要各文件管理器私有协议）。
 - SSH 模式为**全局**（非每会话）：DSH 无远程会话概念，文件树路径即宿主路径；该模型对应"DSH 跑在远端开发机上"的场景。
@@ -99,6 +101,7 @@ Cursor             (SSH)
 
 - `tests/open-with.spec.ts`：解析容错、目标解析与 SSH 过滤、URL 构建（本地/SSH/custom/坏模板）、校验器。
 - `tests/open-external.spec.ts`：三平台命令表、URL 校验、spawn 前校验。
+- `tests/open-external-client.spec.ts`（#522）：SSH remote URL 客户端分流（不触 fetch）、本地/reveal/http(s) 留宿主、导航抛错 reject。
 - `tests/file-tree-open-with.spec.tsx`（jsdom）：右键 → 子菜单/图钉；pin 不选中不关闭；选子项回调关闭菜单；SSH 标签后缀；未接线隐藏。
 - `tests/open-with-settings.spec.tsx`：SSH 输入、添加/删除（删除剪枝 pinned）、无效提示、VSCode 系开关。
 - `tests/side-card-section.spec.tsx`：`SettingsBody` 行列表 + render 共存、仅 render 时不变。

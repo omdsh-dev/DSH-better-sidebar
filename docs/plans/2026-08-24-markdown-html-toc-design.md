@@ -50,3 +50,9 @@ DSH 宿主的 `MarkdownText` 出于聊天安全把 raw HTML 按字面文本渲�
 
 - GFM 脚注跨段不保（宿主本就把脚注渲染为纯文本）；`srcset` 不重写（实际只有远程 URL）；HTML 实体不解码；标题锚点 permalink、TOC 滚动联动高亮不做；Sidechat 不动；不换渲染器。
 - CommonMark HTML 块类型 1（script/pre/style/textarea 按闭标签终止）与类型 7（单行完整标签）不做专门处理——块级名单 + 空行终止已覆盖 README 级真实用法。
+
+## 5. 后续修正记录（bug 反馈）
+
+- **代码块表头在预览中悬浮过长**：DSH `CodeBlock` 的 `bannerWrap` 是 `position: sticky; top: 0; z-index: 6`——在聊天里每个消息块拥有自己的滚动容器，表头粘住是对的；但在文件预览中所有 fence 共享一个 `.editorMd` 滚动容器，表头会钉在视口顶部直到整个块滚过，读作悬浮在文档上。修正：预览容器内对非 mermaid 的 `.md-code-block` 首子元素（即 `bannerWrap`）恢复 `position: static; z-index: auto`（mermaid 块已被 `data-mermaid-processed` 排除，其自身 chrome 取代了表头）。见 `src/client/sidebar.module.css` `.editorMd :global(.md-code-block:not([data-mermaid-processed])) > :global(div):first-child`。
+- **TOC 面板被代码块表头压住**：`.tocBar` 原 `z-index: 3`，低于代码块表头的 `6`，弹出面板（位于 bar 的层叠上下文内）会被 sticky 表头盖住。修正：`.tocBar` 提升到 `7`（仍低于传送门选择弹窗的 `60` 与 mermaid 模态的 `1000`）。
+- **TOC 只能再点按钮收起**：新增文档级 `pointerdown` 监听，点击落在按钮与面板之外（预览空白处）即收起；按钮/面板豁免，保证按钮仍可翻转。见 `src/client/md-toc.tsx`（与 Esc 关闭共用同一 effect）。

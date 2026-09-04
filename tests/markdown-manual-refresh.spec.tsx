@@ -5,15 +5,15 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createElement, useEffect } from 'react'
-import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
+import { renderRoot, setupReactAct } from './test-utils.ts'
 import type { Context } from '../src/context-types.ts'
 import { EditorHost } from '../src/client/EditorHost.tsx'
 import { api } from '../src/client/api.ts'
 import { createBetterSidebarService, type FileViewerProps } from '../src/client/service.ts'
 import { allLeaves, createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+setupReactAct()
 
 function toolbar(dirty: boolean) {
   return {
@@ -37,6 +37,8 @@ function FakeMarkdownViewer(props: FileViewerProps) {
       markDirty = undefined
       props.onToolbarControls?.(null)
     }
+    // Only the callback identities must re-wire; content is read at render time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.onToolbarControls, props.onToolbarState])
   return createElement('div', { 'data-testid': 'markdown-content' }, props.content ?? '')
 }
@@ -68,28 +70,16 @@ function setup(): {
 }
 
 function mount(ctx: Context, store: ReturnType<typeof createSidebarStore>, tab: SidebarTab) {
-  const container = document.createElement('div')
-  document.body.append(container)
-  const root = createRoot(container)
-  act(() => {
-    root.render(createElement(EditorHost, {
-      ctx,
-      store,
-      scope: { sessionId: 'markdown-manual-refresh-session', cwd: '/tmp' },
-      tab,
-      expanded: [],
-      revealed: [],
-      onToggleDir: () => {},
-      onReferenceFile: () => {},
-    }))
-  })
-  return {
-    container,
-    unmount: () => {
-      act(() => { root.unmount() })
-      container.remove()
-    },
-  }
+  return renderRoot(createElement(EditorHost, {
+    ctx,
+    store,
+    scope: { sessionId: 'markdown-manual-refresh-session', cwd: '/tmp' },
+    tab,
+    expanded: [],
+    revealed: [],
+    onToggleDir: () => {},
+    onReferenceFile: () => {},
+  }))
 }
 
 async function flush(): Promise<void> {

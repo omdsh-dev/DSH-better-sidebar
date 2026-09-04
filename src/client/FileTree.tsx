@@ -20,7 +20,7 @@
  * (VSCode semantics — a drop on a file row targets its parent directory),
  * and `busy` gates new drags while one upload is in flight.
  */
-import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
@@ -131,8 +131,8 @@ export function FileTree(props: {
   onOpenWith?: (targetId: string, path: string) => void
   /** Toggle one target's pinned state (the submenu row's pushpin). */
   onToggleOpenWithPin?: (targetId: string) => void
-  /** Insert `@<relative path>` into the composer draft. */
-  onReferenceFile: (path: string) => void
+  /** Insert `@<relative path>` into the composer draft (file vs directory). */
+  onReferenceFile: (path: string, isDir: boolean) => void
   /** Bump to wipe the level cache and reload the visible set. */
   refreshTick: number
   /** Upload into `dir` (absolute, inside the workspace); runs in the caller. */
@@ -332,7 +332,7 @@ export function FileTree(props: {
         title={t('referenceFile')}
         onClick={(event) => {
           event.stopPropagation()
-          onReferenceFile(entry.path)
+          onReferenceFile(entry.path, entry.isDir)
         }}
       >
         {t('referenceFile')}
@@ -441,6 +441,12 @@ export function FileTree(props: {
 
   const root = cwd
 
+  // Membership is tested per rendered row (deep trees run this thousands of
+  // times per render): includes() made every row O(expanded), the whole tree
+  // O(rows × expanded). One Set per render keeps it O(1) per row.
+  const expandedSet = useMemo(() => new Set(expanded), [expanded])
+  const revealedSet = useMemo(() => new Set(revealed), [revealed])
+
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
     if (level === undefined) {
@@ -466,7 +472,7 @@ export function FileTree(props: {
     const entries = level.entries ?? []
     return entries.map(entry => {
       if (entry.isDir) {
-        const isOpen = expanded.includes(entry.path)
+        const isOpen = expandedSet.has(entry.path)
         return (
           <div key={entry.path}>
             <div
@@ -475,9 +481,9 @@ export function FileTree(props: {
               className={clsx(
                 css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden,
                 dropTarget === entry.path && css.explorerRowDropTarget,
-                revealed.includes(entry.path) && css.explorerRowRevealed,
+                revealedSet.has(entry.path) && css.explorerRowRevealed,
               )}
-              data-dsh-revealed={revealed.includes(entry.path) ? 'true' : undefined}
+              data-dsh-revealed={revealedSet.has(entry.path) ? 'true' : undefined}
               style={{ paddingLeft: depth * 22 + 6 }}
               onClick={() => { onToggle(entry.path) }}
               onKeyDown={(event) => {
@@ -507,9 +513,9 @@ export function FileTree(props: {
           className={clsx(
             css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken,
             dropTarget === parentOf(entry.path) && css.explorerRowDropTarget,
-            revealed.includes(entry.path) && css.explorerRowRevealed,
+            revealedSet.has(entry.path) && css.explorerRowRevealed,
           )}
-          data-dsh-revealed={revealed.includes(entry.path) ? 'true' : undefined}
+          data-dsh-revealed={revealedSet.has(entry.path) ? 'true' : undefined}
           style={{ paddingLeft: depth * 22 + 6 }}
           title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
           onClick={() => { onOpenFile(entry.path) }}
@@ -564,7 +570,7 @@ export function FileTree(props: {
                   title={t('referenceFile')}
                   onClick={(event) => {
                     event.stopPropagation()
-                    onReferenceFile(root)
+                    onReferenceFile(root, true)
                   }}
                 >
                   {t('referenceFile')}

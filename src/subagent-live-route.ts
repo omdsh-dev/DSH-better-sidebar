@@ -77,7 +77,7 @@ export function buildSubagentLiveApi(ctx: Context): SidebarSubagentLiveRoutes {
         if (entry.label?.startsWith(SIDE_LABEL_PREFIX) ?? false) continue
         try {
           const activity = lastActivity(
-            ctx.sessions.get(entry.id)?.events ?? [],
+            ctx.sessions.get(entry.id)?.snapshotEvents() ?? [],
             LIVE_WINDOW_MESSAGES,
           )
           if (activity.text !== undefined || activity.tool !== undefined) {
