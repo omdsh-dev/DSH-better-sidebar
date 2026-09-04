@@ -18,15 +18,13 @@ import { useLayoutEffect, useMemo, useRef } from 'react'
 import { createElement, type ReactNode } from 'react'
 import DOMPurify from 'dompurify'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ComponentType } from 'react'
 import { markdownTextProps } from './markdown-labels.tsx'
-import { lazyChunkComponent } from './lazy-chunk.tsx'
 import { resolveLocalMediaDest } from './markdown-images.ts'
 import {
   analyzeHtmlSegment,
   type AnalyzedMarkdownHtml,
 } from './markdown-html.ts'
-import { splitMermaidBlocks, type MermaidMarkdownProps } from './mermaid-blocks.ts'
+import { splitMermaidBlocks } from './mermaid-blocks.ts'
 import type { SessionScope } from './api.ts'
 import css from './sidebar.module.css'
 

@@ -177,6 +177,7 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
     const mask = (text: string): string => redactText(path, text).text
     const hit = [opRaw.read, opRaw.content, opRaw.edit?.oldString, opRaw.edit?.newString, opRaw.errorText, priorRaw]
       .some((text) => text !== undefined && redactText(path, text).hit)
+    if (!hit) return { op: opRaw, prior: priorRaw, redactionHit: false }
     const redacted: FileOp = {
       ...opRaw,
       ...(opRaw.read !== undefined ? { read: mask(opRaw.read) } : {}),
