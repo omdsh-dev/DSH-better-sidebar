@@ -39,7 +39,7 @@ export type NodePtyModule = typeof nodePtyNs
  * range DSH core declares (`@deepseek-ai/dsh-subprocess-local`): the same
  * range keeps pnpm resolving both to one physical package.
  */
-export const DSH_NODE_PTY_RANGE = '^1.1.0'
+export const DSH_NODE_PTY_RANGE = '1.2.0-beta.15'
 
 /**
  * The WebSocket close-code-1011 reason the host sends when node-pty is
