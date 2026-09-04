@@ -40,7 +40,7 @@
 
 ## ✨ 功能一览
 
-- **🗂️ 文件工作台**：资源管理器（懒加载目录树；软链接按目标类型展示——目录软链接可展开、失效链接标红）+ CodeMirror 编辑器；图片 / Markdown（含 Mermaid 图表，strict 安全渲染 + 点击放大；README 级内嵌 HTML——徽章墙 / `<details>` 折叠 / 表格内联标签经 DOMPurify 消毒真实渲染；浮动目录大纲一键跳转）/ HTML / PDF
+- **🗂️ 文件工作台**：资源管理器（懒加载目录树；软链接按目标类型展示——目录软链接可展开、失效链接标红；文件树与文件 tab 按扩展名显示图标——markdown / 图片 / PDF / 代码 / 配置 / 压缩包等各有 glyph，插件可经 `registerFileIcon` 注册自定义图标与目录图标）+ CodeMirror 编辑器；图片 / Markdown（含 Mermaid 图表，strict 安全渲染 + 点击放大；README 级内嵌 HTML——徽章墙 / `<details>` 折叠 / 表格内联标签经 DOMPurify 消毒真实渲染；浮动目录大纲一键跳转）/ HTML / PDF
 - **🌐 内嵌浏览器**：多开网页 tab，后退 / 前进 / 刷新；内容运行在沙箱 iframe；外链默认按协议分流——HTTP 在侧边栏打开、HTTPS 走系统浏览器（设置页可分别调整）
 - **💻 真实终端**：xterm.js + node-pty 真实 shell，断线重连回放；可选为模型注入 `terminal_*` 工具
 - **📂 模型侧边栏打开（可选）**：全局设置开启后注入 `sidebar_open` 工具——模型可主动在侧边栏打开文件 / 文件夹（树以该目录为根）/ HTTP(S) 网页
@@ -262,6 +262,10 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 ## 🆕 最近更新
 
 **支持的 DSH 版本**：<a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="支持的 DSH 版本（v0.18.0 正式版）：0.1.2-rc.1+" src="https://img.shields.io/badge/DSH-0.1.2--rc.1%2B-4d6bfe" /></a> · 完整发布历史见 [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)
+
+### v0.19.0（未发布）
+
+- 🎨 **文件图标多样化 + 对外图标注册 API（[file-icons.tsx](./src/client/file-icons.tsx)）**：文件树与编辑器文件 tab 不再是单一 `VscFile`——markdown / 图片媒体 / PDF / JSON / 40+ 代码扩展 / 配置 / 数据库 / lock / 压缩包各有专属 glyph（VSCodicons 单色 `currentColor`，遵循皮肤契约），未知扩展回退通用图标。`ctx.betterSidebar` 新增 `registerFileIcon`（`features` 含 `'fileIcons'`）：按扩展名注册自定义图标（彩色 ReactNode 亦可，颜色责任在注册方），`exts: []` 为全局默认（只兜内置 glyph 没认领的扩展，不吞掉内置多样性），保留扩展名 `'folder'` / `'folder-open'` 可换目录行图标；`fileIcon` / `folderIcon` 为权威解析器（完整回退链 + 逐工厂崩溃隔离），注册/注销即时生效。接入示例见[外部插件指南 §7](./docs/external-plugin-guide.md)。
 
 ### v0.18.0
 
@@ -503,7 +507,7 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 
 ## 🔌 服务化扩展
 
-从 v0.4.0 起暴露 `ctx.betterSidebar` 服务，其他插件可注册侧边栏页面与文件预览器（内置 8 tab + 6 viewer 亦通过同一服务注册）。v0.12.1 补齐基座能力（完整类型导出、能力探测、状态订阅、tab 角标、生命周期回调、定向打开、插件自有设置等）。
+从 v0.4.0 起暴露 `ctx.betterSidebar` 服务，其他插件可注册侧边栏页面与文件预览器（内置 8 tab + 6 viewer 亦通过同一服务注册）。v0.12.1 补齐基座能力（完整类型导出、能力探测、状态订阅、tab 角标、生命周期回调、定向打开、插件自有设置等）。v0.19.0 起新增文件图标注册：`registerFileIcon` 按扩展名（或保留的 `'folder'` / `'folder-open'` 目录扩展名、`exts: []` 全局默认）替换文件树与文件 tab 的图标，彩色 ReactNode 亦可——内置消费、注册即生效，无需自己接线。
 
 完整接入文档（全字段、匹配算法、HMR 陷阱、声明式设置、版本探测、自由窗口与皮肤契约）：**[`docs/external-plugin-guide.md`](./docs/external-plugin-guide.md)**；仓库开发规则（硬约束 / CI / 发版）见 [`AGENTS.md`](./AGENTS.md)。
 

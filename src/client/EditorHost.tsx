@@ -389,6 +389,7 @@ export function EditorHost(props: {
           onOpenWith={openWith}
           onToggleOpenWithPin={toggleOpenWithPin}
           onReferenceFile={onReferenceFile}
+          service={ctx.get('betterSidebar')}
         />
       </div>
     )
@@ -511,6 +512,7 @@ export function EditorHost(props: {
               onOpenWith={openWith}
               onToggleOpenWithPin={toggleOpenWithPin}
               onReferenceFile={onReferenceFile}
+              service={ctx.get('betterSidebar')}
             />
           </div>
         )}

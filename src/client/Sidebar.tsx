@@ -813,8 +813,16 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    * ctx and the conversation input service at click time; a missing service
    * or scope degrades to a logged no-op, never a crash.
    */
-  /** The tab icon from the tab-type registry (shared by every workbench). */
+  /**
+   * The tab icon: an editor tab WITH a file path (the per-path windows of
+   * split mode — `meta.dir` marks folder windows, which keep the folder
+   * glyph) shows the same file icon the tree row shows (`fileIcon`, feature
+   * `fileIcons`); every other tab uses its tab-type descriptor icon.
+   */
   const tabIconOf = (tab: SidebarTab): ReactNode => {
+    if (tab.type === 'editor' && tab.path !== undefined && (tab.meta as { dir?: boolean } | undefined)?.dir !== true) {
+      return ctx.get('betterSidebar')?.fileIcon(tab.path, 14) ?? null
+    }
     const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
     if (descriptor === undefined) return null
     return typeof descriptor.icon === 'function' ? descriptor.icon(14) : descriptor.icon

@@ -549,10 +549,28 @@ interface BetterSidebarService {
   registerTab(descriptor: TabDescriptor): () => void
   /** 注册文件预览器；返回 disposer */
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
+  /** 注册自定义文件树/文件 tab 图标（v0.19.0+，features 含 'fileIcons'）；返回 disposer */
+  registerFileIcon(descriptor: FileIconDescriptor): () => void
   /** 当前已注册的 tab 描述符快照（同步，供 useSyncExternalStore 用；含被设置页禁用的类型） */
   getTabs(): readonly TabDescriptor[]
   /** 当前已注册的 file viewer 描述符快照（含被设置页禁用的 viewer） */
   getFileViewers(): readonly FileViewerDescriptor[]
+  /** 当前已注册的文件图标描述符快照（v0.19.0+） */
+  getFileIcons(): readonly FileIconDescriptor[]
+  /** 按 path 匹配**具体扩展名**注册（priority 降序、注册序；不查 catch-all
+   *  与 folder 保留值）。消费方一般直接用 fileIcon/folderIcon 全链解析器。 */
+  matchFileIcon(path: string): FileIconDescriptor | undefined
+  /** 匹配目录行注册（'folder'/'folder-open' 保留扩展名；priority 降序、注册序；
+   *  返回 undefined = 回退内置 VscFolder/VscFolderOpened） */
+  matchFolderIcon(open: boolean): FileIconDescriptor | undefined
+  /** 文件图标权威解析器（v0.19.0+），完整回退链：
+   *  ① 具体扩展名注册 → ② 内置 glyph（md/媒体/pdf/json/代码/配置/数据库/lock/压缩包）
+   *  → ③ 最优 catch-all 注册（exts: []，即全局默认）→ ④ 通用 VscFile。
+   *  任一注册工厂抛错都会被吞（console.error 后跳下一级），永远返回有效 ReactNode。 */
+  fileIcon(path: string, size: number): ReactNode
+  /** 目录图标解析器：注册的 'folder'（闭合）/'folder-open'（展开）图标 →
+   *  内置 VscFolder/VscFolderOpened；path 为目录自身路径（主题可按目录变化）。 */
+  folderIcon(path: string, open: boolean, size: number): ReactNode
   /** 按 id 查 tab 描述符 */
   getTab(id: string): TabDescriptor | undefined
   /** 某个 tab 类型是否在 Side card 设置中启用（v0.4.1+；缺省 = 启用） */
@@ -586,7 +604,8 @@ interface BetterSidebarService {
   readonly version: string
   /** 单调能力清单（只增不删）：'badge' | 'tabLifecycle' | 'updateTab' |
    *  'openFile' | 'targetedOpen' | 'stateSubscription' | 'tabMeta' |
-   *  'pluginSettings' | 'urlTarget' | 'settingSelect' | 'floatWindows'
+   *  'pluginSettings' | 'urlTarget' | 'settingSelect' | 'floatWindows' |
+   *  'fileIcons'
    *  ——用 `features.includes('xxx')` 按能力 gate。 */
   readonly features: readonly string[]
   /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs。
@@ -618,7 +637,64 @@ interface OpenTabSeed {
    *  undefined = 不改，null = 显式清除 */
   meta?: unknown
 }
+
+/** 文件图标注册描述符（v0.19.0+，features 含 'fileIcons'）。 */
+interface FileIconDescriptor {
+  /** 唯一 id（如 'my-plugin:icons'） */
+  id: string
+  /** 小写扩展名、不带前导点（如 ['csv','tsv']）。两个**保留值**认领目录行
+   *  而非文件扩展名：'folder'（闭合目录）、'folder-open'（展开目录）——
+   *  它们不会匹配真实文件（名为 x.folder 的文件不受影响）。
+   *  [] = catch-all 全局默认：只兜内置 glyph 没认领的扩展名（注册的具体
+   *  扩展名与内置 glyph 永远优先于它）。 */
+  exts: readonly string[]
+  /** priority 高者胜，缺省 0（同级按注册先后） */
+  priority?: number
+  /** 尺寸感知的图标工厂（文件树/文件 tab 当前以 size=14 渲染）。
+   *  与内置图标（currentColor 单色，遵循皮肤契约）不同，注册图标可以是
+   *  任意 ReactNode——包括彩色图标；颜色在皮肤间的表现由注册方自行负责。 */
+  icon: (path: string, size: number) => ReactNode
+}
 ```
+
+**图标注册示例**（v0.19.0+；一次注册可同时覆盖具体扩展名、目录与全局默认）：
+
+```ts
+if (ctx.betterSidebar.features.includes('fileIcons')) {
+  ctx.effect(() =>
+    ctx.betterSidebar.registerFileIcon({
+      id: 'my-plugin:icons',
+      exts: ['csv', 'tsv'],
+      icon: (path, size) => <MyCsvIcon size={size} />, // 彩色也可以
+    })
+  )
+  ctx.effect(() =>
+    ctx.betterSidebar.registerFileIcon({
+      id: 'my-plugin:folders',
+      exts: ['folder'], // 闭合目录行；['folder-open'] 认领展开行——
+      icon: (path, size) => <MyFolderIcon size={size} />, // 开/合图标不同就注册两条
+    })
+  )
+  ctx.effect(() =>
+    ctx.betterSidebar.registerFileIcon({
+      id: 'my-plugin:default', // 全局默认：只兜内置 glyph 没认领的文件
+      exts: [],
+      icon: (path, size) => <MyGenericFileIcon size={size} />,
+    })
+  )
+}
+```
+
+**消费表面与回退链**（由本插件内置消费，插件无需自己接线）：
+
+- 文件树文件行 / 编辑器文件 tab（每个文件独立窗口）：`fileIcon(path, size)`
+  ——具体扩展名注册 → 内置 glyph（markdown/媒体/pdf/json/代码/配置/数据库/lock/压缩包）
+  → catch-all 全局默认 → 通用 `VscFile`。
+- 文件树目录行（含根行）：`folderIcon(path, open, size)`——`'folder'`/`'folder-open'`
+  注册 → 内置 `VscFolder`/`VscFolderOpened`。
+
+注册/注销即时生效（文件树与 tab 栏订阅注册表变化自动重渲染）；图标工厂抛错会被吞掉
+（console.error 后跳到回退链下一级），不会空白行。
 
 **版本与能力探测**（v0.12.0+）：消费插件先查能力再使用新 API，老版本（或旧 DSH）下优雅降级：
 
