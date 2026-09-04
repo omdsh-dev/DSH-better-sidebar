@@ -424,4 +424,9 @@ export const ar: Record<string, string> = {
   pluginDocsPanelDesc: '«وثائق عامة» في شريط DSH الجانبي: ملاحظات Markdown عامة، قابلة للقراءة من أي مساحة عمل — قائمة ملفات، مخطط تفصيلي، فتح في Chrome / VS Code، وأزرار نسخ؛ دليل الوثائق قابل للتكوين (الافتراضي ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'متصفح الوكيل لـ DeepSeek Harness: 32 أداة ego_* تقود متصفح Chromium حقيقي، مع تبويب «متصفح ego» أصلي في الشريط الجانبي يعرض مباشرة كل صفحة يزورها الوكيل — يمكنك النقر والسحب والكتابة لتولي التحكم. يسجّل التبويب تلقائيًا عند وجود better-sidebar، وإلا يظهر كفقاعة عائمة',
   pluginBilingualReaderDesc: 'اقرأ ملفات PDF في الشريط الجانبي لـ DSH: عرض PDF أصلي، حدد نصًا لترجمته بواسطة النموذج اللغوي مع السياق، معزولًا تمامًا عن المحادثة الرئيسية',
+  changesRedactOn: "تنقيع مُفعّل: تظهر الأسرار كـ [REDACTED]؛ انقر للتعطيل (على مسؤوليتك)",
+  changesRedactOff: "تنقيع مُعطّل: سيُعرض المحتوى كما هو؛ انقر للتفعيل",
+  changesRedactOnLabel: "تنقيع",
+  changesRedactOffLabel: "بدون تنقيع",
+  changesRedactBanner: "مُنقّى",
 }

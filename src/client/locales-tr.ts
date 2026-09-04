@@ -423,4 +423,9 @@ export const tr: Record<string, string> = {
   pluginDocsPanelDesc: 'DSH kenar çubuğunda «Genel belgeler»: herhangi bir çalışma alanından kendi Markdown notlarınızı okuyun — dosya listesi, ana hat, Chrome / VS Code’da açma ve kopyalama düğmeleri; belgeler dizini yapılandırılabilir (varsayılan ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'DeepSeek Harness için aracı tarayıcı: 32 ego_* aracı gerçek bir Chromium’u yönetir; kenar çubuğundaki yerel «ego tarayıcı» sekmesi aracının ziyaret ettiği her sayfayı canlı gösterir — tıklayarak, sürükleyerek ve yazarak kontrolü devralabilirsiniz. better-sidebar varsa sekme otomatik kaydedilir, yoksa yüzen baloncuğa düşer',
   pluginBilingualReaderDesc: 'DSH kenar çubuğunda PDF okuyun: yerel PDF görüntüleme, LLM ile çevirmek için metin seçin, bağlamı kullanarak ve ana sohbetten tamamen izole',
+  changesRedactOn: "Maskeleme açık: gizli değerler [REDACTED] olarak görünür; kapatmak için tıklayın (kendiniz sorumlusunuz)",
+  changesRedactOff: "Maskeleme kapalı: içerik olduğu gibi görünür; açmak için tıklayın",
+  changesRedactOnLabel: "Maskeleme",
+  changesRedactOffLabel: "Maskeleme yok",
+  changesRedactBanner: "Maskelendi",
 }

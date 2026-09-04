@@ -438,4 +438,9 @@ export const zhMO: Record<string, string> = {
   pluginDocsPanelDesc: 'DSH 側邊欄裡的「全域文件」：全域 Markdown 筆記，任何工作區隨時可讀——列表點選閱讀、懸浮大綱跳轉、Chrome / VS Code 外部開啟、程式碼複製，目錄可設定（預設 ~/.dsh/docs）',
   pluginEgoBrowserDesc: '將 CitroLabs/ego-lite 接進 DeepSeek Harness 的 agent 瀏覽器：32 個 ego_* 工具驅動真實 Chromium，側邊欄原生「ego 瀏覽器」Tab 實時觀察 agent 逛的每個頁面，可直接點擊/拖拽/輸入接管；裝 better-sidebar 時自動註冊 Tab，沒裝則退回浮動浮窗',
   pluginBilingualReaderDesc: '喺 DSH 側邊欄讀論文 PDF：原生 PDF 顯示，揀一段文字就用大模型劃詞翻譯，結合上下文、完全隔離主對話，只做閱讀輔助',
+  changesRedactOn: "已開啟脫敏：敏感內容以 [REDACTED] 顯示；點擊關閉（自擔風險）",
+  changesRedactOff: "脫敏已關閉：將原樣顯示文件內容；點擊開啟",
+  changesRedactOnLabel: "脫敏中",
+  changesRedactOffLabel: "脫敏關",
+  changesRedactBanner: "已脫敏",
 }

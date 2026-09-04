@@ -342,6 +342,7 @@
 
 /* ── Shared preview pane ───────────────────────────────────────────────── */
 
+.redactBanner { flex: none; font: var(--dsw-font-xxxs-strong-11); padding: 2px 8px; border-radius: 7px; color: var(--dsw-alias-state-warning-primary, #b8860b); background: var(--dsw-alias-interactive-bg-hover); white-space: nowrap; }
 .mdToggle { flex: none; border: 1px solid var(--dsw-alias-border-l1); border-radius: 7px; background: transparent; color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-strong-11); padding: 2px 8px; cursor: pointer; }
 .mdToggle:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 .mdToggle[data-on='true'] { border-color: var(--dsw-alias-state-business-primary); color: var(--dsw-alias-state-business-primary); }

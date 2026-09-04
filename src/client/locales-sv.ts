@@ -406,4 +406,9 @@ export const sv: Record<string, string> = {
   pluginDocsPanelDesc: 'Globala dokument i DSH-sidopanelen: läs era egna Markdown-anteckningar från valfri arbetsyta — en fillista, en översikt, öppna i Chrome / VS Code och kopieringsknappar; dokumentkatalogen är konfigurerbar (standard ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'Agentwebbläsaren för DeepSeek Harness: 32 ego_*-verktyg styr en riktig Chromium; en inbyggd «ego browser»-flik i sidopanelen visar varje sida agenten besöker i realtid — du kan klicka, dra och skriva för att ta över. Registrerar fliken automatiskt när better-sidebar finns, annars en flytande bubbla',
   pluginBilingualReaderDesc: 'Läs PDF-filer i DSH-sidopanelen: inbyggd PDF-visning, markera text för att översätta med LLM, med kontext och helt isolerad från huvudkonversationen',
+  changesRedactOn: "Maskning på: hemligheter visas som [REDACTED]; klicka för att stänga av (på egen risk)",
+  changesRedactOff: "Maskning av: innehåll visas som det är; klicka för att aktivera",
+  changesRedactOnLabel: "Maskning",
+  changesRedactOffLabel: "Utan maskning",
+  changesRedactBanner: "Maskerat",
 }

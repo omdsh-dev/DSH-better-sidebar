@@ -423,4 +423,9 @@ export const ja: Record<string, string> = {
   pluginDocsPanelDesc: 'DSH サイドバー内の「グローバルドキュメント」：任意のワークスペースから読めるグローバル Markdown ノート。リストで選んで閲覧、ホバーでアウトラインジャンプ、Chrome / VS Code で外部オープン、コードコピー。ディレクトリは設定可（デフォルト ~/.dsh/docs）',
   pluginEgoBrowserDesc: 'DeepSeek Harness 用エージェントブラウザ：32 個の ego_* ツールが本物の Chromium を操作し、サイドバーのネイティブ「ego ブラウザ」Tab がエージェントの訪れる全ページをライブ表示。クリック・ドラッグ・入力で操作を引き継げます。better-sidebar があれば Tab を自動登録、なければフローティングバブルにフォールバック',
   pluginBilingualReaderDesc: 'DSH サイドバーで論文 PDF を読む：ネイティブ PDF 表示、テキストを選択して LLM で翻訳。コンテキストを使い、メイン会話から完全に分離',
+  changesRedactOn: "マスキング有効：機密値は [REDACTED] で表示。クリックで無効化（自己責任）",
+  changesRedactOff: "マスキング無効：内容がそのまま表示されます。クリックで有効化",
+  changesRedactOnLabel: "マスキング中",
+  changesRedactOffLabel: "マスキング解除",
+  changesRedactBanner: "マスク済み",
 }

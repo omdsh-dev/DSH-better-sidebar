@@ -21,6 +21,7 @@ import { DiffFiles } from '../diff/DiffFiles.tsx'
 import { langOfPath } from '../diff/highlight.ts'
 import { buildDiffSegments, diffLines, diffStats, parseUnifiedDiff, unifiedSegments, type DiffRow } from '../diff/rows.ts'
 import { parseReadContent, parseReadLines, type FileOp } from './ops.ts'
+import { redactText } from '../redact.ts'
 import { rewriteLocalImageUrls } from '../markdown-images.ts'
 import { markdownTextProps } from '../markdown-labels.tsx'
 import { splitMermaidBlocks } from '../mermaid-blocks.ts'
@@ -150,8 +151,40 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
 
   // ── Op target material (pure snapshots; the prior content came with the
   //    target so a running op shows what is already known). ────────────────
-  const op = target.kind === 'op' ? target.op : null
-  const prior = target.kind === 'op' ? target.prior : undefined
+  const opRaw = target.kind === 'op' ? target.op : null
+  const priorRaw = target.kind === 'op' ? target.prior : undefined
+  // Secret redaction: on by default, toggle persists per browser (localStorage).
+  // Every op payload consumer below (diff rows, read rows, markdown source,
+  // error text) renders from the REDACTED shape, so masked payloads are the
+  // only thing that can reach the DOM while the toggle is on. Display-only:
+  // session events and the fs layer keep their original bytes.
+  const [redactionOn, setRedactionOn] = useState((): boolean => {
+    try { return localStorage.getItem('dsh-better-sidebar.redaction') !== '0' } catch { return true }
+  })
+  const toggleRedaction = (): void => {
+    setRedactionOn((prev) => {
+      const next = !prev
+      try { localStorage.setItem('dsh-better-sidebar.redaction', next ? '1' : '0') } catch { /* storage unavailable */ }
+      return next
+    })
+  }
+  const { op, prior, redactionHit } = useMemo(() => {
+    const path = target.kind === 'op' ? target.path : ''
+    if (opRaw === null || !redactionOn) {
+      return { op: opRaw, prior: priorRaw, redactionHit: false }
+    }
+    const mask = (text: string): string => redactText(path, text).text
+    const hit = [opRaw.read, opRaw.content, opRaw.edit?.oldString, opRaw.edit?.newString, opRaw.errorText, priorRaw]
+      .some((text) => text !== undefined && redactText(path, text).hit)
+    const redacted: FileOp = {
+      ...opRaw,
+      ...(opRaw.read !== undefined ? { read: mask(opRaw.read) } : {}),
+      ...(opRaw.content !== undefined ? { content: mask(opRaw.content) } : {}),
+      ...(opRaw.edit !== undefined ? { edit: { oldString: mask(opRaw.edit.oldString), newString: mask(opRaw.edit.newString) } } : {}),
+      ...(opRaw.errorText !== undefined ? { errorText: mask(opRaw.errorText) } : {}),
+    }
+    return { op: redacted, prior: priorRaw === undefined ? undefined : mask(priorRaw), redactionHit: true }
+  }, [opRaw, priorRaw, target, redactionOn]);
   const opLang = useMemo(() => (target.kind === 'op' ? langOfPath(target.path) : undefined), [target])
   const opRows = useMemo(() => (op === null ? [] : diffOf(op, prior)), [op, prior])
   const opSegments = useMemo(() => buildDiffSegments(opRows), [opRows])
@@ -293,6 +326,21 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
               <IconRightUpOutline16 size={14} />
             </button>
           </>
+        )}
+        {redactionHit && redactionOn && (
+          <span className={css.redactBanner} role="status">{t('changesRedactBanner')}</span>
+        )}
+        {target.kind === 'op' && (
+          <button
+            type="button"
+            className={css.mdToggle}
+            data-on={redactionOn ? 'true' : undefined}
+            aria-pressed={redactionOn}
+            onClick={toggleRedaction}
+            title={redactionOn ? t('changesRedactOff') : t('changesRedactOn')}
+          >
+            {redactionOn ? t('changesRedactOnLabel') : t('changesRedactOffLabel')}
+          </button>
         )}
         {mdOp && (
           <button

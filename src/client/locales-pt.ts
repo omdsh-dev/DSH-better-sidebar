@@ -406,4 +406,9 @@ export const pt: Record<string, string> = {
   pluginDocsPanelDesc: 'Documentos globais na barra lateral do DSH: leia suas próprias notas Markdown de qualquer workspace — uma lista de arquivos, um sumário, abrir no Chrome / VS Code e botões de copiar; o diretório de documentos é configurável (padrão ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'O navegador de agente para o DeepSeek Harness: 32 ferramentas ego_* controlam um Chromium real; uma aba nativa «ego browser» na barra lateral mostra ao vivo cada página visitada pelo agente — você pode clicar, arrastar e digitar para assumir. Registra a aba automaticamente quando o better-sidebar está presente; caso contrário, uma bolha flutuante',
   pluginBilingualReaderDesc: 'Leia PDFs na barra lateral do DSH: visualização nativa de PDF, selecione o texto para traduzir com o LLM, com contexto e totalmente isolado da conversa principal',
+  changesRedactOn: "Máscara ativa: segredos exibidos como [REDACTED]; clique para desativar (por sua conta)",
+  changesRedactOff: "Máscara desativada: conteúdo exibido como está; clique para ativar",
+  changesRedactOnLabel: "Máscara",
+  changesRedactOffLabel: "Sem máscara",
+  changesRedactBanner: "Mascarado",
 }
