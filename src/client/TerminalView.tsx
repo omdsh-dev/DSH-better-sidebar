@@ -43,6 +43,7 @@ import { api, type SessionScope, type TerminalDepsStatus } from './api.ts'
 import { agentUuidOf, isAgentTabId, type SidebarStore } from './state.ts'
 import { isDarkScheme, subscribeColorScheme, effectiveTokenValue, tokenValue } from './theme.ts'
 import { resolveTerminalFont } from './terminal-font.ts'
+import { handleTerminalCopyKeyEvent } from './terminal-keybindings.ts'
 import {
   buildTerminalLinks,
   shouldActivateTerminalLink,
@@ -135,6 +136,13 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
+    // Match native terminal ergonomics on Windows/Linux: Ctrl+C copies an
+    // active selection, but remains ETX/SIGINT when nothing is selected.
+    // Ctrl+Shift+C cannot serve as the browser fallback because Chromium
+    // reserves it for DevTools before xterm receives the event.
+    term.attachCustomKeyEventHandler(event => (
+      handleTerminalCopyKeyEvent(event, term, writeClipboard)
+    ))
     // Ctrl+Click (Cmd+Click on mac) opens http(s) URLs printed in the
     // pty stream — a plain click is left for xterm's text-selection
     // gesture. Only http(s) is dispatched; file:// / mailto: / etc. are
