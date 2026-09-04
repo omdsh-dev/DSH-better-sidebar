@@ -11,7 +11,6 @@ import {
   ALLOWED_SIGNALS,
   snapshotOf,
   tryResizePty,
-  type AgentTerminalSnapshot,
 } from '../src/agent-pty.ts'
 
 /**

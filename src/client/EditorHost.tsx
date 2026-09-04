@@ -40,6 +40,7 @@ import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
+import { closePathTabs, retargetPathTabs } from './tree-mutations.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
 import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, type SidebarStore, type SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
@@ -225,6 +226,16 @@ export function EditorHost(props: {
     })
   }
 
+  // Tree mutations reconcile the OPEN tabs (both split trees, the bottom
+  // panel, free windows): a rename retargets its tab to the new path; a
+  // delete closes tabs at or under the removed path. See tree-mutations.ts.
+  const onPathRenamed = (oldPath: string, newPath: string): void => {
+    retargetPathTabs(ctx, store, oldPath, newPath)
+  }
+  const onPathDeleted = (path: string): void => {
+    closePathTabs(ctx, store, path)
+  }
+
   // The viewer's toolbar, hoisted into THIS header: the text editor reports
   // its state and registers its commands (both null/absent for viewers
   // without a toolbar — image, pdf, binary download).
@@ -338,6 +349,9 @@ export function EditorHost(props: {
     }
     apply(planFirstMatch(ctx.get('betterSidebar')?.matchFileViewer(path), mediaUrlOf))
     return () => { cancelled = true; controller.abort() }
+    // The deps are deliberately granular: the scope object's identity churns,
+    // only its sessionId / cwd fields gate the (re)fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope.sessionId, scope.cwd, path, ctx, showEmpty, isDir, reloadSeq])
 
   // Save-then-refresh in preview mode (issue #167 part C): the edge into
@@ -386,6 +400,8 @@ export function EditorHost(props: {
           onOpenWith={openWith}
           onToggleOpenWithPin={toggleOpenWithPin}
           onReferenceFile={onReferenceFile}
+          onPathRenamed={onPathRenamed}
+          onPathDeleted={onPathDeleted}
         />
       </div>
     )
@@ -508,6 +524,8 @@ export function EditorHost(props: {
               onOpenWith={openWith}
               onToggleOpenWithPin={toggleOpenWithPin}
               onReferenceFile={onReferenceFile}
+              onPathRenamed={onPathRenamed}
+              onPathDeleted={onPathDeleted}
             />
           </div>
         )}

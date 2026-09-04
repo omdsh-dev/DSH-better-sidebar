@@ -15,7 +15,8 @@ import { MarkdownDocument, type MarkdownHtmlMedia } from '../src/client/Markdown
 import { analyzeMarkdownHtml } from '../src/client/markdown-html.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 const media: MarkdownHtmlMedia = {
   scope: { sessionId: 's1', cwd: '/ws' },

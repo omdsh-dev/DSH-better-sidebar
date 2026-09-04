@@ -8,15 +8,15 @@
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createElement, type ReactNode } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createElement } from 'react'
 import { act } from 'react-dom/test-utils'
+import { renderRoot, setupReactAct } from './test-utils.ts'
 import { SideChatView } from '../src/client/SideChatView.tsx'
 import { attachLocale } from '../src/client/locales.ts'
 import type { Context, SidebarSessionList } from '../src/context-types.ts'
 import type { SidebarTab } from '../src/client/state.ts'
 
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+setupReactAct()
 
 /** Minimal structural fake of the DSH LocaleService face the sidebar uses. */
 class FakeLocale {
@@ -64,7 +64,7 @@ const EVENTS = [
 
 /** A subscribable sessions-list snapshot (mirror of the runtime list feed). */
 function makeStore(initial: SidebarSessionList) {
-  let snapshot = initial
+  const snapshot = initial
   const listeners = new Set<() => void>()
   return {
     getSnapshot: (): SidebarSessionList => snapshot,
@@ -108,19 +108,6 @@ function makeCtx(store: ReturnType<typeof makeStore>, connection?: Connection): 
 
 function jsonResponse(value: unknown): Response {
   return { ok: true, status: 200, json: async () => value } as unknown as Response
-}
-
-/** Render `node` into a detached body container under React's act(). */
-function mount(node: ReactNode): { container: HTMLDivElement; unmount: () => void } {
-  const container = document.createElement('div')
-  document.body.append(container)
-  const root: Root = createRoot(container)
-  act(() => { root.render(node) })
-  const unmount = (): void => {
-    act(() => { root.unmount() })
-    container.remove()
-  }
-  return { container, unmount }
 }
 
 let eventsPulls = 0
@@ -168,7 +155,7 @@ function threadStore(): ReturnType<typeof makeStore> {
 describe('SideChatView rendering', () => {
   it('renders the bash pair as a TerminalBlock and the turn tail with usage + duration', async () => {
     const props = viewProps(makeCtx(threadStore()))
-    const { container, unmount } = mount(createElement(SideChatView, props))
+    const { container, unmount } = renderRoot(createElement(SideChatView, props))
     await act(async () => {})  // flush the initial transcript pull
     const text = container.textContent ?? ''
     // Terminal surface: the command line and the marker-stripped output body.
@@ -182,7 +169,7 @@ describe('SideChatView rendering', () => {
   it('shows the disconnect banner, reconnects on click, and pulls immediately on recovery', async () => {
     const connection = makeConnection('disconnected')
     const props = viewProps(makeCtx(threadStore(), connection))
-    const { container, unmount } = mount(createElement(SideChatView, props))
+    const { container, unmount } = renderRoot(createElement(SideChatView, props))
     await act(async () => {})  // flush the initial transcript pull
     expect(container.textContent ?? '').toContain('连接已断开')
 
@@ -200,12 +187,12 @@ describe('SideChatView rendering', () => {
   })
 
   it('renders no banner without a connection service or while connected', async () => {
-    const absent = mount(createElement(SideChatView, viewProps(makeCtx(threadStore()))))
+    const absent = renderRoot(createElement(SideChatView, viewProps(makeCtx(threadStore()))))
     expect(absent.container.textContent ?? '').not.toContain('连接已断开')
     absent.unmount()
 
     const connection = makeConnection('connected')
-    const connected = mount(createElement(SideChatView, viewProps(makeCtx(threadStore(), connection))))
+    const connected = renderRoot(createElement(SideChatView, viewProps(makeCtx(threadStore(), connection))))
     expect(connected.container.textContent ?? '').not.toContain('连接已断开')
     connected.unmount()
   })

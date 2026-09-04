@@ -19,7 +19,8 @@ import { TAB_DRAG_TYPE } from '../src/client/TabBar.tsx'
 import type { UploadItem } from '../src/client/upload.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 // vitest 4.1.11+ follows the OS locale; pin en-US so hint assertions are
 // deterministic regardless of the developer machine.

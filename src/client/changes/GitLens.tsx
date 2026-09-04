@@ -17,6 +17,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from '../api.ts'
 import { api } from '../api.ts'
+import { usePolling } from '../use-polling.ts'
 import { baseName, isWithinWorkspace, relativeTo } from '../paths.ts'
 import { resolveSidebarPath } from '../produced-files.ts'
 import { relativeTime, t } from '../locales.ts'
@@ -62,6 +63,12 @@ function refNames(refs: string): string[] {
       .map(ref => (ref.includes(' -> ') ? ref.slice(ref.indexOf(' -> ') + 4) : ref))
       .map(ref => (ref.startsWith('tag: ') ? ref.slice(5) : ref)),
   )]
+}
+
+/** One thrown value as display text (every error banner/row here normalizes
+ *  through this so non-Error rejections never render as '[object Object]'). */
+function errorMessage(reason: unknown): string {
+  return reason instanceof Error ? reason.message : String(reason)
 }
 
 /** The pending destructive action (discard / revert / cherry-pick), gated by a confirm modal. */
@@ -157,11 +164,14 @@ export function GitLens(props: GitLensProps) {
       setLogEnded(logResult.length < LOG_BATCH)
     } catch (reason) {
       if (options.generation === refreshGeneration.current) {
-        setError(reason instanceof Error ? reason.message : String(reason))
+        setError(errorMessage(reason))
       }
     } finally {
       if (options.loading && options.generation === refreshGeneration.current) setLoading(false)
     }
+    // Granular scope fields: the scope object's identity churns, only its
+    // sessionId / cwd fields gate the git target.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope.sessionId, scope.cwd, repoRoot])
 
   const refresh = useCallback(async (silent = false): Promise<void> => {
@@ -219,12 +229,15 @@ export function GitLens(props: GitLensProps) {
       await refreshTarget(target, { loading: !silent, generation })
     } catch (reason) {
       if (generation === refreshGeneration.current) {
-        setError(reason instanceof Error ? reason.message : String(reason))
+        setError(errorMessage(reason))
         if (!silent) setLoading(false)
       }
     } finally {
       refreshInFlight.current = false
     }
+    // Granular scope fields: the scope object's identity churns, only its
+    // sessionId / cwd fields gate the refresh target.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope.sessionId, scope.cwd, refreshTarget])
 
   useEffect(() => {
@@ -268,11 +281,11 @@ export function GitLens(props: GitLensProps) {
     const generation = refreshGeneration.current += 1
     void refreshTarget(chosenPathRef.current ?? '', { loading: true, generation })
   }
-  useEffect(() => {
-    if (!visible) return
-    const timer = window.setInterval(() => { void refresh(true) }, 2_000)
-    return () => { window.clearInterval(timer) }
-  }, [visible, refresh])
+  /** The silent poll tick (the status-only fast path between worktree
+   *  re-lists, see refresh) — fixed 2s cadence while visible, no initial
+   *  burst (mount and scope changes already refresh above). */
+  const pollTick = useCallback((): Promise<void> => refresh(true), [refresh])
+  usePolling(visible, pollTick, { intervalMs: 2_000 })
 
   /** Append the next history page (lazy: only when the user asks for more). */
   const loadMoreLog = async (): Promise<void> => {
@@ -289,7 +302,7 @@ export function GitLens(props: GitLensProps) {
       if (next.length < LOG_BATCH) setLogEnded(true)
     } catch (reason) {
       if (generation === refreshGeneration.current && target === chosenPathRef.current) {
-        setCommitError(`${t('historyLoadError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+        setCommitError(`${t('historyLoadError')}: ${errorMessage(reason)}`)
       }
     } finally {
       if (generation === refreshGeneration.current && target === chosenPathRef.current) setLogLoadingMore(false)
@@ -355,7 +368,7 @@ export function GitLens(props: GitLensProps) {
       setCommitMsg('')
       await refresh()
     } catch (reason) {
-      setCommitError(reason instanceof Error ? reason.message : String(reason))
+      setCommitError(errorMessage(reason))
     } finally {
       setBusy(false)
     }
@@ -369,7 +382,7 @@ export function GitLens(props: GitLensProps) {
       await api.gitCheckout(gitScope, branch, selectedWorktree)
       await refresh()
     } catch (reason) {
-      setCommitError(`${t('checkoutError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+      setCommitError(`${t('checkoutError')}: ${errorMessage(reason)}`)
     } finally {
       setBusy(false)
     }
@@ -384,7 +397,7 @@ export function GitLens(props: GitLensProps) {
         await confirmState.onConfirm()
         await refresh()
       } catch (reason) {
-        setCommitError(reason instanceof Error ? reason.message : String(reason))
+        setCommitError(errorMessage(reason))
       } finally {
         setBusy(false)
       }
@@ -658,6 +671,7 @@ export function GitLens(props: GitLensProps) {
               if (id === 'absolute') copy(resolveSidebarPath(repoRoot ?? selectedWorktree ?? scope.cwd, target.entry.path))
             }}
             portal
+            compact
             align="start"
             getAnchorRect={() => (fileMenu === null ? null : new DOMRect(fileMenu.x, fileMenu.y, 0, 0))}
             anchor={<span />}
@@ -715,6 +729,7 @@ export function GitLens(props: GitLensProps) {
               }
             }}
             portal
+            compact
             align="start"
             getAnchorRect={() => (historyMenu === null ? null : new DOMRect(historyMenu.x, historyMenu.y, 0, 0))}
             anchor={<span />}

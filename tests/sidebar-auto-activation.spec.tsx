@@ -9,7 +9,8 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 import { Sidebar } from '../src/client/Sidebar.tsx'
 import { allLeaves, createSidebarStore, firstLeaf, type SidebarStore } from '../src/client/state.ts'

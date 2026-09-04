@@ -16,7 +16,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 import { TabBar } from '../src/client/TabBar.tsx'
 import type { SidebarTab } from '../src/client/state.ts'
@@ -306,5 +307,63 @@ describe('TabBar pin submenu (v0.17.0)', () => {
     } finally {
       unmount()
     }
+  })
+})
+
+describe('TabBar context menu flip geometry (submenu clamping)', () => {
+  const ATTR = 'data-dsh-sidebar-submenu'
+
+  /** jsdom's default viewport (what the hook reads via window.innerWidth/Height). */
+  const VW = window.innerWidth
+  const VH = window.innerHeight
+
+  it('publishes "down" while the menu is open and clears it on selection', () => {
+    stubZh()
+    const { tabEls, onClose, unmount } = mountBar(fourTabs())
+    try {
+      // rightClick() dispatches at clientY 40 — the top strip, upper half.
+      act(() => { rightClick(tabEls[1]!) })
+      expect(document.body.getAttribute(ATTR)).toBe('down')
+      act(() => { menuItems()[1]!.click() })
+      expect(onClose).toHaveBeenCalledWith('t2')
+      expect(document.body.hasAttribute(ATTR)).toBe(false)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('flips left when the cursor sits within the right-hand submenu room', () => {
+    stubZh()
+    const { tabEls, unmount } = mountBar(fourTabs())
+    try {
+      const nearRight = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: VW - 10, clientY: 40 })
+      act(() => { tabEls[1]!.dispatchEvent(nearRight) })
+      expect(document.body.getAttribute(ATTR)).toBe('down left')
+    } finally {
+      unmount()
+    }
+  })
+
+  it('keeps the primitive defaults (empty tokens) for a lower-half opening', () => {
+    stubZh()
+    const { tabEls, unmount } = mountBar(fourTabs())
+    try {
+      const lowLeft = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: VH - 40 })
+      act(() => { tabEls[1]!.dispatchEvent(lowLeft) })
+      // Attribute present but empty: layout.css matches no token, so the
+      // host primitive's own up/right geometry applies.
+      expect(document.body.getAttribute(ATTR)).toBe('')
+    } finally {
+      unmount()
+    }
+  })
+
+  it('clears the attribute on unmount with the menu still open', () => {
+    stubZh()
+    const { tabEls, unmount } = mountBar(fourTabs())
+    act(() => { rightClick(tabEls[1]!) })
+    expect(document.body.getAttribute(ATTR)).toBe('down')
+    unmount()
+    expect(document.body.hasAttribute(ATTR)).toBe(false)
   })
 })

@@ -281,6 +281,13 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     await newTabButton.click()
     const item = page.getByRole('menuitem', { name: title }).first()
     await expect(item, `built-in tab "${title}" is not offered by the + menu — descriptor removed or its label changed`).toHaveCount(1)
+    if (title === BUILTIN_TABS[0]) {
+      // Layout-level evidence for the compact density: rows render ~26px
+      // tall (the default density would be 40px). Guard loose at ≤30px so
+      // font/zoom differences across runners cannot flake it.
+      const rowHeight = await item.evaluate(el => el.getBoundingClientRect().height)
+      expect(rowHeight, '+ menu rows must render at the compact density (≤30px)').toBeLessThanOrEqual(30)
+    }
     await item.click()
     // Let the activation commit (including any lazy-chunk fetch) before the
     // crash assertions run.

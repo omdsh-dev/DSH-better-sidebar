@@ -53,6 +53,7 @@ import {
   type TreeJob,
 } from './subagent-jobs.ts'
 import { api, type JobOutputResult } from './api.ts'
+import { usePolling } from './use-polling.ts'
 import { IconStopOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import css from './SubagentView.module.css'
@@ -180,52 +181,30 @@ function SubagentLiveLines(props: { live: LastActivity | undefined }) {
 /**
  * One shared live-preview poller for the whole Subagent tree. Unlike the old
  * per-card `subagents.history` timers, this sends at most ONE `subagents.live`
- * request at a time: a recursive timeout starts only after the previous
- * request settles, so a slow host never sees abort/restart storms.
+ * request at a time (the shared poller's self-scheduling mode arms the next
+ * tick only after the previous request settles, so a slow host never sees
+ * abort/restart storms); a response settling after the poller stopped (page
+ * hidden, tree re-rooted) is dropped via the aborted signal.
  */
 function useSubagentLive(
   rootId: string | undefined,
   active: boolean,
 ): Readonly<Record<string, LastActivity>> {
   const [live, setLive] = useState<Record<string, LastActivity>>({})
-  const controllerRef = useRef<AbortController | undefined>(undefined)
 
   // A new tree must never inherit another root's live previews.
   useEffect(() => { setLive({}) }, [rootId])
 
-  useEffect(() => {
-    if (rootId === undefined || !active) return
-    const targetRootId = rootId
-    let disposed = false
-    let timer: number | undefined
-
-    const schedule = (): void => {
-      if (disposed) return
-      timer = window.setTimeout(() => { void load() }, POLL_MS)
-    }
-    async function load(): Promise<void> {
-      if (disposed) return
-      const controller = new AbortController()
-      controllerRef.current = controller
-      try {
-        const result = await api.subagentsLive(targetRootId, controller.signal)
-        if (!disposed) setLive(result.live)
-      } catch {
-        // Keep the last known live map; the next scheduled poll retries.
-      } finally {
-        if (controllerRef.current === controller) controllerRef.current = undefined
-        if (!disposed) schedule()
-      }
-    }
-
-    void load()
-    return () => {
-      disposed = true
-      if (timer !== undefined) window.clearTimeout(timer)
-      controllerRef.current?.abort()
-      controllerRef.current = undefined
-    }
-  }, [rootId, active])
+  const poll = useCallback(async (signal: AbortSignal): Promise<void> => {
+    if (rootId === undefined) return
+    const result = await api.subagentsLive(rootId, signal)
+    if (!signal.aborted) setLive(result.live)
+  }, [rootId])
+  usePolling(rootId !== undefined && active, poll, {
+    intervalMs: POLL_MS,
+    mode: 'self-scheduling',
+    immediate: true,
+  })
 
   return live
 }
@@ -415,6 +394,9 @@ function JobOutputPane(props: {
     if (!active || !isJobLive(job)) return
     const timer = window.setInterval(() => { void load() }, JOB_POLL_MS)
     return () => { window.clearInterval(timer) }
+    // isJobLive reads only job.status; whole-job identity churns on every
+    // catalog refresh and must not restart the poll interval.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, active, job.status])
 
   useEffect(() => () => { controllerRef.current?.abort() }, [])
@@ -425,6 +407,8 @@ function JobOutputPane(props: {
     if (!isJobLive(job) || typeof state !== 'object' || state.text.length === 0) return
     const pre = preRef.current
     if (pre !== null) pre.scrollTop = pre.scrollHeight
+    // Same as the poll effect above: only the status transition matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, job.status])
 
   return (
@@ -656,7 +640,9 @@ export function SubagentView(props: {
     useCallback(() => sessions.list.getSnapshot(), [sessions]),
   )
   const byId = list.byId
-  const catalogs = list.subagentsByParent ?? {}
+  // Memoized so the empty-catalog fallback keeps a stable identity — a fresh
+  // `{}` per render would invalidate every catalog-dependent memo/effect.
+  const catalogs = useMemo(() => list.subagentsByParent ?? {}, [list.subagentsByParent])
 
   // The topology root: the main agent of the current session's tree.
   const rootId = useMemo(() => rootAncestor(byId, sessionId), [byId, sessionId])
@@ -680,6 +666,9 @@ export function SubagentView(props: {
     if (rootId === undefined || !active) return
     observe(rootId, true)
     return () => {
+      // The cleanup must release everything observed AT cleanup time (the set
+      // mutates as branches open), so reading the ref here is the point.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       for (const parentSessionId of observedRef.current) {
         sessions.setSubagentCatalogOpen?.(parentSessionId, false)
       }
@@ -715,7 +704,7 @@ export function SubagentView(props: {
     try {
       sessions.openSubagent?.(address)
     } catch (error) {
-      console.warn('[dsh-better-sidebar] openSubagent failed:', error)
+      console.error('[dsh-better-sidebar] openSubagent failed:', error)
     }
   }, [sessions, onOpenChild])
 
@@ -725,7 +714,7 @@ export function SubagentView(props: {
     try {
       sessions.open?.(rootId)
     } catch (error) {
-      console.warn('[dsh-better-sidebar] open session failed:', error)
+      console.error('[dsh-better-sidebar] open session failed:', error)
     }
   }, [sessions, rootId])
 

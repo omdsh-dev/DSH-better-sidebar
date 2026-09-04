@@ -31,7 +31,6 @@ import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { appendToDraft } from './conversation-draft.ts'
 import { useSelectionPopup } from './selection-popup.ts'
 import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
-import { lazyChunkComponent } from './lazy-chunk.tsx'
 import { analyzeMarkdownHtml } from './markdown-html.ts'
 import { LazyMermaidMarkdown, MarkdownDocument, type MarkdownHtmlMedia } from './MarkdownHtml.tsx'
 import { MdToc } from './md-toc.tsx'
@@ -117,13 +116,16 @@ export function TextEditor(props: FileViewerProps) {
     setDirty(false)
     setSaveState('idle')
     selectionPopup.hide()
+    // hide() reads a live ref; the reset must fire only on a content (file)
+    // swap, and the hook object's identity churns on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content])
 
   // A different file switches the remembered preview scroll position to that
   // file's own entry (first open: none, so the preview starts at the top).
   useEffect(() => {
     previewScrollRef.current = previewScrollMemory.get(previewScrollKey(scope, path)) ?? 0
-  }, [path])
+  }, [scope, path])
 
   // Create the CodeMirror editor once the content is loaded. The view owns
   // the document; React only tracks dirty state through the update listener
@@ -220,6 +222,7 @@ export function TextEditor(props: FileViewerProps) {
     // The keymap's save() reads live refs; scope/path are stable for a
     // tab's lifetime, and the dark flip is handled by the reconfigure
     // effect below (recreating the view here would drop the draft).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content, path])
 
   // Scheme flip: re-theme in place (the compartment holds only the
@@ -276,6 +279,9 @@ export function TextEditor(props: FileViewerProps) {
         view.requestMeasure()
       })
     })
+    // The reveal reads the live document/view refs; only the flip into
+    // preview triggers it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode])
 
   // Snapshot the live document into the draft whenever the preview needs

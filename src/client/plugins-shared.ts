@@ -14,8 +14,10 @@ export const PLUGIN_TOPIC_URL = 'https://github.com/topics/dsh-better-sidebar'
 export interface PluginEntry {
   /** Unique id (the npm package name). */
   id: string
-  /** Short display name. */
-  name: string
+  /** Short display name (i18n friendly: string or () => string — the plain
+   *  string form is the raw-name fallback when no dictionary key covers the
+   *  entry, mirroring `description`). */
+  name: string | (() => string)
   /** GitHub repository URL. */
   url: string
   /** One-line description (i18n friendly: string or () => string). */

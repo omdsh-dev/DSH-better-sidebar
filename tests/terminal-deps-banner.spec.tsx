@@ -19,7 +19,8 @@ import * as primitives from '@deepseek-ai/dsh-client-ui-primitives'
 import { TerminalDepsBanner } from '../src/client/TerminalView.tsx'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 const deps = {
   ok: false as const,

@@ -16,7 +16,8 @@ import { act } from 'react-dom/test-utils'
 import { FileTree } from '../src/client/FileTree.tsx'
 import { createSidebarStore } from '../src/client/state.ts'
 
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 // jsdom defines no scrollIntoView; counting calls needs a real function.
 const scrollIntoView = vi.fn()

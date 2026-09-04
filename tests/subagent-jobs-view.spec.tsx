@@ -7,9 +7,9 @@
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createElement, type ReactNode } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { createElement } from 'react'
 import { act } from 'react-dom/test-utils'
+import { renderRoot } from './test-utils.ts'
 import { SubagentView } from '../src/client/SubagentView.tsx'
 import type { Context, SidebarSessionList } from '../src/context-types.ts'
 
@@ -50,19 +50,6 @@ function makeCtx(store: Store): Context {
       },
     },
   } as unknown as Context
-}
-
-/** Render `node` into a detached body container under React's act(). */
-function mount(node: ReactNode): { container: HTMLDivElement; unmount: () => void } {
-  const container = document.createElement('div')
-  document.body.append(container)
-  const root: Root = createRoot(container)
-  act(() => { root.render(node) })
-  const unmount = (): void => {
-    act(() => { root.unmount() })
-    container.remove()
-  }
-  return { container, unmount }
 }
 
 const outputCalls: Array<{ sessionId: string; id: string }> = []
@@ -129,7 +116,7 @@ afterEach(() => {
 describe('SubagentView background jobs', () => {
   it('renders the tree jobs with status, durations, and owner labels', () => {
     const store = makeStore(baseSnapshot())
-    const { container, unmount } = mount(
+    const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
     )
     const text = container.textContent ?? ''
@@ -147,7 +134,7 @@ describe('SubagentView background jobs', () => {
 
   it('renders nothing job-related when the mirror is empty', () => {
     const store = makeStore({ current: 'root', byId: { root: { id: 'root', displayTitle: '主会话' } }, subagentsByParent: {}, jobsBySession: {} })
-    const { container, unmount } = mount(
+    const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
     )
     expect(container.textContent).not.toContain('后台任务')
@@ -156,7 +143,7 @@ describe('SubagentView background jobs', () => {
 
   it('survives the mirror emptying while mounted (hook-order regression #300)', async () => {
     const store = makeStore(baseSnapshot())
-    const { container, unmount } = mount(
+    const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
     )
     expect(container.textContent).toContain('sleep 300')
@@ -174,7 +161,7 @@ describe('SubagentView background jobs', () => {
 
   it('shows the selected job output in the bottom dock, closeable', async () => {
     const store = makeStore(baseSnapshot())
-    const { container, unmount } = mount(
+    const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
     )
     const row = container.querySelector('button[aria-label*="sleep 300"]') as HTMLButtonElement
@@ -195,7 +182,7 @@ describe('SubagentView background jobs', () => {
 
   it('switches the single dock between selected rows', async () => {
     const store = makeStore(baseSnapshot())
-    const { container, unmount } = mount(
+    const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
     )
     const first = container.querySelector('button[aria-label*="sleep 300"]') as HTMLButtonElement
@@ -223,7 +210,7 @@ describe('SubagentView background jobs', () => {
       ],
     }
     const store = makeStore(snapshot)
-    const { container, unmount } = mount(
+    const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
     )
     const row = container.querySelector('button[aria-label*="unread cmd"]') as HTMLButtonElement
@@ -249,7 +236,7 @@ describe('SubagentView background jobs', () => {
       subagentsByParent: {},
       jobsBySession: { root: many },
     })
-    const { container, unmount } = mount(
+    const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
     )
     expect(container.textContent).toContain('60 个后台任务 · 30 运行中')
@@ -264,7 +251,7 @@ describe('SubagentView background jobs', () => {
 
   it('kills a live job only after the two-click confirm', async () => {
     const store = makeStore(baseSnapshot())
-    const { container, unmount } = mount(
+    const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
     )
     const kill = container.querySelector('button[aria-label="终止"]') as HTMLButtonElement
@@ -282,7 +269,7 @@ describe('SubagentView background jobs', () => {
     vi.useFakeTimers()
     try {
       const store = makeStore(baseSnapshot())
-      const { container, unmount } = mount(
+      const { container, unmount } = renderRoot(
         createElement(SubagentView, { sessionId: 'root', active: false, ctx: makeCtx(store) }),
       )
       const row = container.querySelector('button[aria-label*="sleep 300"]') as HTMLButtonElement

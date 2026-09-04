@@ -279,6 +279,7 @@ export function FreeWindow(props: {
             else if (id === 'close') onClose()
           }}
           portal
+          compact
           align="start"
           getAnchorRect={() => (menu === null ? null : new DOMRect(menu.x, menu.y, 0, 0))}
           anchor={<span />}

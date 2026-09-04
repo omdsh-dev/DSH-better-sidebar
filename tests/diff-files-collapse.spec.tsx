@@ -5,7 +5,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { DiffFiles } from '../src/client/diff/DiffFiles.tsx'
 
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 const diff = [
   'diff --git a/src/a.ts b/src/a.ts',

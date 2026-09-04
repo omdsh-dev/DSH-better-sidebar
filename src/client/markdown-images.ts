@@ -133,5 +133,6 @@ export function rewriteLocalImageUrls(
     return `${head}${resolve(dest.replace(/^<|>$/g, ''))}`
   })
 
+  // eslint-disable-next-line no-control-regex -- NUL is the deliberate mask sentinel (cannot appear in source markdown)
   return refsRewritten.replace(/\u0000(\d+)\u0000/g, (_m, index: string) => masks[Number(index)] ?? '')
 }

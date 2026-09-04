@@ -119,6 +119,7 @@ export interface SidebarSlotRegisterOptions {
   locale?: string
   registrant?: string
   /** Business-face factory; args depend on the slot scope. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirrors the host slots signature, where inject args are untyped; unknown[] would reject concrete-typed implementations (contravariance)
   inject?: (...args: any[]) => Record<string, unknown>
   children?: Record<string, unknown>
 }

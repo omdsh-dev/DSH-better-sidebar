@@ -18,7 +18,7 @@ import { renderToString } from 'react-dom/server'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import * as primitives from '@deepseek-ai/dsh-client-ui-primitives'
-import { PLUGIN_TOPIC_URL, type PluginEntry } from '../src/client/plugins-shared.ts'
+import { type PluginEntry } from '../src/client/plugins-shared.ts'
 import { builtinTabPlugins } from '../src/client/plugins-tabs.ts'
 import { builtinViewerPlugins } from '../src/client/plugins-viewers.ts'
 import { AddPluginModal, PluginListBody } from '../src/client/add-plugin-modal.tsx'
@@ -26,9 +26,18 @@ import { createBetterSidebarService } from '../src/client/service.ts'
 import { createSidebarStore } from '../src/client/state.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 const officeEntry = builtinViewerPlugins[0] as PluginEntry
+const sentinelEntry = builtinTabPlugins.find(entry => entry.id === '@dsh-external/dsh-sentinel') as PluginEntry
+
+/** Resolve an i18n-friendly string-or-function value (mirror of textOf).
+ *  Catalog names went through the same union as descriptions, so they
+ *  render through t() in the active (test: en) locale. */
+function textOf(value: string | (() => string)): string {
+  return typeof value === 'function' ? value() : value
+}
 
 describe('PluginListBody (render)', () => {
   it('viewer kind renders the topic button and the office catalog entry', () => {
@@ -42,7 +51,7 @@ describe('PluginListBody (render)', () => {
     expect(html).not.toContain('href=')
     // The seeded catalog entry: name, description, install script,
     // a jump button (opens the repo in a NEW browser tab) and a copy button.
-    expect(html).toContain(officeEntry.name)
+    expect(html).toContain(textOf(officeEntry.name))
     expect(html).toContain(officeEntry.install.replaceAll('&', '&amp;'))
     expect(html).toContain('Open')
     expect(html).toContain('Copy')
@@ -52,9 +61,9 @@ describe('PluginListBody (render)', () => {
     const store = createSidebarStore()
     const service = createBetterSidebarService(store)
     const html = renderToString(createElement(PluginListBody, { service, kind: 'tab' }))
-    expect(html).toContain('dsh-sentinel 唤醒系统')
+    expect(html).toContain(textOf(sentinelEntry.name))
     expect(html).toContain('github:fuhefei/dsh-sentinel')
-    expect(html).not.toContain(officeEntry.name)
+    expect(html).not.toContain(textOf(officeEntry.name))
   })
 })
 
@@ -74,9 +83,9 @@ describe('AddPluginModal wiring', () => {
       })
       const html = document.body.innerHTML
       if (kind === 'viewer') {
-        expect(html).toContain(officeEntry.name)
+        expect(html).toContain(textOf(officeEntry.name))
       } else {
-        expect(html).toContain('dsh-sentinel 唤醒系统')
+        expect(html).toContain(textOf(sentinelEntry.name))
       }
       act(() => { root.unmount() })
       container.remove()

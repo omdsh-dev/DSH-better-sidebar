@@ -90,6 +90,11 @@
   flex-direction: row;
   gap: 4px;
   pointer-events: auto;
+  /* The cluster recenters between the panel's tab strip (top: 3) and DSH's
+     session header row (top: 14, see the collapsed rule below) on every
+     expand/collapse — ride the panel slide's own duration/easing so the two
+     moves stay in lockstep instead of the cluster snapping. */
+  transition: top var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
 /* The tab strip of the OPEN right panel reserves the cluster's width at its
@@ -1031,6 +1036,83 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── Inline rename editor ─────────────────────────────────────────────────
+   The row swaps its name span for a plain input (same row metrics: 34px
+   height, 6px gap, xxs type); only tokens, no hardcoded colors. */
+.explorerRenaming {
+  cursor: text;
+}
+
+.explorerRenameInput {
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-state-business-primary);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.explorerRenameInput:focus {
+  outline: none;
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+/* The dismissable mutation-failure strip above the root row (rename/delete
+   refusals — raw server text, same policy as the fence notice). */
+.explorerActionError {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  box-sizing: border-box;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-state-error-primary);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.explorerActionErrorText {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.explorerActionErrorClose {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.explorerActionErrorClose:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The delete-confirmation modal's description paragraph (the git lens's
+   .gitConfirmDesc sibling — same quiet single-question look). */
+.explorerConfirmDesc {
+  margin: 0;
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
 }
 
 /* The hover-revealed @-reference button at the row's far right (and the
@@ -2434,15 +2516,16 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 /* The pushpin toggle on an "open with" submenu row: brand ink once the
-   target is pinned to the menu's top level. */
+   target is pinned to the menu's top level. Sized for the compact menu's
+   26px rows (16px box, 12px glyph) — proportionate without overflowing. */
 .openWithPin {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
   color: var(--dsw-alias-label-tertiary);
   cursor: pointer;
 }

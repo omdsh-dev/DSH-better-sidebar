@@ -10,8 +10,6 @@ import * as os from 'node:os'
 import { isAbsolute, join, posix, resolve, win32 } from 'node:path'
 import z from 'schemastery'
 import {
-  SIDEBAR_PREFS_DEFAULTS,
-  SIDEBAR_PREFS_NS,
   TERMINAL_FONT_SIZE_DEFAULT,
   TERMINAL_FONT_SIZE_MAX,
   TERMINAL_FONT_SIZE_MIN,

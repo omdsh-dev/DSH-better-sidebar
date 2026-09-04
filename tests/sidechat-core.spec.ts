@@ -22,7 +22,6 @@ import {
   SIDE_INJECTION_PLUGIN,
   SIDE_LABEL_PREFIX,
   type SeedEvent,
-  type SidechatLogEvent,
 } from '../src/sidechat-core.ts'
 
 /** One log event fixture (structural, seq === index like the live contract).

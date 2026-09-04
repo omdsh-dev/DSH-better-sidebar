@@ -129,6 +129,25 @@ export type TerminalDepsStatus =
     note?: string
   }
 
+/**
+ * Parse one `/sidebar` JSON response envelope into its value. A non-ok
+ * status, an unparseable body, or any shape other than `{ok: true, value}`
+ * surfaces as {@link SidebarApiError} carrying the wire code (falling back
+ * to the HTTP status). Shared by the JSON api route and the raw upload
+ * route, whose envelopes are identical.
+ */
+async function readEnvelope<T>(response: Response): Promise<T> {
+  const parsed: { ok?: boolean; value?: unknown; error?: { code?: string; message?: string } } | null
+    = await response.json().catch(() => null)
+  if (!response.ok || parsed === null || parsed.ok !== true || parsed.value === undefined) {
+    throw new SidebarApiError(
+      parsed?.error?.code ?? 'http',
+      parsed?.error?.message ?? `HTTP ${response.status}`,
+    )
+  }
+  return parsed.value as T
+}
+
 async function call<T>(method: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   let response: Response
   try {
@@ -141,15 +160,7 @@ async function call<T>(method: string, payload: Record<string, unknown>, signal?
   } catch (error) {
     throw new SidebarApiError('network', error instanceof Error ? error.message : String(error))
   }
-  const parsed: { ok?: boolean; value?: unknown; error?: { code?: string; message?: string } } | null
-    = await response.json().catch(() => null)
-  if (!response.ok || parsed === null || parsed.ok !== true || parsed.value === undefined) {
-    throw new SidebarApiError(
-      parsed?.error?.code ?? 'http',
-      parsed?.error?.message ?? `HTTP ${response.status}`,
-    )
-  }
-  return parsed.value as T
+  return readEnvelope<T>(response)
 }
 
 /**
@@ -180,15 +191,7 @@ async function fetchUpload<T>(
     if (error instanceof DOMException && error.name === 'AbortError') throw error
     throw new SidebarApiError('network', error instanceof Error ? error.message : String(error))
   }
-  const parsed: { ok?: boolean; value?: unknown; error?: { code?: string; message?: string } } | null
-    = await response.json().catch(() => null)
-  if (!response.ok || parsed === null || parsed.ok !== true || parsed.value === undefined) {
-    throw new SidebarApiError(
-      parsed?.error?.code ?? 'http',
-      parsed?.error?.message ?? `HTTP ${response.status}`,
-    )
-  }
-  return parsed.value as T
+  return readEnvelope<T>(response)
 }
 
 /** One request's session scope: the conversation id plus its cwd when known. */
@@ -275,6 +278,15 @@ export const api = {
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
+  /** Rename one tree row within its directory (single-segment name; the
+   *  server refuses existing destinations, the workspace root, and — while
+   *  the fence is armed — anything resolving outside the workspace). */
+  fsRename: (scope: SessionScope, path: string, name: string) =>
+    call<{ path: string }>('fs.rename', scopePayload(scope, { path, name })),
+  /** Permanently delete one tree row (recursive for directories; a symlink
+   *  row unlinks the link only). The UI confirms before calling this. */
+  fsRemove: (scope: SessionScope, path: string) =>
+    call<{ path: string }>('fs.remove', scopePayload(scope, { path })),
   /** Upload one file's raw bytes into `dir` (keeps the folder tree via
    *  `relativePath`); the host streams it under the session workspace. */
   uploadFile: (scope: SessionScope, dir: string, relativePath: string, body: Blob, signal?: AbortSignal) =>

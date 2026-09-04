@@ -133,9 +133,11 @@ export function useSelectionPopup(options: SelectionPopupOptions): SelectionPopu
   // Re-target the visibility observer whenever a popup opens: the surface
   // refs may have been null at mount (content loads async, mode flips swap
   // the preview container for the CodeMirror host), so the surface is only
-  // trustworthy at open time.
+  // trustworthy at open time. The boolean flip is the only thing that must
+  // re-run this; an anchor move while open keeps the same surface.
+  const popupOpen = popup !== null
   useEffect(() => {
-    if (popup === null) return
+    if (!popupOpen) return
     observerRef.current?.disconnect()
     observerRef.current = null
     if (typeof IntersectionObserver === 'undefined') return
@@ -148,10 +150,7 @@ export function useSelectionPopup(options: SelectionPopupOptions): SelectionPopu
     }, { threshold: 0 })
     observerRef.current = observer
     observer.observe(surface)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- the boolean
-    // flip is the only thing that must re-run this; an anchor move while
-    // open keeps the same surface.
-  }, [popup !== null])
+  }, [popupOpen])
 
   return { popup, buttonRef, show, hide, commit }
 }

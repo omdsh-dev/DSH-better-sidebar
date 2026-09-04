@@ -16,6 +16,7 @@ import {
 import type { SidebarTab } from './state.ts'
 import { isAgentTabId } from './state.ts'
 import { isPinnedVirtualTab } from './pinned.ts'
+import { useSubmenuFlip } from './menu-flip.ts'
 import { IconPinOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
@@ -90,6 +91,9 @@ export function TabBar(props: {
   // The tab right-click context menu: the target tab plus the cursor
   // position (the portaled Menu anchors there, following the git lens/FileTree).
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null)
+  // The strip sits at the panel's top, so the pin submenu must grow downward;
+  // the flip hook derives that from the cursor y (upper half → "down").
+  useSubmenuFlip(tabMenu)
   const [dragOver, setDragOver] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   // The context target's index in the render-time tab snapshot; -1 when the
@@ -265,6 +269,7 @@ export function TabBar(props: {
             setMenuOpen(false)
           }}
           portal
+          compact
           align="end"
           anchor={(
             <button
@@ -355,6 +360,7 @@ export function TabBar(props: {
             }
           }}
           portal
+          compact
           align="start"
           getAnchorRect={() => (tabMenu === null ? null : new DOMRect(tabMenu.x, tabMenu.y, 0, 0))}
           anchor={<span />}

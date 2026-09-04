@@ -203,6 +203,7 @@ export function appendToDraft(ctx: Context, sessionId: string, text: string): bo
  */
 export function fileMention(relativePath: string): { mention: string; label: string } | undefined {
   const path = relativePath.replace(/[\\/]+$/, '')
+  // eslint-disable-next-line no-control-regex -- rejecting control characters is the point of this guard
   if (/[\u0000-\u001f\u007f-\u009f"]/u.test(path)) return undefined
   const mention = /\s/u.test(path) ? `@"${path}"` : `@${path}`
   const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))

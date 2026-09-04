@@ -15,7 +15,8 @@ import { createSidebarStore } from '../src/client/state.ts'
 import type { OpenWithTarget } from '../src/client/open-with.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 // vitest 4.1.11+ follows the OS locale; pin en-US so menu copy is English.
 beforeAll(() => {
@@ -201,5 +202,47 @@ describe('FileTree open-with menu', () => {
     const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
     expect(items.some(item => item.textContent?.includes('Open with'))).toBe(false)
     expect(items.some(item => item.getAttribute('aria-haspopup') === 'menu')).toBe(false)
+  })
+})
+
+describe('FileTree open-with menu flip geometry (submenu clamping)', () => {
+  const ATTR = 'data-dsh-sidebar-submenu'
+
+  let harness: Harness
+  afterEach(() => {
+    harness.unmount()
+    document.body.innerHTML = ''
+    document.body.removeAttribute(ATTR)
+  })
+
+  it('publishes "down" for a top-of-tree opening and clears on selection', async () => {
+    harness = await mountTree()
+    // openMenu() right-clicks at (20, 30) — the upper half, plenty of right
+    // room in jsdom's default viewport.
+    openMenu(harness.container)
+    expect(document.body.getAttribute(ATTR)).toBe('down')
+    const parent = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+      .find(item => item.getAttribute('aria-haspopup') === 'menu')
+    act(() => { parent!.click() })
+    const zedRow = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menu"] [role="menuitem"]')]
+      .find(item => item.textContent?.trim() === 'Zed')
+    act(() => { zedRow!.click() })
+    expect(document.querySelector('[role="menuitem"]')).toBeNull()
+    expect(document.body.hasAttribute(ATTR)).toBe(false)
+  })
+
+  it('adds "left" when the cursor sits within the right-hand submenu room', async () => {
+    harness = await mountTree()
+    const nearRight = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: window.innerWidth - 10, clientY: 30 })
+    act(() => { fileRow(harness.container).dispatchEvent(nearRight) })
+    expect(document.body.getAttribute(ATTR)).toBe('down left')
+  })
+
+  it('clears the attribute on unmount with the menu still open', async () => {
+    harness = await mountTree()
+    openMenu(harness.container)
+    expect(document.body.getAttribute(ATTR)).toBe('down')
+    harness.unmount()
+    expect(document.body.hasAttribute(ATTR)).toBe(false)
   })
 })

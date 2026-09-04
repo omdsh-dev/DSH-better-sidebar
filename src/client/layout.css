@@ -111,3 +111,63 @@ body[data-dsh-sidebar-dragging] #root [data-dsh-center-col],
     transition: none;
   }
 }
+
+/* Context-menu submenu flip (viewport clamping for the portaled menus).
+ *
+ * The ui-primitives Menu clamps its main portal list into the viewport but
+ * positions nested submenus with static CSS only — anchored at the parent
+ * row's bottom, growing UP and to the RIGHT — with no clamp whatsoever.
+ * Docked on the window's right edge, both defaults are the worst case for
+ * this panel: a tall "open with" submenu escapes past the viewport top when
+ * the row menu opens near the top, and past the right edge on narrow panels
+ * (PANEL_MIN 280 < card 218 + gap + submenu 165).
+ *
+ * menu-flip.ts publishes `data-dsh-sidebar-submenu` on <body> — with the
+ * words "down" and/or "left" — for exactly the lifetime of one of OUR
+ * submenu-bearing menus (FileTree row menu, TabBar tab menu). The tokens
+ * flip the growth direction; the attribute's absence restores the
+ * primitive's own geometry untouched, and host-owned menus are never
+ * affected because they never open while the attribute exists (each side
+ * closes on the other's outside pointerdown).
+ *
+ * No max-height/overflow scroll cap here on purpose: overflow clipping
+ * would cut the submenu's ::before hover bridge (the corridor that keeps
+ * itemWrap's mouseleave from closing the card mid-crossing). */
+
+/* Visual tether, part 1 — the parent row stays lit while its submenu is
+ * open. The primitive only styles :hover, so once the pointer crossed into
+ * the side card the parent row's fill cleared and the floating card read as
+ * unrelated. The Menu marks the open parent row with aria-expanded="true"
+ * (host-rendered, stable), so the same hover token re-applies for the
+ * submenu's whole lifetime. */
+body[data-dsh-sidebar-submenu] div[role="menu"] button[aria-expanded="true"] {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* Visual tether, part 2 — the side card hugs its parent (10px → 4px gap),
+ * with the ::before hover corridor narrowed to match. Ordered BEFORE the
+ * flip overrides below so their left/right flips still win. */
+body[data-dsh-sidebar-submenu] div[role="menu"] div[role="menu"] {
+  left: calc(100% + 4px);
+}
+
+body[data-dsh-sidebar-submenu] div[role="menu"] div[role="menu"]::before {
+  left: -4px;
+  width: 4px;
+}
+
+body[data-dsh-sidebar-submenu~="down"] div[role="menu"] div[role="menu"] {
+  top: -4px;
+  bottom: auto;
+}
+
+body[data-dsh-sidebar-submenu~="left"] div[role="menu"] div[role="menu"] {
+  left: auto;
+  right: calc(100% + 4px);
+}
+
+/* The hover bridge follows the card to the left side of the parent row. */
+body[data-dsh-sidebar-submenu~="left"] div[role="menu"] div[role="menu"]::before {
+  left: auto;
+  right: -4px;
+}

@@ -69,6 +69,7 @@ import {
   type SidechatTranscriptRow,
 } from './sidechat-transcript.ts'
 import { api } from './api.ts'
+import { usePolling } from './use-polling.ts'
 import { t } from './locales.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarTab } from './state.ts'
@@ -493,17 +494,25 @@ export function SideChatView(props: {
     }
   }, [threadId, fetchInfo])
 
-  // Poll while the tab is visible and the thread runs.
+  // One transcript pull on every input change (attach, visibility flip,
+  // run-state flip — the last one catches a thread's terminal state once it
+  // stops running).
   useEffect(() => {
     if (!visible || threadId === undefined) return
     void fetchThread(threadId)
-    if (!running) return
-    const timer = window.setInterval(() => {
-      void fetchThread(threadId)
-      void fetchInfo(threadId)
-    }, POLL_MS)
-    return () => { window.clearInterval(timer) }
-  }, [visible, threadId, running, fetchThread, fetchInfo])
+    // `running` is not read here, but re-triggering this pull on run-state
+    // flips is load-bearing (see above); the badge fetch rides the ticks.
+  }, [visible, threadId, running, fetchThread])
+
+  // Poll while the tab is visible and the thread runs: transcript deltas +
+  // badge refresh on a fixed cadence. Each pull self-guards (fetchThread
+  // aborts its predecessor; a late settle keeps the last rows).
+  const pollTick = useCallback(async (): Promise<void> => {
+    if (threadId === undefined) return
+    void fetchThread(threadId)
+    void fetchInfo(threadId)
+  }, [threadId, fetchThread, fetchInfo])
+  usePolling(visible && running && threadId !== undefined, pollTick, { intervalMs: POLL_MS })
 
   useEffect(() => () => { controllerRef.current?.abort() }, [])
 
@@ -574,7 +583,6 @@ export function SideChatView(props: {
       }
     }
     return items
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threads])
 
   const growComposer = (): void => {
@@ -688,7 +696,7 @@ export function SideChatView(props: {
           )}
           items={menuItems}
           selectedId={threadId}
-          onSelect={(id) => { id === '$new' ? openNewThread() : openExistingThread(id) }}
+          onSelect={(id) => { if (id === '$new') openNewThread(); else openExistingThread(id) }}
           onClose={() => { setMenuOpen(false) }}
           align="end"
           portal

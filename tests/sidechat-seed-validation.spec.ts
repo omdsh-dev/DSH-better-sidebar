@@ -40,15 +40,6 @@ function assistantMessage(text: string): Record<string, unknown> {
   }
 }
 
-function toolResultMessage(callId: string, text: string): Record<string, unknown> {
-  return {
-    id: `m-${callId}`,
-    role: 'user',
-    content: [{ type: 'tool-result', toolCallId: callId, content: [{ type: 'text', text }] }],
-    source: { kind: 'tool', callId },
-  }
-}
-
 /** A parent log with a completed turn, a pending question, and an open
  *  in-progress turn (the exact shape a mid-stream thread creation sees). */
 function parentLog(): SidebarSessionEvent[] {

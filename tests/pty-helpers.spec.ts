@@ -12,6 +12,9 @@ vi.mock('node:os', async (importOriginal) => {
   }
 })
 
+import { existsSync, statSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
 import { resolveSidebarConfig } from '../src/config.ts'
 import {
   defaultShell,
@@ -141,9 +144,6 @@ describe('pty helpers', () => {
     if (process.platform !== 'darwin') return
     ensureSpawnHelper()
     ensureSpawnHelper()
-    const { existsSync, statSync } = require('node:fs') as typeof import('node:fs')
-    const { dirname, join } = require('node:path') as typeof import('node:path')
-    const { createRequire } = require('node:module') as typeof import('node:module')
     const entry = createRequire(import.meta.url).resolve('node-pty')
     const root = dirname(dirname(entry))
     // Prebuilt (tarball) or node-gyp-compiled (build/Release): mirror

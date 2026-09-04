@@ -16,11 +16,6 @@ allowBuilds:
 # `admitPromptContent` export that dsh-subagent's artifacts import. When
 # bumping the DSH baseline, audit with `pnpm peers check` and hoist any
 # newly-unmet transitive peers into devDependencies too.
-#
-# Exception: dsh-client-locale has no 0.1.2-alpha.5 on npm (newest is
-# 0.1.2-alpha.3), so its peer floor / devDep pin trail the baseline —
-# `^0.1.2-alpha.3` already accepts the host's alpha.5 runtime (same 0.1.2
-# prerelease tuple); re-pin when upstream publishes.
 
 minimumReleaseAgeExclude:
   - '@deepseek-ai/*'

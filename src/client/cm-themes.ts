@@ -2,15 +2,17 @@
  * CodeMirror 6 theme pieces for the sidebar editor. The editor surface
  * (background, caret, gutter) rides the DSH theme tokens so it blends with
  * the panel in both schemes; only the syntax token colors need concrete
- * values, and those come from the same designed palettes the app's code
- * surfaces use — the one-dark family for dark, the one-light family for
- * light. The scheme flip reconfigures these via a compartment (see
- * TextEditor), so the document, undo history and scroll survive re-theming.
+ * values, and those come from the same designed syntax families the app's
+ * code surfaces use — one-dark for dark, one-light for light
+ * (one-dark-palette.ts, shared with the terminal's ANSI palette). The
+ * scheme flip reconfigures these via a compartment (see TextEditor), so
+ * the document, undo history and scroll survive re-theming.
  */
 import { Compartment } from '@codemirror/state'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags, type Tag } from '@lezer/highlight'
 import { EditorView } from '@codemirror/view'
+import { ONE_DARK, ONE_LIGHT } from './one-dark-palette.ts'
 
 /** Token-driven surface shared by both schemes (pure CSS values). */
 export const cmSurfaceTheme = EditorView.theme({
@@ -53,52 +55,52 @@ interface HighlightRule {
   fontStyle?: string
 }
 
-/** one-dark syntax palette (mirrors @codemirror/theme-one-dark). */
+/** one-dark syntax rules (mirrors @codemirror/theme-one-dark; hues from one-dark-palette.ts). */
 const HIGHLIGHTS_DARK: HighlightRule[] = [
-  { tag: tags.comment, color: '#5c6370', fontStyle: 'italic' },
-  { tag: tags.keyword, color: '#c678dd' },
-  { tag: tags.string, color: '#98c379' },
-  { tag: tags.number, color: '#d19a66' },
-  { tag: tags.bool, color: '#d19a66' },
-  { tag: tags.atom, color: '#d19a66' },
-  { tag: tags.typeName, color: '#e5c07b' },
-  { tag: tags.className, color: '#e5c07b' },
-  { tag: tags.propertyName, color: '#e06c75' },
-  { tag: tags.function(tags.variableName), color: '#61afef' },
-  { tag: tags.variableName, color: '#e06c75' },
-  { tag: tags.operator, color: '#56b6c2' },
-  { tag: tags.tagName, color: '#e06c75' },
-  { tag: tags.attributeName, color: '#d19a66' },
-  { tag: tags.heading, color: '#e06c75', fontStyle: 'bold' },
+  { tag: tags.comment, color: ONE_DARK.faintGray, fontStyle: 'italic' },
+  { tag: tags.keyword, color: ONE_DARK.magenta },
+  { tag: tags.string, color: ONE_DARK.green },
+  { tag: tags.number, color: ONE_DARK.orange },
+  { tag: tags.bool, color: ONE_DARK.orange },
+  { tag: tags.atom, color: ONE_DARK.orange },
+  { tag: tags.typeName, color: ONE_DARK.yellow },
+  { tag: tags.className, color: ONE_DARK.yellow },
+  { tag: tags.propertyName, color: ONE_DARK.red },
+  { tag: tags.function(tags.variableName), color: ONE_DARK.blue },
+  { tag: tags.variableName, color: ONE_DARK.red },
+  { tag: tags.operator, color: ONE_DARK.cyan },
+  { tag: tags.tagName, color: ONE_DARK.red },
+  { tag: tags.attributeName, color: ONE_DARK.orange },
+  { tag: tags.heading, color: ONE_DARK.red, fontStyle: 'bold' },
   { tag: tags.emphasis, fontStyle: 'italic' },
   { tag: tags.strong, fontStyle: 'bold' },
-  { tag: tags.link, color: '#61afef', fontStyle: 'underline' },
-  { tag: tags.meta, color: '#e5c07b' },
-  { tag: tags.invalid, color: '#ffffff', fontStyle: 'bold' },
+  { tag: tags.link, color: ONE_DARK.blue, fontStyle: 'underline' },
+  { tag: tags.meta, color: ONE_DARK.yellow },
+  { tag: tags.invalid, color: ONE_DARK.white, fontStyle: 'bold' },
 ]
 
-/** one-light syntax palette (the light counterpart of one-dark). */
+/** one-light syntax rules (the light counterpart; hues from one-dark-palette.ts). */
 const HIGHLIGHTS_LIGHT: HighlightRule[] = [
-  { tag: tags.comment, color: '#a0a1a7', fontStyle: 'italic' },
-  { tag: tags.keyword, color: '#a626a4' },
-  { tag: tags.string, color: '#50a14f' },
-  { tag: tags.number, color: '#986801' },
-  { tag: tags.bool, color: '#0184bc' },
-  { tag: tags.atom, color: '#0184bc' },
-  { tag: tags.typeName, color: '#c18401' },
-  { tag: tags.className, color: '#c18401' },
-  { tag: tags.propertyName, color: '#e45649' },
-  { tag: tags.function(tags.variableName), color: '#c18401' },
-  { tag: tags.variableName, color: '#e45649' },
-  { tag: tags.operator, color: '#383a42' },
-  { tag: tags.tagName, color: '#e45649' },
-  { tag: tags.attributeName, color: '#986801' },
-  { tag: tags.heading, color: '#e45649', fontStyle: 'bold' },
+  { tag: tags.comment, color: ONE_LIGHT.gray, fontStyle: 'italic' },
+  { tag: tags.keyword, color: ONE_LIGHT.magenta },
+  { tag: tags.string, color: ONE_LIGHT.green },
+  { tag: tags.number, color: ONE_LIGHT.orange },
+  { tag: tags.bool, color: ONE_LIGHT.blue },
+  { tag: tags.atom, color: ONE_LIGHT.blue },
+  { tag: tags.typeName, color: ONE_LIGHT.yellow },
+  { tag: tags.className, color: ONE_LIGHT.yellow },
+  { tag: tags.propertyName, color: ONE_LIGHT.red },
+  { tag: tags.function(tags.variableName), color: ONE_LIGHT.yellow },
+  { tag: tags.variableName, color: ONE_LIGHT.red },
+  { tag: tags.operator, color: ONE_LIGHT.black },
+  { tag: tags.tagName, color: ONE_LIGHT.red },
+  { tag: tags.attributeName, color: ONE_LIGHT.orange },
+  { tag: tags.heading, color: ONE_LIGHT.red, fontStyle: 'bold' },
   { tag: tags.emphasis, fontStyle: 'italic' },
   { tag: tags.strong, fontStyle: 'bold' },
-  { tag: tags.link, color: '#4078f2', fontStyle: 'underline' },
-  { tag: tags.meta, color: '#c18401' },
-  { tag: tags.invalid, color: '#ffffff', fontStyle: 'bold' },
+  { tag: tags.link, color: ONE_LIGHT.link, fontStyle: 'underline' },
+  { tag: tags.meta, color: ONE_LIGHT.yellow },
+  { tag: tags.invalid, color: ONE_LIGHT.white, fontStyle: 'bold' },
 ]
 
 /** The scheme-dependent extension pair (surface tint + syntax highlight). */

@@ -191,7 +191,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           ],
         }],
       },
-      component: ({ ctx, store, scope, tab, visible, onOpenFile, onOpenDiff }) => (
+      component: ({ ctx, store, scope, tab, visible, onOpenDiff }) => (
         <ChangesTab
           ctx={ctx}
           store={store}

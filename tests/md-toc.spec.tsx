@@ -13,7 +13,8 @@ import { act } from 'react-dom/test-utils'
 import { MdToc, TOC_MIN_HEADINGS } from '../src/client/md-toc.tsx'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 const scrollIntoView = vi.fn()
 Element.prototype.scrollIntoView = scrollIntoView

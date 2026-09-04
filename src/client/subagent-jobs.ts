@@ -8,11 +8,11 @@
  */
 import type {
   SidebarSessionList,
-  SidebarSessionSummary,
   SidebarJobStatus,
   SidebarJobView,
 } from '../context-types.ts'
 import type { CopyKey } from './locales.ts'
+import { treeSessionIds } from './subagent-lineage.ts'
 
 /** One row of the jobs section: the job plus its owning session's title. */
 export interface TreeJob {
@@ -26,36 +26,10 @@ export function isJobLive(job: SidebarJobView): boolean {
   return job.status === 'running' || job.status === 'stopping'
 }
 
-/**
- * Every session id of the topology tree rooted at `rootId` (the root plus
- * each session whose uninterrupted subagent-origin chain reaches it — same
- * lineage semantics as {@link countSubagentDescendants}; cycles fail soft).
- * Sessions outside the tree (orphans, other trees) are excluded, so the
- * jobs section never shows foreign work.
- */
-export function treeSessionIds(
-  byId: SidebarSessionList['byId'],
-  rootId: string | undefined,
-): Set<string> {
-  const ids = new Set<string>()
-  if (rootId === undefined) return ids
-  for (const summary of Object.values(byId)) {
-    const seen = new Set<string>()
-    let current: SidebarSessionSummary | undefined = summary
-    let reachesRoot = false
-    while (current !== undefined && !seen.has(current.id)) {
-      seen.add(current.id)
-      if (current.id === rootId) {
-        reachesRoot = true
-        break
-      }
-      if (current.origin !== 'subagent' || current.parentId === undefined) break
-      current = byId[current.parentId]
-    }
-    if (reachesRoot) ids.add(summary.id)
-  }
-  return ids
-}
+// The lineage walk itself lives in ./subagent-lineage.ts (the single shared
+// subagent-origin chain implementation); re-exported for the established
+// import sites of this module.
+export { treeSessionIds }
 
 /**
  * Whether a NEW background job appeared for one session between two

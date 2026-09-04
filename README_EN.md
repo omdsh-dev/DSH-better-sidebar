@@ -9,7 +9,7 @@
   <a href="https://github.com/omdsh-dev/DSH-better-sidebar/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/omdsh-dev/DSH-better-sidebar" /></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
   <a href="https://dshfind.com/en/plugins/omdsh-dev/DSH-better-sidebar?ref=badge"><img alt="dshfind" src="https://dshfind.com/api/badge/omdsh-dev/DSH-better-sidebar?lang=en" /></a><br /><br />
-  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.19.0-alpha.0 alpha track): 0.1.2-alpha.5" src="https://img.shields.io/badge/DSH-0.1.2--alpha.5_(alpha%20track)-4d6bfe" /></a>
+  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.0): 0.1.2-rc.1+" src="https://img.shields.io/badge/DSH-0.1.2--rc.1%2B-4d6bfe" /></a>
   <a href="https://github.com/topics/dsh-better-sidebar"><img alt="Plugin ecosystem: GitHub topic dsh-better-sidebar" src="https://img.shields.io/badge/plugin%20ecosystem-topic%20dsh--better--sidebar-4d6bfe" /></a><br /><br />
   <img alt="File management" src="https://img.shields.io/badge/-File%20management-4d6bfe" /> <img alt="Edit &amp; preview" src="https://img.shields.io/badge/-Edit%20%26%20preview-4d6bfe" /> <img alt="Embedded browser" src="https://img.shields.io/badge/-Embedded%20browser-4d6bfe" /> <img alt="Real terminal" src="https://img.shields.io/badge/-Real%20terminal-4d6bfe" /> <img alt="Changes" src="https://img.shields.io/badge/-Changes-4d6bfe" /> <img alt="Background tasks" src="https://img.shields.io/badge/-Background%20tasks-4d6bfe" /> <img alt="Side Chat" src="https://img.shields.io/badge/-Side%20Chat-4d6bfe" /> <img alt="Plugin integration" src="https://img.shields.io/badge/-Plugin%20integration-4d6bfe" /><br /><br />
   <b>A dual workbench (right sidebar + bottom panel)</b> that opens its <code>ctx.betterSidebar</code> service to every plugin —<br />
@@ -62,9 +62,9 @@
 **Prerequisites**: DSH installed (`dsh web` boots), Node.js ≥ 20, pnpm ≥ 10.
 
 **Supported DSH versions**:
-<a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.19.0-alpha.0 alpha track): 0.1.2-alpha.5" src="https://img.shields.io/badge/DSH-0.1.2--alpha.5_(alpha%20track)-4d6bfe" /></a>
+<a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.0): 0.1.2-rc.1+" src="https://img.shields.io/badge/DSH-0.1.2--rc.1%2B-4d6bfe" /></a>
 
-> 🧪 **Alpha track**: starting with `v0.18.0-alpha.0` the plugin targets DSH **0.1.2-alpha.x** (npm dist-tag `alpha`) and drops 0.1.0-rc.8 ~ 0.1.1-rc.2 — stable-DSH users should stay on `@latest` (v0.17.1); DSH 0.1.2-alpha.5 users install `dsh-better-sidebar@alpha`.
+> 📌 **Stable release**: starting with `v0.18.0` the plugin targets DSH **0.1.2-rc.1+** (npm dist-tag `latest`) and drops 0.1.0-rc.8 ~ 0.1.1-rc.2 — stable-DSH (≤ 0.1.1-rc.2) users should stay pinned to `dsh-better-sidebar@0.17.1` (`@latest` now points at v0.18.0); hosts still on 0.1.2-alpha.x should upgrade DSH first, or keep `dsh-better-sidebar@alpha` (v0.18.0-alpha.0).
 
 ```sh
 dsh plugin --profile web add dsh-better-sidebar@latest   # first run fails: pnpm 11 blocks node-pty build scripts (the dependency is still written)
@@ -84,6 +84,8 @@ Install the dsh-better-sidebar plugin (a sidebar workbench for DSH):
 4. When done, remind me to hard-refresh the browser (Cmd/Ctrl+Shift+R)
 If anything fails, check the troubleshooting table in the README at https://github.com/omdsh-dev/DSH-better-sidebar
 ```
+
+**Option 3: one-shot script** — from a clone of this repo, run `bash scripts/install.sh` (macOS / Linux / Windows Git Bash; native Windows uses `install.ps1`; `-h` for options) — it automates add → approve-builds → re-run.
 
 <details>
 <summary><b>Updating</b></summary>
@@ -263,17 +265,52 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
   <a href="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0"><img width="33%" alt="Service API base screenshot" src="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0" /></a>
 </div>
 
-**Supported DSH versions**: <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.19.0-alpha.0 alpha track): 0.1.2-alpha.5" src="https://img.shields.io/badge/DSH-0.1.2--alpha.5_(alpha%20track)-4d6bfe" /></a> · full release history on the [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases) page
+**Supported DSH versions**: <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.0): 0.1.2-rc.1+" src="https://img.shields.io/badge/DSH-0.1.2--rc.1%2B-4d6bfe" /></a> · full release history on the [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases) page
+
+### v0.18.0
+
+> 📌 **Stable release** (npm `latest`): this release targets **DSH 0.1.2-rc.1+ only** (peer floor `^0.1.2-rc.1`); 0.1.0-rc.8 ~ 0.1.1-rc.2 are not supported — stable-DSH users should stay pinned to `dsh-better-sidebar@0.17.1`, hosts on 0.1.2-alpha.x keep `dsh-better-sidebar@alpha` (v0.18.0-alpha.0).
+
+All changes since v0.17.1 (the two intermediate version numbers v0.18.1-alpha.0 / v0.19.0-alpha.0 were never published; their content is folded into this release):
+
+**🔗 Host track graduation**
+
+- **Onto the DSH 0.1.2 line and graduating to stable**: v0.18.0-alpha.0 dropped the 0.1.1-rc.x compatibility layer and fixed blank Side Chat transcripts on alpha.1+ (#472); the baseline then climbed through alpha.3 (#497) and alpha.5 (#516, `Session.events` → `snapshotEvents()`); the chat file-open funnel moved to `remote.session.openWorkspacePath` (#494) and the "Show in folder" reveal scroll was scoped to the tree body (#453). This release pins the baseline to **DSH 0.1.2-rc.1** (zero source delta vs alpha.5 — a pure version bump; `dsh-client-locale` resumed publishing, everything aligned to rc.1; real-host mount smoke 14/14 in CI)
+
+**✨ Features**
+
+- 🌿 **Unified "Changes" tab** (#475): one tab, two lenses — Git (real diff / history / stage·commit·revert / worktree & child-repo selection) and This Session (live tracking of every file the model reads / writes / edits); a unified diff renderer (mod pairing + intra-line character highlights + syntax coloring + context folding), a draggable bottom preview pane, and one-click expansion into a dedicated diff tab
+- 💬 **Side Chat rendering upgrade** (#486): main-conversation-grade Blocks structure, per-turn usage tails, reconnect banner
+- ⚙️ **Workspace path fence toggle** (#458): a new `workspaceFence` declarative settings key with a one-click off affordance and guidance on 403 error surfaces
+
+**⚡ Performance**
+
+- 🚀 **Core bundle -45%** (#489): 19 non-zh/en dictionary chunks lazy-loaded, render stabilization (transcript row reuse / tree Sets / batched drags), startup & polling cost cuts (single settings fetch, one git process per tick); a new perf measurement lane; also fixes the bottom-pane drag leaking panel width into the host layout and jumping the native left sidebar
+- 📉 Fewer repeated center-column DOM queries (#456)
+
+**🐛 Fixes (selection)**
+
+- ✏️ Editor / Markdown: SSH remote editor links open on the client (#522), reading position kept across preview/edit switches (#467), YAML frontmatter hidden in preview (#394), TOC dismiss-on-outside-click + popover z-index (#461), file basename kept in @-reference links (#417)
+- 💻 Terminal / platform: Windows custom shell executables resolve (#503), transient resize failures contained (#428), monospace fallback for unresolvable fonts (#366), Linux absolute paths in WSL workspaces (#455), Windows Explorer reveal selection preserved (#508)
+- 🗂️ Layout / state / file tree / chat: desktop shell layout coexists with the side card (#398), no forced mobile drawer on auto-activation (#373), restored free-window id conflicts (#385), tree auto-refresh on window focus (#469), reference affordance pinned to row tail (#509), selection-popup dismissal + caret-anchored draft insert (#427), collapsed toggle cluster aligned (#361), old-engine scroll-jump compat (#448), worktree listing on older Git (#454)
+
+**🧰 CI & internals**
+
+- Windows CI lane (#520), Makefile command surface (#526), e2e script hardening + aggregate double-mount regression (#527), shared component test utils deduplicating boilerplate (#524), duplicate-implementation convergence + dead code removal (#525)
+
+**🌐 Ecosystem**
+
+- 10+ new curated plugins: dsh-better-sidebar-icons (#441), dsh-sidenote (#451, formerly dsh-sidechat #470), dsh-github-workbench (#410), dsh-bilingual-reader (#379), dsh-server-deck (#413), dsh-md-export (#405), dsh-code-nav (#404), dsh-suhuang-scroll (#392), dsh-better-overleaf (#370), and more (each with 18+ language i18n coverage)
 
 ### v0.19.0-alpha.0
 
-> 🧪 **Alpha track**: this release targets **DSH 0.1.2-alpha.x only** (peer floor `^0.1.2-alpha.5`, npm dist-tag `alpha`, install `dsh-better-sidebar@alpha`).
+> 🧪 **Alpha track**: this release targets **DSH 0.1.2-alpha.x only** (peer floor `^0.1.2-alpha.5`, npm dist-tag `alpha`, install `dsh-better-sidebar@alpha`). This version number was never published separately; its content is folded into the **v0.18.0** stable release.
 
 - 🔗 **Adapted to DSH 0.1.2-alpha.5 (published to npm, `alpha` dist-tag)**: the CI mount gate's pin, the `dsh.plugin.json` engines floor, and the `@deepseek-ai/*` peer / devDependencies baseline moved up to 0.1.2-alpha.5 (verified by a real-host mount smoke 14/14). `dsh-client-locale` has no alpha.5 upstream (newest is 0.1.2-alpha.3), so its peer floor / devDep pin trail the baseline and already accept the alpha.5 runtime (`pnpm peers check` reports zero mismatches — no new transitive peers to hoist). The code adapts to alpha.4's compatibility-flagged change — the `Session.events` property was removed, migrated to the on-demand `snapshotEvents()` API (8 sites: sidechat transcript live reads, fork inheritance, `jobs.output` replay, subagent activity), and the `seedLength` meta field the host dropped was removed from thread creation; alpha.4's remaining changes (bidirectional `send_message`, custom-model discovery reusing Profile headers, `SessionSeq`/`SessionLogOffset` strong typing) and alpha.5's upgrade-startup fix were verified not to touch any other plugin surface.
 
 ### v0.18.1-alpha.0
 
-> 🧪 **Alpha track**: this release targets **DSH 0.1.2-alpha.x only** (peer floor `^0.1.2-alpha.3`, npm dist-tag `alpha`, install `dsh-better-sidebar@alpha`).
+> 🧪 **Alpha track**: this release targets **DSH 0.1.2-alpha.x only** (peer floor `^0.1.2-alpha.3`, npm dist-tag `alpha`, install `dsh-better-sidebar@alpha`). This version number was never published separately; its content is folded into the **v0.18.0** stable release.
 
 - 🔗 **Adapted to DSH 0.1.2-alpha.3 (published to npm, `alpha` dist-tag)**: the CI mount gate's pin, the `dsh.plugin.json` engines floor, and the `@deepseek-ai/*` peer / devDependencies baseline moved up to 0.1.2-alpha.3 (verified by a real-host mount smoke 14/14). All 117 commits between alpha.2 and alpha.3 were audited point by point: every host contract this plugin relies on (token auth, slash RPC, `MarkdownText` labels, the event-stream and persistence APIs behind `sidechat.events`, `SettingsNamespaceInput`, `SUBAGENT_DESCRIPTOR_VERSION` (still 3), `dsh-client-store`, the profile loader, the node-pty pin) is unchanged, so no code adaptation was needed; alpha.3's breaking changes (the required `BeginSubmissionInput.mode`, the renamed `attachment-invalid` subagent error, the removed SQLite persistence backend, the identity-gated projection change feed) were all verified not to touch this plugin.
 
@@ -480,12 +517,23 @@ The dashed cards at the end of the "Sidebar content" / "File viewers" grids in t
 ## 🛠️ Development & Build
 
 ```sh
-pnpm install      # @deepseek-ai/* devDependencies resolve (baseline 0.1.2-alpha.5, alpha dist-tag) — no token needed
+pnpm install      # @deepseek-ai/* devDependencies resolve (baseline 0.1.2-rc.1, next dist-tag) — no token needed
 pnpm typecheck    # tsc --noEmit
+pnpm lint         # eslint . (flat config: js + typescript-eslint + react-hooks recommended)
 pnpm build        # → lib/index.js + lib/invariant.js + lib/client.js + lib/client-registry.js + lib/types
 pnpm test         # vitest (includes manifest consistency guard; build first)
 pnpm watch        # tsdown --watch
 ```
+
+**Make thin wrappers** (`make help` lists every target; package.json stays the single source of truth):
+
+```sh
+make check          # aggregate gate: typecheck → build → test → check:consumer-types (mirrors CI)
+make mount          # real-mount smoke: build + pack → install Chromium → pnpm test:mount
+make clean          # remove lib/, *.tgz, playwright-report/, test-results/
+```
+
+`pnpm check:consumer-types`: the consumer-facing declaration-surface guard — type-checks the built `lib/types` from a browser-only consumer's perspective (no `@types/node`, `skipLibCheck: false`); run `pnpm build` first.
 
 **Architecture**: a single npm package with host/client halves — host (`src/index.ts`): `/sidebar/api/*` JSON API, `/sidebar/file` media route, `/sidebar/html` preview route, `/sidebar/ws/terminal` WebSocket (fs / git / pty / preview, all session-scoped with a trust fence); client (`src/client/index.tsx`): portal sidebar + views + interception; state persisted per session in localStorage. Organized per DSH official conventions (no default export, dual client bundles); no dependency on npm / checkout at runtime (`@deepseek-ai/*` provided by the web profile).
 
@@ -549,7 +597,7 @@ WeChat / QQ group QR codes will live here. After uploading the QR images (drag t
 
 - **Code changes go through PRs**: develop on a `feat/*` / `fix/*` branch, then `gh pr create`; docs-only changes may be pushed to main directly
 - **Curate an ecosystem plugin**: tag your repo with `dsh-better-sidebar` + PR a `PluginEntry` into [`src/client/plugins-tabs.ts`](./src/client/plugins-tabs.ts) / [`plugins-viewers.ts`](./src/client/plugins-viewers.ts)
-- **Before submitting**: `pnpm typecheck && pnpm build && pnpm test` (CI additionally gates on npm-pack → real-mount → headless-render via `pnpm test:mount`)
+- **Before submitting**: `pnpm typecheck && pnpm build && pnpm test` (or `make check` for the one-shot aggregate; CI additionally gates on npm-pack → real-mount → headless-render via `pnpm test:mount`, plus the aggregate double-mount regression `pnpm test:mount:aggregate`)
 - See [`AGENTS.md`](./AGENTS.md) for the repository rules (hard constraints, CI lanes, release flow)
 
 ## ⭐ Star History

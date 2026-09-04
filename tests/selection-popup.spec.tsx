@@ -16,7 +16,8 @@ import { act } from 'react-dom/test-utils'
 import { useSelectionPopup } from '../src/client/selection-popup.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
-;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
+import { setupReactAct } from './test-utils.ts'
+setupReactAct()
 
 /** jsdom ships no IntersectionObserver; a controllable stand-in. */
 class FakeIntersectionObserver implements IntersectionObserver {
