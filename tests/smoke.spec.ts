@@ -110,7 +110,7 @@ describe('host plugin smoke', () => {
       '/sidebar/file',
       '/sidebar/html',
     ])
-    expect(upgrades.map(route => route.path)).toEqual(['/sidebar/ws/terminal', '/sidebar/ws/agent-terminals', '/sidebar/ws/agent-opens'])
+    expect(upgrades.map(route => route.path)).toEqual(['/sidebar/ws/terminal', '/sidebar/ws/agent-terminals', '/sidebar/ws/agent-opens', '/sidebar/ws/fs-events'])
     // Teardown runs without throwing (pty manager has nothing open).
     for (const cleanup of effects) cleanup()
   })
