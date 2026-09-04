@@ -18,24 +18,22 @@ import { useLayoutEffect, useMemo, useRef } from 'react'
 import { createElement, type ReactNode } from 'react'
 import DOMPurify from 'dompurify'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ComponentType } from 'react'
 import { markdownTextProps } from './markdown-labels.tsx'
-import { lazyChunkComponent } from './lazy-chunk.tsx'
 import { resolveLocalMediaDest } from './markdown-images.ts'
 import {
   analyzeHtmlSegment,
   type AnalyzedMarkdownHtml,
 } from './markdown-html.ts'
-import { splitMermaidBlocks, type MermaidMarkdownProps } from './mermaid-blocks.ts'
+import { splitMermaidBlocks } from './mermaid-blocks.ts'
 import type { SessionScope } from './api.ts'
 import css from './sidebar.module.css'
 
 /** The chunk-resident markdown renderer (mermaid lazy chunk), shared with the
- *  legacy no-HTML preview path in TextEditor. */
-export const LazyMermaidMarkdown = lazyChunkComponent<MermaidMarkdownProps>(
-  'mermaid',
-  (mod) => mod.MermaidMarkdown as ComponentType<MermaidMarkdownProps> | undefined,
-)
+ *  legacy no-HTML preview path in TextEditor. Defined in mermaid-lazy.tsx (a
+ *  light module) so core-bundle consumers can import the stub without
+ *  dragging DOMPurify along. */
+export { LazyMermaidMarkdown } from './mermaid-lazy.tsx'
+import { LazyMermaidMarkdown } from './mermaid-lazy.tsx'
 
 /** Everything the sanitizers need to resolve local media + scope the route. */
 export interface MarkdownHtmlMedia {

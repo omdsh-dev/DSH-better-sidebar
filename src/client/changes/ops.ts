@@ -201,6 +201,25 @@ export function knownContentBefore(ops: readonly FileOp[], path: string, before:
   return undefined
 }
 
+/**
+ * Strip the DSH read-tool response envelope down to the file's raw content,
+ * PRESERVING blank lines (unlike {@link parseReadLines}, which drops them):
+ * drops the <content> wrapper, the "(Showing lines ...)" note, and the
+ * per-line "<n>: " prefixes. The markdown reading mode needs the blank lines
+ * because markdown block structure depends on them.
+ */
+export function parseReadContent(raw: string): string {
+  const contentMatch = raw.match(/<content>([\s\S]*?)<\/content>/)
+  const body = contentMatch ? contentMatch[1]! : raw
+  return body
+    .split('\n')
+    .filter((line) => !/^\s*\(Showing lines .*\)\s*$/.test(line))
+    .map((line) => line.replace(/^\s*\d+:\s/, ''))
+    .join('\n')
+    .replace(/^[\n]+/, '')
+    .replace(/\n+$/, '')
+}
+
 /** One parsed read line: the file's own line number and its content text. */
 export interface ReadLine { readonly line: number; readonly text: string }
 

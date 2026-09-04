@@ -9,7 +9,7 @@
  * diff tab via the shell.
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { IconCloseOutline16, IconRefreshOutline16, IconRightUpOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutline16, IconRefreshOutline16, IconRightUpOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionScope } from '../api.ts'
 import { api } from '../api.ts'
 import { t } from '../locales.ts'
@@ -20,7 +20,12 @@ import { DiffRows, ReadRows } from '../diff/DiffRows.tsx'
 import { DiffFiles } from '../diff/DiffFiles.tsx'
 import { langOfPath } from '../diff/highlight.ts'
 import { buildDiffSegments, diffLines, diffStats, parseUnifiedDiff, unifiedSegments, type DiffRow } from '../diff/rows.ts'
-import { parseReadLines, type FileOp } from './ops.ts'
+import { parseReadContent, parseReadLines, type FileOp } from './ops.ts'
+import { redactText } from '../redact.ts'
+import { rewriteLocalImageUrls } from '../markdown-images.ts'
+import { markdownTextProps } from '../markdown-labels.tsx'
+import { splitMermaidBlocks } from '../mermaid-blocks.ts'
+import { LazyMermaidMarkdown } from '../mermaid-lazy.tsx'
 import { createFrameBatcher } from '../frame-batcher.ts'
 import css from './changes.module.css'
 import diffCss from '../diff/diff.module.css'
@@ -147,8 +152,41 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
 
   // ── Op target material (pure snapshots; the prior content came with the
   //    target so a running op shows what is already known). ────────────────
-  const op = target.kind === 'op' ? target.op : null
-  const prior = target.kind === 'op' ? target.prior : undefined
+  const opRaw = target.kind === 'op' ? target.op : null
+  const priorRaw = target.kind === 'op' ? target.prior : undefined
+  // Secret redaction: on by default, toggle persists per browser (localStorage).
+  // Every op payload consumer below (diff rows, read rows, markdown source,
+  // error text) renders from the REDACTED shape, so masked payloads are the
+  // only thing that can reach the DOM while the toggle is on. Display-only:
+  // session events and the fs layer keep their original bytes.
+  const [redactionOn, setRedactionOn] = useState((): boolean => {
+    try { return localStorage.getItem('dsh-better-sidebar.redaction') !== '0' } catch { return true }
+  })
+  const toggleRedaction = (): void => {
+    setRedactionOn((prev) => {
+      const next = !prev
+      try { localStorage.setItem('dsh-better-sidebar.redaction', next ? '1' : '0') } catch { /* storage unavailable */ }
+      return next
+    })
+  }
+  const { op, prior, redactionHit } = useMemo(() => {
+    const path = target.kind === 'op' ? target.path : ''
+    if (opRaw === null || !redactionOn) {
+      return { op: opRaw, prior: priorRaw, redactionHit: false }
+    }
+    const mask = (text: string): string => redactText(path, text).text
+    const hit = [opRaw.read, opRaw.content, opRaw.edit?.oldString, opRaw.edit?.newString, opRaw.errorText, priorRaw]
+      .some((text) => text !== undefined && redactText(path, text).hit)
+    if (!hit) return { op: opRaw, prior: priorRaw, redactionHit: false }
+    const redacted: FileOp = {
+      ...opRaw,
+      ...(opRaw.read !== undefined ? { read: mask(opRaw.read) } : {}),
+      ...(opRaw.content !== undefined ? { content: mask(opRaw.content) } : {}),
+      ...(opRaw.edit !== undefined ? { edit: { oldString: mask(opRaw.edit.oldString), newString: mask(opRaw.edit.newString) } } : {}),
+      ...(opRaw.errorText !== undefined ? { errorText: mask(opRaw.errorText) } : {}),
+    }
+    return { op: redacted, prior: priorRaw === undefined ? undefined : mask(priorRaw), redactionHit: true }
+  }, [opRaw, priorRaw, target, redactionOn]);
   const opLang = useMemo(() => (target.kind === 'op' ? langOfPath(target.path) : undefined), [target])
   const opRows = useMemo(() => (op === null ? [] : diffOf(op, prior)), [op, prior])
   const opSegments = useMemo(() => buildDiffSegments(opRows), [opRows])
@@ -157,6 +195,39 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
     () => (op?.kind === 'read' && op.read !== undefined ? parseReadLines(op.read) : []),
     [op],
   )
+
+  // ── Markdown reading mode: .md op targets (read/write/edit, non-error)
+  //    toggle between the raw/diff view and the rendered document — the same
+  //    shared MarkdownText pass the editor preview uses, with local image
+  //    destinations rewritten through the /sidebar/file media route. ──────
+  const mdOp = target.kind === 'op' && !target.op.isError && /\.(md|markdown|mdx)$/i.test(target.path)
+  const [reading, setReading] = useState(false)
+  const readingSrc = useMemo(() => {
+    if (!mdOp || op === null) return ''
+    if (op.kind === 'read') return parseReadContent(op.read ?? '')
+    if (op.kind === 'write') return op.content ?? ''
+    if (op.kind === 'edit' && op.edit !== undefined) {
+      if (prior !== undefined && prior.includes(op.edit.oldString)) {
+        return prior.replace(op.edit.oldString, op.edit.newString)
+      }
+      return op.edit.newString
+    }
+    return ''
+  }, [mdOp, op, prior])
+  const readingText = useMemo(
+    () => (mdOp && reading && readingSrc !== '' && target.kind === 'op'
+      ? rewriteLocalImageUrls(readingSrc, scope, target.path, window.location.origin)
+      : ''),
+    [mdOp, reading, readingSrc, scope, target],
+  )
+  // Mermaid fences render through the same chunk-resident renderer the editor
+  // preview uses (one MarkdownText pass with the mermaid fences lifted out);
+  // the plain single-pass path stays byte-for-byte for documents without any.
+  const readingHasMermaid = useMemo(
+    () => (readingText !== '' ? splitMermaidBlocks(readingText).some((block) => block.kind === 'mermaid') : false),
+    [readingText],
+  )
+  const codeLabels = { copyLabel: t('copy'), copiedLabel: t('copied') }
 
   // Header stats for git targets come off the parsed patch text.
   const gitStats = useMemo(() => {
@@ -264,6 +335,32 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
             </button>
           </>
         )}
+        {redactionHit && redactionOn && (
+          <span className={css.redactBanner} role="status">{t('changesRedactBanner')}</span>
+        )}
+        {target.kind === 'op' && (
+          <button
+            type="button"
+            className={css.mdToggle}
+            data-on={redactionOn ? 'true' : undefined}
+            aria-pressed={redactionOn}
+            onClick={toggleRedaction}
+            title={redactionOn ? t('changesRedactOff') : t('changesRedactOn')}
+          >
+            {redactionOn ? t('changesRedactOnLabel') : t('changesRedactOffLabel')}
+          </button>
+        )}
+        {mdOp && (
+          <button
+            type="button"
+            className={css.mdToggle}
+            data-on={reading ? 'true' : undefined}
+            aria-pressed={reading}
+            onClick={() => { setReading(value => !value) }}
+          >
+            {t(reading ? 'changesMdRaw' : 'changesMdReading')}
+          </button>
+        )}
         <button
           type="button"
           className={css.iconButton}
@@ -274,7 +371,17 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
           <IconCloseOutline16 size={14} />
         </button>
       </div>
-      {target.kind === 'op' && op !== null && op.isError
+      {target.kind === 'op' && mdOp && reading && readingText !== ''
+        ? (
+          <div className={css.paneBody}>
+            <div className={css.mdBody}>
+              {readingHasMermaid
+                ? <LazyMermaidMarkdown text={readingText} codeLabels={codeLabels} />
+                : <MarkdownText {...markdownTextProps(readingText, codeLabels)} />}
+            </div>
+          </div>
+        )
+        : target.kind === 'op' && op !== null && op.isError
         ? (
           <div className={css.paneBody}>
             <div className={css.readError} role="alert">

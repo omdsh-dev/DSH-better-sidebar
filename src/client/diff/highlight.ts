@@ -132,24 +132,81 @@ const MD_LANG: LangConfig = {
   wordBody: WORD,
 }
 
+/** JS keyword list, shared by js/jsx/mjs/cjs. */
+const JS_WORDS = `async await break case catch class const continue debugger default delete do else
+  export extends false finally for from function get if implements import in instanceof interface
+  let new null of return set static super switch this throw true try typeof undefined var void
+  while with yield`
+
+/** TS keyword list, shared by ts/tsx/mts/cts. */
+const TS_WORDS = `abstract any as asserts async await boolean break case catch class const constructor
+  continue debugger declare default delete do else enum export extends false finally for from
+  function get if implements import in infer instanceof interface is keyof let module namespace
+  never new null number object of override private protected public readonly return satisfies set
+  static string super switch symbol this throw true try type typeof undefined union unknown var
+  void while with yield`
+
+/** CSS family: block comments delimited by slash-star, hyphenated property words. */
+const CSS_LANG: LangConfig = {
+  lineComments: [],
+  blockComment: ['/*', '*/'],
+  strings: ['"', "'"],
+  keywords: kw(`media import charset keyframes font-face supports page namespace layer scope container
+    property value at-rule when and not only from to important
+    background background-color background-image background-position background-size
+    border border-radius border-color border-width border-style bottom box-shadow box-sizing
+    color content cursor clip clip-path clear display direction
+    flex flex-direction flex-wrap flex-flow flex-grow flex-shrink flex-basis
+    font font-family font-size font-style font-weight float fill
+    grid grid-area grid-template grid-template-columns grid-template-rows grid-gap gap
+    height left letter-spacing line-height list-style margin margin-top margin-right
+    margin-bottom margin-left max-height max-width min-height min-width opacity order
+    outline overflow padding padding-top padding-right padding-bottom padding-left
+    position pointer-events right rotate scale translate transform transform-origin
+    text-align text-decoration text-transform top transition transition-property
+    user-select vertical-align visibility white-space width word-break word-spacing z-index
+    align-items align-content align-self justify-content justify-items justify-self
+    aspect-ratio inset object-fit object-position resize scroll-behavior filter backdrop-filter
+    animation animation-name animation-duration animation-timing-function animation-delay
+    will-change
+    html body p a div span li ul ol table tr td th form input button label select textarea img
+    section header footer main nav article aside h1 h2 h3 h4 h5 h6 i b em strong small pre code
+    inherit initial unset auto none fixed absolute relative sticky static flex block inline
+    inline-block inline-flex grid hidden visible hidden bold normal inherit root var calc env`),
+  constants: kw('true false'),
+  macro: false,
+  wordStart: /[A-Za-z-]/u,
+  wordBody: /[A-Za-z0-9-]/u,
+}
+
+/** Markup family (HTML/XML/SVG/Vue): markup comments plus common tags. */
+const MARKUP_LANG: LangConfig = {
+  lineComments: [],
+  blockComment: ['<!--', '-->'],
+  strings: ['"', "'"],
+  keywords: kw(`html head body title meta link script style template slot
+    div span p a img ul ol li table thead tbody tr th td form input button label select
+    option textarea header footer main nav section article aside figure figcaption
+    h1 h2 h3 h4 h5 h6 strong em b i u s small br hr pre code blockquote
+    svg path circle rect line polyline polygon g defs use text symbol
+    xml doctype class id href src type value name content charset async defer
+    vue component props setup script-style export import v-if v-for v-bind v-on`),
+  constants: new Set(),
+  macro: false,
+  wordStart: LETTER,
+  wordBody: WORD,
+}
+
 /** Extension → language id, mirroring the read tool's hint table. */
 const LANGS: Readonly<Record<string, LangConfig>> = {
-  ts: C_FAMILY(`abstract any as asserts async await boolean break case catch class const constructor
-    continue debugger declare default delete do else enum export extends false finally for from
-    function get if implements import in infer instanceof interface is keyof let module namespace
-    never new null number object of override private protected public readonly return satisfies set
-    static string super switch symbol this throw true try type typeof undefined union unknown var
-    void while with yield`),
+  ts: C_FAMILY(TS_WORDS),
   tsx: C_FAMILY(`abstract any as asserts async await boolean break case catch class const constructor
     continue declare default delete do else enum export extends false finally for from function get
     if implements import in infer instanceof interface is keyof let module namespace never new null
     number object of override private protected public readonly return satisfies set static string
     super switch symbol this throw true try type typeof undefined union unknown var void while with
     yield`),
-  js: C_FAMILY(`async await break case catch class const continue debugger default delete do else
-    export extends false finally for from function get if implements import in instanceof interface
-    let new null of return set static super switch this throw true try typeof undefined var void
-    while with yield`),
+  js: C_FAMILY(JS_WORDS),
   jsx: C_FAMILY(`async await break case catch class const continue debugger default delete do else
     export extends false finally for from function get if implements import in instanceof interface
     let new null of return set static super switch this throw true try typeof undefined var void
@@ -225,11 +282,22 @@ const LANGS: Readonly<Record<string, LangConfig>> = {
   md: MD_LANG,
   markdown: MD_LANG,
   mdx: MD_LANG,
-  html: CONFIG_LANG,
-  htm: CONFIG_LANG,
-  css: HASH_FAMILY(''),
-  scss: HASH_FAMILY(''),
-  less: HASH_FAMILY(''),
+  mjs: C_FAMILY(JS_WORDS),
+  cjs: C_FAMILY(JS_WORDS),
+  mts: C_FAMILY(TS_WORDS),
+  cts: C_FAMILY(TS_WORDS),
+  jsonc: CONFIG_LANG,
+  json5: CONFIG_LANG,
+  html: MARKUP_LANG,
+  htm: MARKUP_LANG,
+  xml: MARKUP_LANG,
+  svg: MARKUP_LANG,
+  vue: MARKUP_LANG,
+  css: CSS_LANG,
+  scss: CSS_LANG,
+  less: CSS_LANG,
+  graphql: HASH_FAMILY('query mutation fragment on directive enum input interface scalar schema type implements'),
+  gql: HASH_FAMILY('query mutation fragment on directive enum input interface scalar schema type implements'),
   lua: HASH_FAMILY(`and break do else elseif end false for function goto if in local nil not or
     repeat return then true until while`),
 }
