@@ -725,7 +725,7 @@ test('dragging the bottom strip while the right panel is closed keeps the host l
       return probe === null ? Number.NaN : probe
     }, { timeout: 30_000 })
     .toBeLessThanOrEqual(8)
-  const stripBox = await page.evaluate(() => {
+  const readStripBox = (): Promise<{ x: number; y: number } | null> => page.evaluate(() => {
     const bottom = document.querySelector('[data-dsh-better-sidebar] [data-dsh-bottom-panel]')
     if (bottom === null) return null
     const strip = [...bottom.querySelectorAll<HTMLElement>('*')].find(el => getComputedStyle(el).cursor === 'row-resize')
@@ -733,11 +733,31 @@ test('dragging the bottom strip while the right panel is closed keeps the host l
     const r = strip.getBoundingClientRect()
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
   })
-  expect(stripBox, 'the bottom drag strip must be present (cursor: row-resize)').not.toBeNull()
+
+  // The compositor can finish the slide a frame after the geometry poll.
+  // Re-acquire the moving strip and retry pointerdown if that boundary frame
+  // missed it; once the body marker appears, the real drag is live.
+  let stripBox: { x: number; y: number } | null = null
+  let dragStarted = false
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    stripBox = await readStripBox()
+    expect(stripBox, 'the bottom drag strip must be present (cursor: row-resize)').not.toBeNull()
+    await page.mouse.move(stripBox!.x, stripBox!.y)
+    await page.mouse.down()
+    try {
+      await expect
+        .poll(async () => page.evaluate(() => document.body.hasAttribute('data-dsh-sidebar-dragging')), { timeout: 1_000 })
+        .toBe(true)
+      dragStarted = true
+      break
+    } catch {
+      await page.mouse.up()
+      await page.waitForTimeout(150)
+    }
+  }
+  expect(dragStarted, 'pointerdown must engage the bottom drag strip').toBe(true)
 
   // Drag the strip UP (grow the bottom panel) in steps, like a real resize.
-  await page.mouse.move(stripBox!.x, stripBox!.y)
-  await page.mouse.down()
   for (let i = 1; i <= 12; i++) {
     await page.mouse.move(stripBox!.x, stripBox!.y - i * 8, { steps: 2 })
     await page.waitForTimeout(40)
