@@ -430,5 +430,7 @@ export const sv: Record<string, string> = {
   pluginMdExportName: 'Markdown-export',
   pluginCodeNavName: 'Kodförhandsvisningsnavigatör',
   pluginVideoPreviewName: 'Videoförhandsvisning',
+  pluginTurnOutlineName: "dsh-turn-outline Varvöversikt",
+  pluginTurnOutlineDesc: "Viker sessionen i användarvarv (indata + verktygssteg + utdata); klicka på ett steg för att hoppa till exakt plats i samtalet — utan LLM-anrop, skrivskyddad",
   presetDshDesktopDesc: 'Electrons avancerade läge (ramlöst): macOS reserverar 20px högst upp; Windows reserverar 32px för namnlisten när WCO inte är tillgängligt',
 }

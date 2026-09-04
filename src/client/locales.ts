@@ -454,6 +454,8 @@ export const zh = {
   pluginMdExportName: 'Markdown 导出插件',
   pluginCodeNavName: '代码预览导航',
   pluginVideoPreviewName: '视频预览插件',
+  pluginTurnOutlineName: 'dsh-turn-outline 轮次轨迹',
+  pluginTurnOutlineDesc: '把会话按用户轮次折叠成「输入 + 工具步骤 + 输出」摘要，点击任意步骤一键跳回对话原位；零 LLM 调用、只读',
   presetDshDesktopDesc: 'Electron 高级模式（无边框）：macOS 顶栏 20px、Windows 无 WCO 时 32px 标题栏让位',
 }
 
@@ -890,6 +892,8 @@ export const en: Record<keyof typeof zh, string> = {
   pluginMdExportName: 'Markdown Export',
   pluginCodeNavName: 'Code Preview Navigator',
   pluginVideoPreviewName: 'Video Preview',
+  pluginTurnOutlineName: 'dsh-turn-outline Turn Outline',
+  pluginTurnOutlineDesc: 'Fold the session into user turns (input + tool steps + output) and click any step to jump back to its exact spot in the conversation — no LLM calls, read-only',
   presetDshDesktopDesc: 'Electron advanced (frameless) mode: macOS reserves a 20px top strip; Windows reserves a 32px title bar when WCO is unavailable',
 }
 

@@ -448,5 +448,7 @@ export const ar: Record<string, string> = {
   pluginMdExportName: 'تصدير Markdown',
   pluginCodeNavName: 'مستكشف معاينة الكود',
   pluginVideoPreviewName: 'معاينة الفيديو',
+  pluginTurnOutlineName: "dsh-turn-outline مخطط الجولات",
+  pluginTurnOutlineDesc: "يطوي الجلسة إلى جولات المستخدم (الإدخال + خطوات الأدوات + المخرجات)؛ انقر على أي خطوة للانتقال إلى موضعها الدقيق في المحادثة — بدون استدعاء LLM، للقراءة فقط",
   presetDshDesktopDesc: 'وضع Electron المتقدم (بلا إطار): يحجز macOS شريطًا علويًا بمقدار 20px، ويحجز Windows بمقدار 32px لشريط العنوان عند غياب WCO',
 }

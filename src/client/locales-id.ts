@@ -445,5 +445,7 @@ export const id: Record<string, string> = {
   pluginMdExportName: 'Ekspor Markdown',
   pluginCodeNavName: 'Navigator pratinjau kode',
   pluginVideoPreviewName: 'Pratinjau video',
+  pluginTurnOutlineName: "dsh-turn-outline Garis besar giliran",
+  pluginTurnOutlineDesc: "Melipat sesi menjadi giliran pengguna (input + langkah alat + output); klik langkah mana pun untuk melompat ke posisi persisnya dalam percakapan — tanpa panggilan LLM, hanya baca",
   presetDshDesktopDesc: 'Mode Electron lanjutan (tanpa bingkai): macOS mencadangkan 20px di atas; Windows mencadangkan 32px untuk bilah judul saat WCO tidak tersedia',
 }

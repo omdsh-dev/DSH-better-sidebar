@@ -445,5 +445,7 @@ export const nl: Record<string, string> = {
   pluginMdExportName: 'Markdown-export',
   pluginCodeNavName: 'Codevoorvertoning-navigator',
   pluginVideoPreviewName: 'Videovoorvertoning',
+  pluginTurnOutlineName: "dsh-turn-outline Beurtoverzicht",
+  pluginTurnOutlineDesc: "Vouwt de sessie op in gebruikersbeurten (invoer + toolstappen + uitvoer); klik op een stap om terug te springen naar de exacte plek in het gesprek — zonder LLM-aanroepen, alleen-lezen",
   presetDshDesktopDesc: 'Geavanceerde Electronmodus (zonder rand): macOS reserveert 20px bovenaan; Windows reserveert 32px voor de titelbalk wanneer WCO niet beschikbaar is',
 }

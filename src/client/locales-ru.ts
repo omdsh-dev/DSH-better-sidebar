@@ -445,5 +445,7 @@ export const ru: Record<string, string> = {
   pluginMdExportName: 'Экспорт Markdown',
   pluginCodeNavName: 'Навигатор предпросмотра кода',
   pluginVideoPreviewName: 'Предпросмотр видео',
+  pluginTurnOutlineName: "dsh-turn-outline План раундов",
+  pluginTurnOutlineDesc: "Сворачивает сессию в раунды пользователя (ввод + шаги инструментов + вывод); клик по любому шагу возвращает к точному месту в диалоге — без вызовов LLM, только чтение",
   presetDshDesktopDesc: 'Расширенный режим Electron (без рамки): macOS резервирует 20px сверху; Windows без WCO резервирует 32px под строку заголовка',
 }

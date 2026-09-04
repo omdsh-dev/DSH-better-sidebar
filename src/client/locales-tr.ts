@@ -447,5 +447,7 @@ export const tr: Record<string, string> = {
   pluginMdExportName: 'Markdown dışa aktarma',
   pluginCodeNavName: 'Kod önizleme gezgini',
   pluginVideoPreviewName: 'Video önizlemesi',
+  pluginTurnOutlineName: "dsh-turn-outline Tur özeti",
+  pluginTurnOutlineDesc: "Oturumu kullanıcı turlarına (girdi + araç adımları + çıktı) katlar; herhangi bir adıma tıklayarak sohbette tam konumuna atlayın — LLM çağrısı yok, yalnızca okunur",
   presetDshDesktopDesc: 'Electron gelişmiş (çerçevesiz) mod: macOS üstte 20px ayırır; Windows, WCO yokken başlık çubuğu için 32px ayırır',
 }

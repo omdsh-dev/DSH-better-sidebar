@@ -447,5 +447,7 @@ export const vi: Record<string, string> = {
   pluginMdExportName: 'Xuất Markdown',
   pluginCodeNavName: 'Trình điều hướng xem trước mã',
   pluginVideoPreviewName: 'Xem trước video',
+  pluginTurnOutlineName: "dsh-turn-outline Dàn ý theo vòng",
+  pluginTurnOutlineDesc: "Gấp phiên thành các vòng của người dùng (đầu vào + bước công cụ + đầu ra); nhấp vào bất kỳ bước nào để nhảy về đúng vị trí trong hội thoại — không gọi LLM, chỉ đọc",
   presetDshDesktopDesc: 'Chế độ Electron nâng cao (không viền): macOS dành 20px ở trên cùng; Windows dành 32px cho thanh tiêu đề khi không có WCO',
 }

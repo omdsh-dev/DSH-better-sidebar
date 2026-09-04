@@ -447,5 +447,7 @@ export const hi: Record<string, string> = {
   pluginMdExportName: 'Markdown एक्सपोर्ट',
   pluginCodeNavName: 'कोड प्रीव्यू नेविगेटर',
   pluginVideoPreviewName: 'वीडियो प्रीव्यू',
+  pluginTurnOutlineName: "dsh-turn-outline टर्न रूपरेखा",
+  pluginTurnOutlineDesc: "सत्र को उपयोगकर्ता टर्न (इनपुट + टूल चरण + आउटपुट) में मोड़ें; किसी भी चरण पर क्लिक करें और बातचीत के सटीक स्थान पर जाएँ — कोई LLM कॉल नहीं, केवल पढ़ना",
   presetDshDesktopDesc: 'Electron एडवांस्ड (फ्रेमलेस) मोड: macOS ऊपर 20px सुरक्षित रखता है; Windows WCO अनुपलब्ध होने पर टाइटल बार के लिए 32px रखता है',
 }
