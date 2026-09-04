@@ -29,7 +29,7 @@ import {
   type SidebarConfig,
   type SidebarPrefs,
 } from './config.ts'
-import { parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import { parentOf, requireAbsolute, listDirectoryWith, rootLabel } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
 import { renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from './fs-operations.ts'
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
@@ -77,8 +77,8 @@ export type {
 /** Plugin identity for cordis.yml rows. */
 export const name = 'dsh-better-sidebar'
 
-/** Services required before mounting: the webserver routes, the session store, the web runtime's trusted hosts, and the tool registry. */
-export const inject = ['webServer', 'sessions', 'webRuntime', 'tools']
+/** Services required before mounting: the webserver routes, session store, routed filesystem, trust source, and tool registry. */
+export const inject = ['webServer', 'sessions', 'fs', 'webRuntime', 'tools']
 
 /** Content types for the media route, by extension. */
 const MEDIA_TYPES: Record<string, string> = {
@@ -331,8 +331,20 @@ function buildApi(
     'fs.tree': async (payload) => {
       const { cwd } = await cwdOf(payload)
       const record = payload as { path?: unknown }
-      const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'), fenceEnabledOf(getSettings))
-      return listDirectory(target, resolved.listLimit)
+      const requested = record.path === undefined ? cwd : requireAbsolute(requireString(payload, 'path'))
+      try {
+        const target = await ctx.fs.resolve(requested)
+        if (fenceEnabledOf(getSettings)) {
+          const workspaceTarget = await ctx.fs.resolve(cwd)
+          if (!ctx.fs.contains(workspaceTarget, target)) {
+            throw new SidebarError('forbidden', `path "${requested}" is outside workspace`, 403)
+          }
+        }
+        return listDirectoryWith(ctx.fs, requested, resolved.listLimit, target)
+      } catch (error) {
+        if (error instanceof SidebarError) throw error
+        throw new SidebarError('fs-error', `cannot list "${requested}": ${error instanceof Error ? error.message : String(error)}`, 400)
+      }
     },
     'fs.search': async (payload) => {
       // The editor side panel's global name search: rooted at the session

@@ -492,10 +492,45 @@ describe('session cwd resolution over the API route', () => {
   interface CtxOverrides {
     sessions?: { get: (id: string) => { header: { cwd?: string } } | undefined }
     sessionPersistence?: { inspect: (id: string) => Promise<{ meta: { cwd?: string } }> }
+    fs?: {
+      resolve(path: string): Promise<{ targetKey: string; displayPath: string }>
+      contains(parent: { targetKey: string }, child: { targetKey: string }): boolean
+      lstat(path: string): Promise<{ type: 'file' | 'directory' | 'symlink' | 'other' } | undefined>
+      stat(target: { targetKey: string }): Promise<{ type: 'file' | 'directory' | 'other' } | undefined>
+      listDir(target: { targetKey: string }): Promise<Array<{
+        name: string
+        type: 'file' | 'directory' | 'other'
+        target: { targetKey: string; displayPath: string }
+      }>>
+    }
   }
 
   const mountAll = (overrides: CtxOverrides = {}): SidebarWebRoute[] => {
     const routes: SidebarWebRoute[] = []
+    const localFs = {
+      resolve: async (path: string) => {
+        const absolute = resolvePath(path)
+        const canonical = await import('node:fs/promises').then(({ realpath }) => realpath(absolute))
+        return { targetKey: canonical, displayPath: absolute }
+      },
+      contains: (parent: { targetKey: string }, child: { targetKey: string }) => child.targetKey === parent.targetKey || child.targetKey.startsWith(`${parent.targetKey}${process.platform === 'win32' ? '\\' : '/'}`),
+      lstat: async (path: string) => {
+        const info = await import('node:fs/promises').then(fs => fs.lstat(path)).catch(() => undefined)
+        return info === undefined ? undefined : { type: info.isSymbolicLink() ? 'symlink' as const : info.isDirectory() ? 'directory' as const : info.isFile() ? 'file' as const : 'other' as const }
+      },
+      stat: async (target: { targetKey: string }) => {
+        const info = await import('node:fs/promises').then(fs => fs.stat(target.targetKey)).catch(() => undefined)
+        return info === undefined ? undefined : { type: info.isDirectory() ? 'directory' as const : info.isFile() ? 'file' as const : 'other' as const }
+      },
+      listDir: async (target: { targetKey: string; displayPath: string }) => {
+        const entries = await import('node:fs/promises').then(fs => fs.readdir(target.targetKey, { withFileTypes: true }))
+        return Promise.all(entries.map(async entry => ({
+          name: entry.name,
+          type: entry.isDirectory() ? 'directory' as const : entry.isFile() ? 'file' as const : 'other' as const,
+          target: await localFs.resolve(join(target.displayPath, entry.name)),
+        })))
+      },
+    }
     const ctx = {
       webRuntime: { trustedHosts: [] },
       webServer: {
@@ -503,6 +538,7 @@ describe('session cwd resolution over the API route', () => {
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
       },
       sessions: overrides.sessions ?? { get: () => undefined },
+      fs: overrides.fs ?? localFs,
       tools: { register: () => () => {} },
       // The vendored cordis runs registration effects immediately.
       effect: (fn: () => void | (() => void)) => { fn() },
@@ -673,6 +709,38 @@ describe('session cwd resolution over the API route', () => {
     })
     const result = await invoke(route, 'fs.read', { sessionId: 's-sub', path: 'package.json' })
     expect(result).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+  })
+
+  it('lists a routed SSH workspace instead of the empty local anchor', async () => {
+    const anchor = resolvePath('/home/me/.dsh/ssh-workspace-anchors/project')
+    const remoteRoot = 'ssh://gpu/work/project'
+    const fs = {
+      resolve: vi.fn(async (path: string) => ({
+        targetKey: path === anchor ? remoteRoot : `${remoteRoot}/${path.slice(anchor.length + 1)}`,
+        displayPath: path === anchor ? 'gpu:/work/project' : `gpu:/work/project/${path.slice(anchor.length + 1)}`,
+      })),
+      contains: vi.fn((parent: { targetKey: string }, child: { targetKey: string }) => child.targetKey === parent.targetKey || child.targetKey.startsWith(`${parent.targetKey}/`)),
+      lstat: vi.fn(async () => ({ type: 'directory' as const })),
+      stat: vi.fn(async () => ({ type: 'directory' as const })),
+      listDir: vi.fn(async () => [{
+        name: 'docs',
+        type: 'directory' as const,
+        target: { targetKey: `${remoteRoot}/docs`, displayPath: 'gpu:/work/project/docs' },
+      }]),
+    }
+    const route = mount({
+      sessions: { get: () => ({ header: { cwd: anchor } }) },
+      fs,
+    })
+
+    const tree = await invoke(route, 'fs.tree', { sessionId: 'ssh' }) as unknown as {
+      ok: boolean
+      value?: { entries: Array<{ name: string; path: string }> }
+    }
+
+    expect(tree.ok).toBe(true)
+    expect(tree.value?.entries).toEqual([expect.objectContaining({ name: 'docs', path: join(anchor, 'docs') })])
+    expect(fs.listDir).toHaveBeenCalledWith(expect.objectContaining({ targetKey: remoteRoot }))
   })
 
   it('rejects fs.tree paths outside the session workspace', async () => {
@@ -860,6 +928,30 @@ describe('side card settings routes', () => {
 
   const mountWithSettings = (settings?: unknown): SidebarWebRoute => {
     const routes: SidebarWebRoute[] = []
+    const fs = {
+      resolve: async (path: string) => {
+        const absolute = resolvePath(path)
+        const canonical = await import('node:fs/promises').then(({ realpath }) => realpath(absolute))
+        return { targetKey: canonical, displayPath: absolute }
+      },
+      contains: (parent: { targetKey: string }, child: { targetKey: string }) => child.targetKey === parent.targetKey || child.targetKey.startsWith(`${parent.targetKey}${process.platform === 'win32' ? '\\' : '/'}`),
+      lstat: async (path: string) => {
+        const info = await import('node:fs/promises').then(module => module.lstat(path)).catch(() => undefined)
+        return info === undefined ? undefined : { type: info.isSymbolicLink() ? 'symlink' as const : info.isDirectory() ? 'directory' as const : info.isFile() ? 'file' as const : 'other' as const }
+      },
+      stat: async (target: { targetKey: string }) => {
+        const info = await import('node:fs/promises').then(module => module.stat(target.targetKey)).catch(() => undefined)
+        return info === undefined ? undefined : { type: info.isDirectory() ? 'directory' as const : info.isFile() ? 'file' as const : 'other' as const }
+      },
+      listDir: async (target: { targetKey: string; displayPath: string }) => {
+        const entries = await import('node:fs/promises').then(module => module.readdir(target.targetKey, { withFileTypes: true }))
+        return Promise.all(entries.map(async entry => ({
+          name: entry.name,
+          type: entry.isDirectory() ? 'directory' as const : entry.isFile() ? 'file' as const : 'other' as const,
+          target: await fs.resolve(join(target.displayPath, entry.name)),
+        })))
+      },
+    }
     const ctx = {
       webRuntime: { trustedHosts: [] },
       webServer: {
@@ -867,6 +959,7 @@ describe('side card settings routes', () => {
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
       },
       sessions: { get: () => undefined },
+      fs,
       tools: { register: () => () => {} },
       effect: (fn: () => void | (() => void)) => { fn() },
       inject: (deps: string[], callback: (sctx: { settings: unknown }) => void) => {
