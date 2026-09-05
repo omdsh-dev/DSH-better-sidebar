@@ -151,7 +151,10 @@ export function TextEditor(props: FileViewerProps) {
         history(),
         EditorState.tabSize.of(2),
         CodeMirrorView.contentAttributes.of({ spellcheck: 'false' }),
+        // editable=false protects the DOM; readOnly=true also blocks editing
+        // commands/transactions from the remaining navigation keymaps.
         CodeMirrorView.editable.of(!readOnly),
+        EditorState.readOnly.of(readOnly),
         cmSurfaceTheme,
         themeComp.of(dark),
         ...(language !== null ? [language] : []),
