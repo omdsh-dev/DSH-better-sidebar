@@ -595,6 +595,22 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
   const optimisticRef = useRef(prefs)
   useEffect(() => { optimisticRef.current = prefs }, [prefs])
 
+  // Keep this settings surface aligned with preference writes made elsewhere
+  // in the page (notably the browser status row's global sandbox switch).
+  // SidebarStore also publishes ordinary session-state changes, so compare the
+  // stable prefs snapshot reference before touching local/optimistic state.
+  useEffect(() => {
+    let current = store.getSnapshot().prefs
+    return store.subscribe(() => {
+      const next = store.getSnapshot().prefs
+      if (next === current) return
+      current = next
+      optimisticRef.current = next
+      setPrefs(next)
+      setWidthDraft(String(next.defaultWidthPercent))
+    })
+  }, [store])
+
   // The declarative inventory: the registered tab types and file viewers.
   // Local state + service.subscribe (registry changes are rare — plugin
   // load/unload — so a plain effect is enough; no external-store ceremony).
