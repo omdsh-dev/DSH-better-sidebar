@@ -933,6 +933,12 @@ describe('side card settings routes', () => {
     expect(String((result.value as { name: unknown }).name).length).toBeGreaterThan(0)
   })
 
+  it('exposes the current host identity for restart recovery polling', async () => {
+    const route = mountWithSettings(undefined)
+    const result = await invoke(route, 'host.status', {})
+    expect(result).toEqual({ ok: true, value: { pid: process.pid } })
+  })
+
   it('reads the resolved prefs and writes a patch through the seam', async () => {
     const route = mountWithSettings(createFakeSettings())
     const read = await invoke(route, 'settings.get', {})
