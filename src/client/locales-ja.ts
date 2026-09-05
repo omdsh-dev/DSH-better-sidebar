@@ -425,6 +425,7 @@ export const ja: Record<string, string> = {
   pluginTurnReviewDesc: '「直近のターン」の diff に Approve / Request changes のヒューマンゲート。直前ターンのみ審査、会話を fork しない。ファイルをメイン会話/サブエージェント/未帰属グループ分け、ファイル単位でチェックして差し戻し + 任意コメント、ファイルをクリックするとターン開始スナップショット vs 現在の diff を先に表示。/rewind ではない',
   pluginVideoPreviewDesc: 'better-sidebar エディター内で動画ファイルをインラインプレビュー（.mp4/.webm/.mov/.mkv/.avi 等）。HTTP Range (206) をサポートする専用 /video ホストルートを搭載、プログレスバードラッグ可、20MB mediaLimit 制限なし',
   pluginCodeNavDesc: 'コードプレビューナビゲーター：ファイルタイプから言語を自動判定してシンタックスハイライト、シンボルアウトライン（クラス/メソッド/変数のフィルタ＆ワンクリックジャンプ）、ファイル内検索（全一致ハイライト、前/次へ、大文字小文字区別）。better-sidebar のコードファイルプレビューを引き継ぎます',
+  pluginDevGitGraphDesc: 'A faithful vscode-git-graph port as a sidebar tab: the only entry is a native better-sidebar tab, auto-bound to the session workspace, full git operations (checkout/merge/rebase/push/tag/stash), light/dark theming, file diffs open in the built-in DiffTab; requires dsh-better-sidebar',
   pluginDocsPanelDesc: 'DSH サイドバー内の「グローバルドキュメント」：任意のワークスペースから読めるグローバル Markdown ノート。リストで選んで閲覧、ホバーでアウトラインジャンプ、Chrome / VS Code で外部オープン、コードコピー。ディレクトリは設定可（デフォルト ~/.dsh/docs）',
   pluginEgoBrowserDesc: 'DeepSeek Harness 用エージェントブラウザ：32 個の ego_* ツールが本物の Chromium を操作し、サイドバーのネイティブ「ego ブラウザ」Tab がエージェントの訪れる全ページをライブ表示。クリック・ドラッグ・入力で操作を引き継げます。better-sidebar があれば Tab を自動登録、なければフローティングバブルにフォールバック',
   pluginBilingualReaderDesc: 'DSH サイドバーで論文 PDF を読む：ネイティブ PDF 表示、テキストを選択して LLM で翻訳。コンテキストを使い、メイン会話から完全に分離',
