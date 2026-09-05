@@ -276,6 +276,8 @@ export interface FileViewerProps {
   /** Internal: the viewer registers its toolbar commands on mount (null on
    *  unmount). */
   onToolbarControls?: (controls: EditorToolbarControls | null) => void
+  /** Optional target line number to scroll / highlight (e.g. from read tool offset). */
+  targetLine?: number
 }
 
 /** The toolbar state a text editor reports to the host's merged-mode header. */

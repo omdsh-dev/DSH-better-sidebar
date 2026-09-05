@@ -90,7 +90,7 @@ export function applyChatPreview(store: SidebarStore, tab: SidebarTab): void {
   if (located.where === 'float') {
     // Editor → editor keeps the float: patch in place and raise.
     if (located.tab.type === 'editor' && tab.type === 'editor') {
-      store.reduce(s => patchTab(s, CHAT_PREVIEW_TAB_ID, { title: tab.title, path: tab.path }))
+      store.reduce(s => patchTab(s, CHAT_PREVIEW_TAB_ID, { title: tab.title, path: tab.path, meta: tab.meta }))
       store.reduce(s => {
         const floated = floatWithTab(s, CHAT_PREVIEW_TAB_ID)
         return floated !== undefined ? raiseFloat(s, floated.id) : s
@@ -110,7 +110,7 @@ export function applyChatPreview(store: SidebarStore, tab: SidebarTab): void {
   const paneId = located.paneId
   // Same type editor: patch in place and focus.
   if (located.tab.type === 'editor' && tab.type === 'editor') {
-    store.reduce(s => patchTab(s, CHAT_PREVIEW_TAB_ID, { title: tab.title, path: tab.path }))
+    store.reduce(s => patchTab(s, CHAT_PREVIEW_TAB_ID, { title: tab.title, path: tab.path, meta: tab.meta }))
     store.reduce(s => activateTab(s, paneId, CHAT_PREVIEW_TAB_ID))
     // Ensure visible: expand + pin to right (only when not floating).
     store.reduce(s => (s.panelOpen ? s : togglePanel(s)))

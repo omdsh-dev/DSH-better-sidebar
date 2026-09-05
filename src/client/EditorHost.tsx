@@ -492,6 +492,7 @@ export function EditorHost(props: {
             customData: load.customData,
             // The viewer's toolbar always hoists into this host's header.
             toolbar: 'host',
+            targetLine: typeof metaOf(tab).line === 'number' ? (metaOf(tab).line as number) : undefined,
             onToolbarState,
             onToolbarControls,
           })}

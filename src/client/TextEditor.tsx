@@ -60,7 +60,7 @@ const previewScrollMemory = new Map<string, number>()
 const previewScrollKey = (scope: { sessionId: string }, path: string): string => `${scope.sessionId}::${path}`
 
 export function TextEditor(props: FileViewerProps) {
-  const { ctx, scope, path, viewerId, content, truncated } = props
+  const { ctx, scope, path, viewerId, content, truncated, targetLine } = props
   const [mode, setMode] = useState<ViewMode>('preview')
   /** The editor's current text (null while clean); preview renders this. */
   const [draft, setDraft] = useState<string | null>(null)
@@ -214,6 +214,20 @@ export function TextEditor(props: FileViewerProps) {
     })
     const view = new CodeMirrorView({ state, parent: host })
     viewRef.current = view
+
+    // Scroll to target line if provided (e.g. from read tool offset)
+    if (typeof targetLine === 'number' && targetLine >= 1 && targetLine <= state.doc.lines) {
+      const lineObj = state.doc.line(targetLine)
+      view.dispatch({ selection: { anchor: lineObj.from } })
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const block = view.lineBlockAt(lineObj.from)
+          view.scrollDOM.scrollTop = Math.max(0, block.top - 8)
+          view.requestMeasure()
+        })
+      })
+    }
+
     return () => {
       view.destroy()
       viewRef.current = null

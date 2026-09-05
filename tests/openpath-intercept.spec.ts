@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { registerOpenPathInterception } from '../src/client/intercept.tsx'
+import { setLastToolContextForTest } from '../src/client/tool-click-context.ts'
 import {
   isFolderRevealPath,
   wrapOpenWorkspacePath,
@@ -311,5 +312,53 @@ describe('open-path interception wiring', () => {
     await new Promise<void>(resolve => setTimeout(resolve, 0))
     expect(previewPath()).toBe('/w/src/b.ts')
     expect(hostOpened).toEqual([])
+  })
+
+  it('read tool opens ONLY as an editor tab even when editOpensDiff is true', async () => {
+    let current = fakeNamespaceService([])
+    let injectCallback: ((c: unknown) => void) | undefined
+    let effectDisposer: (() => void) | undefined
+    const ctx = {
+      inject: (_names: readonly string[], fn: (c: unknown) => void) => {
+        injectCallback = fn
+        fn({
+          get: (name: string) => (name === 'remote.session' ? current : undefined),
+          effect: (eff: () => () => void) => { effectDisposer = eff() },
+        })
+        return { dispose: async () => { effectDisposer?.() } }
+      },
+      sessions: {
+        list: {
+          getSnapshot: () => ({ current: 's1', byId: { s1: { id: 's1', cwd: '/w' } } }),
+        },
+      },
+    }
+    const store = createSidebarStore()
+    store.setSession('s1')
+    store.setPrefs({ ...store.getPrefs(), editOpensDiff: true })
+    registerOpenPathInterception(ctx as unknown as Context, store)
+
+    setLastToolContextForTest({
+      tool: 'read',
+      isRead: true,
+      isEdit: false,
+      targetLine: 42,
+      timestamp: Date.now(),
+    })
+
+    await current.openWorkspacePath({ path: '/w/src/doc.ts' })
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+
+    const splits = store.getSnapshot().state!.splits as {
+      tabs: Array<{ id: string; type: string; path?: string; diff?: unknown; meta?: { line?: number } }>
+    }
+    const tab = splits.tabs.find(t => t.id === 'chat-preview')
+    expect(tab).toBeDefined()
+    expect(tab?.type).toBe('editor')
+    expect(tab?.path).toBe('/w/src/doc.ts')
+    expect(tab?.diff).toBeUndefined()
+    expect(tab?.meta?.line).toBe(42)
+
+    setLastToolContextForTest(null)
   })
 })

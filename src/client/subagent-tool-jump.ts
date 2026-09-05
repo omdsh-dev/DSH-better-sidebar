@@ -14,6 +14,12 @@ import type {
 import { t } from './locales.ts'
 import { isPlainLeftClick } from './link-intercept.ts'
 import { firstLeaf, togglePanel, type SidebarStore } from './state.ts'
+import {
+  findFilePathInTool,
+  findTargetLineInTool,
+  isReadTool,
+} from './tool-click-context.ts'
+import { openSidebarFile } from './intercept.tsx'
 
 /** Whether a tool name represents a subagent delegation or communication tool. */
 export function isSubagentTool(name: string | null | undefined): boolean {
@@ -157,15 +163,37 @@ export function registerSubagentToolJump(
     if (!target || typeof target.closest !== 'function') return
 
     // Find closest tool call container
-    const toolEl = target.closest('[data-tool]')
+    const toolEl = target.closest('[data-tool], [data-variant]')
     if (!toolEl) return
 
     const toolName = toolEl.getAttribute('data-tool')
-    if (!isSubagentTool(toolName)) return
+    const variant = toolEl.getAttribute('data-variant')
 
     // If user explicitly clicked a toggle chevron, let it toggle expansion
     const isChevron = Boolean(target.closest('[class*="chevron" i], [data-slot*="chevron" i], svg'))
     if (isChevron) return
+
+    // Handle clicking a read tool: open the file directly in the editor (never diff)
+    if (isReadTool(toolName) || isReadTool(variant)) {
+      const isFileLink = Boolean(target.closest('button[class*="fileLink" i]'))
+      if (!isFileLink) {
+        const filePath = findFilePathInTool(toolEl)
+        if (filePath) {
+          const snapshot = ctx.sessions?.list?.getSnapshot()
+          const parentSessionId = snapshot?.current
+          if (parentSessionId) {
+            event.preventDefault()
+            event.stopPropagation()
+            const targetLine = findTargetLineInTool(toolEl)
+            void openSidebarFile(ctx, store, parentSessionId, filePath, { isRead: true, targetLine })
+            return
+          }
+        }
+      }
+      return
+    }
+
+    if (!isSubagentTool(toolName)) return
 
     const snapshot = ctx.sessions?.list?.getSnapshot()
     const parentSessionId = snapshot?.current

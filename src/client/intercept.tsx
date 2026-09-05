@@ -16,6 +16,7 @@ import { api } from './api.ts'
 import { buildCommitDiffTab, buildEditDiffTab, deriveEditDiffTarget } from './edit-diff.ts'
 import { relativeTo } from './paths.ts'
 import { applyChatPreview, CHAT_PREVIEW_TAB_ID } from './chat-preview.ts'
+import { getLastToolContext } from './tool-click-context.ts'
 import css from './sidebar.module.css'
 
 /**
@@ -55,12 +56,40 @@ export function openSidebarEditorFile(ctx: Context, store: SidebarStore, session
  * @param sessionId - owning session.
  * @param path - file path (relative to the session cwd or absolute).
  */
-export async function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: string, path: string): Promise<void> {
+export async function openSidebarFile(
+  ctx: Context,
+  store: SidebarStore,
+  sessionId: string,
+  path: string,
+  options?: { isRead?: boolean; targetLine?: number },
+): Promise<void> {
   const prefs = store.getPrefs()
   const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
   const cwd = summary?.cwd
   const absolute = resolveSidebarPath(cwd, path)
   let previewTab: import('./state.ts').SidebarTab | null = null
+
+  const toolContext = getLastToolContext()
+  const isRead = options?.isRead ?? (toolContext?.isRead && !toolContext?.isEdit) ?? false
+  const targetLine = options?.targetLine ?? (isRead ? toolContext?.targetLine : undefined)
+
+  // When opening from a read tool (or explicit read option), ONLY show the file
+  // in the editor (or the read content at targetLine). NEVER probe or open git diff.
+  if (isRead) {
+    const at = Math.max(absolute.lastIndexOf('/'), absolute.lastIndexOf('\\'))
+    const title = at === -1 ? absolute : absolute.slice(at + 1)
+    previewTab = {
+      id: CHAT_PREVIEW_TAB_ID,
+      type: 'editor',
+      title,
+      path: absolute,
+      ...(targetLine !== undefined ? { meta: { line: targetLine } } : {}),
+    }
+    applyChatPreview(store, previewTab)
+    void ctx
+    return
+  }
+
   const canProbeDiff = prefs.editOpensDiff !== false && prefs.tabsEnabled['diff'] !== false
   if (canProbeDiff) {
     try {
@@ -97,7 +126,13 @@ export async function openSidebarFile(ctx: Context, store: SidebarStore, session
   if (previewTab === null) {
     const at = Math.max(absolute.lastIndexOf('/'), absolute.lastIndexOf('\\'))
     const title = at === -1 ? absolute : absolute.slice(at + 1)
-    previewTab = { id: CHAT_PREVIEW_TAB_ID, type: 'editor', title, path: absolute }
+    previewTab = {
+      id: CHAT_PREVIEW_TAB_ID,
+      type: 'editor',
+      title,
+      path: absolute,
+      ...(targetLine !== undefined ? { meta: { line: targetLine } } : {}),
+    }
   }
   // Bypass service.openTab's dedupe (editor dedupes by path) and manipulate
   // the store directly so the fixed preview id always reuses the same tab.

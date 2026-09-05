@@ -7,7 +7,7 @@ import {
   registerSubagentToolJump,
 } from '../src/client/subagent-tool-jump.ts'
 import type { Context, SidebarSessionList } from '../src/context-types.ts'
-import type { SidebarStore } from '../src/client/state.ts'
+import { createSidebarStore, type SidebarStore } from '../src/client/state.ts'
 
 afterEach(() => {
   document.body.innerHTML = ''
@@ -253,6 +253,57 @@ describe('registerSubagentToolJump', () => {
     )
 
     expect(openSubagent).not.toHaveBeenCalled()
+
+    dispose()
+  })
+
+  it('clicking a read tool row opens the file in editor', async () => {
+    const ctx = {
+      sessions: {
+        list: {
+          getSnapshot: () => ({
+            current: 'p-1',
+            byId: {
+              'p-1': { id: 'p-1', cwd: '/workspace', displayTitle: 'Parent' },
+            },
+          }),
+        },
+      },
+      get: vi.fn(),
+    } as unknown as Context
+    const store = createSidebarStore()
+    store.setSession('p-1')
+    store.setPrefs({ ...store.getPrefs(), editOpensDiff: true })
+
+    const dispose = registerSubagentToolJump(ctx, store)
+
+    const toolEl = document.createElement('div')
+    toolEl.setAttribute('data-tool', 'read')
+    toolEl.setAttribute('data-variant', 'read')
+    const titleSpan = document.createElement('span')
+    titleSpan.className = 'toolTitle'
+    titleSpan.textContent = '读取'
+    const summarySpan = document.createElement('span')
+    summarySpan.className = 'summary'
+    summarySpan.textContent = 'src/test.ts'
+    toolEl.appendChild(titleSpan)
+    toolEl.appendChild(summarySpan)
+    document.body.appendChild(toolEl)
+
+    titleSpan.dispatchEvent(
+      new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }),
+    )
+
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+
+    const splits = store.getSnapshot().state!.splits as {
+      tabs: Array<{ id: string; type: string; path?: string; diff?: unknown }>
+    }
+    const tab = splits.tabs.find(t => t.id === 'chat-preview')
+    expect(tab).toBeDefined()
+    expect(tab?.type).toBe('editor')
+    expect(tab?.path).toBe('/workspace/src/test.ts')
+    expect(tab?.diff).toBeUndefined()
 
     dispose()
   })
