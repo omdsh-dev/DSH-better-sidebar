@@ -112,7 +112,10 @@ export interface JobOutputResult {
 }
 
 /** The `subagents.live` response: running child id → latest activity. */
-export type SubagentLiveResult = { live: Record<string, LastActivity> }
+export type SubagentLiveResult = {
+  live: Record<string, LastActivity>
+  models?: Record<string, string>
+}
 
 /** Terminal dependency status (mirror of the host's depsStatus; issue #140). */
 export type TerminalDepsStatus =

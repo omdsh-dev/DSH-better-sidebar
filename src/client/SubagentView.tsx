@@ -178,6 +178,11 @@ function SubagentLiveLines(props: { live: LastActivity | undefined }) {
   )
 }
 
+interface SubagentLiveData {
+  live: Readonly<Record<string, LastActivity>>
+  models: Readonly<Record<string, string>>
+}
+
 /**
  * One shared live-preview poller for the whole Subagent tree. Unlike the old
  * per-card `subagents.history` timers, this sends at most ONE `subagents.live`
@@ -189,16 +194,23 @@ function SubagentLiveLines(props: { live: LastActivity | undefined }) {
 function useSubagentLive(
   rootId: string | undefined,
   active: boolean,
-): Readonly<Record<string, LastActivity>> {
+): SubagentLiveData {
   const [live, setLive] = useState<Record<string, LastActivity>>({})
+  const [models, setModels] = useState<Record<string, string>>({})
 
   // A new tree must never inherit another root's live previews.
-  useEffect(() => { setLive({}) }, [rootId])
+  useEffect(() => {
+    setLive({})
+    setModels({})
+  }, [rootId])
 
   const poll = useCallback(async (signal: AbortSignal): Promise<void> => {
     if (rootId === undefined) return
     const result = await api.subagentsLive(rootId, signal)
-    if (!signal.aborted) setLive(result.live)
+    if (!signal.aborted) {
+      setLive(result.live)
+      if (result.models !== undefined) setModels(result.models)
+    }
   }, [rootId])
   usePolling(rootId !== undefined && active, poll, {
     intervalMs: POLL_MS,
@@ -206,7 +218,21 @@ function useSubagentLive(
     immediate: true,
   })
 
-  return live
+  return { live, models }
+}
+
+/** Resolve the model name for a session, checking the live map first then projection hints. */
+export function resolveSessionModel(
+  sessionId: string,
+  liveModels: Readonly<Record<string, string>>,
+  byId: Readonly<Record<string, SidebarSessionSummary>>,
+): string | undefined {
+  if (liveModels[sessionId]) return liveModels[sessionId]
+  const summary = byId[sessionId]
+  const selection = (summary as { projectionValues?: { modelSelection?: { model?: string; next?: { model?: string }; lastUsed?: { model?: string } } } })?.projectionValues?.modelSelection
+  const fromProjection = selection?.next?.model ?? selection?.lastUsed?.model ?? selection?.model
+  if (typeof fromProjection === 'string' && fromProjection !== '') return fromProjection
+  return undefined
 }
 
 interface RowsProps {
@@ -219,13 +245,14 @@ interface RowsProps {
   currentSessionId: string
   /** The batch live-preview map (child id → latest activity). */
   live: Readonly<Record<string, LastActivity>>
+  models: Readonly<Record<string, string>>
   openChild: (address: SidebarSubagentAddress) => void
   refresh: (parentSessionId: string) => void
 }
 
 /** Render one topology level; branches are always expanded (lazy catalogs). */
 function CatalogRows({
-  parentSessionId, catalog, catalogs, byId, level, currentSessionId, live,
+  parentSessionId, catalog, catalogs, byId, level, currentSessionId, live, models,
   openChild, refresh,
 }: RowsProps) {
   const emptyLoading = catalog?.state === 'loading' && catalog.entries.length === 0
@@ -281,6 +308,7 @@ function CatalogRows({
         const summary = byId[entry.id]
         const label = childLabel(entry, summary)
         const secondary = cardSecondary(summary, entry)
+        const model = resolveSessionModel(entry.id, models, byId)
         const childLoading = childCatalog === undefined
           || (childCatalog.state === 'loading' && childCatalog.entries.length === 0)
         const address: SidebarSubagentAddress = {
@@ -314,7 +342,14 @@ function CatalogRows({
                 className={css.subagentDot}
               />
               <span className={css.subagentContent}>
-                <span className={css.subagentLabel}>{label}</span>
+                <span className={css.subagentLabel}>
+                  <span className={css.subagentLabelText}>{label}</span>
+                  {model !== undefined && (
+                    <span className={css.subagentModelBadge} title={model}>
+                      {model}
+                    </span>
+                  )}
+                </span>
                 <span className={css.subagentSecondary}>{secondary}</span>
                 {entry.activity === 'running' && (
                   <SubagentLiveLines live={live[entry.id]} />
@@ -340,6 +375,7 @@ function CatalogRows({
                       level={level + 1}
                       currentSessionId={currentSessionId}
                       live={live}
+                      models={models}
                       openChild={openChild}
                       refresh={refresh}
                     />
@@ -462,8 +498,9 @@ function JobsSection(props: {
   rootId: string | undefined
   /** The page is visible (active tab + open panel): skip polling otherwise. */
   active: boolean
+  models: Readonly<Record<string, string>>
 }) {
-  const { byId, jobsBySession, rootId, active } = props
+  const { byId, jobsBySession, rootId, active, models } = props
   const rows = useMemo(
     () => orderJobs(collectTreeJobs(byId, jobsBySession, rootId)),
     [byId, jobsBySession, rootId],
@@ -549,6 +586,7 @@ function JobsSection(props: {
             const elapsed = live
               ? now - job.startedAt
               : (job.finishedAt ?? job.startedAt) - job.startedAt
+            const jobModel = resolveSessionModel(row.ownerSessionId, models, byId)
             const secondary = [
               ...(multiOwner ? [row.ownerTitle] : []),
               jobStatusLabel(job.status, t),
@@ -576,6 +614,11 @@ function JobsSection(props: {
                     <span className={css.jobsLabelLine}>
                       <span className={css.jobsKind}>{job.kind}</span>
                       <span className={css.jobsLabel} title={job.label}>{job.label}</span>
+                      {jobModel !== undefined && (
+                        <span className={css.subagentModelBadge} title={jobModel}>
+                          {jobModel}
+                        </span>
+                      )}
                     </span>
                     <span className={css.jobsSecondary}>{secondary}</span>
                   </span>
@@ -648,7 +691,8 @@ export function SubagentView(props: {
   const rootId = useMemo(() => rootAncestor(byId, sessionId), [byId, sessionId])
   const rootCatalog = rootId === undefined ? undefined : catalogs[rootId]
   const rootSummary = rootId === undefined ? undefined : byId[rootId]
-  const live = useSubagentLive(rootId, active)
+  const { live, models } = useSubagentLive(rootId, active)
+  const rootModel = rootId === undefined ? undefined : resolveSessionModel(rootId, models, byId)
 
   /** Catalog owners currently consuming live membership updates. */
   const observedRef = useRef(new Set<string>())
@@ -825,7 +869,14 @@ export function SubagentView(props: {
               />
               <span className={css.subagentContent}>
                 <span className={css.subagentLabel}>
-                  {rootSummary.displayTitle !== '' ? rootSummary.displayTitle : t('subagentMainAgent')}
+                  <span className={css.subagentLabelText}>
+                    {rootSummary.displayTitle !== '' ? rootSummary.displayTitle : t('subagentMainAgent')}
+                  </span>
+                  {rootModel !== undefined && (
+                    <span className={css.subagentModelBadge} title={rootModel}>
+                      {rootModel}
+                    </span>
+                  )}
                 </span>
                 <span className={css.subagentSecondary}>
                   {`${t('subagentMainAgent')} · ${rootSummary.running === true ? t('subagentRunning') : t('subagentInactive')}`}
@@ -847,6 +898,7 @@ export function SubagentView(props: {
                   level={1}
                   currentSessionId={sessionId}
                   live={live}
+                  models={models}
                   openChild={openChild}
                   refresh={refresh}
                 />
@@ -865,6 +917,7 @@ export function SubagentView(props: {
           jobsBySession={list.jobsBySession}
           rootId={rootId}
           active={active}
+          models={models}
         />
       </div>
     </div>
