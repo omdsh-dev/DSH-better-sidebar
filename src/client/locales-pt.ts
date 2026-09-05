@@ -213,6 +213,8 @@ export const pt: Record<string, string> = {
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Abrir arquivos do chat na barra lateral',
   settingsOpenPathDesc: 'Abrir links de arquivos no chat (linhas de ferramentas, arquivos produzidos, menções) no editor da barra lateral em vez do aplicativo padrão do sistema',
+  settingsEditDiffTitle: 'Open edited files as diff',
+  settingsEditDiffDesc: 'When on, clicking an edit-tool file link opens the git worktree diff view in the sidebar instead of the file editor; non-git workspaces fall back to the file',
   settingsOpenToolsTitle: 'Injetar a ferramenta de abertura na barra lateral para o modelo',
   settingsOpenToolsDesc: 'Quando ativado, o modelo pode abrir arquivos, pastas e páginas HTTP(S) na barra lateral pela ferramenta sidebar_open (desativado por padrão)',
   settingsTitleBarTitle: 'Modo de compatibilidade de posição',

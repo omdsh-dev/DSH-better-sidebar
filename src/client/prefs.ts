@@ -79,6 +79,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     interceptOpenPath: typeof record.interceptOpenPath === 'boolean'
       ? record.interceptOpenPath
       : SIDEBAR_PREFS_DEFAULTS.interceptOpenPath,
+    editOpensDiff: typeof record.editOpensDiff === 'boolean'
+      ? record.editOpensDiff
+      : SIDEBAR_PREFS_DEFAULTS.editOpensDiff,
     editorExplorer: typeof record.editorExplorer === 'boolean'
       ? record.editorExplorer
       : SIDEBAR_PREFS_DEFAULTS.editorExplorer,

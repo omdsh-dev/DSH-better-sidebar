@@ -282,4 +282,30 @@ describe('SubagentView background jobs', () => {
       vi.useRealTimers()
     }
   })
+
+  it('renders model badge for job owners when available from live models', async () => {
+    vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+      const method = String(url).split('/').pop()
+      if (method === 'subagents.live') {
+        return jsonResponse({
+          ok: true,
+          value: {
+            live: {},
+            models: { root: 'deepseek-v3', child: 'claude-3-opus' },
+          },
+        })
+      }
+      return jsonResponse({ ok: true, value: {} })
+    })
+
+    const store = makeStore(baseSnapshot())
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+    )
+    await act(async () => { await Promise.resolve() })
+    const text = container.textContent ?? ''
+    expect(text).toContain('deepseek-v3')
+    expect(text).toContain('claude-3-opus')
+    unmount()
+  })
 })

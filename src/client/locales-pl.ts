@@ -232,6 +232,8 @@ export const pl: Record<string, string> = {
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Otwieraj pliki czatu w panelu bocznym',
   settingsOpenPathDesc: 'Otwieraj linki plików na czacie (wiersze narzędzi, wyprodukowane pliki, wzmianki) w edytorze panelu bocznego zamiast w domyślnej aplikacji systemu',
+  settingsEditDiffTitle: 'Open edited files as diff',
+  settingsEditDiffDesc: 'When on, clicking an edit-tool file link opens the git worktree diff view in the sidebar instead of the file editor; non-git workspaces fall back to the file',
   settingsOpenToolsTitle: 'Wstrzyknij narzędzie otwierania panelu bocznego dla modelu',
   settingsOpenToolsDesc: 'Po włączeniu model może otwierać pliki, foldery i strony HTTP(S) w panelu bocznym za pomocą narzędzia sidebar_open (domyślnie wyłączone)',
   settingsTitleBarTitle: 'Tryb zgodności pozycji',

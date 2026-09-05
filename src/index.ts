@@ -14,7 +14,7 @@
  * processes are keyed by session.
  */
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, extname, isAbsolute, join } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -404,6 +404,16 @@ function buildApi(
       const { cwd } = await gitCwdOf(payload)
       return git.status(cwd, selectedRepoOf(payload))
     },
+    'git.status-at': async (payload) => {
+      // Owning-repository probe for the chat file-link diff preview: the
+      // status is scoped to the repository that owns `path`, not the session
+      // cwd's discovery list (the file may sit in a nested child repo).
+      const { cwd } = await gitCwdOf(payload)
+      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path')), fenceEnabledOf(getSettings))
+      const root = await git.repoRootOf(path)
+      if (root === undefined) return { isRepo: false, entries: [], repositories: [] }
+      return git.status(root, root)
+    },
     'git.diff': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       const record = payload as { path?: unknown; staged?: unknown }
@@ -451,9 +461,24 @@ function buildApi(
         : undefined
       return git.log(cwd, count, skip, selectedRepoOf(payload))
     },
+    'git.last-commit-at': async (payload) => {
+      // File-limited last-commit probe for the edit→commit fallback: the most
+      // recent commit touching `path` inside its owning repository.
+      const { cwd } = await gitCwdOf(payload)
+      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path')), fenceEnabledOf(getSettings))
+      const root = await git.repoRootOf(path)
+      if (root === undefined) return { commit: null }
+      const rel = relative(root, path).split(sep).join('/')
+      if (rel === '' || rel.startsWith('..')) return { commit: null }
+      const commit = await git.lastCommitTouching(root, rel)
+      return { commit: commit === undefined ? null : { ...commit, repoRoot: root } }
+    },
     'git.commit-diff': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
-      return { diff: await git.commitDiff(cwd, requireString(payload, 'hash'), selectedRepoOf(payload)) }
+      const record = payload as { path?: unknown }
+      const repoRoot = selectedRepoOf(payload)
+      const path = record.path === undefined ? undefined : await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot)
+      return { diff: await git.commitDiff(cwd, requireString(payload, 'hash'), repoRoot, path) }
     },
     'git.discard': async (payload) => {
       const { cwd } = await gitCwdOf(payload)

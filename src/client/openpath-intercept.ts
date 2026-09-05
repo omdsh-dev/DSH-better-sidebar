@@ -65,9 +65,9 @@ export interface OpenPathInterceptDeps {
   /** The session whose scope the sidebar editor loads the file in (current session). */
   currentSessionId(): string | undefined
   /** Route the open into the sidebar editor (the established openSidebarFile). */
-  openInSidebar(path: string, sessionId: string): void
+  openInSidebar(path: string, sessionId: string): void | Promise<void>
   /** Route a folder-reveal gesture ("Show in folder" passes '.') into the sidebar explorer. */
-  revealInExplorer(path: string, sessionId: string): void
+  revealInExplorer(path: string, sessionId: string): void | Promise<void>
 }
 
 /**

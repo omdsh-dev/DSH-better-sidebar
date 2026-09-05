@@ -269,6 +269,52 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
     const inputSub = term.onData((data) => {
       if (socket !== null && socket.readyState === WebSocket.OPEN) socket.send(data)
     })
+
+    // 聚焦保障：点击终端壳即 focus 到 xterm 的 textarea
+    const onHostClick = (): void => term.focus()
+    host.addEventListener('click', onHostClick)
+
+    // 让 Ctrl+V / Ctrl+Shift+V / Shift+Insert 穿透给浏览器而不是被 xterm 吞掉
+    term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') return false
+      if (e.shiftKey && e.key === 'Insert') return false
+      // Ctrl+Shift+V 在某些 Linux 终端也是粘贴，同样放行
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'v') return false
+      return true
+    })
+
+    // 粘贴：同步 clipboardData 优先，空时用 Edge 异步兜底，经 term.paste() 走 onData->ws
+    const onPaste = (e: ClipboardEvent): void => {
+      const text = e.clipboardData?.getData('text/plain')
+      if (text) {
+        e.preventDefault()
+        term.paste(text)
+        return
+      }
+      // Edge 增强粘贴：clipboardData 为空（如跨应用、云剪贴板），用 async API
+      if (navigator.clipboard?.readText) {
+        e.preventDefault()
+        void navigator.clipboard.readText().then((t) => { if (t) term.paste(t) }).catch(() => {})
+      }
+    }
+    host.addEventListener('paste', onPaste)
+
+    // 额外兜底：焦点不在 textarea 时，Ctrl+V 的 keydown 仍可触发 async 读（Edge 失焦场景）
+    const onKeyDownPasteFallback = (e: KeyboardEvent): void => {
+      const isPasteGesture = ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'v')
+        || (e.shiftKey && e.key === 'Insert')
+      if (!isPasteGesture) return
+      const ae = document.activeElement as HTMLElement | null
+      const isTextarea = ae?.classList.contains('xterm-helper-textarea') ?? false
+      if (isTextarea) return // 已有 paste 事件，无需重复
+      if (!navigator.clipboard?.readText) return
+      // 只在 host 包含焦点或 host 自身被点击过的场景下兜底，避免全局劫持其他输入框的粘贴
+      if (!host.contains(ae) && ae !== document.body) return
+      e.preventDefault()
+      void navigator.clipboard.readText().then((t) => { if (t) { term.focus(); term.paste(t) } }).catch(() => {})
+    }
+    host.addEventListener('keydown', onKeyDownPasteFallback as unknown as EventListener)
+
     // Resize streams fire per layout frame during panel open/close
     // animations; fit() measures glyphs, so coalesce to one fit per
     // animation frame (same pattern as the core's frame-batcher, kept
@@ -334,6 +380,9 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
       cancelOpen()
       window.clearTimeout(retry)
       observer.disconnect()
+      host.removeEventListener('click', onHostClick)
+      host.removeEventListener('paste', onPaste)
+      host.removeEventListener('keydown', onKeyDownPasteFallback as unknown as EventListener)
       if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
       fontSub()
       schemeSub()

@@ -33,7 +33,7 @@ import { FenceErrorNotice } from './FenceErrorNotice.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
 import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
-import { openSidebarFile } from './intercept.tsx'
+import { openSidebarEditorFile } from './intercept.tsx'
 import { openWithSshActive, openWithUrl, parseOpenWithConfig, resolveOpenWithTargets } from './open-with.ts'
 import { updatePluginSettings } from './plugin-settings.ts'
 import { TreePanel } from './TreePanel.tsx'
@@ -162,13 +162,13 @@ export function EditorHost(props: {
     if (inPlace) {
       ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) })
     } else {
-      openSidebarFile(ctx, store, scope.sessionId, absolute)
+      openSidebarEditorFile(ctx, store, scope.sessionId, absolute)
     }
   }
 
   /** The context menu's explicit "new tab" escape (per-path dedupe). */
   const openFileNewTab = (absolute: string): void => {
-    openSidebarFile(ctx, store, scope.sessionId, absolute)
+    openSidebarEditorFile(ctx, store, scope.sessionId, absolute)
   }
 
   /**
@@ -492,6 +492,7 @@ export function EditorHost(props: {
             customData: load.customData,
             // The viewer's toolbar always hoists into this host's header.
             toolbar: 'host',
+            targetLine: typeof metaOf(tab).line === 'number' ? (metaOf(tab).line as number) : undefined,
             onToolbarState,
             onToolbarControls,
           })}

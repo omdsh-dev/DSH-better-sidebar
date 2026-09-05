@@ -223,6 +223,8 @@ export const fr: Record<string, string> = {
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Ouvrir les fichiers de discussion dans la barre latérale',
   settingsOpenPathDesc: 'À la place de l’application par défaut du système, ouvrir dans l’éditeur de la barre latérale les liens vers les fichiers du chat (lignes d’outils, listes de produits, mentions de fichiers)',
+  settingsEditDiffTitle: 'Open edited files as diff',
+  settingsEditDiffDesc: 'When on, clicking an edit-tool file link opens the git worktree diff view in the sidebar instead of the file editor; non-git workspaces fall back to the file',
   settingsOpenToolsTitle: 'Injecter l\'outil d\'ouverture latérale pour le modèle',
   settingsOpenToolsDesc: 'Une fois activé, le modèle peut ouvrir des fichiers, dossiers et pages HTTP(S) dans la barre latérale via l\'outil sidebar_open (désactivé par défaut)',
   settingsTitleBarTitle: 'Mode de compatibilité de position',

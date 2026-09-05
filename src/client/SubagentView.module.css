@@ -133,8 +133,34 @@
 }
 
 .subagentLabel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   color: inherit;
   font-weight: 400;
+}
+
+.subagentLabelText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagentModelBadge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  max-width: 140px;
+  padding: 0 5px;
+  border: 1px solid var(--dsw-alias-hairline);
+  border-radius: 999px;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+  line-height: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .subagentSecondary {

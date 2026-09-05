@@ -543,6 +543,30 @@ make clean          # remove lib/, *.tgz, playwright-report/, test-results/
 - HTML preview and browser tab content render in **opaque-origin sandboxed iframes** (no `allow-same-origin`/`allow-top-navigation`, `no-referrer`, all permission policies disabled); the `/sidebar/html` route carries a CSP `sandbox` + size/path bounds; the address bar rejects `javascript:`/`data:`/`file:` and local addresses like localhost
 - The UI shows the sandbox status live (red warning when off) and can temporarily unlock the current page; the settings page can disable the sandbox per feature (disabled by default, with a warning) — when off, content shares the origin with the UI; only recommended for fully trusted content
 
+### 📁 Extra roots (extraRoots)
+
+File reads/writes (`fs.tree` / `fs.read` / `fs.write`, media and HTML preview, uploads) outside the session workspace are additionally allowed under `~/.dsh/external` by default (when that directory exists — e.g. `~/.dsh/external/dsh-plugin-omoslim`). Customize the allowed roots via `extraRoots`, or disable them entirely with an explicit empty array:
+
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml
+- insert:
+    - id: better-sidebar
+      name: 'dsh-better-sidebar'
+      config:
+        # Extra roots (absolute paths, ~ expands to os.homedir(); non-absolute fails loud; deduped, empty strings ignored)
+        extraRoots:
+          - ~/.dsh/external
+          - /data/shared
+          # Disable all extra roots
+          # extraRoots: []
+```
+
+- When `extraRoots` is omitted the default is `["~/.dsh/external"]` (included only if the directory actually exists; otherwise equivalent to `[]`).
+- An explicit `[]` disables all extra roots and confines file access strictly to the session workspace.
+- Each entry supports a `~` prefix that expands to the host home directory (`os.homedir()`); after expansion it must be an absolute path (POSIX or Windows), otherwise the plugin fails to load.
+- Whether a target is allowed is checked per request by resolving each extra root via `realpath`; unresolvable roots (missing/unreadable) are skipped and a `403 path "..." is outside workspace` is returned only when no root contains the target.
+- `fs.search` remains workspace-only and is not affected by `extraRoots`.
+
 ## ⚠️ Known Limitations
 
 - Git has no push/pull/fetch; Markdown previews provide a manual refresh button with confirmation before discarding unsaved edits; no file watcher or automatic polling; tool inline file-open buttons cannot be intercepted

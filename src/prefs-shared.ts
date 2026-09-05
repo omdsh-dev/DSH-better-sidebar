@@ -72,6 +72,12 @@ export interface SidebarPrefs {
    */
   interceptOpenPath: boolean
   /**
+   * Whether edit-tool path clicks (tool-row `openPath` interception) open the
+   * git worktree diff view instead of the file editor. On by default; when off
+   * the click opens the file in the editor exactly as before.
+   */
+  editOpensDiff: boolean
+  /**
    * Whether the editor tab runs in merged mode: a path input replaces the
    * plain header and a toggleable file-tree panel (with a global name
    * search) docks at the tab's right edge. On by default; also makes brand
@@ -277,6 +283,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   terminalFontFamily: '',
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
   interceptOpenPath: true,
+  editOpensDiff: true,
   editorExplorer: false,
   changesDiffFloat: true,
   workspaceFence: true,
