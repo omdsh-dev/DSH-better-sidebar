@@ -159,6 +159,12 @@ export interface SidebarPrefs {
    */
   titleBarStripPx: number
   /**
+   * Whether the code/markdown editor enables vim keybindings (@replit/
+   * codemirror-vim). Off by default; flipping the setting reconfigures the
+   * open editor in place (document, undo history and scroll survive).
+   */
+  editorVim: boolean
+  /**
    * Whether the HTML previewer drops its sandboxed iframe. Sandbox ON (the
    * default) renders previewed HTML in an opaque-origin iframe that cannot
    * touch the GUI; turning it OFF runs the previewed page with the GUI's
@@ -278,6 +284,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
   interceptOpenPath: true,
   editorExplorer: false,
+  editorVim: false,
   changesDiffFloat: true,
   workspaceFence: true,
   terminalShell: '',

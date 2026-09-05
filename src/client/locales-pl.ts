@@ -301,6 +301,8 @@ export const pl: Record<string, string> = {
   sandboxStatusOn: 'Tryb piaskownicy: włączony · strony nie mogą dostępować danych interfejsu ani plików lokalnych; logowania i ciasteczka firm trzecich mogą nie działać',
   sandboxUnlock: 'Wyłącz tymczasowo (niebezpieczne)',
   sandboxRestore: 'Przywróć piaskownicę',
+  settingsEditorVimTitle: 'Skróty vim w edytorze',
+  settingsEditorVimDesc: 'Po włączeniu edytor kodu/Markdown używa skrótów vim (tryby normalny/insert/visual — hjkl, dd, yy, p itd.); zapis nadal przez Ctrl/Cmd+S, a przełącznik działa od razu w otwartych edytorach',
   settingsHtmlDefaultUnsafeTitle: 'Otwieraj podgląd HTML bez piaskownicy domyślnie (niebezpieczne)',
   settingsHtmlDefaultUnsafeDesc: 'Po włączeniu każdy nowo otwarty podgląd HTML zaczyna się bez piaskownicy (ten sam origin co interfejs — może czytać pliki sesji i wewnętrzne API); pasek stanu nadal pozwala przywrócić piaskownicę',
   settingsHtmlSandboxTitle: 'Wyłącz piaskownicę podglądu HTML (niebezpieczne)',

@@ -282,6 +282,8 @@ export const sv: Record<string, string> = {
   sandboxStatusOn: 'Sandlådeläge: på · sidor kan inte komma åt GUI:ts data eller lokala filer; inloggningar och tredjepartscookies kanske inte fungerar',
   sandboxUnlock: 'Avaktivera tillfälligt (osäkert)',
   sandboxRestore: 'Återställ sandlåda',
+  settingsEditorVimTitle: 'vim-tangentbindningar i redigeraren',
+  settingsEditorVimDesc: 'När påslagen använder kod-/Markdown-redigeraren vim-tangentbindningar (normal-/insättnings-/visuellt läge — hjkl, dd, yy, p osv.); spara är fortfarande Ctrl/Cmd+S och reglaget tillämpas direkt på öppna redigerare',
   settingsHtmlDefaultUnsafeTitle: 'Öppna HTML-förhandsgranskningar osandlådade som standard (osäkert)',
   settingsHtmlDefaultUnsafeDesc: 'När på, startar varje nyöppnad HTML-förhandsgranskning i osandlådat tillstånd (samma ursprung som GUI — kan läsa sessionsfiler och interna API:er); statusraden erbjuder fortfarande en återställning med ett klick',
   settingsHtmlSandboxTitle: 'Avaktivera sandlåda för HTML-förhandsgranskning (osäkert)',

@@ -285,6 +285,8 @@ export const de: Record<string, string> = {
   sandboxStatusOn: 'Sandbox-Modus: aktiviert · Seiten können weder auf die Daten der Oberfläche noch auf lokale Dateien zugreifen; Anmeldungen und Drittanbieter-Cookies funktionieren möglicherweise nicht',
   sandboxUnlock: 'Vorübergehend deaktivieren (unsicher)',
   sandboxRestore: 'Sandbox wiederherstellen',
+  settingsEditorVimTitle: 'Vim-Tastaturbelegung im Editor',
+  settingsEditorVimDesc: 'Wenn aktiviert, nutzt der Code-/Markdown-Editor Vim-Tastaturbelegung (Normal-/Einfüge-/Visuell-Modus — hjkl, dd, yy, p, …); Speichern bleibt Strg/Cmd+S, und der Schalter wirkt sofort auf geöffnete Editoren',
   settingsHtmlDefaultUnsafeTitle: 'HTML-Vorschauen standardmäßig ohne Sandbox öffnen (unsicher)',
   settingsHtmlDefaultUnsafeDesc: 'Wenn aktiviert, startet jede neu geöffnete HTML-Vorschau ohne Sandbox (gleiche Herkunft wie die Oberfläche – sie kann Sitzungsdateien und interne APIs lesen); die Statuszeile bietet weiterhin eine einmalige Wiederherstellung',
   settingsHtmlSandboxTitle: 'HTML-Vorschau-Sandbox deaktivieren (unsicher)',

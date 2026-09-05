@@ -297,6 +297,8 @@ export const nl: Record<string, string> = {
   sandboxStatusOn: 'Sandbox-modus: aan · pagina\'s kunnen de GUI-gegevens of lokale bestanden niet benaderen; logins en third-party cookies werken mogelijk niet',
   sandboxUnlock: 'Tijdelijk uitschakelen (onveilig)',
   sandboxRestore: 'Sandbox herstellen',
+  settingsEditorVimTitle: 'Vim-sneltoetsen in de editor',
+  settingsEditorVimDesc: 'Indien aan, gebruikt de code-/Markdown-editor vim-sneltoetsen (normaal/invoeg/visueel — hjkl, dd, yy, p, ...); opslaan blijft Ctrl/Cmd+S en de schakelaar geldt direct voor geopende editors',
   settingsHtmlDefaultUnsafeTitle: 'HTML-voorbeelden standaard zonder sandbox openen (onveilig)',
   settingsHtmlDefaultUnsafeDesc: 'Indien aan, start elke nieuw geopende HTML-voorbeeld in de niet-gesandboxte staat (zelfde origin als de GUI — kan sessiebestanden en interne API\'s lezen); de statusbalk biedt nog een eenkliks-herstel',
   settingsHtmlSandboxTitle: 'HTML-voorbeeld-sandbox uitschakelen (onveilig)',

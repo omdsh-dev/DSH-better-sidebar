@@ -299,6 +299,8 @@ export const tr: Record<string, string> = {
   sandboxStatusOn: 'Kum modu: açık · sayfalar arayüzün verilerine veya yerel dosyalara erişemez; oturum açmalar ve üçüncü taraf çerezler çalışmayabilir',
   sandboxUnlock: 'Geçici olarak devre dışı bırak (güvenli değil)',
   sandboxRestore: 'Kumu geri yükle',
+  settingsEditorVimTitle: 'Editörde vim tuş bağlamaları',
+  settingsEditorVimDesc: 'Açıkken kod/Markdown editörü vim tuş bağlamalarını etkinleştirir (normal/ekleme/görsel mod — hjkl, dd, yy, p vb.); kaydetme hâlâ Ctrl/Cmd+S’dir ve anahtar açık editörlere anında uygulanır',
   settingsHtmlDefaultUnsafeTitle: 'HTML önizlemelerini varsayılan olarak kumsuz aç (güvenli değil)',
   settingsHtmlDefaultUnsafeDesc: 'Açıkken, yeni açılan her HTML önizlemesi kumsuz durumda başlar (arayüzle aynı kaynak — oturum dosyalarını ve iç API’leri okuyabilir); durum satırı yine tek dokunuşla geri yükleme sunar',
   settingsHtmlSandboxTitle: 'HTML önizleme kumunu devre dışı bırak (güvenli değil)',

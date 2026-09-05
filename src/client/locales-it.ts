@@ -290,6 +290,8 @@ export const it: Record<string, string> = {
   sandboxStatusOn: 'Modalità sandbox: attiva · le pagine non possono accedere ai dati dell’interfaccia o ai file locali; i login e i cookie di terze parti potrebbero non funzionare',
   sandboxUnlock: 'Disattiva temporaneamente (non sicuro)',
   sandboxRestore: 'Ripristina sandbox',
+  settingsEditorVimTitle: 'Tasti vim nell’editor',
+  settingsEditorVimDesc: 'Quando attivo, l’editor di codice/Markdown abilita i tasti vim (modalità normale/inserimento/visuale — hjkl, dd, yy, p, ecc.); il salvataggio resta Ctrl/Cmd+S e l’interruttore si applica subito agli editor aperti',
   settingsHtmlDefaultUnsafeTitle: 'Apri le anteprime HTML senza sandbox per impostazione predefinita (non sicuro)',
   settingsHtmlDefaultUnsafeDesc: 'Se attivato, ogni anteprima HTML appena aperta inizia nello stato senza sandbox (stessa origine dell’interfaccia — può leggere i file di sessione e le API interne); la riga di stato offre ancora un ripristino con un tocco',
   settingsHtmlSandboxTitle: 'Disattiva la sandbox dell’anteprima HTML (non sicuro)',

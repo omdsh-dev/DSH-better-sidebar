@@ -299,6 +299,8 @@ export const hi: Record<string, string> = {
   sandboxStatusOn: 'सैंडबॉक्स मोड: चालू · पृष्ठ GUI के डेटा या स्थानीय फ़ाइलों तक नहीं पहुँच सकते; लॉगिन और थर्ड-पार्टी कुकीज़ काम नहीं कर सकतीं',
   sandboxUnlock: 'अस्थायी रूप से अक्षम (असुरक्षित)',
   sandboxRestore: 'सैंडबॉक्स पुनर्स्थापित करें',
+  settingsEditorVimTitle: 'एडिटर में vim कीबाइंडिंग',
+  settingsEditorVimDesc: 'चालू होने पर कोड/Markdown एडिटर vim कीबाइंडिंग सक्षम करता है (नॉर्मल/इंसर्ट/विज़ुअल मोड — hjkl, dd, yy, p आदि); सेव Ctrl/Cmd+S ही रहता है और स्विच खुले एडिटर पर तुरंत लागू होता है',
   settingsHtmlDefaultUnsafeTitle: 'HTML पूर्वावलोकन डिफ़ॉल्ट रूप से अनसैंडबॉक्स्ड खोलें (असुरक्षित)',
   settingsHtmlDefaultUnsafeDesc: 'चालू होने पर, हर नया खुला HTML पूर्वावलोकन अनसैंडबॉक्स्ड स्थिति में शुरू होता है (GUI के समान मूल — सत्र फ़ाइलें और आंतरिक API पढ़ सकता है); स्थिति पंक्ति अभी भी एक-टैप पुनर्स्थापना देती है',
   settingsHtmlSandboxTitle: 'HTML पूर्वावलोकन सैंडबॉक्स अक्षम करें (असुरक्षित)',

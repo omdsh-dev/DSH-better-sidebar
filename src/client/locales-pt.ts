@@ -282,6 +282,8 @@ export const pt: Record<string, string> = {
   sandboxStatusOn: 'Modo sandbox: ativado · as páginas não podem acessar os dados da interface nem arquivos locais; logins e cookies de terceiros podem não funcionar',
   sandboxUnlock: 'Desativar temporariamente (inseguro)',
   sandboxRestore: 'Restaurar sandbox',
+  settingsEditorVimTitle: 'Atalhos vim no editor',
+  settingsEditorVimDesc: 'Quando ativado, o editor de código/Markdown habilita atalhos vim (modos normal/inserção/visual — hjkl, dd, yy, p etc.); salvar continua com Ctrl/Cmd+S e a opção se aplica imediatamente aos editores abertos',
   settingsHtmlDefaultUnsafeTitle: 'Abrir pré-visualizações de HTML sem sandbox por padrão (inseguro)',
   settingsHtmlDefaultUnsafeDesc: 'Quando ativado, toda pré-visualização de HTML recém-aberta começa sem sandbox (mesma origem da interface — pode ler arquivos de sessão e APIs internas); a linha de status ainda oferece restauração em um toque',
   settingsHtmlSandboxTitle: 'Desativar o sandbox da pré-visualização de HTML (inseguro)',

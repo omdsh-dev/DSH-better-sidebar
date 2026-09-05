@@ -314,6 +314,8 @@ export const zhTW: Record<string, string> = {
   sandboxStatusOn: '沙箱模式：已啟用 · 頁面無法存取介面資料與本地檔案，登入態與第三方 Cookie 可能不可用',
   sandboxUnlock: '臨時解鎖（不安全）',
   sandboxRestore: '恢復沙箱',
+  settingsEditorVimTitle: '編輯器 vim 鍵位',
+  settingsEditorVimDesc: '開啟後，程式碼 / Markdown 編輯器啟用 vim 鍵位（普通 / 插入 / 視覺模式，hjkl、dd、yy、p 等）；儲存仍為 Ctrl/Cmd+S，開關對已開啟的編輯器即時生效',
   settingsHtmlDefaultUnsafeTitle: 'HTML 預覽預設以非沙箱模式開啟（不安全）',
   settingsHtmlDefaultUnsafeDesc: '開啟後，每次開啟 HTML 檔案時預覽預設處於非沙箱狀態（與介面同源，可讀取工作階段檔案與內部介面）；可在狀態列臨時恢復沙箱',
   settingsHtmlSandboxTitle: '關閉 HTML 預覽沙箱（不安全）',

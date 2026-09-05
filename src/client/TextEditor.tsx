@@ -16,9 +16,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
-import { EditorState } from '@codemirror/state'
+import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
+import { vim } from '@replit/codemirror-vim'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
 import { api, htmlUrl } from './api.ts'
@@ -71,6 +72,8 @@ export function TextEditor(props: FileViewerProps) {
   const savingRef = useRef(false)
   /** The theme compartment of the current view (reconfigured on scheme flip). */
   const themeCompRef = useRef<CmThemeCompartment | null>(null)
+  /** The vim compartment of the current view (reconfigured on pref flips). */
+  const vimCompRef = useRef<Compartment | null>(null)
   /** The app's resolved color scheme; the editor re-themes in place on flips. */
   const [dark, setDark] = useState(() => isDarkScheme())
   /** The markdown preview container (selection-containment + line lookup). */
@@ -135,6 +138,7 @@ export function TextEditor(props: FileViewerProps) {
   // the preview/edit toggle. The theme + syntax colors live in a compartment
   // so a scheme flip reconfigures only that part — the document, undo
   // history and scroll position survive.
+  const vimMode = props.store?.getPrefs().editorVim === true
   useEffect(() => {
     if (content === undefined) return
     const host = hostRef.current
@@ -142,9 +146,15 @@ export function TextEditor(props: FileViewerProps) {
     const language = languageForPath(path)
     const themeComp = new CmThemeCompartment()
     themeCompRef.current = themeComp
+    const vimComp = new Compartment()
+    vimCompRef.current = vimComp
     const state = EditorState.create({
       doc: content,
       extensions: [
+        // Vim keybindings behind the `editorVim` side card setting (off by
+        // default). First slot = highest keymap precedence; the compartment
+        // lets the toggle flip in place (see the vimMode effect below).
+        vimComp.of(vimMode ? [vim()] : []),
         CodeMirrorView.lineWrapping,
         lineNumbers(),
         history(),
@@ -233,6 +243,16 @@ export function TextEditor(props: FileViewerProps) {
     if (view === null || themeComp === null) return
     view.dispatch({ effects: themeComp.reconfigure(dark) })
   }, [dark])
+
+  // Vim setting flip: reconfigure the keymap in place — same compartment
+  // pattern as the scheme flip, so the document, undo history and scroll
+  // position all survive the toggle.
+  useEffect(() => {
+    const view = viewRef.current
+    const vimComp = vimCompRef.current
+    if (view === null || vimComp === null) return
+    view.dispatch({ effects: vimComp.reconfigure(vimMode ? [vim()] : []) })
+  }, [vimMode])
 
   // The editor may have been display:none while previewing; re-measure when
   // it becomes visible again (CodeMirror sizes itself on reveal). A mode

@@ -299,6 +299,8 @@ export const ja: Record<string, string> = {
   sandboxStatusOn: 'サンドボックスモード：オン ・ ページは GUI のデータやローカルファイルにアクセス不可。ログイン状態とサードパーティ Cookie は利用できない場合あり',
   sandboxUnlock: '一時的に解除（非安全）',
   sandboxRestore: 'サンドボックスを復元',
+  settingsEditorVimTitle: 'エディター vim キーバインド',
+  settingsEditorVimDesc: 'オンにすると、コード / Markdown エディターで vim キーバインドが有効になります（ノーマル / 挿入 / ビジュアルモード、hjkl、dd、yy、p など）；保存は引き続き Ctrl/Cmd+S、切り替えは開いているエディターに即時反映されます',
   settingsHtmlDefaultUnsafeTitle: 'HTML プレビューをデフォルトで非サンドボックスで開く（非安全）',
   settingsHtmlDefaultUnsafeDesc: 'オンにすると、新しく開く HTML プレビューは非サンドボックス状態で起動（GUI と同一オリジン、会話ファイルや内部 API を読み取り可）。ステータス行から一時的にサンドボックスを復元可能',
   settingsHtmlSandboxTitle: 'HTML プレビューのサンドボックスを無効化（非安全）',

@@ -299,6 +299,8 @@ export const vi: Record<string, string> = {
   sandboxStatusOn: 'Chế độ sandbox: đã bật · trang không thể truy cập dữ liệu UI và tệp cục bộ, đăng nhập và cookie bên thứ ba có thể không hoạt động',
   sandboxUnlock: 'Mở khóa tạm (không an toàn)',
   sandboxRestore: 'Khôi phục sandbox',
+  settingsEditorVimTitle: 'Phím vim trong trình soạn thảo',
+  settingsEditorVimDesc: 'Khi bật, trình soạn thảo mã/Markdown bật phím vim (chế độ thường/chèn/thị giác — hjkl, dd, yy, p, v.v.); lưu vẫn là Ctrl/Cmd+S và công tắc áp dụng ngay cho các trình soạn thảo đang mở',
   settingsHtmlDefaultUnsafeTitle: 'Mở xem trước HTML không sandbox mặc định (không an toàn)',
   settingsHtmlDefaultUnsafeDesc: 'Khi bật, mỗi lần mở tệp HTML xem trước sẽ mặc định không sandbox (cùng nguồn UI, có thể đọc tệp phiên và API nội bộ); có thể khôi phục sandbox tạm thời trên thanh trạng thái',
   settingsHtmlSandboxTitle: 'Tắt sandbox xem trước HTML (không an toàn)',
