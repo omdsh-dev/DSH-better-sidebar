@@ -9,7 +9,7 @@
  * only, no editor chrome); file tabs keep the full chrome in both modes.
  */
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createElement, useEffect, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
@@ -298,6 +298,47 @@ describe('EditorHost (files window)', () => {
       expect(calls).toEqual(['mode:edit', 'save'])
     } finally {
       unmount()
+    }
+  })
+
+  it('threads an external preview grant into fs.read and marks the viewer read-only', async () => {
+    const { store, ctx } = setup()
+    let viewerReadOnly: boolean | undefined
+    ctx.betterSidebar.registerFileViewer({
+      id: 'test:markdown',
+      exts: ['md'],
+      fetchStrategy: 'fsRead',
+      component: (props) => {
+        viewerReadOnly = props.readOnly
+        return createElement('div', null, props.content)
+      },
+    })
+    ctx.betterSidebar.openTab({
+      type: 'editor',
+      title: 'report.md',
+      path: '/outside/report.md',
+      id: 'editor:/outside/report.md',
+      meta: { previewGrant: 'grant-token', readOnly: true },
+    })
+    const fileTab = (): SidebarTab =>
+      allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+        .find(tab => tab.path === '/outside/report.md')!
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      ok: true,
+      value: { kind: 'text', content: '# External', truncated: false },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { container, unmount } = mountHost(ctx, store, fileTab)
+    try {
+      await act(async () => { await Promise.resolve(); await Promise.resolve() })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body)) as Record<string, unknown>
+      expect(body).toMatchObject({ sessionId: 'editor-home-session', path: '/outside/report.md', previewGrant: 'grant-token' })
+      expect(viewerReadOnly).toBe(true)
+      expect(container.textContent).toContain('# External')
+    } finally {
+      unmount()
+      vi.unstubAllGlobals()
     }
   })
 

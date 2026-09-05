@@ -38,6 +38,8 @@ export interface SidebarHttpRequest {
   url?: string
   method?: string
   headers: Record<string, string | string[] | undefined>
+  /** TCP peer facts used by the loopback-only external-preview grant route. */
+  socket?: { remoteAddress?: string }
   [Symbol.asyncIterator](): AsyncIterator<string | Uint8Array>
 }
 

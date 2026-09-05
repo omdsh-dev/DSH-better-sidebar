@@ -8,21 +8,82 @@
  */
 import { IconCodeOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
-import { firstLeaf, revealPaths, togglePanel, type SidebarStore } from './state.ts'
+import { allLeaves, firstLeaf, revealPaths, togglePanel, type SidebarStore, type SidebarTab } from './state.ts'
+import { api, type SessionScope } from './api.ts'
 import { t } from './locales.ts'
 import { resolveSidebarPath, selectProducedFiles } from './produced-files.ts'
-import { wrapOpenWorkspacePath, type OpenWorkspacePathService } from './openpath-intercept.ts'
+import {
+  isAbsoluteMarkdownPath,
+  wrapAbsoluteMarkdownMentions,
+  wrapOpenWorkspacePath,
+  type ChatFileMentionsService,
+  type OpenWorkspacePathService,
+} from './openpath-intercept.ts'
 import css from './sidebar.module.css'
 
+/** Private metadata carried only by an explicitly authorized chat preview. */
+interface SidebarFileOpenOptions {
+  previewGrant?: string
+  readOnly?: boolean
+}
+
 /** Open a file in the sidebar's editor (used by the intercepted row and the explorer). */
-export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: string, path: string): void {
+export function openSidebarFile(
+  ctx: Context,
+  store: SidebarStore,
+  sessionId: string,
+  path: string,
+  options: SidebarFileOpenOptions = {},
+): void {
   const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
   const absolute = resolveSidebarPath(summary?.cwd, path)
   const at = Math.max(absolute.lastIndexOf('/'), absolute.lastIndexOf('\\'))
   const title = at === -1 ? absolute : absolute.slice(at + 1)
+  const meta = options.previewGrant === undefined
+    ? undefined
+    : { previewGrant: options.previewGrant, readOnly: options.readOnly === true }
   // Route through the sidebar service so the editor descriptor's dedupeKey
   // (per-path) applies; the id is path-derived so multiple editors coexist.
-  ctx.get('betterSidebar')?.openTab({ type: 'editor', title, path: absolute, id: `editor:${absolute}` })
+  const service = ctx.get('betterSidebar')
+  if (meta !== undefined) {
+    // A previously opened tab for this path would otherwise win dedupe and
+    // retain a stale/missing grant. Refresh it without dropping tree chrome.
+    const state = service?.getSnapshot().state
+    const tabs: SidebarTab[] = state === undefined
+      ? []
+      : [
+          ...allLeaves(state.splits).flatMap(leaf => leaf.tabs),
+          ...allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs),
+          ...state.floats.map(item => item.tab),
+        ]
+    const existing = tabs.find(tab => tab.type === 'editor' && tab.path === absolute)
+    if (existing !== undefined) {
+      const currentMeta = existing.meta !== null && typeof existing.meta === 'object' && !Array.isArray(existing.meta)
+        ? existing.meta as Record<string, unknown>
+        : {}
+      service?.updateTab(existing.id, { meta: { ...currentMeta, ...meta } })
+    }
+  }
+  service?.openTab({ type: 'editor', title, path: absolute, id: `editor:${absolute}`, ...(meta === undefined ? {} : { meta }) })
+}
+
+/** Authorize a chat-clicked Markdown file, then open an outside file read-only. */
+function openChatFileInSidebar(ctx: Context, store: SidebarStore, sessionId: string, path: string): void {
+  if (!isAbsoluteMarkdownPath(path)) {
+    openSidebarFile(ctx, store, sessionId, path)
+    return
+  }
+  const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
+  const scope: SessionScope = { sessionId, ...(summary?.cwd === undefined ? {} : { cwd: summary.cwd }) }
+  void api.markdownPreviewGrant(scope, path).then((result) => {
+    if (ctx.sessions.list.getSnapshot().current !== sessionId) return
+    if (result.outside) openSidebarFile(ctx, store, sessionId, path, { previewGrant: result.grant, readOnly: true })
+    else openSidebarFile(ctx, store, sessionId, path)
+  }).catch((error: unknown) => {
+    // Fail closed: opening without the capability would only create a broken
+    // tab (the normal fs.read route remains workspace-fenced).
+    console.error('[dsh-better-sidebar] Markdown preview authorization failed:', error)
+  })
 }
 
 /**
@@ -169,18 +230,36 @@ export function registerTurnTailInterception(ctx: Context, store: SidebarStore):
  * descriptor — HMR-safe).
  */
 export function registerOpenPathInterception(ctx: Context, store: SidebarStore): () => void {
+  const takeoverEnabled = (): boolean => !store.getSuspended()
+    && store.getPrefs().interceptOpenPath !== false
+    && store.getPrefs().tabsEnabled['editor'] !== false
+
   const fiber = ctx.inject(['remote.session'], (fctx) => {
     fctx.effect(() => {
       const service = fctx.get('remote.session') as OpenWorkspacePathService
       return wrapOpenWorkspacePath(service, {
-        takeoverEnabled: () => !store.getSuspended()
-          && store.getPrefs().interceptOpenPath !== false
-          && store.getPrefs().tabsEnabled['editor'] !== false,
+        takeoverEnabled,
         currentSessionId: () => ctx.sessions.list.getSnapshot().current,
-        openInSidebar: (path, sessionId) => { openSidebarFile(ctx, store, sessionId, path) },
+        openInSidebar: (path, sessionId) => { openChatFileInSidebar(ctx, store, sessionId, path) },
         revealInExplorer: (_path, sessionId) => { revealInExplorer(ctx, store, sessionId, lastProduced) },
       })
     }, 'dsh-better-sidebar: open-path interception wrap')
   })
-  return () => { void fiber.dispose() }
+
+  // ui-deliverables only links inline-code names produced in the same turn.
+  // Extend (never replace) that vocabulary with complete absolute Markdown
+  // paths, then let owner.openFile flow into the remote wrapper above.
+  const mentions = (ctx as unknown as {
+    get(name: 'chatFileMentions'): ChatFileMentionsService | undefined
+  }).get('chatFileMentions')
+  const restoreMentions = mentions === undefined
+    ? () => {}
+    : wrapAbsoluteMarkdownMentions(mentions, {
+        enabled: takeoverEnabled,
+        label: (path) => `${t('producedOpen')}: ${path}`,
+      })
+  return () => {
+    restoreMentions()
+    void fiber.dispose()
+  }
 }

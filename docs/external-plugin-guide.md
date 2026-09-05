@@ -419,6 +419,7 @@ interface FileViewerProps {
   mediaUrl?: string        // fetchStrategy='mediaUrl' 时
   customData?: unknown     // fetchStrategy='custom' 时（load() 的返回值）
   // 以下为内置文本编辑器与 EditorHost 内部协作字段，外部 viewer 忽略：
+  readOnly?: boolean       // 会话外 Markdown 的显式点击预览：只读、不可保存
   toolbar?: 'self' | 'host'
   onToolbarState?: (state: EditorToolbarState) => void
   onToolbarControls?: (controls: EditorToolbarControls | null) => void
@@ -731,6 +732,7 @@ ctx.effect(() =>
 | **第三语言覆盖（ja 等）** | 可选 peer `@huanlin/dsh-plugin-better-locale`（optional）提供 ja/ko 覆盖，**借用 DSH 英文槽位**（仅 DSH=en 时生效，zh 下惰性）。经 `ctx.get('betterLocale')` 注入 `t()`；未安装整段 no-op |
 | **懒加载 chunk** | 重依赖（xterm/CodeMirror）在独立 bundle（`lib/client-<name>.js`），经 `/sidebar/bundle` 按需下发；factory 赋到 `globalThis.__dshChunks__[<name>]`，由 `src/client/chunk-loader.ts` 物化，**不经** `__ModuleLoader__`。对消费插件透明 |
 | **聊天文件打开漏斗（alpha 宿主）** | 聊天里一切文件打开（工具行 / 产物行 / 正文提及 / 行内代码路径）汇入 `ctx.remote.session.openWorkspacePath`（Typert remote 命名空间，cordis 服务 key `remote.session`，方法为 **accessor 属性**、异步挂载）。better-sidebar 的「聊天区文件在侧边栏打开」即在 `ctx.inject(['remote.session'], …)` 内以 defineProperty 遮蔽该方法（`src/client/openpath-intercept.ts`）。你的插件若要观测/旁路聊天文件打开，走同一服务；不要假设 pre-alpha 的 `ctx.workspaces.openPath` 存在（alpha 的 `IWorkspaces` 已无此方法） |
+| **会话结果中的绝对 Markdown 路径** | stock `chatFileMentions` 先解析当轮产物；better-sidebar 仅对完整的 POSIX / Windows 绝对 `.md` / `.markdown` 行内代码补链接，并继续走聊天文件打开漏斗。工作区外文件需由 loopback TCP 客户端显式点击后取得随机、会话绑定、精确路径的内存读授权；该 tab 强制只读，`fs.write` 与其它路径仍按 `workspaceFence` 规则处理 |
 
 ---
 

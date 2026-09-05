@@ -70,4 +70,17 @@ describe('markdown preview code-block copy labels (DSH i18n following)', () => {
     expect(html).toContain('Copy')
     expect(html).not.toContain('复制')
   })
+
+  it('renders an authorized external Markdown document without edit/save controls', () => {
+    const locale = new FakeLocale()
+    locale.active = 'en'
+    attachLocale(locale)
+    const html = renderToString(createElement(TextEditor, viewerProps({
+      content: '# External report',
+      readOnly: true,
+    })))
+    expect(html).toContain('External report')
+    expect(html).not.toContain('>Edit<')
+    expect(html).not.toContain('aria-label="Save"')
+  })
 })
