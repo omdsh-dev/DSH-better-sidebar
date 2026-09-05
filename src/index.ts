@@ -55,6 +55,7 @@ import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
 import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
 import { buildSidechatApi } from './sidechat-routes.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
+import { decodeTextBytes, encodeText, encodingOfFile } from './text-encoding.ts'
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
@@ -171,7 +172,8 @@ async function resolveGitPath(cwd: string, raw: string, selected?: string): Prom
 /** How many leading bytes a binary read returns for client-side detect sniffing. */
 const READ_HEAD_LIMIT = 4096
 
-/** Text read of a file with the size cap; binary detection via NUL probe.
+/** Text read of a file with the size cap; text encoding is detected before
+ *  the NUL-based binary fallback so UTF-16/UTF-32 text remains editable.
  *  Binary reads also return the first {@link READ_HEAD_LIMIT} bytes (base64)
  *  so the client can re-match viewers by content (`detect`). */
 async function readText(path: string, readLimit: number): Promise<{
@@ -196,12 +198,13 @@ async function readText(path: string, readLimit: number): Promise<{
     const buffer = Buffer.alloc(Math.min(size, readLimit))
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
     const slice = buffer.subarray(0, bytesRead)
-    const binary = slice.includes(0)
+    const decoded = decodeTextBytes(slice)
+    const binary = decoded === null
     const head = binary
       ? slice.subarray(0, Math.min(slice.length, READ_HEAD_LIMIT)).toString('base64')
       : undefined
     return {
-      content: binary ? '' : slice.toString('utf8'),
+      content: decoded?.content ?? '',
       truncated,
       binary,
       size,
@@ -358,10 +361,11 @@ function buildApi(
       const { cwd } = await cwdOf(payload)
       const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'), fenceEnabledOf(getSettings))
       const content = requireString(payload, 'content')
+      const encoding = await encodingOfFile(path)
       const tmp = `${path}.dsh-sidebar-tmp-${process.pid}`
       try {
         await mkdir(dirname(path), { recursive: true })
-        await writeFile(tmp, content, 'utf8')
+        await writeFile(tmp, encodeText(content, encoding))
         await rename(tmp, path)
       } catch (error) {
         await rm(tmp, { force: true }).catch(() => {})
