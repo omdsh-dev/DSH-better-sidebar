@@ -19,6 +19,7 @@ import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
 import { registerLinkInterception } from './link-intercept.ts'
+import { registerSubagentToolJump } from './subagent-tool-jump.ts'
 import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { loadBootDecision } from './prefs.ts'
@@ -396,6 +397,18 @@ export function apply(ctx: Context): void {
         }
       },
       'dsh-better-sidebar: link interception',
+    )
+
+    ctx.effect(
+      () => {
+        try {
+          return registerSubagentToolJump(ctx, sidebarStore)
+        } catch (error) {
+          fail('subagent jump interception', error)
+          return () => {}
+        }
+      },
+      'dsh-better-sidebar: subagent tool jump interception',
     )
 
     // The IME guard: composition keys (candidate arrows, confirm, cancel)

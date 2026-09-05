@@ -57,4 +57,46 @@ describe('DiffFiles file folding', () => {
       container.remove()
     }
   })
+
+  it('expands single file diff by default even if it is a test file', () => {
+    const singleTestDiff = [
+      'diff --git a/tests/b.spec.ts b/tests/b.spec.ts',
+      '--- a/tests/b.spec.ts',
+      '+++ b/tests/b.spec.ts',
+      '@@ -1 +1 @@',
+      '-old-b',
+      '+new-b',
+    ].join('\n')
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root: Root = createRoot(container)
+    try {
+      act(() => { root.render(createElement(DiffFiles, { diff: singleTestDiff })) })
+      const headers = [...container.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
+      expect(headers).toHaveLength(1)
+      expect(headers[0]!.getAttribute('aria-expanded')).toBe('true')
+      expect(container.textContent).toContain('new-b')
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
+
+  it('expands all files when defaultExpandAll is true', () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root: Root = createRoot(container)
+    try {
+      act(() => { root.render(createElement(DiffFiles, { diff, defaultExpandAll: true })) })
+      const headers = [...container.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')]
+      expect(headers).toHaveLength(3)
+      expect(headers.map(header => header.getAttribute('aria-expanded'))).toEqual(['true', 'true', 'true'])
+      expect(container.textContent).toContain('new-a')
+      expect(container.textContent).toContain('new-b')
+      expect(container.textContent).toContain('new-doc')
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
 })

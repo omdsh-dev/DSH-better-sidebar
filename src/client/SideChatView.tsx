@@ -178,7 +178,10 @@ function CollapsibleRow(props: {
     : null
   if (props.children === undefined) {
     return (
-      <div className={clsx(css.sidechatRowLine, css.sidechatRowStatic, props.failed === true && css.sidechatRowFailed)}>
+      <div
+        data-tool={props.label}
+        className={clsx(css.sidechatRowLine, css.sidechatRowStatic, props.failed === true && css.sidechatRowFailed)}
+      >
         {leading}
         {label}
         {meta}
@@ -186,7 +189,7 @@ function CollapsibleRow(props: {
     )
   }
   return (
-    <details className={css.sidechatRow}>
+    <details className={css.sidechatRow} data-tool={props.label}>
       <summary
         className={clsx(
           css.sidechatRowLine,

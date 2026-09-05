@@ -171,3 +171,22 @@ body[data-dsh-sidebar-submenu~="left"] div[role="menu"] div[role="menu"]::before
   left: auto;
   right: -4px;
 }
+
+/* Subagent tool-call visual affordance: indicate click-to-jump to subagent */
+[data-tool^="subagent"],
+[data-tool="send_message"],
+[data-tool="interrupt_agent"] {
+  cursor: pointer;
+}
+
+[data-tool^="subagent"] [class*="summary"],
+[data-tool="send_message"] [class*="summary"] {
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+[data-tool^="subagent"]:hover [class*="summary"],
+[data-tool="send_message"]:hover [class*="summary"] {
+  color: var(--dsw-alias-interactive-text-hover, inherit);
+  text-decoration: underline dotted;
+}

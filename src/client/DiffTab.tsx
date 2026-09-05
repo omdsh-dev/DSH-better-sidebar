@@ -103,8 +103,8 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
       {!loading && error === null && data !== null && (
         <>
           {data.untracked !== undefined
-            ? <DiffFiles diff="" untrackedPath={diff.kind === 'worktree' ? diff.path : ''} untrackedContent={data.untracked} />
-            : <DiffFiles diff={data.diff} />}
+            ? <DiffFiles diff="" untrackedPath={diff.kind === 'worktree' ? diff.path : ''} untrackedContent={data.untracked} defaultExpandAll />
+            : <DiffFiles diff={data.diff} defaultExpandAll />}
           {data.diff === '' && data.untracked === undefined && (
             <div className={css.gitEmpty}>{t('diffEmpty')}</div>
           )}

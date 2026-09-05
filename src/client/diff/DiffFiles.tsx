@@ -18,11 +18,22 @@ import css from './diff.module.css'
 const TEST_PATH = /(^|\/)(?:__tests__|tests?|specs?|fixtures?|mocks?|snapshots?)(?:\/|$)|\.(?:test|spec)\.[^/]+$/i
 const DOC_PATH = /(^|\/)(?:docs?|documentation)(?:\/|$)|(^|\/)(?:readme|changelog|contributing|license|authors|notice)(\.[^/]*)?$/i
 const GENERATED_PATH = /(^|\/)(?:dist|build|coverage|generated|vendor|node_modules)(?:\/|$)|(^|\/)(?:package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|composer\.lock|cargo\.lock|poetry\.lock)$/i
-const SOURCE_PATH = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts|py|pyw|rb|php|java|kt|kts|scala|go|rs|swift|c|h|cc|cpp|cxx|hpp|hh|hxx|cs|fs|fsx|vb|dart|lua|r|ex|exs|erl|hrl|clj|cljs|cljc|groovy|sh|bash|zsh|fish|ps1|sql|vue|svelte|astro|html|htm|css|scss|sass|less)$/i
+const SOURCE_PATH = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts|py|pyw|rb|php|java|kt|kts|scala|go|rs|swift|c|h|cc|cpp|cxx|hpp|hh|hxx|cs|fs|fsx|vb|dart|lua|r|ex|exs|erl|hrl|clj|cljs|cljc|groovy|sh|bash|zsh|fish|ps1|sql|vue|svelte|astro|html|htm|css|scss|sass|less|json|jsonc|json5|ya?ml|toml|xml|svg|env|ini|conf|properties|proto|graphql|gql)$/i
 
-/** Source files open by default; tests, docs, generated files and unknown types stay folded. */
-function defaultExpandedFiles(files: readonly DiffFile[]): Set<number> {
+/**
+ * Source files open by default; tests, docs, generated files and unknown types stay folded.
+ * When `expandAll` is true or there is only a single file in the diff, all expandable files open by default.
+ */
+function defaultExpandedFiles(files: readonly DiffFile[], expandAll?: boolean): Set<number> {
   const expanded = new Set<number>()
+  if (expandAll || files.length === 1) {
+    files.forEach((file, index) => {
+      if (!file.binary && file.hunks.length > 0) {
+        expanded.add(index)
+      }
+    })
+    return expanded
+  }
   files.forEach((file, index) => {
     const path = displayPath(file.newPath === '/dev/null' ? file.oldPath : file.newPath)
     if (!file.binary && file.hunks.length > 0
@@ -51,17 +62,19 @@ export interface DiffFilesProps {
   /** Untracked-file content: when present, renders as a full-file addition instead of parsing. */
   untrackedPath?: string
   untrackedContent?: string
+  /** Whether all expandable files start expanded (defaults to false; single-file diffs always expand). */
+  defaultExpandAll?: boolean
 }
 
-export function DiffFiles({ diff, untrackedPath, untrackedContent }: DiffFilesProps) {
+export function DiffFiles({ diff, untrackedPath, untrackedContent, defaultExpandAll }: DiffFilesProps) {
   const parsed = useMemo(() => {
     if (untrackedPath !== undefined) {
       return { files: [untrackedFile(untrackedPath, untrackedContent ?? '')] }
     }
     return parseUnifiedDiff(diff)
   }, [diff, untrackedPath, untrackedContent])
-  const [expandedFiles, setExpandedFiles] = useState<Set<number>>(() => defaultExpandedFiles(parsed.files))
-  useEffect(() => { setExpandedFiles(defaultExpandedFiles(parsed.files)) }, [parsed])
+  const [expandedFiles, setExpandedFiles] = useState<Set<number>>(() => defaultExpandedFiles(parsed.files, defaultExpandAll))
+  useEffect(() => { setExpandedFiles(defaultExpandedFiles(parsed.files, defaultExpandAll)) }, [parsed, defaultExpandAll])
 
   // Segments and header stats computed once per file.
   const files = useMemo(
