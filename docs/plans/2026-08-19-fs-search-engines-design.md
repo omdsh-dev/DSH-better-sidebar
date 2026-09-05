@@ -37,7 +37,7 @@
 | 引擎 | 命令 | 语义对齐 |
 |---|---|---|
 | fd | `fd --hidden --no-ignore --exclude .git --fixed-strings --ignore-case --path-separator / --max-results N+1 <q> .`(cwd=root) | `--fixed-strings` 字面量子串匹配(对齐朴素语义,防 glob 注入);`-H -I` 不忽略隐藏/ignore 文件;"文件名+目录名" 都匹配;`--max-results` 天然限流;`.git` 目录显式排除(朴素遍历同样跳过) |
-| rg | `rg --files --hidden --no-ignore --glob '!**/.git/**' --iglob '*<escaped>*' --path-separator / .`(cwd=root) | `--iglob` 大小写不敏感(rg globset 不支持 `(?i)` 前缀);`--path-separator /` 把 Windows 上的 `\` 输出钉成 `/`(rg 在 cmd/PowerShell 下输出 `\`、Git Bash 下输出 `/`,见 rg#501,源头钉死);**只匹配文件,不匹配目录名**(documented lossy);`.git` 全程排除;无结果上限,流式读取到 N+1 杀进程;**exit 1 = 无匹配,属正常空结果**(rg 契约,streamLines 放行,不触发引擎禁用) |
+| rg | `rg --files --hidden --no-ignore --glob '!**/.git/**' --iglob '*<escaped>*' --iglob '**/*<escaped>*/**' --path-separator / .`(cwd=root) | `--iglob` 大小写不敏感(rg globset 不支持 `(?i)` 前缀);`--path-separator /` 把 Windows 上的 `\` 输出钉成 `/`(rg 在 cmd/PowerShell 下输出 `\`、Git Bash 下输出 `/`,见 rg#501,源头钉死);query 双 glob:无斜杠形态按 gitignore 语义**只匹配 basename**(真机 rg 15 验证),路径级形态 `**/*q*/**` 收纳「匹配目录下的文件」供 `deriveRgMatches` 倒推目录命中——与 fd/plain 的目录名匹配对齐(残留 lossy:rg 看不见空目录);`.git` 全程排除;无结果上限,流式读取到 N+1 杀进程;**exit 1 = 无匹配,属正常空结果**(rg 契约,streamLines 放行,不触发引擎禁用) |
 
 统一出口:子进程 stdout 流式逐行(全量结果用 readline + 超过 N+1 即 kill,不会 buffer 进内存),经 `normalizeEnginePaths` 换算(去 `./` 前缀、`/` 分隔),由 `searchFiles` 排序 + 截断。
 
@@ -78,7 +78,7 @@
   | `/Applications`(24 万文件) | 无匹配 | 452ms,0 命中,`truncated=true` | 184ms,0 命中,完整 |
   | `/Users/y/tools`(3.7 万文件) | `glob` | 217ms,102 命中,完整 | 56ms,99 命中,完整 |
 
-  结论:**真实嵌套目录下 rg 快 2.5~20 倍,且 plain 大目录一律预算截断(结果不完整,正是 issue #203 指出的问题)**;`tools "glob"` 的 99 vs 102 差异是 rg 只报文件、plain 把目录也算命中(documented lossy);README 查询 rg 命中 200(结果上限)+ 完整遍历,而 plain 85 命中即因预算截断而漏掉其余。顺带修出两个 mock 测不出的 bug:`(?i)` 前缀无效(改 `--iglob`)与 rg exit 1 = 无匹配(放行,不触发引擎禁用)。极端场景(如 `~/Library/Containers`,数百万 iCloud 小文件)下 plain 与 rg 均需 >5min,两类实现都不可用,不作为基准
+  结论:**真实嵌套目录下 rg 快 2.5~20 倍,且 plain 大目录一律预算截断(结果不完整,正是 issue #203 指出的问题)**;`tools "glob"` 的 99 vs 102 差异是 rg 只报文件、plain 把目录也算命中——后续以 query 双 glob + `deriveRgMatches` 倒推对齐(残留 lossy:空目录不可见);README 查询 rg 命中 200(结果上限)+ 完整遍历,而 plain 85 命中即因预算截断而漏掉其余。顺带修出两个 mock 测不出的 bug:`(?i)` 前缀无效(改 `--iglob`)与 rg exit 1 = 无匹配(放行,不触发引擎禁用)。极端场景(如 `~/Library/Containers`,数百万 iCloud 小文件)下 plain 与 rg 均需 >5min,两类实现都不可用,不作为基准
 - 本机无 fd,`fd` 候选探测自然剔除,链正常降级
 - **门控插桩验收(2026-08-21,本机 macOS,真机 dsh web + UI 实测)**:
   - 默认静默:未设 `DSH_SEARCH_DEBUG` 时零 console、零磁盘写(测试与真机双重确认)

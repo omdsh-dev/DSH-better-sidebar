@@ -19,7 +19,7 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { basename, dirname, join, sep } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { homedir } from 'node:os'
 import { debugLog } from './search-debug.ts'
 
@@ -317,18 +317,26 @@ export function rgArgv(query: string): string[] {
     '--iglob', `!**/${name}/**`,
     '--iglob', `!**/${name}`,
   ])
+  const escaped = escapeGlob(query)
   return [
     '--files', '--hidden', '--no-ignore',
     ...skipGlobs,
-    '--iglob', `*${escapeGlob(query)}*`, '--path-separator', '/', '.',
+    // Two query globs: the slash-free form matches BASENAMES only (rg
+    // follows gitignore semantics — no '/' in the pattern means basename
+    // match, verified on real rg 15: 'util/helper.ts' never matches
+    // '*util*'), so a second path-level glob admits files UNDER a
+    // matching directory — deriveRgMatches turns those into the
+    // directory matches the walk/fd contract reports.
+    '--iglob', `*${escaped}*`,
+    '--iglob', `**/*${escaped}*/**`,
+    '--path-separator', '/', '.',
   ]
 }
 
 /** One child invocation per engine, emitting normalized relative paths.
- *  rg's -g globs match the WHOLE path, while the walk contract matches
- *  entry NAMES only — the extra path-level hits are filtered back out here
- *  (a basename hit always implies a path hit under the same glob, so the
- *  glob can never drop a legitimate match).
+ *  rg's query globs admit basename hits AND files under matching
+ *  directories; deriveRgMatches converts the latter into the directory
+ *  matches the walk contract reports and drops nothing else.
  *
  *  Truncation symmetry: `streamLines` marks truncated when the stream
  *  exceeds `cap = maxMatches + 1` lines (the +1 is a sentinel proving
@@ -353,16 +361,46 @@ function runChild(
     child = spawn(probe.binary, rgArgv(query), { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })
   }
   return streamLines(child, cap, signal).then(({ lines, truncated }) => {
-    let paths = normalizeEnginePaths(lines)
-    if (probe.engine === 'rg') {
-      // rg reports files only, and its glob already guarantees the path
-      // contains the query; the walk matches entry names, so drop hits
-      // whose basename does not contain it.
-      const needle = query.toLowerCase()
-      paths = paths.filter(path => basename(path).toLowerCase().includes(needle))
-    }
-    return { paths, truncated }
+    const paths = normalizeEnginePaths(lines)
+    if (probe.engine !== 'rg') return { paths, truncated }
+    const derived = deriveRgMatches(paths, query, maxMatches)
+    return { paths: derived.paths, truncated: truncated || derived.truncated }
   })
+}
+
+/** rg reports FILES only (`rg --files` never emits a directory line), while
+ *  the walk contract matches entry names — files AND directories. Every rg
+ *  line is a file path whose glob already guarantees the query appears
+ *  somewhere in it, so: a basename hit stays a file match, and a matching
+ *  DIRECTORY segment is derived as a directory match (a directory named X
+ *  holding at least one file surfaces exactly as fd/walk report it).
+ *  EMPTY directories stay invisible to rg — no file path carries them —
+ *  the one irreducible gap versus fd (documented lossy, see the design
+ *  doc). Output is deduped and sorted; when the derived set exceeds the
+ *  match budget it is capped at maxMatches + 1 and truncated is raised —
+ *  the budget, not the engine, cut the result short (the caller slices
+ *  back to maxMatches on truncated, same as the fd/rg stream sentinel). */
+export function deriveRgMatches(
+  paths: readonly string[],
+  query: string,
+  maxMatches: number,
+): { paths: string[]; truncated: boolean } {
+  const needle = query.toLowerCase()
+  const out = new Set<string>()
+  for (const path of paths) {
+    const segments = path.split('/')
+    const base = segments[segments.length - 1]
+    if (base !== undefined && base.toLowerCase().includes(needle)) out.add(path)
+    let prefix = ''
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      const segment = segments[index]
+      if (segment === undefined) continue
+      prefix = prefix === '' ? segment : `${prefix}/${segment}`
+      if (segment.toLowerCase().includes(needle)) out.add(prefix)
+    }
+  }
+  const derived = [...out].sort()
+  return { paths: derived.slice(0, maxMatches + 1), truncated: derived.length > maxMatches }
 }
 
 let prober = (): Promise<readonly EngineProbe[]> => probeOnce()

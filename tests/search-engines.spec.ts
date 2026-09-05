@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { join } from 'node:path'
 import {
   bundledRgCandidates,
+  deriveRgMatches,
   EngineTimeoutError,
   escapeGlob,
   fdArgv,
@@ -67,6 +68,54 @@ describe('normalizeEnginePaths', () => {
       'src/util.ts',
       'docs/guide.md',
     ])
+  })
+})
+
+describe('deriveRgMatches', () => {
+  // rg --files never emits a directory line: a matching DIRECTORY segment
+  // must be derived from the file path so rg-only machines see the same
+  // results as fd / the plain walk (which both report directory names).
+  it('keeps basename hits and derives matching directory segments', () => {
+    expect(deriveRgMatches(
+      ['src/util.ts', 'util/helper.ts', 'web/dist/bundle.js'],
+      'util',
+      10,
+    )).toEqual({ paths: ['src/util.ts', 'util'], truncated: false })
+  })
+
+  it('dedupes repeated matching segments across lines', () => {
+    expect(deriveRgMatches(['lib/a/x.ts', 'lib/a/y.ts'], 'lib', 10)).toEqual({
+      paths: ['lib'],
+      truncated: false,
+    })
+  })
+
+  it('matches case-insensitively (walk parity)', () => {
+    expect(deriveRgMatches(['SRC/Util.ts'], 'UTIL', 10)).toEqual({
+      paths: ['SRC/Util.ts'],
+      truncated: false,
+    })
+  })
+
+  it('caps the derived set at maxMatches + 1 and raises truncated', () => {
+    // 4 derived entries ('a' + 3 files) over a budget of 2: the budget, not
+    // the engine, cut the result short — same sentinel semantics as the
+    // fd/rg stream (cap = maxMatches + 1, caller slices back).
+    expect(deriveRgMatches(['a/a1', 'a/a2', 'a/a3'], 'a', 2)).toEqual({
+      paths: ['a', 'a/a1', 'a/a2'],
+      truncated: true,
+    })
+  })
+
+  it('derives both the directory and the basename hit from one line', () => {
+    // 'util/util.ts': basename hit keeps the file, the 'util' segment
+    // derives the directory — runChild ORs this with the stream's own
+    // truncation flag (a stream-truncated run with a small derived set
+    // stays true).
+    expect(deriveRgMatches(['util/util.ts'], 'util', 10)).toEqual({
+      paths: ['util', 'util/util.ts'],
+      truncated: false,
+    })
   })
 })
 
@@ -130,8 +179,9 @@ describe('engine argv symmetry', () => {
       expect(rgIglobs).toContain(`!**/${name}/**`)
       expect(rgIglobs).toContain(`!**/${name}`)
     }
-    // The query iglob is the last one, still case-insensitive and escaped.
-    expect(rgIglobs[rgIglobs.length - 1]).toBe('*util*')
+    // The query iglobs are the last ones (skip globs precede them), still
+    // case-insensitive and escaped: basename form + path-level form.
+    expect(rgIglobs.slice(-2)).toEqual(['*util*', '**/*util*/**'])
   })
 
   it('rg argv escapes glob metacharacters and pins / separators', () => {
