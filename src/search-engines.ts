@@ -162,8 +162,41 @@ function verify(binary: string): Promise<boolean> {
  *  a balanced one silently matches a DIFFERENT literal ('a{b}' searches
  *  'ab'). Verified against rg 15: '\{' is a valid brace escape. */
 export function escapeGlob(query: string): string {
+  // The output is a GLOB string, not a regex: rg globs are gitignore-style,
+  // so '[' opens a character class and MUST be escaped there even though
+  // escaping it is unnecessary inside this regex's own character class.
+  // eslint-disable-next-line no-useless-escape
   return query.replace(/[\[\]{}*?\\]/g, '\\$&')
 }
+
+/** Directory names that are never useful filename-search results (VCS
+ *  internals, dependency forests, package-manager stores, build caches).
+ *  The plain walk in fs-search.ts builds its case-insensitive skip set
+ *  from this list, and BOTH engine argvs exclude every name — with
+ *  --no-ignore active an rg/fd run would otherwise re-enter node_modules
+ *  and regress the budget-saving behavior of the walk. Excludes are
+ *  matched case-insensitively (fd honors --ignore-case; rg uses --iglob),
+ *  mirroring the walk's toLowerCase comparison. */
+export const SKIP_DIR_NAMES: readonly string[] = [
+  '.git',
+  'node_modules',
+  '.pnpm-store',
+  '.yarn',
+  '.turbo',
+  '.turbopack',
+  '.next',
+  '.nuxt',
+  '.output',
+  '.cache',
+  '.parcel-cache',
+  'coverage',
+  'dist',
+  'build',
+  'out',
+  '.umi',
+  '.umi-production',
+  '.dumi',
+]
 
 /** A timeout means the tree is too big, not that the binary is broken —
  *  it must not disable the engine for every other search root. */
@@ -254,12 +287,17 @@ export function normalizeEnginePaths(lines: readonly string[], separator: string
   return out
 }
 
-/** The fd argv: the query as a literal substring, '/' separators, and
- *  --max-results one ABOVE the stream sentinel (cap + 1) so a full result
- *  set overflows into the same truncation detected for rg (see runChild). */
+/** The fd argv: the query as a literal substring, '/' separators, every
+ *  SKIP_DIR_NAMES excluded (a bare name excludes the entry at any depth;
+ *  a worktree-style `.git` FILE is covered too — verified against real
+ *  fd), and --max-results one ABOVE the stream sentinel (cap + 1) so a
+ *  full result set overflows into the same truncation detected for rg
+ *  (see runChild). */
 export function fdArgv(cap: number, query: string): string[] {
   return [
-    '--hidden', '--no-ignore', '--exclude', '.git', '--fixed-strings', '--ignore-case',
+    '--hidden', '--no-ignore',
+    ...SKIP_DIR_NAMES.flatMap(name => ['--exclude', name]),
+    '--fixed-strings', '--ignore-case',
     '--path-separator', '/', '--max-results', String(cap + 1), query, '.',
   ]
 }
@@ -267,16 +305,21 @@ export function fdArgv(cap: number, query: string): string[] {
 /** The rg argv: --files listing filtered by a case-insensitive literal-name
  *  glob, '/' separators pinned (rg emits '\' in cmd/PowerShell on Windows,
  *  '/' in Git Bash — rg#501; the flag exists since rg 0.8, a build without
- *  it fails at spawn and is disabled at runtime). The second --glob also
- *  excludes an entry NAMED '.git' itself: a git worktree has a `.git`
- *  FILE (not a directory) at its root, and the directory-exclusion glob
- *  requires a path segment AFTER .git so it does not cover the pointer
- *  file (verified against real rg) — fd's --exclude .git and the plain
- *  walk both skip it. */
+ *  it fails at spawn and is disabled at runtime). Every SKIP_DIR_NAME gets
+ *  a glob pair: a '<name>-anywhere' glob prunes the directory tree, and the second
+ *  entry-only glob excludes an entry NAMED the skip word itself — a git
+ *  worktree has a `.git` FILE (not a directory) at its root, and the
+ *  directory-exclusion glob requires a path segment AFTER the word so it
+ *  does not cover the pointer file (verified against real rg). fd's
+ *  --exclude and the plain walk both skip it without the extra glob. */
 export function rgArgv(query: string): string[] {
+  const skipGlobs = SKIP_DIR_NAMES.flatMap(name => [
+    '--iglob', `!**/${name}/**`,
+    '--iglob', `!**/${name}`,
+  ])
   return [
     '--files', '--hidden', '--no-ignore',
-    '--glob', '!**/.git/**', '--glob', '!**/.git',
+    ...skipGlobs,
     '--iglob', `*${escapeGlob(query)}*`, '--path-separator', '/', '.',
   ]
 }

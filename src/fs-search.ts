@@ -20,7 +20,7 @@
 import { opendir } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
 import { homedir } from 'node:os'
-import { runEngine, usableEngines } from './search-engines.ts'
+import { runEngine, usableEngines, SKIP_DIR_NAMES } from './search-engines.ts'
 import { debugLog } from './search-debug.ts'
 
 /** Shorten an absolute search root for log lines: ~/ for the config home. */
@@ -55,28 +55,13 @@ const DEFAULT_MAX_VISITED = 100_000
  * Directory names that are never useful filename-search results and would
  * burn the visit budget before the walk reaches project files. Compared
  * case-insensitively so `Node_Modules` / `.GIT` stay skipped on every
- * platform. The directory itself is neither matched nor descended.
+ * platform. The name list lives in search-engines.ts (SKIP_DIR_NAMES) —
+ * the engine argvs exclude the same names so the fallback and the engines
+ * return identical result shapes. An entry with a skip name is neither
+ * matched nor descended — including a worktree-style `.git` FILE (parity
+ * with the engines' .git exclusion — see SKIP_DIR_NAMES in search-engines.ts).
  */
-const SEARCH_SKIP_DIRS = new Set([
-  '.git',
-  'node_modules',
-  '.pnpm-store',
-  '.yarn',
-  '.turbo',
-  '.turbopack',
-  '.next',
-  '.nuxt',
-  '.output',
-  '.cache',
-  '.parcel-cache',
-  'coverage',
-  'dist',
-  'build',
-  'out',
-  '.umi',
-  '.umi-production',
-  '.dumi',
-])
+const SEARCH_SKIP_DIRS = new Set(SKIP_DIR_NAMES)
 
 /**
  * Search `root` recursively for entries whose name contains `query`
@@ -111,7 +96,7 @@ export async function searchFilesPlain(root: string, query: string, opts: FsSear
       // Dependency / VCS / build-output forests: never matched, never
       // descended. A worktree-style `.git` FILE (pointer to the real
       // gitdir) is VCS noise too — the name check covers both shapes,
-      // parity with fd's --exclude and rg's '!**/.git' glob.
+      // parity with the engines' .git exclusion (SKIP_DIR_NAMES in search-engines.ts).
       if (SEARCH_SKIP_DIRS.has(dirent.name.toLowerCase())) continue
       if (dirent.name.toLowerCase().includes(needle)) {
         matches.push(join(relative(root, dir), dirent.name))

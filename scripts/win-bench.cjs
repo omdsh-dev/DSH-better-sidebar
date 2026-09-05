@@ -1,3 +1,6 @@
+// This is an ops script run directly with `node <file>` on a real host (not
+// bundled by tsdown): CommonJS require() is intentional here.
+/* eslint-disable @typescript-eslint/no-require-imports */
 // Windows engine benchmark: plain walk vs fd vs rg on the same root/query.
 // Usage: node win-bench.cjs <root> [query...]
 // PATH is extended with Scoop shims + npm global (ssh sessions lack them).

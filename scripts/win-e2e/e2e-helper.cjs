@@ -1,8 +1,10 @@
+// This is an ops script run directly with `node <file>` on a real host (not
+// bundled by tsdown): CommonJS require() is intentional here.
+/* eslint-disable @typescript-eslint/no-require-imports */
 // Windows DSH e2e helper: check dsh web process/log state, then hit
 // /sidebar/api/fs.search if a URL is available.
 const { execSync, execFileSync } = require('node:child_process')
 const fs = require('node:fs')
-const os = require('node:os')
 
 const scratch = 'C:\\Users\\y\\dsh-e2e-scratch'
 

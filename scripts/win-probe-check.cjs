@@ -1,3 +1,6 @@
+// This is an ops script run directly with `node <file>` on a real host (not
+// bundled by tsdown): CommonJS require() is intentional here.
+/* eslint-disable @typescript-eslint/no-require-imports */
 // Windows real-machine probe verification: does bundledRgCandidates hit
 // the DSH global install's ripgrep, and does probeEngines actually pick it?
 const { existsSync } = require('node:fs')

@@ -8,7 +8,7 @@
  * contracts are what the dispatch depends on.
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { join, sep } from 'node:path'
+import { join } from 'node:path'
 import {
   bundledRgCandidates,
   EngineTimeoutError,
@@ -20,6 +20,7 @@ import {
   rgArgv,
   runEngine,
   setEngineHooks,
+  SKIP_DIR_NAMES,
   usableEngines,
 } from '../src/search-engines.ts'
 import type { EngineProbe } from '../src/search-engines.ts'
@@ -99,12 +100,38 @@ describe('engine argv symmetry', () => {
 
   it('fd argv keeps the literal-fixed, hidden, no-ignore contract', () => {
     const argv = fdArgv(10, 'a*b')
-    expect(argv.slice(0, 8)).toEqual([
-      '--hidden', '--no-ignore', '--exclude', '.git',
-      '--fixed-strings', '--ignore-case', '--path-separator', '/',
-    ])
+    expect(argv.slice(0, 2)).toEqual(['--hidden', '--no-ignore'])
+    expect(argv).toContain('--fixed-strings')
+    expect(argv).toContain('--ignore-case')
+    expect(argv).toContain('--path-separator')
+    expect(argv).toContain('/')
     expect(argv[argv.length - 2]).toBe('a*b') // literal, unescaped
     expect(argv[argv.length - 1]).toBe('.')
+  })
+
+  // --no-ignore bypasses .gitignore: without explicit excludes the engines
+  // would re-enter node_modules etc. and regress the walk's budget savings.
+  // fd excludes each skip name at any depth (incl. a worktree .git FILE);
+  // rg needs the directory glob + entry-only glob pair per name.
+  it('fd and rg exclude every SKIP_DIR_NAMES entry (walk parity)', () => {
+    const fd = fdArgv(10, 'util')
+    const fdExcludes: (string | undefined)[] = []
+    for (let index = 0; index < fd.length; index += 1) {
+      if (fd[index] === '--exclude') fdExcludes.push(fd[index + 1])
+    }
+    expect(fdExcludes).toEqual([...SKIP_DIR_NAMES])
+
+    const rg = rgArgv('util')
+    const rgIglobs: (string | undefined)[] = []
+    for (let index = 0; index < rg.length; index += 1) {
+      if (rg[index] === '--iglob') rgIglobs.push(rg[index + 1])
+    }
+    for (const name of SKIP_DIR_NAMES) {
+      expect(rgIglobs).toContain(`!**/${name}/**`)
+      expect(rgIglobs).toContain(`!**/${name}`)
+    }
+    // The query iglob is the last one, still case-insensitive and escaped.
+    expect(rgIglobs[rgIglobs.length - 1]).toBe('*util*')
   })
 
   it('rg argv escapes glob metacharacters and pins / separators', () => {
@@ -121,11 +148,9 @@ describe('engine argv symmetry', () => {
   // rg needs the second entry-only glob for parity.
   it('rg argv excludes .git directories AND a bare worktree .git file', () => {
     const argv = rgArgv('util')
-    const globs: (string | undefined)[] = []
-    for (let index = 0; index < argv.length; index += 1) {
-      if (argv[index] === '--glob') globs.push(argv[index + 1])
-    }
-    expect(globs).toEqual(['!**/.git/**', '!**/.git'])
+    expect(argv).toContain('--iglob')
+    expect(argv).toContain('!**/.git/**')
+    expect(argv).toContain('!**/.git')
   })
 })
 

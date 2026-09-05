@@ -1,3 +1,6 @@
+// This is an ops script run directly with `node <file>` on a real host (not
+// bundled by tsdown): CommonJS require() is intentional here.
+/* eslint-disable @typescript-eslint/no-require-imports */
 const { execFileSync } = require('node:child_process')
 const root = 'C:\\Users\\y\\wintest'
 function run(label, binary, args) {
