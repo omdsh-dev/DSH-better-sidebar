@@ -521,12 +521,14 @@ describe('session cwd resolution over the API route', () => {
     route: SidebarWebRoute,
     method: string,
     payload: unknown,
+    remoteAddress = '127.0.0.1',
   ): Promise<{ ok: boolean; status: number; value?: { cwd: string }; error?: { code?: string; message: string } }> => {
     const body = Buffer.from(JSON.stringify(payload))
     const req = {
       method: 'POST',
       url: `/sidebar/api/${method}`,
       headers: { host: '127.0.0.1:3080' },
+      socket: { remoteAddress },
       [Symbol.asyncIterator]: async function* () { yield body },
     } as never
     const out: { status: number; body: string } = { status: 200, body: '' }
@@ -706,6 +708,55 @@ describe('session cwd resolution over the API route', () => {
       expect(read).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
     } finally {
       rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('grants one loopback-clicked external Markdown document read-only access', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-markdown-preview-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    const report = join(outside, '中文评审报告.md')
+    const other = join(outside, 'other.md')
+    const nonMarkdown = join(outside, 'secret.txt')
+    writeFileSync(report, '# 评审报告\n\n只读内容')
+    writeFileSync(other, '# Other')
+    writeFileSync(nonMarkdown, 'secret')
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const issued = await invoke(route, 'preview.markdown', { sessionId: 'preview', path: report })
+      expect(issued).toMatchObject({ ok: true, value: { outside: true, grant: expect.any(String) } })
+      const token = (issued as unknown as { value: { grant: string } }).value.grant
+
+      const read = await invoke(route, 'fs.read', { sessionId: 'preview', path: report, previewGrant: token })
+      expect(read).toMatchObject({ ok: true, value: { kind: 'text', content: '# 评审报告\n\n只读内容' } })
+      const wrongPath = await invoke(route, 'fs.read', { sessionId: 'preview', path: other, previewGrant: token })
+      expect(wrongPath).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+      const wrongSession = await invoke(route, 'fs.read', { sessionId: 'other-session', cwd: workspace, path: report, previewGrant: token })
+      expect(wrongSession).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+      const write = await invoke(route, 'fs.write', { sessionId: 'preview', path: report, content: 'changed' })
+      expect(write).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+      expect(readFileSync(report, 'utf8')).toBe('# 评审报告\n\n只读内容')
+      const textGrant = await invoke(route, 'preview.markdown', { sessionId: 'preview', path: nonMarkdown })
+      expect(textGrant).toMatchObject({ ok: false, status: 400, error: { code: 'bad-request' } })
+      const remoteGrant = await invoke(route, 'preview.markdown', { sessionId: 'preview', path: report }, '192.0.2.10')
+      expect(remoteGrant).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps an in-workspace Markdown click on the ordinary editable path', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'dsh-sidebar-markdown-workspace-'))
+    const report = join(workspace, 'report.md')
+    writeFileSync(report, '# Local')
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const issued = await invoke(route, 'preview.markdown', { sessionId: 'preview', path: report })
+      expect(issued).toMatchObject({ ok: true, value: { outside: false } })
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
     }
   })
 

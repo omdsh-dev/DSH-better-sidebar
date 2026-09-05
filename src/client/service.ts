@@ -266,6 +266,9 @@ export interface FileViewerProps {
   mediaUrl?: string
   /** custom load() return value (fetchStrategy='custom'). */
   customData?: unknown
+  /** Internal: an explicitly authorized out-of-workspace chat preview is
+   *  readable but must never expose editing/saving controls. */
+  readOnly?: boolean
   /** Internal (built-in text editor): 'host' asks the viewer to skip its own
    *  toolbar row — the editor host's merged-mode header renders it instead,
    *  fed through the two callbacks below. Viewers that ignore these fields

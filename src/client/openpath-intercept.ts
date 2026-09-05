@@ -25,7 +25,12 @@
  * on contribution remounts; the caller therefore enters through
  * `ctx.inject(['remote.session'], …)`, which re-fires on every remount.
  *
- * The wrapper is dependency-free by design (no React / ui-primitives), so
+ * DSH's stock inline-code vocabulary only recognizes files produced in the
+ * same turn. The second wrapper in this module preserves that resolver first,
+ * then adds a deliberately narrow fallback for complete ABSOLUTE Markdown
+ * paths so an existing report mentioned by the assistant is clickable too.
+ *
+ * The wrappers are dependency-free by design (no React / ui-primitives), so
  * the takeover logic is unit-testable and the file stays importable from
  * the test runtime.
  */
@@ -136,9 +141,83 @@ export function wrapOpenWorkspacePath(
     value: wrapped,
   })
   return () => {
-    // Restore the exact original property (the gateway's accessor) so a
-    // chain of wrappers keeps working across disposals in any order.
+    // Restore only when this wrapper still owns the property. An older HMR
+    // disposer must never clobber a newer wrapper installed after it.
+    if (service.openWorkspacePath !== wrapped) return
     if (descriptor !== undefined) Object.defineProperty(target, KEY, descriptor)
     else Reflect.deleteProperty(target, KEY)
+  }
+}
+
+/** One clickable inline-code file mention (mirror of MarkdownFileMentions). */
+export interface ResolvedFileMention {
+  open(): void
+  label: string
+  title: string
+}
+
+/** Resolver passed by the chat renderer to assistant Markdown. */
+export interface FileMentionResolver {
+  resolve(value: string): ResolvedFileMention | undefined
+}
+
+/** The closing-message owner face needed by a mention's click callback. */
+export interface FileMentionOwner {
+  openFile(path: string): void | Promise<void>
+}
+
+/** Structural mirror of DSH's optional `chatFileMentions` service. */
+export interface ChatFileMentionsService {
+  forClosing(owner: FileMentionOwner): FileMentionResolver | undefined
+}
+
+/** Live gates and accessible copy for the absolute-path fallback. */
+export interface AbsoluteMarkdownMentionDeps {
+  enabled(): boolean
+  label(path: string): string
+}
+
+/**
+ * Whether a whole inline-code token is an absolute Markdown file path.
+ * Supports the native forms of every DSH host platform (POSIX, drive-letter,
+ * and UNC) without treating relative paths, URLs, commands, or other code as
+ * file links.
+ */
+export function isAbsoluteMarkdownPath(value: string): boolean {
+  if (value === '' || value.includes('\u0000') || !/\.(?:md|markdown)$/i.test(value)) return false
+  return value.startsWith('/')
+    || /^[a-zA-Z]:[\\/]/.test(value)
+    || /^\\\\[^\\/]+[\\/][^\\/]+[\\/]/.test(value)
+}
+
+/**
+ * Preserve the stock produced-file resolver, then recognize complete absolute
+ * Markdown paths. The returned mention still calls the chat owner's `openFile`
+ * so every click flows through the same open-path interception as stock links.
+ */
+export function wrapAbsoluteMarkdownMentions(
+  service: ChatFileMentionsService,
+  deps: AbsoluteMarkdownMentionDeps,
+): () => void {
+  const original = service.forClosing
+  const wrapped = function (this: ChatFileMentionsService, owner: FileMentionOwner): FileMentionResolver | undefined {
+    const inherited = original.call(this, owner)
+    if (!deps.enabled()) return inherited
+    return {
+      resolve(value) {
+        const existing = inherited?.resolve(value)
+        if (existing !== undefined) return existing
+        if (!deps.enabled() || !isAbsoluteMarkdownPath(value)) return undefined
+        return {
+          open: () => { void owner.openFile(value) },
+          label: deps.label(value),
+          title: value,
+        }
+      },
+    }
+  }
+  service.forClosing = wrapped
+  return () => {
+    if (service.forClosing === wrapped) service.forClosing = original
   }
 }

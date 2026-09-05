@@ -32,11 +32,11 @@ import {
 import { parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
 import { renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from './fs-operations.ts'
-import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
+import { ensureWorkspacePath, ensureWorkspaceWritePath, MarkdownPreviewGrants } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
-import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
+import { isTrustedApiRequest, isLoopbackHostname, isLoopbackRemoteAddress } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
 import { launchExternal } from './open-external.ts'
 import * as git from './git.ts'
@@ -298,6 +298,7 @@ function buildApi(
   resolved: ResolvedSidebarConfig,
   terminalShell: string,
   getSettings: () => SidebarSettingsFace | undefined,
+  markdownPreviewGrants: MarkdownPreviewGrants,
 ): Record<string, ApiMethod> {
   const cwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
     const sessionId = requireString(payload, 'sessionId')
@@ -342,14 +343,22 @@ function buildApi(
       const query = requireString(payload, 'query')
       return searchFiles(cwd, query)
     },
+    'preview.markdown': async (payload) => {
+      const { sessionId, cwd } = await cwdOf(payload)
+      return markdownPreviewGrants.issue(sessionId, cwd, requireString(payload, 'path'))
+    },
     'fs.read': async (payload) => {
-      const { cwd } = await cwdOf(payload)
+      const { sessionId, cwd } = await cwdOf(payload)
       // Relative paths are git-derived (status/diff report repo-root-relative
       // names; the untracked diff view reads the file through this route). A
       // child-repo path is relative to the selected repoRoot, not the session
       // cwd; thread it so the path resolves inside the authorized workspace.
       const selected = selectedRepoOf(payload)
-      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected), fenceEnabledOf(getSettings))
+      const requested = await resolveGitPath(cwd, requireString(payload, 'path'), selected)
+      const rawGrant = (payload as { previewGrant?: unknown }).previewGrant
+      const path = typeof rawGrant === 'string' && rawGrant !== ''
+        ? await markdownPreviewGrants.authorize(rawGrant, sessionId, requested)
+        : await ensureWorkspacePath(cwd, requested, fenceEnabledOf(getSettings))
       const { content, truncated, binary, size, head } = await readText(path, resolved.readLimit)
       if (binary) return { kind: 'binary', size, truncated, head }
       return { kind: 'text', content, truncated }
@@ -739,6 +748,9 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // `/sidebar/ws/agent-opens` socket. Unlike the pty registry it has no
   // native dependencies — the tool works even in node-pty degraded mode.
   const agentOpenRegistry = new AgentOpenRegistry()
+  // Exact-path, session-bound read capabilities minted only for explicit
+  // loopback chat clicks on absolute Markdown paths outside the workspace.
+  const markdownPreviewGrants = new MarkdownPreviewGrants()
 
   // ── User-facing "Side card" preferences ──────────────────────────────────
   // Register the namespace with the settings provider so the Settings page
@@ -850,7 +862,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   })
 
   // ── JSON API ────────────────────────────────────────────────────────────
-  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace)
+  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace, markdownPreviewGrants)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -870,6 +882,12 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         return
       }
       try {
+        // Minting an out-of-workspace read capability is deliberately stricter
+        // than the ordinary trusted-host fence: the TCP peer itself must be
+        // loopback, so a LAN client cannot ask the host to expose local files.
+        if (method === 'preview.markdown' && !isLoopbackRemoteAddress(req.socket?.remoteAddress)) {
+          throw new SidebarError('forbidden', 'external Markdown preview grants require a loopback client', 403)
+        }
         const payload = await readJsonBody(req)
         const handler = api[method]
         if (handler === undefined) {
@@ -1106,6 +1124,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     ptyManager?.disposeAll()
     agentPtyRegistry?.disposeAll()
     agentOpenRegistry.dispose()
+    markdownPreviewGrants.dispose()
     wss.close()
     agentListWss.close()
     agentOpenWss.close()
