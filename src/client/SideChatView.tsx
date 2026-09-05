@@ -58,6 +58,7 @@ import {
   sideThreadRows,
   threadHasCompletedTurn,
   threadTrailingPending,
+  type SidechatLiveStep,
   type SidechatThreadInfo,
 } from '../sidechat-core.ts'
 import {
@@ -109,9 +110,12 @@ export function consumeSidechatSeed(): string | undefined {
 const inFlightStarts = new Set<string>()
 
 /** Per-thread transcript cache: thread-own events merged by seq (polls ride
- * the afterSeq delta and never re-download what they already hold). */
+ * the afterSeq delta and never re-download what they already hold), plus the
+ * last poll's in-flight assistant prefix (transient — replaced or dropped by
+ * every poll, never merged into `entries`). */
 interface ThreadCache {
   entries: SidebarHistoryEntry[]
+  live?: SidechatLiveStep
 }
 
 /** Row-render labels (locale-dependent, memoized once per mount). */
@@ -457,14 +461,18 @@ export function SideChatView(props: {
     try {
       const cache = cacheRef.current
       const afterSeq = cache.entries.at(-1)?.event.seq
-      const { events } = await api.sidechatEvents(childId, afterSeq, controller.signal)
+      const { events, live } = await api.sidechatEvents(childId, afterSeq, controller.signal)
+      // The in-flight prefix grows without any new event, so its change is a
+      // re-render trigger of its own.
+      const liveChanged = live?.text !== cache.live?.text || live?.reasoning !== cache.live?.reasoning
+      cache.live = live
       if (events.length > 0) {
         // Wire events arrive as parsed JSON; the mirror narrows data to the
         // record the mapping reads.
         const incoming = events.map(event => ({ event: event as SidebarSessionEvent }))
         cache.entries = mergeBySeq(cache.entries, incoming)
-        setRevision(value => value + 1)
       }
+      if (events.length > 0 || liveChanged) setRevision(value => value + 1)
     } catch {
       // Aborted by a newer pull or a wire failure: keep the last rows.
     }
@@ -533,7 +541,9 @@ export function SideChatView(props: {
   // their object identity (see reuseRows): the 2s poll re-renders only the
   // changed tail instead of re-parsing markdown for the whole transcript.
   const rows = useMemo(() => {
-    const next = threadId === undefined ? [] : transcriptRows(cacheRef.current.entries, prevRowsRef.current)
+    const next = threadId === undefined
+      ? []
+      : transcriptRows(cacheRef.current.entries, prevRowsRef.current, cacheRef.current.live)
     prevRowsRef.current = next
     return next
   },
@@ -545,12 +555,14 @@ export function SideChatView(props: {
   const trailingPending = threadId !== undefined && threadTrailingPending(cacheRef.current.entries)
   const freshThread = threadId !== undefined && rows.length === 0
 
-  // Follow the stream: stick to the bottom while the log grows.
+  // Follow the stream: stick to the bottom while the transcript grows. The
+  // in-flight prefix grows a row's text without adding one, so this tracks
+  // the mapped rows themselves (a fresh array per changed poll).
   useEffect(() => {
     const scroller = scrollRef.current
     if (scroller === null) return
     scroller.scrollTop = scroller.scrollHeight
-  }, [rows.length, threadId])
+  }, [rows, threadId])
 
   /** Open a NEW thread tab (createTab mints the autoCreate tab; its view
    *  creates the thread on mount). */

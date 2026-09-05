@@ -43,9 +43,11 @@ import {
   sideLabel,
   type SeedEvent,
   type SidechatLogEvent,
+  type SidechatLiveStep,
   type SidechatThreadInfo,
   threadOwnLogEvents,
 } from './sidechat-core.ts'
+import { createAssistantStreamMirror } from './sidechat-live.ts'
 import { requireString, SidebarError } from './wire.ts'
 
 /** The six Side Chat routes of the sidebar API (wire method names). */
@@ -65,8 +67,10 @@ export interface SidechatRoutes {
   'sidechat.info'(payload: unknown): Promise<SidechatThreadInfo>
   /** The thread's OWN transcript events, seed-cut host-side (the inherited
    *  parent log never crosses the wire); `afterSeq` narrows the response to
-   *  the delta beyond it (poll tail). */
-  'sidechat.events'(payload: unknown): Promise<{ events: SidechatLogEvent[] }>
+   *  the delta beyond it (poll tail). `live` carries the in-flight step's
+   *  assistant prefix, which no durable event holds until the step settles;
+   *  it is absent when nothing streams. */
+  'sidechat.events'(payload: unknown): Promise<{ events: SidechatLogEvent[]; live?: SidechatLiveStep }>
 }
 
 /** Timeout guarding the create call (the registry detaches it before the
@@ -200,6 +204,7 @@ async function threadLogEvents(ctx: Context, childId: string): Promise<readonly 
  *  error the tab surfaces inline). The record keys are the FULL wire method
  *  names the /sidebar/api dispatcher looks up (`api[method]`). */
 export function buildSidechatApi(ctx: Context): SidechatRoutes {
+  const liveStreams = createAssistantStreamMirror(ctx)
   return {
     'sidechat.start': async (payload: unknown) => {
       const sessionId = requireString(payload, 'sessionId')
@@ -395,7 +400,13 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
       const events = await threadLogEvents(ctx, childId)
       const own = threadOwnLogEvents(events)
       const fresh = rawAfter === undefined ? own : own.filter(event => event.seq > rawAfter)
-      return { events: fresh.length > EVENTS_CAP ? fresh.slice(fresh.length - EVENTS_CAP) : fresh }
+      // The live prefix is read AFTER the log so a step settling mid-call is
+      // reported once, by the log, never twice.
+      const live = liveStreams.step(childId)
+      return {
+        events: fresh.length > EVENTS_CAP ? fresh.slice(fresh.length - EVENTS_CAP) : fresh,
+        ...(live === undefined ? {} : { live }),
+      }
     },
   }
 }

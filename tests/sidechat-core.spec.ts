@@ -136,7 +136,7 @@ describe('buildSidechatInheritance', () => {
       ev('user/message', 6, { content: [{ type: 'text', text: 'next?' }], source: { kind: 'user' } }),
       ev('turn/start', 7, { turn: 2 }),
       ev('step/start', 8, { turn: 2, step: 1 }),
-      ev('assistant/chunk', 9, { turn: 2, step: 1, chunk: { type: 'text-delta', index: 0, text: 'partial answer' } }),
+      ev('assistant/message', 9, { turn: 2, step: 1, message: { content: [{ type: 'text', text: 'partial answer' }] } }),
     ]
     const { seed, snapshot } = buildSidechatInheritance(events)
     expectContiguous(seed)
@@ -145,10 +145,10 @@ describe('buildSidechatInheritance', () => {
     const turnEnd = seed.at(-1)!
     expect(stepEnd).toMatchObject({ type: 'step/end', data: { turn: 2, step: 1 } })
     expect(turnEnd).toMatchObject({ type: 'turn/end', data: { turn: 2, reason: { kind: 'interrupted' } } })
-    // The pending user message and the partial chunk survive as REAL events.
+    // The pending user message and the step's message survive as REAL events.
     expect(seed.some(event => event.type === 'user/message'
       && (event.data.content as Array<{ text: string }>)[0]?.text === 'next?')).toBe(true)
-    expect(seed.some(event => event.type === 'assistant/chunk')).toBe(true)
+    expect(seed.some(event => event.type === 'assistant/message' && event.seq === 9)).toBe(true)
     expect(snapshot).toBeNull()
   })
 
@@ -166,7 +166,7 @@ describe('buildSidechatInheritance', () => {
           content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'hit' }] }],
         },
       }),
-      ev('assistant/chunk', 5, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'found ' } }),
+      ev('assistant/message', 5, { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'found ' }] } }),
     ]
     const { seed, snapshot } = buildSidechatInheritance(events)
     expectContiguous(seed)
@@ -180,7 +180,7 @@ describe('buildSidechatInheritance', () => {
       ev('user/message', 0, { content: [{ type: 'text', text: 'q' }], source: { kind: 'user' } }),
       ev('turn/start', 1, { turn: 1 }),
       ev('step/start', 2, { turn: 1, step: 1 }),
-      ev('assistant/chunk', 3, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'running ' } }),
+      ev('assistant/message', 3, { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'running ' }] } }),
       ev('tool/call', 4, { turn: 1, step: 1, callId: 'c1', name: 'bash', arguments: '{"cmd":"sleep 9"}' }),
     ]
     expect(hasDanglingToolCall(events, 1)).toBe(true)
@@ -203,7 +203,7 @@ describe('buildSidechatInheritance', () => {
       ev('assistant/message', 3, { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'first' }] } }),
       ev('step/end', 4, { turn: 1, step: 1 }),
       ev('step/start', 5, { turn: 1, step: 2 }),
-      ev('assistant/chunk', 6, { turn: 1, step: 2, chunk: { type: 'text-delta', index: 0, text: 'second' } }),
+      ev('assistant/message', 6, { turn: 1, step: 2, message: { content: [{ type: 'text', text: 'second' }] } }),
     ]
     const { seed } = buildSidechatInheritance(events)
     expectContiguous(seed)
@@ -218,13 +218,21 @@ describe('buildOpenTurnSnapshot', () => {
     expect(buildOpenTurnSnapshot(completedTurn(0, 1, { text: 'x' }))).toBeNull()
   })
 
-  it('preserves streamed text and tool detail verbatim', () => {
+  it('preserves settled text and tool detail verbatim', () => {
     const events = [
       ev('turn/start', 0, { turn: 1 }),
       ev('step/start', 1, { turn: 1, step: 1 }),
-      ev('assistant/chunk', 2, { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'think' } }),
-      ev('assistant/chunk', 3, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: '```js\ncode' } }),
-      ev('assistant/chunk', 4, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: '\n```' } }),
+      ev('assistant/message', 2, {
+        turn: 1,
+        step: 1,
+        message: {
+          content: [
+            { type: 'reasoning', text: 'think' },
+            { type: 'text', text: '```js\ncode\n```' },
+            { type: 'tool-call', id: 'c1', name: 'read', arguments: '{"path":"a.txt"}' },
+          ],
+        },
+      }),
       ev('tool/call', 5, { turn: 1, step: 1, callId: 'c1', name: 'read', arguments: '{"path":"a.txt"}' }),
       ev('tool/result', 6, {
         turn: 1,
@@ -243,6 +251,40 @@ describe('buildOpenTurnSnapshot', () => {
     expect(snapshot).toContain('`read` — arguments: `{"path":"a.txt"}`')
     expect(snapshot).toContain('Result: file body')
     expect(snapshot).toContain('`bash` (executing)')
+  })
+
+  it('leaves out a superseded attempt: only settled messages are output', () => {
+    const events = [
+      ev('turn/start', 0, { turn: 1 }),
+      ev('step/start', 1, { turn: 1, step: 1 }),
+      // A failed attempt's stream is durable but was never model-visible.
+      ev('assistant/attempt', 2, {
+        turn: 1,
+        step: 1,
+        stream: [{ type: 'text-chunks', time0: 1, index: 0, dt: [], texts: ['abandoned'] }],
+      }),
+      ev('assistant/message', 3, { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'retried' }] } }),
+      ev('tool/call', 4, { turn: 1, step: 1, callId: 'c1', name: 'bash', arguments: '{}' }),
+    ]
+    const snapshot = buildOpenTurnSnapshot(events)
+    expect(snapshot).toContain('retried')
+    expect(snapshot).not.toContain('abandoned')
+  })
+
+  it('skips malformed assistant content instead of throwing', () => {
+    const events = [
+      ev('turn/start', 0, { turn: 1 }),
+      ev('step/start', 1, { turn: 1, step: 1 }),
+      ev('assistant/message', 2, { turn: 1, step: 1, message: { content: 'not-an-array' } }),
+      ev('assistant/message', 3, { turn: 1, step: 1 }),
+      ev('assistant/message', 4, {
+        turn: 1,
+        step: 1,
+        message: { content: [null, { type: 'text' }, { type: 'text', text: 'kept' }] },
+      }),
+      ev('tool/call', 5, { turn: 1, step: 1, callId: 'c1', name: 'bash', arguments: '{}' }),
+    ]
+    expect(buildOpenTurnSnapshot(events)).toContain('kept')
   })
 })
 

@@ -8,7 +8,7 @@
  */
 import { encodeHtmlUrl } from '../html-route.ts'
 import type { LastActivity } from '../subagent-activity.ts'
-import type { SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
+import type { SidechatLiveStep, SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
 import type { SidebarSessionEvent } from '../context-types.ts'
 import type { BrowserProbeResult } from './browser.ts'
 
@@ -385,9 +385,11 @@ export const api = {
     call<SidechatThreadInfo>('sidechat.info', { childId }),
   /** One transcript pull of a Side Chat thread: the thread's OWN events
    *  (the inherited seed is cut host-side and never crosses the wire).
-   *  `afterSeq` narrows the response to the delta beyond it (poll tail). */
+   *  `afterSeq` narrows the response to the delta beyond it (poll tail).
+   *  `live` carries the in-flight step's assistant prefix — no durable event
+   *  holds it until the step settles — and is absent when nothing streams. */
   sidechatEvents: (childId: string, afterSeq?: number, signal?: AbortSignal) =>
-    call<{ events: SidechatLogEvent[] }>('sidechat.events', {
+    call<{ events: SidechatLogEvent[]; live?: SidechatLiveStep }>('sidechat.events', {
       childId,
       ...(afterSeq !== undefined ? { afterSeq } : {}),
     }, signal),
