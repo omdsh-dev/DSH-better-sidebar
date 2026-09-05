@@ -27,6 +27,7 @@ import type { Agent, AgentSetup, CreateAgentOptions, ResumeAgentOptions } from '
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import type { Context as CordisContext } from '@deepseek-ai/cordis'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import { SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type {
   Context,
   SidebarAgentPresetsService,
@@ -238,16 +239,28 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
         data: descriptor as unknown as Record<string, unknown>,
       }
       const seed = [...inheritance.seed, descriptorEvent]
+      // Fork-marker fields (the exact shape the host's own session.fork uses,
+      // api-session-controller): without `isSeeded` + `inheritedEventCount` the
+      // session treats the whole seed as the child's OWN events, so the child's
+      // Inbox constructor replays the parent's `agent/inbox/spliced` events and
+      // inherits whatever input sat UNCLAIMED in the parent at the click moment
+      // (a queued follow-up, or a tool-result context spliced into next-step
+      // between step boundaries of a long-running turn). The first side prompt
+      // would then claim and send that stale message BEFORE the boundary +
+      // question. The marker keeps `ownEvents()` at the end-seed boundary, so
+      // the inherited inbox replays to empty.
       const options: CreateAgentOptions = {
         sessionId: childId,
         meta: {
           ...(parentSession.header.cwd === undefined ? {} : { cwd: parentSession.header.cwd }),
           parentSession: parentSession.id,
+          isSeeded: true,
           origin: 'subagent',
           delegationDepth: (parentSession.header.delegationDepth ?? 0) + 1,
           ...(agentPreset === undefined ? {} : { agentPreset }),
         },
         seed: seed as unknown as readonly SessionEvent[],
+        inheritedEventCount: SessionLogOffset(seed.length),
         agentOptions: { ...parent.options },
         setup,
         signal: AbortSignal.timeout(CREATE_TIMEOUT_MS),
