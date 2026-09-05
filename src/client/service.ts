@@ -509,14 +509,40 @@ function safeCall(fn: () => void): void {
   }
 }
 
+const BUILTIN_TAB_IDS = new Set(['explorer', 'git', 'subagent', 'terminal', 'browser', 'diff', 'changes'])
+const BUILTIN_VIEWER_IDS = new Set(['code', 'markdown', 'image', 'pdf', 'html', 'video'])
+
+const isTestEnv = typeof process !== 'undefined' && (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true')
+
+const g = globalThis as unknown as {
+  __DSH_BETTER_SIDEBAR_EXTERNAL_TABS__?: Map<string, TabDescriptor>
+  __DSH_BETTER_SIDEBAR_EXTERNAL_VIEWERS__?: Map<string, FileViewerDescriptor>
+}
+
+function getPreservedTabs(): Map<string, TabDescriptor> {
+  if (isTestEnv || typeof window === 'undefined') return new Map()
+  if (!g.__DSH_BETTER_SIDEBAR_EXTERNAL_TABS__) {
+    g.__DSH_BETTER_SIDEBAR_EXTERNAL_TABS__ = new Map()
+  }
+  return g.__DSH_BETTER_SIDEBAR_EXTERNAL_TABS__
+}
+
+function getPreservedViewers(): Map<string, FileViewerDescriptor> {
+  if (isTestEnv || typeof window === 'undefined') return new Map()
+  if (!g.__DSH_BETTER_SIDEBAR_EXTERNAL_VIEWERS__) {
+    g.__DSH_BETTER_SIDEBAR_EXTERNAL_VIEWERS__ = new Map()
+  }
+  return g.__DSH_BETTER_SIDEBAR_EXTERNAL_VIEWERS__
+}
+
 /**
  * Create one BetterSidebar service bound to a store. The service owns the
  * tab/viewer registries (Map + listener set) and proxies openTab/closeTab
  * to the store's reducer. One instance per client plugin activation.
  */
 export function createBetterSidebarService(store: SidebarStore): BetterSidebarService {
-  const tabs = new Map<string, TabDescriptor>()
-  const viewers = new Map<string, FileViewerDescriptor>()
+  const tabs = new Map<string, TabDescriptor>(getPreservedTabs())
+  const viewers = new Map<string, FileViewerDescriptor>(getPreservedViewers())
   const listeners = new Set<() => void>()
 
   const notify = (): void => {
@@ -530,13 +556,20 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
 
   const registerTab = (descriptor: TabDescriptor): (() => void) => {
     if (tabs.has(descriptor.id)) {
+      if (tabs.get(descriptor.id) === descriptor) return () => {}
       throw new Error(`[dsh-better-sidebar] tab type "${descriptor.id}" already registered`)
     }
     tabs.set(descriptor.id, descriptor)
+    if (!BUILTIN_TAB_IDS.has(descriptor.id)) {
+      getPreservedTabs().set(descriptor.id, descriptor)
+    }
     notify()
     return () => {
       if (tabs.get(descriptor.id) === descriptor) {
         tabs.delete(descriptor.id)
+        if (!BUILTIN_TAB_IDS.has(descriptor.id)) {
+          getPreservedTabs().delete(descriptor.id)
+        }
         notify()
       }
     }
@@ -544,13 +577,20 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
 
   const registerFileViewer = (descriptor: FileViewerDescriptor): (() => void) => {
     if (viewers.has(descriptor.id)) {
+      if (viewers.get(descriptor.id) === descriptor) return () => {}
       throw new Error(`[dsh-better-sidebar] file viewer "${descriptor.id}" already registered`)
     }
     viewers.set(descriptor.id, descriptor)
+    if (!BUILTIN_VIEWER_IDS.has(descriptor.id)) {
+      getPreservedViewers().set(descriptor.id, descriptor)
+    }
     notify()
     return () => {
       if (viewers.get(descriptor.id) === descriptor) {
         viewers.delete(descriptor.id)
+        if (!BUILTIN_VIEWER_IDS.has(descriptor.id)) {
+          getPreservedViewers().delete(descriptor.id)
+        }
         notify()
       }
     }
