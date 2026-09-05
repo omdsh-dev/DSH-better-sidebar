@@ -39,11 +39,10 @@ export interface LastActivity {
 
 /**
  * Fold a session event log into the last text output + last tool call (each
- * is the LAST occurrence in event order). Lifecycle events and raw
- * `assistant/chunk` rows are ignored — the card shows what the subagent is
- * doing right now, not its plumbing. The scan runs BACKWARD from the newest
- * event and stops once both fields are found, so a long history costs only
- * the recent tail in the common case.
+ * is the LAST occurrence in event order). Lifecycle events are ignored — the
+ * card shows what the subagent is doing right now, not its plumbing. The scan
+ * runs BACKWARD from the newest event and stops once both fields are found,
+ * so a long history costs only the recent tail in the common case.
  * @param events - the session's append-only event log (oldest → newest).
  * @param maxMessages - optional message-boundary window: only the tail's
  *   last `maxMessages` surface messages (`user/message`, `assistant/message`)

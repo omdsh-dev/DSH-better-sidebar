@@ -50,7 +50,7 @@ describe('subagent activity summary parser', () => {
     const live = lastActivity([
       entry('turn/end', { turn: 1, reason: 'success' }),
       entry('step/start', { turn: 1, step: 1 }),
-      entry('assistant/chunk', { turn: 1, step: 1, chunk: { type: 'text', delta: 'x' } }),
+      entry('step/start', { turn: 1, step: 1 }),
       entry('assistant/message', { turn: 1, step: 1, message: { content: [{ type: 'tool_use', name: 'bash' }] } }),
     ])
     expect(live).toEqual({})

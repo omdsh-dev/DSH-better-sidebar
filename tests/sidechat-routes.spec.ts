@@ -164,7 +164,7 @@ describe('sidechat.start', () => {
         ev('user/message', 0, { content: [{ type: 'text', text: 'q' }], source: { kind: 'user' } }),
         ev('turn/start', 1, { turn: 1 }),
         ev('step/start', 2, { turn: 1, step: 1 }),
-        ev('assistant/chunk', 3, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'streaming' } }),
+        ev('assistant/message', 3, { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'streaming' }] } }),
       ],
     })
     const child = agent('child')
@@ -175,7 +175,7 @@ describe('sidechat.start', () => {
 
     const options = services.create.mock.calls[0]![0] as { seed: Array<{ type: string; data: Record<string, unknown> }> }
     expect(options.seed.map(event => event.type)).toEqual([
-      'user/message', 'turn/start', 'step/start', 'assistant/chunk', 'step/end', 'turn/end',
+      'user/message', 'turn/start', 'step/start', 'assistant/message', 'step/end', 'turn/end',
       'subagent/descriptor',
     ])
     expect(options.seed.at(-2)?.data).toEqual({ turn: 1, reason: { kind: 'interrupted' } })
@@ -375,8 +375,8 @@ function threadLog(): Array<ReturnType<typeof ev>> {
     ev('subagent/descriptor', 3, { mode: 'continuable' }),
     ev('user/message', 4, { content: [{ type: 'text', text: 'Side conversation boundary.' }], source: { kind: 'plugin', plugin: 'dsh-better-sidebar' } }),
     ev('user/message', 5, { content: [{ type: 'text', text: 'the side question' }], source: { kind: 'user' } }),
-    ev('assistant/chunk', 6, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'an' } }),
-    ev('assistant/chunk', 7, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'swer' } }),
+    ev('tool/call', 6, { turn: 1, step: 1, callId: 'c1', name: 'bash', arguments: '{}' }),
+    ev('assistant/message', 7, { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'answer' }] } }),
   ]
 }
 
@@ -427,7 +427,7 @@ describe('sidechat.events', () => {
   })
 
   it('caps a pathological response at its tail (8000 events)', async () => {
-    const events = Array.from({ length: 8_003 }, (_, index) => ev('assistant/chunk', index, { turn: 1, step: 1 }))
+    const events = Array.from({ length: 8_003 }, (_, index) => ev('tool/call', index, { turn: 1, step: 1 }))
     const child = agent('child', { events })
     const services = happyServices(undefined, child)
     const api = buildSidechatApi(ctxWith(services))
@@ -450,6 +450,35 @@ describe('sidechat.events', () => {
     services.inspect.mockImplementation(async () => { throw new Error('no such session') })
     await expect(api['sidechat.events']({ childId: 'ghost' }))
       .rejects.toMatchObject({ code: 'not-found', status: 404 })
+  })
+
+  it('carries the in-flight prefix of a streaming step alongside the events', async () => {
+    // `assistant/chunk` is gone as of DSH 0.1.3-alpha.1, so a step's prose is
+    // durable only once it settles; the poll carries the live prefix instead.
+    const child = agent('child', { events: threadLog() })
+    const services = happyServices(undefined, child)
+    let listener: ((payload: { agent: unknown; frame: unknown }) => void) | undefined
+    const ctx = {
+      get: (key: string) => (key === 'agents' ? services.agents : key === 'sessionPersistence' ? services.sessionPersistence : undefined),
+      on: (_event: string, handler: (payload: { agent: unknown; frame: unknown }) => void) => {
+        listener = handler
+        return () => {}
+      },
+      effect: (setup: () => unknown) => setup(),
+    } as unknown as Context
+    const api = buildSidechatApi(ctx)
+
+    const before = await api['sidechat.events']({ childId: 'child' })
+    expect(before.live).toBeUndefined()
+
+    const agentPayload = { session: { id: 'child' } }
+    // `revision` is allocated per FRAME by the host, so each frame is higher.
+    listener?.({ agent: agentPayload, frame: { type: 'start', attemptId: 'a1', revision: 1, turn: 1, step: 2 } })
+    listener?.({ agent: agentPayload, frame: { type: 'chunk', attemptId: 'a1', revision: 2, index: 0, time: 0, chunk: { type: 'text-delta', text: 'so far' } } })
+
+    const during = await api['sidechat.events']({ childId: 'child', afterSeq: 7 })
+    expect(during.events).toEqual([])
+    expect(during.live).toEqual({ turn: 1, step: 2, text: 'so far', reasoning: '' })
   })
 
   it('fails loudly when a cold thread has no persistence service to read', async () => {
