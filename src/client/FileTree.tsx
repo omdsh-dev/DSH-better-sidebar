@@ -268,15 +268,26 @@ export function FileTree(props: {
     loadDir(dir)
   }, [loadDir])
 
-  // The caller's refresh tick wipes the cache (declared BEFORE the load
-  // effect so the reload below sees the empty cache).
+  // The caller's refresh tick updates the visible levels in place without
+  // clearing the entire cache to empty, avoiding visible flicker.
   const lastTick = useRef(refreshTick)
   useEffect(() => {
     if (lastTick.current === refreshTick) return
     lastTick.current = refreshTick
-    dataRef.current = {}
-    setData({})
-  }, [refreshTick])
+    const root = cwd
+    if (root === undefined) return
+    const active = new Set([root, ...expanded])
+    for (const key of Object.keys(dataRef.current)) {
+      if (!active.has(key)) delete dataRef.current[key]
+    }
+    for (const dir of active) {
+      api.fsTree({ sessionId, cwd }, dir).then((listing) => {
+        storeLevel(dir, { entries: listing.entries })
+      }).catch((error: unknown) => {
+        storeLevel(dir, { error: error instanceof Error ? error.message : String(error) })
+      })
+    }
+  }, [refreshTick, cwd, expanded, sessionId, storeLevel])
 
   useEffect(() => {
     // Load the visible set; already-loaded levels (kept in the cache) are

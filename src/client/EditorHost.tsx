@@ -353,6 +353,37 @@ export function EditorHost(props: {
     prevSaveState.current = current
   }, [toolbar?.saveState, toolbar?.mode])
 
+  // Passive refresh (LLM file change detection): reload this file when
+  // a refresh event targets this path or all files, unless the user has
+  // unsaved edits (dirty draft).
+  useEffect(() => {
+    const handleRefresh = (e: Event): void => {
+      if (path === '' || isDir) return
+      const custom = e as CustomEvent<{ files?: readonly string[]; path?: string }>
+      const targetFiles = custom.detail?.files
+      const targetPath = custom.detail?.path
+      if (targetFiles !== undefined && targetFiles.length > 0) {
+        const matches = targetFiles.some(f => {
+          if (f === path) return true
+          if (scope.cwd) {
+            const abs = f.startsWith('/') ? f : `${scope.cwd}/${f}`
+            return abs === path
+          }
+          return false
+        })
+        if (!matches) return
+      } else if (targetPath !== undefined && targetPath !== path) {
+        return
+      }
+      if (toolbar?.dirty === true) return
+      setReloadSeq(sequence => sequence + 1)
+    }
+    window.addEventListener('dsh-sidebar:refresh-files', handleRefresh)
+    return () => {
+      window.removeEventListener('dsh-sidebar:refresh-files', handleRefresh)
+    }
+  }, [path, isDir, scope.cwd, toolbar?.dirty])
+
   const treeOpen = treeOpenOf(tab)
   /** Persist the panel flag on the tab (survives reloads with the layout). */
   const toggleTree = (): void => { patchMeta(ctx, tab, { treeOpen: !treeOpen }) }

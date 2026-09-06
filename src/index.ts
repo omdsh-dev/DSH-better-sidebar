@@ -676,6 +676,20 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // native dependencies — the tool works even in node-pty degraded mode.
   const agentOpenRegistry = new AgentOpenRegistry()
 
+  // Passive file-change notification: when an agent writes/edits a file or
+  // completes any tool call, notify the connected sidebar view to refresh the
+  // explorer tree and active editor.
+  if (typeof ctx.on === 'function') {
+    const disposeEventRefresh = ctx.on('session/event', (session, event) => {
+      const sessionId = (session as { id?: unknown } | null)?.id
+      if (typeof sessionId !== 'string') return
+      if (event.type === 'tool/result') {
+        agentOpenRegistry.notifyRefresh(sessionId)
+      }
+    })
+    ctx.effect(() => disposeEventRefresh, 'dsh-better-sidebar: passive file refresh on session event')
+  }
+
   // ── User-facing "Side card" preferences ──────────────────────────────────
   // Register the namespace with the settings provider so the Settings page
   // (client half) can render and persist the new-conversation defaults. The
