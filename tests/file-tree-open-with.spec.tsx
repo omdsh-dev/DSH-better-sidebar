@@ -1,9 +1,10 @@
 /**
- * FileTree "open with" context menu: a file row's right-click menu gains the
+ * FileTree "open with" context menu: a row's right-click menu gains the
  * pinned direct rows and the parent submenu row; the submenu lists every
  * resolved target with a per-row pushpin, pinning never selects/closes the
  * menu, and selecting a child invokes the caller's open handler with the
- * row's absolute path. When the caller wires nothing, the section is absent.
+ * row's absolute path (URL targets preserve file/directory kind). When the
+ * caller wires nothing, the section is absent.
  */
 // @vitest-environment jsdom
 import { beforeAll, afterEach, describe, expect, it, vi } from 'vitest'
@@ -26,7 +27,10 @@ beforeAll(() => {
 vi.mock('../src/client/api.ts', () => ({
   api: {
     fsTree: async () => ({
-      entries: [{ name: 'a.ts', path: '/tmp/a.ts', isDir: false }],
+      entries: [
+        { name: 'project', path: '/tmp/project', isDir: true },
+        { name: 'a.ts', path: '/tmp/a.ts', isDir: false },
+      ],
     }),
   },
   downloadUrl: () => '/sidebar/file',
@@ -92,18 +96,23 @@ async function mountTree(overrides: {
   }
 }
 
-/** The file row of the one-level tree (role="button" with the name span). */
-function fileRow(container: HTMLDivElement): HTMLElement {
+/** One named tree row (role="button" with the name span). */
+function namedRow(container: HTMLDivElement, name: string): HTMLElement {
   const row = [...container.querySelectorAll<HTMLElement>('[role="button"]')]
-    .find(el => el.querySelector('[class*="explorerName"]')?.textContent === 'a.ts')
-  if (row === undefined) throw new Error('file row not found')
+    .find(el => el.querySelector('[class*="explorerName"]')?.textContent === name)
+  if (row === undefined) throw new Error(`${name} row not found`)
   return row
 }
 
-/** Open the row's context menu at a fixed cursor position. */
-function openMenu(container: HTMLDivElement): void {
+/** The file row of the one-level tree. */
+function fileRow(container: HTMLDivElement): HTMLElement {
+  return namedRow(container, 'a.ts')
+}
+
+/** Open one row's context menu at a fixed cursor position. */
+function openMenu(container: HTMLDivElement, name = 'a.ts'): void {
   const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 30 })
-  act(() => { fileRow(container).dispatchEvent(event) })
+  act(() => { namedRow(container, name).dispatchEvent(event) })
 }
 
 describe('FileTree open-with menu', () => {
@@ -165,7 +174,7 @@ describe('FileTree open-with menu', () => {
     expect(document.querySelector('[role="menu"] [role="menu"]')).not.toBeNull()
   })
 
-  it('selecting a submenu child invokes onOpenWith with the row path and closes the menu', async () => {
+  it('selecting a file submenu child keeps the raw file path and closes the menu', async () => {
     harness = await mountTree()
     openMenu(harness.container)
     const parent = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
@@ -178,6 +187,30 @@ describe('FileTree open-with menu', () => {
     // Selecting closes the row menu entirely.
     expect(document.querySelector('[role="menu"] [role="menu"]')).toBeNull()
     expect(document.querySelector('[role="menuitem"]')).toBeNull()
+  })
+
+  it('passes a trailing-slash path for directory URL targets', async () => {
+    harness = await mountTree()
+    openMenu(harness.container, 'project')
+    const parent = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+      .find(item => item.getAttribute('aria-haspopup') === 'menu')
+    act(() => { parent!.click() })
+    const vscodeRow = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menu"] [role="menuitem"]')]
+      .find(item => item.textContent?.trim() === 'VS Code')
+    act(() => { vscodeRow!.click() })
+    expect(harness.onOpenWith).toHaveBeenCalledWith('vscode', '/tmp/project/')
+  })
+
+  it('keeps reveal targets on the raw directory path', async () => {
+    harness = await mountTree()
+    openMenu(harness.container, 'project')
+    const parent = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+      .find(item => item.getAttribute('aria-haspopup') === 'menu')
+    act(() => { parent!.click() })
+    const explorerRow = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menu"] [role="menuitem"]')]
+      .find(item => item.textContent?.trim() === 'File Manager')
+    act(() => { explorerRow!.click() })
+    expect(harness.onOpenWith).toHaveBeenCalledWith('explorer', '/tmp/project')
   })
 
   it('appends the SSH hint to VSCode-family labels in remote mode', async () => {
