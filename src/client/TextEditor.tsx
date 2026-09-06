@@ -346,9 +346,11 @@ export function TextEditor(props: FileViewerProps) {
     () => (markdown && mode === 'preview' ? splitMermaidBlocks(previewMdText) : []),
     [markdown, mode, previewMdText],
   )
-  /** Raw-HTML analysis (block runs lifted out + inline gate). Non-null only
-   *  for documents that actually contain HTML — plain markdown keeps the
-   *  legacy single-pass render path below, byte-for-byte. */
+  /** Raw-HTML analysis (block runs lifted out + inline gate). Non-null for
+   *  every markdown preview, so the render below always takes the split
+   *  renderer — its markdown runs rewrite local image destinations internally
+   *  (see MarkdownHtml.tsx). The legacy single-pass branches (fed the
+   *  pre-rewritten `previewText`) are dead in the current wiring. */
   const htmlInfo = useMemo(
     () => (markdown && mode === 'preview' ? analyzeMarkdownHtml(previewMdText) : null),
     [markdown, mode, previewMdText],

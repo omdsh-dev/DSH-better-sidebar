@@ -113,6 +113,7 @@ describe('sidechat.start', () => {
       sessionId: string
       meta: Record<string, unknown>
       seed: readonly { type: string; data: Record<string, unknown> }[]
+      inheritedEventCount: number
       agentOptions: { provider: string; model: string }
       setup: unknown
     }
@@ -120,10 +121,15 @@ describe('sidechat.start', () => {
     expect(options.meta).toMatchObject({
       parentSession: 'parent',
       origin: 'subagent',
+      isSeeded: true,
       delegationDepth: 1,
       agentPreset: 'preset-a',
       cwd: '/p',
     })
+    // The fork-marker pair is load-bearing: without it the child's Inbox
+    // replays the parent's seed inbox splices and inherits whatever input sat
+    // unclaimed in the parent (see sidechat-seed-validation.spec.ts).
+    expect(options.inheritedEventCount).toBe(options.seed.length)
     expect(options.agentOptions).toEqual({ provider: 'test', model: 'model-x' })
     // The child carries the parent's completed turns as a verbatim seed,
     // closed by the durable subagent descriptor (honest catalog citizenship:
@@ -220,6 +226,16 @@ describe('sidechat.start', () => {
     const api = buildSidechatApi(ctxWith(services))
 
     const { childId } = await api['sidechat.start']({ sessionId: 'parent', question: '   ' })
+
+    // The empty thread carries the same fork-marker pair (isSeeded +
+    // inheritedEventCount = seed length) as the prompted create.
+    const options = services.create.mock.calls[0]![0] as {
+      meta: Record<string, unknown>
+      seed: readonly { type: string }[]
+      inheritedEventCount: number
+    }
+    expect(options.meta.isSeeded).toBe(true)
+    expect(options.inheritedEventCount).toBe(options.seed.length)
 
     // No prompt yet: the composer owns the first message; the placeholder
     // label is pinned and the in-progress snapshot is parked for it.
