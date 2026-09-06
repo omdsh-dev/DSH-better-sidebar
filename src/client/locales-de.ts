@@ -301,6 +301,7 @@ export const de: Record<string, string> = {
   settingsBrowserLoopbackDesc: 'Kommagetrennte Allowlist von Loopback-Adressen (z. B. localhost:5174 oder 127.0.0.1:8080), die der Seitenleisten-Browser besuchen darf; leer blockiert standardmäßig alle lokalen Adressen. Die Sandbox bleibt aktiv — Seiten können keine GUI-Daten lesen',
   settingsBrowserLoopbackPlaceholder: 'z. B. localhost:5174, 127.0.0.1:8080',
   browserOpenExternal: 'Im Browser öffnen',
+  openBrowserCloseConfirm: 'Im Browser öffnen und diesen Tab schließen? Ungespeicherte Änderungen gehen verloren.',
   browserEmbedBlocked: '{host} hat die Einbettung verweigert',
   browserEmbedBlockedDesc: 'Die Site verbietet die Anzeige in anderen Seiten (X-Frame-Options / frame-ancestors) und kann daher nicht in der Seitenleiste geladen werden. Öffnen Sie sie stattdessen direkt im Browser.',
   browserEmbedAnyway: 'Trotzdem laden',

@@ -307,6 +307,7 @@ export const ko: Record<string, string> = {
   settingsBrowserLoopbackDesc: '사이드바 브라우저가 방문할 수 있는 루프백 주소의 쉼표로 구분된 허용 목록(예: localhost:5174 또는 127.0.0.1:8080). 비어 있으면 기본적으로 모든 로컬 주소를 차단합니다. 샌드박스는 계속 적용되며, 페이지는 GUI 데이터를 읽을 수 없습니다',
   settingsBrowserLoopbackPlaceholder: '예: localhost:5174, 127.0.0.1:8080',
   browserOpenExternal: '브라우저에서 열기',
+  openBrowserCloseConfirm: '브라우저에서 열고 이 탭을 닫을까요? 저장하지 않은 편집 내용은 삭제됩니다.',
   browserEmbedBlocked: '{host} 가(이) 임베드 요청을 거부했습니다',
   browserEmbedBlockedDesc: '이 사이트는 X-Frame-Options / frame-ancestors로 다른 페이지에 표시되는 것을 금지하여 사이드바에서 로드할 수 없습니다. 브라우저에서 직접 열 수 있습니다',
   browserEmbedAnyway: '그래도 로드',

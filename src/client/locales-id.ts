@@ -313,6 +313,7 @@ export const id: Record<string, string> = {
   settingsBrowserLoopbackDesc: 'Daftar putih alamat loopback yang dipisahkan koma (mis. localhost:5174 atau 127.0.0.1:8080) yang dapat dikunjungi browser sidebar; kosong memblokir semua alamat lokal secara default. Sandbox tetap berlaku — halaman tidak dapat membaca data GUI',
   settingsBrowserLoopbackPlaceholder: 'mis. localhost:5174, 127.0.0.1:8080',
   browserOpenExternal: 'Buka di browser',
+  openBrowserCloseConfirm: 'Buka di browser dan tutup tab ini? Perubahan yang belum disimpan akan dibuang.',
   browserEmbedBlocked: '{host} menolak untuk disematkan',
   browserEmbedBlockedDesc: 'Situs melarang ditampilkan di dalam halaman lain (X-Frame-Options / frame-ancestors), sehingga tidak dapat dimuat di sidebar. Buka langsung di browser Anda.',
   browserEmbedAnyway: 'Tetap muat',

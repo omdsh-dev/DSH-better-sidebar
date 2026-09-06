@@ -87,3 +87,13 @@ export interface FileViewerDescriptor {
 ## 分支与流程
 
 `feat/preview-download` 已被 reset 至 main；本特性改用 `feat/open-in-browser` 分支 + PR（AGENTS §1）。
+
+---
+
+## 追加：点击后自动关闭侧边栏标签页（2026-08-31）
+
+**行为**：「在浏览器中打开」把文件交接给浏览器后，侧边栏里该文件的标签页自动关闭（`ctx.betterSidebar.closeTab(tab.id, scope)`）——浏览器已接管，侧边栏不留冗余 tab。
+
+**草稿守卫**：html viewer 可编辑（TextEditor），有未保存草稿时**先确认再动作**（`window.confirm(t('openBrowserCloseConfirm'))`，沿用 refreshFile 的 confirm 惯例）：取消则既不开浏览器也不关 tab；image/pdf viewer 无编辑态，直接交接。新增 i18n key `openBrowserCloseConfirm`（20 词典已补齐，locales.spec key-set 门禁守护）。
+
+**测试**：`tests/editor-host.spec.tsx`——点击后 tab 从 store 移除；dirty + confirm 取消 → 不开浏览器且 tab 保留；dirty + confirm 确认 → 开浏览器且 tab 关闭。

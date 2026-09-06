@@ -308,6 +308,7 @@ export const fr: Record<string, string> = {
   settingsBrowserLoopbackDesc: 'Liste blanche séparée par des virgules des adresses de bouclage (ex. localhost:5174 ou 127.0.0.1:8080) que le navigateur de la barre latérale peut visiter ; vide bloque toutes les adresses locales par défaut. Le bac à sable reste actif — les pages ne peuvent pas lire les données de l interface',
   settingsBrowserLoopbackPlaceholder: 'ex. localhost:5174, 127.0.0.1:8080',
   browserOpenExternal: 'Ouvrir dans le navigateur',
+  openBrowserCloseConfirm: 'Ouvrir dans le navigateur et fermer cet onglet ? Les modifications non enregistrées seront perdues.',
   browserEmbedBlocked: '{host} a refusé la demande d’encapsulation',
   browserEmbedBlockedDesc: 'Ce site interdit son affichage dans d’autres pages (X-Frame-Options / frame-ancestors) et ne peut donc pas être chargé dans la barre latérale. Vous pouvez l’ouvrir directement dans le navigateur',
   browserEmbedAnyway: 'Charger quand même',

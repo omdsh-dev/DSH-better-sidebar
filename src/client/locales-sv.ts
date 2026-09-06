@@ -298,6 +298,7 @@ export const sv: Record<string, string> = {
   settingsBrowserLoopbackDesc: 'Kommaseparerad tillåten lista över loopback-adresser (t.ex. localhost:5174 eller 127.0.0.1:8080) som sidofältswebbläsaren kan besöka; tom blockerar alla lokala adresser som standard. Sandlådan gäller fortfarande — sidor kan inte läsa GUI-data',
   settingsBrowserLoopbackPlaceholder: 't.ex. localhost:5174, 127.0.0.1:8080',
   browserOpenExternal: 'Öppna i webbläsare',
+  openBrowserCloseConfirm: 'Öppna i webbläsaren och stänga den här fliken? Osparade ändringar kastas.',
   browserEmbedBlocked: '{host} vägrade bli inbäddad',
   browserEmbedBlockedDesc: 'Sajten förbjuder att visas inuti andra sidor (X-Frame-Options / frame-ancestors), så den kan inte ladda i sidopanelen. Öppna den direkt i er webbläsare i stället.',
   browserEmbedAnyway: 'Ladda ändå',

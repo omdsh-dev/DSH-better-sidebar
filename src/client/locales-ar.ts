@@ -316,6 +316,7 @@ export const ar: Record<string, string> = {
   settingsBrowserLoopbackDesc: 'قائمة بيضاء مفصولة بفواصل لعناوين الاسترجاع المحلي (مثل localhost:5174 أو 127.0.0.1:8080) يمكن للمتصفح الجانبي زيارتها؛ فارغة افتراضيًا تمنع جميع العناوين المحلية. تظل صندوق الحماية سارية — لا يمكن للصفحات قراءة بيانات الواجهة',
   settingsBrowserLoopbackPlaceholder: 'مثال localhost:5174, 127.0.0.1:8080',
   browserOpenExternal: 'فتح في المتصفح',
+  openBrowserCloseConfirm: 'فتح في المتصفح وإغلاق هذا التبويب؟ سيتم تجاهل التعديلات غير المحفوظة.',
   browserEmbedBlocked: 'رفض {host} التضمين',
   browserEmbedBlockedDesc: 'يحظر الموقع عرضه داخل صفحات أخرى (X-Frame-Options / frame-ancestors)، لذا لا يمكن تحميله في الشريط الجانبي. افتحه مباشرة في متصفحك بدلاً من ذلك.',
   browserEmbedAnyway: 'تحميل على أي حال',

@@ -315,6 +315,7 @@ export const th: Record<string, string> = {
   settingsBrowserLoopbackDesc: 'รายการที่อนุญาตแบบคั่นด้วยจุลภาคของที่อยู่ลูปแบ็ก (เช่น localhost:5174 หรือ 127.0.0.1:8080) ที่เบราว์เซอร์แถบด้านข้างสามารถเยี่ยมชมได้ ค่าว่างจะบล็อกที่อยู่ภายในทั้งหมดโดยค่าเริ่มต้น แซนด์บ็อกซ์ยังคงมีผล — หน้าเว็บไม่สามารถอ่านข้อมูล GUI ได้',
   settingsBrowserLoopbackPlaceholder: 'เช่น localhost:5174, 127.0.0.1:8080',
   browserOpenExternal: 'เปิดในเบราว์เซอร์',
+  openBrowserCloseConfirm: 'เปิดในเบราว์เซอร์และปิดแท็บนี้? การแก้ไขที่ยังไม่ได้บันทึกจะหายไป',
   browserEmbedBlocked: '{host} ปฏิเสธที่จะถูกฝัง',
   browserEmbedBlockedDesc: 'ไซต์ห้ามไม่ให้แสดงภายในหน้าอื่น (X-Frame-Options / frame-ancestors) จึงไม่สามารถโหลดในแถบด้านข้างได้ เปิดโดยตรงในเบราว์เซอร์ของคุณแทน',
   browserEmbedAnyway: 'โหลดต่อไป',

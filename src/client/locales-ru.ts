@@ -312,6 +312,7 @@ export const ru: Record<string, string> = {
   settingsBrowserLoopbackDesc: 'Разделённый запятыми список разрешённых loopback-адресов (напр. localhost:5174 или 127.0.0.1:8080), которые может посещать браузер боковой панели; пустое значение по умолчанию блокирует все локальные адреса. Песочница продолжает действовать — страницы не могут читать данные интерфейса',
   settingsBrowserLoopbackPlaceholder: 'напр. localhost:5174, 127.0.0.1:8080',
   browserOpenExternal: 'Открыть в браузере',
+  openBrowserCloseConfirm: 'Открыть в браузере и закрыть эту вкладку? Несохранённые изменения будут потеряны.',
   browserEmbedBlocked: '{host} отказал во встраивании',
   browserEmbedBlockedDesc: 'Сайт запрещает отображение внутри других страниц (X-Frame-Options / frame-ancestors), поэтому его нельзя загрузить в боковой панели. Откройте его напрямую в браузере',
   browserEmbedAnyway: 'Загрузить всё равно',

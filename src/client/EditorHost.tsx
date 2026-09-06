@@ -468,7 +468,10 @@ export function EditorHost(props: {
         {/* Open-in-browser: only when the matched viewer declares a
             browser-renderable URL (builtins: image/pdf → media route, html →
             sandboxed html route). Text/code/binary viewers declare nothing —
-            the browser cannot meaningfully render them, so the button hides. */}
+            the browser cannot meaningfully render them, so the button hides.
+            Opening hands the file to the browser, so the sidebar tab closes
+            itself — but never drop a dirty draft silently (the html viewer
+            is editable): confirm first, same pattern as refreshFile. */}
         {load.status === 'ready' && load.viewer.browserUrl !== undefined && (
           <button
             type="button"
@@ -476,9 +479,10 @@ export function EditorHost(props: {
             aria-label={t('browserOpenExternal')}
             title={t('browserOpenExternal')}
             onClick={() => {
-              if (load.status === 'ready' && load.viewer.browserUrl !== undefined) {
-                window.open(load.viewer.browserUrl(scope, path), '_blank', 'noopener')
-              }
+              if (load.status !== 'ready' || load.viewer.browserUrl === undefined) return
+              if (toolbar?.dirty === true && !window.confirm(t('openBrowserCloseConfirm'))) return
+              window.open(load.viewer.browserUrl(scope, path), '_blank', 'noopener')
+              ctx.get('betterSidebar')?.closeTab(tab.id, scope)
             }}
           >
             <VscLinkExternal size={14} />

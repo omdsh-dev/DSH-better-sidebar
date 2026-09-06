@@ -315,6 +315,7 @@ export const vi: Record<string, string> = {
   settingsBrowserLoopbackDesc: 'Danh sách cho phép phân tách bằng dấu phẩy của địa chỉ loopback (vd. localhost:5174 hoặc 127.0.0.1:8080) mà trình duyệt thanh bên có thể truy cập; để trống sẽ chặn tất cả địa chỉ cục bộ theo mặc định. Hộp cát vẫn áp dụng — các trang không thể đọc dữ liệu GUI',
   settingsBrowserLoopbackPlaceholder: 'vd. localhost:5174, 127.0.0.1:8080',
   browserOpenExternal: 'Mở trong trình duyệt',
+  openBrowserCloseConfirm: 'Mở trong trình duyệt và đóng tab này? Các chỉnh sửa chưa lưu sẽ bị mất.',
   browserEmbedBlocked: '{host} từ chối nhúng',
   browserEmbedBlockedDesc: 'Trang này cấm hiển thị trong trang khác qua X-Frame-Options / frame-ancestors, không thể tải trong thanh bên. Mở trực tiếp trong trình duyệt',
   browserEmbedAnyway: 'Vẫn tải',

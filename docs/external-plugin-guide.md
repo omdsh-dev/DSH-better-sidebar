@@ -454,7 +454,7 @@ interface FileViewerProps {
 
 > **内置 viewer**（不可重复注册，全部 6 个）：image(0) / pdf(0) / markdown(0, fsRead；内嵌 HTML 支持：DOMPurify 白名单消毒、`<details>` 跨段嵌套、本地媒体 src 重写走 `/sidebar/file`；≥3 标题时浮动目录大纲。实现 `markdown-html.ts` / `MarkdownHtml.tsx` / `md-toc.tsx`，[设计文档](plans/2026-08-24-markdown-html-toc-design.md)) / html(0, fsRead, 沙箱 iframe 预览) / code(-100, catch-all, fsRead) / binary-download(-50, exts doc/xls/ppt + NUL detect)。Office 三件套预览（.docx/.xlsx/.pptx）**不再内置**——已迁至推荐插件（设置页「添加插件」→ 文件预览弹窗里的 Office 预览插件），以相同 id 注册。
 > code 是兜底 viewer：任何其他 viewer 未认领的文件都会落到 code（CodeMirror 文本编辑）；二进制文件经 head 重匹配被 binary-download 的 NUL detect 认领（下载按钮）。外部 viewer 注册同扩展名 + 更高 priority 即可覆盖。
-> image / pdf / html 三个 viewer 声明了 `browserUrl`，编辑器 header 会出现「在浏览器中打开」按钮（真实新 Tab：image/pdf 走 `/sidebar/file` 媒体 URL，html 走带 CSP sandbox 的 `/sidebar/html` URL，顶层打开仍处 opaque origin，[设计文档](plans/2026-08-31-open-in-browser-design.md)）。
+> image / pdf / html 三个 viewer 声明了 `browserUrl`，编辑器 header 会出现「在浏览器中打开」按钮（真实新 Tab：image/pdf 走 `/sidebar/file` 媒体 URL，html 走带 CSP sandbox 的 `/sidebar/html` URL，顶层打开仍处 opaque origin，[设计文档](plans/2026-08-31-open-in-browser-design.md)）。点击即把文件交接给浏览器，侧边栏中该文件的标签页**自动关闭**；若有未保存草稿（html viewer 可编辑）会先弹确认，取消则不开不关。
 
 ### 5.5 注册示例
 
