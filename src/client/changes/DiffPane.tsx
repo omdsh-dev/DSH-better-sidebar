@@ -303,13 +303,18 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
                 ? <div className={css.paneBody}><div className={css.gitError}>{t('diffLoadError')}: {error}</div></div>
                 : (
                   <div className={css.paneBody}>
-                    {diffText !== null && diffText !== '' && (
+                    {(diffText !== null && diffText !== '') || untracked !== undefined ? (
                       <DiffFiles
-                        diff={diffText}
+                        // The untracked fallback sets diffText='' on purpose
+                        // (git diff never lists an untracked file) and carries
+                        // the full content via `untracked` — the renderer must
+                        // fire for that shape too, or the pane renders blank
+                        // (the dedicated diff tab's shape, see DiffTab).
+                        diff={diffText ?? ''}
                         untrackedPath={untracked !== undefined && target.ref.kind === 'worktree' ? target.ref.path : undefined}
                         untrackedContent={untracked}
                       />
-                    )}
+                    ) : null}
                     {diffText === '' && untracked === undefined && (
                       <div className={css.gitEmpty}>{t('diffEmpty')}</div>
                     )}
