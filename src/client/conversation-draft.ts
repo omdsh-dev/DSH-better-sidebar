@@ -33,6 +33,7 @@
  * position (A|B + C + D → ACD|B).
  */
 import type { Context, SidebarConversation } from '../context-types.ts'
+import { workspaceRelativePath } from './paths.ts'
 
 /** A resolved composer caret/selection in draft coordinates. */
 export interface DraftCaret {
@@ -211,14 +212,54 @@ export function fileMention(relativePath: string): { mention: string; label: str
   return { mention, label }
 }
 
+/** A complete directory token: normalize separators and put '/' inside quotes. */
+export function directoryMention(relativePath: string): string | undefined {
+  const reference = fileMention(relativePath.replace(/\\/g, '/'))
+  if (reference === undefined) return undefined
+  return reference.mention.endsWith('"')
+    ? `${reference.mention.slice(0, -1)}/"`
+    : `${reference.mention}/`
+}
+
+/**
+ * Insert an explorer entry using WorkspaceView.path, selected by exact
+ * session membership (the same lookup as the native conversation shell).
+ * Read the public workspace snapshot at click time so reconnects and session
+ * changes cannot leave a captured root stale. Missing/unready membership or
+ * an unrepresentable path is a logged no-op; never guess from session cwd.
+ */
+export function insertWorkspaceReference(ctx: Context, sessionId: string, path: string, isDir: boolean): boolean {
+  try {
+    const snapshot = ctx.get('workspaces')?.list.getSnapshot()
+    const root = snapshot?.phase === 'ready' && snapshot.state === 'idle'
+      ? snapshot.items.find(workspace => workspace.sessionIds.includes(sessionId))?.path
+      : undefined
+    const relative = workspaceRelativePath(root, path)
+    if (relative === undefined) {
+      console.warn('[dsh-better-sidebar] reference insert skipped: workspace root unavailable or path outside workspace')
+      return false
+    }
+    const mention = isDir ? directoryMention(relative) : fileMention(relative)?.mention
+    if (mention === undefined) {
+      console.warn('[dsh-better-sidebar] reference insert skipped: path cannot be represented as a mention')
+      return false
+    }
+    if (!isDir && insertFileReference(ctx, sessionId, relative)) return true
+    return appendToDraft(ctx, sessionId, mention)
+  } catch (error) {
+    console.warn('[dsh-better-sidebar] workspace-reference insert failed:', error)
+    return false
+  }
+}
+
 /**
  * Insert one FILE reference as a structured chip (like DSH's own `@` picker).
  * The chip displays `@<basename>` but serializes to `@<relative path>` on
  * send, so the reference stays a single link from trigger to basename.
  *
- * Directories are NOT handled here: DSH's folder grammar wants the trailing
- * slash as plain text (`@dir/`) so completion can descend, which
- * `appendToDraft` already covers.
+ * Directories keep the sidebar's plain-text completion behavior (`@dir/`)
+ * through `insertWorkspaceReference`. The rc.1 picker also supports folder
+ * chips on explicit selection; its drill action still inserts plain text.
  */
 export function insertFileReference(ctx: Context, sessionId: string, relativePath: string): boolean {
   const reference = fileMention(relativePath)

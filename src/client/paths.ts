@@ -1,6 +1,6 @@
 /**
- * Path projection helpers shared by the explorer rows: a path relative to
- * the session cwd (for the @-reference button and "copy relative path").
+ * Path projection helpers shared by the explorer rows: workspace-relative
+ * mentions and session-cwd-relative "copy relative path".
  * The fs-tree joins with '/' even on Windows, so both separators normalize
  * to '/' before comparison.
  *
@@ -44,6 +44,27 @@ export function relativeTo(cwd: string, path: string): string {
   if (nPath === nBase) return '.'
   if (nPath.toLowerCase().startsWith(`${nBase.toLowerCase()}/`)) return nPath.slice(nBase.length + 1)
   return path
+}
+
+/**
+ * Project an absolute explorer entry against the host-confirmed workspace
+ * root. Unlike copy-relative-path's `relativeTo`, mention insertion must
+ * never fall back to an absolute token. Unknown roots, traversal components
+ * and paths outside the workspace are refused. Windows drive/UNC paths are
+ * case-insensitive; POSIX paths retain their case-sensitive distinction.
+ */
+export function workspaceRelativePath(root: string | undefined, path: string): string | undefined {
+  if (root === undefined || !isAbsolutePath(root) || !isAbsolutePath(path)) return undefined
+  const norm = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/, '')
+  const base = norm(root)
+  const target = norm(path)
+  if ([base, target].some(value => value.split('/').some(part => part === '.' || part === '..'))) return undefined
+  const windows = /^[A-Za-z]:\//.test(root.replace(/\\/g, '/')) || /^[\\/]{2}/.test(root)
+  const compare = (value: string): string => windows ? value.toLowerCase() : value
+  if (compare(target) === compare(base)) return '.'
+  if (!compare(target).startsWith(`${compare(base)}/`)) return undefined
+  const relative = target.slice(base.length + 1)
+  return relative === '' || isAbsolutePath(relative) ? undefined : relative
 }
 
 /**
