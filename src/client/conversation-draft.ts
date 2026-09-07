@@ -59,7 +59,7 @@ interface SpliceResult {
  */
 function spliceInsert(draft: string, text: string, caret: DraftCaret | null): SpliceResult {
   if (caret === null || draft === '') {
-    const next = draft.trim() === '' ? text : `${draft} ${text}`
+    const next = draft.trim() === '' ? text : `${draft}${/\s$/.test(draft) ? '' : ' '}${text}`
     return { draft: next, caretAfter: next.length }
   }
   const prefix = draft.slice(0, caret.start)
@@ -69,7 +69,7 @@ function spliceInsert(draft: string, text: string, caret: DraftCaret | null): Sp
   // (or the string edges) — mirrors how typing in the middle of a sentence
   // behaves.
   const left = prefix === '' || /\s$/.test(prefix) ? '' : ' '
-  const right = suffix === '' || /^\s/.test(suffix) ? '' : ' '
+  const right = suffix === '' || /^\s/.test(suffix) || /\s$/.test(text) ? '' : ' '
   return {
     draft: `${prefix}${left}${text}${right}${suffix}`,
     caretAfter: prefix.length + left.length + text.length,
@@ -245,7 +245,9 @@ export function insertWorkspaceReference(ctx: Context, sessionId: string, path: 
       return false
     }
     if (!isDir && insertFileReference(ctx, sessionId, relative)) return true
-    return appendToDraft(ctx, sessionId, mention)
+    // The host adds space after a file chip, but not before it. Complete
+    // directory inserts need their own separator for the next @ click.
+    return appendToDraft(ctx, sessionId, isDir ? `${mention} ` : mention)
   } catch (error) {
     console.warn('[dsh-better-sidebar] workspace-reference insert failed:', error)
     return false

@@ -92,6 +92,15 @@ describe('insertAtCaret', () => {
     expect(insertAtCaret('   ', 'X', null)).toBe('X')
   })
 
+  it('keeps a directory separator when appending another reference', () => {
+    expect(insertAtCaret('@src/ ', '@notes.md', null)).toBe('@src/ @notes.md')
+    expect(insertAtCaret('@src/\n', '@notes.md', null)).toBe('@src/\n@notes.md')
+  })
+
+  it('uses the inserted directory separator before a following word', () => {
+    expect(insertAtCaret('hello world', '@src/ ', { start: 6, end: 6 })).toBe('hello @src/ world')
+  })
+
   it('inserts at the caret in the middle of a sentence with one space each side', () => {
     expect(insertAtCaret('hello world', 'CODE', { start: 5, end: 5 })).toBe('hello CODE world')
   })

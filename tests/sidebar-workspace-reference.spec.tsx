@@ -74,7 +74,7 @@ describe('Sidebar workspace references', () => {
     const view = mount(cwd, { root: '/work' })
     try {
       view.insert('/work/my dir', true)
-      expect(view.draft()).toBe('before @"my dir/"')
+      expect(view.draft()).toBe('before @"my dir/" ')
       expect(view.emit).not.toHaveBeenCalled()
     } finally { view.unmount() }
   })
@@ -91,6 +91,21 @@ describe('Sidebar workspace references', () => {
     } finally { view.unmount() }
   })
 
+  it.each(['src', 'my dir', 'docs/my dir'])('separates a directory %s from the next file chip', directory => {
+    const view = mount('/work', { root: '/work', chip: true })
+    try {
+      view.insert(`/work/${directory}`, true)
+      const beforeFile = view.draft()
+      expect(beforeFile).toMatch(/\s$/)
+      view.insert('/work/notes.md', false)
+      expect(view.emit).toHaveBeenCalledWith('slash/input-insert-reference', {
+        reference: { source: 'reference', ref: '@notes.md', label: 'notes.md', appearance: 'file', clipboardText: '@notes.md' },
+        span: { draftRev: 2, start: beforeFile.length, end: beforeFile.length },
+      })
+      expect(view.setDraft).toHaveBeenCalledTimes(1)
+    } finally { view.unmount() }
+  })
+
   it('keeps quoted file text when the chip event is not handled', () => {
     const view = mount('/work', { root: '/work' })
     try {
@@ -103,9 +118,9 @@ describe('Sidebar workspace references', () => {
     const view = mount('C:\\Work\\src', { root: 'C:\\Work\\' })
     try {
       view.insert('c:/WORK/my dir\\nested', true)
-      expect(view.draft()).toBe('before @"my dir/nested/"')
+      expect(view.draft()).toBe('before @"my dir/nested/" ')
       view.insert('c:/work', true)
-      expect(view.draft()).toBe('before @"my dir/nested/" @./')
+      expect(view.draft()).toBe('before @"my dir/nested/" @./ ')
     } finally { view.unmount() }
   })
 
@@ -125,7 +140,7 @@ describe('Sidebar workspace references', () => {
       // Resolve the host snapshot later: the next click must see fresh data.
       Object.assign(options, { root: '/work', phase: 'ready', state: 'idle', workspaceService: true })
       view.insert('/work/src', true)
-      expect(view.draft()).toBe('before @src/')
+      expect(view.draft()).toBe('before @src/ ')
     } finally { view.unmount() }
   })
 
