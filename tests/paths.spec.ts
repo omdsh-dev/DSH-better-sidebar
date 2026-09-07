@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isAbsolutePath, relativeTo } from '../src/client/paths.ts'
+import { isAbsolutePath, relativeTo, workspaceRelativePath } from '../src/client/paths.ts'
 import { resolveSidebarPath } from '../src/client/produced-files.ts'
 import { htmlUrl } from '../src/client/api.ts'
 
@@ -65,5 +65,35 @@ describe('path helpers', () => {
       .toBe('/sidebar/html/s//server/share/a.html')
     expect(htmlUrl({ sessionId: 's', cwd: '/home/me' }, '/home/me/index.html'))
       .toBe('/sidebar/html/s/home/me/index.html')
+  })
+})
+
+describe('workspaceRelativePath', () => {
+  it.each([
+    ['/work', '/work/src/a.ts', 'src/a.ts'],
+    ['/work/', '/work', '.'],
+    ['/', '/src/a.ts', 'src/a.ts'],
+    ['/', '/', '.'],
+    ['C:\\Work', 'c:/work/SRC/a.ts', 'SRC/a.ts'],
+    ['C:\\Work\\', 'c:/WORK', '.'],
+    ['C:\\', 'c:/SRC/a.ts', 'SRC/a.ts'],
+    ['C:\\Work', 'c:/work/my dir\\a.ts', 'my dir/a.ts'],
+    ['\\\\server\\share\\Work', '//SERVER/share/work/src/a.ts', 'src/a.ts'],
+  ])('projects %s / %s', (root, path, expected) => {
+    expect(workspaceRelativePath(root, path)).toBe(expected)
+  })
+
+  it.each([
+    [undefined, '/work/a.ts'],
+    ['', '/work/a.ts'],
+    ['work', '/work/a.ts'],
+    ['/work', '/outside/a.ts'],
+    ['/work', '/work-other/a.ts'],
+    ['/work', '/WORK/a.ts'],
+    ['/work', '/work/../outside/a.ts'],
+    ['/work', 'src/a.ts'],
+    ['C:/Work', 'D:/Work/a.ts'],
+  ])('refuses an unavailable root or unsafe projection %j / %s', (root, path) => {
+    expect(workspaceRelativePath(root, path)).toBeUndefined()
   })
 })

@@ -408,6 +408,21 @@ export interface SidebarConversation {
   }
 }
 
+/** Read-only subset of api-workspace-controller's public IWorkspaces.list. */
+export interface SidebarWorkspacesService {
+  readonly list: {
+    getSnapshot(): {
+      readonly phase: 'pending' | 'ready'
+      readonly state: 'idle' | 'loading' | 'error'
+      readonly items: readonly {
+        /** Canonical host directory, from WorkspaceView.path. */
+        readonly path: string
+        readonly sessionIds: readonly string[]
+      }[]
+    }
+  }
+}
+
 /**
  * The client `remote.session` namespace face (mirror of the gateway client's
  * RemoteNamespaceService for the session-controller contribution on alpha
@@ -551,6 +566,8 @@ export interface SidebarContextShape {
   }
   /** The composer draft face (client ui-conversation, lazy `ctx.get` probe). */
   conversation: SidebarConversation
+  /** Host-authoritative workspace membership; resolved lazily at reference insertion. */
+  workspaces?: SidebarWorkspacesService
   /**
    * The client-side sidebar registry: external plugins register tab types
    * and file previewers here. Provided by the client half (see

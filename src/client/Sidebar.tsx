@@ -33,7 +33,7 @@ import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
-import { appendToDraft, insertFileReference } from './conversation-draft.ts'
+import { insertWorkspaceReference } from './conversation-draft.ts'
 import {
   BOTTOM_MIN, PANEL_MIN, agentUuidOf, firstLeaf, floatTab,
   isAgentTabId, leafWithTab, migrateBottomTabs,
@@ -56,7 +56,6 @@ import { useHostFeeds } from './sidebar/use-host-feeds.ts'
 import { usePinnedTabs } from './sidebar/use-pinned-tabs.ts'
 import { FreeWindowLayer, useFloatDragout } from './sidebar/free-windows.tsx'
 import type { TabDragPayload } from './TabBar.tsx'
-import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
 import { api } from './api.ts'
 import css from './sidebar.module.css'
@@ -752,15 +751,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    */
   const referenceInChat = useCallback((path: string, isDir: boolean): void => {
     if (sessionId === undefined) return
-    const rel = relativeTo(cwd ?? '', path)
-    if (isDir) {
-      appendToDraft(ctx, sessionId, `@${rel === '.' ? './' : `${rel}/`}`)
-      return
-    }
-    if (!insertFileReference(ctx, sessionId, rel)) {
-      appendToDraft(ctx, sessionId, `@${rel}`)
-    }
-  }, [ctx, sessionId, cwd])
+    insertWorkspaceReference(ctx, sessionId, path, isDir)
+  }, [ctx, sessionId])
 
   if (state === undefined || sessionId === undefined) {
     // Keep the unavailable controls focusable: touch users have no hover, so
