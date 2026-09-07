@@ -4,7 +4,7 @@
  * (their full behavior suites live in the standalone dsh-file-trace plugin).
  */
 import { describe, expect, it } from 'vitest'
-import { extractFileOps, groupByFile, knownContentBefore, parseReadLines } from '../src/client/changes/ops.ts'
+import { extractFileOps, groupByFile, knownContentBefore, parseReadContent, parseReadLines } from '../src/client/changes/ops.ts'
 import { diffLines, buildDiffSegments, coalesceInline, diffInline } from '../src/client/diff/rows.ts'
 import { langOfPath, scanLine } from '../src/client/diff/highlight.ts'
 import type { SidebarSessionEvent } from '../src/context-types.ts'
@@ -28,6 +28,27 @@ function result(seq: number, callId: string, text: string, isError = false, time
     },
   })
 }
+
+describe('parseReadContent', () => {
+  it('strips the envelope and line-number prefixes but keeps blank lines', () => {
+    const raw = [
+      '<path>notes.md</path>',
+      '<type>file</type>',
+      '(Showing lines 1 to 4)',
+      '<content>',
+      '1: # Title',
+      '2: ',
+      '3: para one',
+      '4: ',
+      '</content>',
+    ].join('\n')
+    expect(parseReadContent(raw)).toBe('# Title\n\npara one')
+  })
+
+  it('returns the raw text unchanged when no <content> section is present', () => {
+    expect(parseReadContent('plain text')).toBe('plain text')
+  })
+})
 
 describe('extractFileOps', () => {
   it('seeds running ops from tool/call and settles them from tool/result', () => {

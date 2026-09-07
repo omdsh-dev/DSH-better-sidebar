@@ -9,25 +9,36 @@
  * diff tab via the shell.
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { IconCloseOutline16, IconRefreshOutline16, IconRightUpOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutline16, IconRefreshOutline16, IconRightUpOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionScope } from '../api.ts'
-import { api } from '../api.ts'
+import { api, htmlUrl } from '../api.ts'
 import { t } from '../locales.ts'
 import { baseName } from '../paths.ts'
 import { resolveSidebarPath } from '../produced-files.ts'
+import { HTML_IFRAME_SANDBOX } from '../html-preview.ts'
 import type { SidebarDiffRef, SidebarTab } from '../state.ts'
 import { DiffRows, ReadRows } from '../diff/DiffRows.tsx'
+import { PdfView } from '../PdfView.tsx'
 import { DiffFiles } from '../diff/DiffFiles.tsx'
 import { langOfPath } from '../diff/highlight.ts'
 import { buildDiffSegments, diffLines, diffStats, parseUnifiedDiff, unifiedSegments, type DiffRow } from '../diff/rows.ts'
-import { parseReadLines, type FileOp } from './ops.ts'
+import { parseReadContent, parseReadLines, type FileOp } from './ops.ts'
+import { redactText } from '../redact.ts'
+import { rewriteLocalImageUrls } from '../markdown-images.ts'
+import { markdownTextProps } from '../markdown-labels.tsx'
+import { splitMermaidBlocks } from '../mermaid-blocks.ts'
+import { LazyMermaidMarkdown } from '../mermaid-lazy.tsx'
 import { createFrameBatcher } from '../frame-batcher.ts'
 import css from './changes.module.css'
 import diffCss from '../diff/diff.module.css'
 
-/** The drag handle height clamp (px) and keyboard-resize step. */
+/** Drag handle height clamp (px) and keyboard-resize step. */
 const HEIGHT_MIN = 140
 const HEIGHT_STEP = 24
+
+/** The redaction preference, persisted under the repo's sidebar storage
+ *  prefix (see state.ts's `dsh-sidebar:v1`). */
+const REDACTION_KEY = 'dsh-sidebar:v1:redaction'
 
 /** What the pane is showing right now. */
 export type ChangesPreview =
@@ -53,6 +64,61 @@ function diffOf(op: FileOp, prior: string | undefined): readonly DiffRow[] {
     return diffLines(old ?? '', content)
   }
   return []
+}
+
+/** The render view of one html op target: the route-src iframe. Extracted
+ *  (and exported) so the always-sandboxed contract is pinned directly by the
+ *  sandbox spec — this surface has NO no-sandbox escape hatch. */
+export function HtmlRenderPreview(props: { src: string; title: string }) {
+  return (
+    <div className={css.htmlPane}>
+      <iframe
+        className={css.htmlFrame}
+        title={props.title}
+        src={props.src}
+        sandbox={HTML_IFRAME_SANDBOX}
+        referrerPolicy="no-referrer"
+        allow=""
+      />
+    </div>
+  )
+}
+
+/** One header pill toggle — the redaction / reading / render toggles share
+ *  the shape (on-state styling + aria-pressed). */
+function PaneToggle(props: { on: boolean; label: string; title?: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={css.mdToggle}
+      data-on={props.on ? 'true' : undefined}
+      aria-pressed={props.on}
+      title={props.title}
+      onClick={props.onClick}
+    >
+      {props.label}
+    </button>
+  )
+}
+
+/** The reading-mode body of one markdown op target: the shared MarkdownText
+ *  pass (local image destinations already rewritten to the media route by
+ *  the caller). Mermaid fences render through the same chunk-resident
+ *  renderer the editor preview uses (one MarkdownText pass with the fences
+ *  lifted out); the plain path stays byte-for-byte for documents without
+ *  any. */
+function MdReadingView(props: { text: string }) {
+  const codeLabels = { copyLabel: t('copy'), copiedLabel: t('copied') }
+  const hasMermaid = splitMermaidBlocks(props.text).some((block) => block.kind === 'mermaid')
+  return (
+    <div className={css.paneBody}>
+      <div className={css.mdBody}>
+        {hasMermaid
+          ? <LazyMermaidMarkdown text={props.text} codeLabels={codeLabels} />
+          : <MarkdownText {...markdownTextProps(props.text, codeLabels)} />}
+      </div>
+    </div>
+  )
 }
 
 /** The diff tab a git preview expands into (the shell owns placement). */
@@ -147,8 +213,52 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
 
   // ── Op target material (pure snapshots; the prior content came with the
   //    target so a running op shows what is already known). ────────────────
-  const op = target.kind === 'op' ? target.op : null
-  const prior = target.kind === 'op' ? target.prior : undefined
+  const opRaw = target.kind === 'op' ? target.op : null
+  const priorRaw = target.kind === 'op' ? target.prior : undefined
+  // Secret redaction: on by default, toggle persists per browser (localStorage).
+  // Every op payload consumer below (diff rows, read rows, markdown source,
+  // error text) renders from the REDACTED shape, so masked payloads are the
+  // only thing that can reach the DOM while the toggle is on. Display-only:
+  // session events and the fs layer keep their original bytes.
+  const [redactionOn, setRedactionOn] = useState((): boolean => {
+    try { return localStorage.getItem(REDACTION_KEY) !== '0' } catch { return true }
+  })
+  const toggleRedaction = (): void => {
+    setRedactionOn((prev) => {
+      const next = !prev
+      try { localStorage.setItem(REDACTION_KEY, next ? '1' : '0') } catch { /* storage unavailable */ }
+      return next
+    })
+  }
+  const { op, prior, redactionHit } = useMemo(() => {
+    if (opRaw === null || !redactionOn) return { op: opRaw, prior: priorRaw, redactionHit: false }
+    const path = target.kind === 'op' ? target.path : ''
+    // One redactText pass per field: the outcome carries both the masked
+    // text and whether anything was hit.
+    const mask = (text: string | undefined): { masked: string | undefined; hit: boolean } => {
+      if (text === undefined) return { masked: undefined, hit: false }
+      const outcome = redactText(path, text)
+      return { masked: outcome.text, hit: outcome.hit }
+    }
+    const read = mask(opRaw.read)
+    const content = mask(opRaw.content)
+    const editOld = mask(opRaw.edit?.oldString)
+    const editNew = mask(opRaw.edit?.newString)
+    const errorText = mask(opRaw.errorText)
+    const priorMasked = mask(priorRaw)
+    const hit = read.hit || content.hit || editOld.hit || editNew.hit || errorText.hit || priorMasked.hit
+    if (!hit) return { op: opRaw, prior: priorRaw, redactionHit: false }
+    const redacted: FileOp = {
+      ...opRaw,
+      ...(read.masked !== undefined ? { read: read.masked } : {}),
+      ...(content.masked !== undefined ? { content: content.masked } : {}),
+      ...(opRaw.edit !== undefined
+        ? { edit: { oldString: editOld.masked ?? opRaw.edit.oldString, newString: editNew.masked ?? opRaw.edit.newString } }
+        : {}),
+      ...(errorText.masked !== undefined ? { errorText: errorText.masked } : {}),
+    }
+    return { op: redacted, prior: priorMasked.masked, redactionHit: true }
+  }, [opRaw, priorRaw, target, redactionOn])
   const opLang = useMemo(() => (target.kind === 'op' ? langOfPath(target.path) : undefined), [target])
   const opRows = useMemo(() => (op === null ? [] : diffOf(op, prior)), [op, prior])
   const opSegments = useMemo(() => buildDiffSegments(opRows), [opRows])
@@ -157,6 +267,56 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
     () => (op?.kind === 'read' && op.read !== undefined ? parseReadLines(op.read) : []),
     [op],
   )
+
+  // ── Markdown reading mode: .md op targets (read/write/edit, non-error)
+  //    toggle between the raw/diff view and the rendered document — the same
+  //    shared MarkdownText pass the editor preview uses, with local image
+  //    destinations rewritten through the /sidebar/file media route. ──────
+  const mdOp = target.kind === 'op' && !target.op.isError && /\.(md|markdown|mdx)$/i.test(target.path)
+  const [reading, setReading] = useState(false)
+  const readingSrc = useMemo(() => {
+    if (!mdOp || op === null) return ''
+    if (op.kind === 'read') return parseReadContent(op.read ?? '')
+    if (op.kind === 'write') return op.content ?? ''
+    if (op.kind === 'edit' && op.edit !== undefined) {
+      if (prior !== undefined && prior.includes(op.edit.oldString)) {
+        return prior.replace(op.edit.oldString, op.edit.newString)
+      }
+      return op.edit.newString
+    }
+    return ''
+  }, [mdOp, op, prior])
+  const readingText = useMemo(
+    () => (mdOp && reading && readingSrc !== '' && target.kind === 'op'
+      ? rewriteLocalImageUrls(readingSrc, scope, target.path, window.location.origin)
+      : ''),
+    [mdOp, reading, readingSrc, scope, target],
+  )
+
+  // ── HTML render mode: .html/.htm op targets (the editor html viewer's
+  //    ext set) load the SAVED file through the same /sidebar/html route the
+  //    editor's html viewer uses — relative assets (./style.css, img/x.png)
+  //    resolve inside the route, and a segmented read still renders the
+  //    whole document (the route serves the file, not the op snapshot). The
+  //    frame is always sandboxed (the attribute plus the route's CSP sandbox
+  //    header); the editor tab owns the warned no-sandbox escape hatch. ──
+  const htmlOp = target.kind === 'op' && !target.op.isError && /\.(html?)$/i.test(target.path)
+  const [rendering, setRendering] = useState(false)
+  const htmlRenderSrc = useMemo(() => {
+    if (!htmlOp || target.kind !== 'op') return ''
+    return htmlUrl(scope, resolveSidebarPath(scope.cwd, target.path))
+  }, [htmlOp, scope, target])
+
+  // ── PDF render mode: .pdf op targets (read / write / edit, non-error) reuse
+  //    the editor's PdfView verbatim — media-route bytes wrapped into an
+  //    explicitly-typed Blob so the browser's native PDF viewer opens (a
+  //    direct iframe src can fall back to a download). ──────────────────────
+  const pdfOp = target.kind === 'op' && !target.op.isError && /\.pdf$/i.test(target.path)
+  const [renderingPdf, setRenderingPdf] = useState(false)
+  const pdfRenderPath = useMemo(() => {
+    if (!pdfOp || target.kind !== 'op') return ''
+    return resolveSidebarPath(scope.cwd, target.path)
+  }, [pdfOp, scope, target])
 
   // Header stats for git targets come off the parsed patch text.
   const gitStats = useMemo(() => {
@@ -264,6 +424,38 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
             </button>
           </>
         )}
+        {redactionHit && (
+          <span className={css.redactBanner} role="status">{t('changesRedactBanner')}</span>
+        )}
+        {target.kind === 'op' && (
+          <PaneToggle
+            on={redactionOn}
+            label={redactionOn ? t('changesRedactOnLabel') : t('changesRedactOffLabel')}
+            title={redactionOn ? t('changesRedactOff') : t('changesRedactOn')}
+            onClick={toggleRedaction}
+          />
+        )}
+        {mdOp && (
+          <PaneToggle
+            on={reading}
+            label={t(reading ? 'changesMdRaw' : 'changesMdReading')}
+            onClick={() => { setReading(value => !value) }}
+          />
+        )}
+        {htmlOp && (
+          <PaneToggle
+            on={rendering}
+            label={t(rendering ? 'changesHtmlRaw' : 'changesHtmlRender')}
+            onClick={() => { setRendering(value => !value) }}
+          />
+        )}
+        {pdfOp && (
+          <PaneToggle
+            on={renderingPdf}
+            label={t(renderingPdf ? 'changesPdfRaw' : 'changesPdfRender')}
+            onClick={() => { setRenderingPdf(value => !value) }}
+          />
+        )}
         <button
           type="button"
           className={css.iconButton}
@@ -274,7 +466,17 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
           <IconCloseOutline16 size={14} />
         </button>
       </div>
-      {target.kind === 'op' && op !== null && op.isError
+      {target.kind === 'op' && htmlOp && rendering && htmlRenderSrc !== ''
+        ? <HtmlRenderPreview src={htmlRenderSrc} title={target.path} />
+        : target.kind === 'op' && pdfOp && renderingPdf && pdfRenderPath !== ''
+        ? (
+          <div className={css.htmlPane}>
+            <PdfView scope={scope} path={pdfRenderPath} title={target.path} />
+          </div>
+        )
+        : target.kind === 'op' && mdOp && reading && readingText !== ''
+        ? <MdReadingView text={readingText} />
+        : target.kind === 'op' && op !== null && op.isError
         ? (
           <div className={css.paneBody}>
             <div className={css.readError} role="alert">
