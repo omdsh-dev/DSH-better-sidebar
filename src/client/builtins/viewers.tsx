@@ -107,6 +107,15 @@ export function builtinViewers(): readonly FileViewerDescriptor[] {
       exts: [],
       priority: -100,
       fetchStrategy: 'fsRead',
+      // Declarative settings: the vim keybinding toggle renders under this
+      // viewer's row in the Side card settings page (off by default).
+      settings: {
+        toggles: [{
+          key: 'editorVim',
+          title: () => t('settingsEditorVimTitle'),
+          desc: () => t('settingsEditorVimDesc'),
+        }],
+      },
       component: (props) => <LazyTextEditor {...props} />,
     },
     {

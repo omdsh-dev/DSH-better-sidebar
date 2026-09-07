@@ -110,6 +110,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     titleBarStripPx: typeof record.titleBarStripPx === 'number' && Number.isFinite(record.titleBarStripPx)
       ? clampTitleBarStrip(record.titleBarStripPx)
       : SIDEBAR_PREFS_DEFAULTS.titleBarStripPx,
+    editorVim: typeof record.editorVim === 'boolean'
+      ? record.editorVim
+      : SIDEBAR_PREFS_DEFAULTS.editorVim,
     htmlViewerNoSandbox: typeof record.htmlViewerNoSandbox === 'boolean'
       ? record.htmlViewerNoSandbox
       : SIDEBAR_PREFS_DEFAULTS.htmlViewerNoSandbox,

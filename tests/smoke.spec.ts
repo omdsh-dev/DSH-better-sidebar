@@ -949,6 +949,7 @@ describe('side card settings routes', () => {
         terminalFontSize: 13,
         interceptOpenPath: true,
         editorExplorer: false,
+        editorVim: false,
         workspaceFence: true,
         terminalShell: '',
         terminalShellArgs: '',
