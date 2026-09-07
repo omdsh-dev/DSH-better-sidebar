@@ -5,6 +5,9 @@
  * @module dsh-better-sidebar/config
  */
 
+import { existsSync } from 'node:fs'
+import * as os from 'node:os'
+import { isAbsolute, join, posix, resolve, win32 } from 'node:path'
 import z from 'schemastery'
 import {
   TERMINAL_FONT_SIZE_DEFAULT,
@@ -64,6 +67,16 @@ export interface SidebarConfig {
    * the existing default behavior is kept.
    */
   shellArgs?: string[]
+  /**
+   * Additional filesystem roots the sidebar may read and write outside the
+   * session workspace. Each entry is an absolute path (POSIX or Windows);
+   * a leading `~` expands to the host home directory (`os.homedir()`).
+   * Empty strings are ignored and duplicates are removed. When omitted the
+   * default is `[<homedir>/.dsh/external]` if that directory exists,
+   * otherwise no extra root. An explicit `[]` disables all extra roots.
+   * Non-absolute entries fail the configuration loudly.
+   */
+  extraRoots?: string[]
 }
 
 /** Schemastery schema for the plugin configuration. */
@@ -76,6 +89,9 @@ export const Config: z<SidebarConfig> = z.object({
   reconnectGraceMs: z.number().step(1).min(0).default(30_000),
   shell: z.string().default(''),
   shellArgs: z.array(z.string()).default([]),
+  // No .default([]): missing and explicit [] must be distinguishable — missing
+  // falls back to homedir/.dsh/external (if it exists), explicit [] disables.
+  extraRoots: z.array(z.string()).default(undefined as unknown as string[]),
 })
 
 /** Fully defaulted sidebar host settings. */
@@ -90,6 +106,8 @@ export interface ResolvedSidebarConfig {
   shell: string
   /** Explicit shell arguments; empty means use the platform defaults. */
   shellArgs: string[]
+  /** Expanded absolute extra roots the sidebar may access (deduped, no empty strings). */
+  extraRoots: string[]
 }
 
 /**
@@ -99,6 +117,55 @@ export interface ResolvedSidebarConfig {
  * @returns Complete settings consumed by the host half.
  */
 export function resolveSidebarConfig(config: SidebarConfig | undefined): ResolvedSidebarConfig {
+  const rawExtra = config?.extraRoots
+  let extraRootsInput: string[]
+  if (rawExtra === undefined) {
+    // Default extra root: <homedir>/.dsh/external if it exists on the host.
+    // Explicit [] must stay [] (fully disabled), so the existence check only
+    // applies to the implicit default.
+    const fallback = join(os.homedir(), '.dsh', 'external')
+    extraRootsInput = existsSync(fallback) ? [fallback] : []
+  } else {
+    // Explicit config: keep as-is (existence not checked here, directory may
+    // be mounted later); pure function over the config value.
+    extraRootsInput = rawExtra
+  }
+  const seen = new Set<string>()
+  const extraRoots: string[] = []
+  for (let entry of extraRootsInput) {
+    if (typeof entry !== 'string') continue
+    if (entry === '') continue
+    // Trim surrounding whitespace: configuration values seldom intend it.
+    const trimmed = entry.trim()
+    if (trimmed === '') continue
+    entry = trimmed
+    let expanded = entry
+    if (expanded === '~' || expanded.startsWith('~/') || expanded.startsWith('~\\')) {
+      expanded = expanded.replace(/^~(?=[\/\\]|$)/, os.homedir())
+    } else if (expanded.startsWith('~')) {
+      // A bare ~ prefix without a separator is still treated as homedir
+      // expansion (e.g. "~" already handled; "~foo" is ambiguous and is not
+      // expanded as user-specific homes — keep the strict check above and
+      // let the absolute-path check fail loudly for non-absolute "~foo").
+    }
+    // Entry must be absolute after expansion (POSIX and Windows both accepted).
+    const absolute = isAbsolute(expanded) || posix.isAbsolute(expanded) || win32.isAbsolute(expanded)
+    if (!absolute) {
+      throw new Error(`extraRoots entry "${entry}" is not an absolute path after ~ expansion: "${expanded}"`)
+    }
+    // Normalize to a canonical absolute path for deduplication and later
+    // realpath comparisons. Use the platform-appropriate resolver so a Windows
+    // absolute on a POSIX host (or vice versa) is not mangled by the wrong
+    // resolver. POSIX-checked first: on POSIX a path like "/foo" is both
+    // posix and win32 absolute, but must stay POSIX.
+    let normalized: string
+    if (posix.isAbsolute(expanded)) normalized = posix.resolve(expanded)
+    else if (win32.isAbsolute(expanded)) normalized = win32.resolve(expanded)
+    else normalized = resolve(expanded)
+    if (seen.has(normalized)) continue
+    seen.add(normalized)
+    extraRoots.push(normalized)
+  }
   return {
     readLimit: config?.readLimit ?? 512 * 1024,
     mediaLimit: config?.mediaLimit ?? 20 * 1024 * 1024,
@@ -108,6 +175,7 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
     reconnectGraceMs: config?.reconnectGraceMs ?? 30_000,
     shell: config?.shell?.trim() ?? '',
     shellArgs: config?.shellArgs ?? [],
+    extraRoots,
   }
 }
 
@@ -125,6 +193,7 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   terminalFontFamily: z.string().default(''),
   terminalFontSize: z.number().step(1).min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX).default(TERMINAL_FONT_SIZE_DEFAULT),
   interceptOpenPath: z.boolean().default(true),
+  editOpensDiff: z.boolean().default(true),
   editorExplorer: z.boolean().default(false),
   changesDiffFloat: z.boolean().default(true),
   workspaceFence: z.boolean().default(true),

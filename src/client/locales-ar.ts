@@ -231,6 +231,8 @@ export const ar: Record<string, string> = {
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'فتح ملفات المحادثة في الشريط الجانبي',
   settingsOpenPathDesc: 'فتح روابط الملفات في المحادثة (صفوف الأدوات، الملفات الناتجة، الإشارات) في محرّر الشريط الجانبي بدلاً من التطبيق الافتراضي للنظام',
+  settingsEditDiffTitle: 'Open edited files as diff',
+  settingsEditDiffDesc: 'When on, clicking an edit-tool file link opens the git worktree diff view in the sidebar instead of the file editor; non-git workspaces fall back to the file',
   settingsOpenToolsTitle: 'حقن أداة فتح الشريط الجانبي للنموذج',
   settingsOpenToolsDesc: 'عند التفعيل، يمكن للنموذج فتح الملفات والمجلدات وصفحات HTTP(S) في الشريط الجانبي عبر أداة sidebar_open (معطّل افتراضياً)',
   settingsTitleBarTitle: 'وضع توافق الموضع',

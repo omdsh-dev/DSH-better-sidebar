@@ -261,4 +261,32 @@ describe('SubagentView live polling', () => {
     expect(historySpy).not.toHaveBeenCalled()
     unmount()
   })
+
+  it('renders model badges after the task titles when returned in models', async () => {
+    vi.useFakeTimers()
+    const historySpy = vi.fn()
+    vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+      const method = String(url).split('/').pop()
+      if (method === 'subagents.live') {
+        return jsonResponse({
+          ok: true,
+          value: {
+            live: {},
+            models: { root: 'deepseek-chat', a: 'claude-3-5-sonnet', b: 'gpt-4o' },
+          },
+        })
+      }
+      throw new Error(`unexpected fetch ${String(url)}`)
+    })
+
+    const store = makeStore(runningSnapshot())
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store, historySpy) }),
+    )
+    await act(async () => { await Promise.resolve() })
+    expect(container.textContent).toContain('deepseek-chat')
+    expect(container.textContent).toContain('claude-3-5-sonnet')
+    expect(container.textContent).toContain('gpt-4o')
+    unmount()
+  })
 })

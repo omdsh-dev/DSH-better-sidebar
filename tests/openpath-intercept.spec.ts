@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { registerOpenPathInterception } from '../src/client/intercept.tsx'
+import { setLastToolContextForTest } from '../src/client/tool-click-context.ts'
 import {
   isFolderRevealPath,
   wrapOpenWorkspacePath,
@@ -8,6 +9,17 @@ import {
 } from '../src/client/openpath-intercept.ts'
 import { createSidebarStore } from '../src/client/state.ts'
 import type { Context } from '../src/context-types.ts'
+
+// Node-env shims: the merged client store touches localStorage / window
+// unguarded (state.ts global-width load), so bare these globals before any
+// createSidebarStore() call below.
+const g = globalThis as Record<string, unknown>
+if (g.window === undefined) {
+  g.window = { clearTimeout: () => {}, setTimeout: (_fn: () => void) => 0, innerWidth: 1024, innerHeight: 800 } as unknown as Window
+}
+if (g.localStorage === undefined) {
+  g.localStorage = { getItem: () => null, setItem: () => {} } as unknown as Storage
+}
 
 /**
  * A fake of the gateway client's RemoteNamespaceService: the method is an
@@ -200,34 +212,48 @@ describe('open-path interception wiring', () => {
     return ctx
   }
 
-  it('registers through ctx.inject and routes chat opens into the editor tab', async () => {
+  it('registerOpenPathInterception routes chat opens into the preview tab and restores on dispose', async () => {
     const opened: Array<Record<string, unknown>> = []
     const hostOpened: string[] = []
     const remoteSession = fakeNamespaceService(hostOpened)
     const ctx = fakeCtx(opened, remoteSession)
     const store = createSidebarStore()
+    store.setSession('s1')
+    // The edit→diff pref defaults on, but this wiring spec pins the
+    // preview editor routing (the diff path is async and needs a git probe).
+    // Disable the diff pref so the open lands synchronously in the preview
+    // editor as before.
+    store.setPrefs({ ...store.getPrefs(), editOpensDiff: false })
     const restore = registerOpenPathInterception(ctx as unknown as Context, store)
 
     // Before the namespace mounts, nothing is wrapped.
     expect(Object.getOwnPropertyDescriptor(remoteSession, 'openWorkspacePath')?.get).toBeDefined()
     ctx.mount()
 
-    // Default prefs: the takeover routes the open into the sidebar editor
-    // with the session-scoped absolute path (chat already resolved it).
+    // Default prefs (with edit diff off): the takeover routes the open into the single preview tab
+    // with the session-scoped absolute path (chat already resolved it). The preview uses the fixed id.
     await remoteSession.openWorkspacePath({ path: '/w/src/a.ts' })
-    expect(opened).toEqual([{
+    // Allow the fire-and-forget preview to settle (no await in the wrapper).
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+    const state = store.getSnapshot().state!
+    const preview = state.splits.kind === 'leaf'
+      ? (state.splits as { tabs: Array<{ id: string; type: string; title: string; path?: string }> }).tabs.find(t => t.id === 'chat-preview')
+      : undefined
+    expect(preview).toEqual(expect.objectContaining({
       type: 'editor',
       title: 'a.ts',
       path: '/w/src/a.ts',
-      id: 'editor:/w/src/a.ts',
-    }])
+      id: 'chat-preview',
+    }))
     expect(hostOpened).toEqual([])
 
     // The interceptOpenPath pref off → the original funnel runs untouched.
     store.setPrefs({ ...store.getPrefs(), interceptOpenPath: false })
     await remoteSession.openWorkspacePath({ path: '/w/src/b.ts' })
     expect(hostOpened).toEqual(['/w/src/b.ts'])
-    expect(opened).toHaveLength(1)
+    // Preview still single.
+    const tabsAfter = (store.getSnapshot().state!.splits as { tabs: Array<{ id: string }> }).tabs
+    expect(tabsAfter.filter(t => t.id === 'chat-preview')).toHaveLength(1)
 
     // The editor tab disabled → falls through too (an editor that cannot
     // open must not swallow opens).
@@ -242,7 +268,6 @@ describe('open-path interception wiring', () => {
   })
 
   it('re-applies the shadow when the namespace service is remounted', async () => {
-    const opened: Array<Record<string, unknown>> = []
     const hostOpened: string[] = []
     // A ctx whose inject can fire multiple times (service recreate).
     let effectDisposer: (() => void) | undefined
@@ -250,9 +275,7 @@ describe('open-path interception wiring', () => {
     let current = fakeNamespaceService(hostOpened)
     const ctx = {
       sessions: { list: { getSnapshot: () => ({ current: 's1', byId: { s1: { cwd: '/w' } } }) } },
-      get: (name: string) => name === 'betterSidebar'
-        ? { openTab: (seed: unknown) => { opened.push(seed as Record<string, unknown>) } }
-        : undefined,
+      get: (name: string) => name === 'betterSidebar' ? { openTab: () => {} } : undefined,
       inject: (_deps: string[], callback: (fctx: unknown) => void) => {
         injectCallback = callback
         return { dispose: async () => { effectDisposer?.() } }
@@ -267,15 +290,75 @@ describe('open-path interception wiring', () => {
       },
     }
     const store = createSidebarStore()
+    store.setSession('s1')
+    // Pin the synchronous preview routing (the diff probe path is async).
+    store.setPrefs({ ...store.getPrefs(), editOpensDiff: false })
     registerOpenPathInterception(ctx as unknown as Context, store)
+    // Our openSidebarFile routes into the single chat-preview tab in the
+    // store (not betterSidebar.openTab), so the takeover signal is the
+    // preview tab's path moving to the freshly opened file.
+    const previewPath = (): string | undefined => {
+      const splits = store.getSnapshot().state!.splits as { tabs: Array<{ id: string; path?: string }> }
+      return splits.tabs.find(t => t.id === 'chat-preview')?.path
+    }
     ctx.remount()
     await current.openWorkspacePath({ path: '/w/src/a.ts' })
-    expect(opened).toHaveLength(1)
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+    expect(previewPath()).toBe('/w/src/a.ts')
     // A remount (dispose + fresh service) must not leak the old shadow and
     // must wrap the fresh instance.
     ctx.remount()
     await current.openWorkspacePath({ path: '/w/src/b.ts' })
-    expect(opened).toHaveLength(2)
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+    expect(previewPath()).toBe('/w/src/b.ts')
     expect(hostOpened).toEqual([])
+  })
+
+  it('read tool opens ONLY as an editor tab even when editOpensDiff is true', async () => {
+    let current = fakeNamespaceService([])
+    let injectCallback: ((c: unknown) => void) | undefined
+    let effectDisposer: (() => void) | undefined
+    const ctx = {
+      inject: (_names: readonly string[], fn: (c: unknown) => void) => {
+        injectCallback = fn
+        fn({
+          get: (name: string) => (name === 'remote.session' ? current : undefined),
+          effect: (eff: () => () => void) => { effectDisposer = eff() },
+        })
+        return { dispose: async () => { effectDisposer?.() } }
+      },
+      sessions: {
+        list: {
+          getSnapshot: () => ({ current: 's1', byId: { s1: { id: 's1', cwd: '/w' } } }),
+        },
+      },
+    }
+    const store = createSidebarStore()
+    store.setSession('s1')
+    store.setPrefs({ ...store.getPrefs(), editOpensDiff: true })
+    registerOpenPathInterception(ctx as unknown as Context, store)
+
+    setLastToolContextForTest({
+      tool: 'read',
+      isRead: true,
+      isEdit: false,
+      targetLine: 42,
+      timestamp: Date.now(),
+    })
+
+    await current.openWorkspacePath({ path: '/w/src/doc.ts' })
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+
+    const splits = store.getSnapshot().state!.splits as {
+      tabs: Array<{ id: string; type: string; path?: string; diff?: unknown; meta?: { line?: number } }>
+    }
+    const tab = splits.tabs.find(t => t.id === 'chat-preview')
+    expect(tab).toBeDefined()
+    expect(tab?.type).toBe('editor')
+    expect(tab?.path).toBe('/w/src/doc.ts')
+    expect(tab?.diff).toBeUndefined()
+    expect(tab?.meta?.line).toBe(42)
+
+    setLastToolContextForTest(null)
   })
 })

@@ -112,7 +112,10 @@ export interface JobOutputResult {
 }
 
 /** The `subagents.live` response: running child id → latest activity. */
-export type SubagentLiveResult = { live: Record<string, LastActivity> }
+export type SubagentLiveResult = {
+  live: Record<string, LastActivity>
+  models?: Record<string, string>
+}
 
 /** Terminal dependency status (mirror of the host's depsStatus; issue #140). */
 export type TerminalDepsStatus =
@@ -295,6 +298,8 @@ export const api = {
     call<GitWorktree[]>('git.worktrees', scopePayload(scope, {}), signal),
   gitStatus: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
     call<GitStatusResult>('git.status', gitPayload(scope, worktree, {}), signal),
+  gitStatusAt: (scope: SessionScope, path: string, signal?: AbortSignal) =>
+    call<GitStatusResult>('git.status-at', scopePayload(scope, { path }), signal),
   gitDiff: (scope: SessionScope, path: string | undefined, staged: boolean, worktree?: string, signal?: AbortSignal) =>
     call<{ diff: string }>('git.diff', gitPayload(scope, worktree, { ...(path !== undefined ? { path } : {}), staged }), signal),
   gitStage: (scope: SessionScope, path?: string, worktree?: string) =>
@@ -313,9 +318,12 @@ export const api = {
       ...(count !== undefined ? { count } : {}),
       ...(skip !== undefined ? { skip } : {}),
     }), signal),
-  /** Full patch text of one commit (diff display for the history rows). */
-  gitCommitDiff: (scope: SessionScope, hash: string, worktree?: string, signal?: AbortSignal) =>
-    call<{ diff: string }>('git.commit-diff', gitPayload(scope, worktree, { hash }), signal),
+  /** Full patch text of one commit (diff display for the history rows). When `path` is given the diff is limited to that file. */
+  gitCommitDiff: (scope: SessionScope, hash: string, worktree?: string, path?: string, signal?: AbortSignal) =>
+    call<{ diff: string }>('git.commit-diff', gitPayload(scope, worktree, { ...(path !== undefined ? { path } : {}), hash }), signal),
+  /** The most recent commit that touched `path` (file-limited last-commit probe for the edit→commit fallback). */
+  gitLastCommitAt: (scope: SessionScope, path: string, signal?: AbortSignal) =>
+    call<{ commit: { hash: string; hashFull: string; subject: string; repoRoot: string } | null }>('git.last-commit-at', scopePayload(scope, { path }), signal),
   /** The session's file-tool events for the changes tab's session lens: the
    *  `tool/call` + `tool/result` rows past `afterSeq` (0 = whole window),
    *  capped to the recent window host-side. The client runtime exposes no

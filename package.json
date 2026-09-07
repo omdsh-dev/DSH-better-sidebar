@@ -186,5 +186,8 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.12.0",
     "typescript-eslint": "^8.69.0"
-  }
+  },
+  "workspaces": [
+    "."
+  ]
 }

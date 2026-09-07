@@ -12,7 +12,7 @@ import { IconCodeOutline16, IconFolderOpen16, IconNewChatOutline16, IconPanelLef
 import type { Context } from '../../context-types.ts'
 import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
-import { openSidebarFile } from '../intercept.tsx'
+import { openSidebarEditorFile } from '../intercept.tsx'
 import { EditorHost } from '../EditorHost.tsx'
 import { OpenWithSettings } from '../open-with-settings.tsx'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
@@ -68,6 +68,17 @@ function terminalUuid(): string {
     return crypto.randomUUID()
   }
   return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
+}
+
+/**
+ * A client-side uuid safe on plain-HTTP LAN pages: crypto.randomUUID is a
+ * secure-context API, so fall back to a time/random id when absent.
+ */
+function clientUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
 }
 
 /** Count UI-owned terminals (agent:` tabs excluded — they are the model's). */
@@ -187,7 +198,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           scope={scope}
           tab={tab}
           visible={visible}
-          onOpenFile={(path) => { openSidebarFile(ctx, store, scope.sessionId, path) }}
+          onOpenFile={(path) => { openSidebarEditorFile(ctx, store, scope.sessionId, path) }}
           onOpenDiff={onOpenDiff}
         />
       ),
@@ -243,7 +254,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
         }
         return {
           tab: {
-            id: `sidechat:new-${crypto.randomUUID()}`,
+            id: `sidechat:new-${clientUuid()}`,
             type: 'sidechat',
             title: t('sideChatUntitled'),
             meta: { autoCreate: true },

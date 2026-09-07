@@ -81,6 +81,7 @@ describe('subagents.live route', () => {
         'running-a': { text: 'hello' },
         'running-b': { tool: { name: 'bash', args: '{"command":"ls"}' } },
       },
+      models: {},
     })
     expect(subagents.listDescendants).toHaveBeenCalledWith('root')
   })
@@ -91,7 +92,7 @@ describe('subagents.live route', () => {
     }
     const sessions = { get: () => session([]) }
     const api = buildSubagentLiveApi(ctxWith(subagents, sessions))
-    await expect(api.live({ rootSessionId: 'root' })).resolves.toEqual({ live: {} })
+    await expect(api.live({ rootSessionId: 'root' })).resolves.toEqual({ live: {}, models: {} })
   })
 
   it('folds only activity inside the recent 12-message window', async () => {
@@ -116,6 +117,7 @@ describe('subagents.live route', () => {
     const api = buildSubagentLiveApi(ctxWith(subagents, sessions))
     await expect(api.live({ rootSessionId: 'root' })).resolves.toEqual({
       live: { windowed: { text: 'recent' } },
+      models: {},
     })
   })
 
@@ -139,6 +141,7 @@ describe('subagents.live route', () => {
     const api = buildSubagentLiveApi(ctxWith(subagents, sessions))
     await expect(api.live({ rootSessionId: 'root' })).resolves.toEqual({
       live: { good: { text: 'ok' } },
+      models: {},
     })
   })
 
@@ -164,5 +167,83 @@ describe('subagents.live route', () => {
     await expect(api.live({})).rejects.toThrowError(
       expect.objectContaining<Partial<SidebarError>>({ code: 'bad-request' }),
     )
+  })
+
+  it('resolves model names from live agents, request headers, events, and persistence', async () => {
+    const subagents: SidebarSubagentsService = {
+      listDescendants: vi.fn(async () => [
+        child('child-live-agent', { label: 'LiveAgent' }),
+        child('child-header', { label: 'Header' }),
+        child('child-events', { label: 'Events' }),
+        child('child-cold', { activity: 'inactive', label: 'Cold' }),
+      ]),
+    }
+    const agents = {
+      get: (id: string) => {
+        if (id === 'child-live-agent') {
+          return { options: { model: 'claude-3-5-sonnet' } }
+        }
+        return undefined
+      },
+    }
+    const persistence = {
+      inspect: vi.fn(async (id: string) => {
+        if (id === 'child-cold') {
+          return {
+            meta: {},
+            events: [
+              { type: 'subagent/descriptor', seq: 1, time: 0, data: { agentModel: 'gpt-4o' } },
+            ],
+          }
+        }
+        throw new Error('not found')
+      }),
+    }
+    const sessions = {
+      get: (id: string) => {
+        if (id === 'root') {
+          return {
+            header: { cwd: '/root' },
+            requestHeader: () => ({ config: { model: 'deepseek-chat' } }),
+            snapshotEvents: () => [],
+          }
+        }
+        if (id === 'child-header') {
+          return {
+            header: { cwd: '/child-header' },
+            requestHeader: () => ({ config: { model: 'deepseek-reasoner' } }),
+            snapshotEvents: () => [],
+          }
+        }
+        if (id === 'child-events') {
+          return {
+            header: { cwd: '/child-events' },
+            snapshotEvents: () => [
+              { type: 'model/selection', seq: 1, time: 0, data: { model: 'gemini-1.5-pro' } },
+            ],
+          }
+        }
+        return session([])
+      },
+    }
+    const ctx = {
+      sessions,
+      get: (key: string) => {
+        if (key === 'subagents') return subagents
+        if (key === 'agents') return agents
+        if (key === 'sessionPersistence') return persistence
+        return undefined
+      },
+    } as unknown as Context
+
+    const api = buildSubagentLiveApi(ctx)
+    const result = await api.live({ rootSessionId: 'root' })
+    expect(result.models).toEqual({
+      root: 'deepseek-chat',
+      'child-live-agent': 'claude-3-5-sonnet',
+      'child-header': 'deepseek-reasoner',
+      'child-events': 'gemini-1.5-pro',
+      'child-cold': 'gpt-4o',
+    })
   })
 })

@@ -96,8 +96,8 @@ describe('SideCardSection declarative inventory', () => {
     // The nested auto-open toggle is NOT an inline card (it lives in the popup).
     expect(pressedCount(html, 'true')).toBe(3)
     expect(pressedCount(html, 'false')).toBe(0)
-    // The general toggles are custom switches (real checkboxes, one checked).
-    expect(html.match(/checked=""/g)?.length).toBe(1)
+    // The general toggles are custom switches (real checkboxes, two checked).
+    expect(html.match(/checked=""/g)?.length).toBe(2)
     expect(html).not.toContain('Auto-open Subagents')
   })
 
@@ -153,9 +153,9 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('>Subagents<')
     expect(html).toContain('>Image<')
     expect(pressedCount(html, 'false')).toBe(2)
-    // The explorer card stays pressed; the one default-on general switch stays checked.
+    // The explorer card stays pressed; the two default-on general switches stay checked.
     expect(pressedCount(html, 'true')).toBe(1)
-    expect(html.match(/checked=""/g)?.length).toBe(1)
+    expect(html.match(/checked=""/g)?.length).toBe(2)
   })
 
   it('hides the gear of a disabled feature (its related settings are dormant)', () => {
@@ -178,11 +178,11 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('Pick the title-bar compatibility scheme: auto-detect (default, conservative) / DSH official web / known desktop shells / custom (shift distance + custom CSS)')
     expect(html).not.toContain('<select')
     expect(html).toContain('>Auto-detect<')
-    // Three general-row switches remain (openByDefault + interceptOpenPath
-    // + agentOpenTools), only interceptOpenPath checked by default — the
+    // Four general-row switches remain (openByDefault + interceptOpenPath
+    // + editOpensDiff + agentOpenTools), interceptOpenPath + editOpensDiff checked by default — the
     // scheme row is a dropdown, not a switch.
-    expect(html.match(/type="checkbox"/g)?.length).toBe(3)
-    expect(html.match(/checked=""/g)?.length).toBe(1)
+    expect(html.match(/type="checkbox"/g)?.length).toBe(4)
+    expect(html.match(/checked=""/g)?.length).toBe(2)
     // Auto (default) needs no further settings → no gear.
     expect(html).not.toContain('Position compatibility mode Feature settings')
 

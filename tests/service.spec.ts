@@ -557,6 +557,24 @@ describe('service.openTab auto-expand for content opens', () => {
     }
   })
 
+  it('expands the collapsed drawer for a diff open on a narrow viewport', () => {
+    setWidth(390)
+    try {
+      const store = createSidebarStore()
+      const service = createBetterSidebarService(store)
+      service.registerTab({ id: 'diff', title: 'Git', component: () => null })
+      store.setSession('s1')
+      store.reduce(s => ({ ...s, panelOpen: false }))
+      // A diff seed carries `diff`, not `path`/`url` — it is still a content
+      // open (an edit-tool click landing the diff in a collapsed panel must
+      // surface, not stay out of sight).
+      service.openTab({ type: 'diff', title: 'a.ts', diff: { kind: 'worktree', path: 'a.ts', staged: false } })
+      expect(store.getSnapshot().state?.panelOpen).toBe(true)
+    } finally {
+      setWidth(1024)
+    }
+  })
+
   it('keeps a collapsed drawer for a type-only open on a narrow viewport', () => {
     setWidth(390)
     try {

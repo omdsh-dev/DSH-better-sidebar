@@ -227,6 +227,8 @@ export const ru: Record<string, string> = {
   settingsWidthSuffix: '%',
   settingsOpenPathTitle: 'Открывать файлы чата в боковой панели',
   settingsOpenPathDesc: 'При щелчке по ссылке на файл в чате (строки инструментов, списки результатов, упоминания) файл открывается в редакторе боковой панели, а не в системном приложении по умолчанию',
+  settingsEditDiffTitle: 'Open edited files as diff',
+  settingsEditDiffDesc: 'When on, clicking an edit-tool file link opens the git worktree diff view in the sidebar instead of the file editor; non-git workspaces fall back to the file',
   settingsOpenToolsTitle: 'Внедрить инструмент открытия в боковой панели для модели',
   settingsOpenToolsDesc: 'Если включено, модель может открывать файлы, папки и HTTP(S)-страницы в боковой панели с помощью инструмента sidebar_open (по умолчанию выключено)',
   settingsTitleBarTitle: 'Режим совместимости заголовка',

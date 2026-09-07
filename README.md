@@ -542,6 +542,30 @@ make clean          # 清理 lib/、*.tgz、playwright-report/、test-results/
 - HTML 预览与浏览器 tab 的内容在**不透明源沙箱 iframe** 中渲染（无 `allow-same-origin`/`allow-top-navigation`、`no-referrer`、权限策略全禁）；`/sidebar/html` 路由带 CSP `sandbox` + 大小/路径边界；地址栏拒绝 `javascript:`/`data:`/`file:` 与 localhost 等本机地址
 - 界面实时显示沙箱状态（关闭时红色警示），可临时解锁当前页面；设置页可按功能关闭沙箱（默认关闭该设置，带警告文案）——关闭后内容与界面同源，仅建议对完全可信内容使用
 
+### 📁 额外根目录（extraRoots）
+
+侧边栏的文件读写（`fs.tree` / `fs.read` / `fs.write`、媒体与 HTML 预览、上传）在会话工作区之外默认还允许 `~/.dsh/external`（若该目录存在，例如 `~/.dsh/external/dsh-plugin-omoslim`）。可通过 `extraRoots` 自定义额外根，或以显式空数组完全关闭：
+
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml
+- insert:
+    - id: better-sidebar
+      name: 'dsh-better-sidebar'
+      config:
+        # 额外根（绝对路径，支持 ~ 展开；非绝对路径会 loud 失败；去重、去空串）
+        extraRoots:
+          - ~/.dsh/external
+          - /data/shared
+          # 完全关闭额外根
+          # extraRoots: []
+```
+
+- 未配置 `extraRoots` 时默认 `["~/.dsh/external"]`（仅当该目录真实存在时生效，不存在则等同 `[]`）。
+- 显式传 `[]` 表示禁用全部额外根，文件访问严格限制在会话工作区内。
+- 每一项支持 `~` 前缀展开（`os.homedir()`），展开后必须为绝对路径（POSIX / Windows 均可），否则启动时报错。
+- 目标是否放行在每次请求时对每个额外根做 `realpath` 解析；解析失败（不存在/不可读）的根被跳过，仅当所有根都不包含目标时才返回 `403 path "..." is outside workspace`。
+- `fs.search` 保持仅在会话工作区内搜索，不受 `extraRoots` 影响。
+
 ## ⚠️ 已知限制
 
 - Git 无 push/pull/fetch；Markdown 预览提供手动刷新按钮，刷新未保存编辑前会确认是否丢弃草稿；无文件 watcher/自动轮询；工具行内文件打开按钮不可拦截

@@ -665,14 +665,17 @@ describe('session cwd resolution over the API route', () => {
     expect(value.value?.content).toContain('runGit')
   })
 
-  it('rejects repo-root-relative fs.read paths outside a nested session workspace', async () => {
+  it('allows repo-root-relative fs.read paths inside the default extra root', async () => {
+    // The workspace is inside the default extra root (~/.dsh/external), so the
+    // parent package.json lies inside the extra root and must be allowed.
+    // A strict workspace-only check would forbid it; extraRoots relaxes it.
     const route = mount({
       sessions: {
         get: () => ({ header: { cwd: join(process.cwd(), 'src') } }),
       },
     })
     const result = await invoke(route, 'fs.read', { sessionId: 's-sub', path: 'package.json' })
-    expect(result).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+    expect(result).toMatchObject({ ok: true, status: 200 })
   })
 
   it('rejects fs.tree paths outside the session workspace', async () => {
@@ -948,6 +951,7 @@ describe('side card settings routes', () => {
         terminalFontFamily: '',
         terminalFontSize: 13,
         interceptOpenPath: true,
+        editOpensDiff: true,
         editorExplorer: false,
         workspaceFence: true,
         terminalShell: '',
