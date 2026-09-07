@@ -565,11 +565,20 @@ function buildApi(
     // silently overwritten (mirror of the settings seam's own guard).
     'settings.get': () => {
       const settings = getSettings()
+      // `adminManaged` rides the same read: the client hides its settings
+      // section on it, and a deployment that manages the preferences must
+      // not depend on a second round trip to learn so.
       return settings === undefined
-        ? { value: undefined, revision: undefined, externalDisable: false }
-        : { ...settings.get(), externalDisable: settings.externalDisable() }
+        ? { value: undefined, revision: undefined, externalDisable: false, adminManaged: resolved.adminManaged }
+        : { ...settings.get(), externalDisable: settings.externalDisable(), adminManaged: resolved.adminManaged }
     },
     'settings.update': async (payload) => {
+      // The lock is enforced here, not only by hiding the section: the route
+      // is reachable from any browser that passed the fence, so a managed
+      // deployment refuses the write regardless of what page sent it.
+      if (resolved.adminManaged) {
+        throw new SidebarError('settings-rejected', 'the side card preferences are managed by the deployment', 403)
+      }
       const settings = getSettings()
       if (settings === undefined) {
         throw new SidebarError('settings-rejected', 'the settings service is not mounted in this deployment', 503)

@@ -430,14 +430,23 @@ describe('boot decision (one fetch for prefs + external disable)', () => {
     expect(decision.prefs.openByDefault).toBe(true)
   })
 
-  it('falls back to the defaults + not suspended on any failure', async () => {
+  it('falls back to the defaults + not suspended + not managed on any failure', async () => {
     const decision = await loadBootDecision(rejecting())
-    expect(decision).toEqual({ prefs: SIDEBAR_PREFS_DEFAULTS, suspended: false })
+    expect(decision).toEqual({ prefs: SIDEBAR_PREFS_DEFAULTS, suspended: false, adminManaged: false })
   })
 
   it('reads suspended false when the flag is absent', async () => {
     const decision = await loadBootDecision(wire({ defaultWidthPercent: 50 }))
     expect(decision.suspended).toBe(false)
     expect(decision.prefs.defaultWidthPercent).toBe(50)
+  })
+
+  it('reads adminManaged from the same fetch and defaults it to false', async () => {
+    const managed: SidebarSettingsClient = {
+      settingsGet: async () => ({ value: { openByDefault: true }, revision: 3, externalDisable: false, adminManaged: true }),
+      settingsUpdate: async () => ({ value: {}, revision: 4 }),
+    }
+    expect((await loadBootDecision(managed)).adminManaged).toBe(true)
+    expect((await loadBootDecision(wire({}))).adminManaged).toBe(false)
   })
 })

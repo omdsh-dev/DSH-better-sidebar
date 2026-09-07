@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
-import { apply, mediaTypeForPath } from '../src/index.ts'
+import { apply, mediaTypeForPath, type SidebarConfig } from '../src/index.ts'
 import { encodeHtmlUrl } from '../src/html-route.ts'
 import * as git from '../src/git.ts'
 import { listDirectory } from '../src/fs-tree.ts'
@@ -858,7 +858,7 @@ describe('side card settings routes', () => {
     }
   }
 
-  const mountWithSettings = (settings?: unknown): SidebarWebRoute => {
+  const mountWithSettings = (settings?: unknown, config?: SidebarConfig): SidebarWebRoute => {
     const routes: SidebarWebRoute[] = []
     const ctx = {
       webRuntime: { trustedHosts: [] },
@@ -876,7 +876,7 @@ describe('side card settings routes', () => {
       // No jobs/agents services: the jobs routes degrade to a 503.
       get: () => undefined,
     }
-    apply(ctx as never)
+    apply(ctx as never, config)
     return routes.find(route => route.path === '/sidebar/api')!
   }
 
@@ -905,7 +905,7 @@ describe('side card settings routes', () => {
     const route = mountWithSettings(undefined)
     const result = await invoke(route, 'settings.get', {})
     expect(result.ok).toBe(true)
-    expect(result.value).toEqual({ value: undefined, revision: undefined, externalDisable: false })
+    expect(result.value).toEqual({ value: undefined, revision: undefined, externalDisable: false, adminManaged: false })
   })
 
   it('reports externalDisable false when the aionui namespace is absent', async () => {
@@ -920,6 +920,27 @@ describe('side card settings routes', () => {
     const result = await invoke(route, 'settings.get', {})
     expect(result.ok).toBe(true)
     expect((result.value as { externalDisable?: boolean }).externalDisable).toBe(true)
+  })
+
+  it('reports adminManaged false by default and true from the plugin config', async () => {
+    const plain = await invoke(mountWithSettings(createFakeSettings()), 'settings.get', {})
+    expect((plain.value as { adminManaged?: boolean }).adminManaged).toBe(false)
+    const managed = await invoke(mountWithSettings(createFakeSettings(), { adminManaged: true }), 'settings.get', {})
+    expect((managed.value as { adminManaged?: boolean }).adminManaged).toBe(true)
+    // The flag rides the same read even while the settings service is absent.
+    const absent = await invoke(mountWithSettings(undefined, { adminManaged: true }), 'settings.get', {})
+    expect(absent.value).toEqual({ value: undefined, revision: undefined, externalDisable: false, adminManaged: true })
+  })
+
+  it('refuses settings.update while the preferences are deployment-managed', async () => {
+    const route = mountWithSettings(createFakeSettings(), { adminManaged: true })
+    const result = await invoke(route, 'settings.update', { patch: { openByDefault: true } })
+    expect(result.ok).toBe(false)
+    expect(result.error?.code).toBe('settings-rejected')
+    expect(result.error?.message).toContain('managed by the deployment')
+    // Reads keep working: the client still boots on the managed preferences.
+    const read = await invoke(route, 'settings.get', {})
+    expect(read.ok).toBe(true)
   })
 
   it('serves the effective terminal shell and its display name', async () => {
@@ -970,6 +991,7 @@ describe('side card settings routes', () => {
       },
       revision: 0,
       externalDisable: false,
+      adminManaged: false
     })
 
     const written = await invoke(route, 'settings.update', { patch: { openByDefault: true } })
