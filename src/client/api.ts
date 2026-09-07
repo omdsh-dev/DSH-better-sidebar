@@ -96,6 +96,11 @@ export interface FsTextResult { kind: 'text'; content: string; truncated: boolea
  *  `head` carries the first bytes (base64) for viewer detect sniffing. */
 export interface FsBinaryResult { kind: 'binary'; size: number; truncated: boolean; head: string }
 
+/** Result of authorizing one explicitly clicked absolute Markdown path. */
+export type MarkdownPreviewGrant =
+  | { outside: false }
+  | { outside: true; grant: string }
+
 /**
  * One jobs.output response: the output the MODEL has read so far for the
  * job (replayed from the owner session's event log — the model's
@@ -274,8 +279,16 @@ export const api = {
    *  side panel's search box); matches are cwd-relative '/'-separated paths. */
   fsSearch: (scope: SessionScope, query: string, signal?: AbortSignal) =>
     call<{ matches: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query }), signal),
-  fsRead: (scope: SessionScope, path: string, signal?: AbortSignal) =>
-    call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
+  /** Ask the loopback host to authorize an explicitly clicked Markdown file.
+   *  In-workspace paths need no token; outside paths receive an exact-path,
+   *  session-bound read grant. */
+  markdownPreviewGrant: (scope: SessionScope, path: string, signal?: AbortSignal) =>
+    call<MarkdownPreviewGrant>('preview.markdown', scopePayload(scope, { path }), signal),
+  fsRead: (scope: SessionScope, path: string, signal?: AbortSignal, previewGrant?: string) =>
+    call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, {
+      path,
+      ...(previewGrant !== undefined && previewGrant !== '' ? { previewGrant } : {}),
+    }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
   /** Rename one tree row within its directory (single-segment name; the

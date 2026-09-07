@@ -110,7 +110,12 @@ export function EditorHost(props: {
   // directory as an editor tab carrying `meta.dir: true` with the directory
   // as its path. It renders the file tree rooted at that folder instead of
   // the viewer loading flow (a directory is not a file).
-  const isDir = metaOf(tab).dir === true
+  const tabMeta = metaOf(tab)
+  const isDir = tabMeta.dir === true
+  /** Exact-path read capability for a user-clicked Markdown document outside
+   *  the session workspace. Its tab is always preview-only. */
+  const previewGrant = typeof tabMeta.previewGrant === 'string' ? tabMeta.previewGrant : undefined
+  const readOnly = previewGrant !== undefined && tabMeta.readOnly === true
   const [load, setLoad] = useState<EditorLoad>({ status: 'loading' })
   // Manual refresh (issue #167): bumping the sequence re-runs the load effect
   // with the same path/scope — the only reload entry besides open/close.
@@ -160,7 +165,10 @@ export function EditorHost(props: {
    */
   const openFile = (absolute: string): void => {
     if (inPlace) {
-      ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) })
+      // A preview grant is exact-path. Navigating this tab to another file
+      // must drop it (and the read-only marker) while preserving tree chrome.
+      const { previewGrant: _previewGrant, readOnly: _readOnly, ...nextMeta } = tabMeta
+      ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute), meta: nextMeta })
     } else {
       openSidebarFile(ctx, store, scope.sessionId, absolute)
     }
@@ -330,7 +338,7 @@ export function EditorHost(props: {
           })
           return
         case 'fetchFsRead':
-          api.fsRead(scope, path).then((result) => {
+          api.fsRead(scope, path, controller.signal, previewGrant).then((result) => {
             if (cancelled) return
             // Binary reads carry the head bytes for the detect re-match.
             const outcome = planFsReadOutcome(action.viewer, {
@@ -352,7 +360,7 @@ export function EditorHost(props: {
     // The deps are deliberately granular: the scope object's identity churns,
     // only its sessionId / cwd fields gate the (re)fetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope.sessionId, scope.cwd, path, ctx, showEmpty, isDir, reloadSeq])
+  }, [scope.sessionId, scope.cwd, path, ctx, showEmpty, isDir, reloadSeq, previewGrant])
 
   // Save-then-refresh in preview mode (issue #167 part C): the edge into
   // 'saved' (never a lingering 'saved' state) triggers exactly one reload, so
@@ -490,6 +498,7 @@ export function EditorHost(props: {
             truncated: load.truncated,
             mediaUrl: load.mediaUrl,
             customData: load.customData,
+            readOnly,
             // The viewer's toolbar always hoists into this host's header.
             toolbar: 'host',
             onToolbarState,

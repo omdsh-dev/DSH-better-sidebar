@@ -1,6 +1,7 @@
 /** Filesystem path guards shared by sidebar APIs that access a session workspace. */
-import { realpath } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { randomBytes } from 'node:crypto'
+import { realpath, stat } from 'node:fs/promises'
+import { basename, dirname, extname, join } from 'node:path'
 import { isWithin, requireAbsolute } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
 import { SidebarError } from './wire.ts'
@@ -78,5 +79,90 @@ export async function ensureWorkspaceWritePath(cwd: string, target: string, fenc
       missingSegments.unshift(basename(existingPath))
       existingPath = parent
     }
+  }
+}
+
+/** A client-visible decision for one explicitly clicked Markdown path. */
+export type MarkdownPreviewGrant =
+  | { outside: false }
+  | { outside: true; grant: string }
+
+/** One server-memory read capability. It is exact-path and session bound. */
+interface MarkdownPreviewCapability {
+  sessionId: string
+  path: string
+}
+
+/** Maximum live external-preview capabilities (oldest entries are evicted). */
+const MARKDOWN_PREVIEW_GRANT_LIMIT = 128
+
+/** Only Markdown documents get the out-of-workspace preview escape hatch. */
+function isMarkdownPath(path: string): boolean {
+  const extension = extname(path).toLowerCase()
+  return extension === '.md' || extension === '.markdown'
+}
+
+/** Resolve one existing path without granting it any workspace authority. */
+async function resolveExternalPreviewPath(target: string): Promise<string> {
+  const absolute = requireAbsolute(target)
+  return resolveRealPath(absolute, 'preview target')
+}
+
+/**
+ * Host-lifetime, unguessable read capabilities for Markdown documents that
+ * the user explicitly clicks in chat. The normal workspace fence remains the
+ * default for every route and every write: `issue` only grants one canonical
+ * document to one session, and `authorize` re-resolves the path so a replaced
+ * symlink cannot reuse an old grant.
+ */
+export class MarkdownPreviewGrants {
+  private readonly grants = new Map<string, MarkdownPreviewCapability>()
+
+  /** Decide whether a clicked document needs a grant, and mint one if so. */
+  async issue(sessionId: string, cwd: string, target: string): Promise<MarkdownPreviewGrant> {
+    const [workspace, path] = await Promise.all([
+      resolveRealPath(cwd, 'workspace'),
+      resolveExternalPreviewPath(target),
+    ])
+    if (isWithin(workspace, path)) return { outside: false }
+    if (!isMarkdownPath(path)) {
+      throw new SidebarError('bad-request', 'external preview only accepts Markdown files', 400)
+    }
+    let info
+    try {
+      info = await stat(path)
+    } catch (error) {
+      throw new SidebarError('fs-error', `cannot inspect preview target "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
+    }
+    if (!info.isFile()) throw new SidebarError('bad-request', 'external Markdown preview target is not a file', 400)
+
+    const grant = randomBytes(24).toString('base64url')
+    this.grants.set(grant, { sessionId, path })
+    while (this.grants.size > MARKDOWN_PREVIEW_GRANT_LIMIT) {
+      const oldest = this.grants.keys().next().value as string | undefined
+      if (oldest === undefined) break
+      this.grants.delete(oldest)
+    }
+    return { outside: true, grant }
+  }
+
+  /** Validate an exact path/session/token tuple and return its canonical path. */
+  async authorize(grant: string, sessionId: string, target: string): Promise<string> {
+    const capability = this.grants.get(grant)
+    if (capability === undefined || capability.sessionId !== sessionId) {
+      throw new SidebarError('forbidden', 'invalid external Markdown preview grant', 403)
+    }
+    const path = await resolveExternalPreviewPath(target)
+    if (path !== capability.path) {
+      throw new SidebarError('forbidden', 'external Markdown preview grant does not match this path', 403)
+    }
+    this.grants.delete(grant)
+    this.grants.set(grant, capability)
+    return path
+  }
+
+  /** Drop all capabilities when the host plugin is disposed. */
+  dispose(): void {
+    this.grants.clear()
   }
 }

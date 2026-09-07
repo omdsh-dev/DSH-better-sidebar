@@ -53,6 +53,7 @@ const previewScrollKey = (scope: { sessionId: string }, path: string): string =>
 
 export function TextEditor(props: FileViewerProps) {
   const { ctx, scope, path, viewerId, content, truncated } = props
+  const readOnly = props.readOnly === true
   const [mode, setMode] = useState<ViewMode>('preview')
   /** The editor's current text (null while clean); preview renders this. */
   const [draft, setDraft] = useState<string | null>(null)
@@ -142,6 +143,10 @@ export function TextEditor(props: FileViewerProps) {
         history(),
         EditorState.tabSize.of(2),
         CodeMirrorView.contentAttributes.of({ spellcheck: 'false' }),
+        // editable=false protects the DOM; readOnly=true also blocks editing
+        // commands/transactions from the remaining navigation keymaps.
+        CodeMirrorView.editable.of(!readOnly),
+        EditorState.readOnly.of(readOnly),
         cmSurfaceTheme,
         themeComp.of(dark),
         ...(language !== null ? [language] : []),
@@ -151,11 +156,11 @@ export function TextEditor(props: FileViewerProps) {
           }
         }),
         keymap.of([
-          {
+          ...(readOnly ? [] : [{
             key: 'Mod-s',
             preventDefault: true,
             run: () => { save(); return true },
-          },
+          }]),
           ...defaultKeymap,
           ...historyKeymap,
         ]),
@@ -215,7 +220,7 @@ export function TextEditor(props: FileViewerProps) {
     // tab's lifetime, and the dark flip is handled by the reconfigure
     // effect below (recreating the view here would drop the draft).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content, path])
+  }, [content, path, readOnly])
 
   // Scheme flip: re-theme in place (the compartment holds only the
   // scheme-dependent extensions; everything else is untouched).
@@ -289,7 +294,7 @@ export function TextEditor(props: FileViewerProps) {
 
   const save = (): void => {
     const view = viewRef.current
-    if (view === null || savingRef.current) return
+    if (readOnly || view === null || savingRef.current) return
     savingRef.current = true
     setSaveState('saving')
     api.fsWrite(scope, path, view.state.doc.toString()).then(() => {
@@ -397,7 +402,8 @@ export function TextEditor(props: FileViewerProps) {
       rect.top,
     )
   }
-  const editable = content !== undefined
+  const editable = content !== undefined && !readOnly
+  const modes = (markdown || html) && !readOnly
   const saveLabel = saveState === 'saving' ? t('loading') : saveState === 'saved' ? t('saved') : saveState === 'failed' ? t('saveFailed') : ''
   // Per-feature sandbox escape hatch: the global side card setting (warned)
   // plus a per-surface temporary unlock. The unlock state starts at the
@@ -416,7 +422,7 @@ export function TextEditor(props: FileViewerProps) {
   const lastToolbarRef = useRef('')
   useEffect(() => {
     if (!hostToolbar) return
-    const state: EditorToolbarState = { modes: markdown || html, mode, dirty, editable, saveState }
+    const state: EditorToolbarState = { modes, mode, dirty, editable, saveState }
     const key = JSON.stringify(state)
     if (lastToolbarRef.current === key) return
     lastToolbarRef.current = key
@@ -435,7 +441,7 @@ export function TextEditor(props: FileViewerProps) {
     <>
       {!hostToolbar && (
       <div className={css.editorHeader}>
-        {(markdown || html) && (
+        {modes && (
           <div className={css.editorModeToggle}>
             <button
               type="button"
