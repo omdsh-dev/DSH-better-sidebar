@@ -5,7 +5,7 @@
  * @module dsh-better-sidebar/config
  */
 
-import z from 'schemastery'
+import z from '@deepseek-ai/schemastery'
 import {
   TERMINAL_FONT_SIZE_DEFAULT,
   TERMINAL_FONT_SIZE_MAX,

@@ -101,6 +101,7 @@
     "@deepseek-ai/dsh-settings": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-subagent": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-tools": "^0.1.2-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.2",
     "@huanlin/dsh-plugin-better-locale": "^0.1.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
@@ -139,7 +140,6 @@
     "node-pty": "^1.1.0",
     "react-icons": "5.7.0",
     "rxjs": "^7.8.2",
-    "schemastery": "^3.18.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
@@ -164,6 +164,7 @@
     "@deepseek-ai/dsh-tools": "0.1.2-rc.1",
     "@deepseek-ai/dsh-user-approval": "0.1.2-rc.1",
     "@deepseek-ai/dsh-util-time": "0.1.2-rc.1",
+    "@deepseek-ai/schemastery": "3.18.2",
     "@huanlin/dsh-plugin-better-locale": "^0.1.0",
     "@playwright/test": "^1.62.1",
     "@types/node": "^24.0.0",

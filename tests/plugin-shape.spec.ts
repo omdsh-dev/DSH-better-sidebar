@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import Loader from '@cordisjs/plugin-loader'
+import Schema from '@deepseek-ai/schemastery'
 import * as sidebar from '../src/index.ts'
 
 /**
@@ -25,6 +26,10 @@ describe('dsh-better-sidebar plugin export shape', () => {
   it('exports the schemastery Config with the documented tunable fields', () => {
     const schema = sidebar.Config
     expect(schema).toBeDefined()
+    // The loader/settings stack and this plugin must share the scoped DSH
+    // Schemastery constructor; a bundled legacy `schemastery` copy breaks
+    // runtime identity even when its schema objects look structurally alike.
+    expect(schema).toBeInstanceOf(Schema)
     // The resolved defaults mirror the pre-config constants.
     const resolved = (schema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>

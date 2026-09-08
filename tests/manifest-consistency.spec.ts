@@ -103,6 +103,12 @@ describe.skipIf(!libBuilt)('registry manifest consistency (dsh.plugin.json)', ()
     expect(registryId).not.toBe(pkg.name)
   })
 
+  it('the host bundle keeps the shared scoped Schemastery runtime external', () => {
+    const source = readFileSync(resolve(ROOT, manifest.main), 'utf8')
+    expect(source).toContain('from "@deepseek-ai/schemastery"')
+    expect(source).not.toMatch(/from ["']schemastery["']/)
+  })
+
   it('the lazy chunk bundles exist and assign their global registry slots (served by /sidebar/bundle)', () => {
     for (const file of CHUNK_FILES) {
       expect(existsSync(resolve(ROOT, file)), file).toBe(true)

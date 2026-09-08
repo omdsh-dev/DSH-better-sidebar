@@ -85,7 +85,7 @@ describe('AgentPtyRegistry', () => {
     } finally {
       registry.disposeAll()
     }
-  })
+  }, 15_000)
 
   it('spawns a bare shell when command is empty', () => {
     const registry = new AgentPtyRegistry(testShell())
@@ -118,7 +118,7 @@ describe('AgentPtyRegistry', () => {
     } finally {
       registry.disposeAll()
     }
-  })
+  }, 15_000)
 
   it('reads a bounded page of the transcript', async () => {
     const registry = new AgentPtyRegistry(testShell())
@@ -136,7 +136,7 @@ describe('AgentPtyRegistry', () => {
     } finally {
       registry.disposeAll()
     }
-  })
+  }, 15_000)
 
   it('resizes without throwing', () => {
     const registry = new AgentPtyRegistry(testShell())

@@ -76,6 +76,11 @@ describe('DSH community-market manifest compatibility', () => {
     }
   })
 
+  it('shares the host Schemastery runtime instead of installing the legacy bare package', () => {
+    expect(pkg.dependencies).not.toHaveProperty('schemastery')
+    expect(pkg.peerDependencies).toHaveProperty('@deepseek-ai/schemastery', '^3.18.2')
+  })
+
   it('declares no install lifecycle scripts in the PACKED manifest (the published surface)', () => {
     const packed = packedManifest()
     const scripts = (packed.scripts as Record<string, string> | undefined) ?? {}
