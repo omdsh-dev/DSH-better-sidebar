@@ -325,9 +325,29 @@ function sameEntries(left: readonly PromptOverviewEntry[], right: readonly Promp
   })
 }
 
-/** Locate the active official Chat flow (never a side-chat flow in the panel host). */
+/** Locate the active official Chat flow (never a hidden/stale flow behind
+ * a plugin view in the panel host). */
 function conversationFlow(): HTMLElement | null {
-  return document.querySelector<HTMLElement>('#root [data-slot="conversation"] [data-chat-flow]')
+  const flows = document.querySelectorAll<HTMLElement>('#root [data-slot="conversation"] [data-chat-flow]')
+  for (const flow of flows) {
+    const rect = flow.getBoundingClientRect()
+    const style = getComputedStyle(flow)
+    if (rect.width <= 0 || rect.height <= 0 || style.display === 'none' || style.visibility === 'hidden') continue
+    const scroller = flow.closest<HTMLElement>('[data-conversation-scroll]')
+    if (scroller === null) continue
+    const scrollRect = scroller.getBoundingClientRect()
+    if (scrollRect.width <= 0 || scrollRect.height <= 0) continue
+    // If a built-in/plugin view is currently on top of the chat column, the
+    // stale Chat flow remains mounted underneath it. Do not paint the rail
+    // over that view (for example, the account quota panel).
+    const probe = document.elementFromPoint(
+      scrollRect.left + scrollRect.width / 2,
+      scrollRect.top + Math.min(scrollRect.height / 2, 200),
+    )
+    if (probe !== null && !flow.contains(probe)) continue
+    return flow
+  }
+  return null
 }
 
 /** Find the scrollport using the same landmark as the official ChatView. */
