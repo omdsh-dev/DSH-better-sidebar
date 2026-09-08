@@ -1,4 +1,5 @@
 # dsh-better-sidebar
+[![DSH Insights health](https://dsh-insights.com/badge/omdsh-dev/DSH-better-sidebar.svg)](https://dsh-insights.com/p/omdsh-dev/DSH-better-sidebar/)
 
 <!-- Hero -->
 <div align="center">
