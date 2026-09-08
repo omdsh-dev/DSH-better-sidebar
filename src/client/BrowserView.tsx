@@ -16,7 +16,7 @@
  * address-bar navigations (in-frame link clicks are cross-origin and
  * invisible — a documented limitation).
  */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import {
   IconChevronLeftOutline14,
   IconChevronRightOutline14,
@@ -27,6 +27,7 @@ import {
 import { VscLinkExternal } from 'react-icons/vsc'
 import { api } from './api.ts'
 import { embeddabilityOf, isAllowedLoopbackUrl, normalizeBrowserUrl } from './browser.ts'
+import { parsePrefs } from './prefs.ts'
 import { patchTab } from './state.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { t } from './locales.ts'
@@ -95,7 +96,22 @@ export function BrowserView(props: TabComponentProps) {
   /** TEMPORARY sandbox unlock for THIS surface only (never writes the global
    *  side card setting; lasts until the tab unmounts or the user restores). */
   const [localUnlock, setLocalUnlock] = useState(false)
-  const noSandbox = store.getPrefs().browserNoSandbox === true || localUnlock
+  /** The persistent browser-wide setting is reactive: changing it from any
+   *  browser tab remounts every open browser iframe in this page. */
+  const subscribePrefs = useCallback((listener: () => void) => store.subscribe(listener), [store])
+  const readBrowserNoSandbox = useCallback(() => store.getSnapshot().prefs.browserNoSandbox, [store])
+  const globallyUnsandboxed = useSyncExternalStore(subscribePrefs, readBrowserNoSandbox, readBrowserNoSandbox)
+  const noSandbox = globallyUnsandboxed || localUnlock
+  const [sandboxSettingPending, setSandboxSettingPending] = useState(false)
+  const [sandboxSettingError, setSandboxSettingError] = useState<string | null>(null)
+
+  // A global restore is authoritative over every tab's earlier temporary
+  // unlock. All mounted BrowserViews observe the shared pref transition and
+  // clear their local escape hatch together.
+  useEffect(() => {
+    if (!globallyUnsandboxed) setLocalUnlock(false)
+  }, [globallyUnsandboxed])
+
   /** A site that refuses to be embedded (X-Frame-Options / frame-ancestors):
    *  the probe verdict shown instead of the blank iframe. */
   const [embedBlocked, setEmbedBlocked] = useState<string | null>(null)
@@ -159,6 +175,22 @@ export function BrowserView(props: TabComponentProps) {
     setUrl(next)
     setInput(next)
     setReloadKey(key => key + 1)
+  }
+
+  /** Persist the browser-wide sandbox mode and publish the round-tripped
+   *  preferences through the shared store. This affects every open browser
+   *  tab immediately and survives session/page changes. */
+  const toggleGlobalSandbox = (): void => {
+    if (sandboxSettingPending) return
+    setSandboxSettingPending(true)
+    setSandboxSettingError(null)
+    void api.settingsUpdate({ browserNoSandbox: !globallyUnsandboxed }).then((view) => {
+      store.setPrefs(parsePrefs(view.value))
+    }).catch(() => {
+      setSandboxSettingError(t('settingsSaveFailed'))
+    }).finally(() => {
+      setSandboxSettingPending(false)
+    })
   }
 
   return (
@@ -228,11 +260,18 @@ export function BrowserView(props: TabComponentProps) {
       {message !== null && <div className={css.browserMessage}>{message}</div>}
       <SandboxStatusBar
         sandboxed={!noSandbox}
-        local={localUnlock}
+        local={localUnlock && !globallyUnsandboxed}
         dangerCopy={t('browserNoSandboxWarning')}
         onUnlock={() => { setLocalUnlock(true) }}
         onRestore={() => { setLocalUnlock(false) }}
+        persistentAction={{
+          label: globallyUnsandboxed ? t('sandboxRestore') : t('settingsBrowserSandboxTitle'),
+          title: t('settingsBrowserSandboxDesc'),
+          pending: sandboxSettingPending,
+          onClick: toggleGlobalSandbox,
+        }}
       />
+      {sandboxSettingError !== null && <div className={css.browserMessage}>{sandboxSettingError}</div>}
       {url === undefined ? (
         <div className={css.browserStart}>{t('browserStart')}</div>
       ) : embedBlocked !== null && !forceEmbed ? (
