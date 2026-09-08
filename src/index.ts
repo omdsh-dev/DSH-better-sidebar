@@ -474,7 +474,13 @@ function buildApi(
     'git.show': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       const repoRoot = selectedRepoOf(payload)
-      const path = await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot)
+      // `git show <rev>:<path>` addresses the path inside the revision TREE:
+      // repository-relative, exactly the unified diff's own path form (after
+      // the a// b/ prefix). The absolute filesystem paths resolveGitPath
+      // produces would break the rev:path syntax and fail every read, so the
+      // path passes through as-is — it can only address blobs of this repo's
+      // own revisions, the same surface git.diff/git.log already expose.
+      const path = requireString(payload, 'path')
       const rev = requireString(payload, 'rev')
       return { content: await git.show(cwd, rev, path, repoRoot) }
     },

@@ -316,6 +316,11 @@ export const api = {
   /** Full patch text of one commit (diff display for the history rows). */
   gitCommitDiff: (scope: SessionScope, hash: string, worktree?: string, signal?: AbortSignal) =>
     call<{ diff: string }>('git.commit-diff', gitPayload(scope, worktree, { hash }), signal),
+  /** One file's content at a revision (`git show <rev>:<path>`); null when the
+   *  revision has no such path. The diff views' on-demand hunk-fold expansion
+   *  reads both sides' full contents through this. */
+  gitShow: (scope: SessionScope, rev: string, path: string, worktree?: string, signal?: AbortSignal) =>
+    call<{ content: string | null }>('git.show', gitPayload(scope, worktree, { rev, path }), signal),
   /** The session's file-tool events for the changes tab's session lens: the
    *  `tool/call` + `tool/result` rows past `afterSeq` (0 = whole window),
    *  capped to the recent window host-side. The client runtime exposes no

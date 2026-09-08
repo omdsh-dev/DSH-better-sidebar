@@ -30,6 +30,8 @@ export const hi: Record<string, string> = {
   changesRunning: 'चल रहा है',
   changesError: 'त्रुटि',
   changesFold: '{count} पंक्तियाँ… विस्तार के लिए क्लिक करें',
+  changesFoldLoading: 'विस्तार हो रहा है…',
+  changesFoldUnavailable: 'संदर्भ अनुपलब्ध',
   changesContext: 'संदर्भ',
   changesPriorUnknown: 'बदलाव से पहले की सामग्री विंडो में नहीं है; पूरी नई जोड़ी गई दिखाई जाती है',
   explorer: 'एक्सप्लोरर',

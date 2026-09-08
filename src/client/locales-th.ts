@@ -30,6 +30,8 @@ export const th: Record<string, string> = {
   changesRunning: 'กำลังทำงาน',
   changesError: 'ข้อผิดพลาด',
   changesFold: '{count} บรรทัด… คลิกเพื่อขยาย',
+  changesFoldLoading: 'กำลังขยาย…',
+  changesFoldUnavailable: 'ไม่สามารถโหลดบริบทได้',
   changesContext: 'บริบท',
   changesPriorUnknown: 'เนื้อหาก่อนแก้ไขอยู่นอกหน้าต่าง แสดงเป็นเพิ่มใหม่ทั้งหมด',
   explorer: 'ตัวสำรวจ',

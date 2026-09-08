@@ -22,6 +22,8 @@ export const ko: Record<string, string> = {
   changesRunning: '실행 중',
   changesError: '오류',
   changesFold: '{count}줄… 클릭하여 펼치기',
+  changesFoldLoading: '펼치는 중…',
+  changesFoldUnavailable: '컨텍스트를 불러올 수 없음',
   changesContext: '컨텍스트',
   changesPriorUnknown: '변경 전 내용이 창에 없어 모두 새로 추가된 것으로 표시됩니다',
   explorer: '탐색기',

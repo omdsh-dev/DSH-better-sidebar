@@ -28,6 +28,8 @@ export const id: Record<string, string> = {
   changesRunning: 'berjalan',
   changesError: 'error',
   changesFold: '{count} baris… klik untuk meluaskan',
+  changesFoldLoading: 'Meluaskan…',
+  changesFoldUnavailable: 'Konteks tidak tersedia',
   changesContext: 'konteks',
   changesPriorUnknown: 'Konten sebelum perubahan berada di luar jendela; ditampilkan sebagai sepenuhnya baru',
   explorer: 'Explorer',

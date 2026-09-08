@@ -2,11 +2,12 @@
  * The unified-diff adapter: git's own hunks (from parseUnifiedDiff) convert
  * into the shared DiffRow segments — rewrite pairing applies inside git
  * hunks exactly like session-op diffs, the unemitted context gaps between
- * hunks become non-expandable folds carrying their line ranges, and the
- * header stats (+n −m) count mods on both sides.
+ * hunks become folds carrying their line ranges (expandable on demand via
+ * foldRowsFromContents), and the header stats (+n −m) count mods on both
+ * sides.
  */
 import { describe, expect, it } from 'vitest'
-import { parseUnifiedDiff, unifiedSegments, diffLines, pairMods, diffStats, untrackedFile } from '../src/client/diff/rows.ts'
+import { parseUnifiedDiff, unifiedSegments, diffLines, pairMods, diffStats, untrackedFile, foldRowsFromContents, type FoldSegment } from '../src/client/diff/rows.ts'
 
 const twoHunks = [
   'diff --git a/a.ts b/a.ts',
@@ -119,5 +120,59 @@ describe('pairMods', () => {
   it('matches diffLines output (the LCS walk pairs rewrites the same way)', () => {
     const rows = diffLines('hello world', 'hello dsh')
     expect(rows.map(r => r.kind)).toEqual(['mod', 'mod'])
+  })
+})
+
+describe('foldRowsFromContents', () => {
+  it('slices an aligned gap into context rows carrying both line numbers', () => {
+    const fold: FoldSegment = { kind: 'fold', count: 4, oldStart: 4, oldEnd: 7, newStart: 6, newEnd: 9 }
+    const rows = foldRowsFromContents(fold, 'a\nb\nc\nd\ne\nf\ng\nh\n', 'A\nB\nC\nD\nE\nF\nG\nH\nI\n')
+    expect(rows).toEqual([
+      { kind: 'context', oldLine: 4, newLine: 6, text: 'd' },
+      { kind: 'context', oldLine: 5, newLine: 7, text: 'e' },
+      { kind: 'context', oldLine: 6, newLine: 8, text: 'f' },
+      { kind: 'context', oldLine: 7, newLine: 9, text: 'g' },
+    ])
+  })
+
+  it('keeps the old-side number alone when the new range cannot map (pure deletion gap)', () => {
+    const fold: FoldSegment = { kind: 'fold', count: 2, oldStart: 3, oldEnd: 4, newStart: 3, newEnd: 2 }
+    const rows = foldRowsFromContents(fold, 'a\nb\nc\nd\n', 'a\nb\n')
+    expect(rows).toEqual([
+      { kind: 'context', oldLine: 3, text: 'c' },
+      { kind: 'context', oldLine: 4, text: 'd' },
+    ])
+  })
+
+  it('emits pure additions for new lines the old range never reached (pure addition gap)', () => {
+    const fold: FoldSegment = { kind: 'fold', count: 3, oldStart: 3, oldEnd: 2, newStart: 3, newEnd: 5 }
+    const rows = foldRowsFromContents(fold, 'a\nb\n', 'a\nb\nc\nd\ne\n')
+    expect(rows).toEqual([
+      { kind: 'add', newLine: 3, text: 'c' },
+      { kind: 'add', newLine: 4, text: 'd' },
+      { kind: 'add', newLine: 5, text: 'e' },
+    ])
+  })
+
+  it('keeps \\r endings verbatim like git context lines', () => {
+    const fold: FoldSegment = { kind: 'fold', count: 2, oldStart: 1, oldEnd: 2, newStart: 1, newEnd: 2 }
+    const rows = foldRowsFromContents(fold, 'a\r\nb\r\n', 'a\r\nb\r\n')
+    expect(rows.map(r => r.text)).toEqual(['a\r', 'b\r'])
+  })
+
+  it('returns no rows for empty contents', () => {
+    const fold: FoldSegment = { kind: 'fold', count: 5, oldStart: 1, oldEnd: 5, newStart: 1, newEnd: 5 }
+    expect(foldRowsFromContents(fold, '', '')).toEqual([])
+  })
+
+  it('clips line numbers to the actual content (no-newline overrun)', () => {
+    // A file without a trailing newline: the fold's ranges can overrun the
+    // actual line count by one; the slice stops at the real last line.
+    const fold: FoldSegment = { kind: 'fold', count: 3, oldStart: 2, oldEnd: 4, newStart: 2, newEnd: 4 }
+    const rows = foldRowsFromContents(fold, 'a\nb\nc', 'a\nb\nc')
+    expect(rows).toEqual([
+      { kind: 'context', oldLine: 2, newLine: 2, text: 'b' },
+      { kind: 'context', oldLine: 3, newLine: 3, text: 'c' },
+    ])
   })
 })

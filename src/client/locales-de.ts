@@ -16,6 +16,8 @@ export const de: Record<string, string> = {
   changesRunning: 'läuft',
   changesError: 'Fehler',
   changesFold: '{count} Zeilen… zum Aufklappen klicken',
+  changesFoldLoading: 'Wird aufgeklappt…',
+  changesFoldUnavailable: 'Kontext nicht verfügbar',
   changesContext: 'Kontext',
   changesPriorUnknown: 'Inhalt vor der Änderung liegt außerhalb des Fensters; als vollständig neu angezeigt',
   explorer: 'Explorer',

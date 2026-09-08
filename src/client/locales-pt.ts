@@ -13,6 +13,8 @@ export const pt: Record<string, string> = {
   changesRunning: 'em execução',
   changesError: 'erro',
   changesFold: '{count} linhas… clique para expandir',
+  changesFoldLoading: 'Expandindo…',
+  changesFoldUnavailable: 'Contexto indisponível',
   changesContext: 'contexto',
   changesPriorUnknown: 'O conteúdo anterior está fora da janela; mostrado como totalmente adicionado',
   explorer: 'Explorador',

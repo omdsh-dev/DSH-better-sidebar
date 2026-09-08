@@ -21,6 +21,8 @@ export const it: Record<string, string> = {
   changesRunning: 'in esecuzione',
   changesError: 'errore',
   changesFold: '{count} righe… clicca per espandere',
+  changesFoldLoading: 'Espansione…',
+  changesFoldUnavailable: 'Contesto non disponibile',
   changesContext: 'contesto',
   changesPriorUnknown: 'Il contenuto precedente è fuori dalla finestra; mostrato come interamente aggiunto',
   explorer: 'Esplora risorse',

@@ -13,6 +13,8 @@ export const sv: Record<string, string> = {
   changesRunning: 'körs',
   changesError: 'fel',
   changesFold: '{count} rader… klicka för att expandera',
+  changesFoldLoading: 'Expanderar…',
+  changesFoldUnavailable: 'Kontext ej tillgänglig',
   changesContext: 'kontext',
   changesPriorUnknown: 'Innehållet före ändringen ligger utanför fönstret; visas som helt nytt',
   explorer: 'Utforskare',

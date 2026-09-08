@@ -32,6 +32,8 @@ export const pl: Record<string, string> = {
   changesRunning: 'w toku',
   changesError: 'błąd',
   changesFold: '{count} wierszy… kliknij, aby rozwinąć',
+  changesFoldLoading: 'Rozwijanie…',
+  changesFoldUnavailable: 'Kontekst niedostępny',
   changesContext: 'kontekst',
   changesPriorUnknown: 'Zawartość sprzed zmiany jest poza oknem; pokazana jako w całości nowa',
   explorer: 'Eksplorator',

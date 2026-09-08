@@ -45,6 +45,8 @@ export const zhMO: Record<string, string> = {
   changesRunning: '執行中',
   changesError: '出錯',
   changesFold: '{count} 行…點擊展開',
+  changesFoldLoading: '展開中…',
+  changesFoldUnavailable: '上下文未載入',
   changesContext: '上下文',
   changesPriorUnknown: '變更前的內容不在視窗內，顯示為全部新增',
   explorer: '檔案總管',

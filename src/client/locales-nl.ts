@@ -28,6 +28,8 @@ export const nl: Record<string, string> = {
   changesRunning: 'actief',
   changesError: 'fout',
   changesFold: '{count} regels… klik om uit te klappen',
+  changesFoldLoading: 'Uitklappen…',
+  changesFoldUnavailable: 'Context niet beschikbaar',
   changesContext: 'context',
   changesPriorUnknown: 'Eerdere inhoud valt buiten het venster; getoond als volledig nieuw',
   explorer: 'Verkenner',

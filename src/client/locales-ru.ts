@@ -26,6 +26,8 @@ export const ru: Record<string, string> = {
   changesRunning: 'выполняется',
   changesError: 'ошибка',
   changesFold: '{count} строк… нажмите, чтобы развернуть',
+  changesFoldLoading: 'Разворачивание…',
+  changesFoldUnavailable: 'Контекст недоступен',
   changesContext: 'контекст',
   changesPriorUnknown: 'Содержимое до изменения вне окна; показано как полностью добавленное',
   explorer: 'Проводник',

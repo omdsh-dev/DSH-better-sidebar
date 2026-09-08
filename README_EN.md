@@ -9,7 +9,7 @@
   <a href="https://github.com/omdsh-dev/DSH-better-sidebar/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/omdsh-dev/DSH-better-sidebar" /></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
   <a href="https://dshfind.com/en/plugins/omdsh-dev/DSH-better-sidebar?ref=badge"><img alt="dshfind" src="https://dshfind.com/api/badge/omdsh-dev/DSH-better-sidebar?lang=en" /></a><br /><br />
-  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.0): 0.1.2-rc.1+" src="https://img.shields.io/badge/DSH-0.1.2--rc.1%2B-4d6bfe" /></a>
+  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.1): 0.1.2-rc.1+" src="https://img.shields.io/badge/DSH-0.1.2--rc.1%2B-4d6bfe" /></a>
   <a href="https://github.com/topics/dsh-better-sidebar"><img alt="Plugin ecosystem: GitHub topic dsh-better-sidebar" src="https://img.shields.io/badge/plugin%20ecosystem-topic%20dsh--better--sidebar-4d6bfe" /></a><br /><br />
   <img alt="File management" src="https://img.shields.io/badge/-File%20management-4d6bfe" /> <img alt="Edit &amp; preview" src="https://img.shields.io/badge/-Edit%20%26%20preview-4d6bfe" /> <img alt="Embedded browser" src="https://img.shields.io/badge/-Embedded%20browser-4d6bfe" /> <img alt="Real terminal" src="https://img.shields.io/badge/-Real%20terminal-4d6bfe" /> <img alt="Changes" src="https://img.shields.io/badge/-Changes-4d6bfe" /> <img alt="Background tasks" src="https://img.shields.io/badge/-Background%20tasks-4d6bfe" /> <img alt="Side Chat" src="https://img.shields.io/badge/-Side%20Chat-4d6bfe" /> <img alt="Plugin integration" src="https://img.shields.io/badge/-Plugin%20integration-4d6bfe" /><br /><br />
   <b>A dual workbench (right sidebar + bottom panel)</b> that opens its <code>ctx.betterSidebar</code> service to every plugin —<br />
@@ -62,7 +62,7 @@
 **Prerequisites**: DSH installed (`dsh web` boots), Node.js ≥ 20, pnpm ≥ 10.
 
 **Supported DSH versions**:
-<a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.0): 0.1.2-rc.1+" src="https://img.shields.io/badge/DSH-0.1.2--rc.1%2B-4d6bfe" /></a>
+<a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.1): 0.1.2-rc.1+" src="https://img.shields.io/badge/DSH-0.1.2--rc.1%2B-4d6bfe" /></a>
 
 > 📌 **Stable release**: starting with `v0.18.0` the plugin targets DSH **0.1.2-rc.1+** (npm dist-tag `latest`) and drops 0.1.0-rc.8 ~ 0.1.1-rc.2 — stable-DSH (≤ 0.1.1-rc.2) users should stay pinned to `dsh-better-sidebar@0.17.1` (`@latest` now points at v0.18.0); hosts still on 0.1.2-alpha.x should upgrade DSH first, or keep `dsh-better-sidebar@alpha` (v0.18.0-alpha.0).
 
@@ -265,7 +265,28 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
   <a href="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0"><img width="33%" alt="Service API base screenshot" src="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0" /></a>
 </div>
 
-**Supported DSH versions**: <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.0): 0.1.2-rc.1+" src="https://img.shields.io/badge/DSH-0.1.2--rc.1%2B-4d6bfe" /></a> · full release history on the [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases) page
+**Supported DSH versions**: <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.18.1): 0.1.2-rc.1+" src="https://img.shields.io/badge/DSH-0.1.2--rc.1%2B-4d6bfe" /></a> · full release history on the [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases) page
+
+### v0.18.1
+
+> 📌 **Stable release** (npm `latest`): the DSH baseline is unchanged (**0.1.2-rc.1+**, peer floor `^0.1.2-rc.1`) — this is the incremental cut after v0.18.0: richer op previews in the changes panel, a writable file tree, and five fixes.
+
+**✨ Features**
+
+- 📄 **Op-preview upgrades in the changes panel** (#499): markdown reading mode with mermaid fences, plus inline `.html` and `.pdf` render previews; diff syntax highlighting extended to mjs/cjs/mts/cts, CSS/SCSS/Less, HTML/XML/SVG/Vue, GraphQL, JSONC/JSON5; new **secret redaction** layer (on by default for previews, toggleable in the pane header)
+- 🗂️ **File-tree rename / delete** (#550): inline rename plus confirmed delete, slimmer context menus and viewport-clamped submenus
+- 🧩 **Plugin catalog names and shell preset text localized** (#535): they now follow the host language
+
+**🐛 Fixes**
+
+- 🔀 **Git diff gap folds really expand** (#576, fixes #577): the fold row promised "n lines… click to expand" but did nothing (`-U3` leaves gap segments without row text); the hidden rows now load on demand through `git.show`, sliced from both sides' contents, with loading / failure states and request deduplication — plus a fix to that route's `rev:path` addressing (it always returned empty before)
+- 💬 **Side-chat seeds no longer inherit the parent's unclaimed inbox messages** (#562): the seed carries the fork markers, so the "side chat sends earlier User messages first on long contexts" ghost message is gone
+- 🖼️ **Local images in the split markdown renderer** (#569): rewritten to reachable URLs instead of 404ing
+
+**🧰 CI and internals**
+
+- ESLint flat config wired into CI and the Makefile (#536), Makefile command surface (#526), hardened e2e scripts (#527), shared component-test utilities (#524)
+- Refactors: Sidebar.tsx split by concern (#542), four polling idioms converged onto `use-polling` (#541), rc.7 `__DSH_MODULES__` fallback removed (#540), One Dark/Light syntax palettes single-sourced (#534), duplicated implementations converged and dead code removed (#525)
 
 ### v0.18.0
 

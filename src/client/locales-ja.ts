@@ -30,6 +30,8 @@ export const ja: Record<string, string> = {
   changesRunning: '実行中',
   changesError: 'エラー',
   changesFold: '{count} 行…クリックで展開',
+  changesFoldLoading: '展開中…',
+  changesFoldUnavailable: 'コンテキスト未読み込み',
   changesContext: 'コンテキスト',
   changesPriorUnknown: '変更前の内容がウィンドウ内になく、すべて新規追加として表示されます',
   explorer: 'エクスプローラー',

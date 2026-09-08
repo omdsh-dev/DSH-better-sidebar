@@ -30,6 +30,8 @@ export const vi: Record<string, string> = {
   changesRunning: 'đang chạy',
   changesError: 'lỗi',
   changesFold: '{count} dòng… bấm để mở rộng',
+  changesFoldLoading: 'Đang mở rộng…',
+  changesFoldUnavailable: 'Không tải được ngữ cảnh',
   changesContext: 'ngữ cảnh',
   changesPriorUnknown: 'Nội dung trước thay đổi nằm ngoài cửa sổ; hiển thị như toàn bộ mới thêm',
   explorer: 'Trình khám phá',

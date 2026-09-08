@@ -23,6 +23,8 @@ export const fr: Record<string, string> = {
   changesRunning: 'en cours',
   changesError: 'erreur',
   changesFold: '{count} lignes… cliquer pour déplier',
+  changesFoldLoading: 'Dépliage…',
+  changesFoldUnavailable: 'Contexte indisponible',
   changesContext: 'contexte',
   changesPriorUnknown: 'Le contenu antérieur est hors de la fenêtre ; affiché comme entièrement ajouté',
   explorer: 'Explorateur',

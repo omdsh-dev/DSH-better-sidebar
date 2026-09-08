@@ -21,7 +21,7 @@ import { DiffRows, ReadRows } from '../diff/DiffRows.tsx'
 import { PdfView } from '../PdfView.tsx'
 import { DiffFiles } from '../diff/DiffFiles.tsx'
 import { langOfPath } from '../diff/highlight.ts'
-import { buildDiffSegments, diffLines, diffStats, parseUnifiedDiff, unifiedSegments, type DiffRow } from '../diff/rows.ts'
+import { buildDiffSegments, diffLines, diffStats, displayPath, foldRowsFromContents, parseUnifiedDiff, unifiedSegments, type DiffFile, type DiffRow, type FoldSegment } from '../diff/rows.ts'
 import { parseReadContent, parseReadLines, type FileOp } from './ops.ts'
 import { redactText } from '../redact.ts'
 import { rewriteLocalImageUrls } from '../markdown-images.ts'
@@ -158,7 +158,19 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
   const [error, setError] = useState<string | null>(null)
   const [diffText, setDiffText] = useState<string | null>(null)
   const [untracked, setUntracked] = useState<string | undefined>(undefined)
+  // The staged flag of the side ACTUALLY rendered: when the requested side's
+  // diff came back empty the load falls back to the other side, and the fold
+  // expansion must read that side's revisions (else the sliced line numbers
+  // land on the wrong contents).
+  const [effectiveStaged, setEffectiveStaged] = useState<boolean | null>(null)
   const gitRef = target.kind === 'git' ? target.ref : null
+  // The scope every git call of this target shares (repoRoot folded in when
+  // the ref carries one, exactly like the load effect's paneScope).
+  const gitScope = useMemo<SessionScope>(() => ({
+    sessionId: scope.sessionId,
+    cwd: scope.cwd,
+    ...(gitRef?.repoRoot !== undefined ? { repoRoot: gitRef.repoRoot } : {}),
+  }), [scope.sessionId, scope.cwd, gitRef?.repoRoot])
 
   useEffect(() => {
     if (gitRef === null) return
@@ -172,6 +184,7 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
     setError(null)
     setDiffText(null)
     setUntracked(undefined)
+    setEffectiveStaged(null)
     const load = async (): Promise<void> => {
       try {
         if (gitRef.kind === 'commit') {
@@ -184,7 +197,10 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
           // The requested side is empty — try the OTHER side once (the change
           // may have moved sides after the preview target was minted).
           const other = await api.gitDiff(paneScope, gitRef.path, !gitRef.staged, gitRef.worktree)
-          if (other.diff !== '') result = other
+          if (other.diff !== '') {
+            result = other
+            if (!cancelled) setEffectiveStaged(!gitRef.staged)
+          }
         }
         if (result.diff !== '') {
           if (!cancelled) setDiffText(result.diff)
@@ -210,6 +226,71 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
     void load()
     return () => { cancelled = true }
   }, [gitRef, scope.sessionId, scope.cwd, tick])
+
+  // ── On-demand git fold expansion: a fold's hidden rows come from both
+  //    sides' full contents (git.show / fsRead), fetched ONCE per file so
+  //    sibling folds share the request, then sliced by each fold's line
+  //    ranges. The cache dies with the target or a refresh tick. ───────────
+  const foldContents = useRef(new Map<string, Promise<{ old: string; new: string }>>())
+  useEffect(() => { foldContents.current = new Map() }, [gitRef, tick])
+  const foldLoader = useMemo(() => {
+    if (gitRef === null) return undefined
+    const sidesOf = (file: DiffFile): Promise<{ old: string; new: string }> => {
+      // Both sides empty cannot cover a non-empty fold — treat it as a failed
+      // fetch so the fold degrades to the unavailable marker instead of
+      // silently expanding to nothing (the symptom of a bad rev or path
+      // reading null on both sides).
+      const ofSides = (oldContent: string | null, newContent: string | null): { old: string; new: string } => {
+        if ((oldContent ?? '') === '' && (newContent ?? '') === '') throw new Error('no content on either side')
+        return { old: oldContent ?? '', new: newContent ?? '' }
+      }
+      const fetchSides = async (): Promise<{ old: string; new: string }> => {
+        if (gitRef.kind === 'commit') {
+          // The patch's -m --first-parent shape: old side from the parent,
+          // new side from the commit (a root commit's parent read fails → '').
+          const [oldSide, newSide] = await Promise.all([
+            file.oldPath === '/dev/null'
+              ? Promise.resolve({ content: null })
+              : api.gitShow(gitScope, `${gitRef.hashFull}^`, displayPath(file.oldPath), gitRef.worktree),
+            file.newPath === '/dev/null'
+              ? Promise.resolve({ content: null })
+              : api.gitShow(gitScope, gitRef.hashFull, displayPath(file.newPath), gitRef.worktree),
+          ])
+          return ofSides(oldSide.content, newSide.content)
+        }
+        // Worktree change: staged is HEAD vs index, unstaged is index vs
+        // worktree (the worktree side reads the live file).
+        const staged = effectiveStaged ?? gitRef.staged
+        if (staged) {
+          const [oldSide, newSide] = await Promise.all([
+            file.oldPath === '/dev/null'
+              ? Promise.resolve({ content: null })
+              : api.gitShow(gitScope, 'HEAD', displayPath(file.oldPath), gitRef.worktree),
+            file.newPath === '/dev/null'
+              ? Promise.resolve({ content: null })
+              : api.gitShow(gitScope, ':0', displayPath(file.newPath), gitRef.worktree),
+          ])
+          return ofSides(oldSide.content, newSide.content)
+        }
+        const [oldSide, worktree] = await Promise.all([
+          file.oldPath === '/dev/null'
+            ? Promise.resolve({ content: null })
+            : api.gitShow(gitScope, ':0', displayPath(file.oldPath), gitRef.worktree),
+          api.fsRead(gitScope, resolveSidebarPath(gitRef.repoRoot ?? gitRef.worktree ?? scope.cwd, displayPath(file.newPath))).catch(() => null),
+        ])
+        return ofSides(oldSide.content, worktree !== null && worktree.kind === 'text' ? worktree.content : null)
+      }
+      const path = displayPath(file.newPath === '/dev/null' ? file.oldPath : file.newPath)
+      let promise = foldContents.current.get(path)
+      if (promise === undefined) {
+        promise = fetchSides()
+        foldContents.current.set(path, promise)
+      }
+      return promise
+    }
+    return (file: DiffFile, segment: FoldSegment): Promise<readonly DiffRow[]> =>
+      sidesOf(file).then(sides => foldRowsFromContents(segment, sides.old, sides.new))
+  }, [gitRef, gitScope, effectiveStaged, scope])
 
   // ── Op target material (pure snapshots; the prior content came with the
   //    target so a running op shows what is already known). ────────────────
@@ -508,6 +589,7 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
                     {diffText !== null && diffText !== '' && (
                       <DiffFiles
                         diff={diffText}
+                        resolveFold={foldLoader}
                         untrackedPath={untracked !== undefined && target.ref.kind === 'worktree' ? target.ref.path : undefined}
                         untrackedContent={untracked}
                       />

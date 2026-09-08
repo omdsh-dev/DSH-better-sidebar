@@ -31,6 +31,8 @@ export const ar: Record<string, string> = {
   changesRunning: 'قيد التنفيذ',
   changesError: 'خطأ',
   changesFold: '{count} أسطر… انقر للتوسيع',
+  changesFoldLoading: 'جارٍ التوسيع…',
+  changesFoldUnavailable: 'السياق غير متوفر',
   changesContext: 'سياق',
   changesPriorUnknown: 'المحتوى السابق خارج النافذة؛ يُعرض كما لو أُضيف بالكامل',
   explorer: 'المستكشف',

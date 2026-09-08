@@ -30,6 +30,8 @@ export const tr: Record<string, string> = {
   changesRunning: 'çalışıyor',
   changesError: 'hata',
   changesFold: '{count} satır… genişletmek için tıklayın',
+  changesFoldLoading: 'Genişletiliyor…',
+  changesFoldUnavailable: 'Bağlam yüklenemedi',
   changesContext: 'bağlam',
   changesPriorUnknown: 'Değişiklik öncesi içerik pencere dışında; tamamen yeni eklenmiş olarak gösteriliyor',
   explorer: 'Gezgin',

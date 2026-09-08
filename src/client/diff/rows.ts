@@ -451,6 +451,41 @@ export function untrackedFile(path: string, content: string): DiffFile {
   return { oldPath: '/dev/null', newPath: `b/${path}`, binary: false, hunks: [{ oldStart: 0, newStart: 1, header: '', lines }] }
 }
 
+/**
+ * Materialize a git gap fold's hidden rows from the two sides' full file
+ * contents, by the fold's known line ranges: the old side drives context
+ * rows (each mapped onto the new side through the fold's offset — a gap is
+ * an unchanged run, so the sides align), and new-side lines the old range
+ * never reaches become pure additions. Line numbers clip to the actual
+ * content (a no-newline file's ranges can overrun by one); `\r` endings
+ * survive verbatim, like git's own context lines.
+ */
+export function foldRowsFromContents(fold: FoldSegment, oldContent: string, newContent: string): DiffRow[] {
+  const oldLines = oldContent.length === 0 ? [] : oldContent.split('\n')
+  const newLines = newContent.length === 0 ? [] : newContent.split('\n')
+  const offset = fold.newStart - fold.oldStart
+  const rows: DiffRow[] = []
+  const oldFrom = Math.max(fold.oldStart, 1)
+  const oldTo = Math.min(fold.oldEnd, oldLines.length)
+  for (let oldLine = oldFrom; oldLine <= oldTo; oldLine += 1) {
+    const text = oldLines[oldLine - 1]!
+    const newLine = oldLine + offset
+    rows.push(
+      newLine >= fold.newStart && newLine <= fold.newEnd && newLine <= newLines.length
+        ? { kind: 'context', oldLine, newLine, text }
+        : { kind: 'context', oldLine, text },
+    )
+  }
+  // New-side lines beyond what the old range reached (a pure-addition gap):
+  // rows carrying only the new-side number, exactly like added lines.
+  const newFrom = Math.max(fold.newStart, 1)
+  const newTo = Math.min(fold.newEnd, newLines.length)
+  for (let newLine = Math.max(newFrom, oldTo + offset + 1); newLine <= newTo; newLine += 1) {
+    rows.push({ kind: 'add', newLine, text: newLines[newLine - 1]! })
+  }
+  return rows
+}
+
 /** Strip the `a/` / `b/` prefix git puts on diff paths (not on /dev/null). */
 export function displayPath(path: string): string {
   if (path === '/dev/null') return path
