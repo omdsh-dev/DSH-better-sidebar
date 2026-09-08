@@ -398,8 +398,8 @@ export function SideChatView(props: {
   // loop itself stays silent on wire failures; absent service (older host)
   // reads as `undefined` = never show the banner.
   const connectionState = useSyncExternalStore(
-    useMemo(() => (callback: () => void) => ctx.connection?.state.subscribe(callback) ?? (() => {}), [ctx]),
-    useCallback(() => ctx.connection?.state.getSnapshot(), [ctx]),
+    useMemo(() => (callback: () => void) => ctx.connection?.state?.subscribe(callback) ?? (() => {}), [ctx]),
+    useCallback(() => ctx.connection?.state?.getSnapshot(), [ctx]),
   )
 
   /** The agent-identity badge of the thread header (preset · model). */

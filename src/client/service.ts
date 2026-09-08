@@ -28,8 +28,8 @@ import {
 } from './state.ts'
 import { isNarrowWidth } from './breakpoints.ts'
 import { extOf } from './paths.ts'
+import { SIDEBAR_PREFS_DEFAULTS, type SidebarPrefs } from '../prefs-shared.ts'
 import type { SessionScope } from './api.ts'
-import type { SidebarPrefs } from '../prefs-shared.ts'
 
 /**
  * Public state vocabulary re-exported for consumers (type-only; the values
@@ -605,13 +605,13 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     if (descriptor === undefined) return
     // A scope targets another session: the open lands in THAT session's
     // state (loaded on demand) without switching the UI's active session.
-    const targetSessionId = scope?.sessionId ?? store.getSnapshot().sessionId
+    const targetSessionId = scope?.sessionId ?? store?.getSnapshot()?.sessionId
     if (targetSessionId === undefined) return
     const callbackScope: SessionScope = scope ?? { sessionId: targetSessionId }
     // Whether this open targets a session that is NOT the one on screen: a
     // targeted open must not auto-expand panels the user cannot see (the
     // expansion is about landing "in sight" for the CURRENT viewer).
-    const activeSessionId = store.getSnapshot().sessionId
+    const activeSessionId = store?.getSnapshot()?.sessionId
     const targetsInactiveSession = scope !== undefined && scope.sessionId !== activeSessionId
     // Lifecycle capture: `created` when the open minted a NEW tab (a
     // dedupe/id-safety-net focus is an ACTIVATION, not an open).
@@ -752,7 +752,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       return closeTabReducer(state, paneId, tabId)
     })
     if (closed !== undefined) {
-      const sessionId = scope?.sessionId ?? store.getSnapshot().sessionId
+      const sessionId = scope?.sessionId ?? store?.getSnapshot()?.sessionId
       if (sessionId !== undefined) {
         const descriptor = tabs.get(closed.type)
         // An explicit scope (with its optional cwd) rides to the callback.
@@ -762,7 +762,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   }
 
   /** The snapshot the store publishes (state/prefs carry the active session). */
-  const getSnapshot = (): SidebarSnapshot => store.getSnapshot()
+  const getSnapshot = (): SidebarSnapshot => store?.getSnapshot() ?? { sessionId: undefined, state: undefined, prefs: { ...SIDEBAR_PREFS_DEFAULTS } }
 
   /** Store changes: session switch, state mutations, prefs writes. */
   const subscribeState = (listener: () => void): (() => void) => store.subscribe(listener)
@@ -794,7 +794,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       return activateTabReducer(state, paneId, tabId)
     })
     if (activated !== undefined) {
-      const sessionId = scope?.sessionId ?? store.getSnapshot().sessionId
+      const sessionId = scope?.sessionId ?? store?.getSnapshot()?.sessionId
       if (sessionId !== undefined) {
         const descriptor = tabs.get(activated.type)
         // An explicit scope (with its optional cwd) rides to the callback.
