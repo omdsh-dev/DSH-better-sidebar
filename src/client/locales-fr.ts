@@ -295,6 +295,8 @@ export const fr: Record<string, string> = {
   browserStart: 'Saisissez une adresse pour commencer à naviguer (mode bac à sable)',
   browserBlockedScheme: 'Bloqué : seuls les liens http/https sont pris en charge',
   browserBlockedLoopback: 'Bloqué : l’accès aux adresses locales ou internes n’est pas autorisé dans le navigateur',
+  browserAllowLoopback: 'Autoriser {authority}',
+  browserAllowLoopbackSaving: 'Autorisation…',
   browserInvalid: 'Adresse invalide',
   browserNoSandboxWarning: 'Bac à sable désactivé : la page actuelle partage l’origine de l’interface et dispose de l’ensemble des droits de session (restauration possible dans les réglages)',
   htmlNoSandboxWarning: 'Bac à sable désactivé : ce HTML partage l’origine de l’interface, peut lire les fichiers de session et les interfaces internes (restauration possible dans les réglages)',

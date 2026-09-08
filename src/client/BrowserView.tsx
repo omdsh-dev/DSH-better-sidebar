@@ -2,11 +2,11 @@
  * The built-in browser tab: an address bar plus a sandboxed iframe.
  *
  * Security model (see browser.ts + the sandbox tokens below): the iframe is
- * ALWAYS sandboxed without `allow-same-origin` (opaque origin — the visited
- * page can never sit on the GUI's origin, read its storage, or reach
- * /sidebar/api) and without `allow-top-navigation` (a page must not hijack
- * the GUI). The address bar only accepts http(s) and refuses loopback /
- * the GUI's own origin. The side card setting "关闭浏览器沙箱" drops the
+ * sandboxed without `allow-top-navigation` (a page must not hijack the GUI).
+ * Public pages use an opaque origin; explicitly approved loopback servers
+ * get their own origin for local module/fetch pipelines but remain
+ * cross-origin to the GUI. The address bar only accepts http(s) and gates
+ * loopback behind an exact user approval. The side card setting "关闭浏览器沙箱" drops the
  * sandbox attribute entirely for fully trusted sites — the visited page then
  * runs with the GUI's own origin and full session access, so a persistent
  * warning bar renders while it is off.
@@ -26,7 +26,8 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { VscLinkExternal } from 'react-icons/vsc'
 import { api } from './api.ts'
-import { embeddabilityOf, isAllowedLoopbackUrl, normalizeBrowserUrl } from './browser.ts'
+import { allowLoopbackUrl, embeddabilityOf, isAllowedLoopbackUrl, normalizeBrowserUrl } from './browser.ts'
+import { parsePrefs } from './prefs.ts'
 import { patchTab } from './state.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { t } from './locales.ts'
@@ -86,7 +87,12 @@ export function BrowserView(props: TabComponentProps) {
   const [url, setUrl] = useState<string | undefined>(tab.path)
   const [input, setInput] = useState<string>(tab.path ?? '')
   /** Blocked/invalid hint shown under the address bar (null = none). */
-  const [message, setMessage] = useState<string | null>(null)
+  const [message, setMessage] = useState<
+    | { kind: 'copy'; copy: string }
+    | { kind: 'loopback'; url: string }
+    | null
+  >(null)
+  const [allowingLoopback, setAllowingLoopback] = useState(false)
   /** Address-bar navigation history (in-frame clicks are not tracked). */
   const [history, setHistory] = useState<string[]>(tab.path !== undefined ? [tab.path] : [])
   const [cursor, setCursor] = useState<number>(tab.path !== undefined ? 0 : -1)
@@ -138,9 +144,32 @@ export function BrowserView(props: TabComponentProps) {
       return
     }
     setMessage(result.kind === 'invalid'
-      ? t('browserInvalid')
-      : result.reason === 'scheme' ? t('browserBlockedScheme')
-      : t('browserBlockedLoopback'))
+      ? { kind: 'copy', copy: t('browserInvalid') }
+      : result.reason === 'scheme'
+        ? { kind: 'copy', copy: t('browserBlockedScheme') }
+        : { kind: 'loopback', url: result.url })
+  }
+
+  /** Persist an exact one-address loopback grant, then complete the blocked
+   * navigation without weakening the browser sandbox. */
+  const allowLoopback = (blockedUrl: string): void => {
+    if (allowingLoopback) return
+    const nextAllowlist = allowLoopbackUrl(store.getPrefs().browserAllowedLoopback, blockedUrl)
+    setAllowingLoopback(true)
+    void api.settingsUpdate({ browserAllowedLoopback: nextAllowlist }).then((view) => {
+      store.setPrefs(parsePrefs(view.value))
+      setMessage(null)
+      setUrl(blockedUrl)
+      setInput(blockedUrl)
+      setHistory(previous => [...previous.slice(0, cursor + 1), blockedUrl])
+      setCursor(previous => previous + 1)
+      setReloadKey(key => key + 1)
+      persist(blockedUrl)
+      setAllowingLoopback(false)
+    }).catch((error: unknown) => {
+      console.error('browser loopback allow failed', error)
+      setAllowingLoopback(false)
+    })
   }
 
   const goBack = (): void => {
@@ -225,7 +254,23 @@ export function BrowserView(props: TabComponentProps) {
           <VscLinkExternal size={15} />
         </button>
       </div>
-      {message !== null && <div className={css.browserMessage}>{message}</div>}
+      {message !== null && (
+        <div className={css.browserMessage}>
+          <span>{message.kind === 'copy' ? message.copy : t('browserBlockedLoopback')}</span>
+          {message.kind === 'loopback' && (
+            <button
+              type="button"
+              className={css.browserMessageAction}
+              disabled={allowingLoopback}
+              onClick={() => { allowLoopback(message.url) }}
+            >
+              {allowingLoopback
+                ? t('browserAllowLoopbackSaving')
+                : t('browserAllowLoopback', { authority: new URL(message.url).host })}
+            </button>
+          )}
+        </div>
+      )}
       <SandboxStatusBar
         sandboxed={!noSandbox}
         local={localUnlock}

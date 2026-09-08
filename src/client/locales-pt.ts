@@ -285,6 +285,8 @@ export const pt: Record<string, string> = {
   browserStart: 'Digite uma URL para começar a navegar (modo sandbox)',
   browserBlockedScheme: 'Bloqueado: apenas URLs http/https são permitidas',
   browserBlockedLoopback: 'Bloqueado: endereços locais e internos não podem ser navegados aqui',
+  browserAllowLoopback: 'Permitir {authority}',
+  browserAllowLoopbackSaving: 'Permitindo…',
   browserInvalid: 'URL inválida',
   browserNoSandboxWarning: 'Sandbox desativado: a página atual roda com privilégios completos da interface (reative nas configurações)',
   htmlNoSandboxWarning: 'Sandbox desativado: este HTML roda com privilégios completos da interface (reative nas configurações)',

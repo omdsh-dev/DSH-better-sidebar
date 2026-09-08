@@ -288,6 +288,8 @@ export const de: Record<string, string> = {
   browserStart: 'URL eingeben, um mit dem Browsen zu beginnen (Sandbox-Modus)',
   browserBlockedScheme: 'Blockiert: nur http/https-Links sind erlaubt',
   browserBlockedLoopback: 'Blockiert: lokale und interne Adressen können hier nicht aufgerufen werden',
+  browserAllowLoopback: '{authority} zulassen',
+  browserAllowLoopbackSaving: 'Wird zugelassen…',
   browserInvalid: 'Ungültige URL',
   browserNoSandboxWarning: 'Sandbox aus: Die aktuelle Seite läuft mit vollen Benutzeroberflächen-Rechten (in den Einstellungen wieder aktivierbar)',
   htmlNoSandboxWarning: 'Sandbox aus: Dieses HTML läuft mit vollen Benutzeroberflächen-Rechten (in den Einstellungen wieder aktivierbar)',

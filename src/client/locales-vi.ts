@@ -302,6 +302,8 @@ export const vi: Record<string, string> = {
   browserStart: 'Nhập URL để bắt đầu duyệt (chế độ sandbox)',
   browserBlockedScheme: 'Đã chặn: chỉ cho phép link http/https',
   browserBlockedLoopback: 'Đã chặn: không cho phép truy cập địa chỉ cục bộ hoặc nội bộ trong trình duyệt',
+  browserAllowLoopback: 'Cho phép {authority}',
+  browserAllowLoopbackSaving: 'Đang cho phép…',
   browserInvalid: 'URL không hợp lệ',
   browserNoSandboxWarning: 'Sandbox đã tắt: trang hiện tại cùng nguồn với UI, có toàn quyền phiên (có thể bật lại trong cài đặt)',
   htmlNoSandboxWarning: 'Sandbox đã tắt: HTML này cùng nguồn với UI, có thể đọc tệp phiên và API nội bộ (có thể bật lại trong cài đặt)',

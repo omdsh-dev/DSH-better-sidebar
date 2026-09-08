@@ -19,7 +19,8 @@ export type BrowserBlockReason = 'scheme' | 'loopback'
 /** Result of normalizing one address-bar input. */
 export type BrowserNavigateResult =
   | { kind: 'ok'; url: string }
-  | { kind: 'blocked'; reason: BrowserBlockReason }
+  | { kind: 'blocked'; reason: 'scheme' }
+  | { kind: 'blocked'; reason: 'loopback'; url: string }
   | { kind: 'invalid' }
 
 /** One browser.probe wire result (host fetch of the target's headers). */
@@ -117,6 +118,24 @@ export function isAllowedLoopbackUrl(url: string, allowlist: string): boolean {
   return parseLoopbackAllowlist(allowlist)(parsed.hostname, parsed.port)
 }
 
+/**
+ * Add one exact loopback authority to the user allowlist. Existing bare-host
+ * and exact-authority grants are preserved without duplication. Non-loopback
+ * or invalid URLs leave the allowlist unchanged.
+ */
+export function allowLoopbackUrl(allowlist: string, url: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return allowlist
+  }
+  if (!isLoopbackHostname(parsed.hostname)) return allowlist
+  if (parseLoopbackAllowlist(allowlist)(parsed.hostname, parsed.port)) return allowlist
+  const entries = allowlist.split(',').map(entry => entry.trim()).filter(entry => entry !== '')
+  return [...entries, parsed.host.toLowerCase()].join(', ')
+}
+
 export function normalizeBrowserUrl(input: string, selfOrigin: string, allowedLoopback = ''): BrowserNavigateResult {
   const trimmed = input.trim()
   if (trimmed === '') return { kind: 'invalid' }
@@ -161,7 +180,7 @@ export function normalizeBrowserUrl(input: string, selfOrigin: string, allowedLo
     if (allowedLoopback.trim() !== '' && parseLoopbackAllowlist(allowedLoopback)(url.hostname, url.port)) {
       return { kind: 'ok', url: url.href }
     }
-    return { kind: 'blocked', reason: 'loopback' }
+    return { kind: 'blocked', reason: 'loopback', url: url.href }
   }
   return { kind: 'ok', url: url.href }
 }

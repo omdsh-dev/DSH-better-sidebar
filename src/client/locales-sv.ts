@@ -285,6 +285,8 @@ export const sv: Record<string, string> = {
   browserStart: 'Ange en URL för att börja surfa (sandlådeläge)',
   browserBlockedScheme: 'Blockerat: endast http/https-URL:er är tillåtna',
   browserBlockedLoopback: 'Blockerat: lokala och interna adresser kan inte surfas här',
+  browserAllowLoopback: 'Tillåt {authority}',
+  browserAllowLoopbackSaving: 'Tillåter…',
   browserInvalid: 'Ogiltig URL',
   browserNoSandboxWarning: 'Sandlåda av: den aktuella sidan kör med fullständiga GUI-privilegier (återaktivera i inställningarna)',
   htmlNoSandboxWarning: 'Sandlåda av: denna HTML kör med fullständiga GUI-privilegier (återaktivera i inställningarna)',

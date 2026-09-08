@@ -5,7 +5,7 @@
  * policy is the address-bar gate on top of it.
  */
 import { describe, expect, it } from 'vitest'
-import { isLoopbackHostname, normalizeBrowserUrl } from '../src/client/browser.ts'
+import { allowLoopbackUrl, isLoopbackHostname, normalizeBrowserUrl } from '../src/client/browser.ts'
 
 const SELF = 'http://127.0.0.1:3080'
 
@@ -39,7 +39,9 @@ describe('normalizeBrowserUrl', () => {
       'http://127.0.0.1/', 'http://127.255.255.255/',
       'http://[::1]/', 'http://0.0.0.0/',
     ]) {
-      expect(normalizeBrowserUrl(input, SELF), input).toEqual({ kind: 'blocked', reason: 'loopback' })
+      const result = normalizeBrowserUrl(input, SELF)
+      expect(result.kind, input).toBe('blocked')
+      if (result.kind === 'blocked') expect(result.reason, input).toBe('loopback')
     }
   })
 
@@ -54,13 +56,34 @@ describe('normalizeBrowserUrl', () => {
     })
     // A different port of the same loopback host is NOT the GUI origin and
     // stays blocked.
-    expect(normalizeBrowserUrl('http://127.0.0.1:9999/', SELF)).toEqual({ kind: 'blocked', reason: 'loopback' })
+    expect(normalizeBrowserUrl('http://127.0.0.1:9999/', SELF)).toEqual({
+      kind: 'blocked',
+      reason: 'loopback',
+      url: 'http://127.0.0.1:9999/',
+    })
   })
 
   it('reports invalid input', () => {
     expect(normalizeBrowserUrl('', SELF)).toEqual({ kind: 'invalid' })
     expect(normalizeBrowserUrl('   ', SELF)).toEqual({ kind: 'invalid' })
     expect(normalizeBrowserUrl('ht tp://x', SELF)).toEqual({ kind: 'invalid' })
+  })
+})
+
+describe('allowLoopbackUrl', () => {
+  it('adds only the exact blocked local authority', () => {
+    expect(allowLoopbackUrl('', 'http://localhost:3003/path')).toBe('localhost:3003')
+    expect(allowLoopbackUrl('127.0.0.1:8080', 'http://localhost:3003/path')).toBe('127.0.0.1:8080, localhost:3003')
+  })
+
+  it('does not duplicate an existing host or exact authority grant', () => {
+    expect(allowLoopbackUrl('localhost', 'http://localhost:3003/path')).toBe('localhost')
+    expect(allowLoopbackUrl('localhost:3003', 'http://localhost:3003/path')).toBe('localhost:3003')
+  })
+
+  it('refuses to add invalid or public URLs', () => {
+    expect(allowLoopbackUrl('', 'not a url')).toBe('')
+    expect(allowLoopbackUrl('localhost:3003', 'https://example.com/')).toBe('localhost:3003')
   })
 })
 

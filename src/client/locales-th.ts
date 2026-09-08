@@ -302,6 +302,8 @@ export const th: Record<string, string> = {
   browserStart: 'กรอก URL เพื่อเริ่มเรียกดู (โหมดแซนด์บ็อกซ์)',
   browserBlockedScheme: 'ถูกบล็อก: อนุญาตเฉพาะ URL http/https เท่านั้น',
   browserBlockedLoopback: 'ถูกบล็อก: ไม่สามารถเรียกดูที่อยู่ภายในเครื่องและภายในได้ที่นี่',
+  browserAllowLoopback: 'อนุญาต {authority}',
+  browserAllowLoopbackSaving: 'กำลังอนุญาต…',
   browserInvalid: 'URL ไม่ถูกต้อง',
   browserNoSandboxWarning: 'แซนด์บ็อกซ์ปิด: หน้าปัจจุบันทำงานด้วยสิทธิ์ GUI เต็มรูปแบบ (เปิดใช้ใหม่ได้ในการตั้งค่า)',
   htmlNoSandboxWarning: 'แซนด์บ็อกซ์ปิด: HTML นี้ทำงานด้วยสิทธิ์ GUI เต็มรูปแบบ (เปิดใช้ใหม่ได้ในการตั้งค่า)',
