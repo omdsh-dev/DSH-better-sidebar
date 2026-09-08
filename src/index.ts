@@ -39,6 +39,7 @@ import { extractFrameAncestors } from './browser-probe.ts'
 import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
 import { launchExternal } from './open-external.ts'
+import { createHostRestartController } from './host-restart.ts'
 import * as git from './git.ts'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { defaultShell, ensureSpawnHelper, PtyManager, shellDisplayName } from './pty-manager.ts'
@@ -323,6 +324,9 @@ function buildApi(
   // `subagents.history` calls. The route degrades to a 503 when the host
   // subagent runtime is absent (the page has no topology to show anyway).
   const subagentLiveApi: SidebarSubagentLiveRoutes = buildSubagentLiveApi(ctx)
+  // One controller per plugin activation makes the destructive handoff
+  // idempotent: repeated clicks cannot launch competing replacement hosts.
+  const hostRestart = createHostRestartController()
   return {
     'session.cwd': async (payload) => {
       const { sessionId, cwd } = await cwdOf(payload)
@@ -558,6 +562,12 @@ function buildApi(
     // "Terminal N" label; the shell itself is configured through
     // `cordis.patch.yml` (`config.shell`) or resolved by the host default.
     'shell.get': () => ({ shell: terminalShell, name: shellDisplayName(terminalShell) }),
+    // A same-origin, trust-fenced restart handshake. The detached helper is
+    // launched before this response is written, then the old host receives
+    // SIGTERM after a short flush window and the helper relaunches it only
+    // after the listening process has disappeared.
+    'host.restart': () => hostRestart.request(),
+    'host.status': () => ({ pid: process.pid }),
     // The side card preferences. The settings service is optional in the
     // composition; while absent the routes report undefined and the client
     // keeps the schema defaults. Writes are revision-guarded: a stale editor

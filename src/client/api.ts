@@ -394,6 +394,12 @@ export const api = {
   /** The effective terminal shell and its display name (plugin-global). */
   shellGet: () =>
     call<{ shell: string; name: string }>('shell.get', {}),
+  /** Restart the current DSH Web host and relaunch its exact command. */
+  hostRestart: () =>
+    call<{ accepted: true; alreadyScheduled: boolean; pid: number }>('host.restart', {}),
+  /** Probe the current Host identity while waiting for a restart. */
+  hostStatus: (signal?: AbortSignal) =>
+    call<{ pid: number }>('host.status', {}, signal),
   /** Read the side card preferences (plugin-global, no session scope). */
   settingsGet: () =>
     call<{ value?: unknown; revision?: number; externalDisable?: boolean }>('settings.get', {}),
