@@ -296,11 +296,26 @@ export interface SidebarSessionTitleService {
   rename(session: unknown, title: string): { title: string; eventSeq: number }
 }
 
+/** One read handle over a persisted session (the DSH 0.1.3+ seam). */
+export interface SidebarSessionPersistenceHandle {
+  /** The immutable stored header (carries `cwd` / `agentPreset`). */
+  readonly header: { cwd?: string; agentPreset?: string }
+  read(): Promise<{ events: readonly SidebarSessionEvent[] }>
+  close(): Promise<void>
+}
+
 /** The host session-persistence face (mirror of the sessionPersistence
- *  service): detached inspection of a persisted session, used to compose the
- *  recorded preset when a Side Chat thread cold-resumes. */
+ *  service): detached reading of a persisted session, used to compose the
+ *  recorded preset when a Side Chat thread cold-resumes.
+ *
+ *  DSH 0.1.3 replaced the inspection service with the handle seam; both are
+ *  declared optional and `readPersistedSession` picks whichever the running
+ *  runtime exposes. */
 export interface SidebarSessionPersistenceService {
-  inspect(sessionId: string): Promise<{
+  /** Handle-based seam (DSH 0.1.3+). */
+  open?(sessionId: string, access: 'read' | 'write'): Promise<SidebarSessionPersistenceHandle>
+  /** Legacy detached inspection (removed in DSH 0.1.3). */
+  inspect?(sessionId: string): Promise<{
     meta: { cwd?: string; agentPreset?: string }
     events: readonly SidebarSessionEvent[]
   }>

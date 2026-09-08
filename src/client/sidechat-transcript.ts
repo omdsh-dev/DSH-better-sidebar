@@ -19,6 +19,7 @@
  */
 import type { DiffHunk, ReadBlockLine } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarHistoryEntry } from '../context-types.ts'
+import { assistantEventDeltas } from '../assistant-stream-compat.ts'
 import { isContextInjectionMessage, SIDE_BOUNDARY_PROMPT } from '../sidechat-core.ts'
 
 /**
@@ -321,6 +322,31 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
    *  last request's prompt size (earlier steps' input is mostly the same
    *  context re-sent, so summing would double-count). */
   const turnUsage = new Map<number, { inputTokens: number; outputTokens: number }>()
+  /** Accumulate one text/reasoning delta into its (turn, step, block, kind)
+   *  stream row, creating the row on first sight. Shared by v1 top-level
+   *  `assistant/chunk` events and by the deltas a v2 Assistant settlement
+   *  embeds (DSH 0.1.3 Session format v2 removed top-level chunk events). */
+  const pushStreamDelta = (
+    kind: 'assistant' | 'reasoning',
+    text: string,
+    blockIndex: unknown,
+    turn: unknown,
+    step: unknown,
+    seq: number,
+  ): void => {
+    if (text === '') return
+    const key = `${String(turn)}:${String(step)}:${String(blockIndex)}:${kind}`
+    const existing = streamRows.get(key)
+    if (existing !== undefined) {
+      const row = rows[existing]
+      if (row !== undefined && row.kind === kind && !row.settled) {
+        rows[existing] = { ...row, text: row.text + text }
+      }
+      return
+    }
+    streamRows.set(key, rows.length)
+    rows.push({ kind, seq, text, settled: false })
+  }
   for (let index = 0; index < events.length; index++) {
     if (index <= seedEnd) continue
     const event = events[index]
@@ -375,27 +401,33 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
         break
       }
       case 'assistant/chunk': {
+        // v1 (pre-0.1.3) logs only: top-level token deltas. v2 settlements
+        // carry the same deltas embedded in `assistant/message` /
+        // `assistant/attempt`, handled in the cases below.
         const chunk = data.chunk as { type?: unknown; text?: unknown } | undefined
         if (chunk === null || typeof chunk !== 'object') break
         const kind = chunk.type === 'text-delta' ? 'assistant' : chunk.type === 'reasoning-delta' ? 'reasoning' : null
-        if (kind === null || typeof chunk.text !== 'string' || chunk.text === '') break
-        const turn = data.turn
-        const step = data.step
-        const blockIndex = (chunk as { index?: unknown }).index
-        const key = `${String(turn)}:${String(step)}:${String(blockIndex)}:${kind}`
-        const existing = streamRows.get(key)
-        if (existing !== undefined) {
-          const row = rows[existing]
-          if (row !== undefined && row.kind === kind && !row.settled) {
-            rows[existing] = { ...row, text: row.text + chunk.text }
-          }
-        } else {
-          streamRows.set(key, rows.length)
-          rows.push({ kind, seq: event.seq, text: chunk.text, settled: false })
+        if (kind === null || typeof chunk.text !== 'string') break
+        pushStreamDelta(kind, chunk.text, (chunk as { index?: unknown }).index, data.turn, data.step, event.seq)
+        break
+      }
+      case 'assistant/attempt': {
+        // v2: one failed/retried/cancelled attempt that committed no surface
+        // message. Its embedded stream still shows the delivered prefix, and
+        // no settle ever supersedes these rows — exactly like the v1 chunks
+        // an attempt used to leave in the log.
+        for (const delta of assistantEventDeltas(data)) {
+          pushStreamDelta(delta.kind, delta.text, delta.index, data.turn, data.step, event.seq)
         }
         break
       }
       case 'assistant/message': {
+        // v2: the surfaced settlement embeds its exact timed stream. Rebuild
+        // the streaming rows first so the settle below replaces them in
+        // place, matching the v1 chunk-then-message rendering.
+        for (const delta of assistantEventDeltas(data)) {
+          pushStreamDelta(delta.kind, delta.text, delta.index, data.turn, data.step, event.seq)
+        }
         // Turn-tail usage: each assembled message carries its step's token
         // accounting (absent when the adapter reported none).
         const usageTurn = data.turn
