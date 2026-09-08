@@ -26,6 +26,7 @@ import { markdownPreviewSource } from './markdown-frontmatter.ts'
 import { rewriteLocalImageUrls } from './markdown-images.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
+import { cmSearchExtensions, CmSearchPhrases } from './cm-search.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { appendToDraft } from './conversation-draft.ts'
@@ -35,7 +36,7 @@ import { analyzeMarkdownHtml } from './markdown-html.ts'
 import { LazyMermaidMarkdown, MarkdownDocument, type MarkdownHtmlMedia } from './MarkdownHtml.tsx'
 import { MdToc } from './md-toc.tsx'
 import { splitMermaidBlocks } from './mermaid-blocks.ts'
-import { t } from './locales.ts'
+import { localeSignature, t } from './locales.ts'
 import { HTML_IFRAME_SANDBOX } from './html-preview.ts'
 import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
@@ -63,6 +64,14 @@ export function TextEditor(props: FileViewerProps) {
   const savingRef = useRef(false)
   /** The theme compartment of the current view (reconfigured on scheme flip). */
   const themeCompRef = useRef<CmThemeCompartment | null>(null)
+  /** The search-phrases compartment of the current view (reconfigured on a
+   *  language switch — the panel copy is baked into the EditorState). */
+  const searchPhrasesRef = useRef<CmSearchPhrases | null>(null)
+  /** The effective UI language (DSH locale id + better-locale override id).
+   *  Read during render and subscribed below: the tab-cell memo only
+   *  compares the DSH locale revision, so a better-locale override switch
+   *  would otherwise never reach this component. */
+  const [localeSig, setLocaleSig] = useState(() => localeSignature())
   /** The app's resolved color scheme; the editor re-themes in place on flips. */
   const [dark, setDark] = useState(() => isDarkScheme())
   /** The markdown preview container (selection-containment + line lookup). */
@@ -101,6 +110,27 @@ export function TextEditor(props: FileViewerProps) {
 
   useEffect(() => subscribeColorScheme(() => { setDark(isDarkScheme()) }), [])
 
+  // Keep `localeSig` fresh from BOTH language sources: the DSH locale service
+  // and (when @huanlin/dsh-plugin-better-locale is installed) the override
+  // store. The sidebar root re-renders the tree on a DSH locale switch, but
+  // an override switch is not part of the tab-cell memo key, so this
+  // component subscribes directly instead of relying on a parent render.
+  useEffect(() => {
+    const sync = (): void => { setLocaleSig(localeSignature()) }
+    sync()
+    const locale = ctx.locale as { subscribe?: (cb: () => void) => () => void } | undefined
+    type BetterLocaleStore = { subscribe?(listener: () => void): () => void }
+    const betterLocale = typeof ctx.get === 'function'
+      ? (ctx as unknown as { get(name: 'betterLocale'): BetterLocaleStore | undefined }).get('betterLocale')
+      : undefined
+    const offLocale = locale?.subscribe?.(sync)
+    const offOverride = betterLocale?.subscribe?.(sync)
+    return () => {
+      offLocale?.()
+      offOverride?.()
+    }
+  }, [ctx])
+
   // A new file (tab switch) starts clean: fresh preview mode, no draft.
   useEffect(() => {
     setMode('preview')
@@ -134,6 +164,8 @@ export function TextEditor(props: FileViewerProps) {
     const language = languageForPath(path)
     const themeComp = new CmThemeCompartment()
     themeCompRef.current = themeComp
+    const searchPhrases = new CmSearchPhrases()
+    searchPhrasesRef.current = searchPhrases
     const state = EditorState.create({
       doc: content,
       extensions: [
@@ -144,6 +176,13 @@ export function TextEditor(props: FileViewerProps) {
         CodeMirrorView.contentAttributes.of({ spellcheck: 'false' }),
         cmSurfaceTheme,
         themeComp.of(dark),
+        // Find-in-file (Cmd/Ctrl+F): the top-pinned search panel plus the
+        // upstream search keymap, registered BEFORE the editor's own keymap
+        // below so the search bindings (Escape in particular — the editor
+        // keymap's `simplifySelection` shares that key) win while the panel
+        // is open, and the save key stays in the editor keymap unchanged.
+        ...cmSearchExtensions(),
+        searchPhrases.of(),
         ...(language !== null ? [language] : []),
         CodeMirrorView.updateListener.of((update) => {
           if (update.docChanged) {
@@ -210,6 +249,7 @@ export function TextEditor(props: FileViewerProps) {
       view.destroy()
       viewRef.current = null
       themeCompRef.current = null
+      searchPhrasesRef.current = null
     }
     // The keymap's save() reads live refs; scope/path are stable for a
     // tab's lifetime, and the dark flip is handled by the reconfigure
@@ -225,6 +265,17 @@ export function TextEditor(props: FileViewerProps) {
     if (view === null || themeComp === null) return
     view.dispatch({ effects: themeComp.reconfigure(dark) })
   }, [dark])
+
+  // Language switch: re-resolve the search panel copy in place. CodeMirror
+  // reads the `phrases` facet when it builds the panel, so the compartment
+  // must be reconfigured for the new language (the document, history,
+  // scroll, and keymaps survive — same in-place pattern as the theme flip).
+  useEffect(() => {
+    const view = viewRef.current
+    const searchPhrases = searchPhrasesRef.current
+    if (view === null || searchPhrases === null) return
+    view.dispatch({ effects: searchPhrases.reconfigure() })
+  }, [localeSig])
 
   // The editor may have been display:none while previewing; re-measure when
   // it becomes visible again (CodeMirror sizes itself on reveal). A mode
