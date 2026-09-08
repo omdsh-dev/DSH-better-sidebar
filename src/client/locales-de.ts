@@ -92,6 +92,7 @@ export const de: Record<string, string> = {
   terminalDepsFailed: 'Die Terminal-Abhängigkeit node-pty konnte nicht geladen werden',
   terminalDepsHint: 'Führen Sie den folgenden Befehl in einem Terminal oder in cmd auf dem DSH-System aus, um dies zu beheben, und klicken Sie dann auf „Erneut versuchen“ (node-pty bleibt mit der DSH-Core-Version synchron):',
   terminalDepsProfile: ' (erkanntes Profil: {profile})',
+  terminalShellNotFound: 'Konfigurierte Shell nicht gefunden: {name} — Shell-Pfad unter Einstellungen → Side card → Terminal prüfen',
   preview: 'Vorschau',
   toc: 'Inhaltsverzeichnis',
   edit: 'Bearbeiten',

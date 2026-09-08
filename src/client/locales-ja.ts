@@ -106,6 +106,7 @@ export const ja: Record<string, string> = {
   terminalDepsFailed: 'ターミナル依存関係 node-pty の読み込みに失敗',
   terminalDepsHint: 'DSH 環境のターミナルまたは cmd で以下のコマンドを実行して修復し、再試行してください（node-pty は DSH コアと同じバージョンを維持）：',
   terminalDepsProfile: '（検出された profile：{profile}）',
+  terminalShellNotFound: '設定されたシェルが見つかりません：{name}（設定 → サイドカード → ターミナル のシェルパスを確認してください）',
   preview: 'プレビュー',
   toc: '目次',
   edit: '編集',

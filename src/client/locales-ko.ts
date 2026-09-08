@@ -98,6 +98,7 @@ export const ko: Record<string, string> = {
   terminalDepsFailed: '터미널 의존성 node-pty 로드 실패',
   terminalDepsHint: 'DSH가 설치된 환경의 터미널 또는 cmd에서 아래 명령을 실행하여 복구한 후 다시 시도를 클릭하세요(node-pty는 DSH 코어와 동일한 버전을 유지합니다):',
   terminalDepsProfile: ' (profile 감지됨: {profile})',
+  terminalShellNotFound: '설정된 셸을 찾을 수 없습니다: {name} — 설정 → 사이드 카드 → 터미널에서 셸 경로를 확인하세요',
   preview: '미리보기',
   toc: '목차',
   edit: '편집',

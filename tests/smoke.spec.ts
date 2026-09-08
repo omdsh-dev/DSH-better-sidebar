@@ -9,7 +9,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
-import { apply, mediaTypeForPath } from '../src/index.ts'
+import { apply, mediaTypeForPath, wsCloseReasonOf } from '../src/index.ts'
+import { SidebarError } from '../src/wire.ts'
 import { encodeHtmlUrl } from '../src/html-route.ts'
 import * as git from '../src/git.ts'
 import { listDirectory } from '../src/fs-tree.ts'
@@ -835,7 +836,10 @@ describe('side card settings routes', () => {
     }
     return {
       register(ns: string, schema: unknown) {
-        namespaces.set(ns, { schema, value: undefined, revision: 0 })
+        // Preserve a pre-seeded value: tests stage prefs through the `pre`
+        // map before the plugin mounts and registers the same namespace.
+        const existing = namespaces.get(ns)
+        namespaces.set(ns, { schema, value: existing?.value ?? undefined, revision: 0 })
         return { get: () => ({}), watch: () => () => {}, update: async () => {}, replace: async () => {} }
       },
       describe() {
@@ -931,6 +935,45 @@ describe('side card settings routes', () => {
       name: expect.any(String),
     })
     expect(String((result.value as { name: unknown }).name).length).toBeGreaterThan(0)
+  })
+
+  it('shell.get reflects the settings-page override with the quotes stripped', async () => {
+    const route = mountWithSettings(createFakeSettings({
+      'dsh-better-sidebar': {
+        terminalShell: '"C:\\Program Files\\PowerShell\\7\\pwsh.exe"',
+        terminalShellArgs: '-NoLogo',
+      },
+    }))
+    const result = await invoke(route, 'shell.get', {})
+    expect(result.ok).toBe(true)
+    expect(result.value).toMatchObject({
+      shell: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+      name: 'pwsh',
+    })
+  })
+
+  it('maps a shell-not-found failure to the machine-readable close reason', async () => {
+    expect(wsCloseReasonOf(new SidebarError(
+      'shell-not-found',
+      'shell executable not found: "C:\\Program Files\\PowerShell\\7\\pwsh.exe"',
+      400,
+      { shell: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe' },
+    ))).toBe('shell-not-found:pwsh')
+    expect(wsCloseReasonOf(new Error('boom'))).toBe('boom')
+    expect(wsCloseReasonOf('plain')).toBe('plain')
+  })
+
+  it('caps the close reason by UTF-8 bytes so the ws 123-byte limit holds', () => {
+    // 200 CJK characters are ~600 bytes: a character-count slice would still
+    // overflow the cap `ws` enforces with Buffer.byteLength.
+    const reason = wsCloseReasonOf(new SidebarError(
+      'shell-not-found',
+      'shell executable not found',
+      400,
+      { shell: `/bin/${'终'.repeat(200)}` },
+    ))
+    expect(reason.startsWith('shell-not-found:')).toBe(true)
+    expect(Buffer.byteLength(reason)).toBeLessThanOrEqual(123)
   })
 
   it('reads the resolved prefs and writes a patch through the seam', async () => {

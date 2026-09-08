@@ -61,6 +61,13 @@ const FAILURE_LIMIT = 3
  */
 const PTY_DEPS_MISSING = 'pty-deps-missing'
 
+/**
+ * The WS close-reason prefix the host sends when the CONFIGURED shell was
+ * not found (mirror of src/index.ts wsCloseReasonOf; wire contract, keep the
+ * literal in lockstep). The view renders a localized, actionable banner.
+ */
+const SHELL_NOT_FOUND_PREFIX = 'shell-not-found:'
+
 /** The degraded-mode payload rendered by {@link TerminalDepsBanner}. */
 type TerminalDepsInfo = Extract<TerminalDepsStatus, { ok: false }>
 
@@ -240,6 +247,12 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
           }).catch(() => {
             setFatal(t('terminalDepsFailed'))
           })
+          return
+        }
+        // The configured shell could not be found (settings page or yaml):
+        // a localized banner beats the raw English close reason.
+        if (event.code === 1011 && event.reason.startsWith(SHELL_NOT_FOUND_PREFIX)) {
+          setFatal(t('terminalShellNotFound', { name: event.reason.slice(SHELL_NOT_FOUND_PREFIX.length) || '?' }))
           return
         }
         // A server-side refusal carries a close code + reason; retrying it

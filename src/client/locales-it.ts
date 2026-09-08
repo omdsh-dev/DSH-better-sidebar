@@ -97,6 +97,7 @@ export const it: Record<string, string> = {
   terminalDepsFailed: 'Caricamento della dipendenza del terminale node-pty non riuscito',
   terminalDepsHint: 'Esegua il comando seguente in un terminale o cmd sul computer DSH per ripristinarlo, poi riprovi (node-pty resta sincronizzato con la versione del core DSH):',
   terminalDepsProfile: ' (rilevato profilo: {profile})',
+  terminalShellNotFound: 'Shell configurata non trovata: {name} — verifica il percorso della shell in Impostazioni → Side card → Terminal',
   preview: 'Anteprima',
   toc: 'Indice',
   edit: 'Modifica',

@@ -106,6 +106,7 @@ export const hi: Record<string, string> = {
   terminalDepsFailed: 'टर्मिनल निर्भरता node-pty लोड विफल',
   terminalDepsHint: 'DSH मशीन पर एक टर्मिनल या cmd में नीचे दिया गया कमांड चलाएँ, फिर पुनः प्रयास करें (node-pty DSH कोर संस्करण के साथ सिंक रहता है):',
   terminalDepsProfile: ' (पहचाना गया प्रोफ़ाइल: {profile})',
+  terminalShellNotFound: 'कॉन्फ़िगर किया गया shell नहीं मिला: {name} — Settings → Side card → Terminal में shell पथ जाँचें',
   preview: 'पूर्वावलोकन',
   toc: 'विषय-सूची',
   edit: 'संपादित करें',

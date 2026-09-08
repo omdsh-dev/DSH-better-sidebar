@@ -104,6 +104,7 @@ export const id: Record<string, string> = {
   terminalDepsFailed: 'Dependensi terminal node-pty gagal dimuat',
   terminalDepsHint: 'Jalankan perintah di bawah ini di terminal atau cmd pada mesin DSH untuk memperbaikinya, lalu coba lagi (node-pty tetap sinkron dengan versi inti DSH):',
   terminalDepsProfile: ' (profil terdeteksi: {profile})',
+  terminalShellNotFound: 'Shell yang dikonfigurasi tidak ditemukan: {name} — periksa path shell di Pengaturan → Side card → Terminal',
   preview: 'Pratinjau',
   toc: 'Daftar Isi',
   edit: 'Edit',

@@ -121,6 +121,7 @@ export const zhHK: Record<string, string> = {
   terminalDepsFailed: '終端依賴 node-pty 載入失敗',
   terminalDepsHint: '在 DSH 所在環境的終端或 cmd 中執行以下命令修復，然後點重試（node-pty 與 DSH 核心保持同一版本）：',
   terminalDepsProfile: '（偵測到 profile：{profile}）',
+  terminalShellNotFound: '未找到配置的 Shell：{name}，請到 設定 → 側邊卡片 → 終端 檢查 Shell 路徑',
   preview: '預覽',
   toc: '目錄',
   edit: '編輯',

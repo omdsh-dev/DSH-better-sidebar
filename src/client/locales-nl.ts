@@ -104,6 +104,7 @@ export const nl: Record<string, string> = {
   terminalDepsFailed: 'Terminalafhankelijkheid node-pty kon niet worden geladen',
   terminalDepsHint: 'Voer het onderstaande commando uit in een terminal of cmd op de DSH-machine om het te herstellen en probeer het opnieuw (node-pty blijft in sync met de DSH-coreversie):',
   terminalDepsProfile: ' (gedetecteerde profile: {profile})',
+  terminalShellNotFound: 'Geconfigureerde shell niet gevonden: {name} — controleer het shell-pad onder Instellingen → Side card → Terminal',
   preview: 'Voorbeeld',
   toc: 'Inhoudsopgave',
   edit: 'Bewerken',

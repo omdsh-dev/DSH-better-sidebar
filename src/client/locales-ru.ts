@@ -102,6 +102,7 @@ export const ru: Record<string, string> = {
   terminalDepsFailed: 'Не удалось загрузить зависимость терминала node-pty',
   terminalDepsHint: 'Выполните приведённую ниже команду в терминале или cmd на машине DSH, затем нажмите «Повторить» (node-pty остаётся синхронизированным с версией ядра DSH):',
   terminalDepsProfile: ' (обнаружен profile: {profile})',
+  terminalShellNotFound: 'Настроенная оболочка не найдена: {name} — проверьте путь к оболочке в Настройки → Side card → Terminal',
   preview: 'Предпросмотр',
   toc: 'Оглавление',
   edit: 'Изменить',
