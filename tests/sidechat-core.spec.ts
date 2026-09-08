@@ -244,6 +244,43 @@ describe('buildOpenTurnSnapshot', () => {
     expect(snapshot).toContain('Result: file body')
     expect(snapshot).toContain('`bash` (executing)')
   })
+
+  it('reconstructs the same text from v2 embedded settlement streams', () => {
+    // DSH 0.1.3 Session format v2 removed top-level chunks; the delivered
+    // prefix lives inside `assistant/message` (surfaced) and
+    // `assistant/attempt` (failed/retried) settlements.
+    const events = [
+      ev('turn/start', 0, { turn: 1 }),
+      ev('step/start', 1, { turn: 1, step: 1 }),
+      ev('assistant/attempt', 2, {
+        turn: 1,
+        step: 1,
+        stream: [{ type: 'reasoning-chunks', time0: 2000, index: 0, dt: [0], texts: ['think'] }],
+      }),
+      ev('assistant/message', 3, {
+        turn: 1,
+        step: 1,
+        message: { content: [{ type: 'text', text: '```js\ncode\n```' }] },
+        stream: [
+          { type: 'text-chunks', time0: 3000, index: 0, dt: [0, 10], texts: ['```js\ncode', '\n```'] },
+        ],
+      }),
+      ev('tool/call', 4, { turn: 1, step: 1, callId: 'c1', name: 'read', arguments: '{"path":"a.txt"}' }),
+      ev('tool/result', 5, {
+        turn: 1,
+        step: 1,
+        message: {
+          source: { kind: 'tool', callId: 'c1' },
+          content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'file body' }] }],
+        },
+      }),
+    ]
+    const snapshot = buildOpenTurnSnapshot(events)
+    expect(snapshot).not.toBeNull()
+    expect(snapshot).toContain('```js\ncode\n```')
+    expect(snapshot).toContain('Reasoning so far')
+    expect(snapshot).toContain('Result: file body')
+  })
 })
 
 describe('sideLabel', () => {

@@ -103,7 +103,12 @@ test('right panel keeps desktop session actions in their header positions', asyn
   const [sessionLogBox, panelBox] = await Promise.all([sessionLog.boundingBox(), panel.boundingBox()])
   expect(sessionLogBox).not.toBeNull()
   expect(panelBox).not.toBeNull()
-  expect(sessionLogBox!.width, 'the desktop session-log action must keep its full button width').toBeGreaterThanOrEqual(110)
+  // The floor tracks the HOST header, not the plugin: DSH 0.1.3-alpha.2 adds
+  // an "Open in" action to the Web header, which narrows the session-log
+  // button to ~99px on a 1280px viewport. The invariants that matter stay
+  // strict: the label is visible, the action stays in the header flow, and it
+  // never overlaps the plugin panel chrome (the assertion below).
+  expect(sessionLogBox!.width, 'the desktop session-log action must keep its full button width').toBeGreaterThanOrEqual(90)
   expect(sessionLogBox!.x + sessionLogBox!.width, 'the session-log action must not overlap the plugin panel chrome').toBeLessThanOrEqual(panelBox!.x - 8)
   expect(pageErrors).toEqual([])
   expect(consoleErrors).toEqual([])

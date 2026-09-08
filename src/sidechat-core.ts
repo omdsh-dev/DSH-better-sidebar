@@ -17,6 +17,7 @@
  * snapshot inside the boundary prompt.
  */
 import type { SidebarHistoryEntry, SidebarSessionSummary } from './context-types.ts'
+import { assistantEventDeltas } from './assistant-stream-compat.ts'
 
 /** The durable thread-label prefix (also the row filter in the client list). */
 export const SIDE_LABEL_PREFIX = 'Side: '
@@ -272,6 +273,18 @@ export function buildOpenTurnSnapshot(events: readonly SidechatLogEvent[]): stri
       if (chunk === null || typeof chunk !== 'object') continue
       if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
       else if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string') reasoning += chunk.text
+      continue
+    }
+    // v2 (DSH 0.1.3) settlements: the exact timed stream is embedded in the
+    // assistant event instead of arriving as top-level chunks. Accumulating
+    // from the embedded stream keeps the snapshot's text/reasoning identical
+    // to the v1 chunk walk; an in-flight attempt that has not settled yet has
+    // no durable evidence in v2, so it simply contributes nothing here.
+    if (event.type === 'assistant/message' || event.type === 'assistant/attempt') {
+      for (const delta of assistantEventDeltas(data)) {
+        if (delta.kind === 'assistant') text += delta.text
+        else reasoning += delta.text
+      }
       continue
     }
     if (event.type === 'tool/call') {

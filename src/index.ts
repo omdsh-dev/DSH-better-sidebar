@@ -30,6 +30,7 @@ import {
   type SidebarPrefs,
 } from './config.ts'
 import { parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import { readPersistedSession } from './session-persistence-compat.ts'
 import { resolveSessionPath } from './session-path.ts'
 import { renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from './fs-operations.ts'
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
@@ -129,7 +130,7 @@ async function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string)
   }
   const persistence = ctx.get('sessionPersistence')
   if (persistence !== undefined) {
-    const inspected = await persistence.inspect(sessionId)
+    const inspected = await readPersistedSession(persistence, sessionId)
     const metaCwd = inspected.meta.cwd
     if (metaCwd !== undefined && metaCwd !== '') {
       try {
@@ -507,7 +508,7 @@ function buildApi(
         const persistence = ctx.get('sessionPersistence')
         if (persistence !== undefined) {
           try {
-            events = (await persistence.inspect(sessionId)).events
+            events = (await readPersistedSession(persistence, sessionId)).events
           } catch {
             // Cold read unavailable (session never persisted): an empty
             // window is the honest answer, not a wire error.

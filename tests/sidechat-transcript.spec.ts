@@ -113,6 +113,47 @@ describe('transcriptRows', () => {
     expect(assistants[0]).toMatchObject({ kind: 'assistant', text: 'final answer', settled: true })
   })
 
+  it('renders a v2 embedded settlement stream and settles it in place', () => {
+    // DSH 0.1.3 Session format v2: no top-level chunks — the settlement
+    // embeds the exact timed stream. The rendering must match the v1 pair.
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('user/message', 1, { content: textBlocks('q'), source: { kind: 'user' } })),
+      entry(ev('turn/start', 2, { turn: 1 })),
+      entry(ev('step/start', 3, { turn: 1, step: 1 })),
+      entry(ev('assistant/message', 4, {
+        turn: 1,
+        step: 1,
+        message: { content: textBlocks('Hello') },
+        stream: [
+          { type: 'text-chunks', time0: 4000, index: 0, dt: [0, 100], texts: ['Hel', 'lo'] },
+          { type: 'reasoning-chunks', time0: 4200, index: 1, dt: [0], texts: ['think'] },
+        ],
+      })),
+    ]
+    const rows = transcriptRows(entries)
+    const assistants = rows.filter(row => row.kind === 'assistant')
+    expect(assistants).toHaveLength(1)
+    expect(assistants[0]).toMatchObject({ kind: 'assistant', text: 'Hello', settled: true })
+  })
+
+  it('keeps a v2 failed attempt stream as unsettled rows (no settle ever lands)', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('turn/start', 1, { turn: 1 })),
+      entry(ev('step/start', 2, { turn: 1, step: 1 })),
+      entry(ev('assistant/attempt', 3, {
+        turn: 1,
+        step: 1,
+        stream: [{ type: 'text-chunks', time0: 3000, index: 0, dt: [0], texts: ['partial'] }],
+      })),
+    ]
+    const rows = transcriptRows(entries)
+    const assistant = rows.find(row => row.kind === 'assistant') as Extract<SidechatTranscriptRow, { kind: 'assistant' }>
+    expect(assistant.text).toBe('partial')
+    expect(assistant.settled).toBe(false)
+  })
+
   it('pairs tool calls with results and marks failures', () => {
     const entries = [
       entry(ev('session/end-seed', 0)),

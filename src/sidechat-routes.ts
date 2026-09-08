@@ -48,6 +48,7 @@ import {
   threadOwnLogEvents,
 } from './sidechat-core.ts'
 import { requireString, SidebarError } from './wire.ts'
+import { readPersistedSession } from './session-persistence-compat.ts'
 
 /** The six Side Chat routes of the sidebar API (wire method names). */
 export interface SidechatRoutes {
@@ -117,7 +118,7 @@ async function composePersistedSetup(
   if (persistence === undefined) {
     return () => Promise.resolve()
   }
-  const inspected = await persistence.inspect(childId)
+  const inspected = await readPersistedSession(persistence, childId)
   const presetId = resolvePresetId(inspected.meta, inspected.events)
   const presets = ctx.get('agentPresets') as SidebarAgentPresetsService | undefined
   if (presets === undefined || presetId === undefined) {
@@ -186,7 +187,7 @@ async function threadLogEvents(ctx: Context, childId: string): Promise<readonly 
     throw new SidebarError('sidechat-error', 'the session persistence service is unavailable', 503)
   }
   try {
-    const inspected = await persistence.inspect(childId)
+    const inspected = await readPersistedSession(persistence, childId)
     return inspected.events as unknown as readonly SidechatLogEvent[]
   } catch (error: unknown) {
     throw new SidebarError(
@@ -388,7 +389,7 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
       const persistence = ctx.get('sessionPersistence') as SidebarSessionPersistenceService | undefined
       if (persistence !== undefined) {
         try {
-          const inspected = await persistence.inspect(childId)
+          const inspected = await readPersistedSession(persistence, childId)
           const preset = resolvePresetId(inspected.meta, inspected.events)
           return { live: false, ...(preset === undefined ? {} : { preset }) }
         } catch {

@@ -10,7 +10,7 @@
  * not a mock, so the class of bug cannot silently return.
  */
 import { describe, expect, it } from 'vitest'
-import { Session, SessionLogOffset } from '@deepseek-ai/dsh-session'
+import { Session, SessionLogOffset, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { Inbox } from '@deepseek-ai/dsh-agent'
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
@@ -41,6 +41,18 @@ function assistantMessage(text: string): Record<string, unknown> {
   }
 }
 
+/** One v2 Assistant settlement: DSH 0.1.3 requires every `assistant/message`
+ *  (and `assistant/attempt`) in a seed to carry an `stream` array, and the
+ *  embedded run must reproduce the message text. */
+function assistantSettlement(text: string, turn = 1, step = 1): Record<string, unknown> {
+  return {
+    turn,
+    step,
+    message: assistantMessage(text),
+    stream: [{ type: 'text-chunks', time0: 0, index: 0, dt: [0], texts: [text] }],
+  }
+}
+
 /** A parent log with a completed turn, a pending question, and an open
  *  in-progress turn (the exact shape a mid-stream thread creation sees). */
 function parentLog(): SidebarSessionEvent[] {
@@ -48,7 +60,7 @@ function parentLog(): SidebarSessionEvent[] {
     ev('user/message', 0, userMessage('first question')),
     ev('turn/start', 1, { turn: 1 }),
     ev('step/start', 2, { turn: 1, step: 1 }),
-    ev('assistant/message', 3, { turn: 1, step: 1, message: assistantMessage('first answer') }),
+    ev('assistant/message', 3, assistantSettlement('first answer')),
     ev('step/end', 4, { turn: 1, step: 1 }),
     ev('turn/end', 5, { turn: 1, reason: { kind: 'completed' } }),
     ev('user/message', 6, userMessage('pending question')),
@@ -141,7 +153,9 @@ describe('sidechat seed fork markers vs the real dsh-agent Inbox replay', () => 
     Session.create(
       id as SessionId,
       seed as never,
-      { version: 0, id: id as SessionId, createdAt: Date.now(), isSeeded: true },
+      // Header version follows the running DSH (2 since Session format v2);
+      // the literal type is `typeof SESSION_FORMAT_VERSION`, so never pin it.
+      { version: SESSION_FORMAT_VERSION, id: id as SessionId, createdAt: Date.now(), isSeeded: true },
       SessionLogOffset(seed.length),
     )
   /** Real loop order: inbox insert → turn/start → claim deletion → step/start
@@ -152,7 +166,7 @@ describe('sidechat seed fork markers vs the real dsh-agent Inbox replay', () => 
     ev('agent/inbox/spliced', 2, { target: 'next-turn', start: 0, removedCount: 1, inserted: [] }),
     ev('step/start', 3, { turn: 1, step: 1 }),
     ev('user/message', 4, pendingMessage('m-q', 'user', 'q')),
-    ev('assistant/message', 5, { turn: 1, step: 1, message: assistantMessage('a') }),
+    ev('assistant/message', 5, assistantSettlement('a')),
     ev('step/end', 6, { turn: 1, step: 1 }),
     ev('turn/end', 7, { turn: 1, reason: { kind: 'completed' } }),
   ]
