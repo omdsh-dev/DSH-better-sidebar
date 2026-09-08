@@ -191,18 +191,28 @@ describe('host plugin smoke', () => {
   })
 
   it('pages the log lazily with skip/count', async () => {
-    const cwd = process.cwd()
-    const first = await git.log(cwd, 5, 0)
-    expect(first).toHaveLength(5)
-    const second = await git.log(cwd, 5, 5)
-    expect(second).toHaveLength(5)
-    // The pages are disjoint windows over the same ordered history.
-    expect(first[0]!.hashFull).not.toBe(second[0]!.hashFull)
-    const all = await git.log(cwd, 10, 0)
-    expect(all.slice(0, 5)).toEqual(first)
-    expect(all.slice(5)).toEqual(second)
-    // A skip past the end returns an empty page (the lazy loader's stop sign).
-    expect(await git.log(cwd, 5, 10_000)).toEqual([])
+    // A shallow source checkout may have fewer than ten commits. Own the
+    // fixture history so pagination is verified independently of checkout depth.
+    const cwd = mkdtempSync(join(tmpdir(), 'sidebar-log-pages-'))
+    const run = (args: string[]): void => {
+      const result = spawnSync('git', ['-c', 'commit.gpgsign=false', '-c', `core.hooksPath=${join(cwd, 'no-hooks')}`, ...args], { cwd, encoding: 'utf8' })
+      expect(result.status, result.stderr).toBe(0)
+    }
+    try {
+      run(['init'])
+      for (let index = 0; index < 12; index++) run(['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', `fixture ${index}`])
+      const first = await git.log(cwd, 5, 0)
+      expect(first).toHaveLength(5)
+      const second = await git.log(cwd, 5, 5)
+      expect(second).toHaveLength(5)
+      // The pages are disjoint windows over the same ordered history.
+      expect(first[0]!.hashFull).not.toBe(second[0]!.hashFull)
+      const all = await git.log(cwd, 10, 0)
+      expect(all.slice(0, 5)).toEqual(first)
+      expect(all.slice(5)).toEqual(second)
+      // A skip past the end returns an empty page (the lazy loader's stop sign).
+      expect(await git.log(cwd, 5, 10_000)).toEqual([])
+    } finally { rmSync(cwd, { recursive: true, force: true }) }
   })
 
   it('pty manager releases the quota on close and respawns after exit', async () => {
@@ -618,6 +628,14 @@ describe('session cwd resolution over the API route', () => {
     const result = await invoke(route, 'session.cwd', { sessionId: 's-cold' })
     expect(result.ok).toBe(true)
     expect(result.value?.cwd).toBe(coldCwd)
+  })
+
+  it('prefers a native stat header to a stale browser cwd hint', async () => {
+    const stat = vi.fn(async () => ({ header: { cwd: '/remote-anchor' } }))
+    const route = mount({ sessionPersistence: { stat } } as never)
+    const result = await invoke(route, 'session.cwd', { sessionId: 'cold-remote', cwd: '/wrong-local' })
+    expect(result.value?.cwd).toBe(resolvePath('/remote-anchor'))
+    expect(stat).toHaveBeenCalledWith('cold-remote')
   })
 
   it('rejects a relative cwd from the persistence index', async () => {

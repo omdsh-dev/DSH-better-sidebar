@@ -300,6 +300,7 @@ export interface SidebarSessionTitleService {
  *  service): detached inspection of a persisted session, used to compose the
  *  recorded preset when a Side Chat thread cold-resumes. */
 export interface SidebarSessionPersistenceService {
+  stat?(sessionId: string): Promise<{ header: { cwd?: string; agentPreset?: string } } | undefined>
   inspect(sessionId: string): Promise<{
     meta: { cwd?: string; agentPreset?: string }
     events: readonly SidebarSessionEvent[]
@@ -561,6 +562,8 @@ export interface SidebarContextShape {
    * connection outcome) and an immediate-reconnect request.
    */
   connection?: {
+    /** Host-side native browser authentication, when this face is used on the host. */
+    requestRejection?(request: SidebarHttpRequest): number | undefined
     state: {
       getSnapshot(): 'connected' | 'disconnected' | 'connecting' | undefined
       subscribe(listener: () => void): () => void

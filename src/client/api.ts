@@ -383,8 +383,8 @@ export const api = {
       ...(afterSeq !== undefined ? { afterSeq } : {}),
     }, signal),
   /** The effective terminal shell and its display name (plugin-global). */
-  shellGet: () =>
-    call<{ shell: string; name: string }>('shell.get', {}),
+  shellGet: (sessionId?: string) =>
+    call<{ shell: string; name: string }>('shell.get', sessionId ? { sessionId } : {}),
   /** Read the side card preferences (plugin-global, no session scope). */
   settingsGet: () =>
     call<{ value?: unknown; revision?: number; externalDisable?: boolean }>('settings.get', {}),

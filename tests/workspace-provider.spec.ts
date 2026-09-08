@@ -4,7 +4,7 @@ import {
   type BetterSidebarWorkspaceProvider,
 } from '../src/workspace-provider.ts'
 import { apply } from '../src/index.ts'
-import type { SidebarWebRoute } from '../src/context-types.ts'
+import type { SidebarWebRoute, SidebarWebUpgradeRoute } from '../src/context-types.ts'
 
 function provider(id: string, priority: number, claim: (cwd: string) => boolean): BetterSidebarWorkspaceProvider {
   return {
@@ -78,6 +78,8 @@ describe('BetterSidebarWorkspaceRegistry', () => {
   })
 
   it('publishes the v1 host service and delegates file API and content routes', async () => {
+    let authenticated = true
+    const upgrades: SidebarWebUpgradeRoute[] = []
     const routes: SidebarWebRoute[] = []
     let service: BetterSidebarWorkspaceRegistry | undefined
     const external = provider('external', 10, cwd => cwd === '/virtual')
@@ -93,14 +95,14 @@ describe('BetterSidebarWorkspaceRegistry', () => {
       webRuntime: { trustedHosts: [] },
       webServer: {
         register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
-        registerUpgrade: () => () => {},
+        registerUpgrade: (route: SidebarWebUpgradeRoute) => { upgrades.push(route); return () => {} },
       },
       sessions: { get: () => ({ header: { cwd: '/virtual' } }) },
       tools: { register: () => () => {} },
       logger: { warn: () => {} },
       effect: (fn: () => void | (() => void)) => { fn() },
       inject: () => () => {},
-      get: () => undefined,
+      get: (key: string) => key === 'connection' ? { requestRejection: () => authenticated ? undefined : 401 } : undefined,
       provide: (_name: string, value: BetterSidebarWorkspaceRegistry) => { service = value; return () => {} },
     }
 
@@ -148,5 +150,12 @@ describe('BetterSidebarWorkspaceRegistry', () => {
     expect(html.headers['content-security-policy']).toContain('sandbox')
     expect(html.body).toBe('<h1>remote</h1>')
     expect(external.readBytes).toHaveBeenCalledTimes(2)
+    authenticated = false
+    const rejected = await invoke(route, 'pty.close', { sessionId: 's', tab: 'terminal' })
+    expect(rejected).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+    const socket = { destroy: vi.fn() }
+    upgrades.find(route => route.path === '/sidebar/ws/terminal')!.handler({ headers: { host: '127.0.0.1:3080' } } as never, socket, Buffer.alloc(0))
+    expect(socket.destroy).toHaveBeenCalledTimes(1)
+
   })
 })

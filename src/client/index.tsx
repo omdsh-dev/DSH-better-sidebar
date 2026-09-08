@@ -144,19 +144,29 @@ export function apply(ctx: Context): void {
   // terminal tabs that still carry it.
   const fallbackTitle = t('terminal')
   let terminalTitle = fallbackTitle
-  void api.shellGet().then(({ name }) => {
-    terminalTitle = name
-    const snapshot = service.getSnapshot()
-    if (snapshot.state === undefined) return
-    const tabs = allLeaves(snapshot.state.splits)
-      .concat(allLeaves(snapshot.state.bottomSplits))
-      .flatMap(leaf => leaf.tabs)
-    for (const tab of tabs) {
-      if (tab.type === 'terminal' && !isAgentTabId(tab.id) && tab.title === fallbackTitle) {
-        service.updateTab(tab.id, { title: name })
+  let titleSession: string | undefined
+  let titleRequest = 0
+  const refreshTerminalTitle = (): void => {
+    const sessionId = service.getSnapshot().sessionId
+    if (sessionId === titleSession) return
+    titleSession = sessionId
+    terminalTitle = fallbackTitle
+    const request = ++titleRequest
+    if (!sessionId) return
+    void api.shellGet(sessionId).then(({ name }) => {
+      if (request !== titleRequest) return
+      terminalTitle = name
+      const snapshot = service.getSnapshot()
+      if (snapshot.sessionId !== sessionId || snapshot.state === undefined) return
+      const tabs = allLeaves(snapshot.state.splits)
+        .concat(allLeaves(snapshot.state.bottomSplits)).flatMap(leaf => leaf.tabs)
+      for (const tab of tabs) {
+        if (tab.type === 'terminal' && !isAgentTabId(tab.id) && tab.title === fallbackTitle) service.updateTab(tab.id, { title: name })
       }
-    }
-  }).catch(() => { /* keep fallback */ })
+    }).catch(() => { /* keep neutral terminal title */ })
+  }
+  ctx.effect(() => service.subscribe(refreshTerminalTitle), 'dsh-better-sidebar: workspace terminal title')
+  refreshTerminalTitle()
   // Register the plugin's own built-in tabs and viewers through the same
   // service (eating our own dogfood). The disposer unregisters them on
   // fiber disposal (HMR-safe).

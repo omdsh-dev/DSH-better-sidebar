@@ -14,6 +14,27 @@ export interface BetterSidebarWorkspaceScope {
   fence: boolean
 }
 
+export type BetterSidebarTerminalEvent =
+  | { type: 'data'; data: string }
+  | { type: 'exit'; exitCode: number | null }
+  | { type: 'error'; message: string }
+
+export interface BetterSidebarTerminalHandle {
+  snapshot(): { text: string; truncated: boolean; exited: boolean; exitCode: number | null; error?: string }
+  subscribe(listener: (event: BetterSidebarTerminalEvent) => void): () => void
+  write(data: string): Promise<void>
+  resize(cols: number, rows: number): Promise<void>
+  close(): Promise<void>
+}
+
+export interface BetterSidebarTerminalRequest {
+  sessionId: string
+  tabId: string
+  cols: number
+  rows: number
+  signal: AbortSignal
+}
+
 export interface BetterSidebarWorkspaceReadResult {
   content: string
   truncated: boolean
@@ -54,6 +75,8 @@ export interface BetterSidebarWorkspaceProvider {
   id: string
   /** Higher values claim first. Defaults to zero. */
   priority?: number
+  /** Preserve previously claimed workspaces as unavailable after unload; never silently execute locally. */
+  retainClaim?: boolean
   /** Synchronous workspace claim; false passes selection to the next provider. */
   claim(scope: { cwd: string }): boolean
   tree(scope: BetterSidebarWorkspaceScope, path: string, limit: number): Promise<SidebarFsListing>
@@ -63,6 +86,8 @@ export interface BetterSidebarWorkspaceProvider {
   readBytes(scope: BetterSidebarWorkspaceScope, path: string, limit: number): Promise<BetterSidebarWorkspaceBytesResult>
   /** Execute one existing Git action in the provider's execution world. */
   git: { execute(request: BetterSidebarGitRequest): Promise<unknown> }
+  /** Human-owned interactive shell; separate from model-facing terminal tools. */
+  terminal?: { label?: string; open(scope: BetterSidebarWorkspaceScope, request: BetterSidebarTerminalRequest): Promise<BetterSidebarTerminalHandle> }
 }
 
 export interface BetterSidebarWorkspaceService {
@@ -75,6 +100,7 @@ export interface BetterSidebarWorkspaceService {
 export class BetterSidebarWorkspaceRegistry implements BetterSidebarWorkspaceService {
   readonly version = BETTER_SIDEBAR_WORKSPACE_VERSION
   private providers = new Map<string, BetterSidebarWorkspaceProvider>()
+  private readonly retainedClaims = new Set<string>()
 
   constructor(private readonly local: BetterSidebarWorkspaceProvider) {}
 
@@ -90,11 +116,16 @@ export class BetterSidebarWorkspaceRegistry implements BetterSidebarWorkspaceSer
     const ordered = [...this.providers.values()].sort((left, right) => (right.priority ?? 0) - (left.priority ?? 0))
     for (const provider of ordered) {
       try {
-        if (provider.claim(scope)) return provider
-      } catch {
+        if (provider.claim(scope)) {
+          if (provider.retainClaim) this.retainedClaims.add(scope.cwd)
+          return provider
+        }
+      } catch (error) {
+        if (provider.retainClaim) throw error
         // A broken optional provider must not disable the local workspace.
       }
     }
+    if (this.retainedClaims.has(scope.cwd)) throw new SidebarError('pty-error', 'workspace provider is unavailable; reconnect it before using this workspace')
     return this.local
   }
 }
