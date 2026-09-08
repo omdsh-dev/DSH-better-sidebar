@@ -288,7 +288,7 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
   }, [mdOp, op, prior])
   const readingText = useMemo(
     () => (mdOp && reading && readingSrc !== '' && target.kind === 'op'
-      ? rewriteLocalImageUrls(readingSrc, scope, target.path, window.location.origin)
+      ? rewriteLocalImageUrls(readingSrc, scope, target.path, document.baseURI)
       : ''),
     [mdOp, reading, readingSrc, scope, target],
   )

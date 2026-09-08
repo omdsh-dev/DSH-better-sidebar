@@ -1,12 +1,13 @@
 /**
- * Typed fetch wrapper over the /sidebar JSON API. Every call posts to
- * `/sidebar/api/<method>` with the sessionId and — when known — the session's
+ * Typed fetch wrapper over the /sidebar JSON API. Every call posts through
+ * the injected document base to `/sidebar/api/<method>` with the sessionId and — when known — the session's
  * cwd from the client's own list summary. The host prefers its attached
  * session header and uses the summary cwd only while the session is still
  * hydrating at page load (a detached session would otherwise fail the
  * request). Failures surface as {@link SidebarApiError} with the wire code.
  */
 import { encodeHtmlUrl } from '../html-route.ts'
+import { hostRouteUrl } from './host-route-url.ts'
 import type { LastActivity } from '../subagent-activity.ts'
 import type { SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
 import type { SidebarSessionEvent } from '../context-types.ts'
@@ -151,7 +152,7 @@ async function readEnvelope<T>(response: Response): Promise<T> {
 async function call<T>(method: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   let response: Response
   try {
-    response = await fetch(`/sidebar/api/${method}`, {
+    response = await fetch(hostRouteUrl(`sidebar/api/${method}`), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
@@ -181,7 +182,7 @@ async function fetchUpload<T>(
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
   let response: Response
   try {
-    response = await fetch(`/sidebar/upload?${params.toString()}`, {
+    response = await fetch(hostRouteUrl(`sidebar/upload?${params.toString()}`), {
       method: 'POST',
       headers: { 'content-type': 'application/octet-stream' },
       body,
@@ -413,12 +414,12 @@ export const api = {
   openExternal,
 }
 
-/** Absolute URL of the media route for one path (images only). */
+/** Absolute media-route URL for one path (images only), resolved through the document base. */
 export function mediaUrl(scope: SessionScope, path: string): string {
   return fileUrl(scope, path, false)
 }
 
-/** Absolute URL of the download route: serves raw bytes (binary-safe) with
+/** Absolute download-route URL: serves raw bytes (binary-safe) with
  *  `Content-Disposition: attachment`, so the browser saves the file. */
 export function downloadUrl(scope: SessionScope, path: string): string {
   return fileUrl(scope, path, true)
@@ -429,11 +430,11 @@ function fileUrl(scope: SessionScope, path: string, download: boolean): string {
   const params = new URLSearchParams({ sessionId: scope.sessionId, path })
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
   if (download) params.set('download', '1')
-  return `/sidebar/file?${params.toString()}`
+  return hostRouteUrl(`sidebar/file?${params.toString()}`).href
 }
 
 /**
- * Absolute URL of the HTML preview route (see html-route.ts): the path is
+ * Absolute HTML-preview URL (see html-route.ts): the path is
  * fully encoded so the previewed page's relative assets resolve back into
  * the same route with the session scope intact. The UNC marker is
  * platform-neutral — the host's requireAbsolute resolves the decoded
@@ -441,5 +442,5 @@ function fileUrl(scope: SessionScope, path: string, download: boolean): string {
  * client-side platform signal is needed.
  */
 export function htmlUrl(scope: SessionScope, path: string): string {
-  return encodeHtmlUrl(scope.sessionId, path)
+  return hostRouteUrl(encodeHtmlUrl(scope.sessionId, path)).href
 }

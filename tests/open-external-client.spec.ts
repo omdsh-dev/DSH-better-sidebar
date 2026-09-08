@@ -4,6 +4,7 @@
  * editor URLs and reveal actions keep using the DSH host opener.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import './browser-globals.ts'
 import { api } from '../src/client/api.ts'
 
 afterEach(() => {
@@ -64,7 +65,7 @@ describe('api.openExternal', () => {
 
     expect(assign).not.toHaveBeenCalled()
     expect(fetchMock).toHaveBeenCalledOnce()
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('/sidebar/api/open.external')
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('http://localhost/sidebar/api/open.external')
   })
 
   it('keeps reveal actions and http(s) lookalikes on the host opener', async () => {
