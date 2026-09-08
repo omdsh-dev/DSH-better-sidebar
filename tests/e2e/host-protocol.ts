@@ -33,6 +33,10 @@ export interface LaunchUrl {
   /** The URL as printed (token query included) — the correct page.goto
    *  target; navigating it performs the token→cookie exchange. */
   pageUrl: string
+  /** Directory pathname of the launch URL, always with a trailing slash.
+   *  `/` for a root-mounted host; `/dataops/proxy/3080/` behind a reverse
+   *  proxy that injects a base path. */
+  pathname: string
   /** The one-time launch token. */
   token: string
 }
@@ -46,7 +50,8 @@ export function parseLaunchUrl(raw: string): LaunchUrl {
   if (token === null) {
     throw new Error(`launch URL carries no ?token= — not a DSH 0.1.2-alpha+ authenticated launch URL: ${raw}`)
   }
-  return { origin: url.origin, pageUrl: raw, token }
+  const pathname = url.pathname.endsWith('/') ? url.pathname : `${url.pathname}/`
+  return { origin: url.origin, pageUrl: raw, pathname, token }
 }
 
 /** Page navigation URL with extra query stamps (e.g. desktop-shell URL

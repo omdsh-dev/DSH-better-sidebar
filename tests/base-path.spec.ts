@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { hostRouteUrl, hostWebSocketUrl } from '../src/client/host-route-url.ts'
 
 /**
@@ -29,5 +29,34 @@ describe('host route URLs behind a reverse-proxy base path', () => {
       .toBe('wss://example.test/dataops/proxy/3080/sidebar/ws/agent-terminals')
     expect(hostWebSocketUrl('/sidebar/ws/agent-opens', baseUrl).href)
       .toBe('wss://example.test/dataops/proxy/3080/sidebar/ws/agent-opens')
+  })
+
+  it('treats a missing trailing slash and a launch-token query as a directory prefix', () => {
+    const withoutSlash = 'https://example.test/dataops/proxy/3080'
+    const withToken = 'https://example.test/dataops/proxy/3080/?token=abc'
+    expect(hostRouteUrl('/sidebar/api/fs.tree', withoutSlash).href)
+      .toBe('https://example.test/dataops/proxy/3080/sidebar/api/fs.tree')
+    expect(hostRouteUrl('/sidebar/bundle/editor.js', withToken).href)
+      .toBe('https://example.test/dataops/proxy/3080/sidebar/bundle/editor.js')
+    expect(hostWebSocketUrl('/sidebar/ws/terminal', withToken).href)
+      .toBe('wss://example.test/dataops/proxy/3080/sidebar/ws/terminal')
+  })
+})
+
+describe('hostDocumentBase prefers the longer live location over a root <base>', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('uses location.href when document.baseURI is the origin root', async () => {
+    vi.resetModules()
+    vi.stubGlobal('document', { baseURI: 'http://127.0.0.1:4199/' })
+    vi.stubGlobal('location', { href: 'http://127.0.0.1:4199/dataops/proxy/3080/' })
+    const { hostDocumentBase, hostRouteUrl: resolveRoute, hostWebSocketUrl: resolveWs } = await import('../src/client/host-route-url.ts')
+    expect(hostDocumentBase()).toBe('http://127.0.0.1:4199/dataops/proxy/3080/')
+    expect(resolveRoute('/sidebar/api/fs.tree').href)
+      .toBe('http://127.0.0.1:4199/dataops/proxy/3080/sidebar/api/fs.tree')
+    expect(resolveWs('/sidebar/ws/terminal').href)
+      .toBe('ws://127.0.0.1:4199/dataops/proxy/3080/sidebar/ws/terminal')
   })
 })
