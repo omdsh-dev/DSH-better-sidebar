@@ -1,11 +1,9 @@
 /**
- * Single-level directory listing for the sidebar explorer. Streams the level
- * with opendir, sorts directories first then names (case-insensitive), and
- * marks POSIX-hidden entries (dot-prefixed) for dimmed display. Symlinks are
- * stat'ed once to expose their target kind — a symlink to a directory
- * expands like a directory — and dangling links are flagged broken. The
- * probe runs only for entries that are actually symlinks, so levels without
- * links stay as cheap as before.
+ * Single-level directory listing for the sidebar explorer. Local callers use
+ * opendir directly; routed workspaces use the DSH filesystem service so an
+ * empty host anchor can expose another execution world's tree. Both paths sort
+ * directories first, dim dot-prefixed entries, classify directory symlinks,
+ * and flag dangling links.
  */
 import { opendir, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
@@ -80,6 +78,57 @@ export async function listDirectory(path: string, maxEntries = 1000): Promise<Si
   await probeSymlinkTargets(rows)
   rows.sort(compareEntries)
   return { path, entries: rows, truncated: overflow > 0 }
+}
+
+/** Minimal routed filesystem face used by the explorer. */
+export interface SidebarFileSystem {
+  resolve(path: string): Promise<{ targetKey: unknown; displayPath: string }>
+  lstat(path: string): Promise<{ type: 'file' | 'directory' | 'symlink' | 'other' } | undefined>
+  stat(target: { targetKey: unknown; displayPath: string }): Promise<{ type: 'file' | 'directory' | 'other' } | undefined>
+  listDir(target: { targetKey: unknown; displayPath: string }): Promise<Array<{
+    name: string
+    type: 'file' | 'directory' | 'other'
+    target: { targetKey: unknown; displayPath: string }
+  }>>
+}
+
+/**
+ * List one directory through DSH's filesystem service. This is the path used
+ * for workspace anchors whose visible files live in another execution world
+ * (for example an SSH Remote workspace); row paths deliberately remain in the
+ * session's host-path namespace so every follow-up API request can route the
+ * same anchor descendant again.
+ */
+export async function listDirectoryWith(
+  fs: SidebarFileSystem,
+  path: string,
+  maxEntries = 1000,
+  resolvedTarget?: { targetKey: unknown; displayPath: string },
+): Promise<SidebarFsListing> {
+  try {
+    const target = resolvedTarget ?? await fs.resolve(path)
+    const listed = await fs.listDir(target)
+    const truncated = listed.length > maxEntries
+    const visible = listed.slice(0, maxEntries)
+    const entries = await Promise.all(visible.map(async (entry): Promise<SidebarFsEntry> => {
+      const childPath = join(path, entry.name)
+      const pathInfo = await fs.lstat(childPath).catch(() => undefined)
+      const isSymlink = pathInfo?.type === 'symlink'
+      const targetInfo = isSymlink ? await fs.stat(entry.target).catch(() => undefined) : undefined
+      return {
+        name: entry.name,
+        path: childPath,
+        isDir: (targetInfo?.type ?? entry.type) === 'directory',
+        hidden: entry.name.startsWith('.'),
+        isSymlink,
+        broken: isSymlink && targetInfo === undefined,
+      }
+    }))
+    entries.sort(compareEntries)
+    return { path, entries, truncated }
+  } catch (error) {
+    throw new SidebarError('fs-error', `cannot list "${path}": ${messageOf(error)}`, 400)
+  }
 }
 
 /** How many symlink target stats run in flight during one level listing. */
