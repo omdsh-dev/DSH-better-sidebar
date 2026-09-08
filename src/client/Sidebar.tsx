@@ -915,7 +915,13 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             </button>
           </Tooltip>
         )}
-        <Tooltip label={state.panelOpen ? t('collapse') : t('expand')} side="bottom" delayMs={500}>
+        {/*
+          Narrow (touch) viewports render the raw button: the Tooltip swallows
+          the first tap to show its bubble, so the toggle would need two taps
+          to act. The aria-label still names the control (styled by the mobile
+          toggle block in sidebar.module.css).
+        */}
+        {narrow ? (
           <button
             type="button"
             className={css.toggleButton}
@@ -924,7 +930,18 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
           >
             <IconPanelRightOutline16 />
           </button>
-        </Tooltip>
+        ) : (
+          <Tooltip label={state.panelOpen ? t('collapse') : t('expand')} side="bottom" delayMs={500}>
+            <button
+              type="button"
+              className={css.toggleButton}
+              aria-label={state.panelOpen ? t('collapse') : t('expand')}
+              onClick={() => { store.reduce(togglePanel) }}
+            >
+              <IconPanelRightOutline16 />
+            </button>
+          </Tooltip>
+        )}
       </div>
       {/*
         The right panel stays mounted while collapsed (hidden off-screen) so
