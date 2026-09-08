@@ -64,6 +64,17 @@ export interface SidebarConfig {
    * the existing default behavior is kept.
    */
   shellArgs?: string[]
+  /**
+   * Deployment-managed side card preferences. When true the plugin does not
+   * contribute its "Side card" settings section to the DSH settings shell
+   * and the `settings.update` route refuses every write, so the preferences
+   * are exactly what the deployment's settings document says (an
+   * administrator edits `settings.yaml` on the host; the `dsh-better-sidebar`
+   * namespace keeps its schema). Reads are unaffected, so the sidebar still
+   * boots on those preferences. Off by default: a personal install keeps the
+   * self-service section.
+   */
+  adminManaged?: boolean
 }
 
 /** Schemastery schema for the plugin configuration. */
@@ -76,6 +87,7 @@ export const Config: z<SidebarConfig> = z.object({
   reconnectGraceMs: z.number().step(1).min(0).default(30_000),
   shell: z.string().default(''),
   shellArgs: z.array(z.string()).default([]),
+  adminManaged: z.boolean().default(false),
 })
 
 /** Fully defaulted sidebar host settings. */
@@ -90,6 +102,8 @@ export interface ResolvedSidebarConfig {
   shell: string
   /** Explicit shell arguments; empty means use the platform defaults. */
   shellArgs: string[]
+  /** Whether the side card preferences are deployment-managed (section hidden, writes refused). */
+  adminManaged: boolean
 }
 
 /**
@@ -108,6 +122,7 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
     reconnectGraceMs: config?.reconnectGraceMs ?? 30_000,
     shell: config?.shell?.trim() ?? '',
     shellArgs: config?.shellArgs ?? [],
+    adminManaged: config?.adminManaged ?? false,
   }
 }
 

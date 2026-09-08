@@ -197,6 +197,19 @@ export function apply(ctx: Context): void {
     // unchanged chunks keep their resolved exports (no re-inject /
     // re-execute on HMR), changed ones are dropped for a clean re-fetch.
     void revalidateChunksOnReactivate()
+    // The Side card settings section registration, deferred until the boot
+    // decision below says the deployment does not manage the preferences.
+    let settingsSectionMounted = false
+    const mountSettingsSection = (): void => {
+      ctx.slots.inject('settings.section', () => ctx.slots.register({
+        name: 'settings.section',
+        id: 'better-sidebar',
+        order: 100,
+        label: () => t('settingsNav'),
+        inject: () => ({ store: sidebarStore, service }),
+      }, SideCardSection))
+    }
+
     ctx.effect(() => {
       let disposed = false
       let root: Root | undefined
@@ -312,6 +325,15 @@ export function apply(ctx: Context): void {
           // aionui-panel provider is selected, the sidebar must not mount at
           // all. Re-evaluated on every settings-document update (live switch).
           sidebarStore.setSuspended(decision.suspended)
+        }
+        // The Side card settings section is contributed once, after the first
+        // decision: a deployment with `config.adminManaged` keeps it out of
+        // the DSH settings shell (the host also refuses `settings.update`, so
+        // hiding is presentation, not the lock). A timed-out or failed read
+        // keeps the historical behavior and mounts the section.
+        if (!settingsSectionMounted && decision?.adminManaged !== true) {
+          settingsSectionMounted = true
+          mountSettingsSection()
         }
         if (decision?.suspended) unmount()
         else mount()
@@ -433,13 +455,8 @@ export function apply(ctx: Context): void {
     // it); the section reads/writes the prefs through the plugin's own
     // fenced settings route, keeps the shared store in sync, and renders the
     // declarative enable/disable inventory from the tab/viewer registry.
-    ctx.slots.inject('settings.section', () => ctx.slots.register({
-      name: 'settings.section',
-      id: 'better-sidebar',
-      order: 100,
-      label: () => t('settingsNav'),
-      inject: () => ({ store: sidebarStore, service }),
-    }, SideCardSection))
+    // Mounted from the boot decision above (see `mountSettingsSection`), so a
+    // deployment with `config.adminManaged` never contributes it.
   } catch (error) {
     fail('load', error)
   }
