@@ -558,6 +558,17 @@ export interface SidebarContextShape {
    */
   betterSidebar: BetterSidebarService
   /**
+   * Live assistant-stream subscribe (`agent/assistant-stream`): the
+   * process-local publication that replaced the durable `assistant/chunk`
+   * event in DSH 0.1.3-alpha.1. Declared here because the vendored cordis
+   * Events map this plugin compiles against does not carry the agent
+   * runtime's entries.
+   */
+  on(
+    event: 'agent/assistant-stream',
+    listener: (payload: { agent: unknown; frame: SidebarAssistantStreamFrame }) => void,
+  ): () => void
+  /**
    * String-keyed session feed subscribe (the vendored cordis `on` is keyed
    * to its typed Events map; the harness session feed is a plain string
    * event). The listener receives every appended session event with the
@@ -565,6 +576,24 @@ export interface SidebarContextShape {
    */
   on(event: string, listener: (session: unknown, event: SidebarSessionEvent) => void): () => void
 }
+
+/**
+ * One live assistant-stream publication — mirror of @deepseek-ai/dsh-agent's
+ * `AssistantStreamFrame`, narrowed to the fields the sidebar reads. Chunk
+ * frames are transient; the loop appends the step's durable settlement
+ * before the `end` frame.
+ */
+export type SidebarAssistantStreamFrame =
+  | { type: 'start'; attemptId: string; revision: number; turn: number; step: number }
+  | { type: 'chunk'; attemptId: string; revision: number; index: number; time: number; chunk: unknown }
+  | {
+    type: 'end'
+    attemptId: string
+    revision: number
+    index: number
+    /** Whether a durable settlement committed, or the attempt was dropped. */
+    outcome: { kind: 'committed'; eventType: string; seq: number } | { kind: 'abandoned' }
+  }
 
 /**
  * The Context this plugin sees: the vendored cordis Context intersected with

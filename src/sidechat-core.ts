@@ -81,6 +81,21 @@ export interface SidechatLogEvent {
   data: unknown
 }
 
+/**
+ * The partial assistant output of one step still streaming, carried by the
+ * transcript poll because no durable event holds it: DSH 0.1.3-alpha.1
+ * removed `assistant/chunk`, so a step's prose reaches the log only at its
+ * settled `assistant/message`.
+ */
+export interface SidechatLiveStep {
+  turn: number
+  step: number
+  /** Text delivered by the attempt in flight (may be empty). */
+  text: string
+  /** Reasoning delivered by the attempt in flight (may be empty). */
+  reasoning: string
+}
+
 /** The result of cutting a parent log into a side-thread inheritance. */
 export interface SidechatInheritance {
   /** The child seed: contiguous from seq 0, ends outside any open turn. */
@@ -245,12 +260,26 @@ export function buildSidechatInheritance(events: readonly SidechatLogEvent[]): S
   return { seed, snapshot: null }
 }
 
+/** The content blocks of one assistant/message event's message. */
+function assistantBlocks(data: Record<string, unknown>): { type?: unknown; text?: unknown }[] {
+  const message = data.message as { content?: unknown } | undefined
+  const content = message?.content
+  if (!Array.isArray(content)) return []
+  return content.filter(block => block !== null && typeof block === 'object')
+}
+
 /**
  * Structured text snapshot of the parent's OPEN turn (from its `turn/start`
- * to the log tail): the accumulated assistant/reasoning output verbatim
- * (code blocks ride the raw deltas) and the tool activity — executed tools
- * with their result text, the still-executing one marked. Returns null when
- * there is no open turn or nothing to show.
+ * to the log tail): the assistant/reasoning output of the turn's settled
+ * steps and the tool activity — executed tools with their result text, the
+ * still-executing one marked. Returns null when there is no open turn or
+ * nothing to show.
+ *
+ * The text comes from each step's settled `assistant/message`, which the loop
+ * appends before dispatching that step's tool calls — so a turn held open by
+ * an executing tool has all of its output durably present. Superseded model
+ * attempts (`assistant/attempt`) are left out: they were retried and never
+ * became model-visible history.
  */
 export function buildOpenTurnSnapshot(events: readonly SidechatLogEvent[]): string | null {
   const boundary = lastTurnBoundary(events)
@@ -267,11 +296,11 @@ export function buildOpenTurnSnapshot(events: readonly SidechatLogEvent[]): stri
       pendingCalls.clear()
       continue
     }
-    if (event.type === 'assistant/chunk') {
-      const chunk = data.chunk as { type?: unknown; text?: unknown } | undefined
-      if (chunk === null || typeof chunk !== 'object') continue
-      if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
-      else if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string') reasoning += chunk.text
+    if (event.type === 'assistant/message') {
+      for (const block of assistantBlocks(data)) {
+        if (block.type === 'text' && typeof block.text === 'string') text += block.text
+        else if (block.type === 'reasoning' && typeof block.text === 'string') reasoning += block.text
+      }
       continue
     }
     if (event.type === 'tool/call') {

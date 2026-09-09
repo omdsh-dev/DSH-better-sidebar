@@ -12,14 +12,15 @@
  * plugin-sourced context) onto a collapsible injection row, so the view
  * shows only the thread's own conversation.
  *
- * Live streaming: `assistant/message` events only land when a step
- * completes, but `assistant/chunk` events stream token-level text and
- * reasoning deltas. The mapping accumulates both per block and supersedes
- * them with the assembled message once it lands (settled rows).
+ * Live output: DSH 0.1.3-alpha.1 removed the durable `assistant/chunk`
+ * event, so the log carries a step's prose only at its settled
+ * `assistant/message`. The in-flight prefix rides the same poll response
+ * (`live`) from the host's process-local stream mirror and renders as
+ * unsettled tail rows until the settled blocks replace it.
  */
 import type { DiffHunk, ReadBlockLine } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarHistoryEntry } from '../context-types.ts'
-import { isContextInjectionMessage, SIDE_BOUNDARY_PROMPT } from '../sidechat-core.ts'
+import { isContextInjectionMessage, type SidechatLiveStep, SIDE_BOUNDARY_PROMPT } from '../sidechat-core.ts'
 
 /**
  * Structured render payload for a tool row that maps onto one of the host's
@@ -299,20 +300,31 @@ function resultCard(
 /**
  * Map a thread child's history rows onto compact transcript rows: the
  * inherited fork seed is cut at the last `session/end-seed`, context
- * injections map onto a collapsible injection row, `assistant/chunk`
- * deltas accumulate into streaming rows per (turn, step, block) and are
- * superseded by the assembled `assistant/message`, and tool invocations
- * render one expandable line each (arguments, paired result text, failure
- * marker; a still-executing call is marked until its result lands).
+ * injections map onto a collapsible injection row, each settled
+ * `assistant/message` renders its text and reasoning blocks, and tool
+ * invocations render one expandable line each (arguments, paired result
+ * text, failure marker; a still-executing call is marked until its result
+ * lands).
+ *
+ * `live` is the in-flight step's assistant prefix from the same poll. It
+ * renders as unsettled tail rows, and is ignored once that step's
+ * `assistant/message` is in `entries` — the settled blocks are the same text
+ * and the poll can observe both.
  * @param entries - history rows (event + host-computed view) in seq order.
+ * @param prev - the previous poll's rows (row-identity reuse).
+ * @param live - the in-flight step's prefix, when the thread is streaming.
  * @returns display rows in log order.
  */
-export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: readonly SidechatTranscriptRow[]): SidechatTranscriptRow[] {
+export function transcriptRows(
+  entries: readonly SidebarHistoryEntry[],
+  prev?: readonly SidechatTranscriptRow[],
+  live?: SidechatLiveStep,
+): SidechatTranscriptRow[] {
   const events = entries.map(entry => entry.event)
   const seedEnd = lastSeedEnd(events)
   const rows: SidechatTranscriptRow[] = []
-  /** (turn, step, index, kind) key → index of its accumulating stream row. */
-  const streamRows = new Map<string, number>()
+  /** "turn:step" of every step whose assembled message already landed. */
+  const settledSteps = new Set<string>()
   /** tool callId → index of its tool row in `rows` (result pairing). */
   const callRows = new Map<string, number>()
   /** turn → envelope time of its `turn/start` (turn-tail duration basis). */
@@ -374,27 +386,6 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
         rows.push({ kind: 'user', seq: event.seq, text })
         break
       }
-      case 'assistant/chunk': {
-        const chunk = data.chunk as { type?: unknown; text?: unknown } | undefined
-        if (chunk === null || typeof chunk !== 'object') break
-        const kind = chunk.type === 'text-delta' ? 'assistant' : chunk.type === 'reasoning-delta' ? 'reasoning' : null
-        if (kind === null || typeof chunk.text !== 'string' || chunk.text === '') break
-        const turn = data.turn
-        const step = data.step
-        const blockIndex = (chunk as { index?: unknown }).index
-        const key = `${String(turn)}:${String(step)}:${String(blockIndex)}:${kind}`
-        const existing = streamRows.get(key)
-        if (existing !== undefined) {
-          const row = rows[existing]
-          if (row !== undefined && row.kind === kind && !row.settled) {
-            rows[existing] = { ...row, text: row.text + chunk.text }
-          }
-        } else {
-          streamRows.set(key, rows.length)
-          rows.push({ kind, seq: event.seq, text: chunk.text, settled: false })
-        }
-        break
-      }
       case 'assistant/message': {
         // Turn-tail usage: each assembled message carries its step's token
         // accounting (absent when the adapter reported none).
@@ -409,13 +400,7 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
             else turnUsage.set(usageTurn, { inputTokens: input, outputTokens: aggregate.outputTokens + output })
           }
         }
-        const prefix = `${String(data.turn)}:${String(data.step)}:`
-        const streamed = [...streamRows.entries()]
-          .filter(([key]) => key.startsWith(prefix))
-          .map(([, rowIndex]) => rowIndex)
-        for (const key of [...streamRows.keys()]) {
-          if (key.startsWith(prefix)) streamRows.delete(key)
-        }
+        settledSteps.add(`${String(data.turn)}:${String(data.step)}`)
         const content = Array.isArray((data.message as { content?: unknown } | undefined)?.content)
           ? (data.message as { content: readonly unknown[] }).content
           : []
@@ -430,8 +415,7 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
           }
           return []
         })
-        if (streamed.length === 0) rows.push(...settled)
-        else rows.splice(Math.min(...streamed), streamed.length, ...settled)
+        rows.push(...settled)
         break
       }
       case 'tool/call': {
@@ -484,7 +468,27 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
       }
     }
   }
+  appendLiveRows(rows, events, settledSteps, live)
   return reuseRows(rows, prev)
+}
+
+/**
+ * Append the in-flight step's prefix as unsettled reasoning/assistant rows.
+ * Their `seq` is one past the log tail — stable while the step streams,
+ * because a step appends nothing durable between its first token and its
+ * settlement — so the rows keep their React key as the text grows.
+ */
+function appendLiveRows(
+  rows: SidechatTranscriptRow[],
+  events: readonly SidebarHistoryEntry['event'][],
+  settledSteps: ReadonlySet<string>,
+  live: SidechatLiveStep | undefined,
+): void {
+  if (live === undefined) return
+  if (settledSteps.has(`${String(live.turn)}:${String(live.step)}`)) return
+  const seq = (events.at(-1)?.seq ?? -1) + 1
+  if (live.reasoning !== '') rows.push({ kind: 'reasoning', seq, text: live.reasoning, settled: false })
+  if (live.text !== '') rows.push({ kind: 'assistant', seq, text: live.text, settled: false })
 }
 
 /** Whether two rows carry identical display content (identity fields plus

@@ -80,37 +80,55 @@ describe('transcriptRows', () => {
     ])
   })
 
-  it('accumulates chunk deltas per block and supersedes them on settle', () => {
+  it('appends the in-flight prefix as unsettled rows after the log tail', () => {
     const entries = [
       entry(ev('session/end-seed', 0)),
       entry(ev('user/message', 1, { content: textBlocks('q'), source: { kind: 'user' } })),
       entry(ev('turn/start', 2, { turn: 1 })),
       entry(ev('step/start', 3, { turn: 1, step: 1 })),
-      entry(ev('assistant/chunk', 4, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'Hel' } })),
-      entry(ev('assistant/chunk', 5, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'lo' } })),
-      entry(ev('assistant/chunk', 6, { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 1, text: 'think' } })),
     ]
-    const rows = transcriptRows(entries)
-    const assistant = rows.find(row => row.kind === 'assistant') as Extract<SidechatTranscriptRow, { kind: 'assistant' }>
-    expect(assistant.text).toBe('Hello')
-    expect(assistant.settled).toBe(false)
+    const rows = transcriptRows(entries, undefined, { turn: 1, step: 1, text: 'Hello', reasoning: 'think' })
     const reasoning = rows.find(row => row.kind === 'reasoning') as Extract<SidechatTranscriptRow, { kind: 'reasoning' }>
-    expect(reasoning.text).toBe('think')
+    expect(reasoning).toEqual({ kind: 'reasoning', seq: 4, text: 'think', settled: false })
+    const assistant = rows.find(row => row.kind === 'assistant') as Extract<SidechatTranscriptRow, { kind: 'assistant' }>
+    expect(assistant).toEqual({ kind: 'assistant', seq: 4, text: 'Hello', settled: false })
+    // Reasoning precedes the answer it produced.
+    expect(rows.indexOf(reasoning)).toBeLessThan(rows.indexOf(assistant))
   })
 
-  it('replaces streaming rows with the settled assistant message', () => {
+  it('omits an empty half of the prefix instead of pushing a blank row', () => {
+    const entries = [entry(ev('step/start', 3, { turn: 1, step: 1 }))]
+    const rows = transcriptRows(entries, undefined, { turn: 1, step: 1, text: 'answer', reasoning: '' })
+    expect(rows).toEqual([{ kind: 'assistant', seq: 4, text: 'answer', settled: false }])
+  })
+
+  it('drops the prefix once that step’s assistant message has settled', () => {
+    // The poll reads the log before the live prefix, so a step settling
+    // mid-call can arrive in both; the settled message wins outright.
     const entries = [
       entry(ev('session/end-seed', 0)),
       entry(ev('user/message', 1, { content: textBlocks('q'), source: { kind: 'user' } })),
       entry(ev('turn/start', 2, { turn: 1 })),
       entry(ev('step/start', 3, { turn: 1, step: 1 })),
-      entry(ev('assistant/chunk', 4, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'par' } })),
       entry(ev('assistant/message', 5, { turn: 1, step: 1, message: { content: textBlocks('final answer') } })),
     ]
-    const rows = transcriptRows(entries)
+    const rows = transcriptRows(entries, undefined, { turn: 1, step: 1, text: 'par', reasoning: '' })
     const assistants = rows.filter(row => row.kind === 'assistant')
     expect(assistants).toHaveLength(1)
     expect(assistants[0]).toMatchObject({ kind: 'assistant', text: 'final answer', settled: true })
+  })
+
+  it('keeps the prefix of a LATER step whose earlier sibling already settled', () => {
+    const entries = [
+      entry(ev('step/start', 3, { turn: 1, step: 1 })),
+      entry(ev('assistant/message', 4, { turn: 1, step: 1, message: { content: textBlocks('step one') } })),
+      entry(ev('step/start', 5, { turn: 1, step: 2 })),
+    ]
+    const rows = transcriptRows(entries, undefined, { turn: 1, step: 2, text: 'step two so far', reasoning: '' })
+    expect(rows.filter(row => row.kind === 'assistant')).toEqual([
+      { kind: 'assistant', seq: 4, text: 'step one', settled: true },
+      { kind: 'assistant', seq: 6, text: 'step two so far', settled: false },
+    ])
   })
 
   it('pairs tool calls with results and marks failures', () => {
