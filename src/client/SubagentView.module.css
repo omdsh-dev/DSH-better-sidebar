@@ -34,6 +34,78 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* Enabled-by-default active-only filter. It is a real switch button rather
+   than a hidden preference so the Tasks view always explains why settled
+   rows are absent and lets the user restore them in one click. */
+.subagentFilter {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 5px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  cursor: pointer;
+  outline: none;
+}
+
+.subagentFilter:hover,
+.subagentFilter:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.subagentFilterTrack {
+  position: relative;
+  flex: none;
+  width: 22px;
+  height: 12px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  box-sizing: border-box;
+  background: var(--dsw-alias-bg-layer-2);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.subagentFilterThumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-tertiary);
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.subagentFilterActive .subagentFilterTrack {
+  border-color: var(--dsw-alias-button-primary-fill);
+  background: var(--dsw-alias-button-primary-fill);
+}
+
+.subagentFilterActive .subagentFilterThumb {
+  transform: translateX(10px);
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.subagentFilterLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subagentFilterTrack,
+  .subagentFilterThumb {
+    transition: none;
+  }
+}
+
 .subagentRefresh {
   flex: none;
   display: inline-flex;

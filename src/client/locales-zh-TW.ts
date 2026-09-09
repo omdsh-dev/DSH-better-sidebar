@@ -289,6 +289,8 @@ export const zhTW: Record<string, string> = {
   subagentEmptyDesc: '目前主代理派生的子代理將顯示在這裡',
   subagentRunning: '執行中',
   subagentInactive: '閒置',
+  subagentActiveOnly: '僅顯示活躍',
+  subagentActiveOnlyDesc: '隱藏已完成或非活躍的子代理',
   subagentModeOneShot: '一次性',
   subagentModeContinuable: '可續接',
   subagentCount: '{count} 個子代理',

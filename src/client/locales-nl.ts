@@ -272,6 +272,8 @@ export const nl: Record<string, string> = {
   subagentEmptyDesc: 'Subagents voortgebracht door de hoofdagent verschijnen hier',
   subagentRunning: 'Actief',
   subagentInactive: 'Inactief',
+  subagentActiveOnly: 'Alleen actieve',
+  subagentActiveOnlyDesc: 'Voltooide of inactieve subagents verbergen',
   subagentModeOneShot: 'One-shot',
   subagentModeContinuable: 'Vervolgbaar',
   subagentCount: '{count} subagents',

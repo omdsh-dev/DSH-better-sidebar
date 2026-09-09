@@ -275,6 +275,8 @@ export const ar: Record<string, string> = {
   subagentEmptyDesc: 'الوكلاء الفرعيون المُنتَجون تحت الوكيل الرئيسي سيظهرون هنا',
   subagentRunning: 'قيد التشغيل',
   subagentInactive: 'خامل',
+  subagentActiveOnly: 'النشطة فقط',
+  subagentActiveOnlyDesc: 'إخفاء الوكلاء الفرعيين المكتملين أو غير النشطين',
   subagentModeOneShot: 'مرة واحدة',
   subagentModeContinuable: 'قابل للاستئناف',
   subagentCount: '{count} وكلاء فرعيون',

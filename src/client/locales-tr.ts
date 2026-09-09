@@ -274,6 +274,8 @@ export const tr: Record<string, string> = {
   subagentEmptyDesc: 'Ana aracının altında doğan alt aracılar burada görünür',
   subagentRunning: 'Çalışıyor',
   subagentInactive: 'Etkin değil',
+  subagentActiveOnly: 'Yalnızca aktif',
+  subagentActiveOnlyDesc: 'Tamamlanan veya etkin olmayan alt aracıları gizle',
   subagentModeOneShot: 'Tek seferlik',
   subagentModeContinuable: 'Sürdürülebilir',
   subagentCount: '{count} alt aracı',

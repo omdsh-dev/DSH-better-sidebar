@@ -160,15 +160,20 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           title: () => t('settingsSubagentTitle'),
           desc: () => t('settingsSubagentDesc'),
         }, {
+          key: 'hideCompletedSubagents',
+          title: () => t('subagentActiveOnly'),
+          desc: () => t('subagentActiveOnlyDesc'),
+        }, {
           key: 'autoOpenJobs',
           title: () => t('settingsJobsTitle'),
           desc: () => t('settingsJobsDesc'),
         }],
       },
-      component: ({ ctx, scope, visible, onSubagentJump }) => (
+      component: ({ ctx, store, scope, visible, onSubagentJump }) => (
         <SubagentView
           sessionId={scope.sessionId}
           ctx={ctx}
+          store={store}
           active={visible}
           onOpenChild={(address) => { onSubagentJump?.(address.childSessionId) }}
         />

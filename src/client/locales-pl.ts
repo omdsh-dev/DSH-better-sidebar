@@ -276,6 +276,8 @@ export const pl: Record<string, string> = {
   subagentEmptyDesc: 'Podagenci powołani przez agenta głównego pojawią się tutaj',
   subagentRunning: 'Działa',
   subagentInactive: 'Bezczynny',
+  subagentActiveOnly: 'Tylko aktywne',
+  subagentActiveOnlyDesc: 'Ukryj ukończonych lub nieaktywnych podagentów',
   subagentModeOneShot: 'Jednorazowy',
   subagentModeContinuable: 'Kontynuowalny',
   subagentCount: '{count} podagentów',

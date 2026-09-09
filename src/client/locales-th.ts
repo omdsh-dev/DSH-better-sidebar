@@ -274,6 +274,8 @@ export const th: Record<string, string> = {
   subagentEmptyDesc: 'ตัวแทนย่อยที่สร้างภายใต้ตัวแทนหลักจะปรากฏที่นี่',
   subagentRunning: 'กำลังทำงาน',
   subagentInactive: 'ไม่ได้ทำงาน',
+  subagentActiveOnly: 'เฉพาะที่กำลังทำงาน',
+  subagentActiveOnlyDesc: 'ซ่อนตัวแทนย่อยที่เสร็จสิ้นหรือไม่ได้ทำงาน',
   subagentModeOneShot: 'ครั้งเดียว',
   subagentModeContinuable: 'ทำต่อได้',
   subagentCount: '{count} ตัวแทนย่อย',

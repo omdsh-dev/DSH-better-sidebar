@@ -838,6 +838,7 @@ describe('side card settings routes', () => {
         openByDefault: false,
         defaultWidthPercent: 35,
         autoOpenSubagent: true,
+        hideCompletedSubagents: true,
         autoOpenJobs: true,
         agentTerminalTools: false, agentOpenTools: false,
         bottomPanelAutoTerminal: true,

@@ -52,6 +52,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     autoOpenSubagent: typeof record.autoOpenSubagent === 'boolean'
       ? record.autoOpenSubagent
       : SIDEBAR_PREFS_DEFAULTS.autoOpenSubagent,
+    hideCompletedSubagents: typeof record.hideCompletedSubagents === 'boolean'
+      ? record.hideCompletedSubagents
+      : SIDEBAR_PREFS_DEFAULTS.hideCompletedSubagents,
     autoOpenJobs: typeof record.autoOpenJobs === 'boolean'
       ? record.autoOpenJobs
       : SIDEBAR_PREFS_DEFAULTS.autoOpenJobs,

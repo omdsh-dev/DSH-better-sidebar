@@ -257,6 +257,8 @@ export const sv: Record<string, string> = {
   subagentEmptyDesc: 'Subagenter skapade under huvudagenten visas här',
   subagentRunning: 'Kör',
   subagentInactive: 'Inaktiv',
+  subagentActiveOnly: 'Endast aktiva',
+  subagentActiveOnlyDesc: 'Dölj slutförda eller inaktiva subagenter',
   subagentModeOneShot: 'Engångs',
   subagentModeContinuable: 'Fortsättbar',
   subagentCount: '{count} subagenter',

@@ -260,6 +260,8 @@ export const de: Record<string, string> = {
   subagentEmptyDesc: 'Subagenten, die unter dem Hauptagenten erzeugt werden, erscheinen hier',
   subagentRunning: 'Läuft',
   subagentInactive: 'Inaktiv',
+  subagentActiveOnly: 'Nur aktive',
+  subagentActiveOnlyDesc: 'Abgeschlossene oder inaktive Subagenten ausblenden',
   subagentModeOneShot: 'Einmalig',
   subagentModeContinuable: 'Fortsetzbar',
   subagentCount: '{count} Subagenten',

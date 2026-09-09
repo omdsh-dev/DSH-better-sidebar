@@ -80,7 +80,7 @@ describe('built-in tab registrations', () => {
   it('the subagent tab declares its auto-open related settings', () => {
     const { service } = setup()
     const toggles = service.getTab('subagent')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual(['autoOpenSubagent', 'autoOpenJobs'])
+    expect(toggles.map(t => t.key)).toEqual(['autoOpenSubagent', 'hideCompletedSubagents', 'autoOpenJobs'])
   })
 
   it('the editor tab declares its merged-mode (embedded file tree) setting', () => {

@@ -274,6 +274,8 @@ export const ja: Record<string, string> = {
   subagentEmptyDesc: 'メインエージェントが派生したサブエージェントはここに表示されます',
   subagentRunning: '実行中',
   subagentInactive: 'アイドル',
+  subagentActiveOnly: 'アクティブのみ',
+  subagentActiveOnlyDesc: '完了または非アクティブなサブエージェントを非表示',
   subagentModeOneShot: 'ワンショット',
   subagentModeContinuable: '継続可',
   subagentCount: '{count} 個のサブエージェント',

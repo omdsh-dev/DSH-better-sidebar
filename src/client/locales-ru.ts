@@ -272,6 +272,8 @@ export const ru: Record<string, string> = {
   subagentEmptyDesc: 'Субагенты, порождённые главным агентом, появятся здесь',
   subagentRunning: 'Выполняется',
   subagentInactive: 'Простаивает',
+  subagentActiveOnly: 'Только активные',
+  subagentActiveOnlyDesc: 'Скрыть завершённых или неактивных субагентов',
   subagentModeOneShot: 'Одноразовый',
   subagentModeContinuable: 'Продолжаемый',
   subagentCount: '{count} субагентов',

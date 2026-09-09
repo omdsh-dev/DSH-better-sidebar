@@ -267,6 +267,8 @@ export const fr: Record<string, string> = {
   subagentEmptyDesc: 'Les sous-agents dérivés de l’agent principal actuel s’afficheront ici',
   subagentRunning: 'En cours',
   subagentInactive: 'Inactif',
+  subagentActiveOnly: 'Actifs uniquement',
+  subagentActiveOnlyDesc: 'Masquer les sous-agents terminés ou inactifs',
   subagentModeOneShot: 'À usage unique',
   subagentModeContinuable: 'Reprenable',
   subagentCount: '{count} sous-agent(s)',

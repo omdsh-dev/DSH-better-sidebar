@@ -274,6 +274,8 @@ export const hi: Record<string, string> = {
   subagentEmptyDesc: 'मुख्य एजेंट के अंतर्गत बने सबएजेंट यहाँ दिखेंगे',
   subagentRunning: 'चल रहा',
   subagentInactive: 'निष्क्रिय',
+  subagentActiveOnly: 'केवल सक्रिय',
+  subagentActiveOnlyDesc: 'पूर्ण या निष्क्रिय सबएजेंट छिपाएँ',
   subagentModeOneShot: 'एक-बार',
   subagentModeContinuable: 'जारी रखने योग्य',
   subagentCount: '{count} सबएजेंट',

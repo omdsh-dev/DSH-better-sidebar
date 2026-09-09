@@ -14,6 +14,7 @@ import type {
   SidebarSessionList,
   SidebarSessionSummary,
   SidebarSubagentCatalog,
+  SidebarSubagentChildEntry,
 } from '../context-types.ts'
 import { SIDE_LABEL_PREFIX } from '../sidechat-core.ts'
 
@@ -85,6 +86,57 @@ export function collectBranchIds(
   }
   if (rootId !== undefined) visit(rootId)
   return out
+}
+
+/**
+ * Whether one healthy catalog entry is currently active. The catalog's
+ * sampled activity is authoritative, while the session summary is accepted
+ * as a fresher positive signal during the short interval before the catalog
+ * catches up. An inactive value never overrides a running summary.
+ */
+export function isActiveSubagent(
+  entry: SidebarSubagentChildEntry,
+  summary: SidebarSessionSummary | undefined,
+): boolean {
+  return entry.activity === 'running' || summary?.running === true
+}
+
+/**
+ * Whether a catalog child belongs in the active-only topology. An inactive
+ * ancestor remains as structural context when one of its descendants is
+ * active; cycles and not-yet-hydrated catalogs fail closed to the node's own
+ * sampled activity.
+ */
+export function hasActiveSubagentBranch(
+  entry: SidebarSubagentChildEntry,
+  catalogs: Readonly<Record<string, SidebarSubagentCatalog>>,
+  byId: Readonly<Record<string, SidebarSessionSummary>>,
+  currentSessionId?: string,
+  seen: ReadonlySet<string> = new Set(),
+): boolean {
+  if (isActiveSubagent(entry, byId[entry.id])) return true
+  // The summary lineage arrives before lazy catalogs hydrate. Use it as an
+  // immediate positive signal so active deep branches never pop in late.
+  if (countSubagentDescendants(byId, entry.id).runningCount > 0) return true
+  // Keep the selected subagent and its ancestors as navigation context even
+  // after its run settles; every unrelated inactive branch remains filtered.
+  if (currentSessionId !== undefined) {
+    const lineageSeen = new Set<string>()
+    let current = byId[currentSessionId]
+    while (current?.origin === 'subagent' && !lineageSeen.has(current.id)) {
+      lineageSeen.add(current.id)
+      if (current.id === entry.id) return true
+      current = current.parentId === undefined ? undefined : byId[current.parentId]
+    }
+  }
+  if (seen.has(entry.id)) return false
+  const nextSeen = new Set(seen)
+  nextSeen.add(entry.id)
+  return (catalogs[entry.id]?.entries ?? []).some(child => (
+    child.kind === 'child'
+      && !(child.label?.startsWith(SIDE_LABEL_PREFIX) ?? false)
+      && hasActiveSubagentBranch(child, catalogs, byId, currentSessionId, nextSeen)
+  ))
 }
 
 /**

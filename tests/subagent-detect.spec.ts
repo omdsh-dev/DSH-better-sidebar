@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   collectBranchIds, countSubagentDescendants, detectNewDirectSubagent,
-  directSubagentCount, rootAncestor,
+  directSubagentCount, hasActiveSubagentBranch, isActiveSubagent, rootAncestor,
 } from '../src/client/subagent-detect.ts'
 import type { SidebarSessionList, SidebarSubagentCatalog } from '../src/context-types.ts'
 
@@ -140,6 +140,54 @@ describe('subagent detection over the sessions list feed', () => {
     // A hydrating session row degrades to the session itself.
     expect(rootAncestor(byId, 'not-listed')).toBe('not-listed')
     expect(rootAncestor(byId, undefined)).toBeUndefined()
+  })
+
+  it('recognizes active rows and preserves inactive ancestors of active descendants', () => {
+    const child = (
+      id: string,
+      activity: 'running' | 'inactive',
+      hasChildren = false,
+    ): Extract<SidebarSubagentCatalog['entries'][number], { kind: 'child' }> => ({
+      kind: 'child', id, activity, hasChildren, mode: 'one-shot',
+    })
+    const byId: SidebarSessionList['byId'] = {
+      root: { id: 'root', displayTitle: 'Root' },
+      staleCatalog: { id: 'staleCatalog', displayTitle: 'Fresh summary', running: true },
+      ancestor: { id: 'ancestor', displayTitle: 'Ancestor', origin: 'subagent', parentId: 'root' },
+      deepLive: { id: 'deepLive', displayTitle: 'Deep live', origin: 'subagent', parentId: 'ancestor', running: true },
+      selectedDone: { id: 'selectedDone', displayTitle: 'Selected done', origin: 'subagent', parentId: 'ancestor' },
+    }
+    expect(isActiveSubagent(child('live', 'running'), undefined)).toBe(true)
+    expect(isActiveSubagent(child('staleCatalog', 'inactive'), byId.staleCatalog)).toBe(true)
+    expect(isActiveSubagent(child('done', 'inactive'), undefined)).toBe(false)
+
+    const ancestor = child('ancestor', 'inactive', true)
+    // Summary lineage preserves the branch before its lazy catalog hydrates.
+    expect(hasActiveSubagentBranch(ancestor, {}, byId)).toBe(true)
+    expect(hasActiveSubagentBranch(
+      child('selectedDone', 'inactive'), {}, byId, 'selectedDone',
+    )).toBe(true)
+    byId.deepLive!.running = false
+    const catalogs: Record<string, SidebarSubagentCatalog> = {
+      ancestor: {
+        entries: [child('deep-live', 'running')],
+        parentAvailable: true,
+        state: 'ready',
+        error: null,
+      },
+    }
+    expect(hasActiveSubagentBranch(ancestor, catalogs, byId)).toBe(true)
+    expect(hasActiveSubagentBranch(child('done', 'inactive'), catalogs, byId)).toBe(false)
+
+    // Side Chat descendants never keep an otherwise-settled Tasks branch.
+    catalogs.ancestor!.entries = [{ ...child('side', 'running'), label: 'Side: hidden thread' }]
+    expect(hasActiveSubagentBranch(ancestor, catalogs, byId)).toBe(false)
+    // Malformed cyclic catalogs terminate without inventing activity.
+    catalogs.ancestor!.entries = [child('loop', 'inactive', true)]
+    catalogs.loop = {
+      entries: [ancestor], parentAvailable: true, state: 'ready', error: null,
+    }
+    expect(hasActiveSubagentBranch(ancestor, catalogs, byId)).toBe(false)
   })
 
   it('collects every catalog branch of the topology, cycle-safe', () => {

@@ -266,6 +266,8 @@ export const ko: Record<string, string> = {
   subagentEmptyDesc: '현재 주 에이전트에서 파생된 서브 에이전트가 여기에 표시됩니다',
   subagentRunning: '실행 중',
   subagentInactive: '대기 중',
+  subagentActiveOnly: '활성만',
+  subagentActiveOnlyDesc: '완료되었거나 비활성 상태인 서브 에이전트 숨기기',
   subagentModeOneShot: '일회성',
   subagentModeContinuable: '이어서 가능',
   subagentCount: '서브 에이전트 {count}개',

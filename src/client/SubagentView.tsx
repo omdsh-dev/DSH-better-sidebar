@@ -38,6 +38,7 @@ import type {
 import {
   collectBranchIds,
   countSubagentDescendants,
+  hasActiveSubagentBranch,
   isSideThreadSummary,
   rootAncestor,
 } from './subagent-detect.ts'
@@ -53,6 +54,8 @@ import {
   type TreeJob,
 } from './subagent-jobs.ts'
 import { api, type JobOutputResult } from './api.ts'
+import type { SidebarStore } from './state.ts'
+import { updateSidebarPrefs } from './plugin-settings.ts'
 import { IconStopOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import css from './SubagentView.module.css'
@@ -240,24 +243,42 @@ interface RowsProps {
   currentSessionId: string
   /** The batch live-preview map (child id → latest activity). */
   live: Readonly<Record<string, LastActivity>>
+  /** Hide settled child branches while preserving ancestors of live descendants. */
+  activeOnly: boolean
   openChild: (address: SidebarSubagentAddress) => void
   refresh: (parentSessionId: string) => void
+}
+
+/** Apply the Tasks visibility policy to one catalog row. */
+function catalogEntryVisible(
+  entry: SidebarSubagentChildEntry | SidebarSubagentDiagnosticEntry,
+  catalogs: Readonly<Record<string, SidebarSubagentCatalog>>,
+  byId: Readonly<Record<string, SidebarSessionSummary>>,
+  currentSessionId: string,
+  activeOnly: boolean,
+): boolean {
+  if (entry.kind === 'child') {
+    if (entry.label?.startsWith(SIDE_LABEL_PREFIX) ?? false) return false
+    return !activeOnly || hasActiveSubagentBranch(entry, catalogs, byId, currentSessionId)
+  }
+  // Diagnostics are not completed subagents. Keep them visible so filtering
+  // never conceals a corrupt/unavailable branch that needs attention.
+  return !(byId[entry.id]?.displayTitle.startsWith(SIDE_LABEL_PREFIX) ?? false)
 }
 
 /** Render one topology level; branches are always expanded (lazy catalogs). */
 function CatalogRows({
   parentSessionId, catalog, catalogs, byId, level, currentSessionId, live,
-  openChild, refresh,
+  activeOnly, openChild, refresh,
 }: RowsProps) {
   const emptyLoading = catalog?.state === 'loading' && catalog.entries.length === 0
   // Side Chat threads are honest catalog citizens (durable descriptor, 'Side: '
   // label) but they are NOT subagent topology — filter them out here (the tab
   // strip owns them). Legacy threads created before the descriptor fix still
   // arrive as corrupt diagnostics; they are recognized by summary title.
-  const visibleEntries = (catalog?.entries ?? []).filter((entry) => {
-    if (entry.kind === 'child') return !(entry.label?.startsWith(SIDE_LABEL_PREFIX) ?? false)
-    return !(byId[entry.id]?.displayTitle.startsWith(SIDE_LABEL_PREFIX) ?? false)
-  })
+  const visibleEntries = (catalog?.entries ?? []).filter(entry => (
+    catalogEntryVisible(entry, catalogs, byId, currentSessionId, activeOnly)
+  ))
   return (
     <>
       {emptyLoading && (
@@ -361,6 +382,7 @@ function CatalogRows({
                       level={level + 1}
                       currentSessionId={currentSessionId}
                       live={live}
+                      activeOnly={activeOnly}
                       openChild={openChild}
                       refresh={refresh}
                     />
@@ -643,10 +665,32 @@ export function SubagentView(props: {
   sessionId: string
   active: boolean
   ctx: Context
+  /** Shared sidebar store: present in the built-in tab, optional in isolated tests. */
+  store?: SidebarStore
   onOpenChild?: (address: SidebarSubagentAddress) => void
 }) {
-  const { sessionId, active, ctx, onOpenChild } = props
+  const { sessionId, active, ctx, store, onOpenChild } = props
   const sessions = ctx.sessions
+  const readActiveOnly = useCallback((): boolean => (
+    store?.getPrefs().hideCompletedSubagents ?? true
+  ), [store])
+  const [activeOnly, setActiveOnly] = useState(readActiveOnly)
+
+  // Keep the in-view control synchronized with settings writes from any
+  // surface. Missing/legacy values intentionally resolve to the default ON.
+  useEffect(() => {
+    if (store === undefined) return
+    const sync = (): void => { setActiveOnly(readActiveOnly()) }
+    sync()
+    return store.subscribe(sync)
+  }, [store, readActiveOnly])
+
+  const toggleActiveOnly = useCallback((): void => {
+    const next = !activeOnly
+    setActiveOnly(next)
+    if (store === undefined) return
+    updateSidebarPrefs(store, { hideCompletedSubagents: next })
+  }, [activeOnly, store])
 
   // The same list feed the official catalog consumes (byId lineage + the
   // lazy per-parent catalogs). Older DSH snapshots without the subagent seam
@@ -752,6 +796,13 @@ export function SubagentView(props: {
     : totals.runningCount > 0
       ? t('subagentCountRunning', { count: totals.count, running: totals.runningCount })
       : t('subagentCount', { count: totals.count })
+  const filteredEmpty = activeOnly
+    && totals.count > 0
+    && rootCatalog?.state === 'ready'
+    && !summaryBackedLoading
+    && rootCatalog.entries.every(entry => (
+      !catalogEntryVisible(entry, catalogs, byId, sessionId, activeOnly)
+    ))
 
   /** Arrow-key tree navigation over the visible rows (official catalog recipe). */
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -791,6 +842,19 @@ export function SubagentView(props: {
             ? ` · ${rootSummary.displayTitle}`
             : ''}
         </span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={activeOnly}
+          title={t('subagentActiveOnlyDesc')}
+          className={clsx(css.subagentFilter, activeOnly && css.subagentFilterActive)}
+          onClick={toggleActiveOnly}
+        >
+          <span className={css.subagentFilterTrack} aria-hidden="true">
+            <span className={css.subagentFilterThumb} />
+          </span>
+          <span className={css.subagentFilterLabel}>{t('subagentActiveOnly')}</span>
+        </button>
         {countLabel !== undefined && <span className={css.subagentCount}>{countLabel}</span>}
         <button
           type="button"
@@ -858,10 +922,17 @@ export function SubagentView(props: {
                   level={1}
                   currentSessionId={sessionId}
                   live={live}
+                  activeOnly={activeOnly}
                   openChild={openChild}
                   refresh={refresh}
                 />
               )}
+            </div>
+          )}
+          {filteredEmpty && (
+            <div className={css.subagentEmpty}>
+              <div>{t('subagentActiveOnly')}</div>
+              <div className={css.subagentEmptyHint}>{t('subagentActiveOnlyDesc')}</div>
             </div>
           )}
           {readyEmpty && (

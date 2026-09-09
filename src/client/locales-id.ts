@@ -272,6 +272,8 @@ export const id: Record<string, string> = {
   subagentEmptyDesc: 'Subagen yang dibangkitkan di bawah agen utama akan muncul di sini',
   subagentRunning: 'Berjalan',
   subagentInactive: 'Menganggur',
+  subagentActiveOnly: 'Hanya aktif',
+  subagentActiveOnlyDesc: 'Sembunyikan subagen yang selesai atau tidak aktif',
   subagentModeOneShot: 'Sekali pakai',
   subagentModeContinuable: 'Dapat dilanjutkan',
   subagentCount: '{count} subagen',

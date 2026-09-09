@@ -274,6 +274,8 @@ export const vi: Record<string, string> = {
   subagentEmptyDesc: 'Tác nhân con do tác nhân chính tạo ra sẽ hiển thị ở đây',
   subagentRunning: 'Đang chạy',
   subagentInactive: 'Nghỉ',
+  subagentActiveOnly: 'Chỉ đang hoạt động',
+  subagentActiveOnlyDesc: 'Ẩn các tác nhân con đã hoàn tất hoặc không hoạt động',
   subagentModeOneShot: 'Một lần',
   subagentModeContinuable: 'Có thể tiếp tục',
   subagentCount: '{count} tác nhân con',

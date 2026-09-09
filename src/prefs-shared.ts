@@ -21,6 +21,11 @@ export interface SidebarPrefs {
    */
   autoOpenSubagent: boolean
   /**
+   * Whether the Tasks topology hides completed/inactive subagents. On by
+   * default; the in-view switch and the Tasks card setting stay synchronized.
+   */
+  hideCompletedSubagents: boolean
+  /**
    * Whether the sidebar auto-activates (opens the panel) and expands the
    * Jobs page when a NEW background job appears for the current
    * conversation (any new job id, not just the first one).
@@ -235,6 +240,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   openByDefault: false,
   defaultWidthPercent: WIDTH_PERCENT_DEFAULT,
   autoOpenSubagent: true,
+  hideCompletedSubagents: true,
   autoOpenJobs: true,
   agentTerminalTools: false,
   agentOpenTools: false,
