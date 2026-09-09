@@ -516,6 +516,7 @@ All changes since v0.14.0:
 | Action | Keys |
 |---|---|
 | Save edits | `Ctrl/Cmd + S` |
+| Find in file | `Ctrl/Cmd + F` (`Enter` / `Shift + Enter` next / previous, `Esc` closes) |
 | Git commit | `Ctrl + Enter` |
 | Close tab | Middle mouse button |
 | Tab context menu (right-click) | Close / Close Other Tabs / Close Tabs to the Left / Close Tabs to the Right (current pane) |

@@ -411,6 +411,21 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   ).toHaveCount(1)
   const pathInput = sidebar.locator('input[placeholder^="File path"]:visible')
   await expect(pathInput, 'the file tab header path input shows the opened file').toHaveValue(new RegExp(`${SEEDED_FILE}$`))
+  // Find-in-file (Cmd/Ctrl+F): the plain-text tab is a code viewer with no
+  // edit toggle — the editor is mounted in its "preview" (read-mostly)
+  // surface, which must search too. The extension rides the SHARED base
+  // extension list, so this proves the search panel opens in a real browser
+  // against the lazily-loaded editor chunk (the jsdom spec covers the unit
+  // level). Mod is Cmd on macOS, Ctrl everywhere else.
+  await sidebar.locator('.cm-content:visible').first().click()
+  await page.keyboard.press(`${process.platform === 'darwin' ? 'Meta' : 'Control'}+f`)
+  const searchPanel = sidebar.locator('.cm-panels-top .cm-search')
+  await expect(
+    searchPanel,
+    'Cmd/Ctrl+F must open the top-pinned search panel in the code viewer',
+  ).toHaveCount(1, { timeout: 10_000 })
+  await page.keyboard.press('Escape')
+  await expect(searchPanel, 'Escape must close the search panel').toHaveCount(0, { timeout: 10_000 })
   await page.waitForTimeout(1_500)
   await assertNoCrash()
 

@@ -134,6 +134,21 @@ export const zh = {
   unsaved: '未保存',
   saveFailed: '保存失败',
   truncation: '文件过大，仅显示前 512KB',
+  searchFind: '查找',
+  searchReplace: '替换',
+  searchNext: '下一个',
+  searchPrevious: '上一个',
+  searchAll: '全选匹配',
+  searchMatchCase: '区分大小写',
+  searchWholeWord: '全词匹配',
+  searchRegexp: '正则表达式',
+  searchReplaceAll: '全部替换',
+  searchCurrentMatch: '当前匹配',
+  searchOnLine: '所在行号',
+  searchReplacedMatches: '已替换 $ 处匹配',
+  searchReplacedMatchOnLine: '已替换第 $ 行的匹配',
+  searchGoToLine: '跳转到行',
+  searchGo: '跳转',
   binary: '二进制文件，无法预览',
   loading: '加载中…',
   error: '加载失败',
@@ -584,6 +599,21 @@ export const en: Record<keyof typeof zh, string> = {
   unsaved: 'Unsaved',
   saveFailed: 'Save failed',
   truncation: 'File too large — showing the first 512KB',
+  searchFind: 'Find',
+  searchReplace: 'Replace',
+  searchNext: 'next',
+  searchPrevious: 'previous',
+  searchAll: 'all',
+  searchMatchCase: 'match case',
+  searchWholeWord: 'by word',
+  searchRegexp: 'regexp',
+  searchReplaceAll: 'replace all',
+  searchCurrentMatch: 'current match',
+  searchOnLine: 'on line',
+  searchReplacedMatches: 'replaced $ matches',
+  searchReplacedMatchOnLine: 'replaced match on line $',
+  searchGoToLine: 'Go to line',
+  searchGo: 'go',
   binary: 'Binary file, preview unavailable',
   loading: 'Loading…',
   error: 'Failed to load',
@@ -1037,6 +1067,23 @@ export function isZh(): boolean {
   const dshActive = localeService?.getSnapshot().active ?? ''
   if (betterLocaleStore?.isOverrideActive(dshActive) === true) return false
   return activeLocale().toLowerCase().startsWith('zh')
+}
+
+/**
+ * A signature of the effective UI language: the DSH locale service's active
+ * id plus the better-locale override id when one is actually in force (the
+ * override only borrows DSH's `en` slot, so it is inert while DSH is on
+ * `zh`). `t()` resolves copy from exactly these two inputs, so a component
+ * that caches localized text OUTSIDE React state — e.g. CodeMirror's
+ * `phrases` facet, which is baked into an EditorState — can use this string
+ * as an effect dependency to know when to re-resolve it.
+ */
+export function localeSignature(): string {
+  const dshActive = localeService?.getSnapshot().active ?? ''
+  const override = betterLocaleStore?.isOverrideActive(dshActive) === true
+    ? betterLocaleStore.active ?? ''
+    : ''
+  return `${dshActive}:${override}`
 }
 
 /** Format an ISO 8601 author date relative to now (刚刚 / N 分钟前 / N 小时前 / 昨天 / date). */
