@@ -246,24 +246,26 @@ export function repoRoots(cwd: string): Promise<string[]> {
 }
 
 async function discoverRepoRoots(cwd: string): Promise<string[]> {
+  const roots: string[] = []
   try {
-    return [await directRepoRoot(cwd)]
+    roots.push(await directRepoRoot(cwd))
   } catch {
-    const entries = await readdir(cwd, { withFileTypes: true }).catch(() => [])
-    const roots: string[] = []
-    for (const entry of entries
-      .filter(entry => entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules')
-      .sort((left, right) => left.name.localeCompare(right.name))
-      .slice(0, DISCOVERY_LIMIT)) {
-      try {
-        const root = await directRepoRoot(join(cwd, entry.name))
-        if (!roots.some(existing => pathIdentity(existing) === pathIdentity(root))) roots.push(root)
-      } catch {
-        // Ordinary child directory; keep discovering sibling repositories.
-      }
-    }
-    return roots
+    // Current directory is not a Git repository root.
   }
+
+  const entries = await readdir(cwd, { withFileTypes: true }).catch(() => [])
+  for (const entry of entries
+    .filter(entry => entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules')
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .slice(0, DISCOVERY_LIMIT)) {
+    try {
+      const root = await directRepoRoot(join(cwd, entry.name))
+      if (!roots.some(existing => pathIdentity(existing) === pathIdentity(root))) roots.push(root)
+    } catch {
+      // Ordinary child directory; keep discovering sibling repositories.
+    }
+  }
+  return roots
 }
 
 /** Resolve the selected repository, defaulting to the first discovered root. */
