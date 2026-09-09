@@ -14,6 +14,7 @@
  * processes are keyed by session.
  */
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
@@ -179,6 +180,8 @@ async function readText(path: string, readLimit: number): Promise<{
   truncated: boolean
   binary: boolean
   size: number
+  /** Last-modified time (ms) — the save route's conflict baseline. */
+  mtimeMs: number
   head?: string
 }> {
   const info = await stat(path).catch((error: unknown) => {
@@ -205,6 +208,7 @@ async function readText(path: string, readLimit: number): Promise<{
       truncated,
       binary,
       size,
+      mtimeMs: info.mtimeMs,
       head,
     }
   } finally {
@@ -350,15 +354,36 @@ function buildApi(
       // cwd; thread it so the path resolves inside the authorized workspace.
       const selected = selectedRepoOf(payload)
       const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected), fenceEnabledOf(getSettings))
-      const { content, truncated, binary, size, head } = await readText(path, resolved.readLimit)
-      if (binary) return { kind: 'binary', size, truncated, head }
-      return { kind: 'text', content, truncated }
+      const { content, truncated, binary, size, mtimeMs, head } = await readText(path, resolved.readLimit)
+      if (binary) return { kind: 'binary', size, truncated, mtimeMs, head }
+      return { kind: 'text', content, truncated, mtimeMs }
     },
     'fs.write': async (payload) => {
       const { cwd } = await cwdOf(payload)
       const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'), fenceEnabledOf(getSettings))
       const content = requireString(payload, 'content')
-      const tmp = `${path}.dsh-sidebar-tmp-${process.pid}`
+      // Optimistic concurrency: the client sends the mtime its draft was based
+      // on; a file that changed on disk since (the model wrote it, another tab
+      // saved, an external editor touched it) refuses the write instead of
+      // silently clobbering those bytes. Omitted (older callers) = no gate.
+      const record = payload as { expectedMtimeMs?: unknown } | null
+      const expected = typeof record?.expectedMtimeMs === 'number' && Number.isFinite(record.expectedMtimeMs)
+        ? record.expectedMtimeMs
+        : undefined
+      if (expected !== undefined) {
+        const current = await stat(path).then(info => info.mtimeMs).catch(() => undefined)
+        if (current !== undefined && current !== expected) {
+          throw new SidebarError(
+            'fs-conflict',
+            `"${path}" changed on disk since it was loaded (expected mtime ${expected}, found ${current})`,
+            409,
+          )
+        }
+      }
+      // Unique temp sibling (randomUUID, the upload route's pattern): two
+      // concurrent saves to the same path write their own temp file, so one
+      // cannot rm() the other's before its rename (EEXIST cross-talk).
+      const tmp = join(dirname(path), `.${basename(path)}.dsh-write-${randomUUID()}.tmp`)
       try {
         await mkdir(dirname(path), { recursive: true })
         await writeFile(tmp, content, 'utf8')
@@ -367,7 +392,9 @@ function buildApi(
         await rm(tmp, { force: true }).catch(() => {})
         throw new SidebarError('fs-error', `cannot write "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
       }
-      return { ok: true }
+      // The fresh baseline the client adopts after a successful save.
+      const mtimeMs = await stat(path).then(info => info.mtimeMs).catch(() => undefined)
+      return { ok: true, ...(mtimeMs !== undefined ? { mtimeMs } : {}) }
     },
     // The tree row's rename: single-segment name, destination-existence and
     // workspace-root refusals, link-aware (renames the row, not its target).

@@ -90,11 +90,11 @@ export interface GitLogEntry {
   refs: string
 }
 
-/** Text read result. */
-export interface FsTextResult { kind: 'text'; content: string; truncated: boolean }
+/** Text read result. `mtimeMs` is the save route's conflict baseline. */
+export interface FsTextResult { kind: 'text'; content: string; truncated: boolean; mtimeMs?: number }
 /** Binary read result (no content; images load through the media route).
  *  `head` carries the first bytes (base64) for viewer detect sniffing. */
-export interface FsBinaryResult { kind: 'binary'; size: number; truncated: boolean; head: string }
+export interface FsBinaryResult { kind: 'binary'; size: number; truncated: boolean; mtimeMs?: number; head: string }
 
 /**
  * One jobs.output response: the output the MODEL has read so far for the
@@ -276,8 +276,17 @@ export const api = {
     call<{ matches: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query }), signal),
   fsRead: (scope: SessionScope, path: string, signal?: AbortSignal) =>
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
-  fsWrite: (scope: SessionScope, path: string, content: string) =>
-    call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
+  /** Save a file. `expectedMtimeMs` is the mtime the draft was based on: a
+   *  file that changed on disk since refuses with code `fs-conflict` (the
+   *  editor then offers a reload) instead of clobbering those bytes. `null`
+   *  (the file did not exist yet) and omitted (older callers) both mean no
+   *  gate. The response carries the fresh baseline. */
+  fsWrite: (scope: SessionScope, path: string, content: string, expectedMtimeMs?: number | null) =>
+    call<{ ok: true; mtimeMs?: number }>('fs.write', scopePayload(scope, {
+      path,
+      content,
+      ...(expectedMtimeMs !== undefined ? { expectedMtimeMs } : {}),
+    })),
   /** Rename one tree row within its directory (single-segment name; the
    *  server refuses existing destinations, the workspace root, and — while
    *  the fence is armed — anything resolving outside the workspace). */

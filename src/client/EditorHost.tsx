@@ -31,6 +31,7 @@ import { api, isOutsideWorkspaceMessage, mediaUrl, type SessionScope } from './a
 import { BinaryDownload } from './binary-download.tsx'
 import { FenceErrorNotice } from './FenceErrorNotice.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
+import { clearEditorDirty, setEditorDirty } from './editor-dirty.ts'
 import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
 import { openSidebarFile } from './intercept.tsx'
@@ -48,7 +49,7 @@ import css from './sidebar.module.css'
 type EditorLoad =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; viewer: FileViewerDescriptor; content?: string; truncated?: boolean; mediaUrl?: string; customData?: unknown }
+  | { status: 'ready'; viewer: FileViewerDescriptor; content?: string; truncated?: boolean; mtimeMs?: number; mediaUrl?: string; customData?: unknown }
   | { status: 'binary' }
 
 /** The docked tree panel's width bounds (drag-resize clamps into them). */
@@ -233,7 +234,7 @@ export function EditorHost(props: {
     retargetPathTabs(ctx, store, oldPath, newPath)
   }
   const onPathDeleted = (path: string): void => {
-    closePathTabs(ctx, store, path)
+    closePathTabs(ctx, store, path, t('closeUnsavedConfirm'))
   }
 
   // The viewer's toolbar, hoisted into THIS header: the text editor reports
@@ -247,6 +248,17 @@ export function EditorHost(props: {
   const onToolbarControls = useCallback((controls: EditorToolbarControls | null) => {
     controlsRef.current = controls
   }, [])
+
+  // Publish this tab's unsaved-draft state to the close/unload guards: the
+  // toolbar report already carries `dirty`, so no extra plumbing is needed.
+  // A path-less window (the files home) and folder windows never register.
+  // The cleanup clears on unmount (tab closed, session switched, in-place
+  // path switch remounts the viewer) so a guard can never outlive its draft.
+  useEffect(() => {
+    if (path === '' || isDir) return
+    setEditorDirty(tab.id, toolbar?.dirty === true, scope.sessionId, path)
+    return () => { clearEditorDirty(tab.id) }
+  }, [tab.id, toolbar?.dirty, scope.sessionId, path, isDir])
 
   // The docked panel's drag-resize: pointer capture on the handle itself
   // (no window listeners — the captured pointer keeps tracking even off the
@@ -339,7 +351,10 @@ export function EditorHost(props: {
               truncated: result.truncated,
               head: result.kind === 'binary' ? result.head : undefined,
             }, (head) => ctx.get('betterSidebar')?.matchFileViewer(path, head), mediaUrlOf)
-            apply(outcome)
+            // Carry the read's mtime into the rendered viewer: the text
+            // editor uses it as the save baseline (fs-conflict on drift).
+            if (outcome.kind === 'render') setLoad({ ...outcome, status: 'ready', mtimeMs: result.mtimeMs })
+            else apply(outcome)
           }).catch((error: unknown) => {
             if (cancelled) return
             setLoad({ status: 'error', message: error instanceof Error ? error.message : String(error) })
@@ -488,12 +503,14 @@ export function EditorHost(props: {
             viewerId: load.viewer.id,
             content: load.content,
             truncated: load.truncated,
+            mtimeMs: load.mtimeMs,
             mediaUrl: load.mediaUrl,
             customData: load.customData,
             // The viewer's toolbar always hoists into this host's header.
             toolbar: 'host',
             onToolbarState,
             onToolbarControls,
+            onReload: refreshFile,
           })}
         </div>
         {treeOpen && (

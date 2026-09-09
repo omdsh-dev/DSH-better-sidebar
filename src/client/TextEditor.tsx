@@ -19,9 +19,10 @@ import clsx from 'clsx'
 import { EditorState } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
-import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { openSearchPanel, search, searchKeymap } from '@codemirror/search'
+import { IconCheckOutline16, IconSearchOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
-import { api, htmlUrl } from './api.ts'
+import { api, htmlUrl, SidebarApiError } from './api.ts'
 import { markdownPreviewSource } from './markdown-frontmatter.ts'
 import { rewriteLocalImageUrls } from './markdown-images.ts'
 import { languageForPath } from './lang.ts'
@@ -51,6 +52,28 @@ type ViewMode = 'preview' | 'edit'
 const previewScrollMemory = new Map<string, number>()
 const previewScrollKey = (scope: { sessionId: string }, path: string): string => `${scope.sessionId}::${path}`
 
+/**
+ * The CodeMirror search panel's labels, resolved from this plugin's own
+ * dictionary at call time (the panel reads them per open, so a live locale
+ * switch is picked up on the next Ctrl/Cmd+F). CodeMirror's built-in strings
+ * are English-only; the keys mirror its `phrase()` calls exactly.
+ */
+function searchPhrases(): Record<string, string> {
+  return {
+    Find: t('find'),
+    Replace: t('replace'),
+    next: t('findNext'),
+    previous: t('findPrevious'),
+    all: t('findAll'),
+    'match case': t('findMatchCase'),
+    regexp: t('findRegexp'),
+    'by word': t('findByWord'),
+    replace: t('replaceOne'),
+    'replace all': t('replaceAll'),
+    close: t('close'),
+  }
+}
+
 export function TextEditor(props: FileViewerProps) {
   const { ctx, scope, path, viewerId, content, truncated } = props
   const [mode, setMode] = useState<ViewMode>('preview')
@@ -58,9 +81,15 @@ export function TextEditor(props: FileViewerProps) {
   const [draft, setDraft] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+  /** The save was refused because the file changed on disk (fs-conflict). */
+  const [conflict, setConflict] = useState(false)
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<CodeMirrorView | null>(null)
   const savingRef = useRef(false)
+  /** The mtime the draft is based on (`null` = the file did not exist yet).
+   *  Seeded from the load, refreshed by every successful save, and reset by
+   *  the file-switch effect. */
+  const mtimeRef = useRef<number | null>(props.mtimeMs ?? null)
   /** The theme compartment of the current view (reconfigured on scheme flip). */
   const themeCompRef = useRef<CmThemeCompartment | null>(null)
   /** The app's resolved color scheme; the editor re-themes in place on flips. */
@@ -107,6 +136,9 @@ export function TextEditor(props: FileViewerProps) {
     setDraft(null)
     setDirty(false)
     setSaveState('idle')
+    setConflict(false)
+    // The freshly loaded bytes are the new save baseline.
+    mtimeRef.current = props.mtimeMs ?? null
     selectionPopup.hide()
     // hide() reads a live ref; the reset must fire only on a content (file)
     // swap, and the hook object's identity churns on every render.
@@ -144,6 +176,12 @@ export function TextEditor(props: FileViewerProps) {
         CodeMirrorView.contentAttributes.of({ spellcheck: 'false' }),
         cmSurfaceTheme,
         themeComp.of(dark),
+        // Find / replace (Ctrl/Cmd+F, Ctrl/Cmd+H): the panel opens at the
+        // top (the editor header is directly above it), all matches are
+        // highlighted, and the labels follow the sidebar's own dictionary
+        // (CodeMirror's defaults are English-only) through the phrases facet.
+        EditorState.phrases.of(searchPhrases()),
+        search({ top: true }),
         ...(language !== null ? [language] : []),
         CodeMirrorView.updateListener.of((update) => {
           if (update.docChanged) {
@@ -158,6 +196,7 @@ export function TextEditor(props: FileViewerProps) {
           },
           ...defaultKeymap,
           ...historyKeymap,
+          ...searchKeymap,
         ]),
         // Selection popup (the code and markdown editors): a non-empty
         // selection anchors the floating "add to conversation" button above
@@ -292,13 +331,26 @@ export function TextEditor(props: FileViewerProps) {
     if (view === null || savingRef.current) return
     savingRef.current = true
     setSaveState('saving')
-    api.fsWrite(scope, path, view.state.doc.toString()).then(() => {
+    // Optimistic concurrency: the draft was based on the bytes read at
+    // `mtimeMs`; a file that changed on disk since is REFUSED (fs-conflict)
+    // instead of clobbering whatever wrote it (the model, another tab, an
+    // external editor). `null` = the file did not exist when loaded.
+    api.fsWrite(scope, path, view.state.doc.toString(), mtimeRef.current ?? null).then((result) => {
       savingRef.current = false
+      // Adopt the fresh baseline the host reports (absent on a stat failure —
+      // keep the old one, the next save just re-checks).
+      if (typeof result.mtimeMs === 'number') mtimeRef.current = result.mtimeMs
       setDraft(null)
       setDirty(false)
+      setConflict(false)
       setSaveState('saved')
-    }).catch(() => {
+    }).catch((error: unknown) => {
       savingRef.current = false
+      if (error instanceof SidebarApiError && error.code === 'fs-conflict') {
+        setConflict(true)
+        setSaveState('idle')
+        return
+      }
       setSaveState('failed')
     })
   }
@@ -458,6 +510,26 @@ export function TextEditor(props: FileViewerProps) {
           <button
             type="button"
             className={css.iconButton}
+            aria-label={t('find')}
+            title={`${t('find')} (Ctrl/Cmd+F)`}
+            onClick={() => {
+              // The panel lives in the CodeMirror surface: in preview mode the
+              // editor is hidden, so switch to edit first (the search panel is
+              // not part of the preview).
+              if (mode === 'preview' && (markdown || html)) setMode('edit')
+              const view = viewRef.current
+              if (view === null) return
+              view.focus()
+              openSearchPanel(view)
+            }}
+          >
+            <IconSearchOutline16 />
+          </button>
+        )}
+        {editable && (
+          <button
+            type="button"
+            className={css.iconButton}
             aria-label={t('save')}
             title={`${t('save')} (Ctrl/Cmd+S)`}
             onClick={save}
@@ -471,6 +543,18 @@ export function TextEditor(props: FileViewerProps) {
       {editable && (
         <>
           {truncated === true && mode === 'edit' && <div className={css.editorBanner}>{t('truncation')}</div>}
+          {conflict && (
+            <div className={css.editorBanner}>
+              {t('saveConflict')}
+              <button
+                type="button"
+                className={css.editorBannerAction}
+                onClick={() => { props.onReload?.() }}
+              >
+                {t('saveConflictReload')}
+              </button>
+            </div>
+          )}
           <div
             className={clsx(css.editorCm, (markdown || html) && mode === 'preview' && css.editorCmHidden)}
             ref={hostRef}

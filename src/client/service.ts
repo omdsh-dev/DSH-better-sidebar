@@ -262,6 +262,10 @@ export interface FileViewerProps {
   /** fsRead text content (fetchStrategy='fsRead'). */
   content?: string
   truncated?: boolean
+  /** Last-modified time (ms) of the loaded bytes — the built-in text editor's
+   *  save baseline (a file that changed on disk since refuses the write).
+   *  Absent for viewers/loads that carry no baseline. */
+  mtimeMs?: number
   /** mediaUrl for the path (fetchStrategy='mediaUrl'). */
   mediaUrl?: string
   /** custom load() return value (fetchStrategy='custom'). */
@@ -276,6 +280,8 @@ export interface FileViewerProps {
   /** Internal: the viewer registers its toolbar commands on mount (null on
    *  unmount). */
   onToolbarControls?: (controls: EditorToolbarControls | null) => void
+  /** Internal: reload the file from disk (the save-conflict banner's action). */
+  onReload?: () => void
 }
 
 /** The toolbar state a text editor reports to the host's merged-mode header. */

@@ -516,6 +516,9 @@ All changes since v0.14.0:
 | Action | Keys |
 |---|---|
 | Save edits | `Ctrl/Cmd + S` |
+| Find / replace in the editor | `Ctrl/Cmd + F` / `Ctrl/Cmd + H` |
+| Find next / previous | `Ctrl/Cmd + G` / `Shift + Ctrl/Cmd + G` (in the panel: `Enter` / `Shift + Enter`) |
+| Select next occurrence | `Ctrl/Cmd + D` |
 | Git commit | `Ctrl + Enter` |
 | Close tab | Middle mouse button |
 | Tab context menu (right-click) | Close / Close Other Tabs / Close Tabs to the Left / Close Tabs to the Right (current pane) |
@@ -567,6 +570,7 @@ make clean          # remove lib/, *.tgz, playwright-report/, test-results/
 ## ⚠️ Known Limitations
 
 - Git has no push/pull/fetch; Markdown previews provide a manual refresh button with confirmation before discarding unsaved edits; no file watcher or automatic polling; tool inline file-open buttons cannot be intercepted
+- Unsaved drafts: closing a tab, deleting the file, and refreshing/closing the page all confirm first (the `Ctrl/Cmd + F` panel searches the open editor only, not across files); a save is refused when the file changed on disk since it was loaded (a "Reload from disk" action is offered) instead of silently overwriting those bytes
 - Dragging a terminal tab to another pane remounts it (shell restarts)
 - Office-suite preview (.docx/.xlsx/.pptx) moved to the recommended office plugin (see the "Add plugins" modals in settings); without it these files fall through to the code/download fallbacks
 - Browser sandbox has no login state / third-party cookies are restricted; some sites need popup login; sites that refuse embedding via `X-Frame-Options`/`frame-ancestors` (e.g. arxiv.org) show a reason panel (with "Open in browser"); in-iframe navigation does not enter the back stack
