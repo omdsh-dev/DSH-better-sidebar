@@ -41,6 +41,27 @@ describe('git parsing', () => {
     }
   })
 
+  it('discovers root and direct child repositories when root is also a git repository', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-better-sidebar-root-git-'))
+    const child = join(workspace, 'child-repo')
+    try {
+      await mkdir(child)
+      await Promise.all([
+        execFileAsync('git', ['-C', workspace, 'init']),
+        execFileAsync('git', ['-C', child, 'init']),
+      ])
+
+      await expect(repoRoots(workspace)).resolves.toEqual([canonical(workspace), canonical(child)])
+      await expect(status(workspace, canonical(child))).resolves.toMatchObject({
+        isRepo: true,
+        root: canonical(child),
+        repositories: [canonical(workspace), canonical(child)],
+      })
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('parses porcelain -z entries including renames', () => {
     const output = ['M  src/a.ts', ' M src/b.ts', '?? src/c.ts', 'R  src/new.ts', 'src/old.ts', ''].join('\0')
     const entries = parsePorcelainZ(output)
