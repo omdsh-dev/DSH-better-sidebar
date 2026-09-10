@@ -228,6 +228,11 @@ export function apply(ctx: Context): void {
       let mounted = false
       let bodyObserver: MutationObserver | undefined
       let hostCheckFrame: number | null = null
+      /** Bounded retry budget for the geometry watchdog: the mount self-check
+       *  can run before React commits `[data-dsh-panel-host]`. ~120 frames is
+       *  far beyond any realistic commit latency, and a bounded budget keeps
+       *  the loop from spinning forever if the layer never appears. */
+      let retriesLeft = 120
       const unmount = (): void => {
         if (!mounted) return
         mounted = false
@@ -254,47 +259,78 @@ export function apply(ctx: Context): void {
         })
         bodyObserver.observe(document.body, { childList: true })
       }
-      /** One-shot geometry self-check: if the host page transforms
-       *  <html>/<body> itself (exotic shells), a fixed panel host would
-       *  track the transformed box instead of the viewport. Flip the
-       *  degraded mode and pin the host to the viewport every frame until
-       *  the ancestor transform is actually gone. The normal path (no
-       *  page-level transform) never runs the sync loop. */
+      /** Geometry self-check for the fixed panel host.
+       *
+       *  Two independent failure modes are covered:
+       *
+       *  1. LATE LAYER. The mount self-check runs right after `root.render()`,
+       *     but React has not committed yet, so `[data-dsh-panel-host]` is
+       *     usually still absent. The old code returned on that first miss and
+       *     was never rescheduled — the guard silently did nothing for the
+       *     whole session. Keep retrying for a bounded window instead.
+       *
+       *  2. HIJACKED CONTAINING BLOCK. A page-level `transform`, `filter`,
+       *     `backdrop-filter` (translucent skins), `will-change`,
+       *     `contain: paint` or `container-type` re-roots the containing block
+       *     of `position: fixed`, so the host stops tracking the viewport (the
+       *     height may collapse to 0, or the box shifts). Detected as a rect
+       *     that no longer matches the viewport — deliberately geometry-based
+       *     rather than a property allowlist, so any equivalent future trigger
+       *     is caught by the same check. Flip degraded mode and pin the host to
+       *     the viewport every frame. */
       const scheduleHostCheck = (): void => {
         hostCheckFrame ??= requestAnimationFrame(() => {
           hostCheckFrame = null
           const layer = host?.querySelector<HTMLElement>('[data-dsh-panel-host]')
-          if (layer === null || layer === undefined) return
+          if (layer === null || layer === undefined) {
+            // React has not committed the layer yet (or the host was replaced).
+            // Retry for a bounded window instead of giving up permanently.
+            if (host !== undefined && retriesLeft-- > 0) scheduleHostCheck()
+            return
+          }
           const rect = layer.getBoundingClientRect()
-          const mismatched = Math.abs(rect.left) > 8 || Math.abs(rect.top) > 8
-            || Math.abs(rect.width - window.innerWidth) > 8 || Math.abs(rect.height - window.innerHeight) > 8
+          const mismatched = Math.abs(rect.left) > 1 || Math.abs(rect.top) > 1
+            || Math.abs(rect.width - window.innerWidth) > 1 || Math.abs(rect.height - window.innerHeight) > 1
           if (!mismatched) {
             layer.removeAttribute('data-dsh-panel-host-degraded')
             layer.style.transform = ''
+            // Keep watching: a skin toggled or a shell wrapper added later
+            // re-roots the containing block mid-session. Cheap (one rect per
+            // frame); stops by itself once the host is gone.
+            if (host !== undefined) scheduleHostCheck()
             return
           }
           layer.setAttribute('data-dsh-panel-host-degraded', '')
-          console.warn('[dsh-better-sidebar] panel host geometry mismatch — a page-level transform was detected; using degraded viewport sync')
+          console.warn('[dsh-better-sidebar] panel host geometry mismatch — a page-level transform/filter/backdrop-filter is re-rooting the containing block; using degraded viewport sync')
           // Track our own compensating translation so the loop judges the
           // UNCORRECTED geometry: clearing degraded mode must wait for the
-          // ancestor transform to actually disappear — the frame right after
+          // page-level transform to actually disappear — the frame right after
           // our correction applies would otherwise look "fixed" and the
           // offset would return immediately (CR #232 P1).
           let applied = { x: 0, y: 0 }
           const sync = (): void => {
-            const r = layer.getBoundingClientRect()
+            const live = host?.querySelector<HTMLElement>('[data-dsh-panel-host]')
+            if (live === null || live === undefined) {
+              // Host unmounted: stop the loop rather than spinning on a
+              // detached node.
+              hostCheckFrame = null
+              return
+            }
+            const r = live.getBoundingClientRect()
             const rawLeft = r.left - applied.x
             const rawTop = r.top - applied.y
             if (Math.abs(rawLeft) <= 1 && Math.abs(rawTop) <= 1
               && Math.abs(r.width - window.innerWidth) <= 1 && Math.abs(r.height - window.innerHeight) <= 1) {
-              layer.removeAttribute('data-dsh-panel-host-degraded')
-              layer.style.transform = ''
+              live.removeAttribute('data-dsh-panel-host-degraded')
+              live.style.transform = ''
+              // Cause gone: resume the watchdog instead of ending the check.
+              scheduleHostCheck()
               return
             }
             const next = { x: -rawLeft, y: -rawTop }
             if (next.x !== applied.x || next.y !== applied.y) {
               applied = next
-              layer.style.transform = `translate(${applied.x}px, ${applied.y}px)`
+              live.style.transform = `translate(${applied.x}px, ${applied.y}px)`
             }
             hostCheckFrame = requestAnimationFrame(sync)
           }
