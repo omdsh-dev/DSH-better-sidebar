@@ -37,6 +37,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import '@xterm/xterm/css/xterm.css'
 import { t } from './locales.ts'
+import { ONE_DARK, ONE_LIGHT } from './one-dark-palette.ts'
 import { openWhenSized } from './open-when-sized.ts'
 import { api, type SessionScope, type TerminalDepsStatus } from './api.ts'
 import { agentUuidOf, isAgentTabId, type SidebarStore } from './state.ts'
@@ -60,6 +61,13 @@ const FAILURE_LIMIT = 3
  */
 const PTY_DEPS_MISSING = 'pty-deps-missing'
 
+/**
+ * The WS close-reason prefix the host sends when the CONFIGURED shell was
+ * not found (mirror of src/index.ts wsCloseReasonOf; wire contract, keep the
+ * literal in lockstep). The view renders a localized, actionable banner.
+ */
+const SHELL_NOT_FOUND_PREFIX = 'shell-not-found:'
+
 /** The degraded-mode payload rendered by {@link TerminalDepsBanner}. */
 type TerminalDepsInfo = Extract<TerminalDepsStatus, { ok: false }>
 
@@ -67,24 +75,24 @@ type TerminalDepsInfo = Extract<TerminalDepsStatus, { ok: false }>
  * Curated ANSI palettes for the terminal. The surface colors (background,
  * foreground, cursor, selection) ride the theme tokens so the terminal
  * blends with the panel in both schemes; the 16 ANSI colors are the same
- * designed palettes the app's code surfaces use (one-dark family for dark,
- * one-light family for light), read live so a scheme flip re-themes in
- * place.
+ * designed syntax families the app's code surfaces use — one-dark for
+ * dark, one-light for light (one-dark-palette.ts, shared with the
+ * CodeMirror themes) — read live so a scheme flip re-themes in place.
  */
 const ANSI_DARK: Record<string, string> = {
-  black: '#282c34', red: '#e06c75', green: '#98c379', yellow: '#e5c07b',
-  blue: '#61afef', magenta: '#c678dd', cyan: '#56b6c2', white: '#abb2bf',
-  brightBlack: '#5c6370', brightRed: '#e06c75', brightGreen: '#98c379',
-  brightYellow: '#e5c07b', brightBlue: '#61afef', brightMagenta: '#c678dd',
-  brightCyan: '#56b6c2', brightWhite: '#ffffff',
+  black: ONE_DARK.black, red: ONE_DARK.red, green: ONE_DARK.green, yellow: ONE_DARK.yellow,
+  blue: ONE_DARK.blue, magenta: ONE_DARK.magenta, cyan: ONE_DARK.cyan, white: ONE_DARK.gray,
+  brightBlack: ONE_DARK.faintGray, brightRed: ONE_DARK.red, brightGreen: ONE_DARK.green,
+  brightYellow: ONE_DARK.yellow, brightBlue: ONE_DARK.blue, brightMagenta: ONE_DARK.magenta,
+  brightCyan: ONE_DARK.cyan, brightWhite: ONE_DARK.white,
 }
 
 const ANSI_LIGHT: Record<string, string> = {
-  black: '#383a42', red: '#e45649', green: '#50a14f', yellow: '#c18401',
-  blue: '#0184bc', magenta: '#a626a4', cyan: '#0997b3', white: '#a0a1a7',
-  brightBlack: '#4f525e', brightRed: '#e45649', brightGreen: '#50a14f',
-  brightYellow: '#c18401', brightBlue: '#0184bc', brightMagenta: '#a626a4',
-  brightCyan: '#0997b3', brightWhite: '#fafafa',
+  black: ONE_LIGHT.black, red: ONE_LIGHT.red, green: ONE_LIGHT.green, yellow: ONE_LIGHT.yellow,
+  blue: ONE_LIGHT.blue, magenta: ONE_LIGHT.magenta, cyan: ONE_LIGHT.cyan, white: ONE_LIGHT.gray,
+  brightBlack: ONE_LIGHT.faintGray, brightRed: ONE_LIGHT.red, brightGreen: ONE_LIGHT.green,
+  brightYellow: ONE_LIGHT.yellow, brightBlue: ONE_LIGHT.blue, brightMagenta: ONE_LIGHT.magenta,
+  brightCyan: ONE_LIGHT.cyan, brightWhite: ONE_LIGHT.offWhite,
 }
 
 /** The xterm theme for the current scheme (surface from tokens, ANSI curated). */
@@ -239,6 +247,12 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
           }).catch(() => {
             setFatal(t('terminalDepsFailed'))
           })
+          return
+        }
+        // The configured shell could not be found (settings page or yaml):
+        // a localized banner beats the raw English close reason.
+        if (event.code === 1011 && event.reason.startsWith(SHELL_NOT_FOUND_PREFIX)) {
+          setFatal(t('terminalShellNotFound', { name: event.reason.slice(SHELL_NOT_FOUND_PREFIX.length) || '?' }))
           return
         }
         // A server-side refusal carries a close code + reason; retrying it

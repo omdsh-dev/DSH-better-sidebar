@@ -17,6 +17,7 @@
  * snapshot inside the boundary prompt.
  */
 import type { SidebarHistoryEntry, SidebarSessionSummary } from './context-types.ts'
+import type { AssistantLiveChunk } from './assistant-live.ts'
 
 /** The durable thread-label prefix (also the row filter in the client list). */
 export const SIDE_LABEL_PREFIX = 'Side: '
@@ -79,6 +80,55 @@ export interface SidechatLogEvent {
   seq: number
   time: number
   data: unknown
+}
+
+/**
+ * One live assistant delta on the plugin's wire, mirroring DSH 0.1.5's
+ * client-only `assistant/live-chunk` presentation row.
+ *
+ * DSH 0.1.5 no longer logs `assistant/chunk`: an in-flight attempt's deltas
+ * are process-local frames (`agent/assistant-stream`, folded by
+ * {@link ./assistant-live.ts}) and reach the transcript through the plugin's
+ * own `sidechat.events` route as these rows. They are NOT durable — the
+ * route returns the current attempt's rows on every poll and the client
+ * replaces its live set each time; the durable `assistant/message` settles
+ * them by `turn:step`.
+ */
+export interface SidechatLiveEvent {
+  type: 'assistant/live-chunk'
+  /** Ordering key among live rows only; durable seqs stay authoritative. */
+  seq: number
+  time: number
+  data: {
+    attemptId: string
+    turn: number
+    step: number
+    /** Dense zero-based position within the attempt. */
+    index: number
+    /** The raw model stream chunk. */
+    chunk: Record<string, unknown>
+  }
+}
+
+/**
+ * Project buffered live chunks into wire rows.
+ * @param chunks - the session's active-attempt chunks, in index order.
+ * @param tailSeq - the session's last durable seq (live rows order after it).
+ * @returns the rows to append to the transcript feed.
+ */
+export function liveEventsOf(chunks: readonly AssistantLiveChunk[], tailSeq: number): SidechatLiveEvent[] {
+  return chunks.map((delta, position) => ({
+    type: 'assistant/live-chunk',
+    seq: tailSeq + 1 + position,
+    time: delta.time,
+    data: {
+      attemptId: delta.attemptId,
+      turn: delta.turn,
+      step: delta.step,
+      index: delta.index,
+      chunk: delta.chunk,
+    },
+  }))
 }
 
 /** The result of cutting a parent log into a side-thread inheritance. */
@@ -210,8 +260,14 @@ const SNAPSHOT_TOTAL_CAP = 8000
 /**
  * Build the side-thread inheritance for one parent log: the full event log
  * up to the click moment, honestly closed when it ends inside an open turn.
+ * @param events - the parent's log (live or persisted).
+ * @param live - the parent's in-flight stream chunks (DSH 0.1.5+ publishes
+ *   them outside the log); used only by the snapshot fallback.
  */
-export function buildSidechatInheritance(events: readonly SidechatLogEvent[]): SidechatInheritance {
+export function buildSidechatInheritance(
+  events: readonly SidechatLogEvent[],
+  live: readonly AssistantLiveChunk[] = [],
+): SidechatInheritance {
   if (events.length === 0) return { seed: [], snapshot: null }
   const boundary = lastTurnBoundary(events)
   if (boundary < 0 || events[boundary]?.type === 'turn/end') {
@@ -225,7 +281,7 @@ export function buildSidechatInheritance(events: readonly SidechatLogEvent[]): S
     // the structured snapshot to the boundary prompt instead.
     return {
       seed: copyEvents(events.slice(0, boundary)),
-      snapshot: buildOpenTurnSnapshot(events),
+      snapshot: buildOpenTurnSnapshot(events, live),
     }
   }
   const seed = copyEvents(events)
@@ -245,21 +301,83 @@ export function buildSidechatInheritance(events: readonly SidechatLogEvent[]): S
   return { seed, snapshot: null }
 }
 
+/** One assistant content block reduced to the text the snapshot shows. */
+function messageTexts(message: unknown): { text: string; reasoning: string } {
+  const content = (message as { content?: unknown } | undefined)?.content
+  let text = ''
+  let reasoning = ''
+  if (!Array.isArray(content)) return { text, reasoning }
+  for (const block of content) {
+    if (block === null || typeof block !== 'object') continue
+    const candidate = block as { type?: unknown; text?: unknown }
+    if (typeof candidate.text !== 'string' || candidate.text === '') continue
+    if (candidate.type === 'text') text += candidate.text
+    else if (candidate.type === 'reasoning') reasoning += candidate.text
+  }
+  return { text, reasoning }
+}
+
+/**
+ * Expand one attempt's compact `AssistantStreamRecord[]` (the durable stream
+ * DSH 0.1.5 embeds in `assistant/message.stream` and `assistant/attempt.stream`)
+ * into the text/reasoning it carried. Tool-call records contribute no text.
+ */
+function streamTexts(stream: unknown): { text: string; reasoning: string } {
+  let text = ''
+  let reasoning = ''
+  if (!Array.isArray(stream)) return { text, reasoning }
+  for (const record of stream) {
+    if (record === null || typeof record !== 'object') continue
+    const entry = record as { type?: unknown; texts?: unknown; chunk?: unknown }
+    if (entry.type === 'text-chunks' || entry.type === 'reasoning-chunks') {
+      if (!Array.isArray(entry.texts)) continue
+      const joined = entry.texts.filter((part): part is string => typeof part === 'string').join('')
+      if (entry.type === 'text-chunks') text += joined
+      else reasoning += joined
+      continue
+    }
+    if (entry.type === 'chunk') {
+      const chunk = entry.chunk as { type?: unknown; text?: unknown } | undefined
+      if (chunk === null || typeof chunk !== 'object' || typeof chunk.text !== 'string') continue
+      if (chunk.type === 'text-delta') text += chunk.text
+      else if (chunk.type === 'reasoning-delta') reasoning += chunk.text
+    }
+  }
+  return { text, reasoning }
+}
+
+/** One live delta's contribution to the snapshot. */
+function liveTexts(chunk: Record<string, unknown>): { text: string; reasoning: string } {
+  if (typeof chunk.text !== 'string' || chunk.text === '') return { text: '', reasoning: '' }
+  if (chunk.type === 'text-delta') return { text: chunk.text, reasoning: '' }
+  if (chunk.type === 'reasoning-delta') return { text: '', reasoning: chunk.text }
+  return { text: '', reasoning: '' }
+}
+
 /**
  * Structured text snapshot of the parent's OPEN turn (from its `turn/start`
- * to the log tail): the accumulated assistant/reasoning output verbatim
- * (code blocks ride the raw deltas) and the tool activity — executed tools
- * with their result text, the still-executing one marked. Returns null when
- * there is no open turn or nothing to show.
+ * to the log tail): the assistant/reasoning output so far and the tool
+ * activity — executed tools with their result text, the still-executing one
+ * marked. Returns null when there is no open turn or nothing to show.
+ *
+ * The in-flight step's text is NOT in the log on DSH 0.1.5 (the model stream
+ * is process-local until it settles), so it comes from `live`; settled steps
+ * read their durable `assistant/message` content, and a failed attempt reads
+ * its embedded `assistant/attempt.stream`.
+ * @param events - the parent's log.
+ * @param live - the parent's in-flight stream chunks, in index order.
  */
-export function buildOpenTurnSnapshot(events: readonly SidechatLogEvent[]): string | null {
+export function buildOpenTurnSnapshot(
+  events: readonly SidechatLogEvent[],
+  live: readonly AssistantLiveChunk[] = [],
+): string | null {
   const boundary = lastTurnBoundary(events)
   if (boundary < 0 || events[boundary]?.type !== 'turn/start') return null
+  const openTurn = numberAt(dataOf(events[boundary]!), 'turn')
   let text = ''
   let reasoning = ''
   const tools: string[] = []
   const pendingCalls = new Map<string, { name: string; args: string }>()
-  let total = 0
   for (let index = boundary + 1; index < events.length; index++) {
     const event = events[index]
     if (event === undefined) continue
@@ -268,11 +386,16 @@ export function buildOpenTurnSnapshot(events: readonly SidechatLogEvent[]): stri
       pendingCalls.clear()
       continue
     }
-    if (event.type === 'assistant/chunk') {
-      const chunk = data.chunk as { type?: unknown; text?: unknown } | undefined
-      if (chunk === null || typeof chunk !== 'object') continue
-      if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
-      else if (chunk.type === 'reasoning-delta' && typeof chunk.text === 'string') reasoning += chunk.text
+    if (event.type === 'assistant/message') {
+      const settled = messageTexts(data.message)
+      text += settled.text
+      reasoning += settled.reasoning
+      continue
+    }
+    if (event.type === 'assistant/attempt') {
+      const attempt = streamTexts(data.stream)
+      text += attempt.text
+      reasoning += attempt.reasoning
       continue
     }
     if (event.type === 'tool/call') {
@@ -299,13 +422,18 @@ export function buildOpenTurnSnapshot(events: readonly SidechatLogEvent[]): stri
         ...(result === '' ? [] : [`  Result: ${result}`]),
       ].join('\n')
       tools.push(line)
-      total += line.length
     }
   }
   for (const [, call] of pendingCalls) {
     const line = `- \`${call.name}\` (executing) — arguments: \`${call.args}\``
     tools.push(line)
-    total += line.length
+  }
+  // The in-flight step: its deltas never reached the log.
+  for (const delta of live) {
+    if (delta.turn !== openTurn) continue
+    const contribution = liveTexts(delta.chunk)
+    text += contribution.text
+    reasoning += contribution.reasoning
   }
   const sections: string[] = []
   if (text.trim() !== '') sections.push(`Assistant output so far:\n\n${text}`)

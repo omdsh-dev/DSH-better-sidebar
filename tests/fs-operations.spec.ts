@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { writeWorkspaceUpload } from '../src/fs-operations.ts'
+import { renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from '../src/fs-operations.ts'
 
 /** The test workspace root (each suite gets its own temp tree). */
 const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-'))
@@ -148,5 +148,94 @@ describe('writeWorkspaceUpload', () => {
       cwd: root, dir: root, relativePath: 'keep.txt', chunks: chunksOf('0123456789'), limit: 2,
     })).rejects.toMatchObject({ code: 'too-large' })
     expect(readFileSync(target, 'utf8')).toBe('original')
+  })
+})
+
+describe('renameWorkspaceEntry', () => {
+  it('renames a file within its directory', async () => {
+    writeFileSync(join(root, 'old-name.txt'), 'x')
+    const { path } = await renameWorkspaceEntry({ cwd: root, path: join(root, 'old-name.txt'), name: 'new-name.txt' })
+    // The returned path is CANONICAL (realpath-resolved ancestors — on macOS
+    // the tmpdir's /var becomes /private/var), so assert the shape, not the
+    // lexical spelling.
+    expect(path.endsWith('new-name.txt')).toBe(true)
+    expect(existsSync(join(root, 'old-name.txt'))).toBe(false)
+    expect(existsSync(join(root, 'new-name.txt'))).toBe(true)
+  })
+
+  it('renames a directory (recursive content moves with it)', async () => {
+    mkdirSync(join(root, 'olddir/nested'), { recursive: true })
+    writeFileSync(join(root, 'olddir/nested/deep.txt'), 'x')
+    await renameWorkspaceEntry({ cwd: root, path: join(root, 'olddir'), name: 'newdir' })
+    expect(readFileSync(join(root, 'newdir/nested/deep.txt'), 'utf8')).toBe('x')
+  })
+
+  it('is a no-op for the same name (destination-exists refusal must not bite)', async () => {
+    writeFileSync(join(root, 'same.txt'), 'x')
+    await renameWorkspaceEntry({ cwd: root, path: join(root, 'same.txt'), name: 'same.txt' })
+    expect(existsSync(join(root, 'same.txt'))).toBe(true)
+  })
+
+  it('refuses single-segment violations (empty, dot, traversal, separators)', async () => {
+    writeFileSync(join(root, 'r.txt'), 'x')
+    for (const name of ['', '.', '..', 'a/b', 'a\\b']) {
+      await expect(renameWorkspaceEntry({ cwd: root, path: join(root, 'r.txt'), name }))
+        .rejects.toMatchObject({ code: 'bad-request' })
+    }
+  })
+
+  it('refuses an existing destination instead of clobbering it', async () => {
+    writeFileSync(join(root, 'src.txt'), 'src')
+    writeFileSync(join(root, 'dst.txt'), 'dst')
+    await expect(renameWorkspaceEntry({ cwd: root, path: join(root, 'src.txt'), name: 'dst.txt' }))
+      .rejects.toMatchObject({ code: 'fs-error', status: 409 })
+    expect(readFileSync(join(root, 'dst.txt'), 'utf8')).toBe('dst')
+  })
+
+  it('refuses the workspace root and missing sources', async () => {
+    await expect(renameWorkspaceEntry({ cwd: root, path: root, name: 'nope' }))
+      .rejects.toMatchObject({ code: 'fs-error' })
+    await expect(renameWorkspaceEntry({ cwd: root, path: join(root, 'missing.txt'), name: 'x' }))
+      .rejects.toMatchObject({ code: 'fs-error' })
+  })
+
+  it('renames a symlink ROW, not its target', async () => {
+    writeFileSync(join(root, 'target.txt'), 't')
+    symlinkSync(join(root, 'target.txt'), join(root, 'alias.txt'))
+    await renameWorkspaceEntry({ cwd: root, path: join(root, 'alias.txt'), name: 'alias2.txt' })
+    expect(existsSync(join(root, 'alias.txt'))).toBe(false)
+    expect(existsSync(join(root, 'alias2.txt'))).toBe(true)
+    expect(readFileSync(join(root, 'target.txt'), 'utf8')).toBe('t')
+  })
+})
+
+describe('removeWorkspaceEntry', () => {
+  it('unlinks a file', async () => {
+    writeFileSync(join(root, 'gone.txt'), 'x')
+    await removeWorkspaceEntry({ cwd: root, path: join(root, 'gone.txt') })
+    expect(existsSync(join(root, 'gone.txt'))).toBe(false)
+  })
+
+  it('removes a directory recursively', async () => {
+    mkdirSync(join(root, 'tree/sub'), { recursive: true })
+    writeFileSync(join(root, 'tree/sub/leaf.txt'), 'x')
+    await removeWorkspaceEntry({ cwd: root, path: join(root, 'tree') })
+    expect(existsSync(join(root, 'tree'))).toBe(false)
+  })
+
+  it('unlinks a symlink row without touching (or recursing into) its target', async () => {
+    mkdirSync(join(root, 'realdir'), { recursive: true })
+    writeFileSync(join(root, 'realdir/keep.txt'), 'x')
+    symlinkSync(join(root, 'realdir'), join(root, 'linkdir'))
+    await removeWorkspaceEntry({ cwd: root, path: join(root, 'linkdir') })
+    expect(existsSync(join(root, 'linkdir'))).toBe(false)
+    expect(readFileSync(join(root, 'realdir/keep.txt'), 'utf8')).toBe('x')
+  })
+
+  it('refuses the workspace root and missing paths', async () => {
+    await expect(removeWorkspaceEntry({ cwd: root, path: root }))
+      .rejects.toMatchObject({ code: 'fs-error' })
+    await expect(removeWorkspaceEntry({ cwd: root, path: join(root, 'no-such.txt') }))
+      .rejects.toMatchObject({ code: 'fs-error' })
   })
 })

@@ -64,7 +64,7 @@ const EVENTS = [
 
 /** A subscribable sessions-list snapshot (mirror of the runtime list feed). */
 function makeStore(initial: SidebarSessionList) {
-  let snapshot = initial
+  const snapshot = initial
   const listeners = new Set<() => void>()
   return {
     getSnapshot: (): SidebarSessionList => snapshot,

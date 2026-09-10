@@ -7,6 +7,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { SidebarHistoryEntry, SidebarSessionEvent, SidebarSessionSummary } from '../src/context-types.ts'
+import type { AssistantLiveChunk } from '../src/assistant-live.ts'
 import {
   boundaryDelivered,
   buildOpenTurnSnapshot,
@@ -22,7 +23,6 @@ import {
   SIDE_INJECTION_PLUGIN,
   SIDE_LABEL_PREFIX,
   type SeedEvent,
-  type SidechatLogEvent,
 } from '../src/sidechat-core.ts'
 
 /** One log event fixture (structural, seq === index like the live contract).
@@ -34,6 +34,24 @@ function ev(type: string, seq: number, data: Record<string, unknown> = {}): Side
     return { ...event, surfaceOp: 'append' } as SidebarSessionEvent
   }
   return event
+}
+
+/** One live delta as the 0.1.5 stream buffer produces it: `index` is the
+ *  dense frame position, the chunk carries its own block index. */
+function live(
+  turn: number,
+  step: number,
+  text: string,
+  over: { kind?: 'text' | 'reasoning'; index?: number; block?: number } = {},
+): AssistantLiveChunk {
+  return {
+    attemptId: 'a1',
+    turn,
+    step,
+    index: over.index ?? 0,
+    time: 0,
+    chunk: { type: over.kind === 'reasoning' ? 'reasoning-delta' : 'text-delta', index: over.block ?? 0, text },
+  }
 }
 
 /** A completed user→assistant turn block (turn T, step 1, optional tools). */
@@ -137,7 +155,6 @@ describe('buildSidechatInheritance', () => {
       ev('user/message', 6, { content: [{ type: 'text', text: 'next?' }], source: { kind: 'user' } }),
       ev('turn/start', 7, { turn: 2 }),
       ev('step/start', 8, { turn: 2, step: 1 }),
-      ev('assistant/chunk', 9, { turn: 2, step: 1, chunk: { type: 'text-delta', index: 0, text: 'partial answer' } }),
     ]
     const { seed, snapshot } = buildSidechatInheritance(events)
     expectContiguous(seed)
@@ -146,10 +163,12 @@ describe('buildSidechatInheritance', () => {
     const turnEnd = seed.at(-1)!
     expect(stepEnd).toMatchObject({ type: 'step/end', data: { turn: 2, step: 1 } })
     expect(turnEnd).toMatchObject({ type: 'turn/end', data: { turn: 2, reason: { kind: 'interrupted' } } })
-    // The pending user message and the partial chunk survive as REAL events.
+    // The pending user message survives as a REAL event. The in-flight
+    // step's deltas are process-local on 0.1.5, so they are NOT seed events —
+    // the snapshot fallback is the only path that carries them.
     expect(seed.some(event => event.type === 'user/message'
       && (event.data.content as Array<{ text: string }>)[0]?.text === 'next?')).toBe(true)
-    expect(seed.some(event => event.type === 'assistant/chunk')).toBe(true)
+    expect(seed.every(event => event.type !== 'assistant/live-chunk')).toBe(true)
     expect(snapshot).toBeNull()
   })
 
@@ -167,7 +186,7 @@ describe('buildSidechatInheritance', () => {
           content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'hit' }] }],
         },
       }),
-      ev('assistant/chunk', 5, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'found ' } }),
+      ev('assistant/message', 5, { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'found it' }] }, stream: [] }),
     ]
     const { seed, snapshot } = buildSidechatInheritance(events)
     expectContiguous(seed)
@@ -181,11 +200,12 @@ describe('buildSidechatInheritance', () => {
       ev('user/message', 0, { content: [{ type: 'text', text: 'q' }], source: { kind: 'user' } }),
       ev('turn/start', 1, { turn: 1 }),
       ev('step/start', 2, { turn: 1, step: 1 }),
-      ev('assistant/chunk', 3, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'running ' } }),
       ev('tool/call', 4, { turn: 1, step: 1, callId: 'c1', name: 'bash', arguments: '{"cmd":"sleep 9"}' }),
     ]
     expect(hasDanglingToolCall(events, 1)).toBe(true)
-    const { seed, snapshot } = buildSidechatInheritance(events)
+    // The in-flight text is process-local on 0.1.5: it reaches the snapshot
+    // through the live buffer, not through the log.
+    const { seed, snapshot } = buildSidechatInheritance(events, [live(1, 1, 'running ')])
     expectContiguous(seed)
     // The seed stops BEFORE the open turn; the pending user message stays.
     expect(seed.at(-1)?.type).toBe('user/message')
@@ -201,10 +221,9 @@ describe('buildSidechatInheritance', () => {
       ev('user/message', 0, { content: [{ type: 'text', text: 'q' }], source: { kind: 'user' } }),
       ev('turn/start', 1, { turn: 1 }),
       ev('step/start', 2, { turn: 1, step: 1 }),
-      ev('assistant/message', 3, { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'first' }] } }),
+      ev('assistant/message', 3, { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'first' }] }, stream: [] }),
       ev('step/end', 4, { turn: 1, step: 1 }),
       ev('step/start', 5, { turn: 1, step: 2 }),
-      ev('assistant/chunk', 6, { turn: 1, step: 2, chunk: { type: 'text-delta', index: 0, text: 'second' } }),
     ]
     const { seed } = buildSidechatInheritance(events)
     expectContiguous(seed)
@@ -223,9 +242,6 @@ describe('buildOpenTurnSnapshot', () => {
     const events = [
       ev('turn/start', 0, { turn: 1 }),
       ev('step/start', 1, { turn: 1, step: 1 }),
-      ev('assistant/chunk', 2, { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 0, text: 'think' } }),
-      ev('assistant/chunk', 3, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: '```js\ncode' } }),
-      ev('assistant/chunk', 4, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: '\n```' } }),
       ev('tool/call', 5, { turn: 1, step: 1, callId: 'c1', name: 'read', arguments: '{"path":"a.txt"}' }),
       ev('tool/result', 6, {
         turn: 1,
@@ -237,7 +253,11 @@ describe('buildOpenTurnSnapshot', () => {
       }),
       ev('tool/call', 7, { turn: 1, step: 1, callId: 'c2', name: 'bash', arguments: '{"cmd":"long"}' }),
     ]
-    const snapshot = buildOpenTurnSnapshot(events)
+    const snapshot = buildOpenTurnSnapshot(events, [
+      live(1, 1, 'think', { kind: 'reasoning', index: 0, block: 0 }),
+      live(1, 1, '```js\ncode', { index: 1, block: 1 }),
+      live(1, 1, '\n```', { index: 2, block: 1 }),
+    ])
     expect(snapshot).not.toBeNull()
     expect(snapshot).toContain('```js\ncode\n```')
     expect(snapshot).toContain('Reasoning so far')

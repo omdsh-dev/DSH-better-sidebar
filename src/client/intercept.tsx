@@ -9,10 +9,9 @@
 import { useEffect } from 'react'
 import { IconCodeOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
-import { firstLeaf, revealPaths, togglePanel, type SidebarStore } from './state.ts'
+import { revealPaths, type SidebarStore } from './state.ts'
 import { t } from './locales.ts'
 import { resolveSidebarPath, selectProducedFiles } from './produced-files.ts'
-import { wrapOpenWorkspacePath, type OpenWorkspacePathService } from './openpath-intercept.ts'
 import css from './sidebar.module.css'
 
 /** Open a file in the sidebar's editor (used by the intercepted row and the explorer). */
@@ -27,17 +26,9 @@ export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: st
 }
 
 /**
- * The produced files the turn-tail selector last matched for the visible
- * session. The "Show in folder" gesture carries no file path of its own
- * (`'.'`), so the reveal highlights exactly these rows when available.
- */
-let lastProduced: readonly string[] = []
-
-/**
  * Reveal the produced files in the sidebar explorer: expand their parent
- * directories, highlight the rows, and focus the explorer tab (expanding the
- * hosting panel when it is collapsed). Unknown files fall back to revealing
- * the workspace root itself.
+ * directories, highlight the rows, and focus the explorer tab. Unknown
+ * files fall back to revealing the workspace root itself.
  */
 export function revealInExplorer(
   ctx: Context,
@@ -54,15 +45,6 @@ export function revealInExplorer(
     ? files.map(path => resolveSidebarPath(cwd, path))
     : cwd === undefined ? [] : [cwd]
   store.reduce(state => revealPaths(state, cwd, targets))
-  // A type-only open never auto-expands the panel (only content opens do,
-  // see service.openTab) — so a reveal opens the panel itself when it is
-  // collapsed, exactly like the subagent auto-open flows, or the highlight
-  // would be set on an invisible panel.
-  store.reduce(s => (s.panelOpen ? s : togglePanel(s)))
-  // Pin the landing to the right panel: the files window must appear where
-  // the panel just expanded, not in a bottom-panel pane the user last
-  // touched.
-  store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
   // Focus the single-instance editor home tab (the files window) where the
   // reveal highlight renders. Read via ctx.get like every other internal
   // consumer (#357): the provider is not on this fiber chain, so a direct
@@ -148,7 +130,6 @@ export function registerTurnTailInterception(ctx: Context, store: SidebarStore):
       if (store.getPrefs().tabsEnabled['editor'] === false) return null
       const matched = selectProducedFiles(owner)
       if (matched !== null) {
-        lastProduced = matched
         window.dispatchEvent(new CustomEvent('dsh-sidebar:refresh-files', {
           bubbles: true,
           detail: { files: matched },
@@ -163,39 +144,4 @@ export function registerTurnTailInterception(ctx: Context, store: SidebarStore):
       onShowInFolder: (files: readonly string[]) => { revealInExplorer(ctx, store, sessionId, files) },
     }),
   }, SidebarProducedFiles))
-}
-
-/**
- * Register the chat file-open interception: shadows
- * `remote.session.openWorkspacePath` — the single funnel every chat-side
- * file open goes through on alpha hosts (tool-row path links, the
- * produced-files row, prose mentions, inline-code paths) — so opens land in
- * the sidebar editor instead of the Host OS. The folder-reveal gesture
- * ("Show in folder" passes `'.'`) is the one exception: it is routed to the
- * explorer. Gated by BOTH the `interceptOpenPath` pref and the editor tab's
- * enable switch; declined opens fall through to the original remote call.
- *
- * The `remote.session` namespace service mounts asynchronously (the gateway
- * client creates it when the session-controller contribution arrives) and
- * is recreated on contribution remounts, so the wrapper installs through
- * `ctx.inject`: the callback runs once the service exists and re-runs after
- * every remount, re-applying the shadow on the fresh instance. Returns the
- * disposer (disposes the inject fiber, which restores the original method
- * descriptor — HMR-safe).
- */
-export function registerOpenPathInterception(ctx: Context, store: SidebarStore): () => void {
-  const fiber = ctx.inject(['remote.session'], (fctx) => {
-    fctx.effect(() => {
-      const service = fctx.get('remote.session') as OpenWorkspacePathService
-      return wrapOpenWorkspacePath(service, {
-        takeoverEnabled: () => !store.getSuspended()
-          && store.getPrefs().interceptOpenPath !== false
-          && store.getPrefs().tabsEnabled['editor'] !== false,
-        currentSessionId: () => ctx.sessions.list.getSnapshot().current,
-        openInSidebar: (path, sessionId) => { openSidebarFile(ctx, store, sessionId, path) },
-        revealInExplorer: (_path, sessionId) => { revealInExplorer(ctx, store, sessionId, lastProduced) },
-      })
-    }, 'dsh-better-sidebar: open-path interception wrap')
-  })
-  return () => { void fiber.dispose() }
 }

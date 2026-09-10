@@ -88,6 +88,9 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Lint
+        run: pnpm lint
+
       - name: Test
         run: pnpm test
 
@@ -95,8 +98,9 @@ jobs:
         run: pnpm build
 
       # The consumer-facing declaration surface guard — mirrors the ci.yml
-      # verification order (typecheck → test → build → check:consumer-types)
-      # so a release is gated on the same checks a PR runs.
+      # verification order (typecheck → lint → test → build →
+      # check:consumer-types) so a release is gated on the same checks a PR
+      # runs.
       - name: Check consumer type surface
         run: pnpm check:consumer-types
 

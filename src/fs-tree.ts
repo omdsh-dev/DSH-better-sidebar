@@ -189,7 +189,7 @@ export function requireAbsolute(path: string): string {
  * @param platform - filesystem semantics; injectable so both branches are
  * unit-testable on any host.
  */
-export function isWithin(base: string, target: string, platform: NodeJS.Platform = process.platform): boolean {
+export function isWithin(base: string, target: string, platform: string = process.platform): boolean {
   const norm = (value: string): string => value.replace(/[\\/]+/g, '/').replace(/\/$/, '')
   const b = norm(base)
   const t = norm(target)

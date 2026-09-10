@@ -58,11 +58,11 @@ class FakeRegistry {
     return true
   }
 
-  waitFor(_uuid: string, needle: string): Promise<{ kind: 'found'; needle: string; line: number; column: number; elapsedMs: number }> {
+  waitFor(_uuid: string, needle: string): Promise<{ kind: 'found'; needle: string; line: number; column: number; match: string; elapsedMs: number }> {
     // Mirrors the registry's empty-needle rejection (the tool layer no
     // longer duplicates this check).
     if (needle === '') return Promise.reject(new Error('needle must be a non-empty string'))
-    return Promise.resolve({ kind: 'found', needle, line: 0, column: 0, elapsedMs: 1 })
+    return Promise.resolve({ kind: 'found', needle, line: 0, column: 0, match: needle, elapsedMs: 1 })
   }
 }
 
@@ -189,7 +189,7 @@ describe('agent terminal tools', () => {
     const tool = toolOf(captured, 'terminal_wait_for')
     const uuid = registry.create('s1', 'waiter', '')
     const value = await tool.execute({ uuid, needle: 'done' }, exec('s1'))
-    expect(value).toEqual({ kind: 'found', needle: 'done', line: 0, column: 0, elapsedMs: 1 })
+    expect(value).toEqual({ kind: 'found', needle: 'done', line: 0, column: 0, match: 'done', elapsedMs: 1 })
     expect(validateJsonSchemaValue(tool.output.schema, value, 'value')).toEqual([])
   })
 

@@ -11,7 +11,6 @@ import {
   ALLOWED_SIGNALS,
   snapshotOf,
   tryResizePty,
-  type AgentTerminalSnapshot,
 } from '../src/agent-pty.ts'
 
 /**
@@ -276,6 +275,57 @@ describe('AgentPtyRegistry', () => {
       if (result.kind === 'found') {
         expect(result.needle).toBe('wait-for-fast')
         expect(result.elapsedMs).toBeLessThan(500)
+      }
+    } finally {
+      registry.disposeAll()
+    }
+  })
+
+  it('waitFor supports regex alternation and reports which alternative matched', async () => {
+    const registry = new AgentPtyRegistry(testShell())
+    try {
+      // Multi-outcome pattern (build success/failure): the terminal prints
+      // only the FAILURE marker; the alternation must match immediately and
+      // the `match` field must tell WHICH alternative hit.
+      const uuid = registry.create('s1', 'multi-outcome', 'echo BUILD_FAIL', process.cwd(), 80, 24)
+      await waitForTranscript(registry, uuid, 'BUILD_FAIL')
+      const result = await registry.waitFor(uuid, 'BUILD_(OK|FAIL)', 2000)
+      expect(result.kind).toBe('found')
+      if (result.kind === 'found') {
+        expect(result.needle).toBe('BUILD_(OK|FAIL)')
+        expect(result.match).toBe('BUILD_FAIL')
+      }
+    } finally {
+      registry.disposeAll()
+    }
+  })
+
+  it('waitFor falls back to verbatim matching when the pattern is not a valid regex', async () => {
+    const registry = new AgentPtyRegistry(testShell())
+    try {
+      // `BUILD_(OK` does not compile as a regex (unbalanced group); the wait
+      // must degrade to literal substring matching and still find it.
+      const uuid = registry.create('s1', 'bad-regex', 'echo "BUILD_(OK literal"', process.cwd(), 80, 24)
+      await waitForTranscript(registry, uuid, 'BUILD_(OK')
+      const result = await registry.waitFor(uuid, 'BUILD_(OK', 2000)
+      expect(result.kind).toBe('found')
+      if (result.kind === 'found') {
+        expect(result.match).toBe('BUILD_(OK')
+      }
+    } finally {
+      registry.disposeAll()
+    }
+  })
+
+  it('waitFor regex matches text a plain substring could not express', async () => {
+    const registry = new AgentPtyRegistry(testShell())
+    try {
+      const uuid = registry.create('s1', 'regex-version', 'echo version v1.2.3 ready', process.cwd(), 80, 24)
+      await waitForTranscript(registry, uuid, 'v1.2.3')
+      const result = await registry.waitFor(uuid, String.raw`v\d+\.\d+\.\d+`, 2000)
+      expect(result.kind).toBe('found')
+      if (result.kind === 'found') {
+        expect(result.match).toBe('v1.2.3')
       }
     } finally {
       registry.disposeAll()

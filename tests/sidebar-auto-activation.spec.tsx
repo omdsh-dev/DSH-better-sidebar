@@ -1,7 +1,9 @@
 /**
- * Real-Sidebar regressions for issue #162: background activity should activate
- * the Tasks page on every viewport, but must not force a narrow full-screen
- * drawer open over the chat.
+ * Real-Sidebar regressions for issue #162: background activity (a new
+ * subagent, a new background job) activates the Tasks page in the bottom
+ * workbench. The right column belongs to DSH's native Sidebar, so there is no
+ * full-screen drawer to guard against any more — the activation lands in the
+ * docked workbench on every viewport width.
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -57,7 +59,7 @@ function setViewport(width: number): void {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
 }
 
-function mountSidebar(width: number, panelOpen = false): MountedSidebar {
+function mountSidebar(width: number, bottomOpen = false): MountedSidebar {
   setViewport(width)
   vi.stubGlobal('WebSocket', FakeWebSocket)
   const sessionId = `auto-activation-${++sessionSeq}`
@@ -72,7 +74,7 @@ function mountSidebar(width: number, panelOpen = false): MountedSidebar {
   const store = createSidebarStore()
   store.setPrefs({ ...store.getPrefs(), autoOpenSubagent: true, autoOpenJobs: true })
   store.setSession(sessionId)
-  store.reduce(state => ({ ...state, panelOpen }))
+  store.reduce(state => ({ ...state, bottomOpen }))
   const service = createBetterSidebarService(store)
   service.registerTab({ id: 'subagent', title: 'Subagent', component: () => null })
   const localeSnapshot = { active: 'en' }
@@ -143,14 +145,14 @@ function publishJob(sidebar: MountedSidebar): void {
   })
 }
 
-function expectSubagentFocused(sidebar: MountedSidebar, panelOpen: boolean): void {
+function expectSubagentFocused(sidebar: MountedSidebar): void {
   const state = sidebar.store.getSnapshot().state!
-  const right = firstLeaf(state.splits)
-  expect(state.panelOpen).toBe(panelOpen)
-  expect(state.activePane).toBe(right.id)
-  expect(allLeaves(state.splits).flatMap(leaf => leaf.tabs)
+  const pane = firstLeaf(state.bottomSplits)
+  expect(state.bottomOpen).toBe(true)
+  expect(state.activePane).toBe(pane.id)
+  expect(allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs)
     .filter(tab => tab.type === 'subagent')).toHaveLength(1)
-  expect(right.tabs.find(tab => tab.id === right.active)?.type).toBe('subagent')
+  expect(pane.tabs.find(tab => tab.id === pane.active)?.type).toBe('subagent')
 }
 
 beforeEach(() => {
@@ -170,11 +172,11 @@ afterEach(() => {
 
 describe('Sidebar background-activity auto-activation (#162)', () => {
   it.each([
-    { source: 'subagent', width: 390, opens: false },
-    { source: 'job', width: 390, opens: false },
-    { source: 'subagent', width: 1024, opens: true },
-    { source: 'job', width: 1024, opens: true },
-  ] as const)('$source activation at $width px sets panelOpen=$opens', ({ source, width, opens }) => {
+    { source: 'subagent', width: 390 },
+    { source: 'job', width: 390 },
+    { source: 'subagent', width: 1024 },
+    { source: 'job', width: 1024 },
+  ] as const)('$source activation at $width px focuses the Tasks page in the workbench', ({ source, width }) => {
     const sidebar = mountSidebar(width)
     if (source === 'subagent') {
       publishSubagent(sidebar)
@@ -182,10 +184,10 @@ describe('Sidebar background-activity auto-activation (#162)', () => {
     } else {
       publishJob(sidebar)
     }
-    expectSubagentFocused(sidebar, opens)
+    expectSubagentFocused(sidebar)
   })
 
-  it.each(['subagent', 'job'] as const)('%s activation preserves an already-open narrow drawer', (source) => {
+  it.each(['subagent', 'job'] as const)('%s activation keeps an already-open workbench open', (source) => {
     const sidebar = mountSidebar(390, true)
     if (source === 'subagent') {
       publishSubagent(sidebar)
@@ -193,14 +195,14 @@ describe('Sidebar background-activity auto-activation (#162)', () => {
     } else {
       publishJob(sidebar)
     }
-    expectSubagentFocused(sidebar, true)
+    expectSubagentFocused(sidebar)
   })
 
-  it('uses the current viewport when the delayed subagent activation fires', () => {
+  it('a resize between arming and firing the debounce does not change the landing', () => {
     const sidebar = mountSidebar(1024)
     publishSubagent(sidebar)
     setViewport(390)
     flushSubagentDebounce()
-    expectSubagentFocused(sidebar, false)
+    expectSubagentFocused(sidebar)
   })
 })

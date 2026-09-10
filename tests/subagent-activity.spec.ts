@@ -46,11 +46,11 @@ describe('subagent activity summary parser', () => {
     ])).toEqual({ text: 'ok' })
   })
 
-  it('lastActivity ignores lifecycle events, chunks, and text-less messages', () => {
+  it('lastActivity ignores lifecycle events, stream rows, and text-less messages', () => {
     const live = lastActivity([
       entry('turn/end', { turn: 1, reason: 'success' }),
       entry('step/start', { turn: 1, step: 1 }),
-      entry('assistant/chunk', { turn: 1, step: 1, chunk: { type: 'text', delta: 'x' } }),
+      entry('assistant/live-chunk', { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'x' } }),
       entry('assistant/message', { turn: 1, step: 1, message: { content: [{ type: 'tool_use', name: 'bash' }] } }),
     ])
     expect(live).toEqual({})

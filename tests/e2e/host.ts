@@ -11,7 +11,7 @@
  * - `createHostApi()` for an APIRequestContext carrying the auth cookie,
  * - `hostRpc(api, 'workspace.create', {...})` for the host's unary RPC.
  */
-import { request, type APIRequestContext, type Page } from '@playwright/test'
+import { expect, request, type APIRequestContext, type Page } from '@playwright/test'
 import { parseLaunchUrl, pageUrlWith, rpcAttempt } from './host-protocol'
 
 const envUrl = process.env.DSH_E2E_URL
@@ -131,4 +131,25 @@ export async function hostRpc<T = unknown>(
     throw new Error(`hostRpc ${method} [${attempt.path}] envelope error: ${bodyText.slice(0, 400)}`)
   }
   return result
+}
+
+/**
+ * Send one message in the session the shell opened, so the conversation header
+ * (and the native right Sidebar's corner control) exists: DSH renders the
+ * header only for a session with content, while a freshly seeded blank
+ * session shows the empty hero.
+ *
+ * DSH 0.1.5's composer is a Lexical contenteditable — `fill()` writes the DOM
+ * but not the editor model, so the send button would stay disabled. Type real
+ * keys instead.
+ * @param page - the lane's page.
+ */
+export async function sendFirstMessage(page: Page): Promise<void> {
+  const composer = page.getByRole('textbox', { name: /^(Describe what you want to build|描述你想要构建)/ })
+  await expect(composer).toBeVisible({ timeout: 60_000 })
+  await composer.click()
+  await page.keyboard.type('mount lane smoke')
+  const send = page.getByRole('button', { name: /^(Send message|发送消息)$/ })
+  await expect(send).toBeEnabled({ timeout: 30_000 })
+  await send.click()
 }

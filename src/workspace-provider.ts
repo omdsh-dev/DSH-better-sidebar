@@ -1,4 +1,4 @@
-import { mkdir, open, opendir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, open, opendir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, dirname, join, relative, sep } from 'node:path'
 import { compareEntries, requireAbsolute, type SidebarFsListing } from './fs-tree.ts'
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
@@ -283,7 +283,7 @@ async function executeLocalGit(request: BetterSidebarGitRequest): Promise<unknow
     case 'discard': await git.discard(cwd, await localGitPath(cwd, request.path, repoRoot), repoRoot); return { ok: true }
     case 'revert': await git.revert(cwd, request.hash, repoRoot); return { ok: true }
     case 'cherry-pick': await git.cherryPick(cwd, request.hash, repoRoot); return { ok: true }
-    case 'show': return { content: await git.show(cwd, request.rev, await localGitPath(cwd, request.path, repoRoot), repoRoot) }
+    case 'show': return { content: await git.show(cwd, request.rev, request.path, repoRoot) }
   }
 }
 

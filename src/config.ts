@@ -7,17 +7,12 @@
 
 import z from 'schemastery'
 import {
-  SIDEBAR_PREFS_DEFAULTS,
-  SIDEBAR_PREFS_NS,
   TERMINAL_FONT_SIZE_DEFAULT,
   TERMINAL_FONT_SIZE_MAX,
   TERMINAL_FONT_SIZE_MIN,
   TITLE_BAR_STRIP_DEFAULT,
   TITLE_BAR_STRIP_MAX,
   TITLE_BAR_STRIP_MIN,
-  WIDTH_PERCENT_DEFAULT,
-  WIDTH_PERCENT_MAX,
-  WIDTH_PERCENT_MIN,
   type SidebarPrefs,
 } from './prefs-shared.ts'
 
@@ -30,9 +25,6 @@ export {
   TITLE_BAR_STRIP_DEFAULT,
   TITLE_BAR_STRIP_MAX,
   TITLE_BAR_STRIP_MIN,
-  WIDTH_PERCENT_DEFAULT,
-  WIDTH_PERCENT_MAX,
-  WIDTH_PERCENT_MIN,
   type SidebarPrefs,
 } from './prefs-shared.ts'
 
@@ -117,8 +109,6 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
 
 /** Schemastery schema for the user-facing preferences (validated by the settings service). */
 export const PrefsSchema: z<SidebarPrefs> = z.object({
-  openByDefault: z.boolean().default(false),
-  defaultWidthPercent: z.number().step(1).min(WIDTH_PERCENT_MIN).max(WIDTH_PERCENT_MAX).default(WIDTH_PERCENT_DEFAULT),
   autoOpenSubagent: z.boolean().default(true),
   autoOpenJobs: z.boolean().default(true),
   agentTerminalTools: z.boolean().default(false),
@@ -126,9 +116,7 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   bottomPanelAutoTerminal: z.boolean().default(true),
   terminalFontFamily: z.string().default(''),
   terminalFontSize: z.number().step(1).min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX).default(TERMINAL_FONT_SIZE_DEFAULT),
-  interceptOpenPath: z.boolean().default(true),
   editorExplorer: z.boolean().default(false),
-  changesDiffFloat: z.boolean().default(true),
   workspaceFence: z.boolean().default(true),
   terminalShell: z.string().default(''),
   terminalShellArgs: z.string().default(''),

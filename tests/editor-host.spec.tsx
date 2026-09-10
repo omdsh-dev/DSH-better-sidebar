@@ -10,12 +10,12 @@
  */
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { createElement, useEffect } from 'react'
+import { createElement, useEffect, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import type { Context } from '../src/context-types.ts'
 import { EditorHost } from '../src/client/EditorHost.tsx'
-import { createBetterSidebarService } from '../src/client/service.ts'
+import { createBetterSidebarService, type FileViewerProps } from '../src/client/service.ts'
 import { allLeaves, createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
@@ -34,8 +34,13 @@ function setup(): {
   // The openTab path needs a registered editor descriptor (dedupe by path).
   service.registerTab({ id: 'editor', title: 'Editor', dedupeKey: (tab) => tab.path, component: () => null })
   store.setSession('editor-home-session')
+  // The workbench seeds EMPTY (the right panel that used to carry the default
+  // files window is DSH's native Sidebar now), so these editor-host scenarios
+  // open the path-less files window explicitly — exactly what the shell does
+  // when the files page is opened.
+  service.openTab({ type: 'editor', title: 'Files', meta: { treeOpen: true } })
   const homeTab = (): SidebarTab =>
-    allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+    allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
       .find(tab => tab.type === 'editor' && tab.path === undefined)!
   // openSidebarFile reads the session cwd from ctx.sessions.
   const sessionsSnapshot = { byId: { 'editor-home-session': { cwd: '/tmp' } }, current: 'editor-home-session' }
@@ -149,14 +154,14 @@ describe('EditorHost (files window)', () => {
       typeAndCommit(container.querySelector('input')!, '/tmp/a.ts')
       // The same tab id now carries the file (homeTab's path-less finder no
       // longer matches — look the tab up by id).
-      const after = allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+      const after = allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
         .find(tab => tab.id === before.id)!
       expect(after.id).toBe(before.id)
       expect(after.path).toBe('/tmp/a.ts')
       expect(after.title).toBe('a.ts')
       expect(after.meta).toEqual({ treeOpen: true })
       // No new tab landed.
-      expect(allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)).toHaveLength(1)
+      expect(allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)).toHaveLength(1)
     } finally {
       unmount()
     }
@@ -167,12 +172,12 @@ describe('EditorHost (files window)', () => {
     store.setPrefs({ ...store.getPrefs(), editorExplorer: false })
     ctx.betterSidebar.openTab({ type: 'editor', title: 'a.ts', path: '/tmp/a.ts', id: 'editor:/tmp/a.ts' })
     const fileTab = (): SidebarTab =>
-      allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+      allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
         .find(tab => tab.path === '/tmp/a.ts')!
     const { container, unmount } = mountHost(ctx, store, fileTab)
     try {
       typeAndCommit(container.querySelector('input[placeholder^="File path"]')!, '/tmp/b.ts')
-      const tabs = allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+      const tabs = allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
       // home + a.ts + b.ts
       expect(tabs).toHaveLength(3)
       expect(fileTab().path).toBe('/tmp/a.ts')
@@ -210,7 +215,7 @@ describe('EditorHost (files window)', () => {
       type: 'editor', title: 'a.ts', path: '/tmp/a.ts', id: 'editor:/tmp/a.ts', meta: { treeOpen: true },
     })
     const fileTab = (): SidebarTab =>
-      allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+      allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
         .find(tab => tab.path === '/tmp/a.ts')!
     const { container, unmount } = mountHost(ctx, store, fileTab)
     try {
@@ -258,26 +263,30 @@ describe('EditorHost (files window)', () => {
     const service = ctx.betterSidebar
     const calls: string[] = []
     // A viewer with a hoisted toolbar (the TextEditor contract): register
-    // commands and report the state once on mount.
+    // commands and report the state once on mount. Capitalized so the hooks
+    // rules recognize it as a component.
+    const FakeViewer = (viewerProps: FileViewerProps): ReactNode => {
+      useEffect(() => {
+        viewerProps.onToolbarControls?.({
+          setMode: (next) => { calls.push(`mode:${next}`) },
+          save: () => { calls.push('save') },
+        })
+        viewerProps.onToolbarState?.({ modes: true, mode: 'preview', dirty: true, editable: true, saveState: 'idle' })
+        return () => { viewerProps.onToolbarControls?.(null) }
+        // Mount-only: re-running would re-fire the toolbar registration.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
+      return null
+    }
     service.registerFileViewer({
       id: 'test:fake',
       exts: ['fake'],
       fetchStrategy: 'none',
-      component: (viewerProps) => {
-        useEffect(() => {
-          viewerProps.onToolbarControls?.({
-            setMode: (next) => { calls.push(`mode:${next}`) },
-            save: () => { calls.push('save') },
-          })
-          viewerProps.onToolbarState?.({ modes: true, mode: 'preview', dirty: true, editable: true, saveState: 'idle' })
-          return () => { viewerProps.onToolbarControls?.(null) }
-        }, [])
-        return null
-      },
+      component: FakeViewer,
     })
     service.openTab({ type: 'editor', title: 'x.fake', path: '/tmp/x.fake', id: 'editor:/tmp/x.fake' })
     const fileTab = (): SidebarTab =>
-      allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+      allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
         .find(tab => tab.path === '/tmp/x.fake')!
     const { container, unmount } = mountHost(ctx, store, fileTab)
     try {
@@ -307,7 +316,7 @@ describe('EditorHost (files window)', () => {
       meta: { dir: true },
     }, { sessionId: 'editor-home-session' })
     const dirTab = (): SidebarTab =>
-      allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+      allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
         .find(tab => tab.path === '/work/src')!
     const { container, unmount } = mountHost(ctx, store, dirTab)
     try {

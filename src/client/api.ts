@@ -8,7 +8,7 @@
  */
 import { encodeHtmlUrl } from '../html-route.ts'
 import type { LastActivity } from '../subagent-activity.ts'
-import type { SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
+import type { SidechatLiveEvent, SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
 import type { SidebarSessionEvent } from '../context-types.ts'
 import type { BrowserProbeResult } from './browser.ts'
 
@@ -278,6 +278,15 @@ export const api = {
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
     call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
+  /** Rename one tree row within its directory (single-segment name; the
+   *  server refuses existing destinations, the workspace root, and — while
+   *  the fence is armed — anything resolving outside the workspace). */
+  fsRename: (scope: SessionScope, path: string, name: string) =>
+    call<{ path: string }>('fs.rename', scopePayload(scope, { path, name })),
+  /** Permanently delete one tree row (recursive for directories; a symlink
+   *  row unlinks the link only). The UI confirms before calling this. */
+  fsRemove: (scope: SessionScope, path: string) =>
+    call<{ path: string }>('fs.remove', scopePayload(scope, { path })),
   /** Upload one file's raw bytes into `dir` (keeps the folder tree via
    *  `relativePath`); the host streams it under the session workspace. */
   uploadFile: (scope: SessionScope, dir: string, relativePath: string, body: Blob, signal?: AbortSignal) =>
@@ -307,6 +316,11 @@ export const api = {
   /** Full patch text of one commit (diff display for the history rows). */
   gitCommitDiff: (scope: SessionScope, hash: string, worktree?: string, signal?: AbortSignal) =>
     call<{ diff: string }>('git.commit-diff', gitPayload(scope, worktree, { hash }), signal),
+  /** One file's content at a revision (`git show <rev>:<path>`); null when the
+   *  revision has no such path. The diff views' on-demand hunk-fold expansion
+   *  reads both sides' full contents through this. */
+  gitShow: (scope: SessionScope, rev: string, path: string, worktree?: string, signal?: AbortSignal) =>
+    call<{ content: string | null }>('git.show', gitPayload(scope, worktree, { rev, path }), signal),
   /** The session's file-tool events for the changes tab's session lens: the
    *  `tool/call` + `tool/result` rows past `afterSeq` (0 = whole window),
    *  capped to the recent window host-side. The client runtime exposes no
@@ -376,9 +390,12 @@ export const api = {
     call<SidechatThreadInfo>('sidechat.info', { childId }),
   /** One transcript pull of a Side Chat thread: the thread's OWN events
    *  (the inherited seed is cut host-side and never crosses the wire).
-   *  `afterSeq` narrows the response to the delta beyond it (poll tail). */
+   *  `afterSeq` narrows the response to the delta beyond it (poll tail).
+   *  `live` is the thread's in-flight model deltas (DSH 0.1.5 publishes them
+   *  outside the session log) — the CURRENT attempt on every pull, never a
+   *  delta, so the caller replaces its live set instead of appending. */
   sidechatEvents: (childId: string, afterSeq?: number, signal?: AbortSignal) =>
-    call<{ events: SidechatLogEvent[] }>('sidechat.events', {
+    call<{ events: SidechatLogEvent[]; live: SidechatLiveEvent[] }>('sidechat.events', {
       childId,
       ...(afterSeq !== undefined ? { afterSeq } : {}),
     }, signal),

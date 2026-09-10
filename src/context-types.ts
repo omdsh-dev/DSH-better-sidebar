@@ -120,6 +120,7 @@ export interface SidebarSlotRegisterOptions {
   locale?: string
   registrant?: string
   /** Business-face factory; args depend on the slot scope. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirrors the host slots signature, where inject args are untyped; unknown[] would reject concrete-typed implementations (contravariance)
   inject?: (...args: any[]) => Record<string, unknown>
   children?: Record<string, unknown>
 }
@@ -296,15 +297,35 @@ export interface SidebarSessionTitleService {
   rename(session: unknown, title: string): { title: string; eventSeq: number }
 }
 
-/** The host session-persistence face (mirror of the sessionPersistence
- *  service): detached inspection of a persisted session, used to compose the
- *  recorded preset when a Side Chat thread cold-resumes. */
+/**
+ * The host session-persistence face (mirror of the `sessionPersistence`
+ * service): durable, handle-addressed session storage.
+ *
+ * DSH 0.1.5 replaced the detached `inspect(id)` call with an explicit read
+ * handle: `open(id, 'read')` never takes write ownership and works while
+ * another process owns the session, `handle.read()` returns one contiguous
+ * slice of the log, and `close()` releases it. Every cold read in this plugin
+ * goes through {@link readPersistedSession} so the handle is always closed.
+ */
 export interface SidebarSessionPersistenceService {
   stat?(sessionId: string): Promise<{ header: { cwd?: string; agentPreset?: string } } | undefined>
-  inspect(sessionId: string): Promise<{
-    meta: { cwd?: string; agentPreset?: string }
-    events: readonly SidebarSessionEvent[]
-  }>
+  open(sessionId: string, access: 'read' | 'write'): Promise<SidebarSessionHandle>
+}
+
+/** One open channel onto a stored session (the fields this plugin reads). */
+export interface SidebarSessionHandle {
+  /** Immutable stored header (cwd / agentPreset live here). */
+  readonly header: { cwd?: string; agentPreset?: string } & Record<string, unknown>
+  /** Exact fork-inherited prefix length stored with the log. */
+  readonly inheritedEventCount?: number
+  /**
+   * Read a slice of the valid contiguous log.
+   * @param offset - first logical seq to include (defaults to 0).
+   * @param length - maximum events (defaults to the rest of the log).
+   */
+  read(offset?: number, length?: number): Promise<{ events: readonly SidebarSessionEvent[] }>
+  /** Release the handle (idempotent). */
+  close(): Promise<void>
 }
 
 /** The client session list snapshot the sidebar subscribes to. */
@@ -407,30 +428,6 @@ export interface SidebarConversation {
   input: {
     for(actx: Context): SidebarSessionInput
   }
-}
-
-/**
- * The client `remote.session` namespace face (mirror of the gateway client's
- * RemoteNamespaceService for the session-controller contribution on alpha
- * hosts). The chat's file-open funnel is `openWorkspacePath`: the caller
- * resolves the path against the session cwd, and the host hands it to the
- * OS's default application. Namespace methods are accessor properties (see
- * `client/openpath-intercept.ts` for how the interception shadows them).
- */
-export interface SidebarRemoteSessionService {
-  /**
-   * Open an absolute path with the Host operating system's default
-   * application. Resolves with the typert `RemoteResult` envelope
-   * (`{ ok: true, value: { opened } }` / `{ ok: false, error }`), like every
-   * remote method — callers branch on `result.ok`.
-   */
-  openWorkspacePath(
-    request: { path: string },
-    signal?: AbortSignal,
-  ): Promise<
-    | { readonly ok: true; readonly value: { opened: boolean } }
-    | { readonly ok: false; readonly error: { readonly code: string; readonly message: string; readonly details: object } }
-  >
 }
 
 /**
@@ -587,6 +584,13 @@ export interface SidebarContextShape {
    * LIVE Session instance that appended it.
    */
   on(event: string, listener: (session: unknown, event: SidebarSessionEvent) => void): () => void
+  /**
+   * The agent's process-local assistant stream (DSH 0.1.5+): one payload per
+   * `start` / `chunk` / `end` frame, carrying the emitting agent and the
+   * frame. These frames are NOT session events — see
+   * {@link ./assistant-live.ts} for why the plugin needs them.
+   */
+  on(event: 'agent/assistant-stream', listener: (payload: { agent?: unknown; frame?: unknown }) => void): () => void
 }
 
 /**

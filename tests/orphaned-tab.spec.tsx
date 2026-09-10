@@ -23,12 +23,10 @@ function typesOf(node: unknown): string[] {
 describe('sanitize keeps unregistered tab types', () => {
   it('preserves a persisted tab of an unknown type with its title/path', () => {
     const raw = {
-      panelOpen: true,
-      width: 400,
       nextTerminal: 1,
       activePane: null,
       expanded: [],
-      splits: {
+      bottomSplits: {
         kind: 'leaf',
         id: 'pane:1',
         tabs: [
@@ -40,21 +38,19 @@ describe('sanitize keeps unregistered tab types', () => {
     }
     const clean = sanitizeState(raw)
     expect(clean).toBeDefined()
-    expect(typesOf(clean!.splits)).toContain('my-plugin:db')
+    expect(typesOf(clean!.bottomSplits)).toContain('my-plugin:db')
     // The kept tab keeps its payload so a later registration can reuse it.
-    const leaf = clean!.splits as unknown as { kind: 'leaf'; tabs: Array<Record<string, unknown>> }
+    const leaf = clean!.bottomSplits as unknown as { kind: 'leaf'; tabs: Array<Record<string, unknown>> }
     const kept = leaf.tabs.find(tab => tab.type === 'my-plugin:db')
     expect(kept).toMatchObject({ title: 'Database', path: '/data.sqlite' })
   })
 
   it('an unknown type alone in a pane still sanitizes cleanly', () => {
     const raw = {
-      panelOpen: true,
-      width: 400,
       nextTerminal: 1,
       activePane: null,
       expanded: [],
-      splits: {
+      bottomSplits: {
         kind: 'leaf',
         id: 'pane:1',
         tabs: [{ id: 'tab:1', type: 'some-plugin:page', title: 'Page' }],
@@ -63,7 +59,7 @@ describe('sanitize keeps unregistered tab types', () => {
     }
     const clean = sanitizeState(raw)
     expect(clean).toBeDefined()
-    expect(typesOf(clean!.splits)).toEqual(['some-plugin:page'])
+    expect(typesOf(clean!.bottomSplits)).toEqual(['some-plugin:page'])
   })
 })
 

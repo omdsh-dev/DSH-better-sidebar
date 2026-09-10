@@ -43,7 +43,7 @@ const COPIED_FEEDBACK_MS = 1500
 /** The modal body: the GitHub topic button + the recommended plugin list
  *  with per-entry jump/copy buttons (extracted for direct testing). */
 export function PluginListBody(props: { service: BetterSidebarService; kind: PluginKind }) {
-  const { service, kind } = props
+  const { kind } = props
   // Which entry's copy button currently shows the "已复制" feedback.
   const [copiedId, setCopiedId] = useState<string | null>(null)
   // Live catalog filter (name / id / description). A free-text search keeps
@@ -56,8 +56,9 @@ export function PluginListBody(props: { service: BetterSidebarService; kind: Plu
   const needle = query.trim().toLowerCase()
   const matches = (entry: PluginEntry): boolean => {
     if (needle === '') return true
+    const name = typeof entry.name === 'function' ? entry.name() : entry.name
     const description = typeof entry.description === 'function' ? entry.description() : entry.description
-    return entry.name.toLowerCase().includes(needle)
+    return name.toLowerCase().includes(needle)
       || entry.id.toLowerCase().includes(needle)
       || description.toLowerCase().includes(needle)
   }
@@ -93,8 +94,12 @@ export function PluginListBody(props: { service: BetterSidebarService; kind: Plu
     window.open(entry.url, '_blank', 'noopener')
   }
 
-  /** One catalog row (extracted so the group render stays flat). */
-  const renderEntry = (entry: PluginEntry): ReactNode => (
+  /** One catalog row (extracted so the group render stays flat). The name
+   *  resolves like the description (string or () => string) so it follows
+   *  the active locale; a plain-string entry keeps its raw name. */
+  const renderEntry = (entry: PluginEntry): ReactNode => {
+    const name = typeof entry.name === 'function' ? entry.name() : entry.name
+    return (
     <div key={entry.id} className={css.pluginEntry}>
       <div className={css.pluginEntryHead}>
         {/* The name is a BUTTON on the same window.open path as the
@@ -104,16 +109,16 @@ export function PluginListBody(props: { service: BetterSidebarService; kind: Plu
         <button
           type="button"
           className={css.pluginName}
-          aria-label={`${t('openPlugin')}: ${entry.name}`}
+          aria-label={`${t('openPlugin')}: ${name}`}
           onClick={() => { jump(entry) }}
         >
-          {entry.name}
+          {name}
         </button>
         <span className={css.pluginEntryActions}>
           <button
             type="button"
             className={css.pluginJumpBtn}
-            aria-label={`${t('openPlugin')}: ${entry.name}`}
+            aria-label={`${t('openPlugin')}: ${name}`}
             onClick={() => { jump(entry) }}
           >
             {t('openPlugin')}
@@ -121,7 +126,7 @@ export function PluginListBody(props: { service: BetterSidebarService; kind: Plu
           <button
             type="button"
             className={css.pluginCopyBtn}
-            aria-label={`${t('copyInstall')}: ${entry.name}`}
+            aria-label={`${t('copyInstall')}: ${name}`}
             onClick={() => { copy(entry) }}
           >
             {copiedId === entry.id ? t('copied') : t('copy')}
@@ -133,7 +138,8 @@ export function PluginListBody(props: { service: BetterSidebarService; kind: Plu
       </div>
       <code className={css.pluginInstall}>{entry.install}</code>
     </div>
-  )
+    )
+  }
 
   return (
     <div className={css.pluginList}>

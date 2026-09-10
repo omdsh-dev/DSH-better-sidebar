@@ -2,7 +2,7 @@
 
 **日期**：2026-08-31（2026-09-01 rebase 到 main c199212 并在 alpha.3 上复测）
 **状态**：已实施（分支 `feat/sidebar-perf`，单 PR 多 commit）
-**目标宿主**：DSH v0.1.2-alpha.2 起开发，宿主参考 `/Users/menghuan/Code/deepseek-harness`（只读）；main 已切 alpha.3（v0.18.1-alpha.0），rebase 后在 alpha.3 真机全量复测（§3.1）
+**目标宿主**：DSH v0.1.2-alpha.2 起开发，宿主参考 `<checkout>/deepseek-harness`（只读）；main 已切 alpha.3（v0.18.1-alpha.0），rebase 后在 alpha.3 真机全量复测（§3.1）
 **测量环境**：macOS arm64 本机，真实 `dsh web`（npx 钉版）+ scratch profile 挂载 tarball，Playwright Chromium 无头，每指标 3 次取中位数（`tests/e2e/perf.e2e.ts` 输出 `PERF_JSON`）。
 
 ## 1. 修复的 bug：底栏拖拽引发原生左侧边栏突变

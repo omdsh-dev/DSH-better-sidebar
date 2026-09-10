@@ -40,6 +40,9 @@ export function PdfView(props: { scope: SessionScope; path: string; title: strin
       controller.abort()
       if (objectUrl !== undefined) URL.revokeObjectURL(objectUrl)
     }
+    // Granular scope fields: the scope object's identity churns, only its
+    // sessionId / cwd fields gate the fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope.sessionId, scope.cwd, path])
 
   useEffect(() => {

@@ -3,9 +3,9 @@
  * (repository truth: staged/unstaged files, commit box, history) and the
  * session round (agent truth: every file the model read, wrote, or edited).
  * Both lenses preview their selections in a shared resizable bottom pane
- * ({@link DiffPane}); git targets expand into the dedicated diff tab —
- * docked in a pane, or floated as a free window per the tab's setting.
- * The active lens and the pane height persist in the tab's meta, so the tab
+ * ({@link DiffPane}); git targets expand into the dedicated diff tab docked
+ * in the workbench's diff pane. The active lens and the pane height persist
+ * in the tab's meta, so the tab
  * reopens exactly where it was left.
  *
  * The session events ride the host's `changes.ops` route (the client
@@ -18,7 +18,8 @@ import type { SidebarSessionEvent } from '../../context-types.ts'
 import type { TabComponentProps } from '../service.ts'
 import { t } from '../locales.ts'
 import { api } from '../api.ts'
-import { floatTab, type SidebarDiffRef } from '../state.ts'
+import { usePolling } from '../use-polling.ts'
+import type { SidebarDiffRef } from '../state.ts'
 import { GitLens } from './GitLens.tsx'
 import { SessionLens } from './SessionLens.tsx'
 import { DiffPane, diffTabOf, type ChangesPreview } from './DiffPane.tsx'
@@ -93,6 +94,9 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
       // only while nothing has ever loaded.
       if (generation === pollGen.current) setOpsError(true)
     }
+    // Granular scope fields: the scope object's identity churns, only its
+    // sessionId / cwd fields gate the poll target.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope.sessionId, scope.cwd])
   useEffect(() => {
     pollGen.current += 1
@@ -101,12 +105,11 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
     seqRef.current = 0
     setOpsError(false)
   }, [scope.sessionId])
-  useEffect(() => {
-    void pull()
-    if (!visible) return
-    const timer = window.setInterval(() => { void pull() }, 2_500)
-    return () => { window.clearInterval(timer) }
-  }, [visible, pull])
+  // One pull on every input change — mount, scope change, and visibility
+  // flip all re-pull (a hidden tab still catches up on the flip); only the
+  // poll CADENCE below is gated by visibility.
+  useEffect(() => { void pull() }, [visible, pull])
+  usePolling(visible, pull, { intervalMs: 2_500 })
   // tick only forces the re-render; the fold reads the ref directly.
   void tick
   const ops = opsRef.current
@@ -134,18 +137,11 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
     setPreview({ kind: 'op', path, op, prior: knownContentBefore(ops, path, op) })
   }
 
-  /** Expand the current git preview into the dedicated diff tab: docked
-   *  into the shell's diff pane, or floated as a free window centered on
-   *  the viewport when the tab's diff-open setting asks for it (default). */
+  /** Expand the current git preview into the dedicated diff tab, docked
+   *  into the workbench's diff pane. */
   const expandPreview = (): void => {
     if (preview?.kind !== 'git') return
-    const diffTab = diffTabOf(preview.ref)
-    onOpenDiff?.(diffTab)
-    if (store.getPrefs().changesDiffFloat !== false) {
-      const x = Math.round(window.innerWidth / 2)
-      const y = Math.round(window.innerHeight / 2)
-      store.reduce(state => floatTab(state, diffTab.id, x, y))
-    }
+    onOpenDiff?.(diffTabOf(preview.ref))
   }
 
   const previewKey = (target: ChangesPreview): string => target.kind === 'git'

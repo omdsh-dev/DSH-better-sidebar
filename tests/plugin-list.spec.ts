@@ -2,11 +2,11 @@
  * Built-in plugin catalog data-integrity tests (both files: the TAB
  * catalog in plugins-tabs.ts and the FILE-PREVIEWER catalog in
  * plugins-viewers.ts). Every entry must be installable as data — a unique
- * id (npm package name), a GitHub URL, a non-empty localized description
- * (string or () => string), and an install script that mentions the dsh
- * plugin CLI. The catalogs are the discovery surface of the two "add
- * plugin" modals; a malformed entry would break the install flow, so the
- * shape is pinned here.
+ * id (npm package name), a GitHub URL, a non-empty localized name and
+ * description (string or () => string), and an install script that mentions
+ * the dsh plugin CLI. The catalogs are the discovery surface of the two
+ * "add plugin" modals; a malformed entry would break the install flow, so
+ * the shape is pinned here.
  */
 import { describe, expect, it } from 'vitest'
 import { builtinTabPlugins } from '../src/client/plugins-tabs.ts'
@@ -42,9 +42,11 @@ describe('builtin plugin catalogs', () => {
         }
       })
 
-      it('every entry has a name, a GitHub URL, and an install script', () => {
+      it('every entry has a localized name, a GitHub URL, and an install script', () => {
         for (const entry of list) {
-          expect(entry.name.length).toBeGreaterThan(0)
+          // Names went through the same i18n-friendly union as descriptions
+          // (string or () => string), so resolve before asserting.
+          expect(textOf(entry.name).length).toBeGreaterThan(0)
           expect(entry.url.startsWith('https://github.com/')).toBe(true)
           expect(entry.install.length).toBeGreaterThan(0)
           expect(entry.install).toContain('dsh plugin')

@@ -9,24 +9,17 @@
 /** The user-settings namespace holding the side card preferences. */
 export const SIDEBAR_PREFS_NS = 'dsh-better-sidebar'
 
-/** User-facing side card preferences (new-conversation defaults). */
+/** User-facing side card preferences. */
 export interface SidebarPrefs {
-  /** Whether a brand-new conversation opens the side card by default. */
-  openByDefault: boolean
-  /** Default panel width as a percent of the window width (20–60). */
-  defaultWidthPercent: number
   /**
    * Whether the sidebar auto-activates the Tasks page when the current
-   * conversation spawns a new subagent. Wide viewports also open the panel;
-   * narrow viewports prepare the tab without opening the full-screen drawer.
+   * conversation spawns a new subagent.
    */
   autoOpenSubagent: boolean
   /**
    * Whether the sidebar auto-activates the Tasks page containing the
    * background-jobs section when a NEW job appears for the current
-   * conversation (any new job id, not just the first one). Wide viewports also
-   * open the panel; narrow viewports prepare the tab without opening the
-   * full-screen drawer.
+   * conversation (any new job id, not just the first one).
    */
   autoOpenJobs: boolean
   /**
@@ -64,14 +57,6 @@ export interface SidebarPrefs {
    */
   bottomPanelAutoTerminal: boolean
   /**
-   * Whether chat-side file opens (tool-row path links, the produced-files
-   * row, prose file mentions — every path that funnels through the client
-   * runtime's `remote.session.openWorkspacePath`) open in the sidebar editor
-   * instead of the Host OS's default application. On by default; the editor
-   * tab's own enable switch gates it too (both must be on for the takeover).
-   */
-  interceptOpenPath: boolean
-  /**
    * Whether the editor tab runs in merged mode: a path input replaces the
    * plain header and a toggleable file-tree panel (with a global name
    * search) docks at the tab's right edge. On by default; also makes brand
@@ -80,14 +65,6 @@ export interface SidebarPrefs {
    * Side card settings; off restores the pre-merge editor exactly.
    */
   editorExplorer: boolean
-  /**
-   * Where the changes tab's "expand to a diff tab" action lands the diff:
-   * true (default) floats it as a free window centered on the viewport;
-   * false docks it into the shell's diff pane below the source panel (the
-   * pre-float behavior). The select lives under the changes card's gear in
-   * the Side card settings.
-   */
-  changesDiffFloat: boolean
   /**
    * Whether the sidebar's filesystem routes enforce the workspace fence:
    * every client-supplied path must resolve (through symlinks) inside the
@@ -246,11 +223,6 @@ export interface SidebarPrefs {
   pluginSettings: Record<string, Record<string, unknown>>
 }
 
-/** Range contract of {@link SidebarPrefs.defaultWidthPercent}. */
-export const WIDTH_PERCENT_MIN = 20
-export const WIDTH_PERCENT_MAX = 60
-export const WIDTH_PERCENT_DEFAULT = 35
-
 /** Range contract of {@link SidebarPrefs.terminalFontSize}. */
 export const TERMINAL_FONT_SIZE_MIN = 9
 export const TERMINAL_FONT_SIZE_MAX = 32
@@ -267,8 +239,6 @@ export type TitleBarScheme = typeof TITLE_BAR_SCHEMES[number]
 
 /** Fallback prefs used whenever the settings document is unreachable or malformed. */
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
-  openByDefault: false,
-  defaultWidthPercent: WIDTH_PERCENT_DEFAULT,
   autoOpenSubagent: true,
   autoOpenJobs: true,
   agentTerminalTools: false,
@@ -276,9 +246,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   bottomPanelAutoTerminal: true,
   terminalFontFamily: '',
   terminalFontSize: TERMINAL_FONT_SIZE_DEFAULT,
-  interceptOpenPath: true,
   editorExplorer: false,
-  changesDiffFloat: true,
   workspaceFence: true,
   terminalShell: '',
   terminalShellArgs: '',
@@ -297,11 +265,6 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   tabsEnabled: {},
   viewersEnabled: {},
   pluginSettings: {},
-}
-
-/** Clamp one width percent into the contract range (shared by schema and client reads). */
-export function clampWidthPercent(value: number): number {
-  return Math.min(WIDTH_PERCENT_MAX, Math.max(WIDTH_PERCENT_MIN, Math.round(value)))
 }
 
 /** Clamp one terminal font size into the contract range (shared by schema and client reads). */

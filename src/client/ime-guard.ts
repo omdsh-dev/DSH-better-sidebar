@@ -25,9 +25,12 @@
  * legacy signal engines emit without isComposing.
  */
 
-/** The pure decision: is this keyboard event part of an IME composition? */
-export function isImeComposition(event: { isComposing: boolean; keyCode: number }): boolean {
-  return event.isComposing || event.keyCode === 229
+/** The pure decision: is this keyboard event part of an IME composition?
+ *  `isComposing` is optional on the input: React's synthetic KeyboardEvent
+ *  type does not declare it (the DOM event always carries it), and the
+ *  keyCode 229 fallback covers exactly those callers. */
+export function isImeComposition(event: { isComposing?: boolean; keyCode: number }): boolean {
+  return event.isComposing === true || event.keyCode === 229
 }
 
 /**

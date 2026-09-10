@@ -44,18 +44,27 @@ describe('built-in tab registrations', () => {
     expect(changes?.component).toBeDefined()
   })
 
-  it('the changes tab declares the diff-open picker (free window default)', () => {
+  it('every visible tab declares a non-empty, mutually distinct title', () => {
+    // The native new-tab list (guide page) is an icon+title capsule at DSH
+    // 0.1.5-alpha.2 — the `description` field is gone from the host contract.
+    // The title is therefore the only per-tab guide text: it must exist, and
+    // no two visible tabs may share one (identical capsules would be
+    // indistinguishable in the guide and the tab strip).
     const { service } = setup()
-    const toggles = service.getTab('git')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual(['changesDiffFloat'])
-    const picker = toggles[0]
-    expect(picker?.type).toBe('select')
-    expect(picker?.title).toBeDefined()
-    expect(picker?.desc).toBeDefined()
-    const options = picker?.options ?? []
-    // Float first (the default the reducer and prefs ship), pane second.
-    expect(options.map(o => o.value)).toEqual([true, false])
-    expect(options.every(o => o.icon !== undefined && o.title !== undefined && o.desc !== undefined)).toBe(true)
+    const visible = service.getTabs().filter(descriptor => descriptor.hidden !== true)
+    expect(visible.length).toBeGreaterThan(0)
+    for (const descriptor of visible) {
+      const title = typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title
+      expect(title, `${descriptor.id} must declare a title`).toBeTruthy()
+    }
+    const titles = visible.map(descriptor =>
+      typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title)
+    expect(new Set(titles).size, 'titles must differ per tab').toBe(visible.length)
+  })
+
+  it('the changes tab declares no settings of its own (the diff always docks)', () => {
+    const { service } = setup()
+    expect(service.getTab('git')?.settings).toBeUndefined()
   })
 
   it('only diff is hidden from the + menu; editor is the visible files window (order 10)', () => {
@@ -172,7 +181,7 @@ describe('built-in tab registrations', () => {
     service.openTab({ type: 'browser' })
     service.openTab({ type: 'browser' })
     const state = store.getSnapshot().state!
-    const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'browser')
+    const tabs = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'browser')
     expect(tabs).toHaveLength(2)
     expect(tabs[0]!.id).toBe('browser:1')
     expect(tabs[1]!.id).toBe('browser:2')
@@ -185,7 +194,7 @@ describe('built-in tab registrations', () => {
     service.openTab({ type: 'terminal' })
     service.openTab({ type: 'terminal' })
     const state = store.getSnapshot().state!
-    const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'terminal')
+    const tabs = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'terminal')
     expect(tabs).toHaveLength(2)
     expect(tabs[0]!.title).toBe('bash')
     expect(tabs[1]!.title).toBe('bash')
@@ -199,7 +208,7 @@ describe('built-in tab registrations', () => {
     store.setSession('s1')
     service.openTab({ type: 'terminal' })
     const state = store.getSnapshot().state!
-    const tab = allLeaves(state.splits).flatMap(leaf => leaf.tabs).find(t => t.type === 'terminal')
+    const tab = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).find(t => t.type === 'terminal')
     expect(tab?.title).toBe(t('terminal'))
   })
 

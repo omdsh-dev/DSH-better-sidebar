@@ -14,6 +14,8 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
+    // Bridge Node's `localStorage` accessor to jsdom's store (see the file).
+    setupFiles: ['tests/setup.ts'],
     server: {
       deps: {
         inline: [/@deepseek-ai\/dsh-client-ui-primitives/],

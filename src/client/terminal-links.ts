@@ -38,7 +38,7 @@ const OPENABLE_SCHEMES = new Set(['http:', 'https:'])
  * match on a line; callers must reset `lastIndex` before reuse (the
  * helper does this defensively).
  */
-export const TERMINAL_URL_REGEX = /\bhttps?:\/\/[^\s"'<>\[\]{}|\\^`]+/gi
+export const TERMINAL_URL_REGEX = /\bhttps?:\/\/[^\s"'<>[\]{}|\\^`]+/gi
 
 /** A URL match in a terminal line: the text and its 0-based start offset. */
 export interface TerminalUrlMatch {

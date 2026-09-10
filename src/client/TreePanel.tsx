@@ -63,11 +63,15 @@ export function TreePanel(props: {
   onOpenWith?: (targetId: string, path: string) => void
   onToggleOpenWithPin?: (targetId: string) => void
   onReferenceFile: (path: string, isDir: boolean) => void
+  /** A tree rename landed (passed through to FileTree for tab retargeting). */
+  onPathRenamed?: (oldPath: string, newPath: string) => void
+  /** A tree delete landed (passed through to FileTree for tab closing). */
+  onPathDeleted?: (path: string, isDir: boolean) => void
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean
 }) {
-  const { sessionId, cwd, store, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, full } = props
+  const { sessionId, cwd, store, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onPathRenamed, onPathDeleted, full } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -252,6 +256,8 @@ export function TreePanel(props: {
           onOpenWith={onOpenWith}
           onToggleOpenWithPin={onToggleOpenWithPin}
           onReferenceFile={onReferenceFile}
+          onPathRenamed={onPathRenamed}
+          onPathDeleted={onPathDeleted}
           refreshTick={refreshTick}
           onUploadRequest={startUpload}
           busy={busy}

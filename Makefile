@@ -1,7 +1,6 @@
 # dsh-better-sidebar 命令面薄封装：目标仅转发 package.json scripts（唯一事实源），
 # 新增/改名 script 不需要动这里；本文件只补目标发现（help）与 CI 门禁聚合
 # （check / mount / mount-aggregate / registry）。
-# 注：lint 目标留给引入 ESLint 的后续 PR。
 
 .DEFAULT_GOAL := help
 
@@ -17,11 +16,14 @@ build: ## 构建（清 lib/ → tsc → tsdown）
 typecheck: ## 类型检查（tsc --noEmit）
 	pnpm typecheck
 
+lint: ## 代码检查（eslint .，flat config 最小规则集）
+	pnpm lint
+
 test: ## 单元测试（vitest run）
 	pnpm test
 
-check: ## 聚合校验门禁：typecheck → build → test → check:consumer-types（对齐 CI）
-	pnpm typecheck && pnpm build && pnpm test && pnpm check:consumer-types
+check: ## 聚合校验门禁：typecheck → lint → build → test → check:consumer-types（对齐 CI）
+	pnpm typecheck && pnpm lint && pnpm build && pnpm test && pnpm check:consumer-types
 
 clean: ## 清理构建产物与测试报告（lib/、*.tgz、playwright-report/、test-results/）
 	rm -rf lib playwright-report test-results
@@ -39,4 +41,4 @@ mount-aggregate: ## 聚合双挂载回归：build + pack → pnpm test:mount:agg
 registry: ## 组装 plugin-registry 暂存（registry/，不入库）：build → node scripts/package-registry.mjs
 	pnpm build && node scripts/package-registry.mjs
 
-.PHONY: help install build typecheck test check clean pack mount mount-aggregate registry
+.PHONY: help install build typecheck lint test check clean pack mount mount-aggregate registry

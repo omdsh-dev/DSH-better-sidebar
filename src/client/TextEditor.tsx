@@ -31,26 +31,17 @@ import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { appendToDraft } from './conversation-draft.ts'
 import { useSelectionPopup } from './selection-popup.ts'
 import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
-import { lazyChunkComponent } from './lazy-chunk.tsx'
 import { analyzeMarkdownHtml } from './markdown-html.ts'
 import { LazyMermaidMarkdown, MarkdownDocument, type MarkdownHtmlMedia } from './MarkdownHtml.tsx'
 import { MdToc } from './md-toc.tsx'
 import { splitMermaidBlocks } from './mermaid-blocks.ts'
 import { t } from './locales.ts'
+import { HTML_IFRAME_SANDBOX } from './html-preview.ts'
 import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
 
 /** Previewable files (rendered output vs source editing). */
 type ViewMode = 'preview' | 'edit'
-
-/**
- * The sandbox tokens of the HTML preview iframe. NO allow-same-origin (the
- * preview must stay in an opaque origin — with the route's own origin it
- * could read session data) and NO allow-top-navigation (a previewed page
- * must not hijack the GUI). The user can disable the sandbox per-feature
- * in the side card settings (warned); the toggle below reflects it.
- */
-export const HTML_IFRAME_SANDBOX = 'allow-scripts allow-popups allow-downloads allow-modals'
 
 /** Per-file preview scroll memory. Module-level so it survives viewer
  *  remounts: the save-then-switch-to-preview reload (EditorHost #215 case B)
@@ -117,13 +108,16 @@ export function TextEditor(props: FileViewerProps) {
     setDirty(false)
     setSaveState('idle')
     selectionPopup.hide()
+    // hide() reads a live ref; the reset must fire only on a content (file)
+    // swap, and the hook object's identity churns on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content])
 
   // A different file switches the remembered preview scroll position to that
   // file's own entry (first open: none, so the preview starts at the top).
   useEffect(() => {
     previewScrollRef.current = previewScrollMemory.get(previewScrollKey(scope, path)) ?? 0
-  }, [path])
+  }, [scope, path])
 
   // Create the CodeMirror editor once the content is loaded. The view owns
   // the document; React only tracks dirty state through the update listener
@@ -220,6 +214,7 @@ export function TextEditor(props: FileViewerProps) {
     // The keymap's save() reads live refs; scope/path are stable for a
     // tab's lifetime, and the dark flip is handled by the reconfigure
     // effect below (recreating the view here would drop the draft).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content, path])
 
   // Scheme flip: re-theme in place (the compartment holds only the
@@ -276,6 +271,9 @@ export function TextEditor(props: FileViewerProps) {
         view.requestMeasure()
       })
     })
+    // The reveal reads the live document/view refs; only the flip into
+    // preview triggers it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode])
 
   // Snapshot the live document into the draft whenever the preview needs
@@ -340,9 +338,11 @@ export function TextEditor(props: FileViewerProps) {
     () => (markdown && mode === 'preview' ? splitMermaidBlocks(previewMdText) : []),
     [markdown, mode, previewMdText],
   )
-  /** Raw-HTML analysis (block runs lifted out + inline gate). Non-null only
-   *  for documents that actually contain HTML — plain markdown keeps the
-   *  legacy single-pass render path below, byte-for-byte. */
+  /** Raw-HTML analysis (block runs lifted out + inline gate). Non-null for
+   *  every markdown preview, so the render below always takes the split
+   *  renderer — its markdown runs rewrite local image destinations internally
+   *  (see MarkdownHtml.tsx). The legacy single-pass branches (fed the
+   *  pre-rewritten `previewText`) are dead in the current wiring. */
   const htmlInfo = useMemo(
     () => (markdown && mode === 'preview' ? analyzeMarkdownHtml(previewMdText) : null),
     [markdown, mode, previewMdText],

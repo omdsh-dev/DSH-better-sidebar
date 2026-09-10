@@ -37,6 +37,8 @@ function FakeMarkdownViewer(props: FileViewerProps) {
       markDirty = undefined
       props.onToolbarControls?.(null)
     }
+    // Only the callback identities must re-wire; content is read at render time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.onToolbarControls, props.onToolbarState])
   return createElement('div', { 'data-testid': 'markdown-content' }, props.content ?? '')
 }
@@ -56,7 +58,7 @@ function setup(): {
     component: FakeMarkdownViewer,
   })
   store.setSession('markdown-manual-refresh-session')
-  const home = allLeaves(store.getSnapshot().state!.splits)
+  const home = allLeaves(store.getSnapshot().state!.bottomSplits)
     .flatMap(leaf => leaf.tabs)
     .find(candidate => candidate.type === 'editor')!
   const tab: SidebarTab = { ...home, path: '/tmp/notes.md', title: 'notes.md' }

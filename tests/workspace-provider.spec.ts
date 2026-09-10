@@ -20,7 +20,7 @@ function provider(id: string, priority: number, claim: (cwd: string) => boolean)
   }
 }
 
-async function invoke(route: SidebarWebRoute, method: string, payload: unknown): Promise<any> {
+async function invoke(route: SidebarWebRoute, method: string, payload: unknown): Promise<unknown> {
   const chunks: Buffer[] = []
   const source = Buffer.from(JSON.stringify(payload))
   const req = {
@@ -100,6 +100,7 @@ describe('BetterSidebarWorkspaceRegistry', () => {
       sessions: { get: () => ({ header: { cwd: '/virtual' } }) },
       tools: { register: () => () => {} },
       logger: { warn: () => {} },
+      on: () => () => {},
       effect: (fn: () => void | (() => void)) => { fn() },
       inject: () => () => {},
       get: (key: string) => key === 'connection' ? { requestRejection: () => authenticated ? undefined : 401 } : undefined,
@@ -115,6 +116,11 @@ describe('BetterSidebarWorkspaceRegistry', () => {
     expect(await invoke(route, 'fs.read', { sessionId: 's', path: '/virtual/a.txt' })).toEqual({ ok: true, value: { kind: 'text', content: 'remote', truncated: false } })
     expect(await invoke(route, 'fs.write', { sessionId: 's', path: '/virtual/a.txt', content: 'next' })).toEqual({ ok: true, value: { ok: true } })
     expect(await invoke(route, 'fs.search', { sessionId: 's', query: 'file' })).toEqual({ ok: true, value: { matches: ['src/file.ts'], truncated: false } })
+    // New local file operations must never fall through to SSH anchor files.
+    for (const method of ['fs.rename', 'fs.remove']) {
+      expect(await invoke(route, method, { sessionId: 's', path: '/virtual/a.txt', name: 'b.txt' }))
+        .toMatchObject({ ok: false, error: { code: 'method-error' } })
+    }
     const gitCalls: Array<[string, Record<string, unknown>]> = [
       ['git.worktrees', {}], ['git.status', {}], ['git.diff', { path: 'a.ts', staged: true }],
       ['git.stage', { path: 'a.ts' }], ['git.unstage', { path: 'a.ts' }], ['git.commit', { message: 'done' }],

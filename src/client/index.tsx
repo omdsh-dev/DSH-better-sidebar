@@ -17,7 +17,11 @@ import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-load
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
-import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
+import { registerTurnTailInterception } from './intercept.tsx'
+import { createNativeTabRecords } from './native/tab-adapter.tsx'
+import { registerNativeSurface } from './native/index.ts'
+import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
+import { createNativeSurface } from './native/surface.ts'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
@@ -137,6 +141,27 @@ export function apply(ctx: Context): void {
   // are ready by the time the sidebar renders.
   const service = createBetterSidebarService(sidebarStore)
   ctx.provide('betterSidebar', service)
+  // The native right-Sidebar surface: the plugin's content is registered as
+  // DSH tab types (one per descriptor) and every open routes there, so the
+  // right column belongs to the host and only the bottom workbench stays
+  // plugin-owned. Both halves live for this fiber's lifetime.
+  const nativeRecords = createNativeTabRecords()
+  const nativeSurface = createNativeSurface(ctx, nativeRecords)
+  service.setSurface(nativeSurface)
+  ctx.effect(
+    () => registerNativeSurface({ ctx, store: sidebarStore, service, records: nativeRecords }),
+    'dsh-better-sidebar: native right-Sidebar registrations',
+  )
+  // The bottom workbench's expand/collapse button in DSH's session header
+  // (the header's corner seat belongs to the native sidebar's own control).
+  ctx.effect(
+    () => registerBottomToggle(ctx, sidebarStore),
+    'dsh-better-sidebar: bottom-workbench toggle',
+  )
+  ctx.effect(
+    () => () => { nativeSurface.dispose(); service.setSurface(undefined) },
+    'dsh-better-sidebar: native right-Sidebar surface',
+  )
   // Terminal tab titles use the host's effective shell name (e.g. bash/zsh)
   // instead of "Terminal 1". Start with a safe fallback and replace it as
   // soon as the host shell info resolves. Tabs created before the response
@@ -158,8 +183,7 @@ export function apply(ctx: Context): void {
       terminalTitle = name
       const snapshot = service.getSnapshot()
       if (snapshot.sessionId !== sessionId || snapshot.state === undefined) return
-      const tabs = allLeaves(snapshot.state.splits)
-        .concat(allLeaves(snapshot.state.bottomSplits)).flatMap(leaf => leaf.tabs)
+      const tabs = allLeaves(snapshot.state.bottomSplits).flatMap(leaf => leaf.tabs)
       for (const tab of tabs) {
         if (tab.type === 'terminal' && !isAgentTabId(tab.id) && tab.title === fallbackTitle) service.updateTab(tab.id, { title: name })
       }
@@ -176,14 +200,21 @@ export function apply(ctx: Context): void {
   )
   // A failure anywhere in the client lifecycle must never take the app down
   // silently: log with the plugin prefix and pin a visible diagnostic strip
-  // to the page so a blank panel is never the only symptom.
+  // to the page so a blank panel is never the only symptom. This strip is
+  // the last-resort reporter (no CSS module is reachable from here), so its
+  // colors go through skin token chains with the previous hexes as the
+  // chain tails — worst case (no skin tokens on the page) it renders
+  // byte-identical to the old hardcoded bar, and any `--dsw-alias-*` skin
+  // re-themes it (guide §12: no hardcoded colors).
   const fail = (phase: string, error: unknown): void => {
     console.error(`[dsh-better-sidebar] ${phase} error:`, error)
     try {
       const bar = document.createElement('div')
       bar.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:2147483000;max-width:70vw;padding:8px 12px;'
-        + 'font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#f2a1a1;background:#1b1b22;'
-        + 'border:1px solid #f2a1a1;border-radius:8px;white-space:pre-wrap'
+        + 'font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;'
+        + 'color:var(--dsw-alias-state-error-primary,#f2a1a1);'
+        + 'background:var(--dsw-alias-bg-layer-3,var(--dsw-alias-bg-base,#1b1b22));'
+        + 'border:1px solid var(--dsw-alias-state-error-primary,#f2a1a1);border-radius:8px;white-space:pre-wrap'
       bar.textContent = `[dsh-better-sidebar] ${phase} error: ${error instanceof Error ? error.message : String(error)}`
       document.body.appendChild(bar)
     } catch {
@@ -191,10 +222,9 @@ export function apply(ctx: Context): void {
     }
   }
   try {
-    // rc.8+ exposes the client module system as the `ctx.modules` service
-    // (no window.__DSH_MODULES__ page global anymore); the chunk loader needs
-    // it to resolve its externals, so inject it before anything can load a
-    // lazy chunk. The loader falls back to the rc.7 global when absent.
+    // rc.8+ exposes the client module system as the `ctx.modules` service;
+    // the chunk loader needs it to resolve its externals, so inject it
+    // before anything can load a lazy chunk.
     setChunkModuleSystem(ctx.modules)
     // Fresh chunk state for this activation: drop per-test fixtures and
     // revalidate loaded chunk scripts against the bundle route's ETags —
@@ -307,7 +337,7 @@ export function apply(ctx: Context): void {
         // rides the same fetch, so one round trip covers both decisions).
         const decision = await Promise.race([
           loadBootDecision(api),
-          new Promise<null>(resolve => { const timer = window.setTimeout(() => resolve(null), 2000) }),
+          new Promise<null>(resolve => { window.setTimeout(() => resolve(null), 2000) }),
         ])
         if (disposed) return
         if (decision !== null) {
@@ -344,18 +374,6 @@ export function apply(ctx: Context): void {
         }
       },
       'dsh-better-sidebar: turn-tail interception',
-    )
-
-    ctx.effect(
-      () => {
-        try {
-          return registerOpenPathInterception(ctx, sidebarStore)
-        } catch (error) {
-          fail('interception', error)
-          return () => {}
-        }
-      },
-      'dsh-better-sidebar: open-path interception',
     )
 
     ctx.effect(

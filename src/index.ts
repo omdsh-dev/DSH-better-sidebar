@@ -13,8 +13,8 @@
  * session's authoritative cwd comes from the session store, and terminal
  * processes are keyed by session.
  */
-import { open, stat } from 'node:fs/promises'
-import { basename, dirname, extname, isAbsolute, join } from 'node:path'
+import { stat } from 'node:fs/promises'
+import { basename, extname, isAbsolute, join } from 'node:path'
 import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -31,7 +31,7 @@ import {
 } from './config.ts'
 import { parentOf, requireAbsolute, rootLabel } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
-import { writeWorkspaceUpload } from './fs-operations.ts'
+import { renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from './fs-operations.ts'
 import {
   BetterSidebarWorkspaceRegistry,
   LocalBetterSidebarWorkspaceProvider,
@@ -48,7 +48,7 @@ import * as git from './git.ts'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { WorkspaceTerminalManager } from './workspace-terminal.ts'
 import { connectWorkspaceTerminal } from './workspace-terminal-socket.ts'
-import { defaultShell, ensureSpawnHelper, PtyManager, shellDisplayName } from './pty-manager.ts'
+import { defaultShell, ensureSpawnHelper, PtyManager, shellDisplayName, splitShellArgs, unquotePath } from './pty-manager.ts'
 import { AgentPtyRegistry, armPtyResizeGate, tryResizePty, type AgentTerminalHandle } from './agent-pty.ts'
 import {
   DSH_NODE_PTY_RANGE,
@@ -61,7 +61,9 @@ import { AgentOpenRegistry, registerOpenTool, type AgentOpenRequest } from './ag
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
 import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
 import { buildSidechatApi } from './sidechat-routes.ts'
+import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
+import { readPersistedSession } from './session-store.ts'
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
@@ -147,16 +149,14 @@ async function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string)
   const headerCwd = ctx.sessions.get(sessionId)?.header.cwd
   if (headerCwd) return checked(headerCwd)
   const persistence = ctx.get('sessionPersistence')
-  // alpha.1+ exposes stat/header without acquiring a writer or restoring an Agent.
-  // The persisted execution world wins over a stale browser cwd hint.
   if (typeof persistence?.stat === 'function') {
     const stored = await persistence.stat(sessionId)
     if (stored?.header.cwd) return checked(stored.header.cwd)
   }
   if (clientCwd) return checked(clientCwd)
-  if (persistence && typeof persistence.stat !== 'function') {
-    const inspected = await persistence.inspect(sessionId)
-    if (inspected.meta.cwd) return checked(inspected.meta.cwd)
+  if (persistence !== undefined) {
+    const persisted = await readPersistedSession(persistence, sessionId)
+    if (persisted.header.cwd) return checked(persisted.header.cwd)
   }
   return process.cwd()
 }
@@ -189,47 +189,6 @@ async function resolveGitPath(cwd: string, raw: string, selected?: string): Prom
 
 /** How many leading bytes a binary read returns for client-side detect sniffing. */
 const READ_HEAD_LIMIT = 4096
-
-/** Text read of a file with the size cap; binary detection via NUL probe.
- *  Binary reads also return the first {@link READ_HEAD_LIMIT} bytes (base64)
- *  so the client can re-match viewers by content (`detect`). */
-async function readText(path: string, readLimit: number): Promise<{
-  content: string
-  truncated: boolean
-  binary: boolean
-  size: number
-  head?: string
-}> {
-  const info = await stat(path).catch((error: unknown) => {
-    throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
-  })
-  if (info.isDirectory()) {
-    throw new SidebarError('fs-error', `"${path}" is a directory`, 400)
-  }
-  const size = info.size
-  const truncated = size > readLimit
-  const handle = await open(path, 'r').catch((error: unknown) => {
-    throw new SidebarError('fs-error', `cannot read "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
-  })
-  try {
-    const buffer = Buffer.alloc(Math.min(size, readLimit))
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
-    const slice = buffer.subarray(0, bytesRead)
-    const binary = slice.includes(0)
-    const head = binary
-      ? slice.subarray(0, Math.min(slice.length, READ_HEAD_LIMIT)).toString('base64')
-      : undefined
-    return {
-      content: binary ? '' : slice.toString('utf8'),
-      truncated,
-      binary,
-      size,
-      head,
-    }
-  } finally {
-    await handle.close()
-  }
-}
 
 /** One API method dispatch table entry. */
 type ApiMethod = (payload: unknown) => Promise<unknown> | unknown
@@ -269,11 +228,11 @@ function shellOverridesOf(getSettings: () => SidebarSettingsFace | undefined): {
   const value = settings?.get().value
   if (value === null || typeof value !== 'object') return {}
   const record = value as Record<string, unknown>
-  const shell = typeof record.terminalShell === 'string' ? record.terminalShell.trim() : ''
+  const shell = typeof record.terminalShell === 'string' ? unquotePath(record.terminalShell.trim()) : ''
   const args = typeof record.terminalShellArgs === 'string' ? record.terminalShellArgs.trim() : ''
   return {
     shell: shell === '' ? undefined : shell,
-    shellArgs: args === '' ? undefined : args.split(/\s+/).filter(Boolean),
+    shellArgs: args === '' ? undefined : splitShellArgs(args),
   }
 }
 
@@ -319,6 +278,7 @@ function buildApi(
   workspace: BetterSidebarWorkspaceService,
   getSettings: () => SidebarSettingsFace | undefined,
   workspaceTerminals: WorkspaceTerminalManager,
+  assistantLive: AssistantLiveBuffer,
 ): Record<string, ApiMethod> {
   const cwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
     const sessionId = requireString(payload, 'sessionId')
@@ -382,6 +342,30 @@ function buildApi(
       await workspace.resolve(scope).writeText(scope, path, content)
       return { ok: true }
     },
+    // The tree row's rename: single-segment name, destination-existence and
+    // workspace-root refusals, link-aware (renames the row, not its target).
+    // fs-operations.ts owns the containment and shape rules.
+    'fs.rename': async (payload) => {
+      const { cwd } = await cwdOf(payload)
+      if (workspace.resolve({ cwd }).id !== 'local') throw new SidebarError('method-error', 'Rename and delete are not available for this remote workspace', 501)
+      return renameWorkspaceEntry({
+        cwd,
+        path: requireString(payload, 'path'),
+        name: requireString(payload, 'name'),
+        fence: fenceEnabledOf(getSettings),
+      })
+    },
+    // The tree row's delete (permanent — the host has no trash): recursive
+    // for directories, unlinks a symlink row without touching its target.
+    'fs.remove': async (payload) => {
+      const { cwd } = await cwdOf(payload)
+      if (workspace.resolve({ cwd }).id !== 'local') throw new SidebarError('method-error', 'Rename and delete are not available for this remote workspace', 501)
+      return removeWorkspaceEntry({
+        cwd,
+        path: requireString(payload, 'path'),
+        fence: fenceEnabledOf(getSettings),
+      })
+    },
     'git.worktrees': payload => executeGit(payload, { operation: 'worktrees', repoRoot: selectedRepoOf(payload) }),
     'git.status': payload => executeGit(payload, { operation: 'status', repoRoot: selectedRepoOf(payload) }),
     'git.diff': (payload) => {
@@ -433,7 +417,7 @@ function buildApi(
         const persistence = ctx.get('sessionPersistence')
         if (persistence !== undefined) {
           try {
-            events = (await persistence.inspect(sessionId)).events
+            events = (await readPersistedSession(persistence, sessionId)).events
           } catch {
             // Cold read unavailable (session never persisted): an empty
             // window is the honest answer, not a wire error.
@@ -497,7 +481,8 @@ function buildApi(
         const provider = workspace.resolve({ cwd })
         if (provider.id !== 'local') return { shell: '', name: provider.terminal?.label ?? 'Terminal' }
       }
-      return { shell: terminalShell, name: shellDisplayName(terminalShell) }
+      const effective = shellOverridesOf(getSettings).shell ?? terminalShell
+      return { shell: effective, name: shellDisplayName(effective) }
     },
     // The side card preferences. The settings service is optional in the
     // composition; while absent the routes report undefined and the client
@@ -626,7 +611,7 @@ function buildApi(
     // identities are fenced from the generic session RPCs (agent-lookup
     // ownership), and the thread is created with a CUSTOM seed the stock
     // fork APIs cannot express.
-    ...buildSidechatApi(ctx),
+    ...buildSidechatApi(ctx, assistantLive),
   }
 }
 
@@ -849,7 +834,14 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   })
 
   // ── JSON API ────────────────────────────────────────────────────────────
-  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, workspaceRegistry, () => settingsFace, workspaceTerminals)
+  // The live assistant stream buffer: DSH 0.1.5 publishes in-flight model
+  // deltas as process-local `agent/assistant-stream` frames instead of the
+  // durable `assistant/chunk` events 0.1.2 logged, so the side-chat
+  // transcript and the inherited in-progress snapshot read them here. The
+  // effect releases the listener on fiber disposal.
+  const assistantLive = createAssistantLiveBuffer(ctx)
+  ctx.effect(() => () => { assistantLive.dispose() }, 'dsh-better-sidebar: live assistant stream buffer')
+  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, workspaceRegistry, () => settingsFace, workspaceTerminals, assistantLive)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -1166,6 +1158,38 @@ async function attachAgentList(
 }
 
 /**
+ * The WS close reason for a failed terminal attach. A missing configured
+ * shell gets a SHORT machine-readable marker (`shell-not-found:<name>`,
+ * capped by BYTES — a WS close reason allows at most 123 bytes, which `ws`
+ * validates with `Buffer.byteLength`) that the client maps to a localized,
+ * actionable banner; every other failure keeps the raw message (the
+ * model-side tool errors read it verbatim).
+ */
+export function wsCloseReasonOf(error: unknown): string {
+  if (error instanceof SidebarError && error.code === 'shell-not-found') {
+    const name = truncateUtf8Bytes(shellDisplayName(String(error.meta?.shell ?? '')), 100)
+    return `shell-not-found:${name}`
+  }
+  return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * Truncate to at most `maxBytes` UTF-8 bytes without splitting a code point.
+ * A character-count `slice` does not bound the WS close reason: `ws` measures
+ * `Buffer.byteLength` against its 123-byte cap, and the resulting throw would
+ * replace the very error the reason describes.
+ */
+function truncateUtf8Bytes(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value) <= maxBytes) return value
+  let truncated = ''
+  for (const character of value) {
+    if (Buffer.byteLength(truncated + character) > maxBytes) break
+    truncated += character
+  }
+  return truncated
+}
+
+/**
  * Wire one terminal socket to its pty: replay transcript, pump both ways.
  * Two attach modes share the wire protocol:
  * - `?uuid=...` attaches to an agent-owned terminal (created by the
@@ -1220,7 +1244,7 @@ async function attachTerminal(
     })
 
   } catch (error) {
-    ws.close(1011, Buffer.from(error instanceof Error ? error.message : String(error)).subarray(0, 110).toString('utf8'))
+    ws.close(1011, wsCloseReasonOf(error))
   }
 }
 

@@ -9,7 +9,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
-import { apply, mediaTypeForPath } from '../src/index.ts'
+import { apply, mediaTypeForPath, wsCloseReasonOf } from '../src/index.ts'
+import { SidebarError } from '../src/wire.ts'
 import { encodeHtmlUrl } from '../src/html-route.ts'
 import * as git from '../src/git.ts'
 import { listDirectory } from '../src/fs-tree.ts'
@@ -39,6 +40,8 @@ interface FakeContext {
   sessions: { get: (id: string) => { header: { cwd?: string } } | undefined }
   tools: { register: (tool: unknown) => () => void }
   effect: (fn: () => void | (() => void), label?: string) => void
+  /** The session/agent event feeds: nothing emits in these tests. */
+  on: (event: string, listener: (payload: never) => void) => () => void
   /** The settings service never appears in the smoke context: the inject
    *  callback must never run (mirror of cordis' service-less inject). */
   inject: (deps: readonly string[], callback: (sctx: never) => void) => () => void
@@ -99,6 +102,7 @@ describe('host plugin smoke', () => {
       // No settings service in the smoke context: the registration callback
       // never runs (cordis' service-less inject behaves the same).
       inject: () => () => {},
+      on: () => () => {},
       // No jobs/agents services: the jobs routes degrade to a 503.
       get: () => undefined,
     }
@@ -135,6 +139,7 @@ describe('host plugin smoke', () => {
         if (typeof cleanup === 'function') effects.push(cleanup)
       },
       inject: () => () => {},
+      on: () => () => {},
       get: () => undefined,
     }
     try {
@@ -501,7 +506,7 @@ describe('git destructive operations (scratch repository)', () => {
 describe('session cwd resolution over the API route', () => {
   interface CtxOverrides {
     sessions?: { get: (id: string) => { header: { cwd?: string } } | undefined }
-    sessionPersistence?: { inspect: (id: string) => Promise<{ meta: { cwd?: string } }> }
+    sessionPersistence?: { open: (id: string, access: 'read' | 'write') => Promise<{ header: { cwd?: string }; read: () => Promise<{ events: never[] }>; close: () => Promise<void> }> }
     fs?: {
       resolve(path: string): Promise<{ targetKey: string; displayPath: string }>
       contains(parent: { targetKey: string }, child: { targetKey: string }): boolean
@@ -554,6 +559,8 @@ describe('session cwd resolution over the API route', () => {
       effect: (fn: () => void | (() => void)) => { fn() },
       // No settings service: the namespace registration never runs.
       inject: () => () => {},
+      // The session/agent event feeds: nothing emits in these tests.
+      on: () => () => {},
       // No jobs/agents services in the smoke context: the routes degrade.
       get: (key: string) => key === 'sessionPersistence' ? overrides.sessionPersistence : undefined,
     }
@@ -620,8 +627,10 @@ describe('session cwd resolution over the API route', () => {
     const coldCwd = resolvePath('/cold-project-cwd')
     const route = mount({
       sessionPersistence: {
-        inspect: async (id) => ({
-          meta: id === 's-cold' ? { cwd: coldCwd } : {},
+        open: async (id) => ({
+          header: id === 's-cold' ? { cwd: coldCwd } : {},
+          read: async () => ({ events: [] }),
+          close: async () => {},
         }),
       },
     })
@@ -645,7 +654,7 @@ describe('session cwd resolution over the API route', () => {
     // potentially recreate the original "outside workspace" misclassification.
     const route = mount({
       sessionPersistence: {
-        inspect: async () => ({ meta: { cwd: 'relative/path' } }),
+        open: async () => ({ header: { cwd: 'relative/path' }, read: async () => ({ events: [] }), close: async () => {} }),
       },
     })
     const result = await invoke(route, 'session.cwd', { sessionId: 's-bad' })
@@ -656,7 +665,7 @@ describe('session cwd resolution over the API route', () => {
   it('falls back to the process cwd when persistence has no cwd for the session', async () => {
     const route = mount({
       sessionPersistence: {
-        inspect: async () => ({ meta: {} }),
+        open: async () => ({ header: {}, read: async () => ({ events: [] }), close: async () => {} }),
       },
     })
     const result = await invoke(route, 'session.cwd', { sessionId: 's-blank' })
@@ -889,7 +898,10 @@ describe('side card settings routes', () => {
     }
     return {
       register(ns: string, schema: unknown) {
-        namespaces.set(ns, { schema, value: undefined, revision: 0 })
+        // Preserve a pre-seeded value: tests stage prefs through the `pre`
+        // map before the plugin mounts and registers the same namespace.
+        const existing = namespaces.get(ns)
+        namespaces.set(ns, { schema, value: existing?.value ?? undefined, revision: 0 })
         return { get: () => ({}), watch: () => () => {}, update: async () => {}, replace: async () => {} }
       },
       describe() {
@@ -952,6 +964,8 @@ describe('side card settings routes', () => {
         if (deps.includes('settings') && settings !== undefined) callback({ settings })
         return () => {}
       },
+      // The session/agent event feeds: nothing emits in these tests.
+      on: () => () => {},
       // No jobs/agents services: the jobs routes degrade to a 503.
       get: () => undefined,
     }
@@ -1012,21 +1026,57 @@ describe('side card settings routes', () => {
     expect(String((result.value as { name: unknown }).name).length).toBeGreaterThan(0)
   })
 
+  it('shell.get reflects the settings-page override with the quotes stripped', async () => {
+    const route = mountWithSettings(createFakeSettings({
+      'dsh-better-sidebar': {
+        terminalShell: '"C:\\Program Files\\PowerShell\\7\\pwsh.exe"',
+        terminalShellArgs: '-NoLogo',
+      },
+    }))
+    const result = await invoke(route, 'shell.get', {})
+    expect(result.ok).toBe(true)
+    expect(result.value).toMatchObject({
+      shell: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+      name: 'pwsh',
+    })
+  })
+
+  it('maps a shell-not-found failure to the machine-readable close reason', async () => {
+    expect(wsCloseReasonOf(new SidebarError(
+      'shell-not-found',
+      'shell executable not found: "C:\\Program Files\\PowerShell\\7\\pwsh.exe"',
+      400,
+      { shell: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe' },
+    ))).toBe('shell-not-found:pwsh')
+    expect(wsCloseReasonOf(new Error('boom'))).toBe('boom')
+    expect(wsCloseReasonOf('plain')).toBe('plain')
+  })
+
+  it('caps the close reason by UTF-8 bytes so the ws 123-byte limit holds', () => {
+    // 200 CJK characters are ~600 bytes: a character-count slice would still
+    // overflow the cap `ws` enforces with Buffer.byteLength.
+    const reason = wsCloseReasonOf(new SidebarError(
+      'shell-not-found',
+      'shell executable not found',
+      400,
+      { shell: `/bin/${'终'.repeat(200)}` },
+    ))
+    expect(reason.startsWith('shell-not-found:')).toBe(true)
+    expect(Buffer.byteLength(reason)).toBeLessThanOrEqual(123)
+  })
+
   it('reads the resolved prefs and writes a patch through the seam', async () => {
     const route = mountWithSettings(createFakeSettings())
     const read = await invoke(route, 'settings.get', {})
     expect(read.ok).toBe(true)
     expect(read.value).toEqual({
       value: {
-        openByDefault: false,
-        defaultWidthPercent: 35,
         autoOpenSubagent: true,
         autoOpenJobs: true,
         agentTerminalTools: false, agentOpenTools: false,
         bottomPanelAutoTerminal: true,
         terminalFontFamily: '',
         terminalFontSize: 13,
-        interceptOpenPath: true,
         editorExplorer: false,
         workspaceFence: true,
         terminalShell: '',
@@ -1040,7 +1090,6 @@ describe('side card settings routes', () => {
         browserInterceptHttp: true,
         browserInterceptHttps: false,
         browserAllowedLoopback: '',
-        changesDiffFloat: true,
         // The enable-switch maps default to {} (everything on).
         tabsEnabled: {},
         viewersEnabled: {},
@@ -1051,11 +1100,11 @@ describe('side card settings routes', () => {
       externalDisable: false,
     })
 
-    const written = await invoke(route, 'settings.update', { patch: { openByDefault: true } })
+    const written = await invoke(route, 'settings.update', { patch: { agentOpenTools: true } })
     expect(written.ok).toBe(true)
-    const view = written.value as { value: { openByDefault: boolean; defaultWidthPercent: number }; revision: number }
-    expect(view.value.openByDefault).toBe(true)
-    expect(view.value.defaultWidthPercent).toBe(35)
+    const view = written.value as { value: { agentOpenTools: boolean; terminalFontSize: number }; revision: number }
+    expect(view.value.agentOpenTools).toBe(true)
+    expect(view.value.terminalFontSize).toBe(13)
     expect(view.revision).toBe(1)
   })
 
@@ -1089,10 +1138,10 @@ describe('side card settings routes', () => {
 
   it('refuses a stale write with settings-conflict (409)', async () => {
     const route = mountWithSettings(createFakeSettings())
-    await invoke(route, 'settings.update', { patch: { openByDefault: false } })
+    await invoke(route, 'settings.update', { patch: { agentOpenTools: false } })
     // The second write carries the pre-write revision: the seam refuses it.
     const stale = await invoke(route, 'settings.update', {
-      patch: { defaultWidthPercent: 40 },
+      patch: { terminalFontSize: 15 },
       expectedRevision: 0,
     })
     expect(stale.ok).toBe(false)
@@ -1206,6 +1255,8 @@ describe('agent terminal tool gating', () => {
         if (deps.includes('settings')) callback({ settings })
         return () => {}
       },
+      // The session/agent event feeds: nothing emits in these tests.
+      on: () => () => {},
       // No jobs/agents services: the jobs routes degrade to a 503.
       get: () => undefined,
     }
@@ -1263,6 +1314,8 @@ describe('agent sidebar-open tool gating', () => {
         if (deps.includes('settings')) callback({ settings })
         return () => {}
       },
+      // The session/agent event feeds: nothing emits in these tests.
+      on: () => () => {},
       get: () => undefined,
     }
     apply(ctx as never)

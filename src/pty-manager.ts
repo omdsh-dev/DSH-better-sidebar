@@ -336,8 +336,10 @@ function windowsPwshCandidateDirs(env: NodeJS.ProcessEnv): string[] {
 /**
  * Resolve the configured shell executable before handing it to node-pty.
  *
- * POSIX node-pty uses `execvp`, so bare commands already follow PATH and are
- * passed through unchanged. Windows' native backend does not consistently
+ * POSIX and Windows are both probed BEFORE spawn so a wrong configured name
+ * becomes a stable, actionable `shell-not-found` error instead of a bare
+ * "[process exited with code N]" (POSIX execvp) or an opaque native string
+ * (Windows). Windows' native backend additionally does not consistently
  * apply the shell's PATHEXT lookup to a bare value (`pwsh` / `cmd` can fail
  * with the opaque `File not found:` error), so perform the lookup ourselves:
  *
@@ -345,58 +347,79 @@ function windowsPwshCandidateDirs(env: NodeJS.ProcessEnv): string[] {
  *   suffix when the user omitted `.exe`),
  * - a bare name is searched through PATH, System32, and PowerShell's known
  *   install directories,
- * - failure becomes a stable, actionable pty-error instead of a native
- *   backend string with no mention of the configured shell.
+ * - failure becomes a stable, actionable `shell-not-found` error instead of
+ *   a native backend string with no mention of the configured shell.
  */
 export function resolveShellExecutable(
   shell: string,
   options: ShellExecutableResolutionOptions = {},
 ): string {
-  const configured = shell.trim()
+  const configured = unquotePath(shell.trim())
   const platform = options.platform ?? process.platform
-  if (platform !== 'win32' || configured === '') return configured
+  if (configured === '') return configured
 
   const env = options.env ?? process.env
   const exists = options.exists ?? existsSync
-  const rawPathext = windowsEnv(env, 'PATHEXT')
-  const executableExts = (rawPathext ?? '.COM;.EXE')
-    .split(';')
-    .map(extension => extension.trim())
-    // node-pty ultimately calls CreateProcess; batch files need an
-    // intermediate cmd.exe and therefore are not valid shell executables.
-    .filter(extension => /^\.(?:com|exe)$/i.test(extension))
-  if (executableExts.length === 0) executableExts.push('.EXE', '.COM')
+  const notFound = (): SidebarError =>
+    new SidebarError('shell-not-found', `shell executable not found: "${configured}"`, 400, { shell: configured })
 
-  const hasExtension = win32Path.extname(configured) !== ''
-  const names = hasExtension
-    ? [configured]
-    : executableExts.map(extension => configured + extension.toLowerCase())
-  const hasPath = win32Path.isAbsolute(configured) || /[\\/]/.test(configured)
-  const candidates: string[] = []
-  if (hasPath) {
-    candidates.push(...names)
-  } else {
-    const path = windowsEnv(env, 'PATH')
-    if (path !== undefined) {
-      for (const dir of path.split(';').map(entry => entry.trim()).filter(Boolean)) {
-        for (const name of names) candidates.push(win32Path.join(dir, name))
+  if (platform === 'win32') {
+    const rawPathext = windowsEnv(env, 'PATHEXT')
+    const executableExts = (rawPathext ?? '.COM;.EXE')
+      .split(';')
+      .map(extension => extension.trim())
+      // node-pty ultimately calls CreateProcess; batch files need an
+      // intermediate cmd.exe and therefore are not valid shell executables.
+      .filter(extension => /^\.(?:com|exe)$/i.test(extension))
+    if (executableExts.length === 0) executableExts.push('.EXE', '.COM')
+
+    const hasExtension = win32Path.extname(configured) !== ''
+    const names = hasExtension
+      ? [configured]
+      : executableExts.map(extension => configured + extension.toLowerCase())
+    const hasPath = win32Path.isAbsolute(configured) || /[\\/]/.test(configured)
+    const candidates: string[] = []
+    if (hasPath) {
+      candidates.push(...names)
+    } else {
+      const path = windowsEnv(env, 'PATH')
+      if (path !== undefined) {
+        for (const dir of path.split(';').map(entry => entry.trim()).filter(Boolean)) {
+          for (const name of names) candidates.push(win32Path.join(dir, name))
+        }
+      }
+      const systemRoot = windowsEnv(env, 'SystemRoot')
+      if (systemRoot !== undefined && systemRoot.trim() !== '') {
+        for (const name of names) candidates.push(win32Path.join(systemRoot, 'System32', name))
+      }
+      if (/^pwsh(?:\.exe)?$/i.test(configured)) {
+        for (const dir of windowsPwshCandidateDirs(env)) {
+          candidates.push(win32Path.join(dir, 'pwsh.exe'))
+        }
       }
     }
-    const systemRoot = windowsEnv(env, 'SystemRoot')
-    if (systemRoot !== undefined && systemRoot.trim() !== '') {
-      for (const name of names) candidates.push(win32Path.join(systemRoot, 'System32', name))
+
+    for (const candidate of [...new Set(candidates)]) {
+      if (exists(candidate)) return candidate
     }
-    if (/^pwsh(?:\.exe)?$/i.test(configured)) {
-      for (const dir of windowsPwshCandidateDirs(env)) {
-        candidates.push(win32Path.join(dir, 'pwsh.exe'))
-      }
-    }
+    throw notFound()
   }
 
-  for (const candidate of [...new Set(candidates)]) {
+  // POSIX: the previous pass-through delegated a wrong name to execvp and the
+  // pty died with a bare "[process exited with code N]". Probe like Windows:
+  // a path with a separator must exist; a bare name is searched along PATH
+  // (the colon form is fixed by the platform). A miss is a clear, actionable
+  // error instead of a cryptic exit code.
+  if (configured.includes('/')) {
+    if (!exists(configured)) throw notFound()
+    return configured
+  }
+  const path = env.PATH ?? '/usr/bin:/bin'
+  for (const dir of path.split(':').map(entry => entry.trim()).filter(Boolean)) {
+    const candidate = join(dir, configured)
     if (exists(candidate)) return candidate
   }
-  throw new SidebarError('pty-error', `shell executable not found: "${configured}"`)
+  throw notFound()
 }
 
 /**
@@ -466,4 +489,60 @@ export function shellDisplayName(shell: string): string {
 export function shellSpawnArgs(configured: string[] = []): string[] {
   if (configured.length > 0) return [...configured]
   return process.platform === 'win32' ? [] : ['-l']
+}
+
+/**
+ * Strip ONE pair of surrounding quotes from a configured shell path. Users
+ * paste Windows paths with spaces pre-quoted (`"C:\Program Files\…"`); the
+ * quotes are shell-input syntax, not part of the path. Unpaired quotes and
+ * shorter values stay verbatim.
+ */
+export function unquotePath(value: string): string {
+  if (value.length >= 2) {
+    const first = value[0]
+    const last = value[value.length - 1]
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) return value.slice(1, -1)
+  }
+  return value
+}
+
+/**
+ * Split a settings-page shell-arguments string into argv with quote-aware
+ * grouping: `'…'` / `"…"` group whitespace, and characters inside quotes are
+ * LITERAL — a backslash is never an escape, so Windows paths survive intact
+ * (`-File "C:\my init\init.ps1"` → three tokens, the last containing spaces).
+ * The price is that an argument containing a literal quote character cannot
+ * be expressed; shell startup arguments never need one. An unclosed quote
+ * folds the remainder into the current token (settings input stays
+ * forgiving); an empty quote pair yields no argument.
+ */
+export function splitShellArgs(input: string): string[] {
+  const args: string[] = []
+  let current = ''
+  let quote: '"' | "'" | null = null
+  let started = false
+  for (const ch of input) {
+    if (quote !== null) {
+      if (ch === quote) quote = null
+      else current += ch
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      started = true
+      continue
+    }
+    if (/\s/.test(ch)) {
+      if (started) {
+        args.push(current)
+        current = ''
+        started = false
+      }
+      continue
+    }
+    current += ch
+    started = true
+  }
+  if (started) args.push(current)
+  return args.filter(arg => arg !== '')
 }

@@ -58,6 +58,7 @@ import {
   sideThreadRows,
   threadHasCompletedTurn,
   threadTrailingPending,
+  type SidechatLiveEvent,
   type SidechatThreadInfo,
 } from '../sidechat-core.ts'
 import {
@@ -69,6 +70,7 @@ import {
   type SidechatTranscriptRow,
 } from './sidechat-transcript.ts'
 import { api } from './api.ts'
+import { usePolling } from './use-polling.ts'
 import { t } from './locales.ts'
 import type { SessionScope } from './api.ts'
 import type { SidebarTab } from './state.ts'
@@ -111,6 +113,8 @@ const inFlightStarts = new Set<string>()
  * the afterSeq delta and never re-download what they already hold). */
 interface ThreadCache {
   entries: SidebarHistoryEntry[]
+  /** The CURRENT attempt's live deltas (replaced every pull, never merged). */
+  live: SidechatLiveEvent[]
 }
 
 /** Row-render labels (locale-dependent, memoized once per mount). */
@@ -382,7 +386,7 @@ export function SideChatView(props: {
   const [info, setInfo] = useState<SidechatThreadInfo | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
 
-  const cacheRef = useRef<ThreadCache>({ entries: [] })
+  const cacheRef = useRef<ThreadCache>({ entries: [], live: [] })
   // The previous poll's rows (see the mapping's reuse pass below).
   const prevRowsRef = useRef<SidechatTranscriptRow[]>([])
   const controllerRef = useRef<AbortController | null>(null)
@@ -456,14 +460,18 @@ export function SideChatView(props: {
     try {
       const cache = cacheRef.current
       const afterSeq = cache.entries.at(-1)?.event.seq
-      const { events } = await api.sidechatEvents(childId, afterSeq, controller.signal)
+      const { events, live } = await api.sidechatEvents(childId, afterSeq, controller.signal)
+      // The live set is the CURRENT attempt, so it replaces whatever the
+      // previous pull held; a settled step drops out of the host buffer and
+      // its durable assistant/message takes over in the mapping.
+      cache.live = live ?? []
       if (events.length > 0) {
         // Wire events arrive as parsed JSON; the mirror narrows data to the
         // record the mapping reads.
         const incoming = events.map(event => ({ event: event as SidebarSessionEvent }))
         cache.entries = mergeBySeq(cache.entries, incoming)
-        setRevision(value => value + 1)
       }
+      setRevision(value => value + 1)
     } catch {
       // Aborted by a newer pull or a wire failure: keep the last rows.
     }
@@ -481,7 +489,7 @@ export function SideChatView(props: {
   // Reset the transcript cache whenever the binding changes, then focus
   // the composer — it owns the first message of a fresh thread.
   useEffect(() => {
-    cacheRef.current = { entries: [] }
+    cacheRef.current = { entries: [], live: [] }
     prevRowsRef.current = []
     controllerRef.current?.abort()
     setError(null)
@@ -493,17 +501,25 @@ export function SideChatView(props: {
     }
   }, [threadId, fetchInfo])
 
-  // Poll while the tab is visible and the thread runs.
+  // One transcript pull on every input change (attach, visibility flip,
+  // run-state flip — the last one catches a thread's terminal state once it
+  // stops running).
   useEffect(() => {
     if (!visible || threadId === undefined) return
     void fetchThread(threadId)
-    if (!running) return
-    const timer = window.setInterval(() => {
-      void fetchThread(threadId)
-      void fetchInfo(threadId)
-    }, POLL_MS)
-    return () => { window.clearInterval(timer) }
-  }, [visible, threadId, running, fetchThread, fetchInfo])
+    // `running` is not read here, but re-triggering this pull on run-state
+    // flips is load-bearing (see above); the badge fetch rides the ticks.
+  }, [visible, threadId, running, fetchThread])
+
+  // Poll while the tab is visible and the thread runs: transcript deltas +
+  // badge refresh on a fixed cadence. Each pull self-guards (fetchThread
+  // aborts its predecessor; a late settle keeps the last rows).
+  const pollTick = useCallback(async (): Promise<void> => {
+    if (threadId === undefined) return
+    void fetchThread(threadId)
+    void fetchInfo(threadId)
+  }, [threadId, fetchThread, fetchInfo])
+  usePolling(visible && running && threadId !== undefined, pollTick, { intervalMs: POLL_MS })
 
   useEffect(() => () => { controllerRef.current?.abort() }, [])
 
@@ -523,8 +539,24 @@ export function SideChatView(props: {
   // The previous poll's rows ride into the mapping so unchanged rows keep
   // their object identity (see reuseRows): the 2s poll re-renders only the
   // changed tail instead of re-parsing markdown for the whole transcript.
+  // The live deltas are appended AFTER the durable events (they are the
+  // in-flight tail), and a delta whose step already settled durably is
+  // dropped: the durable message is authoritative and would otherwise render
+  // twice.
   const rows = useMemo(() => {
-    const next = threadId === undefined ? [] : transcriptRows(cacheRef.current.entries, prevRowsRef.current)
+    const cache = cacheRef.current
+    const settled = new Set(
+      cache.entries
+        .filter(entry => entry.event.type === 'assistant/message')
+        .map(entry => {
+          const data = entry.event.data as { turn?: unknown; step?: unknown }
+          return `${String(data.turn)}:${String(data.step)}`
+        }),
+    )
+    const live = cache.live
+      .filter(event => !settled.has(`${String(event.data.turn)}:${String(event.data.step)}`))
+      .map(event => ({ event: event as SidebarSessionEvent }))
+    const next = threadId === undefined ? [] : transcriptRows([...cache.entries, ...live], prevRowsRef.current)
     prevRowsRef.current = next
     return next
   },
@@ -574,7 +606,6 @@ export function SideChatView(props: {
       }
     }
     return items
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threads])
 
   const growComposer = (): void => {
@@ -688,7 +719,7 @@ export function SideChatView(props: {
           )}
           items={menuItems}
           selectedId={threadId}
-          onSelect={(id) => { id === '$new' ? openNewThread() : openExistingThread(id) }}
+          onSelect={(id) => { if (id === '$new') openNewThread(); else openExistingThread(id) }}
           onClose={() => { setMenuOpen(false) }}
           align="end"
           portal

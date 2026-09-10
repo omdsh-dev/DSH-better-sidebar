@@ -89,6 +89,8 @@ Cursor             (SSH)
 
 **实施偏差（2026-09，#517 / PR #522）**：SSH 远程编辑器链接**不再经宿主路由执行**。DSH 部署在无头远端服务器时，宿主侧 `xdg-open` 无 DISPLAY/无编辑器，`vscode://` 静默失败。`api.openExternal`（`src/client/api.ts`）现把 `<scheme>://vscode-remote/ssh-remote+…` 形态的 URL 在浏览器客户端同步触发 `window.location.assign`（处于用户点击链内，外部协议交给本机编辑器经 Remote-SSH 打开远端文件）；reveal 与本地编辑器 URL 仍走本节宿主路由。普通浏览器可处理自定义协议；禁止/未处理 `vscode://` 的 WebView 壳客户端需各自适配（见 #517 补充信息）。
 
+**实施偏差（2026-09，右键菜单减重与子菜单视口钳制）**：本菜单（及 TabBar / GitLens / FreeWindow 右键菜单、「+」菜单）整体切到 primitives `Menu` 的 **`compact` 密度**（行高 26px / 12px 字 / 164px 卡片 / 7px 圆角），菜单图标随槽位 16→14、子菜单图钉 20→16。同时发现宿主子菜单**不受视口钳制**（`bottom:-4px` 从父行向上生长、`left:calc(100%+10px)` 向右展开，主列表的钳制与 `max-height` 收缩均不覆盖它）：树顶部右键时本子菜单伸出视口上沿，窄面板（280–400px）时伸出右沿。修复为插件侧方案 `src/client/menu-flip.ts`——菜单打开期间在 `<body>` 发布 `data-dsh-sidebar-submenu="down|left"` 方向 token（`y < vh/2` → down；`x + 400 > vw` → left，400 镜像宿主几何 218 卡片 + 10 间隙 + 165 子菜单 + 12 边距），`layout.css` 据此翻转子菜单生长方向与 `::before` 悬停桥；**属性的存续期即作用域**（仅我们的菜单打开时存在），宿主自有菜单不受影响。**不做** `max-height` + 滚动钳制：overflow 裁剪会切掉子菜单 `::before` 悬停桥（跨 10px 间隙会触发 mouseLeave 关卡）。残留见「已知限制」末两条。
+
 ## 已知限制
 
 - 路径含 `#`/`?` 的文件名经 URL 打开可能被浏览器当作 fragment/query（不处理，注释说明）。
@@ -96,13 +98,18 @@ Cursor             (SSH)
 - 自定义编辑器仅支持 URL 模板式，不支持 CLI 命令式；无 `{dir}` 占位符。
 - Linux reveal 退化为打开所在目录（精确 select 需要各文件管理器私有协议）。
 - SSH 模式为**全局**（非每会话）：DSH 无远程会话概念，文件树路径即宿主路径；该模型对应"DSH 跑在远端开发机上"的场景。
+- 子菜单钳制为方向翻转而非高度裁剪：约 >15 个打开方式目标 + 矮视口 + 不利光标位仍可能溢出（compact 密度已把常规 4–8 目标场景收进安全区）。
+- 翻转阈值镜像宿主 `Menu.module.css` 几何常量（218/10/165/12）：宿主未来改尺寸时阈值偏保守（多翻一次方向），不会产生新越界；菜单打开期间窗口 resize 不重算 token，该次打开最坏退化为原始行为。
 
 ## 测试
 
 - `tests/open-with.spec.ts`：解析容错、目标解析与 SSH 过滤、URL 构建（本地/SSH/custom/坏模板）、校验器。
 - `tests/open-external.spec.ts`：三平台命令表、URL 校验、spawn 前校验。
 - `tests/open-external-client.spec.ts`（#522）：SSH remote URL 客户端分流（不触 fetch）、本地/reveal/http(s) 留宿主、导航抛错 reject。
-- `tests/file-tree-open-with.spec.tsx`（jsdom）：右键 → 子菜单/图钉；pin 不选中不关闭；选子项回调关闭菜单；SSH 标签后缀；未接线隐藏。
+- `tests/file-tree-open-with.spec.tsx`（jsdom）：右键 → 子菜单/图钉；pin 不选中不关闭；选子项回调关闭菜单；SSH 标签后缀；未接线隐藏；翻转向量（down / down left / 卸载清理）。
+- `tests/menu-flip.spec.tsx`：方向 token 纯函数（四象限、边界、窄面板）+ hook 属性生命周期 + layout.css 选择器与属性名的跨文件一致性。
+- `tests/tab-bar-context-menu.spec.tsx`：追加翻转向量（顶部条 down、右缘 down left、下半空 token、卸载清理）。
+- `tests/e2e/mount.e2e.ts`：「+」菜单首行 computed 高度 ≤30px（compact 密度的布局级证据）。
 - `tests/open-with-settings.spec.tsx`：SSH 输入、添加/删除（删除剪枝 pinned）、无效提示、VSCode 系开关。
 - `tests/side-card-section.spec.tsx`：`SettingsBody` 行列表 + render 共存、仅 render 时不变。
 - `tests/builtins.spec.ts`：editor 描述符断言补 `settings.render`。

@@ -149,22 +149,56 @@ function signalNameOf(signal: number | null | undefined): string | null {
   return SIGNAL_NAMES[signal] ?? `signal ${signal}`
 }
 
-/** Locate the first occurrence of `needle` in `transcript`, returning its line/column. */
-function locateNeedle(transcript: string, needle: string): { line: number; column: number } | undefined {
+/**
+ * Compile a wait needle into a RegExp. The needle is treated as a JavaScript
+ * regular expression; a pattern that fails to compile ( e.g. an unbalanced
+ * group typed as a literal ) degrades to verbatim substring matching so
+ * legacy literal needles keep working.
+ */
+function compileNeedle(needle: string): RegExp | null {
+  try {
+    return new RegExp(needle)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Locate the first occurrence of `needle` in `transcript`, returning its
+ * line/column plus the actual matched text — for alternation patterns
+ * ( e.g. `(BUILD_OK|BUILD_FAIL)` ) the match tells which alternative hit.
+ * `re` is the precompiled form of `needle` (from {@link compileNeedle});
+ * `null` means verbatim substring matching.
+ */
+function locateNeedle(
+  transcript: string,
+  needle: string,
+  re: RegExp | null,
+): { line: number; column: number; match: string } | undefined {
   if (needle === '') return undefined
-  const idx = transcript.indexOf(needle)
-  if (idx === -1) return undefined
+  // Regex hit → use the match index/text; literal fallback → indexOf with
+  // the needle itself as the matched text.
+  let hit: { index: number; text: string } | undefined
+  if (re !== null) {
+    re.lastIndex = 0
+    const m = re.exec(transcript)
+    hit = m === null ? undefined : { index: m.index, text: m[0] }
+  } else {
+    const idx = transcript.indexOf(needle)
+    hit = idx === -1 ? undefined : { index: idx, text: needle }
+  }
+  if (hit === undefined) return undefined
   // Walk the transcript up to the match index, counting newlines to derive
   // the 0-based line; the column is the offset within that line.
   let line = 0
   let lineStart = 0
-  for (let i = 0; i < idx; i += 1) {
+  for (let i = 0; i < hit.index; i += 1) {
     if (transcript.charCodeAt(i) === 0x0a /* \n */) {
       line += 1
       lineStart = i + 1
     }
   }
-  return { line, column: idx - lineStart }
+  return { line, column: hit.index - lineStart, match: hit.text }
 }
 
 /** One live agent terminal. */
@@ -208,12 +242,17 @@ export type AgentTerminalWaitResult =
   | {
     /** The needle was found in the transcript. */
     kind: 'found'
-    /** The matched substring. */
+    /** The pattern that was awaited. */
     needle: string
     /** 0-based line index (in the retained transcript) where the needle first appeared. */
     line: number
     /** 0-based column index within that line where the match starts. */
     column: number
+    /**
+     * The text that actually matched — for multi-outcome patterns
+     * ( e.g. `(BUILD_OK|BUILD_FAIL)` ) this tells which alternative matched.
+     */
+    match: string
     /** Elapsed wall-clock milliseconds from the wait start to the match. */
     elapsedMs: number
   }
@@ -456,7 +495,12 @@ export class AgentPtyRegistry {
    * make event-driven wakeups unreliable. A 50ms poll is fast enough for
    * interactive use and simple enough to be obviously correct.
    * @param uuid - terminal to watch.
-   * @param needle - substring to search for (case-sensitive, verbatim).
+   * @param needle - JavaScript regular expression to search for
+   *   (case-sensitive); a pattern that fails to compile falls back to
+   *   verbatim substring matching. May cover several outcomes at once
+   *   ( e.g. `(BUILD_OK|BUILD_FAIL)` for build success vs failure ) — the
+   *   returned `match` reports the text that actually matched, so callers
+   *   can tell which outcome hit.
    * @param timeoutMs - max wait; default 10000 (10s). Clamped to ≥100ms.
    * @param signal - caller-owned cancellation; aborts the wait re-throwing.
    * @returns one of `found` / `timeout` / `exited`.
@@ -474,15 +518,18 @@ export class AgentPtyRegistry {
     const timeout = Math.max(100, Math.floor(timeoutMs))
     const start = Date.now()
     const deadline = start + timeout
+    // Compile the needle once (regex semantics; invalid patterns degrade to
+    // verbatim matching) and reuse the compiled form across every poll.
+    const re = compileNeedle(needle)
     // Fast path: already exited, or the needle is already in the transcript
     // (a `terminal_send` may have produced the expected output before this
     // call even started).
     if (handle.exited) {
       return { kind: 'exited', needle, exitCode: handle.exitCode ?? null, exitSignal: signalNameOf(handle.exitSignal) }
     }
-    const firstHit = locateNeedle(handle.transcript, needle)
+    const firstHit = locateNeedle(handle.transcript, needle, re)
     if (firstHit !== undefined) {
-      return { kind: 'found', needle, line: firstHit.line, column: firstHit.column, elapsedMs: Date.now() - start }
+      return { kind: 'found', needle, line: firstHit.line, column: firstHit.column, match: firstHit.match, elapsedMs: Date.now() - start }
     }
     // Poll loop: check the transcript every 50ms, exit on match / exit /
     // abort / timeout. The handle is read live each iteration (its transcript
@@ -492,9 +539,9 @@ export class AgentPtyRegistry {
       if (handle.exited) {
         return { kind: 'exited', needle, exitCode: handle.exitCode ?? null, exitSignal: signalNameOf(handle.exitSignal) }
       }
-      const hit = locateNeedle(handle.transcript, needle)
+      const hit = locateNeedle(handle.transcript, needle, re)
       if (hit !== undefined) {
-        return { kind: 'found', needle, line: hit.line, column: hit.column, elapsedMs: Date.now() - start }
+        return { kind: 'found', needle, line: hit.line, column: hit.column, match: hit.match, elapsedMs: Date.now() - start }
       }
       if (Date.now() >= deadline) {
         return { kind: 'timeout', needle, timeoutMs: timeout, totalLines: handle.transcript.split('\n').length }

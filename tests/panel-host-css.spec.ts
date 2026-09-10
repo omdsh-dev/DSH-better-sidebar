@@ -22,7 +22,7 @@ const css = readFileSync('src/client/sidebar.module.css', 'utf8')
 /** Body of the `:global([data-dsh-panel-host])` rule (up to the un-indented `}`). */
 const hostRule = css.match(/:global\(\[data-dsh-panel-host\]\) \{([\s\S]*?)\n\}/)?.[1]
 
-/** Strip /* ... *​/ comment blocks so prose mentions don't count as declarations. */
+/** Strip block comments (`/*` to `*`-`/`) so prose mentions don't count as declarations. */
 const stripComments = (cssText: string): string => cssText.replace(/\/\*[\s\S]*?\*\//g, '')
 
 describe('panel host layer css', () => {
