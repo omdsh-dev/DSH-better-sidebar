@@ -574,7 +574,7 @@ All changes since v0.14.0:
 |---|---|
 | Save edits | `Ctrl/Cmd + S` |
 | Git commit | `Ctrl + Enter` |
-| Close tab | Middle mouse button |
+| Close tab | Middle mouse button (the native right sidebar and the plugin's bottom workbench alike; the host strip has no such gesture of its own — the plugin restores it for the tabs it owns) |
 | Tab context menu (right-click) | Close / Close Other Tabs / Close Tabs to the Left / Close Tabs to the Right (current pane) |
 | Split / merge panes | Drag tab to pane edge / middle |
 | Reference file to input | Hover the `@file` button at end of line |

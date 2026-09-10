@@ -573,7 +573,7 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 |---|---|
 | 保存编辑 | `Ctrl/Cmd + S` |
 | Git 提交 | `Ctrl + Enter` |
-| 关闭 Tab | 鼠标中键 |
+| 关闭 Tab | 鼠标中键（DSH 原生右侧栏与插件底部工作台通用；宿主 tab 条自身没有该手势，插件按归属补回） |
 | Tab 右键菜单 | 关闭 / 关闭其他页签 / 关闭左侧页签 / 关闭右侧页签（当前标签组） |
 | 拆分/合并分栏 | 拖 Tab 到分栏边缘 / 中间 |
 | 引用文件到输入框 | 悬浮行尾 `@文件` 按钮 |

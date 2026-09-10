@@ -27,6 +27,7 @@ import type { SessionScope } from '../api.ts'
 import { RenderBoundary } from '../RenderBoundary.tsx'
 import { OrphanedTab } from '../OrphanedTab.tsx'
 import { referenceInChat } from '../reference-in-chat.ts'
+import { nativeTabMarker, type NativeTabMiddleClick } from './tab-middle-click.ts'
 import type { BetterSidebarService } from '../service.ts'
 import type { SidebarStore, SidebarTab, TabType } from '../state.ts'
 import css from '../sidebar.module.css'
@@ -64,6 +65,16 @@ export interface NativeTabInfo {
       readonly revision: number
     }
     readonly signal: AbortSignal
+    /**
+     * The tab's own actions (`sidebar.right.pane.tab.title` shares the body's
+     * hook context, so a title sees them too). `close()` ends the record in
+     * the session it lives in — the same call the host's × button makes.
+     * Optional: a partial runtime without the field leaves the plugin's
+     * middle-click close unregistered rather than throwing.
+     */
+    readonly actions?: {
+      readonly close?: () => void
+    }
   }
 }
 
@@ -330,6 +341,13 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
 /** What a title registration injects. */
 export interface NativeTitleInjected {
   readonly records: NativeTabRecords
+  /**
+   * The middle-click controller the chip publishes its close to (see
+   * `tab-middle-click.ts`): the host's strip has no button-1 handling, so the
+   * plugin restores the gesture from the one element of a native tab it
+   * renders itself.
+   */
+  readonly middleClick: NativeTabMiddleClick
 }
 
 /**
@@ -337,14 +355,26 @@ export interface NativeTitleInjected {
  * in-place file switch, the side chat on the thread's first prompt). Without
  * this registration the chip would keep the title captured when the tab
  * opened.
+ *
+ * The chip is also where the plugin takes back the middle-click close the
+ * host's strip does not implement: it stamps its native tab id (the marker
+ * the document-level press handler resolves ownership AND identity from) and
+ * publishes `actions.close()` for it, so a middle press anywhere on the tab
+ * closes exactly this tab, in exactly its session.
  */
 export function NativeTabTitle(props: NativeTitleInjected & NativeBodyFrameworkProps): ReactNode {
-  const { records, useTabInfo } = props
+  const { records, middleClick, useTabInfo } = props
   const nativeTab = useTabInfo().tab
-  return useSyncExternalStore(
+  const title = useSyncExternalStore(
     listener => records.subscribe(listener),
     () => records.get(nativeTab.id)?.tab.title ?? nativeTab.title,
   )
+  const close = nativeTab.actions?.close
+  useEffect(() => {
+    if (close === undefined) return undefined
+    return middleClick.register(nativeTab.id, close)
+  }, [middleClick, nativeTab.id, close])
+  return createElement('span', nativeTabMarker(nativeTab.id), title)
 }
 
 /** The component pair one descriptor contributes to the native surface. */

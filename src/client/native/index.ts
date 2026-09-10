@@ -33,6 +33,7 @@ import {
   type NativeTabParams,
   type NativeTabRecords,
 } from './tab-adapter.tsx'
+import { createNativeTabMiddleClick } from './tab-middle-click.ts'
 
 /** The native tab-type registry face (`ctx.sidebarRightTabs`). */
 interface NativeTabRegistry {
@@ -125,6 +126,11 @@ export interface NativeSurfaceDeps {
  */
 export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
   const { ctx, store, service, records } = deps
+  // The middle-click close the host's strip does not implement (see
+  // tab-middle-click.ts): one controller per activation, handed to every
+  // title chip and disposed with these registrations, so no document-level
+  // listener outlives the plugin.
+  const middleClick = createNativeTabMiddleClick()
   // Wait for the tab-type REGISTRY (a service), not for the slot declaration:
   // the native seat declares `sidebar.right.pane.tab` BEFORE it provides
   // `sidebarRightTabs`, so a declaration-triggered registration reads the
@@ -162,7 +168,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
         name: 'sidebar.right.pane.tab.title',
         key: id,
-        inject: () => ({ records }),
+        inject: () => ({ records, middleClick }),
       }, NativeTabTitle)),
     ]
 
@@ -276,6 +282,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
   })
   return () => {
     void seat.dispose()
+    middleClick.dispose()
   }
 }
 
