@@ -35,6 +35,14 @@
 :global([data-dsh-panel-host]) {
   position: fixed;
   inset: 0;
+  /* Explicit viewport height: `inset: 0` alone derives the height from the
+     containing block, and an ancestor carrying `backdrop-filter` / `filter` /
+     `transform` (e.g. a skin's glass columns, wallpaper-exclusive) swaps that
+     containing block for a zero-height box — the width still stretches via
+     left/right, but the height collapses to 0 and the whole panel becomes
+     invisible while staying in the DOM. `100vh` resolves against the viewport
+     instead, so the host keeps its full height in every shell. */
+  height: 100vh;
   z-index: 25;
   pointer-events: none;
   /* Clip at the viewport edge: collapsed panels slide off-screen with
