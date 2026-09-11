@@ -7,6 +7,7 @@
  * request). Failures surface as {@link SidebarApiError} with the wire code.
  */
 import { encodeHtmlUrl } from '../html-route.ts'
+import { resolveSidebarPath } from './produced-files.ts'
 import type { LastActivity } from '../subagent-activity.ts'
 import type { SidechatLiveEvent, SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
 import type { SidebarSessionEvent } from '../context-types.ts'
@@ -425,6 +426,28 @@ export const api = {
   openExternal,
 }
 
+/**
+ * The path spelling the media and HTML routes take: absolute in the session's
+ * namespace.
+ *
+ * A file tab seeded by a native file address
+ * (`dsh-resource://file/session/<sid>/<path>`) carries an in-workspace path
+ * RELATIVE to the session root (see `resource-address.ts`), which the HTML
+ * route cannot express at all — its encoder drops a leading `/` and its
+ * decoder reads the segments back as an absolute path, so `chart.html` became
+ * `/chart.html` — and which the media route only accepts since the matching
+ * host fix (`resolveWorkspaceTarget` joins a relative target onto the session
+ * cwd). `resolveSidebarPath` returns an absolute path unchanged and leaves a
+ * relative one alone while the session cwd is not known yet, which the host
+ * then resolves.
+ * @param scope - the session scope carrying the cwd.
+ * @param path - a workspace-relative or absolute path.
+ * @returns the absolute path for the URL builders below.
+ */
+function sessionAbsolutePath(scope: SessionScope, path: string): string {
+  return resolveSidebarPath(scope.cwd, path)
+}
+
 /** Absolute URL of the media route for one path (images only). */
 export function mediaUrl(scope: SessionScope, path: string): string {
   return fileUrl(scope, path, false)
@@ -438,7 +461,7 @@ export function downloadUrl(scope: SessionScope, path: string): string {
 
 /** Shared URL builder for the /sidebar/file route (media vs download). */
 function fileUrl(scope: SessionScope, path: string, download: boolean): string {
-  const params = new URLSearchParams({ sessionId: scope.sessionId, path })
+  const params = new URLSearchParams({ sessionId: scope.sessionId, path: sessionAbsolutePath(scope, path) })
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
   if (download) params.set('download', '1')
   return `/sidebar/file?${params.toString()}`
@@ -453,5 +476,5 @@ function fileUrl(scope: SessionScope, path: string, download: boolean): string {
  * client-side platform signal is needed.
  */
 export function htmlUrl(scope: SessionScope, path: string): string {
-  return encodeHtmlUrl(scope.sessionId, path)
+  return encodeHtmlUrl(scope.sessionId, sessionAbsolutePath(scope, path))
 }

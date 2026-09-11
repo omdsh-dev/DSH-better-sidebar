@@ -571,6 +571,8 @@ const { value } = await res.json()   // 错误时 { ok: false, error: { code, me
 const url = `/sidebar/file?${new URLSearchParams({ sessionId: scope.sessionId, path })}`
 ```
 
+> **`path` 的两种拼法都收**（修复见 [#618](https://github.com/omdsh-dev/DSH-better-sidebar/issues/618)）：绝对路径原样使用；**工作区相对路径**会先 join 到该 session 的权威 `cwd` 再走围栏——原生文件地址 `dsh-resource://file/session/<sid>/<path>` 对工作区内的文件用的就是相对拼法（文件 tab 的 `tab.path` 因此是相对路径），`fs.read` 一直也是这个语义。`/sidebar/html` 没有这个宽松度：它的地址语法只能表达绝对路径（编码时丢掉前导 `/`、解码时统一补回），所以 **HTML 预览 URL 必须由调用方先解析成绝对路径**（内置实现见 `api.ts` 的 `htmlUrl`）。
+
 > 注：内置的 `api.ts` 是 better-sidebar 内部模块，外部插件 **不要** value-import 它（构建纯度门会挡）；按上表模式自己 fetch 即可。所有路由带与 `/api` 相同的 Host 头信任围栏，浏览器同源访问天然通过。
 
 ---
