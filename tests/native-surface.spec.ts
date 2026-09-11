@@ -255,6 +255,79 @@ describe('registerNativeSurface lifecycle (service-driven registration)', () => 
   })
 })
 
+describe('browser tab open seed reaches the view', () => {
+  it('maps a native open\'s `params.url` onto the tab `path` the view reads', () => {
+    // Regression: an open performed with `openTab({ type: 'browser', url })`
+    // (the chat link takeover, and the model-facing `sidebar_open` tool) rides
+    // the native record as `navigation.params.url`, while `BrowserView` mounts
+    // from `tab.path`. Without the descriptor's `paramsOf` the seed stopped at
+    // `meta.url` and the tab opened with an EMPTY address bar and no iframe —
+    // the tab was simply titled with the hostname and showed nothing. Verified
+    // against a real profile: filling the address bar by hand loaded the page,
+    // the open itself did not.
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'browser', title: 'Browser', component: () => null })
+    const records = createNativeTabRecords()
+
+    // Capture the props the slot injector hands the body, so the assertion
+    // runs the SAME `paramsOf` the surface registered. The seed lives on the
+    // registration's `inject` thunk (evaluated per session), not on the
+    // options object itself.
+    const injects = new Map<string, (sessionId: string) => Record<string, unknown>>()
+    const registry = { current: undefined as undefined | { register: (definition: { id: string; kind: string; title: (address: string) => string }) => () => void } }
+    let runInjected: (() => void) | undefined
+    const ctx = {
+      inject: (_deps: readonly string[], callback: (injected: { get: () => unknown }) => void) => {
+        runInjected = () => { callback({ get: () => registry.current }) }
+        return { dispose: () => { runInjected = undefined } }
+      },
+      get: () => registry.current,
+      slots: {
+        inject: (_key: string, callback: () => () => void) => callback(),
+        register: (options: { name: string; key?: string; inject?: (sessionId: string) => Record<string, unknown> }) => {
+          if (options.name === 'sidebar.right.pane.tab' && options.inject !== undefined) {
+            injects.set(options.key ?? options.name, options.inject)
+          }
+          return () => {}
+        },
+      },
+    }
+    registerNativeSurface({ ctx: ctx as never, store, service, records })
+    registry.current = { register: () => () => {} }
+    runInjected?.()
+
+    // The body's injector is what computes the seed; replay it with a record
+    // shaped exactly like one the native surface produces for a URL open.
+    const injected = injects.get('dsh-better-sidebar:browser')?.('s1') as
+      { paramsOf?: (info: unknown) => { path?: string } | undefined } | undefined
+    expect(injected?.paramsOf, 'the browser descriptor must declare a paramsOf').toBeDefined()
+    const info = {
+      tab: {
+        id: 'native-b1',
+        kind: 'browser',
+        title: 'example.com',
+        contentId: 'sidebar://browser',
+        visible: true,
+        navigation: { address: 'sidebar://browser', params: { url: 'https://example.com/x' }, revision: 0 },
+        signal: new AbortController().signal,
+      },
+    }
+    expect(injected!.paramsOf!(info)).toEqual({ path: 'https://example.com/x' })
+    // A record seeded before this mapping existed keeps its URL in `meta.url`;
+    // it must still render rather than come back empty.
+    const legacy = {
+      tab: { ...info.tab, navigation: { address: 'sidebar://browser', params: { meta: { url: 'https://legacy.test/y' } }, revision: 0 } },
+    }
+    expect(injected!.paramsOf!(legacy)).toEqual({ path: 'https://legacy.test/y' })
+    // A tab with neither seed yields nothing, so a fresh browser tab still
+    // opens on its empty "enter a URL" state.
+    const bare = { tab: { ...info.tab, navigation: { address: 'sidebar://browser', params: undefined, revision: 0 } } }
+    expect(injected!.paramsOf!(bare)).toBeUndefined()
+  })
+})
+
 describe('NativeTabBody full-height host wrapper', () => {
   it('renders the descriptor component inside the [data-dsh-native-tab-host] wrapper', () => {
     // DSH's native tab body host (`.paneBody`) is a BLOCK scroller with a
