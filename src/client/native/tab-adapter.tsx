@@ -31,6 +31,12 @@ import type { BetterSidebarService } from '../service.ts'
 import type { SidebarStore, SidebarTab, TabType } from '../state.ts'
 import css from '../sidebar.module.css'
 
+/** The chip glyph's size: the tab strip's own icon scale. */
+const CHIP_ICON_SIZE = 14
+
+/** The editor kind: a chip for a file row shows the file's own glyph. */
+const EDITOR_KIND = 'editor'
+
 /**
  * The plugin-side seed a native open carries in `navigation.params`.
  * JSON-shaped by convention (the native surface does not validate it).
@@ -330,20 +336,52 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
 /** What a title registration injects. */
 export interface NativeTitleInjected {
   readonly records: NativeTabRecords
+  readonly service: BetterSidebarService
+  /** The descriptor id this title belongs to (one registration per descriptor). */
+  readonly descriptorId: string
 }
 
 /**
- * A live tab chip: the synthetic record's title (the editor rewrites it on an
- * in-place file switch, the side chat on the thread's first prompt). Without
- * this registration the chip would keep the title captured when the tab
- * opened.
+ * A live tab chip: the type's glyph followed by the synthetic record's title
+ * (the editor rewrites it on an in-place file switch, the side chat on the
+ * thread's first prompt). Without this registration the chip would keep the
+ * title captured when the tab opened.
+ *
+ * The host's tab definition has no icon field — a chip is drawn from the
+ * `title` text alone — but this slot IS the chip's content, so the glyph is
+ * ours to add. Placement follows the plugin's own semantics: an editor tab
+ * with a path shows that file's icon (the same glyph the tree row shows), and
+ * every other tab shows its descriptor's icon. Both ride
+ * `descriptor.icon`, so the workbench strip, the guide capsules and the chip
+ * cannot drift apart.
  */
 export function NativeTabTitle(props: NativeTitleInjected & NativeBodyFrameworkProps): ReactNode {
-  const { records, useTabInfo } = props
+  const { records, service, descriptorId, useTabInfo } = props
   const nativeTab = useTabInfo().tab
-  return useSyncExternalStore(
+  const version = useSyncExternalStore(
     listener => records.subscribe(listener),
-    () => records.get(nativeTab.id)?.tab.title ?? nativeTab.title,
+    () => records.versionOf(nativeTab.id),
+  )
+  const record = records.get(nativeTab.id)
+  const title = record?.tab.title ?? nativeTab.title
+  // `version` is read so a title/path/meta mutation re-renders the chip; the
+  // icon itself is derived from the record, never stored.
+  void version
+  const descriptor = service.getTab(descriptorId) ?? service.getTab(record?.tab.type ?? nativeTab.kind)
+  const path = record?.tab.path
+  const icon = path !== undefined && descriptorId === EDITOR_KIND
+    ? service.fileIcon(path, CHIP_ICON_SIZE)
+    : undefined
+  const glyph = icon ?? (typeof descriptor?.icon === 'function'
+    ? descriptor.icon(CHIP_ICON_SIZE)
+    : descriptor?.icon)
+  if (glyph === undefined || glyph === null) return title
+  return (
+    <>
+      {/* Decorative: the chip's accessible name stays the title. */}
+      <span className={css.chipIcon} aria-hidden="true">{glyph}</span>
+      {title}
+    </>
   )
 }
 

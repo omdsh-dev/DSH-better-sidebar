@@ -98,6 +98,8 @@ export const ko: Record<string, string> = {
   terminalError: '터미널 연결 실패',
   terminalConnectFailed: '터미널 연결이 여러 번 실패했습니다',
   terminalRetry: '다시 시도',
+  terminalWaitBanner: '에이전트가 {needle} 대기 중',
+  terminalSkipWait: '대기 건너뛰기',
   terminalDepsFailed: '터미널 의존성 node-pty 로드 실패',
   terminalDepsHint: 'DSH가 설치된 환경의 터미널 또는 cmd에서 아래 명령을 실행하여 복구한 후 다시 시도를 클릭하세요(node-pty는 DSH 코어와 동일한 버전을 유지합니다):',
   terminalDepsProfile: ' (profile 감지됨: {profile})',

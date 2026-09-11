@@ -8,6 +8,8 @@
  * tab (git lens + session lens, PR #471's file-trace merged in).
  */
 import { describe, expect, it } from 'vitest'
+import type { ReactElement } from 'react'
+import { VscCommentDiscussion, VscGitCommit, VscGlobe, VscLayers, VscTerminal } from 'react-icons/vsc'
 // First import: browser globals before the xterm-carrying builtin graph loads.
 import './browser-globals.ts'
 
@@ -61,7 +63,7 @@ describe('built-in tab registrations', () => {
   })
 
   it('every visible tab declares a non-empty, mutually distinct description', () => {
-    // DSH 0.1.5-rc.1 renders `description` under the title while the guide
+    // DSH 0.1.5-rc.1+ renders `description` under the title while the guide
     // lists at most 4 entries (a longer list drops every description). With
     // the host no longer substituting a generic fallback, a tab without one
     // renders the title alone — so every visible tab declares the real
@@ -234,6 +236,35 @@ describe('built-in tab registrations', () => {
     for (const tab of service.getTabs()) {
       expect(tab.icon, tab.id).toBeDefined()
     }
+  })
+
+  it('the tab glyphs say what the page shows (colored, token-driven)', () => {
+    const { service } = setup()
+    const iconOf = (id: string): ReactElement => {
+      const icon = service.getTab(id)?.icon
+      expect(icon, id).toBeDefined()
+      return (typeof icon === 'function' ? icon(14) : icon) as ReactElement
+    }
+    // Every colored glyph is [wrapper][glyph]; unwrap the themed wrapper.
+    const glyphOf = (id: string): unknown => {
+      const wrapper = iconOf(id) as ReactElement<{ children?: ReactElement }>
+      return (wrapper.props.children as ReactElement | undefined)?.type ?? wrapper.type
+    }
+    // Tasks lists subagent sessions AND background jobs — layered sheets say
+    // "work running in the background"; a checklist glyph would say "to-do
+    // list", which this page is not.
+    expect(glyphOf('subagent')).toBe(VscLayers)
+    expect(glyphOf('git')).toBe(VscGitCommit)
+    expect(glyphOf('sidechat')).toBe(VscCommentDiscussion)
+    expect(glyphOf('browser')).toBe(VscGlobe)
+    // The terminal glyph is the widest in the set, so it renders a step down
+    // from the strip's size. No outline: the glyphs stay exactly as the icon
+    // set draws them, only tinted through the wrapper's token.
+    const wrapper = iconOf('terminal') as ReactElement<{ children?: ReactElement }>
+    const terminal = wrapper.props.children as ReactElement<{ size?: number; style?: Record<string, unknown> }>
+    expect(terminal.type).toBe(VscTerminal)
+    expect(terminal.props.size).toBeLessThan(14)
+    expect(terminal.props.style).toBeUndefined()
   })
 })
 

@@ -107,6 +107,8 @@ export const ar: Record<string, string> = {
   terminalError: 'فشل اتصال الطرفية',
   terminalConnectFailed: 'فشل اتصال الطرفية عدة مرات',
   terminalRetry: 'إعادة المحاولة',
+  terminalWaitBanner: 'الوكيل ينتظر {needle}',
+  terminalSkipWait: 'تخطي الانتظار',
   terminalDepsFailed: 'فشل تحميل تبعية الطرفية node-pty',
   terminalDepsHint: 'شغّل الأمر التالي في طرفية أو cmd على جهاز DSH للإصلاح، ثم أعد المحاولة (يبقى node-pty متزامناً مع إصدار نواة DSH):',
   terminalDepsProfile: ' (الملف الشخصي المكتشف: {profile})',

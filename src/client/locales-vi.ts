@@ -106,6 +106,8 @@ export const vi: Record<string, string> = {
   terminalError: 'Kết nối terminal thất bại',
   terminalConnectFailed: 'Terminal kết nối thất bại nhiều lần',
   terminalRetry: 'Thử lại',
+  terminalWaitBanner: 'Agent đang chờ {needle}',
+  terminalSkipWait: 'Bỏ qua thời gian chờ',
   terminalDepsFailed: 'Dependency terminal node-pty tải thất bại',
   terminalDepsHint: 'Chạy lệnh sau trong terminal hoặc cmd trên máy DSH để sửa, rồi nhấn thử lại (node-pty đồng bộ phiên bản với lõi DSH):',
   terminalDepsProfile: ' (phát hiện profile: {profile})',

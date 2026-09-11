@@ -106,6 +106,8 @@ export const tr: Record<string, string> = {
   terminalError: 'Terminal bağlantısı başarısız',
   terminalConnectFailed: 'Terminal art arda bağlanamadı',
   terminalRetry: 'Yeniden dene',
+  terminalWaitBanner: 'Ajan {needle} bekliyor',
+  terminalSkipWait: 'Beklemeyi atla',
   terminalDepsFailed: 'Terminal bağımlılığı node-pty yüklenemedi',
   terminalDepsHint: 'Onarmak için DSH makinesindeki bir terminalde veya cmd’de aşağıdaki komutu çalıştırın, sonra yeniden deneyin (node-pty, DSH çekirdek sürümüyle senkron kalır):',
   terminalDepsProfile: ' (algılanan profil: {profile})',

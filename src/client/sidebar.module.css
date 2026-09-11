@@ -420,6 +420,17 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   overflow: hidden;
 }
 
+/* The native tab chip's glyph (drawn by the plugin inside the host's
+   `sidebar.right.pane.tab.title` slot, which is the chip's content): sized to
+   the text, aligned on its baseline box, and separated from the title the way
+   the workbench strip separates its own glyph from its label. */
+.chipIcon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  flex: none;
+}
+
 /* One tab's mounted content; inactive tabs stay mounted but hidden so
    switching never tears down terminals/editors (state survives). */
 .paneTab {
@@ -1893,6 +1904,28 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   word-break: break-all;
   opacity: 0.85;
+}
+
+/* The "Agent 正在等待 {needle}" wait banner: a warn-toned strip above the
+   terminal surface while the model blocks in terminal_wait_for; the needle
+   ellipsizes inline and the full text rides the title tooltip. */
+.terminalWaitBanner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-state-warn-label);
+  background: var(--dsw-alias-state-warn-tertiary);
+}
+
+.terminalWaitNeedle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .boundaryError {

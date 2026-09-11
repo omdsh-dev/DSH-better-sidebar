@@ -134,6 +134,13 @@ export interface AgentTerminalSnapshot {
   exitCode?: number | null
   /** Exit signal name if the process was killed by a signal; null otherwise. */
   exitSignal?: string | null
+
+  /**
+   * The model's active `terminal_wait_for` on this terminal (the sidebar
+   * renders the wait banner from it). Present only while a wait is
+   * registered; carries the LATEST wait when several overlap.
+   */
+  waiting?: { needle: string; since: number }
 }
 
 /** Map a POSIX signal number to its conventional name (best-effort). */
@@ -223,6 +230,8 @@ export interface AgentTerminalHandle {
   exitCode?: number | null
   /** Exit signal number once known (POSIX only; undefined on Windows). */
   exitSignal?: number | null
+  /** Active wait_for registrations (skip bookkeeping; empty while idle). */
+  waits: AgentTerminalActiveWait[]
 }
 
 /** Read result shape (mirrors the official tool-pty terminal_read contract). */
@@ -235,6 +244,16 @@ export interface AgentTerminalReadResult {
   lineBegin: number
   /** 0-based index of the last line in `text` (exclusive). */
   lineEnd: number
+}
+
+/** One active wait_for registration on a handle (banner + skip bookkeeping). */
+export interface AgentTerminalActiveWait {
+  /** The needle being awaited (shown on the sidebar wait banner). */
+  needle: string
+  /** Epoch ms when the wait registered (age display / debugging). */
+  since: number
+  /** Flipped by `skipWait()`; the waiting poll returns `skipped` within one tick. */
+  skipped: boolean
 }
 
 /** Outcome of {@link AgentPtyRegistry.waitFor}. */
@@ -276,6 +295,12 @@ export type AgentTerminalWaitResult =
     /** The exit signal name, if the process was killed by a signal. */
     exitSignal?: string | null
   }
+  | {
+    /** The user skipped the wait from the sidebar banner. */
+    kind: 'skipped'
+    /** The needle that was awaited. */
+    needle: string
+  }
 
 /** Snapshot projection of a handle (drops the pty reference and transcript). */
 export function snapshotOf(handle: AgentTerminalHandle): AgentTerminalSnapshot {
@@ -289,6 +314,8 @@ export function snapshotOf(handle: AgentTerminalHandle): AgentTerminalSnapshot {
     out.exitCode = handle.exitCode ?? null
     out.exitSignal = signalNameOf(handle.exitSignal)
   }
+  const active = handle.waits.at(-1)
+  if (active !== undefined) out.waiting = { needle: active.needle, since: active.since }
   return out
 }
 
@@ -349,6 +376,7 @@ export class AgentPtyRegistry {
       pty,
       transcript: '',
       exited: false,
+      waits: [],
     }
     pty.onData((data) => {
       handle.transcript += data
@@ -503,7 +531,8 @@ export class AgentPtyRegistry {
    *   can tell which outcome hit.
    * @param timeoutMs - max wait; default 10000 (10s). Clamped to ≥100ms.
    * @param signal - caller-owned cancellation; aborts the wait re-throwing.
-   * @returns one of `found` / `timeout` / `exited`.
+   * A wait can also be skipped by the user from the sidebar banner (`skipWait`), which resolves it with `{kind:'skipped'}`.
+   * @returns one of `found` / `timeout` / `exited` / `skipped`.
    */
   async waitFor(
     uuid: string,
@@ -531,27 +560,67 @@ export class AgentPtyRegistry {
     if (firstHit !== undefined) {
       return { kind: 'found', needle, line: firstHit.line, column: firstHit.column, match: firstHit.match, elapsedMs: Date.now() - start }
     }
-    // Poll loop: check the transcript every 50ms, exit on match / exit /
-    // abort / timeout. The handle is read live each iteration (its transcript
-    // and exited fields mutate as the pty produces output).
-    while (true) {
-      if (signal?.aborted) signal.throwIfAborted()
-      if (handle.exited) {
-        return { kind: 'exited', needle, exitCode: handle.exitCode ?? null, exitSignal: signalNameOf(handle.exitSignal) }
+    // Register the active wait so the sidebar can show the wait banner (the
+    // snapshot's `waiting` field rides the agent-terminals push). Registered
+    // only after the fast paths: a wait that resolves instantly never
+    // flashes the banner. The notify() makes every push subscriber (the
+    // sidebar view) converge on the new waiting state immediately.
+    const record: AgentTerminalActiveWait = { needle, since: start, skipped: false }
+    handle.waits.push(record)
+    this.notify()
+    try {
+      // Exit outranks a skip in the same tick: `skipWait` flips `record.skipped`
+      // and the next poll observes it, but a pty that died first is the
+      // objective fact (a skip is moot once the process is gone). The user
+      // sees the same three things either way — the banner clears, `skipWait`
+      // reports 0 for the resolved wait, and the tool result says the wait
+      // ended — only the reported `kind` differs (see the design doc's
+      // implementation-deviation record).
+      while (true) {
+        if (signal?.aborted) signal.throwIfAborted()
+        if (handle.exited) {
+          return { kind: 'exited', needle, exitCode: handle.exitCode ?? null, exitSignal: signalNameOf(handle.exitSignal) }
+        }
+        if (record.skipped) {
+          return { kind: 'skipped', needle }
+        }
+        const hit = locateNeedle(handle.transcript, needle, re)
+        if (hit !== undefined) {
+          return { kind: 'found', needle, line: hit.line, column: hit.column, match: hit.match, elapsedMs: Date.now() - start }
+        }
+        if (Date.now() >= deadline) {
+          return { kind: 'timeout', needle, timeoutMs: timeout, totalLines: handle.transcript.split('\n').length }
+        }
+        await new Promise(resolve => {
+          const t = setTimeout(resolve, 50)
+          // Allow the Node process to exit even if the timer is pending.
+          if (typeof t === 'object' && 'unref' in t) (t as { unref: () => void }).unref()
+        })
       }
-      const hit = locateNeedle(handle.transcript, needle, re)
-      if (hit !== undefined) {
-        return { kind: 'found', needle, line: hit.line, column: hit.column, match: hit.match, elapsedMs: Date.now() - start }
-      }
-      if (Date.now() >= deadline) {
-        return { kind: 'timeout', needle, timeoutMs: timeout, totalLines: handle.transcript.split('\n').length }
-      }
-      await new Promise(resolve => {
-        const t = setTimeout(resolve, 50)
-        // Allow the Node process to exit even if the timer is pending.
-        if (typeof t === 'object' && 'unref' in t) (t as { unref: () => void }).unref()
-      })
+    } finally {
+      const index = handle.waits.indexOf(record)
+      if (index !== -1) handle.waits.splice(index, 1)
+      this.notify()
     }
+  }
+
+  /**
+   * Mark every active wait on one terminal as skipped (the sidebar banner's
+   * skip button). Each waiting poll loop observes its record's flag within
+   * one 50ms tick and returns `{kind:'skipped'}`. Idempotent: 0 when nothing
+   * is waiting (a stale banner racing a wait that already resolved).
+   * @returns the number of waits that transitioned to skipped.
+   */
+  skipWait(uuid: string): number {
+    const handle = this.expect(uuid)
+    let count = 0
+    for (const record of handle.waits) {
+      if (!record.skipped) {
+        record.skipped = true
+        count += 1
+      }
+    }
+    return count
   }
 
   /**

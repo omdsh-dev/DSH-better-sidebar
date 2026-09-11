@@ -7,7 +7,7 @@
  */
 import { useEffect, useRef } from 'react'
 import type { Context, SidebarSessionList } from '../../context-types.ts'
-import { reconcileAgentTerminals, type SidebarStore } from '../state.ts'
+import { mirrorAgentWaits, reconcileAgentTerminals, type SidebarStore } from '../state.ts'
 import { isNarrowWidth } from '../breakpoints.ts'
 import { detectNewDirectSubagent } from '../subagent-detect.ts'
 import { detectNewJob } from '../subagent-jobs.ts'
@@ -94,8 +94,9 @@ export function useHostFeeds(feeds: {
    * the same shell without losing the agent's work — capped like the
    * terminal view's own reconnect loop, so a refused endpoint never spins
    * forever (the next session switch restarts the loop).
-   * While the terminal tab type is disabled in settings, pushes are
-   * ignored (no auto-added tabs); re-enabling makes the next push converge.
+   * While the terminal tab type is disabled in settings, pushes add / remove
+   * no tabs — but the authoritative wait map is STILL mirrored (see the
+   * branch below); re-enabling makes the next push converge on both.
    */
   useEffect(() => {
     if (sessionId === undefined) return
@@ -112,10 +113,15 @@ export function useHostFeeds(feeds: {
       socket.onmessage = (event) => {
         if (typeof event.data !== 'string') return
         try {
-          const list = JSON.parse(event.data) as Array<{ uuid: string; title: string; command: string; exited: boolean }>
+          const list = JSON.parse(event.data) as Array<{ uuid: string; title: string; command: string; exited: boolean; waiting?: { needle: string; since: number } | null }>
           if (!Array.isArray(list)) return
           store.reduce(s => ctx.get('betterSidebar')?.isTabEnabled('terminal') === false
-            ? s
+            // Terminal tabs are disabled: skip tab add/remove reconciliation,
+            // but STILL mirror the authoritative wait map — a wait resolving
+            // during the disabled window must clear its banner state, or a
+            // re-enabled terminal keeps a stale banner until the next
+            // unrelated push.
+            ? mirrorAgentWaits(s, list)
             : reconcileAgentTerminals(s, list))
         } catch {
           // Malformed push: ignore (the next push will reconcile).

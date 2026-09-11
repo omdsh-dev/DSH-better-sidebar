@@ -104,6 +104,8 @@ export const id: Record<string, string> = {
   terminalError: 'Koneksi terminal gagal',
   terminalConnectFailed: 'Terminal gagal terhubung berulang kali',
   terminalRetry: 'Coba lagi',
+  terminalWaitBanner: 'Agen menunggu {needle}',
+  terminalSkipWait: 'Lewati penungguan',
   terminalDepsFailed: 'Dependensi terminal node-pty gagal dimuat',
   terminalDepsHint: 'Jalankan perintah di bawah ini di terminal atau cmd pada mesin DSH untuk memperbaikinya, lalu coba lagi (node-pty tetap sinkron dengan versi inti DSH):',
   terminalDepsProfile: ' (profil terdeteksi: {profile})',

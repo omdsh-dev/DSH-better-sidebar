@@ -121,6 +121,8 @@ export const zhTW: Record<string, string> = {
   terminalError: '終端連線失敗',
   terminalConnectFailed: '終端多次連線失敗',
   terminalRetry: '重試',
+  terminalWaitBanner: 'Agent 正在等待 {needle}',
+  terminalSkipWait: '跳過等待',
   terminalDepsFailed: '終端依賴 node-pty 載入失敗',
   terminalDepsHint: '在 DSH 所在環境的終端或 cmd 中執行以下命令修復，然後點重試（node-pty 與 DSH 核心保持同一版本）：',
   terminalDepsProfile: '（偵測到 profile：{profile}）',

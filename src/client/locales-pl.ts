@@ -108,6 +108,8 @@ export const pl: Record<string, string> = {
   terminalError: 'Połączenie z terminalem nie powiodło się',
   terminalConnectFailed: 'Terminal nie mógł połączyć się wielokrotnie',
   terminalRetry: 'Ponów',
+  terminalWaitBanner: 'Agent czeka na {needle}',
+  terminalSkipWait: 'Pomiń oczekiwanie',
   terminalDepsFailed: 'Zależność terminala node-pty nie mogła się załadować',
   terminalDepsHint: 'Uruchom poniższe polecenie w terminalu lub cmd na maszynie DSH, aby to naprawić, a następnie ponów (node-pty pozostaje w synchronizacji z wersją rdzenia DSH):',
   terminalDepsProfile: ' (wykryty profil: {profile})',

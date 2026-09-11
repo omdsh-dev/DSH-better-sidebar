@@ -296,7 +296,8 @@ export function registerTools(
       + 'The wait scans the FULL retained transcript (up to ~1 MiB) on every poll, so a needle that scrolled past the most recent chunk is still a match. '
       + 'Returns `found` with the line/column and the matched text, `timeout` if the needle did not appear in time, or `exited` if the terminal process died before the needle appeared. '
       + 'Default timeout is 10 seconds; raise it for long-running commands ( dev servers, test suites ). '
-      + 'The wait is cooperative: a tool-call cancel ( or agent turn end ) aborts it immediately.',
+      + 'The wait is cooperative: a tool-call cancel ( or agent turn end ) aborts it immediately. '
+      + 'The user can skip the wait from the sidebar ( a banner on the terminal\'s tab shows the needle and a skip button ) — the tool then returns `skipped`.',
     parameters: {
       uuid: {
         type: 'string',
@@ -349,16 +350,27 @@ export function registerTools(
               exitSignal: { oneOf: [{ type: 'string' }, { type: 'null' }], description: 'Exit signal name, if killed by a signal.' },
             },
           },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: { type: 'string', required: true, const: 'skipped' },
+              needle: { type: 'string', required: true },
+            },
+          },
         ],
       },
       render: (_args, value) => {
-        const v = value as { kind: 'found' | 'timeout' | 'exited'; needle: string; elapsedMs?: number; timeoutMs?: number; line?: number; column?: number; match?: string; exitCode?: number | null; exitSignal?: string | null }
+        const v = value as { kind: 'found' | 'timeout' | 'exited' | 'skipped'; needle: string; elapsedMs?: number; timeoutMs?: number; line?: number; column?: number; match?: string; exitCode?: number | null; exitSignal?: string | null }
         if (v.kind === 'found') {
           const matched = v.match !== undefined && v.match !== '' ? `, matched "${v.match}"` : ''
           return [{ type: 'text', text: `Found "${v.needle}" at line ${v.line}, column ${v.column}${matched} (after ${v.elapsedMs}ms).` }]
         }
         if (v.kind === 'timeout') {
           return [{ type: 'text', text: `Timed out after ${v.timeoutMs}ms waiting for "${v.needle}". Call terminal_read to inspect the transcript.` }]
+        }
+        if (v.kind === 'skipped') {
+          return [{ type: 'text', text: `Skipped by user while waiting for "${v.needle}" — the wait ended early. Call terminal_read to inspect the transcript and decide how to proceed.` }]
         }
         const exitInfo = v.exitCode !== undefined && v.exitCode !== null ? ` (exit code ${v.exitCode})` : ''
         return [{ type: 'text', text: `Terminal exited before "${v.needle}" appeared${exitInfo}.` }]

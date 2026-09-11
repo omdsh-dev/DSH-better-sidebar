@@ -546,6 +546,17 @@ function buildApi(
       agentPtyRegistry?.close(uuid)
       return { ok: true }
     },
+    // The sidebar wait banner's skip button: abort every active
+    // terminal_wait_for on one agent terminal. An unknown uuid (a terminal
+    // already closed / reaped) goes through `expect` and surfaces as 404
+    // not-found; the client tolerates that and lets the next push converge.
+    // Nothing waiting on a live terminal is not an error: 0 skipped.
+    // Degraded mode (node-pty unavailable) has no registry and no waits: an
+    // honest ok.
+    'agent-pty.skip-wait': (payload) => {
+      const uuid = requireString(payload, 'uuid')
+      return { ok: true, skipped: agentPtyRegistry?.skipWait(uuid) ?? 0 }
+    },
     // Terminal dependency status (issue #140): after a WS close 1011 with
     // reason `pty-deps-missing` the client fetches the full repair details
     // here — the close reason itself is capped at 123 bytes, too small for

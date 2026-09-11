@@ -125,4 +125,24 @@ describe('agent terminal reconciliation', () => {
       expect(tabOpenIn(s, 'agent:bbb-222')).toBe(true) // new, added
     })
   })
+
+  it('mirrors the pushed waiting state into agentWaits and clears it when it ends', () => {
+    let s = makeDefaultState()
+    s = reconcileAgentTerminals(s, [{ uuid: 'aaa-111', title: 'busy', waiting: { needle: 'READY_1', since: 42 } }])
+    expect(s.agentWaits['aaa-111']).toEqual({ needle: 'READY_1', since: 42 })
+    // The next push without waiting drops the entry (the push is authoritative).
+    s = reconcileAgentTerminals(s, [{ uuid: 'aaa-111', title: 'stable' }])
+    expect(s.agentWaits['aaa-111']).toBeUndefined()
+  })
+
+  it('produces a new state when ONLY the wait state changes (no tab add/remove)', () => {
+    let s = makeDefaultState()
+    s = reconcileAgentTerminals(s, [{ uuid: 'aaa-111', title: 'stable' }])
+    const before = s
+    const next = reconcileAgentTerminals(s, [{ uuid: 'aaa-111', title: 'stable', waiting: { needle: 'N', since: 1 } }])
+    expect(next).not.toBe(before)
+    expect(next.agentWaits['aaa-111']).toBeDefined()
+    // Idempotent: the same push again returns the same reference.
+    expect(reconcileAgentTerminals(next, [{ uuid: 'aaa-111', title: 'stable', waiting: { needle: 'N', since: 1 } }])).toBe(next)
+  })
 })

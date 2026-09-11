@@ -89,6 +89,8 @@ export const sv: Record<string, string> = {
   terminalError: 'Terminalanslutning misslyckades',
   terminalConnectFailed: 'Terminal misslyckades att ansluta upprepade gånger',
   terminalRetry: 'Försök igen',
+  terminalWaitBanner: 'Agenten väntar på {needle}',
+  terminalSkipWait: 'Hoppa över väntan',
   terminalDepsFailed: 'Terminalberoendet node-pty kunde inte laddas',
   terminalDepsHint: 'Kör kommandot nedan i en terminal eller cmd på DSH-maskinen för att reparera det, försök sedan igen (node-pty hålls synkad med DSH-kärnversionen):',
   terminalDepsProfile: ' (upptäckt profil: {profile})',

@@ -92,6 +92,8 @@ export const de: Record<string, string> = {
   terminalError: 'Terminalverbindung fehlgeschlagen',
   terminalConnectFailed: 'Terminal konnte wiederholt keine Verbindung herstellen',
   terminalRetry: 'Erneut versuchen',
+  terminalWaitBanner: 'Agent wartet auf {needle}',
+  terminalSkipWait: 'Warten überspringen',
   terminalDepsFailed: 'Die Terminal-Abhängigkeit node-pty konnte nicht geladen werden',
   terminalDepsHint: 'Führen Sie den folgenden Befehl in einem Terminal oder in cmd auf dem DSH-System aus, um dies zu beheben, und klicken Sie dann auf „Erneut versuchen“ (node-pty bleibt mit der DSH-Core-Version synchron):',
   terminalDepsProfile: ' (erkanntes Profil: {profile})',

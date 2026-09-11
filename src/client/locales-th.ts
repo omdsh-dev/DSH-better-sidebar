@@ -106,6 +106,8 @@ export const th: Record<string, string> = {
   terminalError: 'การเชื่อมต่อเทอร์มินัลล้มเหลว',
   terminalConnectFailed: 'เทอร์มินัลเชื่อมต่อล้มเหลวหลายครั้ง',
   terminalRetry: 'ลองอีกครั้ง',
+  terminalWaitBanner: 'เอเจนต์กำลังรอ {needle}',
+  terminalSkipWait: 'ข้ามการรอ',
   terminalDepsFailed: 'การอ้างอิงเทอร์มินัล node-pty โหลดล้มเหลว',
   terminalDepsHint: 'เรียกใช้คำสั่งด้านล่างในเทอร์มินัลหรือ cmd บนเครื่อง DSH เพื่อซ่อมแซม แล้วกดลองอีกครั้ง (node-pty ต้องซิงค์กับเวอร์ชันหลักของ DSH):',
   terminalDepsProfile: ' (ตรวจพบ profile: {profile})',

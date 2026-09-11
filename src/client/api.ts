@@ -347,6 +347,10 @@ export const api = {
   /** Release an agent terminal by uuid (tab closed while WS was down). */
   agentPtyClose: (uuid: string) =>
     call<{ ok: true }>('agent-pty.close', { uuid }),
+  /** Skip every active terminal_wait_for on one agent terminal (the wait
+   *  banner's skip button). Idempotent: {skipped:0} when none is active. */
+  agentSkipWait: (uuid: string) =>
+    call<{ ok: true; skipped: number }>('agent-pty.skip-wait', { uuid }),
   /** Terminal dependency status (issue #140): after a WS close 1011 with
    *  reason `pty-deps-missing` the view fetches the full repair details here
    *  (the close reason itself is capped at 123 bytes). */

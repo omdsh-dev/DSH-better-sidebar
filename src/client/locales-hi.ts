@@ -106,6 +106,8 @@ export const hi: Record<string, string> = {
   terminalError: 'टर्मिनल कनेक्शन विफल',
   terminalConnectFailed: 'टर्मिनल बार-बार कनेक्ट विफल',
   terminalRetry: 'पुनः प्रयास',
+  terminalWaitBanner: 'एजेंट {needle} की प्रतीक्षा कर रहा है',
+  terminalSkipWait: 'प्रतीक्षा छोड़ें',
   terminalDepsFailed: 'टर्मिनल निर्भरता node-pty लोड विफल',
   terminalDepsHint: 'DSH मशीन पर एक टर्मिनल या cmd में नीचे दिया गया कमांड चलाएँ, फिर पुनः प्रयास करें (node-pty DSH कोर संस्करण के साथ सिंक रहता है):',
   terminalDepsProfile: ' (पहचाना गया प्रोफ़ाइल: {profile})',

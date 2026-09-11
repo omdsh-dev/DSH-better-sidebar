@@ -91,6 +91,14 @@ export interface SidebarState {
   bottomOpenedOnce: boolean
   /** The bottom workbench's split tree. */
   bottomSplits: SplitNode
+  /**
+   * Live agent-terminal wait state (uuid → the wait the model currently
+   * blocks on in `terminal_wait_for`), mirrored from the host's
+   * agent-terminals push. Transient by design: sanitizeState never restores
+   * it, so a reload starts clean and the next push (sent immediately on WS
+   * attach) repopulates it.
+   */
+  agentWaits: Record<string, { needle: string; since: number }>
 }
 
 export const TAB_MAX_WIDTH = 160
@@ -167,6 +175,7 @@ export function makeDefaultState(): SidebarState {
     bottomHeight: BOTTOM_DEFAULT,
     bottomOpenedOnce: false,
     bottomSplits: bottomLeaf,
+    agentWaits: {},
   }
 }
 
@@ -661,6 +670,36 @@ export function agentTabId(uuid: string): string {
   return `${AGENT_TAB_PREFIX}${uuid}`
 }
 
+/** Shallow equality of two agent-wait maps (same keys, same needle+since). */
+function sameAgentWaits(
+  a: SidebarState['agentWaits'] | undefined,
+  b: Record<string, { needle: string; since: number }>,
+): boolean {
+  if (a === undefined) return Object.keys(b).length === 0
+  const aKeys = Object.keys(a)
+  if (aKeys.length !== Object.keys(b).length) return false
+  for (const key of aKeys) {
+    const av = a[key]
+    const bv = b[key]
+    if (av === undefined || bv === undefined) return false
+    if (av.needle !== bv.needle || av.since !== bv.since) return false
+  }
+  return true
+}
+
+/** Fold the pushed terminal snapshots into the authoritative wait map. */
+function serverWaitsOf(
+  agentTerminals: ReadonlyArray<{ uuid: string; title: string; waiting?: { needle: string; since: number } | null }>,
+): Record<string, { needle: string; since: number }> {
+  const serverWaits: Record<string, { needle: string; since: number }> = {}
+  for (const terminal of agentTerminals) {
+    if (terminal.waiting !== undefined && terminal.waiting !== null) {
+      serverWaits[terminal.uuid] = { needle: terminal.waiting.needle, since: terminal.waiting.since }
+    }
+  }
+  return serverWaits
+}
+
 /**
  * Reconcile the sidebar's agent-terminal tabs with the host's live list.
  * The host pushes the current list of agent terminals (created by the model
@@ -675,7 +714,7 @@ export function agentTabId(uuid: string): string {
  */
 export function reconcileAgentTerminals(
   state: SidebarState,
-  agentTerminals: ReadonlyArray<{ uuid: string; title: string }>,
+  agentTerminals: ReadonlyArray<{ uuid: string; title: string; waiting?: { needle: string; since: number } | null }>,
 ): SidebarState {
   const existingTabs = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs)
   const existingAgentTabs = existingTabs.filter(tab => isAgentTabId(tab.id))
@@ -689,7 +728,12 @@ export function reconcileAgentTerminals(
   // convergence: no title suffix, no meta write — the tab keeps its uuid
   // so a later reconcile push revives it if the agent reopens the same one).
   const toRemove = existingAgentTabs.filter(tab => !serverUuids.has(agentUuidOf(tab.id)) && tab.pin === undefined)
-  if (toAdd.length === 0 && toRemove.length === 0) return state
+  // Mirror the live wait state from the push (authoritative: a vanished
+  // waiting field simply drops the entry). A waits-only change must still
+  // produce a new state — the tab add/remove no-change check alone would
+  // swallow banner updates.
+  const serverWaits = serverWaitsOf(agentTerminals)
+  if (toAdd.length === 0 && toRemove.length === 0 && sameAgentWaits(state.agentWaits, serverWaits)) return state
   // Remove tabs whose uuids vanished from the server list (the agent closed
   // them, or the pty exited and was reaped). Reuse closeTab's leaf cleanup.
   let bottomSplits = state.bottomSplits
@@ -711,7 +755,24 @@ export function reconcileAgentTerminals(
     }
     next = openTabInBottomPane(next, tab)
   }
-  return next
+  return { ...next, agentWaits: serverWaits }
+}
+
+/**
+ * Mirror ONLY the authoritative agent-wait map from a push — no tab
+ * add/remove reconciliation. Used while the `terminal` tab type is disabled:
+ * the tab surface is frozen, but a wait that resolves during that window
+ * must still clear its banner state, or a re-enabled terminal keeps a stale
+ * banner/⏳ until some unrelated host event fires the next full reconcile.
+ * Idempotent: a no-op when the map already matches.
+ */
+export function mirrorAgentWaits(
+  state: SidebarState,
+  agentTerminals: ReadonlyArray<{ uuid: string; title: string; waiting?: { needle: string; since: number } | null }>,
+): SidebarState {
+  const serverWaits = serverWaitsOf(agentTerminals)
+  if (sameAgentWaits(state.agentWaits, serverWaits)) return state
+  return { ...state, agentWaits: serverWaits }
 }
 
 // ── The per-session store ──────────────────────────────────────────────────
@@ -849,6 +910,9 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     // auto-terminal exactly once after the upgrade.
     bottomOpenedOnce: record.bottomOpenedOnce === true,
     bottomSplits,
+    // The agent wait state is TRANSIENT (like revealed): never restored from
+    // storage — the host's first push after attach repopulates it.
+    agentWaits: {},
   }
 }
 

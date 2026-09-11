@@ -628,8 +628,17 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     service.openTab({ type: optionId, title, target: 'bottom' }, { sessionId, cwd })
   }
 
-  /** The tab icon from the tab-type registry. */
+  /**
+   * The tab icon from the tab-type registry. An editor tab WITH a file path
+   * (the per-path windows of split mode — `meta.dir` marks folder windows,
+   * which keep the folder glyph) shows the same file icon the tree row shows
+   * (`fileIcon`, feature `fileIcons`); every other tab uses its tab-type
+   * descriptor icon.
+   */
   const tabIconOf = (tab: SidebarTab): ReactNode => {
+    if (tab.type === 'editor' && tab.path !== undefined && (tab.meta as { dir?: boolean } | undefined)?.dir !== true) {
+      return ctx.get('betterSidebar')?.fileIcon(tab.path, 14) ?? null
+    }
     const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
     if (descriptor === undefined) return null
     return typeof descriptor.icon === 'function' ? descriptor.icon(14) : descriptor.icon
@@ -641,6 +650,15 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    * strip must never break because a plugin's badge computation failed.
    */
   const tabBadgeOf = (tab: SidebarTab): ReactNode => {
+    // Agent-terminal wait indicator (sidebar-internal, deliberately NOT a
+    // TabDescriptor.badge — that API is type-keyed and shared with external
+    // plugins, and cannot address one tab): the agent-terminals push mirrors
+    // the model's live terminal_wait_for into state.agentWaits; an agent tab
+    // whose uuid is waiting shows the hourglass pill.
+    if (isAgentTabId(tab.id)) {
+      const wait = state.agentWaits?.[agentUuidOf(tab.id)]
+      if (wait !== undefined) return <span className={css.tabBadge}>{'⏳'}</span>
+    }
     const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
     if (descriptor?.badge === undefined) return null
     let value: string | number | null | undefined

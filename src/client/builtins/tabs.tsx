@@ -8,8 +8,11 @@
  * `browser:<n>` the same way (no quota). The editor IS the files window
  * (the old standalone explorer merged into it).
  */
-import { IconCodeOutline16, IconFolderOpen16, IconNewChatOutline16, IconPanelLeftOutline16, IconThinkOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCodeOutline16, IconPanelLeftOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
+import {
+  browserTabIcon, changesTabIcon, filesTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,
+} from './tab-icons.tsx'
 import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
 import { openSidebarFile } from '../intercept.tsx'
@@ -22,7 +25,6 @@ import { SubagentView } from '../SubagentView.tsx'
 import { consumeSidechatSeed, SideChatView, sidechatThreadIdOf } from '../SideChatView.tsx'
 import { api } from '../api.ts'
 import { BrowserView } from '../BrowserView.tsx'
-import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16 } from '../icons.tsx'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
 import type { ComponentType } from 'react'
 import type { SessionScope } from '../api.ts'
@@ -87,7 +89,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       // explorer (empty hint + docked tree); with a path it previews/edits
       // the file. Visible in the + menu in the explorer's old slot.
       title: () => t('files'),
-      icon: (size: number) => <IconFolderOpen16 size={size} />,
+      icon: filesTabIcon,
       order: 10,
       hidden: false,
       dedupeKey: (tab) => tab.path,
@@ -150,7 +152,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       id: 'git',
       title: () => t('changes'),
       description: () => t('guideDescGit'),
-      icon: (size: number) => <IconDiffOutline16 size={size} />,
+      icon: changesTabIcon,
       order: 20,
       single: true,
       badge: (_ctx, scope) => {
@@ -173,7 +175,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       id: 'subagent',
       title: () => t('subagent'),
       description: () => t('guideDescSubagent'),
-      icon: (size: number) => <IconThinkOutline16 size={size} />,
+      icon: tasksTabIcon,
       order: 30,
       single: true,
       // Declarative settings: the auto-open switches render under this row in
@@ -202,7 +204,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       id: 'sidechat',
       title: () => t('sideChat'),
       description: () => t('guideDescSidechat'),
-      icon: (size: number) => <IconNewChatOutline16 size={size} />,
+      icon: sidechatTabIcon,
       order: 35,
       // Codex-style: EVERY side conversation is its own tab. A plain open
       // mints a fresh tab flagged `autoCreate` (the view creates the EMPTY
@@ -248,7 +250,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       id: 'terminal',
       title: () => t('terminal'),
       description: () => t('guideDescTerminal'),
-      icon: (size: number) => <IconTerminalOutline16 size={size} />,
+      icon: terminalTabIcon,
       order: 40,
       available: (_ctx, _scope, state) => uiTerminalCount(state) < TERMINAL_LIMIT,
       // Declarative settings: the model-facing terminal tools switch, the
@@ -313,7 +315,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       id: 'browser',
       title: () => t('browser'),
       description: () => t('guideDescBrowser'),
-      icon: (size: number) => <IconGlobeOutline16 size={size} />,
+      icon: browserTabIcon,
       order: 50,
       // Declarative settings: the sandbox escape hatch, the link-takeover
       // MASTER switch, and the per-protocol takeover switches (http on /
@@ -357,7 +359,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
     {
       id: 'diff',
       title: () => t('changes'),
-      icon: (size: number) => <IconDiffOutline16 size={size} />,
+      icon: changesTabIcon,
       order: -1,
       hidden: true,
       dedupeKey: (tab) => tab.id,

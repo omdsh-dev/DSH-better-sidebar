@@ -22,6 +22,9 @@ interface CapturedTool {
 class FakeRegistry {
   readonly terminals = new Map<string, { sessionId: string; title: string; command: string; exited: boolean }>()
 
+  /** When set, waitFor resolves with the skipped shape instead of the found default. */
+  nextWaitResult: { kind: 'skipped' } | undefined = undefined
+
   create(sessionId: string, title: string, command: string): string {
     const uuid = `uuid-${this.terminals.size + 1}`
     this.terminals.set(uuid, { sessionId, title, command, exited: false })
@@ -58,10 +61,14 @@ class FakeRegistry {
     return true
   }
 
-  waitFor(_uuid: string, needle: string): Promise<{ kind: 'found'; needle: string; line: number; column: number; match: string; elapsedMs: number }> {
+  waitFor(_uuid: string, needle: string): Promise<
+    { kind: 'found'; needle: string; line: number; column: number; match: string; elapsedMs: number }
+    | { kind: 'skipped'; needle: string }
+  > {
     // Mirrors the registry's empty-needle rejection (the tool layer no
     // longer duplicates this check).
     if (needle === '') return Promise.reject(new Error('needle must be a non-empty string'))
+    if (this.nextWaitResult !== undefined) return Promise.resolve({ kind: 'skipped', needle })
     return Promise.resolve({ kind: 'found', needle, line: 0, column: 0, match: needle, elapsedMs: 1 })
   }
 }
@@ -191,6 +198,26 @@ describe('agent terminal tools', () => {
     const value = await tool.execute({ uuid, needle: 'done' }, exec('s1'))
     expect(value).toEqual({ kind: 'found', needle: 'done', line: 0, column: 0, match: 'done', elapsedMs: 1 })
     expect(validateJsonSchemaValue(tool.output.schema, value, 'value')).toEqual([])
+  })
+
+  it('terminal_wait_for returns skipped (schema-valid) when the registry reports a user skip', async () => {
+    const { captured, registry } = mount()
+    const tool = toolOf(captured, 'terminal_wait_for')
+    // Use the uuid the registry actually minted — no coupling to its id scheme.
+    const uuid = registry.create('s1', 'skipper', '')
+    registry.nextWaitResult = { kind: 'skipped' }
+    const value = await tool.execute({ uuid, needle: 'BUILD_OK', timeout_ms: 1000 }, exec('s1'))
+    expect(value).toEqual({ kind: 'skipped', needle: 'BUILD_OK' })
+    expect(validateJsonSchemaValue(tool.output.schema, value, 'value')).toEqual([])
+  })
+
+  it('terminal_wait_for render describes the user skip and the needle', () => {
+    const { captured } = mount()
+    const tool = toolOf(captured, 'terminal_wait_for')
+    const blocks = tool.output.render({}, { kind: 'skipped', needle: 'BUILD_OK' }) as Array<{ type: string; text: string }>
+    expect(blocks[0]!.type).toBe('text')
+    expect(blocks[0]!.text).toContain('Skipped by user')
+    expect(blocks[0]!.text).toContain('BUILD_OK')
   })
 
   it('terminal_wait_for rejects an empty needle through the registry (no duplicate check)', async () => {

@@ -99,6 +99,8 @@ export const fr: Record<string, string> = {
   terminalError: 'Échec de la connexion au terminal',
   terminalConnectFailed: 'Le terminal a échoué à se connecter à plusieurs reprises',
   terminalRetry: 'Réessayer',
+  terminalWaitBanner: 'L’agent attend {needle}',
+  terminalSkipWait: 'Ignorer l’attente',
   terminalDepsFailed: 'Échec du chargement de la dépendance terminal node-pty',
   terminalDepsHint: 'Exécutez la commande suivante dans un terminal ou cmd de l’environnement DSH pour réparer, puis cliquez sur Réessayer (node-pty reste à la même version que le cœur DSH) :',
   terminalDepsProfile: ' (profil détecté : {profile})',

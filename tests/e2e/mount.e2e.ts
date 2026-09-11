@@ -347,7 +347,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     )
     .toBe('filled')
 
-  // DSH 0.1.5-rc.1 renders a guide entry's `description` line only while
+  // DSH 0.1.5-rc.1+ renders a guide entry's `description` line only while
   // the guide lists at most 4 entries (`MAX_DESCRIBED_ENTRIES` in the host's
   // GuideBody) — a longer list drops every description and shows titles
   // alone. Shrink the enabled set through the plugin's OWN settings route

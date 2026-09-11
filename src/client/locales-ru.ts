@@ -102,6 +102,8 @@ export const ru: Record<string, string> = {
   terminalError: 'Сбой подключения терминала',
   terminalConnectFailed: 'Терминал не смог подключиться после нескольких попыток',
   terminalRetry: 'Повторить',
+  terminalWaitBanner: 'Агент ожидает {needle}',
+  terminalSkipWait: 'Пропустить ожидание',
   terminalDepsFailed: 'Не удалось загрузить зависимость терминала node-pty',
   terminalDepsHint: 'Выполните приведённую ниже команду в терминале или cmd на машине DSH, затем нажмите «Повторить» (node-pty остаётся синхронизированным с версией ядра DSH):',
   terminalDepsProfile: ' (обнаружен profile: {profile})',

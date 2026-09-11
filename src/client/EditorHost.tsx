@@ -401,6 +401,7 @@ export function EditorHost(props: {
           onReferenceFile={onReferenceFile}
           onPathRenamed={onPathRenamed}
           onPathDeleted={onPathDeleted}
+          service={ctx.get('betterSidebar')}
         />
       </div>
     )
@@ -525,6 +526,7 @@ export function EditorHost(props: {
               onReferenceFile={onReferenceFile}
               onPathRenamed={onPathRenamed}
               onPathDeleted={onPathDeleted}
+              service={ctx.get('betterSidebar')}
             />
           </div>
         )}

@@ -106,6 +106,8 @@ export const ja: Record<string, string> = {
   terminalError: 'ターミナル接続に失敗',
   terminalConnectFailed: 'ターミナル接続が繰り返し失敗しました',
   terminalRetry: '再試行',
+  terminalWaitBanner: 'エージェントが {needle} を待機中',
+  terminalSkipWait: '待機をスキップ',
   terminalDepsFailed: 'ターミナル依存関係 node-pty の読み込みに失敗',
   terminalDepsHint: 'DSH 環境のターミナルまたは cmd で以下のコマンドを実行して修復し、再試行してください（node-pty は DSH コアと同じバージョンを維持）：',
   terminalDepsProfile: '（検出された profile：{profile}）',
