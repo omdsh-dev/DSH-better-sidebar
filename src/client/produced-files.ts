@@ -65,6 +65,33 @@ export function producedForClosing(nodes: readonly unknown[], seq: number): read
 }
 
 /**
+ * Whether this turn declared delivered files before its closing reply — the
+ * condition under which ui-deliverables paints its delivery card.
+ *
+ * `conversation.chat.turnTail` is a chain slot and its election is
+ * first-match-wins with a `break` (ui-renderer's `spec.kind === 'chain'`
+ * branch), so claiming the turn here also suppresses every later contributor.
+ * The official card renders the produced-files row *and* the delivered cards
+ * together (`selectDeliverables` returns `{ produced, presented }`), so a turn
+ * that both wrote and declared files must leave the chain to it — otherwise
+ * the delivery silently disappears. Declining is also how the disabled-editor
+ * case falls back, so the card is the expected host behavior, not a loss.
+ * @param data - the engine Turn `deliverables` record, when published.
+ * @param seq - the closing assistant's seq.
+ * @returns true when at least one declared file precedes the closing reply.
+ */
+function claimsDelivery(data: { presented?: unknown }, seq: number): boolean {
+  if (!Array.isArray(data.presented)) return false
+  for (const item of data.presented) {
+    if (item === null || typeof item !== 'object') continue
+    const presented = item as { seq?: unknown }
+    if (typeof presented.seq === 'number' && presented.seq > seq) continue
+    return true
+  }
+  return false
+}
+
+/**
  * Claim the turn-tail chain only when the closing turn produced files.
  *
  * The authoritative source is the engine Turn data — the same value
@@ -74,6 +101,10 @@ export function producedForClosing(nodes: readonly unknown[], seq: number): read
  * publish it.
  * @param owner - the turn-tail owner currency ({turn, seq, openFile}).
  * @returns produced paths as the matched value, or null to decline.
+ *
+ * Declines whenever the turn also declared deliveries: the chain elects the
+ * first non-null selector and stops, so claiming such a turn would suppress
+ * the official delivery card for it.
  */
 export function selectProducedFiles(owner: unknown): readonly string[] | null {
   const record = owner as {
@@ -84,10 +115,12 @@ export function selectProducedFiles(owner: unknown): readonly string[] | null {
   if (record === null || typeof record !== 'object') return null
   const seq = typeof record.seq === 'number' ? record.seq : Number.POSITIVE_INFINITY
   const data = record.turn?.data?.get?.('deliverables') as
-    | { produced?: unknown }
+    | { produced?: unknown; presented?: unknown }
     | null
     | undefined
   if (data !== null && typeof data === 'object' && Array.isArray(data.produced)) {
+    // A turn that declared deliveries belongs to the official card.
+    if (claimsDelivery(data, seq)) return null
     const paths: string[] = []
     const seen = new Set<string>()
     for (const item of data.produced) {
