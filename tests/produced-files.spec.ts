@@ -48,6 +48,23 @@ describe('produced-files derivation', () => {
     expect(selectProducedFiles(null)).toBeNull()
   })
 
+  it('selector declines a turn that also declared deliveries', () => {
+    // The chain elects the first non-null selector and breaks, so claiming a
+    // turn that wrote *and* presented files would hide the official delivery
+    // card — the card renders the produced row and the delivered cards
+    // together, so it must win.
+    const data = (extra: Record<string, unknown>): { turn: unknown; seq: number } => ({
+      turn: { data: { get: (key: string) => key === 'deliverables' ? { produced: [{ seq: 1, path: 'a.ts' }], ...extra } : undefined } },
+      seq: 2,
+    })
+    expect(selectProducedFiles(data({ presented: [{ seq: 2, path: 'a.md' }] }))).toBeNull()
+    expect(selectProducedFiles(data({ presented: [] }))).toEqual(['a.ts'])
+    // A declaration recorded after the closing reply cannot render a card, so
+    // the takeover stays valid for this turn.
+    expect(selectProducedFiles(data({ presented: [{ seq: 3, path: 'a.md' }] }))).toEqual(['a.ts'])
+    expect(selectProducedFiles(data({}))).toEqual(['a.ts'])
+  })
+
   it('resolves relative paths against the session cwd', () => {
     expect(resolveSidebarPath('/work/proj', 'src/a.ts')).toBe('/work/proj/src/a.ts')
     expect(resolveSidebarPath('/work/proj', '/abs/x.ts')).toBe('/abs/x.ts')
