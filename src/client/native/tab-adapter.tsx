@@ -20,7 +20,7 @@
  * Nothing here is a singleton: the registry is created once per client
  * activation and handed to every registration.
  */
-import { createElement, useEffect, useMemo, useSyncExternalStore } from 'react'
+import { createElement, useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import type { Context } from '../../context-types.ts'
 import type { SessionScope } from '../api.ts'
@@ -157,6 +157,20 @@ export function createNativeTabRecords(): NativeTabRecords {
         views.set(id, minted)
         return minted
       }
+      // A reopened tab id always belongs to the same session, but a session
+      // switch rebuilds the layout under the same ids — a record from another
+      // session must not leak its state (or its scope) into this one.
+      if (existing.scope.sessionId !== scope.sessionId) {
+        const rebuilt: View = {
+          tab: { ...existing.tab, ...(params?.path === undefined ? {} : { path: params.path }) },
+          scope,
+          expanded: [],
+          revealed: [],
+          version: existing.version,
+        }
+        views.set(id, rebuilt)
+        return rebuilt
+      }
       // A navigation may carry new seed fields (the editor's in-place switch,
       // a browser tab pointed at another URL); the record's identity and any
       // plugin-side mutation (title/meta from updateTab) stay.
@@ -285,7 +299,14 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
       return minted === null ? undefined : { title: minted.tab.title, meta: minted.tab.meta }
     },
   })
-  useEffect(() => () => { records.drop(nativeTab.id) }, [records, nativeTab.id])
+  // The native sidebar unmounts a pane's tab BODIES when another tab in the
+  // pane becomes active, and remounts them on the way back. Dropping the
+  // record on unmount would therefore wipe the plugin's per-tab state — the
+  // file tree's expansion set, the terminal's selection — on every tab
+  // switch, so the record deliberately lives in this registry until its tab
+  // is gone for good (the registry is per client activation and the host's
+  // layout is bounded, so the few stale records of closed tabs are a
+  // non-issue). `ensure` below rebuilds a record whose session changed.
   if (descriptor === undefined) {
     // The orphaned fallback sits in the SAME native host as a live body, so
     // it gets the same full-height box (its own root also relies on the
