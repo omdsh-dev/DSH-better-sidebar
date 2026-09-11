@@ -196,18 +196,28 @@ describe('host plugin smoke', () => {
   })
 
   it('pages the log lazily with skip/count', async () => {
-    const cwd = process.cwd()
-    const first = await git.log(cwd, 5, 0)
-    expect(first).toHaveLength(5)
-    const second = await git.log(cwd, 5, 5)
-    expect(second).toHaveLength(5)
-    // The pages are disjoint windows over the same ordered history.
-    expect(first[0]!.hashFull).not.toBe(second[0]!.hashFull)
-    const all = await git.log(cwd, 10, 0)
-    expect(all.slice(0, 5)).toEqual(first)
-    expect(all.slice(5)).toEqual(second)
-    // A skip past the end returns an empty page (the lazy loader's stop sign).
-    expect(await git.log(cwd, 5, 10_000)).toEqual([])
+    // A shallow source checkout may have fewer than ten commits. Own the
+    // fixture history so pagination is verified independently of checkout depth.
+    const cwd = mkdtempSync(join(tmpdir(), 'sidebar-log-pages-'))
+    const run = (args: string[]): void => {
+      const result = spawnSync('git', ['-c', 'commit.gpgsign=false', '-c', `core.hooksPath=${join(cwd, 'no-hooks')}`, ...args], { cwd, encoding: 'utf8' })
+      expect(result.status, result.stderr).toBe(0)
+    }
+    try {
+      run(['init'])
+      for (let index = 0; index < 12; index++) run(['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', `fixture ${index}`])
+      const first = await git.log(cwd, 5, 0)
+      expect(first).toHaveLength(5)
+      const second = await git.log(cwd, 5, 5)
+      expect(second).toHaveLength(5)
+      // The pages are disjoint windows over the same ordered history.
+      expect(first[0]!.hashFull).not.toBe(second[0]!.hashFull)
+      const all = await git.log(cwd, 10, 0)
+      expect(all.slice(0, 5)).toEqual(first)
+      expect(all.slice(5)).toEqual(second)
+      // A skip past the end returns an empty page (the lazy loader's stop sign).
+      expect(await git.log(cwd, 5, 10_000)).toEqual([])
+    } finally { rmSync(cwd, { recursive: true, force: true }) }
   })
 
   it('pty manager releases the quota on close and respawns after exit', async () => {
@@ -497,10 +507,45 @@ describe('session cwd resolution over the API route', () => {
   interface CtxOverrides {
     sessions?: { get: (id: string) => { header: { cwd?: string } } | undefined }
     sessionPersistence?: { open: (id: string, access: 'read' | 'write') => Promise<{ header: { cwd?: string }; read: () => Promise<{ events: never[] }>; close: () => Promise<void> }> }
+    fs?: {
+      resolve(path: string): Promise<{ targetKey: string; displayPath: string }>
+      contains(parent: { targetKey: string }, child: { targetKey: string }): boolean
+      lstat(path: string): Promise<{ type: 'file' | 'directory' | 'symlink' | 'other' } | undefined>
+      stat(target: { targetKey: string }): Promise<{ type: 'file' | 'directory' | 'other' } | undefined>
+      listDir(target: { targetKey: string }): Promise<Array<{
+        name: string
+        type: 'file' | 'directory' | 'other'
+        target: { targetKey: string; displayPath: string }
+      }>>
+    }
   }
 
   const mountAll = (overrides: CtxOverrides = {}): SidebarWebRoute[] => {
     const routes: SidebarWebRoute[] = []
+    const localFs = {
+      resolve: async (path: string) => {
+        const absolute = resolvePath(path)
+        const canonical = await import('node:fs/promises').then(({ realpath }) => realpath(absolute))
+        return { targetKey: canonical, displayPath: absolute }
+      },
+      contains: (parent: { targetKey: string }, child: { targetKey: string }) => child.targetKey === parent.targetKey || child.targetKey.startsWith(`${parent.targetKey}${process.platform === 'win32' ? '\\' : '/'}`),
+      lstat: async (path: string) => {
+        const info = await import('node:fs/promises').then(fs => fs.lstat(path)).catch(() => undefined)
+        return info === undefined ? undefined : { type: info.isSymbolicLink() ? 'symlink' as const : info.isDirectory() ? 'directory' as const : info.isFile() ? 'file' as const : 'other' as const }
+      },
+      stat: async (target: { targetKey: string }) => {
+        const info = await import('node:fs/promises').then(fs => fs.stat(target.targetKey)).catch(() => undefined)
+        return info === undefined ? undefined : { type: info.isDirectory() ? 'directory' as const : info.isFile() ? 'file' as const : 'other' as const }
+      },
+      listDir: async (target: { targetKey: string; displayPath: string }) => {
+        const entries = await import('node:fs/promises').then(fs => fs.readdir(target.targetKey, { withFileTypes: true }))
+        return Promise.all(entries.map(async entry => ({
+          name: entry.name,
+          type: entry.isDirectory() ? 'directory' as const : entry.isFile() ? 'file' as const : 'other' as const,
+          target: await localFs.resolve(join(target.displayPath, entry.name)),
+        })))
+      },
+    }
     const ctx = {
       webRuntime: { trustedHosts: [] },
       webServer: {
@@ -508,6 +553,7 @@ describe('session cwd resolution over the API route', () => {
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
       },
       sessions: overrides.sessions ?? { get: () => undefined },
+      fs: overrides.fs ?? localFs,
       tools: { register: () => () => {} },
       // The vendored cordis runs registration effects immediately.
       effect: (fn: () => void | (() => void)) => { fn() },
@@ -591,6 +637,14 @@ describe('session cwd resolution over the API route', () => {
     const result = await invoke(route, 'session.cwd', { sessionId: 's-cold' })
     expect(result.ok).toBe(true)
     expect(result.value?.cwd).toBe(coldCwd)
+  })
+
+  it('prefers a native stat header to a stale browser cwd hint', async () => {
+    const stat = vi.fn(async () => ({ header: { cwd: '/remote-anchor' } }))
+    const route = mount({ sessionPersistence: { stat } } as never)
+    const result = await invoke(route, 'session.cwd', { sessionId: 'cold-remote', cwd: '/wrong-local' })
+    expect(result.value?.cwd).toBe(resolvePath('/remote-anchor'))
+    expect(stat).toHaveBeenCalledWith('cold-remote')
   })
 
   it('rejects a relative cwd from the persistence index', async () => {
@@ -872,6 +926,30 @@ describe('side card settings routes', () => {
 
   const mountWithSettings = (settings?: unknown): SidebarWebRoute => {
     const routes: SidebarWebRoute[] = []
+    const fs = {
+      resolve: async (path: string) => {
+        const absolute = resolvePath(path)
+        const canonical = await import('node:fs/promises').then(({ realpath }) => realpath(absolute))
+        return { targetKey: canonical, displayPath: absolute }
+      },
+      contains: (parent: { targetKey: string }, child: { targetKey: string }) => child.targetKey === parent.targetKey || child.targetKey.startsWith(`${parent.targetKey}${process.platform === 'win32' ? '\\' : '/'}`),
+      lstat: async (path: string) => {
+        const info = await import('node:fs/promises').then(module => module.lstat(path)).catch(() => undefined)
+        return info === undefined ? undefined : { type: info.isSymbolicLink() ? 'symlink' as const : info.isDirectory() ? 'directory' as const : info.isFile() ? 'file' as const : 'other' as const }
+      },
+      stat: async (target: { targetKey: string }) => {
+        const info = await import('node:fs/promises').then(module => module.stat(target.targetKey)).catch(() => undefined)
+        return info === undefined ? undefined : { type: info.isDirectory() ? 'directory' as const : info.isFile() ? 'file' as const : 'other' as const }
+      },
+      listDir: async (target: { targetKey: string; displayPath: string }) => {
+        const entries = await import('node:fs/promises').then(module => module.readdir(target.targetKey, { withFileTypes: true }))
+        return Promise.all(entries.map(async entry => ({
+          name: entry.name,
+          type: entry.isDirectory() ? 'directory' as const : entry.isFile() ? 'file' as const : 'other' as const,
+          target: await fs.resolve(join(target.displayPath, entry.name)),
+        })))
+      },
+    }
     const ctx = {
       webRuntime: { trustedHosts: [] },
       webServer: {
@@ -879,6 +957,7 @@ describe('side card settings routes', () => {
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
       },
       sessions: { get: () => undefined },
+      fs,
       tools: { register: () => () => {} },
       effect: (fn: () => void | (() => void)) => { fn() },
       inject: (deps: string[], callback: (sctx: { settings: unknown }) => void) => {

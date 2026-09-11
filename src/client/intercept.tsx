@@ -6,6 +6,7 @@
  * deliverables entry; when nothing was produced the selector returns null
  * and the original row renders unchanged.
  */
+import { useEffect } from 'react'
 import { IconCodeOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { revealPaths, type SidebarStore } from './state.ts'
@@ -59,6 +60,14 @@ export function SidebarProducedFiles(props: {
   onShowInFolder: (files: readonly string[]) => void
 }) {
   const { matched, openInSidebar, onShowInFolder } = props
+  useEffect(() => {
+    if (matched.length > 0) {
+      window.dispatchEvent(new CustomEvent('dsh-sidebar:refresh-files', {
+        bubbles: true,
+        detail: { files: matched },
+      }))
+    }
+  }, [matched])
   const shown = matched.slice(0, 6)
   const hidden = matched.length - shown.length
   return (
@@ -119,7 +128,14 @@ export function registerTurnTailInterception(ctx: Context, store: SidebarStore):
     select: (owner) => {
       if (store.getSuspended()) return null
       if (store.getPrefs().tabsEnabled['editor'] === false) return null
-      return selectProducedFiles(owner)
+      const matched = selectProducedFiles(owner)
+      if (matched !== null) {
+        window.dispatchEvent(new CustomEvent('dsh-sidebar:refresh-files', {
+          bubbles: true,
+          detail: { files: matched },
+        }))
+      }
+      return matched
     },
     priority: -1,
     registrant: 'dsh-better-sidebar',

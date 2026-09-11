@@ -169,8 +169,13 @@ export function useHostFeeds(feeds: {
       socket.onmessage = (event) => {
         if (typeof event.data !== 'string') return
         try {
-          const request = JSON.parse(event.data) as { kind?: unknown; target?: unknown; title?: unknown }
+          const request = JSON.parse(event.data) as { kind?: unknown; target?: unknown; title?: unknown; files?: unknown }
           if (request === null || typeof request !== 'object') return
+          if (request.kind === 'refresh') {
+            const files = Array.isArray(request.files) ? request.files : undefined
+            window.dispatchEvent(new CustomEvent('dsh-sidebar:refresh-files', { detail: { files } }))
+            return
+          }
           if (request.kind !== 'file' && request.kind !== 'folder' && request.kind !== 'url') return
           if (typeof request.target !== 'string' || request.target === '') return
           if (store.getPrefs().agentOpenTools !== true) return

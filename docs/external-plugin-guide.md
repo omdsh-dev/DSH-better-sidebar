@@ -573,6 +573,54 @@ const url = `/sidebar/file?${new URLSearchParams({ sessionId: scope.sessionId, p
 
 > 注：内置的 `api.ts` 是 better-sidebar 内部模块，外部插件 **不要** value-import 它（构建纯度门会挡）；按上表模式自己 fetch 即可。所有路由带与 `/api` 相同的 Host 头信任围栏，浏览器同源访问天然通过。
 
+### 6.1 Host workspace provider（v1）
+
+Host 侧兼容插件可注入 `betterSidebarWorkspace`，为非本地执行环境接管文件路由。公共类型从包根导出，禁止引用 `src/*`：
+
+```ts
+import type { BetterSidebarWorkspaceProvider, Context } from 'dsh-better-sidebar'
+
+export const inject = ['betterSidebarWorkspace']
+export function apply(ctx: Context) {
+  const provider: BetterSidebarWorkspaceProvider = {
+    id: 'my-runtime',
+    priority: 100,
+    claim: ({ cwd }) => isMyWorkspace(cwd), // 同步；false 时继续匹配
+    tree: async (scope, path, limit) => { /* ... */ },
+    readText: async (scope, path, limit, headLimit) => { /* ... */ },
+    writeText: async (scope, path, content) => { /* ... */ },
+    search: async (scope, query, budget) => { /* ... */ },
+    readBytes: async (scope, path, limit) => { /* ... */ },
+    git: {
+      execute: async (request) => runWorkspaceGit(request),
+    },
+  }
+  ctx.effect(() => ctx.betterSidebarWorkspace.register(provider))
+}
+```
+
+`betterSidebarWorkspace.version === 1`。注册表按 `priority` 从高到低选第一个 `claim({ cwd }) === true` 的 provider；没有匹配时使用内置 local adapter。同 `id` 的新注册会替换旧注册，旧 disposer 不会误删新实例（HMR-safe）。Provider 接收 `{ cwd, fence }`，负责路径解析、真实目标包含检查和 I/O；Better Sidebar 仍拥有既有 URL、JSON wire、大小预算、MIME、下载 disposition、Host trust fence 与 HTML CSP。上传不经过此接口；交互终端可通过下面的可选能力接入。
+
+`git.execute(request)` 使用封闭的现有操作词汇（`worktrees`、`status`、`diff`、`stage`、`unstage`、`commit`、`branch`、`checkout`、`log`、`commit-diff`、`discard`、`revert`、`cherry-pick`、`show`），不会暴露任意命令。`request.cwd` 始终是会话权威 cwd；可选 `worktree` / `repoRoot` 与现有 Git 面板选择器同形。被 provider 认领的工作区全部 Git 路由都委托此方法；内置 local provider 保持原有解析器、wire 返回形状、路径校验与子进程行为。
+
+
+#### 可选交互终端能力
+
+`provider.terminal = { label?: string, open(scope, request): Promise<BetterSidebarTerminalHandle> }`。
+`request` 携带 `sessionId`、`tabId`、`cols`、`rows` 和 `signal`；这些是人机交互终端，不能用于规避模型工具的权限策略。`scope.cwd` 优先来自 live Session 或原生 persistence `stat().header`，只有新会话无持久记录时才使用浏览器 cwd 提示。
+
+Handle 提供：
+
+- `snapshot()`：有界回放文本、`truncated`、`exited`、`exitCode`，以及可选错误。
+- `subscribe(listener)`：原始 `data`、`exit`、`error` 事件；返回解除订阅函数。
+- `write(data)`：按提交顺序写入原始按键，不附加换行、不套用模型 send/idle 超时。
+- `resize(cols, rows)`：调整远端 PTY；浏览器尺寸范围为 2–1024。
+- `close()`：幂等释放资源，失败明确报告；provider 撤销后清理仍应可调用。
+
+Better Sidebar 统一管理 session/tab 的异步创建、配额、WebSocket 多连接 lease、刷新重连、park 和关闭。`node-pty` 缺失只影响本地终端。Provider 负责创建取消和失败回滚，不能在远端失败时启动本地 shell。`retainClaim: true` 会保留已识别工作区的归属；provider 卸载或 claim 抛错时明确失败，防止误回落到本机 anchor。当前原生 Connection 存在时，所有 sidebar HTTP/WS 路由也复用其浏览器鉴权。
+
+SSH 由独立 `dsh-better-sidebar-ssh-compat` 适配 `sshRemoteHostBridge` 的 `interactive-terminal` 能力，侧栏核心不包含 SSH 传输代码。模型侧栏终端工具仍只支持本地；SSH 模型任务应使用 DSH 原生路由终端。
+
 ---
 
 ## 7. 服务方法完整清单

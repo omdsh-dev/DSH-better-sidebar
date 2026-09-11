@@ -174,4 +174,65 @@ describe('EditorHost refresh (issue #167)', () => {
       unmount()
     }
   })
+
+  it('D: dsh-sidebar:refresh-files passive event reloads matching file when not dirty', async () => {
+    const { ctx, fileTab } = setup('preview', false)
+    const { unmount } = mount(ctx, fileTab)
+    try {
+      await act(async () => { await Promise.resolve() })
+      expect(reads()).toBe(1)
+
+      // Event for a different file -> no reload
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('dsh-sidebar:refresh-files', {
+          bubbles: true,
+          detail: { files: ['/tmp/other.ts'] },
+        }))
+        await Promise.resolve()
+      })
+      expect(reads()).toBe(1)
+
+      // Event matching this file -> reloads
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('dsh-sidebar:refresh-files', {
+          bubbles: true,
+          detail: { files: ['/tmp/a.ts'] },
+        }))
+        await Promise.resolve()
+      })
+      expect(reads()).toBe(2)
+
+      // Broadcast event (no files filter) -> reloads
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('dsh-sidebar:refresh-files', {
+          bubbles: true,
+        }))
+        await Promise.resolve()
+      })
+      expect(reads()).toBe(3)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('D: dsh-sidebar:refresh-files passive event is suppressed when editor is dirty', async () => {
+    const { ctx, fileTab } = setup('edit', true)
+    const { unmount } = mount(ctx, fileTab)
+    try {
+      await act(async () => { await Promise.resolve() })
+      expect(reads()).toBe(1)
+
+      // Event matching this file, but editor is dirty -> no reload
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent('dsh-sidebar:refresh-files', {
+          bubbles: true,
+          detail: { files: ['/tmp/a.ts'] },
+        }))
+        await Promise.resolve()
+      })
+      expect(reads()).toBe(1)
+    } finally {
+      unmount()
+    }
+  })
 })

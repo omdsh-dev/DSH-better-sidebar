@@ -89,11 +89,9 @@ $DSH_CMD plugin --profile web add "file:$TARBALL"
 say "启动 dsh web（--port ${PORT}，日志 ${LOG_DIR}）…"
 e2e_start_dsh_web "$OUT_LOG" "$ERR_LOG"
 
-# 等待启动 URL 或进程退出（最多 120s）。这里有意只取 origin：0.1.2-alpha.1+
-# 的就绪行是 `…/?token=<43字符>` 鉴权 URL，但下方的探活全部打插件的
-# /sidebar/api/* 路由——webserver carrier 不做鉴权（只有 /api、index 与
-# remote.mux 升级在 browser auth 之后），origin 拼路径即正确且两版通用。
-E2E_READY_RE='http://127\.0\.0\.1:[0-9]+'
+# Use the launch URL of this newly-created scratch host to establish its
+# native browser session; sidebar routes share that authentication fence.
+E2E_READY_RE='http://127\.0\.0\.1:[0-9]+[^ ]*'
 E2E_READY_PICK=tail
 e2e_wait_dsh_web_ready "$OUT_LOG" || true
 if [ -z "$URL" ]; then
@@ -101,7 +99,15 @@ if [ -z "$URL" ]; then
   warn "err log 尾部：$(tail -5 "$ERR_LOG" 2>/dev/null || true)"
   die "dsh web 未在 120s 内启动"
 fi
+LAUNCH_URL="$URL"
+URL="${LAUNCH_URL%%\?*}"
+URL="${URL%/}"
+COOKIE_JAR="$SCRATCH/sidebar-cookie.jar"
+curl -sS --cookie-jar "$COOKIE_JAR" --output /dev/null "$LAUNCH_URL"
 say "已启动：$URL"
+
+UNAUTH="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/sidebar/api/terminal.deps")"
+[ "$UNAUTH" = "403" ] || die "未认证 sidebar 请求应被拒绝（HTTP $UNAUTH）"
 
 # ── 断言 ────────────────────────────────────────────────────────────────────
 if grep -q "duplicate prefix route" "$ERR_LOG" "$OUT_LOG" 2>/dev/null; then
@@ -111,13 +117,13 @@ fi
 # 真实方法探活：terminal.deps 是插件自己的 handler（writeOk → HTTP 200 +
 # {"ok":true,...}）。成功响应证明至少一个实例真正注册了 /sidebar/api 路由
 # ——generic missing-route 404 无法冒充（P2: Probe a real sidebar API method）。
-DEPS="$(curl -s -X POST "$URL/sidebar/api/terminal.deps" 2>/dev/null || true)"
+DEPS="$(curl -s --cookie "$COOKIE_JAR" -X POST "$URL/sidebar/api/terminal.deps" 2>/dev/null || true)"
 if ! printf '%s' "$DEPS" | grep -q '"ok":true'; then
   die "/sidebar/api/terminal.deps 未返回 ok:true（响应：$(printf '%s' "$DEPS" | head -c 200)）"
 fi
 say "/sidebar/api/terminal.deps → ok:true（真实 handler 存活）"
 
-STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/sidebar/api/__e2e_unknown__" 2>/dev/null || true)"
+STATUS="$(curl -s --cookie "$COOKIE_JAR" -o /dev/null -w '%{http_code}' -X POST "$URL/sidebar/api/__e2e_unknown__" 2>/dev/null || true)"
 say "/sidebar/api POST 未知方法 → HTTP ${STATUS}（期望 404）"
 [ "$STATUS" = "404" ] || die "/sidebar/api 未知方法未按预期返回 404（HTTP ${STATUS}）"
 

@@ -31,7 +31,7 @@ import type { Context } from './context-types.ts'
 import type { SidebarPrefs } from './prefs-shared.ts'
 
 /** What the model asked to open. */
-export type AgentOpenKind = 'file' | 'folder' | 'url'
+export type AgentOpenKind = 'file' | 'folder' | 'url' | 'refresh'
 
 /** One pending/broadcast open request (the wire face over the push socket). */
 export interface AgentOpenRequest {
@@ -44,6 +44,8 @@ export interface AgentOpenRequest {
   target: string
   /** Tab title the client should use (basename / hostname / caller-supplied). */
   title: string
+  /** Optional file list for passive refresh notifications. */
+  files?: readonly string[]
 }
 
 /** One subscribed sidebar view's sender. */
@@ -98,6 +100,22 @@ export class AgentOpenRegistry {
       const current = this.subscribers.get(sessionId)
       current?.delete(send)
       if (current !== undefined && current.size === 0) this.subscribers.delete(sessionId)
+    }
+  }
+
+  /** Broadcast a passive refresh notification to connected sidebar views for one session. */
+  notifyRefresh(sessionId: string, files?: readonly string[]): void {
+    const views = this.subscribers.get(sessionId)
+    if (views !== undefined && views.size > 0) {
+      const request: AgentOpenRequest = {
+        id: randomUUID(),
+        sessionId,
+        kind: 'refresh',
+        target: '',
+        title: '',
+        ...(files !== undefined ? { files } : {}),
+      }
+      for (const send of views) send(request)
     }
   }
 

@@ -30,6 +30,7 @@
  */
 import type { Context as CordisContext } from '@deepseek-ai/cordis'
 import type { BetterSidebarService } from './client/service.ts'
+import type { BetterSidebarWorkspaceService } from './workspace-provider.ts'
 
 /** The request face route handlers see (structural subset of node's
  *  IncomingMessage: the URL/method/header reads and the async body
@@ -307,6 +308,7 @@ export interface SidebarSessionTitleService {
  * goes through {@link readPersistedSession} so the handle is always closed.
  */
 export interface SidebarSessionPersistenceService {
+  stat?(sessionId: string): Promise<{ header: { cwd?: string; agentPreset?: string } } | undefined>
   open(sessionId: string, access: 'read' | 'write'): Promise<SidebarSessionHandle>
 }
 
@@ -504,6 +506,24 @@ export interface SidebarAgent {
 export interface SidebarContextShape {
   /** The webServer service face this plugin uses. */
   webServer: SidebarWebServer
+  /**
+   * DSH filesystem abstraction. Explorer listing uses it so workspace anchors
+   * contributed by remote-runtime plugins resolve in their execution world.
+   */
+  fs: {
+    resolve(path: string): Promise<{ targetKey: unknown; displayPath: string }>
+    contains(
+      parent: { targetKey: unknown; displayPath: string },
+      child: { targetKey: unknown; displayPath: string },
+    ): boolean
+    lstat(path: string): Promise<{ type: 'file' | 'directory' | 'symlink' | 'other' } | undefined>
+    stat(target: { targetKey: unknown; displayPath: string }): Promise<{ type: 'file' | 'directory' | 'other' } | undefined>
+    listDir(target: { targetKey: unknown; displayPath: string }): Promise<Array<{
+      name: string
+      type: 'file' | 'directory' | 'other'
+      target: { targetKey: unknown; displayPath: string }
+    }>>
+  }
   /** The session store (host `.get`) and the client list feed (`.list`) faces. */
   sessions: SidebarSessionStore & SidebarSessionsService
   /** The web runtime trust list (bind-derived). */
@@ -539,6 +559,8 @@ export interface SidebarContextShape {
    * connection outcome) and an immediate-reconnect request.
    */
   connection?: {
+    /** Host-side native browser authentication, when this face is used on the host. */
+    requestRejection?(request: SidebarHttpRequest): number | undefined
     state: {
       getSnapshot(): 'connected' | 'disconnected' | 'connecting' | undefined
       subscribe(listener: () => void): () => void
@@ -547,6 +569,8 @@ export interface SidebarContextShape {
   }
   /** The composer draft face (client ui-conversation, lazy `ctx.get` probe). */
   conversation: SidebarConversation
+  /** The host-side transport-neutral workspace provider registry. */
+  betterSidebarWorkspace: BetterSidebarWorkspaceService
   /**
    * The client-side sidebar registry: external plugins register tab types
    * and file previewers here. Provided by the client half (see

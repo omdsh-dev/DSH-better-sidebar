@@ -91,7 +91,7 @@ export function insertAtCaret(draft: string, text: string, caret: DraftCaret | n
  */
 function findComposerTextarea(): HTMLTextAreaElement | null {
   if (typeof document === 'undefined') return null
-  const column = document.querySelector('#root [data-slot="conversation"]')
+  const column = document.querySelector('#root [data-slot="main.conversation"], #root [data-slot="conversation"]')
   const find = (scope: ParentNode): HTMLTextAreaElement | null =>
     scope.querySelector('textarea[data-phase]') ?? scope.querySelector('textarea')
   return column !== null

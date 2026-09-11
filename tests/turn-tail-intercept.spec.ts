@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Turn-tail interception registration spec (issue #15): `registerTurnTailInterception`
  * must go through `ctx.slots.inject` — the slot is a CHILD slot the host's
