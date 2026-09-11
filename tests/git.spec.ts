@@ -62,6 +62,68 @@ describe('git parsing', () => {
     }
   })
 
+  it('discovers nested child repositories up to three levels below a git root', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-better-sidebar-nested-git-'))
+    const level2 = join(workspace, 'group', 'project')
+    const level3 = join(level2, 'vendor-lib')
+    const level3Worktree = join(level2, 'vendor-tools')
+    try {
+      mkdirSync(level3, { recursive: true })
+      mkdirSync(level3Worktree, { recursive: true })
+      await Promise.all([
+        execFileAsync('git', ['-C', workspace, 'init']),
+        execFileAsync('git', ['-C', level2, 'init']),
+        execFileAsync('git', ['-C', level3, 'init']),
+        // Worktree form: `.git` is a plain file pointing at the real gitdir.
+        writeFileSync(join(level3Worktree, '.git'), 'gitdir: /tmp/nonexistent/worktrees/x\n'),
+      ])
+
+      await expect(repoRoots(workspace)).resolves.toEqual([
+        canonical(workspace),
+        canonical(level2),
+        canonical(level3),
+        canonical(level3Worktree),
+      ])
+      await expect(status(workspace, canonical(level3))).resolves.toMatchObject({
+        isRepo: true,
+        root: canonical(level3),
+        repositories: [canonical(workspace), canonical(level2), canonical(level3), canonical(level3Worktree)],
+      })
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('descends into discovered repositories and skips hidden, node_modules and beyond-cap depths', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dsh-better-sidebar-embedded-git-'))
+    const outer = join(workspace, 'outer')
+    const embedded = join(outer, 'packages', 'embedded')
+    const inNodeModules = join(outer, 'node_modules', 'shadowed')
+    const tooDeep = join(workspace, 'a', 'b', 'c', 'too-deep')
+    try {
+      mkdirSync(embedded, { recursive: true })
+      mkdirSync(inNodeModules, { recursive: true })
+      mkdirSync(tooDeep, { recursive: true })
+      await Promise.all([
+        execFileAsync('git', ['-C', workspace, 'init']),
+        execFileAsync('git', ['-C', outer, 'init']),
+        execFileAsync('git', ['-C', embedded, 'init']),
+        execFileAsync('git', ['-C', inNodeModules, 'init']),
+        execFileAsync('git', ['-C', tooDeep, 'init']),
+      ])
+
+      // Repos hidden inside node_modules or beyond depth DISCOVERY_MAX_DEPTH - 1
+      // stay invisible; the repo embedded inside `outer` is still discovered.
+      await expect(repoRoots(workspace)).resolves.toEqual([
+        canonical(workspace),
+        canonical(outer),
+        canonical(embedded),
+      ])
+    } finally {
+      await rm(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('parses porcelain -z entries including renames', () => {
     const output = ['M  src/a.ts', ' M src/b.ts', '?? src/c.ts', 'R  src/new.ts', 'src/old.ts', ''].join('\0')
     const entries = parsePorcelainZ(output)
