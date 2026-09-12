@@ -316,6 +316,7 @@ export const hi: Record<string, string> = {
   settingsBrowserLoopbackDesc: 'लूपबैक पतों की कॉमा-सेपरेटेड अनुमति सूची (जैसे localhost:5174 या 127.0.0.1:8080) जिन्हें साइडबार ब्राउज़र देख सकता है; खाली डिफ़ॉल्ट रूप से सभी स्थानीय पते ब्लॉक करता है। सैंडबॉक्स लागू रहता है — पेज GUI डेटा नहीं पढ़ सकते',
   settingsBrowserLoopbackPlaceholder: 'जैसे localhost:5174, 127.0.0.1:8080',
   browserOpenExternal: 'ब्राउज़र में खोलें',
+  openBrowserCloseConfirm: 'ब्राउज़र में खोलें और यह टैब बंद करें? सहेजे न गए बदलाव खो जाएंगे।',
   browserEmbedBlocked: '{host} एम्बेड होने से इनकार',
   browserEmbedBlockedDesc: 'साइट अन्य पृष्ठों के अंदर प्रदर्शित होने से मना करती है (X-Frame-Options / frame-ancestors), इसलिए साइडबार में लोड नहीं हो सकती। इसे अपने ब्राउज़र में सीधे खोलें।',
   browserEmbedAnyway: 'फिर भी लोड करें',

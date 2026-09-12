@@ -9,7 +9,7 @@
  * only, no editor chrome); file tabs keep the full chrome in both modes.
  */
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createElement, useEffect, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
@@ -17,6 +17,7 @@ import type { Context } from '../src/context-types.ts'
 import { EditorHost } from '../src/client/EditorHost.tsx'
 import { createBetterSidebarService, type FileViewerProps } from '../src/client/service.ts'
 import { allLeaves, createSidebarStore, type SidebarTab } from '../src/client/state.ts'
+import { t } from '../src/client/locales.ts'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
 import { setupReactAct } from './test-utils.ts'
@@ -303,6 +304,123 @@ describe('EditorHost (files window)', () => {
       expect(calls).toEqual(['mode:edit', 'save'])
     } finally {
       unmount()
+    }
+  })
+
+  it('the header shows "open in browser" only for viewers declaring browserUrl, opens a new tab, and closes the sidebar tab', () => {
+    const { store, ctx } = setup()
+    const service = ctx.betterSidebar
+    // fetchStrategy 'none' renders immediately (no fetch) — the ready state
+    // carries the descriptor, which is all the button consults.
+    service.registerFileViewer({
+      id: 'test:renderable',
+      exts: ['rdr'],
+      fetchStrategy: 'none',
+      browserUrl: (scope, path) => `/sidebar/file?sessionId=${scope.sessionId}&path=${encodeURIComponent(path)}`,
+      component: () => null,
+    })
+    service.registerFileViewer({
+      id: 'test:plain',
+      exts: ['pln'],
+      fetchStrategy: 'none',
+      component: () => null,
+    })
+    const openSpy = vi.fn().mockReturnValue(null)
+    vi.stubGlobal('open', openSpy)
+    const tabGone = (path: string): boolean =>
+      !allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+        .some(tab => tab.path === path)
+    try {
+      service.openTab({ type: 'editor', title: 'x.rdr', path: '/tmp/x.rdr', id: 'editor:/tmp/x.rdr' })
+      const fileTab = (): SidebarTab =>
+        allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+          .find(tab => tab.path === '/tmp/x.rdr')!
+      const { container, unmount } = mountHost(ctx, store, fileTab)
+      try {
+        const label = t('browserOpenExternal')
+        const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)
+        expect(button).not.toBeNull()
+        act(() => { button!.click() })
+        expect(openSpy).toHaveBeenCalledTimes(1)
+        const [url, target, features] = openSpy.mock.calls[0] as [string, string, string]
+        expect(url).toBe(`/sidebar/file?sessionId=editor-home-session&path=${encodeURIComponent('/tmp/x.rdr')}`)
+        expect(target).toBe('_blank')
+        expect(features).toContain('noopener')
+        // The handoff closes the sidebar tab the file was opened in.
+        expect(tabGone('/tmp/x.rdr')).toBe(true)
+      } finally {
+        unmount()
+      }
+
+      // A viewer without browserUrl never shows the button.
+      service.openTab({ type: 'editor', title: 'x.pln', path: '/tmp/x.pln', id: 'editor:/tmp/x.pln' })
+      const plainTab = (): SidebarTab =>
+        allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+          .find(tab => tab.path === '/tmp/x.pln')!
+      const second = mountHost(ctx, store, plainTab)
+      try {
+        expect(second.container.querySelector(`button[aria-label="${t('browserOpenExternal')}"]`)).toBeNull()
+      } finally {
+        second.unmount()
+      }
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('open-in-browser with a dirty draft asks first; cancel keeps the tab and skips the browser', () => {
+    const { store, ctx } = setup()
+    const service = ctx.betterSidebar
+    // An editable viewer (the html-viewer shape): reports a dirty toolbar.
+    // Capitalized so the hooks rules recognize it as a component.
+    const DirtyViewer = (viewerProps: FileViewerProps): ReactNode => {
+      useEffect(() => {
+        viewerProps.onToolbarState?.({ modes: false, mode: 'preview', dirty: true, editable: true, saveState: 'idle' })
+        // Mount-only: re-running would re-fire the toolbar report.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
+      return null
+    }
+    service.registerFileViewer({
+      id: 'test:dirty',
+      exts: ['dty'],
+      fetchStrategy: 'none',
+      browserUrl: (scope, path) => `/sidebar/file?sessionId=${scope.sessionId}&path=${encodeURIComponent(path)}`,
+      component: DirtyViewer,
+    })
+    const openSpy = vi.fn().mockReturnValue(null)
+    const confirmSpy = vi.fn()
+    vi.stubGlobal('open', openSpy)
+    vi.stubGlobal('confirm', confirmSpy)
+    const tabOpen = (path: string): boolean =>
+      allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+        .some(tab => tab.path === path)
+    try {
+      // Cancel: nothing happens — no browser tab, sidebar tab kept.
+      confirmSpy.mockReturnValue(false)
+      service.openTab({ type: 'editor', title: 'x.dty', path: '/tmp/x.dty', id: 'editor:/tmp/x.dty' })
+      const fileTab = (): SidebarTab =>
+        allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+          .find(tab => tab.path === '/tmp/x.dty')!
+      const { container, unmount } = mountHost(ctx, store, fileTab)
+      try {
+        const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${t('browserOpenExternal')}"]`)
+        expect(button).not.toBeNull()
+        act(() => { button!.click() })
+        expect(confirmSpy).toHaveBeenCalledTimes(1)
+        expect(openSpy).not.toHaveBeenCalled()
+        expect(tabOpen('/tmp/x.dty')).toBe(true)
+
+        // Confirm: the handoff proceeds — browser opens, sidebar tab closes.
+        confirmSpy.mockReturnValue(true)
+        act(() => { button!.click() })
+        expect(openSpy).toHaveBeenCalledTimes(1)
+        expect(tabOpen('/tmp/x.dty')).toBe(false)
+      } finally {
+        unmount()
+      }
+    } finally {
+      vi.unstubAllGlobals()
     }
   })
 

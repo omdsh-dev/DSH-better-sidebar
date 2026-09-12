@@ -314,6 +314,7 @@ export const nl: Record<string, string> = {
   settingsBrowserLoopbackDesc: 'Door komma gescheiden allowlist van loopback-adressen (bijv. localhost:5174 of 127.0.0.1:8080) die de zijbalk-browser kan bezoeken; leeg blokkeert standaard alle lokale adressen. De sandbox blijft van toepassing — pagina s kunnen geen GUI-gegevens lezen',
   settingsBrowserLoopbackPlaceholder: 'bijv. localhost:5174, 127.0.0.1:8080',
   browserOpenExternal: 'Openen in browser',
+  openBrowserCloseConfirm: 'Openen in browser en dit tabblad sluiten? Niet-opgeslagen wijzigingen gaan verloren.',
   browserEmbedBlocked: '{host} weigerde ingebed te worden',
   browserEmbedBlockedDesc: 'De site verbiedt weergave binnen andere pagina\'s (X-Frame-Options / frame-ancestors), dus kan niet in de zijbalk laden. Open de site direct in uw browser.',
   browserEmbedAnyway: 'Toch laden',

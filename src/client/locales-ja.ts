@@ -316,6 +316,7 @@ export const ja: Record<string, string> = {
   settingsBrowserLoopbackDesc: 'サイドバーブラウザがアクセスできるループバックアドレスのカンマ区切り許可リスト（例：localhost:5174 や 127.0.0.1:8080）。空の場合、デフォルトですべてのローカルアドレスをブロックします。サンドボックスは引き続き適用され、ページは GUI データを読み取れません',
   settingsBrowserLoopbackPlaceholder: '例 localhost:5174, 127.0.0.1:8080',
   browserOpenExternal: 'ブラウザーで開く',
+  openBrowserCloseConfirm: 'ブラウザーで開いてこのタブを閉じますか？未保存の編集は破棄されます。',
   browserEmbedBlocked: '{host} は埋め込みを拒否しました',
   browserEmbedBlockedDesc: 'このサイトは X-Frame-Options / frame-ancestors で他ページ内での表示を禁止しているため、サイドバー内で読み込めません。ブラウザーで直接開いてください',
   browserEmbedAnyway: 'それでも読み込む',

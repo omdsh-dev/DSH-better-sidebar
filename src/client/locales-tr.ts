@@ -316,6 +316,7 @@ export const tr: Record<string, string> = {
   settingsBrowserLoopbackDesc: 'Kenar çubuğu tarayıcısının ziyaret edebileceği geri döngü adreslerinin virgülle ayrılmış izin listesi (ör. localhost:5174 veya 127.0.0.1:8080); boş, varsayılan olarak tüm yerel adresleri engeller. Kum havuzu hala geçerlidir — sayfalar GUI verilerini okuyamaz',
   settingsBrowserLoopbackPlaceholder: 'ör. localhost:5174, 127.0.0.1:8080',
   browserOpenExternal: 'Tarayıcıda aç',
+  openBrowserCloseConfirm: 'Tarayıcıda açıp bu sekmeyi kapat? Kaydedilmemiş düzenlemeler kaybolur.',
   browserEmbedBlocked: '{host} gömülmeyi reddetti',
   browserEmbedBlockedDesc: 'Site başka sayfalar içinde gösterilmeyi yasaklıyor (X-Frame-Options / frame-ancestors), bu yüzden kenar çubuğunda yüklenemiyor. Bunun yerine doğrudan tarayıcınızda açın.',
   browserEmbedAnyway: 'Yine de yükle',

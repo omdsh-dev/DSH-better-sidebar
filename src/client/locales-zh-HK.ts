@@ -331,6 +331,7 @@ export const zhHK: Record<string, string> = {
   settingsBrowserLoopbackDesc: '逗號分隔的本機回環地址白名單（如 localhost:5174 或 127.0.0.1:8080），側邊欄瀏覽器可訪問這些本機服務；預設留空則本機地址全部攔截。沙箱隔離仍然生效，頁面無法讀取介面資料',
   settingsBrowserLoopbackPlaceholder: '例如 localhost:5174, 127.0.0.1:8080',
   browserOpenExternal: '在瀏覽器中開啟',
+  openBrowserCloseConfirm: '在瀏覽器中開啟並關閉此分頁，將捨棄未儲存的編輯。繼續嗎？',
   browserEmbedBlocked: '{host} 拒絕了嵌入請求',
   browserEmbedBlockedDesc: '該網站透過 X-Frame-Options / frame-ancestors 禁止在其它頁面中顯示，無法在側邊欄內載入。可在瀏覽器中直接開啟',
   browserEmbedAnyway: '仍然載入',

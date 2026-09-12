@@ -318,6 +318,7 @@ export const pl: Record<string, string> = {
   settingsBrowserLoopbackDesc: 'Rozdzielana przecinkami lista dozwolonych adresów loopback (np. localhost:5174 lub 127.0.0.1:8080), które może odwiedzać przeglądarka paska bocznego; puste domyślnie blokuje wszystkie adresy lokalne. Piaskownica nadal obowiązuje — strony nie mogą odczytywać danych GUI',
   settingsBrowserLoopbackPlaceholder: 'np. localhost:5174, 127.0.0.1:8080',
   browserOpenExternal: 'Otwórz w przeglądarce',
+  openBrowserCloseConfirm: 'Otworzyć w przeglądarce i zamknąć tę kartę? Niezapisane zmiany zostaną utracone.',
   browserEmbedBlocked: '{host} odmówił osadzenia',
   browserEmbedBlockedDesc: 'Witryna zabrania wyświetlania w innych stronach (X-Frame-Options / frame-ancestors), więc nie może się załadować w panelu bocznym. Otwórz ją bezpośrednio w przeglądarce.',
   browserEmbedAnyway: 'Załaduj mimo to',

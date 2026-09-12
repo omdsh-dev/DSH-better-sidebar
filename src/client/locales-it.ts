@@ -307,6 +307,7 @@ export const it: Record<string, string> = {
   settingsBrowserLoopbackDesc: 'Allowlist separata da virgole di indirizzi di loopback (es. localhost:5174 o 127.0.0.1:8080) che il browser della barra laterale può visitare; vuoto blocca tutti gli indirizzi locali per impostazione predefinita. La sandbox si applica ancora — le pagine non possono leggere i dati della GUI',
   settingsBrowserLoopbackPlaceholder: 'es. localhost:5174, 127.0.0.1:8080',
   browserOpenExternal: 'Apri nel browser',
+  openBrowserCloseConfirm: 'Aprire nel browser e chiudere questa scheda? Le modifiche non salvate andranno perse.',
   browserEmbedBlocked: '{host} ha rifiutato di essere incorporato',
   browserEmbedBlockedDesc: 'Il sito vieta di essere mostrato all’interno di altre pagine (X-Frame-Options / frame-ancestors), per cui non può essere caricato nella barra laterale. Lo apra direttamente nel browser.',
   browserEmbedAnyway: 'Carica comunque',
