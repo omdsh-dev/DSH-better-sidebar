@@ -7,7 +7,7 @@
  *   errors in the sidebar shell itself (Workbench, drag layout, …) — a full
  *   swap keeps the page alive.
  * - PER-TAB (Sidebar.tsx TabContent, `css.tabBoundaryError`): a crashing
- *   viewer/editor shows a strip inside ITS OWN pane; the toggle cluster, the
+ *   viewer/editor shows a strip inside ITS OWN pane; the workbench shell, the
  *   other tabs, and the panel itself stay alive (issue #31 — a tab crash
  *   must never take down the whole sidebar).
  *

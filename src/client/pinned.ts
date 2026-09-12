@@ -143,9 +143,8 @@ export function pinnedVisibleTo(tab: SidebarTab, viewer: PinnedViewer): boolean 
  * Collect every pinned terminal visible to the viewer across ALL cached
  * session states. Excludes the viewer's own session (those tabs are on its
  * own strip). Order is stable: sessions in the cache's insertion order,
- * tabs in tree order (splits → bottomSplits → floats) within each session
- * — the order tabs were opened/pinned, so the rail never reorders between
- * renders.
+ * tabs in tree order within each session — the order tabs were
+ * opened/pinned, so the rail never reorders between renders.
  */
 export function collectPinnedTabs(
   bySession: ReadonlyMap<string, SidebarState>,
@@ -154,20 +153,14 @@ export function collectPinnedTabs(
   const entries: PinnedTabEntry[] = []
   for (const [homeSessionId, state] of bySession) {
     if (homeSessionId === viewer.sessionId) continue
-    collectFromTree(state.splits, homeSessionId, viewer, entries)
     collectFromTree(state.bottomSplits, homeSessionId, viewer, entries)
-    for (const float of state.floats) {
-      if (float.tab.type === 'terminal' && pinnedVisibleTo(float.tab, viewer)) {
-        entries.push({ tab: float.tab, homeSessionId })
-      }
-    }
   }
   return entries
 }
 
 /** Walk one split tree depth-first, collecting visible pinned terminals. */
 function collectFromTree(
-  node: SidebarState['splits'],
+  node: SplitNode,
   homeSessionId: string,
   viewer: PinnedViewer,
   out: PinnedTabEntry[],

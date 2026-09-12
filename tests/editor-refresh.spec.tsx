@@ -84,7 +84,7 @@ function setup(initialMode: 'preview' | 'edit' = 'preview', dirty = false): {
   } as unknown as Context
   ctx.betterSidebar.openTab({ type: 'editor', title: 'a.ts', path: '/tmp/a.ts', id: 'editor:/tmp/a.ts' })
   const fileTab = (): SidebarTab =>
-    allLeaves(store.getSnapshot().state!.splits).flatMap(leaf => leaf.tabs)
+    allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
       .find(tab => tab.path === '/tmp/a.ts')!
   return { ctx, fileTab }
 }

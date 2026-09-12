@@ -4,9 +4,8 @@
  * button cluster, and the + menu that opens new tabs (explorer / git /
  * terminal). Tabs are draggable; dropping onto another tab inserts before it,
  * dropping on the strip background appends to this pane. Right-clicking a
- * tab opens the tab context menu (float as a free window / close / close
- * others / close to the left / close to the right, the close ones scoped to
- * this pane).
+ * tab opens the tab context menu (close / close others / close to the left /
+ * close to the right, the close ones scoped to this pane).
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
@@ -68,9 +67,6 @@ export function TabBar(props: {
   newTabOptions: NewTabOption[]
   /** Drop of a tab from any pane: (payload, insertBeforeTabId | null). */
   onDropTab: (payload: TabDragPayload, before: string | null) => void
-  /** Float a tab out as a free window (the tab context menu's entry; the
-   *  drag-to-conversation gesture is handled at the Sidebar shell level). */
-  onFloatTab: (tabId: string) => void
   /**
    * Pin/unpin a terminal tab (v0.17.0+). Called with `'workspace'` or
    * `'global'` to pin (the shell snapshots the home cwd), or `null` to
@@ -85,7 +81,7 @@ export function TabBar(props: {
   getTabBadge?: (tab: SidebarTab) => ReactNode
 }) {
   const {
-    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, onFloatTab, onPinTab, getTabIcon, getTabBadge,
+    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, onPinTab, getTabIcon, getTabBadge,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   // The tab right-click context menu: the target tab plus the cursor
@@ -298,9 +294,8 @@ export function TabBar(props: {
             // The target tab drives the pin entry's shape: terminal tabs
             // get either a "Pin ▸" submenu (unpinned) or a single "Unpin"
             // row (pinned). Non-terminal tabs and missing onPinTab get no
-            // pin entry at all — the menu stays exactly the legacy 5-item
-            // shape. Pinned VIRTUAL tabs (injected from other sessions)
-            // get a stripped menu: only Unpin + Close (no float, no
+            // pin entry at all. Pinned VIRTUAL tabs (injected from other
+            // sessions) get a stripped menu: only Unpin + Close (no
             // close-others/left/right — those are pane-scoped operations
             // that don't apply to cross-session virtual tabs).
             const targetTab = tabMenuIndex >= 0 ? tabs[tabMenuIndex] : undefined
@@ -325,7 +320,6 @@ export function TabBar(props: {
               ]
             }
             return [
-              { id: 'float', label: t('moveToFreeWindow') },
               ...pinEntries,
               { id: 'close', label: t('close') },
               { id: 'closeOthers', label: t('closeOtherTabs'), ...(tabs.length <= 1 ? { disabled: true } : {}) },
@@ -339,9 +333,7 @@ export function TabBar(props: {
             setTabMenu(null)
             const index = tabs.findIndex(tab => tab.id === target.tabId)
             if (index < 0) return
-            if (id === 'float') {
-              onFloatTab(target.tabId)
-            } else if (id === 'pinWorkspace') {
+            if (id === 'pinWorkspace') {
               onPinTab?.(target.tabId, 'workspace')
             } else if (id === 'pinGlobal') {
               onPinTab?.(target.tabId, 'global')

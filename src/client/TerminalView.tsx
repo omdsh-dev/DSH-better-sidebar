@@ -48,6 +48,7 @@ import {
   shouldActivateTerminalLink,
   openTerminalUrl,
 } from './terminal-links.ts'
+import { TerminalWaitBanner } from './TerminalWaitBanner.tsx'
 import css from './sidebar.module.css'
 
 /** How many consecutive unreasoned failures before showing the error banner. */
@@ -60,6 +61,13 @@ const FAILURE_LIMIT = 3
  * full repair details from /sidebar/api/terminal.deps.
  */
 const PTY_DEPS_MISSING = 'pty-deps-missing'
+
+/**
+ * The WS close-reason prefix the host sends when the CONFIGURED shell was
+ * not found (mirror of src/index.ts wsCloseReasonOf; wire contract, keep the
+ * literal in lockstep). The view renders a localized, actionable banner.
+ */
+const SHELL_NOT_FOUND_PREFIX = 'shell-not-found:'
 
 /** The degraded-mode payload rendered by {@link TerminalDepsBanner}. */
 type TerminalDepsInfo = Extract<TerminalDepsStatus, { ok: false }>
@@ -116,6 +124,27 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
   const [fatal, setFatal] = useState<string | null>(null)
   const [depsFatal, setDepsFatal] = useState<TerminalDepsInfo | null>(null)
   const [lastUrl, setLastUrl] = useState<string | null>(null)
+  // Agent terminals only: the model's active terminal_wait_for (mirrored
+  // from the host's agent-terminals push into the store) drives the wait
+  // banner. Read + subscribe like the font prefs above; the banner vanishes
+  // when the host's push drops the waiting field (skip / exit / abort all
+  // converge through the same push). getSnapshot() is {sessionId, state?,
+  // prefs} — the state may be briefly undefined around session switches.
+  const agentUuid = isAgentTabId(tabId) ? agentUuidOf(tabId) : null
+  const [waiting, setWaiting] = useState<{ needle: string; since: number } | undefined>(undefined)
+  useEffect(() => {
+    if (agentUuid === null) return
+    const read = (): void => {
+      const next = store.getSnapshot().state?.agentWaits?.[agentUuid]
+      setWaiting(prev => {
+        const nextValue = next === undefined ? undefined : { needle: next.needle, since: next.since }
+        if (prev?.needle === nextValue?.needle && prev?.since === nextValue?.since) return prev
+        return nextValue
+      })
+    }
+    read()
+    return store.subscribe(read)
+  }, [agentUuid, store])
   const connectRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
@@ -240,6 +269,12 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
           }).catch(() => {
             setFatal(t('terminalDepsFailed'))
           })
+          return
+        }
+        // The configured shell could not be found (settings page or yaml):
+        // a localized banner beats the raw English close reason.
+        if (event.code === 1011 && event.reason.startsWith(SHELL_NOT_FOUND_PREFIX)) {
+          setFatal(t('terminalShellNotFound', { name: event.reason.slice(SHELL_NOT_FOUND_PREFIX.length) || '?' }))
           return
         }
         // A server-side refusal carries a close code + reason; retrying it
@@ -373,6 +408,12 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
 
   return (
     <div className={css.terminalWrap}>
+      {agentUuid !== null && waiting !== undefined && (
+        <TerminalWaitBanner
+          needle={waiting.needle}
+          onSkip={() => { void api.agentSkipWait(agentUuid).catch(() => { /* 跳过失败时 banner 留存，可重试 */ }) }}
+        />
+      )}
       {depsFatal !== null && (
         <TerminalDepsBanner deps={depsFatal} onRetry={() => { setDepsFatal(null); connectRef.current?.() }} />
       )}

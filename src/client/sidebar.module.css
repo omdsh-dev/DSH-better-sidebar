@@ -69,41 +69,6 @@
   left: 0;
 }
 
-/* The persistent expand/collapse cluster at the top-right corner: two rail
-   controls side by side (bottom panel's glyph LEFT of the right panel's).
-   Always pinned to the viewport corner — inside the right panel's top-right
-   while it is open, sitting flush in the 34px tab strip (28px buttons at
-   top: 3) whose right end it really squeezes. Host-internal z-index 45
-   (above the panels' 40); the host's global layer is z-index 25, so the
-   whole cluster stays below DSH's ui-cordis dynamic-plugin panel (30) and
-   the app's overlay stack (menus/tooltips/modals sit at 100+), so a cordis
-   approval popup is never hidden behind the workbench (issue #52). Absolute
-   within the panel host (the host's inset: 0 makes viewport coordinates
-   identical). */
-.toggleCluster {
-  position: absolute;
-  /* env() resolves to 0 on devices without a top inset (desktops). */
-  top: calc(3px + env(safe-area-inset-top));
-  right: 10px;
-  z-index: 45;
-  display: flex;
-  flex-direction: row;
-  gap: 4px;
-  pointer-events: auto;
-  /* The cluster recenters between the panel's tab strip (top: 3) and DSH's
-     session header row (top: 14, see the collapsed rule below) on every
-     expand/collapse — ride the panel slide's own duration/easing so the two
-     moves stay in lockstep instead of the cluster snapping. */
-  transition: top var(--ds-transition-duration-slow) var(--ds-ease-in-out);
-}
-
-/* The tab strip of the OPEN right panel reserves the cluster's width at its
-   right end, so the tabs and the + menu genuinely yield space to the cluster
-   (never hiding under it). */
-.panel:not(.panelHidden) .tabBar {
-  padding-right: 72px;
-}
-
 /* The closed-state affordance is the native rail icon control: a plain
    28px circle (the app's icon-button size — the cluster must stay inside
    the 34px tab-strip band so it never covers the pane headers below),
@@ -134,75 +99,6 @@
 .toggleButton[aria-disabled='true'] {
   opacity: 0.4;
   cursor: default;
-}
-
-.panel {
-  box-sizing: border-box;
-  position: absolute;
-  top: 0;
-  right: 0;
-  /* Full height: the bottom panel squeezes only the center column, so the
-     right panel never gives up any vertical position. */
-  bottom: 0;
-  /* Host-internal z-index 40 (sibling of the bottom panel's 40; the two
-     never overlap — the bottom panel's right edge is this panel's left
-     edge — and both sit below the toggle cluster's 45). The absolute
-     global layer comes from the host ([data-dsh-panel-host], 25) — the
-     whole stack stays above the app's in-flow content and below DSH's
-     ui-cordis dynamic-plugin panel (30) and the app's overlay stack (100+),
-     so menus/tooltips/modals always win over the panels (issue #52). The
-     corner handle is a child and stacks within the panel. */
-  z-index: 40;
-  display: flex;
-  flex-direction: column;
-  /* Re-enable interaction inside the click-transparent panel host. */
-  pointer-events: auto;
-  /* The generic card surface (see the root contract above). Never
-     `--dsw-specific-sidebar-fill` — skin plugins restyle that token for the
-     app's own left nav and a panel consuming it loses its fill or clashes
-     with labels (#60/#105/#106). */
-  background: var(--dsw-alias-bg-layer-1);
-  border-left: 1px solid var(--dsw-alias-border-l2);
-  /* Bottom safe-area (notched phones): the drawer's bottom content clears
-     the home indicator; 0 on desktops. */
-  padding-bottom: env(safe-area-inset-bottom);
-  /* Expand/collapse slides the panel; fullscreen animates the width. */
-  transition:
-    transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    width var(--ds-transition-duration-slow) var(--ds-ease-in-out);
-}
-
-/* Collapsed: slid off-screen, interactive nothing, hidden after the slide. */
-.panelHidden {
-  transform: translateX(102%);
-  pointer-events: none;
-  visibility: hidden;
-  transition:
-    transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    width var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    visibility 0s linear var(--ds-transition-duration-slow);
-}
-
-/* Width drags write at pointer cadence; easing would detach the edge. */
-.panel[data-dragging] {
-  transition: none;
-}
-
-.panelResize {
-  position: absolute;
-  /* Centered on the panel edge (an 8px hit strip straddling the border, the
-     same pattern as the host's own frame handles). */
-  left: -4px;
-  top: 0;
-  bottom: 0;
-  width: 8px;
-  cursor: col-resize;
-  z-index: 2;
-  touch-action: none;
-}
-
-.panelResizeActive {
-  background: var(--dsw-alias-interactive-bg-hover-accent);
 }
 
 .panelBody {
@@ -263,7 +159,6 @@
    will-change: transform is only live while a drag is (the body attribute
    toggles with the drag state), promoting the panels to their own layer
    without paying the compositing cost at rest. */
-.panel,
 .bottomPanel {
   contain: layout style;
 }
@@ -324,148 +219,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding-right: 40px;
 }
 
-/* ── Free windows ──────────────────────────────────────────────────────── */
-
-/* One floating tab: the same card surface as the panels, at viewport
-   coordinates inside the panel host (immune to shell transforms). z-index
-   42: above the panels (40) so a window drags across them, below the
-   toggle cluster (45) and the app's overlay stack (100+, issue #52).
-   Stacking among windows is the floats array order (siblings share the
-   z-index; DOM order wins). Deliberately NO box transition — the header/
-   resize drags write left/top/width/height per frame. Elevated surface,
-   so unlike the flat panels it earns a shadow token. */
-.floatWindow {
-  position: absolute;
-  z-index: 42;
-  display: flex;
-  flex-direction: column;
-  /* Re-enable interaction inside the click-transparent panel host. */
-  pointer-events: auto;
-  background: var(--dsw-alias-bg-layer-1);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  box-shadow: var(--dsw-shadow-lv3);
-  overflow: hidden;
-  contain: layout style;
-}
-
-.floatWindowDragging {
-  will-change: left, top, width, height;
-}
-
-/* The header: the move/dock-back drag handle, mirroring the tab strip's
-   chrome (34px, hairline bottom, secondary label). */
-.floatHeader {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  height: 34px;
-  padding: 0 4px 0 10px;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-alias-bg-layer-1);
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-  cursor: grab;
-  user-select: none;
-}
-
-.floatWindowDragging .floatHeader {
-  cursor: grabbing;
-}
-
-.floatTitle {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Mirrors .tabClose. */
-.floatClose {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--dsw-alias-label-tertiary);
-  cursor: pointer;
-  flex: none;
-}
-
-.floatClose:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-/* Mirrors .paneContent's column-flex contract: the tab cell must hand its
-   child a definite WIDTH via align-stretch. A row flex (the default) sizes
-   the main axis (width) from content — intrinsic-zero hosts (e.g. a plugin
-   tab UI) collapse to a 0px-wide sliver and paint nothing (the blank
-   whale-report window). */
-.floatContent {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-/* The SE resize corner (mirror of .cornerHandle). */
-.floatResize {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 14px;
-  height: 14px;
-  z-index: 2;
-  cursor: nwse-resize;
-  touch-action: none;
-}
-
-.floatResize:hover {
-  background: var(--dsw-alias-interactive-bg-hover-accent);
-}
-
-/* A pane highlighted as the dock target while a float header drag hovers it
-   (the attribute is written directly by the drag at pointer cadence;
-   skin-addressable via [data-dsh-pane][data-dsh-float-dock-over]). */
-.pane[data-dsh-float-dock-over] {
-  outline: 2px dashed var(--dsw-alias-interactive-bg-hover-accent);
-  outline-offset: -2px;
-}
-
-/* The drag-out hint over the conversation column: a dashed frame marking
-   the drop zone, pointer-transparent so it never disturbs the drag it
-   describes. z-index 46: above the windows (42) for unambiguous feedback,
-   still below the app's overlay stack. */
-.floatDropHint {
-  position: absolute;
-  z-index: 46;
-  pointer-events: none;
-  border: 2px dashed var(--dsw-alias-interactive-bg-hover-accent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--dsw-alias-interactive-bg-hover-accent) 12%, transparent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.floatDropHintLabel {
-  padding: 4px 12px;
-  border-radius: 999px;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-layer-1);
-  border: 1px solid var(--dsw-alias-border-l2);
-}
-
 /* ── Desktop drag-region opt-out ──────────────────────────────────────── */
 
 /* Frameless desktop shells make the top strip of the web content draggable
@@ -475,10 +228,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
    `no-drag` itself — some shells (Tauri, older desktop builds, third-party
    wrappers) have no blanket button rule. The property is a no-op in plain
    browsers and in shells without drag regions — safe everywhere. */
-.toggleCluster,
 .toggleButton,
-.tabBar,
-.floatHeader {
+.tabBar {
   -webkit-app-region: no-drag;
 }
 
@@ -487,67 +238,10 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 /* Windows frameless / hidden-title-bar windows draw the native caption
    strip (minimize / maximize / close) at the window's top-right corner,
    OVER the web content. When the user enables the "position compatibility"
-   pref, the sidebar yields the strip: the toggle cluster drops below it and
-   the right panel's content starts below it — the panel's surface still
-   spans the full height, so the caption buttons float over empty sidebar
-   fill (the VSCode hidden-title-bar look). The strip height is user-tunable
-   (`--dsh-title-bar-strip`, written by the Sidebar shell from
-   `titleBarStripPx`; 40px fallback). The bottom panel is unaffected: it
-   sits at the window's bottom, never under the top strip. */
-:global(body[data-dsh-title-bar-compat]) .toggleCluster {
-  top: calc(var(--dsh-title-bar-strip, 40px) + 3px);
-}
-
-:global(body[data-dsh-title-bar-compat]) .panel {
-  /* The caption strip is drawn over the panel's own top edge: keep the
-     surface full-height and push the content (the tab strip) below the
-     strip instead. .panelResize is absolutely positioned and unaffected. */
-  padding-top: var(--dsh-title-bar-strip, 40px);
-}
-
-/* ── Collapsed cluster alignment with the DSH web session header ───────── */
-
-/* While the right panel is open, the cluster rides the panel's 34px tab
-   strip (28px buttons at top: 3). Collapsed, it floats over DSH's own
-   session header instead — whose controls (title, "Session log" capsule)
-   are vertically centered at 28px on both desktop and narrow viewports.
-   top: 3 then strands the cluster ~11px above that row; re-center the
-   28px buttons at 14px. The attribute disappears while the panel is open,
-   so the tab-strip alignment above is untouched. With position
-   compatibility active the DSH header sits below the caption strip, hence
-   strip + 14. */
-:global(body[data-dsh-sidebar-collapsed]) .toggleCluster {
-  top: calc(14px + env(safe-area-inset-top));
-}
-
-:global(body[data-dsh-sidebar-collapsed][data-dsh-title-bar-compat]) .toggleCluster {
-  top: calc(var(--dsh-title-bar-strip, 40px) + 14px);
-}
-
-/* The shared corner (both panels open): the intersection of the right
-   panel's left edge and the bottom panel's top edge. Horizontal drags
-   resize the width, vertical drags the height — the two panels drag
-   against each other. Rendered INSIDE the right panel and positioned
-   relative to it (left edge + the bottom panel's height from the layout
-   variable), so no JS-written viewport coordinates are involved. The
-   z-index is panel-local (above the panel's content; the panel itself sits
-   at 40, below the app's overlay stack). */
-.cornerHandle {
-  position: absolute;
-  left: -6px;
-  bottom: calc(var(--dsh-sidebar-height, 0px) + 6px);
-  width: 12px;
-  height: 12px;
-  z-index: 2;
-  cursor: nwse-resize;
-  touch-action: none;
-}
-
-.cornerHandle:hover,
-.cornerHandle[data-dragging] {
-  background: var(--dsw-alias-interactive-bg-hover-accent);
-}
-
+   pref, the Sidebar shell publishes the strip height as
+   `--dsh-title-bar-strip` plus `body[data-dsh-title-bar-compat]` for the
+   user's own CSS; the plugin's remaining chrome (the bottom workbench) sits
+   at the window's bottom and is never under the top strip. */
 /* Icon button: the app's own icon-button pattern (ui-workspace) — a 28px
    circle, secondary label, hover fill; no border so the icon alone is the
    affordance. */
@@ -724,6 +418,17 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* The native tab chip's glyph (drawn by the plugin inside the host's
+   `sidebar.right.pane.tab.title` slot, which is the chip's content): sized to
+   the text, aligned on its baseline box, and separated from the title the way
+   the workbench strip separates its own glyph from its label. */
+.chipIcon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  flex: none;
 }
 
 /* One tab's mounted content; inactive tabs stay mounted but hidden so
@@ -2201,6 +1906,28 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   opacity: 0.85;
 }
 
+/* The "Agent 正在等待 {needle}" wait banner: a warn-toned strip above the
+   terminal surface while the model blocks in terminal_wait_for; the needle
+   ellipsizes inline and the full text rides the title tooltip. */
+.terminalWaitBanner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-state-warn-label);
+  background: var(--dsw-alias-state-warn-tertiary);
+}
+
+.terminalWaitNeedle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .boundaryError {
   position: fixed;
   right: 0;
@@ -2308,6 +2035,24 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   overflow: auto;
   font: var(--dsw-font-xxs-12);
   color: var(--dsw-alias-state-error-primary);
+}
+
+/* ── Native right-Sidebar tab-body host ──────────────────────────────────
+   DSH's native tab body host (`.paneBody` in dsh-client-ui-dockkit) is a
+   BLOCK scroller with a definite height, not a flex container — the host's
+   own tab bodies (TextPreview, FilesBody) declare `height: 100%` on their
+   root for exactly this reason. Our tab roots declare `flex: 1; min-height:
+   0`, which collapses to content height in that block host (the side-chat
+   composer would float mid-pane). A column flex host of `height: 100%`
+   restores the `flex: 1` semantics our tab roots rely on, and gives
+   third-party descriptors' components the same box inside the native pane.
+   The wrapper div carries `data-dsh-native-tab-host` so the e2e lane can
+   assert the fill (mirroring `data-dsh-better-sidebar`). */
+.nativeTabHost {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 /* ── Diff tab (generic states + shell; the changes tab owns the rest in
@@ -2444,11 +2189,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 /* Reduced motion: no slides, fades or color transitions. */
 @media (prefers-reduced-motion: reduce) {
-  .panel,
-  .panelHidden,
   .bottomPanel,
   .bottomPanelHidden,
-  .toggleCluster,
   .toggleButton,
   .tab,
   .tabBarPlus,
@@ -2465,20 +2207,10 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 /* ── Narrow (mobile) viewport ──────────────────────────────────────────── */
 
 /* Pairs with NARROW_MAX_WIDTH = 768 in src/client/breakpoints.ts: widths
-   strictly below 768px (i.e. max-width: 767px) switch the sidebar to the
-   mobile layout — one full-screen drawer (the bottom panel's tabs were
-   migrated into the right tree), one toggle button. The structural
-   switches (which panels render, the migration) are JS-driven via
-   useNarrowViewport; this block only adapts the pure style details. */
+   strictly below 768px (i.e. max-width: 767px) get the phone-width tab
+   rhythm; the bottom workbench keeps its own geometry (it spans the center
+   column at every width). */
 @media (max-width: 767px) {
-  /* The toggle cluster holds a single button on narrow viewports (the
-     bottom panel button is not rendered), so the open panel's tab strip
-     reserves 40px instead of the desktop 72px — the tabs and + menu still
-     yield space to the one remaining control. */
-  .panel:not(.panelHidden) .tabBar {
-    padding-right: 40px;
-  }
-
   /* Narrower tabs: a phone-width drawer fits more open tabs before the
      strip scrolls. */
   .tab {

@@ -13,9 +13,10 @@
  * shows only the thread's own conversation.
  *
  * Live streaming: `assistant/message` events only land when a step
- * completes, but `assistant/chunk` events stream token-level text and
- * reasoning deltas. The mapping accumulates both per block and supersedes
- * them with the assembled message once it lands (settled rows).
+ * completes, but the host's `assistant/live-chunk` rows stream token-level
+ * text and reasoning deltas (DSH 0.1.5 publishes them outside the session
+ * log — see assistant-live.ts). The mapping accumulates both per block and
+ * supersedes them with the assembled message once it lands (settled rows).
  */
 import type { DiffHunk, ReadBlockLine } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarHistoryEntry } from '../context-types.ts'
@@ -299,12 +300,13 @@ function resultCard(
 /**
  * Map a thread child's history rows onto compact transcript rows: the
  * inherited fork seed is cut at the last `session/end-seed`, context
- * injections map onto a collapsible injection row, `assistant/chunk`
+ * injections map onto a collapsible injection row, `assistant/live-chunk`
  * deltas accumulate into streaming rows per (turn, step, block) and are
  * superseded by the assembled `assistant/message`, and tool invocations
  * render one expandable line each (arguments, paired result text, failure
  * marker; a still-executing call is marked until its result lands).
- * @param entries - history rows (event + host-computed view) in seq order.
+ * @param entries - history rows (event + host-computed view) in seq order,
+ *   the live deltas of the in-flight attempt appended after the durable tail.
  * @returns display rows in log order.
  */
 export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: readonly SidechatTranscriptRow[]): SidechatTranscriptRow[] {
@@ -374,7 +376,7 @@ export function transcriptRows(entries: readonly SidebarHistoryEntry[], prev?: r
         rows.push({ kind: 'user', seq: event.seq, text })
         break
       }
-      case 'assistant/chunk': {
+      case 'assistant/live-chunk': {
         const chunk = data.chunk as { type?: unknown; text?: unknown } | undefined
         if (chunk === null || typeof chunk !== 'object') break
         const kind = chunk.type === 'text-delta' ? 'assistant' : chunk.type === 'reasoning-delta' ? 'reasoning' : null

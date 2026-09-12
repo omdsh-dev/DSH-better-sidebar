@@ -13,6 +13,8 @@
  */
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest'
+import { readFileSync, readdirSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { colorAlpha, effectiveTokenValue, tokenValue } from '../src/client/theme.ts'
 
 afterEach(() => {
@@ -78,5 +80,53 @@ describe('effectiveTokenValue', () => {
     document.body.style.setProperty('--probe', 'transparent')
     expect(tokenValue('--probe')).toBe('transparent')
     expect(effectiveTokenValue('--probe')).toBe('')
+  })
+})
+
+/**
+ * Skin contract (guide §12): every visual value rides a `--dsw-alias-*` /
+ * `--dsw-font-*` / `--ds-*` token, and the plugin draws no color of its own.
+ *
+ * File icons are no exception to check any more: the built-in set IS DSH's
+ * `FileTypeIcon` artwork from a platform module (the host owns those pixels
+ * and its own palette), and everything the plugin renders around them —
+ * including the colored tab glyphs — rides theme tokens. So the guard is
+ * simply that no plugin module carries a color literal, and that no icon
+ * dataset sneaked back in as a chunk.
+ */
+// jsdom has no file:// import.meta.url; vitest runs from the repo root.
+const ROOT = process.cwd()
+
+describe('skin contract: the plugin owns no color of its own', () => {
+  it('the icon modules carry no color literals', () => {
+    for (const file of ['src/client/file-icons.tsx', 'src/client/icons.tsx']) {
+      const source = readFileSync(resolve(ROOT, file), 'utf8')
+      expect(source, file).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
+      expect(source, file).not.toMatch(/\brgba?\(/)
+    }
+  })
+
+  it('the colored tab glyphs take their color from theme tokens, never from a literal', () => {
+    const module = readFileSync(resolve(ROOT, 'src/client/builtins/tab-icons.tsx'), 'utf8')
+    expect(module).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
+    expect(module).not.toMatch(/\brgba?\(/)
+    // Each glyph is wrapped in a themed class, which is how the color arrives.
+    const styles = readFileSync(resolve(ROOT, 'src/client/builtins/tab-icons.module.css'), 'utf8')
+    const classes = [...module.matchAll(/css\.([a-zA-Z]+)/g)].map(m => m[1])
+    expect(classes.length).toBeGreaterThan(0)
+    for (const name of new Set(classes)) expect(styles, name).toContain(`.${name}`)
+    // Every declaration that paints a color resolves to a token.
+    for (const declaration of styles.matchAll(/color:\s*([^;]+);/g)) {
+      expect(declaration[1], declaration[0]).toContain('var(--dsw-')
+    }
+  })
+
+  it('no icon dataset is shipped as a lazy chunk', () => {
+    const chunkDir = resolve(ROOT, 'src/client/chunks')
+    const chunks = readdirSync(chunkDir).filter(name => /\.tsx?$/.test(name))
+    for (const name of chunks) {
+      const source = readFileSync(resolve(chunkDir, name), 'utf8')
+      expect(source, name).not.toMatch(/#[0-9a-fA-F]{6}\b/)
+    }
   })
 })

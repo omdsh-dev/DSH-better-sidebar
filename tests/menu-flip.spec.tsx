@@ -60,7 +60,7 @@ describe('submenuFlipTokens', () => {
     expect(submenuFlipTokens(625, 700, 1024, 768)).toBe('left')
   })
 
-  it('flips left throughout a narrow panel viewport (PANEL_MIN 280)', () => {
+  it('flips left throughout a narrow viewport', () => {
     // A 600px window: any cursor past x=200 flips; the left strip cannot
     // fit a right-growing submenu beside the 218px card either way.
     expect(submenuFlipTokens(300, 100, 600, 800)).toBe('down left')

@@ -41,7 +41,7 @@ import { registerBundleRoute } from './bundle-route.ts'
 import { launchExternal } from './open-external.ts'
 import * as git from './git.ts'
 import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
-import { defaultShell, ensureSpawnHelper, PtyManager, shellDisplayName } from './pty-manager.ts'
+import { defaultShell, ensureSpawnHelper, PtyManager, shellDisplayName, splitShellArgs, unquotePath } from './pty-manager.ts'
 import { AgentPtyRegistry, armPtyResizeGate, tryResizePty, type AgentTerminalHandle } from './agent-pty.ts'
 import {
   DSH_NODE_PTY_RANGE,
@@ -54,7 +54,9 @@ import { AgentOpenRegistry, registerOpenTool, type AgentOpenRequest } from './ag
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
 import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
 import { buildSidechatApi } from './sidechat-routes.ts'
+import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
+import { readPersistedSession } from './session-store.ts'
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
@@ -129,8 +131,8 @@ async function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string)
   }
   const persistence = ctx.get('sessionPersistence')
   if (persistence !== undefined) {
-    const inspected = await persistence.inspect(sessionId)
-    const metaCwd = inspected.meta.cwd
+    const persisted = await readPersistedSession(persistence, sessionId)
+    const metaCwd = persisted.header.cwd
     if (metaCwd !== undefined && metaCwd !== '') {
       try {
         return requireAbsolute(metaCwd)
@@ -250,11 +252,11 @@ function shellOverridesOf(getSettings: () => SidebarSettingsFace | undefined): {
   const value = settings?.get().value
   if (value === null || typeof value !== 'object') return {}
   const record = value as Record<string, unknown>
-  const shell = typeof record.terminalShell === 'string' ? record.terminalShell.trim() : ''
+  const shell = typeof record.terminalShell === 'string' ? unquotePath(record.terminalShell.trim()) : ''
   const args = typeof record.terminalShellArgs === 'string' ? record.terminalShellArgs.trim() : ''
   return {
     shell: shell === '' ? undefined : shell,
-    shellArgs: args === '' ? undefined : args.split(/\s+/).filter(Boolean),
+    shellArgs: args === '' ? undefined : splitShellArgs(args),
   }
 }
 
@@ -298,6 +300,7 @@ function buildApi(
   resolved: ResolvedSidebarConfig,
   terminalShell: string,
   getSettings: () => SidebarSettingsFace | undefined,
+  assistantLive: AssistantLiveBuffer,
 ): Record<string, ApiMethod> {
   const cwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
     const sessionId = requireString(payload, 'sessionId')
@@ -474,7 +477,13 @@ function buildApi(
     'git.show': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       const repoRoot = selectedRepoOf(payload)
-      const path = await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot)
+      // `git show <rev>:<path>` addresses the path inside the revision TREE:
+      // repository-relative, exactly the unified diff's own path form (after
+      // the a// b/ prefix). The absolute filesystem paths resolveGitPath
+      // produces would break the rev:path syntax and fail every read, so the
+      // path passes through as-is — it can only address blobs of this repo's
+      // own revisions, the same surface git.diff/git.log already expose.
+      const path = requireString(payload, 'path')
       const rev = requireString(payload, 'rev')
       return { content: await git.show(cwd, rev, path, repoRoot) }
     },
@@ -501,7 +510,7 @@ function buildApi(
         const persistence = ctx.get('sessionPersistence')
         if (persistence !== undefined) {
           try {
-            events = (await persistence.inspect(sessionId)).events
+            events = (await readPersistedSession(persistence, sessionId)).events
           } catch {
             // Cold read unavailable (session never persisted): an empty
             // window is the honest answer, not a wire error.
@@ -537,6 +546,17 @@ function buildApi(
       agentPtyRegistry?.close(uuid)
       return { ok: true }
     },
+    // The sidebar wait banner's skip button: abort every active
+    // terminal_wait_for on one agent terminal. An unknown uuid (a terminal
+    // already closed / reaped) goes through `expect` and surfaces as 404
+    // not-found; the client tolerates that and lets the next push converge.
+    // Nothing waiting on a live terminal is not an error: 0 skipped.
+    // Degraded mode (node-pty unavailable) has no registry and no waits: an
+    // honest ok.
+    'agent-pty.skip-wait': (payload) => {
+      const uuid = requireString(payload, 'uuid')
+      return { ok: true, skipped: agentPtyRegistry?.skipWait(uuid) ?? 0 }
+    },
     // Terminal dependency status (issue #140): after a WS close 1011 with
     // reason `pty-deps-missing` the client fetches the full repair details
     // here — the close reason itself is capped at 123 bytes, too small for
@@ -553,11 +573,14 @@ function buildApi(
     // Subagent live previews: one batch request per refresh; the route folds
     // the newest text/tool activity of every running child in the tree.
     'subagents.live': (payload) => subagentLiveApi.live(payload),
-    // The effective terminal shell and its display name. The client uses
-    // this to title terminal tabs with the shell name instead of a numbered
-    // "Terminal N" label; the shell itself is configured through
-    // `cordis.patch.yml` (`config.shell`) or resolved by the host default.
-    'shell.get': () => ({ shell: terminalShell, name: shellDisplayName(terminalShell) }),
+    // The effective terminal shell and its display name: the settings-page
+    // override when set (quotes stripped), else the boot-time resolution.
+    // The client titles terminal tabs with the name, so a changed setting is
+    // visible on the next opened tab without a plugin restart.
+    'shell.get': () => {
+      const effective = shellOverridesOf(getSettings).shell ?? terminalShell
+      return { shell: effective, name: shellDisplayName(effective) }
+    },
     // The side card preferences. The settings service is optional in the
     // composition; while absent the routes report undefined and the client
     // keeps the schema defaults. Writes are revision-guarded: a stale editor
@@ -685,7 +708,7 @@ function buildApi(
     // identities are fenced from the generic session RPCs (agent-lookup
     // ownership), and the thread is created with a CUSTOM seed the stock
     // fork APIs cannot express.
-    ...buildSidechatApi(ctx),
+    ...buildSidechatApi(ctx, assistantLive),
   }
 }
 
@@ -850,7 +873,14 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   })
 
   // ── JSON API ────────────────────────────────────────────────────────────
-  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace)
+  // The live assistant stream buffer: DSH 0.1.5 publishes in-flight model
+  // deltas as process-local `agent/assistant-stream` frames instead of the
+  // durable `assistant/chunk` events 0.1.2 logged, so the side-chat
+  // transcript and the inherited in-progress snapshot read them here. The
+  // effect releases the listener on fiber disposal.
+  const assistantLive = createAssistantLiveBuffer(ctx)
+  ctx.effect(() => () => { assistantLive.dispose() }, 'dsh-better-sidebar: live assistant stream buffer')
+  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace, assistantLive)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -1171,6 +1201,38 @@ async function attachAgentList(
 }
 
 /**
+ * The WS close reason for a failed terminal attach. A missing configured
+ * shell gets a SHORT machine-readable marker (`shell-not-found:<name>`,
+ * capped by BYTES — a WS close reason allows at most 123 bytes, which `ws`
+ * validates with `Buffer.byteLength`) that the client maps to a localized,
+ * actionable banner; every other failure keeps the raw message (the
+ * model-side tool errors read it verbatim).
+ */
+export function wsCloseReasonOf(error: unknown): string {
+  if (error instanceof SidebarError && error.code === 'shell-not-found') {
+    const name = truncateUtf8Bytes(shellDisplayName(String(error.meta?.shell ?? '')), 100)
+    return `shell-not-found:${name}`
+  }
+  return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * Truncate to at most `maxBytes` UTF-8 bytes without splitting a code point.
+ * A character-count `slice` does not bound the WS close reason: `ws` measures
+ * `Buffer.byteLength` against its 123-byte cap, and the resulting throw would
+ * replace the very error the reason describes.
+ */
+function truncateUtf8Bytes(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value) <= maxBytes) return value
+  let truncated = ''
+  for (const character of value) {
+    if (Buffer.byteLength(truncated + character) > maxBytes) break
+    truncated += character
+  }
+  return truncated
+}
+
+/**
  * Wire one terminal socket to its pty: replay transcript, pump both ways.
  * Two attach modes share the wire protocol:
  * - `?uuid=...` attaches to an agent-owned terminal (created by the
@@ -1298,7 +1360,7 @@ async function attachTerminal(
       }
     })
   } catch (error) {
-    ws.close(1011, error instanceof Error ? error.message : String(error))
+    ws.close(1011, wsCloseReasonOf(error))
   }
 }
 
