@@ -10,17 +10,17 @@
  * without a manual refresh. Everything here is the former standalone git
  * panel, re-homed as a lens.
  */
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconCodeOutline16, IconCopyOutline16, IconPlusOutline16,
-  IconRefreshOutline16, IconTrashOutline16, Input, Menu, Modal, writeClipboard,
+  IconRefreshOutline16, IconSparkle16, IconTrashOutline16, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from '../api.ts'
-import { api } from '../api.ts'
+import { api, SidebarApiError } from '../api.ts'
 import { usePolling } from '../use-polling.ts'
 import { baseName, isWithinWorkspace, relativeTo } from '../paths.ts'
 import { resolveSidebarPath } from '../produced-files.ts'
-import { relativeTime, t } from '../locales.ts'
+import { isZh, relativeTime, t } from '../locales.ts'
 import type { SidebarDiffRef, SidebarStore } from '../state.ts'
 import css from './changes.module.css'
 
@@ -83,6 +83,12 @@ interface ConfirmState {
  *  floods the panel at once (the end of the log is reached by paging). */
 const LOG_BATCH = 20
 
+/** Commit-box growth contract: one line is 18px with 6px of padding above and
+ *  below (mirrored by `changes.module.css`), and it scrolls past six lines. */
+const COMMIT_BOX_LINE_HEIGHT = 18
+const COMMIT_BOX_PADDING_Y = 6
+const COMMIT_BOX_MAX_ROWS = 6
+
 /** Every Nth silent poll re-lists worktrees (and re-runs auto-selection): the
  *  2s tick only needs the selected checkout's STATUS, and re-listing spawned
  *  a second git process per tick for a list that almost never changes — a
@@ -116,6 +122,28 @@ export function GitLens(props: GitLensProps) {
   const [commitMsg, setCommitMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
+  /** Whether a commit-message suggestion is being generated host-side (the
+   *  host streams the diff through the harness LLM — no agent is spawned). */
+  const [suggesting, setSuggesting] = useState(false)
+  /** The route the next suggestion would use, for the button's tooltip. */
+  const [commitModel, setCommitModel] = useState<string | undefined>(undefined)
+  /** Whether a COMMIT is in flight (a subset of `busy`, which also covers
+   *  staging/checkout): the input reports it with its own busy label. */
+  const [committing, setCommitting] = useState(false)
+  /** The commit box grows with its text, up to the scroll cap below. */
+  const commitBoxRef = useRef<HTMLTextAreaElement | null>(null)
+  useLayoutEffect(() => {
+    const box = commitBoxRef.current
+    // A layout-less environment (tests) reports 0: leave the CSS height alone.
+    if (box === null || box.scrollHeight === 0) return
+    const max = COMMIT_BOX_LINE_HEIGHT * COMMIT_BOX_MAX_ROWS + COMMIT_BOX_PADDING_Y * 2
+    // Reset first: a scrollHeight measured against the current height can only
+    // ever grow, so a deleted line would leave the box too tall.
+    box.style.height = 'auto'
+    const next = Math.min(box.scrollHeight, max)
+    box.style.height = `${next}px`
+    box.style.overflowY = box.scrollHeight > max ? 'auto' : 'hidden'
+  }, [commitMsg])
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
@@ -141,6 +169,23 @@ export function GitLens(props: GitLensProps) {
   const silentTickCount = useRef(0)
 
   const gitScope: SessionScope = repoRoot === undefined ? scope : { ...scope, repoRoot }
+
+  /** Label the generate button with the model the next suggestion would use.
+   *  Re-read whenever the panel becomes visible: the pinned route lives in the
+   *  side card settings, so a change made there lands on the next visit. */
+  const scopeSessionId = scope.sessionId
+  const scopeCwd = scope.cwd
+  useEffect(() => {
+    if (!visible) return
+    let cancelled = false
+    api.gitCommitModel({ sessionId: scopeSessionId, ...(scopeCwd === undefined ? {} : { cwd: scopeCwd }) })
+      .then(view => {
+        if (cancelled) return
+        setCommitModel(view.route === undefined ? undefined : `${view.route.provider}/${view.route.model}`)
+      })
+      .catch(() => { if (!cancelled) setCommitModel(undefined) })
+    return () => { cancelled = true }
+  }, [visible, scopeSessionId, scopeCwd])
 
   /** Publish a complete checkout-derived view. Status, branch choices and
    *  history are one consistency unit: never mix rows from two worktrees. */
@@ -358,10 +403,37 @@ export function GitLens(props: GitLensProps) {
     }
   }
 
+  /** The generate button's label/tooltip: names the model when one resolves,
+   *  so the user knows which provider the draft will run on. */
+  const generateLabel = commitModel === undefined
+    ? t('generateCommitMessage')
+    : t('generateCommitMessageWith', { model: commitModel })
+
+  /** Ask the host to draft a commit message from the pending changes, then
+   *  fill the message box (still editable; regenerating is allowed). */
+  const suggestMessage = async (): Promise<void> => {
+    if (busy || suggesting) return
+    setSuggesting(true)
+    setCommitError(null)
+    try {
+      const { message } = await api.gitSuggestMessage(gitScope, isZh() ? 'zh' : 'en', selectedWorktree)
+      setCommitMsg(message)
+    } catch (reason) {
+      if (reason instanceof SidebarApiError && reason.code === 'git-suggest-empty') {
+        setCommitError(t('suggestCommitEmpty'))
+      } else {
+        setCommitError(`${t('suggestCommitError')}: ${errorMessage(reason)}`)
+      }
+    } finally {
+      setSuggesting(false)
+    }
+  }
+
   const commit = async (): Promise<void> => {
     const message = commitMsg.trim()
-    if (message === '' || busy) return
+    if (message === '' || busy || suggesting) return
     setBusy(true)
+    setCommitting(true)
     setCommitError(null)
     try {
       await api.gitCommit(gitScope, message, selectedWorktree)
@@ -370,6 +442,7 @@ export function GitLens(props: GitLensProps) {
     } catch (reason) {
       setCommitError(errorMessage(reason))
     } finally {
+      setCommitting(false)
       setBusy(false)
     }
   }
@@ -545,20 +618,54 @@ export function GitLens(props: GitLensProps) {
           </div>
 
           <div className={css.gitCommit}>
-            <Input
-              className={css.gitCommitInput}
-              placeholder={t('commitPlaceholder')}
-              value={commitMsg}
-              disabled={busy}
-              onChange={(event) => { setCommitMsg(event.target.value); setCommitError(null) }}
-              onKeyDown={(event) => {
-                if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
-              }}
-            />
+            <span className={css.gitCommitInputWrap}>
+              {/* A native textarea (the primitives ship no multiline input):
+                  commit messages carry a subject AND a body, and Enter must
+                  insert a newline — submitting stays on Ctrl/Cmd+Enter. */}
+              <textarea
+                ref={commitBoxRef}
+                className={css.gitCommitInput}
+                // While busy the placeholder steps aside for the sweep label.
+                placeholder={busy || suggesting ? '' : t('commitPlaceholder')}
+                value={commitMsg}
+                disabled={busy || suggesting}
+                aria-busy={busy || suggesting}
+                aria-label={t('commitPlaceholder')}
+                rows={1}
+                onChange={(event) => { setCommitMsg(event.currentTarget.value); setCommitError(null) }}
+                onKeyDown={(event) => {
+                  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
+                  // Ctrl/Cmd+G drafts the message, mirroring the button (the
+                  // placeholder advertises it).
+                  if ((event.ctrlKey || event.metaKey) && (event.key === 'g' || event.key === 'G')) {
+                    event.preventDefault()
+                    void suggestMessage()
+                  }
+                }}
+              />
+              {/* Only the two per-input operations get a label: other `busy`
+                  work (staging, checkout) disables the box silently. */}
+              {(suggesting || committing) && (
+                <span className={css.gitCommitBusyText} role="status" aria-live="polite">
+                  {suggesting ? t('generatingCommitMessage') : t('committingMessage')}
+                </span>
+              )}
+            </span>
+            <button
+              type="button"
+              className={suggesting ? `${css.gitSuggestButton} ${css.gitSuggestBusy}` : css.gitSuggestButton}
+              aria-label={generateLabel}
+              aria-busy={suggesting}
+              title={generateLabel}
+              disabled={busy || suggesting || (stagedEntries.length === 0 && unstagedEntries.length === 0)}
+              onClick={() => { void suggestMessage() }}
+            >
+              <IconSparkle16 size={14} />
+            </button>
             <button
               type="button"
               className={css.gitCommitButton}
-              disabled={busy || commitMsg.trim() === '' || stagedEntries.length === 0}
+              disabled={busy || suggesting || commitMsg.trim() === '' || stagedEntries.length === 0}
               onClick={() => { void commit() }}
             >
               {t('commit')}

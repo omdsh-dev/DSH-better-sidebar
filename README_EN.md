@@ -269,6 +269,14 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
 
 **Supported DSH versions**: <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.19.1): 0.1.5-rc.1+ (verified on rc.2)" src="https://img.shields.io/badge/DSH-0.1.5--rc.1%2B_%28verified_rc.2%29-4d6bfe" /></a> · full release history on the [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases) page
 
+### v0.19.2 (unreleased)
+
+- ✨ **AI-generated commit messages in the Git panel** ([#642](https://github.com/omdsh-dev/DSH-better-sidebar/pull/642), implements [#80](https://github.com/omdsh-dev/DSH-better-sidebar/issues/80); idea from [#434](https://github.com/omdsh-dev/DSH-better-sidebar/pull/434), adapted to the post-#471 structure):
+  - **Generate** via the ✨ button next to the commit box (the tooltip names the model) or `Ctrl/Cmd+G` inside the box. The host streams the diff through the harness LLM service `ctx.llm.stream()` — **no agent, no session events, the plugin never touches credentials**; the diff order is staged → unstaged → untracked (12K cap) and the prompt follows the UI language.
+  - **Three model sources**: user-pinned (a searchable `provider/model` dropdown in the changes card settings, hand-typed routes allowed; the "follow the conversation" switch defaults on) → the conversation itself (live agent options, falling back to `request/header`) → the `agentDefaultModel` default — generation works even before a session's first message.
+  - **Reasoning cost**: the lowest reasoning effort the model advertises is requested explicitly via `llm.resolveModelInfo()` (the DeepSeek adapter defaults to `high`, which both delays the answer and can eat the whole output budget); models without reasoning omit the field entirely. `maxTokens` 512, a 30s timeout, and empty-message errors carry the finish reason.
+  - **Multiline commit box**: starts at one line, grows with the text and scrolls past six; `Enter` inserts a newline, `Ctrl/Cmd+Enter` commits, and the box shows a sweeping loading label while generating or committing.
+
 ### v0.19.1
 
 > 📌 **Stable release** (npm `latest`, no prerelease suffix): the pinned baseline moves to **DSH 0.1.5-rc.2** (npm `next`) while the **peer floor stays `^0.1.5-rc.1`** — nothing in the rc.2 upstream delta touches this plugin (zero changes under `packages/api|host|session|agent`; the only real code edits are the message-feedback dialog, deliverables card CSS and the `CodeFileIcon` SVG data split), so rc.1 hosts need no DSH upgrade to run this version. Hosts on DSH 0.1.5-alpha.2 stay on **v0.19.0-alpha.1**; the 0.1.2-rc.1 stable line keeps using **v0.18.1**.

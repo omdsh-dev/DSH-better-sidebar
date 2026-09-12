@@ -265,6 +265,14 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 
 **支持的 DSH 版本**：<a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="支持的 DSH 版本（v0.19.1 正式版）：0.1.5-rc.1+（已在 0.1.5-rc.2 上验证）" src="https://img.shields.io/badge/DSH-0.1.5--rc.1%2B_%28verified_rc.2%29-4d6bfe" /></a> · 完整发布历史见 [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)
 
+### v0.19.2（未发布）
+
+- ✨ **Git 面板支持 AI 生成提交信息**（[#642](https://github.com/omdsh-dev/DSH-better-sidebar/pull/642)，实现 [#80](https://github.com/omdsh-dev/DSH-better-sidebar/issues/80)；思路源自 [#434](https://github.com/omdsh-dev/DSH-better-sidebar/pull/434)，按其后的结构重构适配）：
+  - **生成**：提交框旁 ✨ 按钮（tooltip 标注将使用的模型）或输入框内 `Ctrl/Cmd+G`。主机侧经 harness 的 LLM 服务 `ctx.llm.stream()` 直接产出 Conventional Commits 风格消息——**不起 agent、不写会话事件、插件不接触凭证**；diff 取值 staged → unstaged → untracked（12K 截断），提示词跟随界面语言。
+  - **模型三路来源**：用户固定（文件变动卡片设置里的可搜索 `provider/model` 下拉，支持手输；「跟随当前对话」开关默认开）→ 当前对话（live agent options，回退 `request/header`）→ `agentDefaultModel` 默认选择——未发首条消息的新会话也能生成。
+  - **推理开销**：按 `llm.resolveModelInfo()` 显式请求模型**最低** reasoning effort（DeepSeek 适配器在连接未配置时默认 `high`，会拖慢并可能吃光输出预算）；无推理能力则省略字段。`maxTokens` 512、30s 超时、空消息错误附带 finish 原因。
+  - **多行提交框**：单行起步、随内容增高、6 行后滚动；`Enter` 换行、`Ctrl/Cmd+Enter` 提交；生成/提交中禁用输入框并显示扫光 loading 文案（沿用侧边对话的 sweep 动画风格）。
+
 ### v0.19.1
 
 > 📌 **正式版**（npm `latest`，无 prerelease 后缀）：钉版推进到 **DSH 0.1.5-rc.2**（npm `next`），**peer 下限仍是 `^0.1.5-rc.1`**——rc.2 的上游 delta 里没有任何触及本插件的面（零 `packages/api|host|session|agent` 变更，真实代码改动只有消息反馈弹窗、产物卡片 CSS 与 `CodeFileIcon` 的 SVG 数据拆分），因此 rc.1 用户无需升级 DSH 即可用本版。DSH 0.1.5-alpha.2 用户继续用 **v0.19.0-alpha.1**；0.1.2-rc.1 稳定线继续用 **v0.18.1**。

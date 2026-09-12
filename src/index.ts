@@ -55,6 +55,20 @@ import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
 import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
 import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
+import { BlockAssembler, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import {
+  buildCommitPrompt,
+  cleanSuggestion,
+  collectModelRoutes,
+  defaultRouteOf,
+  lowestReasoningEffortOf,
+  modelEntryOf,
+  normalizeLanguage,
+  parseModelRoute,
+  providerEntryOf,
+  truncateDiff,
+  type CommitModelRoute,
+} from './commit-message.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 import { readPersistedSession } from './session-store.ts'
 
@@ -168,6 +182,170 @@ async function resolveGitPath(cwd: string, raw: string, selected?: string): Prom
   if (await stat(sessionPath).then(() => true).catch(() => false)) return sessionPath
   const root = await git.repoRoot(cwd, selected).catch(() => cwd)
   return requireAbsolute(join(root, raw))
+}
+
+/** Max providers / per-provider models the `git.models` catalog answers with.
+ *  The catalog only feeds the Git card's pinned-model dropdown, so a huge
+ *  deployment still resolves to a bounded, fast reply. */
+const MODEL_CATALOG_PROVIDER_LIMIT = 20
+const MODEL_CATALOG_MODEL_LIMIT = 50
+
+/** The Git card's plugin-owned settings key holding the pinned
+ *  `provider/model` route ('' or absent = follow the conversation). */
+const COMMIT_MODEL_SETTING_KEY = 'commitModel'
+
+/**
+ * The provider/model route the user PINNED for commit-message generation
+ * (the Git card's settings write `pluginSettings.git.commitModel`). Absent,
+ * empty or malformed means "follow the conversation" — a bad value must
+ * never lock the feature out, it falls back.
+ */
+function pinnedCommitRouteOf(getSettings: () => SidebarSettingsFace | undefined): CommitModelRoute | undefined {
+  const value = getSettings()?.get().value
+  if (value === null || typeof value !== 'object') return undefined
+  const pluginSettings = (value as { pluginSettings?: unknown }).pluginSettings
+  if (pluginSettings === null || typeof pluginSettings !== 'object') return undefined
+  const blob = (pluginSettings as Record<string, unknown>).git
+  if (blob === null || typeof blob !== 'object') return undefined
+  return parseModelRoute((blob as Record<string, unknown>)[COMMIT_MODEL_SETTING_KEY])
+}
+
+/**
+ * The provider/model route the CURRENT conversation runs on, read without
+ * spawning anything: the live agent's own options are authoritative, and a
+ * session that has not attached yet still carries its newest `request/header`
+ * event (the record the agent loop writes). Undefined while neither is
+ * available — a cold conversation with no request yet has no route to follow.
+ */
+function conversationModelRoute(ctx: Context, sessionId: string): CommitModelRoute | undefined {
+  const agents = ctx.get('agents') as { get(id: string): { options?: { provider?: unknown; model?: unknown } } | undefined } | undefined
+  const options = agents?.get(sessionId)?.options
+  if (options !== undefined
+    && typeof options.provider === 'string' && options.provider !== ''
+    && typeof options.model === 'string' && options.model !== '') {
+    return { provider: options.provider, model: options.model }
+  }
+  const events = ctx.sessions.get(sessionId)?.snapshotEvents()
+  if (events === undefined) return undefined
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index]
+    if (event === undefined || event.type !== 'request/header') continue
+    const config = (event.data as { header?: { config?: unknown } } | undefined)?.header?.config
+    if (config === null || typeof config !== 'object') continue
+    const provider = (config as { provider?: unknown }).provider
+    const model = (config as { model?: unknown }).model
+    if (typeof provider === 'string' && provider !== '' && typeof model === 'string' && model !== '') {
+      return { provider, model }
+    }
+  }
+  return undefined
+}
+
+/**
+ * The harness's DEFAULT model route (settings namespace `agent-default-model`):
+ * the route a brand-new conversation would use, so the suggestion still works
+ * on a session that has not sent its first message (no `request/header` yet)
+ * and in a deployment whose LLM adapters advertise no catalog.
+ */
+function defaultModelRoute(ctx: Context): CommitModelRoute | undefined {
+  const service = ctx.get('agentDefaultModel') as { currentSelection(): unknown } | undefined
+  return defaultRouteOf(service?.currentSelection())
+}
+
+/** Output budget of one suggestion: enough for a subject plus a short body,
+ *  and (with reasoning pinned to the lowest level) no more. */
+const SUGGEST_MAX_TOKENS = 512
+
+/** Hard deadline of one suggestion (the panel shows the model as busy while
+ *  it runs, so a stalled provider must not leave it spinning forever). */
+const SUGGEST_TIMEOUT_MS = 30_000
+
+/**
+ * The reasoning effort to request for one route: the LOWEST the model
+ * advertises, or undefined when it advertises none. A one-line commit message
+ * needs no deliberation, while a high default (the DeepSeek adapter defaults
+ * to `high` unless the connection says otherwise) both delays the answer and
+ * can consume the whole output budget, yielding an empty message.
+ */
+async function commitReasoningEffort(
+  llm: LlmServiceFace,
+  route: CommitModelRoute,
+): Promise<string | undefined> {
+  if (llm.resolveModelInfo === undefined) return undefined
+  const info = await Promise.resolve(llm.resolveModelInfo(route.provider, route.model))
+    .catch(() => undefined)
+  return lowestReasoningEffortOf((info as { reasoning?: { efforts?: unknown } } | undefined)?.reasoning?.efforts)
+}
+
+/** The LLM service surface this route uses (all optional: the service is a
+ *  harness surface the plugin deliberately does not depend on). */
+interface LlmServiceFace {
+  stream(options: GenerateOptions): AsyncIterable<StreamChunk>
+  resolveModelInfo?(provider: string, model: string): Promise<unknown>
+}
+
+/**
+ * One generation stream through the harness LLM service. The service is not
+ * injected (the plugin must not require it), so it is read through `ctx.get`
+ * and checked: a deployment without the LLM surface gets a clean 503 instead
+ * of a TypeError. Chunks are assembled with the harness's own BlockAssembler
+ * — the same chunk-to-message algorithm the agent loop uses.
+ */
+async function streamCommitMessage(
+  ctx: Context,
+  route: CommitModelRoute,
+  system: string,
+  user: string,
+): Promise<string> {
+  const llm = ctx.get('llm') as LlmServiceFace | undefined
+  if (llm === undefined) {
+    throw new SidebarError('git-suggest-error', 'the harness LLM service is unavailable', 503)
+  }
+  // Reasoning capability is read from the model itself: requesting an effort
+  // a non-reasoning model does not support is rejected by the harness
+  // (UNSUPPORTED_REASONING_EFFORT), so the field is omitted in that case.
+  const effort = await commitReasoningEffort(llm, route)
+  const assembler = new BlockAssembler()
+  try {
+    for await (const chunk of llm.stream({
+      provider: route.provider,
+      model: route.model,
+      messages: [createUserMessage({
+        content: [{ type: 'text', text: user }],
+        source: { kind: 'plugin', plugin: 'dsh-better-sidebar' },
+      })],
+      system,
+      maxTokens: SUGGEST_MAX_TOKENS,
+      signal: AbortSignal.timeout(SUGGEST_TIMEOUT_MS),
+      ...(effort === undefined ? {} : { reasoningEffort: effort as GenerateOptions['reasoningEffort'] }),
+    })) {
+      assembler.push(chunk)
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new SidebarError(
+        'git-suggest-error',
+        `the model did not answer within ${Math.round(SUGGEST_TIMEOUT_MS / 1000)}s`,
+        504,
+      )
+    }
+    throw error
+  }
+  const message = cleanSuggestion(assembler.blocks()
+    .map(block => (block.type === 'text' ? block.text : ''))
+    .join(''))
+  if (message === '') {
+    // The finish reason separates "the model stopped without text" (often a
+    // reasoning model that spent its budget thinking) from a transport
+    // failure, so the panel's error line stays actionable.
+    const finish = (assembler.finish as { kind?: unknown } | undefined)?.kind
+    throw new SidebarError(
+      'git-suggest-error',
+      `the model returned an empty message (finish=${typeof finish === 'string' ? finish : 'unknown'})`,
+      500,
+    )
+  }
+  return message
 }
 
 /** How many leading bytes a binary read returns for client-side detect sniffing. */
@@ -486,6 +664,106 @@ function buildApi(
       const path = requireString(payload, 'path')
       const rev = requireString(payload, 'rev')
       return { content: await git.show(cwd, rev, path, repoRoot) }
+    },
+    // Commit-message suggestion: build a prompt from the pending changes and
+    // stream it through the harness LLM service (`ctx.llm`) — no agent is
+    // spawned, no session event is written, and the sidebar never sees a
+    // credential. The route is the one the user PINNED in the Git card's
+    // settings when set, else the route the conversation itself runs on.
+    // Staged changes win because they are exactly what `git commit` records;
+    // with nothing staged the unstaged diff is used, and a lone untracked set
+    // still yields a file-list-based message.
+    'git.suggest-message': async (payload) => {
+      const { cwd, sessionId } = await gitCwdOf(payload)
+      const repoRoot = selectedRepoOf(payload)
+      const language = normalizeLanguage((payload as { language?: unknown }).language)
+      // Pinned first, then the conversation's own route, then the harness
+      // default: a session that has not sent its first message has no
+      // `request/header` yet, but the default selection is still usable.
+      const route = pinnedCommitRouteOf(getSettings)
+        ?? conversationModelRoute(ctx, sessionId)
+        ?? defaultModelRoute(ctx)
+      if (route === undefined) {
+        throw new SidebarError('git-suggest-error', 'cannot resolve a model route for this conversation', 503)
+      }
+      const status = await git.status(cwd, repoRoot)
+      const staged = status.entries.filter(entry => entry.xy[0] !== ' ' && entry.xy[0] !== '?')
+      const untracked = status.entries.filter(entry => entry.xy === '??')
+      const unstaged = status.entries.filter(entry => entry.xy !== '??' && entry.xy[1] !== ' ' && entry.xy[1] !== '?')
+      if (staged.length === 0 && unstaged.length === 0 && untracked.length === 0) {
+        throw new SidebarError('git-suggest-empty', 'no pending changes', 400)
+      }
+      const focus = staged.length > 0
+        ? { diff: await git.diff(cwd, undefined, true, repoRoot), files: staged }
+        : unstaged.length > 0
+          ? { diff: await git.diff(cwd, undefined, false, repoRoot), files: unstaged }
+          : { diff: '', files: untracked }
+      const prompt = buildCommitPrompt(language, focus.files.map(entry => entry.path), truncateDiff(focus.diff))
+      const message = await streamCommitMessage(ctx, route, prompt.system, prompt.user)
+      return { message, provider: route.provider, model: route.model }
+    },
+    // The route the NEXT suggestion would use (pinned → the conversation's own
+    // → the harness default), which the generate button shows in its tooltip.
+    // Deliberately separate from `git.models`: this is one settings read plus
+    // one header scan, with no adapter catalog discovery.
+    'git.commit-model': (payload) => {
+      const record = (payload ?? {}) as { sessionId?: unknown }
+      const pinned = pinnedCommitRouteOf(getSettings)
+      const sessionId = typeof record.sessionId === 'string' ? record.sessionId : ''
+      const route = pinned
+        ?? (sessionId === '' ? undefined : conversationModelRoute(ctx, sessionId))
+        ?? defaultModelRoute(ctx)
+      return {
+        ...(route === undefined ? {} : { route }),
+        /** Whether the route above is a PINNED one (the panel may want to
+         *  label it differently from the conversation's own model). */
+        pinned: pinned !== undefined,
+      }
+    },
+    // The model catalog behind the Git card's pinned-route dropdown: every
+    // registered provider with the models its adapter advertises. Discovery is
+    // advisory and best-effort — a provider whose adapter cannot be asked
+    // (or that advertises nothing) is reported with an empty model list
+    // instead of failing the whole catalog.
+    'git.models': async (payload) => {
+      const record = (payload ?? {}) as { sessionId?: unknown }
+      const llm = ctx.get('llm') as {
+        listProviders(): unknown
+        listModels(provider: string): Promise<unknown>
+      } | undefined
+      const providers = llm === undefined ? [] : await Promise.resolve(llm.listProviders())
+        .then(listed => (Array.isArray(listed) ? listed.slice(0, MODEL_CATALOG_PROVIDER_LIMIT) : []))
+        .then(entries => Promise.all(entries.map(async (entry: unknown) => {
+          const parsed = providerEntryOf(entry)
+          if (parsed === undefined) return { provider: '', name: '', models: [] }
+          const models = await Promise.resolve(llm.listModels(parsed.provider))
+            .then(list => (Array.isArray(list) ? list.slice(0, MODEL_CATALOG_MODEL_LIMIT) : []))
+            .catch(() => [])
+          return {
+            provider: parsed.provider,
+            name: parsed.label,
+            models: models.flatMap((model: unknown) => {
+              const item = modelEntryOf(model)
+              return item === undefined ? [] : [{ id: item.id, name: item.name }]
+            }),
+          }
+        })))
+        .catch(() => [])
+      // The conversation-derived history: routes this session actually used
+      // (newest first). It is the catalog's stand-in before the harness
+      // advertises anything, and it is how a model the user picked in the
+      // chat becomes pinnable here.
+      const events = typeof record.sessionId === 'string'
+        ? ctx.sessions.get(record.sessionId)?.snapshotEvents() ?? []
+        : []
+      return {
+        // Whether the harness exposes an LLM surface at all: an empty
+        // catalog is then "no adapters registered", not "the route failed".
+        llm: llm !== undefined,
+        providers: providers.filter(provider => provider.provider !== ''),
+        recent: collectModelRoutes(events as readonly { type?: unknown; data?: unknown }[]),
+        default: defaultModelRoute(ctx),
+      }
     },
     // The session's file-tool events for the changes tab's session lens
     // (and its badge): the CLIENT runtime's sessions face has no event-log
