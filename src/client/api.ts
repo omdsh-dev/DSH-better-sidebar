@@ -76,6 +76,27 @@ export interface GitWorktree {
   changes: number
 }
 
+/** One model a provider advertises (the pinned commit-message dropdown). */
+export interface GitModelInfo {
+  /** Provider-side model id (dispatched verbatim). */
+  id: string
+  /** Display name; equals `id` when the adapter reports none. */
+  name: string
+}
+
+/** One provider route with the models its adapter advertises. */
+export interface GitModelProvider {
+  provider: string
+  name: string
+  models: GitModelInfo[]
+}
+
+/** The model catalog `git.models` answers with (empty when the harness has
+ *  no LLM service — the dropdown then only offers "follow the conversation"). */
+export interface GitModelCatalog {
+  providers: GitModelProvider[]
+}
+
 /** One git log row. */
 export interface GitLogEntry {
   /** Short hash (7+ chars, display). */
@@ -303,6 +324,16 @@ export const api = {
     call<{ ok: true }>('git.unstage', gitPayload(scope, worktree, { ...(path !== undefined ? { path } : {}) })),
   gitCommit: (scope: SessionScope, message: string, worktree?: string) =>
     call<{ ok: true }>('git.commit', gitPayload(scope, worktree, { message })),
+  /** Ask the host to generate a commit message from the pending changes: it
+   *  streams the diff through the harness LLM on the pinned route (or the
+   *  conversation's own) and answers with the route actually used.
+   *  `language` follows the sidebar's active locale ('zh' | 'en'). */
+  gitSuggestMessage: (scope: SessionScope, language: 'zh' | 'en', worktree?: string) =>
+    call<{ message: string; provider: string; model: string }>('git.suggest-message', gitPayload(scope, worktree, { language })),
+  /** The discoverable provider/model catalog for the Git card's pinned-route
+   *  setting (advisory; empty when the harness exposes no LLM service). */
+  gitModels: (scope: SessionScope, signal?: AbortSignal) =>
+    call<GitModelCatalog>('git.models', scopePayload(scope, {}), signal),
   gitBranch: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
     call<{ current: string; names: string[] }>('git.branch', gitPayload(scope, worktree, {}), signal),
   gitCheckout: (scope: SessionScope, branch: string, worktree?: string) =>

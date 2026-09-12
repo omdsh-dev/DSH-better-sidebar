@@ -13,14 +13,14 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconCodeOutline16, IconCopyOutline16, IconPlusOutline16,
-  IconRefreshOutline16, IconTrashOutline16, Input, Menu, Modal, writeClipboard,
+  IconRefreshOutline16, IconSparkle16, IconTrashOutline16, Input, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from '../api.ts'
-import { api } from '../api.ts'
+import { api, SidebarApiError } from '../api.ts'
 import { usePolling } from '../use-polling.ts'
 import { baseName, isWithinWorkspace, relativeTo } from '../paths.ts'
 import { resolveSidebarPath } from '../produced-files.ts'
-import { relativeTime, t } from '../locales.ts'
+import { isZh, relativeTime, t } from '../locales.ts'
 import type { SidebarDiffRef, SidebarStore } from '../state.ts'
 import css from './changes.module.css'
 
@@ -116,6 +116,9 @@ export function GitLens(props: GitLensProps) {
   const [commitMsg, setCommitMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
+  /** Whether a commit-message suggestion is being generated host-side (the
+   *  host streams the diff through the harness LLM — no agent is spawned). */
+  const [suggesting, setSuggesting] = useState(false)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
@@ -358,9 +361,29 @@ export function GitLens(props: GitLensProps) {
     }
   }
 
+  /** Ask the host to draft a commit message from the pending changes, then
+   *  fill the message box (still editable; regenerating is allowed). */
+  const suggestMessage = async (): Promise<void> => {
+    if (busy || suggesting) return
+    setSuggesting(true)
+    setCommitError(null)
+    try {
+      const { message } = await api.gitSuggestMessage(gitScope, isZh() ? 'zh' : 'en', selectedWorktree)
+      setCommitMsg(message)
+    } catch (reason) {
+      if (reason instanceof SidebarApiError && reason.code === 'git-suggest-empty') {
+        setCommitError(t('suggestCommitEmpty'))
+      } else {
+        setCommitError(`${t('suggestCommitError')}: ${errorMessage(reason)}`)
+      }
+    } finally {
+      setSuggesting(false)
+    }
+  }
+
   const commit = async (): Promise<void> => {
     const message = commitMsg.trim()
-    if (message === '' || busy) return
+    if (message === '' || busy || suggesting) return
     setBusy(true)
     setCommitError(null)
     try {
@@ -549,7 +572,7 @@ export function GitLens(props: GitLensProps) {
               className={css.gitCommitInput}
               placeholder={t('commitPlaceholder')}
               value={commitMsg}
-              disabled={busy}
+              disabled={busy || suggesting}
               onChange={(event) => { setCommitMsg(event.target.value); setCommitError(null) }}
               onKeyDown={(event) => {
                 if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
@@ -557,8 +580,19 @@ export function GitLens(props: GitLensProps) {
             />
             <button
               type="button"
+              className={suggesting ? `${css.gitSuggestButton} ${css.gitSuggestBusy}` : css.gitSuggestButton}
+              aria-label={t('generateCommitMessage')}
+              aria-busy={suggesting}
+              title={t('generateCommitMessage')}
+              disabled={busy || suggesting || (stagedEntries.length === 0 && unstagedEntries.length === 0)}
+              onClick={() => { void suggestMessage() }}
+            >
+              <IconSparkle16 size={14} />
+            </button>
+            <button
+              type="button"
               className={css.gitCommitButton}
-              disabled={busy || commitMsg.trim() === '' || stagedEntries.length === 0}
+              disabled={busy || suggesting || commitMsg.trim() === '' || stagedEntries.length === 0}
               onClick={() => { void commit() }}
             >
               {t('commit')}

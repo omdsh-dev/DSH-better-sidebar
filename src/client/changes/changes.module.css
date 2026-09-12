@@ -218,6 +218,81 @@
   cursor: default;
 }
 
+/* The Git card's pinned-model setting (rendered through settings.render). */
+.commitModel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+}
+
+.commitModelTitle {
+  font: var(--dsw-font-xxs-strong-12);
+  color: var(--dsw-alias-label-primary);
+}
+
+.commitModelDesc {
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.commitModelSelect {
+  height: 26px;
+  max-width: 100%;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-l2);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.commitModelHint {
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The AI commit-message button: a quiet square secondary button beside the
+   input. While the host streams a suggestion it pulses (the panel never
+   blocks on it — the input stays editable). */
+.gitSuggestButton {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.gitSuggestButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.gitSuggestButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.gitSuggestBusy {
+  color: var(--dsw-alias-interactive-bg-hover-accent);
+  animation: dsh-git-suggest-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes dsh-git-suggest-pulse {
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gitSuggestBusy { animation: none; }
+}
+
 /* A history row: line 1 = hash + subject, line 2 = ref badges + author/date
    (badges live on the second line so they never crowd the subject). */
 .gitLogRow {
@@ -395,7 +470,8 @@
 
 /* Keyboard focus rings match the shared sidebar convention. */
 .gitLink:focus-visible, .gitRowMain:focus-visible, .gitLogRow:focus-visible,
-.gitCommitButton:focus-visible, .gitLogMore:focus-visible, .gitBranchSelect:focus-visible,
+.gitCommitButton:focus-visible, .gitSuggestButton:focus-visible,
+.gitLogMore:focus-visible, .gitBranchSelect:focus-visible,
 .lensButton:focus-visible, .filterChip:focus-visible, .iconButton:focus-visible,
 .dragHandle:focus-visible {
   outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent);

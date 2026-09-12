@@ -81,9 +81,16 @@ describe('built-in tab registrations', () => {
     expect(new Set(lines).size, 'descriptions must differ per tab').toBe(visible.length)
   })
 
-  it('the changes tab declares no settings of its own (the diff always docks)', () => {
+  it('the changes tab declares only its pinned commit-model settings panel', () => {
+    // The Git card's gear renders ONE custom panel: which provider/model
+    // drafts commit messages (rendered, not a declarative toggle row,
+    // because the option list is discovered at runtime through git.models).
+    // No declarative toggle rows ride along with it.
     const { service } = setup()
-    expect(service.getTab('git')?.settings).toBeUndefined()
+    const settings = service.getTab('git')?.settings
+    expect(typeof settings?.render).toBe('function')
+    expect(settings?.toggles ?? []).toEqual([])
+    expect(settings?.pluginToggles ?? []).toEqual([])
   })
 
   it('only diff is hidden from the + menu; editor is the visible files window (order 10)', () => {
