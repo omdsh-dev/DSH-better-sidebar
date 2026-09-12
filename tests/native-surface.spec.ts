@@ -10,16 +10,23 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { createNativeTabRecords, NativeTabBody, NativeTabTitle } from '../src/client/native/tab-adapter.tsx'
 import { registerNativeSurface } from '../src/client/native/index.ts'
-import { createBetterSidebarService, type SidebarSurface } from '../src/client/service.ts'
+import { createBetterSidebarService, type SidebarSurface, type TabComponentProps } from '../src/client/service.ts'
 import { createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 
 const scope = { sessionId: 's1', cwd: '/work' }
+/**
+ * One tab body's identity token. Every body instance mints its own; the
+ * registry never adopts — nor drops — a record another token owns, because
+ * DSH mints native tab ids per session (every session's first tabs are all
+ * called `tab1`, `tab2`, …).
+ */
+const owner = {}
 
 describe('createNativeTabRecords', () => {
   it('mints a synthetic tab from the native record + params', () => {
     const records = createNativeTabRecords()
     const view = records.ensure({
-      id: 'tab-1', kind: 'browser', title: 'Browser', params: { url: 'https://a.test', meta: { k: 1 } }, scope,
+      id: 'tab-1', kind: 'browser', title: 'Browser', params: { url: 'https://a.test', meta: { k: 1 } }, scope, owner,
     })
     expect(view.tab).toMatchObject({ id: 'tab-1', type: 'browser', title: 'Browser', meta: { k: 1 } })
     expect(view.scope).toBe(scope)
@@ -29,25 +36,25 @@ describe('createNativeTabRecords', () => {
   it('calls the descriptor factory once for a record that arrives without seed fields', () => {
     const records = createNativeTabRecords()
     const mint = vi.fn(() => ({ title: 'Side chat', meta: { autoCreate: true } }))
-    const view = records.ensure({ id: 'tab-2', kind: 'sidechat', title: 'Side Chat', params: undefined, scope, mint })
+    const view = records.ensure({ id: 'tab-2', kind: 'sidechat', title: 'Side Chat', params: undefined, scope, owner, mint })
     expect(mint).toHaveBeenCalledTimes(1)
     expect(view.tab).toMatchObject({ title: 'Side chat', meta: { autoCreate: true } })
     // A second render of the same record does not re-mint.
-    records.ensure({ id: 'tab-2', kind: 'sidechat', title: 'Side Chat', params: undefined, scope, mint })
+    records.ensure({ id: 'tab-2', kind: 'sidechat', title: 'Side Chat', params: undefined, scope, owner, mint })
     expect(mint).toHaveBeenCalledTimes(1)
   })
 
   it('refreshes the seed fields on navigation but keeps the record identity', () => {
     const records = createNativeTabRecords()
-    records.ensure({ id: 'tab-3', kind: 'editor', title: 'a.ts', params: { path: '/work/a.ts' }, scope })
+    records.ensure({ id: 'tab-3', kind: 'editor', title: 'a.ts', params: { path: '/work/a.ts' }, scope, owner })
     records.update('tab-3', { title: 'renamed.ts' })
-    const view = records.ensure({ id: 'tab-3', kind: 'editor', title: 'b.ts', params: { path: '/work/b.ts' }, scope })
+    const view = records.ensure({ id: 'tab-3', kind: 'editor', title: 'b.ts', params: { path: '/work/b.ts' }, scope, owner })
     expect(view.tab).toMatchObject({ id: 'tab-3', path: '/work/b.ts', title: 'renamed.ts' })
   })
 
   it('tracks expansion per record and bumps its version', () => {
     const records = createNativeTabRecords()
-    records.ensure({ id: 'tab-4', kind: 'editor', title: 'Files', params: undefined, scope })
+    records.ensure({ id: 'tab-4', kind: 'editor', title: 'Files', params: undefined, scope, owner })
     const before = records.versionOf('tab-4')
     records.toggleExpanded('tab-4', '/work/src')
     expect(records.get('tab-4')?.expanded).toEqual(['/work/src'])
@@ -58,18 +65,58 @@ describe('createNativeTabRecords', () => {
 
   it('notifies subscribers and forgets a dropped record', () => {
     const records = createNativeTabRecords()
-    records.ensure({ id: 'tab-5', kind: 'terminal', title: 'Terminal', params: undefined, scope })
+    records.ensure({ id: 'tab-5', kind: 'terminal', title: 'Terminal', params: undefined, scope, owner })
     const listener = vi.fn()
     const off = records.subscribe(listener)
     records.update('tab-5', { title: 'zsh' })
     expect(listener).toHaveBeenCalledTimes(1)
     expect(records.get('tab-5')?.tab.title).toBe('zsh')
-    records.drop('tab-5')
+    records.drop('tab-5', owner)
     expect(records.has('tab-5')).toBe(false)
     off()
-    records.ensure({ id: 'tab-6', kind: 'terminal', title: 'Terminal', params: undefined, scope })
+    records.ensure({ id: 'tab-6', kind: 'terminal', title: 'Terminal', params: undefined, scope, owner })
     records.update('tab-6', { title: 'x' })
     expect(listener).toHaveBeenCalledTimes(2)
+  })
+
+  it('never adopts a record another body owns (the same native id lives in every session)', () => {
+    const records = createNativeTabRecords()
+    const bodyA = {}
+    const bodyB = {}
+    records.ensure({ id: 'tab2', kind: 'editor', title: 'Files', params: undefined, scope, owner: bodyA })
+    records.toggleExpanded('tab2', '/work/src')
+
+    // DSH renders the entering session's body BEFORE deleting the leaving
+    // session's, and both ensure the same id — the entering body must get its
+    // OWN record instead of adopting the one that is about to be dropped.
+    const view = records.ensure({ id: 'tab2', kind: 'editor', title: 'Files', params: undefined, scope, owner: bodyB })
+    expect(view.expanded, 'the entering body does not inherit the leaving one’s tree state').toEqual([])
+    expect(records.get('tab2')?.owner).toBe(bodyB)
+  })
+
+  it('drops only the asking body’s record', () => {
+    const records = createNativeTabRecords()
+    const bodyA = {}
+    const bodyB = {}
+    records.ensure({ id: 'tab2', kind: 'editor', title: 'Files', params: undefined, scope, owner: bodyA })
+    records.ensure({ id: 'tab2', kind: 'editor', title: 'Files', params: undefined, scope, owner: bodyB })
+
+    // The leaving body's unmount cleanup must not touch the live record.
+    records.drop('tab2', bodyA)
+    expect(records.has('tab2'), 'the live record survives the other body’s teardown').toBe(true)
+    records.toggleExpanded('tab2', '/work/src')
+    expect(records.get('tab2')?.expanded).toEqual(['/work/src'])
+
+    records.drop('tab2', bodyB)
+    expect(records.has('tab2')).toBe(false)
+  })
+
+  it('removes a record regardless of owner (the host closed the tab)', () => {
+    const records = createNativeTabRecords()
+    const bodyA = {}
+    records.ensure({ id: 'tab2', kind: 'editor', title: 'Files', params: undefined, scope, owner: bodyA })
+    records.remove('tab2')
+    expect(records.has('tab2')).toBe(false)
   })
 })
 
@@ -416,7 +463,7 @@ describe('NativeTabTitle (the chip glyph)', () => {
       icon: (size: number) => createElement('i', { 'data-stub-icon': size }),
       component: () => createElement('div'),
     })
-    records.ensure({ id: 'chip-1', kind: 'stub-tab', title: 'Stub', params: undefined, scope })
+    records.ensure({ id: 'chip-1', kind: 'stub-tab', title: 'Stub', params: undefined, scope, owner })
 
     const { host, unmount } = renderTitle(records, service, nativeInfo('chip-1', 'stub-tab', 'Stub'), 'stub-tab')
     const chip = host.querySelector('[aria-hidden="true"]')
@@ -442,6 +489,7 @@ describe('NativeTabTitle (the chip glyph)', () => {
       title: 'notes.md',
       params: { path: '/work/notes.md' },
       scope,
+      owner,
     })
 
     const { host, unmount } = renderTitle(records, service, nativeInfo('chip-2', 'editor', 'notes.md'), 'editor')
@@ -457,11 +505,138 @@ describe('NativeTabTitle (the chip glyph)', () => {
   it('falls back to the title alone when the type is gone (unregistered descriptor)', () => {
     const records = createNativeTabRecords()
     const service = createBetterSidebarService(createSidebarStore())
-    records.ensure({ id: 'chip-3', kind: 'ghost', title: 'Ghost', params: undefined, scope })
+    records.ensure({ id: 'chip-3', kind: 'ghost', title: 'Ghost', params: undefined, scope, owner })
 
     const { host, unmount } = renderTitle(records, service, nativeInfo('chip-3', 'ghost', 'Ghost'), 'ghost')
     expect(host.querySelector('[aria-hidden="true"]')).toBeNull()
     expect(host.textContent).toBe('Ghost')
     unmount()
+  })
+})
+
+describe('conversation switch keeps the entered session’s explorer alive', () => {
+  /**
+   * Mount tab bodies the way DSH does: the session-scoped seat is KEYED by
+   * session id (upstream `StrictSessionEntry` renders with `}, binding.key)`),
+   * so a conversation switch renders the entering session's body and deletes
+   * the leaving session's in ONE commit — the entering body's `ensure()` runs
+   * during render, the leaving body's cleanup (`drop`) in the passive phase
+   * after it. Native tab ids restart per session, so both bodies ensure the
+   * same id; before the ownership fix the entering body adopted the leaving
+   * body's record and then had it deleted, leaving the explorer mounted but
+   * inert (every click routed through the registry became a silent no-op).
+   */
+  const mountSwitchable = (): {
+    records: ReturnType<typeof createNativeTabRecords>
+    show: (sessionId: string) => void
+    clickFolder: () => void
+    expanded: () => string
+    unmount: () => void
+  } => {
+    const store = createSidebarStore()
+    store.setSession('session-A')
+    const service = createBetterSidebarService(store)
+    service.registerTab({
+      id: 'explorer',
+      title: 'Files',
+      component: (props: TabComponentProps) => createElement(
+        'div',
+        { 'data-body': props.tab.id },
+        createElement('button', { 'data-toggle': '', onClick: () => { props.onToggleDir?.('/work/dir') } }, 'toggle'),
+        createElement('span', { 'data-expanded': '' }, (props.expanded ?? []).join('|')),
+      ),
+    })
+    const records = createNativeTabRecords()
+    const sessions = { list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } }
+    const ctx = { sessions } as never
+    const info = {
+      tab: {
+        id: 'tab2',
+        kind: 'explorer',
+        title: 'Files',
+        contentId: 'sidebar://files',
+        visible: true,
+        navigation: { address: 'sidebar://files', params: undefined, revision: 0 },
+        signal: new AbortController().signal,
+      },
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    const show = (sessionId: string): void => {
+      root.render(createElement(
+        // The session-scoped seat's key (upstream StrictSessionEntry).
+        'div',
+        { key: sessionId, 'data-session': sessionId },
+        createElement(NativeTabBody, {
+          key: 'tab2',
+          sessionId,
+          ctx,
+          store,
+          service,
+          records,
+          descriptorId: 'explorer',
+          useTabInfo: () => info,
+        }),
+      ))
+    }
+    return {
+      records,
+      show,
+      clickFolder: () => {
+        const button = host.querySelector<HTMLButtonElement>('[data-toggle]')
+        expect(button, 'the explorer body must be mounted').not.toBeNull()
+        act(() => { button!.click() })
+      },
+      expanded: () => host.querySelector('[data-expanded]')?.textContent ?? '<none>',
+      unmount: () => { act(() => { root.unmount() }); host.remove() },
+    }
+  }
+
+  it('the leaving session’s unmount must not delete the entering session’s record', () => {
+    const t = mountSwitchable()
+    act(() => { t.show('session-A') })
+    expect(t.records.has('tab2')).toBe(true)
+
+    // ONE commit: session-B renders (same native tab id) while A is deleted.
+    // A's record is untouched here (version 0) — the case that used to break
+    // for good: the entering body adopted it, A's cleanup deleted it, and the
+    // unchanged snapshot (0 → 0) meant nothing ever re-rendered to re-mint
+    // it, so the explorer stayed mounted but inert.
+    act(() => { t.show('session-B') })
+    expect(t.records.has('tab2'), 'the entered session keeps a record of its own').toBe(true)
+    t.clickFolder()
+    expect(t.expanded(), 'a folder click still responds').toBe('/work/dir')
+
+    // …and the switch is not one-way: going back keeps working too.
+    act(() => { t.show('session-A') })
+    expect(t.records.has('tab2')).toBe(true)
+    t.clickFolder()
+    expect(t.expanded(), 'the session switched back into still responds').toBe('/work/dir')
+    t.unmount()
+  })
+
+  it('the entering session does not inherit the leaving session’s tree state', () => {
+    const t = mountSwitchable()
+    act(() => { t.show('session-A') })
+    t.clickFolder()
+    expect(t.expanded()).toBe('/work/dir')
+
+    act(() => { t.show('session-B') })
+    expect(t.expanded(), 'B starts from its own state, not A’s').toBe('')
+    t.unmount()
+  })
+
+  it('every switch keeps working (no self-sustaining dead state)', () => {
+    const t = mountSwitchable()
+    act(() => { t.show('session-A') })
+    for (const sessionId of ['session-B', 'session-A', 'session-B']) {
+      act(() => { t.show(sessionId) })
+      expect(t.records.has('tab2'), `${sessionId} entered keeps a record`).toBe(true)
+      expect(t.expanded(), `${sessionId} starts with its own state`).toBe('')
+      t.clickFolder()
+      expect(t.expanded(), `${sessionId} responds to a folder click`).toBe('/work/dir')
+    }
+    t.unmount()
   })
 })
