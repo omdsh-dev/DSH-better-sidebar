@@ -34,13 +34,13 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 
 /** The floating "add to conversation" action: payload + viewport anchor. */
-export interface SelectionPopup<T> {
+export interface SelectionPopup<T = string> {
   insert: T
   left: number
   top: number
 }
 
-export interface SelectionPopupOptions<T> {
+export interface SelectionPopupOptions<T = string> {
   /** Commit the payload into the composer draft (button click). */
   onCommit(insert: T): void
   /**
@@ -51,7 +51,7 @@ export interface SelectionPopupOptions<T> {
   getSurface(): HTMLElement | null
 }
 
-export interface SelectionPopupControls<T> {
+export interface SelectionPopupControls<T = string> {
   /** The current popup (null = hidden). */
   popup: SelectionPopup<T> | null
   /** Attach to the portaled button element. */

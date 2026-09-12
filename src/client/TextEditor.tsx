@@ -95,8 +95,11 @@ export function TextEditor(props: FileViewerProps) {
   const selectionPopup = useSelectionPopup<SelectionInsert>({
     onCommit: (insert) => {
       // One compact `<path>[:lines]` chip carries the payload the draft used
-      // to show as a quoted block; a host without the chip path (or without a
-      // `draftRev` to span-CAS against) still gets the plain payload.
+      // to show as a quoted block; a host without the chip path (no session
+      // scope, no conversation service, no `draftRev` to span-CAS against)
+      // still gets the plain payload. The fallback can no longer cost the
+      // draft its chips — it stops short of the whole-draft write once one
+      // exists.
       if (!insertSelectionReference(ctx, scope.sessionId, insert)) {
         appendToDraft(ctx, scope.sessionId, insert.text)
       }

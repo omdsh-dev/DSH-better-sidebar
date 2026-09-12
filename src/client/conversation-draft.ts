@@ -41,8 +41,25 @@
  * caret from the same probe, but as the span they replace: the host's insert
  * event is span-CAS'd and owns the caret afterwards, so no DOM restore is
  * scheduled for them.
+ *
+ * Two coordinate systems (see {@link foldClipboardOffset}). `draft` is the
+ * *clipboard* projection, where a chip occupies its whole `clipboardText`; the
+ * host's insert/replace spans live in the *editor* projection, where a chip
+ * occupies one placeholder character. The two coincide only while the draft
+ * holds no chip, so a span built from raw `draft` offsets is accepted for the
+ * first insert and refused for every one after it — every emitted span folds
+ * first.
+ *
+ * No draft write may destroy a chip: `setDraft` rebuilds the editor from
+ * plain paragraphs, so {@link appendToDraft} splices through the host's text
+ * event instead as soon as the draft holds one ({@link insertPlainText}).
  */
-import type { Context, SidebarConversation, SidebarSessionInput } from '../context-types.ts'
+import type {
+  Context,
+  SidebarConversation,
+  SidebarSessionInput,
+  SidebarSessionOccurrence,
+} from '../context-types.ts'
 import type { SelectionInsert } from './selection-payload.ts'
 
 /** A resolved composer caret/selection in draft coordinates. */
@@ -50,6 +67,16 @@ export interface DraftCaret {
   start: number
   end: number
 }
+
+/**
+ * One reference chip's footprint in the draft (the host's `Occurrence`).
+ * `length` is the whole `clipboardText`, which is what makes the two
+ * projections diverge.
+ */
+export type DraftOccurrence = SidebarSessionOccurrence
+
+/** The subset of the host's input snapshot the insert paths read. */
+type DraftSnapshot = ReturnType<SidebarSessionInput['state']['getSnapshot']>
 
 /**
  * The spliced draft plus the caret index (in that draft) right after the
@@ -72,9 +99,14 @@ interface SpliceResult {
 function spliceInsert(draft: string, text: string, caret: DraftCaret | null): SpliceResult {
   if (caret === null || draft === '') {
     // A whitespace-only draft is dropped outright; anything else keeps its
-    // text and takes one separating space (nothing on the right to double).
+    // text and takes one separating space.
     if (draft.trim() === '') return { draft: text, inserted: text, caretAfter: text.length }
-    const inserted = ` ${text}`
+    // The draft's own tail is a neighbor like any other: a chip insert leaves
+    // the host's separating space there, and adding a second one would widen
+    // the gap to two. (The resolved-caret branch below has always been
+    // whitespace-aware; this one was not.)
+    const left = /\s$/.test(draft) ? '' : ' '
+    const inserted = `${left}${text}`
     return { draft: `${draft}${inserted}`, inserted, caretAfter: draft.length + inserted.length }
   }
   const prefix = draft.slice(0, caret.start)
@@ -113,6 +145,49 @@ export function insertAtCaret(draft: string, text: string, caret: DraftCaret | n
  */
 export function chipTextAt(draft: string, payload: string, caret: DraftCaret | null): string {
   return spliceInsert(draft, payload, caret).inserted
+}
+
+/**
+ * Fold a draft (clipboard-projection) offset onto the editor projection the
+ * host's insert/replace spans are expressed in. The two projections differ in
+ * exactly one place: a chip contributes its whole `clipboardText` to the
+ * draft but a single placeholder character to the editor, so every chip ahead
+ * of the offset collapses `length - 1` characters, and an offset landing
+ * strictly *inside* a chip's expansion snaps to that chip's trailing edge —
+ * the host can only address a chip as a whole, never split it.
+ *
+ * The host folds the same way internally (`detectOffsetOfClipboardOffset` in
+ * `dsh-client-ui-conversation`), but keeps it off the plugin-facing surface;
+ * the published `InputState.occurrences` is the sanctioned input. One
+ * deliberate difference: the host's loop reads a chip that *starts* at the
+ * offset as "inside" and answers its trailing edge, while this one treats the
+ * start as a boundary and answers the position *before* the chip — the true
+ * document position, and one its own caret resolver can address.
+ *
+ * `occurrences` is sorted by offset (host guarantee) and absent on hosts
+ * without the chip channel, where the fold is the identity.
+ */
+export function foldClipboardOffset(
+  offset: number,
+  occurrences: readonly DraftOccurrence[] | undefined,
+): number {
+  let shift = 0
+  if (occurrences !== undefined) {
+    for (const occurrence of occurrences) {
+      const end = occurrence.offset + occurrence.length
+      if (offset > end) {
+        shift += occurrence.length - 1
+        continue
+      }
+      if (offset > occurrence.offset) {
+        // Strictly inside the chip's expansion, or exactly at its trailing
+        // edge: snap to that edge (the host addresses a chip as a whole).
+        return Math.max(0, end - shift - (occurrence.length - 1))
+      }
+      break
+    }
+  }
+  return Math.max(0, offset - shift)
 }
 
 /**
@@ -197,6 +272,11 @@ export function placeComposerCaretAfterInsert(expectedDraft: string, caretIndex:
  * caret (see {@link probeComposerCaret}), falling back to appending at the
  * end when the caret cannot be resolved. Returns false — and logs — when the
  * conversation service or the session scope is unavailable.
+ *
+ * The write path depends on what the draft already holds: a chipless draft
+ * takes the whole-string `setDraft`, while a draft holding chips is spliced
+ * through the host's text event ({@link insertPlainText}) — `setDraft`
+ * rebuilds the editor from plain text and would destroy every chip in it.
  */
 export function appendToDraft(ctx: Context, sessionId: string, text: string): boolean {
   try {
@@ -211,9 +291,24 @@ export function appendToDraft(ctx: Context, sessionId: string, text: string): bo
       return false
     }
     const input = conversation.input.for(actx)
-    const draft = input.state.getSnapshot().draft
-    const caret = probeComposerCaret(draft)
-    const { draft: next, caretAfter } = spliceInsert(draft, text, caret)
+    const before = input.state.getSnapshot()
+    // Mirrors the host's own admission rule for reference inserts (`plain |
+    // claimed` only): a frozen composer takes no draft write on either path —
+    // its text event carries no such guard, and a phase this build has never
+    // heard of is not writable either.
+    const phase = before.phase
+    if (phase !== undefined && phase !== 'plain' && phase !== 'claimed') {
+      console.warn('[dsh-better-sidebar] draft insert skipped: composer is', phase)
+      return false
+    }
+    const caret = probeComposerCaret(before.draft)
+    const { draft: next, inserted, caretAfter } = spliceInsert(before.draft, text, caret)
+    if (before.occurrences !== undefined && before.occurrences.length > 0) {
+      // A chip-bearing draft never goes through `setDraft`: it clears the
+      // document and rebuilds plain paragraphs, taking every chip with it.
+      // The text event splices the very same characters instead.
+      return insertPlainText(actx, input, before, caret, inserted)
+    }
     input.setDraft(next)
     // Put the caret right after the inserted text once the value commit
     // lands — see the module doc for why this keeps stacked inserts at the
@@ -224,6 +319,45 @@ export function appendToDraft(ctx: Context, sessionId: string, text: string): bo
     console.warn('[dsh-better-sidebar] draft insert failed:', error)
     return false
   }
+}
+
+/**
+ * Private-use placeholders the host renders as reference chips: a literal one
+ * inside a *text* node forges a chip position. `setDraft` strips them; the
+ * text event does not, so the splice does it here.
+ */
+const REFERENCE_PLACEHOLDER_RE = /[\uE100-\uE11D\uFFFC]/gu
+
+/** The one character a reference chip occupies in the editor projection. */
+export const CHIP_PLACEHOLDER = '\uFFFC'
+
+/**
+ * Matches {@link CHIP_PLACEHOLDER}. A literal one inside a chip's own
+ * `clipboardText` would sit in a text node and forge a chip position, throwing
+ * off every span folded against `occurrences` afterwards. The chip's `ref`
+ * never enters the editor, so the model still receives the payload verbatim.
+ */
+const CHIP_PLACEHOLDER_RE = /\uFFFC/gu
+
+/**
+ * Splice `text` into a chip-bearing draft through the host's plain-text event
+ * rather than `setDraft`. `text` is what {@link spliceInsert} put between the
+ * surrounding draft text, so the resulting draft string is the exact one
+ * `setDraft` would have written — the chips just survive it.
+ *
+ * Unlike `setDraft`, the host's text event does not sanitize the reference
+ * placeholders, so the splice does.
+ */
+function insertPlainText(
+  actx: Context,
+  input: SidebarSessionInput,
+  before: DraftSnapshot,
+  caret: DraftCaret | null,
+  text: string,
+): boolean {
+  return bailComposerEdit(actx, input, before, caret, 'slash/input-insert-text', {
+    text: text.replace(REFERENCE_PLACEHOLDER_RE, ''),
+  })
 }
 
 /**
@@ -272,28 +406,69 @@ function composerInput(
 }
 
 /**
- * Emit the composer's structured-reference insert for one chip and report
- * whether the machine applied it (the span CAS answer). `caret` is in draft
- * coordinates: the live caret/selection the chip replaces, or null to append
- * at the end (the placement the explorer's @ button has always used).
+ * The scoped event dispatcher, as this module reaches it: the Context's typed
+ * `bail` is keyed to DSH's closed event map, while these internal composer
+ * events are deliberately string-loose at runtime.
+ *
+ * `subject` is the session-scope Context, passed back as the dispatch subject:
+ * cordis applies a scope's listener filter only when the first argument is an
+ * object, and without it the event reaches *every* mounted session's input
+ * shell — whose revision counters all start at 0, so the span CAS alone would
+ * not keep one session's insert out of another's composer.
+ */
+interface ComposerDispatch {
+  bail(subject: Context, name: string, payload: unknown): unknown
+}
+
+/**
+ * Dispatch one composer edit and report whether the machine applied it.
+ * `caret` is in *draft* coordinates — the live caret/selection the edit
+ * replaces, or null to append at the end — and is folded onto the editor
+ * projection the host's span CAS lives in (see {@link foldClipboardOffset}).
+ *
+ * `before` is the snapshot the caller measured that caret against: one read
+ * per gesture keeps the span's coordinates and its `draftRev` on the same
+ * revision. `input` is only read again for the after-snapshot.
+ */
+function bailComposerEdit(
+  actx: Context,
+  input: SidebarSessionInput,
+  before: DraftSnapshot,
+  caret: DraftCaret | null,
+  event: string,
+  body: Record<string, unknown>,
+): boolean {
+  if (before.draftRev === undefined) return false
+  const at = caret ?? { start: before.draft.length, end: before.draft.length }
+  const answer = (actx as unknown as ComposerDispatch).bail(actx, event, {
+    ...body,
+    span: {
+      draftRev: before.draftRev,
+      start: foldClipboardOffset(at.start, before.occurrences),
+      end: foldClipboardOffset(at.end, before.occurrences),
+    },
+  })
+  const after = input.state.getSnapshot()
+  // Either signal alone proves the edit landed; accepting both leaves no room
+  // for a false "refused".
+  return answer === true || after.draftRev !== before.draftRev
+}
+
+/**
+ * Emit the composer's structured-reference insert for one chip (the machine
+ * mints one chip node covering `chip.clipboardText`, followed by its own
+ * separating space).
  */
 function emitChip(
   actx: Context,
   input: SidebarSessionInput,
   chip: ChipReference,
   caret: DraftCaret | null,
+  before: DraftSnapshot,
 ): boolean {
-  const before = input.state.getSnapshot()
-  if (before.draftRev === undefined) return false
-  const at = caret ?? { start: before.draft.length, end: before.draft.length }
-  // The session-scope Context's typed `emit` is keyed to DSH's closed event
-  // map; this internal composer event is deliberately string-loose at runtime.
-  ;(actx as unknown as { emit(name: string, payload: unknown): void }).emit('slash/input-insert-reference', {
+  return bailComposerEdit(actx, input, before, caret, 'slash/input-insert-reference', {
     reference: { source: 'reference', ...chip },
-    span: { draftRev: before.draftRev, start: at.start, end: at.end },
   })
-  const after = input.state.getSnapshot()
-  return after.draftRev !== before.draftRev
 }
 
 /**
@@ -311,13 +486,14 @@ export function insertFileReference(ctx: Context, sessionId: string, relativePat
   try {
     const target = composerInput(ctx, sessionId)
     if (target === null) return false
+    const before = target.input.state.getSnapshot()
     const chip: ChipReference = {
       label: reference.label,
       appearance: 'file',
       clipboardText: reference.mention,
       ref: reference.mention,
     }
-    return emitChip(target.actx, target.input, chip, null)
+    return emitChip(target.actx, target.input, chip, null, before)
   } catch (error) {
     console.warn('[dsh-better-sidebar] file-reference insert failed:', error)
     return false
@@ -345,16 +521,18 @@ export function insertSelectionReference(
   try {
     const target = composerInput(ctx, sessionId)
     if (target === null) return false
-    const draft = target.input.state.getSnapshot().draft
-    const caret = probeComposerCaret(draft)
-    const text = chipTextAt(draft, insert.text, caret)
+    const before = target.input.state.getSnapshot()
+    const caret = probeComposerCaret(before.draft)
+    const text = chipTextAt(before.draft, insert.text, caret)
     const chip: ChipReference = {
       label: insert.label,
       appearance: 'file',
-      clipboardText: text,
+      // The editor-facing text must never carry a literal chip placeholder;
+      // the model form keeps the payload exactly as selected.
+      clipboardText: text.replace(CHIP_PLACEHOLDER_RE, ''),
       ref: text,
     }
-    return emitChip(target.actx, target.input, chip, caret)
+    return emitChip(target.actx, target.input, chip, caret, before)
   } catch (error) {
     console.warn('[dsh-better-sidebar] selection-reference insert failed:', error)
     return false
