@@ -294,6 +294,8 @@ export const hi: Record<string, string> = {
   browserStart: 'ब्राउज़िंग शुरू करने के लिए URL दर्ज करें (सैंडबॉक्स मोड)',
   browserBlockedScheme: 'रोका गया: केवल http/https URL अनुमत हैं',
   browserBlockedLoopback: 'रोका गया: स्थानीय और आंतरिक पते यहाँ ब्राउज़ नहीं किए जा सकते',
+  browserAllowLoopback: '{authority} को अनुमति दें',
+  browserAllowLoopbackSaving: 'अनुमति दी जा रही है…',
   browserInvalid: 'अमान्य URL',
   browserNoSandboxWarning: 'सैंडबॉक्स बंद: वर्तमान पृष्ठ GUI विशेषाधिकार के साथ चलता है (सेटिंग्स में पुनः सक्षम करें)',
   htmlNoSandboxWarning: 'सैंडबॉक्स बंद: यह HTML GUI विशेषाधिकार के साथ चलता है (सेटिंग्स में पुनः सक्षम करें)',

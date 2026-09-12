@@ -294,6 +294,8 @@ export const ja: Record<string, string> = {
   browserStart: 'URL を入力してブラウズ開始（サンドボックスモード）',
   browserBlockedScheme: 'ブロック：http/https リンクのみ許可',
   browserBlockedLoopback: 'ブロック：ローカルや内部アドレスはブラウズできません',
+  browserAllowLoopback: '{authority} を許可',
+  browserAllowLoopbackSaving: '許可中…',
   browserInvalid: '無効な URL',
   browserNoSandboxWarning: 'サンドボックスオフ：現在のページは GUI と同一オリジンで、完全な会話権限を持ちます（設定で復元可）',
   htmlNoSandboxWarning: 'サンドボックスオフ：この HTML は GUI と同一オリジンで、会話ファイルや内部 API を読み取れます（設定で復元可）',

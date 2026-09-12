@@ -292,6 +292,8 @@ export const nl: Record<string, string> = {
   browserStart: 'Voer een URL in om te beginnen met browsen (sandbox-modus)',
   browserBlockedScheme: 'Geblokkeerd: alleen http/https-URL\'s zijn toegestaan',
   browserBlockedLoopback: 'Geblokkeerd: lokale en interne adressen kunnen hier niet worden bezocht',
+  browserAllowLoopback: '{authority} toestaan',
+  browserAllowLoopbackSaving: 'Toestaan…',
   browserInvalid: 'Ongeldige URL',
   browserNoSandboxWarning: 'Sandbox uit: de huidige pagina draait met volledige GUI-privileges (herinschakelen in instellingen)',
   htmlNoSandboxWarning: 'Sandbox uit: deze HTML draait met volledige GUI-privileges (herinschakelen in instellingen)',

@@ -292,6 +292,8 @@ export const id: Record<string, string> = {
   browserStart: 'Masukkan URL untuk mulai menjelajah (mode sandbox)',
   browserBlockedScheme: 'Diblokir: hanya URL http/https yang diizinkan',
   browserBlockedLoopback: 'Diblokir: alamat lokal dan internal tidak dapat dijelajahi di sini',
+  browserAllowLoopback: 'Izinkan {authority}',
+  browserAllowLoopbackSaving: 'Mengizinkan…',
   browserInvalid: 'URL tidak valid',
   browserNoSandboxWarning: 'Sandbox mati: halaman saat ini berjalan dengan hak penuh GUI (aktifkan kembali di pengaturan)',
   htmlNoSandboxWarning: 'Sandbox mati: HTML ini berjalan dengan hak penuh GUI (aktifkan kembali di pengaturan)',

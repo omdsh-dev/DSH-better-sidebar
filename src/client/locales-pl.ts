@@ -296,6 +296,8 @@ export const pl: Record<string, string> = {
   browserStart: 'Wpisz adres URL, aby rozpocząć przeglądanie (tryb piaskownicy)',
   browserBlockedScheme: 'Zablokowano: dozwolone są tylko adresy URL http/https',
   browserBlockedLoopback: 'Zablokowano: nie można tu przeglądać adresów lokalnych i wewnętrznych',
+  browserAllowLoopback: 'Zezwól na {authority}',
+  browserAllowLoopbackSaving: 'Zezwalanie…',
   browserInvalid: 'Nieprawidłowy adres URL',
   browserNoSandboxWarning: 'Piaskownica wyłączona: bieżąca strona działa z pełnymi uprawnieniami interfejsu (można przywrócić w ustawieniach)',
   htmlNoSandboxWarning: 'Piaskownica wyłączona: ten HTML działa z pełnymi uprawnieniami interfejsu (można przywrócić w ustawieniach)',

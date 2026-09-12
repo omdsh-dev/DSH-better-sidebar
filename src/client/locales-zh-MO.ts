@@ -309,6 +309,8 @@ export const zhMO: Record<string, string> = {
   browserStart: '輸入網址開始瀏覽（沙箱模式）',
   browserBlockedScheme: '已封鎖：僅支援 http/https 連結',
   browserBlockedLoopback: '已封鎖：不允許在瀏覽器中存取本機或內部位址',
+  browserAllowLoopback: '允許 {authority}',
+  browserAllowLoopbackSaving: '正在允許…',
   browserInvalid: '無效的網址',
   browserNoSandboxWarning: '沙箱已關閉：目前頁面與介面同源，擁有完整工作階段權限（可在設定中恢復）',
   htmlNoSandboxWarning: '沙箱已關閉：此 HTML 與介面同源，可讀取工作階段檔案與內部介面（可在設定中恢復）',

@@ -285,6 +285,8 @@ export const it: Record<string, string> = {
   browserStart: 'Inserisca un URL per iniziare a navigare (modalità sandbox)',
   browserBlockedScheme: 'Bloccato: sono ammessi solo URL http/https',
   browserBlockedLoopback: 'Bloccato: gli indirizzi locali e interni non possono essere navigati qui',
+  browserAllowLoopback: 'Consenti {authority}',
+  browserAllowLoopbackSaving: 'Autorizzazione…',
   browserInvalid: 'URL non valido',
   browserNoSandboxWarning: 'Sandbox disattivata: la pagina attuale viene eseguita con i privilegi completi dell’interfaccia (può riattivarla nelle impostazioni)',
   htmlNoSandboxWarning: 'Sandbox disattivata: questo HTML viene eseguito con la stessa origine dell’interfaccia e può leggere i file di sessione e le API interne (può riattivarla nelle impostazioni)',

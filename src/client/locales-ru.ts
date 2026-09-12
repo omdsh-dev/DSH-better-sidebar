@@ -291,6 +291,8 @@ export const ru: Record<string, string> = {
   browserStart: 'Введите URL для начала просмотра (режим песочницы)',
   browserBlockedScheme: 'Заблокировано: разрешены только ссылки http/https',
   browserBlockedLoopback: 'Заблокировано: локальные и внутренние адреса недоступны для просмотра здесь',
+  browserAllowLoopback: 'Разрешить {authority}',
+  browserAllowLoopbackSaving: 'Разрешение…',
   browserInvalid: 'Неверный URL',
   browserNoSandboxWarning: 'Песочница выключена: текущая страница работает с полными привилегиями интерфейса (можно включить заново в настройках)',
   htmlNoSandboxWarning: 'Песочница выключена: этот HTML работает с полными привилегиями интерфейса и может читать файлы сессии и внутренние API (можно включить заново в настройках)',

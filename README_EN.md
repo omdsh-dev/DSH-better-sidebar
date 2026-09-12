@@ -631,7 +631,7 @@ make clean          # remove lib/, *.tgz, playwright-report/, test-results/
 ## 🔐 Security
 
 - Routes protected by a Host-header trust fence (same as `/api`); `fs.write` is atomic; media/preview routes only serve files inside the session cwd; git only shells out to the CLI and never sets identity
-- HTML preview and browser tab content render in **opaque-origin sandboxed iframes** (no `allow-same-origin`/`allow-top-navigation`, `no-referrer`, all permission policies disabled); the `/sidebar/html` route carries a CSP `sandbox` + size/path bounds; the address bar rejects `javascript:`/`data:`/`file:` and local addresses like localhost
+- HTML preview and browser tab content render in **sandboxed iframes** (`allow-top-navigation` absent, `no-referrer`, all permission policies disabled); public pages use an opaque origin. Local addresses are blocked by default and offer an explicit `Allow host:port` action; that exact authority then receives `allow-same-origin` for local module/fetch pipelines while remaining cross-origin to the GUI. The address bar always rejects `javascript:`/`data:`/`file:`
 - The UI shows the sandbox status live (red warning when off) and can temporarily unlock the current page; the settings page can disable the sandbox per feature (disabled by default, with a warning) — when off, content shares the origin with the UI; only recommended for fully trusted content
 
 ## ⚠️ Known Limitations

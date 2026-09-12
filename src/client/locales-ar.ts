@@ -295,6 +295,8 @@ export const ar: Record<string, string> = {
   browserStart: 'أدخل عنوان URL لبدء التصفح (وضع الحماية)',
   browserBlockedScheme: 'محظور: يُسمح فقط بعناوين URL من نوع http/https',
   browserBlockedLoopback: 'محظور: لا يمكن تصفّح العناوين المحلية والداخلية هنا',
+  browserAllowLoopback: 'السماح لـ {authority}',
+  browserAllowLoopbackSaving: 'جارٍ السماح…',
   browserInvalid: 'عنوان URL غير صالح',
   browserNoSandboxWarning: 'الحماية معطّلة: الصفحة الحالية تعمل بكامل صلاحيات الواجهة (يمكن إعادة تفعيلها في الإعدادات)',
   htmlNoSandboxWarning: 'الحماية معطّلة: يعمل هذا HTML بنفس أصل الواجهة — يمكنه قراءة ملفات الجلسة وواجهات API الداخلية (يمكن إعادة تفعيلها في الإعدادات)',

@@ -1450,6 +1450,26 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   font: var(--dsw-font-xxxs-11);
   color: var(--dsw-alias-state-warn-label);
   background: var(--dsw-alias-state-warn-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.browserMessageAction {
+  flex: none;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  padding: 2px 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.browserMessageAction:disabled {
+  cursor: default;
+  opacity: 0.65;
 }
 
 .browserFrame {

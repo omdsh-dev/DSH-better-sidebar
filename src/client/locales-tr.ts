@@ -294,6 +294,8 @@ export const tr: Record<string, string> = {
   browserStart: 'Gezinmeye başlamak için bir URL girin (kum modu)',
   browserBlockedScheme: 'Engellendi: yalnızca http/https URL’lerine izin verilir',
   browserBlockedLoopback: 'Engellendi: yerel ve iç adresler burada gezilemez',
+  browserAllowLoopback: '{authority} adresine izin ver',
+  browserAllowLoopbackSaving: 'İzin veriliyor…',
   browserInvalid: 'Geçersiz URL',
   browserNoSandboxWarning: 'Kum kapalı: geçerli sayfa tam arayüz ayrıcalıklarıyla çalışır (ayarlardan yeniden etkinleştirin)',
   htmlNoSandboxWarning: 'Kum kapalı: bu HTML tam arayüz ayrıcalıklarıyla çalışır (ayarlardan yeniden etkinleştirin)',
