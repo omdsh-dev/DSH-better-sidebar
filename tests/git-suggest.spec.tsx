@@ -23,11 +23,15 @@ function pendingStatus(): GitStatusResult {
   return { isRepo: true, branch: 'main', entries: [{ path: 'src/app.ts', xy: ' M' }] }
 }
 
-async function mount(): Promise<{ container: HTMLElement; unmount: () => void }> {
+async function mount(options: {
+  visible?: boolean
+  model?: { route?: { provider: string; model: string }; pinned: boolean }
+} = {}): Promise<{ container: HTMLElement; unmount: () => void }> {
   vi.spyOn(api, 'gitWorktrees').mockResolvedValue([{ path: CWD, branch: 'main', current: true, changes: 1 }])
   vi.spyOn(api, 'gitStatus').mockResolvedValue(pendingStatus())
   vi.spyOn(api, 'gitBranch').mockResolvedValue({ current: 'main', names: ['main'] })
   vi.spyOn(api, 'gitLog').mockResolvedValue([])
+  vi.spyOn(api, 'gitCommitModel').mockResolvedValue(options.model ?? { pinned: false })
 
   const container = document.createElement('div')
   document.body.append(container)
@@ -39,7 +43,7 @@ async function mount(): Promise<{ container: HTMLElement; unmount: () => void }>
       onOpenFile: () => {},
       onPreview: () => {},
       selectedRef: null,
-      visible: false,
+      visible: options.visible ?? false,
     }))
   })
   await act(async () => { await Promise.resolve() })
@@ -55,7 +59,8 @@ async function mount(): Promise<{ container: HTMLElement; unmount: () => void }>
 
 /** The suggest button (aria-label carries the localized copy; default en). */
 function suggestButton(container: HTMLElement): HTMLButtonElement {
-  const button = container.querySelector<HTMLButtonElement>('button[aria-label="Generate commit message"]')
+  // Prefix match: the label gains a model suffix once one resolves.
+  const button = container.querySelector<HTMLButtonElement>('button[aria-label^="Generate commit message"]')
   if (button === null) throw new Error('the suggest button is missing')
   return button
 }
@@ -108,6 +113,36 @@ describe('GitLens commit-message suggestion', () => {
       await act(async () => { await Promise.resolve() })
 
       expect(container.textContent).toContain('Failed to generate commit message')
+    } finally {
+      unmount()
+    }
+  })
+
+  it('drafts the message from the commit input with Ctrl+G', async () => {
+    const suggest = vi.spyOn(api, 'gitSuggestMessage')
+      .mockResolvedValue({ message: 'chore: shortcut', provider: 'deepseek', model: 'deepseek-chat' })
+    const { container, unmount } = await mount()
+    try {
+      await act(async () => {
+        commitInput(container).dispatchEvent(new KeyboardEvent('keydown', { key: 'g', ctrlKey: true, bubbles: true }))
+      })
+      await act(async () => { await Promise.resolve() })
+
+      expect(suggest).toHaveBeenCalledTimes(1)
+      expect(commitInput(container).value).toBe('chore: shortcut')
+    } finally {
+      unmount()
+    }
+  })
+
+  it('names the resolved model in the generate button label', async () => {
+    const { container, unmount } = await mount({
+      visible: true,
+      model: { route: { provider: 'deepseek', model: 'deepseek-chat' }, pinned: true },
+    })
+    try {
+      await act(async () => { await Promise.resolve() })
+      expect(suggestButton(container).title).toBe('Generate commit message (using deepseek/deepseek-chat)')
     } finally {
       unmount()
     }

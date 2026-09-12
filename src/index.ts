@@ -702,6 +702,24 @@ function buildApi(
       const message = await streamCommitMessage(ctx, route, prompt.system, prompt.user)
       return { message, provider: route.provider, model: route.model }
     },
+    // The route the NEXT suggestion would use (pinned → the conversation's own
+    // → the harness default), which the generate button shows in its tooltip.
+    // Deliberately separate from `git.models`: this is one settings read plus
+    // one header scan, with no adapter catalog discovery.
+    'git.commit-model': (payload) => {
+      const record = (payload ?? {}) as { sessionId?: unknown }
+      const pinned = pinnedCommitRouteOf(getSettings)
+      const sessionId = typeof record.sessionId === 'string' ? record.sessionId : ''
+      const route = pinned
+        ?? (sessionId === '' ? undefined : conversationModelRoute(ctx, sessionId))
+        ?? defaultModelRoute(ctx)
+      return {
+        ...(route === undefined ? {} : { route }),
+        /** Whether the route above is a PINNED one (the panel may want to
+         *  label it differently from the conversation's own model). */
+        pinned: pinned !== undefined,
+      }
+    },
     // The model catalog behind the Git card's pinned-route dropdown: every
     // registered provider with the models its adapter advertises. Discovery is
     // advisory and best-effort — a provider whose adapter cannot be asked

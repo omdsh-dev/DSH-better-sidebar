@@ -119,6 +119,8 @@ export function GitLens(props: GitLensProps) {
   /** Whether a commit-message suggestion is being generated host-side (the
    *  host streams the diff through the harness LLM — no agent is spawned). */
   const [suggesting, setSuggesting] = useState(false)
+  /** The route the next suggestion would use, for the button's tooltip. */
+  const [commitModel, setCommitModel] = useState<string | undefined>(undefined)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
@@ -144,6 +146,23 @@ export function GitLens(props: GitLensProps) {
   const silentTickCount = useRef(0)
 
   const gitScope: SessionScope = repoRoot === undefined ? scope : { ...scope, repoRoot }
+
+  /** Label the generate button with the model the next suggestion would use.
+   *  Re-read whenever the panel becomes visible: the pinned route lives in the
+   *  side card settings, so a change made there lands on the next visit. */
+  const scopeSessionId = scope.sessionId
+  const scopeCwd = scope.cwd
+  useEffect(() => {
+    if (!visible) return
+    let cancelled = false
+    api.gitCommitModel({ sessionId: scopeSessionId, ...(scopeCwd === undefined ? {} : { cwd: scopeCwd }) })
+      .then(view => {
+        if (cancelled) return
+        setCommitModel(view.route === undefined ? undefined : `${view.route.provider}/${view.route.model}`)
+      })
+      .catch(() => { if (!cancelled) setCommitModel(undefined) })
+    return () => { cancelled = true }
+  }, [visible, scopeSessionId, scopeCwd])
 
   /** Publish a complete checkout-derived view. Status, branch choices and
    *  history are one consistency unit: never mix rows from two worktrees. */
@@ -361,6 +380,12 @@ export function GitLens(props: GitLensProps) {
     }
   }
 
+  /** The generate button's label/tooltip: names the model when one resolves,
+   *  so the user knows which provider the draft will run on. */
+  const generateLabel = commitModel === undefined
+    ? t('generateCommitMessage')
+    : t('generateCommitMessageWith', { model: commitModel })
+
   /** Ask the host to draft a commit message from the pending changes, then
    *  fill the message box (still editable; regenerating is allowed). */
   const suggestMessage = async (): Promise<void> => {
@@ -576,14 +601,20 @@ export function GitLens(props: GitLensProps) {
               onChange={(event) => { setCommitMsg(event.target.value); setCommitError(null) }}
               onKeyDown={(event) => {
                 if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
+                // Ctrl/Cmd+G drafts the message, mirroring the button (the
+                // placeholder advertises it).
+                if ((event.ctrlKey || event.metaKey) && (event.key === 'g' || event.key === 'G')) {
+                  event.preventDefault()
+                  void suggestMessage()
+                }
               }}
             />
             <button
               type="button"
               className={suggesting ? `${css.gitSuggestButton} ${css.gitSuggestBusy}` : css.gitSuggestButton}
-              aria-label={t('generateCommitMessage')}
+              aria-label={generateLabel}
               aria-busy={suggesting}
-              title={t('generateCommitMessage')}
+              title={generateLabel}
               disabled={busy || suggesting || (stagedEntries.length === 0 && unstagedEntries.length === 0)}
               onClick={() => { void suggestMessage() }}
             >

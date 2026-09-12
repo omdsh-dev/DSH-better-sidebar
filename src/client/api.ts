@@ -349,6 +349,11 @@ export const api = {
    *  setting (advisory; empty when the harness exposes no LLM service). */
   gitModels: (scope: SessionScope, signal?: AbortSignal) =>
     call<GitModelCatalog>('git.models', scopePayload(scope, {}), signal),
+  /** The route the NEXT commit-message suggestion would use (pinned → the
+   *  conversation's own → the harness default); absent when none resolves.
+   *  Cheaper than `gitModels`: no catalog discovery. */
+  gitCommitModel: (scope: SessionScope, signal?: AbortSignal) =>
+    call<{ route?: GitModelRoute; pinned: boolean }>('git.commit-model', scopePayload(scope, {}), signal),
   gitBranch: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
     call<{ current: string; names: string[] }>('git.branch', gitPayload(scope, worktree, {}), signal),
   gitCheckout: (scope: SessionScope, branch: string, worktree?: string) =>
