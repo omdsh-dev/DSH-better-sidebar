@@ -56,6 +56,19 @@ describe('createNativeTabRecords', () => {
     expect(records.get('tab-4')?.expanded).toEqual([])
   })
 
+  it('rebuilds a record when the same id now belongs to another session', () => {
+    // A session switch rebuilds the native layout under the same tab ids; a
+    // record from the previous session must not leak its scope or its
+    // expansion into the new one.
+    const records = createNativeTabRecords()
+    records.ensure({ id: 'tab-8', kind: 'editor', title: 'Files', params: undefined, scope })
+    records.toggleExpanded('tab-8', '/work/src')
+    const other = { sessionId: 'another', cwd: '/other' }
+    const rebuilt = records.ensure({ id: 'tab-8', kind: 'editor', title: 'Files', params: undefined, scope: other })
+    expect(rebuilt.scope.sessionId).toBe('another')
+    expect(rebuilt.expanded).toEqual([])
+  })
+
   it('notifies subscribers and forgets a dropped record', () => {
     const records = createNativeTabRecords()
     records.ensure({ id: 'tab-5', kind: 'terminal', title: 'Terminal', params: undefined, scope })
@@ -353,6 +366,79 @@ describe('NativeTabBody full-height host wrapper', () => {
     expect(wrapper, 'the full-height host wrapper must exist').not.toBeNull()
     expect(wrapper!.querySelector('[data-stub-body]'), 'the descriptor component renders inside the wrapper').not.toBeNull()
     expect(wrapper!.childElementCount).toBe(1)
+    act(() => { root?.unmount() })
+    host.remove()
+  })
+
+  it('keeps the expansion set across a tab switch (the body remounts)', () => {
+    // The whole point of the registry surviving unmounts: the native sidebar
+    // unmounts a hidden pane tab's BODY and remounts it on return, so a record
+    // dropped by the mount cleanup would collapse every expanded folder on
+    // each tab switch (and lose the terminal's own per-tab selection with it).
+    // This drives the REAL body through a switch — and asserts the record is
+    // still there right after the unmount, with nothing left to re-create it —
+    // so it fails if the cleanup drops the record again.
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const service = createBetterSidebarService(store)
+    const records = createNativeTabRecords()
+    service.registerTab({
+      id: 'stub',
+      title: 'Stub',
+      // The body reads its own record through the adapter's `records` prop
+      // (`view.expanded`), which the switch must not reset.
+      component: () => createElement('div', { 'data-stub-body': '' }),
+    })
+    const sessions = { list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } }
+    const ctx = { sessions } as never
+    const info = {
+      tab: {
+        id: 'native-9',
+        kind: 'stub',
+        title: 'Stub',
+        contentId: 'sidebar://stub',
+        visible: true,
+        navigation: { address: 'sidebar://stub', params: undefined, revision: 0 },
+        signal: new AbortController().signal,
+      },
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    let root: Root | undefined
+    act(() => {
+      root = createRoot(host)
+      root.render(createElement(NativeTabBody, {
+        sessionId: 's1',
+        ctx,
+        store,
+        service,
+        records,
+        descriptorId: 'stub',
+        useTabInfo: () => info,
+      }))
+    })
+    expect(records.get('native-9')?.expanded, 'the record exists while the body is mounted').toEqual([])
+    act(() => { records.toggleExpanded('native-9', '/work/src') })
+    // Switch away (the host unmounts the body) …
+    act(() => { root?.unmount() })
+    expect(
+      records.get('native-9')?.expanded,
+      'the record (and the tree expansion it holds) must survive the unmount',
+    ).toEqual(['/work/src'])
+    // … and back: the remount reuses that same record.
+    act(() => {
+      root = createRoot(host)
+      root.render(createElement(NativeTabBody, {
+        sessionId: 's1',
+        ctx,
+        store,
+        service,
+        records,
+        descriptorId: 'stub',
+        useTabInfo: () => info,
+      }))
+    })
+    expect(records.get('native-9')?.expanded, 'the remounted body still sees the expanded folders').toEqual(['/work/src'])
     act(() => { root?.unmount() })
     host.remove()
   })
