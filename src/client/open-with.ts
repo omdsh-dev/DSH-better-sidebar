@@ -200,9 +200,12 @@ function schemeOf(template: string): string | undefined {
   return /^[a-z][a-z0-9+.-]*$/i.test(scheme) ? scheme : undefined
 }
 
-/** Normalize a filesystem path for embedding in a URL (backslashes → '/'). */
+/** Normalize a filesystem path for embedding in a URL: convert backslashes to
+ *  forward slashes, then percent-encode characters that are invalid in a URL
+ *  path (spaces, Unicode, #, etc.). The colon after a drive letter and the
+ *  forward slashes are kept as-is — they are valid URL path characters. */
 export function normalizeUrlPath(path: string): string {
-  return path.replace(/\\/g, '/')
+  return encodeURI(path.replace(/\\/g, '/'))
 }
 
 /** A fresh custom-editor id (uuid when available, time-based fallback). */
