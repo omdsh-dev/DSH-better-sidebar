@@ -123,7 +123,10 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
     close(sessionId, tabId) {
       const record = records.get(tabId)
       if (record === undefined) return undefined
-      records.drop(tabId)
+      // Only a record THIS session owns may be forgotten: native tab ids are
+      // minted per session, so the same id names another session's live tab
+      // too (removing that one would leave its body mounted but inert).
+      if (record.scope.sessionId === sessionId) records.remove(tabId)
       const api = controller()
       if (api !== undefined) {
         if (sessionId === activeSessionId(ctx)) api.close(tabId)
