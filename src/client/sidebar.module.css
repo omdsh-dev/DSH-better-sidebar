@@ -1576,20 +1576,92 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-primary);
 }
 
-.editorImageWrap {
+.editorImageView {
   flex: 1;
   min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.editorImageToolbar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  /* Opaque on purpose: the toolbar floats over the picture, and a translucent
+     chip over a photograph is unreadable at exactly the zoom levels a reader
+     reaches for it. */
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.editorImageButton {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xs-strong-13);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.editorImageButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.editorImageZoom {
+  min-width: 42px;
+  text-align: center;
+  font: var(--dsw-font-xs-strong-13);
+  color: var(--dsw-alias-label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.editorImageStage {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: auto;
   padding: 12px;
+  cursor: grab;
+  /* The stage owns the touch gesture stream: a drag pans the picture instead
+     of scrolling (or bouncing) the pane. */
+  touch-action: none;
+}
+
+.editorImageStage:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l2);
+  outline-offset: -2px;
+}
+
+.editorImageStage[data-image-dragging] {
+  cursor: grabbing;
 }
 
 .editorImage {
-  max-width: 100%;
-  max-height: 100%;
+  display: block;
+  max-width: none;
+  max-height: none;
   object-fit: contain;
+  /* A stretched box + object-fit: contain is what keeps the painted picture
+     aligned with the transform: offsetWidth/offsetHeight then describe the
+     picture's box exactly (see ImageView.tsx). */
+  transform-origin: center center;
+  will-change: transform;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .editorMd {
