@@ -9,7 +9,8 @@
  * The command builders are pure — the platform is injectable — so every
  * per-platform branch is unit-testable without spawning anything.
  */
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { parentOf, requireAbsolute } from './fs-tree.ts'
 import { SidebarError } from './wire.ts'
 
@@ -22,9 +23,42 @@ export interface ExternalCommand {
   args: string[]
 }
 
-/** Reveal/select a path in the OS file manager. On Linux there is no common
- *  select protocol — the containing directory is opened instead (KISS). */
-export function revealCommand(path: string, platform: NodeJS.Platform = process.platform): ExternalCommand {
+/** True when the host runs inside WSL: a Linux kernel with Windows interop.
+ *  "Reveal in the OS file manager" must then go to the Windows side — there
+ *  is no Linux desktop file manager here (and usually no xdg-open). */
+export function isWslRuntime(): boolean {
+  if (process.env.WSL_DISTRO_NAME) return true
+  try {
+    return /microsoft/i.test(readFileSync('/proc/version', 'utf8'))
+  } catch {
+    return false
+  }
+}
+
+/** Translate a WSL absolute path to the Windows form Explorer understands:
+ *  `\\wsl.localhost\<distro>\…` for the Linux filesystem, `C:\…` for /mnt/c. */
+function windowsPathOf(path: string): string {
+  const out = execFileSync('wslpath', ['-w', path], { encoding: 'utf8' }).trim()
+  if (out === '') throw new Error(`wslpath returned no Windows path for ${path}`)
+  return out
+}
+
+/** A Linux-path → Windows-path translator (injectable so the builder below
+ *  stays pure — the real translator shells out to `wslpath`). */
+export type WindowsPathTranslator = (path: string) => string
+
+/** Reveal/select a path in the OS file manager. On plain Linux there is no
+ *  common select protocol — the containing directory is opened instead
+ *  (KISS). Under WSL the opener is the Windows Explorer, fed a translated
+ *  path so the entry is selected exactly like the win32 branch. `wsl` and
+ *  `toWindows` default to non-WSL so the builder stays pure; the launch
+ *  route injects `isWslRuntime()` and the real translator. */
+export function revealCommand(
+  path: string,
+  platform: NodeJS.Platform = process.platform,
+  wsl: boolean = false,
+  toWindows: WindowsPathTranslator = windowsPathOf,
+): ExternalCommand {
   switch (platform) {
     case 'darwin':
       return { command: 'open', args: ['-R', path] }
@@ -33,6 +67,9 @@ export function revealCommand(path: string, platform: NodeJS.Platform = process.
     case 'win32':
       return { command: 'explorer.exe', args: [`/select,${path}`] }
     default: {
+      if (wsl) {
+        return { command: 'explorer.exe', args: [`/select,${toWindows(path)}`] }
+      }
       const parent = parentOf(path)
       return { command: 'xdg-open', args: [parent ?? path] }
     }
@@ -79,10 +116,16 @@ export function validateExternalUrl(raw: string): string {
  */
 export function launchExternal(action: OpenExternalAction, value: string): { started: true } {
   const platform = process.platform
+  const wsl = platform === 'linux' && isWslRuntime()
   const spec = action === 'reveal'
-    ? revealCommand(requireAbsolute(value), platform)
+    ? revealCommand(requireAbsolute(value), platform, wsl)
     : urlCommand(validateExternalUrl(value), platform)
-  const child = spawn(spec.command, spec.args, { detached: true, stdio: 'ignore' })
+  // WSL: the .exe opener runs through Windows interop — keep the Windows
+  // system dirs on PATH even when the host was started with a slim PATH.
+  const env = wsl && spec.command.endsWith('.exe')
+    ? { ...process.env, PATH: `${process.env.PATH ?? ''}:/mnt/c/WINDOWS:/mnt/c/WINDOWS/System32` }
+    : process.env
+  const child = spawn(spec.command, spec.args, { env, detached: true, stdio: 'ignore' })
   child.on('error', () => { /* opener missing/denied: handled by the OS */ })
   child.unref()
   return { started: true }

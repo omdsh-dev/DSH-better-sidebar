@@ -24,6 +24,16 @@ describe('revealCommand', () => {
     expect(revealCommand('/a/b.txt', 'linux')).toEqual({ command: 'xdg-open', args: ['/a'] })
     expect(revealCommand('/', 'linux')).toEqual({ command: 'xdg-open', args: ['/'] })
   })
+
+  it('wsl (linux host with Windows interop): selects the file in the Windows Explorer', () => {
+    // Translator injected — the real one shells out to `wslpath` (see
+    // windowsPathOf), which does not exist on non-WSL CI hosts.
+    const toWindows = (p: string): string => p === '/a/b.txt' ? '\\\\wsl.localhost\\Ubuntu\\a\\b.txt' : p
+    expect(revealCommand('/a/b.txt', 'linux', true, toWindows)).toEqual({
+      command: 'explorer.exe',
+      args: ['/select,\\\\wsl.localhost\\Ubuntu\\a\\b.txt'],
+    })
+  })
 })
 
 describe('urlCommand', () => {
