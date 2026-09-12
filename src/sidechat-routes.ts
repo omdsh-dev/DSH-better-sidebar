@@ -26,8 +26,7 @@ import { createUserMessage, type ContentBlock, type UserMessage } from '@deepsee
 import type { Agent, AgentSetup, CreateAgentOptions, ResumeAgentOptions } from '@deepseek-ai/dsh-agent'
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import type { Context as CordisContext } from '@deepseek-ai/cordis'
-import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
-import { SessionLogOffset } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type {
   Context,
   SidebarAgentPresetsService,
@@ -270,7 +269,12 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
           ...(agentPreset === undefined ? {} : { agentPreset }),
         },
         seed: seed as unknown as readonly SessionEvent[],
-        inheritedEventCount: SessionLogOffset(seed.length),
+        // Branded number, compile-time only: DSH Desktop's plugin-facing
+        // `@deepseek-ai/dsh-session` surface carries the type but not the runtime
+        // stamp, so importing the value aborts the whole host half at load time.
+        // `Array#length` is a non-negative safe integer by construction — exactly
+        // what the upstream stamp asserts — so the cast is lossless here.
+        inheritedEventCount: seed.length as SessionLogOffset,
         agentOptions: { ...parent.options },
         setup,
         signal: AbortSignal.timeout(CREATE_TIMEOUT_MS),
