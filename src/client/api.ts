@@ -91,10 +91,25 @@ export interface GitModelProvider {
   models: GitModelInfo[]
 }
 
-/** The model catalog `git.models` answers with (empty when the harness has
- *  no LLM service — the dropdown then only offers "follow the conversation"). */
+/** The model catalog `git.models` answers with. It merges three sources so
+ *  the picker is usable even before a conversation has run:
+ *  - `providers`: the adapters' own catalog (`llm.listModels`),
+ *  - `recent`: routes THIS session already used (newest first),
+ *  - `default`: the harness default selection (`agent-default-model`), which
+ *    exists without any session at all.
+ *  `llm` says whether the harness exposes an LLM surface: an empty catalog is
+ *  then "no adapters registered", not "the route failed". */
 export interface GitModelCatalog {
+  llm: boolean
   providers: GitModelProvider[]
+  recent: GitModelRoute[]
+  default?: GitModelRoute
+}
+
+/** One pinned-model value: the route the host dispatches on. */
+export interface GitModelRoute {
+  provider: string
+  model: string
 }
 
 /** One git log row. */

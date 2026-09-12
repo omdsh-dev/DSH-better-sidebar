@@ -236,15 +236,114 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
-.commitModelSelect {
+/* Follow-the-conversation switch: a native checkbox (real semantics and
+   focus) beside its label, matching the side card's switch rows. */
+.commitModelRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.commitModelSwitch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.commitModelSwitch input {
+  accent-color: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+/* The searchable route box: the wrapper span the Menu renders around the
+   input. Its default `.root` is `display: inline-flex`, which shrinks to the
+   input's intrinsic width — overridden here so the box fills the panel. The
+   candidate list itself is portalled to <body> (see the component), so its
+   width is pinned to the input at runtime. */
+.commitModelMenuRoot {
+  display: block;
+  width: 100%;
+}
+
+.commitModelBox {
+  display: block;
+}
+
+/* The stored route, shown on its own line: the search box below stays an empty
+   filter, so reopening the picker lists every candidate instead of filtering
+   down to the model that is already selected. */
+.commitModelCurrent {
+  margin-bottom: 4px;
+  font: var(--dsw-font-xxs-strong-12);
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+
+.commitModelInput {
+  width: 100%;
+  box-sizing: border-box;
   height: 26px;
-  max-width: 100%;
   padding: 0 6px;
-  border: 1px solid var(--dsw-alias-border-l1);
+  border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 6px;
-  background: var(--dsw-alias-bg-l2);
+  background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-primary);
   font: var(--dsw-font-xxs-12);
+}
+
+.commitModelInput:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* One candidate row inside the portalled Menu: the route text plus its source
+   badge. The menu shell (background, hover, radius) is the primitive's. */
+.commitModelOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* border-box, or `width: 100%` plus the horizontal padding overflows its
+     label box by 12px — which the Menu's `.itemLabel{overflow:hidden}` then
+     slices off the trailing badge (measured: a clipped "默认"). */
+  box-sizing: border-box;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  text-align: left;
+  cursor: pointer;
+}
+
+.commitModelOption:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* `flex-basis: auto` (NOT `1`, which is basis 0) matters here: the menu card
+   is sized shrink-to-fit, and a zero basis makes that intrinsic width ignore
+   the route text — the card then converges on the input's width alone and the
+   trailing badge is clipped by the Menu's own `.itemLabel{overflow:hidden}`.
+   With auto the text contributes its real width, and `min-width: 0` still lets
+   it ellipsize when the card hits the Menu's max-width. */
+.commitModelOptionText {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The badge keeps its full width under any shrink pressure. */
+.commitModelOptionNote {
+  flex: 0 0 auto;
+  min-width: max-content;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-tertiary);
 }
 
 .commitModelHint {

@@ -59,9 +59,12 @@ import { BlockAssembler, createUserMessage, type GenerateOptions, type StreamChu
 import {
   buildCommitPrompt,
   cleanSuggestion,
-  formatModelRoute,
+  collectModelRoutes,
+  defaultRouteOf,
+  modelEntryOf,
   normalizeLanguage,
   parseModelRoute,
+  providerEntryOf,
   truncateDiff,
   type CommitModelRoute,
 } from './commit-message.ts'
@@ -235,6 +238,17 @@ function conversationModelRoute(ctx: Context, sessionId: string): CommitModelRou
     }
   }
   return undefined
+}
+
+/**
+ * The harness's DEFAULT model route (settings namespace `agent-default-model`):
+ * the route a brand-new conversation would use, so the suggestion still works
+ * on a session that has not sent its first message (no `request/header` yet)
+ * and in a deployment whose LLM adapters advertise no catalog.
+ */
+function defaultModelRoute(ctx: Context): CommitModelRoute | undefined {
+  const service = ctx.get('agentDefaultModel') as { currentSelection(): unknown } | undefined
+  return defaultRouteOf(service?.currentSelection())
 }
 
 /**
@@ -605,7 +619,12 @@ function buildApi(
       const { cwd, sessionId } = await gitCwdOf(payload)
       const repoRoot = selectedRepoOf(payload)
       const language = normalizeLanguage((payload as { language?: unknown }).language)
-      const route = pinnedCommitRouteOf(getSettings) ?? conversationModelRoute(ctx, sessionId)
+      // Pinned first, then the conversation's own route, then the harness
+      // default: a session that has not sent its first message has no
+      // `request/header` yet, but the default selection is still usable.
+      const route = pinnedCommitRouteOf(getSettings)
+        ?? conversationModelRoute(ctx, sessionId)
+        ?? defaultModelRoute(ctx)
       if (route === undefined) {
         throw new SidebarError('git-suggest-error', 'cannot resolve a model route for this conversation', 503)
       }
@@ -630,34 +649,45 @@ function buildApi(
     // advisory and best-effort — a provider whose adapter cannot be asked
     // (or that advertises nothing) is reported with an empty model list
     // instead of failing the whole catalog.
-    'git.models': async () => {
+    'git.models': async (payload) => {
+      const record = (payload ?? {}) as { sessionId?: unknown }
       const llm = ctx.get('llm') as {
         listProviders(): unknown
         listModels(provider: string): Promise<unknown>
       } | undefined
-      if (llm === undefined) return { providers: [] }
-      const listed = await Promise.resolve(llm.listProviders()).catch(() => undefined)
-      const entries = Array.isArray(listed) ? listed.slice(0, MODEL_CATALOG_PROVIDER_LIMIT) : []
-      const providers = await Promise.all(entries.map(async (entry: unknown) => {
-        const record = (entry ?? {}) as Record<string, unknown>
-        const provider = typeof record.provider === 'string' ? record.provider : ''
-        if (provider === '') return { provider: '', name: '', models: [] }
-        const name = typeof record.name === 'string' ? record.name : provider
-        const models = await Promise.resolve(llm.listModels(provider))
-          .then(list => (Array.isArray(list) ? list.slice(0, MODEL_CATALOG_MODEL_LIMIT) : []))
-          .catch(() => [])
-        return {
-          provider,
-          name,
-          models: models.flatMap((model: unknown) => {
-            const item = (model ?? {}) as Record<string, unknown>
-            const id = typeof item.id === 'string' ? item.id : ''
-            if (id === '') return []
-            return [{ id, name: typeof item.name === 'string' && item.name !== '' ? item.name : id }]
-          }),
-        }
-      }))
-      return { providers: providers.filter(provider => provider.provider !== '') }
+      const providers = llm === undefined ? [] : await Promise.resolve(llm.listProviders())
+        .then(listed => (Array.isArray(listed) ? listed.slice(0, MODEL_CATALOG_PROVIDER_LIMIT) : []))
+        .then(entries => Promise.all(entries.map(async (entry: unknown) => {
+          const parsed = providerEntryOf(entry)
+          if (parsed === undefined) return { provider: '', name: '', models: [] }
+          const models = await Promise.resolve(llm.listModels(parsed.provider))
+            .then(list => (Array.isArray(list) ? list.slice(0, MODEL_CATALOG_MODEL_LIMIT) : []))
+            .catch(() => [])
+          return {
+            provider: parsed.provider,
+            name: parsed.label,
+            models: models.flatMap((model: unknown) => {
+              const item = modelEntryOf(model)
+              return item === undefined ? [] : [{ id: item.id, name: item.name }]
+            }),
+          }
+        })))
+        .catch(() => [])
+      // The conversation-derived history: routes this session actually used
+      // (newest first). It is the catalog's stand-in before the harness
+      // advertises anything, and it is how a model the user picked in the
+      // chat becomes pinnable here.
+      const events = typeof record.sessionId === 'string'
+        ? ctx.sessions.get(record.sessionId)?.snapshotEvents() ?? []
+        : []
+      return {
+        // Whether the harness exposes an LLM surface at all: an empty
+        // catalog is then "no adapters registered", not "the route failed".
+        llm: llm !== undefined,
+        providers: providers.filter(provider => provider.provider !== ''),
+        recent: collectModelRoutes(events as readonly { type?: unknown; data?: unknown }[]),
+        default: defaultModelRoute(ctx),
+      }
     },
     // The session's file-tool events for the changes tab's session lens
     // (and its badge): the CLIENT runtime's sessions face has no event-log

@@ -63,6 +63,99 @@ export function formatModelRoute(route: CommitModelRoute): string {
   return `${route.provider}/${route.model}`
 }
 
+/** Cap of the conversation-derived route list (the adapter catalog is
+ *  capped separately, host-side). */
+export const MODEL_ROUTE_HISTORY_LIMIT = 20
+
+/** First non-empty string among the candidates (unknown-shape reads). */
+function firstString(...values: readonly unknown[]): string {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim() !== '') return value.trim()
+  }
+  return ''
+}
+
+/**
+ * One provider entry of the harness LLM catalog, read tolerantly: the
+ * adapter-registration shape is not part of this plugin's contract, so every
+ * plausible field is probed and an entry that yields no route is dropped
+ * (never guessed) — a wrong route would fail at generation time instead.
+ * @param entry - one `listProviders()` element.
+ * @returns the provider route and a display label, or undefined.
+ */
+export function providerEntryOf(entry: unknown): { provider: string; label: string } | undefined {
+  if (entry === null || typeof entry !== 'object') return undefined
+  const record = entry as Record<string, unknown>
+  const provider = firstString(record.provider, record.route, record.id)
+  if (provider === '') return undefined
+  const label = firstString(record.name, record.displayName, record.label, record.title, provider)
+  return { provider, label }
+}
+
+/**
+ * One model entry of a provider's advertised catalog (same tolerant read as
+ * {@link providerEntryOf}).
+ * @param entry - one `listModels()` element.
+ * @returns the model id and a display name, or undefined.
+ */
+export function modelEntryOf(entry: unknown): { id: string; name: string } | undefined {
+  if (entry === null || typeof entry !== 'object') return undefined
+  const record = entry as Record<string, unknown>
+  const id = firstString(record.id, record.model, record.name)
+  if (id === '') return undefined
+  return { id, name: firstString(record.name, record.displayName, record.label, record.title, id) }
+}
+
+/**
+ * The harness's default model selection (settings namespace
+ * `agent-default-model`), read tolerantly: it is the route a NEW conversation
+ * would use, so it is available before any message is sent — unlike the
+ * conversation-derived history.
+ * @param selection - `agentDefaultModel.currentSelection()`.
+ * @returns the default route, or undefined when the service or its value is
+ * unavailable.
+ */
+export function defaultRouteOf(selection: unknown): CommitModelRoute | undefined {
+  if (selection === null || typeof selection !== 'object') return undefined
+  const record = selection as Record<string, unknown>
+  const provider = firstString(record.provider)
+  const model = firstString(record.model)
+  if (provider === '' || model === '') return undefined
+  return { provider, model }
+}
+
+/**
+ * Every provider/model route a session's log has actually USED, newest first
+ * and de-duplicated: the newest `request/header` event wins, so the list is
+ * the routes this deployment really dispatched on — the fallback a pinned
+ * model picker can always offer, even when the harness advertises no catalog.
+ * @param events - the session's log events (newest last).
+ * @param limit - max routes to return.
+ * @returns the distinct routes, newest first.
+ */
+export function collectModelRoutes(
+  events: readonly { type?: unknown; data?: unknown }[],
+  limit = MODEL_ROUTE_HISTORY_LIMIT,
+): CommitModelRoute[] {
+  const routes: CommitModelRoute[] = []
+  const seen = new Set<string>()
+  for (let index = events.length - 1; index >= 0 && routes.length < limit; index--) {
+    const event = events[index]
+    if (event === undefined || event.type !== 'request/header') continue
+    const config = (event.data as { header?: { config?: unknown } } | undefined)?.header?.config
+    if (config === null || typeof config !== 'object') continue
+    const provider = (config as { provider?: unknown }).provider
+    const model = (config as { model?: unknown }).model
+    if (typeof provider !== 'string' || provider === '') continue
+    if (typeof model !== 'string' || model === '') continue
+    const key = `${provider}/${model}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    routes.push({ provider, model })
+  }
+  return routes
+}
+
 /**
  * The Conventional-Commits prompt for one pending change set. Staged wins
  * upstream (it is exactly what `git commit` records); `files` is the matching

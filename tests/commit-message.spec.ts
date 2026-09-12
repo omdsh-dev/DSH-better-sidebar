@@ -9,9 +9,13 @@ import { describe, expect, it } from 'vitest'
 import {
   buildCommitPrompt,
   cleanSuggestion,
+  collectModelRoutes,
+  defaultRouteOf,
   formatModelRoute,
+  modelEntryOf,
   normalizeLanguage,
   parseModelRoute,
+  providerEntryOf,
   SUGGEST_DIFF_LIMIT,
   truncateDiff,
 } from '../src/commit-message.ts'
@@ -77,6 +81,67 @@ describe('buildCommitPrompt', () => {
 
   it('differs by language', () => {
     expect(buildCommitPrompt('zh', [], '').system).not.toBe(buildCommitPrompt('en', [], '').system)
+  })
+})
+
+describe('collectModelRoutes', () => {
+  /** One `request/header` event as the session log carries it. */
+  function header(provider: string, model: string): { type: string; data: unknown } {
+    return { type: 'request/header', data: { header: { config: { provider, model } } } }
+  }
+
+  it('collects the routes a session actually used, newest first and de-duplicated', () => {
+    const events = [
+      { type: 'user/message', data: {} },
+      header('deepseek', 'deepseek-chat'),
+      header('openai', 'gpt-4o'),
+      header('deepseek', 'deepseek-chat'),
+    ]
+    expect(collectModelRoutes(events)).toEqual([
+      { provider: 'deepseek', model: 'deepseek-chat' },
+      { provider: 'openai', model: 'gpt-4o' },
+    ])
+  })
+
+  it('honors the cap and ignores headerless / malformed rows', () => {
+    const events = [
+      header('p1', 'm1'),
+      { type: 'request/header', data: {} },
+      { type: 'request/header', data: { header: {} } },
+      header('p2', 'm2'),
+      header('p3', 'm3'),
+    ]
+    expect(collectModelRoutes(events, 2).map(route => route.model)).toEqual(['m3', 'm2'])
+    expect(collectModelRoutes([])).toEqual([])
+  })
+})
+
+describe('catalog reads (unknown harness shapes)', () => {
+  it('reads a provider from any plausible field and never invents one', () => {
+    expect(providerEntryOf({ provider: 'deepseek', name: 'DeepSeek' }))
+      .toEqual({ provider: 'deepseek', label: 'DeepSeek' })
+    // A differently-named registration must not become an empty route.
+    expect(providerEntryOf({ id: 'openai' })).toEqual({ provider: 'openai', label: 'openai' })
+    for (const value of [undefined, null, '', 42, {}, { name: 'no route' }]) {
+      expect(providerEntryOf(value), String(value)).toBeUndefined()
+    }
+  })
+
+  it('reads a model id/name tolerantly', () => {
+    expect(modelEntryOf({ id: 'deepseek-chat' })).toEqual({ id: 'deepseek-chat', name: 'deepseek-chat' })
+    expect(modelEntryOf({ model: 'gpt-4o', displayName: 'GPT-4o' })).toEqual({ id: 'gpt-4o', name: 'GPT-4o' })
+    // A display-only title is never an id: sending a localized label to a
+    // provider would fail at generation time instead of falling back.
+    expect(modelEntryOf({ title: 'unnamed' })).toBeUndefined()
+    expect(modelEntryOf(null)).toBeUndefined()
+  })
+
+  it('reads the harness default selection, or nothing', () => {
+    expect(defaultRouteOf({ provider: 'deepseek', model: 'deepseek-chat' }))
+      .toEqual({ provider: 'deepseek', model: 'deepseek-chat' })
+    for (const value of [undefined, null, {}, { provider: 'deepseek' }, { model: 'm' }]) {
+      expect(defaultRouteOf(value), String(value)).toBeUndefined()
+    }
   })
 })
 
