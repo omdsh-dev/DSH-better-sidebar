@@ -49,11 +49,11 @@
 
 - **回归守护（确定性）**：`tests/native-surface.spec.ts` 修复后 **25 passed**；把 `src/client/native/tab-adapter.tsx` + `surface.ts` 回退到 `origin/main` 后 **5 条红**，其中组件级那条的断言正是用户症状——`the entered session keeps a record of its own: expected false to be true`，另有 `the entering body does not inherit the leaving one's tree state`、`the live record survives the other body's teardown`。组件级用例刻意照抄宿主形状：外层 `div` 以 sessionId 作 key、内层 body 以同一 tab id 渲染，一次 `act` 完成「进入会话 render + 离开会话 unmount」。
 - **门槛**：`pnpm typecheck` / `pnpm lint` 干净。`pnpm test` = 127 files / **1319 passed** / 9 skipped / 33 failed——**这 33 条失败全部在 `tests/agent-pty.spec.ts` 与 `tests/smoke.spec.ts`，报 `posix_spawnp failed`（本机沙箱不允许 node-pty 起进程）**；把本次改动 stash 掉跑同样两个文件仍是同样 33 条红，与本次改动无关。
-- **未做**：真机 3080 部署验证（本地 profile 仍是 0.19.0 产物），留给 review / 发版流程。
+- **真机（用户执行）**：把 web profile 以 `link:` 指向本分支后，用户在本机 3080（Windows 浏览器经 LAN 隧道 `http://127.0.0.2:3080`）实测——**切换对话后文件浏览器照常响应，原先必现的「切进去失灵、切回来原来好的也一起失灵」未再出现**。该次链接只改了 profile 的依赖声明（`dsh-better-sidebar: link:/Users/y/workspace/dsh-better-sidebar`；pnpm 顺带移除了旧 npm 副本自带的 164 个依赖），其余插件与 `dsh.profile.bundles` 清单不变；实测完已按用户要求换回 npm `latest`（0.19.1，不含本修复）。
 
 ## 未覆盖（诚实记录）
 
-- 单测锁定的是宿主契约的**形状**（每会话计数 + 会话级 seat 按 sessionId 换 key，读的是 `0.1.5-rc.1` / `rc.2` 两个版本的产物，行为一致），**没有**在真实浏览器里端到端点过一次；真机复现步骤（两个新会话各开「文件」→ 确认两边 `data-dockkit-tab` 同号 → 连续切两次 → 点文件夹无反应 → 折叠/展开右侧栏即自愈）已写入 PR 描述。
+- 单测锁定的是宿主契约的**形状**（每会话计数 + 会话级 seat 按 sessionId 换 key，读的是 `0.1.5-rc.1` / `rc.2` 两个版本的产物，行为一致）。**浏览器里的端到端复现由用户先于本次修复完成**（复现步骤：两个新会话各开「文件」→ 确认两边 `data-dockkit-tab` 同号 → 连续切两次 → 点文件夹无反应 → 折叠/展开右侧栏即自愈），本次修复后的真机确认亦由用户执行；插件作者侧（我）没有独立跑过那条浏览器复现，确定性证据是上面的单测红/绿。
 - 记录表仍按 tab id 解析 `update/close/has`，语义是「当前存在的那条记录」；同上，宿主挂载模型是单会话面板，故无歧义。
 - 「离开会话记录被用过（version > 0）时那一次切换会自愈」是既有行为，本次不动：修复后不再有记录被误删，该分支不再产生失效，只是展开状态在会话间本就应当各自独立。
 
