@@ -21,7 +21,7 @@ setupReactAct()
 const media: MarkdownHtmlMedia = {
   scope: { sessionId: 's1', cwd: '/ws' },
   path: '/ws/docs/README.md',
-  origin: 'http://gui.origin',
+  baseUrl: 'http://gui.origin/proxy/3080/',
 }
 const codeLabels = { copyLabel: 'Copy', copiedLabel: 'Copied' }
 
@@ -84,7 +84,7 @@ describe('MarkdownDocument (HTML leaves)', () => {
   it('rewrites local media sources through the /sidebar/file route', async () => {
     const { container, root } = await renderDocument('<picture><img src="./shot.png" alt="shot"/></picture>')
     const img = container.querySelector('img')
-    expect(img?.getAttribute('src')).toBe('http://gui.origin/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fshot.png&cwd=%2Fws')
+    expect(img?.getAttribute('src')).toBe('http://gui.origin/proxy/3080/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fshot.png&cwd=%2Fws')
     await unmount(root)
   })
 })
@@ -189,9 +189,9 @@ describe('MarkdownDocument (local markdown images)', () => {
     ].join('\n'))
     const imgs = [...container.querySelectorAll('img')]
     expect(imgs.length, 'both local images must render as <img>, not alt fallback').toBe(2)
-    expect(imgs[0]?.getAttribute('src')).toBe('http://gui.origin/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fassets%2Ficon.svg&cwd=%2Fws')
+    expect(imgs[0]?.getAttribute('src')).toBe('http://gui.origin/proxy/3080/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fassets%2Ficon.svg&cwd=%2Fws')
     expect(imgs[0]?.getAttribute('alt')).toBe('icon')
-    expect(imgs[1]?.getAttribute('src')).toBe('http://gui.origin/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Flogo.png&cwd=%2Fws')
+    expect(imgs[1]?.getAttribute('src')).toBe('http://gui.origin/proxy/3080/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Flogo.png&cwd=%2Fws')
     expect(imgs[1]?.getAttribute('alt')).toBe('logo')
     await unmount(root)
   })
@@ -204,7 +204,7 @@ describe('MarkdownDocument (local markdown images)', () => {
     ].join('\n'))
     const img = container.querySelector('img')
     expect(img, 'the markdown-syntax image after an HTML run must render').not.toBeNull()
-    expect(img?.getAttribute('src')).toBe('http://gui.origin/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fimg.png&cwd=%2Fws')
+    expect(img?.getAttribute('src')).toBe('http://gui.origin/proxy/3080/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fimg.png&cwd=%2Fws')
     await unmount(root)
   })
 
@@ -216,7 +216,7 @@ describe('MarkdownDocument (local markdown images)', () => {
   })
 
   it('is idempotent for already-rewritten media URLs', async () => {
-    const url = 'http://gui.origin/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fimg.png&cwd=%2Fws'
+    const url = 'http://gui.origin/proxy/3080/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fimg.png&cwd=%2Fws'
     const { container, root } = await renderDocument(`![a](${url})`)
     const img = container.querySelector('img')
     expect(img?.getAttribute('src')).toBe(url)

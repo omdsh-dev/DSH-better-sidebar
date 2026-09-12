@@ -18,9 +18,10 @@
  * graph rows; a chunk id is none of those, so resolution would be version-
  * dependent). Materialization is plugin-owned:
  *
- * 1. inject <script src="/sidebar/bundle/<name>.js"> (classic same-origin
- *    script; the official /plugins/<id>/client.js route cannot serve
- *    arbitrary file names, so the plugin's own host route serves the chunks),
+ * 1. inject a classic same-origin `/sidebar/bundle/<name>.js` script, resolved
+ *    through the injected document base so proxy prefixes survive; the official
+ *    /plugins/<id>/client.js route cannot serve arbitrary file names, so the
+ *    plugin's own host route serves the chunks,
  * 2. read the factory from the global registry,
  * 3. call it with a require that resolves the platform externals through
  *    the injected module system's `import(spec)` (the `ctx.modules` service)
@@ -50,6 +51,8 @@
  * client.js); an edit that does land while a core HMR happens is caught by
  * the ETag comparison on the next activation.
  */
+import { hostRouteUrl } from './host-route-url.ts'
+
 export type ChunkName = 'terminal' | 'editor' | 'mermaid' | 'locale'
 
 /** The module exports a chunk factory provides (namespace-ish record). */
@@ -80,7 +83,7 @@ export const CHUNK_EXTERNALS: readonly string[] = [
 ]
 
 /** Chunk script endpoint served by the plugin host half (src/bundle-route.ts). */
-const CHUNK_URL = (name: ChunkName): string => `/sidebar/bundle/${name}.js`
+const CHUNK_URL = (name: ChunkName): string => hostRouteUrl(`sidebar/bundle/${name}.js`).href
 
 /** Bound on the revalidation HEAD round-trip. A timeout fails open (drop +
  *  re-fetch on the next open) so a stuck bundle route can never wedge lazy

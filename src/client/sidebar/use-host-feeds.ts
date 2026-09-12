@@ -12,6 +12,7 @@ import { isNarrowWidth } from '../breakpoints.ts'
 import { detectNewDirectSubagent } from '../subagent-detect.ts'
 import { detectNewJob } from '../subagent-jobs.ts'
 import { t } from '../locales.ts'
+import { hostWebSocketUrl } from '../host-route-url.ts'
 
 /** How many consecutive reconnect failures stop the agent-terminals push loop
  * (mirror of the terminal view's own cap; the loop restarts on session switch). */
@@ -106,8 +107,7 @@ export function useHostFeeds(feeds: {
     let failures = 0
     const connect = (): void => {
       if (closed) return
-      const url = new URL('/sidebar/ws/agent-terminals', location.origin)
-      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+      const url = hostWebSocketUrl('sidebar/ws/agent-terminals')
       url.search = new URLSearchParams({ sessionId }).toString()
       socket = new WebSocket(url.toString())
       socket.onmessage = (event) => {
@@ -168,8 +168,7 @@ export function useHostFeeds(feeds: {
     let failures = 0
     const connect = (): void => {
       if (closed) return
-      const url = new URL('/sidebar/ws/agent-opens', location.origin)
-      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+      const url = hostWebSocketUrl('sidebar/ws/agent-opens')
       url.search = new URLSearchParams({ sessionId }).toString()
       socket = new WebSocket(url.toString())
       socket.onmessage = (event) => {

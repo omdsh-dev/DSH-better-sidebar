@@ -27,6 +27,9 @@ const LAUNCH = parseLaunchUrl(RAW_URL)
 /** Origin for URL construction (a token URL would corrupt path joins). */
 export const ORIGIN = LAUNCH.origin
 
+/** Directory pathname of the launch URL (`/` or `/prefix/`). */
+export const PATHNAME = LAUNCH.pathname
+
 /** page.goto target: the launch URL as printed (token included —
  *  navigating it exchanges the token for the cookie). */
 export const PAGE_URL = LAUNCH.pageUrl
@@ -38,7 +41,7 @@ export function pageUrl(extra: Record<string, string>): string {
 
 /** Absolute URL for the plugin's own (public, unauthenticated) API route. */
 export function sidebarApi(path: string): string {
-  return `${ORIGIN}/sidebar/api/${path}`
+  return `${ORIGIN}${PATHNAME}sidebar/api/${path}`
 }
 
 /** Exchange the one-time launch token for the auth-cookie header pair: the
@@ -76,7 +79,8 @@ export async function gotoPage(page: Page, extra: Record<string, string> = {}): 
       value: cookieHeader.slice(eq + 1),
       url: ORIGIN,
     }])
-    await page.goto(pageUrlWith(ORIGIN, extra), { waitUntil: 'domcontentloaded' })
+    const stamped = new URL(PATHNAME, ORIGIN)
+    await page.goto(pageUrlWith(stamped.href, extra), { waitUntil: 'domcontentloaded' })
     return
   }
   await page.goto(pageUrl(extra), { waitUntil: 'domcontentloaded' })
@@ -113,22 +117,23 @@ export async function hostRpc<T = unknown>(
   const attempt = rpcAttempt(method, args)
   rpcCounter += 1
   const rpcId = `e2e-${method}-${rpcCounter}`
-  const res = await api.post(attempt.path, {
+  const path = PATHNAME === '/' ? attempt.path : `${PATHNAME.replace(/\/$/, '')}${attempt.path}`
+  const res = await api.post(path, {
     data: { type: 'client-request', rpcId, method: attempt.method, payload: attempt.payload },
   })
   const bodyText = await res.text()
   if (!res.ok()) {
-    throw new Error(`hostRpc ${method} [${attempt.path}] HTTP ${res.status()}: ${bodyText.slice(0, 400)}`)
+    throw new Error(`hostRpc ${method} [${path}] HTTP ${res.status()}: ${bodyText.slice(0, 400)}`)
   }
   let envelope: { type?: string; result?: { ok: true; value: T } | { ok: false; error: unknown } }
   try {
     envelope = JSON.parse(bodyText) as typeof envelope
   } catch {
-    throw new Error(`hostRpc ${method} [${attempt.path}]: non-JSON response: ${bodyText.slice(0, 400)}`)
+    throw new Error(`hostRpc ${method} [${path}]: non-JSON response: ${bodyText.slice(0, 400)}`)
   }
   const result = envelope.result
   if (result === undefined || result.ok !== true) {
-    throw new Error(`hostRpc ${method} [${attempt.path}] envelope error: ${bodyText.slice(0, 400)}`)
+    throw new Error(`hostRpc ${method} [${path}] envelope error: ${bodyText.slice(0, 400)}`)
   }
   return result
 }

@@ -1,3 +1,4 @@
+import './browser-globals.ts'
 import { describe, expect, it } from 'vitest'
 import { isAbsolutePath, relativeTo } from '../src/client/paths.ts'
 import { resolveSidebarPath } from '../src/client/produced-files.ts'
@@ -60,10 +61,10 @@ describe('path helpers', () => {
     // The marker is platform-neutral now: the host resolves the decoded
     // '//server/share/...' form per-platform, so no cwd/OS signal is needed.
     expect(htmlUrl({ sessionId: 's' }, '\\\\server\\share\\proj\\a.html'))
-      .toBe('/sidebar/html/s//server/share/proj/a.html')
+      .toBe('http://localhost/sidebar/html/s//server/share/proj/a.html')
     expect(htmlUrl({ sessionId: 's', cwd: '/home/me' }, '//server/share/a.html'))
-      .toBe('/sidebar/html/s//server/share/a.html')
+      .toBe('http://localhost/sidebar/html/s//server/share/a.html')
     expect(htmlUrl({ sessionId: 's', cwd: '/home/me' }, '/home/me/index.html'))
-      .toBe('/sidebar/html/s/home/me/index.html')
+      .toBe('http://localhost/sidebar/html/s/home/me/index.html')
   })
 })

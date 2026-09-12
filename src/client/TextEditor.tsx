@@ -22,6 +22,7 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
 import { api, htmlUrl } from './api.ts'
+import { hostDocumentBase } from './host-route-url.ts'
 import { markdownPreviewSource } from './markdown-frontmatter.ts'
 import { rewriteLocalImageUrls } from './markdown-images.ts'
 import { languageForPath } from './lang.ts'
@@ -330,7 +331,7 @@ export function TextEditor(props: FileViewerProps) {
   /** The preview source with local image destinations rewritten to absolute
    *  media URLs (see {@link rewriteLocalImageUrls}). */
   const previewText = markdown
-    ? rewriteLocalImageUrls(previewMdText, scope, path, window.location.origin)
+    ? rewriteLocalImageUrls(previewMdText, scope, path, hostDocumentBase())
     : previewMdText
   /** md/mermaid block split for the preview (mermaid fences lift out). Split
    *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
@@ -359,7 +360,7 @@ export function TextEditor(props: FileViewerProps) {
    *  `media` identity, so a fresh object per render would re-sanitize every
    *  keystroke. */
   const htmlMedia = useMemo<MarkdownHtmlMedia>(
-    () => ({ scope, path, origin: window.location.origin }),
+    () => ({ scope, path, baseUrl: hostDocumentBase() }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [scope.sessionId, scope.cwd, path],
   )

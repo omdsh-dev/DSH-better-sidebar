@@ -3,6 +3,7 @@ import { rewriteLocalImageUrls } from '../src/client/markdown-images.ts'
 import type { SessionScope } from '../src/client/api.ts'
 
 const ORIGIN = 'http://127.0.0.1:3080'
+const PROXY_BASE = 'https://gui.example.test/user/proxy/3080/'
 const scope: SessionScope = { sessionId: 'abc', cwd: '/repo' }
 
 describe('rewriteLocalImageUrls', () => {
@@ -11,6 +12,11 @@ describe('rewriteLocalImageUrls', () => {
     const out = rewriteLocalImageUrls(md, scope, '/repo/docs/readme.md', ORIGIN)
     expect(out).toContain(`![a](${ORIGIN}/sidebar/file?sessionId=abc&path=%2Frepo%2Fdocs%2Fimg.png&cwd=%2Frepo)`)
     expect(out).toContain(`![b](${ORIGIN}/sidebar/file?sessionId=abc&path=%2Frepo%2Fdocs%2Fimages%2Fb.jpg&cwd=%2Frepo)`)
+  })
+
+  it('retains a reverse-proxy prefix while keeping the destination absolute', () => {
+    const out = rewriteLocalImageUrls('![a](./img.png)', scope, '/repo/readme.md', PROXY_BASE)
+    expect(out).toContain('https://gui.example.test/user/proxy/3080/sidebar/file?')
   })
 
   it('expects the rewritten destination to be an absolute http URL MarkdownText accepts', () => {

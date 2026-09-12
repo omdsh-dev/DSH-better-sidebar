@@ -28,6 +28,7 @@ const elementStub = (): Record<string, unknown> => ({
 
 if (g.document === undefined) {
   g.document = {
+    baseURI: 'http://localhost/',
     createElement: () => elementStub(),
     createDocumentFragment: () => elementStub(),
     addEventListener: () => {},

@@ -36,6 +36,15 @@ describe('host-protocol: launch URL parsing', () => {
     const launch = parseLaunchUrl(TOKEN_URL)
     expect(launch.origin).toBe(BARE_URL)
     expect(launch.pageUrl).toBe(TOKEN_URL)
+    expect(launch.pathname).toBe('/')
+    expect(launch.token).toBe('AbCdEf0123456789_-AbCdEf0123456789_-AbCd')
+  })
+
+  it('keeps a reverse-proxy directory prefix on the launch URL', () => {
+    const proxied = 'http://127.0.0.1:4199/dataops/proxy/3080/?token=AbCdEf0123456789_-AbCdEf0123456789_-AbCd'
+    const launch = parseLaunchUrl(proxied)
+    expect(launch.origin).toBe(BARE_URL)
+    expect(launch.pathname).toBe('/dataops/proxy/3080/')
     expect(launch.token).toBe('AbCdEf0123456789_-AbCdEf0123456789_-AbCd')
   })
 
