@@ -17,7 +17,11 @@ import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-load
 import { registerBuiltins } from './builtins/index.ts'
 import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
-import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
+import { registerTurnTailInterception } from './intercept.tsx'
+import { createNativeTabRecords } from './native/tab-adapter.tsx'
+import { registerNativeSurface } from './native/index.ts'
+import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
+import { createNativeSurface } from './native/surface.ts'
 import { registerLinkInterception } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
@@ -137,6 +141,27 @@ export function apply(ctx: Context): void {
   // are ready by the time the sidebar renders.
   const service = createBetterSidebarService(sidebarStore)
   ctx.provide('betterSidebar', service)
+  // The native right-Sidebar surface: the plugin's content is registered as
+  // DSH tab types (one per descriptor) and every open routes there, so the
+  // right column belongs to the host and only the bottom workbench stays
+  // plugin-owned. Both halves live for this fiber's lifetime.
+  const nativeRecords = createNativeTabRecords()
+  const nativeSurface = createNativeSurface(ctx, nativeRecords)
+  service.setSurface(nativeSurface)
+  ctx.effect(
+    () => registerNativeSurface({ ctx, store: sidebarStore, service, records: nativeRecords }),
+    'dsh-better-sidebar: native right-Sidebar registrations',
+  )
+  // The bottom workbench's expand/collapse button in DSH's session header
+  // (the header's corner seat belongs to the native sidebar's own control).
+  ctx.effect(
+    () => registerBottomToggle(ctx, sidebarStore),
+    'dsh-better-sidebar: bottom-workbench toggle',
+  )
+  ctx.effect(
+    () => () => { nativeSurface.dispose(); service.setSurface(undefined) },
+    'dsh-better-sidebar: native right-Sidebar surface',
+  )
   // Terminal tab titles use the host's effective shell name (e.g. bash/zsh)
   // instead of "Terminal 1". Start with a safe fallback and replace it as
   // soon as the host shell info resolves. Tabs created before the response
@@ -148,8 +173,7 @@ export function apply(ctx: Context): void {
     terminalTitle = name
     const snapshot = service.getSnapshot()
     if (snapshot.state === undefined) return
-    const tabs = allLeaves(snapshot.state.splits)
-      .concat(allLeaves(snapshot.state.bottomSplits))
+    const tabs = allLeaves(snapshot.state.bottomSplits)
       .flatMap(leaf => leaf.tabs)
     for (const tab of tabs) {
       if (tab.type === 'terminal' && !isAgentTabId(tab.id) && tab.title === fallbackTitle) {
@@ -340,18 +364,6 @@ export function apply(ctx: Context): void {
         }
       },
       'dsh-better-sidebar: turn-tail interception',
-    )
-
-    ctx.effect(
-      () => {
-        try {
-          return registerOpenPathInterception(ctx, sidebarStore)
-        } catch (error) {
-          fail('interception', error)
-          return () => {}
-        }
-      },
-      'dsh-better-sidebar: open-path interception',
     )
 
     ctx.effect(

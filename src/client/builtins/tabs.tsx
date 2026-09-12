@@ -8,8 +8,11 @@
  * `browser:<n>` the same way (no quota). The editor IS the files window
  * (the old standalone explorer merged into it).
  */
-import { IconCodeOutline16, IconFolderOpen16, IconNewChatOutline16, IconPanelLeftOutline16, IconThinkOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCodeOutline16, IconPanelLeftOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
+import {
+  browserTabIcon, changesTabIcon, filesTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,
+} from './tab-icons.tsx'
 import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
 import { openSidebarFile } from '../intercept.tsx'
@@ -22,7 +25,6 @@ import { SubagentView } from '../SubagentView.tsx'
 import { consumeSidechatSeed, SideChatView, sidechatThreadIdOf } from '../SideChatView.tsx'
 import { api } from '../api.ts'
 import { BrowserView } from '../BrowserView.tsx'
-import { IconTerminalOutline16, IconDiffOutline16, IconGlobeOutline16, IconFloatWindowOutline16, IconPanelBottomOutline16 } from '../icons.tsx'
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shared.ts'
 import type { ComponentType } from 'react'
 import type { SessionScope } from '../api.ts'
@@ -72,7 +74,7 @@ function terminalUuid(): string {
 
 /** Count UI-owned terminals (agent:` tabs excluded — they are the model's). */
 function uiTerminalCount(state: SidebarState): number {
-  return allLeaves(state.splits)
+  return allLeaves(state.bottomSplits)
     .flatMap(leaf => leaf.tabs)
     .filter(tab => tab.type === 'terminal' && !isAgentTabId(tab.id)).length
 }
@@ -82,11 +84,12 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
   return [
     {
       id: 'editor',
+      description: () => t('guideDescFiles'),
       // The single files window: an editor tab with no path IS the file
       // explorer (empty hint + docked tree); with a path it previews/edits
       // the file. Visible in the + menu in the explorer's old slot.
       title: () => t('files'),
-      icon: (size: number) => <IconFolderOpen16 size={size} />,
+      icon: filesTabIcon,
       order: 10,
       hidden: false,
       dedupeKey: (tab) => tab.path,
@@ -148,37 +151,13 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
       // log, and the git status needs a fetch — both stay out of the badge).
       id: 'git',
       title: () => t('changes'),
-      icon: (size: number) => <IconDiffOutline16 size={size} />,
+      description: () => t('guideDescGit'),
+      icon: changesTabIcon,
       order: 20,
       single: true,
       badge: (_ctx, scope) => {
         const count = opCountOf(scope.sessionId)
         return count === undefined || count === 0 ? null : count
-      },
-      // Declarative settings: the diff-open picker (free window vs docked
-      // pane) renders as an iconed select row under the changes card's gear
-      // in the Side card settings page.
-      settings: {
-        toggles: [{
-          key: 'changesDiffFloat',
-          type: 'select',
-          title: () => t('changesDiffOpenTitle'),
-          desc: () => t('changesDiffOpenDesc'),
-          options: [
-            {
-              value: true,
-              icon: (size: number) => <IconFloatWindowOutline16 size={size} />,
-              title: () => t('changesDiffOpenFloat'),
-              desc: () => t('changesDiffOpenFloatDesc'),
-            },
-            {
-              value: false,
-              icon: (size: number) => <IconPanelBottomOutline16 size={size} />,
-              title: () => t('changesDiffOpenPane'),
-              desc: () => t('changesDiffOpenPaneDesc'),
-            },
-          ],
-        }],
       },
       component: ({ ctx, store, scope, tab, visible, onOpenDiff }) => (
         <ChangesTab
@@ -195,7 +174,8 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
     {
       id: 'subagent',
       title: () => t('subagent'),
-      icon: (size: number) => <IconThinkOutline16 size={size} />,
+      description: () => t('guideDescSubagent'),
+      icon: tasksTabIcon,
       order: 30,
       single: true,
       // Declarative settings: the auto-open switches render under this row in
@@ -223,7 +203,8 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
     {
       id: 'sidechat',
       title: () => t('sideChat'),
-      icon: (size: number) => <IconNewChatOutline16 size={size} />,
+      description: () => t('guideDescSidechat'),
+      icon: sidechatTabIcon,
       order: 35,
       // Codex-style: EVERY side conversation is its own tab. A plain open
       // mints a fresh tab flagged `autoCreate` (the view creates the EMPTY
@@ -268,7 +249,8 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
     {
       id: 'terminal',
       title: () => t('terminal'),
-      icon: (size: number) => <IconTerminalOutline16 size={size} />,
+      description: () => t('guideDescTerminal'),
+      icon: terminalTabIcon,
       order: 40,
       available: (_ctx, _scope, state) => uiTerminalCount(state) < TERMINAL_LIMIT,
       // Declarative settings: the model-facing terminal tools switch, the
@@ -332,7 +314,8 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
     {
       id: 'browser',
       title: () => t('browser'),
-      icon: (size: number) => <IconGlobeOutline16 size={size} />,
+      description: () => t('guideDescBrowser'),
+      icon: browserTabIcon,
       order: 50,
       // Declarative settings: the sandbox escape hatch, the link-takeover
       // MASTER switch, and the per-protocol takeover switches (http on /
@@ -376,7 +359,7 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
     {
       id: 'diff',
       title: () => t('changes'),
-      icon: (size: number) => <IconDiffOutline16 size={size} />,
+      icon: changesTabIcon,
       order: -1,
       hidden: true,
       dedupeKey: (tab) => tab.id,

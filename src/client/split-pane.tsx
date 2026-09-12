@@ -29,8 +29,6 @@ export interface WorkbenchActions {
   /** Reorder within a pane (drop onto another tab inserts before it). */
   moveTabBefore: (payload: TabDragPayload, toPane: string, beforeTabId: string) => void
   resizeSplit: (splitId: string, index: number, deltaFrac: number) => void
-  /** Float a docked tab out as a free window (tab context menu entry). */
-  floatTab: (tabId: string) => void
   /**
    * Pin/unpin a terminal tab (v0.17.0+). The shell snapshots the home cwd
    * at pin time; null clears the pin. Optional: when undefined the tab
@@ -216,7 +214,6 @@ function LeafView(props: {
           if (before === null) actions.moveTabToEdge(payload, leaf.id, 'center')
           else actions.moveTabBefore(payload, leaf.id, before)
         }}
-        onFloatTab={actions.floatTab}
         onPinTab={actions.pinTab}
       />
       {leaf.tabs.length > 0 ? (
@@ -319,7 +316,7 @@ export function Workbench(props: {
   return (
     <div className={css.workbench}>
       <NodeView
-        node={tree ?? state.splits}
+        node={tree ?? state.bottomSplits}
         state={state}
         newTabOptions={newTabOptions}
         actions={actions}

@@ -7,7 +7,7 @@
  */
 import { useEffect, useRef } from 'react'
 import type { Context, SidebarSessionList } from '../../context-types.ts'
-import { firstLeaf, reconcileAgentTerminals, togglePanel, type SidebarStore } from '../state.ts'
+import { mirrorAgentWaits, reconcileAgentTerminals, type SidebarStore } from '../state.ts'
 import { isNarrowWidth } from '../breakpoints.ts'
 import { detectNewDirectSubagent } from '../subagent-detect.ts'
 import { detectNewJob } from '../subagent-jobs.ts'
@@ -27,6 +27,55 @@ const FAILURE_LIMIT = 3
  */
 const AUTO_OPEN_DEBOUNCE_MS = 500
 
+/**
+ * The native column's public face, as this module reaches it. Both actions
+ * act on the session whose surface is MOUNTED (the controller reads its
+ * binding), which is why the park below is gated on the target session being
+ * the on-screen one.
+ */
+interface NativeColumnFace {
+  isExpanded?: () => boolean
+  toggleExpanded?: () => void
+}
+
+/**
+ * Activate the Tasks page (the `subagent` tab type) in DSH's native right
+ * Sidebar — the landing the two auto-open switches promise: the right column
+ * IS the sidebar the user means, while the plugin's own bottom workbench only
+ * serves its own flows (its `+` menu and the first-expansion terminal). Every
+ * other open in this plugin already lands there, so a `target: 'bottom'` here
+ * puts the Tasks page in the bottom bar instead.
+ *
+ * A background activation must not take over a narrow viewport: below 768px
+ * the host draws that column FULLSCREEN, so the tab is placed and the column
+ * is put back to collapsed — parked, waiting behind the expand control,
+ * instead of covering the chat. The host expands on every open
+ * (`openContent` plans `setExpanded(true)`) and offers no option to suppress
+ * it, hence the read-then-restore pair: both commits land in one React batch,
+ * so the column never renders the intermediate state. The viewport is read
+ * when the activation FIRES (the debounced subagent trigger included), so a
+ * resize while arming is honoured.
+ *
+ * @param ctx - the client context (`ctx.sidebarRight` + `ctx.betterSidebar`).
+ * @param sessionId - the session the feed reports the activity for.
+ * @param options.background - `true` for background activity (parks on narrow
+ *   viewports); `false` for the explicit topology jump-back, which is a user
+ *   gesture and always leaves the column as the host expanded it.
+ */
+function activateTasksPage(ctx: Context, sessionId: string, options: { background: boolean }): void {
+  const column = ctx.get('sidebarRight') as unknown as NativeColumnFace | undefined
+  const park = options.background
+    // The face acts on the MOUNTED session: parking is only meaningful (and
+    // only safe) when the activation targets the one on screen.
+    && ctx.sessions.list.getSnapshot().current === sessionId
+    && isNarrowWidth(window.innerWidth)
+    // Only a column the user had COLLAPSED is put back: an expanded one is in
+    // use, and closing it under the user would be worse than the takeover.
+    && column?.isExpanded?.() === false
+  ctx.get('betterSidebar')?.openTab({ type: 'subagent', title: t('subagent') })
+  if (park) column?.toggleExpanded?.()
+}
+
 export function useHostFeeds(feeds: {
   ctx: Context
   store: SidebarStore
@@ -45,8 +94,9 @@ export function useHostFeeds(feeds: {
    * the same shell without losing the agent's work — capped like the
    * terminal view's own reconnect loop, so a refused endpoint never spins
    * forever (the next session switch restarts the loop).
-   * While the terminal tab type is disabled in settings, pushes are
-   * ignored (no auto-added tabs); re-enabling makes the next push converge.
+   * While the terminal tab type is disabled in settings, pushes add / remove
+   * no tabs — but the authoritative wait map is STILL mirrored (see the
+   * branch below); re-enabling makes the next push converge on both.
    */
   useEffect(() => {
     if (sessionId === undefined) return
@@ -63,10 +113,15 @@ export function useHostFeeds(feeds: {
       socket.onmessage = (event) => {
         if (typeof event.data !== 'string') return
         try {
-          const list = JSON.parse(event.data) as Array<{ uuid: string; title: string; command: string; exited: boolean }>
+          const list = JSON.parse(event.data) as Array<{ uuid: string; title: string; command: string; exited: boolean; waiting?: { needle: string; since: number } | null }>
           if (!Array.isArray(list)) return
           store.reduce(s => ctx.get('betterSidebar')?.isTabEnabled('terminal') === false
-            ? s
+            // Terminal tabs are disabled: skip tab add/remove reconciliation,
+            // but STILL mirror the authoritative wait map — a wait resolving
+            // during the disabled window must clear its banner state, or a
+            // re-enabled terminal keeps a stale banner until the next
+            // unrelated push.
+            ? mirrorAgentWaits(s, list)
             : reconcileAgentTerminals(s, list))
         } catch {
           // Malformed push: ignore (the next push will reconcile).
@@ -167,11 +222,11 @@ export function useHostFeeds(feeds: {
    * Subagent auto-activation: the moment the current conversation spawns its
    * FIRST direct subagent (a 0 → N transition on the list feed), the "auto
    * open" pref is on, and the Tasks tab type is enabled in settings, activate
-   * the Tasks page. Single-instance semantics focus an existing pane tab in
-   * place or raise an existing free window; a new tab lands in the right pane
-   * and is never duplicated. On wide viewports the right panel also expands;
-   * on narrow viewports background activity never forces the full-screen
-   * drawer open over the chat.
+   * the Tasks page in DSH's native right Sidebar. Single-instance semantics
+   * focus an existing tab in place; a new tab lands in that column and is
+   * never duplicated. Landing it EXPANDS the column on wide viewports, while
+   * a narrow viewport (where the host draws that column fullscreen) parks the
+   * tab instead of taking the screen over — see {@link activateTasksPage}.
    * Switching to a session that already has subagents never triggers — its
    * baseline starts at the current count — so a deliberate layout is never
    * fought.
@@ -197,17 +252,7 @@ export function useHostFeeds(feeds: {
       if (!detectNewDirectSubagent(baseline, ctx.sessions.list.getSnapshot(), sessionId)) return
       if (!store.getPrefs().autoOpenSubagent) return
       if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
-      // Read the viewport when the delayed activation fires: a resize while
-      // the debounce is armed must not let background activity force the
-      // narrow full-screen drawer open over the chat.
-      if (!isNarrowWidth(window.innerWidth)) {
-        store.reduce(s => s.panelOpen ? s : togglePanel(s))
-      }
-      // Choose the right panel as the landing pane for a newly created Tasks
-      // tab. Single-instance dedupe still activates an existing pane tab in
-      // place or raises an existing free window.
-      store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
-      ctx.get('betterSidebar')?.openTab({ type: 'subagent', title: t('subagent') })
+      activateTasksPage(ctx, sessionId, { background: true })
     }, AUTO_OPEN_DEBOUNCE_MS)
     autoOpenPendingRef.current = { baseline, timer }
   }, [sessionList, sessionId, store, ctx])
@@ -223,11 +268,12 @@ export function useHostFeeds(feeds: {
    * Job auto-activation: the moment a NEW background job appears for the
    * current conversation (a job id the previous snapshot lacked), the
    * auto-open pref is on, and the Tasks tab type is enabled, activate the Tasks
-   * page that contains the background-jobs section. The right panel expands
-   * only on wide viewports. Unlike the subagent trigger (0 → N only), ANY
-   * new job id triggers: the agent may start several jobs in one session, and
-   * each should surface. A fresh page load never triggers — its baseline starts
-   * at the current snapshot.
+   * page that contains the background-jobs section — in DSH's native right
+   * Sidebar, expanded on wide viewports and parked on narrow ones exactly like
+   * the subagent trigger ({@link activateTasksPage}). Unlike that trigger
+   * (0 → N only), ANY new job id triggers: the agent may start several jobs in
+   * one session, and each should surface. A fresh page load never triggers —
+   * its baseline starts at the current snapshot.
    */
   const jobBaselineRef = useRef<SidebarSessionList | undefined>(undefined)
   useEffect(() => {
@@ -237,11 +283,7 @@ export function useHostFeeds(feeds: {
     if (!detectNewJob(prev, sessionList, sessionId)) return
     if (!store.getPrefs().autoOpenJobs) return
     if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
-    if (!isNarrowWidth(window.innerWidth)) {
-      store.reduce(s => s.panelOpen ? s : togglePanel(s))
-    }
-    store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
-    ctx.get('betterSidebar')?.openTab({ type: 'subagent', title: t('subagent') })
+    activateTasksPage(ctx, sessionId, { background: true })
   }, [sessionList, sessionId, store, ctx])
 
   /**
@@ -250,19 +292,18 @@ export function useHostFeeds(feeds: {
    * session's OWN layout (a fresh child session defaults to the explorer).
    * The README contract says the Subagent page must stay open with the jumped
    * node highlighted — so once the current session becomes the recorded jump
-   * target, re-open the Subagent page on top of the child's layout (expanding
-   * the panel first if it is collapsed). Only this explicit node click arms
-   * the flag, so switching to a subagent session by any other means keeps
-   * that session's own layout untouched.
+   * target, re-open the Tasks page on top of the child's layout, in DSH's
+   * native right Sidebar. This one is an explicit user gesture, so it always
+   * takes the host's expansion (no narrow-viewport parking). Only this node
+   * click arms the flag, so switching to a subagent session by any other means
+   * keeps that session's own layout untouched.
    */
   const subagentJumpRef = useRef<string | undefined>(undefined)
   useEffect(() => {
     const pending = subagentJumpRef.current
     if (pending === undefined || sessionId !== pending) return
     subagentJumpRef.current = undefined
-    store.reduce(s => s.panelOpen ? s : togglePanel(s))
-    store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
-    ctx.get('betterSidebar')?.openTab({ type: 'subagent', title: t('subagent') })
+    activateTasksPage(ctx, sessionId, { background: false })
   }, [sessionId, store, ctx])
 
   return { subagentJumpRef }

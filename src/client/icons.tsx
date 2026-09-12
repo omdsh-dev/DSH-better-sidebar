@@ -1,23 +1,11 @@
 /**
  * Icons the sidebar needs beyond the primitives set: a terminal glyph (the
- * icon library has none), a diff glyph, and the two panel-toggle glyphs for
- * the top-right cluster. Per-tab icons live on the tab descriptors
+ * icon library has none), a diff glyph, and the bottom-workbench toggle.
+ * Per-tab icons live on the tab descriptors
  * (`descriptor.icon`), not in a type-keyed switch — the icon mapping was
  * registry-ized with the tab types.
  */
 import type { IconProps } from '@deepseek-ai/dsh-client-ui-primitives'
-
-/**
- * Right-panel toggle glyph (the "侧拉" button): a frame with a filled strip
- * along its RIGHT edge, in the app's outline style (1.5px stroke,
- * currentColor).
- */
-export const IconPanelRightOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="1.5" y="2" width="13" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
-    <rect x="10.5" y="3.25" width="2.75" height="9.5" rx="1" fill="currentColor" stroke="none" />
-  </svg>
-)
 
 /**
  * Bottom-panel toggle glyph (the "底栏" button): a frame with a filled strip
@@ -159,17 +147,5 @@ export const IconSaveOutline16 = ({ size = 16, className }: IconProps) => (
 export const IconVscode16 = ({ size = 16, className }: IconProps) => (
   <svg width={size} height={size} className={className} viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
     <path d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z" />
-  </svg>
-)
-
-/**
- * Free-window glyph in the app's outline style (1.5px stroke, currentColor):
- * a background frame with a detached rounded mini-window floating over its
- * top-right — the changes tab's "diff opens as a free window" setting.
- */
-export const IconFloatWindowOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="1.5" y="4.5" width="10" height="10" rx="2" stroke="currentColor" strokeWidth="1.5" />
-    <rect x="9.5" y="1.5" width="5" height="5" rx="1.5" stroke="currentColor" strokeWidth="1.5" fill="none" />
   </svg>
 )

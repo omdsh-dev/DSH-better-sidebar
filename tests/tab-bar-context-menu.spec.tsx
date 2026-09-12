@@ -30,13 +30,12 @@ function stubZh(): void {
   })
 }
 
-const MENU_LABELS = ['移动到自由窗口', '关闭', '关闭其他页签', '关闭左侧页签', '关闭右侧页签']
+const MENU_LABELS = ['关闭', '关闭其他页签', '关闭左侧页签', '关闭右侧页签']
 
 function mountBar(tabs: SidebarTab[], opts: { onPinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void } = {}): {
   tabEls: HTMLElement[]
   onClose: ReturnType<typeof vi.fn>
   onActivate: ReturnType<typeof vi.fn>
-  onFloatTab: ReturnType<typeof vi.fn>
   onPinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void
   unmount: () => void
 } {
@@ -44,7 +43,6 @@ function mountBar(tabs: SidebarTab[], opts: { onPinTab?: (tabId: string, scope: 
   document.body.append(container)
   const onClose = vi.fn()
   const onActivate = vi.fn()
-  const onFloatTab = vi.fn()
   const onPinTab = opts.onPinTab
   const root: Root = createRoot(container)
   act(() => {
@@ -56,7 +54,6 @@ function mountBar(tabs: SidebarTab[], opts: { onPinTab?: (tabId: string, scope: 
       onClose,
       onNewTab: () => {},
       newTabOptions: [],
-      onFloatTab,
       ...(onPinTab !== undefined ? { onPinTab } : {}),
       onDropTab: () => {},
     }))
@@ -66,7 +63,6 @@ function mountBar(tabs: SidebarTab[], opts: { onPinTab?: (tabId: string, scope: 
     tabEls,
     onClose,
     onActivate,
-    onFloatTab,
     ...(onPinTab !== undefined ? { onPinTab } : {}),
     unmount: () => {
       act(() => { root.unmount() })
@@ -116,15 +112,14 @@ describe('TabBar right-click context menu', () => {
     }
   })
 
-  it('move to free window floats the target tab without closing it', () => {
+  it('close closes the target tab and dismisses the menu', () => {
     stubZh()
-    const { tabEls, onClose, onFloatTab, unmount } = mountBar(fourTabs())
+    const { tabEls, onClose, unmount } = mountBar(fourTabs())
     try {
       act(() => { rightClick(tabEls[1]!) })
       act(() => { menuItems()[0]!.click() })
-      expect(onFloatTab).toHaveBeenCalledTimes(1)
-      expect(onFloatTab).toHaveBeenCalledWith('t2')
-      expect(onClose).not.toHaveBeenCalled()
+      expect(onClose).toHaveBeenCalledTimes(1)
+      expect(onClose).toHaveBeenCalledWith('t2')
       expect(menuItems()).toHaveLength(0)
     } finally {
       unmount()
@@ -136,7 +131,7 @@ describe('TabBar right-click context menu', () => {
     const { tabEls, onClose, unmount } = mountBar(fourTabs())
     try {
       act(() => { rightClick(tabEls[1]!) })
-      act(() => { menuItems()[1]!.click() })
+      act(() => { menuItems()[0]!.click() })
       expect(onClose).toHaveBeenCalledTimes(1)
       expect(onClose).toHaveBeenCalledWith('t2')
       expect(menuItems()).toHaveLength(0)
@@ -150,7 +145,7 @@ describe('TabBar right-click context menu', () => {
     const { tabEls, onClose, unmount } = mountBar(fourTabs())
     try {
       act(() => { rightClick(tabEls[1]!) })
-      act(() => { menuItems()[2]!.click() })
+      act(() => { menuItems()[1]!.click() })
       expect(onClose.mock.calls.map(call => call[0])).toEqual(['t1', 't3', 't4'])
       expect(onClose).not.toHaveBeenCalledWith('t2')
       expect(menuItems()).toHaveLength(0)
@@ -164,7 +159,7 @@ describe('TabBar right-click context menu', () => {
     const { tabEls, onClose, unmount } = mountBar(fourTabs())
     try {
       act(() => { rightClick(tabEls[2]!) })
-      act(() => { menuItems()[3]!.click() })
+      act(() => { menuItems()[2]!.click() })
       expect(onClose.mock.calls.map(call => call[0])).toEqual(['t1', 't2'])
       expect(menuItems()).toHaveLength(0)
     } finally {
@@ -177,7 +172,7 @@ describe('TabBar right-click context menu', () => {
     const { tabEls, onClose, unmount } = mountBar(fourTabs())
     try {
       act(() => { rightClick(tabEls[1]!) })
-      act(() => { menuItems()[4]!.click() })
+      act(() => { menuItems()[3]!.click() })
       expect(onClose.mock.calls.map(call => call[0])).toEqual(['t3', 't4'])
       expect(menuItems()).toHaveLength(0)
     } finally {
@@ -194,9 +189,9 @@ describe('TabBar right-click context menu', () => {
       act(() => { rightClick(single.tabEls[0]!) })
       const items = menuItems()
       // The Menu renders each row as a disabled <button role="menuitem">.
-      expect(items.map(item => (item as HTMLButtonElement).disabled)).toEqual([false, false, true, true, true])
+      expect(items.map(item => (item as HTMLButtonElement).disabled)).toEqual([false, true, true, true])
       // Clicking the disabled row must not close anything.
-      act(() => { items[2]!.click() })
+      act(() => { items[1]!.click() })
       expect(single.onClose).not.toHaveBeenCalled()
     } finally {
       single.unmount()
@@ -205,9 +200,9 @@ describe('TabBar right-click context menu', () => {
     const four = mountBar(fourTabs())
     try {
       act(() => { rightClick(four.tabEls[0]!) })
-      expect(menuItems().map(item => (item as HTMLButtonElement).disabled)).toEqual([false, false, false, true, false])
+      expect(menuItems().map(item => (item as HTMLButtonElement).disabled)).toEqual([false, false, true, false])
       act(() => { rightClick(four.tabEls[3]!) })
-      expect(menuItems().map(item => (item as HTMLButtonElement).disabled)).toEqual([false, false, false, false, true])
+      expect(menuItems().map(item => (item as HTMLButtonElement).disabled)).toEqual([false, false, false, true])
     } finally {
       four.unmount()
     }
@@ -225,7 +220,7 @@ describe('TabBar pin submenu (v0.17.0)', () => {
     const { tabEls, unmount } = mountBar(fourTabs())
     try {
       act(() => { rightClick(tabEls[2]!) }) // t3 = terminal
-      // Exactly the legacy 5-item menu, no pin row.
+      // Exactly the legacy close-only menu, no pin row.
       expect(menuItems().map(item => item.textContent)).toEqual(MENU_LABELS)
     } finally {
       unmount()
@@ -239,13 +234,12 @@ describe('TabBar pin submenu (v0.17.0)', () => {
     try {
       act(() => { rightClick(tabEls[2]!) }) // t3 = UI terminal
       const labels = menuItems().map(item => item.textContent)
-      // float | pin (with submenu indicator) | close | closeOthers | closeLeft | closeRight
-      expect(labels[0]).toBe('移动到自由窗口')
-      expect(labels[1]).toBe('固定终端')
-      expect(labels[2]).toBe('关闭')
+      // pin (with submenu indicator) | close | closeOthers | closeLeft | closeRight
+      expect(labels[0]).toBe('固定终端')
+      expect(labels[1]).toBe('关闭')
       // Hovering the pin row reveals the submenu items. React synthesizes
       // onMouseEnter from the bubbling mouseover event, so dispatch that.
-      act(() => { menuItems()[1]!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
+      act(() => { menuItems()[0]!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
       const sub = submenuItems().map(item => item.textContent)
       expect(sub).toContain('固定到工作区')
       expect(sub).toContain('固定到全局')
@@ -268,7 +262,7 @@ describe('TabBar pin submenu (v0.17.0)', () => {
     try {
       act(() => { rightClick(tabEls[0]!) })
       const labels = menuItems().map(item => item.textContent)
-      expect(labels[1]).toBe('固定 Agent 终端')
+      expect(labels[0]).toBe('固定 Agent 终端')
     } finally {
       unmount()
     }
@@ -324,7 +318,7 @@ describe('TabBar context menu flip geometry (submenu clamping)', () => {
       // rightClick() dispatches at clientY 40 — the top strip, upper half.
       act(() => { rightClick(tabEls[1]!) })
       expect(document.body.getAttribute(ATTR)).toBe('down')
-      act(() => { menuItems()[1]!.click() })
+      act(() => { menuItems()[0]!.click() })
       expect(onClose).toHaveBeenCalledWith('t2')
       expect(document.body.hasAttribute(ATTR)).toBe(false)
     } finally {

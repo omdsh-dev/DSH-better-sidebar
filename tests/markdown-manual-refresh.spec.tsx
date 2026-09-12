@@ -58,7 +58,7 @@ function setup(): {
     component: FakeMarkdownViewer,
   })
   store.setSession('markdown-manual-refresh-session')
-  const home = allLeaves(store.getSnapshot().state!.splits)
+  const home = allLeaves(store.getSnapshot().state!.bottomSplits)
     .flatMap(leaf => leaf.tabs)
     .find(candidate => candidate.type === 'editor')!
   const tab: SidebarTab = { ...home, path: '/tmp/notes.md', title: 'notes.md' }

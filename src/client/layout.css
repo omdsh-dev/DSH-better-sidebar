@@ -1,47 +1,25 @@
 /**
- * Layout push: an open panel occupies layout instead of floating over it.
- * The right panel reserves padding inside the AppFrame three-column grid,
- * so the app sidebar, conversation, and details column all remain to its
- * left while the frame's border-box stays viewport-wide. Harness measures
- * that border-box to choose desktop versus narrow presentation; preserving
- * it prevents a desktop window from entering narrow mode merely because the
- * plugin panel opened.
+ * Layout push: the bottom workbench occupies layout instead of floating over
+ * the conversation. The right column belongs to DSH's native Sidebar, so this
+ * stylesheet pushes no width — only the workbench's height.
  *
- * AppFrame positions its details drag handle from the measured border-box.
- * Move that handle left by the same reserved width so it stays on the details
- * column edge. The ordinary sidebar handle remains at its native coordinate.
- *
- * The bottom panel squeezes only the conversation column. The anchor is the
+ * The workbench squeezes only the conversation column. The anchor is the
  * [data-dsh-center-col] tag the Sidebar shell's locator writes on the
  * frame's measured center grid item (Sidebar.tsx locate — not a positional
  * path: the frame also contains an overlay layer and drag handles). A
  * stretched grid item shrinks by its bottom margin, so the conversation
  * output and composer lift without touching either sidebar.
  *
- * Sizes ride CSS variables updated by the Sidebar shell (0 while collapsed).
- * Expand/collapse uses the host theme duration; drags disable transitions so
- * every reserved edge tracks the pointer.
+ * The size rides a CSS variable updated by the Sidebar shell (0 while
+ * collapsed). Expand/collapse uses the host theme duration; drags disable
+ * transitions so the reserved edge tracks the pointer.
  */
-/* Current shells expose [data-dsh-frame]; rc.8-era shells expose the same
-   AppFrame only as the root slot's direct child. */
-#root [data-dsh-frame],
-#root > [data-slot="root"] > div {
-  box-sizing: border-box;
-  padding-right: var(--dsh-sidebar-width, 0px);
-  transition: padding-right var(--ds-transition-duration-slow) var(--ds-ease-in-out);
-}
-
-#root [data-dsh-frame] > [data-side="details"],
-#root > [data-slot="root"] > div > [data-side="details"] {
-  transform: translateX(calc(0px - var(--dsh-sidebar-width, 0px)));
-  transition:
-    left var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    transform var(--ds-transition-duration-slow) var(--ds-ease-in-out);
-}
-
 /* The AppFrame's center column. The Sidebar shell's locator (Sidebar.tsx
-   locate/measureCenter) tags the measured column node with
-   [data-dsh-center-col] — one attribute write per node lifetime. The rule
+   locate/measureCenter, resolving via center-column.ts) tags the measured
+   column node with [data-dsh-center-col] — one attribute write per node
+   lifetime. The locator anchors on the conversation slot host
+   (`main.conversation` on DSH 0.1.5-alpha.2+, `conversation` on alpha.1)
+   and skips the transparent display:contents slot hosts above it. The rule
    used to anchor on a structural has()-selector over the conversation slot
    wrapper, whose match cache invalidates on every #root subtree mutation
    (the streaming chat mutates it constantly), re-evaluating the selector
@@ -73,13 +51,7 @@ body[data-dsh-sidebar-collapsed] [data-slot="conversation.session.header"] > hea
   padding-right: 78px;
 }
 
-body[data-dsh-sidebar-dragging] #root [data-dsh-frame],
-body[data-dsh-sidebar-dragging] #root > [data-slot="root"] > div,
-body[data-dsh-sidebar-dragging] #root [data-dsh-frame] > [data-side="details"],
-body[data-dsh-sidebar-dragging] #root > [data-slot="root"] > div > [data-side="details"],
-body[data-dsh-sidebar-dragging] #root [data-dsh-center-col],
-#root [data-dsh-frame][data-dragging] > [data-side="details"],
-#root > [data-slot="root"] > div[data-dragging] > [data-side="details"] {
+body[data-dsh-sidebar-dragging] #root [data-dsh-center-col] {
   transition: none;
 }
 
@@ -103,10 +75,6 @@ body[data-dsh-sidebar-dragging] #root [data-dsh-center-col],
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #root [data-dsh-frame],
-  #root > [data-slot="root"] > div,
-  #root [data-dsh-frame] > [data-side="details"],
-  #root > [data-slot="root"] > div > [data-side="details"],
   #root [data-dsh-center-col] {
     transition: none;
   }
@@ -117,10 +85,10 @@ body[data-dsh-sidebar-dragging] #root [data-dsh-center-col],
  * The ui-primitives Menu clamps its main portal list into the viewport but
  * positions nested submenus with static CSS only — anchored at the parent
  * row's bottom, growing UP and to the RIGHT — with no clamp whatsoever.
- * Docked on the window's right edge, both defaults are the worst case for
- * this panel: a tall "open with" submenu escapes past the viewport top when
- * the row menu opens near the top, and past the right edge on narrow panels
- * (PANEL_MIN 280 < card 218 + gap + submenu 165).
+ * Both defaults are the worst case for our menus: a tall "open with" submenu
+ * escapes past the viewport top when the row menu opens near the top, and
+ * past the right edge in a narrow workbench pane (a pane can be far narrower
+ * than the card 218 + gap + submenu 165 a submenu needs).
  *
  * menu-flip.ts publishes `data-dsh-sidebar-submenu` on <body> — with the
  * words "down" and/or "left" — for exactly the lifetime of one of OUR

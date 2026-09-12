@@ -1,13 +1,13 @@
 /**
  * Inline pinned terminals (extracted from Sidebar.tsx, behavior identical):
  * pinned tabs from OTHER sessions inject as VIRTUAL tabs into the first
- * leaf of the right panel's split tree, and the workbench actions are
+ * leaf of the bottom workbench's split tree, and the workbench actions are
  * wrapped so virtual ids route back to the HOME session. The shell only
  * consumes the augmented tree and the wrapped actions.
  */
 import { useMemo, useState } from 'react'
 import {
-  agentUuidOf, closeFloatByTab, closeTab, isAgentTabId, leafWithTab, setTabPin,
+  agentUuidOf, closeTab, isAgentTabId, leafWithTab, setTabPin,
   type SidebarSnapshot, type SidebarStore, type SplitNode,
 } from '../state.ts'
 import {
@@ -29,8 +29,8 @@ export function usePinnedTabs(input: {
 
   /**
    * Inline pinned terminals (v0.17.0+): pinned tabs from OTHER sessions
-   * inject as VIRTUAL tabs into the first leaf of the right panel's split
-   * tree. The virtual tabs have unique ids (prefixed with the home session)
+   * inject as VIRTUAL tabs into the first leaf of the bottom workbench's
+   * split tree. The virtual tabs have unique ids (prefixed with the home session)
    * and carry the home scope in meta. Clicking a virtual tab sets
    * `activePinnedTabId` — the augmented tree overrides the leaf's `active`
    * so the pinned tab's content renders in-place (TerminalView connects to
@@ -65,11 +65,11 @@ export function usePinnedTabs(input: {
     [pinnedEntries],
   )
 
-  /** The right panel's split tree with pinned virtual tabs injected into the
-   *  first leaf. When `activePinnedTabId` is set, that leaf's `active` is
-   *  overridden so the pinned tab's content is visible. */
+  /** The bottom workbench's split tree with pinned virtual tabs injected
+   *  into the first leaf. When `activePinnedTabId` is set, that leaf's
+   *  `active` is overridden so the pinned tab's content is visible. */
   const augmentedTree = useMemo(
-    () => state === undefined ? undefined : injectPinnedIntoTree(state.splits, pinnedVirtualTabs, activePinnedTabId),
+    () => state === undefined ? undefined : injectPinnedIntoTree(state.bottomSplits, pinnedVirtualTabs, activePinnedTabId),
     [state, pinnedVirtualTabs, activePinnedTabId],
   )
 
@@ -89,10 +89,8 @@ export function usePinnedTabs(input: {
       const vtab = pinnedVirtualTabs.find(t => t.id === virtualId)
       const homeCwd = vtab !== undefined ? getPinnedHomeScope(vtab)?.cwd : undefined
       store.reduceFor(homeSessionId, s => {
-        const leaf = leafWithTab(s.splits, originalId) ?? leafWithTab(s.bottomSplits, originalId)
-        if (leaf !== undefined) return closeTab(s, leaf.id, originalId)
-        if (s.floats.some(f => f.tab.id === originalId)) return closeFloatByTab(s, originalId)
-        return s
+        const leaf = leafWithTab(s.bottomSplits, originalId)
+        return leaf === undefined ? s : closeTab(s, leaf.id, originalId)
       })
       if (isAgentTabId(originalId)) {
         void api.agentPtyClose(agentUuidOf(originalId)).catch(() => { /* already released */ })
@@ -130,10 +128,6 @@ export function usePinnedTabs(input: {
       moveTabToEdge: (payload, toPane, zone) => {
         if (isPinnedVirtualId(payload.tabId)) return
         actions.moveTabToEdge(payload, toPane, zone)
-      },
-      floatTab: (tabId) => {
-        if (isPinnedVirtualId(tabId)) return
-        actions.floatTab(tabId)
       },
       pinTab: (tabId, scope) => {
         if (isPinnedVirtualId(tabId)) {

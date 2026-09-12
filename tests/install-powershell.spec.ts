@@ -69,7 +69,15 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
-describe('PowerShell installer entry points', () => {
+/**
+ * The Windows cases here spawn a real PowerShell (`powershell.exe` 5.1 or
+ * `pwsh`) per assertion, and a cold 5.1 start on a loaded 2-core CI runner
+ * measured 12.1 s (ci-windows run 34494370187) — more than twice vitest's
+ * 5000 ms default, which is why this file kept losing that case. The
+ * file-content cases below share the suite budget but finish in
+ * milliseconds either way.
+ */
+describe('PowerShell installer entry points', { timeout: 30_000 }, () => {
   it('keeps the UTF-8 BOM required by Windows PowerShell 5.1 -File decoding', () => {
     expect(readFileSync(INSTALLER).subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf]))
   })

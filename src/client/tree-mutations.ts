@@ -1,8 +1,8 @@
 /**
  * Open-tab reconciliation after a file-tree mutation (rename/delete).
  *
- * The tree owns the rows; the TABS live in the sidebar state (either split
- * tree, the bottom panel, or free windows). A rename must retarget every
+ * The tree owns the rows; the TABS live in the sidebar state (the bottom
+ * workbench's split tree). A rename must retarget every
  * tab whose `path` is the renamed file (the editor content survives and
  * later saves land on the new path); a delete must close every tab at or
  * under the removed path — files and anything inside a removed directory
@@ -16,15 +16,12 @@ import { baseName } from './FileTree.tsx'
 import { allLeaves, type SidebarSnapshot, type SidebarStore, type SidebarTab } from './state.ts'
 import { isWithinWorkspace } from './paths.ts'
 
-/** Every open tab that carries a file path (either split tree, the bottom
- *  panel, and free windows — a floating tab is as open as a docked one). */
+/** Every open tab that carries a file path. */
 function pathTabsOf(snapshot: SidebarSnapshot): SidebarTab[] {
   const state = snapshot.state
   if (state === undefined) return []
   const tabs: SidebarTab[] = []
-  for (const leaf of allLeaves(state.splits)) tabs.push(...leaf.tabs)
   for (const leaf of allLeaves(state.bottomSplits)) tabs.push(...leaf.tabs)
-  for (const float of state.floats) tabs.push(float.tab)
   return tabs.filter(tab => tab.path !== undefined)
 }
 

@@ -39,9 +39,11 @@ export interface LastActivity {
 
 /**
  * Fold a session event log into the last text output + last tool call (each
- * is the LAST occurrence in event order). Lifecycle events and raw
- * `assistant/chunk` rows are ignored — the card shows what the subagent is
- * doing right now, not its plumbing. The scan runs BACKWARD from the newest
+ * is the LAST occurrence in event order). Lifecycle events and raw stream
+ * rows are ignored — the card shows what the subagent is doing right now,
+ * not its plumbing. (DSH 0.1.5 publishes the raw deltas as process-local
+ * frames instead of log events, so only the assembled `assistant/message`
+ * reaches this scan.) The scan runs BACKWARD from the newest
  * event and stops once both fields are found, so a long history costs only
  * the recent tail in the common case.
  * @param events - the session's append-only event log (oldest → newest).

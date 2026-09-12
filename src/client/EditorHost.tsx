@@ -42,7 +42,7 @@ import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
 import { closePathTabs, retargetPathTabs } from './tree-mutations.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
-import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, type SidebarStore, type SidebarTab } from './state.ts'
+import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, type SidebarStore, type SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
 
 type EditorLoad =
@@ -178,8 +178,7 @@ export function EditorHost(props: {
    */
   const openFileSide = (absolute: string): void => {
     store.reduce((state) => {
-      const key = treeOf(state, tab.id)
-      const pane = leafWithTab(state[key], tab.id) ?? firstLeaf(state[key])
+      const pane = leafWithTab(state.bottomSplits, tab.id) ?? firstLeaf(state.bottomSplits)
       const fresh: SidebarTab = {
         id: mintTabId(),
         type: 'editor',
@@ -187,8 +186,8 @@ export function EditorHost(props: {
         path: absolute,
         meta: { treeOpen: false },
       }
-      const { node, leafId } = insertLeafAt(state[key], pane.id, 'row', fresh, false)
-      return { ...state, [key]: node, activePane: leafId }
+      const { node, leafId } = insertLeafAt(state.bottomSplits, pane.id, 'row', fresh, false)
+      return { ...state, bottomSplits: node, activePane: leafId }
     })
   }
 
@@ -402,6 +401,7 @@ export function EditorHost(props: {
           onReferenceFile={onReferenceFile}
           onPathRenamed={onPathRenamed}
           onPathDeleted={onPathDeleted}
+          service={ctx.get('betterSidebar')}
         />
       </div>
     )
@@ -526,6 +526,7 @@ export function EditorHost(props: {
               onReferenceFile={onReferenceFile}
               onPathRenamed={onPathRenamed}
               onPathDeleted={onPathDeleted}
+              service={ctx.get('betterSidebar')}
             />
           </div>
         )}

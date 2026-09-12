@@ -1,13 +1,15 @@
 /**
  * Center-column tracking (extracted from Sidebar.tsx, behavior identical):
- * the bottom panel spans ONLY the app shell's center column ("squeezes the
- * agent output area") — it starts at the app sidebar's right edge and ends
- * at the details column's left edge (the details column sits between the
- * center and the right panel). Measured directly from the AppFrame's center
- * column DOM (the parent of the [data-slot="conversation"] wrapper —
- * layout.css's center column) so the bottom panel tracks the column's real
- * horizontal edges — including the animated AppFrame padding reservation
- * while the right panel opens/closes; a frame that never appears keeps the
+ * the bottom workbench spans ONLY the app shell's center column ("squeezes
+ * the agent output area") — it starts at the app sidebar's right edge and
+ * ends at the details column's left edge. Measured directly from the
+ * AppFrame's center column DOM (center-column.ts anchors on the conversation
+ * slot host — `main.conversation` on DSH 0.1.5-alpha.2+, `conversation` on
+ * alpha.1 — and walks up the transparent `display: contents` slot hosts to
+ * the column; layout.css's center column) so the workbench tracks the
+ * column's
+ * real horizontal edges, including the animated track moves while DSH's
+ * native right Sidebar opens/closes; a frame that never appears keeps the
  * initial zero-size fallback (the panel renders at 0 width until measured).
  * The rect lives in a REF (not state): the open/close transition resizes
  * the center column EVERY frame for its duration, and reacting per frame
@@ -68,15 +70,17 @@ export function useCenterColumn(
     let disposed = false
     let observer: ResizeObserver | undefined
     // Locate the AppFrame's center column. DSH 0.1.x wraps slot hosts in
-    // [data-slot] containers: the conversation slot wrapper
-    // ([data-slot="conversation"]) sits directly inside the center column,
-    // so its parent IS that column — no hashed-class or positional
-    // dependency (layout.css uses the same anchor). The shell swaps the
-    // boot page for the AppFrame only AFTER boot settles, so the first
-    // query may miss it. Never give up: watch #root's subtree (the swap and
-    // HMR re-renders mutate it) and re-run this locator — querying once and
-    // bailing would strand the panel at the zero-size fallback forever
-    // (observed: a 1px sliver at the viewport's left edge).
+    // [data-slot] containers: the conversation slot host (key
+    // `main.conversation` on 0.1.5-alpha.2+, `conversation` on alpha.1)
+    // sits inside the center column behind transparent `display: contents`
+    // slot hosts, so the resolver walks up to the first ancestor that
+    // renders a box — no hashed-class or positional dependency
+    // (layout.css uses the same anchor). The shell swaps the boot page for
+    // the AppFrame only AFTER boot settles, so the first query may miss it.
+    // Never give up: watch #root's subtree (the swap and HMR re-renders
+    // mutate it) and re-run this locator — querying once and bailing would
+    // strand the panel at the zero-size fallback forever (observed: a 1px
+    // sliver at the viewport's left edge).
     const locate = (): void => {
       if (disposed) return
       // Hot path (#403): streaming output mutates #root at token cadence.
