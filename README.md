@@ -1,4 +1,5 @@
 # dsh-better-sidebar
+[![DSH Insights health](https://dsh-insights.com/badge/omdsh-dev/DSH-better-sidebar.svg)](https://dsh-insights.com/p/omdsh-dev/DSH-better-sidebar/)
 
 > [!IMPORTANT]
 > **已适配 DSH 原生侧边栏 API**（v0.19.0 起，DSH `0.1.5-rc.1+`）：右列就是 DSH 自己的右侧栏——插件的每个 tab 类型与 tab 体通过 `ctx.sidebarRightTabs` / `ctx.sidebarRight` 注册与打开，聊天里的文件打开统一走 `ctx.sidebarRight.openResource('dsh-resource://file/…')`，插件**不再自绘右侧面板**（旧的浮窗能力同步移除）。自绘的底部工作台与开放给其他插件的 `ctx.betterSidebar` 服务保持不变，接入方式见[插件接入指南](docs/external-plugin-guide.md)。
