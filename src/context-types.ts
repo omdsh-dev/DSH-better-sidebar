@@ -410,12 +410,38 @@ export interface SidebarLocaleService {
   register(ns: string, locale: string, dict: Record<string, string>): () => void
 }
 
+/**
+ * One reference chip's footprint in the draft, in clipboard-projection
+ * coordinates: the chip covers `[offset, offset + length)`. Read straight off
+ * the host's published `InputState.occurrences`.
+ */
+export interface SidebarSessionOccurrence {
+  /** Start offset in the clipboard projection (the same plane as `draft`). */
+  offset: number
+  /** Length in the clipboard projection (the chip's whole `clipboardText`). */
+  length: number
+}
+
 /** The composer draft face the sidebar reaches through `ctx.conversation.input`. */
 export interface SidebarSessionInput {
   /** The live input store (draft read for append). `draftRev` is the machine's
    *  span-CAS revision — required to mint a structured file-reference chip. */
   state: {
-    getSnapshot(): { draft: string; draftRev?: number }
+    getSnapshot(): {
+      draft: string
+      draftRev?: number
+      /**
+       * The editor's reference chips as footprints in `draft` coordinates:
+       * `[offset, offset + length)` per chip, sorted by offset. The host's
+       * insert/replace spans live in the *editor* projection instead (one
+       * placeholder character per chip), so a span derived from a `draft`
+       * offset must fold through these first (`foldClipboardOffset`).
+       * Absent on hosts without the chip channel.
+       */
+      occurrences?: readonly SidebarSessionOccurrence[]
+      /** Admission phase; `adjudicating`/`submitting` freeze draft writes. */
+      phase?: string
+    }
   }
   /** Replace the draft text (the input machine's single public write path). */
   setDraft(text: string): void

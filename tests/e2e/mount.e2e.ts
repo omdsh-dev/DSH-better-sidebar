@@ -495,6 +495,81 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await expect(modal, 'Esc must close the zoom modal').toHaveCount(0, { timeout: 10_000 })
   await assertNoCrash()
 
+  // The viewer's "add to conversation" popup commits a CHIP, not a quoted
+  // block: the composer keeps one `<path>:<lines>` label while the chip's
+  // model form stays the fenced payload (design + mechanism:
+  // docs/plans/2026-09-12-selection-chip-design.md). Drive the gesture the way
+  // a user does — select a seeded preview line, then click the portaled
+  // button — and require the committed reference to reach the composer as one
+  // labelled chip. A host without the chip path would fall back to plain text
+  // and this assertion is what notices.
+  /**
+   * Select the seeded preview line and open the portaled "add to
+   * conversation" popup — the gesture both chip commits below are driven by.
+   */
+  const selectPreviewLine = async (): Promise<void> => {
+    await page.evaluate(() => {
+      const host = document.querySelector('[class*="editorMd"]')
+      if (host === null) throw new Error('the markdown preview container is not rendered')
+      const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT)
+      let node: Node | null = walker.nextNode()
+      while (node !== null && (node.textContent ?? '').trim() !== 'tail text') node = walker.nextNode()
+      if (node === null) throw new Error('the seeded preview line is missing')
+      const range = document.createRange()
+      range.selectNodeContents(node)
+      const selection = window.getSelection()
+      if (selection === null) throw new Error('the window has no selection object')
+      selection.removeAllRanges()
+      selection.addRange(range)
+      host.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    })
+  }
+  await selectPreviewLine()
+  const addToConversation = page.locator('[class*="selectionPopup"]')
+  await expect(
+    addToConversation,
+    'selecting text in the preview must offer "add to conversation"',
+  ).toHaveCount(1, { timeout: 10_000 })
+  await addToConversation.click()
+  // "tail text" is line 12 of the seeded document, and the source reverse-search
+  // is unambiguous, so the label is exactly `<file>:12`.
+  await expect(
+    page.locator('[title="diagram.md:12"]'),
+    'the selection must commit as one `<path>:<lines>` chip, not a quoted block',
+  ).toHaveCount(1, { timeout: 10_000 })
+  await assertNoCrash()
+
+  // The gesture the chip exists for is stacking references: commit a second
+  // selection over a draft that already holds one. Once a chip is in the
+  // draft the two projections diverge (the editor counts it as one placeholder
+  // character, the draft string as its whole clipboard text), so an unfolded
+  // span is refused — and the old fallback answered that by rewriting the
+  // whole draft, burying both references as quoted text. Both chips must
+  // survive the second commit.
+  await selectPreviewLine()
+  await expect(
+    addToConversation,
+    'selecting a second passage must offer "add to conversation" again',
+  ).toHaveCount(1, { timeout: 10_000 })
+  await addToConversation.click()
+  await expect(
+    page.locator('[title="diagram.md:12"]'),
+    'the second selection must land as a second chip, leaving the first in place',
+  ).toHaveCount(2, { timeout: 10_000 })
+  const composerHasFence = await page.evaluate(() => {
+    const chip = document.querySelector('[title="diagram.md:12"]')
+    const composer = chip?.closest('[contenteditable="true"]') ?? null
+    // Without this, a missing chip or a moved composer would make the check
+    // below pass on an empty string — the assertion must prove itself.
+    if (composer === null) throw new Error('the composer container was not found around the chip')
+    return (composer.textContent ?? '').includes('```')
+  })
+  expect(
+    composerHasFence,
+    'the composer must show reference chips, never the quoted body text',
+  ).toBe(false)
+  await assertNoCrash()
+
   // README-style markdown (raw-HTML runs + TOC): open the seeded file and
   // require the full round-trip — sanitized HTML leaves (badge image as a real
   // element, active content stripped), markdown nested inside the unclosed
