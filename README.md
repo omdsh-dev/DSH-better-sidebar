@@ -590,6 +590,9 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 | 操作 | 按键 |
 |---|---|
 | 保存编辑 | `Ctrl/Cmd + S` |
+| 编辑器内查找 / 替换 | `Ctrl/Cmd + F` / `Ctrl/Cmd + H` |
+| 查找下一个 / 上一个 | `Ctrl/Cmd + G` / `Shift + Ctrl/Cmd + G`（面板内：`Enter` / `Shift + Enter`） |
+| 选中下一个相同片段 | `Ctrl/Cmd + D` |
 | Git 提交 | `Ctrl + Enter` |
 | 关闭 Tab | 鼠标中键 |
 | Tab 右键菜单 | 关闭 / 关闭其他页签 / 关闭左侧页签 / 关闭右侧页签（当前标签组） |
@@ -641,6 +644,7 @@ make clean          # 清理 lib/、*.tgz、playwright-report/、test-results/
 ## ⚠️ 已知限制
 
 - Git 无 push/pull/fetch；Markdown 预览提供手动刷新按钮，刷新未保存编辑前会确认是否丢弃草稿；无文件 watcher/自动轮询；工具行内文件打开按钮不可拦截
+- 未保存草稿：关闭标签页、删除文件、浏览器刷新/关闭页面都会先确认（`Ctrl/Cmd + F` 的查找面板只作用于编辑器，不做跨文件搜索）；磁盘上被其他来源改动后再保存会被拒绝（提示「重新载入」），不会静默覆盖对方字节
 - 终端 Tab 拖到另一分栏会重挂载（shell 重开）
 - Office 三件套预览（.docx/.xlsx/.pptx）已移至「推荐插件」（Office 预览插件，见设置页「添加插件」弹窗）；未安装时此类文件走代码/下载查看兜底
 - 浏览器沙箱无登录态/第三方 Cookie 受限，部分站点登录需走弹窗；被 `X-Frame-Options`/`frame-ancestors` 拒绝嵌入的站点（如 arxiv.org）显示原因面板（含「在浏览器中打开」）；iframe 内部跳转不进后退栈

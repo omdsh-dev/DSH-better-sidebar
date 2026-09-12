@@ -1338,6 +1338,18 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   background: var(--dsw-alias-state-warn-tertiary);
 }
 
+/* Inline action of a banner (the save-conflict "reload" link). */
+.editorBannerAction {
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 /* Live sandbox status row (HTML preview / browser tab): GREEN while the
    sandbox is on (with the one-tap temporary unlock), RED while it is off
    (global setting or temporary unlock) — the red state is the persistent

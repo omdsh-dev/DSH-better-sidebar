@@ -46,6 +46,7 @@ import { getWcoSnapshot, subscribeWco } from './wco.ts'
 import { getShellPreset } from './shell-presets.ts'
 import { computeTitleBarStrip } from './titlebar-strip.ts'
 import { TabContent, buildNewTabOptions } from './sidebar/TabContent.tsx'
+import { confirmDiscardDraft, dirtyCount, editorDirtyRevision, subscribeEditorDirty } from './editor-dirty.ts'
 import { useCenterColumn } from './sidebar/use-center-column.ts'
 import { useHostFeeds } from './sidebar/use-host-feeds.ts'
 import { usePinnedTabs } from './sidebar/use-pinned-tabs.ts'
@@ -208,6 +209,24 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   const state = snapshot.state
   const sessionId = snapshot.sessionId
+
+  // Unload guard: a browser refresh / tab close / navigation would drop every
+  // open unsaved draft at once. The listener is armed only while at least one
+  // draft is dirty (subscribeEditorDirty fires on every register/clear), so a
+  // clean session navigates away without a prompt. Every session's drafts
+  // count — the page is going away, not just the visible conversation. The
+  // message itself is the browser's own generic warning (custom text ignored).
+  const dirtyRevision = useSyncExternalStore(subscribeEditorDirty, () => editorDirtyRevision())
+  useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent): void => {
+      if (dirtyCount() === 0) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => { window.removeEventListener('beforeunload', onBeforeUnload) }
+  }, [dirtyRevision])
+
   const summaryCwd = sessionId === undefined ? undefined : sessionList.byId[sessionId]?.cwd
 
   // Title-bar / shell compatibility (the "位置兼容模式" scheme):
@@ -527,6 +546,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   const actions: WorkbenchActions = useMemo(() => ({
     closeTab: (paneId, tabId) => {
+      // An unsaved editor draft would be dropped by the unmount — ask first.
+      // The confirmation is the SAME guard the refresh button uses, so every
+      // close path (tab X, middle click, tab context menu, the tree's
+      // close-on-rename/delete) funnels through here and warns exactly once.
+      if (!confirmDiscardDraft(tabId, t('closeUnsavedConfirm'))) return
       // A closed terminal releases its pty immediately — including when its
       // socket is mid-reconnect, where the unmount close frame never reaches
       // the host and the process would hold the quota until the grace ends.

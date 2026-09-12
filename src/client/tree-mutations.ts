@@ -13,6 +13,7 @@
  */
 import type { Context } from '../context-types.ts'
 import { baseName } from './FileTree.tsx'
+import { confirmDiscardDraft } from './editor-dirty.ts'
 import { allLeaves, type SidebarSnapshot, type SidebarStore, type SidebarTab } from './state.ts'
 import { isWithinWorkspace } from './paths.ts'
 
@@ -36,12 +37,16 @@ export function retargetPathTabs(ctx: Context, store: SidebarStore, oldPath: str
 }
 
 /** Close tabs at or under the removed `target` (a directory takes its whole
- *  subtree of open files with it). */
-export function closePathTabs(ctx: Context, store: SidebarStore, target: string): void {
+ *  subtree of open files with it). A tab holding an unsaved draft asks first
+ *  (the same guard + copy as the sidebar's tab close); declining keeps the
+ *  tab — its next save recreates the file, which is the user's call. */
+export function closePathTabs(ctx: Context, store: SidebarStore, target: string, unsavedMessage: string): void {
   const service = ctx.get('betterSidebar')
   if (service === undefined) return
   for (const tab of pathTabsOf(store.getSnapshot())) {
     const path = tab.path
-    if (path !== undefined && (path === target || isWithinWorkspace(target, path))) service.closeTab(tab.id)
+    if (path === undefined || (path !== target && !isWithinWorkspace(target, path))) continue
+    if (!confirmDiscardDraft(tab.id, unsavedMessage)) continue
+    service.closeTab(tab.id)
   }
 }
