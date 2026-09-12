@@ -76,9 +76,7 @@
 
 - `pnpm typecheck` / `pnpm lint` 通过。
 - `pnpm test`（全量，`--maxWorkers=1`）：**1351 passed / 3 failed**，3 例全部是本机 `tests/fs-operations.spec.ts` 创建符号链接报 `EPERM`（Windows 权限差异，与本改动无关）。本改动相关：`tests/conversation-draft.spec.ts` 36 passed、`tests/selection-payload.spec.ts` 16 passed、`tests/selection-popup.spec.tsx` 8 passed。
-- **真机挂载冒烟**（真实 `dsh web` + 官方 `dsh plugin add` 产物 + 无头 Chromium）：基线 lane **7 passed**；加上本改动新增的探针后仍 **7 passed**。探针在 markdown 预览里选中种子文件的一行、点浮层的提交按钮，断言 composer 里出现 `diagram.md:12` 胶囊（不走胶囊路径的宿主会退化成纯文本，这条断言就是用来发现它的）：
-
-  ![预览选中一行 → composer 里只多出一个 diagram.md:12 胶囊](../screenshots/selection-chip.png)
+- **真机挂载冒烟**（真实 `dsh web` + 官方 `dsh plugin add` 产物 + 无头 Chromium）：基线 lane **7 passed**；加上本改动新增的探针后仍 **7 passed**。探针在 markdown 预览里选中种子文件的一行、点浮层的提交按钮，断言 composer 里出现 `diagram.md:12` 胶囊（不走胶囊路径的宿主会退化成纯文本，这条断言就是用来发现它的）。
 
   平台注记：`scripts/e2e-mount.sh` 在 Windows 上会把 tarball 路径转成 POSIX 形式（`/e/…`），被 pnpm 解析成 `E:\e\…` 而失败——与本改动无关的平台差异。本机用逐步对齐 `e2e-common.sh` 的 PowerShell 版本跑同一条 lane（scratch profile 三件套 + `dsh plugin add` + `dsh web --port 0 --no-open` + `playwright test`），CI 仍走原脚本。
 
