@@ -53,6 +53,15 @@ const EDITOR_KIND = 'editor'
 /** The built-in page kind this plugin takes over. */
 const FILES_KIND = 'files'
 
+/**
+ * The descriptor whose tab navigates to a URL. Its open seed arrives as
+ * `navigation.params.url`, while the view reads — and the session state
+ * persists — `tab.path`, so the descriptor needs the mapping declared below;
+ * without it the seed stops at `meta.url` and the tab opens with an empty
+ * address bar.
+ */
+const BROWSER_KIND = 'browser'
+
 /** The plugin's implementation id for a descriptor (unique across kinds). */
 function nativeId(descriptorId: string): string {
   return `dsh-better-sidebar:${descriptorId}`
@@ -61,6 +70,20 @@ function nativeId(descriptorId: string): string {
 /** The descriptor's title text, evaluated fresh for the current locale. */
 function titleOf(descriptor: TabDescriptor): string {
   return typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title
+}
+
+/**
+ * The URL a browser tab's record carries in its `meta`, when it has one.
+ * `meta.url` is where a native open stores the seed (`tab-adapter` keeps a
+ * navigation's `url` there), so reading it back is what makes an already-open
+ * or persisted tab render instead of showing an empty browser.
+ * @param meta - the native record's custom state.
+ * @returns the URL, or `undefined` when the record carries none.
+ */
+function urlOfMeta(meta: unknown): string | undefined {
+  if (typeof meta !== 'object' || meta === null) return undefined
+  const url = (meta as { url?: unknown }).url
+  return typeof url === 'string' && url !== '' ? url : undefined
 }
 
 /**
@@ -147,6 +170,18 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       const address = parseFileAddress(info.tab.contentId)
       return address !== undefined && address.scope === 'session' ? address.sessionId : undefined
     }
+    /**
+     * The browser tab's open seed, mapped to the field its view reads: the
+     * seed arrives as `params.url` (how `openTab({ type, url })` and the
+     * agent/`sidebar_open` flow address it), and `BrowserView` mounts from
+     * `tab.path`. Declaring `path` also keeps a reload working, because the
+     * record's `path` is the field the session state persists.
+     */
+    const browserParamsOf = (info: NativeTabInfo): NativeTabParams | undefined => {
+      const params = info.tab.navigation.params
+      const url = params?.url ?? urlOfMeta(params?.meta)
+      return url === undefined ? undefined : { path: url }
+    }
 
     /** Register the body + chip-title slots for one native implementation id. */
     const registerSlots = (
@@ -204,7 +239,9 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       const slots = registerSlots(
         id,
         { ctx, store, service, records, descriptorId: descriptor.id },
-        isEditor ? { paramsOf: fileParamsOf, sessionIdOf: fileSessionIdOf } : {},
+        isEditor
+          ? { paramsOf: fileParamsOf, sessionIdOf: fileSessionIdOf }
+          : descriptor.id === BROWSER_KIND ? { paramsOf: browserParamsOf } : {},
       )
       return () => {
         for (const dispose of slots.reverse()) dispose()
