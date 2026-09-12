@@ -72,8 +72,8 @@ function suggestButton(container: HTMLElement): HTMLButtonElement {
   return button
 }
 
-function commitInput(container: HTMLElement): HTMLInputElement {
-  const input = container.querySelector<HTMLInputElement>('input')
+function commitInput(container: HTMLElement): HTMLTextAreaElement {
+  const input = container.querySelector<HTMLTextAreaElement>('textarea')
   if (input === null) throw new Error('the commit input is missing')
   return input
 }
@@ -137,6 +137,35 @@ describe('GitLens commit-message suggestion', () => {
 
       expect(suggest).toHaveBeenCalledTimes(1)
       expect(commitInput(container).value).toBe('chore: shortcut')
+    } finally {
+      unmount()
+    }
+  })
+
+  it('keeps a bare Enter as a newline and submits on Ctrl+Enter', async () => {
+    const commit = vi.spyOn(api, 'gitCommit').mockResolvedValue({ ok: true })
+    const { container, unmount } = await mount()
+    try {
+      const box = commitInput(container)
+      await act(async () => {
+        box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      })
+      expect(commit).not.toHaveBeenCalled()
+
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+        setter.call(box, 'feat: multiline\n\nbody line')
+        box.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      await act(async () => {
+        box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+      })
+      await act(async () => { await Promise.resolve() })
+
+      // The message (second arg) is the whole multiline text; the worktree
+      // argument depends on the auto-selection above, so it stays unasserted.
+      expect(commit).toHaveBeenCalledTimes(1)
+      expect(commit.mock.calls[0]?.[1]).toBe('feat: multiline\n\nbody line')
     } finally {
       unmount()
     }

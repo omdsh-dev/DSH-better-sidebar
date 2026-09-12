@@ -10,10 +10,10 @@
  * without a manual refresh. Everything here is the former standalone git
  * panel, re-homed as a lens.
  */
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   Button, IconCodeOutline16, IconCopyOutline16, IconPlusOutline16,
-  IconRefreshOutline16, IconSparkle16, IconTrashOutline16, Input, Menu, Modal, writeClipboard,
+  IconRefreshOutline16, IconSparkle16, IconTrashOutline16, Menu, Modal, writeClipboard,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { GitLogEntry, GitStatusEntry, GitStatusResult, GitWorktree, SessionScope } from '../api.ts'
 import { api, SidebarApiError } from '../api.ts'
@@ -83,6 +83,12 @@ interface ConfirmState {
  *  floods the panel at once (the end of the log is reached by paging). */
 const LOG_BATCH = 20
 
+/** Commit-box growth contract: one line is 18px with 6px of padding above and
+ *  below (mirrored by `changes.module.css`), and it scrolls past six lines. */
+const COMMIT_BOX_LINE_HEIGHT = 18
+const COMMIT_BOX_PADDING_Y = 6
+const COMMIT_BOX_MAX_ROWS = 6
+
 /** Every Nth silent poll re-lists worktrees (and re-runs auto-selection): the
  *  2s tick only needs the selected checkout's STATUS, and re-listing spawned
  *  a second git process per tick for a list that almost never changes — a
@@ -124,6 +130,20 @@ export function GitLens(props: GitLensProps) {
   /** Whether a COMMIT is in flight (a subset of `busy`, which also covers
    *  staging/checkout): the input reports it with its own busy label. */
   const [committing, setCommitting] = useState(false)
+  /** The commit box grows with its text, up to the scroll cap below. */
+  const commitBoxRef = useRef<HTMLTextAreaElement | null>(null)
+  useLayoutEffect(() => {
+    const box = commitBoxRef.current
+    // A layout-less environment (tests) reports 0: leave the CSS height alone.
+    if (box === null || box.scrollHeight === 0) return
+    const max = COMMIT_BOX_LINE_HEIGHT * COMMIT_BOX_MAX_ROWS + COMMIT_BOX_PADDING_Y * 2
+    // Reset first: a scrollHeight measured against the current height can only
+    // ever grow, so a deleted line would leave the box too tall.
+    box.style.height = 'auto'
+    const next = Math.min(box.scrollHeight, max)
+    box.style.height = `${next}px`
+    box.style.overflowY = box.scrollHeight > max ? 'auto' : 'hidden'
+  }, [commitMsg])
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
@@ -599,14 +619,20 @@ export function GitLens(props: GitLensProps) {
 
           <div className={css.gitCommit}>
             <span className={css.gitCommitInputWrap}>
-              <Input
+              {/* A native textarea (the primitives ship no multiline input):
+                  commit messages carry a subject AND a body, and Enter must
+                  insert a newline — submitting stays on Ctrl/Cmd+Enter. */}
+              <textarea
+                ref={commitBoxRef}
                 className={css.gitCommitInput}
                 // While busy the placeholder steps aside for the sweep label.
                 placeholder={busy || suggesting ? '' : t('commitPlaceholder')}
                 value={commitMsg}
                 disabled={busy || suggesting}
                 aria-busy={busy || suggesting}
-                onChange={(event) => { setCommitMsg(event.target.value); setCommitError(null) }}
+                aria-label={t('commitPlaceholder')}
+                rows={1}
+                onChange={(event) => { setCommitMsg(event.currentTarget.value); setCommitError(null) }}
                 onKeyDown={(event) => {
                   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
                   // Ctrl/Cmd+G drafts the message, mirroring the button (the

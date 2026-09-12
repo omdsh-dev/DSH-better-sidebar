@@ -202,13 +202,40 @@
   min-width: 0;
 }
 
-/* The primitives Input renders its OWN wrapper span and puts `className`
-   there; it is content-box, so `width: 100%` would overflow its padding and
-   border onto the neighbouring buttons. Flex sizing (as before this overlay
-   was added) allocates by outer size and stays inside the row. */
+/* The multiline commit box: a native textarea styled to match the primitives
+   Input (layer fill, hairline border, brand focus ring). Flex sizing keeps it
+   inside the row — `width: 100%` would overflow its own padding/border. */
 .gitCommitInput {
   flex: 1;
   min-width: 0;
+  box-sizing: border-box;
+  /* One line by default; GitLens grows it with the text (18px per line,
+     6px vertical padding, six lines before it scrolls). The bounds here are
+     the stylesheet's half of that contract. */
+  min-height: 30px;
+  max-height: 120px;
+  padding: 6px 8px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-13);
+  line-height: 18px;
+  resize: none;
+  overflow-y: hidden;
+}
+
+.gitCommitInput:focus {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.gitCommitInput::placeholder {
+  color: var(--dsw-alias-label-dimmed);
+}
+
+.gitCommitInput:disabled {
+  opacity: 0.5;
 }
 
 /* Busy text in the input's place: the running-status sweep used by the side
@@ -219,7 +246,8 @@
   inset: 0;
   display: flex;
   align-items: center;
-  padding: 0 8px;
+  /* Matches the textarea's own padding so the label sits where the text would. */
+  padding: 6px 8px;
   pointer-events: none;
   font: var(--dsw-font-xxs-12);
   background-image: linear-gradient(
