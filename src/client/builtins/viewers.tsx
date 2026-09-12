@@ -24,6 +24,7 @@
  */
 import { IconCodeOutline16, IconDownloadOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
+import { ImageView } from '../ImageView.tsx'
 import { PdfView } from '../PdfView.tsx'
 import { BinaryDownload } from '../binary-download.tsx'
 import {
@@ -35,7 +36,6 @@ import {
 import type { ComponentType } from 'react'
 import type { FileViewerDescriptor, FileViewerProps } from '../service.ts'
 import { t } from '../locales.ts'
-import css from '../sidebar.module.css'
 
 /**
  * Lazy wrapper over the chunk-resident viewer component. The `pick`
@@ -54,11 +54,7 @@ export function builtinViewers(): readonly FileViewerDescriptor[] {
       icon: (size: number) => <IconImageOutline16 size={size} />,
       exts: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'],
       fetchStrategy: 'mediaUrl',
-      component: ({ mediaUrl: url, title }) => (
-        <div className={css.editorImageWrap}>
-          <img className={css.editorImage} src={url} alt={title} />
-        </div>
-      ),
+      component: ({ mediaUrl: url, title }) => <ImageView mediaUrl={url} title={title} />,
     },
     {
       id: 'pdf',

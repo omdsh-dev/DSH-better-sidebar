@@ -19,7 +19,10 @@
 ## 范围外（记录，不实现）
 
 - LLM 改文件后自动刷新（磁盘指纹对比 + silent 不闪屏）——分形有先例，另行立项；
-- image/pdf/binary viewer 的手动刷新（toolbar 为空，无入口；内容静态，低优先级）。
+- image/pdf/binary viewer 的手动刷新（内容静态，低优先级）。
+  **2026-09-13 更新**：image viewer 现在有自己的 toolbar（缩放读数 + − / 重置 / +，滚轮按光标缩放、
+  拖拽平移、双击 fit ↔ 2×，见 `src/client/ImageView.tsx`），所以「toolbar 为空」不再成立；
+  刷新入口仍未加（内容静态，重开 tab 即可）。
 
 ## 验证
 
