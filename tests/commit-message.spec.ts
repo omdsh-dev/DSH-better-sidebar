@@ -12,6 +12,7 @@ import {
   collectModelRoutes,
   defaultRouteOf,
   formatModelRoute,
+  lowestReasoningEffortOf,
   modelEntryOf,
   normalizeLanguage,
   parseModelRoute,
@@ -113,6 +114,27 @@ describe('collectModelRoutes', () => {
     ]
     expect(collectModelRoutes(events, 2).map(route => route.model)).toEqual(['m3', 'm2'])
     expect(collectModelRoutes([])).toEqual([])
+  })
+})
+
+describe('lowestReasoningEffortOf', () => {
+  const effort = (id: string): { id: string; name: string } => ({ id, name: id })
+
+  it('picks the cheapest advertised level, whatever the adapter order', () => {
+    expect(lowestReasoningEffortOf([effort('high'), effort('off'), effort('max')])).toBe('off')
+    expect(lowestReasoningEffortOf([effort('high'), effort('low')])).toBe('low')
+    expect(lowestReasoningEffortOf([effort('medium'), effort('minimal')])).toBe('minimal')
+  })
+
+  it('never lets an unknown id outrank a known one, and falls back to the first entry', () => {
+    expect(lowestReasoningEffortOf([effort('turbo'), effort('high')])).toBe('high')
+    expect(lowestReasoningEffortOf([effort('turbo'), effort('brisk')])).toBe('turbo')
+  })
+
+  it('reports "no effort" for a model that advertises none', () => {
+    for (const value of [undefined, null, [], 'off', [{}], [{ id: '' }]]) {
+      expect(lowestReasoningEffortOf(value), JSON.stringify(value)).toBeUndefined()
+    }
   })
 })
 

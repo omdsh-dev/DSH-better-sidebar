@@ -107,6 +107,51 @@ export function modelEntryOf(entry: unknown): { id: string; name: string } | und
 }
 
 /**
+ * The reasoning-effort ladder, lowest first. Effort ids are adapter-owned, so
+ * this is only a RANKING hint: an id outside the ladder still forms a valid
+ * route, it just cannot be ordered against these.
+ */
+export const REASONING_LEVEL_ORDER = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+
+/**
+ * The lowest reasoning effort a model advertises, from the `efforts` list of
+ * its resolved model info. Commit-message drafting is a one-line generation:
+ * the highest default (DSH's DeepSeek adapter defaults to `high` unless the
+ * connection configures otherwise) spends the output budget on thinking and
+ * can leave no text at all, so the cheapest supported level is requested
+ * explicitly. Mirrors pi-web's generate-commit.
+ *
+ * An UNKNOWN effort id never outranks a known one; when every id is unknown
+ * the adapter's own first entry wins (its declared order is the only signal
+ * available).
+ * @param efforts - `modelInfo.reasoning.efforts` (unknown shape).
+ * @returns the effort id to request, or undefined when the model advertises
+ * none (passing an effort to a non-reasoning model is rejected by the
+ * harness, so the caller must omit the field entirely).
+ */
+export function lowestReasoningEffortOf(efforts: unknown): string | undefined {
+  if (!Array.isArray(efforts)) return undefined
+  const ids: string[] = []
+  for (const entry of efforts) {
+    const id = entry !== null && typeof entry === 'object' ? (entry as { id?: unknown }).id : undefined
+    if (typeof id === 'string' && id !== '') ids.push(id)
+  }
+  const first = ids[0]
+  if (first === undefined) return undefined
+  let best = first
+  let bestRank = (REASONING_LEVEL_ORDER as readonly string[]).indexOf(best)
+  for (const id of ids.slice(1)) {
+    const rank = (REASONING_LEVEL_ORDER as readonly string[]).indexOf(id)
+    if (rank < 0) continue
+    if (bestRank < 0 || rank < bestRank) {
+      best = id
+      bestRank = rank
+    }
+  }
+  return best
+}
+
+/**
  * The harness's default model selection (settings namespace
  * `agent-default-model`), read tolerantly: it is the route a NEW conversation
  * would use, so it is available before any message is sent — unlike the

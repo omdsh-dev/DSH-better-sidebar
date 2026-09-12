@@ -61,6 +61,7 @@ import {
   cleanSuggestion,
   collectModelRoutes,
   defaultRouteOf,
+  lowestReasoningEffortOf,
   modelEntryOf,
   normalizeLanguage,
   parseModelRoute,
@@ -251,6 +252,38 @@ function defaultModelRoute(ctx: Context): CommitModelRoute | undefined {
   return defaultRouteOf(service?.currentSelection())
 }
 
+/** Output budget of one suggestion: enough for a subject plus a short body,
+ *  and (with reasoning pinned to the lowest level) no more. */
+const SUGGEST_MAX_TOKENS = 512
+
+/** Hard deadline of one suggestion (the panel shows the model as busy while
+ *  it runs, so a stalled provider must not leave it spinning forever). */
+const SUGGEST_TIMEOUT_MS = 30_000
+
+/**
+ * The reasoning effort to request for one route: the LOWEST the model
+ * advertises, or undefined when it advertises none. A one-line commit message
+ * needs no deliberation, while a high default (the DeepSeek adapter defaults
+ * to `high` unless the connection says otherwise) both delays the answer and
+ * can consume the whole output budget, yielding an empty message.
+ */
+async function commitReasoningEffort(
+  llm: LlmServiceFace,
+  route: CommitModelRoute,
+): Promise<string | undefined> {
+  if (llm.resolveModelInfo === undefined) return undefined
+  const info = await Promise.resolve(llm.resolveModelInfo(route.provider, route.model))
+    .catch(() => undefined)
+  return lowestReasoningEffortOf((info as { reasoning?: { efforts?: unknown } } | undefined)?.reasoning?.efforts)
+}
+
+/** The LLM service surface this route uses (all optional: the service is a
+ *  harness surface the plugin deliberately does not depend on). */
+interface LlmServiceFace {
+  stream(options: GenerateOptions): AsyncIterable<StreamChunk>
+  resolveModelInfo?(provider: string, model: string): Promise<unknown>
+}
+
 /**
  * One generation stream through the harness LLM service. The service is not
  * injected (the plugin must not require it), so it is read through `ctx.get`
@@ -264,28 +297,53 @@ async function streamCommitMessage(
   system: string,
   user: string,
 ): Promise<string> {
-  const llm = ctx.get('llm') as { stream(options: GenerateOptions): AsyncIterable<StreamChunk> } | undefined
+  const llm = ctx.get('llm') as LlmServiceFace | undefined
   if (llm === undefined) {
     throw new SidebarError('git-suggest-error', 'the harness LLM service is unavailable', 503)
   }
+  // Reasoning capability is read from the model itself: requesting an effort
+  // a non-reasoning model does not support is rejected by the harness
+  // (UNSUPPORTED_REASONING_EFFORT), so the field is omitted in that case.
+  const effort = await commitReasoningEffort(llm, route)
   const assembler = new BlockAssembler()
-  for await (const chunk of llm.stream({
-    provider: route.provider,
-    model: route.model,
-    messages: [createUserMessage({
-      content: [{ type: 'text', text: user }],
-      source: { kind: 'plugin', plugin: 'dsh-better-sidebar' },
-    })],
-    system,
-    maxTokens: 200,
-  })) {
-    assembler.push(chunk)
+  try {
+    for await (const chunk of llm.stream({
+      provider: route.provider,
+      model: route.model,
+      messages: [createUserMessage({
+        content: [{ type: 'text', text: user }],
+        source: { kind: 'plugin', plugin: 'dsh-better-sidebar' },
+      })],
+      system,
+      maxTokens: SUGGEST_MAX_TOKENS,
+      signal: AbortSignal.timeout(SUGGEST_TIMEOUT_MS),
+      ...(effort === undefined ? {} : { reasoningEffort: effort as GenerateOptions['reasoningEffort'] }),
+    })) {
+      assembler.push(chunk)
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new SidebarError(
+        'git-suggest-error',
+        `the model did not answer within ${Math.round(SUGGEST_TIMEOUT_MS / 1000)}s`,
+        504,
+      )
+    }
+    throw error
   }
   const message = cleanSuggestion(assembler.blocks()
     .map(block => (block.type === 'text' ? block.text : ''))
     .join(''))
   if (message === '') {
-    throw new SidebarError('git-suggest-error', 'the model returned an empty message', 500)
+    // The finish reason separates "the model stopped without text" (often a
+    // reasoning model that spent its budget thinking) from a transport
+    // failure, so the panel's error line stays actionable.
+    const finish = (assembler.finish as { kind?: unknown } | undefined)?.kind
+    throw new SidebarError(
+      'git-suggest-error',
+      `the model returned an empty message (finish=${typeof finish === 'string' ? finish : 'unknown'})`,
+      500,
+    )
   }
   return message
 }
