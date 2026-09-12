@@ -163,6 +163,8 @@ export const zhHK: Record<string, string> = {
   commitError: '提交失敗',
   generateCommitMessage: '產生提交訊息',
   generateCommitMessageWith: '產生提交訊息（使用 {model}）',
+  generatingCommitMessage: '正在產生提交訊息…',
+  committingMessage: '正在提交…',
   suggestCommitError: '產生提交訊息失敗',
   suggestCommitEmpty: '目前沒有可提交的變更',
   commitModelTitle: '提交訊息產生模型',

@@ -192,9 +192,56 @@
   align-items: center;
 }
 
+/* The commit-message box and its busy overlay: the input keeps its own
+   flex sizing through a wrapper so the overlay can sit exactly on top of it
+   while the host generates or commits. */
+.gitCommitInputWrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+/* The primitives Input renders its OWN wrapper span and puts `className`
+   there; it is content-box, so `width: 100%` would overflow its padding and
+   border onto the neighbouring buttons. Flex sizing (as before this overlay
+   was added) allocates by outer size and stays inside the row. */
 .gitCommitInput {
   flex: 1;
   min-width: 0;
+}
+
+/* Busy text in the input's place: the running-status sweep used by the side
+   chat (gradient text scrolled by background-position). The real placeholder
+   is cleared while busy, so the two never overlap. */
+.gitCommitBusyText {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  pointer-events: none;
+  font: var(--dsw-font-xxs-12);
+  background-image: linear-gradient(
+    90deg,
+    var(--dsw-alias-label-tertiary) 0%,
+    var(--dsw-alias-label-primary) 50%,
+    var(--dsw-alias-label-tertiary) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: gitCommitSweep 2.6s linear infinite;
+}
+
+@keyframes gitCommitSweep {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gitCommitBusyText { animation: none; }
 }
 
 .gitCommitButton {

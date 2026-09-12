@@ -150,6 +150,8 @@ export const pl: Record<string, string> = {
   commitError: 'Commit nie powiódł się',
   generateCommitMessage: 'Generate commit message',
   generateCommitMessageWith: 'Generate commit message (using {model})',
+  generatingCommitMessage: 'Generating commit message…',
+  committingMessage: 'Committing…',
   suggestCommitError: 'Failed to generate commit message',
   suggestCommitEmpty: 'No pending changes to summarize',
   commitModelTitle: 'Commit message model',

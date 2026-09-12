@@ -148,6 +148,8 @@ export const ja: Record<string, string> = {
   commitError: 'コミット失敗',
   generateCommitMessage: 'コミットメッセージを生成',
   generateCommitMessageWith: 'コミットメッセージを生成（{model} を使用）',
+  generatingCommitMessage: 'コミットメッセージを生成中…',
+  committingMessage: 'コミット中…',
   suggestCommitError: 'コミットメッセージの生成に失敗',
   suggestCommitEmpty: '要約できる変更はありません',
   commitModelTitle: 'コミットメッセージ生成モデル',

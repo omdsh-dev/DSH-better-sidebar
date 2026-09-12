@@ -121,6 +121,9 @@ export function GitLens(props: GitLensProps) {
   const [suggesting, setSuggesting] = useState(false)
   /** The route the next suggestion would use, for the button's tooltip. */
   const [commitModel, setCommitModel] = useState<string | undefined>(undefined)
+  /** Whether a COMMIT is in flight (a subset of `busy`, which also covers
+   *  staging/checkout): the input reports it with its own busy label. */
+  const [committing, setCommitting] = useState(false)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
   const [logEnded, setLogEnded] = useState(false)
   const [logLoadingMore, setLogLoadingMore] = useState(false)
@@ -410,6 +413,7 @@ export function GitLens(props: GitLensProps) {
     const message = commitMsg.trim()
     if (message === '' || busy || suggesting) return
     setBusy(true)
+    setCommitting(true)
     setCommitError(null)
     try {
       await api.gitCommit(gitScope, message, selectedWorktree)
@@ -418,6 +422,7 @@ export function GitLens(props: GitLensProps) {
     } catch (reason) {
       setCommitError(errorMessage(reason))
     } finally {
+      setCommitting(false)
       setBusy(false)
     }
   }
@@ -593,22 +598,33 @@ export function GitLens(props: GitLensProps) {
           </div>
 
           <div className={css.gitCommit}>
-            <Input
-              className={css.gitCommitInput}
-              placeholder={t('commitPlaceholder')}
-              value={commitMsg}
-              disabled={busy || suggesting}
-              onChange={(event) => { setCommitMsg(event.target.value); setCommitError(null) }}
-              onKeyDown={(event) => {
-                if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
-                // Ctrl/Cmd+G drafts the message, mirroring the button (the
-                // placeholder advertises it).
-                if ((event.ctrlKey || event.metaKey) && (event.key === 'g' || event.key === 'G')) {
-                  event.preventDefault()
-                  void suggestMessage()
-                }
-              }}
-            />
+            <span className={css.gitCommitInputWrap}>
+              <Input
+                className={css.gitCommitInput}
+                // While busy the placeholder steps aside for the sweep label.
+                placeholder={busy || suggesting ? '' : t('commitPlaceholder')}
+                value={commitMsg}
+                disabled={busy || suggesting}
+                aria-busy={busy || suggesting}
+                onChange={(event) => { setCommitMsg(event.target.value); setCommitError(null) }}
+                onKeyDown={(event) => {
+                  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void commit()
+                  // Ctrl/Cmd+G drafts the message, mirroring the button (the
+                  // placeholder advertises it).
+                  if ((event.ctrlKey || event.metaKey) && (event.key === 'g' || event.key === 'G')) {
+                    event.preventDefault()
+                    void suggestMessage()
+                  }
+                }}
+              />
+              {/* Only the two per-input operations get a label: other `busy`
+                  work (staging, checkout) disables the box silently. */}
+              {(suggesting || committing) && (
+                <span className={css.gitCommitBusyText} role="status" aria-live="polite">
+                  {suggesting ? t('generatingCommitMessage') : t('committingMessage')}
+                </span>
+              )}
+            </span>
             <button
               type="button"
               className={suggesting ? `${css.gitSuggestButton} ${css.gitSuggestBusy}` : css.gitSuggestButton}

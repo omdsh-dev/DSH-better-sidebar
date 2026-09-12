@@ -19,6 +19,13 @@ setupReactAct()
 
 const CWD = 'C:/repo/main'
 
+/** One promise the test resolves by hand (in-flight states). */
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolvePromise!: (value: T) => void
+  const promise = new Promise<T>((resolve) => { resolvePromise = resolve })
+  return { promise, resolve: resolvePromise }
+}
+
 function pendingStatus(): GitStatusResult {
   return { isRepo: true, branch: 'main', entries: [{ path: 'src/app.ts', xy: ' M' }] }
 }
@@ -130,6 +137,27 @@ describe('GitLens commit-message suggestion', () => {
 
       expect(suggest).toHaveBeenCalledTimes(1)
       expect(commitInput(container).value).toBe('chore: shortcut')
+    } finally {
+      unmount()
+    }
+  })
+
+  it('locks the box and shows the sweep label while a suggestion is in flight', async () => {
+    const pending = deferred<{ message: string; provider: string; model: string }>()
+    vi.spyOn(api, 'gitSuggestMessage').mockReturnValue(pending.promise)
+    const { container, unmount } = await mount()
+    try {
+      await act(async () => { suggestButton(container).click() })
+      expect(commitInput(container).disabled).toBe(true)
+      expect(container.textContent).toContain('Generating commit message…')
+
+      await act(async () => {
+        pending.resolve({ message: 'feat: done', provider: 'deepseek', model: 'deepseek-chat' })
+        await Promise.resolve()
+      })
+      expect(commitInput(container).disabled).toBe(false)
+      expect(commitInput(container).value).toBe('feat: done')
+      expect(container.textContent).not.toContain('Generating commit message…')
     } finally {
       unmount()
     }
