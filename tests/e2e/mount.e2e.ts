@@ -495,6 +495,43 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await expect(modal, 'Esc must close the zoom modal').toHaveCount(0, { timeout: 10_000 })
   await assertNoCrash()
 
+  // The viewer's "add to conversation" popup commits a CHIP, not a quoted
+  // block: the composer keeps one `<path>:<lines>` label while the chip's
+  // model form stays the fenced payload (design + mechanism:
+  // docs/plans/2026-09-12-selection-chip-design.md). Drive the gesture the way
+  // a user does — select a seeded preview line, then click the portaled
+  // button — and require the committed reference to reach the composer as one
+  // labelled chip. A host without the chip path would fall back to plain text
+  // and this assertion is what notices.
+  await page.evaluate(() => {
+    const host = document.querySelector('[class*="editorMd"]')
+    if (host === null) throw new Error('the markdown preview container is not rendered')
+    const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT)
+    let node: Node | null = walker.nextNode()
+    while (node !== null && (node.textContent ?? '').trim() !== 'tail text') node = walker.nextNode()
+    if (node === null) throw new Error('the seeded preview line is missing')
+    const range = document.createRange()
+    range.selectNodeContents(node)
+    const selection = window.getSelection()
+    if (selection === null) throw new Error('the window has no selection object')
+    selection.removeAllRanges()
+    selection.addRange(range)
+    host.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+  })
+  const addToConversation = page.locator('[class*="selectionPopup"]')
+  await expect(
+    addToConversation,
+    'selecting text in the preview must offer "add to conversation"',
+  ).toHaveCount(1, { timeout: 10_000 })
+  await addToConversation.click()
+  // "tail text" is line 12 of the seeded document, and the source reverse-search
+  // is unambiguous, so the label is exactly `<file>:12`.
+  await expect(
+    page.locator('[title="diagram.md:12"]'),
+    'the selection must commit as one `<path>:<lines>` chip, not a quoted block',
+  ).toHaveCount(1, { timeout: 10_000 })
+  await assertNoCrash()
+
   // README-style markdown (raw-HTML runs + TOC): open the seeded file and
   // require the full round-trip — sanitized HTML leaves (badge image as a real
   // element, active content stripped), markdown nested inside the unclosed
