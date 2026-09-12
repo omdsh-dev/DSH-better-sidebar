@@ -52,7 +52,7 @@
  *
  * No draft write may destroy a chip: `setDraft` rebuilds the editor from
  * plain paragraphs, so {@link appendToDraft} splices through the host's text
- * event instead as soon as the draft holds one ({@link insertPlainText}).
+ * event instead as soon as the draft holds one.
  */
 import type {
   Context,
@@ -67,13 +67,6 @@ export interface DraftCaret {
   start: number
   end: number
 }
-
-/**
- * One reference chip's footprint in the draft (the host's `Occurrence`).
- * `length` is the whole `clipboardText`, which is what makes the two
- * projections diverge.
- */
-export type DraftOccurrence = SidebarSessionOccurrence
 
 /** The subset of the host's input snapshot the insert paths read. */
 type DraftSnapshot = ReturnType<SidebarSessionInput['state']['getSnapshot']>
@@ -91,40 +84,54 @@ interface SpliceResult {
 }
 
 /**
+ * What one insert puts between the surrounding draft: `text` plus the
+ * whitespace-aware separators, and the left separator so the splice can place
+ * the caret right after the text. The single source of the separator rules —
+ * {@link spliceInsert} assembles the draft around it, and {@link chipTextAt}
+ * takes it whole instead of restating the rules.
+ */
+function joinedInsert(
+  draft: string,
+  text: string,
+  caret: DraftCaret | null,
+): { text: string; left: string } {
+  if (caret === null || draft === '') {
+    // A whitespace-only draft is dropped outright; anything else keeps its
+    // text and takes one separating space. The draft's own tail is a neighbor
+    // like any other: a chip insert leaves the host's separating space there,
+    // and adding a second one would widen the gap to two. (The resolved-caret
+    // branch below has always been whitespace-aware; this one was not.)
+    if (draft.trim() === '') return { text, left: '' }
+    const left = /\s$/.test(draft) ? '' : ' '
+    return { text: `${left}${text}`, left }
+  }
+  // One separating space per side, but never doubled against adjacent
+  // whitespace (or the string edges) — mirrors how typing in the middle of a
+  // sentence behaves.
+  const left = caret.start === 0 || /\s/.test(draft[caret.start - 1] ?? '') ? '' : ' '
+  const right = caret.end === draft.length || /\s/.test(draft[caret.end] ?? '') ? '' : ' '
+  return { text: `${left}${text}${right}`, left }
+}
+
+/**
  * Splice `text` into `draft` at `caret` (replacing any live selection) with
  * whitespace-aware joins and report the caret position right after the
  * inserted text. `caret === null` (position unknown) appends at the end,
  * exactly like the original behavior.
  */
 function spliceInsert(draft: string, text: string, caret: DraftCaret | null): SpliceResult {
+  const { text: inserted, left } = joinedInsert(draft, text, caret)
   if (caret === null || draft === '') {
-    // A whitespace-only draft is dropped outright; anything else keeps its
-    // text and takes one separating space.
-    if (draft.trim() === '') return { draft: text, inserted: text, caretAfter: text.length }
-    // The draft's own tail is a neighbor like any other: a chip insert leaves
-    // the host's separating space there, and adding a second one would widen
-    // the gap to two. (The resolved-caret branch below has always been
-    // whitespace-aware; this one was not.)
-    const left = /\s$/.test(draft) ? '' : ' '
-    const inserted = `${left}${text}`
+    if (draft.trim() === '') return { draft: text, inserted, caretAfter: text.length }
     return { draft: `${draft}${inserted}`, inserted, caretAfter: draft.length + inserted.length }
   }
-  const prefix = draft.slice(0, caret.start)
-  const suffix = draft.slice(caret.end)
-  if (prefix === '' && suffix === '') return { draft: text, inserted: text, caretAfter: text.length }
-  // One separating space, but never doubled against adjacent whitespace
-  // (or the string edges) — mirrors how typing in the middle of a sentence
-  // behaves.
-  const left = prefix === '' || /\s$/.test(prefix) ? '' : ' '
-  const right = suffix === '' || /^\s/.test(suffix) ? '' : ' '
-  const inserted = `${left}${text}${right}`
   return {
-    draft: `${prefix}${inserted}${suffix}`,
+    draft: `${draft.slice(0, caret.start)}${inserted}${draft.slice(caret.end)}`,
     inserted,
     // The caret lands right after the inserted text: past the left separating
     // space, but before the right one, so a following insert stacks adjacent
     // to the text instead of across the gap.
-    caretAfter: prefix.length + left.length + text.length,
+    caretAfter: caret.start + left.length + text.length,
   }
 }
 
@@ -138,13 +145,13 @@ export function insertAtCaret(draft: string, text: string, caret: DraftCaret | n
 
 /**
  * The chip's own draft text for one payload: the payload plus the join spaces
- * {@link spliceInsert} would add at that caret. Taking it straight from the
- * splice — instead of restating the whitespace rules — is what keeps the
- * resulting draft, and therefore the submitted prompt, identical to the
- * plain-text insert the selection popup committed before chips.
+ * {@link joinedInsert} would add at that caret. Taking it from the shared
+ * separator rules — instead of restating them — is what keeps the resulting
+ * draft, and therefore the submitted prompt, identical to the plain-text
+ * insert the selection popup committed before chips.
  */
 export function chipTextAt(draft: string, payload: string, caret: DraftCaret | null): string {
-  return spliceInsert(draft, payload, caret).inserted
+  return joinedInsert(draft, payload, caret).text
 }
 
 /**
@@ -169,7 +176,7 @@ export function chipTextAt(draft: string, payload: string, caret: DraftCaret | n
  */
 export function foldClipboardOffset(
   offset: number,
-  occurrences: readonly DraftOccurrence[] | undefined,
+  occurrences: readonly SidebarSessionOccurrence[] | undefined,
 ): number {
   let shift = 0
   if (occurrences !== undefined) {
@@ -182,7 +189,7 @@ export function foldClipboardOffset(
       if (offset > occurrence.offset) {
         // Strictly inside the chip's expansion, or exactly at its trailing
         // edge: snap to that edge (the host addresses a chip as a whole).
-        return Math.max(0, end - shift - (occurrence.length - 1))
+        return Math.max(0, occurrence.offset - shift + 1)
       }
       break
     }
@@ -275,22 +282,21 @@ export function placeComposerCaretAfterInsert(expectedDraft: string, caretIndex:
  *
  * The write path depends on what the draft already holds: a chipless draft
  * takes the whole-string `setDraft`, while a draft holding chips is spliced
- * through the host's text event ({@link insertPlainText}) — `setDraft`
- * rebuilds the editor from plain text and would destroy every chip in it.
+ * through the host's text event — `setDraft` rebuilds the editor from plain
+ * text and would destroy every chip in it.
  */
 export function appendToDraft(ctx: Context, sessionId: string, text: string): boolean {
   try {
-    const actx = ctx.sessions.scope(sessionId)
-    if (actx === undefined) {
-      console.warn('[dsh-better-sidebar] draft insert skipped: no session scope', sessionId)
+    const face = composerInput(ctx, sessionId)
+    if (!face.ok) {
+      if (face.reason === 'scope') {
+        console.warn('[dsh-better-sidebar] draft insert skipped: no session scope', sessionId)
+      } else {
+        console.warn('[dsh-better-sidebar] draft insert skipped: conversation service unavailable')
+      }
       return false
     }
-    const conversation = ctx.get('conversation') as SidebarConversation | undefined
-    if (conversation === undefined) {
-      console.warn('[dsh-better-sidebar] draft insert skipped: conversation service unavailable')
-      return false
-    }
-    const input = conversation.input.for(actx)
+    const { actx, input } = face
     const before = input.state.getSnapshot()
     // Mirrors the host's own admission rule for reference inserts (`plain |
     // claimed` only): a frozen composer takes no draft write on either path —
@@ -306,8 +312,13 @@ export function appendToDraft(ctx: Context, sessionId: string, text: string): bo
     if (before.occurrences !== undefined && before.occurrences.length > 0) {
       // A chip-bearing draft never goes through `setDraft`: it clears the
       // document and rebuilds plain paragraphs, taking every chip with it.
-      // The text event splices the very same characters instead.
-      return insertPlainText(actx, input, before, caret, inserted)
+      // The host's text event splices the very same characters instead — the
+      // resulting draft string is the exact one `setDraft` would have
+      // written, chips intact — but unlike `setDraft` it does not sanitize
+      // the reference placeholders, so the splice strips them here.
+      return bailComposerEdit(actx, input, before, caret, 'slash/input-insert-text', {
+        text: inserted.replace(REFERENCE_PLACEHOLDER_RE, ''),
+      })
     }
     input.setDraft(next)
     // Put the caret right after the inserted text once the value commit
@@ -328,37 +339,15 @@ export function appendToDraft(ctx: Context, sessionId: string, text: string): bo
  */
 const REFERENCE_PLACEHOLDER_RE = /[\uE100-\uE11D\uFFFC]/gu
 
-/** The one character a reference chip occupies in the editor projection. */
+/**
+ * The one character a reference chip occupies in the editor projection. A
+ * literal one inside a chip's own `clipboardText` would sit in a text node
+ * and forge a chip position, throwing off every span folded against
+ * `occurrences` afterwards — so the chip's clipboard text strips it (the
+ * `ref` never enters the editor, and the model still receives the payload
+ * verbatim).
+ */
 export const CHIP_PLACEHOLDER = '\uFFFC'
-
-/**
- * Matches {@link CHIP_PLACEHOLDER}. A literal one inside a chip's own
- * `clipboardText` would sit in a text node and forge a chip position, throwing
- * off every span folded against `occurrences` afterwards. The chip's `ref`
- * never enters the editor, so the model still receives the payload verbatim.
- */
-const CHIP_PLACEHOLDER_RE = /\uFFFC/gu
-
-/**
- * Splice `text` into a chip-bearing draft through the host's plain-text event
- * rather than `setDraft`. `text` is what {@link spliceInsert} put between the
- * surrounding draft text, so the resulting draft string is the exact one
- * `setDraft` would have written — the chips just survive it.
- *
- * Unlike `setDraft`, the host's text event does not sanitize the reference
- * placeholders, so the splice does.
- */
-function insertPlainText(
-  actx: Context,
-  input: SidebarSessionInput,
-  before: DraftSnapshot,
-  caret: DraftCaret | null,
-  text: string,
-): boolean {
-  return bailComposerEdit(actx, input, before, caret, 'slash/input-insert-text', {
-    text: text.replace(REFERENCE_PLACEHOLDER_RE, ''),
-  })
-}
 
 /**
  * The DSH `@file` spelling for one relative path, mirroring the host grammar
@@ -391,18 +380,19 @@ interface ChipReference {
 
 /**
  * Resolve one session's composer input face through the two lazily fetched
- * services (the `inject`-free reads the app's own plugins use). Null when
- * either is unavailable — every caller degrades to a no-op.
+ * services (the `inject`-free reads the app's own plugins use). `ok` is false
+ * with the failing step named — every caller degrades to a no-op, and
+ * {@link appendToDraft} turns the reason into its skip log.
  */
 function composerInput(
   ctx: Context,
   sessionId: string,
-): { actx: Context; input: SidebarSessionInput } | null {
+): { ok: true; actx: Context; input: SidebarSessionInput } | { ok: false; reason: 'scope' | 'service' } {
   const actx = ctx.sessions.scope(sessionId)
-  if (actx === undefined) return null
+  if (actx === undefined) return { ok: false, reason: 'scope' }
   const conversation = ctx.get('conversation') as SidebarConversation | undefined
-  if (conversation === undefined) return null
-  return { actx, input: conversation.input.for(actx) }
+  if (conversation === undefined) return { ok: false, reason: 'service' }
+  return { ok: true, actx, input: conversation.input.for(actx) }
 }
 
 /**
@@ -484,16 +474,16 @@ export function insertFileReference(ctx: Context, sessionId: string, relativePat
   const reference = fileMention(relativePath)
   if (reference === undefined) return false
   try {
-    const target = composerInput(ctx, sessionId)
-    if (target === null) return false
-    const before = target.input.state.getSnapshot()
+    const face = composerInput(ctx, sessionId)
+    if (!face.ok) return false
+    const before = face.input.state.getSnapshot()
     const chip: ChipReference = {
       label: reference.label,
       appearance: 'file',
       clipboardText: reference.mention,
       ref: reference.mention,
     }
-    return emitChip(target.actx, target.input, chip, null, before)
+    return emitChip(face.actx, face.input, chip, null, before)
   } catch (error) {
     console.warn('[dsh-better-sidebar] file-reference insert failed:', error)
     return false
@@ -519,9 +509,9 @@ export function insertSelectionReference(
   insert: SelectionInsert,
 ): boolean {
   try {
-    const target = composerInput(ctx, sessionId)
-    if (target === null) return false
-    const before = target.input.state.getSnapshot()
+    const face = composerInput(ctx, sessionId)
+    if (!face.ok) return false
+    const before = face.input.state.getSnapshot()
     const caret = probeComposerCaret(before.draft)
     const text = chipTextAt(before.draft, insert.text, caret)
     const chip: ChipReference = {
@@ -529,10 +519,10 @@ export function insertSelectionReference(
       appearance: 'file',
       // The editor-facing text must never carry a literal chip placeholder;
       // the model form keeps the payload exactly as selected.
-      clipboardText: text.replace(CHIP_PLACEHOLDER_RE, ''),
+      clipboardText: text.replaceAll(CHIP_PLACEHOLDER, ''),
       ref: text,
     }
-    return emitChip(target.actx, target.input, chip, caret, before)
+    return emitChip(face.actx, face.input, chip, caret, before)
   } catch (error) {
     console.warn('[dsh-better-sidebar] selection-reference insert failed:', error)
     return false
