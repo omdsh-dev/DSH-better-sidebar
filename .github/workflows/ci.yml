@@ -59,6 +59,12 @@ jobs:
   # runs the same typecheck / test / build / consumer-type-surface steps on
   # a real Windows runtime. The plugin-mount lane (real DSH + Playwright
   # Chromium) stays ubuntu-only and is deliberately NOT mirrored here.
+  #
+  # It also carries the search-engine gate: real fd/ripgrep binaries land on
+  # PATH (choco) before the suite runs, and the byte-level output-shape
+  # assertions run against them afterwards. Windows is where the engine's
+  # output format bites hardest (backslash separators, CR, GBK code pages) —
+  # see docs/ci-windows.md for the red-line list.
   ci-windows:
     runs-on: windows-latest
     timeout-minutes: 30
@@ -86,6 +92,12 @@ jobs:
         run: |
           git config --global user.name "dsh-better-sidebar-ci"
           git config --global user.email "ci@dsh.invalid"
+      # Real engine binaries for the byte-level assertions below. The probe
+      # inside src/search-engines.ts reads PATH, so the whole suite now runs
+      # with engines present; the specs inject their own probes and are
+      # unaffected either way (tests/search-engines.spec.ts).
+      - name: Install fd / ripgrep (choco)
+        run: choco install fd ripgrep -y --no-progress
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Typecheck
@@ -118,6 +130,13 @@ jobs:
         run: pnpm build
       - name: Check consumer type surface
         run: pnpm check:consumer-types
+      # Byte-level assertions on the REAL engine binaries installed above:
+      # pinned (`--path-separator /`) output must carry no '\' and no CR, and
+      # a Unicode filename must survive the UTF-8 pipeline. An engine that is
+      # absent skips (so the script stays runnable on a dev machine); an
+      # assertion failure exits non-zero.
+      - name: Engine output-shape assertions (real fd/rg)
+        run: node scripts/win-engine-check.cjs --assert
 
   # Pack the plugin as an npm tarball, mount it into a REAL DSH instance
   # through the official `dsh plugin --profile web add` channel, and render

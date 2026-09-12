@@ -88,3 +88,22 @@ Get-Content "$env:USERPROFILE\.dsh\search-debug.log" -Tail 20
 
 - 把上面三段期望的结果(或失败日志)发我,由我决定是否还差修复
 - 确认无误后回复 PR 评论,写明"Windows 真机已验证(装 fd + rg,模块级 + UI 链路)",附上本手册链接
+---
+
+## 实施偏差记录（2026-09-12）：CI 车道从 #335 并入本 PR
+
+原计划由独立 PR #335 新增 `search-windows` lane 固化这批验证。main 在 2026-09-03 拿到自己的 `ci-windows` lane（#520：windows-latest 上跑 `pnpm test:windows` 全量套件）之后，那条独立 lane 的形态已经过时，本次把它并入 #303：
+
+**保留并搬进 `ci-windows`**（`.github/workflows/ci.yml` 的两个步骤）：
+- `choco install fd ripgrep -y --no-progress` —— 真引擎二进制进 PATH（在 `pnpm install` 之前）
+- `node scripts/win-engine-check.cjs --assert` —— 套件结束后跑字节级断言
+
+**为什么并进而不是单开 lane**：单开要把「装依赖 + 跑全量」再付一遍（CI 分钟翻倍）却不增加覆盖；并进来则整条套件都在引擎在场的环境下跑（覆盖面严格更大），断言只多两个步骤。引擎相关 spec 是插桩式的（`tests/search-engines.spec.ts` 经 `setEngineHooks` 注入 probe，文件头注释即写明「CI 机器没有 fd/rg」），因此引擎在不在 PATH 上都不改变单测结论——ubuntu 的 `ci` lane 继续覆盖「引擎缺失 → JS 遍历回退」。
+
+**随 #303 一并升级**：`scripts/win-engine-check.cjs` 从「硬编码 `C:\Users\y\wintest` 的裸输出 demo」升级为 #335 的 `--assert` 版——每次运行自建 scratch 目录、引擎缺失即跳过、钉死 `--path-separator /` 的输出不得含 `\`/CR、中文文件名必须命中、失败非零退出。新增 `docs/ci-windows.md`（红线清单 / 历史平台修正 / 标准动作）并在 AGENTS.md §2 埋入口。
+
+**丢弃的部分**（原因见上，均已由 main 独立落地，无需随本 PR 携带）：
+- 独立的 `search-windows` job 与「全量测试」步骤 —— 由 `ci-windows` 承担
+- `package.json` build 跨平台（`rm -rf lib` → `node -e rmSync`）—— 已在 main
+- `tests/smoke.spec.ts` 钉 `core.autocrlf=false`、`tests/pty-deps.spec.ts` 平台断言 —— 已在 main
+- #335 对 README/AGENTS.md 的引擎功能描述 —— 本 PR 的 rebase 已把该描述锚定到 README 的 v0.12.3 条目与 `docs/external-plugin-guide.md`
