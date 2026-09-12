@@ -6,13 +6,19 @@
  * stale or wrong-composer caret is never applied; `placeComposerCaretAfterInsert`
  * restores the caret right after the inserted text once the setDraft value
  * commit lands, keeping stacked inserts at their running position.
+ *
+ * The chip path is covered too: `chipTextAt` derives the chip's own draft text
+ * from that same splice, so `insertSelectionReference` composes a draft — and a
+ * serialized prompt — identical to the plain-text insert it replaced.
  */
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Context } from '../src/context-types.ts'
 import {
   appendToDraft,
+  chipTextAt,
   insertAtCaret,
+  insertSelectionReference,
   placeComposerCaretAfterInsert,
   probeComposerCaret,
 } from '../src/client/conversation-draft.ts'
@@ -234,6 +240,179 @@ describe('appendToDraft', () => {
     const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const ctx = fakeCtx(() => '', (): void => undefined, false)
     expect(appendToDraft(ctx, 's1', 'X')).toBe(false)
+    expect(consoleWarn).toHaveBeenCalledTimes(1)
+    consoleWarn.mockRestore()
+  })
+})
+
+describe('chipTextAt', () => {
+  it('adds only the separating spaces the neighbors actually need', () => {
+    // Between two words: the left gap needs one, the right one is already there.
+    expect(chipTextAt('hello world', 'CODE', { start: 5, end: 5 })).toBe(' CODE')
+    // At the draft head: only the right side needs one.
+    expect(chipTextAt('hello', 'CODE', { start: 0, end: 0 })).toBe('CODE ')
+    // Inside a word: both sides need one.
+    expect(chipTextAt('onetwo', 'CODE', { start: 3, end: 3 })).toBe(' CODE ')
+    // An empty draft takes the bare payload.
+    expect(chipTextAt('', 'CODE', { start: 0, end: 0 })).toBe('CODE')
+  })
+
+  it('replaces a live selection through the same joins', () => {
+    expect(chipTextAt('a little tale', 'CODE', { start: 2, end: 8 })).toBe('CODE')
+    // A selection of the separating space itself re-earns both joins.
+    expect(chipTextAt('ab cd', 'CODE', { start: 2, end: 3 })).toBe(' CODE ')
+  })
+
+  it('appends with the leading space when the caret is unknown', () => {
+    expect(chipTextAt('hello', 'CODE', null)).toBe(' CODE')
+    // A whitespace-only draft is dropped, so the chip carries the payload alone.
+    expect(chipTextAt('   ', 'CODE', null)).toBe('CODE')
+  })
+
+  it('splices back to exactly the plain-text draft at the same caret', () => {
+    // Every shape except an all-whitespace draft: there the plain-text splice
+    // dropped the blank draft outright, while a chip insert only owns its own
+    // span and leaves the blanks in front of it (the host trims the submitted
+    // prompt, so the model receives the same text either way).
+    const cases: { draft: string; caret: { start: number; end: number } | null }[] = [
+      { draft: 'AB', caret: { start: 1, end: 1 } },
+      { draft: 'one  two', caret: { start: 3, end: 3 } },
+      { draft: 'a little tale', caret: { start: 2, end: 8 } },
+      { draft: '', caret: { start: 0, end: 0 } },
+      { draft: 'hello', caret: null },
+    ]
+    for (const { draft, caret } of cases) {
+      const chip = chipTextAt(draft, 'CODE', caret)
+      const start = caret === null ? draft.length : caret.start
+      const end = caret === null ? draft.length : caret.end
+      expect(draft.slice(0, start) + chip + draft.slice(end)).toBe(
+        insertAtCaret(draft, 'CODE', caret),
+      )
+    }
+  })
+})
+
+describe('insertSelectionReference', () => {
+  /** The composer's structured-reference insert event, as the fake machine sees it. */
+  interface ChipEvent {
+    name: string
+    reference: {
+      source: string
+      label: string
+      appearance?: string
+      clipboardText: string
+      ref: string
+    }
+    span: { draftRev: number; start: number; end: number }
+  }
+
+  /**
+   * A fake ctx whose scope `emit` applies the chip the way the input machine
+   * does: the draft takes the chip's `clipboardText` at the event's span and
+   * the revision bumps — that bump is the span-CAS success signal. `rev` of
+   * null models a machine that exposes no revision at all.
+   */
+  function fakeChipCtx(
+    initial: string,
+    rev: number | null = 1,
+  ): { ctx: Context; events: ChipEvent[]; draft: () => string } {
+    let draft = initial
+    let draftRev: number | undefined = rev === null ? undefined : rev
+    const events: ChipEvent[] = []
+    const actx = {
+      emit: (name: string, payload: Omit<ChipEvent, 'name'>): void => {
+        events.push({ name, ...payload })
+        draft = draft.slice(0, payload.span.start) + payload.reference.clipboardText + draft.slice(payload.span.end)
+        draftRev = (draftRev ?? 0) + 1
+      },
+    }
+    const input = {
+      state: { getSnapshot: (): { draft: string; draftRev: number | undefined } => ({ draft, draftRev }) },
+      setDraft: (): void => undefined,
+    }
+    const ctx = {
+      sessions: { scope: () => actx },
+      get: (name: string): unknown =>
+        name === 'conversation' ? { input: { for: () => input } } : undefined,
+    } as unknown as Context
+    return { ctx, events, draft: () => draft }
+  }
+
+  const insert = { label: 'a.ts:2-4', text: '```a.ts:2-4\nconst x = 1\n```' }
+
+  it('mints one file-appearance chip whose ref is the fenced payload', () => {
+    const { ctx, events, draft } = fakeChipCtx('')
+    expect(insertSelectionReference(ctx, 's1', insert)).toBe(true)
+    expect(events).toHaveLength(1)
+    expect(events[0]!.name).toBe('slash/input-insert-reference')
+    expect(events[0]!.reference).toEqual({
+      source: 'reference',
+      label: 'a.ts:2-4',
+      appearance: 'file',
+      clipboardText: insert.text,
+      ref: insert.text,
+    })
+    expect(events[0]!.span).toEqual({ draftRev: 1, start: 0, end: 0 })
+    expect(draft()).toBe(insert.text)
+  })
+
+  it('keeps the draft and the chip-serialized prompt equal to the plain-text insert', () => {
+    mountComposer('AB', 1, 1)
+    const { ctx, events, draft } = fakeChipCtx('AB')
+    insertSelectionReference(ctx, 's1', insert)
+    const caret = { start: 1, end: 1 }
+    expect(draft()).toBe(insertAtCaret('AB', insert.text, caret))
+    // What the model receives: the draft with the chip's span replaced by the
+    // ref the `reference` source serializes (the identity).
+    const event = events[0]!
+    const model =
+      draft().slice(0, event.span.start) +
+      event.reference.ref +
+      draft().slice(event.span.start + event.reference.clipboardText.length)
+    expect(model).toBe(insertAtCaret('AB', insert.text, caret))
+  })
+
+  it('replaces the live selection at the probed caret', () => {
+    mountComposer('a little tale', 2, 8)
+    const { ctx, events, draft } = fakeChipCtx('a little tale')
+    insertSelectionReference(ctx, 's1', { label: 'a.md:1', text: 'CODE' })
+    expect(events[0]!.span).toEqual({ draftRev: 1, start: 2, end: 8 })
+    expect(draft()).toBe(insertAtCaret('a little tale', 'CODE', { start: 2, end: 8 }))
+  })
+
+  it('appends at the end when the caret cannot be probed', () => {
+    const { ctx, events, draft } = fakeChipCtx('hello')
+    expect(insertSelectionReference(ctx, 's1', { label: 'a.md', text: 'CODE' })).toBe(true)
+    expect(events[0]!.span).toEqual({ draftRev: 1, start: 5, end: 5 })
+    expect(draft()).toBe('hello CODE')
+  })
+
+  it('returns false without emitting when the machine has no draftRev', () => {
+    const { ctx, events } = fakeChipCtx('hello', null)
+    expect(insertSelectionReference(ctx, 's1', insert)).toBe(false)
+    expect(events).toEqual([])
+  })
+
+  it('returns false when the session scope or the conversation service is unavailable', () => {
+    const noScope = {
+      sessions: { scope: (): undefined => undefined },
+      get: (): undefined => undefined,
+    } as unknown as Context
+    expect(insertSelectionReference(noScope, 's1', insert)).toBe(false)
+    const noConversation = {
+      sessions: { scope: (): unknown => ({}) },
+      get: (): undefined => undefined,
+    } as unknown as Context
+    expect(insertSelectionReference(noConversation, 's1', insert)).toBe(false)
+  })
+
+  it('returns false and logs when the insert event throws', () => {
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const ctx = {
+      sessions: { scope: () => ({ emit: (): void => { throw new Error('boom') } }) },
+      get: () => ({ input: { for: () => ({ state: { getSnapshot: () => ({ draft: '', draftRev: 1 }) } }) } }),
+    } as unknown as Context
+    expect(insertSelectionReference(ctx, 's1', insert)).toBe(false)
     expect(consoleWarn).toHaveBeenCalledTimes(1)
     consoleWarn.mockRestore()
   })
