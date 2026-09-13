@@ -71,7 +71,7 @@ function pathOf(args: Record<string, unknown>): string | undefined {
 }
 
 /** The 'tool/result' message envelope inside a session event's data. */
-interface ToolResultMessageLike {
+export interface ToolResultMessageLike {
   source?: { kind?: unknown; callId?: unknown }
   content?: unknown
 }
@@ -103,7 +103,7 @@ function resultText(message: ToolResultMessageLike): string | undefined {
 }
 
 /** Whether a tool result reported an error (the inner block's isError flag). */
-function resultIsError(message: ToolResultMessageLike): boolean {
+export function resultIsError(message: ToolResultMessageLike): boolean {
   if (!Array.isArray(message.content)) return false
   return message.content.some((block) => {
     if (block === null || typeof block !== 'object') return false

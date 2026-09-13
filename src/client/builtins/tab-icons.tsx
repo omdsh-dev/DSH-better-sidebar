@@ -1,10 +1,10 @@
 /**
  * The built-in tab glyphs, in color.
  *
- * Every built-in tab type and the incoming 8th (changes) declare their icon
- * here, so the three surfaces that draw a tab's glyph — the bottom workbench's
- * tab strip, the native right Sidebar's guide capsules and its tab chips — all
- * read the same colorful glyph from `descriptor.icon`.
+ * Every built-in tab type declares its icon here, so the three surfaces that
+ * draw a tab's glyph — the bottom workbench's tab strip, the native right
+ * Sidebar's guide capsules and its tab chips — all read the same colorful
+ * glyph from `descriptor.icon`.
  *
  * The color always arrives from a theme token, never from the plugin: the
  * glyph is a VSCodicon drawn in `currentColor`, and the wrapper class supplies
@@ -22,10 +22,11 @@ import {
   VscGitCommit,
   VscGlobe,
   VscLayers,
+  VscNote,
   VscTerminal,
 } from 'react-icons/vsc'
 /** The styled wrapper classes; typed so a renamed rule fails the build. */
-const css = styles as Record<'files' | 'changes' | 'tasks' | 'sidechat' | 'terminal' | 'browser', string>
+const css = styles as Record<'files' | 'changes' | 'plan' | 'tasks' | 'sidechat' | 'terminal' | 'browser', string>
 
 /** One tab type's glyph, sized by the caller's surface (14px in a strip). */
 export type TabIcon = (size: number) => ReactNode
@@ -45,6 +46,14 @@ export const filesTabIcon: TabIcon = (size) => (
 /** Changes / diff: the commit glyph, green like the diff affordances. */
 export const changesTabIcon: TabIcon = (size) =>
   themed(css.changes, <VscGitCommit size={size} />)
+
+/**
+ * Plan — the document the model presented for review. The glyph is a written
+ * note, not a checklist: the page shows one plan DOCUMENT per revision, and
+ * the tasks glyph's own comment (below) already rules the to-do reading out.
+ */
+export const planTabIcon: TabIcon = (size) =>
+  themed(css.plan, <VscNote size={size} />)
 
 /**
  * Tasks (subagents and background jobs) — the live-activity amber. The glyph

@@ -329,6 +329,13 @@ export const api = {
     call<{ events: SidebarSessionEvent[]; lastSeq: number }>('changes.ops', scopePayload(scope, {
       ...(afterSeq !== undefined && afterSeq > 0 ? { afterSeq } : {}),
     }), signal),
+  /** The session's plan rows for the plan page, past `afterSeq` (0 = whole
+   *  window). Host-side pre-filtering is what keeps a long session's earliest
+   *  plans on the wire — the page keeps every revision. */
+  plansEvents: (scope: SessionScope, afterSeq?: number, signal?: AbortSignal) =>
+    call<{ events: SidebarSessionEvent[]; lastSeq: number }>('plans.events', scopePayload(scope, {
+      ...(afterSeq !== undefined && afterSeq > 0 ? { afterSeq } : {}),
+    }), signal),
   /** Discard the worktree changes of one file (the index is untouched). */
   gitDiscard: (scope: SessionScope, path: string, worktree?: string) =>
     call<{ ok: true }>('git.discard', gitPayload(scope, worktree, { path })),

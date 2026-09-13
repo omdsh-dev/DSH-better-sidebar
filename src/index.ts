@@ -52,11 +52,13 @@ import {
 import { registerTools } from './tools.ts'
 import { AgentOpenRegistry, registerOpenTool, type AgentOpenRequest } from './agent-opens.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
+import { buildPlansApi, createPlanPushes, type PlanNotice, type PlanPushes, type SidebarPlansRoutes } from './plans-routes.ts'
+import { PLAN_EVENTS_WINDOW } from './plan-events.ts'
 import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
 import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
-import { readPersistedSession } from './session-store.ts'
+import { readPersistedSession, sessionEventWindow } from './session-store.ts'
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
@@ -293,6 +295,20 @@ function parseLoopbackAllowlist(allowlist: string): (host: string, port: string)
   }
 }
 
+/** Cap on the changes lens's wire window (it accumulates the same bound). */
+const CHANGES_EVENTS_CAP = 4000
+
+/** The changes lens serves the two tool row kinds it folds, past the cursor. */
+function takeChangeRows(
+  log: readonly SidebarSessionEvent[],
+  afterSeq: number,
+): readonly SidebarSessionEvent[] {
+  const filtered = log.filter(
+    event => (event.type === 'tool/call' || event.type === 'tool/result') && event.seq > afterSeq,
+  )
+  return filtered.length > CHANGES_EVENTS_CAP ? filtered.slice(filtered.length - CHANGES_EVENTS_CAP) : filtered
+}
+
 function buildApi(
   ctx: Context,
   ptyManager: PtyManager | null,
@@ -301,6 +317,7 @@ function buildApi(
   terminalShell: string,
   getSettings: () => SidebarSettingsFace | undefined,
   assistantLive: AssistantLiveBuffer,
+  planPushes: PlanPushes,
 ): Record<string, ApiMethod> {
   const cwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
     const sessionId = requireString(payload, 'sessionId')
@@ -326,6 +343,9 @@ function buildApi(
   // `subagents.history` calls. The route degrades to a 503 when the host
   // subagent runtime is absent (the page has no topology to show anyway).
   const subagentLiveApi: SidebarSubagentLiveRoutes = buildSubagentLiveApi(ctx)
+  // Plan submissions for the plan page (shape, rationale and the mirror's
+  // role: plans-routes.ts).
+  const plansApi: SidebarPlansRoutes = buildPlansApi(ctx, planPushes, PLAN_EVENTS_WINDOW)
   return {
     'session.cwd': async (payload) => {
       const { sessionId, cwd } = await cwdOf(payload)
@@ -487,44 +507,17 @@ function buildApi(
       const rev = requireString(payload, 'rev')
       return { content: await git.show(cwd, rev, path, repoRoot) }
     },
-    // The session's file-tool events for the changes tab's session lens
-    // (and its badge): the CLIENT runtime's sessions face has no event-log
-    // access, so the events cross the wire here — live session log first,
-    // the persisted logical log for not-yet-hydrated sessions. Only the
-    // two event types the lens folds are sent, narrowed to `seq > afterSeq`
-    // so polling is a small delta, with the same recent-window cap the
-    // client accumulator applies.
-    'changes.ops': async (payload) => {
-      const sessionId = requireString(payload, 'sessionId')
-      const rawAfter = (payload as { afterSeq?: unknown } | null)?.afterSeq
-      if (rawAfter !== undefined
-        && (typeof rawAfter !== 'number' || !Number.isSafeInteger(rawAfter) || rawAfter < 0)) {
-        throw new SidebarError('bad-request', 'afterSeq must be a non-negative integer')
-      }
-      // An absent cursor means "from the very first event" — a session whose
-      // log opens on a tool event (subagent seeds do) carries seq 0, which a
-      // literal `> 0` comparison would drop, so the absent case floors at -1.
-      const afterSeq = rawAfter ?? -1
-      let events: readonly SidebarSessionEvent[] | undefined = ctx.sessions.get(sessionId)?.snapshotEvents()
-      if (events === undefined) {
-        const persistence = ctx.get('sessionPersistence')
-        if (persistence !== undefined) {
-          try {
-            events = (await readPersistedSession(persistence, sessionId)).events
-          } catch {
-            // Cold read unavailable (session never persisted): an empty
-            // window is the honest answer, not a wire error.
-          }
-        }
-      }
-      if (events === undefined) return { events: [], lastSeq: Math.max(afterSeq, 0) }
-      const CHANGES_EVENTS_CAP = 4000
-      const filtered = events.filter(
-        event => (event.type === 'tool/call' || event.type === 'tool/result') && event.seq > afterSeq,
-      )
-      const window = filtered.length > CHANGES_EVENTS_CAP ? filtered.slice(filtered.length - CHANGES_EVENTS_CAP) : filtered
-      return { events: window, lastSeq: window.at(-1)?.seq ?? afterSeq }
-    },
+    // The session's file-tool events for the changes tab's session lens (and
+    // its badge): the two row kinds the lens folds, past the cursor, capped to
+    // the recent window. The live-then-persisted source is shared with every
+    // other session-backed route (see session-store.ts's window helper).
+    'changes.ops': (payload) => sessionEventWindow(ctx, payload, takeChangeRows),
+    // The session's plan revisions for the plan page: every accepted call of
+    // the host plan tool plus its paired result, pre-filtered host-side so the
+    // wire carries plan rows only. Its own window is merged with the rows the
+    // push feed mirrored, which is what covers a store log frozen at its
+    // rehydration boundary (see plans-routes.ts).
+    'plans.events': (payload) => plansApi.events(payload),
     // Release a terminal immediately. The WebSocket close frame already does
     // this while the socket is open; this route covers the tab-close that
     // happens while the socket is down (reconnect loop), so a closed tab can
@@ -763,6 +756,11 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // native dependencies — the tool works even in node-pty degraded mode.
   const agentOpenRegistry = new AgentOpenRegistry()
 
+  // The plan push feed (shape and rationale: plans-routes.ts). Unlike the
+  // registry above it keeps no queue — a notice that finds no view attached is
+  // dropped, never replayed on a later attach.
+  const planPushes = createPlanPushes(ctx)
+
   // ── User-facing "Side card" preferences ──────────────────────────────────
   // Register the namespace with the settings provider so the Settings page
   // (client half) can render and persist the new-conversation defaults. The
@@ -880,7 +878,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // effect releases the listener on fiber disposal.
   const assistantLive = createAssistantLiveBuffer(ctx)
   ctx.effect(() => () => { assistantLive.dispose() }, 'dsh-better-sidebar: live assistant stream buffer')
-  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace, assistantLive)
+  const api = buildApi(ctx, ptyManager, agentPtyRegistry, resolved, terminalShell, () => settingsFace, assistantLive, planPushes)
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/api',
@@ -1130,15 +1128,34 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
     },
   }), 'dsh-better-sidebar: agent-opens push WebSocket')
 
+  // ── Plan submissions push WebSocket ────────────────────────────────────
+  // The notice NAMES a plan; it never carries one — 'plans.events' stays the
+  // single authority for a plan's text.
+  const planWss = new WebSocketServer({ noServer: true })
+  ctx.effect(() => ctx.webServer.registerUpgrade({
+    path: '/sidebar/ws/plans',
+    handler: (req, socket, head) => {
+      if (!fence(req)) {
+        socket.destroy()
+        return
+      }
+      planWss.handleUpgrade(req as unknown as IncomingMessage, socket as unknown as Duplex, head as Buffer, (ws) => {
+        void attachPlanPushes(planPushes, ws, req)
+      })
+    },
+  }), 'dsh-better-sidebar: plans push WebSocket')
+
   ctx.effect(() => () => {
     toolsDisposers?.()
     openToolsDisposers?.()
     ptyManager?.disposeAll()
     agentPtyRegistry?.disposeAll()
     agentOpenRegistry.dispose()
+    planPushes.dispose()
     wss.close()
     agentListWss.close()
     agentOpenWss.close()
+    planWss.close()
   }, 'dsh-better-sidebar: teardown')
 }
 
@@ -1164,6 +1181,34 @@ async function attachAgentOpen(
     // disposer detaches the view on socket close/error so later opens queue
     // instead of accumulating on a dead socket.
     const unsubscribe = registry.attach(sessionId, send)
+    ws.on('close', () => { unsubscribe() })
+    ws.on('error', () => { unsubscribe() })
+  } catch (error) {
+    ws.close(1011, error instanceof Error ? error.message : String(error))
+  }
+}
+
+/** Attach one sidebar view to the plan push feed for its session. */
+async function attachPlanPushes(
+  pushes: PlanPushes,
+  ws: WebSocket,
+  req: SidebarHttpRequest,
+): Promise<void> {
+  try {
+    const url = new URL(req.url ?? '/', 'http://dsh.internal')
+    const sessionId = url.searchParams.get('sessionId')
+    if (sessionId === null) {
+      ws.close(1008, 'sessionId is required')
+      return
+    }
+    const send = (notice: PlanNotice): void => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(notice))
+      }
+    }
+    // The feed keeps no queue, so attaching has nothing to replay: the
+    // detacher only stops later notices from landing on a dead socket.
+    const unsubscribe = pushes.subscribe(sessionId, send)
     ws.on('close', () => { unsubscribe() })
     ws.on('error', () => { unsubscribe() })
   } catch (error) {

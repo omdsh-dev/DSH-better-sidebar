@@ -34,7 +34,7 @@ import { PAGE_URL, createHostApi, hostRpc, sendFirstMessage } from './host'
 const WORKSPACE_PATH = process.env.DSH_E2E_PERF_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-perf-workspace')
 
 /** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const NATIVE_TABS = ['files', 'git', 'subagent', 'sidechat', 'terminal', 'browser']
+const NATIVE_TABS = ['files', 'git', 'plan', 'subagent', 'sidechat', 'terminal', 'browser']
 
 let api: APIRequestContext
 

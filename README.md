@@ -49,6 +49,7 @@
 - **📂 模型侧边栏打开（可选）**：全局设置开启后注入 `sidebar_open` 工具——模型可主动在侧边栏打开文件 / 文件夹（树以该目录为根）/ HTTP(S) 网页
 - **🌿 文件变动**：Git 视角（真 diff / 历史 / 暂存·提交·还原 / worktree·子仓库选择）与本轮文件视角（模型读 / 写 / 编辑实时追踪，按文件分组、按类型筛选）**双视角合一**；统一 diff 渲染（改蓝配对 + 行内字符级高亮 + 语法着色（含 mjs/cjs/mts/cts、CSS/SCSS/Less、HTML/XML/SVG/Vue、GraphQL、JSONC/JSON5）+ 上下文折叠），底部可拖拽预览面板，可一键展开为独立 diff tab（落进工作台的 diff 分栏）；`.md` 操作（读 / 写 / 编辑）预览头部可切换**阅读模式**——经共享 MarkdownText 渲染 GFM 表格 / 任务列表 / 删除线 / 脚注 / 数学公式，本地图片自动改写为 `/sidebar/file` 媒体路由；含 ```mermaid 围栏时走编辑器同款懒加载 mermaid 渲染器（图可点击缩放 / 平移）；**敏感内容脱敏**——凭据形态路径整文件遮罩、普通文件按内容形态遮值（api_key: / Bearer / sk- / AKIA / ghp_ / PEM 等，字段名保留），默认开启、预览面板一键开关（localStorage 记忆），仅影响显示、不改会话数据。已知边界：mermaid 无引号节点标签含被遮密钥时，图回退源码（规避：标签加引号）；`.html` 操作（读 / 写 / 编辑）预览头部可切换**渲染模式**——复用编辑器同款 `/sidebar/html` 路由 iframe，相对资源（./style.css、img/x.png）同路由解析，分段读取也渲染完整文档，恒定沙箱（opaque origin + CSP 头，无逃生门）；`.pdf` 操作（读 / 写 / 编辑）同样可切换**渲染模式**——复用编辑器同款 PDF 预览（媒体路由字节流 + 显式 Blob，浏览器原生查看器内嵌，附下载入口）
 - **🧩 后台任务页**：subagent 拓扑 + 后台任务（退出码 / 实时输出 / 强制终止）
+- **📋 计划页**：计划模式下模型提交的每份计划全文自动落到侧边栏「计划」页——提交的瞬间自动切过去（不抢焦点、窄屏不停放成抽屉），逐版留档、下拉切换回看，每版带评审状态（待评审 / 已批准 / 未采纳），一键复制全文；**零磁盘写入**（只读会话事件日志）
 - **💬 侧边对话(beta)**：Codex 风格的侧边线程——继承主会话完整上下文（含进行中的回合与工具调用）独立运行，不进入主会话；线程内可持续追问，一键「保存为新会话」提升为顶层会话
 - **🖥️ 原生右侧栏 + 底部工作台**：右列交给 DSH 0.1.5 的原生右侧栏——插件把每个 tab 类型注册成原生 tab（文件打开走 `dsh-resource://file/**`，并接管内置「文件」页 / 文件树），插件自己只保留底部工作台（分栏 / 终端 / 随会话持久化），开合按钮挂在会话头右侧
 - **📌 固定终端**：右键终端 Tab 可「固定到工作区 / 固定到全局」——固定后切换会话不消失，在 TabBar 内联呈现（跨会话虚拟 Tab，点击就地激活，PTY 按 home 会话 id+tab 直连宿主 PTY，无需切回宿主会话）；Agent 终端被 reconcile 移除时豁免保留
@@ -57,7 +58,7 @@
 - **⚡ 按需加载**：启动只拉 ~325KB 核心，终端 / 编辑器 / Mermaid 图表等重依赖用到才按需拉取（[设计文档](docs/plans/2026-08-12-lazy-chunks-design.md)）
 - **🌏 多语言**：界面文案跟随 DSH 语言（zh / en）实时切换；安装 `@huanlin/dsh-plugin-better-locale` 后支持日语（ja）等第三语言覆盖（见下方「🌏 第三语言覆盖」）
 
-> 🔌 **核心理念**：服务优先——内置的 8 tab + 6 viewer 与第三方插件通过同一套 `ctx.betterSidebar` API 注册，能力完全对等；官方不再内置、可由生态提供的功能，交由生态插件实现（已有 **28+ 生态插件**，见下方「🌐 插件生态」）。接入文档见「🔌 服务化扩展」与 [外部插件接入指南](./docs/external-plugin-guide.md)。
+> 🔌 **核心理念**：服务优先——内置的 8 个 tab 类型（7 可见 + 1 隐藏的 diff）+ 6 个 viewer 与第三方插件通过同一套 `ctx.betterSidebar` API 注册，能力完全对等；官方不再内置、可由生态提供的功能，交由生态插件实现（已有 **28+ 生态插件**，见下方「🌐 插件生态」）。接入文档见「🔌 服务化扩展」与 [外部插件接入指南](./docs/external-plugin-guide.md)。
 
 ## 🚀 安装
 
@@ -173,7 +174,7 @@ dsh registry enable dsh-external/dsh-better-sidebar
 
 ## 🌐 插件生态
 
-`ctx.betterSidebar` 服务向所有插件开放两个扩展点：**`registerTab`（注册侧边栏页面）** 与 **`registerFileViewer`（注册文件预览器）**。内置的 8 tab + 6 viewer 与第三方插件走同一套 API，能力完全对等。
+`ctx.betterSidebar` 服务向所有插件开放两个扩展点：**`registerTab`（注册侧边栏页面）** 与 **`registerFileViewer`（注册文件预览器）**。内置的 8 个 tab 类型（7 可见 + 1 隐藏的 diff）+ 6 个 viewer 与第三方插件走同一套 API，能力完全对等。
 
 ```ts
 import type {} from 'dsh-better-sidebar'  // 触发 ctx.betterSidebar 类型合并
@@ -273,7 +274,7 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 - 🎨 **文件图标（#611）与内置 Tab 图标改为彩色**（#531 + #594 合并，实现按 rc.2 重做）：
   - **文件/文件夹图标走 DSH 官方图形**：回退链末端是宿主 `ui-primitives` 的 `FileTypeIcon`（48 类官方全彩代码/配置图形 + markdown/图片/PDF/Office/视频/文件夹的类目色板），插件**不再自带扩展名表，也不再需要图标懒加载 chunk**——`#429` 那份 563 条彩色数据与 `lib/client-file-icons.js`（255 kB）连同 `fileIconTheme` 设置开关一并删除，彩色就是唯一形态（核心 bundle 因此只增 10 kB）。
   - **新增对外 `registerFileIcon` API**（能力 `'fileIcons'`）：按扩展名（`exts`）、精确文件名（`names`）、目录名（`folderNames`）注册自己的图标，优先级降序、同级按注册序；**注意**：宿主分类器覆盖任意路径，所以注册 `exts: []` 的 catch-all 会接管所有未具体命中的行。
-  - **内置 tab 图标彩色**：文件 / 文件变动 / 任务管理 / 侧边对话 / 终端 / 浏览器 六个类型与 diff 视图的 glyph 换成彩色版本（颜色全部来自 `--dsw-alias-*` 令牌，皮肤照旧全覆盖）。
+  - **内置 tab 图标彩色**：文件 / 文件变动 / 计划 / 任务管理 / 侧边对话 / 终端 / 浏览器 七个类型与 diff 视图的 glyph 换成彩色版本（颜色全部来自 `--dsw-alias-*` 令牌，皮肤照旧全覆盖）。
   - **原生右侧栏的 tab 芯片也带图标**：宿主的 tab 定义没有 icon 字段，但 `sidebar.right.pane.tab.title` 槽就是芯片内容——插件在该槽渲染「图标 + 标题」（编辑器 tab 带路径时显示该文件的图标），glyph 为 `aria-hidden`，芯片可访问名不变。
 - 🛠 **CI 修复一：Windows lane 的真实超时**。`ci-windows` 在 2026-09-09/10 窗口内红了 8 次，其中 6 次是真起进程的用例撞上 vitest 默认 5000ms：`tests/agent-pty.spec.ts`（真起 PowerShell + ConPTY）与 `tests/install-powershell.spec.ts`（冷启 `powershell.exe` 实测 12.1s）现在各自声明 30s 预算，且 `vitest.config.ts` 的全局 `testTimeout` 从默认 5000ms 提到 **15s**（第一次真实 Windows 跑又在**第三个**文件上翻车：`tests/git.spec.ts:85` 耗时 9607ms——三个文件同一个根因，逐文件加超时是打地鼠）；`waitForTranscript` 的内层轮询预算从 5000ms 降到 15s，**内层预算必须小于外层**（原先是同一个 5000ms，结构性必然超时）。`ci-windows` 的 `Test` 改跑 `pnpm test:windows`（`--maxWorkers=2`），在 2 核 runner 上不再让真起进程的 spec 互相抢占。
 - 🛠 **CI 修复二：挂载车道的 npm 安装**。`plugin-mount` 的 `npm install -g @deepseek-ai/dsh@<ver>` 曾 4 次失败（2 次 `ETARGET`、2 次 `JavaScript heap out of memory` exit 134）：钉版自身的传递依赖是浮动 `^` 范围，上游**分阶段发布**预发布版时（rc.2 于 09-10 的 14:43–14:57 逐包上线）npm 会组出 rc.1/rc.2 混合 peer 图（3062 条 ERESOLVE）。现在钉一个**已完整发布**的 rc.2（修 ETARGET）并加 `NODE_OPTIONS=--max-old-space-size=4096`（修 OOM）。中途试过 `--legacy-peer-deps`，被真实 CI 否掉：它跳过的正是全局安装必须提供的 peer，`dsh-app-boot` 在 boot 时 require 的 `@deepseek-ai/cordis-plugin-group` 是 peer 而非 dependency，加了它 CLI 直接 `ERR_MODULE_NOT_FOUND`。
@@ -284,7 +285,7 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 
 **✨ 新功能**
 
-- 📝 **新建标签页列表恢复可选说明**（#613）：DSH 0.1.5-rc.1 让 `SidebarRightGuideEntry.description` 回归（可选），插件随之恢复 `TabDescriptor.description`，六个内置类型各写回一条说明（原生指南的 文件 / 文件变动 / 任务管理 / 侧边对话 / 终端 / 浏览器 六行都带上它），`guideDesc*` 词条回到 20 份词典。**宿主的原生指南只在列出的条目 ≤ 4 条时渲染说明**（更长的列表是整列丢弃，不是截断），而插件默认贡献 6 个 guide 条目——因此默认组合下说明不渲染，只有在插件设置页关掉足够多的 tab 类型、把 guide 压到 ≤ 4 条时才会出现。未声明说明的条目仍是「图标 + 标题」单行（插件不补通用兜底句）。
+- 📝 **新建标签页列表恢复可选说明**（#613）：DSH 0.1.5-rc.1 让 `SidebarRightGuideEntry.description` 回归（可选），插件随之恢复 `TabDescriptor.description`，七个内置类型各写回一条说明（原生指南的 文件 / 文件变动 / 计划 / 任务管理 / 侧边对话 / 终端 / 浏览器 七行都带上它），`guideDesc*` 词条回到 20 份词典。**宿主的原生指南只在列出的条目 ≤ 4 条时渲染说明**（更长的列表是整列丢弃，不是截断），而插件默认贡献 7 个 guide 条目——因此默认组合下说明不渲染，只有在插件设置页关掉足够多的 tab 类型、把 guide 压到 ≤ 4 条时才会出现。未声明说明的条目仍是「图标 + 标题」单行（插件不补通用兜底句）。
 
 **🐛 修复**
 
@@ -321,7 +322,7 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 
 **✨ 新功能**
 
-- 🖥️ **接入 DSH 原生右侧栏**（#604）：右列改为 DSH 自己的右侧栏——插件的 7 个 tab 类型全部注册成原生 tab 类型 + 原生 tab 体；聊天里的文件打开统一走 `ctx.sidebarRight.openResource(dsh-resource://file/…)`；`editor` 类型以 `extension` 优先级认领文件资源（压过内置文本预览）并接管内置「文件」页 kind（注销即复位）；跨会话打开在目标会话未上屏时排队重放。
+- 🖥️ **接入 DSH 原生右侧栏**（#604）：右列改为 DSH 自己的右侧栏——插件的 8 个 tab 类型全部注册成原生 tab 类型 + 原生 tab 体；聊天里的文件打开统一走 `ctx.sidebarRight.openResource(dsh-resource://file/…)`；`editor` 类型以 `extension` 优先级认领文件资源（压过内置文本预览）并接管内置「文件」页 kind（注销即复位）；跨会话打开在目标会话未上屏时排队重放。
 - 🧩 **退役插件自绘右侧面板与自由窗口**（#605）：右列归 DSH 后，插件只保留底部工作台（单分栏树、随会话持久化），开合按钮注册进 DSH 会话头 utilities 槽；浮窗 API（`floats` / `floatTab` / `dockFloat` / `raiseFloat` / 右键「移动到自由窗口」）、`features` 里的 `'floatWindows'`，以及 `openByDefault` / `defaultWidthPercent` / `changesDiffFloat` 三个设置项一并删除（旧持久化文档里的 `floats` 字段被忽略，不影响加载）。
 - 🔗 **适配 DSH 0.1.5 宿主契约**（#603）：`assistant/chunk` 事件删除 → 实时增量改由 `agent/assistant-stream` 帧折叠（侧边对话转录的 `live` 字段）；`sessionPersistence.inspect` 删除 → 冷会话读取改走 `open(id,'read')`；会话头 `version` 用 `SESSION_FORMAT_VERSION`。
 
@@ -599,7 +600,7 @@ GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sidebar
 
 ## 🔌 服务化扩展
 
-从 v0.4.0 起暴露 `ctx.betterSidebar` 服务，其他插件可注册侧边栏页面与文件预览器（内置 8 tab + 6 viewer 亦通过同一服务注册）。v0.12.1 补齐基座能力（完整类型导出、能力探测、状态订阅、tab 角标、生命周期回调、定向打开、插件自有设置等）。v0.19.0 起新增文件图标注册：`registerFileIcon` 按扩展名（或保留的 `'folder'` / `'folder-open'` 目录扩展名、`exts: []` 全局默认）替换文件树与文件 tab 的图标，彩色 ReactNode 亦可——内置消费、注册即生效，无需自己接线。
+从 v0.4.0 起暴露 `ctx.betterSidebar` 服务，其他插件可注册侧边栏页面与文件预览器（内置 8 个 tab 类型（7 可见 + 1 隐藏的 diff）+ 6 个 viewer 亦通过同一服务注册）。v0.12.1 补齐基座能力（完整类型导出、能力探测、状态订阅、tab 角标、生命周期回调、定向打开、插件自有设置等）。v0.19.0 起新增文件图标注册：`registerFileIcon` 按扩展名（或保留的 `'folder'` / `'folder-open'` 目录扩展名、`exts: []` 全局默认）替换文件树与文件 tab 的图标，彩色 ReactNode 亦可——内置消费、注册即生效，无需自己接线。
 
 完整接入文档（全字段、匹配算法、HMR 陷阱、声明式设置、版本探测、原生栏承载面与皮肤契约）：**[`docs/external-plugin-guide.md`](./docs/external-plugin-guide.md)**；仓库开发规则（硬约束 / CI / 发版）见 [`AGENTS.md`](./AGENTS.md)。
 

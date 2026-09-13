@@ -23,6 +23,13 @@ export interface SidebarPrefs {
    */
   autoOpenJobs: boolean
   /**
+   * Whether the sidebar opens the Plan page the moment the model presents a
+   * plan (the host plan tool's `exit_plan_mode`). Unlike the two switches
+   * above this one is not about background work: a plan is waiting for the
+   * user's review, and the page is where its full text is readable.
+   */
+  autoOpenPlan: boolean
+  /**
    * Whether the model-facing agent terminal tools (terminal_create / list /
    * send / read / wait_for / resize / signal / close) are injected into the
    * model's toolset. Off by default: the feature stays dormant until the
@@ -241,6 +248,7 @@ export type TitleBarScheme = typeof TITLE_BAR_SCHEMES[number]
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   autoOpenSubagent: true,
   autoOpenJobs: true,
+  autoOpenPlan: true,
   agentTerminalTools: false,
   agentOpenTools: false,
   bottomPanelAutoTerminal: true,
