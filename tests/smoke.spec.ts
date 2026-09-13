@@ -400,7 +400,7 @@ describe('git destructive operations (scratch repository)', () => {
   }
 
   const gitRun = (cwd: string, args: string[]): string => {
-    const result = spawnSync('git', ['-C', cwd, '--no-pager', '-c', 'color.ui=false', ...args], {
+    const result = spawnSync('git', ['-C', cwd, '--no-pager', '-c', 'color.ui=false', '-c', 'core.quotePath=false', ...args], {
       encoding: 'utf8',
       env: { ...process.env, ...FIXTURE_IDENTITY },
     })
