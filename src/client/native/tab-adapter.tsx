@@ -140,12 +140,18 @@ export function createNativeTabRecords(): NativeTabRecords {
       if (existing === undefined) {
         const seeded = params?.title === undefined && params?.meta === undefined ? mint?.() : undefined
         const meta = params?.meta ?? seeded?.meta
+        // A `url` seed IS the address of a page type that navigates (the
+        // browser tab reads `tab.path` on mount); it only differs from a `path`
+        // seed in who writes it, so the record takes whichever arrived. Losing
+        // it here left a link opened in the sidebar with its hostname as the
+        // chip title and an empty address bar.
+        const address = params?.path ?? params?.url
         const minted: View = {
           tab: {
             id,
             type: kind as TabType,
             title: params?.title ?? seeded?.title ?? title,
-            ...(params?.path === undefined ? {} : { path: params.path }),
+            ...(address === undefined ? {} : { path: address }),
             ...(params?.diff === undefined ? {} : { diff: params.diff }),
             ...(meta === undefined ? {} : { meta }),
           },
