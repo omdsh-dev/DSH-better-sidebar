@@ -14,7 +14,7 @@ import { SidebarError } from '../src/wire.ts'
 import { SIDE_BOUNDARY_PROMPT, SIDE_INJECTION_PLUGIN, SIDE_NEW_THREAD_TITLE, sideLabel } from '../src/sidechat-core.ts'
 import type { Context } from '../src/context-types.ts'
 
-/** A fake live agent (inject/followup/cancel spied). */
+/** A fake live agent (inject/followup/cancel/inbox.clear spied). */
 function agent(id: string, over: { events?: unknown[]; header?: Record<string, unknown>; provider?: string; model?: string } = {}) {
   return {
     id,
@@ -28,6 +28,7 @@ function agent(id: string, over: { events?: unknown[]; header?: Record<string, u
     inject: vi.fn(),
     followup: vi.fn(),
     cancel: vi.fn(),
+    inbox: { clear: vi.fn() },
   }
 }
 
@@ -172,6 +173,17 @@ describe('sidechat.start', () => {
     const message = child.followup.mock.calls[0]![0] as { content: Array<{ type: string; text: string }>; source: { kind: string } }
     expect(message.source).toEqual({ kind: 'user' })
     expect(message.content[0]!.text).toBe('explain the event flow')
+    // The fork markers alone do not empty the RUNTIME inbox (the projection
+    // folds the full log, seed prefix included — see
+    // sidechat-seed-validation.spec.ts), so the route must durably clear the
+    // child inbox right after create, BEFORE any message is sent: the first
+    // side prompt would otherwise claim and send the parent's unclaimed
+    // queued input ahead of the boundary + question.
+    expect(child.inbox.clear).toHaveBeenCalledTimes(1)
+    expect(child.inbox.clear.mock.invocationCallOrder[0])
+      .toBeLessThan(child.inject.mock.invocationCallOrder[0]!)
+    expect(child.inbox.clear.mock.invocationCallOrder[0])
+      .toBeLessThan(child.followup.mock.invocationCallOrder[0]!)
     expect(services.rename).toHaveBeenCalledWith(child.session, sideLabel('explain the event flow'))
   })
 
@@ -251,6 +263,9 @@ describe('sidechat.start', () => {
     // label is pinned and the in-progress snapshot is parked for it.
     expect(child.inject).not.toHaveBeenCalled()
     expect(child.followup).not.toHaveBeenCalled()
+    // The empty thread clears its inherited inbox too: the phantom would sit
+    // unclaimed until the composer's first prompt claims it.
+    expect(child.inbox.clear).toHaveBeenCalledTimes(1)
     expect(services.rename).toHaveBeenCalledWith(child.session, SIDE_NEW_THREAD_TITLE)
 
     // The first prompt injects the boundary + the parked snapshot (split

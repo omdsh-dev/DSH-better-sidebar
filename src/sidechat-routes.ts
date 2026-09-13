@@ -286,6 +286,20 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
         throw new SidebarError('sidechat-error', `thread creation failed: ${error instanceof Error ? error.message : String(error)}`, 500)
       }
       threadDisposers.set(childId, () => handle.dispose())
+      // The fork markers above cut `ownEvents()`, but the RUNTIME inbox
+      // (`ReactLoopInbox` → ctx.sessionProjections) folds the FULL log —
+      // inherited seed prefix included — because the standard inbox
+      // projection's init ignores `inheritedEventCount` (DSH 0.1.5-rc.2).
+      // Whatever input sat unclaimed in the parent at the click moment
+      // therefore replays into the child's live inbox, and the first side
+      // prompt would claim and send it BEFORE the boundary + question (the
+      // long-conversation queued-input leak). Clearing durably right after
+      // create fences it: the compensating splices are the child's own
+      // events (persisted, so a cold resume stays clean; the transcript
+      // never renders them), and nothing has been sent yet, so the idle
+      // driver cannot have claimed anything — no race.
+      // See docs/plans/2026-09-13-sidechat-inbox-projection-leak.md.
+      handle.agent.inbox.clear()
       // Pin the thread label so the client can identify its threads by
       // title prefix (the rename is a live-session op, no RPC fence).
       const titles = ctx.get('sessionTitle') as SidebarSessionTitleService | undefined

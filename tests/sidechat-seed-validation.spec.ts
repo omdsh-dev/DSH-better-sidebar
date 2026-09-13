@@ -12,6 +12,8 @@
 import { describe, expect, it } from 'vitest'
 import { Session, SessionLogOffset, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 import type { SessionId } from '@deepseek-ai/dsh-session'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import { Context } from '@deepseek-ai/cordis'
 import type { InboxState } from '@deepseek-ai/dsh-agent'
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import type { SidebarSessionEvent } from '../src/context-types.ts'
@@ -40,6 +42,61 @@ function assistantMessage(text: string): Record<string, unknown> {
     source: { kind: 'model', provider: 'test', model: 'model-x' },
   }
 }
+
+/** One pending inbox message (the shape `agent/inbox/spliced.inserted` carries). */
+const pendingMessage = (id: string, kind: string, text: string) => ({
+  id,
+  role: 'user',
+  content: [{ type: 'text', text }],
+  source: { kind },
+})
+
+/** The shape the routes pass since the marker fix: isSeeded + inheritedEventCount. */
+const forkMarkedSession = (id: string, seed: readonly SidebarSessionEvent[]): Session =>
+  Session.create(
+    id as SessionId,
+    seed as never,
+    { version: SESSION_FORMAT_VERSION, id: id as SessionId, createdAt: Date.now(), isSeeded: true },
+    SessionLogOffset(seed.length),
+  )
+
+/** Real loop order: inbox insert → turn/start → claim deletion → step/start
+ *  → user/message. One completed, fully claimed turn (seq 0-7). */
+const completedTurnLog = (): SidebarSessionEvent[] => [
+  ev('agent/inbox/spliced', 0, { target: 'next-turn', start: 0, inserted: [pendingMessage('m-q', 'user', 'q')] }),
+  ev('turn/start', 1, { turn: 1 }),
+  ev('agent/inbox/spliced', 2, { target: 'next-turn', start: 0, removedCount: 1, inserted: [] }),
+  ev('step/start', 3, { turn: 1, step: 1 }),
+  ev('user/message', 4, pendingMessage('m-q', 'user', 'q')),
+  ev('assistant/message', 5, { turn: 1, step: 1, message: assistantMessage('a'), stream: [] }),
+  ev('step/end', 6, { turn: 1, step: 1 }),
+  ev('turn/end', 7, { turn: 1, reason: { kind: 'completed' } }),
+]
+
+/** Mid-turn with an UNCLAIMED tool-result context in next-step (seq 15). */
+const midTurnLog = (): SidebarSessionEvent[] => [
+  ...completedTurnLog(),
+  ev('agent/inbox/spliced', 8, { target: 'next-turn', start: 0, inserted: [pendingMessage('m-q2', 'user', 'q2')] }),
+  ev('turn/start', 9, { turn: 2 }),
+  ev('agent/inbox/spliced', 10, { target: 'next-turn', start: 0, removedCount: 1, inserted: [] }),
+  ev('step/start', 11, { turn: 2, step: 1 }),
+  ev('user/message', 12, pendingMessage('m-q2', 'user', 'q2')),
+  ev('tool/call', 13, { turn: 2, step: 1, callId: 'c1', name: 'bash', arguments: '{}' }),
+  ev('tool/result', 14, {
+    turn: 2, step: 1,
+    message: {
+      id: 'm-r',
+      role: 'user',
+      content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'ok' }] }],
+      source: { kind: 'tool', callId: 'c1' },
+    },
+  }),
+  ev('agent/inbox/spliced', 15, {
+    target: 'next-step',
+    start: 0,
+    inserted: [pendingMessage('m-ctx', 'tool', 'tool bash finished: exit 0 ... now continue the plan')],
+  }),
+]
 
 /** A parent log with a completed turn, a pending question, and an open
  *  in-progress turn (the exact shape a mid-stream thread creation sees).
@@ -133,12 +190,6 @@ describe('sidechat seed fork markers vs the reconstructed inbox', () => {
    * `inheritedEventCount` the marker pair supplies is exactly what keeps the
    * inherited prefix out of it.
    */
-  const pendingMessage = (id: string, kind: string, text: string) => ({
-    id,
-    role: 'user',
-    content: [{ type: 'text', text }],
-    source: { kind },
-  })
   const inboxOver = (session: Session): { nextTurn: number; nextStep: number } => {
     let state: InboxState = { 'next-turn': [], 'next-step': [] }
     for (const event of session.ownEvents()) {
@@ -152,50 +203,6 @@ describe('sidechat seed fork markers vs the reconstructed inbox', () => {
     }
     return { nextTurn: state['next-turn'].length, nextStep: state['next-step'].length }
   }
-  /** The shape the routes pass since the fix: isSeeded + inheritedEventCount. */
-  const forkMarkedSession = (id: string, seed: readonly SidebarSessionEvent[]): Session =>
-    Session.create(
-      id as SessionId,
-      seed as never,
-      { version: SESSION_FORMAT_VERSION, id: id as SessionId, createdAt: Date.now(), isSeeded: true },
-      SessionLogOffset(seed.length),
-    )
-  /** Real loop order: inbox insert → turn/start → claim deletion → step/start
-   *  → user/message. One completed, fully claimed turn (seq 0-7). */
-  const completedTurnLog = (): SidebarSessionEvent[] => [
-    ev('agent/inbox/spliced', 0, { target: 'next-turn', start: 0, inserted: [pendingMessage('m-q', 'user', 'q')] }),
-    ev('turn/start', 1, { turn: 1 }),
-    ev('agent/inbox/spliced', 2, { target: 'next-turn', start: 0, removedCount: 1, inserted: [] }),
-    ev('step/start', 3, { turn: 1, step: 1 }),
-    ev('user/message', 4, pendingMessage('m-q', 'user', 'q')),
-    ev('assistant/message', 5, { turn: 1, step: 1, message: assistantMessage('a'), stream: [] }),
-    ev('step/end', 6, { turn: 1, step: 1 }),
-    ev('turn/end', 7, { turn: 1, reason: { kind: 'completed' } }),
-  ]
-  /** Mid-turn with an UNCLAIMED tool-result context in next-step (seq 15). */
-  const midTurnLog = (): SidebarSessionEvent[] => [
-    ...completedTurnLog(),
-    ev('agent/inbox/spliced', 8, { target: 'next-turn', start: 0, inserted: [pendingMessage('m-q2', 'user', 'q2')] }),
-    ev('turn/start', 9, { turn: 2 }),
-    ev('agent/inbox/spliced', 10, { target: 'next-turn', start: 0, removedCount: 1, inserted: [] }),
-    ev('step/start', 11, { turn: 2, step: 1 }),
-    ev('user/message', 12, pendingMessage('m-q2', 'user', 'q2')),
-    ev('tool/call', 13, { turn: 2, step: 1, callId: 'c1', name: 'bash', arguments: '{}' }),
-    ev('tool/result', 14, {
-      turn: 2, step: 1,
-      message: {
-        id: 'm-r',
-        role: 'user',
-        content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'ok' }] }],
-        source: { kind: 'tool', callId: 'c1' },
-      },
-    }),
-    ev('agent/inbox/spliced', 15, {
-      target: 'next-step',
-      start: 0,
-      inserted: [pendingMessage('m-ctx', 'tool', 'tool bash finished: exit 0 ... now continue the plan')],
-    }),
-  ]
 
   it('inherits the parent\'s UNCLAIMED next-step tool context without the fork markers (root cause)', () => {
     // Parent mid-turn (user queue empty): the bash tool returned and spliced
@@ -220,9 +227,12 @@ describe('sidechat seed fork markers vs the reconstructed inbox', () => {
     expect(inboxOver(unmarked)).toEqual({ nextTurn: 1, nextStep: 0 })
   })
 
-  it('the fork-marker pair (isSeeded + inheritedEventCount) leaves the inherited inbox empty', () => {
+  it('the fork-marker pair (isSeeded + inheritedEventCount) empties the ownEvents()-based fold', () => {
     // Same mid-turn log as the root-cause case, plus the descriptor the
     // routes append — exactly what sidechat.start passes to agents.create.
+    // NOTE: this pins the marker pair's ownEvents() cut only — necessary but
+    // NOT sufficient for the RUNTIME inbox, which folds the full log (the
+    // describe below proves the hole and the route's clear() fence).
     const { seed } = buildSidechatInheritance(midTurnLog())
     const withDescriptor = [
       ...seed,
@@ -238,5 +248,100 @@ describe('sidechat seed fork markers vs the reconstructed inbox', () => {
     expect(marked.ownEvents().map(event => event.type)).toEqual(['session/end-seed'])
     expect(marked.snapshotEvents().map(event => event.type).at(-1)).toBe('session/end-seed')
     expect(inboxOver(marked)).toEqual({ nextTurn: 0, nextStep: 0 })
+  })
+})
+
+describe('sidechat seed vs the REAL projection registry (the runtime inbox path)', () => {
+  /**
+   * Regression: the long-conversation queued-input leak reappeared with the
+   * marker pair in place. The RUNTIME inbox of a live thread is not the
+   * ownEvents() fold above — it is `ReactLoopInbox.current()` →
+   * `ctx.sessionProjections.stateOf(session, 'inbox')` →
+   * `SessionProjectionRegistry.cellFor`, which folds `session.snapshotEvents()`
+   * — the FULL log, inherited seed prefix included — because the standard
+   * inbox projection's `init` ignores `inheritedEventCount` and the
+   * registry's `session/created` eager init skips every seeded session
+   * (seq !== 0). The seed's `agent/inbox/spliced` events therefore replay as
+   * the child's live pending input.
+   *
+   * The definition below is a verbatim transcription of
+   * `inboxProjectionDefinition` from `@deepseek-ai/dsh-agent-loop` (not
+   * re-exported from the package root), pinned against DSH 0.1.5-rc.2.
+   */
+  const inboxDefinition = {
+    key: 'inbox',
+    stateVersion: 1,
+    stateSchema: { parse: (value: unknown) => value },
+    init: () => ({ 'next-turn': [] as unknown[], 'next-step': [] as unknown[] }),
+    apply: (state: { 'next-turn': unknown[]; 'next-step': unknown[] }, event: { type: string; data: Record<string, unknown> }) => {
+      if (event.type !== 'agent/inbox/spliced') return state
+      const splice = event.data
+      const target = splice.target as 'next-turn' | 'next-step'
+      const next = state[target].toSpliced(
+        splice.start as number,
+        (splice.removedCount as number | undefined) ?? 0,
+        ...splice.inserted as unknown[],
+      )
+      return { ...state, [target]: next }
+    },
+  }
+
+  /** One registry wired the way the live host wires it (root context). */
+  const registry = (): SessionProjectionRegistry => {
+    const reg = new SessionProjectionRegistry(new Context())
+    reg.register(inboxDefinition as never)
+    return reg
+  }
+
+  const buildMarkedChild = (): Session => {
+    // Mid-turn parent log with BOTH unclaimed shapes: the tool-result
+    // context in next-step (seq 15) and a follow-up queued while running in
+    // next-turn (seq 16) — the reported long-conversation scenario.
+    const log: SidebarSessionEvent[] = [
+      ...midTurnLog(),
+      ev('agent/inbox/spliced', 16, { target: 'next-turn', start: 0, inserted: [pendingMessage('m-late', 'user', 'queued while running')] }),
+    ]
+    const { seed } = buildSidechatInheritance(log)
+    const withDescriptor = [
+      ...seed,
+      {
+        type: 'subagent/descriptor',
+        seq: seed.length,
+        time: Date.now(),
+        data: snapshotSubagentDescriptor({ mode: 'continuable', provider: 'sidechat', label: 'Side: test' }),
+      } as unknown as SidebarSessionEvent,
+    ]
+    return forkMarkedSession('session-inbox-registry', withDescriptor)
+  }
+
+  it('the fork-marker pair ALONE leaves the phantom input live in the runtime inbox (the rc.2 projection hole)', () => {
+    const state = registry().stateOf(buildMarkedChild(), 'inbox') as { 'next-turn': unknown[]; 'next-step': unknown[] }
+    // The markers cut ownEvents() but the registry folds the FULL log, so
+    // the parent's unclaimed next-step context AND queued follow-up are the
+    // child's live pending input — exactly what the route's post-create
+    // inbox.clear() fences. If a future DSH makes the projection
+    // fork-aware, this assertion fails on the version bump: drop the
+    // route's fence then.
+    expect(state['next-step']).toHaveLength(1)
+    expect(state['next-turn']).toHaveLength(1)
+  })
+
+  it('the route\'s post-create clear() empties the runtime inbox durably', () => {
+    const reg = registry()
+    const child = buildMarkedChild()
+    // ReactLoopInbox.clear() logs one compensating splice per non-empty
+    // list, next-step first, removedCount = the current length.
+    const before = reg.stateOf(child, 'inbox') as { 'next-turn': unknown[]; 'next-step': unknown[] }
+    child.append('agent/inbox/spliced', { target: 'next-step', start: 0, removedCount: before['next-step'].length, inserted: [] })
+    child.append('agent/inbox/spliced', { target: 'next-turn', start: 0, removedCount: before['next-turn'].length, inserted: [] })
+    const after = reg.stateOf(child, 'inbox') as { 'next-turn': unknown[]; 'next-step': unknown[] }
+    expect(after['next-step']).toHaveLength(0)
+    expect(after['next-turn']).toHaveLength(0)
+    // The compensations are the child's OWN events (after the end-seed
+    // marker): they persist with the session, so a cold resume folds the
+    // stored log to the same empty state, and the transcript cut is
+    // unchanged (splices never render).
+    expect(child.ownEvents().map(event => event.type))
+      .toEqual(['session/end-seed', 'agent/inbox/spliced', 'agent/inbox/spliced'])
   })
 })
