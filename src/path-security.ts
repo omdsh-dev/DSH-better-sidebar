@@ -1,6 +1,7 @@
 /** Filesystem path guards shared by sidebar APIs that access a session workspace. */
 import { realpath } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { isAbsolute } from 'node:path'
 import { isWithin, requireAbsolute } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
 import { SidebarError } from './wire.ts'
@@ -33,7 +34,12 @@ function assertWithinWorkspace(workspace: string, target: string): void {
  * @returns The canonical absolute path used for the filesystem operation.
  */
 export async function ensureWorkspacePath(cwd: string, target: string, fence = true): Promise<string> {
-  const absolute = requireAbsolute(resolveSessionPath(cwd, target))
+  // #646: the ecosystem passes session-relative paths (e.g. `openFile(scope,
+  // 'pastes/x.txt')` produces `pastes/x.txt` in the tab). Resolve them
+  // against the session cwd before the absolute check so read and write
+  // paths share the same contract.
+  const resolved = isAbsolute(target) ? target : join(cwd, target)
+  const absolute = requireAbsolute(resolveSessionPath(cwd, resolved))
   const [realCwd, realTarget] = await Promise.all([
     resolveRealPath(cwd, 'workspace'),
     resolveRealPath(absolute, 'target'),
@@ -56,7 +62,10 @@ export async function ensureWorkspacePath(cwd: string, target: string, fence = t
  * @returns A canonical path for an existing target or its nearest existing ancestor.
  */
 export async function ensureWorkspaceWritePath(cwd: string, target: string, fence = true): Promise<string> {
-  const absolute = requireAbsolute(resolveSessionPath(cwd, target))
+  // #646: same relative-path resolution as the read path — a plugin that
+  // opened a file with a session-relative path must be able to save it.
+  const resolved = isAbsolute(target) ? target : join(cwd, target)
+  const absolute = requireAbsolute(resolveSessionPath(cwd, resolved))
   const realCwd = await resolveRealPath(cwd, 'workspace')
   let existingPath = absolute
   const missingSegments: string[] = []
