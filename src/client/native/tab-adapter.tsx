@@ -20,7 +20,7 @@
  * Nothing here is a singleton: the registry is created once per client
  * activation and handed to every registration.
  */
-import { createElement, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
+import { createElement, useMemo, useSyncExternalStore } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import type { Context } from '../../context-types.ts'
 import type { SessionScope } from '../api.ts'
@@ -81,29 +81,24 @@ interface View {
   revealed: string[]
   /** Bumped on every mutation; the components subscribe to it. */
   version: number
-  /**
-   * The tab body that minted this record. DSH mints native tab ids from a
-   * PER-SESSION counter, so every session's first tabs are all called `tab1`,
-   * `tab2`, … — two sessions' bodies therefore ensure the SAME id as a matter
-   * of course. The token keeps one body from reading (or deleting) a record
-   * that another body owns.
-   */
-  owner: object
 }
 
 /** The plugin-side record registry for native tabs. */
 export interface NativeTabRecords {
   /**
-   * The synthetic record for a native tab, minted on first sight and kept
-   * across navigations (a navigation refreshes the seed fields, never the
-   * identity or a plugin-side title/meta mutation).
+   * The synthetic record for a native tab, minted on first sight and kept for
+   * as long as the tab lives: across navigations (a navigation refreshes the
+   * seed fields, never the identity or a plugin-side title/meta mutation) and
+   * across the host's body remounts (the native sidebar mounts only the ACTIVE
+   * tab's body, so switching tabs unmounts and re-mounts bodies of tabs that
+   * are still open).
    *
-   * A record belonging to ANOTHER body is never adopted: the same native tab
-   * id exists in every session, and DSH keys the session-scoped seat by
-   * session id, so a conversation switch renders the ENTERING session's body
-   * before the LEAVING session's body is deleted. Adopting there would hand
-   * this body a record the leaving body is about to drop (see `drop`).
-   * @param input - the native record, the session it lives in, and its body.
+   * A record belonging to ANOTHER SESSION is never adopted. DSH mints native
+   * tab ids from a PER-SESSION counter, so every session's first tabs are all
+   * called `tab1`, `tab2`, …; the same id in a different session is a
+   * different tab and gets a record built from ITS native seed alone.
+   * @param input - the native record, the session it lives in, and the
+   * descriptor's fallback factory.
    * @returns the current view state.
    */
   ensure(input: {
@@ -112,8 +107,6 @@ export interface NativeTabRecords {
     title: string
     params: NativeTabParams | undefined
     scope: SessionScope
-    /** The ensuring tab body's identity token (one per body instance). */
-    owner: object
     /**
      * The descriptor's own factory, called ONCE for a record that arrives
      * without seed fields (a native guide open, which knows nothing about the
@@ -129,15 +122,11 @@ export interface NativeTabRecords {
   /** Merge a patch into the synthetic record (the `updateTab` path). */
   update(id: string, patch: { title?: string; path?: string; meta?: unknown }): void
   /**
-   * Forget the record this body owns (its body unmounted). A record owned by
-   * a DIFFERENT body is left strictly alone — that is what keeps an entering
-   * session's explorer alive when the leaving session's body unmounts right
-   * after it rendered.
+   * Forget a record because its native TAB is gone (the host closed it).
+   * Nothing else may forget one: a body unmounting only means another tab
+   * became active, and the state has to be there when the user comes back.
    * @param id - the native tab id.
-   * @param owner - the asking body; only its own record is removed.
    */
-  drop(id: string, owner: object): void
-  /** Forget a record regardless of its owner (the host closed the tab). */
   remove(id: string): void
   /** Toggle one directory in a record's expansion set. */
   toggleExpanded(id: string, path: string): void
@@ -159,31 +148,54 @@ export function createNativeTabRecords(): NativeTabRecords {
     views.set(id, { ...view, version: view.version + 1 })
     notify()
   }
+  /**
+   * Build one record from a tab's own native seed, with no plugin-side state:
+   * the first sight of a tab, and the rebuild a second session's identically
+   * named tab gets (see `ensure`). `version` is carried over so a rebuild is
+   * not mistaken for a mutation of the same record.
+   */
+  const mintRecord = (
+    id: string,
+    kind: string,
+    title: string,
+    params: NativeTabParams | undefined,
+    scope: SessionScope,
+    mint: (() => { title?: string; meta?: unknown } | undefined) | undefined,
+    version: number,
+  ): View => {
+    const seeded = params?.title === undefined && params?.meta === undefined ? mint?.() : undefined
+    const meta = params?.meta ?? seeded?.meta
+    return {
+      tab: {
+        id,
+        type: kind as TabType,
+        title: params?.title ?? seeded?.title ?? title,
+        ...(params?.path === undefined ? {} : { path: params.path }),
+        ...(params?.diff === undefined ? {} : { diff: params.diff }),
+        ...(meta === undefined ? {} : { meta }),
+      },
+      scope,
+      expanded: [],
+      revealed: [],
+      version,
+    }
+  }
   return {
-    ensure({ id, kind, title, params, scope, owner, mint }) {
+    ensure({ id, kind, title, params, scope, mint }) {
       const existing = views.get(id)
-      // A record owned by another body is not adopted, it is replaced: see
-      // the `ensure` contract. Silent by design — this runs during render.
-      if (existing === undefined || existing.owner !== owner) {
-        const seeded = params?.title === undefined && params?.meta === undefined ? mint?.() : undefined
-        const meta = params?.meta ?? seeded?.meta
-        const minted: View = {
-          tab: {
-            id,
-            type: kind as TabType,
-            title: params?.title ?? seeded?.title ?? title,
-            ...(params?.path === undefined ? {} : { path: params.path }),
-            ...(params?.diff === undefined ? {} : { diff: params.diff }),
-            ...(meta === undefined ? {} : { meta }),
-          },
-          scope,
-          expanded: [],
-          revealed: [],
-          version: 0,
-          owner,
-        }
-        views.set(id, minted)
-        return minted
+      if (existing === undefined) {
+        views.set(id, mintRecord(id, kind, title, params, scope, mint, 0))
+        return views.get(id)!
+      }
+      // The same id in ANOTHER session is another tab: native ids restart at
+      // `tab1` in every session, so a conversation switch meets this id again.
+      // The record is rebuilt from THIS tab's native seed alone — never from
+      // `existing.tab`, which holds the other session's title/path/meta.
+      // Silent by design: this runs during render (the version is unchanged,
+      // so nothing is scheduled off the back of it).
+      if (existing.scope.sessionId !== scope.sessionId) {
+        views.set(id, mintRecord(id, kind, title, params, scope, mint, existing.version))
+        return views.get(id)!
       }
       // A navigation may carry new seed fields (the editor's in-place switch,
       // a browser tab pointed at another URL); the record's identity and any
@@ -212,12 +224,6 @@ export function createNativeTabRecords(): NativeTabRecords {
       const entry = views.get(id)
       if (entry === undefined) return
       put(id, { ...entry, tab: { ...entry.tab, ...patch } })
-    },
-    drop(id, owner) {
-      const entry = views.get(id)
-      if (entry === undefined || entry.owner !== owner) return
-      views.delete(id)
-      notify()
     },
     remove(id) {
       if (views.delete(id)) notify()
@@ -289,23 +295,15 @@ function useSessionCwd(ctx: Context, sessionId: string): string | undefined {
 /**
  * One plugin tab rendered inside the native right Sidebar: the descriptor's
  * own component with the plugin's props, over a synthetic record minted from
- * the native tab and dropped when the record ends.
+ * the native tab. The record outlives this body: the host mounts only the
+ * ACTIVE tab's body, so a tab switch unmounts and re-mounts bodies whose tabs
+ * are still open, and the plugin's per-tab state (tree expansion, an in-place
+ * file switch) must be there when the user comes back.
  */
 export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkProps): ReactNode {
   const { ctx, store, service, records, descriptorId, useTabInfo } = props
   const info = useTabInfo()
   const nativeTab = info.tab
-  // This body instance's identity token (stable across its renders). Native
-  // tab ids restart in every session, so the record MUST carry who owns it:
-  // on a conversation switch the entering session's body renders before the
-  // leaving session's body unmounts, and an ownership-blind drop there would
-  // delete the record this body is rendering from — leaving the explorer
-  // mounted but inert (every click routed through the registry silently
-  // no-ops, because the missing record's version stays 0 and nothing
-  // re-renders to re-mint it).
-  const ownerRef = useRef<object | null>(null)
-  if (ownerRef.current === null) ownerRef.current = {}
-  const owner = ownerRef.current
   const version = useRecordVersion(records, nativeTab.id)
   const sessionId = props.sessionIdOf?.(info) ?? props.sessionId
   const cwd = useSessionCwd(ctx, sessionId)
@@ -323,7 +321,6 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
     title: nativeTab.title,
     params,
     scope,
-    owner,
     mint: () => {
       const state = store.getSnapshot().state
       if (descriptor?.createTab === undefined || state === undefined) return undefined
@@ -331,7 +328,6 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
       return minted === null ? undefined : { title: minted.tab.title, meta: minted.tab.meta }
     },
   })
-  useEffect(() => () => { records.drop(nativeTab.id, owner) }, [records, nativeTab.id, owner])
   if (descriptor === undefined) {
     // The orphaned fallback sits in the SAME native host as a live body, so
     // it gets the same full-height box (its own root also relies on the
