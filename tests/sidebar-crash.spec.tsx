@@ -1,5 +1,6 @@
 /**
- * Sidebar crash tests — the two failure modes behind issue #31.
+ * Sidebar crash tests — the failure modes behind issue #31 plus the store's
+ * listener containment.
  *
  * 1. Layout-push leak: the layout-push effect writes
  *    `--dsh-sidebar-height` on document.documentElement (the right column
@@ -13,6 +14,14 @@
  *    take down the whole sidebar. The per-tab boundary shows a strip inside
  *    that tab's pane while the toggle cluster, the other tabs, and the panel
  *    itself stay alive; the retry button recovers a transient crash.
+ *
+ * 3. Store listener containment: `service.subscribeState` is the store's own
+ *    `subscribe`, so a consumer plugin's listener runs inside `notify()` —
+ *    which runs inline in the mutating call site (the Sidebar's own mount
+ *    effect calls `store.setSession`). A throw escaping that loop lands in
+ *    the React commit phase, where the shell's ROOT RenderBoundary (index.tsx)
+ *    swaps the WHOLE sidebar for its error strip. One listener must not be
+ *    able to do that to the rest of the panel.
  *
  * Rendered with the REAL Sidebar shell + real store/service against a minimal
  * fake context (createRoot + act(), the repo's jsdom pattern).
@@ -185,5 +194,32 @@ describe('tab crash containment', () => {
     act(() => { retry!.click() })
     expect(container.textContent).toContain('recovered')
     expect(container.textContent).not.toContain('transient')
+  })
+})
+
+describe('store listener containment', () => {
+  it('a throwing consumer listener cannot take the shell down', () => {
+    const { container, service, store } = mountSidebar()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // A consumer plugin subscribes through the service's PUBLIC state seam
+    // (subscribeState IS the store's subscribe) and throws while reading a
+    // field this store no longer carries — the 0.19.0 shape that dropped the
+    // right column's `splits` tree, i.e. a real third-party plugin's failure
+    // mode rather than a synthetic one.
+    const unsubscribe = service.subscribeState(() => {
+      throw new Error('third-party listener boom')
+    })
+    // The mutation drives notify() from inside act(); before the isolation
+    // this call threw straight out of the store into the commit phase.
+    expect(() => { act(() => { store.reduce(toggleBottomPanel) }) }).not.toThrow()
+    // The shell is intact (the collapse control is still mounted) and the
+    // mutation landed for everyone else.
+    expect(container.textContent).not.toContain('dsh-better-sidebar:')
+    expect(container.querySelector(`[aria-label="${t('collapseBottomPanel')}"]`)).not.toBeNull()
+    expect(store.getSnapshot().state!.bottomOpen).toBe(true)
+    // The crash is reported rather than swallowed silently.
+    expect(errorSpy).toHaveBeenCalled()
+    unsubscribe()
+    errorSpy.mockRestore()
   })
 })

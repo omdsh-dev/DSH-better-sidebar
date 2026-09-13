@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, CONVERSATION_MIN, createSidebarStore,
   insertLeafAt, makeDefaultState, moveTab, moveTabToEdge, openDiffTab,
@@ -889,5 +889,65 @@ describe('URL reset escape hatch (issue #369)', () => {
     store.setSession('s1')
     const leaf = store.getSnapshot().state!.bottomSplits as { tabs: { type: string }[] }
     expect(leaf.tabs.map(tab => tab.type)).toEqual([])
+  })
+})
+
+/**
+ * listener isolation. `service.subscribeState` is this store's own
+ * `subscribe`, so a consumer plugin's listener throws INSIDE notify() — and
+ * notify() runs inline in the mutating call site (setSession from the
+ * Sidebar's mount effect, reduce from a click handler). An escaping throw
+ * therefore lands in the React commit phase, where the shell's ROOT
+ * RenderBoundary swaps the whole sidebar for its error strip.
+ */
+describe('store listener isolation', () => {
+  // Same browser-global stubs as the blocks above: setSession → loadState
+  // reads window.location.search and localStorage.
+  beforeEach(() => {
+    const g = globalThis as Record<string, unknown>
+    g.window = { clearTimeout: () => {}, setTimeout: () => 0, innerWidth: 1024, innerHeight: 800, location: { search: '' } }
+    g.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} }
+  })
+  afterEach(() => {
+    const g = globalThis as Record<string, unknown>
+    delete g.window
+    delete g.localStorage
+  })
+
+  it('contains a throwing listener and still delivers the change to the rest', () => {
+    const store = createSidebarStore()
+    const delivered: string[] = []
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    store.subscribe(() => {
+      delivered.push('throwing')
+      throw new Error('third-party listener boom')
+    })
+    store.subscribe(() => { delivered.push('healthy') })
+    // The mutation must not throw out of the store, and the throwing
+    // listener must not rob the healthy ones of their notification (React's
+    // own useSyncExternalStore callback shares this loop in the real shell).
+    expect(() => store.setSession('s1')).not.toThrow()
+    expect(delivered).toEqual(['throwing', 'healthy'])
+    // The mutation itself still landed.
+    expect(store.getSnapshot().sessionId).toBe('s1')
+    expect(store.getSnapshot().state).toBeDefined()
+    // The crash is reported, not swallowed silently.
+    expect(errorSpy).toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
+  it('keeps notifying every listener on later mutations (the loop recovers)', () => {
+    const store = createSidebarStore()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let healthyCalls = 0
+    store.subscribe(() => { throw new Error('boom') })
+    store.subscribe(() => { healthyCalls += 1 })
+    store.setSession('s1')
+    const afterFirst = healthyCalls
+    // A later mutation notifies again: the throwing listener was neither
+    // dropped from the set nor left the loop half-iterated.
+    store.reduce(toggleBottomPanel)
+    expect(healthyCalls).toBe(afterFirst + 1)
+    errorSpy.mockRestore()
   })
 })
