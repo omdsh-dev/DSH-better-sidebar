@@ -1235,8 +1235,31 @@ export class SidebarStore {
     this.persistTimers.set(sessionId, timer)
   }
 
+  /**
+   * Fan one store change out to every subscribed listener. A throwing
+   * listener is CONTAINED instead of aborting the loop.
+   *
+   * `service.subscribeState` hands this store's own `subscribe` to consumer
+   * plugins, and `notify()` runs inline in whatever call site mutated the
+   * store — `setSession` from the Sidebar's mount effect, `reduce` from a
+   * click handler. An exception escaping here therefore surfaces as a
+   * render/commit-phase error, and the shell's ROOT RenderBoundary swaps the
+   * ENTIRE sidebar for its error strip: one plugin misreading a field this
+   * store no longer carries (0.19.0 dropped the right column's `splits`
+   * tree) takes the panel down for every other plugin and for the user.
+   *
+   * Isolating per listener also keeps the remaining listeners running —
+   * React's own useSyncExternalStore callback shares this loop, so a crash
+   * in one subscriber no longer costs the healthy ones their re-render.
+   */
   private notify(): void {
-    for (const listener of [...this.listeners]) listener()
+    for (const listener of [...this.listeners]) {
+      try {
+        listener()
+      } catch (error) {
+        console.error('[dsh-better-sidebar] store listener error:', error)
+      }
+    }
   }
 }
 

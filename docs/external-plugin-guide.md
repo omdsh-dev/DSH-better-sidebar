@@ -657,7 +657,10 @@ interface BetterSidebarService {
   /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs。
    *  session 未激活时 state/sessionId 为 undefined。 */
   getSnapshot(): SidebarSnapshot
-  /** 订阅快照变化（会话切换/状态变更/prefs 写入）；返回 disposer */
+  /** 订阅快照变化（会话切换/状态变更/prefs 写入）；返回 disposer。
+   *  listener 抛出的异常被逐个隔离并 `console.error`，既不中断其余监听器
+   *  （含 React 自己的渲染订阅），也不会把整条侧栏换成错误条——所以
+   *  listener 里读宿主 state 的字段仍请自己判空，别指望异常能当哨兵。 */
   subscribeState(listener: () => void): () => void
   /** 更新一个已打开 tab 的显示字段（title/path/meta）；tab 不存在时 no-op */
   updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void
