@@ -310,7 +310,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
       () => page.evaluate(() =>
         performance.getEntriesByType('resource')
           .filter(entry => entry.name.includes('/sidebar/bundle/plan.js'))
-          .map(entry => (entry as PerformanceResourceTiming).responseStatus)),
+          .map(entry => (entry as PerformanceResourceTiming & { responseStatus?: number }).responseStatus)),
       { timeout: 30_000 },
     )
     .toContain(200)

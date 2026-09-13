@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SidebarSessionEvent } from '../../context-types.ts'
+import { PLAN_CHANGED_EVENT, PLAN_EVENTS_WINDOW } from '../../plan-events.ts'
 import { api } from '../api.ts'
 import { analyzeMarkdownHtml } from '../markdown-html.ts'
 import { MarkdownDocument, type MarkdownHtmlMedia } from '../MarkdownHtml.tsx'
@@ -20,24 +21,14 @@ import css from './plan.module.css'
  *  submission and on review, and both are user-paced moments. */
 const PLAN_POLL_MS = 5_000
 
-/** Cap on accumulated rows, matching the host's own window. */
-const EVENTS_CAP = 2_000
-
 /** How long the "copied" feedback stays on the button. */
 const COPIED_FEEDBACK_MS = 1_500
 
-/** The localized label of one revision's review state. */
-function statusLabel(status: PlanStatus): string {
-  if (status === 'approved') return t('planStatusApproved')
-  if (status === 'unadopted') return t('planStatusUnadopted')
-  return t('planStatusPending')
-}
-
-/** The status class carrying the state's ink. */
-function statusClass(status: PlanStatus): string {
-  if (status === 'approved') return css.statusApproved ?? ''
-  if (status === 'unadopted') return css.statusUnadopted ?? ''
-  return css.statusPending ?? ''
+/** One status's label key and ink class, looked up instead of branched twice. */
+const STATUS_META: Record<PlanStatus, { key: 'planStatusApproved' | 'planStatusUnadopted' | 'planStatusPending'; cls: string }> = {
+  approved: { key: 'planStatusApproved', cls: css.statusApproved ?? '' },
+  unadopted: { key: 'planStatusUnadopted', cls: css.statusUnadopted ?? '' },
+  pending: { key: 'planStatusPending', cls: css.statusPending ?? '' },
 }
 
 export function PlanView({ scope, visible }: TabComponentProps) {
@@ -65,7 +56,9 @@ export function PlanView({ scope, visible }: TabComponentProps) {
       }
       if (events.length > 0) {
         const merged = [...eventsRef.current, ...events]
-        eventsRef.current = merged.length > EVENTS_CAP ? merged.slice(merged.length - EVENTS_CAP) : merged
+        eventsRef.current = merged.length > PLAN_EVENTS_WINDOW
+          ? merged.slice(merged.length - PLAN_EVENTS_WINDOW)
+          : merged
       }
       if (lastSeq > seqRef.current) seqRef.current = lastSeq
       const folded = extractPlans(eventsRef.current)
@@ -106,8 +99,8 @@ export function PlanView({ scope, visible }: TabComponentProps) {
   // visibility flip re-pulls anyway.
   useEffect(() => {
     const onChange = (): void => { if (visible) void pull() }
-    window.addEventListener('dsh-sidebar:plan-changed', onChange)
-    return () => { window.removeEventListener('dsh-sidebar:plan-changed', onChange) }
+    window.addEventListener(PLAN_CHANGED_EVENT, onChange)
+    return () => { window.removeEventListener(PLAN_CHANGED_EVENT, onChange) }
   }, [pull, visible])
 
   const entry = pinned === undefined
@@ -164,7 +157,7 @@ export function PlanView({ scope, visible }: TabComponentProps) {
             <option key={plan.callId} value={plan.callId}>{`v${index + 1} · ${plan.title ?? t('plan')}`}</option>
           ))}
         </select>
-        <span className={`${css.status ?? ''} ${statusClass(entry.status)}`}>{statusLabel(entry.status)}</span>
+        <span className={`${css.status ?? ''} ${STATUS_META[entry.status].cls}`}>{t(STATUS_META[entry.status].key)}</span>
         <span className={css.time}>{relativeTime(new Date(entry.time).toISOString())}</span>
         <button type="button" className={css.copy} onClick={() => { void copy() }}>
           {copied ? t('copied') : t('planCopy')}

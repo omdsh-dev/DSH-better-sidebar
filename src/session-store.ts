@@ -109,12 +109,16 @@ export async function sessionEventWindow(
   const afterSeq = rawAfter ?? -1
   const live = ctx.sessions.get(sessionId)?.snapshotEvents()
   const base = live ?? (await readPersistedSessionOf(ctx, sessionId))?.events ?? []
-  // Deduped by seq: the mirror overlaps the snapshot wherever the store IS
-  // current, and a row must never double-count.
-  const rows = new Map<number, SidebarSessionEvent>()
-  for (const event of base) rows.set(event.seq, event)
-  for (const event of extraRows?.(sessionId) ?? []) rows.set(event.seq, event)
-  const log = [...rows.values()].sort((left, right) => left.seq - right.seq)
+  // Deduped by seq (the mirror overlaps the snapshot wherever the store IS
+  // current). Routes without a mirror — the common case — skip the merge.
+  const extra = extraRows?.(sessionId) ?? []
+  let log: readonly SidebarSessionEvent[] = base
+  if (extra.length > 0) {
+    const rows = new Map<number, SidebarSessionEvent>()
+    for (const event of base) rows.set(event.seq, event)
+    for (const event of extra) rows.set(event.seq, event)
+    log = [...rows.values()].sort((left, right) => left.seq - right.seq)
+  }
   const shipped = take(log, afterSeq)
   // An empty window answers with a cursor the caller can reuse: `afterSeq` is
   // floored at 0 so a first poll of a session with no plan rows leaves the

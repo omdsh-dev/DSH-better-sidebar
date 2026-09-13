@@ -12,6 +12,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import * as primitives from '@deepseek-ai/dsh-client-ui-primitives'
 import { PlanView } from '../src/client/plans/PlanView.tsx'
+import { PLAN_CHANGED_EVENT } from '../src/plan-events.ts'
 import { api } from '../src/client/api.ts'
 import { createSidebarStore } from '../src/client/state.ts'
 import { t } from '../src/client/locales.ts'
@@ -179,7 +180,7 @@ describe('PlanView', () => {
       // The model presents a second revision; the push feed relays it (the
       // page listens on the window, since it lives in a lazy chunk).
       mockPlans([planCall(1, 'p1', '# 第一版\n\n旧正文。'), planCall(3, 'p2', '# 第二版\n\n新正文。')])
-      act(() => { window.dispatchEvent(new Event('dsh-sidebar:plan-changed')) })
+      act(() => { window.dispatchEvent(new Event(PLAN_CHANGED_EVENT)) })
       await flush()
 
       expect(container.querySelector('select')!.value).toBe('p2')

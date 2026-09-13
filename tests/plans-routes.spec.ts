@@ -5,7 +5,8 @@
  * ships, which it refuses, and what the feed announces and mirrors.
  */
 import { describe, expect, it } from 'vitest'
-import { buildPlansApi, createPlanPushes, PLANS_EVENTS_CAP, type PlanRowMirror } from '../src/plans-routes.ts'
+import { buildPlansApi, createPlanPushes, type PlanRowMirror } from '../src/plans-routes.ts'
+import { PLAN_EVENTS_WINDOW } from '../src/plan-events.ts'
 import { SidebarError } from '../src/wire.ts'
 import type { Context, SidebarSessionEvent } from '../src/context-types.ts'
 
@@ -97,15 +98,30 @@ describe('plans.events route', () => {
   it('ships only the plan rows, dropping unrelated tool traffic', async () => {
     const [noiseCall, noiseResult] = noise(1, 'b1')
     const events = [noiseCall, noiseResult, planCall(3, 'p1'), planResult(4, 'p1', 'approved')]
-    const api = buildPlansApi(ctxWith({ get: () => session(events) }), noMirror, PLANS_EVENTS_CAP)
+    const api = buildPlansApi(ctxWith({ get: () => session(events) }), noMirror, PLAN_EVENTS_WINDOW)
     const { events: shipped } = await api.events({ sessionId: 's1' })
     expect(shipped.map(event => event.seq)).toEqual([3, 4])
   })
 
   it('drops a result whose call is not a plan call', async () => {
     const [, noiseResult] = noise(1, 'b1')
-    const api = buildPlansApi(ctxWith({ get: () => session([planCall(3, 'p1'), noiseResult]) }), noMirror, PLANS_EVENTS_CAP)
+    const api = buildPlansApi(ctxWith({ get: () => session([planCall(3, 'p1'), noiseResult]) }), noMirror, PLAN_EVENTS_WINDOW)
     expect((await api.events({ sessionId: 's1' })).events.map(event => event.seq)).toEqual([3])
+  })
+
+  it('drops a call whose result marks it aborted before dispatch, together with its result', async () => {
+    // The harness mounts the error's `info` — not the error itself — on the
+    // result, so the code rides `data.error.code` and reads
+    // 'ABORTED_BEFORE_DISPATCH' (the dsh-tools constant's VALUE, not its name).
+    // The call row carries a perfectly good body, but the user never saw a
+    // review card, so neither face may ship or fold it.
+    const abortedResult = planResult(4, 'p1', 'aborted', {
+      isError: true,
+      error: { name: 'AbortError', code: 'ABORTED_BEFORE_DISPATCH' },
+    })
+    const events = [planCall(3, 'p1'), abortedResult, planCall(5, 'p2'), planResult(6, 'p2', 'approved')]
+    const api = buildPlansApi(ctxWith({ get: () => session(events) }), noMirror, PLAN_EVENTS_WINDOW)
+    expect((await api.events({ sessionId: 's1' })).events.map(event => event.seq)).toEqual([5, 6])
   })
 
   it('drops a submission the host itself would refuse', async () => {
@@ -117,13 +133,13 @@ describe('plans.events route', () => {
       planCall(2, 'bad2', '没有标题的正文'),
       planCall(3, 'good', '# 合法计划'),
     ]
-    const api = buildPlansApi(ctxWith({ get: () => session(events) }), noMirror, PLANS_EVENTS_CAP)
+    const api = buildPlansApi(ctxWith({ get: () => session(events) }), noMirror, PLAN_EVENTS_WINDOW)
     expect((await api.events({ sessionId: 's1' })).events.map(event => event.seq)).toEqual([3])
   })
 
   it('recognizes a result past the cursor by collecting plan ids over the WHOLE log', async () => {
     const events = [planCall(1, 'p1'), planResult(2, 'p1', 'keep planning', { isError: true })]
-    const api = buildPlansApi(ctxWith({ get: () => session(events) }), noMirror, PLANS_EVENTS_CAP)
+    const api = buildPlansApi(ctxWith({ get: () => session(events) }), noMirror, PLAN_EVENTS_WINDOW)
     // A client that already holds seq 1 must still receive the seq-2 result.
     const { events: shipped, lastSeq } = await api.events({ sessionId: 's1', afterSeq: 1 })
     expect(shipped.map(event => event.seq)).toEqual([2])
@@ -131,7 +147,7 @@ describe('plans.events route', () => {
   })
 
   it('reports lastSeq as the newest shipped seq, and the cursor itself on an empty delta', async () => {
-    const api = buildPlansApi(ctxWith({ get: () => session([planCall(1, 'p1')]) }), noMirror, PLANS_EVENTS_CAP)
+    const api = buildPlansApi(ctxWith({ get: () => session([planCall(1, 'p1')]) }), noMirror, PLAN_EVENTS_WINDOW)
     expect((await api.events({ sessionId: 's1' })).lastSeq).toBe(1)
     expect((await api.events({ sessionId: 's1', afterSeq: 5 })).lastSeq).toBe(5)
   })
@@ -153,13 +169,13 @@ describe('plans.events route', () => {
     const api = buildPlansApi(
       ctxWith({ get: () => undefined }, persistenceWith([planCall(1, 'p1')])),
       noMirror,
-      PLANS_EVENTS_CAP,
+      PLAN_EVENTS_WINDOW,
     )
     expect((await api.events({ sessionId: 'cold' })).events.map(event => event.seq)).toEqual([1])
   })
 
   it('answers an empty window (never an error) when neither source is available', async () => {
-    const api = buildPlansApi(ctxWith({ get: () => undefined }), noMirror, PLANS_EVENTS_CAP)
+    const api = buildPlansApi(ctxWith({ get: () => undefined }), noMirror, PLAN_EVENTS_WINDOW)
     expect(await api.events({ sessionId: 'gone' })).toEqual({ events: [], lastSeq: 0 })
   })
 
@@ -170,7 +186,7 @@ describe('plans.events route', () => {
     const api = buildPlansApi(
       ctxWith({ get: () => session([]) }),
       { rows: () => mirrored },
-      PLANS_EVENTS_CAP,
+      PLAN_EVENTS_WINDOW,
     )
     expect((await api.events({ sessionId: 's1' })).events.map(event => event.seq)).toEqual([7])
   })
@@ -179,14 +195,14 @@ describe('plans.events route', () => {
     // A session whose log opens on the call itself carries seq 0: a literal
     // `> 0` comparison would drop it, and the page would claim "no plans"
     // while a review card sits in the log.
-    const api = buildPlansApi(ctxWith({ get: () => session([planCall(0, 'p0')]) }), noMirror, PLANS_EVENTS_CAP)
+    const api = buildPlansApi(ctxWith({ get: () => session([planCall(0, 'p0')]) }), noMirror, PLAN_EVENTS_WINDOW)
     expect((await api.events({ sessionId: 's1' })).events.map(event => event.seq)).toEqual([0])
     // An EXPLICIT cursor of 0 still excludes it.
     expect((await api.events({ sessionId: 's1', afterSeq: 0 })).events).toEqual([])
   })
 
   it('rejects a malformed cursor and a missing sessionId', async () => {
-    const api = buildPlansApi(ctxWith({ get: () => undefined }), noMirror, PLANS_EVENTS_CAP)
+    const api = buildPlansApi(ctxWith({ get: () => undefined }), noMirror, PLAN_EVENTS_WINDOW)
     await expect(api.events({ sessionId: 's1', afterSeq: -1 })).rejects.toBeInstanceOf(SidebarError)
     await expect(api.events({ sessionId: 's1', afterSeq: 1.5 })).rejects.toBeInstanceOf(SidebarError)
     await expect(api.events({})).rejects.toBeInstanceOf(SidebarError)

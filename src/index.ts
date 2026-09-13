@@ -52,7 +52,8 @@ import {
 import { registerTools } from './tools.ts'
 import { AgentOpenRegistry, registerOpenTool, type AgentOpenRequest } from './agent-opens.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
-import { buildPlansApi, createPlanPushes, PLANS_EVENTS_CAP, type PlanNotice, type PlanPushes, type SidebarPlansRoutes } from './plans-routes.ts'
+import { buildPlansApi, createPlanPushes, type PlanNotice, type PlanPushes, type SidebarPlansRoutes } from './plans-routes.ts'
+import { PLAN_EVENTS_WINDOW } from './plan-events.ts'
 import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
 import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
@@ -344,7 +345,7 @@ function buildApi(
   const subagentLiveApi: SidebarSubagentLiveRoutes = buildSubagentLiveApi(ctx)
   // Plan submissions for the plan page (shape, rationale and the mirror's
   // role: plans-routes.ts).
-  const plansApi: SidebarPlansRoutes = buildPlansApi(ctx, planPushes, PLANS_EVENTS_CAP)
+  const plansApi: SidebarPlansRoutes = buildPlansApi(ctx, planPushes, PLAN_EVENTS_WINDOW)
   return {
     'session.cwd': async (payload) => {
       const { sessionId, cwd } = await cwdOf(payload)

@@ -8,13 +8,16 @@
  */
 import { useEffect, useRef } from 'react'
 import type { Context, SidebarSessionList } from '../../context-types.ts'
+import { PLAN_CHANGED_EVENT } from '../../plan-events.ts'
 import { mirrorAgentWaits, reconcileAgentTerminals, type SidebarStore } from '../state.ts'
 import { isNarrowWidth } from '../breakpoints.ts'
 import { detectNewDirectSubagent } from '../subagent-detect.ts'
 import { detectNewJob } from '../subagent-jobs.ts'
 
-/** How many consecutive reconnect failures stop the agent-terminals push loop
- * (mirror of the terminal view's own cap; the loop restarts on session switch). */
+/** How many reconnect failures stop a push loop. The two older feeds below
+ *  count failures over their whole lifetime; {@link connectSessionPush}
+ *  counts CONSECUTIVE ones (cleared on connect). Converging the older feeds
+ *  is future work. */
 const FAILURE_LIMIT = 3
 
 /**
@@ -83,6 +86,51 @@ function activatePage(
     && column?.isExpanded?.() === false
   ctx.get('betterSidebar')?.openTab({ type })
   if (park) column?.toggleExpanded?.()
+}
+
+/**
+ * One push-socket connection with the shared reconnect discipline: a short
+ * fixed backoff, {@link FAILURE_LIMIT} consecutive failures stop the loop (a
+ * session switch restarts it), and a successful connect clears the count.
+ * Returns the detacher.
+ */
+function connectSessionPush(
+  path: string,
+  label: string,
+  sessionId: string,
+  handlers: { onMessage: (data: string) => void },
+): () => void {
+  let socket: WebSocket | null = null
+  let retry: number | undefined
+  let closed = false
+  let failures = 0
+  const connect = (): void => {
+    if (closed) return
+    const url = new URL(path, location.origin)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.search = new URLSearchParams({ sessionId }).toString()
+    socket = new WebSocket(url.toString())
+    socket.onopen = () => { failures = 0 }
+    socket.onmessage = (event) => {
+      if (typeof event.data === 'string') handlers.onMessage(event.data)
+    }
+    socket.onclose = () => {
+      if (closed) return
+      failures += 1
+      if (failures >= FAILURE_LIMIT) {
+        console.error(`[dsh-better-sidebar] ${label} connection failed; stopping reconnect loop`, sessionId)
+        return
+      }
+      retry = window.setTimeout(connect, 2000)
+    }
+    socket.onerror = () => { socket?.close() }
+  }
+  connect()
+  return () => {
+    closed = true
+    window.clearTimeout(retry)
+    socket?.close()
+  }
 }
 
 export function useHostFeeds(feeds: {
@@ -231,37 +279,17 @@ export function useHostFeeds(feeds: {
    * Plan submissions push: the host announces `{ sessionId, seq }` the moment
    * the model presents a plan through plan mode's exit tool. This is the ONE
    * activation here that no session-list signature can drive — a plan leaves
-   * no trace on the list feed while the session is still running (the exit
-   * tool waits inside its turn for the user's review), so the notice is the
-   * only honest trigger. Same socket discipline as the two feeds above: a
-   * short backoff, three failures stop the loop, and a session switch
-   * restarts it.
-   *
-   * The gates mirror the subagent trigger's, in the same order. A notice for
-   * another session is dropped outright — this socket only ever serves the
-   * mounted session, and a plan presented elsewhere must not steal the view.
+   * no trace on the list feed while the session is still running, so the
+   * notice is the only honest trigger. Discipline via
+   * {@link connectSessionPush}; a notice for another session is dropped as a
+   * defensive gate, and the auto-open gates mirror the subagent trigger's.
    */
   useEffect(() => {
     if (sessionId === undefined) return
-    let socket: WebSocket | null = null
-    let retry: number | undefined
-    let closed = false
-    let failures = 0
-    const connect = (): void => {
-      if (closed) return
-      const url = new URL('/sidebar/ws/plans', location.origin)
-      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-      url.search = new URLSearchParams({ sessionId }).toString()
-      socket = new WebSocket(url.toString())
-      // A successful (re)connect clears the failure count: the cap below gives
-      // up on a REFUSED endpoint, it is not a lifetime budget. This feed is the
-      // page's ONLY trigger (no session-list signature drives it), so an
-      // accumulated count would silently retire the feature for the session.
-      socket.onopen = () => { failures = 0 }
-      socket.onmessage = (event) => {
-        if (typeof event.data !== 'string') return
+    return connectSessionPush('/sidebar/ws/plans', 'plans', sessionId, {
+      onMessage: (data) => {
         try {
-          const notice = JSON.parse(event.data) as { sessionId?: unknown } | null
+          const notice = JSON.parse(data) as { sessionId?: unknown } | null
           if (notice === null || typeof notice !== 'object') return
           if (notice.sessionId !== sessionId) return
           // The refresh is INDEPENDENT of the two switches below: they decide
@@ -269,31 +297,15 @@ export function useHostFeeds(feeds: {
           // current — a page the reader opened by hand stays live either way.
           // The page is a lazy chunk, so the signal crosses that boundary
           // through the window (the file tree's relay uses the same channel).
-          window.dispatchEvent(new Event('dsh-sidebar:plan-changed'))
+          window.dispatchEvent(new Event(PLAN_CHANGED_EVENT))
           if (!store.getPrefs().autoOpenPlan) return
           if (ctx.get('betterSidebar')?.isTabEnabled('plan') === false) return
           activatePage(ctx, sessionId, 'plan', { background: true })
         } catch {
           // Malformed push: ignore — the page's own poll still catches up.
         }
-      }
-      socket.onclose = () => {
-        if (closed) return
-        failures += 1
-        if (failures >= FAILURE_LIMIT) {
-          console.error('[dsh-better-sidebar] plans connection failed; stopping reconnect loop', sessionId)
-          return
-        }
-        retry = window.setTimeout(connect, 2000)
-      }
-      socket.onerror = () => { socket?.close() }
-    }
-    connect()
-    return () => {
-      closed = true
-      window.clearTimeout(retry)
-      socket?.close()
-    }
+      },
+    })
   }, [sessionId, ctx, store])
 
   /**

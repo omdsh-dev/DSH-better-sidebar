@@ -126,6 +126,23 @@ describe('extractPlans', () => {
     expect(plans[0]!.status).toBe('pending')
   })
 
+  it('drops a call whose result marks it aborted before dispatch (the harness error.info shape)', () => {
+    // The harness mounts the error's `info` — not the error itself — on the
+    // result, so the code rides `data.error.code` and reads
+    // 'ABORTED_BEFORE_DISPATCH' (the dsh-tools constant's VALUE, not its name).
+    const aborted: SidebarSessionEvent = ev('tool/result', 2, 2, {
+      error: { name: 'AbortError', code: 'ABORTED_BEFORE_DISPATCH' },
+      message: { source: { kind: 'tool', callId: 'p1' }, content: [{ type: 'tool-result', isError: true, content: [] }] },
+    })
+    const plans = extractPlans([
+      call(1, 'p1', { plan: '# 未送达的计划' }),
+      aborted,
+      call(3, 'p2', { plan: '# 正常计划' }),
+      result(4, 'p2', 'approved'),
+    ])
+    expect(plans.map(plan => plan.callId)).toEqual(['p2'])
+  })
+
   it('trims the surrounding blank lines of a body but keeps its interior intact', () => {
     const plans = extractPlans([call(1, 'p1', { plan: '\n\n# 标题\n\n第一段\n\n第二段\n\n' })])
     expect(plans[0]!.body).toBe('# 标题\n\n第一段\n\n第二段')
