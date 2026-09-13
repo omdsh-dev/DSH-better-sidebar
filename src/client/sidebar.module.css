@@ -1784,8 +1784,11 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 /* The floating "add to conversation" button anchored above a text
    selection in the preview/code viewers. Portalled to document.body and
    position:fixed, so the editor's overflow clips cannot crop it; flat
-   chrome like the rest of the sidebar (hairline border, layer-2 fill,
-   hover fill — no shadow). */
+   chrome like the rest of the sidebar (hairline border, no shadow).
+   Fills come from the menu/overlay pair, not the layer/hover pair: this
+   button floats over text with no panel behind it, while skins make the
+   layer tokens translucent (~0.45) and interactive-bg-hover a bare
+   0.06-0.08 tint, neither of which is readable over the text beneath. */
 .selectionPopup {
   position: fixed;
   z-index: 60;
@@ -1796,7 +1799,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding: 0 10px;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 6px;
-  background: var(--dsw-alias-bg-layer-2);
+  background: var(--dsw-specific-menu);
   color: var(--dsw-alias-label-primary);
   font: var(--dsw-font-xxxs-strong-11);
   white-space: nowrap;
@@ -1804,7 +1807,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 .selectionPopup:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--dsw-alias-interactive-bg-hover-solid);
 }
 
 .editorPdf {
