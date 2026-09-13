@@ -46,7 +46,10 @@ export interface NativeTabParams {
   readonly title?: string
   /** A file path (the editor window's content seed). */
   readonly path?: string
-  /** A URL the tab navigates to on mount (the browser tab's seed). */
+  /** A URL the tab navigates to on mount (the browser tab's seed; the
+   * adapter lands it on the synthetic record's `path` when `path` is absent,
+   * because the browser tab initializes its address bar/iframe from
+   * `tab.path` — #654). */
   readonly url?: string
   /** A diff reference (the diff tab's content seed). */
   readonly diff?: SidebarTab['diff']
@@ -145,7 +148,9 @@ export function createNativeTabRecords(): NativeTabRecords {
             id,
             type: kind as TabType,
             title: params?.title ?? seeded?.title ?? title,
-            ...(params?.path === undefined ? {} : { path: params.path }),
+            ...(params?.path === undefined && params?.url === undefined
+              ? {}
+              : { path: params?.path ?? params?.url }),
             ...(params?.diff === undefined ? {} : { diff: params.diff }),
             ...(meta === undefined ? {} : { meta }),
           },
@@ -161,14 +166,9 @@ export function createNativeTabRecords(): NativeTabRecords {
       // a browser tab pointed at another URL); the record's identity and any
       // plugin-side mutation (title/meta from updateTab) stay.
       const patch: Partial<SidebarTab> = {}
-      if (params?.path !== undefined && params.path !== existing.tab.path) patch.path = params.path
+      const nextPath = params?.path ?? params?.url
+      if (nextPath !== undefined && nextPath !== existing.tab.path) patch.path = nextPath
       if (params?.diff !== undefined) patch.diff = params.diff
-      if (params?.url !== undefined) {
-        const meta = typeof existing.tab.meta === 'object' && existing.tab.meta !== null
-          ? existing.tab.meta as Record<string, unknown>
-          : {}
-        patch.meta = { ...meta, url: params.url }
-      }
       if (existing.scope.cwd !== scope.cwd) {
         views.set(id, { ...existing, scope, tab: { ...existing.tab, ...patch } })
         return views.get(id)!
