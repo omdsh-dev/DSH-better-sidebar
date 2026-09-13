@@ -63,6 +63,26 @@ describe('writeWorkspaceUpload', () => {
     expect(path).toBe(join(root, 'docs', 'b.txt'))
   })
 
+  it('accepts a workspace-relative upload directory', async () => {
+    // As with absolute directories, the relative spelling must name an
+    // EXISTING directory below the workspace root.
+    mkdirSync(join(root, 'rel-dir'))
+    const { path } = await writeWorkspaceUpload({
+      cwd: root,
+      dir: 'rel-dir',
+      relativePath: 'c.txt',
+      chunks: chunksOf('z'),
+      limit: 1024,
+    })
+    expect(path).toBe(join(root, 'rel-dir', 'c.txt'))
+  })
+
+  it('refuses a workspace-relative directory that escapes the workspace', async () => {
+    await expect(writeWorkspaceUpload({
+      cwd: root, dir: '..', relativePath: 'x.txt', chunks: chunksOf('x'), limit: 1024,
+    })).rejects.toMatchObject({ code: 'forbidden' })
+  })
+
   it('refuses traversal, empty segments, and absolute relativePaths', async () => {
     await expect(writeWorkspaceUpload({
       cwd: root, dir: root, relativePath: '../evil.txt', chunks: chunksOf('x'), limit: 1024,
@@ -207,6 +227,19 @@ describe('renameWorkspaceEntry', () => {
     expect(existsSync(join(root, 'alias2.txt'))).toBe(true)
     expect(readFileSync(join(root, 'target.txt'), 'utf8')).toBe('t')
   })
+
+  it('accepts a workspace-relative row path', async () => {
+    writeFileSync(join(root, 'rel-src.txt'), 'x')
+    const { path } = await renameWorkspaceEntry({ cwd: root, path: 'rel-src.txt', name: 'rel-dst.txt' })
+    expect(path.endsWith('rel-dst.txt')).toBe(true)
+    expect(existsSync(join(root, 'rel-src.txt'))).toBe(false)
+    expect(existsSync(join(root, 'rel-dst.txt'))).toBe(true)
+  })
+
+  it('refuses a relative row path that escapes the workspace', async () => {
+    await expect(renameWorkspaceEntry({ cwd: root, path: '..', name: 'nope' }))
+      .rejects.toMatchObject({ code: 'forbidden' })
+  })
 })
 
 describe('removeWorkspaceEntry', () => {
@@ -237,5 +270,16 @@ describe('removeWorkspaceEntry', () => {
       .rejects.toMatchObject({ code: 'fs-error' })
     await expect(removeWorkspaceEntry({ cwd: root, path: join(root, 'no-such.txt') }))
       .rejects.toMatchObject({ code: 'fs-error' })
+  })
+
+  it('accepts a workspace-relative row path', async () => {
+    writeFileSync(join(root, 'rel-gone.txt'), 'x')
+    await removeWorkspaceEntry({ cwd: root, path: 'rel-gone.txt' })
+    expect(existsSync(join(root, 'rel-gone.txt'))).toBe(false)
+  })
+
+  it('refuses a relative row path that escapes the workspace', async () => {
+    await expect(removeWorkspaceEntry({ cwd: root, path: '..' }))
+      .rejects.toMatchObject({ code: 'forbidden' })
   })
 })

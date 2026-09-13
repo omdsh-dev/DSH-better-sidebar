@@ -684,6 +684,57 @@ describe('session cwd resolution over the API route', () => {
     expect(result).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
   })
 
+  it('serves media for a workspace-relative path (chat image links)', async () => {
+    // Regression: chat links spell workspace files relative (the model writes
+    // `output/pic.png`, not the absolute spelling the file tree sends). The
+    // media route must join the session cwd exactly like fs.read does — before
+    // the fix it answered 400 "not an absolute path" and the <img> fetch
+    // failed silently while the text editor opened the same link fine.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-media-relative-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(join(workspace, 'output'), { recursive: true })
+    mkdirSync(outside)
+    const mediaPath = join(workspace, 'output', 'pic.png')
+    writeFileSync(mediaPath, 'PNGDATA')
+    writeFileSync(join(outside, 'secret.png'), 'SECRET')
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const media = routes.find(route => route.path === '/sidebar/file')!
+      const relative = await invokeGet(media, `/sidebar/file?sessionId=rel&path=${encodeURIComponent('output/pic.png')}`)
+      expect(relative.status).toBe(200)
+      expect(relative.body).toBe('PNGDATA')
+      // The absolute spelling (the file tree's form) keeps working.
+      const absolute = await invokeGet(media, `/sidebar/file?sessionId=rel&path=${encodeURIComponent(mediaPath)}`)
+      expect(absolute.status).toBe(200)
+      expect(absolute.body).toBe('PNGDATA')
+      // A relative spelling that escapes the workspace stays fence-refused.
+      const escape = await invokeGet(media, `/sidebar/file?sessionId=rel&path=${encodeURIComponent('../outside/secret.png')}`)
+      expect(escape).toMatchObject({ status: 403 })
+      expect(JSON.parse(escape.body)).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('writes a workspace-relative file through fs.write', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-relative-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    mkdirSync(join(root, 'outside'))
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const ok = await invoke(route, 'fs.write', { sessionId: 'rel', path: 'docs/note.txt', content: 'n' })
+      expect(ok.ok).toBe(true)
+      expect(readFileSync(join(workspace, 'docs', 'note.txt'), 'utf8')).toBe('n')
+      // A relative spelling that escapes the workspace stays fence-refused.
+      const escape = await invoke(route, 'fs.write', { sessionId: 'rel', path: '../outside/evil.txt', content: 'hack' })
+      expect(escape).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('rejects fs.tree paths outside the session workspace', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-security-'))
     const workspace = join(root, 'workspace')

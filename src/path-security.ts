@@ -1,9 +1,26 @@
 /** Filesystem path guards shared by sidebar APIs that access a session workspace. */
 import { realpath } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { isWithin, requireAbsolute } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
 import { SidebarError } from './wire.ts'
+
+/**
+ * Resolve a possibly relative caller path into the session's namespace:
+ * absolute paths pass through unchanged (their session-namespace
+ * re-interpretation, e.g. the WSL projection, stays the caller's job), while
+ * relative paths join the workspace root — the spelling chat links and other
+ * clients use for workspace files. The result must still flow through the
+ * caller's real-path + containment checks; this helper never relaxes them
+ * (`..` segments can still escape, and the fence catches them).
+ *
+ * @param cwd - Session workspace root.
+ * @param target - Caller-supplied absolute or workspace-relative path.
+ * @returns The absolute spelling of `target` in the session's namespace.
+ */
+export function absoluteInWorkspace(cwd: string, target: string): string {
+  return isAbsolute(target) ? target : join(cwd, target)
+}
 
 /** Resolve a path and convert filesystem resolution failures to an API error. */
 async function resolveRealPath(path: string, label: string): Promise<string> {
