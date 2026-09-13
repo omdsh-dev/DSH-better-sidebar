@@ -63,6 +63,9 @@ describe('dsh-better-sidebar plugin export shape', () => {
     expect(resolved.autoOpenSubagent).toBe(true)
     // A new background job auto-opens the Jobs page too.
     expect(resolved.autoOpenJobs).toBe(true)
+    // A plan presented through plan mode opens the Plan page (the page holds
+    // no text of its own — it is where the document is readable in full).
+    expect(resolved.autoOpenPlan).toBe(true)
     // The terminal tools default OFF (the feature is dormant until the user
     // enables it in the side card settings).
     expect(resolved.agentTerminalTools).toBe(false)

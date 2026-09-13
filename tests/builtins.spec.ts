@@ -1,5 +1,5 @@
 /**
- * Built-in registration tests: the plugin registers 7 tabs and 6 file
+ * Built-in registration tests: the plugin registers 8 tabs and 6 file
  * viewers through the same service external plugins use (dogfooding);
  * the catch-all `code` viewer, the NUL-sniffing `binary-download` viewer,
  * and the html sandbox settings pin the registry's behavior. (Office
@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { ReactElement } from 'react'
-import { VscCommentDiscussion, VscGitCommit, VscGlobe, VscLayers, VscTerminal } from 'react-icons/vsc'
+import { VscCommentDiscussion, VscGitCommit, VscGlobe, VscLayers, VscNote, VscTerminal } from 'react-icons/vsc'
 // First import: browser globals before the xterm-carrying builtin graph loads.
 import './browser-globals.ts'
 
@@ -30,10 +30,10 @@ function setup(options: BuiltinTabOptions = {}): { service: ReturnType<typeof cr
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 7 built-in tabs', () => {
+  it('registers the 8 built-in tabs', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['browser', 'diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal'],
+      ['browser', 'diff', 'editor', 'git', 'plan', 'sidechat', 'subagent', 'terminal'],
     )
   })
 
@@ -133,6 +133,14 @@ describe('built-in tab registrations', () => {
     const { service } = setup()
     const toggles = service.getTab('subagent')?.settings?.toggles ?? []
     expect(toggles.map(t => t.key)).toEqual(['autoOpenSubagent', 'autoOpenJobs'])
+  })
+
+  it('the plan tab declares its auto-open setting', () => {
+    const { service } = setup()
+    const toggles = service.getTab('plan')?.settings?.toggles ?? []
+    expect(toggles.map(t => t.key)).toEqual(['autoOpenPlan'])
+    expect(toggles[0]?.title).toBeDefined()
+    expect(toggles[0]?.desc).toBeDefined()
   })
 
   it('the editor tab declares its merged-mode (embedded file tree) setting', () => {
@@ -255,6 +263,9 @@ describe('built-in tab registrations', () => {
     // list", which this page is not.
     expect(glyphOf('subagent')).toBe(VscLayers)
     expect(glyphOf('git')).toBe(VscGitCommit)
+    // The plan page shows one plan DOCUMENT per revision — a written note,
+    // for the same reason the tasks glyph above is not a checklist.
+    expect(glyphOf('plan')).toBe(VscNote)
     expect(glyphOf('sidechat')).toBe(VscCommentDiscussion)
     expect(glyphOf('browser')).toBe(VscGlobe)
     // The terminal glyph is the widest in the set, so it renders a step down

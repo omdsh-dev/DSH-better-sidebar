@@ -1,7 +1,7 @@
 /**
- * The 7 built-in tab descriptors: the plugin registers its own pages
- * (editor / git — the unified changes tab / subagent / sidechat / terminal /
- * browser / diff) through
+ * The 8 built-in tab descriptors: the plugin registers its own pages
+ * (editor / git — the unified changes tab / plan / subagent / sidechat /
+ * terminal / browser / diff) through
  * the same {@link BetterSidebarService} external plugins use — eating its
  * own dogfood. The terminal descriptor owns its quota (`TERMINAL_LIMIT`)
  * and mints `terminal:<uuid>` ids through `createTab`; the browser mints
@@ -11,7 +11,7 @@
 import { IconCodeOutline16, IconPanelLeftOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../../context-types.ts'
 import {
-  browserTabIcon, changesTabIcon, filesTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,
+  browserTabIcon, changesTabIcon, filesTabIcon, planTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,
 } from './tab-icons.tsx'
 import { allLeaves, isAgentTabId, type SidebarState } from '../state.ts'
 import { t } from '../locales.ts'
@@ -29,7 +29,7 @@ import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../prefs-shar
 import type { ComponentType } from 'react'
 import type { SessionScope } from '../api.ts'
 import type { SidebarStore } from '../state.ts'
-import type { TabDescriptor } from '../service.ts'
+import type { TabComponentProps, TabDescriptor } from '../service.ts'
 
 /**
  * Lazy wrapper over the terminal view: xterm (and its stylesheet) is fetched
@@ -55,6 +55,18 @@ interface TerminalViewProps {
   store: SidebarStore
 }
 
+/**
+ * Lazy wrapper over the Plan page: its markdown stack (MarkdownHtml's
+ * DOMPurify + HTML analysis) is heavy and serves ONLY this page, so it is
+ * fetched on first open rather than carried by every startup (see
+ * chunk-loader.ts). A bare static import here would pull that stack into the
+ * core bundle — exactly what src/client/chunks/ exists to prevent.
+ */
+const LazyPlan = lazyChunkComponent<TabComponentProps>(
+  'plan',
+  (mod) => mod.PlanView as ComponentType<TabComponentProps> | undefined,
+)
+
 /** How many UI-owned terminals may be open at once (agent-owned ones are uncapped). */
 export const TERMINAL_LIMIT = 3
 
@@ -79,7 +91,7 @@ function uiTerminalCount(state: SidebarState): number {
     .filter(tab => tab.type === 'terminal' && !isAgentTabId(tab.id)).length
 }
 
-/** The 6 built-in tab descriptors. */
+/** The 8 built-in tab descriptors. */
 export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): readonly TabDescriptor[] {
   return [
     {
@@ -170,6 +182,26 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           onOpenDiff={onOpenDiff}
         />
       ),
+    },
+    {
+      // The plan page: every plan the model presented in this session, one
+      // document per revision. Single-instance on purpose — revisions are the
+      // page's own selector, not new tabs, so a re-presented plan focuses the
+      // page instead of stacking another one beside it.
+      id: 'plan',
+      title: () => t('plan'),
+      description: () => t('guideDescPlan'),
+      icon: planTabIcon,
+      order: 25,
+      single: true,
+      settings: {
+        toggles: [{
+          key: 'autoOpenPlan',
+          title: () => t('settingsPlanTitle'),
+          desc: () => t('settingsPlanDesc'),
+        }],
+      },
+      component: (props) => <LazyPlan {...props} />,
     },
     {
       id: 'subagent',

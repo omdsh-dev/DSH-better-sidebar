@@ -70,8 +70,11 @@ function bundleId(file: string): string {
   return match[1]!
 }
 
-/** The lazy chunk bundle names (mirror of src/bundle-route.ts CHUNK_NAMES). */
-const CHUNK_FILES = ['terminal', 'editor', 'mermaid'].map(name => `lib/client-${name}.js`)
+/** The lazy chunk bundle names (mirror of src/bundle-route.ts CHUNK_NAMES).
+ *  `locale` is absent because it is not in package.json's `files` whitelist,
+ *  so it never reaches the published tarball — a pre-existing packaging gap
+ *  that predates this list. */
+const CHUNK_FILES = ['terminal', 'editor', 'mermaid', 'plan'].map(name => `lib/client-${name}.js`)
 
 /** The global registry slot a built chunk script assigns (its factory key). */
 function chunkSlot(file: string): string {

@@ -1,0 +1,102 @@
+/*
+ * The Plan page: a revision selector over one plan document. Every color
+ * resolves to a `--dsw-*` token — the plugin owns no color of its own.
+ */
+
+.root {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 16px;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  text-align: center;
+}
+
+.emptyHint {
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-dimmed);
+}
+
+/* Header: the revision selector plus this revision's status, age and the
+   copy action. */
+.toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.select {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.status {
+  flex: none;
+  font: var(--dsw-font-xxxs-11);
+  white-space: nowrap;
+}
+
+.statusPending {
+  color: var(--dsw-alias-state-warn-primary, var(--dsw-alias-label-primary));
+}
+
+.statusApproved {
+  color: var(--dsw-alias-state-success-primary, var(--dsw-alias-brand-primary, var(--dsw-alias-label-primary)));
+}
+
+/* "Unadopted" is the user's own choice to keep planning — it reads as history,
+   not as a failure, so it stays on the quiet ink. */
+.statusUnadopted {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.time {
+  flex: none;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+.copy {
+  flex: none;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  cursor: pointer;
+}
+
+.copy:hover {
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The plan document: the page's only scrolling region (the host already gives
+   the tab body a full-height flex box). */
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 12px 16px;
+}
