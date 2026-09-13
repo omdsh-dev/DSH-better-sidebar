@@ -7,6 +7,10 @@
  * data). Pure — no React, no DOM.
  */
 import type { SidebarSessionEvent } from '../../context-types.ts'
+// The tool-result shape and its isError test live in the shared plan domain:
+// the host's plan fold settles a revision with the same rule, and two copies
+// of it would be two chances to disagree about what "approved" means.
+import { resultIsError, type ToolResultMessageLike } from '../../plan-events.ts'
 
 /** The file-touching operation kinds the tracer distinguishes. */
 export type FileOpKind = 'read' | 'write' | 'edit'
@@ -70,12 +74,6 @@ function pathOf(args: Record<string, unknown>): string | undefined {
   return undefined
 }
 
-/** The 'tool/result' message envelope inside a session event's data. */
-interface ToolResultMessageLike {
-  source?: { kind?: unknown; callId?: unknown }
-  content?: unknown
-}
-
 /** One 'tool-result' content block (inner blocks carry the text). */
 interface ToolResultBlockLike {
   type?: unknown
@@ -100,16 +98,6 @@ function resultText(message: ToolResultMessageLike): string | undefined {
     }
   }
   return parts.length > 0 ? parts.join('\n') : undefined
-}
-
-/** Whether a tool result reported an error (the inner block's isError flag). */
-function resultIsError(message: ToolResultMessageLike): boolean {
-  if (!Array.isArray(message.content)) return false
-  return message.content.some((block) => {
-    if (block === null || typeof block !== 'object') return false
-    return (block as ToolResultBlockLike).type === 'tool-result'
-      && (block as ToolResultBlockLike).isError === true
-  })
 }
 
 /**

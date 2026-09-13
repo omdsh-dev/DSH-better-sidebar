@@ -20,6 +20,13 @@
   color: var(--dsw-alias-state-success-primary, var(--dsw-alias-brand-primary, var(--dsw-alias-label-primary)));
 }
 
+/* The plan document: the info/business family. It shares that accent with the
+   side chat and the browser, which is fine — the note glyph reads nothing
+   like theirs, and the opaque families are down to one each elsewhere. */
+.plan {
+  color: var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary, var(--dsw-alias-label-primary)));
+}
+
 .tasks {
   color: var(--dsw-alias-state-warn-primary, var(--dsw-alias-label-primary));
 }

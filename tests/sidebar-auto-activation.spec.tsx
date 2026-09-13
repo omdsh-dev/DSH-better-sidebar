@@ -32,12 +32,31 @@ import {
 } from '../src/client/service.ts'
 import type { Context, SidebarSessionList } from '../src/context-types.ts'
 
+/** Every socket the module constructed, newest last (the feeds are told apart
+ *  by the path they were opened for). */
+const sockets: FakeWebSocket[] = []
+
 class FakeWebSocket {
+  onopen: (() => void) | null = null
   onmessage: ((event: { data: unknown }) => void) | null = null
   onclose: (() => void) | null = null
   onerror: (() => void) | null = null
   close = (): void => {}
-  constructor(_url: string) {}
+  /** The path this socket was opened for. */
+  readonly path: string
+  constructor(url: string) {
+    this.path = new URL(url).pathname
+    sockets.push(this)
+  }
+  /** Deliver one server frame to this socket's message handler. */
+  emit(data: unknown): void {
+    this.onmessage?.({ data })
+  }
+}
+
+/** The most recently opened socket for one push path. */
+function socketFor(path: string): FakeWebSocket | undefined {
+  return [...sockets].reverse().find(socket => socket.path === path)
 }
 
 function makeSessionFeed(initial: SidebarSessionList) {
@@ -158,13 +177,14 @@ function mountSidebar(
   }
   const feed = makeSessionFeed(initial)
   const store = createSidebarStore()
-  store.setPrefs({ ...store.getPrefs(), autoOpenSubagent: true, autoOpenJobs: true })
+  store.setPrefs({ ...store.getPrefs(), autoOpenSubagent: true, autoOpenJobs: true, autoOpenPlan: true })
   store.setSession(sessionId)
   store.reduce(state => ({ ...state, bottomOpen }))
   const service = createBetterSidebarService(store)
   const surface = makeNativeSurfaceSpy()
   service.setSurface(surface.surface)
   service.registerTab({ id: 'subagent', title: 'Subagent', component: JumpHarness })
+  service.registerTab({ id: 'plan', title: 'Plan', component: JumpHarness })
   const column = makeNativeColumnSpy(options.columnExpanded ?? false)
   const localeSnapshot = { active: 'en' }
   const ctx = {
@@ -291,6 +311,26 @@ function expectWorkbenchUntouched(sidebar: MountedSidebar, open = false): void {
     .filter(tab => tab.type === 'subagent')).toHaveLength(0)
 }
 
+/** The push feeds' reconnect budget (mirror of use-host-feeds' FAILURE_LIMIT). */
+const FAILURE_BUDGET = 3
+
+/** Deliver one plan-submission notice on the plans push socket. */
+function publishPlan(sidebar: MountedSidebar, sessionId: string = sidebar.sessionId): void {
+  const socket = socketFor('/sidebar/ws/plans')
+  expect(socket, 'the plans push socket is connected').toBeDefined()
+  act(() => { socket!.emit(JSON.stringify({ sessionId, seq: 7 })) })
+}
+
+/** The Plan page landed in the native right Sidebar. */
+function expectNativePlanOpen(sidebar: MountedSidebar): void {
+  expect(sidebar.surface.opens).toEqual([{
+    sessionId: sidebar.sessionId,
+    kind: 'plan',
+    params: expect.objectContaining({ title: expect.any(String) }),
+    revealIfOpened: true,
+  }])
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
   localStorage.clear()
@@ -298,6 +338,7 @@ beforeEach(() => {
 
 afterEach(() => {
   while (mounted.length > 0) mounted.pop()!.unmount()
+  sockets.length = 0
   vi.clearAllTimers()
   vi.useRealTimers()
   vi.unstubAllGlobals()
@@ -364,5 +405,76 @@ describe('Sidebar background-activity auto-activation (#162)', () => {
     switchToChild(sidebar)
     expectNativeTasksOpen(sidebar, 'child')
     expect(sidebar.column.toggles).toBe(0)
+  })
+})
+
+describe('Plan-submission auto-activation', () => {
+  it('opens the Plan page on a notice for the mounted session', () => {
+    const sidebar = mountSidebar(1024)
+    publishPlan(sidebar)
+    expectNativePlanOpen(sidebar)
+  })
+
+  it('lands it expanded and parks it on a narrow viewport', () => {
+    const sidebar = mountSidebar(390)
+    publishPlan(sidebar)
+    expectNativePlanOpen(sidebar)
+    // The column the user had collapsed is put back — parked — because below
+    // 768px the host draws it fullscreen over the chat.
+    expect(sidebar.column.toggles).toBe(1)
+  })
+
+  it('a narrow column the user already expanded is not closed under them', () => {
+    const sidebar = mountSidebar(390, false, { columnExpanded: true })
+    publishPlan(sidebar)
+    expectNativePlanOpen(sidebar)
+    expect(sidebar.column.toggles).toBe(0)
+  })
+
+  it('stays closed while the auto-open switch is off', () => {
+    const sidebar = mountSidebar(1024)
+    sidebar.store.setPrefs({ ...sidebar.store.getPrefs(), autoOpenPlan: false })
+    publishPlan(sidebar)
+    expect(sidebar.surface.opens).toEqual([])
+  })
+
+  it('stays closed while the plan tab type is disabled', () => {
+    const sidebar = mountSidebar(1024)
+    sidebar.store.setPrefs({ ...sidebar.store.getPrefs(), tabsEnabled: { plan: false } })
+    publishPlan(sidebar)
+    expect(sidebar.surface.opens).toEqual([])
+  })
+
+  it('ignores a notice for another session', () => {
+    const sidebar = mountSidebar(1024)
+    publishPlan(sidebar, 'another-session')
+    expect(sidebar.surface.opens).toEqual([])
+  })
+
+  it('stops reconnecting once the failure budget is spent', () => {
+    mountSidebar(1024)
+    const opens = (): number => sockets.filter(socket => socket.path === '/sidebar/ws/plans').length
+    for (let attempt = 0; attempt < FAILURE_BUDGET; attempt += 1) {
+      act(() => { socketFor('/sidebar/ws/plans')!.onclose?.() })
+      act(() => { vi.advanceTimersByTime(2_000) })
+    }
+    const afterGivingUp = opens()
+    act(() => { vi.advanceTimersByTime(30_000) })
+    expect(opens()).toBe(afterGivingUp)
+  })
+
+  it('clears the failure budget on a connect that actually opened', () => {
+    mountSidebar(1024)
+    const opens = (): number => sockets.filter(socket => socket.path === '/sidebar/ws/plans').length
+    // Two refusals, then a socket that OPENS — the counter is a budget on a
+    // refused endpoint, not a lifetime allowance, so the next refusal retries.
+    for (let attempt = 0; attempt < FAILURE_BUDGET - 1; attempt += 1) {
+      act(() => { socketFor('/sidebar/ws/plans')!.onclose?.() })
+      act(() => { vi.advanceTimersByTime(2_000) })
+    }
+    act(() => { socketFor('/sidebar/ws/plans')!.onopen?.() })
+    act(() => { socketFor('/sidebar/ws/plans')!.onclose?.() })
+    act(() => { vi.advanceTimersByTime(2_000) })
+    expect(opens()).toBeGreaterThan(FAILURE_BUDGET)
   })
 })

@@ -49,6 +49,7 @@
 - **📂 Model-driven sidebar opens (opt-in)**: with the global setting on, the `sidebar_open` tool lets the model actively open files / folders (tree rooted there) / HTTP(S) pages in the sidebar
 - **🌿 Changes**: one tab, two lenses — **Git** (real diff / history / stage·commit·revert / worktree & child-repo selection) and **This Session** (live tracking of every file the model reads / writes / edits, grouped by file with kind filters); a unified diff renderer (mod pairing + intra-line character highlights + syntax coloring incl. mjs/cjs/mts/cts, CSS/SCSS/Less, HTML/XML/SVG/Vue, GraphQL, JSONC/JSON5 + context folding), a draggable bottom preview pane, and one-click expansion into a dedicated diff tab; `.md` ops (read / write / edit) offer a **reading-mode** toggle in the preview header — the shared MarkdownText renders GFM tables / task lists / strikethrough / footnotes / math, with local images rewritten through the /sidebar/file media route; documents with ```mermaid fences render through the editor's lazy mermaid renderer (click-to-zoom / pan diagrams); **secret redaction** — credential-shaped paths mask whole files and ordinary files mask secret-shaped values (api_key: / Bearer / sk- / AKIA / ghp_ / PEM …, field names kept), on by default with a one-click preview-pane toggle (persisted in localStorage), display-only — session data untouched. Known edge: an unquoted mermaid label containing a redacted secret breaks the diagram (falls back to source); workaround: quote the label. `.html` ops (read / write / edit) gain a **Render** toggle in the preview head — the editor's `/sidebar/html` route iframe, with relative assets resolving inside the route and segmented reads rendering the full document; always sandboxed (opaque origin + CSP header, no escape hatch). `.pdf` ops (read / write / edit) gain the same **Render** toggle — the editor's PDF preview reused verbatim (media-route bytes + explicit Blob, the browser's native viewer inline, with a download fallback)
 - **🧩 Background Tasks**: agent topology + background tasks (exit codes / live output / force-kill)
+- **📋 Plan page**: every plan the model presents in plan mode lands in the sidebar's Plan page — the column switches to it the moment a plan is submitted (never stealing focus, and a narrow viewport parks it instead of taking the screen over); revisions are kept per version behind a selector, each carrying its review state (pending review / approved / not adopted), with one-click copy of the full text. **Zero disk writes** — it only reads the session event log.
 - **💬 Side Chat (beta)**: Codex-style side threads — the child inherits the parent's FULL context (completed turns + the pending question + the in-progress turn's assistant output and tool activity, honestly frozen as "interrupted") and runs independently without entering the main conversation; threads support continuous follow-ups (auto-resumed after a DSH restart) and one-click "Save as new session" promotion to a top-level session
 - **🖥️ Native right sidebar + plugin bottom workbench**: the right column belongs to DSH 0.1.5's own sidebar — the plugin registers every tab type as a native tab (file opens go through `dsh-resource://file/**`, and the built-in Files page / file tree is taken over), keeping only its own bottom workbench (split panes / terminals / per-session persistence) whose toggle sits in the session header
 - **📌 Pinned Terminals**: right-click a terminal tab to "Pin to Workspace / Pin Globally" — pinned terminals survive session switches and surface inline in the TabBar as virtual tabs (click activates in-place, PTY connects directly to the home session's PTY via WS, no session jump needed); agent terminals exempted from reconcile removal
@@ -57,7 +58,7 @@
 - **⚡ On-demand Loading**: only ~325KB core at startup; heavy deps (terminal / editor / mermaid diagrams) load on demand ([design](docs/plans/2026-08-12-lazy-chunks-design.md))
 - **🌏 i18n**: UI text follows DSH's language (zh / en) with live switching; with the optional `@huanlin/dsh-plugin-better-locale` peer, 19 third-language overlays (ja / de / fr / …) are available
 
-> 🔌 **Core principle**: service-first — the 8 built-in tabs + 6 viewers register through the same `ctx.betterSidebar` API as third-party plugins, with fully equal capabilities; anything the ecosystem can provide better is delegated to ecosystem plugins (**28+ ecosystem plugins** already — see "🌐 Plugin Ecosystem" below). See "🔌 Service API" and the [external plugin guide](./docs/external-plugin-guide.md).
+> 🔌 **Core principle**: service-first — the 8 built-in tab types (7 visible + 1 hidden diff) + 6 viewers register through the same `ctx.betterSidebar` API as third-party plugins, with fully equal capabilities; anything the ecosystem can provide better is delegated to ecosystem plugins (**28+ ecosystem plugins** already — see "🌐 Plugin Ecosystem" below). See "🔌 Service API" and the [external plugin guide](./docs/external-plugin-guide.md).
 
 ## 🚀 Installation
 
@@ -173,7 +174,7 @@ Update: `git pull && pnpm install && pnpm build` → `node scripts/package-regis
 
 ## 🌐 Plugin Ecosystem
 
-The `ctx.betterSidebar` service opens two extension points to every plugin: **`registerTab` (sidebar pages)** and **`registerFileViewer` (file previewers)**. The 8 built-in tabs + 6 viewers register through the exact same API — fully equal capabilities.
+The `ctx.betterSidebar` service opens two extension points to every plugin: **`registerTab` (sidebar pages)** and **`registerFileViewer` (file previewers)**. The 8 built-in tab types (7 visible + 1 hidden diff) + 6 viewers register through the exact same API — fully equal capabilities.
 
 ```ts
 import type {} from 'dsh-better-sidebar'  // triggers the ctx.betterSidebar type merge
@@ -268,6 +269,12 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
 </div>
 
 **Supported DSH versions**: <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.19.1): 0.1.5-rc.1+ (verified on rc.2)" src="https://img.shields.io/badge/DSH-0.1.5--rc.1%2B_%28verified_rc.2%29-4d6bfe" /></a> · full release history on the [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases) page
+
+### Unreleased
+
+**✨ New**
+
+- 📋 **Plan page (the 8th built-in tab type)**: every plan the model presents in plan mode is archived revision by revision — the page opens the moment a plan is submitted, a selector walks back through every version, each carrying its review status (pending / approved / not adopted) and submission time, with one-click copy of the full text. The plan document has exactly one source: the `plan` argument of `exit_plan_mode` in the session event log (the `plan/mode` events and the `plan` projection carry booleans only), and **nothing is written to disk**. The body rides a lazy chunk (`lib/client-plan.js`) so its markdown stack stays out of the startup bundle, and the push feed carries only a "there is a new plan" notice — the route stays the single authority for the text. New setting: "Open the Plan page when the model presents a plan" (on by default). Design: [docs/plans/2026-09-13-plan-page-design.md](docs/plans/2026-09-13-plan-page-design.md).
 
 ### v0.19.1
 
@@ -595,7 +602,7 @@ All changes since v0.14.0:
 
 ## 🔌 Service API
 
-Since v0.4.0 the plugin exposes the `ctx.betterSidebar` service — other plugins can register sidebar pages and file viewers (the 8 built-in tabs + 6 viewers register through the same service). v0.12.1 completed the base capabilities (complete type exports, capability detection, state subscription, tab badges, lifecycle callbacks, targeted open, plugin-owned settings, etc.).
+Since v0.4.0 the plugin exposes the `ctx.betterSidebar` service — other plugins can register sidebar pages and file viewers (the 8 built-in tab types (7 visible + 1 hidden diff) + 6 viewers register through the same service). v0.12.1 completed the base capabilities (complete type exports, capability detection, state subscription, tab badges, lifecycle callbacks, targeted open, plugin-owned settings, etc.).
 
 Full integration docs (complete fields, matching algorithm, HMR pitfalls, declarative settings, version detection, the native-sidebar surface and the skinning contract): **[`docs/external-plugin-guide.md`](./docs/external-plugin-guide.md)**; repository rules (hard constraints / CI / release) live in [`AGENTS.md`](./AGENTS.md).
 

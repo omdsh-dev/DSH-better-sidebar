@@ -17,7 +17,11 @@ import { CHUNK_EXTERNALS } from '../src/client/chunk-loader.ts'
 
 const g = globalThis as Record<string, unknown>
 
-const CHUNKS = ['terminal', 'editor', 'mermaid']
+/** The lazy chunks whose artifact contract this suite checks — the chunk
+ *  names minus `locale`, which is not in package.json's `files` and so never
+ *  reaches the published tarball (a known, unfixed packaging gap — not an
+ *  exemption from the contract). Keep in sync with src/bundle-route.ts. */
+const CHUNKS = ['terminal', 'editor', 'mermaid', 'plan']
 
 /** All chunk artifacts present (tsdown emits the whole lib/ in one run). */
 const chunksBuilt = CHUNKS.every(name => existsSync(`lib/client-${name}.js`))

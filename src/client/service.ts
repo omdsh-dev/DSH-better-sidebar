@@ -117,9 +117,9 @@ export interface SidebarSettingsDeclaration {
   /**
    * Extra settings rows rendered under the feature's own row in the
    * settings page (only while the feature is enabled). Keys must be fields
-   * of the host's PrefsSchema (built-ins: 'autoOpenSubagent',
-   * 'agentTerminalTools', 'agentOpenTools', 'terminalFontFamily'); unknown
-   * keys are dropped by the settings seam.
+   * of the host's PrefsSchema — see `PrefsSchema` in src/config.ts (the
+   * external plugin guide §8 lists the current keys); unknown keys are
+   * dropped by the settings seam.
    */
   toggles?: readonly SidebarSettingToggle[]
   /**

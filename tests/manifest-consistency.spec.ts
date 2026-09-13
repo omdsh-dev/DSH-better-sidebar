@@ -70,8 +70,14 @@ function bundleId(file: string): string {
   return match[1]!
 }
 
-/** The lazy chunk bundle names (mirror of src/bundle-route.ts CHUNK_NAMES). */
-const CHUNK_FILES = ['terminal', 'editor', 'mermaid'].map(name => `lib/client-${name}.js`)
+/** The lazy chunk bundle names (mirror of src/bundle-route.ts CHUNK_NAMES).
+ *  `locale` is absent because it is not in package.json's `files` whitelist,
+ *  so it never reaches the published tarball. That is a KNOWN, UNFIXED
+ *  packaging gap, NOT a deliberate exclusion: a tarball install 404s this
+ *  chunk, the client swallows the miss, and the third-language dictionaries
+ *  silently never register. One line in package.json fixes it — left for its
+ *  own change rather than folded into an unrelated one. */
+const CHUNK_FILES = ['terminal', 'editor', 'mermaid', 'plan'].map(name => `lib/client-${name}.js`)
 
 /** The global registry slot a built chunk script assigns (its factory key). */
 function chunkSlot(file: string): string {

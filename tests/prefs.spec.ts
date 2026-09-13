@@ -34,6 +34,7 @@ describe('side card preferences', () => {
       .toEqual({
         autoOpenSubagent: false,
         autoOpenJobs: true,
+        autoOpenPlan: true,
         agentTerminalTools: true, agentOpenTools: false,
         bottomPanelAutoTerminal: true,
         terminalFontFamily: '',
@@ -65,6 +66,7 @@ describe('side card preferences', () => {
       .toEqual({
         autoOpenSubagent: true,
         autoOpenJobs: true,
+        autoOpenPlan: true,
         agentTerminalTools: false, agentOpenTools: false,
         bottomPanelAutoTerminal: true,
         terminalFontFamily: '',
@@ -96,6 +98,7 @@ describe('side card preferences', () => {
       .toEqual({
         autoOpenSubagent: true,
         autoOpenJobs: true,
+        autoOpenPlan: true,
         agentTerminalTools: false, agentOpenTools: false,
         bottomPanelAutoTerminal: true,
         terminalFontFamily: '',

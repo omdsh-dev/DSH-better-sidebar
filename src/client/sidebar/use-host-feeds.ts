@@ -1,20 +1,23 @@
 /**
  * Host-feed subscriptions (extracted from Sidebar.tsx, behavior identical):
- * the WebSocket pushes (agent terminals, agent opens) and the session-list
- * driven auto-activation triggers (subagent, background jobs, topology
- * jump-back). All of it reacts to the host's live feeds for the CURRENT
- * session; the sidebar shell only consumes the returned jump-back ref.
+ * the WebSocket pushes (agent terminals, agent opens, plan submissions) and
+ * the session-list driven auto-activation triggers (subagent, background
+ * jobs, topology jump-back). All of it reacts to the host's live feeds for
+ * the CURRENT session; the sidebar shell only consumes the returned
+ * jump-back ref.
  */
 import { useEffect, useRef } from 'react'
 import type { Context, SidebarSessionList } from '../../context-types.ts'
+import { PLAN_CHANGED_EVENT } from '../../plan-events.ts'
 import { mirrorAgentWaits, reconcileAgentTerminals, type SidebarStore } from '../state.ts'
 import { isNarrowWidth } from '../breakpoints.ts'
 import { detectNewDirectSubagent } from '../subagent-detect.ts'
 import { detectNewJob } from '../subagent-jobs.ts'
-import { t } from '../locales.ts'
 
-/** How many consecutive reconnect failures stop the agent-terminals push loop
- * (mirror of the terminal view's own cap; the loop restarts on session switch). */
+/** How many reconnect failures stop a push loop. The two older feeds below
+ *  count failures over their whole lifetime; {@link connectSessionPush}
+ *  counts CONSECUTIVE ones (cleared on connect). Converging the older feeds
+ *  is future work. */
 const FAILURE_LIMIT = 3
 
 /**
@@ -39,12 +42,12 @@ interface NativeColumnFace {
 }
 
 /**
- * Activate the Tasks page (the `subagent` tab type) in DSH's native right
- * Sidebar — the landing the two auto-open switches promise: the right column
- * IS the sidebar the user means, while the plugin's own bottom workbench only
- * serves its own flows (its `+` menu and the first-expansion terminal). Every
- * other open in this plugin already lands there, so a `target: 'bottom'` here
- * puts the Tasks page in the bottom bar instead.
+ * Activate one built-in page in DSH's native right Sidebar — the landing the
+ * auto-open switches promise: the right column IS the sidebar the user means,
+ * while the plugin's own bottom workbench only serves its own flows (its `+`
+ * menu and the first-expansion terminal). Every other open in this plugin
+ * already lands there, so a `target: 'bottom'` here puts the page in the
+ * bottom bar instead.
  *
  * A background activation must not take over a narrow viewport: below 768px
  * the host draws that column FULLSCREEN, so the tab is placed and the column
@@ -56,13 +59,22 @@ interface NativeColumnFace {
  * when the activation FIRES (the debounced subagent trigger included), so a
  * resize while arming is honoured.
  *
+ * The tab title is left to the descriptor — `service.openTab` falls back to
+ * it — so a page renamed in one place is renamed on every activation path.
+ *
  * @param ctx - the client context (`ctx.sidebarRight` + `ctx.betterSidebar`).
  * @param sessionId - the session the feed reports the activity for.
+ * @param type - the built-in tab type to activate.
  * @param options.background - `true` for background activity (parks on narrow
  *   viewports); `false` for the explicit topology jump-back, which is a user
  *   gesture and always leaves the column as the host expanded it.
  */
-function activateTasksPage(ctx: Context, sessionId: string, options: { background: boolean }): void {
+function activatePage(
+  ctx: Context,
+  sessionId: string,
+  type: string,
+  options: { background: boolean },
+): void {
   const column = ctx.get('sidebarRight') as unknown as NativeColumnFace | undefined
   const park = options.background
     // The face acts on the MOUNTED session: parking is only meaningful (and
@@ -72,8 +84,53 @@ function activateTasksPage(ctx: Context, sessionId: string, options: { backgroun
     // Only a column the user had COLLAPSED is put back: an expanded one is in
     // use, and closing it under the user would be worse than the takeover.
     && column?.isExpanded?.() === false
-  ctx.get('betterSidebar')?.openTab({ type: 'subagent', title: t('subagent') })
+  ctx.get('betterSidebar')?.openTab({ type })
   if (park) column?.toggleExpanded?.()
+}
+
+/**
+ * One push-socket connection with the shared reconnect discipline: a short
+ * fixed backoff, {@link FAILURE_LIMIT} consecutive failures stop the loop (a
+ * session switch restarts it), and a successful connect clears the count.
+ * Returns the detacher.
+ */
+function connectSessionPush(
+  path: string,
+  label: string,
+  sessionId: string,
+  handlers: { onMessage: (data: string) => void },
+): () => void {
+  let socket: WebSocket | null = null
+  let retry: number | undefined
+  let closed = false
+  let failures = 0
+  const connect = (): void => {
+    if (closed) return
+    const url = new URL(path, location.origin)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.search = new URLSearchParams({ sessionId }).toString()
+    socket = new WebSocket(url.toString())
+    socket.onopen = () => { failures = 0 }
+    socket.onmessage = (event) => {
+      if (typeof event.data === 'string') handlers.onMessage(event.data)
+    }
+    socket.onclose = () => {
+      if (closed) return
+      failures += 1
+      if (failures >= FAILURE_LIMIT) {
+        console.error(`[dsh-better-sidebar] ${label} connection failed; stopping reconnect loop`, sessionId)
+        return
+      }
+      retry = window.setTimeout(connect, 2000)
+    }
+    socket.onerror = () => { socket?.close() }
+  }
+  connect()
+  return () => {
+    closed = true
+    window.clearTimeout(retry)
+    socket?.close()
+  }
 }
 
 export function useHostFeeds(feeds: {
@@ -219,6 +276,39 @@ export function useHostFeeds(feeds: {
   }, [sessionId, ctx, store])
 
   /**
+   * Plan submissions push: the host announces `{ sessionId, seq }` the moment
+   * the model presents a plan through plan mode's exit tool. This is the ONE
+   * activation here that no session-list signature can drive — a plan leaves
+   * no trace on the list feed while the session is still running, so the
+   * notice is the only honest trigger. Discipline via
+   * {@link connectSessionPush}; a notice for another session is dropped as a
+   * defensive gate, and the auto-open gates mirror the subagent trigger's.
+   */
+  useEffect(() => {
+    if (sessionId === undefined) return
+    return connectSessionPush('/sidebar/ws/plans', 'plans', sessionId, {
+      onMessage: (data) => {
+        try {
+          const notice = JSON.parse(data) as { sessionId?: unknown } | null
+          if (notice === null || typeof notice !== 'object') return
+          if (notice.sessionId !== sessionId) return
+          // The refresh is INDEPENDENT of the two switches below: they decide
+          // whether the page is brought forward, not whether its data is
+          // current — a page the reader opened by hand stays live either way.
+          // The page is a lazy chunk, so the signal crosses that boundary
+          // through the window (the file tree's relay uses the same channel).
+          window.dispatchEvent(new Event(PLAN_CHANGED_EVENT))
+          if (!store.getPrefs().autoOpenPlan) return
+          if (ctx.get('betterSidebar')?.isTabEnabled('plan') === false) return
+          activatePage(ctx, sessionId, 'plan', { background: true })
+        } catch {
+          // Malformed push: ignore — the page's own poll still catches up.
+        }
+      },
+    })
+  }, [sessionId, ctx, store])
+
+  /**
    * Subagent auto-activation: the moment the current conversation spawns its
    * FIRST direct subagent (a 0 → N transition on the list feed), the "auto
    * open" pref is on, and the Tasks tab type is enabled in settings, activate
@@ -226,7 +316,7 @@ export function useHostFeeds(feeds: {
    * focus an existing tab in place; a new tab lands in that column and is
    * never duplicated. Landing it EXPANDS the column on wide viewports, while
    * a narrow viewport (where the host draws that column fullscreen) parks the
-   * tab instead of taking the screen over — see {@link activateTasksPage}.
+   * tab instead of taking the screen over — see {@link activatePage}.
    * Switching to a session that already has subagents never triggers — its
    * baseline starts at the current count — so a deliberate layout is never
    * fought.
@@ -252,7 +342,7 @@ export function useHostFeeds(feeds: {
       if (!detectNewDirectSubagent(baseline, ctx.sessions.list.getSnapshot(), sessionId)) return
       if (!store.getPrefs().autoOpenSubagent) return
       if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
-      activateTasksPage(ctx, sessionId, { background: true })
+      activatePage(ctx, sessionId, 'subagent', { background: true })
     }, AUTO_OPEN_DEBOUNCE_MS)
     autoOpenPendingRef.current = { baseline, timer }
   }, [sessionList, sessionId, store, ctx])
@@ -270,7 +360,7 @@ export function useHostFeeds(feeds: {
    * auto-open pref is on, and the Tasks tab type is enabled, activate the Tasks
    * page that contains the background-jobs section — in DSH's native right
    * Sidebar, expanded on wide viewports and parked on narrow ones exactly like
-   * the subagent trigger ({@link activateTasksPage}). Unlike that trigger
+   * the subagent trigger ({@link activatePage}). Unlike that trigger
    * (0 → N only), ANY new job id triggers: the agent may start several jobs in
    * one session, and each should surface. A fresh page load never triggers —
    * its baseline starts at the current snapshot.
@@ -283,7 +373,7 @@ export function useHostFeeds(feeds: {
     if (!detectNewJob(prev, sessionList, sessionId)) return
     if (!store.getPrefs().autoOpenJobs) return
     if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
-    activateTasksPage(ctx, sessionId, { background: true })
+    activatePage(ctx, sessionId, 'subagent', { background: true })
   }, [sessionList, sessionId, store, ctx])
 
   /**
@@ -303,7 +393,7 @@ export function useHostFeeds(feeds: {
     const pending = subagentJumpRef.current
     if (pending === undefined || sessionId !== pending) return
     subagentJumpRef.current = undefined
-    activateTasksPage(ctx, sessionId, { background: false })
+    activatePage(ctx, sessionId, 'subagent', { background: false })
   }, [sessionId, store, ctx])
 
   return { subagentJumpRef }

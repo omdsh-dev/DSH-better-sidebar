@@ -57,7 +57,7 @@ const SEEDED_README_FILE = 'readme-style.md'
 const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 
 /** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const NATIVE_TABS = ['files', 'git', 'subagent', 'sidechat', 'terminal', 'browser']
+const NATIVE_TABS = ['files', 'git', 'plan', 'subagent', 'sidechat', 'terminal', 'browser']
 
 let api: APIRequestContext
 /** The seeded session id (captured by seedSession; the Side Chat smoke's parent). */
@@ -301,6 +301,20 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     await assertNoCrash()
   }
 
+  // The plan page is served from a lazy chunk (lib/client-plan.js): the sweep
+  // above must have fetched it with a 200. A missing or unbundled chunk renders
+  // the wrapper's error placeholder instead — not a crash, so assertNoCrash
+  // alone would let the page ship broken.
+  await expect
+    .poll(
+      () => page.evaluate(() =>
+        performance.getEntriesByType('resource')
+          .filter(entry => entry.name.includes('/sidebar/bundle/plan.js'))
+          .map(entry => (entry as PerformanceResourceTiming & { responseStatus?: number }).responseStatus)),
+      { timeout: 30_000 },
+    )
+    .toContain(200)
+
   // The sweep opened the Side Chat type, whose view auto-creates a thread and
   // polls the transcript — that poll MUST ride the plugin's own
   // sidechat.events route (the host transport this lane locks). The poll runs
@@ -361,7 +375,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const settingsGetBody = (await settingsGet.json()) as { value?: { tabsEnabled?: Record<string, boolean> } }
   const originalTabsEnabled = settingsGetBody.value?.tabsEnabled ?? {}
   /** The types this check switches off (leaving three entries, i.e. ≤4). */
-  const shrunken = ['git', 'subagent', 'terminal'] as const
+  const shrunken = ['git', 'plan', 'subagent', 'terminal'] as const
   try {
     // Send the FULL map back (the route's patch is key-wise merged, so a
     // full map is correct whether the host merges or replaces).

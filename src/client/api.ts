@@ -9,6 +9,7 @@
 import { encodeHtmlUrl } from '../html-route.ts'
 import type { LastActivity } from '../subagent-activity.ts'
 import type { SidechatLiveEvent, SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
+import type { PlanList } from '../plan-events.ts'
 import type { SidebarSessionEvent } from '../context-types.ts'
 import type { BrowserProbeResult } from './browser.ts'
 
@@ -329,6 +330,11 @@ export const api = {
     call<{ events: SidebarSessionEvent[]; lastSeq: number }>('changes.ops', scopePayload(scope, {
       ...(afterSeq !== undefined && afterSeq > 0 ? { afterSeq } : {}),
     }), signal),
+  /** One session's plan revisions, oldest first, already folded host-side.
+   *  Host-side folding is what keeps a long session's earliest plans on the
+   *  wire AND what keeps the acceptance rule in one place. */
+  plansEvents: (scope: SessionScope, signal?: AbortSignal) =>
+    call<PlanList>('plans.events', scopePayload(scope, {}), signal),
   /** Discard the worktree changes of one file (the index is untouched). */
   gitDiscard: (scope: SessionScope, path: string, worktree?: string) =>
     call<{ ok: true }>('git.discard', gitPayload(scope, worktree, { path })),
