@@ -62,3 +62,40 @@
 - 不改 DSH 源码（仓库硬约束 §1）。
 - 不改插件自绘底部工作台的记录语义（它按会话隔离持久化，不共享本记录表）。
 - 不新增设置项、不动 `TabDescriptor` / `ctx.betterSidebar` 的任何公开签名。
+
+---
+
+## 后续修正（#661）：判据从 body token 换成会话，记录活到 tab 关闭为止
+
+原方案把记录的身份和寿命都绑在 **body 实例 token** 上。真机复现（`dsh web` + 复现者 profile 的副本，scratch home，不动线上实例）暴露了两个后果：
+
+1. **同一会话内切 tab 会清空该 tab 的插件侧状态**（#661）。原生右侧栏同一 pane 内只挂载当前 tab 的 body，切走即卸载 → 卸载清理 `drop(id, owner)` 删掉记录 → 切回来重新 mint 时，文件树展开集、终端选中态，以及 merged（`editorExplorer=true`）下**就地打开的文件**全部丢失（tab 退回空白资源管理器、chip 标题退回「文件」）。
+2. 身份粒度比"记录该活多久"更细：记录应横跨 tab 的整个生命周期，而 body 会随 tab 切换卸载/重挂。
+
+于是把身份与寿命都挪到正确的载体上：
+
+| 维度 | 原方案 | 现在 |
+|---|---|---|
+| 身份 | body 实例 token（`View.owner`） | 原生 tab 的**会话**：`ensure` 在 `existing.scope.sessionId !== scope.sessionId` 时按该 tab 自己的原生种子重建（不再 `{...existing.tab}`，title/path/meta 不可能跨会话串） |
+| 寿命 | 随 body 卸载 `drop(id, owner)` | 到宿主关闭该 tab 为止（唯一入口 `surface.close` → `remove`，保留 session 校验） |
+| API | `drop(id, owner)` + `remove(id)` | 只剩 `remove(id)`；`View.owner`、`NativeTabBody` 的 `useRef` token 一并删除 |
+
+`#636`（跨会话失灵）的守护用例在新判据下继续成立。
+
+### 改动清单（增量）
+
+| 子系统 | 文件 | 变更 |
+|---|---|---|
+| 记录表 | `src/client/native/tab-adapter.tsx` | `View.owner` 删除；抽出 `mintRecord`（首见与跨会话重建共用一个构造器）；`ensure` 判据换成会话；`drop` 删除；`NativeTabBody` 去掉 token 与卸载清理（`useEffect`/`useRef` 导入一并收回） |
+| 测试 | `tests/native-surface.spec.ts` | 既有用例的 `owner` 参数移除；新增「同会话 body 重挂载保住树展开集 + 就地打开的文件」与「另一个会话不继承 path/title」；`mountSwitchable` 增加 `hide()`/`path()` 两个观察面 |
+
+### 验证（增量）
+
+- 单测：`tests/native-surface.spec.ts` **26 passed**。只把 `tab-adapter.tsx` 回退到本 PR 的原实现 → **2 条红**，其中组件级那条正是用户症状：`the expansion set survives the body remount: expected '' to deeply equal '/work/dir'`。
+- 真机（scratch home + profile 副本）：merged 模式「就地打开 md → 切走 → 切回」——原实现 `CTRL-RESULT chip=0 heading=0`（tab 退回「文件」、正文丢失），改后 `chip=1 heading=1`（chip 仍是 `ccc-readme.md`，正文仍在）。
+- 相邻症状：#660（**新**开 tab 的那一帧 chip 仍可能拿不到 path —— 因为 chip 与 body 同帧渲染而 `ensure` 静默）**不由本方案修复**，仍走"从 tab 地址派生图标"那条独立修复（PR #662）；本方案顺带让"切走再切回"的图标正确（记录不再被删）。
+
+### 未覆盖（诚实记录）
+
+- 宿主自己的 × 关闭 tab 不经过插件 `closeTab` 时，记录会留到页面关闭。按 tab id 计数、同一 pane 内 tab 数有界，且被关闭的 id 不会被复用（宿主按会话计数器只增），故不构成状态错用；用 `tab.signal` 驱动的清理留给后续。
+- 记录表仍按 tab id 解析 `update/close/has`；宿主挂载模型是单会话面板，且同一 id 只会被一个会话持有，故无歧义。
