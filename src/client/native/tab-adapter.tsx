@@ -339,6 +339,17 @@ export interface NativeTitleInjected {
   readonly service: BetterSidebarService
   /** The descriptor id this title belongs to (one registration per descriptor). */
   readonly descriptorId: string
+  /**
+   * The seed fields the native RECORD itself carries, when the type declares
+   * them (a file address names the file the tab shows).
+   *
+   * The chip must read the file's path from here and not only from
+   * {@link NativeTabRecords}: the plugin-side record is minted by the tab
+   * BODY's render — one commit after the chip first draws — and it is dropped
+   * again when the body unmounts, so a selected file tab used to fall back to
+   * its descriptor's generic glyph every time it was activated.
+   */
+  readonly paramsOf?: (info: NativeTabInfo) => NativeTabParams | undefined
 }
 
 /**
@@ -356,8 +367,9 @@ export interface NativeTitleInjected {
  * cannot drift apart.
  */
 export function NativeTabTitle(props: NativeTitleInjected & NativeBodyFrameworkProps): ReactNode {
-  const { records, service, descriptorId, useTabInfo } = props
-  const nativeTab = useTabInfo().tab
+  const { records, service, descriptorId, paramsOf, useTabInfo } = props
+  const info = useTabInfo()
+  const nativeTab = info.tab
   const version = useSyncExternalStore(
     listener => records.subscribe(listener),
     () => records.versionOf(nativeTab.id),
@@ -368,7 +380,12 @@ export function NativeTabTitle(props: NativeTitleInjected & NativeBodyFrameworkP
   // icon itself is derived from the record, never stored.
   void version
   const descriptor = service.getTab(descriptorId) ?? service.getTab(record?.tab.type ?? nativeTab.kind)
-  const path = record?.tab.path
+  // The record's own path wins (an in-place switch stores it there, and the
+  // native address of a page kind cannot carry it); the address-derived path
+  // is what keeps the glyph correct when the record is not there YET (the tab
+  // was just activated and the body has not rendered) or has already been
+  // dropped (the body unmounted when the tab was switched away).
+  const path = record?.tab.path ?? paramsOf?.(info)?.path
   const icon = path !== undefined && descriptorId === EDITOR_KIND
     ? service.fileIcon(path, CHIP_ICON_SIZE)
     : undefined
