@@ -733,6 +733,29 @@ describe('session cwd resolution over the API route', () => {
     }
   })
 
+  it('serves a workspace-relative media path against the session cwd', async () => {
+    // The client sends the path it displays, which is workspace-relative when the
+    // file lies inside the session, and rides `cwd` in the query for exactly this.
+    // Requiring the caller to absolute the path made every linked file in the
+    // conversation answer 400 'is not an absolute path'.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-route-relative-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(join(workspace, 'shots'), { recursive: true })
+    writeFileSync(join(workspace, 'shots', 'a.png'), 'png bytes')
+    try {
+      const route = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+        .find(candidate => candidate.path === '/sidebar/file')!
+      const relative = await invokeGet(route, `/sidebar/file?sessionId=s&path=${encodeURIComponent('shots/a.png')}`)
+      expect(relative.status).toBe(200)
+      expect(relative.body).toBe('png bytes')
+      // An absolute path keeps working, since both forms reach the same file.
+      const absolute = await invokeGet(route, `/sidebar/file?sessionId=s&path=${encodeURIComponent(join(workspace, 'shots', 'a.png'))}`)
+      expect(absolute.status).toBe(200)
+      expect(absolute.body).toBe('png bytes')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
   it('rejects media and HTML reads through a workspace symlink', async () => {
     if (!canCreateSymlink) return
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-route-symlink-security-'))
