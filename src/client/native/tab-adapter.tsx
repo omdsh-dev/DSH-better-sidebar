@@ -140,12 +140,17 @@ export function createNativeTabRecords(): NativeTabRecords {
       if (existing === undefined) {
         const seeded = params?.title === undefined && params?.meta === undefined ? mint?.() : undefined
         const meta = params?.meta ?? seeded?.meta
+        // Browser opens carry their initial URL as `params.url`, while the
+        // component contract (and the bottom workbench) uses `tab.path` as
+        // the canonical browser address. Treat the URL as a creation seed;
+        // later in-place updates arrive through `records.update()`.
+        const path = params?.path ?? params?.url
         const minted: View = {
           tab: {
             id,
             type: kind as TabType,
             title: params?.title ?? seeded?.title ?? title,
-            ...(params?.path === undefined ? {} : { path: params.path }),
+            ...(path === undefined ? {} : { path }),
             ...(params?.diff === undefined ? {} : { diff: params.diff }),
             ...(meta === undefined ? {} : { meta }),
           },
@@ -162,13 +167,11 @@ export function createNativeTabRecords(): NativeTabRecords {
       // plugin-side mutation (title/meta from updateTab) stay.
       const patch: Partial<SidebarTab> = {}
       if (params?.path !== undefined && params.path !== existing.tab.path) patch.path = params.path
+      // Older activations could have minted a browser record without a path.
+      // Fill that hole once, but never re-apply the original URL after a
+      // BrowserView navigation has updated the synthetic record.
+      if (params?.url !== undefined && existing.tab.path === undefined) patch.path = params.url
       if (params?.diff !== undefined) patch.diff = params.diff
-      if (params?.url !== undefined) {
-        const meta = typeof existing.tab.meta === 'object' && existing.tab.meta !== null
-          ? existing.tab.meta as Record<string, unknown>
-          : {}
-        patch.meta = { ...meta, url: params.url }
-      }
       if (existing.scope.cwd !== scope.cwd) {
         views.set(id, { ...existing, scope, tab: { ...existing.tab, ...patch } })
         return views.get(id)!

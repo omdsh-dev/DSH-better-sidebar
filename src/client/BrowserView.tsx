@@ -80,16 +80,24 @@ export function iframeSandboxFor(url: string | undefined, allowedLoopback: strin
 }
 
 export function BrowserView(props: TabComponentProps) {
-  const { store, tab } = props
+  const { ctx, store, tab } = props
   // The current address (initialized from the persisted tab.path so a
-  // reload restores the visited page).
-  const [url, setUrl] = useState<string | undefined>(tab.path)
-  const [input, setInput] = useState<string>(tab.path ?? '')
+  // reload restores the visited page). `meta.url` is a compatibility
+  // fallback for native records created by older releases; new writes use
+  // tab.path exclusively.
+  const initial = tab.path ?? (
+    typeof tab.meta === 'object' && tab.meta !== null && !Array.isArray(tab.meta)
+      && typeof (tab.meta as Record<string, unknown>).url === 'string'
+      ? (tab.meta as Record<string, unknown>).url as string
+      : undefined
+  )
+  const [url, setUrl] = useState<string | undefined>(initial)
+  const [input, setInput] = useState<string>(initial ?? '')
   /** Blocked/invalid hint shown under the address bar (null = none). */
   const [message, setMessage] = useState<string | null>(null)
   /** Address-bar navigation history (in-frame clicks are not tracked). */
-  const [history, setHistory] = useState<string[]>(tab.path !== undefined ? [tab.path] : [])
-  const [cursor, setCursor] = useState<number>(tab.path !== undefined ? 0 : -1)
+  const [history, setHistory] = useState<string[]>(initial !== undefined ? [initial] : [])
+  const [cursor, setCursor] = useState<number>(initial !== undefined ? 0 : -1)
   /** Bumped on reload to remount the iframe (also remounts on sandbox flip). */
   const [reloadKey, setReloadKey] = useState(0)
   /** TEMPORARY sandbox unlock for THIS surface only (never writes the global
@@ -120,6 +128,15 @@ export function BrowserView(props: TabComponentProps) {
   const persist = (nextUrl: string): void => {
     let host = nextUrl
     try { host = new URL(nextUrl).hostname } catch { /* keep the URL as title */ }
+    const service = ctx.get('betterSidebar')
+    if (service !== undefined) {
+      // The service routes native tabs to NativeSurface and bottom tabs to
+      // the plugin-owned SidebarStore, so both surfaces persist uniformly.
+      service.updateTab(tab.id, { path: nextUrl, title: host })
+      return
+    }
+    // Keep the direct reducer as a defensive fallback for isolated mounts
+    // and tests that render the view without the service registration.
     store.reduce(state => patchTab(state, tab.id, { path: nextUrl, title: host }))
   }
 

@@ -176,6 +176,17 @@ describe('browser tab iframe sandbox', () => {
     expect(html).toContain('输入网址开始浏览')
   })
 
+  it('restores a legacy native URL stored in tab.meta.url', () => {
+    const store = createSidebarStore()
+    const props = tabProps(store)
+    const html = renderToString(createElement(BrowserView, {
+      ...props,
+      tab: { ...props.tab, meta: { url: 'https://legacy.example/' } },
+    }))
+    expect(html).toContain('value="https://legacy.example/"')
+    expect(html).toContain('src="https://legacy.example/"')
+  })
+
   it('sandboxes the iframe without same-origin / top-navigation', () => {
     const store = createSidebarStore()
     const html = renderToString(createElement(BrowserView, tabProps(store, 'https://example.com/')))
