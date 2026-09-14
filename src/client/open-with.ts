@@ -165,11 +165,28 @@ export function openWithSshActive(config: OpenWithConfig): boolean {
 }
 
 /**
+ * Normalize one row path for an editor URL while preserving its resource
+ * kind. VS Code's remote CLI/URI handling uses a trailing slash to force a
+ * directory; files deliberately keep no trailing slash and the SSH URL
+ * builder adds `:1:1` to force goto/file semantics instead of path guessing.
+ */
+export function openWithResourcePath(path: string, isDir: boolean): string {
+  const normalized = normalizeUrlPath(path)
+  if (!isDir || normalized.endsWith('/')) return normalized
+  return `${normalized}/`
+}
+
+/**
  * The URL to open for one resolved target, or undefined when the target has
  * no URL form (reveal) or the template is malformed. The path is inserted
  * RAW into the template (browsers percent-encode as needed; VSCode-family
  * URL parsers consume the absolute path with its leading slash, e.g.
  * `vscode://file//home/u/f.ts` or `vscode://file/C:/Users/u/f.ts`).
+ *
+ * SSH paths are expected to preserve row kind via {@link openWithResourcePath}:
+ * a trailing slash remains a folder URL, while every non-slash path gets a
+ * `:1:1` goto suffix so VS Code-family handlers cannot reinterpret a file as
+ * a directory (notably extensionless files).
  */
 export function openWithUrl(target: OpenWithTarget, path: string, config: OpenWithConfig): string | undefined {
   if (target.kind !== 'url' || target.urlTemplate === undefined) return undefined
@@ -180,7 +197,8 @@ export function openWithUrl(target: OpenWithTarget, path: string, config: OpenWi
     if (scheme === undefined) return undefined
     // `ssh-remote+<host>` owns NO slash of its own: the path keeps its
     // leading slash, so `/home/u/f.ts` lands as `…+host/home/u/f.ts`.
-    return `${scheme}://vscode-remote/ssh-remote+${config.sshHost.trim()}${normalized}`
+    const remote = `${scheme}://vscode-remote/ssh-remote+${config.sshHost.trim()}${normalized}`
+    return normalized.endsWith('/') ? remote : `${remote}:1:1`
   }
   if (!target.urlTemplate.includes('{path}') || !hasUrlScheme(target.urlTemplate)) return undefined
   return target.urlTemplate.replace('{path}', normalized)
