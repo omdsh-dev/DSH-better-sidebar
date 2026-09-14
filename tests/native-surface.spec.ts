@@ -21,9 +21,24 @@ describe('createNativeTabRecords', () => {
     const view = records.ensure({
       id: 'tab-1', kind: 'browser', title: 'Browser', params: { url: 'https://a.test', meta: { k: 1 } }, scope,
     })
-    expect(view.tab).toMatchObject({ id: 'tab-1', type: 'browser', title: 'Browser', meta: { k: 1 } })
+    expect(view.tab).toMatchObject({ id: 'tab-1', type: 'browser', title: 'Browser', path: 'https://a.test', meta: { k: 1 } })
     expect(view.scope).toBe(scope)
     expect(view.expanded).toEqual([])
+  })
+
+  it('keeps a browser navigation update instead of re-applying the native URL seed', () => {
+    const records = createNativeTabRecords()
+    records.ensure({
+      id: 'tab-browser', kind: 'browser', title: 'Browser', params: { url: 'https://initial.test' }, scope,
+    })
+    records.update('tab-browser', { path: 'https://visited.test', title: 'visited.test' })
+
+    // NativeTabBody calls ensure again when the record update re-renders. The
+    // original navigation param is a creation seed, not the current address.
+    const view = records.ensure({
+      id: 'tab-browser', kind: 'browser', title: 'Browser', params: { url: 'https://initial.test' }, scope,
+    })
+    expect(view.tab).toMatchObject({ path: 'https://visited.test', title: 'visited.test' })
   })
 
   it('calls the descriptor factory once for a record that arrives without seed fields', () => {
