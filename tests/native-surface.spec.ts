@@ -4,16 +4,111 @@
  * (src/client/native/tab-adapter.tsx) and the service's routing into it
  * (src/client/service.ts `setSurface`).
  */
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { createNativeTabRecords, NativeTabBody, NativeTabTitle } from '../src/client/native/tab-adapter.tsx'
 import { registerNativeSurface } from '../src/client/native/index.ts'
+import { createNativeSurface } from '../src/client/native/surface.ts'
 import { createBetterSidebarService, type SidebarSurface } from '../src/client/service.ts'
 import { createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 
 const scope = { sessionId: 's1', cwd: '/work' }
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+describe('createNativeSurface pending lifecycle writes', () => {
+  /** Mount a surface whose active session writes into the supplied controller. */
+  const mount = (controller: Record<string, unknown>) => {
+    const unsubscribe = vi.fn()
+    const ctx = {
+      get: () => controller,
+      sessions: {
+        list: {
+          getSnapshot: () => ({ current: 's1' }),
+          subscribe: () => unsubscribe,
+        },
+      },
+    }
+    return { surface: createNativeSurface(ctx as never, createNativeTabRecords()), unsubscribe }
+  }
+
+  it('retries openTab after the current session seat finishes binding', () => {
+    vi.useFakeTimers()
+    let ready = false
+    const openTab = vi.fn(() => {
+      if (!ready) throw new Error('sidebarRight: no session surface is mounted')
+    })
+    const { surface } = mount({ openTab, openResource: vi.fn(), close: vi.fn() })
+
+    expect(() => surface.openTab({ sessionId: 's1', kind: 'terminal', params: {}, revealIfOpened: true })).not.toThrow()
+    expect(openTab).toHaveBeenCalledTimes(1)
+
+    ready = true
+    vi.advanceTimersByTime(50)
+    expect(openTab).toHaveBeenCalledTimes(2)
+    surface.dispose()
+  })
+
+  it('retries openResource after the current session seat finishes binding', () => {
+    vi.useFakeTimers()
+    let ready = false
+    const openResource = vi.fn(() => {
+      if (!ready) throw new Error('sidebarRight: no session surface is mounted')
+    })
+    const { surface } = mount({ openTab: vi.fn(), openResource, close: vi.fn() })
+
+    expect(() => surface.openResource({ sessionId: 's1', address: 'dsh-resource://file/session/s1/a.ts', line: 7, revealIfOpened: true })).not.toThrow()
+    expect(openResource).toHaveBeenCalledTimes(1)
+
+    ready = true
+    vi.advanceTimersByTime(50)
+    expect(openResource).toHaveBeenCalledTimes(2)
+    surface.dispose()
+  })
+
+  it('continues to throw native controller errors unrelated to mounting', () => {
+    vi.useFakeTimers()
+    const openTab = vi.fn(() => { throw new Error('sidebarRight: no registered tab type') })
+    const { surface } = mount({ openTab, openResource: vi.fn(), close: vi.fn() })
+
+    expect(() => surface.openTab({ sessionId: 's1', kind: 'missing', params: {}, revealIfOpened: true }))
+      .toThrow('sidebarRight: no registered tab type')
+    vi.advanceTimersByTime(500)
+    expect(openTab).toHaveBeenCalledTimes(1)
+    surface.dispose()
+  })
+
+  it('stops pending retries when the surface is disposed', () => {
+    vi.useFakeTimers()
+    const openTab = vi.fn(() => { throw new Error('sidebarRight: no session surface is mounted') })
+    const { surface, unsubscribe } = mount({ openTab, openResource: vi.fn(), close: vi.fn() })
+
+    surface.openTab({ sessionId: 's1', kind: 'terminal', params: {}, revealIfOpened: true })
+    surface.dispose()
+    vi.advanceTimersByTime(500)
+
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+    expect(openTab).toHaveBeenCalledTimes(1)
+  })
+
+  it('removes a successful pending open instead of replaying it again', () => {
+    vi.useFakeTimers()
+    const openTab = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('sidebarRight: no session surface is mounted') })
+      .mockImplementation(() => undefined)
+    const { surface } = mount({ openTab, openResource: vi.fn(), close: vi.fn() })
+
+    surface.openTab({ sessionId: 's1', kind: 'terminal', params: {}, revealIfOpened: true })
+    vi.advanceTimersByTime(1_000)
+
+    expect(openTab).toHaveBeenCalledTimes(2)
+    surface.dispose()
+  })
+})
 
 describe('createNativeTabRecords', () => {
   it('mints a synthetic tab from the native record + params', () => {
