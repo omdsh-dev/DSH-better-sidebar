@@ -130,11 +130,14 @@ export function urlCommand(
 export function wslRemoteEditorUrl(url: string, distroName: string): string {
   const match = /^(vscode(?:-insiders)?|cursor):\/\/file(\/\/.*)$/i.exec(url)
   if (match === null) return url
+  const scheme = match[1]
+  const remotePath = match[2]
+  if (scheme === undefined || remotePath === undefined) return url
   const distro = distroName.trim()
   if (distro === '') {
     throw new SidebarError('internal', 'WSL_DISTRO_NAME is unavailable; cannot build a Remote-WSL editor URL', 500)
   }
-  return `${match[1]}://vscode-remote/wsl+${distro}${match[2].slice(1)}`
+  return `${scheme}://vscode-remote/wsl+${distro}${remotePath.slice(1)}`
 }
 
 /** Validate a URL-scheme open target: a parseable custom-scheme URL (never
