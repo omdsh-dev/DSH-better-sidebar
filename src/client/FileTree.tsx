@@ -301,7 +301,13 @@ export function FileTree(props: {
   }, [])
 
   const loadDir = useCallback((dir: string) => {
-    if (dataRef.current[dir] !== undefined) return
+    // Only a listing settles a level: the error branch below stores its
+    // failure in this same cache, so treating any entry as "already loaded"
+    // made one 403 (the trust fence, a host restart, a transient read error)
+    // stick for the rest of the mount — the tree could not retry it, and the
+    // only ways out were the fence notice's retry button or a remount.
+    const cached = dataRef.current[dir]
+    if (cached !== undefined && cached.error === undefined) return
     storeLevel(dir, {})
     api.fsTree({ sessionId, cwd }, dir).then((listing) => {
       storeLevel(dir, { entries: listing.entries })
