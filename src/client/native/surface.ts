@@ -21,6 +21,12 @@ import { fileAddressFor } from '../resource-address.ts'
 import type { NativeTabParams, SidebarSurface } from '../service.ts'
 import type { NativeTabRecords } from './tab-adapter.tsx'
 
+/** The public controller error emitted before the current session seat binds. */
+const SURFACE_NOT_MOUNTED_MESSAGE = 'sidebarRight: no session surface is mounted'
+
+/** Delay between attempts to replay opens waiting for the native seat. */
+const PENDING_RETRY_DELAY_MS = 50
+
 /** One open the surface could not place yet. */
 type Pending =
   | { kind: 'tab'; sessionId: string; tabKind: string; params: NativeTabParams; revealIfOpened: boolean }
@@ -55,6 +61,30 @@ function activeSessionId(ctx: Context): string | undefined {
 }
 
 /**
+ * Identify the one public-write error that represents a transient seat lifecycle gap.
+ * @param error - the value thrown by the native Sidebar controller.
+ * @returns whether the current session surface has not mounted yet.
+ */
+function isSurfaceNotMountedError(error: unknown): boolean {
+  return error instanceof Error && error.message === SURFACE_NOT_MOUNTED_MESSAGE
+}
+
+/**
+ * Attempt a public write against the mounted native session surface.
+ * @param write - the native controller write to perform.
+ * @returns false only while the current session seat is not mounted yet.
+ */
+function tryMountedWrite(write: () => void): boolean {
+  try {
+    write()
+    return true
+  } catch (error) {
+    if (isSurfaceNotMountedError(error)) return false
+    throw error
+  }
+}
+
+/**
  * Bind the plugin's write face to the native controller.
  * @param ctx - the client context (session list + `ctx.sidebarRight`).
  * @param records - the plugin's native tab record registry.
@@ -62,6 +92,7 @@ function activeSessionId(ctx: Context): string | undefined {
  */
 export function createNativeSurface(ctx: Context, records: NativeTabRecords): NativeSurface {
   const pending: Pending[] = []
+  let retryTimer: ReturnType<typeof setTimeout> | undefined
   const controller = (): NativeController | undefined =>
     ctx.get('sidebarRight') as unknown as NativeController | undefined
 
@@ -73,8 +104,7 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
     if (entry.kind === 'tab') {
       const options = { params: entry.params, revealIfOpened: entry.revealIfOpened }
       if (onScreen) {
-        api.openTab(entry.tabKind, options)
-        return true
+        return tryMountedWrite(() => { api.openTab(entry.tabKind, options) })
       }
       if (api.openTabIn !== undefined) {
         api.openTabIn(entry.sessionId, entry.tabKind, options)
@@ -87,8 +117,7 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
       revealIfOpened: entry.revealIfOpened,
     }
     if (onScreen) {
-      api.openResource(entry.address, options)
-      return true
+      return tryMountedWrite(() => { api.openResource(entry.address, options) })
     }
     if (api.openResourceIn !== undefined) {
       api.openResourceIn(entry.sessionId, entry.address, options)
@@ -97,16 +126,35 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
     return false
   }
 
-  const flushPending = (): void => {
+  /** Schedule one retry while at least one native open remains pending. */
+  function scheduleFlush(): void {
+    if (retryTimer !== undefined || pending.length === 0) return
+    retryTimer = setTimeout(() => {
+      retryTimer = undefined
+      flushPending()
+    }, PENDING_RETRY_DELAY_MS)
+  }
+
+  /** Replay queued opens once and keep retrying only while some remain pending. */
+  function flushPending(): void {
     if (pending.length === 0) return
     for (let index = pending.length - 1; index >= 0; index--) {
       const entry = pending[index]
       if (entry !== undefined && place(entry)) pending.splice(index, 1)
     }
+    if (pending.length > 0) {
+      scheduleFlush()
+    } else if (retryTimer !== undefined) {
+      clearTimeout(retryTimer)
+      retryTimer = undefined
+    }
   }
 
   const enqueue = (entry: Pending): void => {
-    if (!place(entry)) pending.push(entry)
+    if (!place(entry)) {
+      pending.push(entry)
+      scheduleFlush()
+    }
   }
 
   const unsubscribe = ctx.sessions.list.subscribe(flushPending)
@@ -144,6 +192,12 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
     },
     has: tabId => records.has(tabId),
     flushPending,
-    dispose: () => { unsubscribe() },
+    dispose: () => {
+      unsubscribe()
+      if (retryTimer !== undefined) {
+        clearTimeout(retryTimer)
+        retryTimer = undefined
+      }
+    },
   }
 }
