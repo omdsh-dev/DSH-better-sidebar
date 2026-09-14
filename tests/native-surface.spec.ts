@@ -10,6 +10,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { createNativeTabRecords, NativeTabBody, NativeTabTitle } from '../src/client/native/tab-adapter.tsx'
 import { registerNativeSurface } from '../src/client/native/index.ts'
+import { createNativeSurface } from '../src/client/native/surface.ts'
 import { createBetterSidebarService, type SidebarSurface } from '../src/client/service.ts'
 import { createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 
@@ -70,6 +71,45 @@ describe('createNativeTabRecords', () => {
     records.ensure({ id: 'tab-6', kind: 'terminal', title: 'Terminal', params: undefined, scope })
     records.update('tab-6', { title: 'x' })
     expect(listener).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('createNativeSurface record operations', () => {
+  it('focuses a known native tab through the host controller', () => {
+    const records = createNativeTabRecords()
+    records.ensure({ id: 'native-1', kind: 'terminal', title: 'Terminal', params: undefined, scope })
+    const focus = vi.fn()
+    const controller = { openTab: vi.fn(), openResource: vi.fn(), focus, close: vi.fn() }
+    const surface = createNativeSurface({
+      get: () => controller,
+      sessions: { list: { getSnapshot: () => ({ current: 's1' }), subscribe: () => () => {} } },
+    } as never, records)
+
+    expect(surface.activate('native-1')).toBe(true)
+    expect(focus).toHaveBeenCalledWith('native-1')
+    expect(surface.activate('missing')).toBe(false)
+    expect(focus).toHaveBeenCalledTimes(1)
+    surface.dispose()
+  })
+
+  it('returns the synthetic tab meta when closing a native tab', () => {
+    const records = createNativeTabRecords()
+    records.ensure({ id: 'native-1', kind: 'sidechat', title: 'Side chat', params: { meta: { childId: 'child-1' } }, scope })
+    const close = vi.fn()
+    const controller = { openTab: vi.fn(), openResource: vi.fn(), close }
+    const surface = createNativeSurface({
+      get: () => controller,
+      sessions: { list: { getSnapshot: () => ({ current: 's1' }), subscribe: () => () => {} } },
+    } as never, records)
+
+    expect(surface.close('s1', 'native-1')).toEqual({
+      type: 'sidechat',
+      title: 'Side chat',
+      meta: { childId: 'child-1' },
+    })
+    expect(close).toHaveBeenCalledWith('native-1')
+    expect(records.has('native-1')).toBe(false)
+    surface.dispose()
   })
 })
 
@@ -180,6 +220,26 @@ describe('service routing into the native surface', () => {
     // A non-native id keeps the plugin's own layout path (a strict no-op here).
     expect(() => service.updateTab('other', { title: 'x' })).not.toThrow()
     expect(() => service.closeTab('other', scope)).not.toThrow()
+  })
+
+  it('passes a native tab meta to its onClose lifecycle callback', () => {
+    const { service, surface } = mount()
+    const onClose = vi.fn()
+    service.registerTab({ id: 'sidechat', title: 'Side chat', onClose, component: () => null })
+    vi.spyOn(surface, 'close').mockReturnValue({
+      type: 'sidechat',
+      title: 'Side chat',
+      meta: { childId: 'child-1' },
+    })
+
+    service.closeTab('native-1', scope)
+
+    expect(onClose).toHaveBeenCalledWith({
+      id: 'native-1',
+      type: 'sidechat',
+      title: 'Side chat',
+      meta: { childId: 'child-1' },
+    }, scope)
   })
 
   it('refuses a disabled type before touching the surface', () => {

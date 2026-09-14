@@ -14,13 +14,13 @@
 
 - `registerTab` / `registerFileViewer` 签名不变；
 - `openTab` / `openFile` 默认落到原生右侧栏；新增可选 `OpenTabSeed.target`（`'right'` 默认 / `'bottom'` 落插件的底部工作台）；
-- `updateTab` / `closeTab` / `activateTab` 认识原生 tab id（插件为每个原生 tab 维护一条合成 `SidebarTab` 记录，`tab.meta` / `tab.path` 的写入照旧生效）。
+- `updateTab` / `closeTab` / `activateTab` 认识原生 tab id（插件为每个原生 tab 维护一条合成 `SidebarTab` 记录，`tab.meta` / `tab.path` 的写入照旧生效）；`activateTab` 会通过宿主 `focus(tabId)` 聚焦该 tab 及其 pane，`closeTab` 触发 `onClose` 时保留合成记录里的 `meta`。
 
 行为差异（写在这里以免踩坑）：
 
 | 事项 | 说明 |
 |---|---|
-| 生命周期回调 | 原生面只有「一次打开」，不区分新建/聚焦，因此只触发 `onOpen`（`onActivate` 仅在插件自己的底部工作台里触发） |
+| 生命周期回调 | 原生面的打开不区分新建/聚焦，因此打开只触发 `onOpen`；显式 `activateTab` 会聚焦原生 tab，但 `onActivate` 仍仅在插件自己的底部工作台里触发；显式 `closeTab` 触发 `onClose` 并传递 `meta`，点击宿主原生 × 仍不会触发该回调（组件卸载不等于逻辑关闭） |
 | 去重 | 原生按 `(kind, 地址)` 去重：有 `createTab` 的类型每次新开一个 tab（terminal / browser / sidechat / diff），其余聚焦已有 tab；`dedupeKey` 的自定义语义不参与原生面 |
 | 布局持久化 | 原生栏的布局**只在内存**（刷新后回到折叠默认），插件自己的底部工作台仍然持久化 |
 | 跨会话打开 | 目标会话的右侧栏 store 未挂载时，打开会排队到该会话上屏后重放 |
@@ -640,8 +640,9 @@ interface BetterSidebarService {
    * 类型型打开（+ 菜单等）不展开。
    */
   openTab(seed: OpenTabSeed, scope?: SessionScope): void
-  /** 关闭一个 tab（未知 id 严格 no-op，无状态搅动）；scope（v0.12.0+）
-   *  随回调传递（含可选 cwd），缺省为 { sessionId: 当前 } */
+  /** 关闭一个 tab（未知 id 严格 no-op，无状态搅动）；原生 tab 的 onClose
+   *  收到合成记录中的 meta；scope（v0.12.0+）随回调传递（含可选 cwd），
+   *  缺省为 { sessionId: 当前 } */
   closeTab(tabId: string, scope?: SessionScope): void
   /** 订阅注册表变化（register/dispose 时触发） */
   subscribe(listener: () => void): () => void
@@ -661,8 +662,9 @@ interface BetterSidebarService {
   subscribeState(listener: () => void): () => void
   /** 更新一个已打开 tab 的显示字段（title/path/meta）；tab 不存在时 no-op */
   updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void
-  /** 激活一个已打开的 tab（tab 栏点击路径；触发 descriptor.onActivate；
-   *  未知 id 严格 no-op）；scope（v0.12.0+）随回调传递，同 closeTab */
+  /** 激活一个已打开的 tab（原生面聚焦该 tab 及其 pane；底部工作台触发
+   *  descriptor.onActivate；未知 id 严格 no-op）；scope（v0.12.0+）随回调传递，
+   *  同 closeTab */
   activateTab(tabId: string, scope?: SessionScope): void
   /** 在 scope.sessionId 的侧边栏编辑器打开一个文件（title 缺省为文件名；
    *  id 按路径派生（`editor:` + path），与内置 open-path 拦截一致，不同文件可并排打开）。

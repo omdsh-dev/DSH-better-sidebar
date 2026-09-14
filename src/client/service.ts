@@ -455,8 +455,8 @@ export interface SidebarSurface {
   openResource(input: { sessionId: string; address: string; line?: number; revealIfOpened: boolean }): void
   /** The file address of one path (the native surface owns the grammar). */
   fileAddress(sessionId: string, cwd: string | undefined, path: string): string
-  /** Close one native tab; the closed record's type/title, or undefined when the id is not native. */
-  close(sessionId: string, tabId: string): { type: string; title: string } | undefined
+  /** Close one native tab; its lifecycle fields, or undefined when the id is not native. */
+  close(sessionId: string, tabId: string): { type: string; title: string; meta?: unknown } | undefined
   /** Patch a native tab's plugin-side record; false when it is not native. */
   update(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): boolean
   /** Focus a native tab; false when it is not native. */
@@ -1058,7 +1058,12 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
         const descriptor = tabs.get(closedNative.type)
         if (descriptor !== undefined) {
           safeCall(() => descriptor.onClose?.(
-            { id: tabId, type: closedNative.type as TabType, title: closedNative.title },
+            {
+              id: tabId,
+              type: closedNative.type as TabType,
+              title: closedNative.title,
+              ...(closedNative.meta === undefined ? {} : { meta: closedNative.meta }),
+            },
             scope ?? { sessionId },
           ))
         }
