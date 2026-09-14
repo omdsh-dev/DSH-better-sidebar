@@ -1,6 +1,7 @@
-/* Subagent page: main-agent topology tree. Row/card chrome mirrors the
-   official ui-subagent catalog row (min-height 50, 7/8/11 padding, radius 8,
-   flex-start alignment, tree connector lines via border-left hairlines). */
+/* Tasks page shell: header row, empty/error states, and the state dot. The
+   graph canvas / tree rows / popovers / jobs drawer live in
+   tasks-graph.module.css; the old indentation-tree and jobs-dock classes
+   were pruned when the page moved to the unified model. */
 .subagent {
   flex: 1;
   min-height: 0;
@@ -8,20 +9,24 @@
   flex-direction: column;
 }
 
+/* The page header keeps the mockup's rhythm: a 13px semibold title, a mono
+   count, and a hairline underline that separates chrome from content. */
 .subagentHeader {
   flex: none;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
-  height: 36px;
-  padding: 0 8px 0 12px;
+  padding: 10px 10px 9px 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l4);
 }
 
 .subagentTitle {
   flex: 1;
   min-width: 0;
-  font: var(--dsw-font-s-14);
-  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -30,8 +35,9 @@
 /* The descendant count badge ("3 · 1 运行中") beside the title. */
 .subagentCount {
   flex: none;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 10px;
+  color: var(--dsw-alias-label-secondary);
 }
 
 .subagentRefresh {
@@ -39,44 +45,19 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: 3px;
   background: transparent;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--dsw-alias-label-tertiary);
   cursor: pointer;
 }
 
 .subagentRefresh:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.subagentBody {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 2px 6px 8px;
-}
-
-/* One node card: state dot + label + secondary + (running) live lines. */
-.subagentRow {
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 50px;
-  padding: 7px 8px 7px 11px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  font: var(--dsw-font-s-14);
   color: var(--dsw-alias-label-primary);
-  text-align: left;
-  cursor: pointer;
-  outline: none;
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .subagentRow:hover {
@@ -97,101 +78,23 @@
   background: var(--dsw-alias-interactive-bg-active);
 }
 
-.subagentRowDisabled {
-  color: var(--dsw-alias-label-dimmed);
-  cursor: not-allowed;
-}
-
 .subagentRowDisabled:hover {
   background: transparent;
 }
 
 /* Loading placeholders are disabled but keep the default cursor (official
    `.loadingRow` distinction from `.disabled`). */
-.subagentRowLoading {
-  cursor: default;
-}
 
 /* The state dot aligns to the first text line (official catalog detail). */
 .subagentDot {
   margin-top: 4px;
 }
 
-.subagentContent {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  gap: 2px;
-}
-
 .subagentLabel,
-.subagentSecondary {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.subagentLabel {
-  color: inherit;
-  font-weight: 400;
-}
-
-.subagentSecondary {
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-tertiary);
-}
 
 /* ── Live lines (running cards only) ──────────────────────────────────── */
 
-.subagentLive {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-  min-width: 0;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-tertiary);
-  overflow: hidden;
-}
-
-.subagentLiveTool {
-  flex: none;
-  font: var(--dsw-font-xxxs-strong-11);
-  color: var(--dsw-alias-label-secondary);
-}
-
-.subagentLiveArgs {
-  min-width: 0;
-  font-family: var(--ds-font-family-code);
-  font-size: var(--dsw-font-xxxs-11-font-size);
-  line-height: var(--dsw-font-xxxs-11-line-height);
-  color: var(--dsw-alias-label-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.subagentLiveText {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-secondary);
-}
-
 /* ── Tree connector lines (official catalog recipe) ────────────────────── */
-
-.subagentNode {
-  position: relative;
-  min-width: 0;
-}
-
-.subagentChildren {
-  position: relative;
-  margin-left: 18px;
-  padding-left: 4px;
-}
 
 .subagentChildren::before {
   content: '';
@@ -276,60 +179,11 @@
 
 /* ── Background-job section (below the topology tree) ────────────────── */
 
-.jobs {
-  margin-top: 10px;
-  border-top: 1px solid var(--dsw-alias-border-l2);
-  padding-top: 8px;
-}
-
-.jobsHeader {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 26px;
-  padding: 0 2px;
-}
-
-.jobsTitle {
-  flex: 1;
-  min-width: 0;
-  font: var(--dsw-font-xxxs-strong-11);
-  color: var(--dsw-alias-label-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.jobsCount {
-  flex: none;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.jobsList {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
 /* One job row; the whole row lights up on hover, the expandable target
    stays transparent (the kill button rides on the row's right edge). */
-.jobsRow {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  border-radius: 8px;
-}
 
 .jobsRow:hover {
   background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.jobsRowSettled {
-  opacity: 0.8;
 }
 
 /* The row whose output is shown in the bottom dock. */
@@ -338,95 +192,12 @@
   background: var(--dsw-alias-interactive-bg-active);
 }
 
-.jobsRowMain {
-  flex: 1;
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  min-width: 0;
-  padding: 6px 8px 6px 11px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  font: var(--dsw-font-s-14);
-  color: var(--dsw-alias-label-primary);
-  text-align: left;
-  cursor: pointer;
-  outline: none;
-}
-
 .jobsRowMain:focus-visible {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.jobsDot {
-  margin-top: 5px;
-}
-
-.jobsContent {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 1px;
-}
-
 /* The command line: a kind badge followed by the command itself in the code
    face, like the terminal's live lines. */
-.jobsLabelLine {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.jobsKind {
-  flex: none;
-  max-width: 90px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 0 5px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 4px;
-  font: var(--dsw-font-xxxs-strong-11);
-  line-height: 14px;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.jobsLabel {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--ds-font-family-code);
-  font-size: var(--dsw-font-xxxs-11-font-size);
-  line-height: var(--dsw-font-xxxs-11-line-height);
-  color: var(--dsw-alias-label-primary);
-}
-
-.jobsSecondary {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.jobsKill {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  margin-right: 4px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-}
 
 .jobsKill:hover {
   background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
@@ -450,98 +221,13 @@
   cursor: default;
 }
 
-.jobsKillError {
-  flex: none;
-  margin-right: 4px;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-state-error-primary);
-}
-
 /* ── The shared output dock (bottom of the page, sticky like a terminal) ── */
 
 /* Direct child of the scrolling body, so it docks at the scrollport's bottom
    edge while the job list scrolls above it; a solid background keeps the
    tree from showing through. */
-.jobsPane {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
-  margin-top: 4px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-base);
-  box-shadow: 0 -6px 12px -8px rgba(0, 0, 0, 0.35);
-  overflow: hidden;
-}
-
-.jobsPaneHeader {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 4px 0 10px;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-}
-
-.jobsPaneDot {
-  flex: none;
-}
-
-.jobsPaneLabel {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--ds-font-family-code);
-  font-size: var(--dsw-font-xxxs-11-font-size);
-  line-height: var(--dsw-font-xxxs-11-line-height);
-  color: var(--dsw-alias-label-primary);
-}
-
-.jobsPaneStatus {
-  flex: none;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.jobsPaneClose {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-}
 
 .jobsPaneClose:hover {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.jobsPanePre {
-  margin: 0;
-  max-height: 200px;
-  overflow: auto;
-  padding: 6px 10px;
-  font-family: var(--ds-font-family-code);
-  font-size: var(--dsw-font-xxxs-11-font-size);
-  line-height: 1.5;
-  color: var(--dsw-alias-label-primary);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.jobsPaneHint {
-  padding: 8px 10px;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.jobsPaneError {
-  color: var(--dsw-alias-state-error-primary);
-}

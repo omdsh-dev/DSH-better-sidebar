@@ -290,6 +290,77 @@ export interface SidebarAgentPresetsService {
   mount(agentCtx: unknown, presetId: string): Promise<void>
 }
 
+/**
+ * The experimental Agent Teams service face (`ctx.agentTeams`, mounted only
+ * when the deployment loads `dsh-experimental-agent-team-profile`; absent →
+ * `ctx.get` returns undefined and the Teams block hides). Only the
+ * browser-facing Remote vocabulary the Tasks page needs is mirrored —
+ * structurally, so the plugin never imports the experimental package.
+ */
+export interface SidebarAgentTeamsService {
+  /** The agent's team membership, or undefined for a non-team/stale agent. */
+  tryMembership(agent: unknown): unknown
+  /** The point-in-time team snapshot the official panel renders. */
+  remoteView(agent: unknown): Promise<{ members: SidebarTeamMemberView[]; tasks: SidebarTeamTaskView[] }>
+  /** Create one shared task (CAS-free; ids are server-issued). */
+  remoteCreateTask(agent: unknown, req: SidebarCreateTeamTaskRequest): Promise<SidebarTeamTaskMutationResult>
+  /** Compare-and-set mutation of one shared task (stale revision → conflict). */
+  remoteUpdateTask(agent: unknown, req: SidebarUpdateTeamTaskRequest): Promise<SidebarTeamTaskMutationResult>
+}
+
+/** One team member as the runtime-enriched view reports it. */
+export interface SidebarTeamMemberView {
+  /** The member's session id (the teammate's child session under the lead). */
+  id: string
+  name: string
+  role: 'lead' | 'teammate'
+  status: 'running' | 'idle' | 'inactive' | 'provisioning' | 'failed'
+  description?: string
+  provider?: string
+  context?: 'fresh' | 'fork'
+  model?: string
+  diagnostics: string[]
+}
+
+/** One shared task-board row (durable fields plus derived readiness). */
+export interface SidebarTeamTaskView {
+  id: string
+  revision: number
+  subject: string
+  description: string
+  status: 'pending' | 'in_progress' | 'completed' | 'deleted'
+  ownerName?: string
+  blockedBy: string[]
+  writeScopes: string[]
+  ready: boolean
+  writeScopeWarnings: string[]
+}
+
+/** Input for creating one shared task. */
+export interface SidebarCreateTeamTaskRequest {
+  subject: string
+  description: string
+  blockedBy?: readonly string[]
+  writeScopes?: readonly string[]
+}
+
+/** Input for one CAS task mutation. */
+export interface SidebarUpdateTeamTaskRequest {
+  taskId: string
+  expectedRevision: number
+  action: 'claim' | 'release' | 'edit' | 'set_dependencies' | 'complete' | 'reopen' | 'reassign' | 'delete'
+  subject?: string
+  description?: string
+  blockedBy?: readonly string[]
+  writeScopes?: readonly string[]
+  owner?: string
+}
+
+/** Browser task-mutation result (stale revisions kept distinct, passthrough). */
+export type SidebarTeamTaskMutationResult =
+  | { ok: true; value: SidebarTeamTaskView }
+  | { ok: false; error: { code: 'team-task-conflict' | 'team-rejected'; message: string } }
+
 /** The host session-title service face (mirror of the sessionTitle service). */
 export interface SidebarSessionTitleService {
   /** Rename one live session's title (pins it against auto-regeneration). */

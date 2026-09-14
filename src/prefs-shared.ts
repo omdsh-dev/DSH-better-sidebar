@@ -23,6 +23,11 @@ export interface SidebarPrefs {
    */
   autoOpenJobs: boolean
   /**
+   * The Tasks page's default presentation: the workflow graph canvas or the
+   * classic indentation tree (the in-page toggle still flips it ad hoc).
+   */
+  tasksViewMode: 'graph' | 'tree'
+  /**
    * Whether the model-facing agent terminal tools (terminal_create / list /
    * send / read / wait_for / resize / signal / close) are injected into the
    * model's toolset. Off by default: the feature stays dormant until the
@@ -241,6 +246,7 @@ export type TitleBarScheme = typeof TITLE_BAR_SCHEMES[number]
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   autoOpenSubagent: true,
   autoOpenJobs: true,
+  tasksViewMode: 'graph',
   agentTerminalTools: false,
   agentOpenTools: false,
   bottomPanelAutoTerminal: true,
