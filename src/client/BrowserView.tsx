@@ -16,7 +16,7 @@
  * address-bar navigations (in-frame link clicks are cross-origin and
  * invisible — a documented limitation).
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   IconChevronLeftOutline14,
   IconChevronRightOutline14,
@@ -101,6 +101,33 @@ export function BrowserView(props: TabComponentProps) {
   const [embedBlocked, setEmbedBlocked] = useState<string | null>(null)
   /** The user asked to load the refused site anyway (keeps the plain iframe). */
   const [forceEmbed, setForceEmbed] = useState(false)
+  /**
+   * The address currently rendered, readable from the external-seed effect
+   * without making it re-subscribe on every navigation.
+   */
+  const displayedUrl = useRef<string | undefined>(tab.path)
+  displayedUrl.current = url
+  /** The cursor, read by the external-seed effect (same reason). */
+  const cursorRef = useRef(cursor)
+  cursorRef.current = cursor
+
+  // The address may be changed from the OUTSIDE while this view stays
+  // mounted: the native right Sidebar keeps ONE record per tab and rewrites
+  // its `tab.path` on a navigation (a second link click / `sidebar_open` into
+  // the same record, tab-adapter `ensure`). Following the persisted path is
+  // what makes those opens actually load — without it the iframe kept showing
+  // whatever it had (or the start page). A LOCAL navigation writes the same
+  // value it already displays, so `displayedUrl` filters it out.
+  useEffect(() => {
+    const next = tab.path
+    if (next === undefined || next === displayedUrl.current) return
+    setUrl(next)
+    setInput(next)
+    setMessage(null)
+    setReloadKey(key => key + 1)
+    setHistory(previous => [...previous.slice(0, cursorRef.current + 1), next])
+    setCursor(previous => previous + 1)
+  }, [tab.path])
 
   // Probe every navigation (address bar, history, restored path): when the
   // target forbids embedding, show the reason + open-in-browser instead of

@@ -21,9 +21,25 @@ describe('createNativeTabRecords', () => {
     const view = records.ensure({
       id: 'tab-1', kind: 'browser', title: 'Browser', params: { url: 'https://a.test', meta: { k: 1 } }, scope,
     })
-    expect(view.tab).toMatchObject({ id: 'tab-1', type: 'browser', title: 'Browser', meta: { k: 1 } })
+    expect(view.tab).toMatchObject({ id: 'tab-1', type: 'browser', title: 'Browser', path: 'https://a.test', meta: { k: 1 } })
     expect(view.scope).toBe(scope)
     expect(view.expanded).toEqual([])
+  })
+
+  it('follows a url navigation on an existing record (a second open into the same tab)', () => {
+    // The url seed IS the browser tab's content seed: it lands on `tab.path`
+    // (what BrowserView reads), exactly like the non-native `openTab({ url })`
+    // path does (service.spec.ts's "url seed lands the tab with its path
+    // pre-set"), on creation AND on a later navigation.
+    const records = createNativeTabRecords()
+    records.ensure({ id: 'tab-url', kind: 'browser', title: 'Browser', params: { url: 'https://a.test' }, scope })
+    const view = records.ensure({
+      id: 'tab-url', kind: 'browser', title: 'b.test', params: { url: 'https://b.test/x' }, scope,
+    })
+    expect(view.tab.path).toBe('https://b.test/x')
+    // The record identity (and any plugin-side title mutation) survives a
+    // navigation; only the seed fields are refreshed.
+    expect(view.tab.title).toBe('Browser')
   })
 
   it('calls the descriptor factory once for a record that arrives without seed fields', () => {

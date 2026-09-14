@@ -140,12 +140,19 @@ export function createNativeTabRecords(): NativeTabRecords {
       if (existing === undefined) {
         const seeded = params?.title === undefined && params?.meta === undefined ? mint?.() : undefined
         const meta = params?.meta ?? seeded?.meta
+        // The content seed: `path` for file-like kinds, `url` for the
+        // browser (the non-native path pre-fills `tab.path` from
+        // `openTab({ url })` — service.ts's "A URL seed pre-fills a NEWLY
+        // CREATED tab's path" — and the browser component reads ONLY
+        // `tab.path`). Dropping `url` here left every link takeover and
+        // `sidebar_open` URL with an empty browser tab.
+        const seedPath = params?.path ?? params?.url
         const minted: View = {
           tab: {
             id,
             type: kind as TabType,
             title: params?.title ?? seeded?.title ?? title,
-            ...(params?.path === undefined ? {} : { path: params.path }),
+            ...(seedPath === undefined ? {} : { path: seedPath }),
             ...(params?.diff === undefined ? {} : { diff: params.diff }),
             ...(meta === undefined ? {} : { meta }),
           },
@@ -164,6 +171,11 @@ export function createNativeTabRecords(): NativeTabRecords {
       if (params?.path !== undefined && params.path !== existing.tab.path) patch.path = params.path
       if (params?.diff !== undefined) patch.diff = params.diff
       if (params?.url !== undefined) {
+        // A url navigation moves the browser tab: `tab.path` is what the
+        // component follows (see BrowserView's external-seed effect), so the
+        // new URL must land there. `meta.url` is kept as the historical
+        // carrier, but nothing reads it.
+        if (params.url !== existing.tab.path) patch.path = params.url
         const meta = typeof existing.tab.meta === 'object' && existing.tab.meta !== null
           ? existing.tab.meta as Record<string, unknown>
           : {}
