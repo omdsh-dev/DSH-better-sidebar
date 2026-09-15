@@ -5,6 +5,7 @@
  * of the whole plugin (and `dsh web`) failing to boot.
  */
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -18,8 +19,12 @@ import {
   loadRequiredNodePty,
   nodePtyLoadCause,
   resetNodePtyCache,
+  type NodePtyRequire,
 } from '../src/pty-deps.ts'
 import { SidebarError } from '../src/wire.ts'
+
+/** The unmodified loader — the fallback's absolute paths must still resolve. */
+const realRequire: NodePtyRequire = createRequire(import.meta.url)
 
 /** A throw-only require: node-pty missing or its native binding broken. */
 const failingRequire = (): never => { throw new Error('Cannot find package node-pty') }
@@ -56,6 +61,25 @@ describe('loadNodePty', () => {
     expect(thrown).toBeInstanceOf(SidebarError)
     expect((thrown as SidebarError).code).toBe('pty-deps-missing')
     expect((thrown as SidebarError).status).toBe(503)
+  })
+
+  it('recovers via the DSH core copy when the local node-pty is broken (issue #269)', () => {
+    // On Linux the published node-pty tarball ships no prebuilt binaries and
+    // relies on a build step that pnpm 10+ may skip (no allowBuilds) or the
+    // machine's C++ toolchain may be missing. The plugin's own copy then
+    // stays unusable while the DSH core (which declares the same range)
+    // installed a working binding — loadNodePty must fall back to it.
+    //
+    // The injected loader fails only for the plugin-local resolution (the
+    // bare id 'node-pty'); absolute paths resolved through the core package
+    // still load, isolating "local copy broken" from "nothing loadable".
+    const localBroken: NodePtyRequire = (id: string) => {
+      if (id === 'node-pty') throw new Error('Cannot find package node-pty')
+      return realRequire(id)
+    }
+    expect(loadNodePty(localBroken)).not.toBeNull()
+    const mod = loadNodePty(localBroken)
+    expect(typeof mod?.spawn).toBe('function')
   })
 })
 
