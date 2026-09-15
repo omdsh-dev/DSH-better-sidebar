@@ -59,16 +59,103 @@ type LoadResult = { ok: true; module: NodePtyModule } | { ok: false; cause: unkn
 let cached: LoadResult | undefined
 
 /**
+ * The DSH core package that declares `node-pty` in its own `dependencies`.
+ * Its install always yields a working native binding for the current
+ * platform (core cannot boot without it), so it is a reliable fallback
+ * resolution context when the plugin's own copy is broken.
+ */
+const CORE_PTY_OWNER = '@deepseek-ai/dsh-subprocess-local'
+
+/**
+ * Candidate entry files of the DSH core package that declares `node-pty`.
+ * Each yielded path is a resolvable module file usable as a `createRequire`
+ * base. The plugin's own module graph usually reaches the core package
+ * already (its peers resolve against the DSH host bundle at mount time);
+ * the well-known install roots cover standalone layouts.
+ */
+function* coreEntryCandidates(): Generator<string> {
+  try {
+    yield createRequire(import.meta.url).resolve(CORE_PTY_OWNER)
+  } catch {
+    // not reachable from this module — fall through to the roots below
+  }
+  const home = process.env.DSH_HOME !== undefined && process.env.DSH_HOME.trim() !== ''
+    ? process.env.DSH_HOME
+    : join(homedir(), '.dsh')
+  const pkgDir = join('node_modules', CORE_PTY_OWNER)
+  yield join(home, pkgDir, 'lib', 'index.js')
+  yield join(home, 'node_modules', '@deepseek-ai', 'dsh', pkgDir, 'lib', 'index.js')
+  for (const globalRoot of wellKnownGlobalRoots()) {
+    yield join(globalRoot, '@deepseek-ai', 'dsh', pkgDir, 'lib', 'index.js')
+  }
+}
+
+/** Global node_modules roots worth probing on this machine. */
+function* wellKnownGlobalRoots(): Generator<string> {
+  // Node's own global module paths (covers npm/pnpm/yarn global installs).
+  try {
+    const nodeModule = defaultRequire('node:module') as { globalPaths?: string[] }
+    for (const root of nodeModule.globalPaths ?? []) {
+      if (root !== '') yield root
+    }
+  } catch {
+    // ignore — the static roots below still apply
+  }
+  if (process.platform === 'win32') {
+    const prefix = process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming')
+    yield join(prefix, 'npm', 'node_modules')
+  } else {
+    yield '/usr/local/lib/node_modules'
+    yield '/usr/lib/node_modules'
+  }
+}
+
+/**
+ * Resolve `node-pty` through the DSH core package that declares it. Returns
+ * the loaded module, or null when no core-side copy is loadable. Never
+ * throws: every candidate is isolated in try/catch.
+ *
+ * Each candidate entry anchors `node-pty` resolution at the core package's
+ * own dependency graph, then the resolved absolute path is loaded through
+ * `requireImpl` — so an injected failing loader disables the fallback too,
+ * keeping the fully-degraded path testable.
+ */
+function loadNodePtyFromCore(requireImpl: NodePtyRequire = defaultRequire): NodePtyModule | null {
+  for (const entry of coreEntryCandidates()) {
+    if (!existsSync(entry)) continue
+    try {
+      const anchored = createRequire(entry)
+      const ptyPath = anchored.resolve('node-pty')
+      return requireImpl(ptyPath) as NodePtyModule
+    } catch {
+      // this candidate is unusable (broken binding, mismatched ABI…) — next
+    }
+  }
+  return null
+}
+
+/**
  * Load node-pty once (synchronously) and cache the outcome. Returns null
  * when the package or its native binding cannot be loaded; the cause stays
  * queryable through {@link nodePtyLoadCause}. Never throws.
+ *
+ * On Linux the published node-pty tarball ships no prebuilt binaries (it
+ * builds from source via node-gyp); when that build is skipped — pnpm 10+'s
+ * strict-dep-builds without an `allowBuilds` approval, a pruned store entry,
+ * or a missing C++ toolchain — the plugin's own copy stays unusable even
+ * though the DSH core installed the same range correctly (issue #269). The
+ * fallback chain re-resolves the dependency through the core package, which
+ * satisfies the same `^1.1.0` range with a working platform binding.
  */
 export function loadNodePty(requireImpl: NodePtyRequire = defaultRequire): NodePtyModule | null {
   if (cached === undefined) {
     try {
       cached = { ok: true, module: requireImpl('node-pty') as NodePtyModule }
     } catch (cause) {
-      cached = { ok: false, cause }
+      const fallback = loadNodePtyFromCore(requireImpl)
+      cached = fallback !== null
+        ? { ok: true, module: fallback }
+        : { ok: false, cause }
     }
   }
   return cached.ok ? cached.module : null
