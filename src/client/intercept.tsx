@@ -11,7 +11,54 @@ import type { Context } from '../context-types.ts'
 import { revealPaths, type SidebarStore } from './state.ts'
 import { t } from './locales.ts'
 import { resolveSidebarPath, selectProducedFiles } from './produced-files.ts'
+import { fileAddressFor } from './resource-address.ts'
 import css from './sidebar.module.css'
+
+/** The id this plugin's own file editor registers its tab type under (`EDITOR_KIND`). */
+const EDITOR_KIND = 'editor'
+
+/** The native tab-registry slice this module probes: who would open an address. */
+interface NativeTabRegistryProbe {
+  /**
+   * Types that would open `address`, best first (priority band → matched
+   * pattern length → registration order).
+   */
+  candidates(address: string): readonly { readonly kind?: string }[]
+}
+
+/** The native controller slice used to hand an address to the type claiming it. */
+interface NativeResourceOpener {
+  openResource(address: string): void
+}
+
+/**
+ * Whether a tab type other than this plugin's own editor claims `address`.
+ *
+ * This module names its `editor` type directly, which bypasses the native tab
+ * registry: a type that explicitly claims a file kind (a `.drawio` canvas
+ * registered with `extension` priority and a specific address glob, say) could
+ * never open its own tab from the explorer or the produced-files row, even
+ * though it wins the registry's ranking. Probing first fixes that without
+ * changing any other file: for a file no other type claims, this plugin's
+ * `editor` IS the best candidate, so the caller keeps its previous path
+ * verbatim.
+ *
+ * @param ctx - client context; `ctx.get` is used because the registry is optional.
+ * @param address - the `dsh-resource://file/…` address of the file being opened.
+ * @returns true when another registered type owns the address.
+ */
+function claimedByAnotherType(ctx: Context, address: string): boolean {
+  try {
+    const tabs = ctx.get('sidebarRightTabs') as unknown as NativeTabRegistryProbe | undefined
+    if (tabs === undefined || typeof tabs.candidates !== 'function') return false
+    const best = tabs.candidates(address)[0]
+    return best !== undefined && best.kind !== undefined && best.kind !== EDITOR_KIND
+  } catch (error) {
+    // Probing is best-effort: an incompatible registry keeps the old path.
+    console.error('[dsh-better-sidebar] tab-claim probe failed', error)
+    return false
+  }
+}
 
 /** Open a file in the sidebar's editor (used by the intercepted row and the explorer). */
 export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: string, path: string): void {
@@ -19,6 +66,17 @@ export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: st
   const absolute = resolveSidebarPath(summary?.cwd, path)
   const at = Math.max(absolute.lastIndexOf('/'), absolute.lastIndexOf('\\'))
   const title = at === -1 ? absolute : absolute.slice(at + 1)
+  // A type that explicitly claims this file owns it: open through the native
+  // surface so that type's registered tab body renders instead of this plugin's
+  // editor.
+  const address = fileAddressFor(sessionId, summary?.cwd, path)
+  if (claimedByAnotherType(ctx, address)) {
+    const opener = ctx.get('sidebarRight') as unknown as NativeResourceOpener | undefined
+    if (opener?.openResource !== undefined) {
+      opener.openResource(address)
+      return
+    }
+  }
   // Route through the sidebar service so the editor descriptor's dedupeKey
   // (per-path) applies; the id is path-derived so multiple editors coexist.
   ctx.get('betterSidebar')?.openTab({ type: 'editor', title, path: absolute, id: `editor:${absolute}` })
