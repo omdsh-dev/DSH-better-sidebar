@@ -10,7 +10,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { createNativeTabRecords, NativeTabBody, NativeTabTitle } from '../src/client/native/tab-adapter.tsx'
 import { registerNativeSurface } from '../src/client/native/index.ts'
-import { createBetterSidebarService, type SidebarSurface } from '../src/client/service.ts'
+import { createBetterSidebarService, type SidebarSurface, type TabComponentProps } from '../src/client/service.ts'
 import { createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 
 const scope = { sessionId: 's1', cwd: '/work' }
@@ -421,6 +421,108 @@ describe('NativeTabBody full-height host wrapper', () => {
     expect(wrapper!.childElementCount).toBe(1)
     act(() => { root?.unmount() })
     host.remove()
+  })
+})
+
+/**
+ * #636, at the level the bug actually lives: the host mounts ONE tab body per
+ * pane and the session-scoped seat is keyed by sessionId (upstream
+ * `StrictSessionEntry` closes with `}, binding.key)`), so a conversation switch
+ * renders the entering session's body and unmounts the leaving one in the SAME
+ * commit. Native ids restart per session, so both bodies carry the same id.
+ *
+ * The regression this pins: the entering body's `ensure` ran during render and
+ * ADOPTED the leaving session's record; that same commit's passive cleanup then
+ * deleted it. The record was minted at version 0, so `versionOf` went 0 → 0 —
+ * no snapshot change, no re-render, `ensure` never rebuilt — and every later
+ * click through the registry was a silent no-op (the folder never expanded, the
+ * file never opened, no request on the wire). The reported shape is exactly
+ * this: switch conversations twice and the tree is dead, in BOTH directions.
+ */
+describe('conversation switch keeps the entered session’s explorer responsive (#636)', () => {
+  const mountSwitchable = (): {
+    records: ReturnType<typeof createNativeTabRecords>
+    show: (sessionId: string) => void
+    clickFolder: () => void
+    expanded: () => string
+    unmount: () => void
+  } => {
+    const store = createSidebarStore()
+    store.setSession('session-A')
+    const service = createBetterSidebarService(store)
+    service.registerTab({
+      id: 'explorer',
+      title: 'Files',
+      component: (props: TabComponentProps) => createElement(
+        'div',
+        { 'data-body': props.tab.id },
+        createElement('button', { 'data-toggle': '', onClick: () => { props.onToggleDir?.('/work/dir') } }, 'toggle'),
+        createElement('span', { 'data-expanded': '' }, (props.expanded ?? []).join('|')),
+      ),
+    })
+    const records = createNativeTabRecords()
+    const sessions = { list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } }
+    const ctx = { sessions } as never
+    // The SAME native id in both sessions — the host's per-session counter.
+    const info = {
+      tab: {
+        id: 'tab2',
+        kind: 'explorer',
+        title: 'Files',
+        contentId: 'sidebar://files',
+        visible: true,
+        navigation: { address: 'sidebar://files', params: undefined, revision: 0 },
+        signal: new AbortController().signal,
+      },
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    const show = (sessionId: string): void => {
+      root.render(createElement(
+        // The session-scoped seat's key (upstream StrictSessionEntry).
+        'div',
+        { key: sessionId, 'data-session': sessionId },
+        createElement(NativeTabBody, {
+          key: 'tab2',
+          sessionId,
+          ctx,
+          store,
+          service,
+          records,
+          descriptorId: 'explorer',
+          useTabInfo: () => info,
+        }),
+      ))
+    }
+    return {
+      records,
+      show,
+      expanded: () => host.querySelector('[data-expanded]')?.textContent ?? '<none>',
+      clickFolder: () => {
+        const button = host.querySelector<HTMLButtonElement>('[data-toggle]')
+        expect(button, 'the explorer body must be mounted').not.toBeNull()
+        act(() => { button!.click() })
+      },
+      unmount: () => { act(() => { root.unmount() }); host.remove() },
+    }
+  }
+
+  it('a folder click still responds after switching away and back twice', () => {
+    const t = mountSwitchable()
+    act(() => { t.show('session-A') })
+    expect(t.records.has('tab2')).toBe(true)
+
+    // ONE commit: B renders (same native tab id) while A unmounts. Then back.
+    for (const sessionId of ['session-B', 'session-A', 'session-B', 'session-A']) {
+      act(() => { t.show(sessionId) })
+      expect(t.records.has('tab2'), `${sessionId}: the entered session keeps a live record`).toBe(true)
+      t.clickFolder()
+      expect(t.expanded(), `${sessionId}: a folder click must still respond`).toBe('/work/dir')
+      t.clickFolder()
+      expect(t.expanded(), `${sessionId}: and toggle back`).toBe('')
+    }
+    t.unmount()
   })
 })
 
