@@ -620,10 +620,9 @@ export interface SidechatModelSelection {
  * `parent.options` verbatim silently ships the stale creation default
  * (issue #368).
  *
- * `request/header` contributes provider/model only: the header's effort may
- * be an adapter default the core selection getter deliberately does not
- * adopt, while a `model/selection` event is the user's explicit pick and
- * carries its effort verbatim.
+ * A `request/header` contributes provider/model/effort, EXCEPT when its
+ * effort is marked as an adapter default (`adapterDefaults.reasoningEffort`)
+ * which the core selection getter deliberately does not adopt as a sticky pick.
  */
 export function parentModelSelection(
   events: readonly SidechatLogEvent[],
@@ -637,18 +636,34 @@ export function parentModelSelection(
       continue
     }
     if (event.type !== 'request/header') continue
-    const config = (dataOf(event).header as { config?: unknown } | undefined)?.config
+    const header = (dataOf(event).header as {
+      config?: unknown
+      adapterDefaults?: { reasoningEffort?: boolean }
+    } | undefined)
+    const config = header?.config
     if (config === null || typeof config !== 'object') continue
     const selection = looseSelection(config as Record<string, unknown>)
     if (selection === undefined) continue
-    lastUsed = { provider: selection.provider, model: selection.model }
-    if (
-      pending !== undefined
-      && pending.provider === selection.provider
-      && pending.model === selection.model
-    ) pending = undefined
+    const isDefaultEffort = header?.adapterDefaults?.reasoningEffort === true
+    lastUsed = {
+      provider: selection.provider,
+      model: selection.model,
+      ...(!isDefaultEffort && selection.reasoningEffort !== undefined ? { reasoningEffort: selection.reasoningEffort } : {}),
+    }
+    if (sameSelection(pending, lastUsed)) pending = undefined
   }
   return pending ?? lastUsed
+}
+
+function sameSelection(
+  left: SidechatModelSelection | undefined,
+  right: SidechatModelSelection | undefined,
+): boolean {
+  if (left === right) return true
+  if (left === undefined || right === undefined) return false
+  return left.provider === right.provider
+    && left.model === right.model
+    && left.reasoningEffort === right.reasoningEffort
 }
 
 /** Narrow one loose record into a model selection (non-empty strings only). */

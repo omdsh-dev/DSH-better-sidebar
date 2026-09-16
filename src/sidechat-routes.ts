@@ -273,6 +273,19 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
       // would then claim and send that stale message BEFORE the boundary +
       // question. The marker keeps `ownEvents()` at the end-seed boundary, so
       // the inherited inbox replays to empty.
+      const targetEffort = parentSelection !== undefined
+        ? (parentSelection.reasoningEffort === undefined ? undefined : ReasoningEffortId(parentSelection.reasoningEffort))
+        : parent.options.reasoningEffort
+      const childAgentOptions: CreateAgentOptions['agentOptions'] = {
+        ...parent.options,
+        ...(routeProvider === undefined ? {} : { provider: routeProvider }),
+        ...(routeModel === undefined ? {} : { model: routeModel }),
+      }
+      if (targetEffort !== undefined) {
+        childAgentOptions.reasoningEffort = targetEffort
+      } else {
+        delete childAgentOptions.reasoningEffort
+      }
       const options: CreateAgentOptions = {
         sessionId: childId,
         meta: {
@@ -285,14 +298,7 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
         },
         seed: seed as unknown as readonly SessionEvent[],
         inheritedEventCount: SessionLogOffset(seed.length),
-        agentOptions: {
-          ...parent.options,
-          ...(routeProvider === undefined ? {} : { provider: routeProvider }),
-          ...(routeModel === undefined ? {} : { model: routeModel }),
-          ...(parentSelection?.reasoningEffort === undefined
-            ? {}
-            : { reasoningEffort: ReasoningEffortId(parentSelection.reasoningEffort) }),
-        },
+        agentOptions: childAgentOptions,
         setup,
         signal: AbortSignal.timeout(CREATE_TIMEOUT_MS),
       }

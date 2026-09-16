@@ -15,11 +15,15 @@ import { SIDE_BOUNDARY_PROMPT, SIDE_INJECTION_PLUGIN, SIDE_NEW_THREAD_TITLE, sid
 import type { Context } from '../src/context-types.ts'
 
 /** A fake live agent (inject/followup/cancel spied). */
-function agent(id: string, over: { events?: unknown[]; header?: Record<string, unknown>; provider?: string; model?: string } = {}) {
+function agent(id: string, over: { events?: unknown[]; header?: Record<string, unknown>; provider?: string; model?: string; reasoningEffort?: string } = {}) {
   return {
     id,
     status: 'idle' as const,
-    options: { provider: over.provider ?? 'test', model: over.model ?? 'model-x' },
+    options: {
+      provider: over.provider ?? 'test',
+      model: over.model ?? 'model-x',
+      ...(over.reasoningEffort !== undefined ? { reasoningEffort: over.reasoningEffort } : {}),
+    },
     session: {
       id,
       header: { cwd: '/p', delegationDepth: 0, agentPreset: 'preset-a', ...over.header },
@@ -317,9 +321,82 @@ describe('sidechat.start', () => {
     await api['sidechat.start']({ sessionId: 'parent', question: 'side question' })
 
     const options = services.create.mock.calls[0]![0] as { agentOptions: Record<string, unknown> }
-    // Header effort is deliberately NOT adopted (it may be an adapter
-    // default the core selection getter does not honor).
     expect(options.agentOptions).toEqual({ provider: 'gemini', model: 'gemini-3.7-flash-high' })
+  })
+
+  it('inherits reasoningEffort from request headers when not marked as adapter default', async () => {
+    const parent = agent('parent', {
+      provider: 'ark-code',
+      model: 'glm-5.3-flash',
+      events: [
+        ev('request/header', 0, {
+          header: {
+            config: { provider: 'openrouter', model: 'ox-alpha', reasoningEffort: 'high' },
+          },
+        }),
+      ],
+    })
+    const child = agent('child')
+    const services = happyServices(parent, child)
+    const api = buildSidechatApi(ctxWith(services))
+
+    await api['sidechat.start']({ sessionId: 'parent', question: 'side question' })
+
+    const options = services.create.mock.calls[0]![0] as { agentOptions: Record<string, unknown> }
+    expect(options.agentOptions).toEqual({
+      provider: 'openrouter',
+      model: 'ox-alpha',
+      reasoningEffort: 'high',
+    })
+  })
+
+  it('drops adapter-default reasoningEffort from request headers', async () => {
+    const parent = agent('parent', {
+      provider: 'ark-code',
+      model: 'glm-5.3-flash',
+      events: [
+        ev('request/header', 0, {
+          header: {
+            config: { provider: 'openrouter', model: 'ox-alpha', reasoningEffort: 'low' },
+            adapterDefaults: { reasoningEffort: true },
+          },
+        }),
+      ],
+    })
+    const child = agent('child')
+    const services = happyServices(parent, child)
+    const api = buildSidechatApi(ctxWith(services))
+
+    await api['sidechat.start']({ sessionId: 'parent', question: 'side question' })
+
+    const options = services.create.mock.calls[0]![0] as { agentOptions: Record<string, unknown> }
+    expect(options.agentOptions).toEqual({
+      provider: 'openrouter',
+      model: 'ox-alpha',
+    })
+  })
+
+  it('clears stale parent options reasoningEffort when parent switches to a model without effort', async () => {
+    const parent = agent('parent', {
+      provider: 'oai',
+      model: 'o1',
+      reasoningEffort: 'high',
+      events: [
+        ev('model/selection', 0, { provider: 'ark-code', model: 'glm-5.3-flash' }),
+      ],
+    })
+    const child = agent('child')
+    const services = happyServices(parent, child)
+    const api = buildSidechatApi(ctxWith(services))
+
+    await api['sidechat.start']({ sessionId: 'parent', question: 'side question' })
+
+    const options = services.create.mock.calls[0]![0] as { agentOptions: Record<string, unknown> }
+    expect(options.agentOptions).toEqual({
+      provider: 'ark-code',
+      model: 'glm-5.3-flash',
+    })
+    expect(options.agentOptions.reasoningEffort).toBeUndefined()
   })
 
   it('rejects a non-running parent', async () => {

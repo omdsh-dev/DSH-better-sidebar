@@ -403,13 +403,23 @@ describe('parentModelSelection', () => {
     ])).toEqual({ provider: 'p2', model: 'm2', reasoningEffort: 'high' })
   })
 
-  it('lets a same-route request header consume the pending selection', () => {
-    // Consumed pending -> the header's route is current (effort dropped: the
-    // header's effort may be an adapter default the core getter does not adopt).
+  it('lets a same-route request header consume the pending selection preserving explicit effort', () => {
+    // Consumed pending -> the header's route is current (effort preserved when not an adapter default).
     expect(parentModelSelection([
       ev('model/selection', 0, { provider: 'p2', model: 'm2', reasoningEffort: 'high' }),
       ev('request/header', 1, { header: { config: { provider: 'p2', model: 'm2', reasoningEffort: 'high' } } }),
-    ])).toEqual({ provider: 'p2', model: 'm2' })
+    ])).toEqual({ provider: 'p2', model: 'm2', reasoningEffort: 'high' })
+  })
+
+  it('drops adapter-default effort from request headers', () => {
+    expect(parentModelSelection([
+      ev('request/header', 0, {
+        header: {
+          config: { provider: 'p1', model: 'm1', reasoningEffort: 'low' },
+          adapterDefaults: { reasoningEffort: true },
+        },
+      }),
+    ])).toEqual({ provider: 'p1', model: 'm1' })
   })
 
   it('keeps a pending selection a different-route header cannot consume', () => {
@@ -424,6 +434,12 @@ describe('parentModelSelection', () => {
       ev('request/header', 0, { header: { config: { provider: 'p1', model: 'm1', reasoningEffort: 'low' } } }),
       ev('request/header', 1, { header: { config: { provider: 'p1', model: 'm1' } } }),
     ])).toEqual({ provider: 'p1', model: 'm1' })
+  })
+
+  it('preserves non-default effort on request header fallback', () => {
+    expect(parentModelSelection([
+      ev('request/header', 0, { header: { config: { provider: 'p1', model: 'm1', reasoningEffort: 'high' } } }),
+    ])).toEqual({ provider: 'p1', model: 'm1', reasoningEffort: 'high' })
   })
 
   it('ignores malformed selection and header rows instead of throwing', () => {
