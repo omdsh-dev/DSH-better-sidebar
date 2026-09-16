@@ -22,7 +22,7 @@
  *   AgentRegistry.resume, composing the preset the child recorded.
  */
 import { randomUUID } from 'node:crypto'
-import { createUserMessage, type ContentBlock, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId, type ContentBlock, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Agent, AgentSetup, CreateAgentOptions, ResumeAgentOptions } from '@deepseek-ai/dsh-agent'
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import type { Context as CordisContext } from '@deepseek-ai/cordis'
@@ -38,6 +38,7 @@ import {
   boundaryDelivered,
   buildSidechatInheritance,
   liveEventsOf,
+  parentModelSelection,
   resolvePresetId,
   SIDE_BOUNDARY_PROMPT,
   SIDE_INJECTION_PLUGIN,
@@ -220,6 +221,19 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
         throw new SidebarError('sidechat-error', `parent session "${sessionId}" is not running`, 409)
       }
       const parentSession = parent.session
+      // The parent's CURRENT model route. agent.options freezes the
+      // creation-time deployment default — a composer model switch rides
+      // `model/selection` events + the session-local selection and never
+      // rewrites options — so the child inherits the durable projection
+      // (falling back to the options snapshot only when the log carries no
+      // selection at all). Inheriting parent.options verbatim silently
+      // shipped the stale default instead of the model the user sees
+      // selected in the parent composer (#368).
+      const parentSelection = parentModelSelection(
+        parentSession.snapshotEvents() as unknown as readonly SidechatLogEvent[],
+      )
+      const routeProvider = parentSelection?.provider ?? parent.options.provider
+      const routeModel = parentSelection?.model ?? parent.options.model
       const inheritance = buildSidechatInheritance(
         parentSession.snapshotEvents() as unknown as readonly SidechatLogEvent[],
         live?.chunksFor(sessionId) ?? [],
@@ -239,8 +253,8 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
         mode: 'continuable',
         provider: 'sidechat',
         label,
-        ...(parent.options.provider === undefined ? {} : { agentProvider: parent.options.provider }),
-        ...(parent.options.model === undefined ? {} : { agentModel: parent.options.model }),
+        ...(routeProvider === undefined ? {} : { agentProvider: routeProvider }),
+        ...(routeModel === undefined ? {} : { agentModel: routeModel }),
       })
       const descriptorEvent: SeedEvent = {
         type: 'subagent/descriptor',
@@ -259,6 +273,19 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
       // would then claim and send that stale message BEFORE the boundary +
       // question. The marker keeps `ownEvents()` at the end-seed boundary, so
       // the inherited inbox replays to empty.
+      const targetEffort = parentSelection !== undefined
+        ? (parentSelection.reasoningEffort === undefined ? undefined : ReasoningEffortId(parentSelection.reasoningEffort))
+        : parent.options.reasoningEffort
+      const childAgentOptions: CreateAgentOptions['agentOptions'] = {
+        ...parent.options,
+        ...(routeProvider === undefined ? {} : { provider: routeProvider }),
+        ...(routeModel === undefined ? {} : { model: routeModel }),
+      }
+      if (targetEffort !== undefined) {
+        childAgentOptions.reasoningEffort = targetEffort
+      } else {
+        delete childAgentOptions.reasoningEffort
+      }
       const options: CreateAgentOptions = {
         sessionId: childId,
         meta: {
@@ -271,7 +298,7 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
         },
         seed: seed as unknown as readonly SessionEvent[],
         inheritedEventCount: SessionLogOffset(seed.length),
-        agentOptions: { ...parent.options },
+        agentOptions: childAgentOptions,
         setup,
         signal: AbortSignal.timeout(CREATE_TIMEOUT_MS),
       }

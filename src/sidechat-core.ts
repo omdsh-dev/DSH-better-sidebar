@@ -594,3 +594,86 @@ export function resolvePresetId(
   }
   return header.agentPreset
 }
+
+/** One model route as the durable log records it (the shape of a
+ *  `model/selection` event payload and of the core `modelSelection`
+ *  projection rows). */
+export interface SidechatModelSelection {
+  provider: string
+  model: string
+  reasoningEffort?: string
+}
+
+/**
+ * The model selection a session CURRENTLY runs, projected from its durable
+ * log (mirror of the core `modelSelection` projection — replicated here
+ * like resolvePresetId to avoid a host dependency). An explicit
+ * `model/selection` event stays PENDING until a same-route `request/header`
+ * consumes it; the value the composer's model selector shows is
+ * `pending ?? lastUsed`.
+ *
+ * This is NOT what `agent.options.provider/model` holds: those freeze the
+ * creation-time deployment default and are never rewritten by a UI model
+ * switch — DSH 0.1.5 routes requests through the session-local selection
+ * and its `agent/request` waterfall instead. Anyone inheriting "the
+ * parent's current model" must read this projection; inheriting
+ * `parent.options` verbatim silently ships the stale creation default
+ * (issue #368).
+ *
+ * A `request/header` contributes provider/model/effort, EXCEPT when its
+ * effort is marked as an adapter default (`adapterDefaults.reasoningEffort`)
+ * which the core selection getter deliberately does not adopt as a sticky pick.
+ */
+export function parentModelSelection(
+  events: readonly SidechatLogEvent[],
+): SidechatModelSelection | undefined {
+  let pending: SidechatModelSelection | undefined
+  let lastUsed: SidechatModelSelection | undefined
+  for (const event of events) {
+    if (event.type === 'model/selection') {
+      const selection = looseSelection(dataOf(event))
+      if (selection !== undefined) pending = selection
+      continue
+    }
+    if (event.type !== 'request/header') continue
+    const header = (dataOf(event).header as {
+      config?: unknown
+      adapterDefaults?: { reasoningEffort?: boolean }
+    } | undefined)
+    const config = header?.config
+    if (config === null || typeof config !== 'object') continue
+    const selection = looseSelection(config as Record<string, unknown>)
+    if (selection === undefined) continue
+    const isDefaultEffort = header?.adapterDefaults?.reasoningEffort === true
+    lastUsed = {
+      provider: selection.provider,
+      model: selection.model,
+      ...(!isDefaultEffort && selection.reasoningEffort !== undefined ? { reasoningEffort: selection.reasoningEffort } : {}),
+    }
+    if (sameSelection(pending, lastUsed)) pending = undefined
+  }
+  return pending ?? lastUsed
+}
+
+function sameSelection(
+  left: SidechatModelSelection | undefined,
+  right: SidechatModelSelection | undefined,
+): boolean {
+  if (left === right) return true
+  if (left === undefined || right === undefined) return false
+  return left.provider === right.provider
+    && left.model === right.model
+    && left.reasoningEffort === right.reasoningEffort
+}
+
+/** Narrow one loose record into a model selection (non-empty strings only). */
+function looseSelection(data: Record<string, unknown>): SidechatModelSelection | undefined {
+  const { provider, model, reasoningEffort } = data
+  if (typeof provider !== 'string' || provider === '') return undefined
+  if (typeof model !== 'string' || model === '') return undefined
+  return {
+    provider,
+    model,
+    ...(typeof reasoningEffort === 'string' && reasoningEffort !== '' ? { reasoningEffort } : {}),
+  }
+}
