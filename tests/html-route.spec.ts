@@ -175,3 +175,47 @@ describe('relative asset resolution stays in-route', () => {
     })
   })
 })
+
+describe('htmlUrl', () => {
+  it('resolves a session-relative path against the session cwd before encoding', async () => {
+    // Core `fileAddressFor` relativizes in-workspace absolute paths when it
+    // mints a `dsh-resource://file/session/…` address, so the editor's tab
+    // path is workspace-RELATIVE for files opened from chat. The route needs
+    // an absolute path; without the join, decodeHtmlUrl fabricates a bogus
+    // `/dsh-shots/…` root and the host preview dies with fs-error ENOENT.
+    const { htmlUrl } = await import('../src/client/api.ts')
+    const url = htmlUrl({ sessionId: 'sess-1', cwd: '/data/w' }, 'dsh-shots/a/index.html')
+    expect(decodeHtmlUrl(url)).toEqual({
+      ok: true,
+      ref: { sessionId: 'sess-1', path: '/data/w/dsh-shots/a/index.html' },
+    })
+  })
+
+  it('keeps an absolute path untouched (POSIX root, drive, UNC)', async () => {
+    const { htmlUrl } = await import('../src/client/api.ts')
+    expect(decodeHtmlUrl(htmlUrl({ sessionId: 's', cwd: '/w' }, '/etc/hosts'))).toEqual({
+      ok: true, ref: { sessionId: 's', path: '/etc/hosts' },
+    })
+    expect(decodeHtmlUrl(htmlUrl({ sessionId: 's', cwd: 'D:/w' }, 'D:/w/x.html'))).toEqual({
+      ok: true, ref: { sessionId: 's', path: 'D:/w/x.html' },
+    })
+    expect(decodeHtmlUrl(htmlUrl({ sessionId: 's', cwd: '/w' }, '//server/share/x.html'))).toEqual({
+      ok: true, ref: { sessionId: 's', path: '//server/share/x.html' },
+    })
+  })
+
+  it('falls back to the raw path when the session cwd is unknown (previous behavior)', async () => {
+    const { htmlUrl } = await import('../src/client/api.ts')
+    expect(decodeHtmlUrl(htmlUrl({ sessionId: 's' }, 'a/b.html'))).toEqual({
+      ok: true, ref: { sessionId: 's', path: '/a/b.html' },
+    })
+  })
+
+  it('joins a Windows backslash cwd with a backslash separator', async () => {
+    const { htmlUrl } = await import('../src/client/api.ts')
+    const url = htmlUrl({ sessionId: 's', cwd: 'D:\\work\\' }, 'sub\\x.html')
+    expect(decodeHtmlUrl(url)).toEqual({
+      ok: true, ref: { sessionId: 's', path: 'D:/work/sub/x.html' },
+    })
+  })
+})

@@ -11,6 +11,7 @@ import type { LastActivity } from '../subagent-activity.ts'
 import type { SidechatLiveEvent, SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
 import type { SidebarSessionEvent } from '../context-types.ts'
 import type { BrowserProbeResult } from './browser.ts'
+import { isAbsolutePath } from './paths.ts'
 
 /** One wire failure. */
 export class SidebarApiError extends Error {
@@ -453,5 +454,15 @@ function fileUrl(scope: SessionScope, path: string, download: boolean): string {
  * client-side platform signal is needed.
  */
 export function htmlUrl(scope: SessionScope, path: string): string {
-  return encodeHtmlUrl(scope.sessionId, path)
+  // A session-scoped resource address may carry a workspace-RELATIVE path
+  // (core `fileAddressFor` relativizes in-workspace absolutes when it mints
+  // `dsh-resource://file/session/...`), while the route demands an absolute
+  // path — decodeHtmlUrl would fabricate a bogus `/relative/...` root and the
+  // host's realpath fails with fs-error. Resolve against the session cwd,
+  // mirroring resolveSidebarPath: POSIX roots, drive letters and UNC shares
+  // stay untouched, everything else joins on.
+  const resolved = isAbsolutePath(path) || scope.cwd === undefined || scope.cwd === ''
+    ? path
+    : `${scope.cwd.replace(/[\\/]+$/, '')}${scope.cwd.includes('\\') ? '\\' : '/'}${path}`
+  return encodeHtmlUrl(scope.sessionId, resolved)
 }
