@@ -20,7 +20,7 @@
  * (VSCode semantics — a drop on a file row targets its parent directory),
  * and `busy` gates new drags while one upload is in flight.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import {
@@ -70,6 +70,22 @@ function isFileDrag(event: DragEvent): boolean {
 
 /** How long the row's "copied" label stays after a successful write. */
 const COPIED_MS = 1200
+
+/**
+ * Per-tree scroll memory. The tree body's `scrollTop` lives on the DOM
+ * element, and the host mounts ONE tab body per pane (native right Sidebar)
+ * or keys the workbench cell by tab id — so a tab switch, a conversation
+ * switch or a reload destroys the element and the reader lands back at the
+ * root. Module-level so it outlives the remount, keyed by session + root so
+ * each session's explorer keeps its own place. A key with no entry starts at
+ * the top (a first open must not inherit another tree's position).
+ */
+const treeScrollMemory = new Map<string, number>()
+
+/** The memory key for one explorer root. */
+function treeScrollKey(sessionId: string, cwd: string | undefined): string {
+  return `${sessionId}::${cwd ?? ''}`
+}
 
 /**
  * The drop overlay's hero art: an arrow rising out of a notched tray
@@ -209,6 +225,20 @@ export function FileTree(props: {
   const dropDepth = useRef(0)
   /** Explorer body element; its viewport rect anchors the portaled drop zone. */
   const bodyRef = useRef<HTMLDivElement>(null)
+  /** True while a programmatic scroll-memory restore is in flight: the scroll
+   *  events it fires must not overwrite the remembered position. */
+  const restoringScrollRef = useRef(false)
+  /** The memory key whose restore is SETTLED — applied, absent, or abandoned
+   *  because the reader scrolled first. The tree loads lazily, so the restore
+   *  effect re-runs as levels arrive and must fire exactly once per key;
+   *  later commits (a refresh tick, a rename, an expansion) must never yank
+   *  the reader back to the remembered offset. */
+  const restoredKeyRef = useRef<string | null>(null)
+  /** Set once the reader scrolls: their position outranks the remembered one,
+   *  so a restore still waiting for the levels to load must stand down. */
+  const readerScrolledRef = useRef(false)
+  /** The memory key this mount reads and writes. */
+  const scrollKey = treeScrollKey(sessionId, cwd)
   /** The body's viewport rect captured at drag entry (null = not measured). */
   const [dropRect, setDropRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null)
   /** Context-menu "upload here" target directory. */
@@ -413,6 +443,62 @@ export function FileTree(props: {
     const max = Math.max(body.scrollHeight - body.clientHeight, 0)
     body.scrollTo({ top: Math.min(Math.max(target, 0), max), behavior: 'smooth' })
   }, [revealed, data])
+
+  /**
+   * Restore this tree's remembered offset. The host mounts one tab body per
+   * pane, so switching tabs / conversations (or a reload) tears the tree
+   * element down; without this the reader is returned to the root every time.
+   *
+   * The tree loads levels lazily, so a mount's first commit usually has a
+   * body far shorter than the remembered offset — writing `scrollTop` then
+   * would be clamped to 0 and the position lost. The effect therefore re-runs
+   * on `data` (every level that arrives lengthens the body) and applies the
+   * offset as soon as the scroller can actually hold it. Three guards keep it
+   * from fighting the reader:
+   *
+   * - one restore per memory key (`restoredKeyRef`), so later commits never
+   *   re-apply a stale offset;
+   * - a "Show in folder" reveal wins the first scroll: when the tree is
+   *   revealed, the reveal effect owns the body and no restore is attempted
+   *   for that key;
+   * - a reader who scrolls first abandons the restore (see `onScroll`).
+   *
+   * A layout effect so the first paint after the levels arrive is already at
+   * the remembered offset (no visible jump from the top).
+   */
+  useLayoutEffect(() => {
+    if (restoredKeyRef.current === scrollKey) return
+    const body = bodyRef.current
+    if (body === null) return
+    const target = treeScrollMemory.get(scrollKey) ?? 0
+    if (target <= 0 || revealed.length > 0 || readerScrolledRef.current) {
+      restoredKeyRef.current = scrollKey
+      return
+    }
+    // The scroller cannot hold the offset yet (levels still loading); stay
+    // armed and try again on the next level. `restoredKeyRef` is untouched.
+    if (body.scrollHeight <= body.clientHeight) return
+    const max = Math.max(body.scrollHeight - body.clientHeight, 0)
+    const applied = Math.min(target, max)
+    restoredKeyRef.current = scrollKey
+    restoringScrollRef.current = true
+    body.scrollTop = applied
+    requestAnimationFrame(() => { restoringScrollRef.current = false })
+  }, [scrollKey, data, revealed])
+
+  /**
+   * Remember this tree's offset on every reader scroll. Skipped while a
+   * programmatic restore is in flight (its own scroll event must not count)
+   * and while the body is not scrollable (a collapsed/loading container
+   * clamps to 0 — remembering that would erase the real position).
+   */
+  const rememberScroll = useCallback((event: { currentTarget: HTMLDivElement }): void => {
+    const body = event.currentTarget
+    if (restoringScrollRef.current) return
+    if (body.scrollHeight <= body.clientHeight) return
+    readerScrolledRef.current = true
+    treeScrollMemory.set(scrollKey, body.scrollTop)
+  }, [scrollKey])
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
   const copyPath = useCallback((text: string, path: string): void => {
@@ -705,6 +791,7 @@ export function FileTree(props: {
     <div
       ref={bodyRef}
       className={css.explorerBody}
+      onScroll={rememberScroll}
       onDragEnter={handleBodyDragEnter}
       onDragOver={handleBodyDragOver}
       onDragLeave={handleBodyDragLeave}
