@@ -48,18 +48,29 @@ function happyServices(parent: AgentLike | undefined, child: AgentLike) {
   const rename = vi.fn((_session: unknown, _title: string) => ({ title: 'x', eventSeq: 1 }))
   const resolve = vi.fn(async (_id?: string) => ({ id: 'preset-a' }))
   const mount = vi.fn(async () => {})
-  const inspect = vi.fn(async (_id?: string): Promise<{ meta: Record<string, unknown>; events: unknown[] }> => ({ meta: { agentPreset: 'preset-a' }, events: [] }))
+  /** The 0.1.5 persistence face: open(id, 'read') -> handle.read() -> close(). */
+  const open = vi.fn(async (_id?: string): Promise<{
+    header: { agentPreset?: string; cwd?: string }
+    inheritedEventCount: number
+    read: () => Promise<{ events: unknown[] }>
+    close: () => Promise<void>
+  }> => ({
+    header: { agentPreset: 'preset-a' },
+    inheritedEventCount: 0,
+    read: async () => ({ events: [] }),
+    close: async () => {},
+  }))
   return {
     agents: { get, create, resume },
     agentPresets: { resolve, mount },
     sessionTitle: { rename },
-    sessionPersistence: { inspect },
+    sessionPersistence: { open },
     create,
     resume,
     get,
     rename,
     mount,
-    inspect,
+    open,
   }
 }
 
@@ -113,6 +124,7 @@ describe('sidechat.start', () => {
       sessionId: string
       meta: Record<string, unknown>
       seed: readonly { type: string; data: Record<string, unknown> }[]
+      inheritedEventCount: number
       agentOptions: { provider: string; model: string }
       setup: unknown
     }
@@ -120,10 +132,15 @@ describe('sidechat.start', () => {
     expect(options.meta).toMatchObject({
       parentSession: 'parent',
       origin: 'subagent',
+      isSeeded: true,
       delegationDepth: 1,
       agentPreset: 'preset-a',
       cwd: '/p',
     })
+    // The fork-marker pair is load-bearing: without it the child's Inbox
+    // replays the parent's seed inbox splices and inherits whatever input sat
+    // unclaimed in the parent (see sidechat-seed-validation.spec.ts).
+    expect(options.inheritedEventCount).toBe(options.seed.length)
     expect(options.agentOptions).toEqual({ provider: 'test', model: 'model-x' })
     // The child carries the parent's completed turns as a verbatim seed,
     // closed by the durable subagent descriptor (honest catalog citizenship:
@@ -164,7 +181,6 @@ describe('sidechat.start', () => {
         ev('user/message', 0, { content: [{ type: 'text', text: 'q' }], source: { kind: 'user' } }),
         ev('turn/start', 1, { turn: 1 }),
         ev('step/start', 2, { turn: 1, step: 1 }),
-        ev('assistant/chunk', 3, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'streaming' } }),
       ],
     })
     const child = agent('child')
@@ -175,7 +191,7 @@ describe('sidechat.start', () => {
 
     const options = services.create.mock.calls[0]![0] as { seed: Array<{ type: string; data: Record<string, unknown> }> }
     expect(options.seed.map(event => event.type)).toEqual([
-      'user/message', 'turn/start', 'step/start', 'assistant/chunk', 'step/end', 'turn/end',
+      'user/message', 'turn/start', 'step/start', 'step/end', 'turn/end',
       'subagent/descriptor',
     ])
     expect(options.seed.at(-2)?.data).toEqual({ turn: 1, reason: { kind: 'interrupted' } })
@@ -220,6 +236,16 @@ describe('sidechat.start', () => {
     const api = buildSidechatApi(ctxWith(services))
 
     const { childId } = await api['sidechat.start']({ sessionId: 'parent', question: '   ' })
+
+    // The empty thread carries the same fork-marker pair (isSeeded +
+    // inheritedEventCount = seed length) as the prompted create.
+    const options = services.create.mock.calls[0]![0] as {
+      meta: Record<string, unknown>
+      seed: readonly { type: string }[]
+      inheritedEventCount: number
+    }
+    expect(options.meta.isSeeded).toBe(true)
+    expect(options.inheritedEventCount).toBe(options.seed.length)
 
     // No prompt yet: the composer owns the first message; the placeholder
     // label is pinned and the in-progress snapshot is parked for it.
@@ -290,7 +316,7 @@ describe('sidechat.prompt', () => {
     const resumeOptions = services.resume.mock.calls[0]![0] as { resumeSessionId: string; setup: unknown }
     expect(resumeOptions.resumeSessionId).toBe('child')
     expect(typeof resumeOptions.setup).toBe('function')
-    expect(services.inspect).toHaveBeenCalledWith('child')
+    expect(services.open).toHaveBeenCalledWith('child', 'read')
     expect(child.followup).toHaveBeenCalledTimes(1)
   })
 
@@ -352,14 +378,14 @@ describe('sidechat.info', () => {
     const api = buildSidechatApi(ctxWith(services))
     const info = await api['sidechat.info']({ childId: 'child' })
     expect(info).toEqual({ live: false, preset: 'preset-a' })
-    expect(services.inspect).toHaveBeenCalledWith('child')
+    expect(services.open).toHaveBeenCalledWith('child', 'read')
   })
 
   it('degrades to a bare cold info when the session is gone', async () => {
     const services = happyServices(undefined, agent('child'))
     services.agents.get = vi.fn((_id: unknown) => undefined)
-    services.inspect = vi.fn(async () => { throw new Error('unknown session') })
-    services.sessionPersistence = { inspect: services.inspect }
+    services.open = vi.fn(async () => { throw new Error('unknown session') })
+    services.sessionPersistence = { open: services.open }
     const api = buildSidechatApi(ctxWith(services))
     await expect(api['sidechat.info']({ childId: 'ghost' })).resolves.toEqual({ live: false })
   })
@@ -375,8 +401,8 @@ function threadLog(): Array<ReturnType<typeof ev>> {
     ev('subagent/descriptor', 3, { mode: 'continuable' }),
     ev('user/message', 4, { content: [{ type: 'text', text: 'Side conversation boundary.' }], source: { kind: 'plugin', plugin: 'dsh-better-sidebar' } }),
     ev('user/message', 5, { content: [{ type: 'text', text: 'the side question' }], source: { kind: 'user' } }),
-    ev('assistant/chunk', 6, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'an' } }),
-    ev('assistant/chunk', 7, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'swer' } }),
+    ev('assistant/attempt', 6, { turn: 1, step: 1, stream: [] }),
+    ev('assistant/attempt', 7, { turn: 1, step: 1, stream: [] }),
   ]
 }
 
@@ -388,7 +414,7 @@ describe('sidechat.events', () => {
     const result = await api['sidechat.events']({ childId: 'child' })
     expect(result.events.map(event => event.seq)).toEqual([3, 4, 5, 6, 7])
     expect(result.events[0]).toMatchObject({ type: 'subagent/descriptor', seq: 3 })
-    expect(services.inspect).not.toHaveBeenCalled()
+    expect(services.open).not.toHaveBeenCalled()
   })
 
   it('narrows to the afterSeq delta on polls (and never resurrects the seed)', async () => {
@@ -406,11 +432,16 @@ describe('sidechat.events', () => {
     const child = agent('child')
     const services = happyServices(undefined, child)
     services.agents.get = vi.fn((_id: unknown) => undefined)
-    services.inspect.mockImplementation(async () => ({ meta: { agentPreset: 'preset-a' }, events: threadLog() }))
+    services.open.mockImplementation(async () => ({
+      header: { agentPreset: 'preset-a' },
+      inheritedEventCount: 0,
+      read: async () => ({ events: threadLog() }),
+      close: async () => {},
+    }))
     const api = buildSidechatApi(ctxWith(services))
     const result = await api['sidechat.events']({ childId: 'child' })
     expect(result.events.map(event => event.seq)).toEqual([3, 4, 5, 6, 7])
-    expect(services.inspect).toHaveBeenCalledWith('child')
+    expect(services.open).toHaveBeenCalledWith('child', 'read')
   })
 
   it('returns a marker-less legacy log whole', async () => {
@@ -427,7 +458,7 @@ describe('sidechat.events', () => {
   })
 
   it('caps a pathological response at its tail (8000 events)', async () => {
-    const events = Array.from({ length: 8_003 }, (_, index) => ev('assistant/chunk', index, { turn: 1, step: 1 }))
+    const events = Array.from({ length: 8_003 }, (_, index) => ev('assistant/attempt', index, { turn: 1, step: 1, stream: [] }))
     const child = agent('child', { events })
     const services = happyServices(undefined, child)
     const api = buildSidechatApi(ctxWith(services))
@@ -447,7 +478,7 @@ describe('sidechat.events', () => {
       .rejects.toMatchObject({ code: 'bad-request' })
 
     services.agents.get = vi.fn((_id: unknown) => undefined)
-    services.inspect.mockImplementation(async () => { throw new Error('no such session') })
+    services.open.mockImplementation(async () => { throw new Error('no such session') })
     await expect(api['sidechat.events']({ childId: 'ghost' }))
       .rejects.toMatchObject({ code: 'not-found', status: 404 })
   })

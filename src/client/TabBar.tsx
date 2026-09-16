@@ -4,9 +4,8 @@
  * button cluster, and the + menu that opens new tabs (explorer / git /
  * terminal). Tabs are draggable; dropping onto another tab inserts before it,
  * dropping on the strip background appends to this pane. Right-clicking a
- * tab opens the tab context menu (float as a free window / close / close
- * others / close to the left / close to the right, the close ones scoped to
- * this pane).
+ * tab opens the tab context menu (close / close others / close to the left /
+ * close to the right, the close ones scoped to this pane).
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
@@ -16,6 +15,7 @@ import {
 import type { SidebarTab } from './state.ts'
 import { isAgentTabId } from './state.ts'
 import { isPinnedVirtualTab } from './pinned.ts'
+import { useSubmenuFlip } from './menu-flip.ts'
 import { IconPinOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
 import css from './sidebar.module.css'
@@ -67,9 +67,6 @@ export function TabBar(props: {
   newTabOptions: NewTabOption[]
   /** Drop of a tab from any pane: (payload, insertBeforeTabId | null). */
   onDropTab: (payload: TabDragPayload, before: string | null) => void
-  /** Float a tab out as a free window (the tab context menu's entry; the
-   *  drag-to-conversation gesture is handled at the Sidebar shell level). */
-  onFloatTab: (tabId: string) => void
   /**
    * Pin/unpin a terminal tab (v0.17.0+). Called with `'workspace'` or
    * `'global'` to pin (the shell snapshots the home cwd), or `null` to
@@ -89,13 +86,16 @@ export function TabBar(props: {
   onRename?: (tabId: string, title: string) => void
 }) {
   const {
-    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, onFloatTab, onPinTab, getTabIcon, getTabBadge,
+    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, onPinTab, getTabIcon, getTabBadge,
     canRenameTab, onRename,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   // The tab right-click context menu: the target tab plus the cursor
   // position (the portaled Menu anchors there, following the git lens/FileTree).
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null)
+  // The strip sits at the panel's top, so the pin submenu must grow downward;
+  // the flip hook derives that from the cursor y (upper half → "down").
+  useSubmenuFlip(tabMenu)
   const [dragOver, setDragOver] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
   // Inline rename: the tab id being edited + the draft text. A ref mirrors
@@ -344,6 +344,7 @@ export function TabBar(props: {
             setMenuOpen(false)
           }}
           portal
+          compact
           align="end"
           anchor={(
             <button
@@ -372,9 +373,8 @@ export function TabBar(props: {
             // The target tab drives the pin entry's shape: terminal tabs
             // get either a "Pin ▸" submenu (unpinned) or a single "Unpin"
             // row (pinned). Non-terminal tabs and missing onPinTab get no
-            // pin entry at all — the menu stays exactly the legacy 5-item
-            // shape. Pinned VIRTUAL tabs (injected from other sessions)
-            // get a stripped menu: only Unpin + Close (no float, no
+            // pin entry at all. Pinned VIRTUAL tabs (injected from other
+            // sessions) get a stripped menu: only Unpin + Close (no
             // close-others/left/right — those are pane-scoped operations
             // that don't apply to cross-session virtual tabs).
             const targetTab = tabMenuIndex >= 0 ? tabs[tabMenuIndex] : undefined
@@ -399,7 +399,6 @@ export function TabBar(props: {
               ]
             }
             return [
-              { id: 'float', label: t('moveToFreeWindow') },
               ...pinEntries,
               { id: 'close', label: t('close') },
               { id: 'closeOthers', label: t('closeOtherTabs'), ...(tabs.length <= 1 ? { disabled: true } : {}) },
@@ -413,9 +412,7 @@ export function TabBar(props: {
             setTabMenu(null)
             const index = tabs.findIndex(tab => tab.id === target.tabId)
             if (index < 0) return
-            if (id === 'float') {
-              onFloatTab(target.tabId)
-            } else if (id === 'pinWorkspace') {
+            if (id === 'pinWorkspace') {
               onPinTab?.(target.tabId, 'workspace')
             } else if (id === 'pinGlobal') {
               onPinTab?.(target.tabId, 'global')
@@ -434,6 +431,7 @@ export function TabBar(props: {
             }
           }}
           portal
+          compact
           align="start"
           getAnchorRect={() => (tabMenu === null ? null : new DOMRect(tabMenu.x, tabMenu.y, 0, 0))}
           anchor={<span />}

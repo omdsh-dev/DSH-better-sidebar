@@ -12,7 +12,9 @@ import { renderToString } from 'react-dom/server'
 import { createElement } from 'react'
 import './browser-globals.ts'
 import type { Context } from '../src/context-types.ts'
-import { TextEditor, HTML_IFRAME_SANDBOX } from '../src/client/TextEditor.tsx'
+import { TextEditor } from '../src/client/TextEditor.tsx'
+import { HTML_IFRAME_SANDBOX } from '../src/client/html-preview.ts'
+import { DiffPane, HtmlRenderPreview } from '../src/client/changes/DiffPane.tsx'
 import { BrowserView, BrowserEmbedBlocked, BROWSER_IFRAME_SANDBOX, iframeSandboxFor } from '../src/client/BrowserView.tsx'
 import { createSidebarStore } from '../src/client/state.ts'
 import type { FileViewerProps } from '../src/client/service.ts'
@@ -106,6 +108,53 @@ describe('HTML preview iframe sandbox', () => {
     expect(html).not.toContain('/sidebar/html/')
     // The markdown is rendered into markup, not framed.
     expect(html).toContain('<h1')
+  })
+})
+
+describe('changes tab HTML render preview sandbox', () => {
+  function opProps(path: string) {
+    return {
+      target: {
+        kind: 'op' as const,
+        path,
+        op: { callId: 'c1', kind: 'read' as const, path, time: 0, running: false, isError: false, read: '<content>1: <html><body>hi</body></html></content>' },
+      },
+      scope: { sessionId: 's1', cwd: '/p' },
+      height: 300,
+      onHeightCommit: () => {},
+      onClose: () => {},
+      onExpand: () => {},
+    }
+  }
+
+  it('render iframe is ALWAYS sandboxed (no escape hatch) with the route src, never srcdoc', () => {
+    const html = renderToString(createElement(HtmlRenderPreview, { src: '/sidebar/html/s1/p/a/index.html', title: '/p/a/index.html' }))
+    const iframe = /<iframe[^>]*>/.exec(html)?.[0]
+    expect(iframe).toBeDefined()
+    // The sandbox tokens are exactly the shared constant — and unlike the
+    // editor viewer this surface has NO no-sandbox escape hatch.
+    expect(iframe).toContain(`sandbox="${HTML_IFRAME_SANDBOX}"`)
+    expect(HTML_IFRAME_SANDBOX).not.toContain('allow-same-origin')
+    expect(HTML_IFRAME_SANDBOX).not.toContain('allow-top-navigation')
+    // Cross-origin framing by construction: route-src (never srcdoc).
+    expect(iframe).toContain('src="/sidebar/html/s1/p/a/index.html"')
+    expect(iframe).not.toContain('srcdoc=')
+    expect(iframe).toContain('referrerPolicy="no-referrer"')
+    expect(iframe).toContain('allow=""')
+  })
+
+  it('html op targets show the render toggle (off by default, no iframe); non-html and error targets show none', () => {
+    const htmlOpHtml = renderToString(createElement(DiffPane, opProps('/p/a/index.html')))
+    expect(htmlOpHtml).toContain('渲染')
+    expect(htmlOpHtml).not.toContain('<iframe')
+    const md = renderToString(createElement(DiffPane, opProps('/p/a/readme.md')))
+    expect(md).not.toContain('渲染')
+    const errorProps = opProps('/p/a/index.html')
+    const html = renderToString(createElement(DiffPane, {
+      ...errorProps,
+      target: { ...errorProps.target, op: { ...errorProps.target.op, isError: true, errorText: 'boom' } },
+    }))
+    expect(html).not.toContain('渲染')
   })
 })
 

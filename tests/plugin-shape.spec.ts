@@ -52,13 +52,14 @@ describe('dsh-better-sidebar plugin export shape', () => {
   })
 
   it('registers the side card preferences schema with the documented defaults', async () => {
-    const { PrefsSchema, SIDEBAR_PREFS_NS } = await import('../src/config.ts')
+    const { PrefsSchema, SIDEBAR_PREFS_NS, SIDEBAR_PREFS_DEFAULTS } = await import('../src/config.ts')
     expect(SIDEBAR_PREFS_NS).toBe('dsh-better-sidebar')
     const resolved = (PrefsSchema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
     })(undefined)
-    expect(resolved.openByDefault).toBe(false)
-    expect(resolved.defaultWidthPercent).toBe(35)
+    expect(resolved.openByDefault).toBeUndefined()
+    expect(resolved.defaultWidthPercent).toBeUndefined()
+    expect(resolved.changesDiffFloat).toBeUndefined()
     expect(resolved.autoOpenSubagent).toBe(true)
     // A new background job auto-opens the Jobs page too.
     expect(resolved.autoOpenJobs).toBe(true)
@@ -96,7 +97,17 @@ describe('dsh-better-sidebar plugin export shape', () => {
     // default when the stored document predates it.
     const overridden = (PrefsSchema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
-    })({ openByDefault: false, defaultWidthPercent: 45 })
-    expect(overridden).toEqual({ openByDefault: false, defaultWidthPercent: 45, autoOpenSubagent: true, autoOpenJobs: true, agentTerminalTools: false, agentOpenTools: false, bottomPanelAutoTerminal: true, terminalFontFamily: '', terminalFontSize: 13, interceptOpenPath: true, editorExplorer: false, workspaceFence: true, terminalShell: '', terminalShellArgs: '', titleBarCompat: false, titleBarStripPx: 40, htmlViewerNoSandbox: false, htmlViewerDefaultUnsafe: false, browserNoSandbox: false, browserInterceptLinks: true, browserInterceptHttp: true, browserInterceptHttps: false, browserAllowedLoopback: '', changesDiffFloat: true, tabsEnabled: {}, viewersEnabled: {}, pluginSettings: {} })
+    })({ openByDefault: false, defaultWidthPercent: 45, changesDiffFloat: true })
+    // Schemastery's object schema is OPEN: a document written by an older
+    // plugin version still carrying the retired keys resolves them through
+    // verbatim. They are inert — the typed value the client consumes
+    // (parsePrefs) drops them (tests/prefs.spec.ts) — and the defaults no
+    // longer declare them.
+    // titleBarScheme / titleBarPresetId / customCss are declared WITHOUT a
+    // schema default (the client's parsePrefs supplies them), so they are
+    // absent from a resolved document that never stored them.
+    const { titleBarScheme, titleBarPresetId, customCss, ...schemaDefaults } = SIDEBAR_PREFS_DEFAULTS
+    void titleBarScheme; void titleBarPresetId; void customCss
+    expect(overridden).toEqual({ ...schemaDefaults, openByDefault: false, defaultWidthPercent: 45, changesDiffFloat: true })
   })
 })

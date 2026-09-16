@@ -671,6 +671,7 @@ export function GitLens(props: GitLensProps) {
               if (id === 'absolute') copy(resolveSidebarPath(repoRoot ?? selectedWorktree ?? scope.cwd, target.entry.path))
             }}
             portal
+            compact
             align="start"
             getAnchorRect={() => (fileMenu === null ? null : new DOMRect(fileMenu.x, fileMenu.y, 0, 0))}
             anchor={<span />}
@@ -728,6 +729,7 @@ export function GitLens(props: GitLensProps) {
               }
             }}
             portal
+            compact
             align="start"
             getAnchorRect={() => (historyMenu === null ? null : new DOMRect(historyMenu.x, historyMenu.y, 0, 0))}
             anchor={<span />}

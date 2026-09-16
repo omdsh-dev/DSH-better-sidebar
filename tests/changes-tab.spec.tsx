@@ -146,4 +146,59 @@ describe('ChangesTab', () => {
       container.remove()
     }
   })
+
+  it('renders a .md read op in reading mode through the shared MarkdownText', async () => {
+    mockGit([])
+    const md = ['# Title', '', '| A | B |', '| --- | --- |', '| 1 | 2 |', '', '![pic](./img.png)', ''].join('\n')
+    const numbered = md.split('\n').map((line, i) => String(i + 1) + ': ' + line).join('\n')
+    const envelope = '<content>\n' + numbered + '\n</content>'
+    vi.spyOn(api, 'changesOps').mockResolvedValue({
+      events: [
+        { type: 'tool/call', seq: 1, time: 1, data: { name: 'read', callId: 'r1', arguments: JSON.stringify({ file_path: 'C:/repo/main/notes.md' }) } },
+        { type: 'tool/result', seq: 2, time: 2, data: { message: { source: { kind: 'tool', callId: 'r1' }, content: [{ type: 'tool-result', content: [{ type: 'text', text: envelope }] }] } } },
+      ],
+      lastSeq: 2,
+    })
+
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root: Root = createRoot(container)
+    try {
+      mount(root)
+      await flushEffects()
+
+      // Session lens: open the read op's preview.
+      const group = container.querySelector('[role="group"]')
+      const sessionButton = [...group!.querySelectorAll<HTMLButtonElement>('button')]
+        .find(button => button.getAttribute('aria-pressed') === 'false')
+      await act(async () => { sessionButton!.click() })
+      const row = container.querySelector<HTMLButtonElement>('button[data-op-kind="read"]')
+      expect(row).toBeDefined()
+      expect(container.textContent).toContain('notes.md')
+      await act(async () => { row!.click() })
+      await flushEffects()
+
+      // Reading toggle: raw first (line-numbered rows), then rendered GFM.
+      const toggle = [...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find(button => (button.textContent ?? '').match(/阅读|Reading/))
+      expect(toggle).toBeDefined()
+      expect(container.querySelector('h1')).toBeNull()
+      await act(async () => { toggle!.click() })
+      await flushEffects()
+      expect(container.querySelector('h1')?.textContent).toContain('Title')
+      expect(container.querySelector('table')).not.toBeNull()
+      // The local image destination was rewritten to the media route.
+      const img = container.querySelector('img')
+      expect(img?.getAttribute('src')).toContain('/sidebar/file?')
+      // Toggling back restores the raw line view.
+      const rawToggle = [...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find(button => (button.textContent ?? '').match(/原文|Raw/))
+      await act(async () => { rawToggle!.click() })
+      await flushEffects()
+      expect(container.querySelector('h1')).toBeNull()
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
 })

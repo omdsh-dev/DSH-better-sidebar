@@ -12,12 +12,15 @@
  */
 import type {} from '../src/client/service.ts'
 import {
+  FOLDER_EXT,
+  FOLDER_OPEN_EXT,
   SIDEBAR_FEATURES,
   SIDEBAR_SERVICE_VERSION,
 } from '../src/client/service.ts'
 import type {
   BetterSidebarService,
   FileFetchStrategy,
+  FileIconDescriptor,
   FileViewerDescriptor,
   FileViewerProps,
   OpenTabSeed,
@@ -46,7 +49,7 @@ const tab: TabDescriptor = {
   icon: (_size: number) => null,
   order: 50,
   hidden: false,
-  available: (ctx, scope, state) => scope.sessionId !== '' && state.panelOpen && ctx !== null,
+  available: (ctx, scope, state) => scope.sessionId !== '' && state.bottomOpen && ctx !== null,
   single: false,
   dedupeKey: (t: SidebarTab) => t.id,
   createTab: (state: SidebarState) => ({
@@ -124,6 +127,26 @@ service.subscribeState(() => {})
 service.updateTab('tab:1', { title: 'T', path: '/p', meta: 1 })
 service.activateTab('tab:1')
 service.openFile({ sessionId: 's1', cwd: '/p' }, '/p/a.csv', 'Data')
+
+/** File-icon registration surface (feature `fileIcons`). */
+const icon: FileIconDescriptor = {
+  id: 'my-plugin:icons',
+  exts: ['csv', FOLDER_EXT, FOLDER_OPEN_EXT],
+  names: ['package.json'],
+  folderNames: ['node_modules'],
+  priority: 5,
+  icon: (path: string, size: number, open?: boolean) => {
+    void path; void size; void open
+    return null
+  },
+}
+service.registerFileIcon(icon)
+service.getFileIcons()
+service.matchFileIcon('/p/a.csv')
+service.matchFolderIcon(true)
+service.matchFolderIcon(true, 'node_modules')
+service.fileIcon('/p/a.csv', 14)
+service.folderIcon('/p', true, 14)
 
 /** Named state vocabulary stays importable (the pre-0.12 gap). */
 const diff: SidebarDiffRef = { kind: 'worktree', path: '/p/a.ts', staged: false }

@@ -40,8 +40,9 @@ import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './produced-files.ts'
+import { closePathTabs, retargetPathTabs } from './tree-mutations.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
-import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, treeOf, type SidebarStore, type SidebarTab } from './state.ts'
+import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, type SidebarStore, type SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
 
 type EditorLoad =
@@ -177,8 +178,7 @@ export function EditorHost(props: {
    */
   const openFileSide = (absolute: string): void => {
     store.reduce((state) => {
-      const key = treeOf(state, tab.id)
-      const pane = leafWithTab(state[key], tab.id) ?? firstLeaf(state[key])
+      const pane = leafWithTab(state.bottomSplits, tab.id) ?? firstLeaf(state.bottomSplits)
       const fresh: SidebarTab = {
         id: mintTabId(),
         type: 'editor',
@@ -186,8 +186,8 @@ export function EditorHost(props: {
         path: absolute,
         meta: { treeOpen: false },
       }
-      const { node, leafId } = insertLeafAt(state[key], pane.id, 'row', fresh, false)
-      return { ...state, [key]: node, activePane: leafId }
+      const { node, leafId } = insertLeafAt(state.bottomSplits, pane.id, 'row', fresh, false)
+      return { ...state, bottomSplits: node, activePane: leafId }
     })
   }
 
@@ -223,6 +223,16 @@ export function EditorHost(props: {
         : [...config.pinned, targetId]
       return { ...blob, openWith: { ...config, pinned } }
     })
+  }
+
+  // Tree mutations reconcile the OPEN tabs (both split trees, the bottom
+  // panel, free windows): a rename retargets its tab to the new path; a
+  // delete closes tabs at or under the removed path. See tree-mutations.ts.
+  const onPathRenamed = (oldPath: string, newPath: string): void => {
+    retargetPathTabs(ctx, store, oldPath, newPath)
+  }
+  const onPathDeleted = (path: string): void => {
+    closePathTabs(ctx, store, path)
   }
 
   // The viewer's toolbar, hoisted into THIS header: the text editor reports
@@ -389,6 +399,9 @@ export function EditorHost(props: {
           onOpenWith={openWith}
           onToggleOpenWithPin={toggleOpenWithPin}
           onReferenceFile={onReferenceFile}
+          onPathRenamed={onPathRenamed}
+          onPathDeleted={onPathDeleted}
+          service={ctx.get('betterSidebar')}
         />
       </div>
     )
@@ -511,6 +524,9 @@ export function EditorHost(props: {
               onOpenWith={openWith}
               onToggleOpenWithPin={toggleOpenWithPin}
               onReferenceFile={onReferenceFile}
+              onPathRenamed={onPathRenamed}
+              onPathDeleted={onPathDeleted}
+              service={ctx.get('betterSidebar')}
             />
           </div>
         )}

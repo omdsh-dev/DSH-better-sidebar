@@ -8,6 +8,8 @@
  * tab (git lens + session lens, PR #471's file-trace merged in).
  */
 import { describe, expect, it } from 'vitest'
+import type { ReactElement } from 'react'
+import { VscCommentDiscussion, VscGitCommit, VscGlobe, VscLayers, VscTerminal } from 'react-icons/vsc'
 // First import: browser globals before the xterm-carrying builtin graph loads.
 import './browser-globals.ts'
 
@@ -44,18 +46,44 @@ describe('built-in tab registrations', () => {
     expect(changes?.component).toBeDefined()
   })
 
-  it('the changes tab declares the diff-open picker (free window default)', () => {
+  it('every visible tab declares a non-empty, mutually distinct title', () => {
+    // The title is the tab's identity in the native new-tab list (guide
+    // page) and the tab strip: it must exist, and no two visible tabs may
+    // share one (identical capsules would be indistinguishable).
     const { service } = setup()
-    const toggles = service.getTab('git')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual(['changesDiffFloat'])
-    const picker = toggles[0]
-    expect(picker?.type).toBe('select')
-    expect(picker?.title).toBeDefined()
-    expect(picker?.desc).toBeDefined()
-    const options = picker?.options ?? []
-    // Float first (the default the reducer and prefs ship), pane second.
-    expect(options.map(o => o.value)).toEqual([true, false])
-    expect(options.every(o => o.icon !== undefined && o.title !== undefined && o.desc !== undefined)).toBe(true)
+    const visible = service.getTabs().filter(descriptor => descriptor.hidden !== true)
+    expect(visible.length).toBeGreaterThan(0)
+    for (const descriptor of visible) {
+      const title = typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title
+      expect(title, `${descriptor.id} must declare a title`).toBeTruthy()
+    }
+    const titles = visible.map(descriptor =>
+      typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title)
+    expect(new Set(titles).size, 'titles must differ per tab').toBe(visible.length)
+  })
+
+  it('every visible tab declares a non-empty, mutually distinct description', () => {
+    // DSH 0.1.5-rc.1+ renders `description` under the title while the guide
+    // lists at most 4 entries (a longer list drops every description). With
+    // the host no longer substituting a generic fallback, a tab without one
+    // renders the title alone — so every visible tab declares the real
+    // purpose of its page, and no two may read identically.
+    const { service } = setup()
+    const visible = service.getTabs().filter(descriptor => descriptor.hidden !== true)
+    expect(visible.length).toBeGreaterThan(0)
+    for (const descriptor of visible) {
+      expect(descriptor.description, `${descriptor.id} must declare a description`).toBeDefined()
+      const line = typeof descriptor.description === 'function' ? descriptor.description() : descriptor.description
+      expect(line, `${descriptor.id} description must be non-empty`).toBeTruthy()
+    }
+    const lines = visible.map(descriptor =>
+      typeof descriptor.description === 'function' ? descriptor.description() : descriptor.description)
+    expect(new Set(lines).size, 'descriptions must differ per tab').toBe(visible.length)
+  })
+
+  it('the changes tab declares no settings of its own (the diff always docks)', () => {
+    const { service } = setup()
+    expect(service.getTab('git')?.settings).toBeUndefined()
   })
 
   it('only diff is hidden from the + menu; editor is the visible files window (order 10)', () => {
@@ -172,7 +200,7 @@ describe('built-in tab registrations', () => {
     service.openTab({ type: 'browser' })
     service.openTab({ type: 'browser' })
     const state = store.getSnapshot().state!
-    const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'browser')
+    const tabs = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'browser')
     expect(tabs).toHaveLength(2)
     expect(tabs[0]!.id).toBe('browser:1')
     expect(tabs[1]!.id).toBe('browser:2')
@@ -185,7 +213,7 @@ describe('built-in tab registrations', () => {
     service.openTab({ type: 'terminal' })
     service.openTab({ type: 'terminal' })
     const state = store.getSnapshot().state!
-    const tabs = allLeaves(state.splits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'terminal')
+    const tabs = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'terminal')
     expect(tabs).toHaveLength(2)
     expect(tabs[0]!.title).toBe('bash')
     expect(tabs[1]!.title).toBe('bash')
@@ -199,7 +227,7 @@ describe('built-in tab registrations', () => {
     store.setSession('s1')
     service.openTab({ type: 'terminal' })
     const state = store.getSnapshot().state!
-    const tab = allLeaves(state.splits).flatMap(leaf => leaf.tabs).find(t => t.type === 'terminal')
+    const tab = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).find(t => t.type === 'terminal')
     expect(tab?.title).toBe(t('terminal'))
   })
 
@@ -208,6 +236,35 @@ describe('built-in tab registrations', () => {
     for (const tab of service.getTabs()) {
       expect(tab.icon, tab.id).toBeDefined()
     }
+  })
+
+  it('the tab glyphs say what the page shows (colored, token-driven)', () => {
+    const { service } = setup()
+    const iconOf = (id: string): ReactElement => {
+      const icon = service.getTab(id)?.icon
+      expect(icon, id).toBeDefined()
+      return (typeof icon === 'function' ? icon(14) : icon) as ReactElement
+    }
+    // Every colored glyph is [wrapper][glyph]; unwrap the themed wrapper.
+    const glyphOf = (id: string): unknown => {
+      const wrapper = iconOf(id) as ReactElement<{ children?: ReactElement }>
+      return (wrapper.props.children as ReactElement | undefined)?.type ?? wrapper.type
+    }
+    // Tasks lists subagent sessions AND background jobs — layered sheets say
+    // "work running in the background"; a checklist glyph would say "to-do
+    // list", which this page is not.
+    expect(glyphOf('subagent')).toBe(VscLayers)
+    expect(glyphOf('git')).toBe(VscGitCommit)
+    expect(glyphOf('sidechat')).toBe(VscCommentDiscussion)
+    expect(glyphOf('browser')).toBe(VscGlobe)
+    // The terminal glyph is the widest in the set, so it renders a step down
+    // from the strip's size. No outline: the glyphs stay exactly as the icon
+    // set draws them, only tinted through the wrapper's token.
+    const wrapper = iconOf('terminal') as ReactElement<{ children?: ReactElement }>
+    const terminal = wrapper.props.children as ReactElement<{ size?: number; style?: Record<string, unknown> }>
+    expect(terminal.type).toBe(VscTerminal)
+    expect(terminal.props.size).toBeLessThan(14)
+    expect(terminal.props.style).toBeUndefined()
   })
 })
 

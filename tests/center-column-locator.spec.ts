@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   CENTER_COLUMN_REVALIDATE_MS,
   resolveCenterColumn,
@@ -19,6 +19,43 @@ function connectedColumn(doc = document.implementation.createHTMLDocument()): Fi
   doc.body.append(col)
   return { doc, col, slot }
 }
+
+// alpha.2 fixture: a real #root in the jsdom global document, because the
+// contents-skip walk needs a live defaultView.getComputedStyle (inline
+// `display: contents` on the wrapper). Build:
+// #root > col > wrapper[display: contents] > host[data-slot="main.conversation"].
+function alphaColumn(hostSlot: string): { col: HTMLDivElement; host: HTMLDivElement } {
+  const root = document.createElement('div')
+  root.id = 'root'
+  const col = document.createElement('div')
+  const wrapper = document.createElement('div')
+  wrapper.style.display = 'contents'
+  const host = document.createElement('div')
+  host.dataset.slot = hostSlot
+  wrapper.append(host)
+  col.append(wrapper)
+  root.append(col)
+  document.body.append(root)
+  return { col, host }
+}
+
+// The alpha fixtures append into the shared jsdom document; drop them so
+// later tests' querySelector scans stay deterministic.
+afterEach(() => {
+  for (const root of document.body.querySelectorAll('div#root')) root.remove()
+})
+
+describe('center-column anchor keys (DSH 0.1.5-alpha.2)', () => {
+  it('skips display:contents slot hosts above a main.conversation host', () => {
+    const { col } = alphaColumn('main.conversation')
+    expect(resolveCenterColumn(null, { now: () => 0 })).toBe(col)
+  })
+
+  it('still resolves the alpha.1 conversation key through the default selector', () => {
+    const { col } = alphaColumn('conversation')
+    expect(resolveCenterColumn(null, { now: () => 0 })).toBe(col)
+  })
+})
 
 describe('center-column locator (issue #403)', () => {
   it('reuses a connected cached column without querying during the hot-path window', () => {

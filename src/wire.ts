@@ -17,6 +17,7 @@ export type SidebarErrorCode =
   | 'git-error'
   | 'pty-error'
   | 'pty-deps-missing'
+  | 'shell-not-found'
   | 'job-error'
   | 'sidechat-error'
   | 'subagents-unavailable'
@@ -30,6 +31,8 @@ export class SidebarError extends Error {
     readonly code: SidebarErrorCode,
     message: string,
     readonly status = 400,
+    /** Optional structured context (e.g. `{ shell }` for shell-not-found). */
+    readonly meta?: Record<string, string>,
   ) {
     super(message)
   }

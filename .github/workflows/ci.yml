@@ -92,8 +92,28 @@ jobs:
         run: pnpm typecheck
       - name: Lint
         run: pnpm lint
+      # `test:windows` runs the whole suite in ONE fork (`--maxWorkers=1`),
+      # not `pnpm test`'s unbounded pool. Two distinct Windows-only failures
+      # motivated it, both recorded in docs/plans/2026-09-10-dsh-0.1.5-rc.2-adaptation.md:
+      #
+      #   1. Six red runs were real 5000 ms vitest timeouts in specs that
+      #      really start a process (tests/agent-pty:71/:106,
+      #      tests/install-powershell:105 — a cold powershell.exe start
+      #      measured 12.1 s, tests/git.spec.ts:85 at 9.6 s). The suite now
+      #      declares its own budgets (global testTimeout 15 s, 30 s in the
+      #      two heaviest describes), and serial execution stops the
+      #      process-spawning specs starving each other on a 2-core runner.
+      #   2. Four runs died at teardown with `[vitest-pool]: Worker forks
+      #      emitted error / Worker exited unexpectedly` while reporting
+      #      N-1 of N files passed and zero FAIL lines — a worker recycling
+      #      race, not a test failure. It survived --maxWorkers=2, so the
+      #      lane now recycles nothing at all.
+      #
+      # No retries: they would hide a real regression instead of removing the
+      # race. The cost is wall-clock (the Windows step runs several minutes
+      # against a 30-minute job budget), not signal.
       - name: Test
-        run: pnpm test
+        run: pnpm test:windows
       - name: Build
         run: pnpm build
       - name: Check consumer type surface
@@ -131,10 +151,31 @@ jobs:
       # Pin the DSH CLI the lane mounts into; the profile's bundle stack
       # (dsh-base / dsh-web-app) resolves from this installation. Keep in
       # step with the plugin's @deepseek-ai/* peer range when bumping.
-      # DSH 0.1.2-rc.1 is published under the `next` dist-tag; the lanes
-      # speak the slash-only RPC dialect (tests/e2e/host-protocol.ts).
+      # DSH 0.1.5-rc.2 is the `next` dist-tag on npm (`latest` still points
+      # at rc.1); the lanes speak the slash-only RPC dialect
+      # (tests/e2e/host-protocol.ts).
+      #
+      # The larger heap is the fix for one of the two ways this step used to
+      # die (runs 34490912649 and 34363627184 on the alpha line): the pinned
+      # version's TRANSITIVES are declared as floating `^` ranges, so while
+      # upstream publishes a prerelease in stages (0.1.5-rc.2 went out
+      # 14:43-14:57 on 2026-09-10) npm resolved a mixed rc.1/rc.2 peer graph —
+      # 3062 ERESOLVE lines, then "Ineffective mark-compacts near heap limit"
+      # (exit 134). The other failure mode was a hard ETARGET on a sibling
+      # package that appeared minutes later; pinning a version that is fully
+      # published (not mid-flight) is the fix for that one.
+      #
+      # Peer resolution stays ON: `--legacy-peer-deps` was tried in the first
+      # cut of this fix and made the install broken rather than robust — it
+      # skips exactly the peers a global install has to supply, and
+      # @deepseek-ai/dsh-app-boot requires `@deepseek-ai/cordis-plugin-group`
+      # (a peer, not a dependency) at boot, so the CLI died with
+      # ERR_MODULE_NOT_FOUND before the smoke could even start. Verified
+      # locally that the plain install resolves it.
       - name: Install dsh CLI (pinned)
-        run: npm install -g @deepseek-ai/dsh@0.1.2-rc.1
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: npm install -g @deepseek-ai/dsh@0.1.5-rc.2
 
       # lib/ is gitignored; the tarball is produced from this build.
       - name: Build and pack the npm tarball

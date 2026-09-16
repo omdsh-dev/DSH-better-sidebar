@@ -14,7 +14,8 @@
  *      for everything sidebar-shaped the page fetched;
  *   4. bottom-drag frames — rAF frame-interval p95/max while dragging the
  *      bottom strip (the layout-push hot path), plus the width-leak guard
- *      from the drag lane (a closed right panel must push 0).
+ *      from the drag lane (this shell pushes no width at all: the right
+ *      column belongs to DSH's native Sidebar).
  *
  * Results print as single-line `PERF_JSON` records (plus a `PERF_SUMMARY`
  * aggregate) so a shell run can `tee` the log and grep them out; the
@@ -26,14 +27,14 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
-import { PAGE_URL, createHostApi, hostRpc } from './host'
+import { PAGE_URL, createHostApi, hostRpc, sendFirstMessage } from './host'
 
 /** This lane's own workspace (lanes run serially against one server — never
  *  share seed paths with mount/drag). */
 const WORKSPACE_PATH = process.env.DSH_E2E_PERF_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-perf-workspace')
 
 /** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const BUILTIN_TABS = ['Files', 'Changes', 'Tasks', 'Side Chat (beta)', 'Terminal', 'Browser']
+const NATIVE_TABS = ['files', 'git', 'subagent', 'sidechat', 'terminal', 'browser']
 
 let api: APIRequestContext
 
@@ -122,24 +123,23 @@ test('measure: mount latency, longtasks and bundle cost through a full tab sweep
 
   await dismissOnboarding(page)
 
-  // Open the panel, then sweep every built-in tab through the "+" menu — the
-  // same crash-sweep surface as mount.e2e.ts, reused here as the workload.
-  const expandButton = sidebar.getByRole('button', { name: 'Expand sidebar' })
-  await expect(expandButton).toHaveCount(1)
-  await expandButton.click()
-  await expect
-    .poll(async () => {
-      const value = await page.evaluate(() => document.documentElement.style.getPropertyValue('--dsh-sidebar-width'))
-      return value !== '' && value !== '0px'
-    }, { timeout: 90_000 })
-    .toBe(true)
+  // The native Sidebar's way in lives in the conversation header's corner,
+  // which DSH renders only for a session with content.
+  await sendFirstMessage(page)
 
-  const newTabButton = sidebar.getByRole('button', { name: 'New tab' }).first()
-  for (const title of BUILTIN_TABS) {
-    await newTabButton.click()
-    const item = page.getByRole('menuitem', { name: title }).first()
-    await expect(item, `built-in tab "${title}" must be offered by the + menu`).toHaveCount(1)
-    await item.click()
+  // Open DSH's native right Sidebar and sweep every plugin tab type through
+  // its guide page — the same crash-sweep surface as mount.e2e.ts, reused
+  // here as the workload (the plugin's content lives in the native surface on
+  // 0.1.5; the plugin's own panel keeps only its bottom workbench).
+  await page.locator('[data-sidebar-right-expand]').first().click()
+  const pane = page.locator('[data-sidebar-right-panel]')
+  await expect(pane).toBeVisible({ timeout: 90_000 })
+  const addTab = page.locator('[data-dockkit-add-tab]').first()
+  for (const kind of NATIVE_TABS) {
+    if (await page.locator('[data-sidebar-right-guide]').count() === 0) await addTab.click()
+    const entry = page.locator(`[data-sidebar-right-guide-entry="${kind}"]`)
+    await expect(entry, `native tab type "${kind}" must be offered by the guide`).toHaveCount(1)
+    await entry.click()
     await page.waitForTimeout(1_500)
   }
 
@@ -187,10 +187,16 @@ test('measure: bottom-strip drag frame pacing', async ({ page }) => {
   await expect(sidebar).toBeAttached({ timeout: 90_000 })
   await dismissOnboarding(page)
 
-  // The right panel stays CLOSED on purpose: the bottom drag must not push
-  // the host layout in that pose (the width-leak regression the drag lane
-  // locks; recorded here as a number-adjacent guard for the perf story).
-  const bottomExpand = sidebar.getByRole('button', { name: 'Expand bottom panel' })
+  // The workbench's expand/collapse control is registered into DSH's
+  // session-header utilities, which DSH renders only for a session with
+  // content — seed one message first, then address the toggle by its stable
+  // data attribute (it is NOT inside the plugin's own host).
+  await sendFirstMessage(page)
+
+  // The plugin pushes no width ever (the right column is DSH's native
+  // Sidebar), so the drag must never write --dsh-sidebar-width — the guard
+  // the drag lane locks, recorded here for the perf story.
+  const bottomExpand = page.locator('[data-dsh-bottom-toggle]')
   await expect(bottomExpand).toHaveCount(1)
   await bottomExpand.click()
   await expect
@@ -274,5 +280,5 @@ test('measure: bottom-strip drag frame pacing', async ({ page }) => {
     `PERF_SUMMARY drag-frames=${record.frames} p50=${record.intervalMedianMs}ms p95=${record.intervalP95Ms}ms `
     + `max=${record.intervalMaxMs}ms widthLeak=${record.pushWidthLeakMax}px`,
   )
-  expect(record.pushWidthLeakMax, 'the closed right panel must push 0 width during the bottom drag').toBe(0)
+  expect(record.pushWidthLeakMax, 'the plugin must never push a width during the bottom drag').toBe(0)
 })

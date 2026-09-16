@@ -60,7 +60,6 @@ describe('TabBar terminal-tab rename', () => {
           onNewTab={() => { /* no-op */ }}
           newTabOptions={[] as NewTabOption[]}
           onDropTab={() => { /* no-op */ }}
-          onFloatTab={() => { /* no-op */ }}
           canRenameTab={() => true}
           onRename={onRename}
         />,

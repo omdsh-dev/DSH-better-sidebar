@@ -1,0 +1,39 @@
+/*
+ * Colors for the built-in tab glyphs (src/client/builtins/tab-icons.tsx).
+ *
+ * Every declaration resolves to a `--dsw-alias-*` token, so all skins stay in
+ * charge — including the token's own fallback chain, which keeps the glyph
+ * legible on a host that does not define the brand/state families. The plugin
+ * never writes a color literal here; `tests/theme.spec.ts` enforces both
+ * halves of that rule.
+ *
+ * The chips sit on the panel surface, so a token that is itself translucent
+ * would wash out at 14px; each rule therefore prefers an opaque state/brand
+ * token and falls back to the primary ink.
+ */
+
+.files {
+  color: var(--dsw-alias-brand-primary, var(--dsw-alias-label-primary));
+}
+
+.changes {
+  color: var(--dsw-alias-state-success-primary, var(--dsw-alias-brand-primary, var(--dsw-alias-label-primary)));
+}
+
+.tasks {
+  color: var(--dsw-alias-state-warn-primary, var(--dsw-alias-label-primary));
+}
+
+.sidechat {
+  color: var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary, var(--dsw-alias-label-primary)));
+}
+
+.terminal {
+  /* The shell chip is ink, not accent. Its glyph is the widest in the set and
+     renders a step smaller than its siblings (see tab-icons.tsx). */
+  color: var(--dsw-alias-label-primary);
+}
+
+.browser {
+  color: var(--dsw-alias-state-business-primary, var(--dsw-alias-brand-primary, var(--dsw-alias-label-primary)));
+}

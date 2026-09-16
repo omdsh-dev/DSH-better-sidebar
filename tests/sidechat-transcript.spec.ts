@@ -80,15 +80,15 @@ describe('transcriptRows', () => {
     ])
   })
 
-  it('accumulates chunk deltas per block and supersedes them on settle', () => {
+  it('accumulates live deltas per block and supersedes them on settle', () => {
     const entries = [
       entry(ev('session/end-seed', 0)),
       entry(ev('user/message', 1, { content: textBlocks('q'), source: { kind: 'user' } })),
       entry(ev('turn/start', 2, { turn: 1 })),
       entry(ev('step/start', 3, { turn: 1, step: 1 })),
-      entry(ev('assistant/chunk', 4, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'Hel' } })),
-      entry(ev('assistant/chunk', 5, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'lo' } })),
-      entry(ev('assistant/chunk', 6, { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 1, text: 'think' } })),
+      entry(ev('assistant/live-chunk', 4, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'Hel' } })),
+      entry(ev('assistant/live-chunk', 5, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'lo' } })),
+      entry(ev('assistant/live-chunk', 6, { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 1, text: 'think' } })),
     ]
     const rows = transcriptRows(entries)
     const assistant = rows.find(row => row.kind === 'assistant') as Extract<SidechatTranscriptRow, { kind: 'assistant' }>
@@ -104,7 +104,7 @@ describe('transcriptRows', () => {
       entry(ev('user/message', 1, { content: textBlocks('q'), source: { kind: 'user' } })),
       entry(ev('turn/start', 2, { turn: 1 })),
       entry(ev('step/start', 3, { turn: 1, step: 1 })),
-      entry(ev('assistant/chunk', 4, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'par' } })),
+      entry(ev('assistant/live-chunk', 4, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'par' } })),
       entry(ev('assistant/message', 5, { turn: 1, step: 1, message: { content: textBlocks('final answer') } })),
     ]
     const rows = transcriptRows(entries)

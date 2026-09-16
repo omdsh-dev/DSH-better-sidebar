@@ -1,5 +1,15 @@
-/** Stable selector for the DSH AppFrame conversation slot. */
-const CENTER_COLUMN_SELECTOR = '#root [data-slot="conversation"]'
+/**
+ * Anchor selectors for the DSH AppFrame conversation slot host, newest first:
+ *
+ * - DSH 0.1.5-alpha.2 replaced the root `conversation` slot with a root-scoped
+ *   keyed `main` slot, so the conversation renders under `main.conversation`
+ *   (ConversationPanel -> `renderSlot('main.conversation')`);
+ * - alpha.1 and earlier spell the same host `conversation`.
+ *
+ * Both keys are accepted deliberately so one build spans the alpha.1 → alpha.2
+ * boundary; only one exists in any given host.
+ */
+const CENTER_COLUMN_SELECTOR = '#root [data-slot="main.conversation"], #root [data-slot="conversation"]'
 
 /** Match Sidebar's existing last-resort retry cadence (issue #248). */
 export const CENTER_COLUMN_REVALIDATE_MS = 1500
@@ -26,6 +36,22 @@ const validatedAt = new WeakMap<HTMLElement, number>()
  * fast path immediately, without requiring Sidebar to run a second locator.
  */
 const documentStyleState = new WeakMap<Document, string | null>()
+
+/**
+ * From the matched conversation slot host, walk up through transparent slot
+ * hosts to the real column: DSH slot hosts render with `display: contents`,
+ * so on alpha.2 the `main.conversation` host (and any further keyed slot
+ * wrappers above it) contributes no box, and the center column is the first
+ * ancestor whose computed display is NOT `contents`.
+ */
+function columnOfSlotHost(host: Element): HTMLElement | null {
+  const view = host.ownerDocument.defaultView
+  let node = host.parentElement
+  while (node !== null && (view?.getComputedStyle(node).display ?? '') === 'contents') {
+    node = node.parentElement
+  }
+  return node
+}
 
 /**
  * Resolve the AppFrame center column while keeping streaming mutations cheap.
@@ -74,7 +100,8 @@ export function resolveCenterColumn(
   }
 
   const query = options.query ?? (() => doc.querySelector(CENTER_COLUMN_SELECTOR))
-  const col = query()?.parentElement as HTMLElement | null | undefined
+  const host = query()
+  const col = host === null || host === undefined ? null : columnOfSlotHost(host)
   if (col === null || col === undefined || !col.isConnected) return undefined
 
   validatedAt.set(col, now)

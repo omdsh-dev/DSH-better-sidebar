@@ -7,10 +7,10 @@
  * Untracked files produce no `git diff` output; the caller passes their
  * content to render as a full-file addition instead.
  */
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { t } from '../locales.ts'
-import { diffStats, displayPath, parseUnifiedDiff, unifiedSegments, untrackedFile, type DiffFile } from './rows.ts'
+import { diffStats, displayPath, parseUnifiedDiff, unifiedSegments, untrackedFile, type DiffFile, type DiffRow, type FoldSegment } from './rows.ts'
 import { langOfPath } from './highlight.ts'
 import { DiffRows } from './DiffRows.tsx'
 import css from './diff.module.css'
@@ -51,9 +51,14 @@ export interface DiffFilesProps {
   /** Untracked-file content: when present, renders as a full-file addition instead of parsing. */
   untrackedPath?: string
   untrackedContent?: string
+  /** Fetch a git gap fold's hidden rows on demand (both sides' contents by
+   *  the fold's line ranges); forwarded to every file's DiffRows. Absent
+   *  folds without `rows` stay non-expandable (session-op diffs and
+   *  untracked additions always carry theirs). */
+  resolveFold?: (file: DiffFile, segment: FoldSegment) => Promise<readonly DiffRow[]>
 }
 
-export function DiffFiles({ diff, untrackedPath, untrackedContent }: DiffFilesProps) {
+export function DiffFiles({ diff, untrackedPath, untrackedContent, resolveFold }: DiffFilesProps) {
   const parsed = useMemo(() => {
     if (untrackedPath !== undefined) {
       return { files: [untrackedFile(untrackedPath, untrackedContent ?? '')] }
@@ -62,6 +67,26 @@ export function DiffFiles({ diff, untrackedPath, untrackedContent }: DiffFilesPr
   }, [diff, untrackedPath, untrackedContent])
   const [expandedFiles, setExpandedFiles] = useState<Set<number>>(() => defaultExpandedFiles(parsed.files))
   useEffect(() => { setExpandedFiles(defaultExpandedFiles(parsed.files)) }, [parsed])
+
+  // One in-flight/resolved promise per file+fold key, so a fold re-clicked
+  // after a remount (file header collapsed and re-expanded) resolves without
+  // a second fetch and concurrent clicks join the same request. The cache
+  // dies with `parsed` (a new diff text); rejected promises are dropped so a
+  // later retry can go through.
+  const foldCache = useRef(new Map<string, Promise<readonly DiffRow[]>>())
+  useEffect(() => { foldCache.current = new Map() }, [parsed])
+  const loadFold = (file: DiffFile, segment: FoldSegment): Promise<readonly DiffRow[]> => {
+    if (resolveFold === undefined) return Promise.resolve([])
+    const path = displayPath(file.newPath === '/dev/null' ? file.oldPath : file.newPath)
+    const key = `${path}|${String(segment.oldStart)}|${String(segment.newStart)}`
+    let promise = foldCache.current.get(key)
+    if (promise === undefined) {
+      promise = resolveFold(file, segment)
+      foldCache.current.set(key, promise)
+      promise.catch(() => { foldCache.current.delete(key) })
+    }
+    return promise
+  }
 
   // Segments and header stats computed once per file.
   const files = useMemo(
@@ -107,7 +132,7 @@ export function DiffFiles({ diff, untrackedPath, untrackedContent }: DiffFilesPr
           )}
         </button>
         {expandable && fileExpanded && (
-          <DiffRows segments={segments} lang={langOfPath(to)} />
+          <DiffRows segments={segments} lang={langOfPath(to)} resolveFold={resolveFold !== undefined ? (segment) => loadFold(file, segment) : undefined} />
         )}
       </div>
     )

@@ -54,11 +54,8 @@ import clsx from 'clsx'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
-  clampWidthPercent,
   TITLE_BAR_STRIP_MAX,
   TITLE_BAR_STRIP_MIN,
-  WIDTH_PERCENT_MAX,
-  WIDTH_PERCENT_MIN,
   type SidebarPrefs,
 } from '../prefs-shared.ts'
 import { api } from './api.ts'
@@ -572,7 +569,6 @@ export function SettingsBody(props: {
  */
 export function SideCardSection({ store, service }: SideCardSectionProps) {
   const [prefs, setPrefs] = useState<SidebarPrefs>(() => store.getPrefs())
-  const [widthDraft, setWidthDraft] = useState<string>(String(store.getPrefs().defaultWidthPercent))
   const [error, setError] = useState<string | null>(null)
   // Which feature's secondary settings popup is open (null = closed).
   const [settingsFor, setSettingsFor] = useState<TabDescriptor | FileViewerDescriptor | null>(null)
@@ -624,9 +620,7 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
       if (cancelled) return
       revisionRef.current = view.revision
       if (dirtyRef.current) return
-      const next = parsePrefs(view.value)
-      setPrefs(next)
-      setWidthDraft(String(next.defaultWidthPercent))
+      setPrefs(parsePrefs(view.value))
     }).catch(() => { /* the store's defaults stay authoritative */ })
     return () => { cancelled = true }
   }, [])
@@ -657,9 +651,7 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
 
   /** Settle one commit: success adopts the server values, failure reverts. */
   const applyOutcome = (previous: SidebarPrefs, outcome: { ok: boolean; prefs: SidebarPrefs }): void => {
-    const settled = outcome.ok ? outcome.prefs : previous
-    setPrefs(settled)
-    setWidthDraft(String(settled.defaultWidthPercent))
+    setPrefs(outcome.ok ? outcome.prefs : previous)
   }
 
   /** Optimistically apply one pref patch, then commit (revert on failure). */
@@ -670,10 +662,6 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     setPrefs(next)
     setError(null)
     void commit(patch).then(outcome => applyOutcome(previous, outcome))
-  }
-
-  const onToggle = (next: boolean): void => {
-    applyPref({ openByDefault: next })
   }
 
   /** Flip one per-tab enable switch (merge into the tabsEnabled map). */
@@ -778,20 +766,6 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     return raw
   }
 
-  const commitWidth = (): void => {
-    const parsed = Number(widthDraft)
-    if (!Number.isFinite(parsed)) {
-      setWidthDraft(String(prefs.defaultWidthPercent))
-      return
-    }
-    const clamped = clampWidthPercent(parsed)
-    const previous = prefs
-    setPrefs({ ...previous, defaultWidthPercent: clamped })
-    setWidthDraft(String(clamped))
-    setError(null)
-    void commit({ defaultWidthPercent: clamped }).then(outcome => applyOutcome(previous, outcome))
-  }
-
   /**
    * One SMALL toggle card for the responsive inventory grid: the card's main
    * area is the switch (click to flips, visual state IS the state), the icon
@@ -867,51 +841,6 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
       {/* 常规: the DSH settings-row recipe — title/desc left, control right. */}
       <div className={css.group}>
         <div className={css.groupHeading}>{t('settingsGeneralTitle')}</div>
-        <div className={css.row}>
-          <span className={css.rowText}>
-            <span className={css.title}>{t('settingsOpenTitle')}</span>
-            <span className={css.desc}>{t('settingsOpenDesc')}</span>
-          </span>
-          <Switch
-            label={t('settingsOpenTitle')}
-            checked={prefs.openByDefault}
-            onChange={onToggle}
-          />
-        </div>
-        <div className={css.row}>
-          <span className={css.rowText}>
-            <span className={css.title}>{t('settingsWidthTitle')}</span>
-            <span className={css.desc}>{t('settingsWidthDesc')}</span>
-          </span>
-          <span className={css.control}>
-            <Input
-              type="number"
-              className={css.percentInput}
-              value={widthDraft}
-              min={WIDTH_PERCENT_MIN}
-              max={WIDTH_PERCENT_MAX}
-              step={1}
-              aria-label={t('settingsWidthTitle')}
-              onChange={event => { setWidthDraft(event.currentTarget.value) }}
-              onBlur={commitWidth}
-              onKeyDown={event => {
-                if (event.key === 'Enter') event.currentTarget.blur()
-              }}
-            />
-            <span className={css.suffix}>{t('settingsWidthSuffix')}</span>
-          </span>
-        </div>
-        <div className={css.row}>
-          <span className={css.rowText}>
-            <span className={css.title}>{t('settingsOpenPathTitle')}</span>
-            <span className={css.desc}>{t('settingsOpenPathDesc')}</span>
-          </span>
-          <Switch
-            label={t('settingsOpenPathTitle')}
-            checked={prefs.interceptOpenPath}
-            onChange={(next) => { applyPref({ interceptOpenPath: next }) }}
-          />
-        </div>
         <div className={css.row}>
           <span className={css.rowText}>
             <span className={css.title}>{t('settingsOpenToolsTitle')}</span>

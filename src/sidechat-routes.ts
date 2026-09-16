@@ -27,6 +27,7 @@ import type { Agent, AgentSetup, CreateAgentOptions, ResumeAgentOptions } from '
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import type { Context as CordisContext } from '@deepseek-ai/cordis'
 import type { SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import { SessionLogOffset } from '@deepseek-ai/dsh-session'
 import type {
   Context,
   SidebarAgentPresetsService,
@@ -36,17 +37,21 @@ import type {
 import {
   boundaryDelivered,
   buildSidechatInheritance,
+  liveEventsOf,
   resolvePresetId,
   SIDE_BOUNDARY_PROMPT,
   SIDE_INJECTION_PLUGIN,
   SIDE_NEW_THREAD_TITLE,
   sideLabel,
   type SeedEvent,
+  type SidechatLiveEvent,
   type SidechatLogEvent,
   type SidechatThreadInfo,
   threadOwnLogEvents,
 } from './sidechat-core.ts'
+import type { AssistantLiveBuffer } from './assistant-live.ts'
 import { requireString, SidebarError } from './wire.ts'
+import { readPersistedSession } from './session-store.ts'
 
 /** The six Side Chat routes of the sidebar API (wire method names). */
 export interface SidechatRoutes {
@@ -65,8 +70,10 @@ export interface SidechatRoutes {
   'sidechat.info'(payload: unknown): Promise<SidechatThreadInfo>
   /** The thread's OWN transcript events, seed-cut host-side (the inherited
    *  parent log never crosses the wire); `afterSeq` narrows the response to
-   *  the delta beyond it (poll tail). */
-  'sidechat.events'(payload: unknown): Promise<{ events: SidechatLogEvent[] }>
+   *  the delta beyond it (poll tail). `live` carries the thread's in-flight
+   *  model deltas, which DSH 0.1.5 publishes outside the session log — it is
+   *  the CURRENT attempt's rows on every poll, never a delta. */
+  'sidechat.events'(payload: unknown): Promise<{ events: SidechatLogEvent[]; live: SidechatLiveEvent[] }>
 }
 
 /** Timeout guarding the create call (the registry detaches it before the
@@ -116,8 +123,8 @@ async function composePersistedSetup(
   if (persistence === undefined) {
     return () => Promise.resolve()
   }
-  const inspected = await persistence.inspect(childId)
-  const presetId = resolvePresetId(inspected.meta, inspected.events)
+  const inspected = await readPersistedSession(persistence, childId)
+  const presetId = resolvePresetId(inspected.header, inspected.events)
   const presets = ctx.get('agentPresets') as SidebarAgentPresetsService | undefined
   if (presets === undefined || presetId === undefined) {
     return () => Promise.resolve()
@@ -185,7 +192,7 @@ async function threadLogEvents(ctx: Context, childId: string): Promise<readonly 
     throw new SidebarError('sidechat-error', 'the session persistence service is unavailable', 503)
   }
   try {
-    const inspected = await persistence.inspect(childId)
+    const inspected = await readPersistedSession(persistence, childId)
     return inspected.events as unknown as readonly SidechatLogEvent[]
   } catch (error: unknown) {
     throw new SidebarError(
@@ -198,8 +205,11 @@ async function threadLogEvents(ctx: Context, childId: string): Promise<readonly 
 
 /** Build the Side Chat routes (all optional services degrade to a wire
  *  error the tab surfaces inline). The record keys are the FULL wire method
- *  names the /sidebar/api dispatcher looks up (`api[method]`). */
-export function buildSidechatApi(ctx: Context): SidechatRoutes {
+ *  names the /sidebar/api dispatcher looks up (`api[method]`).
+ *  @param ctx - host plugin context.
+ *  @param live - the live assistant stream buffer; absent only in tests that
+ *    never exercise streaming (then every `live` response is empty). */
+export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): SidechatRoutes {
   return {
     'sidechat.start': async (payload: unknown) => {
       const sessionId = requireString(payload, 'sessionId')
@@ -212,6 +222,7 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
       const parentSession = parent.session
       const inheritance = buildSidechatInheritance(
         parentSession.snapshotEvents() as unknown as readonly SidechatLogEvent[],
+        live?.chunksFor(sessionId) ?? [],
       )
       const { agentPreset, setup } = await composeChildSetup(
         ctx,
@@ -238,16 +249,28 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
         data: descriptor as unknown as Record<string, unknown>,
       }
       const seed = [...inheritance.seed, descriptorEvent]
+      // Fork-marker fields (the exact shape the host's own session.fork uses,
+      // api-session-controller): without `isSeeded` + `inheritedEventCount` the
+      // session treats the whole seed as the child's OWN events, so the child's
+      // Inbox constructor replays the parent's `agent/inbox/spliced` events and
+      // inherits whatever input sat UNCLAIMED in the parent at the click moment
+      // (a queued follow-up, or a tool-result context spliced into next-step
+      // between step boundaries of a long-running turn). The first side prompt
+      // would then claim and send that stale message BEFORE the boundary +
+      // question. The marker keeps `ownEvents()` at the end-seed boundary, so
+      // the inherited inbox replays to empty.
       const options: CreateAgentOptions = {
         sessionId: childId,
         meta: {
           ...(parentSession.header.cwd === undefined ? {} : { cwd: parentSession.header.cwd }),
           parentSession: parentSession.id,
+          isSeeded: true,
           origin: 'subagent',
           delegationDepth: (parentSession.header.delegationDepth ?? 0) + 1,
           ...(agentPreset === undefined ? {} : { agentPreset }),
         },
         seed: seed as unknown as readonly SessionEvent[],
+        inheritedEventCount: SessionLogOffset(seed.length),
         agentOptions: { ...parent.options },
         setup,
         signal: AbortSignal.timeout(CREATE_TIMEOUT_MS),
@@ -375,8 +398,8 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
       const persistence = ctx.get('sessionPersistence') as SidebarSessionPersistenceService | undefined
       if (persistence !== undefined) {
         try {
-          const inspected = await persistence.inspect(childId)
-          const preset = resolvePresetId(inspected.meta, inspected.events)
+          const inspected = await readPersistedSession(persistence, childId)
+          const preset = resolvePresetId(inspected.header, inspected.events)
           return { live: false, ...(preset === undefined ? {} : { preset }) }
         } catch {
           // Unknown/gone session: report a bare cold info.
@@ -395,7 +418,13 @@ export function buildSidechatApi(ctx: Context): SidechatRoutes {
       const events = await threadLogEvents(ctx, childId)
       const own = threadOwnLogEvents(events)
       const fresh = rawAfter === undefined ? own : own.filter(event => event.seq > rawAfter)
-      return { events: fresh.length > EVENTS_CAP ? fresh.slice(fresh.length - EVENTS_CAP) : fresh }
+      const tailSeq = own.at(-1)?.seq ?? -1
+      return {
+        events: fresh.length > EVENTS_CAP ? fresh.slice(fresh.length - EVENTS_CAP) : fresh,
+        // The live rows ride every poll: they are process-local, so there is
+        // no durable seq to page them by. An idle thread has none.
+        live: liveEventsOf(live?.chunksFor(childId) ?? [], tailSeq),
+      }
     },
   }
 }

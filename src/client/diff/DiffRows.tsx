@@ -4,11 +4,14 @@
  * line gutters, rewrite (mod) tinting with intra-line character highlights,
  * lightweight syntax coloring, and long-line folding. Presentational — the
  * segments arrive precomputed (session ops via buildDiffSegments, git diffs
- * via unifiedSegments) so both producers render identically.
+ * via unifiedSegments) so both producers render identically; the one
+ * exception is git gap folds, whose rows git never emitted and a caller
+ * supplies on demand through resolveFold (first click fetches, then they
+ * toggle like any fold).
  */
-import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { t } from '../locales.ts'
-import { coalesceInline, diffInline, MIN_FOLD, type DiffRow, type DiffSegment, type InlineDiff } from './rows.ts'
+import { coalesceInline, diffInline, MIN_FOLD, type DiffRow, type DiffSegment, type FoldSegment, type InlineDiff } from './rows.ts'
 import { hasBlockComment, isColored, scanLine, type CodeToken, type TokenType } from './highlight.ts'
 import css from './diff.module.css'
 
@@ -105,21 +108,36 @@ export interface DiffRowsProps {
   segments: readonly DiffSegment[]
   /** Syntax language id (langOfPath); undefined renders plain text. */
   lang?: string
+  /** Fetch a git gap fold's hidden rows on demand (both sides' contents
+   *  sliced by the fold's line ranges). Absent folds without `rows` — git's
+   *  unemitted gaps without a resolver — stay non-expandable markers. */
+  resolveFold?: (segment: FoldSegment) => Promise<readonly DiffRow[]>
 }
 
 /** One file's diff rows: fold chips between hunks, highlighted code rows. */
-export function DiffRows({ segments, lang }: DiffRowsProps) {
+export function DiffRows({ segments, lang, resolveFold }: DiffRowsProps) {
   // Long diff lines fold to one ellipsized row; the set holds expanded row keys.
   const [expandedLines, setExpandedLines] = useState<ReadonlySet<string>>(new Set())
   // Hunk-fold segments expanded by index; default collapsed.
   const [expandedFolds, setExpandedFolds] = useState<ReadonlySet<number>>(new Set())
   // Row-count cap expanded: a huge file renders head rows plus this button.
   const [expandedAll, setExpandedAll] = useState(false)
+  // On-demand fold expansion (git gaps): resolved rows per segment index,
+  // the loading/failed markers, and an epoch that invalidates in-flight
+  // resolves when the segments identity changes.
+  const [foldData, setFoldData] = useState<ReadonlyMap<number, readonly DiffRow[]>>(new Map())
+  const [foldLoading, setFoldLoading] = useState<ReadonlySet<number>>(new Set())
+  const [foldFailed, setFoldFailed] = useState<ReadonlySet<number>>(new Set())
+  const foldEpoch = useRef(0)
   // Reset all folding when the segments identity changes (new target).
   useEffect(() => {
     setExpandedLines(new Set())
     setExpandedFolds(new Set())
     setExpandedAll(false)
+    setFoldData(new Map())
+    setFoldLoading(new Set())
+    setFoldFailed(new Set())
+    foldEpoch.current += 1
   }, [segments])
 
   const inlineMap = useMemo(() => buildInlineMap(segments), [segments])
@@ -190,7 +208,19 @@ export function DiffRows({ segments, lang }: DiffRowsProps) {
         </div>
       )
     }
-    const expandable = segment.rows !== undefined && segment.count >= MIN_FOLD
+    if (foldFailed.has(segIndex)) {
+      // The on-demand fetch failed: a quiet, non-clickable marker — the
+      // expansion promise is gone, so no interaction is promised either.
+      return (
+        <div key={`fold-${String(segIndex)}`} className={css.foldRow}>
+          <span className={css.foldMarker} title={t('changesContext')}>
+            {t('changesFoldUnavailable')}
+          </span>
+        </div>
+      )
+    }
+    const resolvedRows = foldData.get(segIndex)
+    const expandable = (segment.rows !== undefined || resolvedRows !== undefined || resolveFold !== undefined) && segment.count >= MIN_FOLD
     if (!expandable) {
       // A tiny fold (or a git gap with no rows to reveal): a quiet marker.
       return (
@@ -201,27 +231,49 @@ export function DiffRows({ segments, lang }: DiffRowsProps) {
         </div>
       )
     }
+    const loading = foldLoading.has(segIndex)
     const isExpanded = expandedFolds.has(segIndex)
+    const revealed = segment.rows ?? resolvedRows
     return (
       <div
         key={`fold-${String(segIndex)}`}
         className={css.foldRow}
-        data-expandable="true"
+        data-expandable={loading ? undefined : 'true'}
         data-expanded={isExpanded ? 'true' : undefined}
-        onClick={() => {
-          setExpandedFolds(prev => {
-            const next = new Set(prev)
-            if (next.has(segIndex)) next.delete(segIndex)
-            else next.add(segIndex)
-            return next
-          })
+        onClick={loading ? undefined : () => {
+          if (revealed !== undefined) {
+            setExpandedFolds(prev => {
+              const next = new Set(prev)
+              if (next.has(segIndex)) next.delete(segIndex)
+              else next.add(segIndex)
+              return next
+            })
+            return
+          }
+          // A git gap fold's first click: fetch its rows, then expand.
+          if (resolveFold === undefined) return
+          const epoch = foldEpoch.current
+          setFoldLoading(prev => new Set(prev).add(segIndex))
+          resolveFold(segment).then(
+            (rows) => {
+              if (foldEpoch.current !== epoch) return
+              setFoldData(prev => new Map(prev).set(segIndex, rows))
+              setFoldLoading(prev => { const next = new Set(prev); next.delete(segIndex); return next })
+              setExpandedFolds(prev => new Set(prev).add(segIndex))
+            },
+            () => {
+              if (foldEpoch.current !== epoch) return
+              setFoldLoading(prev => { const next = new Set(prev); next.delete(segIndex); return next })
+              setFoldFailed(prev => new Set(prev).add(segIndex))
+            },
+          )
         }}
       >
-        {isExpanded
-          ? segment.rows!.map((row, index) => renderDiffRow(row, `${segIndex}-${String(index)}`))
+        {isExpanded && revealed !== undefined
+          ? revealed.map((row, index) => renderDiffRow(row, `${segIndex}-${String(index)}`))
           : (
             <span className={css.foldMarker} title={t('changesContext')}>
-              {t('changesFold', { count: segment.count })}
+              {loading ? t('changesFoldLoading') : t('changesFold', { count: segment.count })}
             </span>
           )}
       </div>

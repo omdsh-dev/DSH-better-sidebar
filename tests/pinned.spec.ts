@@ -3,11 +3,11 @@
  * states. Covers the visibility matrix (global / workspace × cwd match /
  * mismatch / both undefined / viewer-only undefined) and the cross-session
  * collection (multi-session, exclusion of the viewer's own session, stable
- * tree order, floats).
+ * tree order).
  */
 import { describe, expect, it } from 'vitest'
 import {
-  floatTab, makeDefaultState, openTabInActivePane, setTabPin, toggleBottomPanel,
+  makeDefaultState, openTabInBottomPane, setTabPin, splitPane,
   type SidebarState,
 } from '../src/client/state.ts'
 import { collectPinnedTabs, pinnedVisibleTo, type PinnedViewer,
@@ -21,7 +21,7 @@ function stateWithPinnedTerminal(
   pin: { scope: 'workspace' | 'global'; homeCwd?: string },
 ): SidebarState {
   let s = makeDefaultState()
-  s = openTabInActivePane(s, { id, type: 'terminal', title: id })
+  s = openTabInBottomPane(s, { id, type: 'terminal', title: id })
   return setTabPin(s, id, pin)
 }
 
@@ -100,25 +100,20 @@ describe('collectPinnedTabs', () => {
     expect(entries.map(e => e.tab.id)).toEqual(['terminal:2'])
   })
 
-  it('collects in stable tree order: splits → bottomSplits → floats', () => {
+  it('collects in stable tree order (the workbench split tree, depth-first)', () => {
     let home = makeDefaultState()
-    // Right tree tab first.
-    home = openTabInActivePane(home, { id: 'terminal:right', type: 'terminal', title: 'R' })
-    home = setTabPin(home, 'terminal:right', { scope: 'global' })
-    // Bottom tree tab second.
-    home = toggleBottomPanel(home)
-    const bottomPane = (home.bottomSplits as { id: string }).id
-    home = { ...home, activePane: bottomPane }
-    home = openTabInActivePane(home, { id: 'terminal:bottom', type: 'terminal', title: 'B' })
-    home = setTabPin(home, 'terminal:bottom', { scope: 'global' })
-    // Float last.
-    home = openTabInActivePane(home, { id: 'terminal:float', type: 'terminal', title: 'F' })
-    home = setTabPin(home, 'terminal:float', { scope: 'global' })
-    home = floatTab(home, 'terminal:float', 50, 50)
+    home = openTabInBottomPane(home, { id: 'terminal:first', type: 'terminal', title: 'A' })
+    home = setTabPin(home, 'terminal:first', { scope: 'global' })
+    // A second leaf to the right of the first one: its tabs collect after.
+    const firstPane = (home.bottomSplits as { id: string }).id
+    home = splitPane(home, 'row')
+    home = openTabInBottomPane(home, { id: 'terminal:second', type: 'terminal', title: 'B' })
+    home = setTabPin(home, 'terminal:second', { scope: 'global' })
+    expect(firstPane).not.toBe('')
 
     const bySession = new Map<string, SidebarState>([['home', home]])
     const entries = collectPinnedTabs(bySession, viewer('viewer', '/p'))
-    expect(entries.map(e => e.tab.id)).toEqual(['terminal:right', 'terminal:bottom', 'terminal:float'])
+    expect(entries.map(e => e.tab.id)).toEqual(['terminal:first', 'terminal:second'])
   })
 
   it('keeps stable insertion order across multiple home sessions', () => {
@@ -133,10 +128,10 @@ describe('collectPinnedTabs', () => {
 
   it('ignores unpinned terminals and non-terminal tabs in other sessions', () => {
     let home = makeDefaultState()
-    home = openTabInActivePane(home, { id: 'terminal:unpinned', type: 'terminal', title: 'U' })
-    home = openTabInActivePane(home, { id: 'editor:1', type: 'editor', title: 'E', path: '/e' })
+    home = openTabInBottomPane(home, { id: 'terminal:unpinned', type: 'terminal', title: 'U' })
+    home = openTabInBottomPane(home, { id: 'editor:1', type: 'editor', title: 'E', path: '/e' })
     home = setTabPin(home, 'editor:1', { scope: 'global' }) // defensive: pin only targets terminals
-    home = openTabInActivePane(home, { id: 'terminal:pinned', type: 'terminal', title: 'P' })
+    home = openTabInBottomPane(home, { id: 'terminal:pinned', type: 'terminal', title: 'P' })
     home = setTabPin(home, 'terminal:pinned', { scope: 'global' })
     const bySession = new Map<string, SidebarState>([['home', home]])
     const entries = collectPinnedTabs(bySession, viewer('viewer', '/p'))
@@ -206,7 +201,7 @@ describe('createPinnedVirtualTab', () => {
 
 describe('injectPinnedIntoTree', () => {
   it('returns the original tree when no pinned tabs and no active override', () => {
-    const tree = makeDefaultState().splits
+    const tree = makeDefaultState().bottomSplits
     expect(injectPinnedIntoTree(tree, [], null)).toBe(tree)
   })
 
@@ -216,7 +211,7 @@ describe('injectPinnedIntoTree', () => {
       tab: { id: 'terminal:3', type: 'terminal', title: 'T3', pin: { scope: 'global' } },
       homeSessionId: 'home',
     })
-    const result = injectPinnedIntoTree(s.splits, [vtab], null)
+    const result = injectPinnedIntoTree(s.bottomSplits, [vtab], null)
     expect(result.kind).toBe('leaf')
     if (result.kind === 'leaf') {
       expect(result.tabs[result.tabs.length - 1]!.id).toBe('pinned:home:terminal:3')
@@ -224,12 +219,12 @@ describe('injectPinnedIntoTree', () => {
   })
 
   it('overrides the first leaf active when activePinnedId is set', () => {
-    const s = openTabInActivePane(makeDefaultState(), { id: 'terminal:1', type: 'terminal', title: 'T1' })
+    const s = openTabInBottomPane(makeDefaultState(), { id: 'terminal:1', type: 'terminal', title: 'T1' })
     const vtab = createPinnedVirtualTab({
       tab: { id: 'terminal:2', type: 'terminal', title: 'T2', pin: { scope: 'global' } },
       homeSessionId: 'home',
     })
-    const result = injectPinnedIntoTree(s.splits, [vtab], vtab.id)
+    const result = injectPinnedIntoTree(s.bottomSplits, [vtab], vtab.id)
     if (result.kind === 'leaf') {
       expect(result.active).toBe(vtab.id)
       expect(result.tabs.map(t => t.id)).toContain(vtab.id)
@@ -239,18 +234,18 @@ describe('injectPinnedIntoTree', () => {
 
   it('injects into the first child of a split tree', () => {
     let s = makeDefaultState()
-    s = openTabInActivePane(s, { id: 'terminal:1', type: 'terminal', title: 'T1' })
+    s = openTabInBottomPane(s, { id: 'terminal:1', type: 'terminal', title: 'T1' })
     // Create a split (splits the active pane into two)
-    const leafId = s.splits.kind === 'leaf' ? s.splits.id : ''
-    s = { ...s, splits: { kind: 'split', id: 'split:1', dir: 'row', sizes: [0.5, 0.5], children: [
-      { kind: 'leaf', id: leafId, tabs: s.splits.kind === 'leaf' ? s.splits.tabs : [], active: 'terminal:1' },
+    const leafId = s.bottomSplits.kind === 'leaf' ? s.bottomSplits.id : ''
+    s = { ...s, bottomSplits: { kind: 'split', id: 'split:1', dir: 'row', sizes: [0.5, 0.5], children: [
+      { kind: 'leaf', id: leafId, tabs: s.bottomSplits.kind === 'leaf' ? s.bottomSplits.tabs : [], active: 'terminal:1' },
       { kind: 'leaf', id: 'pane:2', tabs: [], active: null },
     ] } }
     const vtab = createPinnedVirtualTab({
       tab: { id: 'terminal:2', type: 'terminal', title: 'T2', pin: { scope: 'global' } },
       homeSessionId: 'home',
     })
-    const result = injectPinnedIntoTree(s.splits, [vtab], null)
+    const result = injectPinnedIntoTree(s.bottomSplits, [vtab], null)
     expect(result.kind).toBe('split')
     if (result.kind === 'split') {
       const first = result.children[0]!

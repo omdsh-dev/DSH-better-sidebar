@@ -19,6 +19,7 @@ import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
 import { IconFolderOpen16, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
+import type { BetterSidebarService } from './service.ts'
 import type { SidebarStore } from './state.ts'
 import { FileTree } from './FileTree.tsx'
 import { IconUploadOutline16 } from './icons.tsx'
@@ -63,11 +64,17 @@ export function TreePanel(props: {
   onOpenWith?: (targetId: string, path: string) => void
   onToggleOpenWithPin?: (targetId: string) => void
   onReferenceFile: (path: string, isDir: boolean) => void
+  /** A tree rename landed (passed through to FileTree for tab retargeting). */
+  onPathRenamed?: (oldPath: string, newPath: string) => void
+  /** A tree delete landed (passed through to FileTree for tab closing). */
+  onPathDeleted?: (path: string, isDir: boolean) => void
   /** Full-window presentation: the panel fills its host instead of docking
    *  at a fixed width. */
   full?: boolean
+  /** The sidebar registry service (file-icon registrations; passed through to FileTree). */
+  service?: BetterSidebarService
 }) {
-  const { sessionId, cwd, store, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, full } = props
+  const { sessionId, cwd, store, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onPathRenamed, onPathDeleted, full, service } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -252,9 +259,12 @@ export function TreePanel(props: {
           onOpenWith={onOpenWith}
           onToggleOpenWithPin={onToggleOpenWithPin}
           onReferenceFile={onReferenceFile}
+          onPathRenamed={onPathRenamed}
+          onPathDeleted={onPathDeleted}
           refreshTick={refreshTick}
           onUploadRequest={startUpload}
           busy={busy}
+          service={service}
         />
       ) : (
         <div className={css.explorerBody}>

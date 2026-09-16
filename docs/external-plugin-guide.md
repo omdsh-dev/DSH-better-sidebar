@@ -2,9 +2,36 @@
 
 > 面向 **消费插件开发者**：如何让你的插件向 better-sidebar 注册新的侧边栏页面（tab）和文件类型预览器。
 >
-> 适用版本：**v0.4.0+**（`ctx.betterSidebar` 服务）；声明式设置 **v0.4.1+**；text/number 设置行 **v0.11.0+**；badge/生命周期/定向打开/插件设置/版本探测 **v0.12.0+**；select 设置行（`settingSelect`）与外链认领（`urlTarget`）**v0.13.0+**；统一 `@deepseek-ai/cordis` 类型基底 **v0.15.2+**；自由窗口（`floatWindows`）**v0.16.0+**；终端固定（pin）**v0.17.0+**。当前版本 **v0.18.0**（正式版，仅支持 DSH 0.1.2-rc.1+；旧宿主 stable 线为 v0.17.1）。
+> 适用版本：**v0.4.0+**（`ctx.betterSidebar` 服务）；声明式设置 **v0.4.1+**；text/number 设置行 **v0.11.0+**；badge/生命周期/定向打开/插件设置/版本探测 **v0.12.0+**；select 设置行（`settingSelect`）与外链认领（`urlTarget`）**v0.13.0+**；统一 `@deepseek-ai/cordis` 类型基底 **v0.15.2+**；终端固定（pin）**v0.17.0+**。当前版本 **v0.19.1**（正式版，npm `latest`，仅支持 DSH **0.1.5-rc.1+**，已在 **0.1.5-rc.2** 上完成真机挂载验证；**0.1.5-alpha.2 及更早不再支持**——alpha.2 用户请用 v0.19.0-alpha.1，那是它的最后一版；0.1.2-rc.1 稳定线请用 v0.18.x）。**v0.19.0 移除了自绘右侧面板与自由窗口**（见 §0、§11）。
 > 权威代码：`src/client/service.ts`（服务实现）、`src/client/builtins/`（内置 8 tab + 6 viewer 参考实现）、`lib/types/client/service.d.ts`（类型声明）。
 > 仓库开发规则（硬约束 / CI / 发版）见 [AGENTS.md](../AGENTS.md)。
+
+---
+
+## 0. 承载面：DSH 原生右侧栏 + 插件底部工作台（v0.19.0-alpha.0 起）
+
+从 v0.19.0-alpha.0 起，**右列完全属于 DSH**：你的 tab 渲染在 **DSH 自己的右侧栏**里（`ctx.sidebarRight` / `ctx.sidebarRightTabs`），插件把每个 `TabDescriptor` 注册成原生 tab 类型（`kind = descriptor.id`）+ 一个原生 tab 体。插件自己只保留**底部工作台**（分栏树、终端、会话内持久化）。对你的接入代码**没有影响**——仍然只调用 `ctx.betterSidebar`：
+
+- `registerTab` / `registerFileViewer` 签名不变；
+- `openTab` / `openFile` 默认落到原生右侧栏；新增可选 `OpenTabSeed.target`（`'right'` 默认 / `'bottom'` 落插件的底部工作台）；
+- `updateTab` / `closeTab` / `activateTab` 认识原生 tab id（插件为每个原生 tab 维护一条合成 `SidebarTab` 记录，`tab.meta` / `tab.path` 的写入照旧生效）。
+
+行为差异（写在这里以免踩坑）：
+
+| 事项 | 说明 |
+|---|---|
+| 生命周期回调 | 原生面只有「一次打开」，不区分新建/聚焦，因此只触发 `onOpen`（`onActivate` 仅在插件自己的底部工作台里触发） |
+| 去重 | 原生按 `(kind, 地址)` 去重：有 `createTab` 的类型每次新开一个 tab（terminal / browser / sidechat / diff），其余聚焦已有 tab；`dedupeKey` 的自定义语义不参与原生面 |
+| 布局持久化 | 原生栏的布局**只在内存**（刷新后回到折叠默认），插件自己的底部工作台仍然持久化 |
+| 跨会话打开 | 目标会话的右侧栏 store 未挂载时，打开会排队到该会话上屏后重放 |
+| 内置类型接管 | 插件的 `editor` 类型以 `extension` 优先级认领 `dsh-resource://file/**`（压过内置 `ui-sidebar-documentpreview` 的 `text` 预览——即 `fallback` 带），并接管内置 `files` 页面 kind（`openTab('files')` 打开插件的文件树）；插件卸载/禁用时内置实现自动复位 |
+| path 种子的去向（v0.19.2+） | `path` seed 的含义**跟随类型**：只有 `editor`（唯一认领 `dsh-resource://file/**` 的类型）把 path 转成资源地址打开（文件落在编辑器）；**其余类型保留页面型打开**，path 随导航 params 落到合成记录的 `tab.path` 供组件消费——组件型 tab 的 path seed 不会被改道到文件编辑器（v0.19.0/0.19.1 上一切 path seed 都被改道，组件从未挂载，#632） |
+| 终端上限 | 终端 tab 的数量上限只统计插件自己底部工作台里的终端；原生栏里的终端不计入 |
+| 底部工作台的开合 | 落到底部工作台的打开一律展开它（新建与聚焦都算），因此 `openTab` 的落点永远可见；开合按钮注册在 DSH 会话头的 utilities 槽（`conversation.session.header.utilities`），不在插件自己的宿主里 |
+| 新建标签页列表 | 每个 tab 类型在原生 guide 里占一行：标题取 `title` + 图标取 `icon`（缺图标时宿主补一个方块占位），说明取可选的 `description`——**宿主只在 guide 列出的条目 ≤ 4 条时渲染说明**（上游 `MAX_DESCRIBED_ENTRIES = 4`），更长的列表整列丢掉所有说明；未声明 `description` 的条目渲染成单行「图标 + 标题」（rc.1 起 `description` 回到宿主契约，但**宿主与插件都没有兜底句**，所以插件恢复字段而不恢复旧的通用句）；`hidden: true` 的类型不占行。插件的 `editor` 类型不再单独占行（它认领的文件资源由 `files` 接管页承载同一视图）。**注意默认组合看不到说明**：插件贡献 6 个 guide 条目（文件 / 文件变动 / 任务管理 / 侧边对话 / 终端 / 浏览器），已超过 4 条上限——要让说明出现，需在插件设置页关掉足够多的 tab 类型把 guide 压到 ≤ 4 条 |
+| 新建面板的种子（alpha.2） | 在新会话打开原生新面板时，宿主从已注册的 guide 条目里播种：恰好 1 个条目 → 直接打开那一页；0 或 ≥2 个条目 → 打开指南。`revealIfOpened` 打开的「页面」在**同一 pane 内**强制去重（已在该 pane 就不再新建）；由已有 tab 地址驱动的打开不受该去重影响 |
+| alpha.2 全局面板（不接入） | 插件**不采用** alpha.2 引入的全局主面板模型——根级 keyed `main` 槽（预留 key `conversation`，由 ui-conversation 注册为 `main.conversation`）、根级 `sidebar.panellist` 列表槽（`SidebarPanelMetadata` / `SidebarPanelIconOwnerProps`）、`ctx.layout.selectPanel(MainPanelId|null)` / `beginNavigation()` / `dispose()`、全局标准 prop `usePanelInfo`，以及改根级并新增会话级 `rightbar.session` 子槽的 `rightbar`——这些只作兼容保留，不向其迁移 |
+| 已移除 | 插件自绘右侧面板（含宽度拖拽 / 新会话默认宽度）与**自由窗口**（`features` 里的 `'floatWindows'` 已删除，v0.18.x 及更早版本的消费者请勿再 gate 该能力）；`openByDefault` / `defaultWidthPercent` / `changesDiffFloat` 三个设置项同步删除（旧文档里的键会被忽略） |
 
 ---
 
@@ -155,7 +182,15 @@ interface TabDescriptor {
   id: string
   /** 标题（i18n 友好：传字符串或返回字符串的函数） */
   title: string | (() => string)
-  /** 图标：ReactNode 或 (size: number) => ReactNode */
+  /**
+   * 一行说明，渲染在标题下方（DSH 原生右侧栏的新建标签页 / guide 列表）。
+   * **宿主只在 guide 列出的条目 ≤ 4 条时渲染它**（上游 `MAX_DESCRIBED_ENTRIES = 4`），
+   * 更长的列表整列丢掉所有说明——也就是说这是一行「锦上添花」，别把关键信息只放这里。
+   * 不声明就不发 `description` 字段：宿主没有兜底句，插件也不补（通用句在所有页面上
+   * 长得一样，纯噪音），条目就渲染成单行「图标 + 标题」。函数形式在渲染时求值，跟随语言。
+   */
+  description?: string | (() => string)
+  /** 图标：ReactNode 或 (size: number) => ReactNode（不声明时宿主补一个方块占位） */
   icon?: ReactNode | ((size: number) => ReactNode)
   /** + 菜单排序（升序）；默认 100。内置：editor=10, git=20, subagent=30, sidechat=35, terminal=40, browser=50 */
   order?: number
@@ -362,7 +397,7 @@ ctx.effect(() => {
 | id | order | single | hidden | 用途 |
 |---|---|---|---|---|
 | `editor` | 10 | 否（按 path 去重） | 否 | 唯一「文件窗口」（编辑/预览 + 资源管理）。chrome 恒合并形态：路径输入框 + 编辑器控件 + 可开关内嵌文件树（全局搜索 `fs.search`；状态存 `tab.meta.treeOpen/treeWidth`）。`editorExplorer`：关（默认）= 按 path 新开，无路径窗口 = 纯资源管理器；开 = 树点击/Enter 经 `updateTab` 原地切换（id/meta 不变），无路径窗口 = 带 chrome 空窗口。树右键「在新 Tab 中打开」「在侧边打开」（pane 右侧 split）。新会话 seed 空文件窗口（`title:'Files'`）；旧 `explorer` tab 经 `sanitizeState` 迁移 |
-| `git` | 20 | 是 | 是（本轮文件操作数） | 「文件变动」统一 tab（id 保留 `git` 以兼容持久化布局）：**Git 视角**（原 Git 面板：staged/unstaged / 提交 / 历史 / worktree·子仓库选择）+ **本轮文件视角**（原 file-trace：模型读/写/编辑实时折叠，按文件分组、类型筛选）；会话事件经插件自有宿主路由 `changes.ops` 供给（live 日志优先、冷会话回放持久化记录，`afterSeq` 增量），badge 读 tab 轮询写入的同步缓存。两视角共用底部可拖拽预览面板（`tab.meta.lens/previewH` 持久化），diff 渲染统一走 `src/client/diff/`（`DiffRows`/`DiffFiles`：mod 配对 + 行内高亮 + 语法着色 + 上下文折叠）；Git 目标可展开为独立 diff tab——落点由二级设置 `changesDiffFloat` 决定（默认**自由浮窗**居中弹出，可选面板下半 split），设置项见 tab descriptor 的 `settings.toggles` select |
+| `git` | 20 | 是 | 是（本轮文件操作数） | 「文件变动」统一 tab（id 保留 `git` 以兼容持久化布局）：**Git 视角**（原 Git 面板：staged/unstaged / 提交 / 历史 / worktree·子仓库选择）+ **本轮文件视角**（原 file-trace：模型读/写/编辑实时折叠，按文件分组、类型筛选）；会话事件经插件自有宿主路由 `changes.ops` 供给（live 日志优先、冷会话回放持久化记录，`afterSeq` 增量），badge 读 tab 轮询写入的同步缓存。两视角共用底部可拖拽预览面板（`tab.meta.lens/previewH` 持久化），diff 渲染统一走 `src/client/diff/`（`DiffRows`/`DiffFiles`：mod 配对 + 行内高亮 + 语法着色 + 上下文折叠）；Git 目标可展开为独立 diff tab（落进工作台的 diff 分栏） |
 | `subagent` | 30 | 是 | 否 | 子代理拓扑 |
 | `sidechat` | 35 | 否（`sidechat:<uuid>`，按 `meta.threadId` 去重） | 否 | 侧边对话（每对话一 Tab）：打开即建空线程（首条消息赢得标签并同步标题）；线程 = 插件自建子会话（种子继承父会话上下文，进行中回合以 `interrupted` 闭合；种子带合法 `subagent/descriptor`，SubagentView 按 `Side: ` 前缀过滤），`origin:'subagent'` 隐藏于主列表；走 `/sidebar/api/sidechat.*` 路由；头部菜单切换/重开（`parkSidechatReopen` + 确定性 id），关 Tab 释放 live agent；重开经 `collectOwnEvents` 回源到种子边界；「保存为新会话」= `session.fork`（`this` 敏感）。[设计文档](plans/2026-08-20-sidechat-tab-design.md) |
 | `terminal` | 40 | 否（`terminal:<n>`） | 否 | 终端。v0.17.0+ 右键「固定到工作区/全局」：跨会话不消失，TabBar 内联虚拟 Tab（`pinned:<homeSessionId>:<tabId>`），就地按 home scope 连 PTY；global 全会话可见、workspace 仅同 cwd；`tab.pin = { scope, homeCwd? }` 随会话持久化，渲染期解析（`collectPinnedTabs` → `createPinnedVirtualTab` → `injectPinnedIntoTree`） |
@@ -549,10 +584,31 @@ interface BetterSidebarService {
   registerTab(descriptor: TabDescriptor): () => void
   /** 注册文件预览器；返回 disposer */
   registerFileViewer(descriptor: FileViewerDescriptor): () => void
+  /** 注册自定义文件树/文件 tab 图标（v0.19.0+，features 含 'fileIcons'）；返回 disposer */
+  registerFileIcon(descriptor: FileIconDescriptor): () => void
   /** 当前已注册的 tab 描述符快照（同步，供 useSyncExternalStore 用；含被设置页禁用的类型） */
   getTabs(): readonly TabDescriptor[]
   /** 当前已注册的 file viewer 描述符快照（含被设置页禁用的 viewer） */
   getFileViewers(): readonly FileViewerDescriptor[]
+  /** 当前已注册的文件图标描述符快照（v0.19.0+） */
+  getFileIcons(): readonly FileIconDescriptor[]
+  /** 按 path 匹配**具体**注册（priority 降序、注册序）：先 names 文件名，再
+   *  具体扩展名；不查 catch-all 与 folder 保留值。消费方一般直接用
+   *  fileIcon/folderIcon 全链解析器。 */
+  matchFileIcon(path: string): FileIconDescriptor | undefined
+  /** 匹配目录行注册：先按 folderNames 匹配目录名（name 传 basename，可省），
+   *  再按 'folder'/'folder-open' 保留扩展名；priority 降序、注册序；
+   *  返回 undefined = 回退内置 VscFolder/VscFolderOpened */
+  matchFolderIcon(open: boolean, name?: string): FileIconDescriptor | undefined
+  /** 文件图标权威解析器（v0.19.0+），完整回退链：
+   *  ① 具体 names/扩展名注册 → ② 内置 glyph（md/媒体/pdf/json/代码/配置/数据库/lock/压缩包）
+   *  → ③ 最优 catch-all 注册（exts: []，即全局默认）→ ④ 通用 VscFile。
+   *  任一注册工厂抛错都会被吞（console.error 后跳下一级），永远返回有效 ReactNode。 */
+  fileIcon(path: string, size: number): ReactNode
+  /** 目录图标解析器：注册的 folderNames/'folder'（闭合）/'folder-open'（展开）图标 →
+   *  内置 VscFolder/VscFolderOpened；path 为目录自身路径（主题可按目录变化），
+   *  open 会传给工厂，一条注册即可渲染开/合两态。 */
+  folderIcon(path: string, open: boolean, size: number): ReactNode
   /** 按 id 查 tab 描述符 */
   getTab(id: string): TabDescriptor | undefined
   /** 某个 tab 类型是否在 Side card 设置中启用（v0.4.1+；缺省 = 启用） */
@@ -564,7 +620,15 @@ interface BetterSidebarService {
   /**
    * 打开一个 tab（+ 菜单和外部触发都用它；走 descriptor.dedupeKey 去重）。
    * title 可选：给出时优先于 descriptor.title（editor 显示文件名）；
-   * 有 createTab 的 descriptor（terminal）会忽略 title/path/id。
+   * 有 createTab 的 descriptor 分落点：底部工作台（target: 'bottom'）由 createTab
+   * 整体铸造 tab，忽略 seed 的 title/path/id（url 种子仍预填新建 tab 的 path）；
+   * 原生右侧栏只忽略 id（原生 tab id 由宿主铸造，seed.id 仅影响 onOpen 收到的
+   * 合成 tab），createTab 铸造的 title/meta 作缺省、seed 字段优先（v0.19.2+ 起
+   * path 也随导航 params 下发，见下）。
+   * path 可选：含义跟随类型——editor（唯一认领 dsh-resource://file/** 的
+   * 类型）把 path 转成资源地址打开（文件落在编辑器）；其余类型 path 是
+   * 组件种子，随导航 params 落到 tab.path（v0.19.2+；0.19.0/0.19.1 把一切
+   * path seed 都改道文件资源打开，组件型 tab 的组件不会挂载，#632）。
    * url 可选：把**新建** tab 的 path 预填为 URL（侧边栏浏览器导航种子）；
    * 聚焦既有 tab 时 url 不会覆写其 path。
    * 被设置禁用的类型是 no-op（console.warn 提示）。注意：available 不拦截 openTab。
@@ -584,9 +648,10 @@ interface BetterSidebarService {
   // ── v0.12.0+ ──────────────────────────────────────────────────────────
   /** 插件版本（如 '0.17.1'；与 package.json 同步，测试守护） */
   readonly version: string
-  /** 单调能力清单（只增不删）：'badge' | 'tabLifecycle' | 'updateTab' |
-   *  'openFile' | 'targetedOpen' | 'stateSubscription' | 'tabMeta' |
-   *  'pluginSettings' | 'urlTarget' | 'settingSelect' | 'floatWindows'
+  /** 能力清单（只增不删，唯一例外：v0.19.0 删除了 'floatWindows'）：
+   *  'badge' | 'tabLifecycle' | 'updateTab' | 'openFile' | 'targetedOpen' |
+   *  'stateSubscription' | 'tabMeta' | 'pluginSettings' | 'urlTarget' |
+   *  'settingSelect' | 'fileIcons'
    *  ——用 `features.includes('xxx')` 按能力 gate。 */
   readonly features: readonly string[]
   /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs。
@@ -610,6 +675,7 @@ interface BetterSidebarService {
 interface OpenTabSeed {
   type: string
   title?: string
+  /** 文件路径：editor = 打开文件资源；其余类型 = 组件种子（落在 tab.path，v0.19.2+） */
   path?: string
   diff?: SidebarTab['diff']
   id?: string
@@ -618,7 +684,98 @@ interface OpenTabSeed {
    *  undefined = 不改，null = 显式清除 */
   meta?: unknown
 }
+
+/** 文件图标注册描述符（v0.19.0+，features 含 'fileIcons'）。 */
+interface FileIconDescriptor {
+  /** 唯一 id（如 'my-plugin:icons'） */
+  id: string
+  /** 小写扩展名、不带前导点（如 ['csv','tsv']）。两个**保留值**认领目录行
+   *  而非文件扩展名：'folder'（闭合目录）、'folder-open'（展开目录）——
+   *  它们不会匹配真实文件（名为 x.folder 的文件不受影响）。
+   *  [] = catch-all 全局默认：只兜内置 glyph 没认领的扩展名（注册的具体
+   *  names/扩展名与内置 glyph 永远优先于它）。
+   *  **省略** = 完全没有扩展名规则（只有 names 的注册不是 catch-all）。 */
+  exts?: readonly string[]
+  /** 精确**文件名**（basename，大小写不敏感，如 ['package.json','Dockerfile']）——
+   *  图标主题的 fileNames 半边；命中优先于扩展名。省略/[] = 无文件名规则。 */
+  names?: readonly string[]
+  /** 精确**目录名**（basename，大小写不敏感，如 ['node_modules','src']）——
+   *  图标主题的 folderNames 半边；命中优先于保留扩展名，且**只认领列出的
+   *  目录**（要接管所有目录请用 'folder'/'folder-open'）。省略/[] = 无规则。 */
+  folderNames?: readonly string[]
+  /** priority 高者胜，缺省 0（同级按注册先后） */
+  priority?: number
+  /** 尺寸感知的图标工厂（文件树/文件 tab 当前以 size=14 渲染）。
+   *  与内置图标（currentColor 单色，遵循皮肤契约）不同，注册图标可以是
+   *  任意 ReactNode——包括彩色图标；颜色在皮肤间的表现由注册方自行负责。
+   *  open：目录行的展开态（文件行为 undefined），一条注册即可渲染开/合两态。 */
+  icon: (path: string, size: number, open?: boolean) => ReactNode
+}
 ```
+
+**图标注册示例**（v0.19.0+；一次注册可同时覆盖具体扩展名、目录与全局默认）：
+
+```ts
+if (ctx.betterSidebar.features.includes('fileIcons')) {
+  ctx.effect(() =>
+    ctx.betterSidebar.registerFileIcon({
+      id: 'my-plugin:icons',
+      exts: ['csv', 'tsv'],
+      icon: (path, size) => <MyCsvIcon size={size} />, // 彩色也可以
+    })
+  )
+  ctx.effect(() =>
+    ctx.betterSidebar.registerFileIcon({
+      id: 'my-plugin:names', // 精确文件名：package.json 与别的 .json 区分开
+      names: ['package.json', 'Dockerfile'],
+      icon: (path, size) => <MyBrandIcon size={size} />,
+    })
+  )
+  ctx.effect(() =>
+    ctx.betterSidebar.registerFileIcon({
+      id: 'my-plugin:folders', // 只认领列出的目录名
+      folderNames: ['node_modules', 'src'],
+      icon: (path, size, open) => open === true ? <MyOpenFolderIcon size={size} /> : <MyFolderIcon size={size} />,
+    })
+  )
+  ctx.effect(() =>
+    ctx.betterSidebar.registerFileIcon({
+      id: 'my-plugin:all-folders', // 接管所有目录行（保留扩展名）
+      exts: ['folder', 'folder-open'],
+      icon: (path, size, open) => open === true ? <MyOpenFolderIcon size={size} /> : <MyFolderIcon size={size} />,
+    })
+  )
+  ctx.effect(() =>
+    ctx.betterSidebar.registerFileIcon({
+      id: 'my-plugin:default', // 全局默认：只兜内置 glyph 没认领的文件
+      exts: [],
+      icon: (path, size) => <MyGenericFileIcon size={size} />,
+    })
+  )
+}
+```
+
+**消费表面与回退链**（由本插件内置消费，插件无需自己接线）：
+
+- 文件树文件行 / 编辑器文件 tab（每个文件独立窗口）：`fileIcon(path, size)`
+  ——具体 `names`/扩展名注册 → catch-all 全局默认（`exts: []`）→ **DSH 官方图标**。
+- 文件树目录行（含根行）：`folderIcon(path, open, size)`——`folderNames` 命中
+  → `'folder'`/`'folder-open'` 保留扩展名 → DSH 官方的文件夹图形。
+
+注册/注销即时生效（文件树与 tab 栏订阅注册表变化自动重渲染）；图标工厂抛错会被吞掉
+（console.error 后跳到回退链下一级），不会空白行。
+
+**内置图标 = DSH 官方图形**（v0.19.0+，插件不含任何图标数据）：
+
+- 回退链末端是 `FileTypeIcon` / `CodeFileIcon`（`@deepseek-ai/dsh-client-ui-primitives`，
+  DSH 0.1.5-rc.2+）：48 个代码/配置类目的官方全彩图形 + markdown / 图片 / PDF / Word /
+  Excel / PPT / 视频 / 文件夹 / 通用文档的类目色板图形，分类器是宿主的
+  `classifyFileType`（精确文件名 → 前缀/后缀 → 项目上下文 → 扩展名）。本插件因此**没有**
+  自己的扩展名表、**没有**图标 chunk、**没有**图标主题开关——彩色是唯一形态。
+- **语义后果（重要）**：宿主分类器覆盖任意路径，所以「插件自己已经能画这个扩展名」不再是
+  拦住 catch-all 的理由——**注册了 `exts: []` 的插件会接管全部未具体命中的行**（优先级降序、
+  同优先级按注册序）。只想补几个扩展名就照常用 `exts`/`names`，别用 catch-all 兜底。
+- 插件自己注册的图标颜色由注册方负责（见 §12）：品牌色是内容标识而非 chrome。
 
 **版本与能力探测**（v0.12.0+）：消费插件先查能力再使用新 API，老版本（或旧 DSH）下优雅降级：
 
@@ -730,33 +887,38 @@ ctx.effect(() =>
 | **i18n 跟随** | 文案跟随 DSH `ctx.locale`（词典在 `betterSidebar` 命名空间；Host-backed `locale.preference` 优先于浏览器语言并实时切换；缺失回退浏览器）。消费插件**不要**依赖内部 `t()`——标题传字符串或 `() => string` |
 | **第三语言覆盖（ja 等）** | 可选 peer `@huanlin/dsh-plugin-better-locale`（optional）提供 ja/ko 覆盖，**借用 DSH 英文槽位**（仅 DSH=en 时生效，zh 下惰性）。经 `ctx.get('betterLocale')` 注入 `t()`；未安装整段 no-op |
 | **懒加载 chunk** | 重依赖（xterm/CodeMirror）在独立 bundle（`lib/client-<name>.js`），经 `/sidebar/bundle` 按需下发；factory 赋到 `globalThis.__dshChunks__[<name>]`，由 `src/client/chunk-loader.ts` 物化，**不经** `__ModuleLoader__`。对消费插件透明 |
-| **聊天文件打开漏斗（alpha 宿主）** | 聊天里一切文件打开（工具行 / 产物行 / 正文提及 / 行内代码路径）汇入 `ctx.remote.session.openWorkspacePath`（Typert remote 命名空间，cordis 服务 key `remote.session`，方法为 **accessor 属性**、异步挂载）。better-sidebar 的「聊天区文件在侧边栏打开」即在 `ctx.inject(['remote.session'], …)` 内以 defineProperty 遮蔽该方法（`src/client/openpath-intercept.ts`）。你的插件若要观测/旁路聊天文件打开，走同一服务；不要假设 pre-alpha 的 `ctx.workspaces.openPath` 存在（alpha 的 `IWorkspaces` 已无此方法） |
+| **聊天文件打开漏斗（0.1.5 宿主）** | 聊天里一切文件打开（工具行 / 产物行 / 正文提及 / 行内代码路径）统一走 DSH 原生右侧栏的 `ctx.sidebarRight.openResource(fileAddressFor(sessionId, cwd, path))`（`packages/client/ui-chat/src/client/apply.ts` 是唯一调用点）；`remote.session.openWorkspacePath` 在 0.1.5 客户端**已无调用者**，better-sidebar 的 openpath 拦截随之删除。你的插件若要观测/旁路聊天文件打开，注册原生 tab 类型认领 `dsh-resource://file/**`（见 [AGENTS.md §3](AGENTS.md) 第 10 条）；不要假设 `ctx.workspaces.openPath`（已删除）或旧 `remote.session` 漏斗存在 |
+| **原生 tab 体的高度契约** | 你的 tab 组件被挂在**全高列 flex 宿主**里：native 适配层给每个 tab 体（含 orphaned 回退）包一层 `height:100%` 的 `sidebar.module.css` `.nativeTabHost`（带 `data-dsh-native-tab-host`）——根用 `flex: 1` / `height: 100%` 并加 `min-height: 0` 填满面板。宿主的面板体 `.paneBody`（`dsh-client-ui-dockkit`）是**有确定高度的块级滚动容器，不是 flex 容器**，因此只靠外层 flex 容器支撑的根会塌成内容高度（sidechat 的输入框就贴不到面板底）；DSH 自己的 tab 体（`ui-sidebar-documentpreview` 的文档预览、`ui-sidebar-files` 的 FilesBody）正是因此在根上声明 `height: 100%` |
 
 ---
 
-## 11. 自由窗口（v0.16.0，`features` 含 `'floatWindows'`）
+## 11. 自由窗口（v0.16.0 – v0.18.x，**v0.19.0 已移除**）
 
-任意 tab（含你注册的）可拖出侧边栏成为悬浮**自由窗口**——对你的组件基本透明，只需知道以下语义：
+自由窗口（tab 拖出侧边栏成为可移动/缩放的悬浮窗，`SidebarState.floats`、`floatTab`/`dockFloat`/`raiseFloat`、`features` 里的 `'floatWindows'`、右键「移动到自由窗口」、`src/client/FreeWindow.tsx`）在 **v0.19.0-alpha.0 整体删除**：右列交给 DSH 原生右侧栏后，插件只剩底部工作台，浮窗既没有语义归属也没有可用手势（拖出目标区域现在是原生栏的属地）。
 
-- **拖出**：tab 拖到主会话区域（conversation 列）松开即浮动（`floatTab`：移入 `SidebarState.floats`，默认 390×780 按视口钳制居中，清空 pane 折叠）。检测在 `Sidebar.tsx`（`body[data-dsh-tab-dragging]` 门控）；窄视口禁用。右键「移动到自由窗口」始终可用。
-- **窗口操作**（`src/client/FreeWindow.tsx`，`[data-dsh-panel-host]` 内、z-42）：头部拖动移动；拖到 pane（`[data-dsh-pane]`）松开**停靠**（`dockFloat`）；右下角缩放（最小 320×200）；点击置顶（层叠 = `floats` 数组序）；X = `closeTab`（触发 `onClose`、释放终端）。
-- **持久化**：`floats` 随会话进 localStorage（`dsh-sidebar:v1:<sessionId>`）；`sanitizeState` 宽容校验（非法条目单独丢弃、几何钳入视口、diff/ephemeral 不持久化）。
-- **服务语义**：`openTab` 聚焦命中浮动 tab = 置顶窗口（不重复开）；`closeTab`/`activateTab` 关窗/置顶并触发回调；agent 终端 reconcile 移除已消失的浮动窗口。**浮窗内你的组件 `visible` 恒 true**。
-- **稳定寻址面**：`[data-dsh-float-window]` / `[data-dsh-float-id]` / `[data-dsh-pane]` / `[data-dsh-float-dock-over]` / `[class*='floatDropHint']`；全令牌驱动，头部 `-webkit-app-region: no-drag`。
-- **⚠️ portal 事件劫持陷阱**：拖拽表面子树含 portal 覆盖层时（如你的组件在 tab 头部区域渲染弹层），portal 后代合成事件**沿 React 树冒泡**回 `onPointerDown`，会被误判为拖拽开始（吞点击 + 抢 pointer，菜单/X 失灵；jsdom 不走此路径，只有 e2e 能抓）。拖拽起点必须带**同源守卫**：`event.currentTarget.contains(event.target)` 为假或目标在 `button` 内时直接返回（回归：`tests/free-window.spec.tsx` portaled-menu 用例）。
+- 升级到 v0.19.x 后请**不要**再 gate `features.includes('floatWindows')`，也不要引用 `floatTab` 等符号（类型声明里已不存在）；
+- 旧文档里持久化的 `floats` 字段会被 `sanitizeState` 直接忽略，会话不会因此加载失败；
+- 需要「同一个 tab 在别处看」的场景，改用原生栏打开（`openTab` 默认落点）或底部工作台分栏（`OpenTabSeed.target: 'bottom'`）。
 
 ---
 
 ## 12. 皮肤兼容（令牌驱动）
 
 > better-sidebar 所有视觉值消费 DSH 的 `--dsw-alias-*` / `--dsw-font-*` / `--ds-*` 令牌（无硬编码颜色），**不做每皮肤适配**。已与 dsh-web-ui 皮肤中心兼容（10 款皮肤全覆盖 `--dsw-alias-*` 层；`tests/theme.spec.ts` 守护）。你的 tab/viewer 组件遵循同样的令牌规则即可自动兼容全部皮肤。
+>
+> **没有任何豁免面**：文件与文件夹图标是 **DSH 官方的 `FileTypeIcon` 图形**（宿主自己
+> 的调色板，插件不画像素也不存数据），插件画的每个 glyph（含内置 tab 的彩色图标）颜色
+> 都来自 `--dsw-alias-*`——`tests/theme.spec.ts` 同时守护「图标模块零颜色字面量」与
+> 「样式表里每条 `color` 都解析到令牌」。插件自己注册的图标（`registerFileIcon`）颜色由
+> 注册方负责，不受本节令牌约束，但**不要**把彩色图标数据塞进核心 bundle 的常驻渲染路径
+> （要按需加载就照 `src/client/chunk-loader.ts` 的懒加载 chunk 走）。
 
 ### 12.1 规则
 
 - **面板表面**：右/底面板背景 = `var(--dsw-alias-bg-layer-1)`。**绝不消费 `--dsw-specific-sidebar-fill`**（宿主左导航专属，皮肤按左导航语义覆盖它，面板消费会失去填充）。换面板表面 = 覆写 `--dsw-alias-bg-layer-1`。
 - **终端/编辑器表面**：`effectiveTokenValue` 读 `--dsw-alias-bg-base`——`transparent` 与 alpha < 0.9 的半透明值回退不透明底色（文字不叠背景画，issue #90）；≥ 0.9 放行。
 - **根锚点**：宿主 div 带 `data-dsh-better-sidebar`（append 到 body）；其内**面板宿主层** `[data-dsh-panel-host]`（`fixed; inset:0; z-25; pointer-events:none; overflow:hidden+clip`，v0.13.1+），面板/开关簇 absolute 定位，免疫中间层 transform 劫持；页面级 transform 触发 `data-dsh-panel-host-degraded` 降级。`overflow` 级联是**契约**（`hidden` 兜底 + `clip` 收尾，`tests/panel-host-css.spec.ts` 守护）：`hidden` 盒子仍是滚动容器，脚本滚动或浏览器 scroll-into-view 修正（焦点移入视口外区域、嵌套 iframe/工作台加载时抢焦点、面板滑出动画中 focus() 落点）会沿最近可滚祖先滚走整层——面板与开关簇集体偏离视口角（computed left/right 仍"正确"，偏移藏在盒子自身 scroll offset 里）；`clip` 裁剪语义相同但不产生滚动盒，任何路径都滚不动这层。皮肤作用域覆盖限定在 `[data-dsh-better-sidebar]` 内。
-- **布局变量**（`<html>` 上，面板打开时有效）：`--dsh-sidebar-width` / `--dsh-sidebar-height`。右面板宽度 = AppFrame 的 `padding-right` 预留（新版 `#root [data-dsh-frame]` / rc.8 `#root > [data-slot="root"] > div` 双锚点），AppFrame border box 保持完整桌面视口宽度（Harness 以此判定桌面/窄屏布局，避免插件面板展开误入窄屏）；AppFrame 的 details 拖拽手柄按同一变量向左平移贴合列边缘。底部面板仍走 centerCol `margin-bottom`；centerCol 锚点 = **JS 标注**（禁止 `nth-child`）：侧栏 shell 的定位器给测得的 centerCol 节点打 `[data-dsh-center-col]` 标签（`Sidebar.tsx` locate，节点更换/HMR 时随 ref 迁移），`layout.css` 用 `#root [data-dsh-center-col]` 选中（`drag-layout.e2e.ts` 断言恰一节点且为 `[data-slot="conversation"]` 的父级；frame 宽度与桌面 Session Log 由 `desktop-layout.e2e.ts` 断言）。
+- **布局变量**（`<html>` 上，面板打开时有效）：`--dsh-sidebar-width` / `--dsh-sidebar-height`。右面板宽度 = AppFrame 的 `padding-right` 预留（新版 `#root [data-dsh-frame]` / rc.8 `#root > [data-slot="root"] > div` 双锚点），AppFrame border box 保持完整桌面视口宽度（Harness 以此判定桌面/窄屏布局，避免插件面板展开误入窄屏）；AppFrame 的 details 拖拽手柄按同一变量向左平移贴合列边缘。底部面板仍走 centerCol `margin-bottom`；centerCol 锚点 = **JS 标注**（禁止 `nth-child`）：侧栏 shell 的定位器给测得的 centerCol 节点打 `[data-dsh-center-col]` 标签（`Sidebar.tsx` locate，节点更换/HMR 时随 ref 迁移），`layout.css` 用 `#root [data-dsh-center-col]` 选中（`drag-layout.e2e.ts` 断言恰一节点且为对话槽宿主的父级——alpha.2 起 shell 把 `#root [data-slot="main.conversation"]` 解析进列并跳过 `display: contents` 祖先（`center-column.ts` 的 `CENTER_COLUMN_SELECTOR` 同时认 `main.conversation` 与 alpha.1 的 `conversation`），定位器从槽宿主向上取第一个非 `contents` 的祖先；frame 宽度与桌面 Session Log 由 `desktop-layout.e2e.ts` 断言）。
 - **桌面信号与标题栏**（v0.14.1+ 四方案模型 `SidebarPrefs.titleBarScheme`，唯一决策点 `src/client/titlebar-strip.ts` 纯函数）：
   - 壳信号（只读，不自动触发修改）：URL `dsh-desktop-mode` / `dsh-desktop-platform` / 可选 `dsh-desktop-titlebar-inset`（0–120 clamp）。
   - **strip 取值链**：⓪ `web` 方案强制 0；① `navigator.windowControlsOverlay` 真实几何（`wco.ts` 订阅 `geometrychange`，**为 0 也权威**，`visible=false` 幽灵 API 视为缺失）；② URL inset；③ 壳预设 `stripFor`（仅 `preset`）；④ 手动 `titleBarStripPx`（仅 `custom`）；⑤ 0。驱动 `body[data-dsh-title-bar-compat]` + `--dsh-title-bar-strip`。
@@ -861,8 +1023,9 @@ better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"），�
 
 - **`src/client/builtins/`**：7 个内置 tab（tabs.tsx）+ 6 个内置 viewer（viewers.tsx）的注册代码 + 聚合与 disposer 生命周期（index.ts）；Office 预览见 plugins-viewers.ts
 - **`src/client/service.ts`**：`BetterSidebarService` 接口 + `createBetterSidebarService` 工厂实现（含匹配算法、dedupe、createTab、启用态 gating）
-- **`src/client/Sidebar.tsx`**：`TabContent` 分发（查 `getTab` → 调 descriptor.component；未注册 → `<OrphanedTab/>`）、`+` 菜单构建（order 排序 + available disabled + 禁用过滤）、自由窗口拖拽检测
-- **`src/client/FreeWindow.tsx`**：自由窗口（移动/停靠/缩放/置顶，§11）
+- **`src/client/Sidebar.tsx`**：底部工作台外壳 + `TabContent` 分发（查 `getTab` → 调 descriptor.component；未注册 → `<OrphanedTab/>`）、`+` 菜单构建（order 排序 + available disabled + 禁用过滤）
+- **`src/client/native/`**：原生右侧栏接入（tab 类型注册、合成 `SidebarTab` 适配、资源地址、跨会话打开排队）
+- **`src/client/sidebar/bottom-toggle.tsx`**：底部工作台开合按钮（注册进 DSH 会话头 utilities 槽）
 - **`src/client/SideCardSection.tsx`**：声明式设置页（注册表驱动清单 + 嵌套设置行 + 开关持久化）
 - **`src/client/api.ts`**：`/sidebar` API 的封装（复制其 fetch 模式到你的插件）
 - **`src/client/plugins-tabs.ts`** / **`plugins-viewers.ts`**：推荐插件目录（「添加插件」弹窗数据源；加一条数据即上架，`tests/plugin-list.spec.ts` 守护）

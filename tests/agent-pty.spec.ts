@@ -12,6 +12,7 @@ import {
   snapshotOf,
   tryResizePty,
 } from '../src/agent-pty.ts'
+import { SidebarError } from '../src/wire.ts'
 
 /**
  * Resolve a shell binary for tests: on Windows use PowerShell (available on
@@ -21,17 +22,37 @@ function testShell(): string {
   return process.platform === 'win32' ? 'powershell.exe' : '/bin/sh'
 }
 
+/**
+ * Wait for a freshly spawned shell to have produced ANY output.
+ *
+ * The alternative — waiting for a string the prepared command prints — ties
+ * the test to shell wording, and waiting for a string the command CONTAINS is
+ * worse: an interactive shell echoes what is written to it (PowerShell does,
+ * POSIX /bin/sh does not), so the needle would already be in the transcript
+ * before the point the test means to exercise. The suites that only need "the
+ * shell is up" therefore wait for output of any kind.
+ * @param registry - the registry under test.
+ * @param uuid - the terminal to watch.
+ * @returns nothing; the caller asserts straight after.
+ */
+async function waitForShellReady(registry: AgentPtyRegistry, uuid: string): Promise<void> {
+  await waitForTranscript(registry, uuid, '', 0, true)
+}
+
 /** Wait for a terminal's transcript to contain a substring (or timeout). */
 async function waitForTranscript(
   registry: AgentPtyRegistry,
   uuid: string,
   needle: string,
-  timeoutMs = 5000,
+  timeoutMs = 15_000,
+  anyOutput = false,
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const handle = registry.get(uuid)
-    if (handle !== undefined && handle.transcript.includes(needle)) return handle.transcript
+    if (handle !== undefined) {
+      if (anyOutput ? handle.transcript.length > 0 : handle.transcript.includes(needle)) return handle.transcript
+    }
     await new Promise(resolve => setTimeout(resolve, 50))
   }
   const handle = registry.get(uuid)
@@ -67,7 +88,15 @@ describe('tryResizePty', () => {
   })
 })
 
-describe('AgentPtyRegistry', () => {
+/**
+ * The registry suite really starts a shell per terminal — a PowerShell +
+ * ConPTY pair on Windows, /bin/sh elsewhere. vitest's 5000 ms default is
+ * below a cold PowerShell start on a loaded 2-core CI runner (a sibling spec
+ * measured 12.1 s on 2026-09-10), which is what turned six ci-windows runs
+ * red in the 2026-09-09/10 window. Generous, but still finite: a genuinely
+ * hung spawn fails the case.
+ */
+describe('AgentPtyRegistry', { timeout: 30_000 }, () => {
   it('creates a terminal with a uuid, writes the command to stdin, and lists it', async () => {
     const registry = new AgentPtyRegistry(testShell())
     try {
@@ -281,6 +310,57 @@ describe('AgentPtyRegistry', () => {
     }
   })
 
+  it('waitFor supports regex alternation and reports which alternative matched', async () => {
+    const registry = new AgentPtyRegistry(testShell())
+    try {
+      // Multi-outcome pattern (build success/failure): the terminal prints
+      // only the FAILURE marker; the alternation must match immediately and
+      // the `match` field must tell WHICH alternative hit.
+      const uuid = registry.create('s1', 'multi-outcome', 'echo BUILD_FAIL', process.cwd(), 80, 24)
+      await waitForTranscript(registry, uuid, 'BUILD_FAIL')
+      const result = await registry.waitFor(uuid, 'BUILD_(OK|FAIL)', 2000)
+      expect(result.kind).toBe('found')
+      if (result.kind === 'found') {
+        expect(result.needle).toBe('BUILD_(OK|FAIL)')
+        expect(result.match).toBe('BUILD_FAIL')
+      }
+    } finally {
+      registry.disposeAll()
+    }
+  })
+
+  it('waitFor falls back to verbatim matching when the pattern is not a valid regex', async () => {
+    const registry = new AgentPtyRegistry(testShell())
+    try {
+      // `BUILD_(OK` does not compile as a regex (unbalanced group); the wait
+      // must degrade to literal substring matching and still find it.
+      const uuid = registry.create('s1', 'bad-regex', 'echo "BUILD_(OK literal"', process.cwd(), 80, 24)
+      await waitForTranscript(registry, uuid, 'BUILD_(OK')
+      const result = await registry.waitFor(uuid, 'BUILD_(OK', 2000)
+      expect(result.kind).toBe('found')
+      if (result.kind === 'found') {
+        expect(result.match).toBe('BUILD_(OK')
+      }
+    } finally {
+      registry.disposeAll()
+    }
+  })
+
+  it('waitFor regex matches text a plain substring could not express', async () => {
+    const registry = new AgentPtyRegistry(testShell())
+    try {
+      const uuid = registry.create('s1', 'regex-version', 'echo version v1.2.3 ready', process.cwd(), 80, 24)
+      await waitForTranscript(registry, uuid, 'v1.2.3')
+      const result = await registry.waitFor(uuid, String.raw`v\d+\.\d+\.\d+`, 2000)
+      expect(result.kind).toBe('found')
+      if (result.kind === 'found') {
+        expect(result.match).toBe('v1.2.3')
+      }
+    } finally {
+      registry.disposeAll()
+    }
+  })
+
   it('waitFor returns found after the needle appears (async output)', async () => {
     const registry = new AgentPtyRegistry(testShell())
     try {
@@ -340,6 +420,118 @@ describe('AgentPtyRegistry', () => {
   it('waitFor throws on an unknown uuid', async () => {
     const registry = new AgentPtyRegistry(testShell())
     await expect(registry.waitFor('nonexistent-uuid', 'foo', 500)).rejects.toThrow()
+  })
+
+  it('waitFor returns skipped when the user skips from the sidebar', async () => {
+    const registry = new AgentPtyRegistry(testShell())
+    try {
+      // A BARE shell, and the wait needle appears nowhere in its preparation:
+      // an interactive shell echoes what is written to it, so a command that
+      // spelled the needle would already have put it in the transcript before
+      // this point — waitFor's fast path would resolve the wait and there
+      // would be nothing left to skip. POSIX /bin/sh does not echo a command
+      // written to a non-tty and hid this for a long time; PowerShell does,
+      // which is why it only ever failed on Windows.
+      const uuid = registry.create('s1', 'skip-test', '', process.cwd(), 80, 24)
+      await waitForShellReady(registry, uuid)
+      // waitFor registers its record synchronously (before the first poll
+      // await), so the skip can fire immediately after the call.
+      const waitPromise = registry.waitFor(uuid, 'NEVER_APPEARS_XYZ', 30_000)
+      expect(await registry.skipWait(uuid)).toBe(1)
+      const result = await waitPromise
+      expect(result.kind).toBe('skipped')
+      if (result.kind === 'skipped') expect(result.needle).toBe('NEVER_APPEARS_XYZ')
+      // Idempotent: nothing left to skip once the wait resolved.
+      expect(registry.skipWait(uuid)).toBe(0)
+    } finally {
+      registry.disposeAll()
+    }
+  })
+
+  it('snapshot exposes waiting while a wait is active and clears after it ends', async () => {
+    const registry = new AgentPtyRegistry(testShell())
+    try {
+      // Same echo hazard as the skip case above: a bare shell puts no needle
+      // in the transcript on its own.
+      const uuid = registry.create('s1', 'wait-snap', '', process.cwd(), 80, 24)
+      await waitForShellReady(registry, uuid)
+      const waitPromise = registry.waitFor(uuid, 'LATER_MARK_9', 30_000)
+      // Registration happens synchronously before waitFor's first await.
+      expect(registry.list('s1')[0]?.waiting?.needle).toBe('LATER_MARK_9')
+      expect(typeof registry.list('s1')[0]?.waiting?.since).toBe('number')
+      expect(registry.skipWait(uuid)).toBe(1)
+      const result = await waitPromise
+      expect(result.kind).toBe('skipped')
+      expect(registry.list('s1')[0]?.waiting).toBeUndefined()
+    } finally {
+      registry.disposeAll()
+    }
+  })
+
+  it('concurrent waits on one uuid: snapshot shows the latest needle, skipWait skips all', async () => {
+    const registry = new AgentPtyRegistry(testShell())
+    try {
+      const uuid = registry.create('s1', 'concurrent', '', process.cwd(), 80, 24)
+      // The bare shell never emits either needle → both waits miss the fast
+      // paths and register their records (synchronously, before waitFor's
+      // first poll await — the documented concurrent-wait contract).
+      const first = registry.waitFor(uuid, 'NEVER_A_XYZ', 60_000)
+      const second = registry.waitFor(uuid, 'NEVER_B_XYZ', 60_000)
+      // The banner mirrors the LATEST wait (waits.at(-1)).
+      expect(registry.list('s1')[0]?.waiting?.needle).toBe('NEVER_B_XYZ')
+      expect(typeof registry.list('s1')[0]?.waiting?.since).toBe('number')
+      // One skip transitions EVERY active wait on the terminal.
+      expect(registry.skipWait(uuid)).toBe(2)
+      expect(await first).toEqual({ kind: 'skipped', needle: 'NEVER_A_XYZ' })
+      expect(await second).toEqual({ kind: 'skipped', needle: 'NEVER_B_XYZ' })
+      // Both resolved → the wait state cleared from the snapshot.
+      expect(registry.list('s1')[0]?.waiting).toBeUndefined()
+      // Idempotent: nothing left to skip.
+      expect(registry.skipWait(uuid)).toBe(0)
+    } finally {
+      registry.disposeAll()
+    }
+  })
+
+  it('fires change listeners when a wait starts and ends', async () => {
+    const registry = new AgentPtyRegistry(testShell())
+    try {
+      // Same echo hazard as the skip case above: a bare shell puts no needle
+      // in the transcript on its own.
+      const uuid = registry.create('s1', 'watched-wait', '', process.cwd(), 80, 24)
+      await waitForShellReady(registry, uuid)
+      let changes = 0
+      const unsubscribe = registry.subscribe(() => { changes += 1 })
+      const waitPromise = registry.waitFor(uuid, 'NEVER_NOTIFY_1', 30_000)
+      const afterStart = changes
+      expect(afterStart).toBeGreaterThanOrEqual(1)
+      expect(await registry.skipWait(uuid)).toBe(1)
+      expect(await waitPromise).toEqual({ kind: 'skipped', needle: 'NEVER_NOTIFY_1' })
+      expect(changes).toBeGreaterThan(afterStart)
+      unsubscribe()
+    } finally {
+      registry.disposeAll()
+    }
+  })
+
+  it('skipWait rejects an unknown uuid with not-found', () => {
+    const registry = new AgentPtyRegistry(testShell())
+    try {
+      expect(() => registry.skipWait('missing-uuid')).toThrow(/not found/)
+      // The HTTP layer maps `status` straight onto the response, so the 404
+      // contract rides this field — assert it, not just the message.
+      let thrown: unknown
+      try {
+        registry.skipWait('missing-uuid')
+      } catch (error) {
+        thrown = error
+      }
+      expect(thrown).toBeInstanceOf(SidebarError)
+      expect((thrown as SidebarError).status).toBe(404)
+      expect((thrown as SidebarError).code).toBe('not-found')
+    } finally {
+      registry.disposeAll()
+    }
   })
 
   it('delivers SIGINT and SIGTSTP by writing control characters (cross-platform)', () => {

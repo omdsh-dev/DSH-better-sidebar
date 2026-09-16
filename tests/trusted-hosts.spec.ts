@@ -77,6 +77,8 @@ function mount(initialTrustedHosts: readonly string[] = []): {
       if (typeof cleanup === 'function') effects.push(cleanup)
     },
     inject: () => () => {},
+    // The session/agent event feeds: nothing emits in these tests.
+    on: () => () => {},
     get: () => undefined,
   }
   apply(ctx as never)
