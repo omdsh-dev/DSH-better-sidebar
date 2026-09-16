@@ -71,6 +71,72 @@ describe('createNativeTabRecords', () => {
     records.update('tab-6', { title: 'x' })
     expect(listener).toHaveBeenCalledTimes(2)
   })
+
+  /**
+   * The host mounts ONE tab body per pane, and native tab ids restart in every
+   * session (`tab1`, `tab2`, …). A conversation switch therefore renders the
+   * entering session's body over the SAME id while the leaving session's body
+   * unmounts — so a registry keeping one record per id hands the leaving
+   * session's state to the entering one, and the reader's tree expansion and
+   * in-place opened file are gone on the way back.
+   */
+  it('keeps each session’s own state across an A → B → A round trip', () => {
+    const records = createNativeTabRecords()
+    const a = { sessionId: 'A', cwd: '/work' }
+    const b = { sessionId: 'B', cwd: '/work' }
+
+    // Session A: expand a directory and open a file in place.
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: a })
+    records.toggleExpanded('tab1', '/work/src')
+    records.update('tab1', { path: '/work/notes.md', title: 'notes.md' })
+
+    // Switch to B: its own tab1, its own (empty) state.
+    const inB = records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: b })
+    expect(inB.expanded, 'B does not inherit A’s tree state').toEqual([])
+    expect(inB.tab.path, 'B does not inherit A’s in-place file').toBeUndefined()
+    records.toggleExpanded('tab1', '/work/other')
+
+    // Switch BACK to A: A’s own state must be there, untouched.
+    const backInA = records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: a })
+    expect(backInA.expanded, 'A’s tree expansion survives the round trip').toEqual(['/work/src'])
+    expect(backInA.tab.path, 'A’s in-place file survives the round trip').toBe('/work/notes.md')
+    expect(backInA.tab.title, 'A’s retitled chip survives the round trip').toBe('notes.md')
+
+    // …and B’s state was parked, not lost either.
+    const backInB = records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: b })
+    expect(backInB.expanded, 'B’s own state survives its own return').toEqual(['/work/other'])
+    expect(backInB.tab.path, 'B still has no in-place file').toBeUndefined()
+  })
+
+  it('peeks a session’s parked record while another session owns the live slot', () => {
+    const records = createNativeTabRecords()
+    const a = { sessionId: 'A', cwd: '/work' }
+    const b = { sessionId: 'B', cwd: '/work' }
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: { path: '/work/a.md' }, scope: a })
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: b })
+
+    // The live slot is B's; A's record must still be readable by session.
+    expect(records.get('tab1')?.scope.sessionId).toBe('B')
+    expect(records.peek('A', 'tab1')?.tab.path, 'A’s parked path is still readable').toBe('/work/a.md')
+    expect(records.peek('B', 'tab1')?.tab.path, 'B has no path').toBeUndefined()
+    // An unknown session has nothing.
+    expect(records.peek('C', 'tab1')).toBeUndefined()
+  })
+
+  it('drops only the session whose tab the host closed', () => {
+    const records = createNativeTabRecords()
+    const a = { sessionId: 'A', cwd: '/work' }
+    const b = { sessionId: 'B', cwd: '/work' }
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: a })
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: b })
+
+    records.drop('tab1', 'B')
+    expect(records.get('tab1'), 'B’s tab was the live one and is gone').toBeUndefined()
+    // A’s parked record must be untouched — closing B’s tab cannot close A’s.
+    expect(records.peek('A', 'tab1'), 'A’s parked record survives B’s close').toBeDefined()
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: a })
+    expect(records.get('tab1')?.scope.sessionId).toBe('A')
+  })
 })
 
 describe('service routing into the native surface', () => {

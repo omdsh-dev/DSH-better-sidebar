@@ -121,9 +121,11 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
       return fileAddressFor(sessionId, cwd, path)
     },
     close(sessionId, tabId) {
-      const record = records.get(tabId)
+      // Read through the SESSION: the same native id names a tab in every
+      // session, so the bare live slot may hold another session's record.
+      const record = records.peek(sessionId, tabId)
       if (record === undefined) return undefined
-      records.drop(tabId)
+      records.drop(tabId, sessionId)
       const api = controller()
       if (api !== undefined) {
         if (sessionId === activeSessionId(ctx)) api.close(tabId)

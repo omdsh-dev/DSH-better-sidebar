@@ -201,4 +201,48 @@ describe('ChangesTab', () => {
       container.remove()
     }
   })
+
+  /**
+   * An unsaved commit message is the reader's own writing — the same class of
+   * loss as an unsaved editor draft. The host mounts ONE tab body per pane, so
+   * switching tab/conversation unmounts this lens; the message has to come
+   * back with the tab.
+   */
+  it('keeps an unsaved commit message across an unmount (a tab switch)', async () => {
+    mockGit([{ path: 'src/a.ts', xy: ' M' }])
+    const message = 'fix(changes): keep the commit message'
+
+    const first = document.createElement('div')
+    document.body.append(first)
+    const firstRoot: Root = createRoot(first)
+    mount(firstRoot)
+    await flushEffects()
+    const box = first.querySelector<HTMLInputElement>('input')
+    expect(box, 'the git lens must render a commit-message box').not.toBeNull()
+    await act(async () => {
+      // React tracks the value through its own onChange; the native setter is
+      // the standard way to drive a controlled input from a test.
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(box!, message)
+      box!.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    // Unmount = the host switching to another tab.
+    act(() => { firstRoot.unmount() })
+    first.remove()
+
+    const second = document.createElement('div')
+    document.body.append(second)
+    const secondRoot: Root = createRoot(second)
+    try {
+      mount(secondRoot)
+      await flushEffects()
+      expect(
+        second.querySelector<HTMLInputElement>('input')?.value,
+        'the unsaved commit message survives the remount',
+      ).toBe(message)
+    } finally {
+      act(() => { secondRoot.unmount() })
+      second.remove()
+    }
+  })
 })

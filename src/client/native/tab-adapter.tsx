@@ -20,7 +20,7 @@
  * Nothing here is a singleton: the registry is created once per client
  * activation and handed to every registration.
  */
-import { createElement, useEffect, useMemo, useSyncExternalStore } from 'react'
+import { createElement, useMemo, useSyncExternalStore } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import type { Context } from '../../context-types.ts'
 import type { SessionScope } from '../api.ts'
@@ -106,14 +106,32 @@ export interface NativeTabRecords {
      */
     mint?: () => { title?: string; meta?: unknown } | undefined
   }): View
-  /** One record by native tab id. */
+  /** One record by native tab id (the live pane's record). */
   get(id: string): View | undefined
+  /**
+   * One session's record for an id — the live one when that session owns it,
+   * else the parked copy. A chip reads this: the tab strip renders BEFORE the
+   * pane body, so looking up the live slot alone would read the previous
+   * session's record on a conversation switch.
+   * @param sessionId - the session whose record is wanted; undefined falls
+   *   back to the live slot.
+   * @param id - the native tab id.
+   * @returns the session's record, or undefined when it has none yet.
+   */
+  peek(sessionId: string | undefined, id: string): View | undefined
   /** Whether this id belongs to a native tab (vs the plugin's own layout). */
   has(id: string): boolean
   /** Merge a patch into the synthetic record (the `updateTab` path). */
   update(id: string, patch: { title?: string; path?: string; meta?: unknown }): void
-  /** Forget a record (the native tab closed). */
-  drop(id: string): void
+  /**
+   * Forget a record because its native TAB is gone (the host closed it) —
+   * both the live slot and any parked copy. Nothing on a body's unmount may
+   * call this: the host mounts one tab body per pane, so a tab switch or a
+   * conversation switch unmounts a body whose record must survive.
+   * @param id - the native tab id.
+   * @param sessionId - whose tab closed; omitted forgets every copy.
+   */
+  drop(id: string, sessionId?: string): void
   /** Toggle one directory in a record's expansion set. */
   toggleExpanded(id: string, path: string): void
   /** Mint the next instance number of a kind (titles like "Terminal 2"). */
@@ -126,67 +144,144 @@ export interface NativeTabRecords {
 
 /** Create the record registry for one client activation. */
 export function createNativeTabRecords(): NativeTabRecords {
+  /**
+   * The LIVE record per native tab id: the tab whose body the host currently
+   * has mounted. The host mounts ONE body per pane, so a conversation switch
+   * replaces the pane's contents and this slot is handed to the entering
+   * session's tab — whose id is the SAME (`tab1`, `tab2`, … per session).
+   */
   const views = new Map<string, View>()
+  /**
+   * Records a conversation switch displaced, keyed `sessionId::tabId`. Native
+   * ids restart in every session, so the live slot cannot hold two sessions'
+   * records of one id: the leaving session's record parks here and is
+   * restored when the reader switches back. Without this the entering
+   * session's tab overwrites the leaving one's state (tree expansion, an
+   * in-place opened file), which is the state loss a conversation switch
+   * used to show.
+   */
+  const parked = new Map<string, View>()
   const instances = new Map<string, number>()
   const listeners = new Set<() => void>()
   const notify = (): void => { for (const listener of listeners) listener() }
+  const parkKey = (sessionId: string, id: string): string => `${sessionId}::${id}`
   const put = (id: string, view: View): void => {
     views.set(id, { ...view, version: view.version + 1 })
     notify()
   }
+
+  /** Build one record from a native tab's own seed (no plugin-side state). */
+  const mintRecord = (
+    id: string,
+    kind: string,
+    title: string,
+    params: NativeTabParams | undefined,
+    scope: SessionScope,
+    mint: (() => { title?: string; meta?: unknown } | undefined) | undefined,
+    version: number,
+  ): View => {
+    const seeded = params?.title === undefined && params?.meta === undefined ? mint?.() : undefined
+    const meta = params?.meta ?? seeded?.meta
+    return {
+      tab: {
+        id,
+        type: kind as TabType,
+        title: params?.title ?? seeded?.title ?? title,
+        ...(params?.path === undefined ? {} : { path: params.path }),
+        ...(params?.diff === undefined ? {} : { diff: params.diff }),
+        ...(meta === undefined ? {} : { meta }),
+      },
+      scope,
+      expanded: [],
+      revealed: [],
+      version,
+    }
+  }
+
   return {
     ensure({ id, kind, title, params, scope, mint }) {
       const existing = views.get(id)
-      if (existing === undefined) {
-        const seeded = params?.title === undefined && params?.meta === undefined ? mint?.() : undefined
-        const meta = params?.meta ?? seeded?.meta
-        const minted: View = {
-          tab: {
-            id,
-            type: kind as TabType,
-            title: params?.title ?? seeded?.title ?? title,
-            ...(params?.path === undefined ? {} : { path: params.path }),
-            ...(params?.diff === undefined ? {} : { diff: params.diff }),
-            ...(meta === undefined ? {} : { meta }),
-          },
-          scope,
-          expanded: [],
-          revealed: [],
-          version: 0,
+      const sameSession = existing !== undefined && existing.scope.sessionId === scope.sessionId
+
+      // A different session owning the live slot means the pane switched
+      // conversations (native ids restart per session). Park the leaving
+      // session's record — its whole plugin-side state — and clear the slot:
+      // the entering session must NOT inherit it, and must not overwrite it
+      // either (that is the state loss an A → B → A round trip used to show).
+      if (existing !== undefined && !sameSession) {
+        parked.set(parkKey(existing.scope.sessionId, id), existing)
+        views.delete(id)
+      }
+
+      if (sameSession) {
+        // This tab's own record. A navigation may carry new seed fields (the
+        // editor's in-place switch, a browser tab pointed at another URL); the
+        // record's identity and any plugin-side mutation (title/meta from
+        // updateTab) stay.
+        const patch: Partial<SidebarTab> = {}
+        if (params?.path !== undefined && params.path !== existing.tab.path) patch.path = params.path
+        if (params?.diff !== undefined) patch.diff = params.diff
+        if (params?.url !== undefined) {
+          const meta = typeof existing.tab.meta === 'object' && existing.tab.meta !== null
+            ? existing.tab.meta as Record<string, unknown>
+            : {}
+          patch.meta = { ...meta, url: params.url }
         }
-        views.set(id, minted)
-        return minted
+        if (existing.scope.cwd !== scope.cwd) {
+          views.set(id, { ...existing, scope, tab: { ...existing.tab, ...patch } })
+          return views.get(id)!
+        }
+        if (Object.keys(patch).length === 0) return existing
+        const next: View = { ...existing, tab: { ...existing.tab, ...patch } }
+        views.set(id, next)
+        return next
       }
-      // A navigation may carry new seed fields (the editor's in-place switch,
-      // a browser tab pointed at another URL); the record's identity and any
-      // plugin-side mutation (title/meta from updateTab) stay.
-      const patch: Partial<SidebarTab> = {}
-      if (params?.path !== undefined && params.path !== existing.tab.path) patch.path = params.path
-      if (params?.diff !== undefined) patch.diff = params.diff
-      if (params?.url !== undefined) {
-        const meta = typeof existing.tab.meta === 'object' && existing.tab.meta !== null
-          ? existing.tab.meta as Record<string, unknown>
-          : {}
-        patch.meta = { ...meta, url: params.url }
+
+      // No live record for this (id, session): revive this session's parked
+      // copy — the reader is switching BACK — refreshed with the navigation
+      // seed the current open carries.
+      const restored = parked.get(parkKey(scope.sessionId, id))
+      if (restored !== undefined) {
+        parked.delete(parkKey(scope.sessionId, id))
+        const patch: Partial<SidebarTab> = {}
+        if (params?.path !== undefined && params.path !== restored.tab.path) patch.path = params.path
+        if (params?.diff !== undefined) patch.diff = params.diff
+        const next: View = { ...restored, scope, tab: { ...restored.tab, ...patch } }
+        views.set(id, next)
+        return next
       }
-      if (existing.scope.cwd !== scope.cwd) {
-        views.set(id, { ...existing, scope, tab: { ...existing.tab, ...patch } })
-        return views.get(id)!
-      }
-      if (Object.keys(patch).length === 0) return existing
-      const next: View = { ...existing, tab: { ...existing.tab, ...patch } }
-      views.set(id, next)
-      return next
+
+      // A genuinely new tab for this session.
+      views.set(id, mintRecord(id, kind, title, params, scope, mint, 0))
+      return views.get(id)!
     },
     get: id => views.get(id),
+    peek(sessionId, id) {
+      const live = views.get(id)
+      if (sessionId === undefined) return live
+      if (live !== undefined && live.scope.sessionId === sessionId) return live
+      return parked.get(parkKey(sessionId, id))
+    },
     has: id => views.has(id),
     update(id, patch) {
       const entry = views.get(id)
       if (entry === undefined) return
       put(id, { ...entry, tab: { ...entry.tab, ...patch } })
     },
-    drop(id) {
-      if (views.delete(id)) notify()
+    drop(id, sessionId) {
+      let dropped = false
+      if (sessionId === undefined) {
+        dropped = views.delete(id)
+        for (const key of [...parked.keys()]) {
+          if (key.endsWith(`::${id}`)) { parked.delete(key); dropped = true }
+        }
+      } else {
+        const key = parkKey(sessionId, id)
+        if (parked.delete(key)) dropped = true
+        const live = views.get(id)
+        if (live !== undefined && live.scope.sessionId === sessionId) dropped = views.delete(id) || dropped
+      }
+      if (dropped) notify()
     },
     toggleExpanded(id, path) {
       const entry = views.get(id)
@@ -285,7 +380,11 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
       return minted === null ? undefined : { title: minted.tab.title, meta: minted.tab.meta }
     },
   })
-  useEffect(() => () => { records.drop(nativeTab.id) }, [records, nativeTab.id])
+  // No unmount cleanup: the host mounts ONE tab body per pane, so looking at
+  // another tab (or switching conversations) unmounts this body while the tab
+  // stays open. The record must outlive it — the state has to be there when
+  // the reader comes back. The only exit is a real tab close, which goes
+  // through `SidebarSurface.close` → `records.drop(id, sessionId)`.
   if (descriptor === undefined) {
     // The orphaned fallback sits in the SAME native host as a live body, so
     // it gets the same full-height box (its own root also relies on the
@@ -339,6 +438,13 @@ export interface NativeTitleInjected {
   readonly service: BetterSidebarService
   /** The descriptor id this title belongs to (one registration per descriptor). */
   readonly descriptorId: string
+  /**
+   * The session the chip's pane belongs to. A chip renders BEFORE the pane
+   * body (the strip is above it), so on a conversation switch the live slot
+   * may still hold the PREVIOUS session's record — the chip must read its own
+   * session's record to show that session's title/path.
+   */
+  readonly sessionId?: string
 }
 
 /**
@@ -362,7 +468,10 @@ export function NativeTabTitle(props: NativeTitleInjected & NativeBodyFrameworkP
     listener => records.subscribe(listener),
     () => records.versionOf(nativeTab.id),
   )
-  const record = records.get(nativeTab.id)
+  // Read through the SESSION, not the bare live slot: the strip renders before
+  // the body's `ensure`, so right after a conversation switch the live slot
+  // can still be the other session's record (same id in every session).
+  const record = records.peek(props.sessionId, nativeTab.id)
   const title = record?.tab.title ?? nativeTab.title
   // `version` is read so a title/path/meta mutation re-renders the chip; the
   // icon itself is derived from the record, never stored.
