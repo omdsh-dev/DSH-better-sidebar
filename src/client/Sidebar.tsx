@@ -32,7 +32,7 @@ import type { Context } from '../context-types.ts'
 import { referenceInChat as referenceInChatShared } from './reference-in-chat.ts'
 import {
   BOTTOM_MIN, CONVERSATION_MIN, agentUuidOf, firstLeaf, isAgentTabId,
-  leafWithTab, moveTab, moveTabToEdge, openDiffTab, resizeSplitIn,
+  leafWithTab, moveTab, moveTabToEdge, openDiffTab, patchTab, resizeSplitIn,
   setBottomHeight, setTabPin, toggleBottomPanel, toggleExpanded,
   type DropZone, type SidebarStore, type SidebarTab,
 } from './state.ts'
@@ -53,6 +53,14 @@ import type { TabDragPayload } from './TabBar.tsx'
 import { t } from './locales.ts'
 import { api } from './api.ts'
 import css from './sidebar.module.css'
+
+/**
+ * Which tabs accept an inline rename (double-click their label in the tab
+ * strip). Scoped to terminal tabs: editor tabs derive their label from the
+ * file path, browser tabs from the visited page — only terminals own a
+ * stable, user-meaningful name (终端 1 / 终端 2 …).
+ */
+const canRenameTab = (tab: SidebarTab): boolean => tab.type === 'terminal'
 
 /**
  * OS file drags over the sidebar belong to the sidebar, not to the chat:
@@ -556,6 +564,13 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       // (with its cwd) rides to the callback.
       ctx.get('betterSidebar')?.activateTab(tabId, sessionId === undefined ? undefined : { sessionId, cwd })
     },
+    // Rename the label of one open tab (patchTab persists it with the
+    // layout, so a reload keeps the custom name). Pane id is not needed by
+    // the reducer (it locates the tab across the tree) but kept in the
+    // action signature for symmetry with the other tab actions.
+    renameTab: (_paneId, tabId, title) => {
+      store.reduce(s => patchTab(s, tabId, { title }))
+    },
     focusPane: (paneId) => { store.reduce(s => ({ ...s, activePane: paneId })) },
     moveTabToEdge: (payload: TabDragPayload, toPane: string, zone: DropZone) => {
       store.reduce(s => moveTabToEdge(s, payload.paneId, payload.tabId, toPane, zone))
@@ -797,6 +812,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={renderTab}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            canRenameTab={canRenameTab}
           />
         </div>
       </div>

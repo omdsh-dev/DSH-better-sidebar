@@ -7,7 +7,7 @@
  */
 import { useMemo, useState } from 'react'
 import {
-  agentUuidOf, closeTab, isAgentTabId, leafWithTab, setTabPin,
+  agentUuidOf, closeTab, isAgentTabId, leafWithTab, patchTab, setTabPin,
   type SidebarSnapshot, type SidebarStore, type SplitNode,
 } from '../state.ts'
 import {
@@ -128,6 +128,19 @@ export function usePinnedTabs(input: {
       moveTabToEdge: (payload, toPane, zone) => {
         if (isPinnedVirtualId(payload.tabId)) return
         actions.moveTabToEdge(payload, toPane, zone)
+      },
+      renameTab: (paneId, tabId, title) => {
+        if (isPinnedVirtualId(tabId)) {
+          // A pinned VIRTUAL tab is a render-time projection of a tab living in
+          // its HOME session — patchTab on the current state would find nothing
+          // and silently drop the rename. Route it home (like closeTab/pinTab)
+          // and bump the revision so the virtual tab re-derives its label.
+          const { homeSessionId, tabId: originalId } = parsePinnedVirtualId(tabId)
+          store.reduceFor(homeSessionId, s => patchTab(s, originalId, { title }))
+          setPinnedRevision(v => v + 1)
+        } else {
+          actions.renameTab(paneId, tabId, title)
+        }
       },
       pinTab: (tabId, scope) => {
         if (isPinnedVirtualId(tabId)) {

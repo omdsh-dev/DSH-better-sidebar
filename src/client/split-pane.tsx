@@ -22,6 +22,8 @@ import css from './sidebar.module.css'
 export interface WorkbenchActions {
   closeTab: (paneId: string, tabId: string) => void
   activateTab: (paneId: string, tabId: string) => void
+  /** Commit a tab's renamed label (persisted with the layout). */
+  renameTab: (paneId: string, tabId: string, title: string) => void
   /** Make a pane the target of newly opened tabs (click focus). */
   focusPane: (paneId: string) => void
   /** VSCode drag gesture: edge → split the target pane, center → merge. */
@@ -153,8 +155,10 @@ function LeafView(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /** Which tabs may be renamed inline (double-click their label). */
+  canRenameTab?: (tab: SidebarTab) => boolean
 }) {
-  const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, canRenameTab } = props
   const [dropZone, setDropZone] = useState<DropZone | null>(null)
   const activeTab = leaf.tabs.find(tab => tab.id === leaf.active) ?? leaf.tabs[leaf.tabs.length - 1]
 
@@ -206,6 +210,8 @@ function LeafView(props: {
         active={leaf.active}
         onActivate={(tabId) => { actions.activateTab(leaf.id, tabId) }}
         onClose={(tabId) => { actions.closeTab(leaf.id, tabId) }}
+        onRename={(tabId, title) => { actions.renameTab(leaf.id, tabId, title) }}
+        canRenameTab={canRenameTab}
         onNewTab={onNewTab}
         newTabOptions={newTabOptions}
         getTabIcon={getTabIcon}
@@ -251,8 +257,9 @@ function NodeView(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  canRenameTab?: (tab: SidebarTab) => boolean
 }) {
-  const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, canRenameTab } = props
   if (node.kind === 'leaf') {
     return (
       <LeafView
@@ -263,6 +270,7 @@ function NodeView(props: {
         renderTab={renderTab}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        canRenameTab={canRenameTab}
       />
     )
   }
@@ -290,6 +298,7 @@ function NodeView(props: {
               renderTab={renderTab}
               getTabIcon={getTabIcon}
               getTabBadge={getTabBadge}
+              canRenameTab={canRenameTab}
             />
           </div>
         </Fragment>
@@ -311,8 +320,9 @@ export function Workbench(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  canRenameTab?: (tab: SidebarTab) => boolean
 }) {
-  const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, canRenameTab } = props
   return (
     <div className={css.workbench}>
       <NodeView
@@ -324,6 +334,7 @@ export function Workbench(props: {
         renderTab={renderTab}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        canRenameTab={canRenameTab}
       />
     </div>
   )
