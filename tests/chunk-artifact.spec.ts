@@ -17,7 +17,7 @@ import { CHUNK_EXTERNALS } from '../src/client/chunk-loader.ts'
 
 const g = globalThis as Record<string, unknown>
 
-const CHUNKS = ['terminal', 'editor', 'mermaid']
+const CHUNKS = ['terminal', 'editor', 'mermaid', 'locale']
 
 /** All chunk artifacts present (tsdown emits the whole lib/ in one run). */
 const chunksBuilt = CHUNKS.every(name => existsSync(`lib/client-${name}.js`))
