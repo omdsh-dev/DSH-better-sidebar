@@ -281,13 +281,17 @@ export function GitLens(props: GitLensProps) {
   useEffect(() => {
     refreshGeneration.current += 1
     refreshInFlight.current = false
-    worktreeChosenByUser.current = false
-    chosenPathRef.current = undefined
     silentTickCount.current = 0
     // Restore this workspace's remembered worktree (this effect also runs on
     // mount, which is exactly the tab-return case); a workspace the reader has
     // never chosen for has no entry and falls back to the repo default.
-    setSelectedWorktree(worktreeMemory.get(worktreeKey(scope)))
+    const remembered = worktreeMemory.get(worktreeKey(scope))
+    // A remembered choice IS a user choice: without this the auto-select runs
+    // again on every remount and overrides the restore (a clean primary
+    // checkout beside one dirty linked one auto-picks the linked one).
+    worktreeChosenByUser.current = remembered !== undefined
+    chosenPathRef.current = remembered
+    setSelectedWorktree(remembered)
     // The two scalar fields ARE the scope identity; taking `scope` itself
     // would re-run this reset on every unrelated snapshot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
