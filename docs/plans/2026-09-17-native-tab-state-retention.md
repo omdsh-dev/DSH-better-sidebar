@@ -104,6 +104,7 @@ body，所以「单键 live 槽 + 按会话归档」已足够表达全部状态�
 | `peek` / 按会话 `drop` / `retain` 驱逐 + 接线 | 同上 | `a deleted session's archive is dropped`、`the deletion reached the registry` |
 | 编辑器未保存编辑跨重挂载 | `tests/editor-draft-memory.spec.tsx` | `the unsaved edit survives the remount: expected 'const a = 1\n'` |
 | commit message 跨重挂载 | `tests/changes-tab.spec.tsx` | `the unsaved commit message survives the remount: expected ''` |
+| git worktree 跨重挂载 | `tests/git-view-worktree.spec.tsx` | `the chosen worktree survives the remount: expected 'C:/repo/agent' to be 'C:/repo/main'`（这条用例**首次运行就抓到一个真实缺陷**：恢复值没有算作用户选择，auto-select 每次重挂载都会覆盖它） |
 | 树滚动（8 条：恢复 / 不继承 / 短树不夹到 0 / 每会话独立 / 只恢复一次 / 读者优先 / 不可滚时不覆盖 / reveal 让位） | `tests/tree-scroll-memory.spec.tsx` | 回退实现 5 条红 |
 | **真机**状态向量（滚动 + 展开目录 + chip 标题）跨 tab 切换与 A→B→A 会话往返 | `tests/e2e/tree-scroll.e2e.ts` | 在**纯 `origin/main`** 上跑同一条 lane，红在 `tree-scroll.e2e.ts:192`（同会话切 tab 后展开集丢失） |
 
