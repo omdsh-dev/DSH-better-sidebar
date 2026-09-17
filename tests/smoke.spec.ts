@@ -1011,6 +1011,7 @@ describe('side card settings routes', () => {
         browserInterceptHttp: true,
         browserInterceptHttps: false,
         browserAllowedLoopback: '',
+        searchExcludeDirs: '',
         // The enable-switch maps default to {} (everything on).
         tabsEnabled: {},
         viewersEnabled: {},

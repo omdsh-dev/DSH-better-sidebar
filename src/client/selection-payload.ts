@@ -4,11 +4,9 @@
  * here is string math — no React, no ctx — so the unit tests cover it
  * directly.
  *
- * Insert shape (agreed with the product owner):
- * - Selection ≤ SELECTION_LIMIT characters: a fenced code block whose info
- *   line is `相对路径:起止行` and whose body is the selected text.
- * - Selection over the limit: a single plain-text line `相对路径:起止行`
- *   (no fence, no content).
+ * Insert shape:
+ * - Always a fenced code block whose info line is `相对路径:起止行` and
+ *   whose body is the selected text (no length cap).
  * - The path is relative to the session cwd (the same projection the
  *   explorer's @ button uses); an unknown cwd falls back to the absolute
  *   path.
@@ -19,9 +17,6 @@
  *   {@link linesOfSelection}).
  */
 import { relativeTo } from './paths.ts'
-
-/** Max inserted selection length (UTF-16 code units, i.e. JS `.length`). */
-export const SELECTION_LIMIT = 500
 
 /** The source line span a selection maps to (1-based, inclusive). */
 export interface SelectionLines {
@@ -42,8 +37,6 @@ export function headerOf(path: string, cwd: string | undefined, lines?: Selectio
 
 /**
  * The full text appended to the composer draft for one selection.
- * Over the limit the content is dropped: the plain path line is the whole
- * payload (an empty fenced block would just occupy the draft).
  */
 export function buildSelectionInsert(
   path: string,
@@ -52,7 +45,6 @@ export function buildSelectionInsert(
   selected: string,
 ): string {
   const header = headerOf(path, cwd, lines)
-  if (selected.length > SELECTION_LIMIT) return header
   return `\`\`\`${header}\n${selected}\n\`\`\``
 }
 

@@ -32,6 +32,25 @@ interface TocEntry {
   el: HTMLElement
 }
 
+/**
+ * Assign hierarchical outline numbers (1 / 1.1 / 1.1.1) from heading levels.
+ * Counters track h1–h6; deeper slots reset on a shallower heading. Leading
+ * zeros are stripped so docs that start at h2 render as 1 / 2 / 2.1 rather
+ * than 0.1; skipped levels keep an explicit 0 (h1 then h3 → 1 / 1.0.1).
+ */
+export function assignOutlineNumbers(levels: readonly number[]): string[] {
+  const counters = [0, 0, 0, 0, 0, 0]
+  return levels.map((level) => {
+    const index = Math.min(Math.max(level, 1), 6) - 1
+    counters[index]++
+    for (let deeper = index + 1; deeper < 6; deeper++) counters[deeper] = 0
+    const parts = counters.slice(0, index + 1)
+    let start = 0
+    while (start < parts.length - 1 && parts[start] === 0) start++
+    return parts.slice(start).join('.')
+  })
+}
+
 /** The signature used to skip no-op rescans (identity-safe setState guard). */
 function signatureOf(entries: readonly TocEntry[]): string {
   return entries.map((entry) => `${entry.level}:${entry.text}`).join('\n')
@@ -107,6 +126,7 @@ export function MdToc(): ReactNode {
   }
 
   const showOutline = entries.length >= TOC_MIN_HEADINGS
+  const numbers = assignOutlineNumbers(entries.map((entry) => entry.level))
   return (
     <div className={css.tocBar} ref={barRef}>
       {open && showOutline && (
@@ -120,7 +140,7 @@ export function MdToc(): ReactNode {
               title={entry.text}
               onClick={() => { jump(entry) }}
             >
-              <span className={css.tocItemLevel}>{entry.level}</span>
+              <span className={css.tocItemLevel}>{numbers[index]}</span>
               <span className={css.tocItemText}>{entry.text}</span>
             </button>
           ))}

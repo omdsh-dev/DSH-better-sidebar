@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { rewriteLocalImageUrls } from '../src/client/markdown-images.ts'
+import { DEFAULT_IMAGE_DIR, imageDirOf, rewriteLocalImageUrls, rewriteObsidianImageEmbeds } from '../src/client/markdown-images.ts'
 import type { SessionScope } from '../src/client/api.ts'
 
 const ORIGIN = 'http://127.0.0.1:3080'
@@ -96,5 +96,99 @@ describe('rewriteLocalImageUrls', () => {
     expect(out).not.toMatch(/\[docs\]:.*\/sidebar\/file/)
     // The image-referenced definition IS rewritten.
     expect(out).toMatch(/\[pic-def\]:.*\/sidebar\/file/)
+  })
+})
+
+describe('rewriteObsidianImageEmbeds', () => {
+  it('lowers an image embed into a media-route image against the default images dir', () => {
+    const md = 'see ![[diagram.png]]'
+    const out = rewriteObsidianImageEmbeds(md, scope, '/repo/readme.md', ORIGIN)
+    expect(out).toContain(`![diagram.png](${ORIGIN}/sidebar/file?sessionId=abc&path=%2Frepo%2F${DEFAULT_IMAGE_DIR}%2Fdiagram.png&cwd=%2Frepo)`)
+    expect(out).not.toContain('![[')
+  })
+
+  it('uses the pipe text as alt when it is not a size token', () => {
+    const md = '![[diagram.png|My diagram]]'
+    const out = rewriteObsidianImageEmbeds(md, scope, '/repo/readme.md', ORIGIN)
+    expect(out).toContain(`![My diagram](${ORIGIN}/sidebar/file?sessionId=abc&path=%2Frepo%2F${DEFAULT_IMAGE_DIR}%2Fdiagram.png&cwd=%2Frepo)`)
+  })
+
+  it('drops Obsidian WxH sizing syntax (keeps the image name as alt)', () => {
+    const md = '![[diagram.png|200x100]]'
+    const out = rewriteObsidianImageEmbeds(md, scope, '/repo/readme.md', ORIGIN)
+    expect(out).toContain(`![diagram.png](${ORIGIN}/sidebar/file?sessionId=abc&path=%2Frepo%2F${DEFAULT_IMAGE_DIR}%2Fdiagram.png&cwd=%2Frepo)`)
+  })
+
+  it('leaves note/non-image embeds as wiki-link text', () => {
+    const md = 'see ![[meeting-notes]] and ![[report.pdf]]'
+    const out = rewriteObsidianImageEmbeds(md, scope, '/repo/readme.md', ORIGIN)
+    expect(out).toContain('![[meeting-notes]]')
+    expect(out).toContain('![[report.pdf]]')
+    expect(out).not.toContain('/sidebar/file')
+  })
+
+  it('leaves plain (non-embed) wiki links untouched', () => {
+    const md = 'see [[some-note]] for details'
+    const out = rewriteObsidianImageEmbeds(md, scope, '/repo/readme.md', ORIGIN)
+    expect(out).toBe(md)
+  })
+
+  it('honors a relative configurable imageDir anchored at the session cwd', () => {
+    const md = '![[logo.png]]'
+    const out = rewriteObsidianImageEmbeds(md, scope, '/repo/readme.md', ORIGIN, 'assets')
+    expect(out).toContain(`![logo.png](${ORIGIN}/sidebar/file?sessionId=abc&path=%2Frepo%2Fassets%2Flogo.png&cwd=%2Frepo)`)
+  })
+
+  it('honors an absolute imageDir verbatim', () => {
+    const md = '![[logo.png]]'
+    const out = rewriteObsidianImageEmbeds(md, scope, '/repo/readme.md', ORIGIN, '/abs/img')
+    expect(out).toContain(`![logo.png](${ORIGIN}/sidebar/file?sessionId=abc&path=%2Fabs%2Fimg%2Flogo.png&cwd=%2Frepo)`)
+  })
+
+  it('falls back to the file directory when the scope has no cwd', () => {
+    const md = '![[logo.png]]'
+    const out = rewriteObsidianImageEmbeds(md, { sessionId: 'abc' }, '/repo/readme.md', ORIGIN)
+    expect(out).toContain(`![logo.png](${ORIGIN}/sidebar/file?sessionId=abc&path=%2Frepo%2F${DEFAULT_IMAGE_DIR}%2Flogo.png)`)
+    expect(out).not.toContain('cwd=')
+  })
+})
+
+describe('imageDirOf', () => {
+  it('returns the default for missing/empty values', () => {
+    expect(imageDirOf(undefined)).toBe(DEFAULT_IMAGE_DIR)
+    expect(imageDirOf('')).toBe(DEFAULT_IMAGE_DIR)
+    expect(imageDirOf('   ')).toBe(DEFAULT_IMAGE_DIR)
+  })
+
+  it('trims and returns a configured value', () => {
+    expect(imageDirOf(' assets ')).toBe('assets')
+  })
+})
+
+describe('rewriteLocalImageUrls (Obsidian integration)', () => {
+  it('rewrites Obsidian embeds inline and is idempotent on the rewritten output', () => {
+    const md = 'intro ![[diagram.png]] end'
+    const once = rewriteLocalImageUrls(md, scope, '/repo/readme.md', ORIGIN)
+    expect(once).toContain(`![diagram.png](${ORIGIN}/sidebar/file?sessionId=abc&path=%2Frepo%2F${DEFAULT_IMAGE_DIR}%2Fdiagram.png&cwd=%2Frepo)`)
+    // Re-running must not double-resolve the already-absolute media URL.
+    const twice = rewriteLocalImageUrls(once, scope, '/repo/readme.md', ORIGIN)
+    expect(twice).toBe(once)
+  })
+
+  it('does not rewrite embeds inside fenced code blocks or inline code spans', () => {
+    const md = '```\n![[diagram.png]]\n```\n\nuse `![[diagram.png]]` inline'
+    const out = rewriteLocalImageUrls(md, scope, '/repo/readme.md', ORIGIN)
+    expect(out).toBe(md)
+  })
+
+  it('keeps non-image ![[ ... ]] embeds as wiki-link text', () => {
+    const md = 'see ![[meeting-notes]]'
+    const out = rewriteLocalImageUrls(md, scope, '/repo/readme.md', ORIGIN)
+    expect(out).toContain('![[meeting-notes]]')
+  })
+
+  it('threads a configured imageDir through the full rewrite', () => {
+    const out = rewriteLocalImageUrls('![[logo.png]]', scope, '/repo/readme.md', ORIGIN, 'assets')
+    expect(out).toContain(`![logo.png](${ORIGIN}/sidebar/file?sessionId=abc&path=%2Frepo%2Fassets%2Flogo.png&cwd=%2Frepo)`)
   })
 })

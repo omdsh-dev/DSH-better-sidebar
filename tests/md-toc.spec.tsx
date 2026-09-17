@@ -10,7 +10,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
-import { MdToc, TOC_MIN_HEADINGS } from '../src/client/md-toc.tsx'
+import { MdToc, TOC_MIN_HEADINGS, assignOutlineNumbers } from '../src/client/md-toc.tsx'
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
 import { setupReactAct } from './test-utils.ts'
@@ -65,6 +65,17 @@ describe('MdToc', () => {
     expect(TOC_MIN_HEADINGS).toBe(3)
   })
 
+  it('assigns hierarchical outline numbers', () => {
+    expect(assignOutlineNumbers([1, 2, 2, 3])).toEqual(['1', '1.1', '1.2', '1.2.1'])
+    expect(assignOutlineNumbers([1, 2, 1, 2])).toEqual(['1', '1.1', '2', '2.1'])
+    expect(assignOutlineNumbers([1, 3])).toEqual(['1', '1.0.1'])
+    expect(assignOutlineNumbers([2, 2, 3])).toEqual(['1', '2', '2.1'])
+    expect(assignOutlineNumbers([1, 2, 3, 4, 5, 6])).toEqual([
+      '1', '1.1', '1.1.1', '1.1.1.1', '1.1.1.1.1', '1.1.1.1.1.1',
+    ])
+    expect(assignOutlineNumbers([])).toEqual([])
+  })
+
   it('stays hidden below the heading threshold', async () => {
     const { container, root } = await mountToc([
       { tag: 'h1', text: 'One' },
@@ -87,7 +98,9 @@ describe('MdToc', () => {
     const panel = container.querySelector('[data-dsh-md-toc-panel]')
     expect(panel).not.toBeNull()
     const items = [...panel!.querySelectorAll('button')]
-    expect(items.map((item) => item.textContent)).toEqual(['1Title', '2Install', '2Usage', '3Deep'])
+    expect(items.map((item) => item.textContent)).toEqual([
+      '1Title', '1.1Install', '1.2Usage', '1.2.1Deep',
+    ])
     await unmount(root)
   })
 

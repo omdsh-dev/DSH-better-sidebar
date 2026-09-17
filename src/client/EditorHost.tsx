@@ -25,7 +25,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
-import { IconCheckOutline16, IconFolderOpen16, IconRefreshOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutline16, IconFolderOpen16, IconRefreshOutline14, IconSendOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { api, isOutsideWorkspaceMessage, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
@@ -462,6 +462,24 @@ export function EditorHost(props: {
             onClick={refreshFile}
           >
             <IconRefreshOutline14 size={14} />
+          </button>
+        )}
+        {/* Add THIS file to the current conversation (host-toolbar button).
+            The editor's own toolbar row is skipped in host mode, so the
+            merged header carries the action here. Only file tabs (a path on
+            a real file, not a folder window) get the button, mirroring the
+            tab context-menu entry. Reuses the tree @-button callback so a
+            structured @file reference lands in the draft, @rel plain-text
+            fallback included. */}
+        {!isDir && path !== '' && (
+          <button
+            type="button"
+            className={css.iconButton}
+            aria-label={t('addToConversation')}
+            title={t('addToConversation')}
+            onClick={() => { onReferenceFile(path, false) }}
+          >
+            <IconSendOutline16 size={14} />
           </button>
         )}
         <button

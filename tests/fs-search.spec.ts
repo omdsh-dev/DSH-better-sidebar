@@ -1,7 +1,8 @@
 /**
  * fs-search: the host's recursive file-name search behind the editor side
- * panel's search box. Matches are case-insensitive name substrings, reported
- * RELATIVE to the root ('/'-separated); noise directories (`.git`,
+ * panel's search box. Matches are case-insensitive substrings (single token
+ * → entry name; whitespace-split tokens → AND over the relative path),
+ * reported RELATIVE to the root ('/'-separated); noise directories (`.git`,
  * `node_modules`, build caches) are skipped, symlinked directories are
  * never descended (cycle safety), and the maxMatches/maxVisited budgets
  * stop a runaway walk with `truncated: true`.
@@ -10,7 +11,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { searchFiles } from '../src/fs-search.ts'
+import { parseSearchExcludeDirs, searchFiles } from '../src/fs-search.ts'
 
 /**
  * Symlink creation needs extra privileges on Windows; the symlink case skips
@@ -108,11 +109,68 @@ describe('fs-search', () => {
     }
   })
 
+  it('honours opts.skipDirs merged with the built-in skip set', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-search-skip-'))
+    try {
+      mkdirSync(join(dir, '.smart-env', 'multi'), { recursive: true })
+      mkdirSync(join(dir, 'notes'), { recursive: true })
+      writeFileSync(join(dir, '.smart-env', 'multi', 'foo.ajson'), 'noise')
+      writeFileSync(join(dir, 'notes', 'foo.md'), 'note')
+      // Without the extra skip, both name matches appear.
+      expect((await searchFiles(dir, 'foo')).matches).toEqual([
+        '.smart-env/multi/foo.ajson',
+        'notes/foo.md',
+      ])
+      // With skipDirs, the noise forest is neither matched nor descended.
+      expect((await searchFiles(dir, 'foo', { skipDirs: ['.smart-env'] })).matches)
+        .toEqual(['notes/foo.md'])
+      expect((await searchFiles(dir, 'smart-env', { skipDirs: ['.smart-env'] })).matches)
+        .toEqual([])
+      // Built-in skips still apply alongside user excludes.
+      mkdirSync(join(dir, 'node_modules', 'pkg'), { recursive: true })
+      writeFileSync(join(dir, 'node_modules', 'pkg', 'foo.js'), 'dep')
+      expect((await searchFiles(dir, 'foo', { skipDirs: ['.smart-env'] })).matches)
+        .toEqual(['notes/foo.md'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('parseSearchExcludeDirs normalizes basenames, case, and separators', () => {
+    expect(parseSearchExcludeDirs('')).toEqual([])
+    expect(parseSearchExcludeDirs('  .SMART-ENV/ , .obsidian  .cache')).toEqual([
+      '.smart-env',
+      '.obsidian',
+      '.cache',
+    ])
+    expect(parseSearchExcludeDirs('vendor/.smart-env/')).toEqual(['.smart-env'])
+    expect(parseSearchExcludeDirs('. , .. , /')).toEqual([])
+  })
+
   it('an empty (or whitespace) query matches nothing without walking', async () => {
     const dir = makeFixture()
     try {
       expect(await searchFiles(dir, '')).toEqual({ matches: [], truncated: false })
       expect(await searchFiles(dir, '   ')).toEqual({ matches: [], truncated: false })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('AND-matches whitespace-split tokens (basename and cross-path)', async () => {
+    const dir = makeFixture()
+    try {
+      // Both tokens in the basename.
+      expect((await searchFiles(dir, 'util ts')).matches).toEqual(['src/util.ts'])
+      // Tokens spanning directory + file segments of the relative path.
+      expect((await searchFiles(dir, 'src util')).matches).toEqual(['src/util.ts'])
+      // No path contains both tokens.
+      expect((await searchFiles(dir, 'util guide')).matches).toEqual([])
+      // Single-token behaviour unchanged (basename only; case-insensitive).
+      expect((await searchFiles(dir, 'util')).matches).toEqual(['src/util.ts'])
+      expect((await searchFiles(dir, 'UTIL')).matches).toEqual(['src/util.ts'])
+      // Extra whitespace collapses the same as a single space.
+      expect((await searchFiles(dir, '  util   ts  ')).matches).toEqual(['src/util.ts'])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

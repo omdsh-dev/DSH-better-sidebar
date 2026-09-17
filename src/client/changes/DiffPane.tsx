@@ -144,13 +144,15 @@ export interface DiffPaneProps {
   scope: SessionScope
   /** The persisted pane height (px); drag commits a new one upwards. */
   height: number
+  /** The configured Obsidian-embed image directory (markdown viewer setting). */
+  imageDir?: string
   onHeightCommit: (height: number) => void
   onClose: () => void
   /** Expand the current git target into a dedicated diff tab. */
   onExpand: () => void
 }
 
-export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExpand }: DiffPaneProps) {
+export function DiffPane({ target, scope, height, imageDir, onHeightCommit, onClose, onExpand }: DiffPaneProps) {
   // ── Git target loading (mirrors the diff tab: staged-side fallback, the
   //    untracked full-addition fallback, refresh by tick). ─────────────────
   const [tick, setTick] = useState(0)
@@ -369,9 +371,9 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
   }, [mdOp, op, prior])
   const readingText = useMemo(
     () => (mdOp && reading && readingSrc !== '' && target.kind === 'op'
-      ? rewriteLocalImageUrls(readingSrc, scope, target.path, window.location.origin)
+      ? rewriteLocalImageUrls(readingSrc, scope, target.path, window.location.origin, imageDir)
       : ''),
-    [mdOp, reading, readingSrc, scope, target],
+    [mdOp, reading, readingSrc, scope, target, imageDir],
   )
 
   // ── HTML render mode: .html/.htm op targets (the editor html viewer's

@@ -1,12 +1,11 @@
 /**
  * Pure payload logic for the viewer selection popup ("add to
- * conversation"): the fence header (relative path + line span), the
- * over-limit plain-line fallback, and the best-effort reverse-search that
- * maps a preview selection back to source lines.
+ * conversation"): the fence header (relative path + line span), and the
+ * best-effort reverse-search that maps a preview selection back to source
+ * lines.
  */
 import { describe, expect, it } from 'vitest'
 import {
-  SELECTION_LIMIT,
   buildSelectionInsert,
   headerOf,
   linesOfSelection,
@@ -39,27 +38,23 @@ describe('headerOf', () => {
 })
 
 describe('buildSelectionInsert', () => {
-  it('wraps a small selection in a fenced block with the path:line info line', () => {
+  it('wraps a selection in a fenced block with the path:line info line', () => {
     expect(buildSelectionInsert('/p/a.ts', '/p', { start: 2, end: 4 }, 'const x = 1')).toBe(
       '```a.ts:2-4\nconst x = 1\n```',
     )
   })
 
-  it('accepts a selection exactly at the limit (fenced)', () => {
-    const text = 'x'.repeat(SELECTION_LIMIT)
-    expect(buildSelectionInsert('/p/a.ts', '/p', { start: 1, end: 1 }, text)).toBe(
-      `\`\`\`a.ts:1\n${text}\n\`\`\``,
+  it('keeps long selections fenced (no length cap)', () => {
+    const text = 'x'.repeat(2000)
+    expect(buildSelectionInsert('/p/a.ts', '/p', { start: 7, end: 7 }, text)).toBe(
+      `\`\`\`a.ts:7\n${text}\n\`\`\``,
     )
   })
 
-  it('drops the content past the limit: one plain path line, no fence', () => {
-    const text = 'x'.repeat(SELECTION_LIMIT + 1)
-    expect(buildSelectionInsert('/p/a.ts', '/p', { start: 7, end: 7 }, text)).toBe('a.ts:7')
-  })
-
-  it('keeps the plain-line form when past the limit without line numbers', () => {
-    const text = 'x'.repeat(SELECTION_LIMIT + 1)
-    expect(buildSelectionInsert('/p/a.ts', '/p', undefined, text)).toBe('a.ts')
+  it('fences without a line suffix when lines are unknown', () => {
+    expect(buildSelectionInsert('/p/a.ts', '/p', undefined, 'hello')).toBe(
+      '```a.ts\nhello\n```',
+    )
   })
 })
 

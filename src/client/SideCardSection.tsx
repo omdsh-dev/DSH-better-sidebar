@@ -569,6 +569,7 @@ export function SettingsBody(props: {
  */
 export function SideCardSection({ store, service }: SideCardSectionProps) {
   const [prefs, setPrefs] = useState<SidebarPrefs>(() => store.getPrefs())
+  const [searchExcludeDraft, setSearchExcludeDraft] = useState<string>(store.getPrefs().searchExcludeDirs)
   const [error, setError] = useState<string | null>(null)
   // Which feature's secondary settings popup is open (null = closed).
   const [settingsFor, setSettingsFor] = useState<TabDescriptor | FileViewerDescriptor | null>(null)
@@ -620,7 +621,9 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
       if (cancelled) return
       revisionRef.current = view.revision
       if (dirtyRef.current) return
-      setPrefs(parsePrefs(view.value))
+      const next = parsePrefs(view.value)
+      setPrefs(next)
+      setSearchExcludeDraft(next.searchExcludeDirs)
     }).catch(() => { /* the store's defaults stay authoritative */ })
     return () => { cancelled = true }
   }, [])
@@ -651,7 +654,9 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
 
   /** Settle one commit: success adopts the server values, failure reverts. */
   const applyOutcome = (previous: SidebarPrefs, outcome: { ok: boolean; prefs: SidebarPrefs }): void => {
-    setPrefs(outcome.ok ? outcome.prefs : previous)
+    const settled = outcome.ok ? outcome.prefs : previous
+    setPrefs(settled)
+    setSearchExcludeDraft(settled.searchExcludeDirs)
   }
 
   /** Optimistically apply one pref patch, then commit (revert on failure). */
@@ -766,6 +771,17 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     return raw
   }
 
+  /** Persist the filename-search exclude list (trim only; empty is meaningful). */
+  const commitSearchExclude = (): void => {
+    const next = searchExcludeDraft.trim()
+    if (next === prefs.searchExcludeDirs) {
+      setSearchExcludeDraft(prefs.searchExcludeDirs)
+      return
+    }
+    setSearchExcludeDraft(next)
+    applyPref({ searchExcludeDirs: next })
+  }
+
   /**
    * One SMALL toggle card for the responsive inventory grid: the card's main
    * area is the switch (click to flips, visual state IS the state), the icon
@@ -851,6 +867,26 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
             checked={prefs.agentOpenTools}
             onChange={(next) => { applyPref({ agentOpenTools: next }) }}
           />
+        </div>
+        <div className={css.row}>
+          <span className={css.rowText}>
+            <span className={css.title}>{t('settingsSearchExcludeTitle')}</span>
+            <span className={css.desc}>{t('settingsSearchExcludeDesc')}</span>
+          </span>
+          <span className={css.control}>
+            <Input
+              type="text"
+              className={css.typedInput}
+              value={searchExcludeDraft}
+              placeholder={t('settingsSearchExcludePlaceholder')}
+              aria-label={t('settingsSearchExcludeTitle')}
+              onChange={event => { setSearchExcludeDraft(event.currentTarget.value) }}
+              onBlur={commitSearchExclude}
+              onKeyDown={event => {
+                if (event.key === 'Enter') event.currentTarget.blur()
+              }}
+            />
+          </span>
         </div>
         <div className={css.row}>
           <span className={css.rowText}>

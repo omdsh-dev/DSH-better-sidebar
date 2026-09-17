@@ -32,11 +32,15 @@ function stubZh(): void {
 
 const MENU_LABELS = ['关闭', '关闭其他页签', '关闭左侧页签', '关闭右侧页签']
 
-function mountBar(tabs: SidebarTab[], opts: { onPinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void } = {}): {
+function mountBar(tabs: SidebarTab[], opts: {
+  onPinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void
+  onAddToConversation?: (tabId: string) => void
+} = {}): {
   tabEls: HTMLElement[]
   onClose: ReturnType<typeof vi.fn>
   onActivate: ReturnType<typeof vi.fn>
   onPinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void
+  onAddToConversation?: (tabId: string) => void
   unmount: () => void
 } {
   const container = document.createElement('div')
@@ -44,6 +48,7 @@ function mountBar(tabs: SidebarTab[], opts: { onPinTab?: (tabId: string, scope: 
   const onClose = vi.fn()
   const onActivate = vi.fn()
   const onPinTab = opts.onPinTab
+  const onAddToConversation = opts.onAddToConversation
   const root: Root = createRoot(container)
   act(() => {
     root.render(createElement(TabBar, {
@@ -55,6 +60,7 @@ function mountBar(tabs: SidebarTab[], opts: { onPinTab?: (tabId: string, scope: 
       onNewTab: () => {},
       newTabOptions: [],
       ...(onPinTab !== undefined ? { onPinTab } : {}),
+      ...(onAddToConversation !== undefined ? { onAddToConversation } : {}),
       onDropTab: () => {},
     }))
   })
@@ -64,6 +70,7 @@ function mountBar(tabs: SidebarTab[], opts: { onPinTab?: (tabId: string, scope: 
     onClose,
     onActivate,
     ...(onPinTab !== undefined ? { onPinTab } : {}),
+    ...(onAddToConversation !== undefined ? { onAddToConversation } : {}),
     unmount: () => {
       act(() => { root.unmount() })
       container.remove()
@@ -359,5 +366,59 @@ describe('TabBar context menu flip geometry (submenu clamping)', () => {
     expect(document.body.getAttribute(ATTR)).toBe('down')
     unmount()
     expect(document.body.hasAttribute(ATTR)).toBe(false)
+  })
+})
+
+describe('TabBar "add to conversation" entry (file tabs)', () => {
+  const tabs: SidebarTab[] = [
+    { id: 'file:1', type: 'file', title: 'a.ts', path: '/home/u/a.ts' },
+    { id: 'diff:1', type: 'diff', title: 'Patch' },
+    { id: 'term:1', type: 'terminal', title: 'T' },
+  ]
+
+  it('offers "添加到对话" for a file tab carrying a path and fires the callback on click', () => {
+    stubZh()
+    const onAddToConversation = vi.fn<(tabId: string) => void>()
+    const { tabEls, unmount } = mountBar(tabs, { onAddToConversation })
+    try {
+      act(() => { rightClick(tabEls[0]!) }) // file:1
+      const labels = menuItems().map(item => item.textContent)
+      expect(labels[0]).toBe('移动到自由窗口')
+      expect(labels[1]).toBe('添加到对话')
+      act(() => { menuItems()[1]!.click() })
+      expect(onAddToConversation).toHaveBeenCalledTimes(1)
+      expect(onAddToConversation).toHaveBeenCalledWith('file:1')
+      expect(menuItems()).toHaveLength(0)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('stays hidden when no callback is wired (legacy callers)', () => {
+    stubZh()
+    const { tabEls, unmount } = mountBar(tabs)
+    try {
+      act(() => { rightClick(tabEls[0]!) }) // file:1, but no onAddToConversation
+      const labels = menuItems().map(item => item.textContent)
+      expect(labels).not.toContain('添加到对话')
+      expect(labels).toEqual(MENU_LABELS)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('hides the entry for diff and terminal tabs even when the callback is wired', () => {
+    stubZh()
+    const onAddToConversation = vi.fn<(tabId: string) => void>()
+    const { tabEls, unmount } = mountBar(tabs, { onAddToConversation })
+    try {
+      act(() => { rightClick(tabEls[1]!) }) // diff:1 — synthesized patch, no file on disk
+      expect(menuItems().map(item => item.textContent)).not.toContain('添加到对话')
+      act(() => { rightClick(tabEls[2]!) }) // term:1 — no path
+      expect(menuItems().map(item => item.textContent)).not.toContain('添加到对话')
+      expect(onAddToConversation).not.toHaveBeenCalled()
+    } finally {
+      unmount()
+    }
   })
 })

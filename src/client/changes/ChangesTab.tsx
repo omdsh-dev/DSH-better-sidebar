@@ -24,6 +24,7 @@ import { GitLens } from './GitLens.tsx'
 import { SessionLens } from './SessionLens.tsx'
 import { DiffPane, diffTabOf, type ChangesPreview } from './DiffPane.tsx'
 import { extractFileOps, knownContentBefore, type FileOp } from './ops.ts'
+import { imageDirOf } from '../markdown-images.ts'
 import css from './changes.module.css'
 
 /** The default preview pane height (px) before the first drag. */
@@ -199,6 +200,7 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
           target={preview}
           scope={scope}
           height={paneHeight}
+          imageDir={imageDirOf(store.getPrefs().pluginSettings['markdown']?.imageDir)}
           onHeightCommit={(height) => { setPaneHeight(height); patchMeta({ previewH: height }) }}
           onClose={() => { setPreview(null) }}
           onExpand={expandPreview}

@@ -1,11 +1,16 @@
 /**
  * Recursive file-name search for the editor's merged-mode side panel.
- * Streams the tree with opendir and matches the query as a case-insensitive
- * substring of each entry's NAME (paths stay relative to the search root —
- * the client resolves them against the session cwd). No .gitignore semantics
+ * Streams the tree with opendir and matches a whitespace-split query as
+ * case-insensitive substrings (paths stay relative to the search root —
+ * the client resolves them against the session cwd). A single token matches
+ * the entry NAME only; multiple tokens require every token to appear in the
+ * entry's relative path (intersection — order-independent), so
+ * `微黄金 搬迁` can hit `微黄金/搬迁方案.md`. No .gitignore semantics
  * (this is a name lookup, not a code search), but known noise directories
  * (`.git`, `node_modules`, package-manager stores, build caches) are
- * skipped outright and symlink directories are NOT descended (cycle safety).
+ * skipped outright — and the settings-page `searchExcludeDirs` list merges
+ * into the same skip set — and symlink directories are NOT descended (cycle
+ * safety).
  *
  * Two performance budgets bound the walk: `maxMatches` (the client renders
  * the flat list) and `maxVisited` (a runaway tree — a home directory root
@@ -22,12 +27,19 @@ export interface FsSearchResult {
   truncated: boolean
 }
 
-/** Search budgets (both injectable for tests). */
+/** Search budgets (both injectable for tests) + optional extra skip dirs. */
 export interface FsSearchOptions {
   /** Row cap of the result list (default 200). */
   maxMatches?: number
   /** Total entries visited before the walk gives up (default 100_000). */
   maxVisited?: number
+  /**
+   * Extra directory names to skip (merged with {@link SEARCH_SKIP_DIRS}).
+   * Compared case-insensitively to each walked directory's basename — the
+   * directory itself is neither matched nor descended. Prefer feeding
+   * {@link parseSearchExcludeDirs} output here.
+   */
+  skipDirs?: string[]
 }
 
 const DEFAULT_MAX_MATCHES = 200
@@ -61,20 +73,67 @@ const SEARCH_SKIP_DIRS = new Set([
 ])
 
 /**
- * Search `root` recursively for entries whose name contains `query`
- * (case-insensitive).
+ * Parse the settings-page `searchExcludeDirs` string into lowercase directory
+ * basenames ready for {@link FsSearchOptions.skipDirs}. Splits on commas and
+ * whitespace; strips trailing slashes; takes the final path segment so
+ * `.smart-env/` and `foo/.smart-env` both become `.smart-env`. Empty /
+ * `.` / `..` segments are dropped; duplicates collapse.
+ */
+export function parseSearchExcludeDirs(raw: string): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const part of raw.split(/[,\s]+/)) {
+    let name = part.trim().replace(/[/\\]+$/g, '')
+    if (name === '') continue
+    const slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'))
+    if (slash >= 0) name = name.slice(slash + 1)
+    if (name === '' || name === '.' || name === '..') continue
+    const key = name.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(key)
+  }
+  return out
+}
+
+/** Split `query` on whitespace into lowercase tokens; empty / blank → []. */
+export function tokenizeQuery(query: string): string[] {
+  const trimmed = query.trim().toLowerCase()
+  if (trimmed === '') return []
+  return trimmed.split(/\s+/).filter(token => token.length > 0)
+}
+
+/**
+ * Whether an entry matches the tokenized query.
+ * Single token → basename substring; multiple → every token in the
+ * '/'-separated relative path (intersection).
+ */
+function entryMatches(name: string, relativePosix: string, tokens: string[]): boolean {
+  if (tokens.length === 1) return name.toLowerCase().includes(tokens[0]!)
+  const haystack = relativePosix.toLowerCase()
+  return tokens.every(token => haystack.includes(token))
+}
+
+/**
+ * Search `root` recursively for entries matching `query` (case-insensitive
+ * substrings; whitespace-split tokens are AND'd — see file header).
  * @param root - absolute search root.
- * @param query - the name substring; empty matches nothing.
- * @param opts - budget overrides (tests).
+ * @param query - name / path substrings; empty matches nothing.
+ * @param opts - budget overrides (tests) and optional extra skip dirs.
  * @returns the matching paths RELATIVE to `root` ('/'-separated), sorted,
  *  plus whether a budget cut the walk short. An unreadable level is skipped
  *  (permission errors never fail the whole search).
  */
 export async function searchFiles(root: string, query: string, opts: FsSearchOptions = {}): Promise<FsSearchResult> {
-  const needle = query.trim().toLowerCase()
-  if (needle === '') return { matches: [], truncated: false }
+  const tokens = tokenizeQuery(query)
+  if (tokens.length === 0) return { matches: [], truncated: false }
   const maxMatches = opts.maxMatches ?? DEFAULT_MAX_MATCHES
   const maxVisited = opts.maxVisited ?? DEFAULT_MAX_VISITED
+  const skip = new Set(SEARCH_SKIP_DIRS)
+  for (const name of opts.skipDirs ?? []) {
+    const key = name.trim().toLowerCase()
+    if (key !== '') skip.add(key)
+  }
 
   const matches: string[] = []
   let visited = 0
@@ -90,10 +149,13 @@ export async function searchFiles(root: string, query: string, opts: FsSearchOpt
         truncated = true
         return
       }
-      // Dependency / VCS / build-output forests: never matched, never descended.
-      if (dirent.isDirectory() && SEARCH_SKIP_DIRS.has(dirent.name.toLowerCase())) continue
-      if (dirent.name.toLowerCase().includes(needle)) {
-        matches.push(join(relative(root, dir), dirent.name))
+      // Dependency / VCS / build-output forests (+ user excludes): never
+      // matched, never descended.
+      if (dirent.isDirectory() && skip.has(dirent.name.toLowerCase())) continue
+      const rel = join(relative(root, dir), dirent.name)
+      const relPosix = rel.split(sep).join('/')
+      if (entryMatches(dirent.name, relPosix, tokens)) {
+        matches.push(rel)
         if (matches.length >= maxMatches) {
           truncated = true
           return

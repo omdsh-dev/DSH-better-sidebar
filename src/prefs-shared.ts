@@ -196,6 +196,16 @@ export interface SidebarPrefs {
    */
   browserAllowedLoopback: string
   /**
+   * Comma-separated directory NAMES excluded from the editor filename
+   * search (`fs.search`). Compared case-insensitively to each walked
+   * directory's basename (same semantics as the built-in noise list —
+   * `.git`, `node_modules`, …): matching directories are neither matched
+   * nor descended. Empty by default; user entries merge with the built-ins
+   * and cannot turn those off. Trailing slashes and path prefixes are
+   * normalized to the final segment (`.smart-env/` → `.smart-env`).
+   */
+  searchExcludeDirs: string
+  /**
    * Per-tab enable switches, keyed by tab descriptor id (`'explorer'`,
    * `'my-plugin:db'`). An ABSENT key means enabled — only an explicit
    * `false` disables a tab type (hidden from the + menu, `openTab` refuses,
@@ -262,6 +272,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   browserInterceptHttp: true,
   browserInterceptHttps: false,
   browserAllowedLoopback: '',
+  searchExcludeDirs: '',
   tabsEnabled: {},
   viewersEnabled: {},
   pluginSettings: {},

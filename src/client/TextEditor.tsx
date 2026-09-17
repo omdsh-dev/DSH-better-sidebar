@@ -13,31 +13,35 @@
  * the FileViewerProps toolbar callbacks so the host's path-input header
  * renders the controls instead.
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { EditorState } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
-import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutline16, IconSendOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
 import { api, htmlUrl } from './api.ts'
 import { markdownPreviewSource } from './markdown-frontmatter.ts'
-import { rewriteLocalImageUrls } from './markdown-images.ts'
+import { DEFAULT_IMAGE_DIR, imageDirOf, resolveObsidianBaseDir, rewriteLocalImageUrls } from './markdown-images.ts'
+import { clipboardImageOf, obsidianImageEmbed } from './markdown-paste.ts'
+import { DEFAULT_PREVIEW_THEME, previewThemeOf, type MdPreviewTheme } from './markdown-preview-theme.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
-import { appendToDraft } from './conversation-draft.ts'
+import { appendToDraft, insertFileReference } from './conversation-draft.ts'
+import { relativeTo } from './paths.ts'
 import { useSelectionPopup } from './selection-popup.ts'
 import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
 import { analyzeMarkdownHtml } from './markdown-html.ts'
 import { LazyMermaidMarkdown, MarkdownDocument, type MarkdownHtmlMedia } from './MarkdownHtml.tsx'
 import { MdToc } from './md-toc.tsx'
 import { splitMermaidBlocks } from './mermaid-blocks.ts'
+import { flipPreviewTask } from './task-toggle.ts'
 import { t } from './locales.ts'
 import { HTML_IFRAME_SANDBOX } from './html-preview.ts'
-import type { EditorToolbarState, FileViewerProps } from './service.ts'
+import type { EditorToolbarState, FileViewerProps, SidebarStore } from './service.ts'
 import css from './sidebar.module.css'
 
 /** Previewable files (rendered output vs source editing). */
@@ -51,16 +55,71 @@ type ViewMode = 'preview' | 'edit'
 const previewScrollMemory = new Map<string, number>()
 const previewScrollKey = (scope: { sessionId: string }, path: string): string => `${scope.sessionId}::${path}`
 
+/**
+ * The configured Obsidian-embed image directory (the markdown viewer's
+ * `imageDir` setting row, persisted under `pluginSettings['markdown']`),
+ * reactively — flipping the setting in the Side card re-renders any open
+ * preview. Test compositions without a store always read the default.
+ */
+function useImageDir(store: SidebarStore | undefined): string {
+  const snapshot = useCallback(
+    () => store === undefined
+      ? DEFAULT_IMAGE_DIR
+      : imageDirOf(store.getSnapshot().prefs.pluginSettings['markdown']?.imageDir),
+    [store],
+  )
+  return useSyncExternalStore(
+    useCallback((callback: () => void) => store?.subscribe(callback) ?? (() => { /* no store */ }), [store]),
+    snapshot,
+    // Server rendering (snapshot tests): no store exists there either.
+    snapshot,
+  )
+}
+
+/**
+ * The configured markdown file-preview color theme
+ * (`pluginSettings['markdown'].previewTheme`), reactive — flipping the
+ * setting in the Side card re-renders any open preview. Compositions
+ * without a store always read the default (`vivid`).
+ */
+function usePreviewTheme(store: SidebarStore | undefined): MdPreviewTheme {
+  const snapshot = useCallback(
+    () => store === undefined
+      ? DEFAULT_PREVIEW_THEME
+      : previewThemeOf(store.getSnapshot().prefs.pluginSettings['markdown']?.previewTheme),
+    [store],
+  )
+  return useSyncExternalStore(
+    useCallback((callback: () => void) => store?.subscribe(callback) ?? (() => { /* no store */ }), [store]),
+    snapshot,
+    snapshot,
+  )
+}
+
 export function TextEditor(props: FileViewerProps) {
   const { ctx, scope, path, viewerId, content, truncated } = props
+  /** The configured Obsidian-embed image directory (markdown viewer setting). */
+  const imageDir = useImageDir(props.store)
+  /** The configured file-preview color theme (markdown viewer setting). */
+  const previewTheme = usePreviewTheme(props.store)
   const [mode, setMode] = useState<ViewMode>('preview')
   /** The editor's current text (null while clean); preview renders this. */
   const [draft, setDraft] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+  /** Transient paste-image failure note (cleared on the next successful paste). */
+  const [pasteFailed, setPasteFailed] = useState(false)
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<CodeMirrorView | null>(null)
   const savingRef = useRef(false)
+  /** Guards overlapping paste-image uploads (clipboard fires can repeat). */
+  const pastingRef = useRef(false)
+  /** Same-second paste counter so concurrent pastes do not collide on disk. */
+  const pasteSuffixRef = useRef(0)
+  const pasteStampRef = useRef('')
+  /** Live scope/path/imageDir for the paste handler (view is not recreated on flips). */
+  const pasteCtxRef = useRef({ scope, path, imageDir })
+  pasteCtxRef.current = { scope, path, imageDir }
   /** The theme compartment of the current view (reconfigured on scheme flip). */
   const themeCompRef = useRef<CmThemeCompartment | null>(null)
   /** The app's resolved color scheme; the editor re-themes in place on flips. */
@@ -159,6 +218,58 @@ export function TextEditor(props: FileViewerProps) {
           ...defaultKeymap,
           ...historyKeymap,
         ]),
+        // Markdown paste-image: clipboard image/* → upload under imageDir →
+        // insert `![[name.ext]]` at the cursor. Plain-text pastes fall through.
+        ...(viewerId === 'markdown' ? [
+          CodeMirrorView.domEventHandlers({
+            paste(event, _view) {
+              const now = new Date()
+              const stamp = [
+                now.getFullYear(),
+                String(now.getMonth() + 1).padStart(2, '0'),
+                String(now.getDate()).padStart(2, '0'),
+                '-',
+                String(now.getHours()).padStart(2, '0'),
+                String(now.getMinutes()).padStart(2, '0'),
+                String(now.getSeconds()).padStart(2, '0'),
+              ].join('')
+              if (stamp !== pasteStampRef.current) {
+                pasteStampRef.current = stamp
+                pasteSuffixRef.current = 0
+              } else {
+                pasteSuffixRef.current += 1
+              }
+              const image = clipboardImageOf(
+                event.clipboardData,
+                now,
+                pasteSuffixRef.current > 0 ? pasteSuffixRef.current : undefined,
+              )
+              if (image === undefined) return false
+              event.preventDefault()
+              if (pastingRef.current) return true
+              pastingRef.current = true
+              setPasteFailed(false)
+              const { scope: liveScope, path: livePath, imageDir: liveDir } = pasteCtxRef.current
+              const dir = resolveObsidianBaseDir(liveDir, liveScope, livePath)
+              void api.uploadFile(liveScope, dir, image.fileName, image.blob).then(() => {
+                pastingRef.current = false
+                const live = viewRef.current
+                if (live === null) return
+                const embed = obsidianImageEmbed(image.fileName)
+                const sel = live.state.selection.main
+                live.dispatch({
+                  changes: { from: sel.from, to: sel.to, insert: embed },
+                  selection: { anchor: sel.from + embed.length },
+                })
+                setDirty(true)
+              }).catch(() => {
+                pastingRef.current = false
+                setPasteFailed(true)
+              })
+              return true
+            },
+          }),
+        ] : []),
         // Selection popup (the code and markdown editors): a non-empty
         // selection anchors the floating "add to conversation" button above
         // its head. Scrolling (geometry/viewport change) or losing focus
@@ -296,11 +407,27 @@ export function TextEditor(props: FileViewerProps) {
       savingRef.current = false
       setDraft(null)
       setDirty(false)
+      setPasteFailed(false)
       setSaveState('saved')
     }).catch(() => {
       savingRef.current = false
       setSaveState('failed')
     })
+  }
+
+  /**
+   * Add THIS file to the current conversation (toolbar button). Mirrors the
+   * explorer's @-reference path exactly: insert a structured @file chip
+   * (path relative to the session cwd) with a plain `@rel` fallback when the
+   * host's structured insert is unavailable — the agent then resolves the
+   * file content itself on send, so arbitrary file sizes/types are fine.
+   */
+  const addFileToConversation = (): void => {
+    if (scope.sessionId === undefined) return
+    const rel = relativeTo(scope.cwd ?? '', path)
+    if (!insertFileReference(ctx, scope.sessionId, rel)) {
+      appendToDraft(ctx, scope.sessionId, `@${rel}`)
+    }
   }
 
   /** The markdown source the preview renders (draft wins over saved content). */
@@ -327,10 +454,65 @@ export function TextEditor(props: FileViewerProps) {
     requestAnimationFrame(() => { restoringRef.current = false })
   }, [mode, previewMdText])
 
+  /**
+   * Interactive task-list checkboxes in the markdown preview. MarkdownText
+   * renders every task checkbox `disabled`, so (1) re-enable the rendered
+   * checkboxes after each preview render, and (2) a user change is mapped
+   * back to its source line and written to the file — the flip also lands in
+   * the CodeMirror document (undo history + edit/preview state stay in sync)
+   * and the draft refresh re-renders the preview instantly. Chat message
+   * checkboxes (rendered by the same primitive elsewhere) are untouched:
+   * everything here is scoped to this preview container.
+   */
+  useEffect(() => {
+    if (!markdown || mode !== 'preview') return
+    const container = mdRef.current
+    if (container === null) return
+    const checkboxes = Array.from(
+      container.querySelectorAll<HTMLInputElement>('li.task-list-item > input[type="checkbox"]'),
+    )
+    for (const checkbox of checkboxes) checkbox.disabled = false
+    const handleChange = (event: Event): void => {
+      const target = event.target
+      if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return
+      if (target.closest('li.task-list-item') === null) return
+      const index = checkboxes.indexOf(target)
+      if (index === -1) return
+      const view = viewRef.current
+      if (view === null) return
+      const source = view.state.doc.toString()
+      const flip = flipPreviewTask(source, previewMdText, index)
+      if (!flip.ok) {
+        // The browser already flipped the box; put it back — the file wins.
+        target.checked = !target.checked
+        return
+      }
+      const docLine = view.state.doc.line(flip.fullLineIndex + 1)
+      view.dispatch({
+        changes: { from: docLine.from, to: docLine.to, insert: flip.newLine },
+        // Park the cursor on the toggled line (visible feedback on focus).
+        selection: { anchor: docLine.from },
+      })
+      setDraft(view.state.doc.toString())
+      setSaveState('saving')
+      api.fsWrite(scope, path, view.state.doc.toString()).then(() => {
+        setDirty(false)
+        setSaveState('saved')
+      }).catch(() => {
+        setSaveState('failed')
+      })
+    }
+    container.addEventListener('change', handleChange)
+    return () => { container.removeEventListener('change', handleChange) }
+    // Re-enable + re-bind after every preview content change: MarkdownText
+    // re-creates the checkbox DOM nodes whenever the rendered source changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markdown, mode, previewMdText])
+
   /** The preview source with local image destinations rewritten to absolute
    *  media URLs (see {@link rewriteLocalImageUrls}). */
   const previewText = markdown
-    ? rewriteLocalImageUrls(previewMdText, scope, path, window.location.origin)
+    ? rewriteLocalImageUrls(previewMdText, scope, path, window.location.origin, imageDir)
     : previewMdText
   /** md/mermaid block split for the preview (mermaid fences lift out). Split
    *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
@@ -359,9 +541,9 @@ export function TextEditor(props: FileViewerProps) {
    *  `media` identity, so a fresh object per render would re-sanitize every
    *  keystroke. */
   const htmlMedia = useMemo<MarkdownHtmlMedia>(
-    () => ({ scope, path, origin: window.location.origin }),
+    () => ({ scope, path, origin: window.location.origin, imageDir }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scope.sessionId, scope.cwd, path],
+    [scope.sessionId, scope.cwd, path, imageDir],
   )
   const codeLabels = { copyLabel: t('copy'), copiedLabel: t('copied') }
 
@@ -399,6 +581,7 @@ export function TextEditor(props: FileViewerProps) {
   }
   const editable = content !== undefined
   const saveLabel = saveState === 'saving' ? t('loading') : saveState === 'saved' ? t('saved') : saveState === 'failed' ? t('saveFailed') : ''
+  const statusLabel = pasteFailed ? t('pasteImageFailed') : saveLabel
   // Per-feature sandbox escape hatch: the global side card setting (warned)
   // plus a per-surface temporary unlock. The unlock state starts at the
   // "default unsafe" pref so a preview can open straight into the red
@@ -465,7 +648,16 @@ export function TextEditor(props: FileViewerProps) {
             <IconCheckOutline16 />
           </button>
         )}
-        {saveLabel !== '' && <span className={clsx(css.editorStatus, saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>}
+        {statusLabel !== '' && <span className={clsx(css.editorStatus, (saveState === 'failed' || pasteFailed) && css.editorStatusError)}>{statusLabel}</span>}
+        <button
+          type="button"
+          className={css.iconButton}
+          aria-label={t('addToConversation')}
+          title={t('addToConversation')}
+          onClick={addFileToConversation}
+        >
+          <IconSendOutline16 />
+        </button>
       </div>
       )}
       {editable && (
@@ -480,6 +672,7 @@ export function TextEditor(props: FileViewerProps) {
       {markdown && mode === 'preview' && (
         <div
           className={css.editorMd}
+          data-md-preview-theme={previewTheme}
           ref={mdRef}
           onMouseUp={handlePreviewMouseUp}
           onScroll={(event) => {

@@ -33,7 +33,7 @@ import { parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.t
 import { resolveSessionPath } from './session-path.ts'
 import { renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from './fs-operations.ts'
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
-import { searchFiles } from './fs-search.ts'
+import { parseSearchExcludeDirs, searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { extractFrameAncestors } from './browser-probe.ts'
 import { isTrustedApiRequest, isLoopbackHostname } from './trust-fence.ts'
@@ -341,9 +341,15 @@ function buildApi(
       // The editor side panel's global name search: rooted at the session
       // cwd (not caller-targetable — the walk is unbounded by design and
       // must never escape the workspace), budgeted inside searchFiles.
+      // User `searchExcludeDirs` merges into the built-in skip set so noise
+      // forests (e.g. `.smart-env`) never burn the visit budget.
       const { cwd } = await cwdOf(payload)
       const query = requireString(payload, 'query')
-      return searchFiles(cwd, query)
+      const prefs = getSettings()?.get()?.value as SidebarPrefs | undefined
+      const skipDirs = parseSearchExcludeDirs(
+        typeof prefs?.searchExcludeDirs === 'string' ? prefs.searchExcludeDirs : '',
+      )
+      return searchFiles(cwd, query, { skipDirs })
     },
     'fs.read': async (payload) => {
       const { cwd } = await cwdOf(payload)

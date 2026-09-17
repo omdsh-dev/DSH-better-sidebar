@@ -2,16 +2,44 @@
  * Markdown-preview local-image resolution. The shared `MarkdownText` (from
  * @deepseek-ai/dsh-client-ui-primitives) only renders absolute http(s) image
  * URLs — relative links are disabled for chat security — so a local image in
- * a previewed `.md` (`![alt](./img.png)`, an absolute `/cwd/img.png`, or a
- * reference definition) would otherwise fall back to its alt text. This
- * dependency-free helper rewrites those destinations into absolute
- * `/sidebar/file` media URLs (prefixed with the GUI's own origin) so
- * `MarkdownText` accepts them; the host media route then serves the bytes,
- * still restricted to files under the session cwd.
+ * a previewed `.md` (`![alt](./img.png)`, an absolute `/cwd/img.png`, an
+ * Obsidian embed `![[x.png]]`, or a reference definition) would otherwise
+ * fall back to its alt text. This dependency-free helper rewrites those
+ * destinations into absolute `/sidebar/file` media URLs (prefixed with the
+ * GUI's own origin) so `MarkdownText` accepts them; the host media route
+ * then serves the bytes, still restricted to files under the session cwd.
+ *
+ * Obsidian embeds resolve against a configurable image directory (the
+ * markdown viewer's `imageDir` setting, default `images`) anchored at the
+ * session cwd — vault-root-relative like Obsidian itself — via
+ * {@link rewriteObsidianImageEmbeds}.
  */
 
 import type { SessionScope } from './api.ts'
 import { isAbsolutePath } from './paths.ts'
+
+/**
+ * The default Obsidian-style image directory (`![[x.png]]` → `<cwd>/images/x.png`).
+ * Configurable through the markdown viewer's `imageDir` setting row
+ * (persisted in `pluginSettings['markdown']`); the resolved directory is
+ * relative to the session cwd unless an absolute path is configured.
+ */
+export const DEFAULT_IMAGE_DIR = 'images'
+
+/** File extensions Obsidian embeds render as images (others are left as-is). */
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif|heic|tiff?)$/i
+
+/** Obsidian embed source: `![[target]]` (name | optional `|alt` / `|WxH`). */
+const OBSIDIAN_EMBED_RE = /!\[\[([^\]]+)\]\]/g
+
+/**
+ * Normalize the persisted `imageDir` setting value into a usable directory
+ * name: a non-empty trimmed string wins, anything else (missing, empty —
+ * the text row stores '' when cleared) falls back to the default.
+ */
+export function imageDirOf(value: unknown): string {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : DEFAULT_IMAGE_DIR
+}
 
 /**
  * True for a destination that is a remote URL — an absolute `scheme:` URL
@@ -81,6 +109,10 @@ export function resolveLocalMediaDest(
   origin: string,
 ): string {
   const trimmed = dest.trim()
+  // Idempotency: a destination already rewritten to this GUI's media route
+  // (a prior pass, an Obsidian embed lowered below) passes through untouched
+  // — re-resolving it against the file directory would corrupt the URL.
+  if (trimmed.startsWith(`${origin}/sidebar/file?`)) return dest
   if (trimmed === '' || trimmed.startsWith('#')) return dest
   if (isRemoteUrl(trimmed)) return dest
   const slash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
@@ -93,11 +125,58 @@ export function resolveLocalMediaDest(
   return `${origin}/sidebar/file?${params.toString()}`
 }
 
+/**
+ * The directory Obsidian embeds resolve against (and where pasted images
+ * are written): an absolute `imageDir` config is used verbatim; a relative
+ * one is anchored at the session cwd (the project root — Obsidian embeds
+ * are vault-root-relative, not file-relative), falling back to the opened
+ * file's directory when the scope carries no cwd.
+ */
+export function resolveObsidianBaseDir(imageDir: string, scope: SessionScope, filePath: string): string {
+  if (isAbsolutePath(imageDir)) return imageDir.replace(/[\\/]+$/, '')
+  const slash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'))
+  const directory = slash === -1 ? '/' : filePath.slice(0, slash + 1)
+  const root = scope.cwd !== undefined && scope.cwd !== '' ? scope.cwd : directory
+  return `${root.replace(/[\\/]+$/, '')}/${imageDir}`
+}
+
+/**
+ * Lower one Obsidian image embed (`![[x.png]]`) into a standard markdown
+ * image whose destination is a media-route URL. `![[x.png|alt]]` uses `alt`
+ * as the alt text; `![[x.png|WxH]]` (Obsidian size syntax) is accepted but
+ * the size is dropped (no scaling in the preview). Embeds whose target is
+ * not an image (notes, pdfs…) are returned unchanged — they stay wiki-link
+ * text the shared MarkdownText renders verbatim. Code-fenced examples are
+ * masked before this runs (see {@link rewriteLocalImageUrls}).
+ */
+export function rewriteObsidianImageEmbeds(
+  text: string,
+  scope: SessionScope,
+  filePath: string,
+  origin: string,
+  imageDir: string = DEFAULT_IMAGE_DIR,
+): string {
+  return text.replace(OBSIDIAN_EMBED_RE, (match, inner: string) => {
+    const pipe = inner.split('|')
+    const name = (pipe[0] ?? '').trim()
+    if (!IMAGE_EXT_RE.test(name)) return match
+    const arg = pipe.slice(1).join('|').trim()
+    // Only free-form alt text is used; Obsidian's WxH sizing is dropped.
+    const alt = arg !== '' && !/^\d+(?:x\d+)?$/i.test(arg) ? arg : name
+    const base = resolveObsidianBaseDir(imageDir, scope, filePath)
+    const candidate = normalizeLocalPath(`${base}/${name}`)
+    const params = new URLSearchParams({ sessionId: scope.sessionId, path: candidate })
+    if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
+    return `![${alt}](${origin}/sidebar/file?${params.toString()})`
+  })
+}
+
 export function rewriteLocalImageUrls(
   text: string,
   scope: SessionScope,
   filePath: string,
   origin: string,
+  imageDir: string = DEFAULT_IMAGE_DIR,
 ): string {
   const resolve = (dest: string): string => resolveLocalMediaDest(dest, scope, filePath, origin)
 
@@ -110,7 +189,12 @@ export function rewriteLocalImageUrls(
     .replace(/```[\s\S]*?```/g, (block) => { masks.push(block); return `\u0000${masks.length - 1}\u0000` })
     .replace(/`[^`\n]*`/g, (span) => { masks.push(span); return `\u0000${masks.length - 1}\u0000` })
 
-  const inline = masked.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_match, alt, dest) => {
+  // Obsidian embeds (`![[x.png]]`) first: lowered into standard `![x](url)`
+  // images whose destinations are already media-route URLs, so the inline
+  // pass below leaves them untouched (resolve is idempotent on them).
+  const obsidian = rewriteObsidianImageEmbeds(masked, scope, filePath, origin, imageDir)
+
+  const inline = obsidian.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_match, alt, dest) => {
     return `![${alt}](${resolve(dest)})`
   })
 

@@ -41,6 +41,9 @@ export interface MarkdownHtmlMedia {
   scope: SessionScope
   path: string
   origin: string
+  /** The configured Obsidian-embed image directory (defaults to `images`,
+   *  see {@link markdown-images.ts}). */
+  imageDir?: string
 }
 
 /** Tag-like text in a rendered text node — the inline pass gate. */
@@ -239,7 +242,7 @@ export function MarkdownDocument({ info, media, codeLabels }: MarkdownDocumentPr
       // stance), so rewrite local ones into /sidebar/file media URLs first —
       // the same trust fence the sanitized HTML leaves below go through.
       // Idempotent: already-absolute media URLs pass through untouched.
-      const text = rewriteLocalImageUrls(raw, media.scope, media.path, media.origin)
+      const text = rewriteLocalImageUrls(raw, media.scope, media.path, media.origin, media.imageDir)
       return {
         kind: 'markdown',
         text,

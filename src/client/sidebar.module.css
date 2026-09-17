@@ -1600,6 +1600,69 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   font: var(--dsw-font-xs-13);
 }
 
+/* Host MarkdownText zeros first-column (and last-td) cell padding so
+   tables flush with surrounding prose in chat bubbles
+   (`.tableScroll th:first-child { padding-left: 0 }` — specificity
+   0,2,1). File preview tables sit in their own scroll box — restore the
+   horizontal inset so the first column is not flush against the cell
+   edge. Do NOT wrap the cell selectors in `:where()`: that drops
+   specificity to (0,1,0) and the host rule wins. Match the host's
+   resting `10px 16px` cell padding. Scope is `.editorMd` only. */
+.editorMd table th:first-child,
+.editorMd table td:first-child {
+  padding-left: 16px;
+}
+
+.editorMd table td:last-child {
+  padding-right: 16px;
+}
+
+/* Preview task checkboxes are re-enabled by TextEditor (write-back to the
+   source file); give the pointer the same affordance as other controls. */
+.editorMd :global(li.task-list-item) > input[type='checkbox'] {
+  cursor: pointer;
+}
+
+/* File-preview color theme `vivid` (data-md-preview-theme). Element
+   selectors only — MarkdownText CSS Modules hashes are not a contract.
+   All colors stay on --dsw-alias-* tokens (skin-compat §12). Scope is
+   `.editorMd` only; Side Chat / Changes reading mode are untouched. */
+.editorMd[data-md-preview-theme="vivid"] {
+  /* Slightly stronger inline-code chip than the host default. */
+  --dsw-alias-markdown-inline-code: var(--dsw-alias-bg-layer-2);
+}
+
+.editorMd[data-md-preview-theme="vivid"] :where(h1, h2) {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.editorMd[data-md-preview-theme="vivid"] :where(h2) {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.editorMd[data-md-preview-theme="vivid"] :where(h3) {
+  color: var(--dsw-alias-label-primary);
+}
+
+.editorMd[data-md-preview-theme="vivid"] :where(blockquote) {
+  border-left-color: var(--dsw-alias-state-business-primary);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.editorMd[data-md-preview-theme="vivid"] :where(hr) {
+  background: var(--dsw-alias-border-l1);
+}
+
+.editorMd[data-md-preview-theme="vivid"] :where(th) {
+  background: var(--dsw-alias-bg-layer-2);
+  border-bottom-color: var(--dsw-alias-border-l3);
+}
+
+.editorMd[data-md-preview-theme="vivid"] :where(td) {
+  border-bottom-color: var(--dsw-alias-border-l2);
+}
+
 /* The DSH CodeBlock banner is position:sticky (top:0, z-index:6) so a block
    keeps its copy action reachable inside a per-message scroll container —
    the right call in chat, where each block owns its scroll box. In the file
@@ -2380,10 +2443,12 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .tocItem[data-level='5'] { padding-left: 48px; }
 .tocItem[data-level='6'] { padding-left: 58px; }
 
-/* The tiny level number keeps deep outlines scannable. */
+/* Hierarchical outline numbers (1 / 1.1 / 1.1.1) keep deep outlines scannable. */
 .tocItemLevel {
   flex: none;
   font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   color: var(--dsw-alias-label-tertiary);
 }
 

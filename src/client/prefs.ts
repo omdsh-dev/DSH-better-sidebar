@@ -117,6 +117,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     browserAllowedLoopback: typeof record.browserAllowedLoopback === 'string'
       ? record.browserAllowedLoopback
       : SIDEBAR_PREFS_DEFAULTS.browserAllowedLoopback,
+    searchExcludeDirs: typeof record.searchExcludeDirs === 'string'
+      ? record.searchExcludeDirs
+      : SIDEBAR_PREFS_DEFAULTS.searchExcludeDirs,
     tabsEnabled: booleanMapOf(record.tabsEnabled),
     viewersEnabled: booleanMapOf(record.viewersEnabled),
     pluginSettings: pluginSettingsMapOf(record.pluginSettings),
