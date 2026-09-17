@@ -231,4 +231,53 @@ describe('remote-access trust (webRuntime.trustedHosts)', () => {
       cleanup()
     }
   })
+
+  it('accepts the Electron carrier origin on a loopback host despite cross-site markers', async () => {
+    // The desktop carrier serves its UI from dsh-app://app, a custom scheme
+    // whose handler cannot upgrade a WebSocket, so its renderer reaches the
+    // authority the Desktop Host publishes for its embedded webServer — with
+    // Chromium's cross-site marker attached. The Host fence bounds it.
+    const { api, cleanup } = mount([])
+    try {
+      const res = fakeRes()
+      await api(req('POST', '/sidebar/api/session.cwd', {
+        host: '127.0.0.1:3199',
+        'sec-fetch-site': 'cross-site',
+        origin: 'dsh-app://app',
+      }, '{"sessionId":"test-session"}'), res as unknown as ServerResponse)
+      expect(res.status).toBe(200)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('rejects the carrier origin when the requested authority is neither loopback nor trusted', async () => {
+    const { api, cleanup } = mount([])
+    try {
+      const res = fakeRes()
+      await api(req('POST', '/sidebar/api/session.cwd', {
+        host: 'example.com',
+        'sec-fetch-site': 'cross-site',
+        origin: 'dsh-app://app',
+      }, '{"sessionId":"test-session"}'), res as unknown as ServerResponse)
+      expect(res.status).toBe(403)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('still rejects a cross-site origin that is not the carrier scheme', async () => {
+    const { api, cleanup } = mount([])
+    try {
+      const res = fakeRes()
+      await api(req('POST', '/sidebar/api/session.cwd', {
+        host: '127.0.0.1:3199',
+        'sec-fetch-site': 'cross-site',
+        origin: 'https://evil.example',
+      }, '{"sessionId":"test-session"}'), res as unknown as ServerResponse)
+      expect(res.status).toBe(403)
+    } finally {
+      cleanup()
+    }
+  })
 })
