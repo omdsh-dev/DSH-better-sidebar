@@ -994,6 +994,7 @@ describe('side card settings routes', () => {
       value: {
         autoOpenSubagent: true,
         autoOpenJobs: true,
+        tasksViewMode: 'graph',
         agentTerminalTools: false, agentOpenTools: false,
         bottomPanelAutoTerminal: true,
         terminalFontFamily: '',

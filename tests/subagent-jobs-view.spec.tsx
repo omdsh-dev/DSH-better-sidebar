@@ -1,9 +1,9 @@
 /**
- * Subagent page tests for the background-job section: rows render from the
- * `jobsBySession` mirror, clicking a row peeks its output through
- * `jobs.output` with the OWNER session scope, the kill button needs a
- * two-click confirm, settled rows offer no kill, and the output panel never
- * polls while the page is hidden.
+ * Tasks page tests for the background-jobs DRAWER: rows render from the
+ * `jobsBySession` mirror, clicking a row peeks its output in an anchored
+ * popover (portaled to document.body) through `jobs.output` with the OWNER
+ * session scope, the kill button needs a two-click confirm, settled rows
+ * offer no kill, and the output popover never polls while the page is hidden.
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -103,6 +103,12 @@ beforeEach(() => {
       killCalls.push({ sessionId: body.sessionId ?? '', id: body.id ?? '' })
       return jsonResponse({ ok: true, value: { ok: true, outcome: 'requested' } })
     }
+    if (method === 'workflows.list') {
+      return jsonResponse({ ok: true, value: { runs: [] } })
+    }
+    if (method === 'teams.view') {
+      return jsonResponse({ ok: true, value: { available: false } })
+    }
     throw new Error(`unexpected fetch ${String(url)}`)
   })
   Object.defineProperty(globalThis.navigator, 'language', { value: 'zh-CN', configurable: true })
@@ -159,7 +165,7 @@ describe('SubagentView background jobs', () => {
     unmount()
   })
 
-  it('shows the selected job output in the bottom dock, closeable', async () => {
+  it('shows the selected job output in an anchored popover, dismissable', async () => {
     const store = makeStore(baseSnapshot())
     const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
@@ -168,36 +174,36 @@ describe('SubagentView background jobs', () => {
     await act(async () => { row.click() })
     // The peek request carries the OWNER session (the fence compares it).
     expect(outputCalls).toEqual([{ sessionId: 'root', id: 'bash-1' }])
-    expect(container.textContent).toContain('output-of-bash-1')
-    // Exactly one dock region exists (never one per row).
-    expect(container.querySelectorAll('[role="region"]')).toHaveLength(1)
-    // The selected row is marked, and the close button dismisses the dock.
-    expect(row.getAttribute('aria-pressed')).toBe('true')
-    const close = container.querySelector('button[aria-label="关闭"]') as HTMLButtonElement
-    await act(async () => { close.click() })
-    expect(container.textContent).not.toContain('output-of-bash-1')
-    expect(container.querySelectorAll('[role="region"]')).toHaveLength(0)
+    // The popover is portaled to document.body (outside the tab container).
+    expect(document.body.textContent).toContain('output-of-bash-1')
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+    // Escape dismisses the popover.
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(document.body.textContent).not.toContain('output-of-bash-1')
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(0)
     unmount()
   })
 
-  it('switches the single dock between selected rows', async () => {
+  it('switches the single output popover between rows', async () => {
     const store = makeStore(baseSnapshot())
     const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
     )
     const first = container.querySelector('button[aria-label*="sleep 300"]') as HTMLButtonElement
     await act(async () => { first.click() })
-    expect(container.textContent).toContain('output-of-bash-1')
+    expect(document.body.textContent).toContain('output-of-bash-1')
     const second = container.querySelector('button[aria-label*="echo hi"]') as HTMLButtonElement
     await act(async () => { second.click() })
-    // One dock, now fed by the second job (its owner session scopes the replay).
+    // One popover, now fed by the second job (its owner session scopes the replay).
     expect(outputCalls).toEqual([
       { sessionId: 'root', id: 'bash-1' },
       { sessionId: 'child', id: 'bash-2' },
     ])
-    expect(container.querySelectorAll('[role="region"]')).toHaveLength(1)
-    expect(container.textContent).not.toContain('output-of-bash-1')
-    expect(container.textContent).toContain('output-of-bash-2')
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+    expect(document.body.textContent).not.toContain('output-of-bash-1')
+    expect(document.body.textContent).toContain('output-of-bash-2')
     unmount()
   })
 
@@ -215,9 +221,9 @@ describe('SubagentView background jobs', () => {
     )
     const row = container.querySelector('button[aria-label*="unread cmd"]') as HTMLButtonElement
     await act(async () => { row.click() })
-    // read:false → the pane explains the output awaits the model's job_output
+    // read:false → the popover explains the output awaits the model's job_output
     // (never the model's cursor, so there is nothing to steal yet).
-    expect(container.textContent).toContain('等待模型读取该任务的输出')
+    expect(document.body.textContent).toContain('等待模型读取该任务的输出')
     unmount()
   })
 
@@ -241,11 +247,11 @@ describe('SubagentView background jobs', () => {
     )
     expect(container.textContent).toContain('60 个后台任务 · 30 运行中')
     expect(container.querySelectorAll('button[aria-label*="bulk cmd"]')).toHaveLength(60)
-    // Clicking a row anywhere in the long list still feeds the single dock.
+    // Clicking a row anywhere in the long list still feeds the single popover.
     const row = container.querySelector('button[aria-label*="bulk cmd 59"]') as HTMLButtonElement
     await act(async () => { row.click() })
     expect(outputCalls).toEqual([{ sessionId: 'root', id: 'bash-69' }])
-    expect(container.textContent).toContain('output-of-bash-69')
+    expect(document.body.textContent).toContain('output-of-bash-69')
     unmount()
   })
 

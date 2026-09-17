@@ -130,3 +130,104 @@ describe('skin contract: the plugin owns no color of its own', () => {
     }
   })
 })
+
+/**
+ * Task-page migration guard (the shadcn/ui rework).
+ *
+ * The vendored components under `src/client/ui/**` and every migrated
+ * task-page module must take their colors from a DSH token — either directly
+ * (`var(--dsw-…)`) or through one of the shadcn aliases bridged in
+ * `src/client/ui/theme.css` (`--background`, `--border`, …). Three ways that
+ * can rot silently:
+ *
+ * 1. A color literal (`#hex`, `rgb()`, `oklch()`, …) — the host skin can no
+ *    longer repaint it, and the value stops flipping with dark mode.
+ * 2. A Tailwind default-palette class (`bg-blue-500`, `text-white`) — its
+ *    value is defined by Tailwind's own theme, not by DSH.
+ * 3. A `var()` in a migrated stylesheet pointing at neither a `--dsw-*` token
+ *    nor a bridged alias — a typo falls back to the initial color.
+ *
+ * Comments are stripped first: prose legitimately quotes the old values (the
+ * Badge docstring records that upstream's `text-white` became the
+ * `--destructive-foreground` token), and upstream issue numbers look like
+ * three-digit hex colors.
+ */
+const VENDORED_UI_DIR = 'src/client/ui'
+const MIGRATED_TASK_FILES = [
+  'src/client/SubagentView.tsx',
+  'src/client/SubagentView.module.css',
+  'src/client/TasksGraph.tsx',
+  'src/client/TasksTree.tsx',
+  'src/client/TaskWindow.tsx',
+  'src/client/TeamBoard.tsx',
+  'src/client/JobsDrawer.tsx',
+  'src/client/TasksPopovers.tsx',
+  'src/client/AnchoredPopover.tsx',
+  'src/client/tasks-shared.tsx',
+  'src/client/tasks-canvas.module.css',
+]
+
+/** Drop block comments and whole-line `//` comments (URLs/strings stay intact). */
+function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+}
+
+/** Any spelled-out color value (the skin contract's forbidden set). */
+const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|hwb|oklch|oklab|lab|lch|color-mix|light-dark)\(/
+
+/** Tailwind's default palette families, which are not DSH tokens. */
+const PALETTE_CLASS
+  = /\b(?:bg|text|border|ring|fill|stroke|from|via|to|outline|divide|shadow|accent|caret|decoration)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|white|black)(?:-\d{2,3})?\b/
+
+/** Paint declarations whose value must resolve to a token. */
+const PAINT_DECLARATION
+  = /(?:^|;)\s*(background(?:-color|-image)?|color|border(?:-(?:top|right|bottom|left))?-color|border|outline(?:-color)?|fill|stroke|box-shadow|text-decoration-color|caret-color|accent-color|scrollbar-color)\s*:\s*([^;}]+)/g
+
+/** A paint declaration naming no token at all may only be inert. */
+const INERT_PAINT = /^(?:none|transparent|currentcolor|inherit|initial|unset|revert)$/i
+
+/** Every variable the theme bridge defines (or forwards) — the alias allowlist. */
+const THEME_ALIASES = new Set(
+  [...readFileSync(resolve(ROOT, `${VENDORED_UI_DIR}/theme.css`), 'utf8').matchAll(/--([a-z0-9-]+)\s*:/g)]
+    .map(match => match[1]),
+)
+
+/** `--dsw-*` is the contract; the bridged aliases and runtime vars are the only indirection. */
+function tokenAllows(name: string): boolean {
+  return name.startsWith('dsw-') || name.startsWith('tw-') || name.startsWith('radix-') || THEME_ALIASES.has(name)
+}
+
+describe('skin contract: the migrated task page and the vendored ui/ own no color', () => {
+  const uiFiles = readdirSync(resolve(ROOT, VENDORED_UI_DIR))
+    .filter(name => /\.(?:tsx|ts|css)$/.test(name))
+    .map(name => `${VENDORED_UI_DIR}/${name}`)
+  const files = [...uiFiles, ...MIGRATED_TASK_FILES]
+
+  it('covers the vendored components and the migrated task-page modules', () => {
+    expect(uiFiles.length).toBeGreaterThan(10)
+    for (const file of files) expect(readFileSync(resolve(ROOT, file), 'utf8').length, file).toBeGreaterThan(0)
+  })
+
+  it.each(files)('%s carries no color literal', (file) => {
+    expect(stripComments(readFileSync(resolve(ROOT, file), 'utf8')), file).not.toMatch(COLOR_LITERAL)
+  })
+
+  it.each(files)('%s uses no Tailwind default-palette class', (file) => {
+    expect(stripComments(readFileSync(resolve(ROOT, file), 'utf8')), file).not.toMatch(PALETTE_CLASS)
+  })
+
+  it('binds every paint declaration in the migrated stylesheets to a token', () => {
+    for (const file of files.filter(name => name.endsWith('.css'))) {
+      const styles = stripComments(readFileSync(resolve(ROOT, file), 'utf8'))
+      for (const declaration of styles.matchAll(PAINT_DECLARATION)) {
+        const [, property, value] = declaration
+        const vars = [...(value ?? '').matchAll(/var\(--([a-z0-9-]+)/gi)].map(match => match[1] ?? '')
+        if (vars.length === 0) {
+          expect(INERT_PAINT.test((value ?? '').trim()), `${file}: ${property}: ${value}`).toBe(true)
+          continue
+        }
+        for (const name of vars) expect(tokenAllows(name), `${file}: ${property}: var(--${name})`).toBe(true)
+      }
+    }
+  })
+})

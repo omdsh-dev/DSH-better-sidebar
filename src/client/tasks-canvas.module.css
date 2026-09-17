@@ -1,0 +1,69 @@
+/**
+ * Canvas-only styles of the workflow graph (TasksGraph.tsx): the dotted grid,
+ * the transformed node layer, the SVG relation layer and the edge stroke
+ * recipe. These are the four pieces Tailwind utilities cannot express in the
+ * markup (a radial-gradient background image, `transform-origin: 0 0` on the
+ * scaled layer, an overflow-visible SVG stage, and SVG stroke/dash painting) —
+ * everything else in the graph is a utility class over the shadcn tokens.
+ *
+ * Skin contract: every color is a `--dsw-*` token (no literal, no palette
+ * class), so the canvas follows the host light/dark theme like the rest of the
+ * page. Relations are 1px hairlines in the border ink — the KIND of a relation
+ * is its dash pattern and opacity, never a second hue.
+ */
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+  /* Panning must never turn into a text selection or a native scroll. */
+  touch-action: none;
+  user-select: none;
+  /* Graph paper: the dotted grid is part of the language. */
+  background-image: radial-gradient(circle, var(--dsw-alias-border-l1) 0.6px, transparent 0.6px);
+  background-size: 16px 16px;
+  background-position: 0 0;
+}
+
+.canvasDragging {
+  cursor: grabbing;
+}
+
+.canvasInner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.edge {
+  fill: none;
+  stroke: var(--dsw-alias-border-l4);
+  stroke-width: 1;
+  opacity: 0.5;
+}
+
+/* Team membership: dashed. */
+.edgeTeam {
+  stroke-dasharray: 3 3;
+  opacity: 0.8;
+}
+
+/* Workflow member: solid, one notch stronger than a plain lineage edge. */
+.edgeWorkflow {
+  opacity: 0.75;
+}
+
+/* Collapsed aggregate: dotted and faint — it stands for many rows. */
+.edgeFold {
+  stroke-dasharray: 1 4;
+  opacity: 0.4;
+}

@@ -46,6 +46,8 @@ import { builtinModules, createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import type { UserConfig } from 'tsdown'
 import { transform } from 'lightningcss'
+import postcss from 'postcss'
+import tailwindPostcss from '@tailwindcss/postcss'
 
 const require = createRequire(import.meta.url)
 
@@ -67,15 +69,37 @@ const CLIENT_EXTERNALS = [
 ]
 
 /**
+ * CJS-format resolution otherwise lands on a package's `main` / `require`
+ * entry even when a modern ESM one exists. Two shapes of that trap hit this
+ * bundle: packages WITHOUT an exports map pick `main` (the react-remove-scroll
+ * family, whose `main` is `dist/es5` while `module` is `dist/es2015`), and
+ * packages whose exports map lists a non-browser condition first resolve to
+ * their `default` (tslib, whose `default` is the ES5 `tslib.js`). Both then
+ * ship transpiled ES5 plus the tslib helper runtime into the core bundle.
+ * `module` is therefore the first main field and the first condition — the
+ * browser targets this bundle serves all run those ESM entries. It does NOT
+ * rescue a package whose exports map lists `require` before `import` (the
+ * export-key order decides): those get an explicit alias, like react-icons
+ * below and tailwind-merge here.
+ */
+const RESOLVE_MAIN_FIELDS = ['module', 'browser', 'main']
+const RESOLVE_CONDITIONS = ['module', 'browser', 'import', 'require', 'default']
+
+/**
  * react-icons' exports map lists `require` BEFORE `import`, so the shared
  * conditionNames resolve the unshakeable CJS entry and the whole icon set
  * lands in the core bundle (~6.4 MB extra). Pin the two sets the client
  * uses to their ESM entries, which tree-shake down to the imported icons.
+ * tailwind-merge has the same shape (`require` -> the pre-bundled
+ * `bundle-cjs.js`, `import` -> the tree-shakeable `bundle-mjs.mjs`).
  */
 const reactIconsRoot = dirname(dirname(require.resolve('react-icons/lib')))
 const REACT_ICONS_ESM_ALIAS = {
   'react-icons/si': join(reactIconsRoot, 'si/index.mjs'),
   'react-icons/vsc': join(reactIconsRoot, 'vsc/index.mjs'),
+  // `exports` hides it from require.resolve, so derive it from the resolved CJS
+  // entry (same directory) — and fail loudly here if the layout ever changes.
+  'tailwind-merge': join(dirname(require.resolve('tailwind-merge')), 'bundle-mjs.mjs'),
 }
 
 /**
@@ -89,6 +113,28 @@ const INLINE_SAFE = /^@deepseek-ai\/dsh-(host-apiproxy|session|llm|tools|brand)(
 /** Virtual-id wrapper keeping module CSS away from tsdown's own css pipeline. */
 const CSS_VIRTUAL_PREFIX = '\0dsh-css:'
 const CSS_VIRTUAL_SUFFIX = '.mjs'
+
+/** Non-module CSS whose content Tailwind must compile (the vendored shadcn entry). */
+const TAILWIND_MARKER = '@import "tailwindcss'
+
+/**
+ * Run the shared PostCSS pipeline (currently Tailwind v4) over a stylesheet.
+ * Both CSS consumers must go through here — the tsdown css-inline plugin
+ * (build/watch, both install channels) and scripts/ui-css.mjs (the standalone
+ * visual harness artifact) — so the plugin's global stylesheet has exactly one
+ * definition.
+ * @param cssText - stylesheet source, Tailwind directives unexpanded.
+ * @param fileId - the stylesheet's path; `from` and the plugin's `base` keep
+ *   `@source`/`@import` resolution anchored to the real file, independent of
+ *   the process cwd.
+ * @param minify - production builds minify the generated utility sheet; the
+ *   harness keeps it readable.
+ */
+export async function compileTailwind(cssText: string, fileId: string, options: { minify?: boolean } = {}): Promise<string> {
+  const result = await postcss([tailwindPostcss({ base: dirname(fileId), optimize: options.minify ?? false })])
+    .process(cssText, { from: fileId })
+  return result.css
+}
 
 const REPOSITORY_ROOT = fileURLToPath(new URL('.', import.meta.url))
 
@@ -147,10 +193,12 @@ function clientBundle(pluginId: string, entryFile: string): UserConfig {
     // CJS output otherwise makes some transitive packages resolve their
     // Node entry even though this bundle runs in the browser. Keep browser
     // conditional exports authoritative for both source import() and
-    // generated require() edges.
+    // generated require() edges, and prefer the modern ESM entries over the
+    // ES5/CJS ones (see RESOLVE_MAIN_FIELDS).
     inputOptions: {
       resolve: {
-        conditionNames: ['browser', 'import', 'require', 'default'],
+        conditionNames: RESOLVE_CONDITIONS,
+        mainFields: RESOLVE_MAIN_FIELDS,
         alias: REACT_ICONS_ESM_ALIAS,
       },
     },
@@ -315,8 +363,21 @@ function makeCssPlugin(pluginId: string): BuildPlugin {
           `export default ${JSON.stringify(classMap)};`,
         ].join('\n')
       }
+      // Plain css carrying Tailwind directives (src/client/ui/theme.css) is
+      // compiled through postcss/@tailwindcss/postcss first — utilities are
+      // generated from the source tree at build time, so class names must
+      // exist when the bundle is written. Everything else stays verbatim.
+      let cssText = source.toString('utf8')
+      if (cssText.includes(TAILWIND_MARKER)) {
+        const compiled = await compileTailwind(cssText, fileId, { minify: true })
+        // Tailwind's own @source scan is invisible to the bundler — register
+        // the scanned tree so a watch rebuild re-runs this load when TSX
+        // changes (the generated utility set depends on those class names).
+        this.addWatchFile(join(REPOSITORY_ROOT, 'src/client'))
+        cssText = compiled
+      }
       return [
-        injectTag(pluginId, fileId, source.toString('utf8')),
+        injectTag(pluginId, fileId, cssText),
         'export default "";',
       ].join('\n')
     },
@@ -324,7 +385,7 @@ function makeCssPlugin(pluginId: string): BuildPlugin {
 }
 
 /** The lazy chunk names (keep in sync with src/bundle-route.ts CHUNK_NAMES). */
-const CHUNKS = ['terminal', 'editor', 'mermaid', 'locale']
+const CHUNKS = ['terminal', 'editor', 'mermaid', 'locale', 'tasks']
 
 export default [
   {

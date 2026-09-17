@@ -398,7 +398,7 @@ ctx.effect(() => {
 |---|---|---|---|---|
 | `editor` | 10 | 否（按 path 去重） | 否 | 唯一「文件窗口」（编辑/预览 + 资源管理）。chrome 恒合并形态：路径输入框 + 编辑器控件 + 可开关内嵌文件树（全局搜索 `fs.search`；状态存 `tab.meta.treeOpen/treeWidth`）。`editorExplorer`：关（默认）= 按 path 新开，无路径窗口 = 纯资源管理器；开 = 树点击/Enter 经 `updateTab` 原地切换（id/meta 不变），无路径窗口 = 带 chrome 空窗口。树右键「在新 Tab 中打开」「在侧边打开」（pane 右侧 split）。新会话 seed 空文件窗口（`title:'Files'`）；旧 `explorer` tab 经 `sanitizeState` 迁移 |
 | `git` | 20 | 是 | 是（本轮文件操作数） | 「文件变动」统一 tab（id 保留 `git` 以兼容持久化布局）：**Git 视角**（原 Git 面板：staged/unstaged / 提交 / 历史 / worktree·子仓库选择）+ **本轮文件视角**（原 file-trace：模型读/写/编辑实时折叠，按文件分组、类型筛选）；会话事件经插件自有宿主路由 `changes.ops` 供给（live 日志优先、冷会话回放持久化记录，`afterSeq` 增量），badge 读 tab 轮询写入的同步缓存。两视角共用底部可拖拽预览面板（`tab.meta.lens/previewH` 持久化），diff 渲染统一走 `src/client/diff/`（`DiffRows`/`DiffFiles`：mod 配对 + 行内高亮 + 语法着色 + 上下文折叠）；Git 目标可展开为独立 diff tab（落进工作台的 diff 分栏） |
-| `subagent` | 30 | 是 | 否 | 子代理拓扑 |
+| `subagent` | 30 | 是 | 否 | 任务管理（工作流图/树、团队任务板、后台任务抽屉） |
 | `sidechat` | 35 | 否（`sidechat:<uuid>`，按 `meta.threadId` 去重） | 否 | 侧边对话（每对话一 Tab）：打开即建空线程（首条消息赢得标签并同步标题）；线程 = 插件自建子会话（种子继承父会话上下文，进行中回合以 `interrupted` 闭合；种子带合法 `subagent/descriptor`，SubagentView 按 `Side: ` 前缀过滤），`origin:'subagent'` 隐藏于主列表；走 `/sidebar/api/sidechat.*` 路由；头部菜单切换/重开（`parkSidechatReopen` + 确定性 id），关 Tab 释放 live agent；重开经 `collectOwnEvents` 回源到种子边界；「保存为新会话」= `session.fork`（`this` 敏感）。[设计文档](plans/2026-08-20-sidechat-tab-design.md) |
 | `terminal` | 40 | 否（`terminal:<n>`） | 否 | 终端。v0.17.0+ 右键「固定到工作区/全局」：跨会话不消失，TabBar 内联虚拟 Tab（`pinned:<homeSessionId>:<tabId>`），就地按 home scope 连 PTY；global 全会话可见、workspace 仅同 cwd；`tab.pin = { scope, homeCwd? }` 随会话持久化，渲染期解析（`collectPinnedTabs` → `createPinnedVirtualTab` → `injectPinnedIntoTree`） |
 | `browser` | 50 | 否（`browser:<n>`） | 否 | 内嵌浏览器（沙箱 iframe，可设置关沙箱） |
@@ -932,6 +932,32 @@ ctx.effect(() =>
 
 - 类名是 CSS Modules 哈希，**不是契约**；精确命中用 `[data-dsh-better-sidebar]` + 子串类名（`[class*='panel']`）或 DOM 结构。
 - 改动本契约必须同步本文档、设计文档与 `tests/theme.spec.ts`。
+
+### 12.3 在插件里用 Tailwind / shadcn/ui
+
+本仓库自己的任务管理页（v0.20 起）就是这套姿势的参考实现：组件源码 vendoring 在 `src/client/ui/`，样式由 Tailwind v4 编译，颜色全部经 shadcn 语义令牌桥接到 `--dsw-*`。你的插件照做即可自动兼容全部皮肤；**接入的难点只有三条，其余都是常规 Tailwind**。
+
+**① 只引 `theme` + `utilities`，绝不引 preflight。** 插件的 CSS 最终是全局 `<style data-plugin>`（没有 shadow DOM），`@import "tailwindcss"` 连带的 preflight 会重置**整张 DSH 宿主页面**（会话正文、原生右侧栏、设置页）。唯一合法的入口形状：
+
+```css
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@source "../**/*.tsx";   /* 显式限定扫描面，否则 Tailwind 会连 lib/、node_modules/ 一起扫 */
+```
+
+| 现象 | 原因 |
+|---|---|
+| 自己的 `.rounded-md` 被宿主样式压过 | 宿主样式表是**无层级（unlayered）**的，无层级声明优先于任何 `@layer` 内的声明（与特异性无关）。补偿方式是把重置放进层里并抬到**类特异性**、挂在页面自己的作用域根类上（本仓库是 `.dsw-tasks`：`color` / `:where(...)` 的 `box-sizing` 与 `font: inherit` / `focus-visible` 环），而不是去动宿主 |
+| 深浅主题下颜色不翻 | DSH 的主题翻转是给 `<body>` 打 `data-ds-dark-theme`，不是加 `.dark` 类。若确需 `dark:` 变体，先定义 `@custom-variant dark (&:where([data-ds-dark-theme], [data-ds-dark-theme] *))`——但**令牌本身就是翻转的**，绝大多数情况下写 `dark:` 是双重记账，不要写 |
+
+**② 令牌桥接到 `--dsw-*`，颜色零字面量。** 在 `:root` 里把 shadcn 语义名接上 DSH 令牌（`--background: var(--dsw-alias-bg-base)`、`--card: var(--dsw-alias-bg-layer-1)`、`--popover: var(--dsw-alias-bg-layer-2)`、`--border: var(--dsw-alias-border-l4)`、`--primary: var(--dsw-alias-state-business-primary)`、`--muted-foreground: var(--dsw-alias-label-secondary)`、`--destructive: var(--dsw-alias-state-error-primary)` …），再用 `@theme inline { --color-background: var(--background); … }` 接成 Tailwind 工具类。`inline` 保证产物里留着这层间接，宿主皮肤改令牌能立刻生效。**禁止** `#hex` / `rgb()` / `oklch()` 字面量，也**禁止** Tailwind 默认调色板类（`bg-blue-500` / `text-white`）——后者的值是 Tailwind 自己的主题，不是 DSH 的。完整映射表见[任务页设计文档](./plans/2026-09-14-tasks-graph-workflow-teams-design.md)的「shadcn 令牌 → `--dsw-*` 映射表」。
+
+**③ 静态面板零阴影。** 阴影是**层级**手段，不是装饰：卡片、节点、行、面板互相叠加的投影是「节点一多就辣眼睛」的直接原因。静态面板的层级改用 **1px hairline（`border-border`）+ 表面阶梯（`background` → `card`/layer-1 → `popover`/layer-2）+ 三档墨色**承载；`shadow-*` 只允许出现在真正浮动、由自己锚定几何定位的层（popover / dropdown-menu / tooltip / 可拖动窗口）。上游 shadcn 组件默认给 card / input / textarea / toggle / toggle-group 都带 `shadow-xs`/`shadow-sm`，vendoring 时要逐处删掉。
+
+**另外两条与皮肤无关但同样会遇到**：
+
+- **图标用宿主图标，不引 `lucide-react`**：`@deepseek-ai/dsh-client-ui-primitives` 的 `IconXxx` 是平台模块（`size` / `className` 两个 props，颜色靠 `currentColor`），宿主图标渲染的就是 `svg`，所以 shadcn 组件里的 `[&_svg]` / `[&_svg:not([class*='size-'])]:size-4` 选择器照旧成立。引 lucide 会把整套图标内联进你的 bundle。
+- **vendoring 而不是新增重依赖**：`npx shadcn add <component>` 把源码落进你自己的目录（本仓库 `components.json` 的 aliases 全部指向 `src/client/ui`），依赖只增加 `radix-ui` / `class-variance-authority` / `clsx` / `tailwind-merge` 这四个可 tree-shake 的包；`tailwindcss` 与 `@tailwindcss/postcss` 只进 devDependencies（运行期产物是编译后的 CSS）。落盘后**逐文件复核**：CLI 默认会写 `import { cn } from "cn"`（npm 上真有一个同名包）、带回 `dark:` 颜色覆写、带回被删的 `shadow-xs` / `text-white` 与未使用的变体。升级上游组件用 `npx shadcn@latest add <component> --diff`，只取结构性更新再重新施加自己的删改，**不要**用 `--overwrite`。
 
 ---
 

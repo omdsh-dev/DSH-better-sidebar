@@ -9,7 +9,7 @@
  * (the old standalone explorer merged into it).
  */
 import { IconCodeOutline16, IconPanelLeftOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { Context } from '../../context-types.ts'
+import type { Context, SidebarSubagentAddress } from '../../context-types.ts'
 import {
   browserTabIcon, changesTabIcon, filesTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,
 } from './tab-icons.tsx'
@@ -21,7 +21,6 @@ import { OpenWithSettings } from '../open-with-settings.tsx'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
 import { ChangesTab, opCountOf } from '../changes/ChangesTab.tsx'
 import { DiffTab } from '../DiffTab.tsx'
-import { SubagentView } from '../SubagentView.tsx'
 import { consumeSidechatSeed, SideChatView, sidechatThreadIdOf } from '../SideChatView.tsx'
 import { api } from '../api.ts'
 import { BrowserView } from '../BrowserView.tsx'
@@ -46,6 +45,28 @@ import type { TabDescriptor } from '../service.ts'
 const LazyTerminal = lazyChunkComponent<TerminalViewProps>(
   'terminal',
   (mod) => mod.TerminalView as ComponentType<TerminalViewProps> | undefined,
+)
+
+/** The Tasks page's own props (its host, SubagentView, lives in the chunk). */
+interface TasksViewProps {
+  sessionId: string
+  ctx: Context
+  store: SidebarStore
+  active: boolean
+  onOpenChild?: (address: SidebarSubagentAddress) => void
+}
+
+/**
+ * The Tasks page is the heaviest surface of this plugin — the workflow graph,
+ * the tree, the task window, the jobs drawer AND the vendored shadcn/radix
+ * component layer (~430 KiB raw). It lives in the lazy `tasks` chunk so the
+ * core bundle keeps its startup budget: the tab body shows the shared loading
+ * placeholder until the chunk script lands, and a reader who never opens the
+ * Tasks tab never downloads it.
+ */
+const LazyTasks = lazyChunkComponent<TasksViewProps>(
+  'tasks',
+  (mod) => mod.SubagentView as ComponentType<TasksViewProps> | undefined,
 )
 
 /** The terminal view's props (mirror of TerminalView's own signature). */
@@ -189,12 +210,30 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           key: 'autoOpenJobs',
           title: () => t('settingsJobsTitle'),
           desc: () => t('settingsJobsDesc'),
+        }, {
+          key: 'tasksViewMode',
+          type: 'select',
+          title: () => t('settingsViewModeTitle'),
+          desc: () => t('settingsViewModeDesc'),
+          options: [
+            {
+              value: 'graph',
+              title: () => t('settingsViewModeGraph'),
+              desc: () => t('settingsViewModeGraphDesc'),
+            },
+            {
+              value: 'tree',
+              title: () => t('settingsViewModeTree'),
+              desc: () => t('settingsViewModeTreeDesc'),
+            },
+          ],
         }],
       },
-      component: ({ ctx, scope, visible, onSubagentJump }) => (
-        <SubagentView
+      component: ({ ctx, store, scope, visible, onSubagentJump }) => (
+        <LazyTasks
           sessionId={scope.sessionId}
           ctx={ctx}
+          store={store}
           active={visible}
           onOpenChild={(address) => { onSubagentJump?.(address.childSessionId) }}
         />

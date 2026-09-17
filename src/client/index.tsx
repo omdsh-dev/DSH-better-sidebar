@@ -32,6 +32,9 @@ import { LOCALE_NS, attachLocale, attachBetterLocale, t, zh, en } from './locale
 import { loadChunk } from './chunk-loader.ts'
 import css from './sidebar.module.css'
 import './layout.css'
+// Tailwind v4 entry for the vendored shadcn/ui components (theme + utilities
+// only, never preflight — see the file header). tsdown compiles it through
+// postcss/@tailwindcss/postcss and injects it as one more <style data-plugin>.
 
 /** Services required before mounting (provided by the client runtime; the
  *  locale service backs the sidebar's copy — see locales.ts). `modules`

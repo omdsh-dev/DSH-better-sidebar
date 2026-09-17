@@ -18,6 +18,7 @@
 import { describe, expect, it } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { CHUNK_NAMES } from '../src/bundle-route.ts'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
@@ -70,8 +71,24 @@ function bundleId(file: string): string {
   return match[1]!
 }
 
-/** The lazy chunk bundle names (mirror of src/bundle-route.ts CHUNK_NAMES). */
-const CHUNK_FILES = ['terminal', 'editor', 'mermaid'].map(name => `lib/client-${name}.js`)
+/**
+ * The lazy chunk bundles, DERIVED from the host route's registry (never
+ * hand-mirrored: the hand-written list drifted twice — `locale` was missing
+ * from both this list and a later `package.json#files` cleanup, and `tasks`
+ * shipped without being listed at all, which would have made the Tasks page
+ * fail to load from a published tarball).
+ */
+const CHUNK_FILES = CHUNK_NAMES.map(name => `lib/client-${name}.js`)
+
+/** Whether one `package.json#files` entry covers a built artifact path. */
+function publishListCovers(entry: string, file: string): boolean {
+  if (entry === file) return true
+  if (!entry.includes('*')) return false
+  // Only the `lib/client-*.js` shape is in play; a regex built from the entry
+  // is enough (escape everything else).
+  const pattern = new RegExp(`^${entry.split('*').map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')}$`)
+  return pattern.test(file)
+}
 
 /** The global registry slot a built chunk script assigns (its factory key). */
 function chunkSlot(file: string): string {
@@ -107,6 +124,16 @@ describe.skipIf(!libBuilt)('registry manifest consistency (dsh.plugin.json)', ()
     for (const file of CHUNK_FILES) {
       expect(existsSync(resolve(ROOT, file)), file).toBe(true)
       expect(chunkSlot(file), file).toBe(file.slice('lib/client-'.length, -'.js'.length))
+    }
+  })
+
+  it('every chunk is covered by package.json#files (a published tarball must serve it)', () => {
+    const files = (pkg as { files?: string[] }).files ?? []
+    for (const file of CHUNK_FILES) {
+      expect(
+        files.some(entry => publishListCovers(entry, file)),
+        `${file} is not covered by package.json#files (${files.join(', ')})`,
+      ).toBe(true)
     }
   })
 

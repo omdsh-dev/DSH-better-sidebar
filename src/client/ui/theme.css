@@ -1,0 +1,181 @@
+/*
+ * Tailwind v4 entry for the plugin's vendored shadcn/ui components.
+ *
+ * Two deliberate omissions:
+ *
+ * 1. PREFLIGHT IS NEVER IMPORTED. The plugin's CSS ships as a GLOBAL
+ *    `<style data-plugin>` tag injected by the client bundle (no shadow DOM),
+ *    so Tailwind's reset would repaint the whole DSH host page (headings,
+ *    lists, buttons, borders — every element in the conversation and the
+ *    native sidebar). Only `theme.css` (design tokens) and `utilities.css`
+ *    (the classes we actually use) are pulled in.
+ * 2. NO COLOR LITERALS AND NO DARK PALETTE. Every value in `:root` below
+ *    resolves to a DSH `--dsw-*` token, which already flips with the host
+ *    light/dark theme (`body[data-ds-dark-theme]`). That is the skin contract
+ *    (docs/external-plugin-guide.md §12, guarded by tests/theme.spec.ts).
+ *
+ * `@source` is EXPLICIT so the scanner covers only the client TSX tree —
+ * without it Tailwind would glob the project root and pick class-like strings
+ * out of `lib/`, `tests/`, `node_modules/` and the docs.
+ */
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@source "../**/*.tsx";
+
+/* The DSH theme flips by toggling `data-ds-dark-theme` on <body> (see
+ * @deepseek-ai/dsh-client-ui-theme), not by adding a `.dark` class. */
+@custom-variant dark (&:where([data-ds-dark-theme], [data-ds-dark-theme] *));
+
+/*
+ * Bridge: shadcn/ui's semantic names -> Tailwind color/radius/font utilities.
+ *
+ * `inline` keeps the generated utilities as `var(--background)` etc. instead of
+ * copying the (indirect) value, so exactly one indirection layer exists and a
+ * host skin that re-paints a token is picked up live.
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  /* Extra rungs the task page needs beyond stock shadcn: success/warning for
+   * task state and a third text weight (design language: three ink levels by
+   * weight, not by hue). */
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-foreground-3: var(--foreground-3);
+  --color-border-strong: var(--border-strong);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+
+  /* Text roles come from the host's own font tokens so the plugin cannot
+   * drift from the DSH type scale. */
+  --font-sans: var(--dsw-font-family-default, system-ui, sans-serif);
+  --font-mono: var(--dsw-font-family-code, ui-monospace, monospace);
+}
+
+/*
+ * shadcn tokens -> DSH alias tokens. Every value is a `var(--dsw-…)`
+ * reference; nothing here is a color literal, and no dark override is needed
+ * because the DSH tokens themselves flip with the host theme.
+ */
+:root {
+  --radius: 6px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  --background: var(--dsw-alias-bg-base);
+  --foreground: var(--dsw-alias-label-primary);
+  --card: var(--dsw-alias-bg-layer-1);
+  --card-foreground: var(--dsw-alias-label-primary);
+  --popover: var(--dsw-alias-bg-layer-2);
+  --popover-foreground: var(--dsw-alias-label-primary);
+  --primary: var(--dsw-alias-state-business-primary);
+  --primary-foreground: var(--dsw-alias-label-primary-foreground);
+  --secondary: var(--dsw-alias-interactive-bg-hover);
+  --secondary-foreground: var(--dsw-alias-label-primary);
+  --muted: var(--dsw-alias-interactive-bg-hover);
+  --muted-foreground: var(--dsw-alias-label-secondary);
+  --accent: var(--dsw-alias-interactive-bg-hover);
+  --accent-foreground: var(--dsw-alias-label-primary);
+  --destructive: var(--dsw-alias-state-error-primary);
+  --destructive-foreground: var(--dsw-alias-label-primary-foreground);
+  --border: var(--dsw-alias-border-l4);
+  --input: var(--dsw-alias-border-l4);
+  --ring: var(--dsw-alias-state-business-primary);
+  --success: var(--dsw-alias-state-success-primary);
+  --warning: var(--dsw-alias-state-warn-primary);
+  --foreground-3: var(--dsw-alias-label-tertiary);
+  --border-strong: var(--dsw-alias-label-tertiary);
+}
+
+/*
+ * Scoped resets.
+ *
+ * The host's own stylesheets are UNLAYERED, so an unlayered host rule outranks
+ * anything Tailwind puts in `layer(utilities)` regardless of specificity — a
+ * layered `.rounded-md` cannot beat a bare host rule. The compensation is
+ * `.dsw-tasks` (the task page root class): its own rules live in the layer but
+ * carry class-level specificity, and `:where()` keeps the element resets at
+ * class specificity too, so `color`/`font`/`box-sizing` reach the page's
+ * elements without a preflight and without leaking to the rest of DSH.
+ */
+@layer base {
+  .dsw-tasks {
+    color: var(--dsw-alias-label-primary);
+  }
+
+  .dsw-tasks :where(button, input, textarea, select) {
+    font: inherit;
+  }
+
+  .dsw-tasks :where(*, *::before, *::after) {
+    box-sizing: border-box;
+  }
+
+  /* The host strips/overrides the UA focus ring in places; the task page owns
+   * a visible, token-colored one (design language: focus-visible must show). */
+  .dsw-tasks :where(a, button, input, textarea, select, [tabindex]):focus-visible {
+    outline: 2px solid var(--dsw-alias-state-business-primary);
+    outline-offset: 1px;
+  }
+}
+
+/*
+ * Thin scrollbars for the shadcn ScrollArea / scrollable task surfaces, riding
+ * the host's scrollbar tokens (they already flip with the theme).
+ */
+@layer utilities {
+  .dsw-tasks {
+    scrollbar-width: thin;
+    scrollbar-color: var(--dsw-alias-scrollbar-hover-l2) transparent;
+  }
+
+  .dsw-tasks :where(*)::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .dsw-tasks :where(*)::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .dsw-tasks :where(*)::-webkit-scrollbar-thumb {
+    background: var(--dsw-alias-scrollbar-bg-l2);
+    border-radius: 4px;
+  }
+
+  .dsw-tasks :where(*)::-webkit-scrollbar-thumb:hover {
+    background: var(--dsw-alias-scrollbar-hover-l2);
+  }
+}
+
+/* Motion is decorative only (opacity / background / transform); users who ask
+ * for less get none of it. */
+@media (prefers-reduced-motion: reduce) {
+  .dsw-tasks :where(*, *::before, *::after) {
+    animation: none !important;
+    transition: none !important;
+  }
+}
