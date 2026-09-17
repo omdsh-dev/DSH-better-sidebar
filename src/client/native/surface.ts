@@ -55,6 +55,29 @@ function activeSessionId(ctx: Context): string | undefined {
 }
 
 /**
+ * Evict the parked records of sessions that no longer exist.
+ *
+ * A parked record is released by switching back to its session or by the host
+ * closing that tab. Neither happens for a session the user DELETED (or that
+ * DSH dropped from the list), so its archive would otherwise be retained for
+ * the life of the page. The active session is always kept: it may be missing
+ * from `byId` for a moment while the list reloads.
+ * @param ctx - the client context (session list).
+ * @param records - the record registry whose archives are pruned.
+ */
+function evictDeadSessions(ctx: Context, records: NativeTabRecords): void {
+  try {
+    const snapshot = ctx.sessions.list.getSnapshot()
+    const live = new Set(Object.keys(snapshot.byId ?? {}))
+    const current = snapshot.current
+    if (current !== undefined) live.add(current)
+    records.retain(live)
+  } catch {
+    // A read failure is not evidence that sessions are gone; keep everything.
+  }
+}
+
+/**
  * Bind the plugin's write face to the native controller.
  * @param ctx - the client context (session list + `ctx.sidebarRight`).
  * @param records - the plugin's native tab record registry.
@@ -109,7 +132,16 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
     if (!place(entry)) pending.push(entry)
   }
 
-  const unsubscribe = ctx.sessions.list.subscribe(flushPending)
+  // One session-list subscription drives both jobs: replay queued opens for a
+  // session that just came on screen, and drop the archives of sessions that
+  // are gone. Eviction runs on every list change (a deletion is one) and once
+  // at bind time, so a page that starts with stale archives still clears them.
+  const onSessionsChanged = (): void => {
+    flushPending()
+    evictDeadSessions(ctx, records)
+  }
+  const unsubscribe = ctx.sessions.list.subscribe(onSessionsChanged)
+  evictDeadSessions(ctx, records)
   return {
     openTab({ sessionId, kind, params, revealIfOpened }) {
       enqueue({ kind: 'tab', sessionId, tabKind: kind, params, revealIfOpened })

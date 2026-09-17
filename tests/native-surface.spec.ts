@@ -10,6 +10,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { createNativeTabRecords, NativeTabBody, NativeTabTitle } from '../src/client/native/tab-adapter.tsx'
 import { registerNativeSurface } from '../src/client/native/index.ts'
+import { createNativeSurface } from '../src/client/native/surface.ts'
 import { createBetterSidebarService, type SidebarSurface, type TabComponentProps } from '../src/client/service.ts'
 import { createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 
@@ -136,6 +137,91 @@ describe('createNativeTabRecords', () => {
     expect(records.peek('A', 'tab1'), 'A’s parked record survives B’s close').toBeDefined()
     records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: a })
     expect(records.get('tab1')?.scope.sessionId).toBe('A')
+  })
+
+  /**
+   * A parked record is otherwise released only by switching back to its
+   * session or by the host closing that tab. A session the user DELETED has
+   * neither, so its archive would be retained for the life of the page —
+   * bounded per session, but linear in the number of sessions ever opened.
+   */
+  it('retain() evicts the archives of sessions that no longer exist', () => {
+    const records = createNativeTabRecords()
+    const scopeOf = (sessionId: string) => ({ sessionId, cwd: '/work' })
+
+    // Three sessions use the same native id; two end up parked.
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: scopeOf('keep') })
+    records.toggleExpanded('tab1', '/work/keep')
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: scopeOf('deleted') })
+    records.toggleExpanded('tab1', '/work/deleted')
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: scopeOf('live') })
+    records.toggleExpanded('tab1', '/work/live')
+    // Now: 'live' owns the slot, 'keep' and 'deleted' are parked.
+    expect(records.peek('keep', 'tab1')).toBeDefined()
+
+    records.retain(new Set(['keep', 'live']))
+
+    expect(records.peek('keep', 'tab1'), 'a live session keeps its archive').toBeDefined()
+    expect(records.peek('deleted', 'tab1'), 'a deleted session’s archive is dropped').toBeUndefined()
+    // The live slot is never touched by eviction.
+    expect(records.get('tab1')?.scope.sessionId).toBe('live')
+    expect(records.get('tab1')?.expanded).toEqual(['/work/live'])
+
+    // Coming back to a kept session still restores its state.
+    const back = records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: scopeOf('keep') })
+    expect(back.expanded).toEqual(['/work/keep'])
+  })
+
+  it('retain() ignores an empty list (a not-yet-loaded session list must not wipe state)', () => {
+    const records = createNativeTabRecords()
+    const a = { sessionId: 'A', cwd: '/work' }
+    const b = { sessionId: 'B', cwd: '/work' }
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: a })
+    records.toggleExpanded('tab1', '/work/a')
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: b })
+
+    records.retain(new Set())
+    expect(records.peek('A', 'tab1'), 'an empty list is not evidence that A is gone').toBeDefined()
+
+    // A list that omits a parked session DOES evict it (real data).
+    records.retain(new Set(['B']))
+    expect(records.peek('A', 'tab1')).toBeUndefined()
+    expect(records.get('tab1')?.scope.sessionId, 'the live slot is untouched').toBe('B')
+  })
+
+  /**
+   * The wiring, not just the method: `createNativeSurface` subscribes to the
+   * session list, so a deletion reported there has to reach the registry.
+   * Without this the eviction could exist and never run.
+   */
+  it('a session-list change drives the eviction (the wiring)', () => {
+    const held: Array<{ byId: Record<string, unknown>; current?: string }> = [{ byId: { A: {}, B: {} }, current: 'B' }]
+    const listeners = new Set<() => void>()
+    const ctx = {
+      sessions: {
+        list: {
+          subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+          getSnapshot: () => held[held.length - 1]!,
+        },
+      },
+      get: () => undefined,
+    } as never
+    const records = createNativeTabRecords()
+    const scopeOf = (sessionId: string) => ({ sessionId, cwd: '/work' })
+    // A is parked (B owns the live slot).
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: scopeOf('A') })
+    records.toggleExpanded('tab1', '/work/a')
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: scopeOf('B') })
+
+    const surface = createNativeSurface(ctx, records)
+    expect(records.peek('A', 'tab1'), 'A survives while it is in the list').toBeDefined()
+
+    // The user deletes A and the list notifies.
+    held.push({ byId: { B: {} }, current: 'B' })
+    for (const listener of [...listeners]) listener()
+
+    expect(records.peek('A', 'tab1'), 'the deletion reached the registry').toBeUndefined()
+    surface.dispose()
   })
 })
 

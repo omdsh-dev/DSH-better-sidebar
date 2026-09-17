@@ -138,6 +138,18 @@ export interface NativeTabRecords {
   nextInstance(kind: string): number
   /** A per-record version for `useSyncExternalStore`. */
   versionOf(id: string): number
+  /**
+   * Forget every parked record whose session is no longer in `sessionIds`.
+   *
+   * A parked record is otherwise released only by switching back to its
+   * session or by the host closing that tab — neither happens for a session
+   * the user DELETED or that DSH dropped from the list, so without this the
+   * archives of dead sessions are retained for the life of the page. Bounded
+   * per session (ids restart per session and only grow), but linear in the
+   * number of sessions ever opened.
+   * @param sessionIds - the sessions that still exist, plus the active one.
+   */
+  retain(sessionIds: ReadonlySet<string>): void
   /** Subscribe to record changes (title/path/meta/expanded). */
   subscribe(listener: () => void): () => void
 }
@@ -297,6 +309,27 @@ export function createNativeTabRecords(): NativeTabRecords {
       return next
     },
     versionOf: id => views.get(id)?.version ?? 0,
+    retain(sessionIds) {
+      // A list with no sessions is not evidence that every session is gone
+      // (the client may not have loaded its list yet, or a read threw);
+      // evicting on one would throw away live state. Wait for real data.
+      if (sessionIds.size === 0) return
+      let evicted = false
+      for (const key of [...parked.keys()]) {
+        // The key is `sessionId::tabId`; the session id itself never
+        // contains the separator, but a tab id may be an arbitrary string,
+        // so split on the FIRST separator only.
+        const at = key.indexOf('::')
+        if (at < 0) continue
+        if (sessionIds.has(key.slice(0, at))) continue
+        parked.delete(key)
+        evicted = true
+      }
+      // Dropping archives changes no live snapshot, but subscribers that
+      // read through `peek` (a chip for a session the reader is returning
+      // to) must re-read; one notify is cheap and rare.
+      if (evicted) notify()
+    },
     subscribe(listener) {
       listeners.add(listener)
       return () => { listeners.delete(listener) }
