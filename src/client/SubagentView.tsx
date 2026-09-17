@@ -223,7 +223,9 @@ interface RowsProps {
   refresh: (parentSessionId: string) => void
 }
 
-/** Render one topology level; branches are always expanded (lazy catalogs). */
+/** Render one topology level; branches are always expanded (lazy catalogs), and
+ *  children that are no longer running fold into one disclosure at the end of
+ *  the level. */
 function CatalogRows({
   parentSessionId, catalog, catalogs, byId, level, currentSessionId, live,
   openChild, refresh,
@@ -237,6 +239,21 @@ function CatalogRows({
     if (entry.kind === 'child') return !(entry.label?.startsWith(SIDE_LABEL_PREFIX) ?? false)
     return !(byId[entry.id]?.displayTitle.startsWith(SIDE_LABEL_PREFIX) ?? false)
   })
+  // A dispatcher session accumulates settled children for its whole run: they
+  // are history, not state — only the running rows still move (live text, last
+  // tool call). Fold every child that is not running into one toggle at the
+  // bottom of THIS level, so a long session stays readable; catalog order is
+  // preserved inside the fold, and the session currently open stays visible
+  // wherever it sits. Diagnostics are never folded — an anomaly must be seen.
+  const [settledOpen, setSettledOpen] = useState(false)
+  const settledEntries = visibleEntries.filter(
+    (entry) => entry.kind === 'child' && entry.activity !== 'running' && entry.id !== currentSessionId,
+  )
+  const rowsToRender = settledOpen || settledEntries.length === 0
+    ? visibleEntries
+    : visibleEntries.filter(
+        (entry) => entry.kind !== 'child' || entry.activity === 'running' || entry.id === currentSessionId,
+      )
   return (
     <>
       {emptyLoading && (
@@ -255,7 +272,7 @@ function CatalogRows({
           </button>
         </div>
       )}
-      {visibleEntries.map((entry) => {
+      {rowsToRender.map((entry) => {
         if (entry.kind === 'diagnostic') {
           return (
             <div key={entry.id} className={css.subagentNode}>
@@ -349,6 +366,27 @@ function CatalogRows({
           </div>
         )
       })}
+      {settledEntries.length > 0 && (
+        <div className={css.subagentNode}>
+          <button
+            type="button"
+            aria-expanded={settledOpen}
+            aria-label={settledOpen ? t('subagentSettledCollapse') : t('subagentSettledExpand')}
+            className={css.subagentRow}
+            onClick={() => { setSettledOpen((open) => !open) }}
+          >
+            <StateDot state="done" className={css.subagentDot} />
+            <span className={css.subagentContent}>
+              <span className={css.subagentLabel}>
+                {t('subagentSettledGroup', { count: settledEntries.length })}
+              </span>
+              <span className={css.subagentSecondary}>
+                {settledOpen ? t('subagentSettledCollapse') : t('subagentSettledExpand')}
+              </span>
+            </span>
+          </button>
+        </div>
+      )}
     </>
   )
 }
