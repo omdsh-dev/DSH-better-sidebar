@@ -914,11 +914,17 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       // Multi-instance kinds (terminal / browser / side chat / diff) mint a
       // fresh tab per open; single-instance kinds focus the existing one.
       const revealIfOpened = descriptor.createTab === undefined
+      // A url seed lands on `path`: the browser tab reads its address from
+      // there and persists navigations back to the same field
+      // (BrowserView's `persist`), so dropping the seed left an opened tab
+      // with an empty address bar. `path` means the file to open only for
+      // `editor`, which never carries a url seed.
+      const componentPath = seed.path ?? seed.url
       const synthetic: SidebarTab = {
         id: seed.id ?? minted?.tab.id ?? seed.type,
         type: seed.type,
         title,
-        ...(seed.path === undefined ? {} : { path: seed.path }),
+        ...(componentPath === undefined ? {} : { path: componentPath }),
         ...(seed.diff === undefined ? {} : { diff: seed.diff }),
         ...(seed.meta === undefined && minted?.tab.meta === undefined ? {} : { meta: seed.meta ?? minted?.tab.meta }),
       }
