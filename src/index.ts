@@ -981,7 +981,10 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
         const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
-        const path = await ensureWorkspacePath(cwd, raw, fenceEnabledOf(() => settingsFace))
+        // The client sends the path it displays, which is workspace-relative when the
+        // file lies inside the session; cwd rides in the query for exactly this.
+        const requested = isAbsolute(raw) ? raw : join(cwd, raw)
+        const path = await ensureWorkspacePath(cwd, requested, fenceEnabledOf(() => settingsFace))
         const info = await stat(path)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)

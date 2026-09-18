@@ -146,6 +146,14 @@ export interface SidebarSessionSummary {
   parentId?: string
   /** Whether the session's agent is currently running. */
   running?: boolean
+  /**
+   * Local ownership counts by consumer. The runtime's ui-session service
+   * treats a positive `mainView` count as "this session owns the visible
+   * conversation", which is how the on-screen session is identified on
+   * runtimes that no longer publish `list.current`. Optional because a
+   * runtime older than the retention mirror omits it.
+   */
+  retainedBy?: Readonly<Record<string, number>>
 }
 
 /** One healthy subagent catalog child row (structural mirror of the runtime). */
@@ -328,7 +336,17 @@ export interface SidebarSessionHandle {
 
 /** The client session list snapshot the sidebar subscribes to. */
 export interface SidebarSessionList {
-  current: string | undefined
+  /**
+   * The on-screen session. DSH 0.1.5 publishes it here; 0.1.6-alpha.2 dropped
+   * the field, so it is optional and {@link mainViewSessionId} derives the same
+   * answer from `retainedBy` when it is absent.
+   */
+  current?: string | undefined
+  /**
+   * Host-list order. Absent only on runtime snapshots older than the ordered
+   * catalog; the sidebar then has no rows to order anyway.
+   */
+  ids?: readonly string[]
   byId: Record<string, SidebarSessionSummary>
   /** Direct durable catalogs keyed by their selected parent address. */
   subagentsByParent?: Readonly<Record<string, SidebarSubagentCatalog>>
