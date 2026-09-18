@@ -66,6 +66,15 @@ export function isTrustedApiRequest(request: ApiTrustRequest, trustedHosts: read
   const hostUrl = parseAuthority(host)
   if (hostUrl === undefined) return false
   if (!isLoopbackHostname(hostUrl.hostname) && !isTrustedAuthority(hostUrl, trustedHosts)) return false
+  // The Electron desktop carrier renders this app's own UI from dsh-app://app
+  // and reaches these routes over loopback alone, through the Desktop Host that
+  // owns both the renderer and this webServer. Chromium reports that pairing as
+  // cross-site and serializes the custom scheme as an opaque origin, so neither
+  // browser marker can decide it — the Host fence above is what bounds the
+  // request. Admitting that origin additionally lets the renderer open the
+  // WebSockets the carrier's protocol handler cannot upgrade.
+  const origin = header(request.headers, 'origin')
+  if (origin !== undefined && isDesktopCarrierOrigin(origin)) return true
   if (header(request.headers, 'sec-fetch-site') === 'cross-site') return false
   // Origin fence: when a browser attaches an Origin it must name this
   // hostname (the Host fence above already bound the authority, so the port
@@ -74,10 +83,24 @@ export function isTrustedApiRequest(request: ApiTrustRequest, trustedHosts: read
   // without the port, and refusing those bricks every /sidebar route. Absent
   // Origin is fine — the Host fence above already bound the request. The
   // literal "null" (sandboxed iframes, file: pages) is an opaque origin, refused.
-  const origin = header(request.headers, 'origin')
   if (origin === undefined) return true
   try {
     return new URL(origin).hostname === hostUrl.hostname
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Whether an Origin names the Electron desktop carrier's custom protocol.
+ * Such a page is this app's own renderer, and every request it makes still has
+ * to pass the Host fence; a browser page cannot forge the header.
+ * @param origin - the Origin header value.
+ * @returns true for the carrier scheme, false for anything unparsable or other.
+ */
+function isDesktopCarrierOrigin(origin: string): boolean {
+  try {
+    return new URL(origin).protocol === 'dsh-app:'
   } catch {
     return false
   }

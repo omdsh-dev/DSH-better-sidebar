@@ -38,6 +38,7 @@ import { writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import '@xterm/xterm/css/xterm.css'
 import { t } from './locales.ts'
 import { ONE_DARK, ONE_LIGHT } from './one-dark-palette.ts'
+import { websocketAuthority } from './websocket-authority.ts'
 import { openWhenSized } from './open-when-sized.ts'
 import { api, type SessionScope, type TerminalDepsStatus } from './api.ts'
 import { agentUuidOf, isAgentTabId, type SidebarStore } from './state.ts'
@@ -212,7 +213,7 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
     let failures = 0
 
     const wsUrl = (): string => {
-      const url = new URL('/sidebar/ws/terminal', location.origin)
+      const url = new URL('/sidebar/ws/terminal', websocketAuthority())
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
       // Agent terminals attach by uuid (the host looks them up in the agent
       // pty registry); UI-tab terminals attach by sessionId+tab (the host
