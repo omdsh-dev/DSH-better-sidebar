@@ -28,7 +28,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as Re
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { Context } from '../context-types.ts'
+import type { Context, SidebarSessionList } from '../context-types.ts'
 import { referenceInChat as referenceInChatShared } from './reference-in-chat.ts'
 import {
   BOTTOM_MIN, CONVERSATION_MIN, agentUuidOf, firstLeaf, isAgentTabId,
@@ -93,6 +93,33 @@ function injectUserCss(attr: string, id: string, cssText: string): HTMLStyleElem
   tag.textContent = cssText
   document.head.appendChild(tag)
   return tag
+}
+
+/**
+ * The session that owns the visible conversation, for runtimes whose list
+ * snapshot has no `current`.
+ *
+ * DSH 0.1.5 published the on-screen session as `list.current`. 0.1.6-alpha.2
+ * removed the field and moved the selection into the ui-session service, whose
+ * own `publishMain` rule is "the row some consumer retains as the main view":
+ * `Object.values(byId).find(c => (c.retainedBy.mainView ?? 0) > 0)?.id`.
+ * Mirroring that rule here keeps the sidebar bound to the same session the
+ * runtime considers current, on either generation.
+ *
+ * Falling back to the first listed id would be wrong: catalog order is host
+ * order, so with several sessions open the sidebar would bind to a session the
+ * user is not looking at.
+ *
+ * @param list - the sessions list snapshot the sidebar subscribes to.
+ * @returns the main-view session id, or undefined when nothing is retained.
+ */
+export function mainViewSessionId(list: SidebarSessionList): string | undefined {
+  if (list.current !== undefined) return list.current
+  for (const id of list.ids ?? []) {
+    const retained = list.byId[id]?.retainedBy
+    if (retained !== undefined && (retained.mainView ?? 0) > 0) return id
+  }
+  return undefined
 }
 
 export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
@@ -197,7 +224,17 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     useMemo(() => (callback: () => void) => ctx.sessions.list.subscribe(callback), [ctx]),
     useCallback(() => ctx.sessions.list.getSnapshot(), [ctx]),
   )
-  const current = sessionList.current
+  /**
+   * The conversation on screen. Older runtimes publish it as
+   * `list.current`; 0.1.6-alpha.2 dropped that field and moved the
+   * selection to the ui-session service, whose `publishMain` derives it
+   * from `retainedBy.mainView` (the provider that owns the visible
+   * conversation). Read the field when it exists and fall back to the
+   * same retention rule, so one build serves both runtimes: a blank
+   * fallback here would set no session, and openFile/openTab then return
+   * without opening anything.
+   */
+  const current = mainViewSessionId(sessionList)
 
   // Per-session sidebar state.
   const snapshot = useSyncExternalStore(
