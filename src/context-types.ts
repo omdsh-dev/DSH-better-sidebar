@@ -124,9 +124,21 @@ export interface SidebarSlotRegisterOptions {
   children?: Record<string, unknown>
 }
 
+/** A declared slot's runtime spec (only the kind the sidebar branches on). */
+export interface SidebarSlotSpec {
+  /** Registration contract of the slot: 'chain' elects one entry by selector, 'list' renders every entry. */
+  kind?: string
+}
+
 /** The client slots service face (register returns the disposer). */
 export interface SidebarSlotsService {
   register(options: SidebarSlotRegisterOptions, component: unknown): () => void
+  /**
+   * Look up a declared slot's spec (the runtime SlotRegistry.spec). Optional:
+   * hosts that predate the lookup leave it undefined, and an undeclared slot
+   * returns undefined on hosts that have it.
+   */
+  spec?(key: string): SidebarSlotSpec | undefined
   /**
    * Run a callback for each declaration lifetime of a slot (the runtime
    * SlotRegistry.inject): a no-op while the slot is undeclared, so the
