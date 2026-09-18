@@ -1,14 +1,18 @@
 /**
- * Turn-tail interception registration spec (issue #15): `registerTurnTailInterception`
- * must go through `ctx.slots.inject` — the slot is a CHILD slot the host's
+ * Turn-tail registration spec. Issue #15: `registerTurnTailInterception` must
+ * go through `ctx.slots.inject` — the slot is a CHILD slot the host's
  * ui-conversation declares in its `conversation.chat.node` children table, so a
  * direct `slots.register` races the declaration and the ui-slots core throws
  * "not declared (a parent entry's children table must declare it)".
+ * Issue #705: the declared kind selects the registration contract — chain
+ * (through DSH 0.1.5-rc.2) versus list (0.1.6-alpha.2 onward, `id` mandatory
+ * and no `matched` prop for the entry component).
  *
  * The fake `slots` mirrors SlotRegistry.inject's semantics: run the callback
  * synchronously when the slot is already declared; otherwise wait and run it
  * when the declaration commits; the returned disposer cancels a pending wait
  * and disposes any active registration; the register disposer is idempotent.
+ * Its `spec` mirrors SlotRegistry.spec for the one declared key.
  */
 import { describe, expect, it, vi } from 'vitest'
 import { createSidebarStore } from '../src/client/state.ts'
@@ -24,8 +28,10 @@ interface RegisteredSlot {
  * A structural fake of the client slots service. `declared` selects the
  * timing: already-on-ledger (callback runs synchronously) vs. pending
  * (callback runs on `declare()`, unless the controller was disposed first).
+ * `kind` is the declared contract the registration branches on; `undefined`
+ * omits the `spec` lookup entirely, as hosts predating it do.
  */
-const fakeSlots = (declared: boolean) => {
+const fakeSlots = (declared: boolean, kind?: 'chain' | 'list') => {
   const registered: RegisteredSlot[] = []
   const disposals: number[] = []
   const pendings: Array<() => void> = []
@@ -34,6 +40,7 @@ const fakeSlots = (declared: boolean) => {
     disposals,
     pendings,
     slots: {
+      ...(kind === undefined ? {} : { spec: (key: string) => key === 'conversation.chat.turnTail' ? { kind } : undefined }),
       register: (options: Record<string, unknown>, component: unknown) => {
         registered.push({ options, component })
         return () => { disposals.push(1) }
@@ -196,5 +203,64 @@ describe('turn-tail interception registration (issue #15)', () => {
     }))
 
     restore()
+  })
+})
+
+describe('turn-tail registration on a list-kind host (issue #705)', () => {
+  /** The list entry component: owner props in, element or null out. */
+  const entryOf = (component: unknown) => component as (props: unknown) => { props: { matched: readonly string[] } } | null
+
+  it('registers with a stable id and no chain selector', () => {
+    const fake = fakeSlots(true, 'list')
+    const store = createSidebarStore()
+    const restore = registerTurnTailInterception(clientCtx(fake.slots), store)
+
+    expect(fake.registered).toHaveLength(1)
+    const { options, component } = fake.registered[0]!
+    expect(options.name).toBe('conversation.chat.turnTail')
+    // A list registration without an id is rejected by the host's ui-slots core.
+    expect(options.id).toBe('dsh-better-sidebar:produced-files')
+    // No election on a list: the takeover fields belong to the chain contract.
+    expect(options.select).toBeUndefined()
+    expect(options.priority).toBeUndefined()
+    expect(options.registrant).toBe('dsh-better-sidebar')
+    expect(options.inject).toBeTypeOf('function')
+    expect(component).toBeTypeOf('function')
+
+    restore()
+    expect(fake.disposals).toHaveLength(1)
+  })
+
+  it('selects inside the component, which a list entry renders without a matched prop', () => {
+    const fake = fakeSlots(true, 'list')
+    const store = createSidebarStore()
+    const restore = registerTurnTailInterception(clientCtx(fake.slots), store)
+    const entry = entryOf(fake.registered[0]!.component)
+
+    // A produced turn renders the chips row with the selection this entry made.
+    expect(entry(producedOwner(['a.ts', 'b.ts']))?.props.matched).toEqual(['a.ts', 'b.ts'])
+    // Nothing produced: the entry contributes nothing, the rest of the list stays.
+    expect(entry(emptyOwner())).toBeNull()
+
+    // The decline conditions the chain contract expressed in `select` apply here.
+    store.setPrefs({ ...store.getPrefs(), tabsEnabled: { editor: false } })
+    expect(entry(producedOwner(['a.ts']))).toBeNull()
+    store.setPrefs({ ...store.getPrefs(), tabsEnabled: { editor: true } })
+    store.setSuspended(true)
+    expect(entry(producedOwner(['a.ts']))).toBeNull()
+
+    restore()
+  })
+
+  it('keeps the chain contract when the host declares a chain or has no spec lookup', () => {
+    for (const kind of ['chain', undefined] as const) {
+      const fake = fakeSlots(true, kind)
+      const restore = registerTurnTailInterception(clientCtx(fake.slots), createSidebarStore())
+      const { options } = fake.registered[0]!
+      expect(options.id).toBeUndefined()
+      expect(options.select).toBeTypeOf('function')
+      expect(options.priority).toBe(-1)
+      restore()
+    }
   })
 })
