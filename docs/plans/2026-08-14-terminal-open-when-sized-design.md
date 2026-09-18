@@ -38,13 +38,12 @@
 export function openWhenSized(
   host: HTMLElement,
   open: () => void,
-  raf: (cb: FrameRequestCallback) => number = requestAnimationFrame,
-  caf: (id: number) => void = cancelAnimationFrame,
+  hooks?: OpenWhenSizedHooks,
 ): () => void
 ```
 
-- 单条代码路径：`raf(step)` → step 检查 `host.isConnected`（false 则停止，防卸载后空转）→ `clientWidth > 0 && clientHeight > 0` 则调 `open()` 并停止；否则再排一帧。
-- 返回 cancel：`caf(frame)` 并置空（幂等），cleanup 调用。
+- 单条代码路径：初始 `raf(step)` 一帧后检查一次 → `host.isConnected`（false 则停止，防卸载后空转）→ `clientWidth > 0 && clientHeight > 0` 则调 `open()` 并停止；否则不再排帧，改由 `ResizeObserver`（`observe` 注入点）与 250ms 兜底 interval 触发后续检查（**2026-09-17 起，见 §7**）。
+- 返回 cancel：停帧 + 断开 observer + 清 interval（幂等），cleanup 调用。
 - helper 不 try/catch（保持纯净），异常由调用方处理。
 
 ### 4.2 消费点 `src/client/TerminalView.tsx`
@@ -70,21 +69,31 @@ const cancelOpen = openWhenSized(host, () => {
 
 ## 5. 测试
 
-`tests/open-when-sized.spec.ts`（jsdom + 注入手动步进的假 raf/caf；`Object.defineProperty` 桩 `clientWidth/clientHeight`；`appendChild/remove` 控制 `isConnected`）：
+`tests/open-when-sized.spec.ts`（jsdom + 注入手动步进的假 raf/caf、假 observer、假 interval；`Object.defineProperty` 桩 `clientWidth/clientHeight`；`appendChild/remove` 控制 `isConnected`）：
 
-1. 已尺寸 → tick 一次后 open 恰好一次，之后不再排帧；
-2. 零尺寸 → 多次 tick 不 open，设尺寸后下一次 tick open 一次，后续 tick 不重复；
-3. 只有一维缺失 → 补齐后 open；
-4. cancel 后永不 open、无残留帧、cancel 幂等；
-5. host 脱离文档 → 轮询停止、不 open；
-6. open 抛错 → 异常向调用方传播（调用方负责 try/catch），不重复调用。
+1. 已尺寸 → 首帧后 open 恰好一次，之后 observer / interval / 帧全部停；
+2. 零尺寸 → 设尺寸后 observer 触发 open 一次，后续触发不重复；
+3. 零尺寸 → 无 resize entry 时兜底 interval 也能 open 一次；
+4. 只有一维缺失 → 补齐后 open；
+5. host 挂载但隐藏期间不再排帧（只读一次盒，靠 observer/interval 驱动）；
+6. cancel 后永不 open、observer 断开、interval 清除、cancel 幂等；
+7. host 脱离文档 → 停止、不 open；
+8. open 抛错 → 异常向调用方传播（调用方负责 try/catch），不重复调用。
 
 ## 6. 限制与取舍
 
-- rAF 轮询在 host 长期隐藏（`display:none` 祖先）期间持续排帧，每帧只读两个属性，开销可忽略；open 后立即停止。用 ResizeObserver 触发也可行，但轮询是 issue 中建议的标准修法，且不依赖 observer 对 transition 中间态的回调时序。
-- 已尺寸快速路径比原行为晚一帧（rAF 回调时机），无感知差异。
+- 每帧轮询改为事件驱动：`ResizeObserver` 覆盖「`display:none` → 可见」「展开动画结束」等尺寸变化，兜底 interval 覆盖没有 resize entry 的宿主与无 `ResizeObserver` 的环境。代价是对 observer 回调时序的依赖，与轮询的「下一帧必然检查」不同；兜底 interval 保留 250ms 的最坏延迟。
+- 已尺寸快速路径仍晚一帧（初始 `raf` 回调时机），与设计一致。
 - 若容器永远零尺寸（异常布局），终端永不 open、不崩溃——对不可见内容是可接受的降级。
 
 ## 7. 实施偏差记录
 
-无（按设计实施）。
+### 2026-09-17：每帧轮询改为 `ResizeObserver` + 兜底 interval（#6906）
+
+原设计的 §6 第一条判断「每帧只读两个属性，开销可忽略」不成立，改为事件驱动：
+
+- 实测（DSH 0.1.5-rc.1 Web GUI，Chrome 149，CDP `Performance.getMetrics`，5s 窗口）：宿主在 `display:none` 下、页面无其它布局失效时该循环只值 ~20ms/s 主线程；一旦页面有逐帧样式写入（滚动、流式更新、其它插件每帧改样式），每次 `clientWidth` 读取都强制一次全量同步布局 → **119.8 layouts/s**，正是「滚动时成段冻结」的放大器。DOM 越大单次布局越贵。
+- 因此 `check()` 只在初始一帧、observer 回调与兜底 interval 里执行；循环不再自我续帧。
+- `raf`/`caf` 注入点保留（初始帧），新增 `observe`/`setInterval`/`clearInterval` 注入点，测试改用假 observer + 假 interval 驱动。
+- 调用点 `TerminalView.tsx` 不变（第三参数可选）。
+- 原设计 §6 第二条末尾「用 ResizeObserver 触发也可行，但……」的取舍已按实测反转。
