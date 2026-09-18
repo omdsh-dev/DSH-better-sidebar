@@ -51,9 +51,28 @@ type ViewMode = 'preview' | 'edit'
 const previewScrollMemory = new Map<string, number>()
 const previewScrollKey = (scope: { sessionId: string }, path: string): string => `${scope.sessionId}::${path}`
 
+/**
+ * Per-file unsaved-edit memory. The host mounts ONE tab body per pane, so
+ * switching tabs or conversations destroys the editor instance and its
+ * CodeMirror document — an unsaved edit used to die with it (the worst of the
+ * state losses: the reader's typing, not just their scroll position). The
+ * document is parked here on unmount and re-seeded when the file comes back,
+ * keyed by session + path like the preview scroll memory above. Saving clears
+ * the entry: the file on disk is the truth again.
+ */
+const editorDrafts = new Map<string, { doc: string; mode: ViewMode }>()
+const editorDraftKey = (scope: { sessionId: string }, path: string): string => `${scope.sessionId}::${path}`
+
 export function TextEditor(props: FileViewerProps) {
   const { ctx, scope, path, viewerId, content, truncated } = props
-  const [mode, setMode] = useState<ViewMode>('preview')
+  /** This file's parked edit, read once for the initial mode (see above). */
+  const draftKey = editorDraftKey(scope, path)
+  const [mode, setMode] = useState<ViewMode>(() => editorDrafts.get(draftKey)?.mode ?? 'preview')
+  /** The mode as the unmount cleanup reads it. The cleanup closes over the
+   *  first render's `mode` (the effect's deps are content/path), so the parked
+   *  entry needs the live value through a ref. */
+  const modeRef = useRef<ViewMode>(mode)
+  modeRef.current = mode
   /** The editor's current text (null while clean); preview renders this. */
   const [draft, setDraft] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -101,11 +120,14 @@ export function TextEditor(props: FileViewerProps) {
 
   useEffect(() => subscribeColorScheme(() => { setDark(isDarkScheme()) }), [])
 
-  // A new file (tab switch) starts clean: fresh preview mode, no draft.
+  // A new file (tab switch) starts clean — but a file that was edited and not
+  // saved re-opens with its parked edit (the body unmounts on every tab
+  // switch, so without this the typing is destroyed).
   useEffect(() => {
-    setMode('preview')
-    setDraft(null)
-    setDirty(false)
+    const parked = editorDrafts.get(editorDraftKey(scope, path))
+    setMode(parked?.mode ?? 'preview')
+    setDraft(parked?.doc ?? null)
+    setDirty(parked !== undefined)
     setSaveState('idle')
     selectionPopup.hide()
     // hide() reads a live ref; the reset must fire only on a content (file)
@@ -134,8 +156,11 @@ export function TextEditor(props: FileViewerProps) {
     const language = languageForPath(path)
     const themeComp = new CmThemeCompartment()
     themeCompRef.current = themeComp
+    // Re-open with the parked edit when this file was edited and not saved;
+    // the on-disk text is only the starting point.
+    const parkedDoc = editorDrafts.get(editorDraftKey(scope, path))?.doc
     const state = EditorState.create({
-      doc: content,
+      doc: parkedDoc ?? content,
       extensions: [
         CodeMirrorView.lineWrapping,
         lineNumbers(),
@@ -207,6 +232,14 @@ export function TextEditor(props: FileViewerProps) {
     const view = new CodeMirrorView({ state, parent: host })
     viewRef.current = view
     return () => {
+      // Park an unsaved edit before the document dies with the view. The host
+      // unmounts a tab body whenever the reader looks at another tab or
+      // conversation, so this is the ONLY chance to keep the typing; a clean
+      // document clears any stale entry instead.
+      const current = view.state.doc.toString()
+      const key = editorDraftKey(scope, path)
+      if (current === content) editorDrafts.delete(key)
+      else editorDrafts.set(key, { doc: current, mode: modeRef.current })
       view.destroy()
       viewRef.current = null
       themeCompRef.current = null
@@ -294,6 +327,8 @@ export function TextEditor(props: FileViewerProps) {
     setSaveState('saving')
     api.fsWrite(scope, path, view.state.doc.toString()).then(() => {
       savingRef.current = false
+      // The file on disk is the truth again: drop the parked edit.
+      editorDrafts.delete(editorDraftKey(scope, path))
       setDraft(null)
       setDirty(false)
       setSaveState('saved')

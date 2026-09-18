@@ -73,7 +73,7 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
     try {
       await act(async () => {
         root.render(createElement(GitLens, {
-          scope: { sessionId: 'session', cwd: MAIN },
+          scope: { sessionId: 'auto-select-session', cwd: MAIN },
           store: createSidebarStore(),
           onOpenFile: () => {},
           onPreview: () => {},
@@ -132,7 +132,7 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
     try {
       await act(async () => {
         root.render(createElement(GitLens, {
-          scope: { sessionId: 'session', cwd: MAIN },
+          scope: { sessionId: 'late-history-session', cwd: MAIN },
           store: createSidebarStore(),
           onOpenFile: () => {},
           onPreview: () => {},
@@ -162,6 +162,64 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
     } finally {
       act(() => { root.unmount() })
       container.remove()
+    }
+  })
+
+  /**
+   * Which checkout the reader picked is real state: stage/commit/checkout all
+   * target it. The host mounts ONE tab body per pane, so a tab or conversation
+   * switch unmounts this lens and the mount effect resets the selection — it
+   * must come back from the per-workspace memory.
+   */
+  it('keeps the chosen worktree across an unmount (a tab switch)', async () => {
+    vi.spyOn(api, 'gitWorktrees').mockResolvedValue(inventories)
+    vi.spyOn(api, 'gitStatus').mockImplementation(async (_scope, target) => statusFor(target))
+    vi.spyOn(api, 'gitBranch').mockImplementation(async (_scope, target) => ({
+      current: target === AGENT ? 'agent' : 'main',
+      names: target === AGENT ? ['agent'] : ['main'],
+    }))
+    vi.spyOn(api, 'gitLog').mockImplementation(async (_scope, _count, _skip, target) => logFor(target))
+
+    const mount = async (): Promise<{ container: HTMLDivElement; root: Root }> => {
+      const container = document.createElement('div')
+      document.body.append(container)
+      const root: Root = createRoot(container)
+      await act(async () => {
+        root.render(createElement(GitLens, {
+          scope: { sessionId: 'remember-session', cwd: MAIN },
+          store: createSidebarStore(),
+          onOpenFile: () => {},
+          onPreview: () => {},
+          selectedRef: null,
+          visible: false,
+        }))
+      })
+      await flushEffects()
+      return { container, root }
+    }
+
+    // First mount: the reader explicitly picks the primary checkout (the
+    // inventory alone would auto-select the dirty linked one).
+    const first = await mount()
+    const firstSelect = first.container.querySelectorAll<HTMLSelectElement>('select')[0]!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(firstSelect, MAIN)
+      firstSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await flushEffects()
+    expect(firstSelect.value).toBe(MAIN)
+    act(() => { first.root.unmount() })
+    first.container.remove()
+
+    // The host re-mounts the tab: the explicit choice must survive (it is not
+    // re-derived from the worktree inventory).
+    const second = await mount()
+    try {
+      const secondSelect = second.container.querySelectorAll<HTMLSelectElement>('select')[0]!
+      expect(secondSelect.value, 'the chosen worktree survives the remount').toBe(MAIN)
+    } finally {
+      act(() => { second.root.unmount() })
+      second.container.remove()
     }
   })
 })

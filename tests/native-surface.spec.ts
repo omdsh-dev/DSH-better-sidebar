@@ -10,7 +10,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { createNativeTabRecords, NativeTabBody, NativeTabTitle } from '../src/client/native/tab-adapter.tsx'
 import { registerNativeSurface } from '../src/client/native/index.ts'
-import { createBetterSidebarService, type SidebarSurface } from '../src/client/service.ts'
+import { createNativeSurface } from '../src/client/native/surface.ts'
+import { createBetterSidebarService, type SidebarSurface, type TabComponentProps } from '../src/client/service.ts'
 import { createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 
 const scope = { sessionId: 's1', cwd: '/work' }
@@ -70,6 +71,157 @@ describe('createNativeTabRecords', () => {
     records.ensure({ id: 'tab-6', kind: 'terminal', title: 'Terminal', params: undefined, scope })
     records.update('tab-6', { title: 'x' })
     expect(listener).toHaveBeenCalledTimes(2)
+  })
+
+  /**
+   * The host mounts ONE tab body per pane, and native tab ids restart in every
+   * session (`tab1`, `tab2`, …). A conversation switch therefore renders the
+   * entering session's body over the SAME id while the leaving session's body
+   * unmounts — so a registry keeping one record per id hands the leaving
+   * session's state to the entering one, and the reader's tree expansion and
+   * in-place opened file are gone on the way back.
+   */
+  it('keeps each session’s own state across an A → B → A round trip', () => {
+    const records = createNativeTabRecords()
+    const a = { sessionId: 'A', cwd: '/work' }
+    const b = { sessionId: 'B', cwd: '/work' }
+
+    // Session A: expand a directory and open a file in place.
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: a })
+    records.toggleExpanded('tab1', '/work/src')
+    records.update('tab1', { path: '/work/notes.md', title: 'notes.md' })
+
+    // Switch to B: its own tab1, its own (empty) state.
+    const inB = records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: b })
+    expect(inB.expanded, 'B does not inherit A’s tree state').toEqual([])
+    expect(inB.tab.path, 'B does not inherit A’s in-place file').toBeUndefined()
+    records.toggleExpanded('tab1', '/work/other')
+
+    // Switch BACK to A: A’s own state must be there, untouched.
+    const backInA = records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: a })
+    expect(backInA.expanded, 'A’s tree expansion survives the round trip').toEqual(['/work/src'])
+    expect(backInA.tab.path, 'A’s in-place file survives the round trip').toBe('/work/notes.md')
+    expect(backInA.tab.title, 'A’s retitled chip survives the round trip').toBe('notes.md')
+
+    // …and B’s state was parked, not lost either.
+    const backInB = records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: b })
+    expect(backInB.expanded, 'B’s own state survives its own return').toEqual(['/work/other'])
+    expect(backInB.tab.path, 'B still has no in-place file').toBeUndefined()
+  })
+
+  it('peeks a session’s parked record while another session owns the live slot', () => {
+    const records = createNativeTabRecords()
+    const a = { sessionId: 'A', cwd: '/work' }
+    const b = { sessionId: 'B', cwd: '/work' }
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: { path: '/work/a.md' }, scope: a })
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: b })
+
+    // The live slot is B's; A's record must still be readable by session.
+    expect(records.get('tab1')?.scope.sessionId).toBe('B')
+    expect(records.peek('A', 'tab1')?.tab.path, 'A’s parked path is still readable').toBe('/work/a.md')
+    expect(records.peek('B', 'tab1')?.tab.path, 'B has no path').toBeUndefined()
+    // An unknown session has nothing.
+    expect(records.peek('C', 'tab1')).toBeUndefined()
+  })
+
+  it('drops only the session whose tab the host closed', () => {
+    const records = createNativeTabRecords()
+    const a = { sessionId: 'A', cwd: '/work' }
+    const b = { sessionId: 'B', cwd: '/work' }
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: a })
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: b })
+
+    records.drop('tab1', 'B')
+    expect(records.get('tab1'), 'B’s tab was the live one and is gone').toBeUndefined()
+    // A’s parked record must be untouched — closing B’s tab cannot close A’s.
+    expect(records.peek('A', 'tab1'), 'A’s parked record survives B’s close').toBeDefined()
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: a })
+    expect(records.get('tab1')?.scope.sessionId).toBe('A')
+  })
+
+  /**
+   * A parked record is otherwise released only by switching back to its
+   * session or by the host closing that tab. A session the user DELETED has
+   * neither, so its archive would be retained for the life of the page —
+   * bounded per session, but linear in the number of sessions ever opened.
+   */
+  it('retain() evicts the archives of sessions that no longer exist', () => {
+    const records = createNativeTabRecords()
+    const scopeOf = (sessionId: string) => ({ sessionId, cwd: '/work' })
+
+    // Three sessions use the same native id; two end up parked.
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: scopeOf('keep') })
+    records.toggleExpanded('tab1', '/work/keep')
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: scopeOf('deleted') })
+    records.toggleExpanded('tab1', '/work/deleted')
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: scopeOf('live') })
+    records.toggleExpanded('tab1', '/work/live')
+    // Now: 'live' owns the slot, 'keep' and 'deleted' are parked.
+    expect(records.peek('keep', 'tab1')).toBeDefined()
+
+    records.retain(new Set(['keep', 'live']))
+
+    expect(records.peek('keep', 'tab1'), 'a live session keeps its archive').toBeDefined()
+    expect(records.peek('deleted', 'tab1'), 'a deleted session’s archive is dropped').toBeUndefined()
+    // The live slot is never touched by eviction.
+    expect(records.get('tab1')?.scope.sessionId).toBe('live')
+    expect(records.get('tab1')?.expanded).toEqual(['/work/live'])
+
+    // Coming back to a kept session still restores its state.
+    const back = records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: scopeOf('keep') })
+    expect(back.expanded).toEqual(['/work/keep'])
+  })
+
+  it('retain() ignores an empty list (a not-yet-loaded session list must not wipe state)', () => {
+    const records = createNativeTabRecords()
+    const a = { sessionId: 'A', cwd: '/work' }
+    const b = { sessionId: 'B', cwd: '/work' }
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: a })
+    records.toggleExpanded('tab1', '/work/a')
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: b })
+
+    records.retain(new Set())
+    expect(records.peek('A', 'tab1'), 'an empty list is not evidence that A is gone').toBeDefined()
+
+    // A list that omits a parked session DOES evict it (real data).
+    records.retain(new Set(['B']))
+    expect(records.peek('A', 'tab1')).toBeUndefined()
+    expect(records.get('tab1')?.scope.sessionId, 'the live slot is untouched').toBe('B')
+  })
+
+  /**
+   * The wiring, not just the method: `createNativeSurface` subscribes to the
+   * session list, so a deletion reported there has to reach the registry.
+   * Without this the eviction could exist and never run.
+   */
+  it('a session-list change drives the eviction (the wiring)', () => {
+    const held: Array<{ byId: Record<string, unknown>; current?: string }> = [{ byId: { A: {}, B: {} }, current: 'B' }]
+    const listeners = new Set<() => void>()
+    const ctx = {
+      sessions: {
+        list: {
+          subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+          getSnapshot: () => held[held.length - 1]!,
+        },
+      },
+      get: () => undefined,
+    } as never
+    const records = createNativeTabRecords()
+    const scopeOf = (sessionId: string) => ({ sessionId, cwd: '/work' })
+    // A is parked (B owns the live slot).
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: scopeOf('A') })
+    records.toggleExpanded('tab1', '/work/a')
+    records.ensure({ id: 'tab1', kind: 'editor', title: 'Files', params: undefined, scope: scopeOf('B') })
+
+    const surface = createNativeSurface(ctx, records)
+    expect(records.peek('A', 'tab1'), 'A survives while it is in the list').toBeDefined()
+
+    // The user deletes A and the list notifies.
+    held.push({ byId: { B: {} }, current: 'B' })
+    for (const listener of [...listeners]) listener()
+
+    expect(records.peek('A', 'tab1'), 'the deletion reached the registry').toBeUndefined()
+    surface.dispose()
   })
 })
 
@@ -355,6 +507,108 @@ describe('NativeTabBody full-height host wrapper', () => {
     expect(wrapper!.childElementCount).toBe(1)
     act(() => { root?.unmount() })
     host.remove()
+  })
+})
+
+/**
+ * #636, at the level the bug actually lives: the host mounts ONE tab body per
+ * pane and the session-scoped seat is keyed by sessionId (upstream
+ * `StrictSessionEntry` closes with `}, binding.key)`), so a conversation switch
+ * renders the entering session's body and unmounts the leaving one in the SAME
+ * commit. Native ids restart per session, so both bodies carry the same id.
+ *
+ * The regression this pins: the entering body's `ensure` ran during render and
+ * ADOPTED the leaving session's record; that same commit's passive cleanup then
+ * deleted it. The record was minted at version 0, so `versionOf` went 0 → 0 —
+ * no snapshot change, no re-render, `ensure` never rebuilt — and every later
+ * click through the registry was a silent no-op (the folder never expanded, the
+ * file never opened, no request on the wire). The reported shape is exactly
+ * this: switch conversations twice and the tree is dead, in BOTH directions.
+ */
+describe('conversation switch keeps the entered session’s explorer responsive (#636)', () => {
+  const mountSwitchable = (): {
+    records: ReturnType<typeof createNativeTabRecords>
+    show: (sessionId: string) => void
+    clickFolder: () => void
+    expanded: () => string
+    unmount: () => void
+  } => {
+    const store = createSidebarStore()
+    store.setSession('session-A')
+    const service = createBetterSidebarService(store)
+    service.registerTab({
+      id: 'explorer',
+      title: 'Files',
+      component: (props: TabComponentProps) => createElement(
+        'div',
+        { 'data-body': props.tab.id },
+        createElement('button', { 'data-toggle': '', onClick: () => { props.onToggleDir?.('/work/dir') } }, 'toggle'),
+        createElement('span', { 'data-expanded': '' }, (props.expanded ?? []).join('|')),
+      ),
+    })
+    const records = createNativeTabRecords()
+    const sessions = { list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } }
+    const ctx = { sessions } as never
+    // The SAME native id in both sessions — the host's per-session counter.
+    const info = {
+      tab: {
+        id: 'tab2',
+        kind: 'explorer',
+        title: 'Files',
+        contentId: 'sidebar://files',
+        visible: true,
+        navigation: { address: 'sidebar://files', params: undefined, revision: 0 },
+        signal: new AbortController().signal,
+      },
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    const show = (sessionId: string): void => {
+      root.render(createElement(
+        // The session-scoped seat's key (upstream StrictSessionEntry).
+        'div',
+        { key: sessionId, 'data-session': sessionId },
+        createElement(NativeTabBody, {
+          key: 'tab2',
+          sessionId,
+          ctx,
+          store,
+          service,
+          records,
+          descriptorId: 'explorer',
+          useTabInfo: () => info,
+        }),
+      ))
+    }
+    return {
+      records,
+      show,
+      expanded: () => host.querySelector('[data-expanded]')?.textContent ?? '<none>',
+      clickFolder: () => {
+        const button = host.querySelector<HTMLButtonElement>('[data-toggle]')
+        expect(button, 'the explorer body must be mounted').not.toBeNull()
+        act(() => { button!.click() })
+      },
+      unmount: () => { act(() => { root.unmount() }); host.remove() },
+    }
+  }
+
+  it('a folder click still responds after switching away and back twice', () => {
+    const t = mountSwitchable()
+    act(() => { t.show('session-A') })
+    expect(t.records.has('tab2')).toBe(true)
+
+    // ONE commit: B renders (same native tab id) while A unmounts. Then back.
+    for (const sessionId of ['session-B', 'session-A', 'session-B', 'session-A']) {
+      act(() => { t.show(sessionId) })
+      expect(t.records.has('tab2'), `${sessionId}: the entered session keeps a live record`).toBe(true)
+      t.clickFolder()
+      expect(t.expanded(), `${sessionId}: a folder click must still respond`).toBe('/work/dir')
+      t.clickFolder()
+      expect(t.expanded(), `${sessionId}: and toggle back`).toBe('')
+    }
+    t.unmount()
   })
 })
 

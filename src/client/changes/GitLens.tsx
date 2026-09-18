@@ -53,6 +53,26 @@ function isUntracked(entry: GitStatusEntry): boolean {
   return badgeOf(entry) === '?'
 }
 
+/**
+ * Per-session commit-message memory. The host mounts ONE tab body per pane, so
+ * switching tabs or conversations unmounts this lens and its `useState`. An
+ * unsaved commit message is the same class of loss as an unsaved editor draft
+ * (the reader wrote it, nothing on disk has it), so it is parked here on
+ * unmount and restored when the tab comes back. Keyed by session only: the
+ * message belongs to the session's repository, not to one tab.
+ */
+const commitMessageMemory = new Map<string, string>()
+
+/**
+ * Per-(session, workspace) worktree selection memory. Which checkout the lens
+ * is looking at is real user state — the reader picked a worktree/branch to
+ * work in, and stage/commit/checkout below all target that one — yet the mount
+ * effect resets it, so without this the lens silently jumps back to the repo
+ * default on every tab or conversation switch.
+ */
+const worktreeMemory = new Map<string, string>()
+const worktreeKey = (scope: { sessionId: string; cwd?: string }): string => `${scope.sessionId}::${scope.cwd ?? ''}`
+
 /** The ref names of one log row's decorations (`HEAD -> main` → `main`), deduped. */
 function refNames(refs: string): string[] {
   return [...new Set(
@@ -107,13 +127,15 @@ export function GitLens(props: GitLensProps) {
   const { scope, store, onOpenFile, onPreview, selectedRef, visible } = props
   const [status, setStatus] = useState<GitStatusResult | null>(null)
   const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
-  const [selectedWorktree, setSelectedWorktree] = useState<string | undefined>()
+  const [selectedWorktree, setSelectedWorktree] = useState<string | undefined>(
+    () => worktreeMemory.get(worktreeKey(scope)),
+  )
   const [repoRoot, setRepoRoot] = useState<string | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [branchNames, setBranchNames] = useState<string[]>([])
   const [logEntries, setLogEntries] = useState<GitLogEntry[]>([])
-  const [commitMsg, setCommitMsg] = useState('')
+  const [commitMsg, setCommitMsg] = useState(() => commitMessageMemory.get(scope.sessionId) ?? '')
   const [busy, setBusy] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
   /** Whether the history was fully paged (a batch shorter than LOG_BATCH). */
@@ -139,6 +161,22 @@ export function GitLens(props: GitLensProps) {
   useEffect(() => { chosenPathRef.current = selectedWorktree }, [selectedWorktree])
   /** Silent polls since the last worktree re-list (see WORKTREE_RECHECK_TICKS). */
   const silentTickCount = useRef(0)
+  /** The commit message as the unmount cleanup reads it (the effect below runs
+   *  once per session, so the cleanup would otherwise close over the initial
+   *  empty string). */
+  const commitMsgRef = useRef(commitMsg)
+  commitMsgRef.current = commitMsg
+  // Park an unsaved commit message when the tab body unmounts (the host mounts
+  // one body per pane, so a tab or conversation switch destroys this lens). An
+  // empty box clears the entry instead of parking whitespace.
+  useEffect(() => {
+    const sessionId = scope.sessionId
+    return () => {
+      const parked = commitMsgRef.current
+      if (parked.trim() === '') commitMessageMemory.delete(sessionId)
+      else commitMessageMemory.set(sessionId, parked)
+    }
+  }, [scope.sessionId])
 
   const gitScope: SessionScope = repoRoot === undefined ? scope : { ...scope, repoRoot }
 
@@ -243,10 +281,20 @@ export function GitLens(props: GitLensProps) {
   useEffect(() => {
     refreshGeneration.current += 1
     refreshInFlight.current = false
-    worktreeChosenByUser.current = false
-    chosenPathRef.current = undefined
     silentTickCount.current = 0
-    setSelectedWorktree(undefined)
+    // Restore this workspace's remembered worktree (this effect also runs on
+    // mount, which is exactly the tab-return case); a workspace the reader has
+    // never chosen for has no entry and falls back to the repo default.
+    const remembered = worktreeMemory.get(worktreeKey(scope))
+    // A remembered choice IS a user choice: without this the auto-select runs
+    // again on every remount and overrides the restore (a clean primary
+    // checkout beside one dirty linked one auto-picks the linked one).
+    worktreeChosenByUser.current = remembered !== undefined
+    chosenPathRef.current = remembered
+    setSelectedWorktree(remembered)
+    // The two scalar fields ARE the scope identity; taking `scope` itself
+    // would re-run this reset on every unrelated snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope.sessionId, scope.cwd])
   useEffect(() => { void refresh() }, [refresh])
 
@@ -256,6 +304,8 @@ export function GitLens(props: GitLensProps) {
     worktreeChosenByUser.current = true
     chosenPathRef.current = target
     setSelectedWorktree(target)
+    // Remember the choice for this workspace: a tab switch unmounts the lens.
+    worktreeMemory.set(worktreeKey(scope), target)
     setStatus(null)
     setBranchNames([])
     setLogEntries([])
@@ -365,6 +415,9 @@ export function GitLens(props: GitLensProps) {
     setCommitError(null)
     try {
       await api.gitCommit(gitScope, message, selectedWorktree)
+      // The commit consumed the message: drop the parked copy too, so a
+      // re-opened tab starts with an empty box.
+      commitMessageMemory.delete(scope.sessionId)
       setCommitMsg('')
       await refresh()
     } catch (reason) {

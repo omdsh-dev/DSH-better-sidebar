@@ -162,7 +162,10 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
         name: 'sidebar.right.pane.tab.title',
         key: id,
-        inject: () => ({ records, service, descriptorId: injected.descriptorId }),
+        // The chip needs the session too: it renders before the body's
+        // `ensure`, so right after a conversation switch the live record slot
+        // can still belong to the session the reader just left.
+        inject: (sessionId: string) => ({ records, service, descriptorId: injected.descriptorId, sessionId }),
       }, NativeTabTitle)),
     ]
 
