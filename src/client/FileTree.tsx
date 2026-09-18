@@ -55,6 +55,17 @@ export function baseName(path: string): string {
   return at === -1 ? trimmed : trimmed.slice(at + 1)
 }
 
+/**
+ * CSS.escape for an attribute-selector value (the row paths carry `/`, `\`,
+ * spaces and non-ASCII names). Falls back to a manual escape where the API is
+ * missing (older jsdom in tests), so the anchor lookup never throws.
+ */
+function cssEscape(value: string): string {
+  const scope = globalThis as { CSS?: { escape?: (input: string) => string } }
+  if (typeof scope.CSS?.escape === 'function') return scope.CSS.escape(value)
+  return value.replace(/["\\\]]/g, match => `\\${match}`)
+}
+
 /** The containing directory of an absolute row path (never the root edge here). */
 function parentOf(path: string): string {
   const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
@@ -141,6 +152,15 @@ export function FileTree(props: {
   onPathRenamed?: (oldPath: string, newPath: string) => void
   /** A delete landed: the caller closes tabs at or under the removed path. */
   onPathDeleted?: (path: string, isDir: boolean) => void
+  /**
+   * The row this tree should come back to on mount (absolute path), when the
+   * caller remembers a reading position for this tree (absolute path). The
+   * native right Sidebar passes the anchor its tab record persisted, so
+   * closing the previewed file does not drop the tree back to the root.
+   */
+  anchor?: string
+  /** Report the clicked file and the folders needed to reveal it next time. */
+  onAnchor?: (path: string, offset: number, expanded: string[]) => void
   /** Bump to wipe the level cache and reload the visible set. */
   refreshTick: number
   /** Upload into `dir` (absolute, inside the workspace); runs in the caller. */
@@ -154,7 +174,7 @@ export function FileTree(props: {
    */
   service?: BetterSidebarService
 }) {
-  const { sessionId, cwd, store, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onPathRenamed, onPathDeleted, refreshTick, onUploadRequest, busy, service } = props
+  const { sessionId, cwd, store, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onPathRenamed, onPathDeleted, refreshTick, onUploadRequest, busy, service, anchor, onAnchor } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   /**
    * Registry revision for the file-icon feature: bumps on ANY registry
@@ -209,6 +229,11 @@ export function FileTree(props: {
   const dropDepth = useRef(0)
   /** Explorer body element; its viewport rect anchors the portaled drop zone. */
   const bodyRef = useRef<HTMLDivElement>(null)
+  /** Whether the mount-time reading-position restore already ran (or was disarmed by a reveal). */
+  const restored = useRef(false)
+  /** The latest rendered reporting callback (the unmount cleanup calls it once). */
+  const reportAnchor = useRef(onAnchor)
+  reportAnchor.current = onAnchor
   /** The body's viewport rect captured at drag entry (null = not measured). */
   const [dropRect, setDropRect] = useState<{ top: number; left: number; width: number; height: number } | null>(null)
   /** Context-menu "upload here" target directory. */
@@ -403,6 +428,9 @@ export function FileTree(props: {
   // reveal shifted the whole panel, tab bar included, out of the viewport.
   useEffect(() => {
     if (revealed.length === 0) return
+    // A reveal is the freshest position signal there is: it disarms the
+    // mount-time reading-position restore below.
+    restored.current = true
     const body = bodyRef.current
     if (body === null) return
     const row = body.querySelector<HTMLElement>('[data-dsh-revealed]')
@@ -413,6 +441,57 @@ export function FileTree(props: {
     const max = Math.max(body.scrollHeight - body.clientHeight, 0)
     body.scrollTo({ top: Math.min(Math.max(target, 0), max), behavior: 'smooth' })
   }, [revealed, data])
+
+  /**
+   * Reading-position restore (the mount-time half). Closing the previewed
+   * file unmounts the whole Files window, so the tree used to come back at
+   * the workspace root; when the caller remembers a row (`anchor`), that row
+   * is scrolled back into view once the tree is laid out. Like the reveal
+   * path it scrolls ONLY this tree's body, and it gives up after one
+   * successful try so a later directory load cannot yank the view back.
+   */
+  useEffect(() => {
+    if (anchor === undefined || anchor === '' || restored.current) return
+    const body = bodyRef.current
+    if (body === null) return
+    const row = body.querySelector<HTMLElement>(`[data-dsh-path="${cssEscape(anchor)}"]`)
+    if (row === null) return
+    restored.current = true
+    const bodyTop = body.getBoundingClientRect().top
+    const rowRect = row.getBoundingClientRect()
+    const target = body.scrollTop + rowRect.top - bodyTop - body.clientHeight / 3
+    const max = Math.max(body.scrollHeight - body.clientHeight, 0)
+    body.scrollTop = Math.min(Math.max(target, 0), max)
+  }, [anchor, data])
+
+  /**
+   * Return only the ancestor directories needed to reveal a clicked file.
+   * This intentionally replaces the previous expanded set: old unrelated
+   * folders are not part of the remembered position anymore.
+   */
+  const ancestorsFor = (path: string): string[] => {
+    const result: string[] = []
+    let current = parentOf(path)
+    while (current !== cwd && current !== '' && current !== parentOf(current)) {
+      result.unshift(current)
+      const next = parentOf(current)
+      if (next === current) break
+      current = next
+    }
+    return result
+  }
+
+  /** Open one file row, remembering only that file and its ancestors. */
+  const openFileAt = (path: string): void => {
+    const body = bodyRef.current
+    const clicked = body === null ? null : [...body.querySelectorAll<HTMLElement>('[data-dsh-path]')]
+      .find(candidate => candidate.dataset.dshPath === path)
+    const top = clicked === undefined || clicked === null || body === null
+      ? 0
+      : clicked.getBoundingClientRect().top - body.getBoundingClientRect().top
+    reportAnchor.current?.(path, top, ancestorsFor(path))
+    onOpenFile(path)
+  }
 
   /** Copy `text`; on success flip the row's copied label for a moment. */
   const copyPath = useCallback((text: string, path: string): void => {
@@ -644,9 +723,10 @@ export function FileTree(props: {
               className={clsx(
                 css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden,
                 dropTarget === entry.path && css.explorerRowDropTarget,
-                revealedSet.has(entry.path) && css.explorerRowRevealed,
+                (revealedSet.has(entry.path) || anchor === entry.path) && css.explorerRowRevealed,
               )}
               data-dsh-revealed={revealedSet.has(entry.path) ? 'true' : undefined}
+          data-dsh-path={entry.path}
               style={{ paddingLeft: depth * 22 + 6 }}
               onClick={() => { onToggle(entry.path) }}
               onKeyDown={(event) => {
@@ -676,16 +756,17 @@ export function FileTree(props: {
           className={clsx(
             css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken,
             dropTarget === parentOf(entry.path) && css.explorerRowDropTarget,
-            revealedSet.has(entry.path) && css.explorerRowRevealed,
+            (revealedSet.has(entry.path) || anchor === entry.path) && css.explorerRowRevealed,
           )}
           data-dsh-revealed={revealedSet.has(entry.path) ? 'true' : undefined}
+          data-dsh-path={entry.path}
           style={{ paddingLeft: depth * 22 + 6 }}
           title={entry.broken ? `${entry.path} — ${t('brokenSymlink')}` : entry.path}
-          onClick={() => { onOpenFile(entry.path) }}
+          onClick={() => { openFileAt(entry.path) }}
           onKeyDown={(event) => {
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault()
-              onOpenFile(entry.path)
+              openFileAt(entry.path)
             }
           }}
           onDragOver={(event) => { handleRowDragOver(event, parentOf(entry.path)) }}
@@ -732,6 +813,7 @@ export function FileTree(props: {
           )}
           <div
             className={clsx(css.explorerRow, dropTarget === root && css.explorerRowDropTarget)}
+            data-dsh-path={root}
             style={{ paddingLeft: 6 }}
             onDragOver={(event) => { handleRowDragOver(event, root) }}
             onDrop={(event) => { handleDirDrop(event, root) }}

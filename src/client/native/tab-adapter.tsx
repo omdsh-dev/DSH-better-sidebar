@@ -29,6 +29,7 @@ import { OrphanedTab } from '../OrphanedTab.tsx'
 import { referenceInChat } from '../reference-in-chat.ts'
 import type { BetterSidebarService } from '../service.ts'
 import type { SidebarStore, SidebarTab, TabType } from '../state.ts'
+import { recalledExpanded, saveRecalledExpanded } from './tree-memory.ts'
 import css from '../sidebar.module.css'
 
 /** The chip glyph's size: the tab strip's own icon scale. */
@@ -79,6 +80,8 @@ interface View {
   scope: SessionScope
   expanded: string[]
   revealed: string[]
+  /** The native tab's content identity (`dsh-resource://…` address or page id). */
+  contentId: string
   /** Bumped on every mutation; the components subscribe to it. */
   version: number
 }
@@ -98,6 +101,12 @@ export interface NativeTabRecords {
     title: string
     params: NativeTabParams | undefined
     scope: SessionScope
+    /**
+     * The native tab's content identity: the `dsh-resource://…` address for a
+     * resource tab, the page address for a page tab. Used to key the tab's
+     * persisted explorer expansion (see tree-memory.ts).
+     */
+    contentId: string
     /**
      * The descriptor's own factory, called ONCE for a record that arrives
      * without seed fields (a native guide open, which knows nothing about the
@@ -135,7 +144,7 @@ export function createNativeTabRecords(): NativeTabRecords {
     notify()
   }
   return {
-    ensure({ id, kind, title, params, scope, mint }) {
+    ensure({ id, kind, title, params, scope, mint, contentId }) {
       const existing = views.get(id)
       if (existing === undefined) {
         const seeded = params?.title === undefined && params?.meta === undefined ? mint?.() : undefined
@@ -150,8 +159,12 @@ export function createNativeTabRecords(): NativeTabRecords {
             ...(meta === undefined ? {} : { meta }),
           },
           scope,
-          expanded: [],
+          // A tab that comes back after a reload gets its expanded directories
+          // rehydrated: the native layout is memory-only, so the tree would
+          // otherwise open on a collapsed workspace the user has to re-navigate.
+          expanded: recalledExpanded(scope.sessionId, contentId),
           revealed: [],
+          contentId,
           version: 0,
         }
         views.set(id, minted)
@@ -186,6 +199,7 @@ export function createNativeTabRecords(): NativeTabRecords {
       put(id, { ...entry, tab: { ...entry.tab, ...patch } })
     },
     drop(id) {
+      const entry = views.get(id)
       if (views.delete(id)) notify()
     },
     toggleExpanded(id, path) {
@@ -278,6 +292,7 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
     title: nativeTab.title,
     params,
     scope,
+    contentId: nativeTab.contentId,
     mint: () => {
       const state = store.getSnapshot().state
       if (descriptor?.createTab === undefined || state === undefined) return undefined
@@ -315,6 +330,7 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
         visible: nativeTab.visible,
         expanded: view.expanded,
         revealed: view.revealed,
+        memoryKey: nativeTab.contentId,
         onToggleDir: (path: string) => { records.toggleExpanded(nativeTab.id, path) },
         onReferenceFile: (path: string, isDir: boolean) => { referenceInChat(ctx, sessionId, cwd, path, isDir) },
         onOpenDiff: (tab: SidebarTab) => {
