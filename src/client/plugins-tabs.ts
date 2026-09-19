@@ -56,8 +56,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     name: () => t('pluginTylinaName'),
     url: 'https://github.com/tylina/dsh-tylina',
     description: () => t('pluginTylinaDesc'),
-    // 0.18.0 is the verified compatible better-sidebar release for Tylina.
-    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar@0.18.0 && dsh plugin --profile web add dsh-tylina@0.15.2',
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-tylina',
   },
   {
     id: 'dsh-flowglass',
