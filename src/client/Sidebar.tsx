@@ -197,7 +197,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     useMemo(() => (callback: () => void) => ctx.sessions.list.subscribe(callback), [ctx]),
     useCallback(() => ctx.sessions.list.getSnapshot(), [ctx]),
   )
-  const current = sessionList.current
+  // DSH's SessionListState has no `current` property; the active session is
+  // identified by retainedBy.mainView > 0 (see ui-workspace/tree.ts).
+  const current = Object.values(sessionList.byId).find(
+    s => (s.retainedBy?.mainView ?? 0) > 0,
+  )?.id
 
   // Per-session sidebar state.
   const snapshot = useSyncExternalStore(
