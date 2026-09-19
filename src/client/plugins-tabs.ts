@@ -52,6 +52,13 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-docs-panel',
   },
   {
+    id: 'dsh-tylina',
+    name: () => t('pluginTylinaName'),
+    url: 'https://github.com/tylina/dsh-tylina',
+    description: () => t('pluginTylinaDesc'),
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-tylina',
+  },
+  {
     id: 'dsh-flowglass',
     name: () => t('pluginFlowglassName'),
     url: 'https://github.com/Iwctwbh/dsh-flowglass',
