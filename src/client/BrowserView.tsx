@@ -81,15 +81,19 @@ export function iframeSandboxFor(url: string | undefined, allowedLoopback: strin
 
 export function BrowserView(props: TabComponentProps) {
   const { store, tab } = props
-  // The current address (initialized from the persisted tab.path so a
-  // reload restores the visited page).
-  const [url, setUrl] = useState<string | undefined>(tab.path)
-  const [input, setInput] = useState<string>(tab.path ?? '')
+  // Where this tab starts. An agent-opened tab carries its target in
+  // `meta.url` - the native tab adapter folds `params.url` in there - while a
+  // user-visited tab persists the address in `path`, so a reload restores it.
+  // Reading only `path` left every agent-opened tab titled and blank.
+  const meta = tab.meta as Record<string, unknown> | undefined
+  const initialTarget = (typeof meta?.url === 'string' ? meta.url : undefined) ?? tab.path
+  const [url, setUrl] = useState<string | undefined>(initialTarget)
+  const [input, setInput] = useState<string>(initialTarget ?? '')
   /** Blocked/invalid hint shown under the address bar (null = none). */
   const [message, setMessage] = useState<string | null>(null)
   /** Address-bar navigation history (in-frame clicks are not tracked). */
-  const [history, setHistory] = useState<string[]>(tab.path !== undefined ? [tab.path] : [])
-  const [cursor, setCursor] = useState<number>(tab.path !== undefined ? 0 : -1)
+  const [history, setHistory] = useState<string[]>(initialTarget !== undefined ? [initialTarget] : [])
+  const [cursor, setCursor] = useState<number>(initialTarget !== undefined ? 0 : -1)
   /** Bumped on reload to remount the iframe (also remounts on sandbox flip). */
   const [reloadKey, setReloadKey] = useState(0)
   /** TEMPORARY sandbox unlock for THIS surface only (never writes the global
