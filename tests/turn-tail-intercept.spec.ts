@@ -1,5 +1,5 @@
 /**
- * Turn-tail interception registration spec (issue #15): `registerTurnTailInterception`
+ * Turn-tail row registration spec (issue #15): `registerTurnTailInterception`
  * must go through `ctx.slots.inject` — the slot is a CHILD slot the host's
  * ui-conversation declares in its `conversation.chat.node` children table, so a
  * direct `slots.register` races the declaration and the ui-slots core throws
@@ -87,19 +87,20 @@ const clientCtx = (slots: unknown): Context => {
   } as unknown as Context
 }
 
-describe('turn-tail interception registration (issue #15)', () => {
+describe('turn-tail row registration (issue #15)', () => {
   it('registers through slots.inject and lands once the slot is already declared', () => {
     const fake = fakeSlots(true)
     const store = createSidebarStore()
     const restore = registerTurnTailInterception(clientCtx(fake.slots), store)
 
-    // Exactly one registration, with the takeover descriptor.
+    // Exactly one registration, with the list-kind row descriptor.
     expect(fake.registered).toHaveLength(1)
     const { options, component } = fake.registered[0]!
     expect(options.name).toBe('conversation.chat.turnTail')
-    expect(options.priority).toBe(-1)
+    expect(options.id).toBe('dsh-better-sidebar:produced-files')
+    expect(options.order).toBe(-1)
     expect(options.registrant).toBe('dsh-better-sidebar')
-    expect(options.select).toBeTypeOf('function')
+    expect(options.select).toBeUndefined()
     expect(options.inject).toBeTypeOf('function')
     expect(component).toBeTypeOf('function')
 
@@ -142,26 +143,28 @@ describe('turn-tail interception registration (issue #15)', () => {
     expect(fake.registered).toHaveLength(0)
   })
 
-  it('declines the takeover while the editor tab is disabled in the settings', () => {
+  it('renders nothing while the editor tab is disabled in the settings', () => {
     const fake = fakeSlots(true)
     const store = createSidebarStore()
     const restore = registerTurnTailInterception(clientCtx(fake.slots), store)
-    const select = fake.registered[0]!.options.select as (owner: unknown) => unknown
+    const ProducedFilesTail = fake.registered[0]!.component as (props: Record<string, unknown>) => { props: { matched: readonly string[] } } | null
+    const seats = { openInSidebar: vi.fn(), onShowInFolder: vi.fn() }
 
-    // Enabled (default): a produced turn claims the chain; an empty one declines.
-    expect(select(producedOwner(['a.ts', 'b.ts']))).toEqual(['a.ts', 'b.ts'])
-    expect(select(emptyOwner())).toBeNull()
+    // Enabled (default): a produced turn renders a row; an empty one renders nothing.
+    expect(ProducedFilesTail({ ...producedOwner(['a.ts', 'b.ts']) as object, ...seats })?.props.matched).toEqual(['a.ts', 'b.ts'])
+    expect(ProducedFilesTail({ ...emptyOwner() as object, ...seats })).toBeNull()
     // The engine Turn data path (the real owner currency: { turn, seq,
-    // openFile }) claims through the deliverables record too.
-    expect(select({
+    // openFile }) matches through the deliverables record too.
+    expect(ProducedFilesTail({
       turn: { data: { get: (key: string) => key === 'deliverables' ? { produced: [{ seq: 1, path: 'a.ts' }] } : undefined } },
       seq: 1,
-    })).toEqual(['a.ts'])
+      ...seats,
+    })?.props.matched).toEqual(['a.ts'])
 
-    // Editor tab disabled: even a produced turn falls back to the default
-    // deliverables row (chips that cannot open must not be offered).
+    // Editor tab disabled: even a produced turn renders nothing (chips that
+    // cannot open must not be offered).
     store.setPrefs({ ...store.getPrefs(), tabsEnabled: { editor: false } })
-    expect(select(producedOwner(['a.ts']))).toBeNull()
+    expect(ProducedFilesTail({ ...producedOwner(['a.ts']) as object, ...seats })).toBeNull()
 
     restore()
   })

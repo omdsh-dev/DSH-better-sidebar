@@ -265,6 +265,22 @@ describe('buildOpenTurnSnapshot', () => {
     expect(snapshot).toContain('Result: file body')
     expect(snapshot).toContain('`bash` (executing)')
   })
+
+  it('skips malformed assistant content instead of throwing', () => {
+    const events = [
+      ev('turn/start', 0, { turn: 1 }),
+      ev('step/start', 1, { turn: 1, step: 1 }),
+      ev('assistant/message', 2, { turn: 1, step: 1, message: { content: 'not-an-array' } }),
+      ev('assistant/message', 3, { turn: 1, step: 1 }),
+      ev('assistant/message', 4, {
+        turn: 1,
+        step: 1,
+        message: { content: [null, { type: 'text' }, { type: 'text', text: 'kept' }] },
+      }),
+      ev('tool/call', 5, { turn: 1, step: 1, callId: 'c1', name: 'bash', arguments: '{}' }),
+    ]
+    expect(buildOpenTurnSnapshot(events)).toContain('kept')
+  })
 })
 
 describe('sideLabel', () => {

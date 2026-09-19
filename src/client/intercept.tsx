@@ -1,10 +1,10 @@
 /**
- * Interception of the chat's produced-files row: the turn-tail chain entry
- * that replaces ui-deliverables' row when the closing turn produced files.
- * The takeover looks identical (same chip row); the chips open the file in
- * the sidebar instead of the host OS. Priority -1 runs before the default-0
- * deliverables entry; when nothing was produced the selector returns null
- * and the original row renders unchanged.
+ * Adds a produced-files row to the chat's turn-tail list: a chip per file
+ * the closing turn wrote or edited, opening in the sidebar instead of the
+ * host OS. ui-deliverables' own turn-tail entry covers change announcements
+ * and explicitly presented files under a different id, so this is an
+ * additional row, not a takeover — `order: -1` only positions it ahead of
+ * that entry when both render for the same turn.
  */
 import { IconCodeOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
@@ -12,6 +12,12 @@ import { revealPaths, type SidebarStore } from './state.ts'
 import { t } from './locales.ts'
 import { resolveSidebarPath, selectProducedFiles } from './produced-files.ts'
 import css from './sidebar.module.css'
+
+/** Registration-time seats plus the runtime owner currency the component reads its match from. */
+type ProducedFilesTailProps = Record<string, unknown> & {
+  openInSidebar: (path: string) => void
+  onShowInFolder: (files: readonly string[]) => void
+}
 
 /** Open a file in the sidebar's editor (used by the intercepted row and the explorer). */
 export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: string, path: string): void {
@@ -96,10 +102,10 @@ export function SidebarProducedFiles(props: {
 }
 
 /**
- * Register the turn-tail interception (returns the disposer).
+ * Register the turn-tail row (returns the disposer).
  *
  * The slot is a CHILD slot the host's ui-conversation declares in its
- * `conversation.chat.node` children table (kind: chain, scope: session).
+ * `conversation.chat.node` children table (kind: list, scope: session).
  * Registering it directly races the declaration — the ui-slots core's
  * load-time validation throws "not declared (a parent entry's children
  * table must declare it)" when the parent entry is not on the ledger yet.
@@ -108,24 +114,31 @@ export function SidebarProducedFiles(props: {
  * register() call once the declaration commits; declaration collapse
  * disposes the entry and a later declaration re-registers it. This mirrors
  * @deepseek-ai/dsh-client-ui-deliverables' registration of the same slot.
+ *
+ * List entries carry no `select`: the ui-slots core mounts every registered
+ * id unconditionally, so the "should this row render" decision (produced
+ * files present, editor tab enabled, sidebar not suspended) moves into the
+ * component itself, which returns null to render nothing.
  */
 export function registerTurnTailInterception(ctx: Context, store: SidebarStore): () => void {
+  function ProducedFilesTail(props: ProducedFilesTailProps) {
+    // Decline while the editor tab type is disabled in the side card
+    // settings (chips that cannot open must not be offered), or while the
+    // sidebar is externally disabled (aionui-panel chosen) or suspended.
+    if (store.getSuspended()) return null
+    if (store.getPrefs().tabsEnabled['editor'] === false) return null
+    const matched = selectProducedFiles(props)
+    if (matched === null) return null
+    return <SidebarProducedFiles matched={matched} openInSidebar={props.openInSidebar} onShowInFolder={props.onShowInFolder} />
+  }
   return ctx.slots.inject('conversation.chat.turnTail', () => ctx.slots.register({
     name: 'conversation.chat.turnTail',
-    // Decline the takeover while the editor tab type is disabled in the side
-    // card settings: the produced-files row falls back to the default
-    // deliverables behavior instead of offering chips that cannot open. Also
-    // while the sidebar is externally disabled (aionui-panel chosen).
-    select: (owner) => {
-      if (store.getSuspended()) return null
-      if (store.getPrefs().tabsEnabled['editor'] === false) return null
-      return selectProducedFiles(owner)
-    },
-    priority: -1,
+    id: 'dsh-better-sidebar:produced-files',
+    order: -1,
     registrant: 'dsh-better-sidebar',
     inject: (sessionId: string) => ({
       openInSidebar: (path: string) => { openSidebarFile(ctx, store, sessionId, path) },
       onShowInFolder: (files: readonly string[]) => { revealInExplorer(ctx, store, sessionId, files) },
     }),
-  }, SidebarProducedFiles))
+  }, ProducedFilesTail))
 }
