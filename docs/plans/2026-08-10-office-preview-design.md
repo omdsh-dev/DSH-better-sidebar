@@ -37,7 +37,7 @@
 复用现有 `/sidebar/file` media route(`src/index.ts:349-392`):
 - 该路由已支持任意文件字节(不限扩展名,只检查 `isWithin(cwd, path)` + `isFile` + `size <= mediaLimit`)
 - `MEDIA_TYPES`(`index.ts:44`)对 Office 扩展名 fallback 到 `application/octet-stream`,client 用 `fetch` 拿 ArrayBuffer,不依赖 content-type
-- `mediaLimit` 默认 20MB,对 Office 文件足够(超限降级下载)
+- `mediaLimit` 默认 64 MiB,让较大的 Office 文件继续使用内联预览(超限降级下载)
 
 **不改 `fs.read`**:Office 文件不走文本读取路径(会被 NUL 探测当 binary 拒绝),直接走 media route。
 
@@ -243,7 +243,7 @@ if (officeKind === 'docx' || officeKind === 'xlsx') {
 | 场景 | 检测 | 响应 |
 |---|---|---|
 | 文件损坏(非有效 zip) | 库抛错 | 显示错误信息 + 下载按钮 |
-| `>20MB`(超 `mediaLimit`) | fetch 响应 / host 返回 400 | 提示"文件过大" + 下载按钮 |
+| `>64 MiB`(超 `mediaLimit`) | fetch 响应 / host 返回 400 | 提示"文件过大" + 下载按钮 |
 | 加密文件(密码保护) | SheetJS/docx-preview 抛特定错 | "不支持加密文件" + 下载按钮 |
 | Univer chunk 加载失败 | dynamic import reject | 重试按钮(类比 `TerminalView` 的 `FAILURE_LIMIT`) |
 | 网络失败(媒体路由 403) | fetch 非 200 | 错误信息(信任围栏拒绝) |
@@ -316,7 +316,7 @@ docx-preview 的样式由 `className: 'docx'` 选项控制,可能需补 `src/cli
 - 真实 .xlsx(多 sheet/公式/条件格式)→ 渲染 + 公式计算
 - .pptx → 下载按钮
 - 加密 docx/xlsx → 错误提示 + 下载
-- >20MB → 提示 + 下载
+- >64 MiB → 提示 + 下载
 
 ## 7. 国际化
 
@@ -353,7 +353,7 @@ docx-preview 的样式由 `className: 'docx'` 选项控制,可能需补 `src/cli
 | Univer 体积超预期(>5MB) | 低 | 中 | 评估 tree-shaking;裁剪非必要插件(如 chart) |
 | xlsx → Univer 转换层复杂度爆表 | 中 | 中 | 优先用 `@univerjs/sheets-import-export` 官方包 |
 | Univer canvas 在某些浏览器渲染异常 | 低 | 中 | 错误边界捕获 + 下载降级 |
-| docx-preview 图片 base64 内存爆炸(大 docx) | 低 | 低 | 文件 size cap 已 20MB,可接受 |
+| docx-preview 图片 base64 内存爆炸(大 docx) | 低 | 低 | 文件 size cap 为 64 MiB,超限降级下载 |
 | Univer dispose 不彻底导致内存泄漏 | 中 | 中 | 严格 cleanup + 手动验证 Tab 切换/卸载 |
 
 ## 10. 实现里程碑(粗略,待 writing-plans 细化)
