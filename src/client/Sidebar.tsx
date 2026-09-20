@@ -825,7 +825,7 @@ export function BottomDockToggle(props: { store: SidebarStore }) {
         aria-pressed={open}
         onClick={() => { store.reduce(toggleBottomPanel) }}
       >
-        <IconPanelBottomOutline16 />
+        <IconPanelBottomOutline16 size={15} />
       </button>
     </Tooltip>
   )
