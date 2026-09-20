@@ -29,6 +29,7 @@ import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
+import { EMPTY_WORKSPACE_SELECTION, activeSessionId, workspaceFace } from './active-session.ts'
 import { referenceInChat as referenceInChatShared } from './reference-in-chat.ts'
 import {
   BOTTOM_MIN, CONVERSATION_MIN, agentUuidOf, firstLeaf, isAgentTabId,
@@ -192,12 +193,26 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   // so the conversation keeps CONVERSATION_MIN even on wide touch devices.
   const layoutViewportHeight = visualViewportHeight ?? viewport.height
 
-  // Current conversation (the sessions list feed).
+  // Current conversation. DSH 0.1.5 reports it on the sessions list snapshot;
+  // 0.1.6 dropped that field and keeps the live selection on the workspace
+  // service instead (see client/active-session.ts). The selection store is
+  // subscribed so a session switch still re-renders this shell, and the legacy
+  // field stays the first source for hosts that still project it.
   const sessionList = useSyncExternalStore(
     useMemo(() => (callback: () => void) => ctx.sessions.list.subscribe(callback), [ctx]),
     useCallback(() => ctx.sessions.list.getSnapshot(), [ctx]),
   )
-  const current = sessionList.current
+  const workspaceSelection = useSyncExternalStore(
+    useMemo(
+      () => (callback: () => void) => workspaceFace(ctx)?.selection?.subscribe?.(callback) ?? (() => {}),
+      [ctx],
+    ),
+    useCallback(
+      () => workspaceFace(ctx)?.selection?.getSnapshot?.() ?? EMPTY_WORKSPACE_SELECTION,
+      [ctx],
+    ),
+  )
+  const current = sessionList.current ?? workspaceSelection.sessionId ?? activeSessionId(ctx)
 
   // Per-session sidebar state.
   const snapshot = useSyncExternalStore(

@@ -7,6 +7,7 @@
  */
 import { useEffect, useRef } from 'react'
 import type { Context, SidebarSessionList } from '../../context-types.ts'
+import { activeSessionId } from '../active-session.ts'
 import { mirrorAgentWaits, reconcileAgentTerminals, type SidebarStore } from '../state.ts'
 import { isNarrowWidth } from '../breakpoints.ts'
 import { detectNewDirectSubagent } from '../subagent-detect.ts'
@@ -67,13 +68,21 @@ function activateTasksPage(ctx: Context, sessionId: string, options: { backgroun
   const park = options.background
     // The face acts on the MOUNTED session: parking is only meaningful (and
     // only safe) when the activation targets the one on screen.
-    && ctx.sessions.list.getSnapshot().current === sessionId
+    && activeSessionId(ctx) === sessionId
     && isNarrowWidth(window.innerWidth)
     // Only a column the user had COLLAPSED is put back: an expanded one is in
     // use, and closing it under the user would be worse than the takeover.
     && column?.isExpanded?.() === false
   ctx.get('betterSidebar')?.openTab({ type: 'subagent', title: t('subagent') })
-  if (park) column?.toggleExpanded?.()
+  // Same throwing contract as the surface's writes: park only when the column
+  // is reachable, never let the toggle reach the caller's React tree.
+  if (park) {
+    try {
+      column?.toggleExpanded?.()
+    } catch {
+      // Column not mounted: nothing to park.
+    }
+  }
 }
 
 export function useHostFeeds(feeds: {

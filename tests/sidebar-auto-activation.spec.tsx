@@ -144,13 +144,17 @@ function setViewport(width: number): void {
 function mountSidebar(
   width: number,
   bottomOpen = false,
-  options: { columnExpanded?: boolean } = {},
+  options: { columnExpanded?: boolean; legacyListCurrent?: boolean } = {},
 ): MountedSidebar {
   setViewport(width)
   vi.stubGlobal('WebSocket', FakeWebSocket)
   const sessionId = `auto-activation-${++sessionSeq}`
+  // DSH 0.1.5 reported the open conversation on the list snapshot; 0.1.6 dropped
+  // that field and keeps it on the workspace service. Both sources are mounted
+  // here so a test can pick which one answers (src/client/active-session.ts).
+  const legacyListCurrent = options.legacyListCurrent ?? true
   const initial: SidebarSessionList = {
-    current: sessionId,
+    current: legacyListCurrent ? sessionId : undefined,
     byId: {
       [sessionId]: { id: sessionId, cwd: '/tmp', displayTitle: 'Root' },
     },
@@ -167,13 +171,24 @@ function mountSidebar(
   service.registerTab({ id: 'subagent', title: 'Subagent', component: JumpHarness })
   const column = makeNativeColumnSpy(options.columnExpanded ?? false)
   const localeSnapshot = { active: 'en' }
+  // The 0.1.6 home of the open conversation (a structural stand-in: the plugin
+  // only ever calls `mainReference.sessionId` and `selection.getSnapshot()`).
+  // The snapshot keeps a STABLE identity, exactly like the real snapshot store:
+  // `useSyncExternalStore` re-renders forever when a fresh object comes back on
+  // every call, which is what a naive `() => ({ sessionId })` would do.
+  const workspaceSelection = { sessionId }
+  const workspace = {
+    mainReference: { sessionId },
+    selection: { getSnapshot: () => workspaceSelection, subscribe: () => () => {} },
+  }
   const ctx = {
     locale: { subscribe: () => () => {}, getSnapshot: () => localeSnapshot },
     sessions: { list: feed },
     betterSidebar: service,
     get: (name: string) => name === 'betterSidebar'
       ? service
-      : name === 'sidebarRight' ? column.face : undefined,
+      : name === 'sidebarRight' ? column.face
+        : name === 'uiWorkspace' ? workspace : undefined,
   } as unknown as Context
   const container = document.createElement('div')
   document.body.append(container)
@@ -364,5 +379,31 @@ describe('Sidebar background-activity auto-activation (#162)', () => {
     switchToChild(sidebar)
     expectNativeTasksOpen(sidebar, 'child')
     expect(sidebar.column.toggles).toBe(0)
+  })
+
+  it('0.1.6 list snapshot without `current`: the workspace selection still activates', () => {
+    // The 0.1.6 client list store no longer projects `current`; reading only
+    // that field left the shell's sessionId undefined, which silenced every
+    // trigger in this file with no error at all.
+    const sidebar = mountSidebar(1024, false, { legacyListCurrent: false })
+    const before = sidebar.feed.getSnapshot()
+    act(() => {
+      sidebar.feed.set({
+        ...before,
+        jobsBySession: {
+          ...before.jobsBySession,
+          [sidebar.sessionId]: [{
+            id: 'bash-1',
+            kind: 'bash',
+            label: 'sleep 30',
+            status: 'running',
+            startedAt: 1_000,
+          }],
+        },
+      })
+    })
+    expect(sidebar.store.getSnapshot().sessionId).toBe(sidebar.sessionId)
+    expectNativeTasksOpen(sidebar, sidebar.sessionId)
+    expectWorkbenchUntouched(sidebar)
   })
 })

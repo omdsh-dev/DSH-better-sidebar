@@ -10,6 +10,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { createNativeTabRecords, NativeTabBody, NativeTabTitle } from '../src/client/native/tab-adapter.tsx'
 import { registerNativeSurface } from '../src/client/native/index.ts'
+import { createNativeSurface } from '../src/client/native/surface.ts'
 import { createBetterSidebarService, type SidebarSurface } from '../src/client/service.ts'
 import { createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 
@@ -463,5 +464,101 @@ describe('NativeTabTitle (the chip glyph)', () => {
     expect(host.querySelector('[aria-hidden="true"]')).toBeNull()
     expect(host.textContent).toBe('Ghost')
     unmount()
+  })
+})
+
+describe('createNativeSurface: an unmounted column never throws (#728)', () => {
+  interface Calls {
+    tabs: Array<{ sessionId: string; kind: string }>
+    resources: Array<{ sessionId: string; address: string }>
+  }
+
+  /** The DSH 0.1.6 face while collapsed: mounted-face writes reject, per-session writes do not. */
+  function unmountedController(calls: Calls): object {
+    const reject = (): never => { throw new Error('sidebarRight: no session surface is mounted') }
+    return {
+      openTab: reject,
+      openResource: reject,
+      close: () => undefined,
+      openTabIn: (sessionId: string, kind: string) => { calls.tabs.push({ sessionId, kind }) },
+      openResourceIn: (sessionId: string, address: string) => { calls.resources.push({ sessionId, address }) },
+    }
+  }
+
+  function surfaceFor(controller: unknown, current: string | undefined) {
+    const ctx = {
+      get: (name: string) => (name === 'sidebarRight' ? controller : undefined),
+      sessions: {
+        list: {
+          getSnapshot: () => ({ current, byId: { s1: { id: 's1' } } }),
+          subscribe: () => () => {},
+        },
+      },
+    }
+    return createNativeSurface(ctx as never, createNativeTabRecords())
+  }
+
+  it('routes a tab open through openTabIn when the mounted write rejects', () => {
+    const calls: Calls = { tabs: [], resources: [] }
+    const surface = surfaceFor(unmountedController(calls), 's1')
+
+    // An activation that must also open the column lands exactly here: the
+    // mounted write throws while the column is collapsed, so the per-session
+    // write takes over instead of the error reaching the caller's React tree.
+    expect(() => surface.openTab({ sessionId: 's1', kind: 'subagent', params: {}, revealIfOpened: true }))
+      .not.toThrow()
+    expect(calls.tabs).toEqual([{ sessionId: 's1', kind: 'subagent' }])
+  })
+
+  it('routes a resource open through openResourceIn when the mounted write rejects', () => {
+    const calls: Calls = { tabs: [], resources: [] }
+    const surface = surfaceFor(unmountedController(calls), 's1')
+
+    expect(() => surface.openResource({ sessionId: 's1', address: 'dsh-resource://file/x', revealIfOpened: true }))
+      .not.toThrow()
+    expect(calls.resources).toEqual([{ sessionId: 's1', address: 'dsh-resource://file/x' }])
+  })
+
+  it('still prefers the mounted write for the on-screen session', () => {
+    const opened: string[] = []
+    const controller = {
+      openTab: (kind: string) => { opened.push(kind) },
+      openResource: () => {},
+      close: () => undefined,
+    }
+    const surface = surfaceFor(controller, 's1')
+    surface.openTab({ sessionId: 's1', kind: 'subagent', params: {}, revealIfOpened: true })
+    expect(opened).toEqual(['subagent'])
+  })
+
+  it('reads the active session from the workspace service when the list has no `current`', () => {
+    const opened: string[] = []
+    const ctx = {
+      get: (name: string) => {
+        if (name === 'sidebarRight') {
+          return {
+            openTab: (kind: string) => { opened.push(kind) },
+            openResource: () => {},
+            close: () => undefined,
+          }
+        }
+        if (name === 'uiWorkspace') {
+          return {
+            mainReference: { sessionId: 's1' },
+            selection: { getSnapshot: () => ({ sessionId: 's1' }) },
+          }
+        }
+        return undefined
+      },
+      sessions: {
+        list: {
+          getSnapshot: () => ({ current: undefined, byId: { s1: { id: 's1' } } }),
+          subscribe: () => () => {},
+        },
+      },
+    }
+    const surface = createNativeSurface(ctx as never, createNativeTabRecords())
+    surface.openTab({ sessionId: 's1', kind: 'subagent', params: {}, revealIfOpened: true })
+    expect(opened).toEqual(['subagent'])
   })
 })
