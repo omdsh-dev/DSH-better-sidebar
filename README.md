@@ -28,6 +28,10 @@
   <video src="https://github.com/user-attachments/assets/23187822-047e-45cc-b480-fe997bd55b86" muted autoplay loop playsinline controls width="100%"></video>
 </div>
 
+
+在主输入框输入 `/side` 即可打开新的侧边对话，与侧栏菜单行为一致。该客户端动作不会提交草稿或启动模型回合；关闭侧边对话功能时不可用。
+
+
 ## 📑 目录
 
 - [✨ 功能一览](#-功能一览)
