@@ -8,13 +8,13 @@
 import type { IconProps } from '@deepseek-ai/dsh-client-ui-primitives'
 
 /**
- * Bottom-panel toggle glyph (the "底栏" button): a frame with a filled strip
+ * Bottom-panel toggle glyph (the "底栏" button): a frame with an unfilled compartment
  * along its BOTTOM edge, in the app's outline style.
  */
 export const IconPanelBottomOutline16 = ({ size = 16, className }: IconProps) => (
   <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
     <rect x="1.5" y="2" width="13" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
-    <rect x="3.25" y="10" width="9.5" height="2.75" rx="1" fill="currentColor" stroke="none" />
+    <path d="M1.5 9.5h13" stroke="currentColor" strokeWidth="1.5" />
   </svg>
 )
 
