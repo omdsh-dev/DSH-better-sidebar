@@ -439,7 +439,7 @@ export function EditorHost(props: {
           </div>
         )}
         {toolbar?.dirty === true && <span className={css.dirtyDot} title={t('unsaved')} />}
-        {toolbar?.editable === true && (
+        {toolbar?.editable === true && toolbar?.truncated !== true && (
           <button
             type="button"
             className={css.iconButton}
