@@ -17,6 +17,7 @@
  * - layout state is memory-only, so a queued open is not durable either.
  */
 import type { Context } from '../../context-types.ts'
+import { activeSessionId } from '../active-session.ts'
 import { fileAddressFor } from '../resource-address.ts'
 import type { NativeTabParams, SidebarSurface } from '../service.ts'
 import type { NativeTabRecords } from './tab-adapter.tsx'
@@ -45,15 +46,6 @@ export interface NativeSurface extends SidebarSurface {
   dispose(): void
 }
 
-/** The active session id, as the client list reports it. */
-function activeSessionId(ctx: Context): string | undefined {
-  try {
-    return ctx.sessions.list.getSnapshot().current
-  } catch {
-    return undefined
-  }
-}
-
 /**
  * Bind the plugin's write face to the native controller.
  * @param ctx - the client context (session list + `ctx.sidebarRight`).
@@ -65,6 +57,20 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
   const controller = (): NativeController | undefined =>
     ctx.get('sidebarRight') as unknown as NativeController | undefined
 
+  /**
+   * Place one open, or report that it could not be placed yet.
+   *
+   * The mounted-face writes (`openTab` / `openResource`) go through the
+   * controller's own `require()`, which THROWS while the right column is
+   * collapsed (DSH 0.1.6: `sidebarRight: no session surface is mounted`) — and
+   * the public face has no way to expand a collapsed column, so an activation
+   * that must both open the column and land a page starts exactly there. Each
+   * write therefore falls back to the explicit-session variant
+   * (`openTabIn` / `openResourceIn`, which act on a session's store without
+   * needing it mounted) and never lets a throw escape into the caller's React
+   * tree; an open that still cannot land stays queued and is replayed on the
+   * next session-list change.
+   */
   const place = (entry: Pending): boolean => {
     const api = controller()
     if (api === undefined) return false
@@ -73,12 +79,20 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
     if (entry.kind === 'tab') {
       const options = { params: entry.params, revealIfOpened: entry.revealIfOpened }
       if (onScreen) {
-        api.openTab(entry.tabKind, options)
-        return true
+        try {
+          api.openTab(entry.tabKind, options)
+          return true
+        } catch {
+          // Column not mounted: fall through to the explicit-session write.
+        }
       }
       if (api.openTabIn !== undefined) {
-        api.openTabIn(entry.sessionId, entry.tabKind, options)
-        return true
+        try {
+          api.openTabIn(entry.sessionId, entry.tabKind, options)
+          return true
+        } catch {
+          // The session has no adopted store yet: queue and replay later.
+        }
       }
       return false
     }
@@ -87,12 +101,20 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
       revealIfOpened: entry.revealIfOpened,
     }
     if (onScreen) {
-      api.openResource(entry.address, options)
-      return true
+      try {
+        api.openResource(entry.address, options)
+        return true
+      } catch {
+        // Column not mounted: fall through to the explicit-session write.
+      }
     }
     if (api.openResourceIn !== undefined) {
-      api.openResourceIn(entry.sessionId, entry.address, options)
-      return true
+      try {
+        api.openResourceIn(entry.sessionId, entry.address, options)
+        return true
+      } catch {
+        // The session has no adopted store yet: queue and replay later.
+      }
     }
     return false
   }
