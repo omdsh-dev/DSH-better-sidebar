@@ -453,5 +453,7 @@ export const vi: Record<string, string> = {
   pluginMdExportName: 'Xuất Markdown',
   pluginCodeNavName: 'Trình điều hướng xem trước mã',
   pluginVideoPreviewName: 'Xem trước video',
+  pluginDshMemoryDeltaName: 'dsh-memory-delta Bộ nhớ',
+  pluginDshMemoryDeltaDesc: 'Bộ nhớ xuyên phiên: chỉ chèn phần đã thay đổi (không chèn gì nếu không có thay đổi), kèm nhắc ngày rà soát, tìm kiếm theo độ liên quan và tab thanh bên.',
   presetDshDesktopDesc: 'Chế độ Electron nâng cao (không viền): macOS dành 20px ở trên cùng; Windows dành 32px cho thanh tiêu đề khi không có WCO',
 }

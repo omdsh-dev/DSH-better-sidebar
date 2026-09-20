@@ -451,5 +451,7 @@ export const ru: Record<string, string> = {
   pluginMdExportName: 'Экспорт Markdown',
   pluginCodeNavName: 'Навигатор предпросмотра кода',
   pluginVideoPreviewName: 'Предпросмотр видео',
+  pluginDshMemoryDeltaName: 'dsh-memory-delta Память',
+  pluginDshMemoryDeltaDesc: 'Память между сессиями: внедряется только то, что изменилось (ничего, если ничего не менялось), с напоминанием о дате проверки, поиском по релевантности и вкладкой в боковой панели.',
   presetDshDesktopDesc: 'Расширенный режим Electron (без рамки): macOS резервирует 20px сверху; Windows без WCO резервирует 32px под строку заголовка',
 }

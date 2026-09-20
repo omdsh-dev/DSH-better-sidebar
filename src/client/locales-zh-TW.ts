@@ -468,5 +468,7 @@ export const zhTW: Record<string, string> = {
   pluginMdExportName: 'Markdown 匯出插件',
   pluginCodeNavName: '程式碼預覽導覽',
   pluginVideoPreviewName: '影片預覽插件',
+  pluginDshMemoryDeltaName: 'dsh-memory-delta 記憶',
+  pluginDshMemoryDeltaDesc: '跨工作階段記憶：只注入有變動的部分（沒有變動則完全不注入），附到期覆核提醒、相關度排序檢索與側邊欄分頁。',
   presetDshDesktopDesc: 'Electron 進階模式（無邊框）：macOS 頂欄 20px、Windows 無 WCO 時 32px 標題列讓位',
 }

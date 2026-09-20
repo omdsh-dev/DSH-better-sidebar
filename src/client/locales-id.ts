@@ -451,5 +451,7 @@ export const id: Record<string, string> = {
   pluginMdExportName: 'Ekspor Markdown',
   pluginCodeNavName: 'Navigator pratinjau kode',
   pluginVideoPreviewName: 'Pratinjau video',
+  pluginDshMemoryDeltaName: 'dsh-memory-delta Memori',
+  pluginDshMemoryDeltaDesc: 'Memori antar sesi: hanya yang berubah yang disuntikkan (tidak ada saat tidak ada perubahan), dengan pengingat tanggal tinjauan, pencarian berperingkat relevansi, dan tab bilah samping.',
   presetDshDesktopDesc: 'Mode Electron lanjutan (tanpa bingkai): macOS mencadangkan 20px di atas; Windows mencadangkan 32px untuk bilah judul saat WCO tidak tersedia',
 }

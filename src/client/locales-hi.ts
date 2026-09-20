@@ -453,5 +453,7 @@ export const hi: Record<string, string> = {
   pluginMdExportName: 'Markdown एक्सपोर्ट',
   pluginCodeNavName: 'कोड प्रीव्यू नेविगेटर',
   pluginVideoPreviewName: 'वीडियो प्रीव्यू',
+  pluginDshMemoryDeltaName: 'dsh-memory-delta स्मृति',
+  pluginDshMemoryDeltaDesc: 'सत्रों के बीच स्मृति: केवल बदला हुआ भाग इंजेक्ट होता है (कुछ न बदले तो कुछ नहीं), समीक्षा-तिथि अनुस्मारक, प्रासंगिकता-क्रमित खोज और साइडबार टैब के साथ।',
   presetDshDesktopDesc: 'Electron एडवांस्ड (फ्रेमलेस) मोड: macOS ऊपर 20px सुरक्षित रखता है; Windows WCO अनुपलब्ध होने पर टाइटल बार के लिए 32px रखता है',
 }

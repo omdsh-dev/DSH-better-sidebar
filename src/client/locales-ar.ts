@@ -454,5 +454,7 @@ export const ar: Record<string, string> = {
   pluginMdExportName: 'تصدير Markdown',
   pluginCodeNavName: 'مستكشف معاينة الكود',
   pluginVideoPreviewName: 'معاينة الفيديو',
+  pluginDshMemoryDeltaName: 'dsh-memory-delta الذاكرة',
+  pluginDshMemoryDeltaDesc: 'ذاكرة عبر الجلسات: يُحقن ما تغيّر فقط (ولا شيء عند عدم وجود تغيير)، مع تذكير بموعد المراجعة وبحث مرتّب حسب الصلة وتبويب في الشريط الجانبي.',
   presetDshDesktopDesc: 'وضع Electron المتقدم (بلا إطار): يحجز macOS شريطًا علويًا بمقدار 20px، ويحجز Windows بمقدار 32px لشريط العنوان عند غياب WCO',
 }

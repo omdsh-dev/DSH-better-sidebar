@@ -436,5 +436,7 @@ export const pt: Record<string, string> = {
   pluginMdExportName: 'Exportação Markdown',
   pluginCodeNavName: 'Navegador de pré-visualização de código',
   pluginVideoPreviewName: 'Pré-visualização de vídeo',
+  pluginDshMemoryDeltaName: 'dsh-memory-delta Memória',
+  pluginDshMemoryDeltaDesc: 'Memória entre sessões: injeta apenas o que mudou (nada quando nada mudou), com lembrete de revisão, busca por relevância e aba lateral.',
   presetDshDesktopDesc: 'Modo avançado Electron (sem moldura): o macOS reserva 20px no topo; o Windows reserva 32px para a barra de título sem WCO',
 }

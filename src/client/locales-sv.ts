@@ -436,5 +436,7 @@ export const sv: Record<string, string> = {
   pluginMdExportName: 'Markdown-export',
   pluginCodeNavName: 'Kodförhandsvisningsnavigatör',
   pluginVideoPreviewName: 'Videoförhandsvisning',
+  pluginDshMemoryDeltaName: 'dsh-memory-delta Minne',
+  pluginDshMemoryDeltaDesc: 'Minne mellan sessioner: endast det som ändrats injiceras (inget när inget ändrats), med påminnelse om granskningsdatum, relevanssorterad sökning och en sidopanelflik.',
   presetDshDesktopDesc: 'Electrons avancerade läge (ramlöst): macOS reserverar 20px högst upp; Windows reserverar 32px för namnlisten när WCO inte är tillgängligt',
 }

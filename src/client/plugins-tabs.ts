@@ -87,6 +87,17 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add "github:meyaomiao/dsh-github-workbench#v0.1.0"',
   },
   {
+    id: 'dsh-memory-delta',
+    name: () => t('pluginDshMemoryDeltaName'),
+    url: 'https://github.com/lpf20200901/dsh-memory-delta',
+    description: () => t('pluginDshMemoryDeltaDesc'),
+    // Cross-session memory for DSH: layered Markdown store in the workspace,
+    // differential injection (only what changed), review-date reminders,
+    // ranked search and a read-only sidebar tab. lib/ ships prebuilt, so the
+    // pinned github:-form install needs no local build.
+    install: 'cd ~/.dsh && dsh plugin --profile web add "github:lpf20200901/dsh-memory-delta#v1.0.0"',
+  },
+  {
     id: 'dsh-sidebar-qa',
     name: () => t('pluginSidebarQaName'),
     url: 'https://github.com/ChenRuoT/dsh-sidebar-qa',

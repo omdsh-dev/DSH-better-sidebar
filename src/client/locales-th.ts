@@ -453,5 +453,7 @@ export const th: Record<string, string> = {
   pluginMdExportName: 'ส่งออก Markdown',
   pluginCodeNavName: 'ตัวนำทางพรีวิวโค้ด',
   pluginVideoPreviewName: 'พรีวิววิดีโอ',
+  pluginDshMemoryDeltaName: 'dsh-memory-delta หน่วยความจำ',
+  pluginDshMemoryDeltaDesc: 'หน่วยความจำข้ามเซสชัน: ฉีดเฉพาะส่วนที่เปลี่ยนแปลง (ไม่มีการเปลี่ยนแปลงก็ไม่ฉีดเลย) พร้อมเตือนวันทบทวน ค้นหาตามความเกี่ยวข้อง และแท็บแถบข้าง',
   presetDshDesktopDesc: 'โหมดขั้นสูงของ Electron (ไร้กรอบ): macOS จองแถบด้านบน 20px; Windows จอง 32px ให้แถบหัวเรื่องเมื่อไม่มี WCO',
 }
