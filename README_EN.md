@@ -28,6 +28,10 @@
   <img alt="dsh-better-sidebar workbench" src="https://github.com/user-attachments/assets/dfdb875e-a1a8-4d4b-8340-353736b1708f" />
 </div>
 
+
+Type `/side` in the main composer to open a new Side Chat, just like the sidebar menu. This client-only action does not submit the draft or start a model turn. It is unavailable when Side Chat is disabled.
+
+
 ## 📑 Contents
 
 - [✨ Features](#-features)
