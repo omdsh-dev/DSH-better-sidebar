@@ -5,17 +5,13 @@
  * (`descriptor.icon`), not in a type-keyed switch — the icon mapping was
  * registry-ized with the tab types.
  */
-import type { IconProps } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconPanelLeftOutline16, type IconProps } from '@deepseek-ai/dsh-client-ui-primitives'
 
-/**
- * Bottom-panel toggle glyph (the "底栏" button): a frame with an unfilled compartment
- * along its BOTTOM edge, in the app's outline style.
- */
+/** Bottom toggle: reuse the native panel glyph, rotated toward the bottom. */
 export const IconPanelBottomOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="1.5" y="2" width="13" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
-    <path d="M1.5 9.5h13" stroke="currentColor" strokeWidth="1.5" />
-  </svg>
+  <span className={className} style={{ display: 'inline-flex', width: size, height: size, transform: 'rotate(-90deg)' }}>
+    <IconPanelLeftOutline16 size={size} />
+  </span>
 )
 
 /**
