@@ -14,10 +14,11 @@ import { describe, expect, it } from 'vitest'
 // (xterm's UMD wrapper, CodeMirror's UA probe).
 import './browser-globals.ts'
 import { CHUNK_EXTERNALS } from '../src/client/chunk-loader.ts'
+import { CHUNK_NAMES } from '../src/bundle-route.ts'
 
 const g = globalThis as Record<string, unknown>
 
-const CHUNKS = ['terminal', 'editor', 'mermaid']
+const CHUNKS = [...CHUNK_NAMES]
 
 /** All chunk artifacts present (tsdown emits the whole lib/ in one run). */
 const chunksBuilt = CHUNKS.every(name => existsSync(`lib/client-${name}.js`))
