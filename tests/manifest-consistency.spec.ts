@@ -19,6 +19,7 @@ import { describe, expect, it } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { CHUNK_NAMES } from '../src/bundle-route.ts'
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
 
@@ -43,6 +44,8 @@ interface PluginManifest {
 interface PackageJson {
   name: string
   version: string
+  /** npm publish allowlist; the lazy chunk bundles must be part of it. */
+  files?: string[]
 }
 
 const manifest = JSON.parse(readFileSync(resolve(ROOT, 'dsh.plugin.json'), 'utf8')) as PluginManifest
@@ -70,8 +73,9 @@ function bundleId(file: string): string {
   return match[1]!
 }
 
-/** The lazy chunk bundle names (mirror of src/bundle-route.ts CHUNK_NAMES). */
-const CHUNK_FILES = ['terminal', 'editor', 'mermaid'].map(name => `lib/client-${name}.js`)
+/** The lazy chunk bundle names — derived from the route's own allowlist so a
+ *  chunk can never be declared servable without being guarded here too. */
+const CHUNK_FILES = CHUNK_NAMES.map(name => `lib/client-${name}.js`)
 
 /** The global registry slot a built chunk script assigns (its factory key). */
 function chunkSlot(file: string): string {
@@ -107,6 +111,16 @@ describe.skipIf(!libBuilt)('registry manifest consistency (dsh.plugin.json)', ()
     for (const file of CHUNK_FILES) {
       expect(existsSync(resolve(ROOT, file)), file).toBe(true)
       expect(chunkSlot(file), file).toBe(file.slice('lib/client-'.length, -'.js'.length))
+    }
+  })
+
+  it('every lazy chunk the route may serve is shipped in the npm tarball (package.json files)', () => {
+    // The `files` allowlist is what npm publishes; a chunk missing from it
+    // builds fine and passes every other gate, then 404s for consumers at
+    // runtime. `lib/client-locale.js` shipped unservable exactly this way.
+    const files: string[] = pkg.files ?? []
+    for (const file of CHUNK_FILES) {
+      expect(files, `${file} is served by /sidebar/bundle but not listed in package.json "files"`).toContain(file)
     }
   })
 
