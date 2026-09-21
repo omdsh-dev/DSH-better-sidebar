@@ -232,3 +232,48 @@ describe('remote-access trust (webRuntime.trustedHosts)', () => {
     }
   })
 })
+
+describe('browser.probe loopback fence', () => {
+  /** One browser.probe request for `url`, through the mounted API route. */
+  async function probe(url: string): Promise<FakeRes> {
+    const { api, cleanup } = mount([])
+    try {
+      const res = fakeRes()
+      await api(req('POST', '/sidebar/api/browser.probe', {
+        host: '127.0.0.1:3080',
+        'sec-fetch-site': 'same-origin',
+      }, JSON.stringify({ url })), res as unknown as ServerResponse)
+      return res
+    } finally {
+      cleanup()
+    }
+  }
+
+  it('refuses every spelling of a local address', async () => {
+    // The fence's whole point is that a browsed page cannot use the probe as
+    // an oracle over local services. 0.0.0.0 / :: / the IPv4-mapped IPv6
+    // forms all reach the local host, but the old predicate only knew
+    // localhost, [::1] and 127/8 — so these were probed successfully.
+    for (const url of [
+      'http://127.0.0.1:3080/',
+      'http://localhost:3080/',
+      'http://[::1]:3080/',
+      'http://0.0.0.0:3080/',
+      'http://[::]:3080/',
+      'http://[::ffff:127.0.0.1]:3080/',
+      'http://[::ffff:7f00:1]:3080/',
+    ]) {
+      const res = await probe(url)
+      expect(res.status, url).toBe(400)
+      expect(res.body, url).toContain('local addresses are not probed')
+    }
+  })
+
+  it('still probes an ordinary public address', async () => {
+    // Reachability itself depends on the network, so assert only that the
+    // local-address fence did NOT reject it (unlike the loopback cases above,
+    // which exit before any fetch).
+    const res = await probe('http://example.invalid/')
+    expect(res.body).not.toContain('local addresses are not probed')
+  })
+})

@@ -12,6 +12,9 @@
  * it in an opaque origin with no same-origin privileges, exactly like any
  * other site.
  */
+import { isLoopbackHostname } from '../loopback-shared.ts'
+
+export { isLoopbackHostname }
 
 /** Why a navigation attempt was refused. */
 export type BrowserBlockReason = 'scheme' | 'loopback'
@@ -50,16 +53,6 @@ export function embeddabilityOf(probe: BrowserProbeResult): Embeddability {
   if (xfo === 'DENY' || xfo === 'SAMEORIGIN') return 'blocked'
   if (probe.frameAncestors !== undefined && !probe.frameAncestors.some(source => source === '*')) return 'blocked'
   return 'embeddable'
-}
-
-/** A loopback hostname (localhost, IPv6 ::1, 127.0.0.0/8, 0.0.0.0). */
-export function isLoopbackHostname(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
-  if (host === 'localhost' || host === '::1' || host === '0.0.0.0') return true
-  const parts = host.split('.')
-  return parts.length === 4
-    && parts[0] === '127'
-    && parts.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255)
 }
 
 /**

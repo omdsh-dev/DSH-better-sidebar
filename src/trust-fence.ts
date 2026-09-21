@@ -8,6 +8,12 @@
  * This is a DNS-rebinding / cross-site defense, not authentication.
  */
 import type { IncomingHttpHeaders } from 'node:http'
+import { isLoopbackHostname } from './loopback-shared.ts'
+
+// Re-exported so the fence's own consumers (src/index.ts) keep importing the
+// predicate from the fence; the implementation is shared with the browser half
+// (src/client/browser.ts) so the two classifications cannot drift.
+export { isLoopbackHostname }
 
 /** The request facts the fence reads (structural subset of IncomingMessage). */
 interface ApiTrustRequest {
@@ -26,15 +32,6 @@ function parseAuthority(authority: string): URL | undefined {
   } catch {
     return undefined
   }
-}
-
-/** Whether a normalized URL hostname names the local loopback authority. */
-export function isLoopbackHostname(hostname: string): boolean {
-  if (hostname === 'localhost' || hostname === '[::1]') return true
-  const parts = hostname.split('.')
-  return parts.length === 4
-    && parts[0] === '127'
-    && parts.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255)
 }
 
 /** Canonical authority form: hostname, or hostname:port when a port was written. */
