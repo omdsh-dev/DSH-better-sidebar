@@ -491,6 +491,42 @@ describe('git destructive operations (scratch repository)', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('never parses a revision-shaped operand as a git option', async () => {
+    const dir = makeScratchRepo()
+    try {
+      const hash = (await git.log(dir))[0]!.hashFull
+      // Every revision form the UI actually sends must keep working.
+      await expect(git.show(dir, 'HEAD', 'a.txt')).resolves.toContain('one')
+      await expect(git.show(dir, hash, 'a.txt')).resolves.toContain('one')
+      await expect(git.commitDiff(dir, hash)).resolves.toContain('a.txt')
+      // Operand-shaped option strings must NOT be honoured as flags. Before
+      // --end-of-options, `show(dir, '--stat', ...)` was consumed as a flag and
+      // returned empty, blanking the Changes tab's diff/blame panes.
+      for (const hostile of ['--stat', '--output=nul', '-n', '--no-color']) {
+        const content = await git.show(dir, hostile, 'a.txt')
+        expect(content, hostile).toBeNull()
+      }
+      await expect(git.commitDiff(dir, '--stat')).rejects.toThrow()
+      await expect(git.revert(dir, '--abort')).rejects.toThrow()
+      await expect(git.cherryPick(dir, '--abort')).rejects.toThrow()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the index revision selector (:0) working', async () => {
+    // `:0` is git's own index syntax and the UI uses it for the worktree side
+    // of a diff, so the operand guard must not reject it.
+    const dir = makeScratchRepo()
+    try {
+      writeFileSync(join(dir, 'a.txt'), 'staged-change\n')
+      gitRun(dir, ['add', 'a.txt'])
+      await expect(git.show(dir, ':0', 'a.txt')).resolves.toContain('staged-change')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('session cwd resolution over the API route', () => {
@@ -570,6 +606,37 @@ describe('session cwd resolution over the API route', () => {
     const result = await invoke(route, 'session.cwd', { sessionId: 's-unknown' })
     expect(result.ok).toBe(true)
     expect(result.value?.cwd).toBe(process.cwd())
+  })
+
+  it('answers 404 for Object.prototype member names instead of resolving them as methods', async () => {
+    // The dispatch table is an object literal, so a bare lookup used to find
+    // Object.prototype members and treat them as handlers: `constructor`
+    // answered 200 {}, `toString` answered 200 "[object Undefined]", and
+    // `valueOf` / `hasOwnProperty` answered 500. All must be the documented 404.
+    const route = mount()
+    for (const method of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__']) {
+      const result = await invoke(route, method, {})
+      expect(result, method).toMatchObject({ ok: false, status: 404, error: { code: 'not-found' } })
+    }
+    // A genuinely unknown method keeps its existing 404 contract.
+    const unknown = await invoke(route, 'no-such-method', {})
+    expect(unknown).toMatchObject({ ok: false, status: 404, error: { code: 'not-found' } })
+  })
+
+  it('reports a git failure as a 4xx git error, not an internal 500', async () => {
+    // `GitCommandError` used to fall through to the generic branch and surface
+    // as 500 "internal", which reads as a plugin crash and hid the localized
+    // not-a-repository copy the client already renders. A non-repository cwd
+    // must answer 409 not-repo.
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-git-notrepo-'))
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: dir } }) } })
+      const notRepo = await invoke(route, 'git.branch', { sessionId: 's', cwd: dir })
+      expect(notRepo).toMatchObject({ ok: false, status: 409, error: { code: 'not-repo' } })
+      expect(notRepo.error?.message).not.toContain('internal')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('resolves a cold (detached) session cwd through the persistence index', async () => {
