@@ -76,4 +76,38 @@ describe('isLoopbackHostname', () => {
     expect(isLoopbackHostname('128.0.0.1')).toBe(false)
     expect(isLoopbackHostname('192.168.1.1')).toBe(false)
   })
+
+  it('flags the unspecified and IPv4-mapped IPv6 spellings that also reach localhost', () => {
+    // 0.0.0.0 and :: connect to the local host; ::ffff:127.0.0.1 and its
+    // canonical ::ffff:7f00:1 form are routed to loopback by the OS. The old
+    // predicate missed all of these, so they slipped past the probe fence.
+    expect(isLoopbackHostname('::')).toBe(true)
+    expect(isLoopbackHostname('[::]')).toBe(true)
+    expect(isLoopbackHostname('::ffff:127.0.0.1')).toBe(true)
+    expect(isLoopbackHostname('[::ffff:127.0.0.1]')).toBe(true)
+    expect(isLoopbackHostname('::ffff:7f00:1')).toBe(true)
+    expect(isLoopbackHostname('::ffff:127.255.255.255')).toBe(true)
+  })
+
+  it('flags any *.localhost name', () => {
+    expect(isLoopbackHostname('foo.localhost')).toBe(true)
+    expect(isLoopbackHostname('a.b.localhost')).toBe(true)
+    expect(isLoopbackHostname('notlocalhost.com')).toBe(false)
+  })
+
+  it('does not over-match the new IPv4-mapped branch', () => {
+    expect(isLoopbackHostname('::ffff:8.8.8.8')).toBe(false)
+    expect(isLoopbackHostname('[::ffff:8.8.8.8]')).toBe(false)
+    expect(isLoopbackHostname('::ffff:a00:1')).toBe(false)
+    expect(isLoopbackHostname('::ffff:127.0.0.256')).toBe(false)
+    expect(isLoopbackHostname('::2')).toBe(false)
+    expect(isLoopbackHostname('0.0.0.1')).toBe(false)
+  })
+
+  it('collapses the exotic loopback-IPv4 spellings the URL parser normalizes', () => {
+    // WHATWG URL folds these to 127.0.0.1 before the predicate ever sees them.
+    for (const spelling of ['http://127.1/', 'http://2130706433/', 'http://0x7f.1/']) {
+      expect(isLoopbackHostname(new URL(spelling).hostname), spelling).toBe(true)
+    }
+  })
 })
