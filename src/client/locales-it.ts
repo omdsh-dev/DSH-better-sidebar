@@ -246,6 +246,8 @@ export const it: Record<string, string> = {
   settingsSubagentDesc: 'Quando nella conversazione attuale compare un nuovo sottoagente, attiva automaticamente la pagina Attività; sugli schermi ampi espande anche la barra laterale, mentre sugli schermi stretti non forza l’apertura del pannello a schermo intero; disattiva per selezionare la pagina manualmente',
   settingsJobsTitle: 'Attiva automaticamente la pagina Attività quando compare una nuova attività in background',
   settingsJobsDesc: 'Quando nella conversazione attuale compare una nuova attività in background, attiva automaticamente la pagina Attività (l’attivazione avviene per ogni nuova attività); sugli schermi ampi espande anche la barra laterale, mentre sugli schermi stretti non forza l’apertura del pannello a schermo intero; disattiva per selezionare la pagina manualmente',
+  settingsAutoCollapseTitle: 'Richiudi automaticamente la barra laterale al termine dell’attività',
+  settingsAutoCollapseDesc: 'Quando l’attivazione automatica espande una barra laterale richiusa, questa viene richiusa non appena tutti i sotto-agenti e le attività in background della conversazione attuale sono terminati e restano inattivi per un istante (si chiude solo il pannello, la scheda resta; una barra che hai espanso tu non viene mai toccata). Disattivato per impostazione predefinita',
   settingsToolsTitle: 'Inietta strumenti del terminale per il modello',
   settingsToolsDesc: 'Se attivato, il modello può creare e gestire terminali della barra laterale attraverso gli 8 strumenti terminal_* (disattivato per impostazione predefinita)',
   settingsFenceTitle: 'Controllo dei percorsi del workspace',

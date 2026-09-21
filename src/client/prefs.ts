@@ -47,6 +47,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     autoOpenJobs: typeof record.autoOpenJobs === 'boolean'
       ? record.autoOpenJobs
       : SIDEBAR_PREFS_DEFAULTS.autoOpenJobs,
+    autoCollapseAfterIdle: typeof record.autoCollapseAfterIdle === 'boolean'
+      ? record.autoCollapseAfterIdle
+      : SIDEBAR_PREFS_DEFAULTS.autoCollapseAfterIdle,
     agentTerminalTools: typeof record.agentTerminalTools === 'boolean'
       ? record.agentTerminalTools
       : SIDEBAR_PREFS_DEFAULTS.agentTerminalTools,

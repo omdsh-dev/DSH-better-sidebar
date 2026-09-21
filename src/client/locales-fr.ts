@@ -248,6 +248,8 @@ export const fr: Record<string, string> = {
   settingsSubagentDesc: 'Lorsqu’un nouveau sous-agent est créé dans la session actuelle, activer la page Gestion des tâches ; sur les écrans larges, déployer également la carte latérale ; sur les écrans étroits, ne pas forcer l’ouverture du tiroir plein écran ; une fois l’option désactivée, l’ouverture est manuelle',
   settingsJobsTitle: 'Activer automatiquement la page Gestion des tâches à l’arrivée d’une tâche d’arrière-plan',
   settingsJobsDesc: 'À chaque nouvelle tâche d’arrière-plan dans la session actuelle, activer la page Gestion des tâches (chaque nouvelle tâche déclenche l’activation) ; sur les écrans larges, déployer également la carte latérale ; sur les écrans étroits, ne pas forcer l’ouverture du tiroir plein écran ; une fois l’option désactivée, l’ouverture est manuelle',
+  settingsAutoCollapseTitle: 'Replier automatiquement la carte latérale une fois l’activité terminée',
+  settingsAutoCollapseDesc: 'Lorsque l’activation automatique déploie une carte latérale repliée, celle-ci est repliée dès que tous les sous-agents et tâches d’arrière-plan de la session sont terminés et restent inactifs un instant (seule la carte se ferme, l’onglet reste ; une carte que vous avez déployée vous-même n’est jamais touchée). Désactivé par défaut',
   settingsToolsTitle: 'Injecter des outils de terminal au modèle',
   settingsToolsDesc: 'Une fois activé, le modèle peut créer et piloter des terminaux de la barre latérale via les 8 outils terminal_* (désactivé par défaut)',
   settingsFenceTitle: 'Contrôle des chemins de l\'espace de travail',

@@ -238,6 +238,8 @@ export const pt: Record<string, string> = {
   settingsSubagentDesc: 'Ativar a página de Tarefas quando a conversa atual gerar um novo subagente; em telas largas, expandir também o cartão lateral; em telas estreitas, não forçar a abertura da gaveta em tela cheia; desative para abri-la manualmente',
   settingsJobsTitle: 'Ativar automaticamente a página de Tarefas quando houver uma nova tarefa em segundo plano',
   settingsJobsDesc: 'Ativar a página de Tarefas sempre que uma nova tarefa em segundo plano aparecer na conversa atual (cada nova tarefa aciona a ativação); em telas largas, expandir também o cartão lateral; em telas estreitas, não forçar a abertura da gaveta em tela cheia; desative para abri-la manualmente',
+  settingsAutoCollapseTitle: 'Recolher automaticamente o cartão lateral quando a atividade terminar',
+  settingsAutoCollapseDesc: 'Quando a ativação automática expande um cartão lateral recolhido, ele é recolhido assim que todos os subagentes e tarefas em segundo plano desta conversa terminarem e permanecerem inativos por um instante (apenas o cartão fecha, a aba permanece; um cartão que você mesmo expandiu nunca é alterado). Desativado por padrão',
   settingsToolsTitle: 'Injetar ferramentas de terminal para o modelo',
   settingsToolsDesc: 'Quando ativado, o modelo pode criar e operar terminais da barra lateral por meio das 8 ferramentas terminal_* (desativado por padrão)',
   settingsFenceTitle: 'Controle de caminhos do workspace',

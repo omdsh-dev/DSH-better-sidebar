@@ -238,6 +238,8 @@ export const sv: Record<string, string> = {
   settingsSubagentDesc: 'När den aktuella konversationen skapar en ny subagent aktiveras sidan Uppgifter automatiskt; på breda skärmar expanderas även sidokortet, medan helskärmspanelen inte tvingas öppnas på smala skärmar; stäng av för att välja sidan manuellt',
   settingsJobsTitle: 'Aktivera sidan Uppgifter automatiskt vid ett nytt bakgrundsjobb',
   settingsJobsDesc: 'När ett nytt bakgrundsjobb dyker upp för den aktuella konversationen aktiveras sidan Uppgifter automatiskt (detta sker för varje nytt jobb); på breda skärmar expanderas även sidokortet, medan helskärmspanelen inte tvingas öppnas på smala skärmar; stäng av för att välja sidan manuellt',
+  settingsAutoCollapseTitle: 'Fäll ihop sidokortet automatiskt när aktiviteten är klar',
+  settingsAutoCollapseDesc: 'När den automatiska aktiveringen fäller ut ett ihopfällt sidokort fälls det ihop igen när alla underagenter och bakgrundsjobb i den aktuella konversationen är klara och förblir inaktiva en stund (endast kortet stängs, fliken finns kvar; ett kort du själv fällt ut rörs aldrig). Av som standard',
   settingsToolsTitle: 'Injicera terminalverktyg för modellen',
   settingsToolsDesc: 'När aktiverat kan modellen skapa och styra sidopanelsterminaler via de 8 terminal_*-verktygen (av som standard)',
   settingsFenceTitle: 'Kontroll av workspace-sökvägar',

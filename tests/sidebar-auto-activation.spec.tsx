@@ -90,26 +90,32 @@ function makeNativeSurfaceSpy(): NativeSurfaceSpy {
 }
 
 /** `ctx.sidebarRight`, replaced by a stand-in column: `isExpanded` reports the
- *  current state, `toggleExpanded` flips it and counts the calls. */
+ *  current state, `toggleExpanded` flips it and counts the calls. `expandHost`
+ *  models the host's OWN expansion — `openContent` plans `setExpanded(true)` on
+ *  every open — which is deliberately NOT counted as a toggle: only the park
+ *  and the opt-in auto-collapse move this column from the plugin's side. */
 interface NativeColumnSpy {
   face: { isExpanded: () => boolean; toggleExpanded: () => void }
   toggles: number
+  expanded: boolean
+  expandHost: () => void
 }
 
 function makeNativeColumnSpy(expanded: boolean): NativeColumnSpy {
-  const spy = {
-    toggles: 0,
-    expanded,
-    face: {} as { isExpanded: () => boolean; toggleExpanded: () => void },
-  }
-  spy.face = {
-    isExpanded: () => spy.expanded,
-    toggleExpanded: () => {
-      spy.toggles += 1
-      spy.expanded = !spy.expanded
+  let isExpanded = expanded
+  let toggles = 0
+  return {
+    face: {
+      isExpanded: () => isExpanded,
+      toggleExpanded: () => {
+        toggles += 1
+        isExpanded = !isExpanded
+      },
     },
+    get toggles() { return toggles },
+    get expanded() { return isExpanded },
+    expandHost: () => { isExpanded = true },
   }
-  return spy
 }
 
 /** Stands in for the Tasks page: its node click is the jump gesture that arms
@@ -144,7 +150,7 @@ function setViewport(width: number): void {
 function mountSidebar(
   width: number,
   bottomOpen = false,
-  options: { columnExpanded?: boolean } = {},
+  options: { columnExpanded?: boolean; autoCollapse?: boolean } = {},
 ): MountedSidebar {
   setViewport(width)
   vi.stubGlobal('WebSocket', FakeWebSocket)
@@ -158,14 +164,27 @@ function mountSidebar(
   }
   const feed = makeSessionFeed(initial)
   const store = createSidebarStore()
-  store.setPrefs({ ...store.getPrefs(), autoOpenSubagent: true, autoOpenJobs: true })
+  store.setPrefs({
+    ...store.getPrefs(),
+    autoOpenSubagent: true,
+    autoOpenJobs: true,
+    autoCollapseAfterIdle: options.autoCollapse ?? false,
+  })
   store.setSession(sessionId)
   store.reduce(state => ({ ...state, bottomOpen }))
   const service = createBetterSidebarService(store)
   const surface = makeNativeSurfaceSpy()
-  service.setSurface(surface.surface)
-  service.registerTab({ id: 'subagent', title: 'Subagent', component: JumpHarness })
   const column = makeNativeColumnSpy(options.columnExpanded ?? false)
+  // Placing a tab IS the host's expand: mirror that here (uncounted), so the
+  // park and the auto-collapse see the same column state a real host gives.
+  service.setSurface({
+    ...surface.surface,
+    openTab: input => {
+      surface.opens.push({ ...input })
+      column.expandHost()
+    },
+  })
+  service.registerTab({ id: 'subagent', title: 'Subagent', component: JumpHarness })
   const localeSnapshot = { active: 'en' }
   const ctx = {
     locale: { subscribe: () => () => {}, getSnapshot: () => localeSnapshot },
@@ -246,6 +265,43 @@ function publishJob(sidebar: MountedSidebar): void {
           status: 'running',
           startedAt: 1_000,
         }],
+      },
+    })
+  })
+}
+
+/** The running job from {@link publishJob} settles (the host's next push). */
+function settleJob(sidebar: MountedSidebar): void {
+  const before = sidebar.feed.getSnapshot()
+  const sessionId = before.current!
+  act(() => {
+    sidebar.feed.set({
+      ...before,
+      jobsBySession: {
+        ...before.jobsBySession,
+        [sessionId]: [{
+          id: 'bash-1',
+          kind: 'bash',
+          label: 'sleep 30',
+          status: 'completed',
+          detail: 'exit code: 0',
+          startedAt: 1_000,
+          finishedAt: 2_000,
+        }],
+      },
+    })
+  })
+}
+
+/** The subagent from {@link publishSubagent} finishes its turn. */
+function settleSubagent(sidebar: MountedSidebar): void {
+  const before = sidebar.feed.getSnapshot()
+  act(() => {
+    sidebar.feed.set({
+      ...before,
+      byId: {
+        ...before.byId,
+        child: { ...before.byId.child!, running: false },
       },
     })
   })
@@ -363,6 +419,105 @@ describe('Sidebar background-activity auto-activation (#162)', () => {
     expect(sidebar.store.getSnapshot().state!.bottomOpen).toBe(true)
     switchToChild(sidebar)
     expectNativeTasksOpen(sidebar, 'child')
+    expect(sidebar.column.toggles).toBe(0)
+  })
+})
+
+/**
+ * The opt-in `autoCollapseAfterIdle` half of the same promise: a column the
+ * auto-activation pulled OPEN is handed back once the activity settles, while a
+ * column the user opened themselves is never touched. The lead-in to every case
+ * is a real background feed (job / subagent), so the arm only exists where a
+ * real auto-open created one.
+ */
+describe('Tasks page auto-collapse (autoCollapseAfterIdle)', () => {
+  const grace = 3_000
+
+  it('hands a wide column it opened back once the activity settles', () => {
+    const sidebar = mountSidebar(1024, false, { autoCollapse: true })
+    publishActivity(sidebar, 'job')
+    expect(sidebar.column.expanded).toBe(true)
+    expect(sidebar.column.toggles).toBe(0)
+    // Still running well past the grace period: nothing is taken away.
+    act(() => { vi.advanceTimersByTime(grace * 3) })
+    expect(sidebar.column.toggles).toBe(0)
+    settleJob(sidebar)
+    act(() => { vi.advanceTimersByTime(grace) })
+    expect(sidebar.column.toggles).toBe(1)
+    expect(sidebar.column.expanded).toBe(false)
+    // Only the PANEL is given back: the Tasks tab is still placed.
+    expect(sidebar.surface.opens).toHaveLength(1)
+  })
+
+  it('stays put when the switch is off (the default)', () => {
+    const sidebar = mountSidebar(1024)
+    publishActivity(sidebar, 'job')
+    settleJob(sidebar)
+    act(() => { vi.advanceTimersByTime(grace * 3) })
+    expect(sidebar.column.toggles).toBe(0)
+    expect(sidebar.column.expanded).toBe(true)
+  })
+
+  it('never closes a column the user had already expanded', () => {
+    const sidebar = mountSidebar(1024, false, { autoCollapse: true, columnExpanded: true })
+    publishActivity(sidebar, 'subagent')
+    settleSubagent(sidebar)
+    act(() => { vi.advanceTimersByTime(grace * 3) })
+    expect(sidebar.column.toggles).toBe(0)
+    expect(sidebar.column.expanded).toBe(true)
+  })
+
+  it('holds the column open while a direct subagent is still running', () => {
+    const sidebar = mountSidebar(1024, false, { autoCollapse: true })
+    publishActivity(sidebar, 'subagent')
+    act(() => { vi.advanceTimersByTime(grace * 3) })
+    expect(sidebar.column.toggles).toBe(0)
+    settleSubagent(sidebar)
+    act(() => { vi.advanceTimersByTime(grace) })
+    expect(sidebar.column.toggles).toBe(1)
+  })
+
+  it('leaves the narrow park alone — there is nothing to hand back', () => {
+    const sidebar = mountSidebar(390, false, { autoCollapse: true })
+    publishActivity(sidebar, 'job')
+    expect(sidebar.column.toggles).toBe(1)
+    settleJob(sidebar)
+    act(() => { vi.advanceTimersByTime(grace * 3) })
+    expect(sidebar.column.toggles).toBe(1)
+  })
+
+  it('re-arms the grace window when the next job starts', () => {
+    const sidebar = mountSidebar(1024, false, { autoCollapse: true })
+    publishActivity(sidebar, 'job')
+    settleJob(sidebar)
+    act(() => { vi.advanceTimersByTime(1_000) })
+    expect(sidebar.column.toggles).toBe(0)
+    publishJob(sidebar)
+    act(() => { vi.advanceTimersByTime(grace * 3) })
+    expect(sidebar.column.toggles).toBe(0)
+    settleJob(sidebar)
+    act(() => { vi.advanceTimersByTime(grace) })
+    expect(sidebar.column.toggles).toBe(1)
+  })
+
+  it('does not undo a column the user closed during the grace window', () => {
+    const sidebar = mountSidebar(1024, false, { autoCollapse: true })
+    publishActivity(sidebar, 'job')
+    settleJob(sidebar)
+    act(() => { vi.advanceTimersByTime(1_000) })
+    act(() => { sidebar.column.face.toggleExpanded() })
+    expect(sidebar.column.toggles).toBe(1)
+    act(() => { vi.advanceTimersByTime(grace) })
+    expect(sidebar.column.toggles).toBe(1)
+    expect(sidebar.column.expanded).toBe(false)
+  })
+
+  it('is voided by a session switch', () => {
+    const sidebar = mountSidebar(1024, false, { autoCollapse: true })
+    publishActivity(sidebar, 'job')
+    settleJob(sidebar)
+    switchToChild(sidebar)
+    act(() => { vi.advanceTimersByTime(grace * 3) })
     expect(sidebar.column.toggles).toBe(0)
   })
 })

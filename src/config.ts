@@ -111,6 +111,7 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
 export const PrefsSchema: z<SidebarPrefs> = z.object({
   autoOpenSubagent: z.boolean().default(true),
   autoOpenJobs: z.boolean().default(true),
+  autoCollapseAfterIdle: z.boolean().default(false),
   agentTerminalTools: z.boolean().default(false),
   agentOpenTools: z.boolean().default(false),
   bottomPanelAutoTerminal: z.boolean().default(true),
