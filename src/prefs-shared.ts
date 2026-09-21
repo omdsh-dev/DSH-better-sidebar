@@ -23,6 +23,16 @@ export interface SidebarPrefs {
    */
   autoOpenJobs: boolean
   /**
+   * Whether an auto-activated Tasks page hands the column BACK once the
+   * activity that opened it has settled: after this conversation's direct
+   * subagents and background jobs have been continuously idle for a moment,
+   * a column the auto-activation itself pulled open from collapsed is
+   * collapsed again (the tab stays, only the panel closes). Off by default —
+   * the auto-open behaviour is unchanged unless the user opts in, and a
+   * column the user had open themselves is never touched.
+   */
+  autoCollapseAfterIdle: boolean
+  /**
    * Whether the model-facing agent terminal tools (terminal_create / list /
    * send / read / wait_for / resize / signal / close) are injected into the
    * model's toolset. Off by default: the feature stays dormant until the
@@ -241,6 +251,7 @@ export type TitleBarScheme = typeof TITLE_BAR_SCHEMES[number]
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   autoOpenSubagent: true,
   autoOpenJobs: true,
+  autoCollapseAfterIdle: false,
   agentTerminalTools: false,
   agentOpenTools: false,
   bottomPanelAutoTerminal: true,

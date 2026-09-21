@@ -255,6 +255,8 @@ export const tr: Record<string, string> = {
   settingsSubagentDesc: 'Geçerli sohbet yeni bir alt aracı oluşturduğunda Görevler sayfasını etkinleştir; geniş ekranlarda yan kart da genişletilir, dar ekranlarda tam ekran çekmecesi zorla açılmaz; kapalıyken elle açılması gerekir',
   settingsJobsTitle: 'Yeni bir arka plan işi belirdiğinde Görevler sayfasını otomatik etkinleştir',
   settingsJobsDesc: 'Geçerli sohbette her yeni arka plan işi belirdiğinde Görevler sayfasını etkinleştir (her yeni iş tetikler); geniş ekranlarda yan kart da genişletilir, dar ekranlarda tam ekran çekmecesi zorla açılmaz; kapalıyken elle açılması gerekir',
+  settingsAutoCollapseTitle: 'Etkinlik bittiğinde yan kartı otomatik daralt',
+  settingsAutoCollapseDesc: 'Otomatik etkinleştirme katlanmış bir yan kartı genişlettiğinde, geçerli sohbetin tüm alt ajanları ve arka plan işleri bittikten ve bir süre boşta kaldıktan sonra kart yeniden daraltılır (yalnızca kart kapanır, sekme kalır; kendi genişlettiğiniz kartlara dokunulmaz). Varsayılan olarak kapalı',
   settingsToolsTitle: 'Model için terminal araçları enjekte et',
   settingsToolsDesc: 'Etkinleştirildiğinde model, 8 terminal_* aracı üzerinden kenar çubuğu terminalleri oluşturup kullanabilir (varsayılan kapalı)',
   settingsFenceTitle: 'Çalışma alanı yol denetimi',

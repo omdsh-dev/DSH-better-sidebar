@@ -189,6 +189,10 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           key: 'autoOpenJobs',
           title: () => t('settingsJobsTitle'),
           desc: () => t('settingsJobsDesc'),
+        }, {
+          key: 'autoCollapseAfterIdle',
+          title: () => t('settingsAutoCollapseTitle'),
+          desc: () => t('settingsAutoCollapseDesc'),
         }],
       },
       component: ({ ctx, scope, visible, onSubagentJump }) => (

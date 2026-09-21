@@ -270,6 +270,8 @@ export const zhTW: Record<string, string> = {
   settingsSubagentDesc: '目前工作階段產生新的子代理時，自動選取任務管理頁；寬螢幕時亦會展開側邊欄，窄螢幕時不會強制開啟全螢幕抽屜；關閉後需手動選取',
   settingsJobsTitle: '有新背景任務時自動選取任務管理頁',
   settingsJobsDesc: '目前工作階段出現新的背景任務時，自動選取任務管理頁（每個新任務都會觸發）；寬螢幕時亦會展開側邊欄，窄螢幕時不會強制開啟全螢幕抽屜；關閉後需手動選取',
+  settingsAutoCollapseTitle: '任務結束後自動收起側邊欄',
+  settingsAutoCollapseDesc: '自動選取把原本收合的側邊欄展開時，等目前工作階段的子代理與背景任務全部結束並保持閒置片刻後，自動把側邊欄收起（只收面板，頁籤保留）；你原本就展開的面板不會被動到。預設關閉',
   settingsToolsTitle: '為模型注入終端工具',
   settingsToolsDesc: '開啟後，模型可透過 terminal_create 等 8 個工具建立並操作側邊欄終端（預設關閉）',
   settingsFenceTitle: '工作區路徑檢測',

@@ -253,6 +253,8 @@ export const nl: Record<string, string> = {
   settingsSubagentDesc: 'Wanneer de huidige conversatie een nieuwe subagent start, wordt de Taken-pagina automatisch geactiveerd; op brede schermen wordt ook de zijkaart uitgeklapt, terwijl op smalle schermen het schuifpaneel op volledig scherm niet geforceerd wordt geopend; schakel uit om de pagina handmatig te selecteren',
   settingsJobsTitle: 'Activeer de Taken-pagina automatisch bij een nieuwe achtergrondtaak',
   settingsJobsDesc: 'Wanneer er voor de huidige conversatie een nieuwe achtergrondtaak verschijnt, wordt de Taken-pagina automatisch geactiveerd (dit gebeurt bij elke nieuwe taak); op brede schermen wordt ook de zijkaart uitgeklapt, terwijl op smalle schermen het schuifpaneel op volledig scherm niet geforceerd wordt geopend; schakel uit om de pagina handmatig te selecteren',
+  settingsAutoCollapseTitle: 'Zijkaart automatisch inklappen zodra de activiteit klaar is',
+  settingsAutoCollapseDesc: 'Wanneer de automatische activering een ingeklapte zijkaart uitklapt, wordt die weer ingeklapt zodra alle subagenten en achtergrondtaken van deze conversatie klaar zijn en even inactief blijven (alleen de kaart sluit, het tabblad blijft; een kaart die je zelf hebt uitgeklapt wordt nooit aangeraakt). Standaard uit',
   settingsToolsTitle: 'Terminaltools voor het model injecteren',
   settingsToolsDesc: 'Indien ingeschakeld kan het model zijbalk-terminals aanmaken en besturen via de 8 terminal_*-tools (standaard uit)',
   settingsFenceTitle: 'Workspace-padcontrole',

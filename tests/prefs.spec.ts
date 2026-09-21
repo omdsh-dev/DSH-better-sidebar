@@ -34,6 +34,7 @@ describe('side card preferences', () => {
       .toEqual({
         autoOpenSubagent: false,
         autoOpenJobs: true,
+        autoCollapseAfterIdle: false,
         agentTerminalTools: true, agentOpenTools: false,
         bottomPanelAutoTerminal: true,
         terminalFontFamily: '',
@@ -65,6 +66,7 @@ describe('side card preferences', () => {
       .toEqual({
         autoOpenSubagent: true,
         autoOpenJobs: true,
+        autoCollapseAfterIdle: false,
         agentTerminalTools: false, agentOpenTools: false,
         bottomPanelAutoTerminal: true,
         terminalFontFamily: '',
@@ -96,6 +98,7 @@ describe('side card preferences', () => {
       .toEqual({
         autoOpenSubagent: true,
         autoOpenJobs: true,
+        autoCollapseAfterIdle: false,
         agentTerminalTools: false, agentOpenTools: false,
         bottomPanelAutoTerminal: true,
         terminalFontFamily: '',
@@ -141,6 +144,13 @@ describe('side card preferences', () => {
       .toBe(true)
     expect((await loadPrefs(wire({ autoOpenJobs: false }))).autoOpenJobs)
       .toBe(false)
+    // The idle auto-collapse is OFF by default; only an explicit true turns it on.
+    expect((await loadPrefs(wire({ autoCollapseAfterIdle: 'yes' }))).autoCollapseAfterIdle)
+      .toBe(false)
+    expect((await loadPrefs(wire({ autoCollapseAfterIdle: 1 }))).autoCollapseAfterIdle)
+      .toBe(false)
+    expect((await loadPrefs(wire({ autoCollapseAfterIdle: true }))).autoCollapseAfterIdle)
+      .toBe(true)
   })
 
   it('defaults editorExplorer to false; only an explicit true enables the merged editor-explorer', async () => {

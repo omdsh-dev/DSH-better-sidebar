@@ -994,6 +994,7 @@ describe('side card settings routes', () => {
       value: {
         autoOpenSubagent: true,
         autoOpenJobs: true,
+        autoCollapseAfterIdle: false,
         agentTerminalTools: false, agentOpenTools: false,
         bottomPanelAutoTerminal: true,
         terminalFontFamily: '',

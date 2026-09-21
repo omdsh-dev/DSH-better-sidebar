@@ -247,6 +247,8 @@ export const ko: Record<string, string> = {
   settingsSubagentDesc: '현재 대화에 새 서브 에이전트가 생기면 작업 관리 페이지를 활성화합니다. 넓은 화면에서는 사이드 카드도 펼치지만, 좁은 화면에서는 전체 화면 드로어를 강제로 열지 않습니다. 끄면 수동으로 열어야 합니다',
   settingsJobsTitle: '새 백그라운드 작업이 생기면 작업 관리 페이지 자동 활성화',
   settingsJobsDesc: '현재 대화에 새 백그라운드 작업이 생길 때마다 작업 관리 페이지를 활성화합니다(새 작업마다 트리거됨). 넓은 화면에서는 사이드 카드도 펼치지만, 좁은 화면에서는 전체 화면 드로어를 강제로 열지 않습니다. 끄면 수동으로 열어야 합니다',
+  settingsAutoCollapseTitle: '작업이 끝나면 사이드 카드 자동 접기',
+  settingsAutoCollapseDesc: '자동 활성화가 접혀 있던 사이드 카드를 펼친 경우, 현재 대화의 하위 에이전트와 백그라운드 작업이 모두 끝나고 잠시 유휴 상태가 이어지면 자동으로 다시 접습니다(카드만 닫히고 탭은 유지되며, 직접 펼친 카드는 건드리지 않습니다). 기본값은 꺼짐',
   settingsToolsTitle: '모델에 터미널 도구 주입',
   settingsToolsDesc: '켜면 모델이 terminal_create 등 8개 도구로 사이드바 터미널을 만들고 조작할 수 있습니다(기본 꺼짐)',
   settingsFenceTitle: '워크스페이스 경로 검사',

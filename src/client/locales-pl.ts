@@ -257,6 +257,8 @@ export const pl: Record<string, string> = {
   settingsSubagentDesc: 'Gdy w bieżącej rozmowie pojawi się nowy podagent, automatycznie aktywuj stronę „Zadania”; na szerokich ekranach rozwiń także panel boczny, a na wąskich nie wymuszaj otwarcia pełnoekranowego panelu; wyłącz, aby wybierać stronę ręcznie',
   settingsJobsTitle: 'Automatycznie aktywuj stronę „Zadania” po pojawieniu się nowego zadania w tle',
   settingsJobsDesc: 'Gdy w bieżącej rozmowie pojawi się nowe zadanie w tle, automatycznie aktywuj stronę „Zadania” (akcja jest wyzwalana przez każde nowe zadanie); na szerokich ekranach rozwiń także panel boczny, a na wąskich nie wymuszaj otwarcia pełnoekranowego panelu; wyłącz, aby wybierać stronę ręcznie',
+  settingsAutoCollapseTitle: 'Automatycznie zwijaj panel boczny po zakończeniu zadań',
+  settingsAutoCollapseDesc: 'Gdy automatyczna aktywacja rozwinie zwinięty panel boczny, panel zostanie zwinięty, gdy wszystkie podagenty i zadania w tle w bieżącej rozmowie się zakończą i przez chwilę pozostaną bezczynne (zamykany jest tylko panel, karta pozostaje; panel rozwinięty przez ciebie nie jest ruszany). Domyślnie wyłączone',
   settingsToolsTitle: 'Wstrzyknij narzędzia terminala dla modelu',
   settingsToolsDesc: 'Po włączeniu model może tworzyć i sterować terminalami panelu bocznego przez 8 narzędzi terminal_* (domyślnie wyłączone)',
   settingsFenceTitle: 'Kontrola ścieżek obszaru roboczego',

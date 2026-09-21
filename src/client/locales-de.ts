@@ -241,6 +241,8 @@ export const de: Record<string, string> = {
   settingsSubagentDesc: 'Die Aufgaben-Seite aktivieren, wenn die aktuelle Unterhaltung einen neuen Subagenten erzeugt; auf breiten Ansichten wird zusätzlich die Seitenkarte ausgeklappt, auf schmalen Ansichten wird das Öffnen der Vollbild-Schublade nicht erzwungen; ausschalten, um sie manuell zu öffnen',
   settingsJobsTitle: 'Aufgaben-Seite bei einer neuen Hintergrundaufgabe automatisch aktivieren',
   settingsJobsDesc: 'Die Aufgaben-Seite aktivieren, sobald für die aktuelle Unterhaltung eine neue Hintergrundaufgabe erscheint (jede neue Aufgabe löst dies aus); auf breiten Ansichten wird zusätzlich die Seitenkarte ausgeklappt, auf schmalen Ansichten wird das Öffnen der Vollbild-Schublade nicht erzwungen; ausschalten, um sie manuell zu öffnen',
+  settingsAutoCollapseTitle: 'Seitenkarte automatisch einklappen, sobald die Aktivität endet',
+  settingsAutoCollapseDesc: 'Klappt die Auto-Aktivierung eine eingeklappte Seitenkarte aus, wird sie wieder eingeklappt, sobald alle Unteragenten und Hintergrundaufgaben dieser Unterhaltung beendet sind und kurz untätig bleiben (nur die Karte schließt, der Tab bleibt; eine von dir selbst ausgeklappte Karte wird nie angetastet). Standardmäßig aus',
   settingsToolsTitle: 'Terminal-Werkzeuge für das Modell bereitstellen',
   settingsToolsDesc: 'Wenn aktiviert, kann das Modell über die 8 terminal_*-Werkzeuge Terminale in der Seitenleiste erstellen und steuern (standardmäßig deaktiviert)',
   settingsFenceTitle: 'Workspace-Pfadkontrolle',

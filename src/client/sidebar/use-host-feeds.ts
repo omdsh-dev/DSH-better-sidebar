@@ -11,6 +11,7 @@ import { mirrorAgentWaits, reconcileAgentTerminals, type SidebarStore } from '..
 import { isNarrowWidth } from '../breakpoints.ts'
 import { detectNewDirectSubagent } from '../subagent-detect.ts'
 import { detectNewJob } from '../subagent-jobs.ts'
+import { isSessionActivityIdle } from '../host-activity.ts'
 import { t } from '../locales.ts'
 
 /** How many consecutive reconnect failures stop the agent-terminals push loop
@@ -26,6 +27,16 @@ const FAILURE_LIMIT = 3
  * title frame has had time to land.
  */
 const AUTO_OPEN_DEBOUNCE_MS = 500
+
+/**
+ * Auto-collapse grace period (ms): how long a conversation must stay
+ * COMPLETELY idle — no live background job, no running direct subagent —
+ * before the opt-in auto-collapse (`autoCollapseAfterIdle`) hands its column
+ * back. Every feed push re-arms the timer, so the collapse only fires after one
+ * continuously idle window; the gap is what keeps a task that starts right
+ * after the previous one finished from being read as "the work is over".
+ */
+const AUTO_COLLAPSE_IDLE_MS = 3_000
 
 /**
  * The native column's public face, as this module reaches it. Both actions
@@ -61,9 +72,20 @@ interface NativeColumnFace {
  * @param options.background - `true` for background activity (parks on narrow
  *   viewports); `false` for the explicit topology jump-back, which is a user
  *   gesture and always leaves the column as the host expanded it.
+ * @returns whether this call pulled a COLLAPSED column open — the arm signal of
+ *   the opt-in auto-collapse. Never true for a park (the column is put straight
+ *   back) nor for the jump-back (a user gesture owns its own layout).
  */
-function activateTasksPage(ctx: Context, sessionId: string, options: { background: boolean }): void {
+function activateTasksPage(
+  ctx: Context,
+  sessionId: string,
+  options: { background: boolean },
+): boolean {
   const column = ctx.get('sidebarRight') as unknown as NativeColumnFace | undefined
+  // Read the expansion state BEFORE the open: the host expands on every open
+  // (`openContent` plans `setExpanded(true)`), and that commit has not
+  // necessarily landed by the time this call returns.
+  const wasCollapsed = column?.isExpanded?.() === false
   const park = options.background
     // The face acts on the MOUNTED session: parking is only meaningful (and
     // only safe) when the activation targets the one on screen.
@@ -71,9 +93,10 @@ function activateTasksPage(ctx: Context, sessionId: string, options: { backgroun
     && isNarrowWidth(window.innerWidth)
     // Only a column the user had COLLAPSED is put back: an expanded one is in
     // use, and closing it under the user would be worse than the takeover.
-    && column?.isExpanded?.() === false
+    && wasCollapsed
   ctx.get('betterSidebar')?.openTab({ type: 'subagent', title: t('subagent') })
   if (park) column?.toggleExpanded?.()
+  return options.background && !park && wasCollapsed
 }
 
 export function useHostFeeds(feeds: {
@@ -219,6 +242,15 @@ export function useHostFeeds(feeds: {
   }, [sessionId, ctx, store])
 
   /**
+   * Armed by an auto-activation that pulled a COLLAPSED column open; the
+   * opt-in auto-collapse gives exactly that column back once the activity
+   * settles. `null` means no auto-open of ours is waiting to be handed back —
+   * a column the user expanded themselves never carries an arm, so this
+   * feature can never close it.
+   */
+  const autoCollapseRef = useRef<{ sessionId: string } | null>(null)
+
+  /**
    * Subagent auto-activation: the moment the current conversation spawns its
    * FIRST direct subagent (a 0 → N transition on the list feed), the "auto
    * open" pref is on, and the Tasks tab type is enabled in settings, activate
@@ -252,7 +284,9 @@ export function useHostFeeds(feeds: {
       if (!detectNewDirectSubagent(baseline, ctx.sessions.list.getSnapshot(), sessionId)) return
       if (!store.getPrefs().autoOpenSubagent) return
       if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
-      activateTasksPage(ctx, sessionId, { background: true })
+      if (activateTasksPage(ctx, sessionId, { background: true })) {
+        autoCollapseRef.current = { sessionId }
+      }
     }, AUTO_OPEN_DEBOUNCE_MS)
     autoOpenPendingRef.current = { baseline, timer }
   }, [sessionList, sessionId, store, ctx])
@@ -283,7 +317,9 @@ export function useHostFeeds(feeds: {
     if (!detectNewJob(prev, sessionList, sessionId)) return
     if (!store.getPrefs().autoOpenJobs) return
     if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
-    activateTasksPage(ctx, sessionId, { background: true })
+    if (activateTasksPage(ctx, sessionId, { background: true })) {
+      autoCollapseRef.current = { sessionId }
+    }
   }, [sessionList, sessionId, store, ctx])
 
   /**
@@ -305,6 +341,55 @@ export function useHostFeeds(feeds: {
     subagentJumpRef.current = undefined
     activateTasksPage(ctx, sessionId, { background: false })
   }, [sessionId, store, ctx])
+
+  /**
+   * Auto-collapse: hand the column back once the activity that pulled it open
+   * has settled — opt-in via `autoCollapseAfterIdle` (see
+   * {@link isSessionActivityIdle} for what "settled" means).
+   *
+   * Every feed push re-arms the timer, so the collapse only fires after one
+   * continuously idle window ({@link AUTO_COLLAPSE_IDLE_MS}): a job that starts
+   * during the grace period resets it instead of racing the timer. Firing
+   * re-reads the LIVE snapshot, the pref and the column (all three may have
+   * moved on while the timer ran) and gives up when the column is no longer
+   * expanded — e.g. the user closed it themselves mid-grace, which a stale
+   * toggle must not undo.
+   *
+   * Known limit: the native column face exposes expansion, not the active tab,
+   * so a user who switches to another tab of that same column inside the grace
+   * window still gets the column collapsed (the tab itself is kept). That is
+   * why the switch is off by default, and why only an expansion this feature
+   * caused itself is ever given back.
+   */
+  useEffect(() => {
+    const armed = autoCollapseRef.current
+    if (armed === null) return
+    if (sessionId === undefined || armed.sessionId !== sessionId) {
+      // A session switch voids the arm: the column face acts on the MOUNTED
+      // session, and the armed target is no longer the one on screen.
+      autoCollapseRef.current = null
+      return
+    }
+    if (!store.getPrefs().autoCollapseAfterIdle) {
+      // Turning the switch off also disarms a pending hand-back.
+      autoCollapseRef.current = null
+      return
+    }
+    if (!isSessionActivityIdle(sessionList, sessionId)) return
+    const timer = window.setTimeout(() => {
+      const current = autoCollapseRef.current
+      if (current === null || current.sessionId !== sessionId) return
+      if (!store.getPrefs().autoCollapseAfterIdle) return
+      const live = ctx.sessions.list.getSnapshot()
+      if (live.current !== sessionId) return
+      if (!isSessionActivityIdle(live, sessionId)) return
+      const column = ctx.get('sidebarRight') as unknown as NativeColumnFace | undefined
+      if (column?.isExpanded?.() !== true) return
+      autoCollapseRef.current = null
+      column.toggleExpanded?.()
+    }, AUTO_COLLAPSE_IDLE_MS)
+    return () => window.clearTimeout(timer)
+  }, [sessionList, sessionId, store, ctx])
 
   return { subagentJumpRef }
 }

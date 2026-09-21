@@ -253,6 +253,8 @@ export const id: Record<string, string> = {
   settingsSubagentDesc: 'Aktifkan halaman Tasks saat obrolan saat ini membuat subagen baru; pada layar lebar, kartu samping juga dibentangkan; pada layar sempit, laci layar penuh tidak dipaksa terbuka; matikan untuk membukanya secara manual',
   settingsJobsTitle: 'Aktifkan otomatis halaman Tasks saat ada tugas latar baru',
   settingsJobsDesc: 'Aktifkan halaman Tasks setiap kali tugas latar baru muncul untuk obrolan saat ini (setiap tugas baru memicu aktivasi); pada layar lebar, kartu samping juga dibentangkan; pada layar sempit, laci layar penuh tidak dipaksa terbuka; matikan untuk membukanya secara manual',
+  settingsAutoCollapseTitle: 'Lipat otomatis kartu samping setelah aktivitas selesai',
+  settingsAutoCollapseDesc: 'Saat aktivasi otomatis membentangkan kartu samping yang terlipat, kartu itu dilipat kembali setelah semua subagen dan tugas latar obrolan saat ini selesai dan tetap menganggur sesaat (hanya kartunya yang ditutup, tabnya tetap ada; kartu yang Anda bentangkan sendiri tidak pernah diubah). Nonaktif secara bawaan',
   settingsToolsTitle: 'Suntik alat terminal untuk model',
   settingsToolsDesc: 'Saat diaktifkan, model dapat membuat dan mengendalikan terminal sidebar melalui 8 alat terminal_* (nonaktif secara default)',
   settingsFenceTitle: 'Pemeriksaan path workspace',
