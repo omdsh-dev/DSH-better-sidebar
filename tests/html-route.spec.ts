@@ -142,6 +142,88 @@ describe('decodeHtmlUrl', () => {
   })
 })
 
+describe('cwd hint segment', () => {
+  const CWD = 'C:\\Users\\me\\proj'
+
+  it('encodes the cwd as a $-marked segment after the sessionId', () => {
+    expect(encodeHtmlUrl('s-1', 'C:\\Users\\me\\proj\\index.html', CWD))
+      .toBe(`/sidebar/html/s-1/$${encodeURIComponent(CWD)}/C%3A/Users/me/proj/index.html`)
+  })
+
+  it('round-trips the cwd alongside the path', () => {
+    const url = encodeHtmlUrl('s-1', 'C:\\Users\\me\\proj\\index.html', CWD)
+    expect(decodeHtmlUrl(url)).toEqual({
+      ok: true,
+      ref: { sessionId: 's-1', path: 'C:/Users/me/proj/index.html', cwd: CWD },
+    })
+  })
+
+  it('round-trips a POSIX cwd', () => {
+    const url = encodeHtmlUrl('s-1', '/srv/app/index.html', '/srv/app')
+    expect(decodeHtmlUrl(url)).toEqual({
+      ok: true,
+      ref: { sessionId: 's-1', path: '/srv/app/index.html', cwd: '/srv/app' },
+    })
+  })
+
+  it('round-trips a cwd with special characters', () => {
+    const cwd = '/a b/中文/p%d'
+    const url = encodeHtmlUrl('s', `${cwd}/index.html`, cwd)
+    const result = decodeHtmlUrl(url)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.ref.cwd).toBe(cwd)
+  })
+
+  it('omits the segment for an absent or empty cwd (URLs stay byte-identical to before)', () => {
+    const bare = encodeHtmlUrl('s-1', '/Users/me/a.html')
+    expect(encodeHtmlUrl('s-1', '/Users/me/a.html', undefined)).toBe(bare)
+    expect(encodeHtmlUrl('s-1', '/Users/me/a.html', '')).toBe(bare)
+  })
+
+  it('decodes a legacy URL without the hint (no cwd key)', () => {
+    expect(decodeHtmlUrl('/sidebar/html/s-1/Users/me/a.html')).toEqual({
+      ok: true,
+      ref: { sessionId: 's-1', path: '/Users/me/a.html' },
+    })
+  })
+
+  it('does not mistake a real path segment starting with $ for the hint', () => {
+    // encodeURIComponent turns a leading '$' into '%24', so the RAW segment
+    // never starts with '$' — the marker cannot be spoofed by a file path.
+    const url = encodeHtmlUrl('s', '/srv/$data/index.html')
+    expect(url).toBe('/sidebar/html/s/srv/%24data/index.html')
+    expect(decodeHtmlUrl(url)).toEqual({
+      ok: true,
+      ref: { sessionId: 's', path: '/srv/$data/index.html' },
+    })
+  })
+
+  it('refuses an empty cwd segment (400)', () => {
+    expect(decodeHtmlUrl('/sidebar/html/s/$/a.html')).toEqual({
+      ok: false, status: 400, message: 'invalid cwd segment',
+    })
+  })
+
+  it('carries the hint through relative asset resolution', () => {
+    // The whole point of a path segment: ./style.css must keep BOTH the
+    // session scope and the cwd hint (a query would be dropped).
+    const doc = `http://h${encodeHtmlUrl('s', '/srv/app/index.html', '/srv/app')}`
+    const asset = new URL('./style.css', doc).pathname
+    expect(decodeHtmlUrl(asset)).toEqual({
+      ok: true,
+      ref: { sessionId: 's', path: '/srv/app/style.css', cwd: '/srv/app' },
+    })
+  })
+
+  it('carries the hint for a UNC document', () => {
+    const url = encodeHtmlUrl('s', '\\\\server\\share\\proj\\a.html', '\\\\server\\share\\proj')
+    expect(decodeHtmlUrl(url)).toEqual({
+      ok: true,
+      ref: { sessionId: 's', path: '//server/share/proj/a.html', cwd: '\\\\server\\share\\proj' },
+    })
+  })
+})
+
 describe('relative asset resolution stays in-route', () => {
   it('a relative reference against an encoded document URL keeps the session scope', () => {
     // WHATWG URL resolution drops the QUERY of a path-relative reference,

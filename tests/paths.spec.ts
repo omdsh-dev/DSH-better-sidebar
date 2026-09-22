@@ -59,11 +59,13 @@ describe('path helpers', () => {
   it('htmlUrl always marks UNC paths (platform-neutral marker)', () => {
     // The marker is platform-neutral now: the host resolves the decoded
     // '//server/share/...' form per-platform, so no cwd/OS signal is needed.
+    // A scope cwd additionally rides as the leading '$' hint segment (it
+    // lets the host resolve the workspace before the session attaches).
     expect(htmlUrl({ sessionId: 's' }, '\\\\server\\share\\proj\\a.html'))
       .toBe('/sidebar/html/s//server/share/proj/a.html')
     expect(htmlUrl({ sessionId: 's', cwd: '/home/me' }, '//server/share/a.html'))
-      .toBe('/sidebar/html/s//server/share/a.html')
+      .toBe(`/sidebar/html/s/$${encodeURIComponent('/home/me')}//server/share/a.html`)
     expect(htmlUrl({ sessionId: 's', cwd: '/home/me' }, '/home/me/index.html'))
-      .toBe('/sidebar/html/s/home/me/index.html')
+      .toBe(`/sidebar/html/s/$${encodeURIComponent('/home/me')}/home/me/index.html`)
   })
 })

@@ -18,6 +18,22 @@
  *       sessionId marks the UNC prefix; the WHATWG URL keeps '//' intact so
  *       relative assets still resolve inside the same route)
  *
+ * An OPTIONAL cwd hint may ride between the sessionId and the path as a
+ * `$<encodeURIComponent(cwd)>` segment:
+ *
+ *   /sidebar/html/S/$C%253A%255Cproj/C%3A/proj/index.html
+ *
+ * It exists because this route cannot carry a query (see above) and the
+ * session may still be detached when the first preview request arrives —
+ * without the hint the host falls back to its process cwd and the workspace
+ * fence then refuses every project file with `forbidden`. Riding in the path
+ * keeps the hint attached through relative asset resolution. The marker is
+ * collision-proof: `encodeURIComponent` percent-encodes `$` (to `%24`), so a
+ * real path segment can never produce a RAW segment starting with `$` — the
+ * decoder therefore tests the raw segment, before decoding. The hint is only
+ * advisory: the host still prefers its own authoritative session cwd and
+ * re-validates the resolved path, so a forged value cannot widen access.
+ *
  * The decoder rebuilds the marker as a forward-slash `//server/share/...`
  * path. That form is intentionally platform-neutral: `node:path` resolves it
  * to `\\server\share\...` on win32 and `/server/share/...` on POSIX, so the
@@ -36,6 +52,11 @@ export interface HtmlRouteRef {
   sessionId: string
   /** Absolute file path (leading slash; Windows drives keep their colon). */
   path: string
+  /**
+   * The client's cwd hint when the URL carried one. Advisory only: the host
+   * prefers its attached session header and re-validates the resolved path.
+   */
+  cwd?: string
 }
 
 /** Decode outcome: the reference, or a client-error description. */
@@ -46,19 +67,30 @@ export type HtmlDecodeResult =
 /** The route prefix both encoders/decoders agree on. */
 export const HTML_ROUTE_PREFIX = '/sidebar/html/'
 
-/** Build the route URL for one absolute file path (client + tests). */
-export function encodeHtmlUrl(sessionId: string, path: string): string {
+/**
+ * Marker of the optional cwd segment. `encodeURIComponent` encodes `$`, so a
+ * raw segment starting with this character is unambiguously the hint.
+ */
+const CWD_MARKER = '$'
+
+/**
+ * Build the route URL for one absolute file path (client + tests).
+ * @param cwd - optional session cwd hint; see the module comment for why it
+ * rides in the path instead of a query.
+ */
+export function encodeHtmlUrl(sessionId: string, path: string, cwd?: string): string {
   const unc = /^[\\/]{2}[^\\/]/.test(path)
   const segments = path.split(/[\\/]+/).filter(segment => segment !== '')
-  return `${HTML_ROUTE_PREFIX}${encodeURIComponent(sessionId)}/${unc ? '/' : ''}${segments.map(encodeURIComponent).join('/')}`
+  const hint = cwd !== undefined && cwd !== '' ? `${CWD_MARKER}${encodeURIComponent(cwd)}/` : ''
+  return `${HTML_ROUTE_PREFIX}${encodeURIComponent(sessionId)}/${hint}${unc ? '/' : ''}${segments.map(encodeURIComponent).join('/')}`
 }
 
 /**
- * Decode a route pathname into the session + absolute file path. Rejects
- * a wrong prefix (404), an empty path, malformed percent encoding, and a
- * missing sessionId or file path (400). The caller still must bound the
- * decoded path with the workspace real-path guard — a decoded `..`
- * segment resolves outside the cwd and is refused there.
+ * Decode a route pathname into the session + absolute file path (plus the
+ * optional cwd hint). Rejects a wrong prefix (404), an empty path, malformed
+ * percent encoding, and a missing sessionId or file path (400). The caller
+ * still must bound the decoded path with the workspace real-path guard — a
+ * decoded `..` segment resolves outside the cwd and is refused there.
  */
 export function decodeHtmlUrl(pathname: string): HtmlDecodeResult {
   if (!pathname.startsWith(HTML_ROUTE_PREFIX)) {
@@ -68,15 +100,28 @@ export function decodeHtmlUrl(pathname: string): HtmlDecodeResult {
   if (rest === '') {
     return { ok: false, status: 400, message: 'invalid html route path' }
   }
+  // Split first, decode after: the cwd marker must be read from the RAW
+  // segment (a real path segment starting with '$' arrives as '%24…').
+  const rawSegments = rest.split('/')
   let segments: string[]
   try {
-    segments = rest.split('/').map(segment => decodeURIComponent(segment))
+    segments = rawSegments.map(segment => decodeURIComponent(segment))
   } catch {
     return { ok: false, status: 400, message: 'malformed URL encoding' }
   }
   const [sessionId, ...pathSegments] = segments
   if (sessionId === undefined || sessionId === '') {
     return { ok: false, status: 400, message: 'sessionId and file path are required' }
+  }
+  // The optional cwd hint sits immediately after the sessionId.
+  let cwd: string | undefined
+  if ((rawSegments[1] ?? '').startsWith(CWD_MARKER)) {
+    const value = (pathSegments[0] ?? '').slice(CWD_MARKER.length)
+    if (value === '') {
+      return { ok: false, status: 400, message: 'invalid cwd segment' }
+    }
+    cwd = value
+    pathSegments.shift()
   }
   // An empty FIRST path segment is the UNC marker (encodeHtmlUrl emits
   // '<sid>//server/share/...' for UNC paths); the encoder filters empty
@@ -102,5 +147,5 @@ export function decodeHtmlUrl(pathname: string): HtmlDecodeResult {
   } else {
     path = `/${tail.join('/')}`
   }
-  return { ok: true, ref: { sessionId, path } }
+  return { ok: true, ref: cwd === undefined ? { sessionId, path } : { sessionId, path, cwd } }
 }

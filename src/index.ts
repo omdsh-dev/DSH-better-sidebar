@@ -1034,12 +1034,14 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
           return
         }
         const { sessionId, path } = decoded.ref
-        // The session's authoritative cwd (client cwd cannot ride in the URL
-        // — the path encoding has no query; a detached first request falls
-        // back to the process cwd and is normally refused by the workspace
-        // real-path guard, with the same semantics as the media route's
-        // fallback.
-        const cwd = await sessionCwdOf(ctx, sessionId)
+        // The session's authoritative cwd. The URL has no query (the path
+        // encoding keeps relative assets in-route), so the client's cwd hint
+        // rides as a `$<cwd>` path segment instead — same precedence as the
+        // media route: the attached session header still wins, the hint only
+        // covers the window where the session is not attached yet. Without
+        // it a detached first request fell back to the process cwd and the
+        // workspace guard refused every project file.
+        const cwd = await sessionCwdOf(ctx, sessionId, decoded.ref.cwd)
         const absolute = await ensureWorkspacePath(cwd, path, fenceEnabledOf(() => settingsFace))
         const info = await stat(absolute)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
