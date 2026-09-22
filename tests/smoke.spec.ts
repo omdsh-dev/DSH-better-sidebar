@@ -763,6 +763,63 @@ describe('session cwd resolution over the API route', () => {
     }
   })
 
+  /**
+   * Regression (reported): clicking a file in chat opened a broken preview.
+   *
+   * DSH's file addresses spell a workspace file RELATIVE to the session root
+   * (`dsh-resource://file/session/<id>/deepseek-homepage-clone/index.html`),
+   * so the native tab hands the media/HTML routes a relative path. Those
+   * routes fed it straight to realpath, which on Windows roots a bare path
+   * on the current drive:
+   *
+   *   cannot resolve target "C:\deepseek-homepage-clone\index.html":
+   *   ENOENT ... realpath 'C:\deepseek-homepage-clone\index.html'
+   *
+   * Text files were unaffected because `fs.read` already joined relative
+   * paths onto the workspace — which is exactly why code previewed fine
+   * while images and HTML "cracked".
+   */
+  it('serves media and HTML for a workspace-relative path', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-relative-route-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(join(workspace, 'site'), { recursive: true })
+    writeFileSync(join(workspace, 'site', 'shot.png'), 'png-bytes')
+    writeFileSync(join(workspace, 'site', 'index.html'), '<p>hi</p>')
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const media = routes.find(route => route.path === '/sidebar/file')!
+      const html = routes.find(route => route.path === '/sidebar/html')!
+
+      const mediaResult = await invokeGet(media, `/sidebar/file?sessionId=rel&path=${encodeURIComponent('site/shot.png')}`)
+      expect(mediaResult).toMatchObject({ status: 200 })
+      expect(mediaResult.body).toBe('png-bytes')
+
+      const htmlResult = await invokeGet(html, encodeHtmlUrl('rel', 'site/index.html', workspace))
+      expect(htmlResult).toMatchObject({ status: 200 })
+      expect(htmlResult.body).toBe('<p>hi</p>')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('still fences a relative path that climbs out of the workspace', async () => {
+    // Joining onto the cwd must not become an escape hatch: `..` segments
+    // resolve outside the workspace and the containment guard refuses them.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-relative-fence-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace, { recursive: true })
+    writeFileSync(join(root, 'secret.png'), 'secret')
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const media = routes.find(route => route.path === '/sidebar/file')!
+      const result = await invokeGet(media, `/sidebar/file?sessionId=rel&path=${encodeURIComponent('../secret.png')}`)
+      expect(result).toMatchObject({ status: 403 })
+      expect(JSON.parse(result.body)).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps fs.tree missing-path failures as fs errors', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-security-'))
     const workspace = join(root, 'workspace')

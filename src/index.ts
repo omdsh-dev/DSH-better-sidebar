@@ -152,6 +152,27 @@ function selectedRepoOf(payload: unknown): string | undefined {
 }
 
 /**
+ * Resolve a caller-supplied path against the session workspace.
+ *
+ * Callers legitimately hold WORKSPACE-RELATIVE paths: DSH's file addresses
+ * (`dsh-resource://file/session/<id>/<path>`) spell a file inside the
+ * session workspace relatively, so every native tab opened from chat — a
+ * produced-file chip, a path mentioned in prose, an inline code path —
+ * arrives here relative. Handing such a path straight to
+ * `requireAbsolute`/`realpath` makes Windows root it on the current drive
+ * (`deepseek-homepage-clone/index.html` → `C:\deepseek-homepage-clone\…`)
+ * and the request fails with ENOENT.
+ *
+ * Absolute paths keep their existing semantics, including the session
+ * namespace projection (WSL / dsh-remote mirror) that `resolveSessionPath`
+ * applies. Containment is NOT decided here — the caller still runs the
+ * workspace guard over the result.
+ */
+function resolveWorkspaceRelative(cwd: string, raw: string): string {
+  return isAbsolute(raw) ? raw : join(cwd, raw)
+}
+
+/**
  * Resolve a path that a git command reported — `git status`/`git diff`
  * print paths RELATIVE TO THE REPO TOP LEVEL, which may sit above the
  * session cwd (a session inside a subdirectory of a repository). Absolute
@@ -981,7 +1002,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
         const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
-        const path = await ensureWorkspacePath(cwd, raw, fenceEnabledOf(() => settingsFace))
+        const path = await ensureWorkspacePath(cwd, resolveWorkspaceRelative(cwd, raw), fenceEnabledOf(() => settingsFace))
         const info = await stat(path)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)
@@ -1042,7 +1063,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // it a detached first request fell back to the process cwd and the
         // workspace guard refused every project file.
         const cwd = await sessionCwdOf(ctx, sessionId, decoded.ref.cwd)
-        const absolute = await ensureWorkspacePath(cwd, path, fenceEnabledOf(() => settingsFace))
+        const absolute = await ensureWorkspacePath(cwd, resolveWorkspaceRelative(cwd, path), fenceEnabledOf(() => settingsFace))
         const info = await stat(absolute)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)
