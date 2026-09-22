@@ -689,15 +689,36 @@ function sameAgentWaits(
 
 /** Fold the pushed terminal snapshots into the authoritative wait map. */
 function serverWaitsOf(
-  agentTerminals: ReadonlyArray<{ uuid: string; title: string; waiting?: { needle: string; since: number } | null }>,
+  terminals: ReadonlyArray<AgentTerminalPushEntry>,
 ): Record<string, { needle: string; since: number }> {
   const serverWaits: Record<string, { needle: string; since: number }> = {}
-  for (const terminal of agentTerminals) {
+  for (const terminal of terminals) {
     if (terminal.waiting !== undefined && terminal.waiting !== null) {
       serverWaits[terminal.uuid] = { needle: terminal.waiting.needle, since: terminal.waiting.since }
     }
   }
   return serverWaits
+}
+
+/**
+ * One entry of the host's agent-terminals push (a structural slice of the
+ * host's `AgentTerminalSnapshot`): enough for the client to reconcile tab
+ * placement, mirror waits, and close what vanished.
+ */
+export interface AgentTerminalPushEntry {
+  /** The host's terminal uuid (the tab id is `agent:<uuid>`). */
+  uuid: string
+  /** Display title the model chose at create time. */
+  title: string
+  /**
+   * The surface the model chose at create time (`terminal_create`'s
+   * `target`): `'right'` tabs are placed on DSH's native right Sidebar by
+   * `service.syncAgentTerminals`; `'bottom'` (and absent — a legacy host)
+   * stay on the reconcile path below.
+   */
+  target?: 'bottom' | 'right'
+  /** The model's active `terminal_wait_for`, when one is registered. */
+  waiting?: { needle: string; since: number } | null
 }
 
 /**
@@ -708,26 +729,44 @@ function serverWaitsOf(
  * lose theirs. The agent owns the lifetime — the user closing a tab sends a
  * WS close frame that kills the pty, which fires a change, which converges
  * the view. Idempotent: a no-op when the lists already match.
+ *
+ * Placement split (v0.19.2+): entries the model created with
+ * `target: 'right'` are NOT added here — the feed places them as native
+ * right-Sidebar tabs through `service.syncAgentTerminals` (the only path
+ * that speaks the native surface's vocabulary). Their waits still mirror
+ * through this reducer, and their REMOVAL is likewise native (the bottom
+ * scan below never sees them). Everything else keeps the historical
+ * bottom-workbench behavior.
  * @param state - the current per-session sidebar state.
  * @param agentTerminals - the live agent terminal snapshots from the host.
  * @returns the next state (or the same reference if no change was needed).
  */
 export function reconcileAgentTerminals(
   state: SidebarState,
-  agentTerminals: ReadonlyArray<{ uuid: string; title: string; waiting?: { needle: string; since: number } | null }>,
+  agentTerminals: ReadonlyArray<AgentTerminalPushEntry>,
 ): SidebarState {
   const existingTabs = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs)
   const existingAgentTabs = existingTabs.filter(tab => isAgentTabId(tab.id))
   const existingUuids = new Set(existingAgentTabs.map(tab => agentUuidOf(tab.id)))
-  const serverUuids = new Set(agentTerminals.map(t => t.uuid))
-  const toAdd = agentTerminals.filter(t => !existingUuids.has(t.uuid))
+  const byUuid = new Map(agentTerminals.map(t => [t.uuid, t]))
+  const toAdd = agentTerminals.filter(t => !existingUuids.has(t.uuid) && (t.target ?? 'bottom') !== 'right')
+  // Remove tabs whose uuid vanished from the server list (the agent closed
+  // them, or the pty exited and was reaped), and — defensively — tabs whose
+  // uuid is now PUSHED AS right-targeted: placement is fixed at create time
+  // today, but a bottom tab and its native twin must never coexist for one
+  // uuid (the native twin is placed by service.syncAgentTerminals).
   // Pinned agent terminals (v0.17.0+) are EXEMPT from removal: the agent
   // closed them or the pty exited, but the user pinned them so the tab
   // stays as a disconnected surface. The xterm view's reconnect-failure
   // banner is the user-visible "disconnected" signal (the design's M3
   // convergence: no title suffix, no meta write — the tab keeps its uuid
   // so a later reconcile push revives it if the agent reopens the same one).
-  const toRemove = existingAgentTabs.filter(tab => !serverUuids.has(agentUuidOf(tab.id)) && tab.pin === undefined)
+  const toRemove = existingAgentTabs.filter(tab => {
+    if (tab.pin !== undefined) return false
+    const uuid = agentUuidOf(tab.id)
+    const entry = byUuid.get(uuid)
+    return entry === undefined || (entry.target ?? 'bottom') === 'right'
+  })
   // Mirror the live wait state from the push (authoritative: a vanished
   // waiting field simply drops the entry). A waits-only change must still
   // produce a new state — the tab add/remove no-change check alone would
@@ -768,7 +807,7 @@ export function reconcileAgentTerminals(
  */
 export function mirrorAgentWaits(
   state: SidebarState,
-  agentTerminals: ReadonlyArray<{ uuid: string; title: string; waiting?: { needle: string; since: number } | null }>,
+  agentTerminals: ReadonlyArray<AgentTerminalPushEntry>,
 ): SidebarState {
   const serverWaits = serverWaitsOf(agentTerminals)
   if (sameAgentWaits(state.agentWaits, serverWaits)) return state

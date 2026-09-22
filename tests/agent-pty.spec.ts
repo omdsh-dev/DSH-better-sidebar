@@ -273,6 +273,8 @@ describe('AgentPtyRegistry', { timeout: 30_000 }, () => {
       expect(snap.uuid).toBe(uuid)
       expect(snap.title).toBe('snap')
       expect(snap.exited).toBe(false)
+      // Placement defaults to the bottom workbench (the legacy behavior).
+      expect(snap.target).toBe('bottom')
       // No pty or transcript fields on the snapshot.
       expect('pty' in snap).toBe(false)
       expect('transcript' in snap).toBe(false)
@@ -280,6 +282,21 @@ describe('AgentPtyRegistry', { timeout: 30_000 }, () => {
       // violate the terminal_list output schema's additionalProperties:false).
       expect('sessionId' in snap).toBe(false)
       expect('sessionId' in registry.list('s1')[0]!).toBe(false)
+    } finally {
+      registry.disposeAll()
+    }
+  })
+
+  it('create() records the placement target and snapshotOf serializes it (terminal_list / push wire)', () => {
+    const registry = new AgentPtyRegistry(testShell())
+    try {
+      const right = registry.create('s1', 'right one', '', process.cwd(), 80, 24, undefined, undefined, 'right')
+      const bottom = registry.create('s1', 'bottom one', '', process.cwd())
+      expect(snapshotOf(registry.get(right)!).target).toBe('right')
+      expect(snapshotOf(registry.get(bottom)!).target).toBe('bottom')
+      const list = registry.list('s1')
+      expect(list.find(t => t.uuid === right)?.target).toBe('right')
+      expect(list.find(t => t.uuid === bottom)?.target).toBe('bottom')
     } finally {
       registry.disposeAll()
     }

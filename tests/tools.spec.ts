@@ -20,21 +20,24 @@ interface CapturedTool {
 
 /** Stub registry: uuid-keyed rows without a real pty. */
 class FakeRegistry {
-  readonly terminals = new Map<string, { sessionId: string; title: string; command: string; exited: boolean }>()
+  readonly terminals = new Map<string, { sessionId: string; title: string; command: string; target: 'bottom' | 'right'; exited: boolean }>()
 
   /** When set, waitFor resolves with the skipped shape instead of the found default. */
   nextWaitResult: { kind: 'skipped' } | undefined = undefined
 
-  create(sessionId: string, title: string, command: string): string {
+  create(sessionId: string, title: string, command: string, ...extra: unknown[]): string {
     const uuid = `uuid-${this.terminals.size + 1}`
-    this.terminals.set(uuid, { sessionId, title, command, exited: false })
+    // The real create() signature is (sessionId, title, command, cwd, cols,
+    // rows, shell?, shellArgs?, target?) — `extra[5]` is the placement.
+    const target = (extra[5] === 'right' ? 'right' : 'bottom') as 'bottom' | 'right'
+    this.terminals.set(uuid, { sessionId, title, command, target, exited: false })
     return uuid
   }
 
-  list(sessionId: string): Array<{ uuid: string; title: string; command: string; exited: boolean }> {
+  list(sessionId: string): Array<{ uuid: string; title: string; command: string; target: 'bottom' | 'right'; exited: boolean }> {
     return [...this.terminals.entries()]
       .filter(([, row]) => row.sessionId === sessionId)
-      .map(([uuid, row]) => ({ uuid, title: row.title, command: row.command, exited: row.exited }))
+      .map(([uuid, row]) => ({ uuid, title: row.title, command: row.command, target: row.target, exited: row.exited }))
   }
 
   assertOwned(uuid: string, sessionId: string): void {
@@ -131,6 +134,29 @@ describe('agent terminal tools', () => {
     expect(typeof (value as { uuid: unknown }).uuid).toBe('string')
     expect(registry.terminals.size).toBe(1)
     expect(validateJsonSchemaValue(tool.output.schema, value, 'value')).toEqual([])
+  })
+
+  it('terminal_create declares the target enum and defaults to the bottom workbench', async () => {
+    const { captured, registry } = mount()
+    const tool = toolOf(captured, 'terminal_create')
+    // The definition carries a validated object schema: the enum lives under
+    // properties.target (the registry validates args against it BEFORE
+    // execute runs — an out-of-set value is rejected outright).
+    const schema = tool.parameters as { properties?: Record<string, { enum?: unknown } | undefined> }
+    expect(schema.properties?.target?.enum).toEqual(['right', 'bottom'])
+    const value = await tool.execute({ title: 'dev server', command: 'npm run dev' }, exec('s1'))
+    expect(registry.terminals.get((value as { uuid: string }).uuid)?.target).toBe('bottom')
+  })
+
+  it('terminal_create forwards target:"right" to the registry (native right-sidebar placement)', async () => {
+    const { captured, registry } = mount()
+    const tool = toolOf(captured, 'terminal_create')
+    const value = await tool.execute({ title: 'watcher', command: 'npx tsc -w', target: 'right' }, exec('s1'))
+    expect(registry.terminals.get((value as { uuid: string }).uuid)?.target).toBe('right')
+    // Out-of-set values never reach the registry: the schema validation in
+    // front of execute rejects them (ToolArgsError).
+    await expect(tool.execute({ title: 'x', command: '', target: 'sideways' as 'right' }, exec('s1')))
+      .rejects.toThrow(/must be one of/)
   })
 
   it('terminal_list output matches the declared schema — no sessionId leaks', async () => {

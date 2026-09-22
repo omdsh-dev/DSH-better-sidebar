@@ -28,7 +28,7 @@ import { RenderBoundary } from '../RenderBoundary.tsx'
 import { OrphanedTab } from '../OrphanedTab.tsx'
 import { referenceInChat } from '../reference-in-chat.ts'
 import type { BetterSidebarService } from '../service.ts'
-import type { SidebarStore, SidebarTab, TabType } from '../state.ts'
+import { agentUuidOf, isAgentTabId, type SidebarStore, type SidebarTab, type TabType } from '../state.ts'
 import css from '../sidebar.module.css'
 
 /** The chip glyph's size: the tab strip's own icon scale. */
@@ -42,6 +42,13 @@ const EDITOR_KIND = 'editor'
  * JSON-shaped by convention (the native surface does not validate it).
  */
 export interface NativeTabParams {
+  /**
+   * The plugin-side tab id to mint for this native tab (the host mints its
+   * own record id; this seeds the SYNTHETIC record's `tab.id` so ids the
+   * plugin owns — e.g. an agent terminal's `agent:<uuid>` wire contract —
+   * survive onto the native surface). Absent = use the native id.
+   */
+  readonly id?: string
   /** Overrides the descriptor's title for this instance. */
   readonly title?: string
   /** A file path (the editor window's content seed). */
@@ -114,6 +121,15 @@ export interface NativeTabRecords {
   update(id: string, patch: { title?: string; path?: string; meta?: unknown }): void
   /** Forget a record (the native tab closed). */
   drop(id: string): void
+  /**
+   * Resolve a tab id to the native record key: the native id itself when it
+   * is a key, else the record whose SYNTHETIC `tab.id` matches (ids the
+   * plugin seeded through `params.id`, e.g. `agent:<uuid>`). Undefined when
+   * no record carries the id.
+   */
+  nativeIdOf(tabId: string): string | undefined
+  /** Every live record as `{ nativeId, tabId }` pairs (tabId may be synthetic). */
+  entries(): Array<{ nativeId: string; tabId: string }>
   /** Toggle one directory in a record's expansion set. */
   toggleExpanded(id: string, path: string): void
   /** Mint the next instance number of a kind (titles like "Terminal 2"). */
@@ -142,7 +158,10 @@ export function createNativeTabRecords(): NativeTabRecords {
         const meta = params?.meta ?? seeded?.meta
         const minted: View = {
           tab: {
-            id,
+            // A seeded id wins over the native one: ids the plugin owns (an
+            // agent terminal's `agent:<uuid>`) are its wire contract with
+            // TerminalView's attach URL; everything else keys by native id.
+            id: params?.id ?? id,
             type: kind as TabType,
             title: params?.title ?? seeded?.title ?? title,
             ...(params?.path === undefined ? {} : { path: params.path }),
@@ -180,6 +199,16 @@ export function createNativeTabRecords(): NativeTabRecords {
     },
     get: id => views.get(id),
     has: id => views.has(id),
+    nativeIdOf(tabId) {
+      if (views.has(tabId)) return tabId
+      for (const [nativeId, view] of views) {
+        if (view.tab.id === tabId) return nativeId
+      }
+      return undefined
+    },
+    entries() {
+      return Array.from(views, ([nativeId, view]) => ({ nativeId, tabId: view.tab.id }))
+    },
     update(id, patch) {
       const entry = views.get(id)
       if (entry === undefined) return
@@ -315,6 +344,11 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
         visible: nativeTab.visible,
         expanded: view.expanded,
         revealed: view.revealed,
+        // The native tab's lifetime signal (aborted exactly when the tab is
+        // closed — a session switch / panel unmount leaves it live): a view
+        // that owns a pty (TerminalView) needs it to tell "the user closed
+        // the tab → kill the shell" apart from "we are merely unmounting".
+        closeSignal: nativeTab.signal,
         onToggleDir: (path: string) => { records.toggleExpanded(nativeTab.id, path) },
         onReferenceFile: (path: string, isDir: boolean) => { referenceInChat(ctx, sessionId, cwd, path, isDir) },
         onOpenDiff: (tab: SidebarTab) => {
@@ -367,6 +401,19 @@ export function NativeTabTitle(props: NativeTitleInjected & NativeBodyFrameworkP
   // `version` is read so a title/path/meta mutation re-renders the chip; the
   // icon itself is derived from the record, never stored.
   void version
+  // Agent-terminal wait pill: the host's terminal_wait_for mirror lives in
+  // the store's per-session `agentWaits`; the chip subscribes to the store
+  // through the service's snapshot face, exactly like the bottom TabBar's
+  // badge, so a wait resolving clears it without a record mutation.
+  const waits = useSyncExternalStore(
+    listener => service.subscribeState(listener),
+    () => service.getSnapshot().state?.agentWaits,
+  )
+  const recordId = record?.tab.id
+  const waiting = recordId !== undefined && isAgentTabId(recordId)
+    ? waits?.[agentUuidOf(recordId)]
+    : undefined
+  const label = waiting === undefined ? title : `${title} ⏳`
   const descriptor = service.getTab(descriptorId) ?? service.getTab(record?.tab.type ?? nativeTab.kind)
   const path = record?.tab.path
   const icon = path !== undefined && descriptorId === EDITOR_KIND
@@ -375,12 +422,12 @@ export function NativeTabTitle(props: NativeTitleInjected & NativeBodyFrameworkP
   const glyph = icon ?? (typeof descriptor?.icon === 'function'
     ? descriptor.icon(CHIP_ICON_SIZE)
     : descriptor?.icon)
-  if (glyph === undefined || glyph === null) return title
+  if (glyph === undefined || glyph === null) return label
   return (
     <>
       {/* Decorative: the chip's accessible name stays the title. */}
       <span className={css.chipIcon} aria-hidden="true">{glyph}</span>
-      {title}
+      {label}
     </>
   )
 }

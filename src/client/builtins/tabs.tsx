@@ -53,6 +53,8 @@ interface TerminalViewProps {
   scope: SessionScope
   tabId: string
   store: SidebarStore
+  /** Native right-Sidebar lifetime signal (see TabComponentProps.closeSignal). */
+  closeSignal?: AbortSignal
 }
 
 /** How many UI-owned terminals may be open at once (agent-owned ones are uncapped). */
@@ -309,7 +311,9 @@ export function builtinTabs(ctx: Context, options: BuiltinTabOptions = {}): read
           patch: { nextTerminal: state.nextTerminal + 1 },
         }
       },
-      component: ({ tab, scope, store }) => <LazyTerminal scope={scope} store={store} tabId={tab.id} />,
+      component: ({ tab, scope, store, closeSignal }) => (
+        <LazyTerminal scope={scope} store={store} tabId={tab.id} closeSignal={closeSignal} />
+      ),
     },
     {
       id: 'browser',

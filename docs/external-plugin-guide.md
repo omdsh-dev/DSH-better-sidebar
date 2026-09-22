@@ -2,7 +2,7 @@
 
 > 面向 **消费插件开发者**：如何让你的插件向 better-sidebar 注册新的侧边栏页面（tab）和文件类型预览器。
 >
-> 适用版本：**v0.4.0+**（`ctx.betterSidebar` 服务）；声明式设置 **v0.4.1+**；text/number 设置行 **v0.11.0+**；badge/生命周期/定向打开/插件设置/版本探测 **v0.12.0+**；select 设置行（`settingSelect`）与外链认领（`urlTarget`）**v0.13.0+**；统一 `@deepseek-ai/cordis` 类型基底 **v0.15.2+**；终端固定（pin）**v0.17.0+**。当前版本 **v0.19.1**（正式版，npm `latest`，仅支持 DSH **0.1.5-rc.1+**，已在 **0.1.5-rc.2** 上完成真机挂载验证；**0.1.5-alpha.2 及更早不再支持**——alpha.2 用户请用 v0.19.0-alpha.1，那是它的最后一版；0.1.2-rc.1 稳定线请用 v0.18.x）。**v0.19.0 移除了自绘右侧面板与自由窗口**（见 §0、§11）。
+> 适用版本：**v0.4.0+**（`ctx.betterSidebar` 服务）；声明式设置 **v0.4.1+**；text/number 设置行 **v0.11.0+**；badge/生命周期/定向打开/插件设置/版本探测 **v0.12.0+**；select 设置行（`settingSelect`）与外链认领（`urlTarget`）**v0.13.0+**；统一 `@deepseek-ai/cordis` 类型基底 **v0.15.2+**；终端固定（pin）**v0.17.0+**；agent 终端 `target` 摆放（`syncAgentTerminals` / `closeSignal`，features `'agentTerminalTarget'`）**v0.19.2+**。当前版本 **v0.19.1**（正式版，npm `latest`，仅支持 DSH **0.1.5-rc.1+**，已在 **0.1.5-rc.2** 上完成真机挂载验证；**0.1.5-alpha.2 及更早不再支持**——alpha.2 用户请用 v0.19.0-alpha.1，那是它的最后一版；0.1.2-rc.1 稳定线请用 v0.18.x）。**v0.19.0 移除了自绘右侧面板与自由窗口**（见 §0、§11）。
 > 权威代码：`src/client/service.ts`（服务实现）、`src/client/builtins/`（内置 8 tab + 6 viewer 参考实现）、`lib/types/client/service.d.ts`（类型声明）。
 > 仓库开发规则（硬约束 / CI / 发版）见 [AGENTS.md](../AGENTS.md)。
 
@@ -26,6 +26,7 @@
 | 跨会话打开 | 目标会话的右侧栏 store 未挂载时，打开会排队到该会话上屏后重放 |
 | 内置类型接管 | 插件的 `editor` 类型以 `extension` 优先级认领 `dsh-resource://file/**`（压过内置 `ui-sidebar-documentpreview` 的 `text` 预览——即 `fallback` 带），并接管内置 `files` 页面 kind（`openTab('files')` 打开插件的文件树）；插件卸载/禁用时内置实现自动复位 |
 | path 种子的去向（v0.19.2+） | `path` seed 的含义**跟随类型**：只有 `editor`（唯一认领 `dsh-resource://file/**` 的类型）把 path 转成资源地址打开（文件落在编辑器）；**其余类型保留页面型打开**，path 随导航 params 落到合成记录的 `tab.path` 供组件消费——组件型 tab 的 path seed 不会被改道到文件编辑器（v0.19.0/0.19.1 上一切 path seed 都被改道，组件从未挂载，#632） |
+| agent 终端的摆放（v0.19.2+） | 模型 `terminal_create` 的 **`target` 参数**（`'right'` 默认推荐 / `'bottom'` 底部工作台）决定 agent 终端落在哪：`right` 由 `syncAgentTerminals` 摆上原生右侧栏（id = `agent:<uuid>`，等待 ⏳ 直接渲染在芯片标题上），`bottom` 走插件 reconcile 进底部工作台。**两者都是独立 tab，永远不会占用用户手动开的终端**；`TabComponentProps.closeSignal`（见 §4.2）保证会话切换不误杀 agent 的 pty |
 | 终端上限 | 终端 tab 的数量上限只统计插件自己底部工作台里的终端；原生栏里的终端不计入 |
 | 底部工作台的开合 | 落到底部工作台的打开一律展开它（新建与聚焦都算），因此 `openTab` 的落点永远可见；开合按钮注册在 DSH 会话头的 utilities 槽（`conversation.session.header.utilities`），不在插件自己的宿主里 |
 | 新建标签页列表 | 每个 tab 类型在原生 guide 里占一行：标题取 `title` + 图标取 `icon`（缺图标时宿主补一个方块占位），说明取可选的 `description`——**宿主只在 guide 列出的条目 ≤ 4 条时渲染说明**（上游 `MAX_DESCRIBED_ENTRIES = 4`），更长的列表整列丢掉所有说明；未声明 `description` 的条目渲染成单行「图标 + 标题」（rc.1 起 `description` 回到宿主契约，但**宿主与插件都没有兜底句**，所以插件恢复字段而不恢复旧的通用句）；`hidden: true` 的类型不占行。插件的 `editor` 类型不再单独占行（它认领的文件资源由 `files` 接管页承载同一视图）。**注意默认组合看不到说明**：插件贡献 6 个 guide 条目（文件 / 文件变动 / 任务管理 / 侧边对话 / 终端 / 浏览器），已超过 4 条上限——要让说明出现，需在插件设置页关掉足够多的 tab 类型把 guide 压到 ≤ 4 条 |
@@ -298,6 +299,12 @@ interface TabComponentProps {
   onOpenFile?: (path: string) => void
   onOpenDiff?: (tab: SidebarTab) => void
   onSubagentJump?: (childSessionId: string) => void
+  /** 原生右侧栏 tab 的 lifetime signal（v0.19.2+；底部工作台 tab 恒为 undefined）。
+   *  仅当该 tab 被**关闭**时 abort——会话切换 / 面板卸载导致的重挂载不会 abort。
+   *  组件若持有带生命周期的资源（如终端 pty），用它区分「用户关了 tab → 释放」
+   *  与「只是暂时卸载 → 保持存活」：`store.tabOpen(...) || !closeSignal.aborted`
+   *  才是「tab 还在」的完整判据（内置 TerminalView 即如此）。 */
+  closeSignal?: AbortSignal
 }
 ```
 
@@ -305,6 +312,7 @@ interface TabComponentProps {
 
 - **用 `visible` 做性能门**：subagent 内置页在 `visible === false` 时暂停轮询；你的页面若有轮询/订阅，同样处理。
 - **用 `scope.sessionId`（+ `scope.cwd`）访问会话数据**：所有 `/sidebar/api/*` 请求都要带这两个字段（见 §6）。
+- **持有 pty/进程等资源时用 `closeSignal` 判定关闭**：原生 tab 不在插件 store 里，仅凭 `store.tabOpen` 会把每次卸载误判成「已关闭」而杀掉资源。
 
 ### 4.3 注册示例
 
@@ -622,8 +630,13 @@ interface BetterSidebarService {
    * title 可选：给出时优先于 descriptor.title（editor 显示文件名）；
    * 有 createTab 的 descriptor 分落点：底部工作台（target: 'bottom'）由 createTab
    * 整体铸造 tab，忽略 seed 的 title/path/id（url 种子仍预填新建 tab 的 path）；
-   * 原生右侧栏只忽略 id（原生 tab id 由宿主铸造，seed.id 仅影响 onOpen 收到的
-   * 合成 tab），createTab 铸造的 title/meta 作缺省、seed 字段优先（v0.19.2+ 起
+   * 原生右侧栏 v0.19.2+ **不再忽略 id**：seed.id 经导航 params 种入合成记录的
+   * tab.id（插件自有 id——如 agent 终端的 `agent:<uuid>`——由此延续到原生记录，
+   * components 收到的 tab.id 与 seed.id 一致），并按 id 幂等：原生面已携带该 id
+   * 时为**静默 no-op**（不重复开 tab、不触发任何生命周期回调——agent 终端的
+   * sync 每次 host 推送都会重观察，绝不能退化成 onActivate 风暴）。agent id 种子
+   * （`agent:` 前缀）还会跳过 descriptor.createTab 的 UI 配额铸造（配额满也不拒绝、
+   * id 不被改写）。createTab 铸造的 title/meta 作缺省、seed 字段优先（v0.19.2+ 起
    * path 也随导航 params 下发，见下）。
    * path 可选：含义跟随类型——editor（唯一认领 dsh-resource://file/** 的
    * 类型）把 path 转成资源地址打开（文件落在编辑器）；其余类型 path 是
@@ -641,8 +654,17 @@ interface BetterSidebarService {
    */
   openTab(seed: OpenTabSeed, scope?: SessionScope): void
   /** 关闭一个 tab（未知 id 严格 no-op，无状态搅动）；scope（v0.12.0+）
-   *  随回调传递（含可选 cwd），缺省为 { sessionId: 当前 } */
+   *  随回调传递（含可选 cwd），缺省为 { sessionId: 当前 }。
+   *  原生面同样认识插件种子 id（`agent:<uuid>` 等合成 id 会被解析回原生记录键）。 */
   closeTab(tabId: string, scope?: SessionScope): void
+  /** 把本次 host 推送里 target:'right' 的 agent 终端摆上原生右侧栏
+   *  （v0.19.2+，features 含 'agentTerminalTarget'）：每个 uuid 至多开一个
+   *  原生 terminal tab（id = `agent:<uuid>`，重复观察同一推送为 no-op），
+   *  uuid 离开推送列表则关闭对应原生 tab。target:'bottom'（及缺省/旧 host 的
+   *  无 target 字段）条目是本方法的 no-op——它们由调用方的 store reconcile
+   *  负责。调用方自行 gate tab 类型启用状态（本方法不重复检查）并传入推送
+   *  所属 scope；原生面未安装时整体 no-op。 */
+  syncAgentTerminals(terminals: readonly AgentTerminalPushEntry[], scope: SessionScope): void
   /** 订阅注册表变化（register/dispose 时触发） */
   subscribe(listener: () => void): () => void
   // ── v0.12.0+ ──────────────────────────────────────────────────────────
@@ -651,7 +673,7 @@ interface BetterSidebarService {
   /** 能力清单（只增不删，唯一例外：v0.19.0 删除了 'floatWindows'）：
    *  'badge' | 'tabLifecycle' | 'updateTab' | 'openFile' | 'targetedOpen' |
    *  'stateSubscription' | 'tabMeta' | 'pluginSettings' | 'urlTarget' |
-   *  'settingSelect' | 'fileIcons'
+   *  'settingSelect' | 'fileIcons' | 'agentTerminalTarget'
    *  ——用 `features.includes('xxx')` 按能力 gate。 */
   readonly features: readonly string[]
   /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs。
