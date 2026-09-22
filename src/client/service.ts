@@ -22,9 +22,9 @@
 import type { ReactNode } from 'react'
 import type { Context } from '../context-types.ts'
 import {
-  activateTab as activateTabReducer, allLeaves, closeTab as closeTabReducer,
-  leafWithTab, openTabInBottomPane, patchTab, tabOpenIn,
-  type SidebarSnapshot, type SidebarState, type SidebarStore, type SidebarTab, type TabType,
+  activateTab as activateTabReducer, agentTabId, agentUuidOf, allLeaves, closeTab as closeTabReducer,
+  isAgentTabId, leafWithTab, openTabInBottomPane, patchTab, tabOpenIn,
+  type AgentTerminalPushEntry, type SidebarSnapshot, type SidebarState, type SidebarStore, type SidebarTab, type TabType,
 } from './state.ts'
 import { baseName, extOf } from './paths.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
@@ -156,6 +156,15 @@ export interface TabComponentProps {
   onOpenFile?: (path: string) => void
   onOpenDiff?: (tab: SidebarTab) => void
   onSubagentJump?: (childSessionId: string) => void
+  /**
+   * The native right-Sidebar tab's lifetime signal (absent for bottom
+   * workbench tabs). It aborts exactly when the native tab is CLOSED — a
+   * session switch or panel unmount unmounts the body without aborting it —
+   * so a component that owns a resource with a lifetime (the terminal's
+   * pty) can tell "the user closed the tab → release it" apart from "we are
+   * merely unmounting, keep it alive".
+   */
+  closeSignal?: AbortSignal
 }
 
 /** Describes one kind of sidebar tab (builtins register themselves too). */
@@ -426,6 +435,12 @@ export interface OpenTabSeed {
  * params (the native surface passes them back on every navigation).
  */
 export interface NativeTabParams {
+  /**
+   * The plugin-side tab id to mint for this native tab (rides the
+   * navigation params; the tab adapter seeds its synthetic record's
+   * `tab.id` with it — e.g. an agent terminal's `agent:<uuid>`).
+   */
+  id?: string
   /** Overrides the descriptor's title for this instance. */
   title?: string
   /** A file path (the editor window's content seed; component kinds carry their own). */
@@ -461,8 +476,17 @@ export interface SidebarSurface {
   update(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): boolean
   /** Focus a native tab; false when it is not native. */
   activate(tabId: string): boolean
-  /** Whether a tab id belongs to the native surface. */
+  /**
+   * Whether a tab id belongs to the native surface — matched against the
+   * native record keys AND the records' synthetic `tab.id` (seeded ids).
+   */
   has(tabId: string): boolean
+  /**
+   * Every live native record as `{ nativeId, tabId }` pairs (tabId is the
+   * synthetic record id, which may be a plugin-seeded id like `agent:<uuid>`).
+   * Absent on a surface that cannot enumerate; consumers must default to [].
+   */
+  entries?(): ReadonlyArray<{ nativeId: string; tabId: string }>
 }
 
 /**
@@ -561,6 +585,18 @@ export interface BetterSidebarService {
    * `{ sessionId }` of the active session.
    */
   closeTab(tabId: string, scope?: SessionScope): void
+  /**
+   * Place the model's RIGHT-targeted agent terminals on the native right
+   * Sidebar (v0.19.2+): one native tab per `target: 'right'` push entry,
+   * id-keyed by the plugin's `agent:<uuid>` wire contract, opened once
+   * (re-observing an already-open id is a no-op) and closed when its uuid
+   * leaves the push list. Bottom-targeted entries are this method's no-op —
+   * the caller's store reconcile owns them. Callers gate on the terminal
+   * tab type being enabled (this method does not re-check) and must pass
+   * the SAME scope the push belongs to. Without an installed native surface
+   * this is a no-op (the entries stay bottom-only).
+   */
+  syncAgentTerminals(terminals: readonly AgentTerminalPushEntry[], scope: SessionScope): void
   /** Subscribe to registry changes (register/dispose). */
   subscribe(listener: () => void): () => void
   /** The plugin version this service instance was built from ('0.12.0'). */
@@ -568,7 +604,9 @@ export interface BetterSidebarService {
   /**
    * Monotonic capability list (v0.12.0+): 'badge' | 'tabLifecycle' |
    * 'updateTab' | 'openFile' | 'targetedOpen' | 'stateSubscription' |
-   * 'tabMeta' | 'pluginSettings'. Features are never removed — consumers
+   * 'tabMeta' | 'pluginSettings' | 'agentTerminalTarget' (v0.19.2+:
+   * `terminal_create`'s `target` placement lands through
+   * `syncAgentTerminals`). Features are never removed — consumers
    * gate new API usage on membership.
    */
   readonly features: readonly string[]
@@ -653,6 +691,9 @@ export const SIDEBAR_SERVICE_VERSION = '0.19.1'
  *   external file-tree icons overriding the built-in glyphs, matched by
  *   extension (`exts`), exact file name (`names`), or directory name
  *   (`folderNames`).
+ * - 'agentTerminalTarget' (v0.19.2): BetterSidebarService.syncAgentTerminals
+ *   — `terminal_create`'s `target` parameter places model terminals on the
+ *   native right Sidebar ('right') or the bottom workbench ('bottom').
  *
  * v0.19.0 REMOVED 'floatWindows': the free-window feature is gone (DSH 0.1.5
  * owns the right column, so the plugin keeps only its bottom workbench).
@@ -670,6 +711,7 @@ export const SIDEBAR_FEATURES = [
   'urlTarget',
   'settingSelect',
   'fileIcons',
+  'agentTerminalTarget',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -901,11 +943,22 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     // included) as navigation params, which the tab adapter merges onto the
     // synthetic record's `tab.path` for the registered component.
     if (surface !== undefined && seed.target !== 'bottom') {
+      // An id-seeded native open is IDEMPOTENT: the agent-terminal sync
+      // re-observes its list on every host push, and a native surface that
+      // already carries this id (native key OR synthetic `params.id`) is a
+      // silent no-op — NOT a duplicate tab and NOT a lifecycle event (an
+      // onActivate per push would spam descriptor listeners).
+      if (seed.id !== undefined && surface.has(seed.id)) return
       const state = store.getSnapshot().state
+      // An agent-terminal seed (`agent:<uuid>`) mints its own identity: the
+      // id is the wire contract TerminalView attaches by, so the
+      // descriptor's UI-quota factory must NOT run for it (it would refuse
+      // at capacity and mint a `terminal:<uuid>` instead).
+      const agentSeed = seed.id !== undefined && isAgentTabId(seed.id)
       // The descriptor's own factory mints what a view needs beyond the seed:
       // the side chat's thread bootstrap / reattach meta, the terminal's
       // per-instance title. A `null` return refuses the open (terminal cap).
-      const minted = descriptor.createTab === undefined || state === undefined
+      const minted = agentSeed || descriptor.createTab === undefined || state === undefined
         ? undefined
         : descriptor.createTab(state)
       if (minted === null) return
@@ -941,6 +994,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
           sessionId: targetSessionId,
           kind: seed.type,
           params: {
+            ...(seed.id === undefined ? {} : { id: seed.id }),
             title,
             ...(seed.path === undefined ? {} : { path: seed.path }),
             ...(seed.url === undefined ? {} : { url: seed.url }),
@@ -972,7 +1026,18 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       // Let the descriptor mint the tab (terminal's nextTerminal bump, etc.).
       let tab: SidebarTab
       let next: SidebarState
-      if (descriptor.createTab !== undefined) {
+      // An agent-terminal seed owns its id even on the bottom path (the
+      // native surface is absent — headless/tests): running the UI-quota
+      // factory would mint the wrong id and can refuse at capacity.
+      if (seed.id !== undefined && isAgentTabId(seed.id)) {
+        tab = {
+          id: seed.id,
+          type: seed.type as TabType,
+          title: seed.title ?? (typeof descriptor.title === 'function' ? descriptor.title() : descriptor.title),
+          ...(seed.meta !== undefined ? { meta: seed.meta } : {}),
+        }
+        next = applyDedupe(state, tab, descriptor, land)
+      } else if (descriptor.createTab !== undefined) {
         const result = descriptor.createTab(state)
         if (result === null) return state
         tab = result.tab
@@ -1085,6 +1150,37 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     }
   }
 
+  const syncAgentTerminals = (
+    terminals: readonly AgentTerminalPushEntry[],
+    scope: SessionScope,
+  ): void => {
+    if (surface === undefined) return
+    // The right-side placement set from this push (uuid → title). Everything
+    // else — bottom-targeted entries, legacy pushes without `target` — is
+    // the store reconcile's business, untouched here.
+    const desired = new Map<string, string>()
+    for (const terminal of terminals) {
+      if ((terminal.target ?? 'bottom') === 'right') desired.set(terminal.uuid, terminal.title)
+    }
+    // Close native agent tabs whose uuid left the set (the pty exited and
+    // was reaped, or the agent called terminal_close). `closeTab` →
+    // `surface.close` resolves the synthetic `agent:<uuid>` id to the
+    // native record key; a tab already gone (user closed it first — its
+    // unmount sent the WS close frame) is a no-op.
+    for (const entry of [...(surface.entries?.() ?? [])]) {
+      if (!isAgentTabId(entry.tabId)) continue
+      if (!desired.has(agentUuidOf(entry.tabId))) closeTab(entry.tabId, scope)
+    }
+    // Open the right-side tabs not yet on the surface. Idempotent: the
+    // native open is guarded by `surface.has` inside `openTab`, and this
+    // loop re-observes the whole list on every host push.
+    for (const [uuid, title] of desired) {
+      const id = agentTabId(uuid)
+      if (surface.has(id)) continue
+      openTab({ type: 'terminal', id, title }, scope)
+    }
+  }
+
   /** The snapshot the store publishes (state/prefs carry the active session). */
   const getSnapshot = (): SidebarSnapshot => store.getSnapshot()
 
@@ -1147,6 +1243,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     matchFileViewer,
     openTab,
     closeTab,
+    syncAgentTerminals,
     subscribe,
     version: SIDEBAR_SERVICE_VERSION,
     features: SIDEBAR_FEATURES,

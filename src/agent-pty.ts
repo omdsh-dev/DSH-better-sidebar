@@ -114,6 +114,15 @@ export function tryResizePty(
 }
 
 /**
+ * Where the model asked an agent terminal to surface (the `terminal_create`
+ * `target` parameter): DSH's native right Sidebar (`'right'`) or the
+ * plugin's own bottom workbench (`'bottom'`). Rides the handle → snapshot →
+ * agent-terminals push so the client reconcile can place each tab on its
+ * chosen surface; absent on the wire from an older host (treated as bottom).
+ */
+export type AgentTerminalTarget = 'bottom' | 'right'
+
+/**
  * Serializable snapshot of one agent terminal — the shape the model sees
  * through `terminal_list` and the sidebar sees through the push endpoint.
  * Carries no pty reference and no transcript (those are reached through
@@ -128,6 +137,8 @@ export interface AgentTerminalSnapshot {
   title: string
   /** The command the model asked to run at create time (verbatim). */
   command: string
+  /** Where the tab surfaces: the native right Sidebar or the bottom workbench. */
+  target: AgentTerminalTarget
   /** Whether the top-level process has exited. */
   exited: boolean
   /** Exit code if exited normally; absent until the process exits. */
@@ -218,6 +229,8 @@ export interface AgentTerminalHandle {
   title: string
   /** The command written to stdin right after spawn. */
   command: string
+  /** The surface the model chose at create time (right Sidebar vs bottom workbench). */
+  target: AgentTerminalTarget
   /** The working directory the process was spawned with. */
   cwd: string
   /** The live pty process. */
@@ -308,6 +321,7 @@ export function snapshotOf(handle: AgentTerminalHandle): AgentTerminalSnapshot {
     uuid: handle.uuid,
     title: handle.title,
     command: handle.command,
+    target: handle.target,
     exited: handle.exited,
   }
   if (handle.exited) {
@@ -355,6 +369,7 @@ export class AgentPtyRegistry {
     rows = 24,
     shell?: string,
     shellArgs?: string[],
+    target: AgentTerminalTarget = 'bottom',
   ): string {
     const uuid = randomUUID()
     const dims = clampDims(cols, rows)
@@ -372,6 +387,7 @@ export class AgentPtyRegistry {
       sessionId,
       title,
       command,
+      target,
       cwd,
       pty,
       transcript: '',

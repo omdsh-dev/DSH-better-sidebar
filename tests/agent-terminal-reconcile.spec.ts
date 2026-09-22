@@ -59,6 +59,50 @@ describe('agent terminal reconciliation', () => {
     expect(tabOpenIn(s, 'agent:bbb-222')).toBe(false)
   })
 
+  describe('right-sidebar placement (v0.19.2, target: right)', () => {
+    it('does NOT add right-targeted terminals to the bottom workbench', () => {
+      let s = makeDefaultState()
+      s = reconcileAgentTerminals(s, [
+        { uuid: 'aaa-111', title: 'bottom one' },
+        { uuid: 'bbb-222', title: 'right one', target: 'right' },
+      ])
+      expect(tabOpenIn(s, 'agent:aaa-111')).toBe(true)
+      // The right-targeted entry is placed by service.syncAgentTerminals —
+      // never here.
+      expect(tabOpenIn(s, 'agent:bbb-222')).toBe(false)
+    })
+
+    it('still mirrors waits for right-targeted terminals (banner state lives in the store)', () => {
+      let s = makeDefaultState()
+      s = reconcileAgentTerminals(s, [
+        { uuid: 'bbb-222', title: 'right one', target: 'right', waiting: { needle: 'READY', since: 7 } },
+      ])
+      expect(s.agentWaits['bbb-222']).toEqual({ needle: 'READY', since: 7 })
+      s = reconcileAgentTerminals(s, [
+        { uuid: 'bbb-222', title: 'right one', target: 'right' },
+      ])
+      expect(s.agentWaits['bbb-222']).toBeUndefined()
+    })
+
+    it('a right-targeted push with no wait and no bottom changes is a no-op (same reference)', () => {
+      const s = makeDefaultState()
+      const next = reconcileAgentTerminals(s, [
+        { uuid: 'bbb-222', title: 'right one', target: 'right' },
+      ])
+      expect(next).toBe(s)
+    })
+
+    it('still removes a bottom tab whose uuid later comes back as right-targeted', () => {
+      // Defensive: placement is fixed at create time today, but the reducer
+      // must not strand a bottom tab if the push ever says otherwise.
+      let s = makeDefaultState()
+      s = reconcileAgentTerminals(s, [{ uuid: 'aaa-111', title: 'legacy bottom' }])
+      expect(tabOpenIn(s, 'agent:aaa-111')).toBe(true)
+      s = reconcileAgentTerminals(s, [{ uuid: 'aaa-111', title: 'moved', target: 'right' }])
+      expect(tabOpenIn(s, 'agent:aaa-111')).toBe(false)
+    })
+  })
+
   it('lands new agent terminals in the workbench pane', () => {
     let s = makeDefaultState()
     s = toggleBottomPanel(s)

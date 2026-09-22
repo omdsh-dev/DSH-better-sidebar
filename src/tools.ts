@@ -101,7 +101,9 @@ export function registerTools(
       + 'and close it with terminal_close when done. '
       + 'Use this for interactive shells, REPLs, long-running dev servers, '
       + 'or any work that needs persistent terminal state across tool calls. '
-      + 'The terminal appears as a new tab in the right sidebar (titled with the `title` you provide) so the user can watch and interact with it.',
+      + 'Where the tab appears is your choice: pass target:"right" (recommended — the user watches it beside the chat) '
+      + 'to open it as a tab in the DSH right sidebar, or target:"bottom" (the default) for the bottom workbench. '
+      + 'Either way it is its OWN tab (titled with the `title` you provide) — it never reuses or hijacks the user\'s own terminals.',
     parameters: {
       title: {
         type: 'string',
@@ -112,6 +114,11 @@ export function registerTools(
         type: 'string',
         required: true,
         description: 'Shell command to run in the freshly spawned shell. The host appends an Enter key automatically — do NOT include a trailing newline. Pass "" to open a bare shell with no command.',
+      },
+      target: {
+        type: 'string',
+        enum: ['right', 'bottom'],
+        description: 'Where the terminal tab opens: "right" = the DSH right sidebar (recommended, beside the conversation), "bottom" = the bottom workbench. Omitted = "bottom".',
       },
     },
     output: {
@@ -127,12 +134,13 @@ export function registerTools(
         `Opened terminal "${v.title}" (uuid: ${v.uuid}). The sidebar tab appears automatically; use terminal_read to see output and terminal_send (with submit=true) to run more commands.`,
       ),
     },
-    execute: async (args: { title: string; command: string }, exec) => {
+    execute: async (args: { title: string; command: string; target?: 'right' | 'bottom' }, exec) => {
       exec.signal.throwIfAborted()
       const sessionId = sessionIdOf(exec)
       const cwd = await resolveCwd(sessionId)
       const { shell, shellArgs } = readShellOverrides()
-      const uuid = registry.create(sessionId, args.title, args.command, cwd, 80, 24, shell, shellArgs)
+      const target = args.target === 'right' ? 'right' : 'bottom'
+      const uuid = registry.create(sessionId, args.title, args.command, cwd, 80, 24, shell, shellArgs, target)
       return { uuid, title: args.title }
     },
   }))
@@ -141,7 +149,8 @@ export function registerTools(
     name: 'terminal_list',
     description:
       'List every terminal the current agent has opened in this session. Returns each terminal\'s uuid, title, '
-      + 'the command it was started with, and whether the top-level process has exited (with exit code/signal if so). '
+      + 'the command it was started with, its placement target (right/bottom), and whether the top-level process '
+      + 'has exited (with exit code/signal if so). '
       + 'Use this to recover state after a long sequence of tool calls or to find a terminal you forgot to close.',
     parameters: {},
     output: {
@@ -154,6 +163,7 @@ export function registerTools(
             uuid: { type: 'string', required: true },
             title: { type: 'string', required: true },
             command: { type: 'string', required: true },
+            target: { type: 'string', enum: ['right', 'bottom'], required: true },
             exited: { type: 'boolean', required: true },
             exitCode: { oneOf: [{ type: 'integer' }, { type: 'null' }] },
             exitSignal: { oneOf: [{ type: 'string' }, { type: 'null' }] },
@@ -167,7 +177,7 @@ export function registerTools(
           const status = t.exited
             ? `exited (code ${t.exitCode ?? '?'}, signal ${t.exitSignal ?? 'none'})`
             : 'running'
-          return `  ${t.uuid}  "${t.title}"  [${status}]  $ ${t.command}`
+          return `  ${t.uuid}  "${t.title}"  [${status}] [${t.target}]  $ ${t.command}`
         })
         return [{ type: 'text', text: `Agent terminals in this session:\n${lines.join('\n')}` }]
       },

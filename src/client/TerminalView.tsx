@@ -117,8 +117,8 @@ function xtermTheme(): ITheme {
   }
 }
 
-export function TerminalView(props: { scope: SessionScope; tabId: string; store: SidebarStore }) {
-  const { scope, tabId, store } = props
+export function TerminalView(props: { scope: SessionScope; tabId: string; store: SidebarStore; closeSignal?: AbortSignal }) {
+  const { scope, tabId, store, closeSignal } = props
   const hostRef = useRef<HTMLDivElement>(null)
   const [connected, setConnected] = useState(false)
   const [fatal, setFatal] = useState<string | null>(null)
@@ -390,7 +390,17 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
       // Agent terminals follow the close-frame rule; their lifetime is owned
       // by the agent, so a bare drop (case 3) already leaves them alive
       // indefinitely — no park frame needed.
+      //
+      // NATIVE right-Sidebar tabs (v0.19.2+) never sit in the store's bottom
+      // state, so the store alone would misread EVERY unmount as case 1 and
+      // kill the shell (a session switch / panel unmount included). The
+      // native tab's `closeSignal` is the missing discriminator: it aborts
+      // ONLY when the tab itself was closed, and stays live across
+      // mount/unmount cycles — so "still open" becomes
+      // `store open OR signal not aborted`, and case 1 fires only for a
+      // genuinely closed tab.
       const tabStillOpen = store.tabOpen(scope.sessionId, tabId)
+        || (closeSignal !== undefined && !closeSignal.aborted)
       const sessionSwitched = store.getSnapshot().sessionId !== scope.sessionId
       if (!tabStillOpen
         && socket !== null && socket.readyState === WebSocket.OPEN) {
@@ -404,7 +414,7 @@ export function TerminalView(props: { scope: SessionScope; tabId: string; store:
       term.dispose()
       connectRef.current = null
     }
-  }, [scope.sessionId, scope.cwd, tabId, store])
+  }, [scope.sessionId, scope.cwd, tabId, store, closeSignal])
 
   return (
     <div className={css.terminalWrap}>

@@ -121,28 +121,40 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
       return fileAddressFor(sessionId, cwd, path)
     },
     close(sessionId, tabId) {
-      const record = records.get(tabId)
+      // Accept BOTH the native record key and a plugin-seeded synthetic id
+      // (`agent:<uuid>`): the agent-terminal sync closes by the id it opened
+      // with, and the native id is what the record registry and the host
+      // controller speak.
+      const nativeId = records.nativeIdOf(tabId)
+      if (nativeId === undefined) return undefined
+      const record = records.get(nativeId)
       if (record === undefined) return undefined
-      records.drop(tabId)
+      records.drop(nativeId)
       const api = controller()
       if (api !== undefined) {
-        if (sessionId === activeSessionId(ctx)) api.close(tabId)
-        else if (api.closeIn !== undefined) api.closeIn(sessionId, tabId)
+        if (sessionId === activeSessionId(ctx)) api.close(nativeId)
+        else if (api.closeIn !== undefined) api.closeIn(sessionId, nativeId)
       }
       return { type: record.tab.type, title: record.tab.title }
     },
     update(tabId, patch) {
-      if (!records.has(tabId)) return false
-      records.update(tabId, patch)
+      const nativeId = records.nativeIdOf(tabId)
+      if (nativeId === undefined) return false
+      records.update(nativeId, patch)
       return true
     },
     activate(tabId) {
       // The native surface has no cross-pane activation face the plugin needs:
       // a tab is focused by opening its (kind, address) again, which the
       // native open already de-duplicates.
-      return records.has(tabId)
+      return records.nativeIdOf(tabId) !== undefined
     },
-    has: tabId => records.has(tabId),
+    has: tabId => records.nativeIdOf(tabId) !== undefined
+      // A queued-but-unplaced open counts as present too: the agent-terminal
+      // sync re-observes every push while no session surface is mounted, and
+      // without this the pending queue would grow one duplicate per push.
+      || pending.some(entry => entry.kind === 'tab' && entry.params.id === tabId),
+    entries: () => records.entries(),
     flushPending,
     dispose: () => { unsubscribe() },
   }

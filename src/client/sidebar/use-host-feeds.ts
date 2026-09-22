@@ -113,16 +113,30 @@ export function useHostFeeds(feeds: {
       socket.onmessage = (event) => {
         if (typeof event.data !== 'string') return
         try {
-          const list = JSON.parse(event.data) as Array<{ uuid: string; title: string; command: string; exited: boolean; waiting?: { needle: string; since: number } | null }>
+          const list = JSON.parse(event.data) as Array<{ uuid: string; title: string; command: string; exited: boolean; target?: 'bottom' | 'right'; waiting?: { needle: string; since: number } | null }>
           if (!Array.isArray(list)) return
+          const service = ctx.get('betterSidebar')
+          const disabled = service?.isTabEnabled('terminal') === false
+          // Placement split: entries the model created with target:'right'
+          // are placed as NATIVE right-Sidebar tabs through the service (the
+          // only face that speaks the native surface); everything else falls
+          // to the store reconcile below (bottom workbench + waits). When no
+          // native-capable service is around (headless harness, older stub)
+          // the whole list degrades to bottom placement so no tab is lost.
+          const nativeCapable = !disabled
+            && service !== undefined
+            && typeof service.syncAgentTerminals === 'function'
+          if (nativeCapable) service.syncAgentTerminals(list, { sessionId })
+          const reconciled = nativeCapable ? list : list.map(t => ({ ...t, target: 'bottom' as const }))
           store.reduce(s => ctx.get('betterSidebar')?.isTabEnabled('terminal') === false
             // Terminal tabs are disabled: skip tab add/remove reconciliation,
             // but STILL mirror the authoritative wait map — a wait resolving
             // during the disabled window must clear its banner state, or a
             // re-enabled terminal keeps a stale banner until the next
-            // unrelated push.
-            ? mirrorAgentWaits(s, list)
-            : reconcileAgentTerminals(s, list))
+            // unrelated push. Native placement is skipped as well (the tab
+            // surface is frozen).
+            ? mirrorAgentWaits(s, reconciled)
+            : reconcileAgentTerminals(s, reconciled))
         } catch {
           // Malformed push: ignore (the next push will reconcile).
         }
