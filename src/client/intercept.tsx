@@ -10,18 +10,36 @@ import { IconCodeOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { revealPaths, type SidebarStore } from './state.ts'
 import { t } from './locales.ts'
+import { api } from './api.ts'
+import { isAbsolutePath } from './paths.ts'
 import { resolveSidebarPath, selectProducedFiles } from './produced-files.ts'
 import css from './sidebar.module.css'
 
-/** Open a file in the sidebar's editor (used by the intercepted row and the explorer). */
-export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: string, path: string): void {
-  const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
-  const absolute = resolveSidebarPath(summary?.cwd, path)
+/** Open one resolved absolute path in a per-path editor tab. */
+function openResolved(ctx: Context, absolute: string): void {
   const at = Math.max(absolute.lastIndexOf('/'), absolute.lastIndexOf('\\'))
   const title = at === -1 ? absolute : absolute.slice(at + 1)
   // Route through the sidebar service so the editor descriptor's dedupeKey
   // (per-path) applies; the id is path-derived so multiple editors coexist.
   ctx.get('betterSidebar')?.openTab({ type: 'editor', title, path: absolute, id: `editor:${absolute}` })
+}
+
+/** Open a file in the sidebar's editor (used by the intercepted row and the explorer). */
+export function openSidebarFile(ctx: Context, store: SidebarStore, sessionId: string, path: string): void {
+  const summary = ctx.sessions.list.getSnapshot().byId[sessionId]
+  const cwd = summary?.cwd
+  // A relative path (chat prose, a tool's workspace-relative location) needs
+  // the session cwd to become absolute. The session list can still be empty
+  // right after a page load or a session switch; handing the raw relative
+  // path to the host would make it fail `requireAbsolute` instead of opening.
+  // Ask the host for its authoritative cwd, then open.
+  if (!isAbsolutePath(path) && (cwd === undefined || cwd === '')) {
+    void api.sessionCwd({ sessionId })
+      .then((resolved) => { openResolved(ctx, resolveSidebarPath(resolved.cwd, path)) })
+      .catch((error: unknown) => { console.warn('[dsh-better-sidebar] cannot resolve session cwd:', error) })
+    return
+  }
+  openResolved(ctx, resolveSidebarPath(cwd, path))
 }
 
 /**

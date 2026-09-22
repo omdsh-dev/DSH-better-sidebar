@@ -142,6 +142,140 @@ describe('decodeHtmlUrl', () => {
   })
 })
 
+describe('marker segments (cwd hint + relative flag)', () => {
+  const CWD = 'C:\\Users\\me\\proj'
+
+  it('encodes the cwd as a $c-marked segment after the sessionId', () => {
+    expect(encodeHtmlUrl('s-1', 'C:\\Users\\me\\proj\\index.html', CWD))
+      .toBe(`/sidebar/html/s-1/$c${encodeURIComponent(CWD)}/C%3A/Users/me/proj/index.html`)
+  })
+
+  it('round-trips the cwd alongside the path', () => {
+    const url = encodeHtmlUrl('s-1', 'C:\\Users\\me\\proj\\index.html', CWD)
+    expect(decodeHtmlUrl(url)).toEqual({
+      ok: true,
+      ref: { sessionId: 's-1', path: 'C:/Users/me/proj/index.html', cwd: CWD },
+    })
+  })
+
+  it('round-trips a POSIX cwd', () => {
+    const url = encodeHtmlUrl('s-1', '/srv/app/index.html', '/srv/app')
+    expect(decodeHtmlUrl(url)).toEqual({
+      ok: true,
+      ref: { sessionId: 's-1', path: '/srv/app/index.html', cwd: '/srv/app' },
+    })
+  })
+
+  it('round-trips a cwd with special characters', () => {
+    const cwd = '/a b/中文/p%d'
+    const url = encodeHtmlUrl('s', `${cwd}/index.html`, cwd)
+    const result = decodeHtmlUrl(url)
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.ref.cwd).toBe(cwd)
+  })
+
+  it('omits both markers for an absolute path with no cwd (URLs stay byte-identical to before)', () => {
+    const bare = '/sidebar/html/s-1/Users/me/a.html'
+    expect(encodeHtmlUrl('s-1', '/Users/me/a.html')).toBe(bare)
+    expect(encodeHtmlUrl('s-1', '/Users/me/a.html', undefined)).toBe(bare)
+    expect(encodeHtmlUrl('s-1', '/Users/me/a.html', '')).toBe(bare)
+  })
+
+  it('decodes a legacy URL without markers (no cwd/relative keys)', () => {
+    expect(decodeHtmlUrl('/sidebar/html/s-1/Users/me/a.html')).toEqual({
+      ok: true,
+      ref: { sessionId: 's-1', path: '/Users/me/a.html' },
+    })
+  })
+
+  it('does not mistake a real path segment starting with $ for a marker', () => {
+    // encodeURIComponent turns a leading '$' into '%24', so the RAW segment
+    // never starts with '$' — markers cannot be spoofed by a file path.
+    const url = encodeHtmlUrl('s', '/srv/$data/index.html')
+    expect(url).toBe('/sidebar/html/s/srv/%24data/index.html')
+    expect(decodeHtmlUrl(url)).toEqual({
+      ok: true,
+      ref: { sessionId: 's', path: '/srv/$data/index.html' },
+    })
+  })
+
+  it('refuses an empty cwd segment and an unknown marker (400)', () => {
+    expect(decodeHtmlUrl('/sidebar/html/s/$c/a.html')).toEqual({
+      ok: false, status: 400, message: 'invalid cwd segment',
+    })
+    expect(decodeHtmlUrl('/sidebar/html/s/$x/a.html')).toEqual({
+      ok: false, status: 400, message: 'unknown marker segment',
+    })
+  })
+
+  it('carries the markers through relative asset resolution', () => {
+    // The whole point of path segments: ./style.css must keep BOTH the
+    // session scope and the markers (a query would be dropped).
+    const doc = `http://h${encodeHtmlUrl('s', '/srv/app/index.html', '/srv/app')}`
+    const asset = new URL('./style.css', doc).pathname
+    expect(decodeHtmlUrl(asset)).toEqual({
+      ok: true,
+      ref: { sessionId: 's', path: '/srv/app/style.css', cwd: '/srv/app' },
+    })
+  })
+
+  it('carries the hint for a UNC document', () => {
+    const url = encodeHtmlUrl('s', '\\\\server\\share\\proj\\a.html', '\\\\server\\share\\proj')
+    expect(decodeHtmlUrl(url)).toEqual({
+      ok: true,
+      ref: { sessionId: 's', path: '//server/share/proj/a.html', cwd: '\\\\server\\share\\proj' },
+    })
+  })
+
+  /**
+   * A workspace-RELATIVE path is what DSH's own file addresses spell
+   * (`dsh-resource://file/session/<id>/<relative path>`), so it is what the
+   * preview route receives for a file opened from chat. Rebuilding it with a
+   * leading '/' made Windows root it on the current drive — the reported
+   * `ENOENT ... realpath 'C:\deepseek-homepage-clone\index.html'`.
+   */
+  it('marks a relative path and decodes it back as relative (never drive-rooted)', () => {
+    const url = encodeHtmlUrl('s', 'proj/index.html', 'C:\\DshChat')
+    expect(url).toBe(`/sidebar/html/s/$c${encodeURIComponent('C:\\DshChat')}/$r/proj/index.html`)
+    expect(decodeHtmlUrl(url)).toEqual({
+      ok: true,
+      ref: { sessionId: 's', path: 'proj/index.html', cwd: 'C:\\DshChat', relative: true },
+    })
+  })
+
+  it('marks a relative path even without a cwd hint', () => {
+    const url = encodeHtmlUrl('s', 'proj/index.html')
+    expect(url).toBe('/sidebar/html/s/$r/proj/index.html')
+    expect(decodeHtmlUrl(url)).toEqual({
+      ok: true,
+      ref: { sessionId: 's', path: 'proj/index.html', relative: true },
+    })
+  })
+
+  it('normalizes a backslash-spelled relative path', () => {
+    const result = decodeHtmlUrl(encodeHtmlUrl('s', 'proj\\sub\\index.html'))
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.ref).toEqual({ sessionId: 's', path: 'proj/sub/index.html', relative: true })
+  })
+
+  it("keeps a relative document's assets relative", () => {
+    const doc = `http://h${encodeHtmlUrl('s', 'proj/index.html', '/srv/app')}`
+    const asset = new URL('./style.css', doc).pathname
+    expect(decodeHtmlUrl(asset)).toEqual({
+      ok: true,
+      ref: { sessionId: 's', path: 'proj/style.css', cwd: '/srv/app', relative: true },
+    })
+  })
+
+  it('does not mark an absolute path as relative', () => {
+    for (const absolute of ['/srv/a.html', 'C:\\srv\\a.html', '\\\\server\\share\\a.html']) {
+      const result = decodeHtmlUrl(encodeHtmlUrl('s', absolute))
+      expect(result.ok).toBe(true)
+      if (result.ok) expect(result.ref.relative).toBeUndefined()
+    }
+  })
+})
+
 describe('relative asset resolution stays in-route', () => {
   it('a relative reference against an encoded document URL keeps the session scope', () => {
     // WHATWG URL resolution drops the QUERY of a path-relative reference,

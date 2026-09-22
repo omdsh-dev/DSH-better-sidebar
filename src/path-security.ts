@@ -17,7 +17,11 @@ async function resolveRealPath(path: string, label: string): Promise<string> {
 /** Reject a resolved path whose real filesystem target escapes the workspace. */
 function assertWithinWorkspace(workspace: string, target: string): void {
   if (!isWithin(workspace, target)) {
-    throw new SidebarError('forbidden', `path "${target}" is outside workspace`, 403)
+    // Naming the workspace root makes the refusal diagnosable: the common
+    // cause is a session whose cwd resolved to something unexpected, and
+    // without the root the message cannot distinguish that from a genuine
+    // out-of-workspace path. The root is already visible to this client.
+    throw new SidebarError('forbidden', `path "${target}" is outside workspace "${workspace}"`, 403)
   }
 }
 

@@ -451,7 +451,12 @@ function fileUrl(scope: SessionScope, path: string, download: boolean): string {
  * platform-neutral — the host's requireAbsolute resolves the decoded
  * forward-slash `//server/share/...` form on both win32 and POSIX — so no
  * client-side platform signal is needed.
+ *
+ * The scope's cwd rides along as a path segment (the route has no query):
+ * it lets the host resolve the workspace while the session is still
+ * detached, instead of falling back to its process cwd and refusing the
+ * file. It is advisory — the host prefers its own session header.
  */
 export function htmlUrl(scope: SessionScope, path: string): string {
-  return encodeHtmlUrl(scope.sessionId, path)
+  return encodeHtmlUrl(scope.sessionId, path, scope.cwd)
 }
