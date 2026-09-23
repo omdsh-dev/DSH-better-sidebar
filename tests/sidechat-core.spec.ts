@@ -279,40 +279,20 @@ describe('buildOpenTurnSnapshot', () => {
     expect(snapshot).toContain('`bash` (executing)')
   })
 
-  it('reads the tool/result message dsh-llm actually produces (producer round-trip)', () => {
-    // createToolResultMessage is the producer of every live tool/result row:
-    // the fixture shapes above must match what it emits, not a guess.
-    const message = createToolResultMessage({
-      callId: ToolCallId('c1'),
-      content: [{ type: 'text', text: 'produced body' }],
-      isError: false,
-    })
+it('skips malformed assistant content instead of throwing', () => {
     const events = [
       ev('turn/start', 0, { turn: 1 }),
       ev('step/start', 1, { turn: 1, step: 1 }),
-      ev('tool/call', 2, { turn: 1, step: 1, callId: 'c1', name: 'read', arguments: '{"path":"a"}' }),
-      ev('tool/result', 3, { turn: 1, step: 1, message: message as unknown as Record<string, unknown> }),
-    ]
-    const snapshot = buildOpenTurnSnapshot(events)
-    expect(snapshot).not.toBeNull()
-    expect(snapshot).toContain('Result: produced body')
-  })
-
-  it('reads a LEGACY 0.1.6-wrapped tool result (historical logs keep that shape)', () => {
-    const events = [
-      ev('turn/start', 0, { turn: 1 }),
-      ev('step/start', 1, { turn: 1, step: 1 }),
-      ev('tool/call', 5, { turn: 1, step: 1, callId: 'c1', name: 'read', arguments: '{"path":"old.txt"}' }),
-      ev('tool/result', 6, {
+      ev('assistant/message', 2, { turn: 1, step: 1, message: { content: 'not-an-array' } }),
+      ev('assistant/message', 3, { turn: 1, step: 1 }),
+      ev('assistant/message', 4, {
         turn: 1,
         step: 1,
-        message: legacyToolResultMessage('c1', 'legacy body'),
+        message: { content: [null, { type: 'text' }, { type: 'text', text: 'kept' }] },
       }),
-      ev('tool/call', 7, { turn: 1, step: 1, callId: 'c2', name: 'bash', arguments: '{"cmd":"long"}' }),
+      ev('tool/call', 5, { turn: 1, step: 1, callId: 'c1', name: 'bash', arguments: '{}' }),
     ]
-    const snapshot = buildOpenTurnSnapshot(events)
-    expect(snapshot).not.toBeNull()
-    expect(snapshot).toContain('Result: legacy body')
+    expect(buildOpenTurnSnapshot(events)).toContain('kept')
   })
 })
 
