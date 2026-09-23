@@ -15,6 +15,7 @@ import {
   buildSidechatInheritance,
   hasDanglingToolCall,
   isContextInjectionMessage,
+  parentModelSelection,
   resolvePresetId,
   sideLabel,
   sideThreadRows,
@@ -430,5 +431,73 @@ describe('isContextInjectionMessage', () => {
       source: { kind: 'user' },
     })).toBe(false)
     expect(isContextInjectionMessage({ content: [{ type: 'text', text: 'no source row' }] })).toBe(false)
+  })
+})
+
+describe('parentModelSelection', () => {
+  it('returns undefined for a log without selection state', () => {
+    expect(parentModelSelection([])).toBeUndefined()
+    expect(parentModelSelection([
+      ev('user/message', 0, { content: [{ type: 'text', text: 'q' }], source: { kind: 'user' } }),
+      ev('turn/start', 1, { turn: 1 }),
+    ])).toBeUndefined()
+  })
+
+  it('adopts an explicit pending selection with its effort', () => {
+    // The composer switch logged after the last request: nothing consumed it
+    // yet, so it IS the current selection (the view the selector shows).
+    expect(parentModelSelection([
+      ev('request/header', 0, { header: { config: { provider: 'p1', model: 'm1' } } }),
+      ev('model/selection', 1, { provider: 'p2', model: 'm2', reasoningEffort: 'high' }),
+    ])).toEqual({ provider: 'p2', model: 'm2', reasoningEffort: 'high' })
+  })
+
+  it('lets a same-route request header consume the pending selection preserving explicit effort', () => {
+    // Consumed pending -> the header's route is current (effort preserved when not an adapter default).
+    expect(parentModelSelection([
+      ev('model/selection', 0, { provider: 'p2', model: 'm2', reasoningEffort: 'high' }),
+      ev('request/header', 1, { header: { config: { provider: 'p2', model: 'm2', reasoningEffort: 'high' } } }),
+    ])).toEqual({ provider: 'p2', model: 'm2', reasoningEffort: 'high' })
+  })
+
+  it('drops adapter-default effort from request headers', () => {
+    expect(parentModelSelection([
+      ev('request/header', 0, {
+        header: {
+          config: { provider: 'p1', model: 'm1', reasoningEffort: 'low' },
+          adapterDefaults: { reasoningEffort: true },
+        },
+      }),
+    ])).toEqual({ provider: 'p1', model: 'm1' })
+  })
+
+  it('keeps a pending selection a different-route header cannot consume', () => {
+    expect(parentModelSelection([
+      ev('model/selection', 0, { provider: 'p2', model: 'm2' }),
+      ev('request/header', 1, { header: { config: { provider: 'p1', model: 'm1' } } }),
+    ])).toEqual({ provider: 'p2', model: 'm2' })
+  })
+
+  it('falls back to the last request header when no explicit selection is pending', () => {
+    expect(parentModelSelection([
+      ev('request/header', 0, { header: { config: { provider: 'p1', model: 'm1', reasoningEffort: 'low' } } }),
+      ev('request/header', 1, { header: { config: { provider: 'p1', model: 'm1' } } }),
+    ])).toEqual({ provider: 'p1', model: 'm1' })
+  })
+
+  it('preserves non-default effort on request header fallback', () => {
+    expect(parentModelSelection([
+      ev('request/header', 0, { header: { config: { provider: 'p1', model: 'm1', reasoningEffort: 'high' } } }),
+    ])).toEqual({ provider: 'p1', model: 'm1', reasoningEffort: 'high' })
+  })
+
+  it('ignores malformed selection and header rows instead of throwing', () => {
+    expect(parentModelSelection([
+      ev('model/selection', 0, { provider: '', model: 'm2' }),
+      ev('model/selection', 1, { provider: 'p2' }),
+      ev('request/header', 2, { header: { config: 'garbage' } }),
+      ev('request/header', 3, {}),
+      ev('model/selection', 4, { provider: 'p3', model: 'm3' }),
+    ])).toEqual({ provider: 'p3', model: 'm3' })
   })
 })
