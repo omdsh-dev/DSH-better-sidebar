@@ -306,6 +306,48 @@ describe('EditorHost (files window)', () => {
     }
   })
 
+  it('the header hides the save button for a truncated load (#732)', () => {
+    const { store, ctx } = setup()
+    const service = ctx.betterSidebar
+    // The TextEditor contract reports `truncated` alongside `editable`; the
+    // host's merged header must not offer save while only partial content
+    // is loaded (fs.write would replace the whole file with the prefix).
+    let report: ((truncated: boolean) => void) | undefined
+    const FakeViewer = (viewerProps: FileViewerProps): ReactNode => {
+      useEffect(() => {
+        viewerProps.onToolbarControls?.({ setMode: () => {}, save: () => {} })
+        viewerProps.onToolbarState?.({ modes: true, mode: 'preview', dirty: false, editable: true, truncated: true, saveState: 'idle' })
+        report = (truncated) => {
+          viewerProps.onToolbarState?.({ modes: true, mode: 'preview', dirty: false, editable: true, truncated, saveState: 'idle' })
+        }
+        return () => { viewerProps.onToolbarControls?.(null) }
+        // Mount-only: re-running would re-fire the toolbar registration.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
+      return null
+    }
+    service.registerFileViewer({
+      id: 'test:fake',
+      exts: ['fake'],
+      fetchStrategy: 'none',
+      component: FakeViewer,
+    })
+    service.openTab({ type: 'editor', title: 'big.fake', path: '/tmp/big.fake', id: 'editor:/tmp/big.fake' })
+    const fileTab = (): SidebarTab =>
+      allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
+        .find(tab => tab.path === '/tmp/big.fake')!
+    const { container, unmount } = mountHost(ctx, store, fileTab)
+    try {
+      const header = container.querySelector('input')!.parentElement!
+      expect(header.querySelector('button[aria-label="Save"]')).toBeNull()
+      // A full read replacing the content re-enables saving.
+      act(() => { report!(false) })
+      expect(header.querySelector('button[aria-label="Save"]')).not.toBeNull()
+    } finally {
+      unmount()
+    }
+  })
+
   it('a folder tab (meta.dir) renders the tree rooted at the folder, no editor chrome', () => {
     const { store, ctx } = setup()
     ctx.betterSidebar!.openTab({
