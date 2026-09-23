@@ -84,8 +84,7 @@ export function SidebarProducedFiles(props: {
       {hidden > 0 && (
         <button
           type="button"
-          className={css.producedMore}
-          style={{ cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2 }}
+          className={css.producedAction}
           onClick={() => { onShowInFolder(matched) }}
         >
           {t('showInFolder')}

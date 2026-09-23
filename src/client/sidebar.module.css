@@ -2165,6 +2165,36 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* "Show in folder" is a control, not one more produced file: the +N counter
+   and the action share the label type scale, and the action carries the app's
+   text-action reset on top. Without it the element renders as the UA's dialog
+   button — opaque `ButtonFace` fill, a 2px `outset` bevel, square 0-radius
+   corners and its own 1px/6px padding — which reads as a foreign control
+   against the transparent tertiary label it sits beside (and, in the dark
+   skin, as a bright slab on the conversation background). Height and radius
+   mirror `.producedChip` so the action stays on the chips' optical line; the
+   label keeps the tertiary tone so hover is what promotes it. */
+.producedAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    color var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    background var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.producedAction:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
 /* ── Shared interaction rules ──────────────────────────────────────────── */
 
 /* Keyboard focus stays visible on every interactive control (the styling
@@ -2182,7 +2212,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .editorModeButton:focus-visible,
 .editorDownloadLink:focus-visible,
 .editorPptxButton:focus-visible,
-.editorDocxZoomRange:focus-visible {
+.editorDocxZoomRange:focus-visible,
+.producedAction:focus-visible {
   outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent);
   outline-offset: -1px;
 }
@@ -2196,6 +2227,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   .tabBarPlus,
   .paneCard,
   .explorerRow,
+  .producedAction,
   .divider,
   .dividerRow::after,
   .dividerCol::after {
