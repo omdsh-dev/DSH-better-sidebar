@@ -247,6 +247,40 @@ describe('sidebar state', () => {
     expect(after.tabs).toHaveLength(2)
   })
 
+  it('dragging a pane\'s only tab onto its own edge splits in place instead of losing the tab', () => {
+    let s = state()
+    s = openTabInBottomPane(s, { id: 'git', type: 'git', title: 'Git' })
+    s = splitPane(s, 'col')
+    const split = s.bottomSplits as Extract<SplitNode, { kind: 'split' }>
+    const paneA = split.children[0] as { id: string; tabs: { id: string }[] }
+    const paneB = split.children[1] as { id: string }
+    const tabId = paneA.tabs[0]!.id
+    s = moveTab(s, paneA.id, tabId, paneB.id)
+    // paneB now holds the single tab; dropping it onto paneB's own edge
+    // used to empty paneB, delete its leaf, and discard the tab entirely.
+    s = moveTabToEdge(s, paneB.id, tabId, paneB.id, 'left')
+    const leaves = allLeaves(s.bottomSplits)
+    expect(leaves).toHaveLength(1)
+    expect(leaves[0]!.tabs.map(t => t.id)).toEqual([tabId])
+    expect(s.activePane).toBe(leaves[0]!.id)
+  })
+
+  it('dragging one of several tabs onto its own pane edge splits the pane with the dragged tab', () => {
+    let s = state()
+    s = openTabInBottomPane(s, { id: 'git', type: 'git', title: 'Git' })
+    s = openTabInBottomPane(s, { id: 't2', type: 'terminal', title: 'T2' })
+    const leaf = s.bottomSplits as { id: string; tabs: { id: string }[] }
+    const first = leaf.tabs[0]!.id
+    s = moveTabToEdge(s, leaf.id, first, leaf.id, 'right')
+    const leaves = allLeaves(s.bottomSplits)
+    expect(leaves).toHaveLength(2)
+    const dragged = leaves.find(candidate => candidate.tabs.some(t => t.id === first))
+    const kept = leaves.find(candidate => candidate !== dragged)
+    expect(dragged!.tabs.map(t => t.id)).toEqual([first])
+    expect(kept!.tabs.map(t => t.id)).toEqual([leaf.tabs[1]!.id])
+    expect(s.activePane).toBe(dragged!.id)
+  })
+
   it('closing the last tab removes the pane (promotes the sibling)', () => {
     let s = state()
     s = openTabInBottomPane(s, { id: 'git', type: 'git', title: 'Git' })
