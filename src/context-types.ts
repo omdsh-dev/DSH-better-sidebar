@@ -275,6 +275,77 @@ export interface SidebarAgentPresetsService {
   mount(agentCtx: unknown, presetId: string): Promise<void>
 }
 
+/**
+ * The experimental Agent Teams service face (`ctx.agentTeams`, mounted only
+ * when the deployment loads `dsh-experimental-agent-team-profile`; absent →
+ * `ctx.get` returns undefined and the Teams block hides). Only the
+ * browser-facing Remote vocabulary the Tasks page needs is mirrored —
+ * structurally, so the plugin never imports the experimental package.
+ */
+export interface SidebarAgentTeamsService {
+  /** The agent's team membership, or undefined for a non-team/stale agent. */
+  tryMembership(agent: unknown): unknown
+  /** The point-in-time team snapshot the official panel renders. */
+  remoteView(agent: unknown): Promise<{ members: SidebarTeamMemberView[]; tasks: SidebarTeamTaskView[] }>
+  /** Create one shared task (CAS-free; ids are server-issued). */
+  remoteCreateTask(agent: unknown, req: SidebarCreateTeamTaskRequest): Promise<SidebarTeamTaskMutationResult>
+  /** Compare-and-set mutation of one shared task (stale revision → conflict). */
+  remoteUpdateTask(agent: unknown, req: SidebarUpdateTeamTaskRequest): Promise<SidebarTeamTaskMutationResult>
+}
+
+/** One team member as the runtime-enriched view reports it. */
+export interface SidebarTeamMemberView {
+  /** The member's session id (the teammate's child session under the lead). */
+  id: string
+  name: string
+  role: 'lead' | 'teammate'
+  status: 'running' | 'idle' | 'inactive' | 'provisioning' | 'failed'
+  description?: string
+  provider?: string
+  context?: 'fresh' | 'fork'
+  model?: string
+  diagnostics: string[]
+}
+
+/** One shared task-board row (durable fields plus derived readiness). */
+export interface SidebarTeamTaskView {
+  id: string
+  revision: number
+  subject: string
+  description: string
+  status: 'pending' | 'in_progress' | 'completed' | 'deleted'
+  ownerName?: string
+  blockedBy: string[]
+  writeScopes: string[]
+  ready: boolean
+  writeScopeWarnings: string[]
+}
+
+/** Input for creating one shared task. */
+export interface SidebarCreateTeamTaskRequest {
+  subject: string
+  description: string
+  blockedBy?: readonly string[]
+  writeScopes?: readonly string[]
+}
+
+/** Input for one CAS task mutation. */
+export interface SidebarUpdateTeamTaskRequest {
+  taskId: string
+  expectedRevision: number
+  action: 'claim' | 'release' | 'edit' | 'set_dependencies' | 'complete' | 'reopen' | 'reassign' | 'delete'
+  subject?: string
+  description?: string
+  blockedBy?: readonly string[]
+  writeScopes?: readonly string[]
+  owner?: string
+}
+
+/** Browser task-mutation result (stale revisions kept distinct, passthrough). */
+export type SidebarTeamTaskMutationResult =
+  | { ok: true; value: SidebarTeamTaskView }
+  | { ok: false; error: { code: 'team-task-conflict' | 'team-rejected'; message: string } }
+
 /** The host session-title service face (mirror of the sessionTitle service). */
 export interface SidebarSessionTitleService {
   /** Rename one live session's title (pins it against auto-regeneration). */
@@ -319,10 +390,14 @@ export interface SidebarSessionList {
    * this plugin reads is `subagentCatalog`, the direct-child list the 0.1.6
    * runtime published as `subagentsByParent`.
    *
-   * Two facts the 0.1.6 snapshot carried are gone and must not be re-read:
-   * there is no `current` session id (`ctx.sidebarRight.mounted` is the
-   * sanctioned feed for "which session's seat is on screen"), and there is no
-   * background-jobs mirror (the `jobs.list` route reads the registry itself).
+   * Three facts the 0.1.6 snapshot carried are gone and must not be brought
+   * back: there is no `current` session id (`ctx.sidebarRight.mounted` is the
+   * sanctioned feed for "which session's seat is on screen"), there is no
+   * background-jobs mirror (the `jobs.list` route reads the registry itself),
+   * and there is no per-parent observe handshake — 0.1.7 loads every session's
+   * projections once per connection, so a catalog surface reads them instead
+   * of observing and unobserving (0.1.6's `setSubagentCatalogOpen` is deleted,
+   * not renamed).
    */
   projectionsBySession?: Readonly<Record<string, SidebarProjectionSnapshot>>
 }
@@ -389,10 +464,6 @@ export interface SidebarSessionsService {
    * Resolve an already discovered direct-parent address without opening it.
    */
   subagentAddress?(id: string): SidebarSubagentAddress | undefined
-  /**
-   * Mark whether a catalog surface is consuming live membership updates.
-   */
-  setSubagentCatalogOpen?(parentSessionId: string, open: boolean): void
   /**
    * Refresh one direct-child catalog.
    */

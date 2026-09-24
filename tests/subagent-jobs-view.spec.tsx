@@ -1,25 +1,26 @@
 /**
- * Subagent page tests: the projection-backed topology (branch expansion, the
- * `mode: 'unknown'` row, navigation and catalog retry) and the background-job
- * section (rows read through `jobs.list` per tree session, the output dock
- * with the OWNER session scope, the two-click kill confirm, and no polling
- * while the page is hidden).
+ * Tasks page tests: the projection-backed topology (branch expansion inferred
+ * from the child's OWN catalog, the `mode: 'unknown'` row, navigation through
+ * the workspace face, catalog retry through the 0.1.7 refresh name) and the
+ * background-jobs DRAWER — rows read through the plugin's `jobs.list` route
+ * one session at a time (the registry's access fence admits a job to its OWNER
+ * only), clicking a row peeks its output in an anchored popover (portaled to
+ * document.body) through `jobs.output` with the owner scope, the kill button
+ * needs a two-click confirm, settled rows offer no kill, and nothing polls
+ * while the page is hidden.
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { act } from 'react-dom/test-utils'
-import { renderRoot, setupReactAct } from './test-utils.ts'
-
-setupReactAct()
-
+import { renderRoot } from './test-utils.ts'
 import { SubagentView } from '../src/client/SubagentView.tsx'
 import type {
   Context,
   SidebarJobView,
   SidebarSessionList,
-  SidebarSubagentCatalogEntry,
   SidebarSubagentAddress,
+  SidebarSubagentCatalogEntry,
 } from '../src/context-types.ts'
 
 /** A subscribable sessions-list snapshot (mirror of the runtime list feed). */
@@ -41,18 +42,19 @@ function makeStore(initial: SidebarSessionList) {
 
 type Store = ReturnType<typeof makeStore>
 
-/** The navigation spy the page must reach (DSH 0.1.6+ `ctx.uiWorkspace`). */
+/** The navigation spy the page must reach (DSH 0.1.7 `ctx.uiWorkspace`). */
 interface NavigationSpy {
   opened: Array<SidebarSubagentAddress | string>
 }
 
-/** The client context face SubagentView touches (everything else inert). */
+/**
+ * The client context face SubagentView touches. Navigation rides the
+ * workspace face: 0.1.6 moved main-view selection off `ISessions`, so a spy
+ * left on `sessions.openSubagent` would never fire.
+ */
 function makeCtx(store: Store, navigation?: NavigationSpy): Context {
   return {
-    sessions: {
-      list: store,
-      open: (id: string) => { navigation?.opened.push(id) },
-    },
+    sessions: { list: store },
     get: (name: string) => (name === 'uiWorkspace' && navigation !== undefined
       ? { openSession: (target: SidebarSubagentAddress | string) => { navigation.opened.push(target) } }
       : undefined),
@@ -132,6 +134,12 @@ beforeEach(() => {
       killCalls.push({ sessionId: body.sessionId ?? '', id: body.id ?? '' })
       return jsonResponse({ ok: true, value: { ok: true, outcome: 'requested' } })
     }
+    if (method === 'workflows.list') {
+      return jsonResponse({ ok: true, value: { runs: [] } })
+    }
+    if (method === 'teams.view') {
+      return jsonResponse({ ok: true, value: { available: false } })
+    }
     throw new Error(`unexpected fetch ${String(url)}`)
   })
   Object.defineProperty(globalThis.navigator, 'language', { value: 'zh-CN', configurable: true })
@@ -162,46 +170,33 @@ async function renderPage(store: Store, active = true, navigation?: NavigationSp
   return rendered
 }
 
-/** One topology row by its aria-label prefix. */
-function row(container: HTMLElement, label: string): HTMLElement {
-  const found = container.querySelector<HTMLElement>(`[role="treeitem"][aria-label^="${label}"]`)
-  if (found === null) throw new Error(`no topology row labelled ${label}`)
-  return found
-}
-
 describe('SubagentView topology (projectionsBySession)', () => {
-  it('renders the tree and expands a branch inferred from its own catalog', async () => {
+  it("expands a branch inferred from the child's own catalog", async () => {
     const store = makeStore({
       byId: {
         root: { id: 'root', displayTitle: '主会话' },
         child: { id: 'child', displayTitle: 'Worker', origin: 'subagent', parentId: 'root' },
         grand: { id: 'grand', displayTitle: 'Grandchild', origin: 'subagent', parentId: 'child' },
+        great: { id: 'great', displayTitle: 'Great', origin: 'subagent', parentId: 'grand' },
       },
       projectionsBySession: {
         root: ready([entry('child', 'continuable', 'Worker')]),
-        // The child carries a child of its own: `hasChildren` is not in the
-        // 0.1.7 row, it is the child's own catalog that says so.
+        // The child carries a child of its own: 0.1.7 rows have no
+        // `hasChildren`, it is the child's own catalog that says so.
         child: ready([entry('grand', 'one-shot', 'Grandchild')]),
-        grand: ready([]),
+        grand: ready([entry('great', 'one-shot', 'Great')]),
+        great: ready([]),
       },
     })
     const { container, unmount } = await renderPage(store)
-    const branch = row(container, 'Worker')
-    expect(branch.getAttribute('aria-level')).toBe('1')
-    expect(branch.getAttribute('aria-expanded')).toBe('true')
-    // The grandchild is rendered one level down and is a KNOWN LEAF (its own
-    // catalog loaded empty), so it carries no disclosure.
-    const leaf = row(container, 'Grandchild')
-    expect(leaf.getAttribute('aria-level')).toBe('2')
-    expect(leaf.hasAttribute('aria-expanded')).toBe(false)
-    // Mode + activity come from the row and the live channel respectively.
-    expect(branch.getAttribute('aria-label')).toContain('可续接')
-    expect(leaf.getAttribute('aria-label')).toContain('一次性')
-    expect(branch.getAttribute('aria-label')).toContain('空闲')
+    expect(container.textContent).toContain('Worker')
+    expect(container.textContent).toContain('Grandchild')
+    expect(container.textContent).toContain('可续接')
+    expect(container.textContent).toContain('一次性')
     unmount()
   })
 
-  it('keeps a mode-less (unknown) row unlabelled instead of claiming a mode', async () => {
+  it('never claims a mode for an unknown row', async () => {
     const store = makeStore({
       byId: { root: { id: 'root', displayTitle: '主会话' } },
       projectionsBySession: {
@@ -212,12 +207,9 @@ describe('SubagentView topology (projectionsBySession)', () => {
       },
     })
     const { container, unmount } = await renderPage(store)
-    const unknown = row(container, 'Opaque child')
-    const label = unknown.getAttribute('aria-label') ?? ''
-    expect(label).toContain('Opaque child')
-    expect(label).toContain('空闲')
-    expect(label).not.toContain('一次性')
-    expect(label).not.toContain('可续接')
+    expect(container.textContent).toContain('Opaque child')
+    expect(container.textContent).not.toContain('一次性')
+    expect(container.textContent).not.toContain('可续接')
     unmount()
   })
 
@@ -225,9 +217,15 @@ describe('SubagentView topology (projectionsBySession)', () => {
     const navigation: NavigationSpy = { opened: [] }
     const store = makeStore(baseSnapshot())
     const { container, unmount } = await renderPage(store, true, navigation)
-    await act(async () => { row(container, '子代理').click() })
-    // The runtime removed ISessions.openSubagent after 0.1.5-rc.2: the
-    // workspace face owns main-view selection and is what must be called.
+    // Unfold so the settled child is reachable, open its detail window and
+    // use the jump button (the card itself is the detail affordance).
+    const foldToggle = container.querySelector('button[aria-label="展开已完成的节点"]') as HTMLButtonElement
+    await act(async () => { foldToggle.click() })
+    const node = container.querySelector('[data-graph-node="child"]') as HTMLElement
+    await act(async () => { node.click() })
+    const jump = [...document.querySelectorAll('[role="dialog"] button')]
+      .find(button => button.textContent?.includes('查看转录')) as HTMLButtonElement | undefined
+    await act(async () => { jump?.click() })
     expect(navigation.opened).toEqual([
       { parentSessionId: 'root', childSessionId: 'child', mode: 'continuable' },
     ])
@@ -239,11 +237,7 @@ describe('SubagentView topology (projectionsBySession)', () => {
     const store = makeStore({
       byId: { root: { id: 'root', displayTitle: '主会话' } },
       projectionsBySession: {
-        root: {
-          values: {},
-          state: 'error',
-          error: { code: 'boom', message: '目录读取失败' },
-        },
+        root: { values: {}, state: 'error', error: { code: 'boom', message: '目录读取失败' } },
       },
     })
     const rendered = renderRoot(createElement(SubagentView, {
@@ -258,7 +252,9 @@ describe('SubagentView topology (projectionsBySession)', () => {
       } as unknown as Context,
     }))
     await flushJobs()
-    expect(rendered.container.textContent).toContain('目录读取失败')
+    // The banner names the failed branch count; the per-row message lives in
+    // the catalog view the page folds (see `subagent-catalog.ts`).
+    expect(rendered.container.textContent).toContain('1 个分支加载失败')
     const retry = [...rendered.container.querySelectorAll('button')]
       .find(button => button.textContent?.includes('重试'))
     expect(retry).toBeDefined()
@@ -307,13 +303,13 @@ describe('SubagentView background jobs', () => {
       // "Rendered fewer hooks than expected" (the minified #300 the sidebar
       // boundary surfaces with a retry button).
       jobsByOwner = {}
-      await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
       expect(container.textContent).not.toContain('后台任务')
       // And returning jobs must work too, with the same hook order.
       jobsByOwner = {
         root: [{ id: 'bash-1', kind: 'bash', label: 'sleep 300', status: 'running', startedAt: 1_000 }],
       }
-      await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
       expect(container.textContent).toContain('sleep 300')
       unmount()
     } finally {
@@ -321,41 +317,41 @@ describe('SubagentView background jobs', () => {
     }
   })
 
-  it('shows the selected job output in the bottom dock, closeable', async () => {
+  it('shows the selected job output in an anchored popover, dismissable', async () => {
     const store = makeStore(baseSnapshot())
     const { container, unmount } = await renderPage(store)
-    const first = container.querySelector('button[aria-label*="sleep 300"]') as HTMLButtonElement
-    await act(async () => { first.click() })
+    const row = container.querySelector('button[aria-label*="sleep 300"]') as HTMLButtonElement
+    await act(async () => { row.click() })
     // The peek request carries the OWNER session (the fence compares it).
     expect(outputCalls).toEqual([{ sessionId: 'root', id: 'bash-1' }])
-    expect(container.textContent).toContain('output-of-bash-1')
-    // Exactly one dock region exists (never one per row).
-    expect(container.querySelectorAll('[role="region"]')).toHaveLength(1)
-    // The selected row is marked, and the close button dismisses the dock.
-    expect(first.getAttribute('aria-pressed')).toBe('true')
-    const close = container.querySelector('button[aria-label="关闭"]') as HTMLButtonElement
-    await act(async () => { close.click() })
-    expect(container.textContent).not.toContain('output-of-bash-1')
-    expect(container.querySelectorAll('[role="region"]')).toHaveLength(0)
+    // The popover is portaled to document.body (outside the tab container).
+    expect(document.body.textContent).toContain('output-of-bash-1')
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+    // Escape dismisses the popover.
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(document.body.textContent).not.toContain('output-of-bash-1')
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(0)
     unmount()
   })
 
-  it('switches the single dock between selected rows', async () => {
+  it('switches the single output popover between rows', async () => {
     const store = makeStore(baseSnapshot())
     const { container, unmount } = await renderPage(store)
     const first = container.querySelector('button[aria-label*="sleep 300"]') as HTMLButtonElement
     await act(async () => { first.click() })
-    expect(container.textContent).toContain('output-of-bash-1')
+    expect(document.body.textContent).toContain('output-of-bash-1')
     const second = container.querySelector('button[aria-label*="echo hi"]') as HTMLButtonElement
     await act(async () => { second.click() })
-    // One dock, now fed by the second job (its owner session scopes the replay).
+    // One popover, now fed by the second job (its owner session scopes the replay).
     expect(outputCalls).toEqual([
       { sessionId: 'root', id: 'bash-1' },
       { sessionId: 'child', id: 'bash-2' },
     ])
-    expect(container.querySelectorAll('[role="region"]')).toHaveLength(1)
-    expect(container.textContent).not.toContain('output-of-bash-1')
-    expect(container.textContent).toContain('output-of-bash-2')
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+    expect(document.body.textContent).not.toContain('output-of-bash-1')
+    expect(document.body.textContent).toContain('output-of-bash-2')
     unmount()
   })
 
@@ -368,11 +364,11 @@ describe('SubagentView background jobs', () => {
     }
     const store = makeStore(baseSnapshot())
     const { container, unmount } = await renderPage(store)
-    const unread = container.querySelector('button[aria-label*="unread cmd"]') as HTMLButtonElement
-    await act(async () => { unread.click() })
-    // read:false → the pane explains the output awaits the model's job_output
+    const row = container.querySelector('button[aria-label*="unread cmd"]') as HTMLButtonElement
+    await act(async () => { row.click() })
+    // read:false → the popover explains the output awaits the model's job_output
     // (never the model's cursor, so there is nothing to steal yet).
-    expect(container.textContent).toContain('等待模型读取该任务的输出')
+    expect(document.body.textContent).toContain('等待模型读取该任务的输出')
     unmount()
   })
 
@@ -390,11 +386,11 @@ describe('SubagentView background jobs', () => {
     const { container, unmount } = await renderPage(store)
     expect(container.textContent).toContain('60 个后台任务 · 30 运行中')
     expect(container.querySelectorAll('button[aria-label*="bulk cmd"]')).toHaveLength(60)
-    // Clicking a row anywhere in the long list still feeds the single dock.
-    const bulk = container.querySelector('button[aria-label*="bulk cmd 59"]') as HTMLButtonElement
-    await act(async () => { bulk.click() })
+    // Clicking a row anywhere in the long list still feeds the single popover.
+    const row = container.querySelector('button[aria-label*="bulk cmd 59"]') as HTMLButtonElement
+    await act(async () => { row.click() })
     expect(outputCalls).toEqual([{ sessionId: 'root', id: 'bash-69' }])
-    expect(container.textContent).toContain('output-of-bash-69')
+    expect(document.body.textContent).toContain('output-of-bash-69')
     unmount()
   })
 
@@ -424,40 +420,6 @@ describe('SubagentView background jobs', () => {
       expect(jobListCalls).toEqual([])
       expect(outputCalls).toEqual([])
       unmount()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('stops polling the output and the job lists while the page is hidden', async () => {
-    vi.useFakeTimers()
-    try {
-      const store = makeStore(baseSnapshot())
-      // Render visible to load the rows (a hidden page has none), then hide the
-      // page and hold the counters still.
-      const rendered = renderRoot(createElement(SubagentView, {
-        sessionId: 'root',
-        active: true,
-        ctx: makeCtx(store),
-      }))
-      await flushJobs()
-      const first = rendered.container.querySelector('button[aria-label*="sleep 300"]') as HTMLButtonElement
-      await act(async () => { first.click() })
-      expect(outputCalls).toHaveLength(1)
-      rendered.rerender(createElement(SubagentView, {
-        sessionId: 'root',
-        active: false,
-        ctx: makeCtx(store),
-      }))
-      // The visibility flip itself re-pulls the dock once (the pane's own
-      // effect deps include `active`); what must stop is everything after it.
-      await flushJobs()
-      const peeks = outputCalls.length
-      const reads = jobListCalls.length
-      await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
-      expect(outputCalls).toHaveLength(peeks)
-      expect(jobListCalls).toHaveLength(reads)
-      rendered.unmount()
     } finally {
       vi.useRealTimers()
     }

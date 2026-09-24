@@ -39,16 +39,6 @@ export const IconDiffOutline16 = ({ size = 16, className }: IconProps) => (
   </svg>
 )
 
-/**
- * Stop glyph for the background-job kill button: a filled square in the
- * app's outline scale (16), the universal "halt this work" mark.
- */
-export const IconStopOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor" stroke="none" />
-  </svg>
-)
-
 /** Upload glyph in the app's outline style: an arrow rising into a tray
  *  (the file-manager "upload into the workspace" action). */
 export const IconUploadOutline16 = ({ size = 16, className }: IconProps) => (

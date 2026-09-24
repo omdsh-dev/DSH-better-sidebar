@@ -45,6 +45,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     autoOpenJobs: typeof record.autoOpenJobs === 'boolean'
       ? record.autoOpenJobs
       : SIDEBAR_PREFS_DEFAULTS.autoOpenJobs,
+    tasksViewMode: record.tasksViewMode === 'tree' || record.tasksViewMode === 'graph'
+      ? record.tasksViewMode
+      : SIDEBAR_PREFS_DEFAULTS.tasksViewMode,
     agentOpenTools: typeof record.agentOpenTools === 'boolean'
       ? record.agentOpenTools
       : SIDEBAR_PREFS_DEFAULTS.agentOpenTools,

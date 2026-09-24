@@ -9,7 +9,16 @@
 import { encodeHtmlUrl } from '../html-route.ts'
 import type { LastActivity } from '../subagent-activity.ts'
 import type { SidechatLiveEvent, SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
-import type { SidebarJobView, SidebarSessionEvent } from '../context-types.ts'
+import type {
+  SidebarCreateTeamTaskRequest,
+  SidebarJobView,
+  SidebarSessionEvent,
+  SidebarTeamMemberView,
+  SidebarTeamTaskMutationResult,
+  SidebarTeamTaskView,
+  SidebarUpdateTeamTaskRequest,
+} from '../context-types.ts'
+import type { WorkflowRunView } from '../workflow-runs.ts'
 
 /** One wire failure. */
 export class SidebarApiError extends Error {
@@ -112,6 +121,23 @@ export interface JobOutputResult {
 
 /** The `subagents.live` response: running child id → latest activity. */
 export type SubagentLiveResult = { live: Record<string, LastActivity> }
+
+/** The `workflows.list` response: the tree's folded workflow runs. */
+export type WorkflowsListResult = { runs: WorkflowRunView[] }
+
+/** The `teams.view` response (structural degradation contract). */
+export type TeamsViewResult =
+  | { available: false }
+  | { available: true; team: { members: SidebarTeamMemberView[]; tasks: SidebarTeamTaskView[] } | null }
+
+/** The `teams.taskCreate` request payload (minus the rootSessionId). */
+export type TeamsTaskCreateRequest = SidebarCreateTeamTaskRequest
+
+/** The `teams.taskUpdate` request payload (minus the rootSessionId). */
+export type TeamsTaskUpdateRequest = SidebarUpdateTeamTaskRequest
+
+/** The task-mutation result union (CAS conflict stays distinct). */
+export type TeamsTaskMutationResult = SidebarTeamTaskMutationResult
 
 /**
  * Parse one `/sidebar` JSON response envelope into its value. A non-ok
@@ -353,6 +379,27 @@ export const api = {
    */
   subagentsLive: (rootSessionId: string, signal?: AbortSignal) =>
     call<SubagentLiveResult>('subagents.live', { rootSessionId }, signal),
+  /**
+   * The workflow runs of the whole tree, folded host-side from the
+   * `tool-workflow/*` session events (the same four types the official
+   * workflow-run panel folds). Empty when the tree never ran a workflow —
+   * absence is the normal case, never an error.
+   */
+  workflowsList: (rootSessionId: string, signal?: AbortSignal) =>
+    call<WorkflowsListResult>('workflows.list', { rootSessionId }, signal),
+  /**
+   * The team led by the tree's root agent (experimental Agent Teams layer):
+   * `{available:false}` hides the whole block; `{team:null}` means the root
+   * leads no team. Poll-driven (the official panel is manual-refresh too).
+   */
+  teamsView: (rootSessionId: string, signal?: AbortSignal) =>
+    call<TeamsViewResult>('teams.view', { rootSessionId }, signal),
+  /** Create one shared task on the root-led team. */
+  teamsTaskCreate: (rootSessionId: string, req: TeamsTaskCreateRequest) =>
+    call<TeamsTaskMutationResult>('teams.taskCreate', { rootSessionId, ...req }),
+  /** CAS-mutate one shared task; conflicts ride the returned union. */
+  teamsTaskUpdate: (rootSessionId: string, req: TeamsTaskUpdateRequest) =>
+    call<TeamsTaskMutationResult>('teams.taskUpdate', { rootSessionId, ...req }),
   /** Create a Side Chat thread: a child session seeded with the parent's
    *  full log up to now. Empty question = immediate create (Codex-style):
    *  the thread opens empty, the first prompt carries the boundary. */

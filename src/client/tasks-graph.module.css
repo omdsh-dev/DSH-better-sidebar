@@ -1,0 +1,1496 @@
+/**
+ * Tasks page chrome — the plugin's native scale, the same one the other tabs
+ * (sidebar / changes / sidechat) are cut to: 12px body (`--dsw-font-xxs-*`),
+ * 11px meta (`--dsw-font-xxxs-11`), 10px micro labels, 28px controls (the host
+ * `Button sm`), 1px `--dsw-alias-border-l2` edges with `-l1` hairlines, hover
+ * fill `--dsw-alias-interactive-bg-hover`, no shadow on any in-flow panel, and
+ * `--dsw-shadow-lv2/3` reserved for the floating layers. One accent, used
+ * sparingly (current node, team/workflow relations, live lines).
+ *
+ * Design target: the native right sidebar at its NARROW width (~360px). Every
+ * block must be readable there — nothing may rely on horizontal room.
+ *
+ * Skin contract: every color resolves to a --dsw-* token (tests/theme.spec.ts
+ * guards `color:`).
+ */
+
+/* ── Graph canvas ──────────────────────────────────────────────────────── */
+
+.graphView {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+  touch-action: none;
+  /* Panning must never turn into a text selection. */
+  user-select: none;
+  /* Graph paper: the dotted grid is part of the language. */
+  background-image: radial-gradient(circle, var(--dsw-alias-border-l1) 0.6px, transparent 0.6px);
+  background-size: 16px 16px;
+  background-position: 0 0;
+}
+
+.canvasDragging {
+  cursor: grabbing;
+}
+
+.canvasInner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* A connector is the graph's spine: ink line art at FULL strength
+   (the old 0.7 fade put it under the cards' own borders). It keeps an ink token
+   rather than the `-l1`/`-l2` edge rungs: the canvas is scaled by the fit (0.78
+   at the narrow end), so a 4%/10% black stroke lands at ~0.8 device px and
+   reads as nothing — measured by swapping the token on the rendered page.
+   The relation accents below are the semantic exceptions (state tokens). */
+.edge {
+  fill: none;
+  stroke: var(--dsw-alias-label-tertiary);
+  stroke-width: 1;
+}
+
+.edgeTeam {
+  stroke: var(--dsw-alias-state-business-primary);
+  stroke-dasharray: 3 3;
+  opacity: 0.9;
+}
+
+.edgeWorkflow {
+  stroke: var(--dsw-alias-state-business-primary);
+  opacity: 0.9;
+}
+
+.edgeFold {
+  stroke-dasharray: 1 4;
+  opacity: 0.5;
+}
+
+/* A phase frame is a BACKDROP: a dashed 1px `-l2` contour — the same 1px edge
+   rung as the cards, and one rung above the `-l1` dotted grid — so the frame
+   groups its members without competing with the solid cards and the ink
+   connectors drawn over it. Its label is the part a reader actually reads, so
+   the label — and only the label — climbs onto a text ink. */
+.phaseFrame {
+  position: absolute;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.phaseLabel {
+  position: absolute;
+  top: -7px;
+  left: 8px;
+  padding: 0 5px;
+  background: var(--dsw-alias-bg-layer-1);
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ── Nodes ─────────────────────────────────────────────────────────────── */
+
+/* The card. `border-box` and the 6px/8px inset are load-bearing: the layout
+   reserves a height per card SHAPE (tasks-graph-layout.ts `nodeHeight` sums the
+   rows the card renders) and `box.h` positions the edges and the phase frames,
+   so the card must RENDER exactly the height its box reserved — with the
+   default content-box the 6px paddings and the edges were added on top of every
+   reserve. Keep this padding in step with the layout's `NODE_PAD_Y`.
+   A shape whose title ends up on ONE line renders fewer rows than its reserve:
+   centering the column turns that leftover into even padding around the block
+   instead of a hole under it (the box size itself is fixed — the edges and the
+   phase frames are placed from it, so a card can never be content-sized). */
+.node {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 6px 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 4px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.node:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The current session: the card keeps the native selected language — the
+   same 2px accent bar the tree row wears, never a shadow. */
+.nodeCurrent::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--dsw-alias-state-business-primary);
+}
+
+/* Teammates and the workflow run wear the accent edge; the run adds its
+   tint, so the two read apart without a second border weight. */
+.nodeTeam {
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+.nodeWorkflow {
+  border-color: var(--dsw-alias-state-business-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 6%, var(--dsw-alias-bg-layer-1));
+}
+
+.nodeSettled {
+  opacity: 0.62;
+}
+
+.nodeError {
+  border-color: var(--dsw-alias-state-error-primary);
+}
+
+/* The fold aggregate mirrors the tree's dashed fold row (`treeFoldRow`). */
+.nodeFold {
+  border: 1px dashed var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-base);
+}
+
+.nodeFold:hover {
+  border-color: var(--dsw-alias-label-primary);
+}
+
+.nodeHeader {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.nodeDot {
+  flex: none;
+}
+
+.nodeGlyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The leading marks of a tree row (state dot + node glyph) ride the FIRST text
+   line — the 18px title line — so a row that grows with a live / task line
+   keeps them where the eye reads the node, not glued to the row's top edge. */
+.treeGlyph {
+  display: inline-flex;
+  flex: none;
+  margin-top: 3px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.treeDot {
+  flex: none;
+  margin-top: 6px;
+}
+
+/* The mono meta line: the card's SECOND ink rung — one under the title
+   (`label-primary`), one over the task line's status word (`label-tertiary`).
+   Primary → secondary → tertiary is the page's whole ink scale, so a card
+   carries at most three rungs and never a fourth weight. */
+.nodeMeta {
+  margin-top: 2px;
+  font: var(--dsw-font-xxxs-11);
+  font-family: var(--ds-font-family-code, monospace);
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The fold aggregate recedes ONE rung in both weight and ink (a plain title),
+   so its meta steps down with it — otherwise the two grey lines read as one
+   flat block and the card has no hierarchy at all. */
+.nodeFold .nodeMeta {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ── Node shared-task line (team members only) ─────────────────────────── */
+
+/* The task row keeps the card's ink discipline instead of inventing its own:
+   the SUBJECT rides the second rung with the meta line (it is content), while
+   the status word and the `+N` counter stay on the third rung as its
+   annotations — a row of one flat grey would lose the subject entirely. Its
+   10px/1.3 line plus the 3px lead is the row `NODE_TASK_H` reserves. */
+.taskLine {
+  display: flex;
+  cursor: pointer;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  min-width: 0;
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.taskGlyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.taskLine:hover .taskSubject {
+  color: var(--dsw-alias-label-primary);
+}
+
+.taskLine:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
+.taskSubject {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.taskState {
+  flex: none;
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.taskMore {
+  flex: none;
+  padding: 0 3px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 2px;
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ── Live activity row (icon + tool + args; shared by both modes) ──────── */
+
+.live {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  min-width: 0;
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--dsw-alias-state-business-primary);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.liveGlyph {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  height: 11px;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+}
+
+.liveTool {
+  flex: none;
+}
+
+.liveArgs {
+  color: var(--dsw-alias-label-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.liveText {
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Control cluster: bottom-right, horizontal, visible in BOTH modes ──── */
+
+.controls {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 6;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 3px;
+}
+
+/* Every cell of the cluster is the host `Button sm` square: 28px tall, and a
+   glyph button exactly 28px wide. The box model is declared here (not merely
+   inherited from the host button rule) so the 28px contract holds for the cell
+   even if the button class under it changes; the zoom readout beside it keeps
+   the same 28px height with a fixed 36px width so the buttons never shift as
+   the percentage changes width. */
+.controlBtn {
+  box-sizing: border-box;
+  min-width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border: none;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.controlBtn + .controlBtn,
+.controlZoomLevel + .controlBtn,
+.controlBtn + .controlZoomLevel {
+  border-left: 1px solid var(--dsw-alias-border-l2);
+}
+
+.controlBtn:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.controlBtnActive {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+/* The zoom readout is the cluster's one non-button cell: same 28px height,
+   micro type, tabular figures so the row of numbers does not jitter. */
+.controlZoomLevel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 36px;
+  height: 28px;
+  padding: 0 5px;
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ── Tree mode ─────────────────────────────────────────────────────────── */
+
+.treeView {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 10px 44px;
+  scrollbar-width: thin;
+  user-select: none;
+}
+
+/* One tree row: title over mono meta, on the page's 32px row rhythm (18px title
+   + 14px meta, no vertical padding) — the row pitch stays uniform whatever the
+   row carries, and the live / task lines extend it. */
+.treeRow {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 0 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.treeRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.treeRow:focus-visible {
+  outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent);
+  outline-offset: -1px;
+}
+
+/* The current session: the row keeps the native selected fill and gains the
+   2px accent bar the design asks for — a pseudo element, so the row stays
+   shadowless and its metrics never shift between rows. The bar is inset 4px
+   inside the 32px row (the graph card's own inset), so it reads as a marker on
+   the row rather than a full-height rule. */
+.treeRowActive {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.treeRowActive::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--dsw-alias-state-business-primary);
+}
+
+.treeRowSettled {
+  opacity: 0.62;
+}
+
+/* Children hang on a hairline thread, never a box. */
+.treeKids {
+  margin-left: 15px;
+  padding-left: 10px;
+  border-left: 1px solid var(--dsw-alias-border-l1);
+}
+
+.treeContent {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 32px;
+}
+
+.treeTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: var(--dsw-font-xxs-strong-12);
+  color: var(--dsw-alias-label-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.treeMeta {
+  font: var(--dsw-font-xxxs-11);
+  font-family: var(--ds-font-family-code, monospace);
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.treeFoldRow {
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: 4px;
+  margin: 2px 0;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ── Popover card ──────────────────────────────────────────────────────── */
+
+/* The floating card (node detail / task window / job output): a raised layer,
+   so it — and only it — carries the elevation shadow. ONE skeleton for every
+   card in the family — head band / title / meta rows / one scrolling well /
+   hairline action bar — and three ink tiers inside: the title (primary), the
+   values and the body (secondary), the keys, group headers and hints
+   (tertiary). A card never paints a fourth rung. */
+.popCard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  max-width: 100%;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 4px;
+  box-shadow: var(--dsw-shadow-lv3);
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+  box-sizing: border-box;
+}
+
+/* The head band. It is exactly one control tall (28px, the host's `sm`), so a
+   card with a head action and a card without one put their title on the SAME
+   line of the grid; the micro caps inside ride the middle of that band and
+   keep the page's 0.12em tracking (the same voice as `.taskLabel`). */
+.popHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+  margin-bottom: 4px;
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The chip's own 10px padding would inset its glyph from the card's right
+   content edge; pull the box back by 8px so the × lands on the text axis. */
+.popHeadActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: -8px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* The action bar closes EVERY card the same way: one l1 rule above, one 8px
+   beat, and the primary action left to fill whatever the row gives it. */
+.popFoot {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.popFoot > * {
+  flex: 1;
+}
+
+.jobPopTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.jobPopMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* The meta line's value: the value rung of the card (12px secondary), the same
+   one `.popValue` puts in the node detail's grid — so "负责人 designer" and
+   "状态 已完成" are set at the same scale. */
+.jobPopValue {
+  font: var(--dsw-font-xxs-12);
+  line-height: 1.45;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.jobPopActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+/* The follow-tail switch is the action bar's left cell; the host Switch draws
+   only a track, so its wording rides beside it (the switch keeps the same
+   wording as its accessible name). */
+.jobPopFollow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.jobPopFollowLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The job output well reads on the host's own code-block rhythm (11px/19px
+   code): unwrapped and wrapped terminal lines share one leading, and the well
+   matches every markdown code block in the app. Scoped so the shared `.popPre`
+   metrics the node/task cards rely on stay untouched — and doubled, so the
+   base rule's own `font-size` / `line-height` cannot win on sheet order. */
+.jobPopPre.jobPopPre {
+  font: var(--dsw-font-markdown-code-block, 11px/19px var(--ds-font-family-code, monospace));
+}
+
+/* The armed (first-click) confirm of the popover's kill: the same danger chip
+   the drawer's terminate button arms into, so one destructive action reads the
+   same in both places. */
+.jobPopKillArmed,
+.jobPopKillArmed:hover {
+  border: 1px solid var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* The title row every card opens with: [glyph][name], the glyph being the same
+   host icon the node's own card carries — the popover never types a character
+   in place of an icon, and both popover kinds open identically. */
+.popTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.popGlyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.popTitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+  font: var(--dsw-font-xxs-strong-12);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The key/value grid. `margin: 0` is load-bearing: a bare `<dl>` ships the UA's
+   `1em` block margin, which would out-vote the card's own 4px beat and double
+   the gap under the title. */
+.popRows {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 10px;
+  margin: 0;
+  align-items: baseline;
+  line-height: 1.45;
+}
+
+.popKey {
+  font: var(--dsw-font-xxxs-11);
+  line-height: 1.45;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The value rung. `margin: 0` clears the UA's `dd` indent (the column puts the
+   value after its key; the 40px indent would only push the ellipsis edge). */
+.popValue {
+  margin: 0;
+  text-align: right;
+  font: var(--dsw-font-xxs-12);
+  line-height: 1.45;
+  color: var(--dsw-alias-label-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.popValueMono {
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 11px;
+}
+
+/* An inset well: the hairline is definition, the fill is the surface. The
+   160px cap is the page's one scroll-well height — the member list, the run's
+   phase list, the output well and the task description all take it, so no card
+   in the family scrolls at a different depth. */
+.popPre {
+  margin: 4px 0 0;
+  padding: 8px;
+  max-height: 160px;
+  overflow: auto;
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 3px;
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--dsw-alias-label-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* A section inside a card opens with the family's one hairline: 8px of air on
+   both sides of the rule (the card's own 4px gap plus 4px here, and the 8px
+   padding below), exactly the beat `.jobPopActions` closes a card with. */
+.popSection {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.popList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 160px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.popGroup {
+  padding: 4px 2px 2px;
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* A list row is a press target on the page's control rhythm: EVERY row is one
+   control tall (28px) with the page's 4px row radius, whether it is a real
+   button (a jump affordance) or a plain tally line — the two shapes share one
+   well, so they must not differ. The selector is scoped to the well because
+   `.Button_sm` is (0,1,0) as well and the plugin's sheet has no guaranteed
+   order against the host's; (0,2,0) makes the shape deterministic. */
+.popList .popListRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  min-height: 28px;
+  padding: 0 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.popList .popListRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.popListLabel {
+  flex: 1;
+  min-width: 0;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The card's smallest voice (the empty-description line, the drag hint, the
+   invalid-subject rule). Doubled so that a container rule — the markdown well's
+   body ink, the meta line — can never lift it a rung. */
+.popHint.popHint {
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.popError {
+  font-size: 10px;
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* ── Task window: markdown view + multi-line edit ──────────────────────── */
+
+/* The description is a PAGE-TYPE preview, not the chat transcript: the host's
+   default markdown scale (14px body, 21/19/18px headings, 32px section margins)
+   is the conversation's, and this card is 430px wide on a 12px page.
+ *
+ * The containment is done at the TOKEN level — the host's own `.markdown` and
+ * heading rules read `var(--dsw-font-markdown-*)`, and a local re-declaration
+ * wins for every descendant, so no rule here has to out-specify the host. The
+ * margins are literals in the host sheet, so those few rules do need to
+ * out-specify `.MarkdownText_markdown h1` (0,1,1): the doubled container class
+ * makes them (0,2,1) DETERMINISTICALLY, because the plugin's global
+ * `<style data-plugin>` has no guaranteed order against the host's sheet and a
+ * specificity tie would be a coin flip.
+ *
+ * The well is the page's one scroll-well height (160px), like the member /
+ * task / output wells beside it, and the body is the card's VALUE rung
+ * (secondary) — a description is content, not a title, so the title keeps the
+ * card's only primary ink. */
+.taskMarkdown {
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 2px 0;
+  font: var(--dsw-font-xxs-12);
+  line-height: 1.5;
+  scrollbar-width: thin;
+  /* The page scale, re-declared for the host renderer's own tokens. */
+  --dsw-font-markdown-base: var(--dsw-font-xxs-12);
+  --dsw-font-markdown-base-strong: var(--dsw-font-xxs-strong-12);
+  --dsw-font-markdown-h1: 600 13px/18px var(--dsw-font-family);
+  --dsw-font-markdown-h2: 600 13px/18px var(--dsw-font-family);
+  --dsw-font-markdown-h3: var(--dsw-font-xxs-strong-12);
+  --dsw-font-markdown-h4: var(--dsw-font-xxs-strong-12);
+  --dsw-font-markdown-code: var(--dsw-font-xxxs-11);
+  --dsw-font-markdown-code-block: var(--dsw-font-markdown-code-block-small);
+  --dsw-font-markdown-table: var(--dsw-font-xxxs-11);
+  --dsw-font-markdown-table-head: var(--dsw-font-xxxs-strong-11);
+}
+
+/* The body's ink. The host renderer paints `label-primary` on its own ROOT
+   element, which is a CHILD of this well — a color on the well would only be
+   inherited away — so the rung is set on that root itself (0,2,0 over the
+   host's 0,1,0), and the empty-description hint keeps its own rung through its
+   doubled class. */
+.taskMarkdown.taskMarkdown > * {
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* Section rhythm: the host's 32px/16px margins collapse to the page's 8/4px
+   scale, and list indentation narrows from 18px to 16px. */
+.taskMarkdown.taskMarkdown :is(h1, h2, h3) {
+  margin: 8px 0 4px;
+}
+
+.taskMarkdown.taskMarkdown :is(h4, h5, h6) {
+  margin: 6px 0 2px;
+}
+
+.taskMarkdown.taskMarkdown :is(p, blockquote, pre) {
+  margin: 6px 0;
+}
+
+.taskMarkdown.taskMarkdown :is(ul, ol) {
+  margin: 6px 0;
+  padding-left: 16px;
+}
+
+.taskMarkdown.taskMarkdown li:not(:first-child) {
+  margin-top: 2px;
+}
+
+.taskMarkdown.taskMarkdown li > p {
+  margin: 4px 0;
+}
+
+.taskMarkdown.taskMarkdown li::marker {
+  line-height: 18px;
+}
+
+/* A quote is a hairline definition like every other edge on the page — the
+   host draws a 2px label-caption bar, two rungs off the page's own rule
+   vocabulary. */
+.taskMarkdown.taskMarkdown blockquote {
+  border-left: 1px solid var(--dsw-alias-border-l2);
+  padding-left: 10px;
+}
+
+.taskMarkdown.taskMarkdown hr {
+  margin: 8px 0;
+}
+
+/* Inline code is a chip on the body scale: the host sizes it at `0.875em`
+   with `!important` (10.5px here), which is under the page's 11px meta rung —
+   so this is the one rule that has to answer `!important` with `!important`,
+   and its (0,3,1) out-ranks the host's (0,2,1). The 3px radius matches the
+   plugin's own small chips, not the chat sheet's 6px. */
+.taskMarkdown.taskMarkdown :not(pre) > code {
+  font-size: 11px !important;
+  border-radius: 3px;
+}
+
+/* Table cells: the host's 10px/16px padding is chat-sized; on a 12px page the
+   header rule is a solid l2 edge and the row rules are l1 hairlines. */
+.taskMarkdown.taskMarkdown :is(th, td) {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.taskMarkdown.taskMarkdown th {
+  border-bottom-color: var(--dsw-alias-border-l2);
+}
+
+.taskTextarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.taskTextarea:focus {
+  outline: none;
+  border-color: var(--dsw-alias-state-business-primary);
+}
+
+/* ── Task create/edit dialog ───────────────────────────────────────────── */
+
+/* The form's two field groups keep the card's OWN beat: 8px between groups
+   against the 4px between a label and its control, so view and edit stack on
+   the same rhythm (the view's owner field carries the same 8px above it). */
+.taskForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.taskField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* The view body separates the owner FIELD from the description above it by the
+   form's own 8px group beat (4px card gap + 4px here). */
+.taskMarkdown + .taskField {
+  margin-top: 4px;
+}
+
+.taskLabel {
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The host Input ships chat type (14px) and a 32px box; inside this form it is
+   one field next to a 12px multi-line one, so it takes the page's body scale.
+   The double class out-ranks the host's own `input` rule (0,2,1 over 0,1,0). */
+.taskForm .taskInput input {
+  font: var(--dsw-font-xxs-12);
+}
+
+/* The host box's own edge is the one rung this page does not use: it ships
+   `-l4` (rgba(0,0,0,.16)) while every other field and control here — the
+   multi-line sibling right below it included — takes `-l2`. Left alone, the
+   form showed two different edge inks for two fields in the same column. The
+   host keeps its own focus border (brand primary) because the rule steps aside
+   under `:focus-within`. */
+.taskForm .taskInput:not(:focus-within) {
+  border-color: var(--dsw-alias-border-l2);
+}
+
+/* A blank subject is the form's only invalid state. The hint under the field
+   reports it in words, but the edge has to report it in ink as well — with the
+   focus border gone the field otherwise looked exactly like a valid one and
+   the only evidence left was a disabled Save. The host keeps the field while
+   the reader is still in it, so the two signals never fight. */
+.taskForm .taskInput:has(input[aria-invalid='true']):not(:focus-within) {
+  border-color: var(--dsw-alias-state-error-primary);
+}
+
+.taskOwnerRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* The owner chips are a real choice, not a run of text: every chip carries the
+   page's 1px l2 edge, hover adds the shared hover fill, and the selected one
+   takes the host's active fill under a stronger edge and primary ink — so
+   rest / hover / selected are three different pictures (the host's own
+   `Pill_active` fill alone sits too close to the hover fill to read as a
+   selection). `border-box` keeps the chip on the primitive's 24px box. */
+.taskOwnerRow .taskOwnerPill {
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.taskOwnerRow .taskOwnerPill:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.taskOwnerRow .taskOwnerPillActive {
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-button-ghost-active-border);
+  background: var(--dsw-alias-button-ghost-active-fill);
+  color: var(--dsw-alias-label-primary);
+}
+
+.taskOwnerRow .taskOwnerPillActive:hover {
+  background: var(--dsw-alias-button-ghost-active-hover);
+}
+
+/* The card's action grading: exactly one primary action per card (the
+   affirmative one — 保存 / 完成 / 重新打开), and the destructive action keeps
+   its danger ink in EVERY state instead of only after the first click. Both
+   rules are scoped to the action bar so they out-rank the button primitive
+   (`.Button_outline` is (0,1,0) and ships `background: transparent`) whatever
+   order the plugin's sheet lands in. */
+.jobPopActions .taskDanger {
+  color: var(--dsw-alias-state-error-primary);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 40%, transparent);
+}
+
+.jobPopActions .taskDanger:hover {
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  border-color: var(--dsw-alias-state-error-primary);
+}
+
+/* Armed (the second press is the one that deletes): the filled confirm chip,
+   one rung louder than the resting danger ink. (0,3,0) also keeps it above the
+   shared `.jobPopKillArmed` chip the jobs popover arms into. */
+.jobPopActions .taskDanger.taskDangerArmed,
+.jobPopActions .taskDanger.taskDangerArmed:hover {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
+  border-color: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* ── Team board (always-visible strip under the header) ────────────────── */
+
+.teamBoard {
+  flex: none;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+/* The collapsible bar above a section: the host's own bar type (12px strong,
+   sentence case) rather than the old tracked micro caps. It is exactly one
+   control tall (28px, border-box) and wears the same 1px l1 rule the other
+   board sections are divided by, so the four blocks read as one column. */
+.teamBoardBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: none;
+  font: var(--dsw-font-xxs-strong-12);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.teamBoardBar:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.teamBoardCount {
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.teamBoardChev {
+  margin-left: auto;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.teamBoardIcon {
+  display: inline-flex;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The shared warning note of the team surfaces (the board and the task
+   window's card): 12px gutter, warn ink, micro type. */
+.teamNote {
+  padding: 0 12px 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+/* The board is four stacked blocks — bar / filters / rows / footer. Each keeps
+   the same 12px gutter and the same 6px vertical beat, and the two internal
+   breaks are the 1px l1 rule the bar closes itself with, so the strip reads as
+   one column of sections rather than four bare strips of padding. */
+.teamActions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px 8px;
+}
+
+.teamMembers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 12px;
+}
+
+.teamMemberName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The board's task well: same max height as the popover wells, and the rows
+   keep a 28px press floor with the status Tag deliberately quiet. The 6px
+   horizontal padding is the row's own 6px inset subtracted from the 12px
+   gutter, so the subject starts on the same x as the bar, the filter chips and
+   the footer button; the 1px l1 rule closes the well off from the footer. */
+.teamTasks {
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 0 6px 6px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  scrollbar-width: thin;
+}
+
+/* One row = the press target plus its overflow Menu, on the board's 28px
+   rhythm. */
+.teamTaskRow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* The row's press target takes the width the trailing Menu leaves, so a long
+   subject ellipsises instead of pushing the owner and the Tag off the line. */
+.teamTask {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 24px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-align: left;
+}
+
+.teamTask > * {
+  min-width: 0;
+}
+
+.teamTask:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.teamTaskSubject {
+  flex: 1;
+  min-width: 0;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teamTaskOwner {
+  flex: none;
+  max-width: 72px;
+  font: var(--dsw-font-xxxs-11);
+  font-family: var(--ds-font-family-code, monospace);
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The empty well keeps the row rhythm: one 28px line whose text starts on the
+   same x as a row's subject, so the footer's create button reads as the next
+   step under it instead of a detached block. */
+.teamEmpty {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 6px;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* ── Jobs drawer ───────────────────────────────────────────────────────── */
+
+.jobsDrawer {
+  flex: none;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  z-index: 5;
+}
+
+/* The drawer's collapse bar wears the page's own collapsible-bar recipe — the
+   team board bar above it, to the rule: exactly one control tall (28px,
+   border-box) with the 12px gutter and the 1px l1 hairline that closes the bar
+   off from its body (which therefore carries no top rule of its own). */
+.jobsDrawerBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: none;
+  font: var(--dsw-font-xxs-strong-12);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.jobsDrawerBar:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.jobsDrawerBar:focus-visible {
+  outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent);
+  outline-offset: -1px;
+}
+
+/* The live-job count: the bar's one accented cell, tabular so the ticking
+   number never nudges the text beside it. */
+.jobsBigNum {
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.jobsDrawerCount {
+  min-width: 0;
+  font: var(--dsw-font-xxs-12);
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The disclosure chevron (the same up-glyph the team board bar rotates): it
+   points up while the body is collapsed and flips once it is open. */
+.jobsDrawerChev {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  color: var(--dsw-alias-label-tertiary);
+  transition: transform 0.18s ease;
+}
+
+.jobsDrawerChev[data-open='true'] {
+  transform: rotate(180deg);
+}
+
+.jobsAutoNote {
+  padding: 6px 12px 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.jobsDrawerBody {
+  max-height: 156px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  scrollbar-width: thin;
+}
+
+.jobsRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 4px 6px;
+  border-radius: 3px;
+}
+
+/* A settled job recedes the way a completed tree row does: the live rows keep
+   the page's full ink, the finished ones step back to the same 0.62. */
+.jobsRow[data-settled='true'] {
+  opacity: 0.62;
+}
+
+/* The row's press target. It clips at its own edge — the columns ellipsize
+   inside it — so the reserved terminate column beside it is never encroached,
+   however narrow the panel gets. */
+.jobsRowMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  overflow: hidden;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.jobsRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The row whose output popover is open (declared after the hover fill so the
+   open state wins): the reader always knows which job the floating card reads. */
+.jobsRow[data-open='true'],
+.jobsRow[data-open='true']:hover {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.jobsRowMain:focus-visible {
+  outline: 2px solid var(--dsw-alias-interactive-bg-hover-accent);
+  outline-offset: -1px;
+}
+
+.jobsLabel {
+  flex: 1 1 auto;
+  /* The row's identity outranks its secondary line: at 360px the label keeps a
+     third of the row and the meta ellipsizes instead of the command vanishing. */
+  min-width: 33%;
+  font: var(--dsw-font-xxs-strong-12);
+  font-family: var(--ds-font-family-code, monospace);
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The secondary line (owner · detail · duration): code face like the tree rows'
+   meta, with tabular figures so a ticking duration cannot re-truncate the line
+   it ends. It yields before the label does. */
+.jobsMeta {
+  flex: 0 1 auto;
+  min-width: 0;
+  font: var(--dsw-font-xxxs-11);
+  font-family: var(--ds-font-family-code, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The terminate column. EVERY row reserves the same 28px box — the settled
+   rows that offer no action included — so revealing the button (hover/focus)
+   or arming it (first click) never re-flows the row's text. */
+.jobsKillSlot {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 28px;
+}
+
+.jobsKill {
+  position: absolute;
+  top: 0;
+  right: 0;
+  box-sizing: border-box;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 5px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 3px;
+  background: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code, monospace);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+/* The kill action is an affordance, not a standing loud element: the pointer
+   over the row, or any focus inside it, summons it at the same box as always. */
+.jobsRow:hover .jobsKill,
+.jobsRow:focus-within .jobsKill,
+.jobsKill:focus-visible {
+  opacity: 1;
+}
+
+.jobsKill:hover {
+  border-color: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* Armed (first click): the confirm wording replaces the icon in place — the
+   chip keeps its 28px height and takes its own opaque surface, so the reader
+   never mistakes it for the row's own text. The selector is doubled and
+   repeats `:hover` because the host's own `.outline:hover:not(:disabled)` is a
+   three-class rule that would otherwise paint its translucent hover fill over
+   this surface while the pointer is still on the chip that was just clicked.
+   The chip is 28px wide only while it holds an ICON; the armed rules below
+   give it back its natural width. */
+.jobsKill.jobsKill[data-armed='true'],
+.jobsKill.jobsKill[data-armed='true']:hover {
+  width: auto;
+  padding: 0 7px;
+  border-color: var(--dsw-alias-state-error-primary);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-state-error-primary);
+  opacity: 1;
+  white-space: nowrap;
+}
+
+/* …but while armed the chip stops being an OVERLAY. The confirmation is far
+   wider than the 28px column it lives in, and an absolute chip drawn over the
+   row slices whatever it reaches: at 360px it cut 30px off the row's status
+   Tag (the tag ran 195-244, the chip started at 214) and clipped the tag's own
+   glyph. Taking part in the row's layout instead lets the columns ellipsize
+   into what is left — every state stays whole, and the chip's right edge does
+   not move, so the second click still lands on it. */
+.jobsRow:has(.jobsKill[data-armed='true']) .jobsKillSlot {
+  display: flex;
+  align-items: center;
+  width: auto;
+}
+
+.jobsRow:has(.jobsKill[data-armed='true']) .jobsKill {
+  position: static;
+}
+
+/* The confirmation is what the row is about for as long as it is armed, and
+   the owner · duration line is the first thing to go: squeezed to its 4px
+   remainder it painted half a glyph beside the chip. */
+.jobsRow:has(.jobsKill[data-armed='true']) .jobsMeta {
+  display: none;
+}
+
+/* A failed kill reports itself in the same reserved column (same overlay, same
+   opaque surface) instead of pushing the row's text aside. It never takes the
+   click: the chip underneath stays the retry target. */
+.jobsKillError {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  pointer-events: none;
+  align-items: center;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 3px;
+  background: var(--dsw-alias-bg-layer-1);
+  font-family: var(--ds-font-family-code, monospace);
+  font-size: 10px;
+  color: var(--dsw-alias-state-error-primary);
+  white-space: nowrap;
+}
+
+/* ── Page-level empty / loading hints ──────────────────────────────────── */
+
+.viewEmptyHint {
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+  text-align: center;
+  padding: 0 24px;
+}

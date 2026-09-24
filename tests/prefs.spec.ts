@@ -34,6 +34,7 @@ describe('side card preferences', () => {
       .toEqual({
         autoOpenSubagent: false,
         autoOpenJobs: true,
+        tasksViewMode: 'graph',
         agentOpenTools: true,
         editorExplorer: false,
         workspaceFence: true,
@@ -55,6 +56,7 @@ describe('side card preferences', () => {
       .toEqual({
         autoOpenSubagent: true,
         autoOpenJobs: true,
+        tasksViewMode: 'graph',
         agentOpenTools: false,
         editorExplorer: false,
         workspaceFence: true,
@@ -76,6 +78,7 @@ describe('side card preferences', () => {
       .toEqual({
         autoOpenSubagent: true,
         autoOpenJobs: true,
+        tasksViewMode: 'graph',
         agentOpenTools: false,
         editorExplorer: false,
         workspaceFence: true,

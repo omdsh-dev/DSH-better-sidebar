@@ -137,12 +137,30 @@ export function builtinTabs(): readonly TabDescriptor[] {
           key: 'autoOpenJobs',
           title: () => t('settingsJobsTitle'),
           desc: () => t('settingsJobsDesc'),
+        }, {
+          key: 'tasksViewMode',
+          type: 'select',
+          title: () => t('settingsViewModeTitle'),
+          desc: () => t('settingsViewModeDesc'),
+          options: [
+            {
+              value: 'graph',
+              title: () => t('settingsViewModeGraph'),
+              desc: () => t('settingsViewModeGraphDesc'),
+            },
+            {
+              value: 'tree',
+              title: () => t('settingsViewModeTree'),
+              desc: () => t('settingsViewModeTreeDesc'),
+            },
+          ],
         }],
       },
-      component: ({ ctx, scope, visible, onSubagentJump }) => (
+      component: ({ ctx, store, scope, visible, onSubagentJump }) => (
         <SubagentView
           sessionId={scope.sessionId}
           ctx={ctx}
+          store={store}
           active={visible}
           onOpenChild={(address) => { onSubagentJump?.(address.childSessionId) }}
         />

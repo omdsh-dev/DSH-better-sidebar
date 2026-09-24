@@ -31,10 +31,16 @@ const files = [
   'lib/client-registry.js.map',
   // Lazy chunks: the client fetches these from the host's /sidebar/bundle
   // route on first use (see src/client/chunk-loader.ts / src/bundle-route.ts).
+  // EVERY `CHUNK_NAMES` entry belongs here — the route reads the file out of
+  // the installed copy, so a chunk left out of this list 404s on the registry
+  // channel (`locale` was). tests/manifest-consistency.spec.ts guards the list
+  // against src/bundle-route.ts.
   'lib/client-editor.js',
   'lib/client-editor.js.map',
   'lib/client-mermaid.js',
   'lib/client-mermaid.js.map',
+  'lib/client-locale.js',
+  'lib/client-locale.js.map',
   'README.md',
   'LICENSE',
 ]

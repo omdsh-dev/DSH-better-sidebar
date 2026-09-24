@@ -23,6 +23,11 @@ export interface SidebarPrefs {
    */
   autoOpenJobs: boolean
   /**
+   * The Tasks page's default presentation: the workflow graph canvas or the
+   * classic indentation tree (the in-page toggle still flips it ad hoc).
+   */
+  tasksViewMode: 'graph' | 'tree'
+  /**
    * Whether the model-facing `sidebar_open` tool is injected into the
    * model's toolset — one tool that lets the model actively open a local
    * file, a local folder (as a tree rooted there), or an HTTP(S) page in
@@ -151,6 +156,7 @@ export type TitleBarScheme = typeof TITLE_BAR_SCHEMES[number]
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   autoOpenSubagent: true,
   autoOpenJobs: true,
+  tasksViewMode: 'graph',
   agentOpenTools: false,
   editorExplorer: false,
   workspaceFence: true,

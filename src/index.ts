@@ -43,6 +43,8 @@ import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
 import { AgentOpenRegistry, registerOpenTool, type AgentOpenRequest } from './agent-opens.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
 import { buildSubagentLiveApi, type SidebarSubagentLiveRoutes } from './subagent-live-route.ts'
+import { buildTeamsApi, type SidebarTeamsRoutes } from './team-routes.ts'
+import { buildWorkflowsApi, type SidebarWorkflowRoutes } from './workflow-routes.ts'
 import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
@@ -272,6 +274,17 @@ function buildApi(
   // `subagents.history` calls. The route degrades to a 503 when the host
   // subagent runtime is absent (the page has no topology to show anyway).
   const subagentLiveApi: SidebarSubagentLiveRoutes = buildSubagentLiveApi(ctx)
+  // Workflow runs: no service registry exists in DSH (runs are
+  // holder-owned), so the route folds the `tool-workflow/*` session events
+  // the tool's recorder appends — the same four types the official panel
+  // folds in the browser. A deployment that never runs workflows simply
+  // returns an empty list (absence is normal, never an error).
+  const workflowsApi: SidebarWorkflowRoutes = buildWorkflowsApi(ctx)
+  // Agent Teams (experimental layer): the routes degrade structurally —
+  // service absent → `{available:false}` and the client hides the block;
+  // the tree root leading no team → `{team:null}`. Mutations ride the
+  // service's own CAS result union (conflicts stay distinct).
+  const teamsApi: SidebarTeamsRoutes = buildTeamsApi(ctx)
   return {
     'session.cwd': async (payload) => {
       const { sessionId, cwd } = await cwdOf(payload)
@@ -484,6 +497,14 @@ function buildApi(
     // Subagent live previews: one batch request per refresh; the route folds
     // the newest text/tool activity of every running child in the tree.
     'subagents.live': (payload) => subagentLiveApi.live(payload),
+    // Workflow runs of the whole tree (folded from `tool-workflow/*`
+    // session events; empty list when the tree never ran one).
+    'workflows.list': (payload) => workflowsApi.list(payload),
+    // Agent Teams (experimental): the root-led team's roster + task board,
+    // and the task board's create/CAS-update mutations.
+    'teams.view': (payload) => teamsApi.view(payload),
+    'teams.taskCreate': (payload) => teamsApi.taskCreate(payload),
+    'teams.taskUpdate': (payload) => teamsApi.taskUpdate(payload),
     // The side card preferences. The settings service is optional in the
     // composition; while absent the routes report undefined and the client
     // keeps the schema defaults. Writes are revision-guarded: a stale editor

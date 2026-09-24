@@ -151,8 +151,10 @@ jobs:
       # Pin the DSH CLI the lane mounts into; the profile's bundle stack
       # (dsh-base / dsh-web-app) resolves from this installation. Keep in
       # step with the plugin's @deepseek-ai/* peer range when bumping.
-      # DSH 0.1.6-alpha.2 is the `alpha` dist-tag on npm (`latest` is still
-      # the 0.1.5 line); the lanes speak the slash-only RPC dialect
+      # Write an EXACT version, never a dist-tag: when 0.1.7-rc.1 shipped, the
+      # npm `alpha` tag still meant 0.1.7-alpha.2, rc.1 went out on `next`, and
+      # `latest` was still the 0.1.5 line — `@alpha` would mount a host this
+      # plugin no longer supports. The lanes speak the slash-only RPC dialect
       # (tests/e2e/host-protocol.ts).
       #
       # The larger heap is the fix for one of the two ways this step used to

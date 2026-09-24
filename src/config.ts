@@ -80,6 +80,7 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
 export const PrefsSchema: z<SidebarPrefs> = z.object({
   autoOpenSubagent: z.boolean().default(true),
   autoOpenJobs: z.boolean().default(true),
+  tasksViewMode: z.union([z.const('graph'), z.const('tree')]).default('graph'),
   agentOpenTools: z.boolean().default(false),
   editorExplorer: z.boolean().default(false),
   workspaceFence: z.boolean().default(true),

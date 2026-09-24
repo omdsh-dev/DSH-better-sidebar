@@ -14,7 +14,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { resolve, sep } from 'node:path'
 import { colorAlpha, effectiveTokenValue, tokenValue } from '../src/client/theme.ts'
 
 afterEach(() => {
@@ -91,11 +91,30 @@ describe('effectiveTokenValue', () => {
  * `FileTypeIcon` artwork from a platform module (the host owns those pixels
  * and its own palette), and everything the plugin renders around them —
  * including the colored tab glyphs — rides theme tokens. So the guard is
- * simply that no plugin module carries a color literal, and that no icon
- * dataset sneaked back in as a chunk.
+ * simply that no plugin module carries a color literal, that every module
+ * stylesheet paints `color` from a token, and that no icon dataset sneaked
+ * back in as a chunk.
  */
 // jsdom has no file:// import.meta.url; vitest runs from the repo root.
 const ROOT = process.cwd()
+
+/** `color` as a property — never `background-color` / `scrollbar-color` / `-webkit-text-fill-color`. */
+const COLOR_PROPERTY = /(?:^|[;{\s])color\s*:\s*([^;}]+)/g
+
+/** Values that name no paint of their own and are therefore exempt. */
+const INERT_COLOR = /^(?:inherit|currentcolor|transparent)$/i
+
+/** A token allowed by the contract: the plugin's own `--dsw-*` or the host's `--ds-*`. */
+function isThemeToken(name: string): boolean {
+  return name.startsWith('dsw-') || name.startsWith('ds-')
+}
+
+/** Every `*.module.css` sheet under `src/client/`, as repo-relative POSIX paths. */
+function moduleStylesheets(): string[] {
+  return readdirSync(resolve(ROOT, 'src/client'), { recursive: true, encoding: 'utf8' })
+    .filter(name => name.endsWith('.module.css'))
+    .map(name => `src/client/${name.split(sep).join('/')}`)
+}
 
 describe('skin contract: the plugin owns no color of its own', () => {
   it('the icon modules carry no color literals', () => {
@@ -118,6 +137,27 @@ describe('skin contract: the plugin owns no color of its own', () => {
     // Every declaration that paints a color resolves to a token.
     for (const declaration of styles.matchAll(/color:\s*([^;]+);/g)) {
       expect(declaration[1], declaration[0]).toContain('var(--dsw-')
+    }
+  })
+
+  it('every module stylesheet paints `color` from a theme token', () => {
+    const sheets = moduleStylesheets()
+    // Guard the scan itself: a glob that silently matches nothing would make
+    // this contract vacuous.
+    expect(sheets.length).toBeGreaterThan(5)
+    for (const file of sheets) {
+      const styles = readFileSync(resolve(ROOT, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+      for (const declaration of styles.matchAll(COLOR_PROPERTY)) {
+        const value = declaration[1]!.trim()
+        // `color: inherit` / `currentcolor` / `transparent` is the plugin
+        // deliberately taking the surrounding color, not painting one.
+        if (INERT_COLOR.test(value)) continue
+        // Dereference every var() — `color-mix()` chains are fine as long as
+        // the whole expression bottoms out in theme tokens.
+        const tokens = [...value.matchAll(/var\(--([a-z0-9-]+)/gi)].map(match => match[1]!)
+        expect(tokens.length, `${file}: color: ${value}`).toBeGreaterThan(0)
+        for (const name of tokens) expect(isThemeToken(name), `${file}: color: ${value}`).toBe(true)
+      }
     }
   })
 

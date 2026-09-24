@@ -81,7 +81,7 @@ export function subagentCatalogs(
  * @param childSessionId - the child row whose own catalog decides.
  */
 export function isKnownLeaf(
-  catalogs: Readonly<Record<string, SubagentCatalogView>>,
+  catalogs: Readonly<Record<string, SubagentCatalogView | undefined>>,
   childSessionId: string,
 ): boolean {
   const catalog = catalogs[childSessionId]
@@ -97,7 +97,7 @@ export function isKnownLeaf(
  * @param childSessionId - the child row being drawn.
  */
 export function childActivity(
-  live: Readonly<Record<string, LastActivity>>,
+  live: Readonly<Record<string, LastActivity | undefined>>,
   childSessionId: string,
 ): 'running' | 'inactive' {
   return live[childSessionId] === undefined ? 'inactive' : 'running'
