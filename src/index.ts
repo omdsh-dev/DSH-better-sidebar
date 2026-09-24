@@ -28,7 +28,7 @@ import {
   type SidebarConfig,
   type SidebarPrefs,
 } from './config.ts'
-import { parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
+import { isWithin, parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
 import { renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from './fs-operations.ts'
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
@@ -917,7 +917,16 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
         const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
-        const path = await ensureWorkspacePath(cwd, raw, fenceEnabledOf(() => settingsFace))
+        let target = raw
+        if (!isAbsolute(target)) {
+          target = join(cwd, target)
+        } else if (!isWithin(cwd, target)) {
+          const candidate = join(cwd, target.replace(/^[\/\\]+/, ''))
+          if (isWithin(cwd, candidate)) {
+            target = candidate
+          }
+        }
+        const path = await ensureWorkspacePath(cwd, target, fenceEnabledOf(() => settingsFace))
         const info = await stat(path)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)
@@ -976,7 +985,14 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // real-path guard, with the same semantics as the media route's
         // fallback.
         const cwd = await sessionCwdOf(ctx, sessionId)
-        const absolute = await ensureWorkspacePath(cwd, path, fenceEnabledOf(() => settingsFace))
+        let target = path
+        if (!isWithin(cwd, target)) {
+          const candidate = join(cwd, target.replace(/^[\/\\]+/, ''))
+          if (isWithin(cwd, candidate)) {
+            target = candidate
+          }
+        }
+        const absolute = await ensureWorkspacePath(cwd, target, fenceEnabledOf(() => settingsFace))
         const info = await stat(absolute)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)

@@ -7,6 +7,7 @@
  * request). Failures surface as {@link SidebarApiError} with the wire code.
  */
 import { encodeHtmlUrl } from '../html-route.ts'
+import { resolveSidebarPath } from './paths.ts'
 import type { LastActivity } from '../subagent-activity.ts'
 import type { SidechatLiveEvent, SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
 import type { SidebarJobView, SidebarSessionEvent } from '../context-types.ts'
@@ -409,7 +410,8 @@ export function downloadUrl(scope: SessionScope, path: string): string {
 
 /** Shared URL builder for the /sidebar/file route (media vs download). */
 function fileUrl(scope: SessionScope, path: string, download: boolean): string {
-  const params = new URLSearchParams({ sessionId: scope.sessionId, path })
+  const resolved = resolveSidebarPath(scope.cwd, path)
+  const params = new URLSearchParams({ sessionId: scope.sessionId, path: resolved })
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
   if (download) params.set('download', '1')
   return `/sidebar/file?${params.toString()}`
@@ -424,5 +426,6 @@ function fileUrl(scope: SessionScope, path: string, download: boolean): string {
  * client-side platform signal is needed.
  */
 export function htmlUrl(scope: SessionScope, path: string): string {
-  return encodeHtmlUrl(scope.sessionId, path)
+  const resolved = resolveSidebarPath(scope.cwd, path)
+  return encodeHtmlUrl(scope.sessionId, resolved)
 }
