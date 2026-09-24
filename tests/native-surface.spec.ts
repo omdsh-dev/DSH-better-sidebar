@@ -21,9 +21,39 @@ describe('createNativeTabRecords', () => {
     const view = records.ensure({
       id: 'tab-1', kind: 'browser', title: 'Browser', params: { url: 'https://a.test', meta: { k: 1 } }, scope,
     })
-    expect(view.tab).toMatchObject({ id: 'tab-1', type: 'browser', title: 'Browser', meta: { k: 1 } })
+    expect(view.tab).toMatchObject({ id: 'tab-1', type: 'browser', title: 'Browser', path: 'https://a.test', meta: { k: 1 } })
     expect(view.scope).toBe(scope)
     expect(view.expanded).toEqual([])
+  })
+
+  it('seeds the browser tab path from params.url on first mint (#654)', () => {
+    // The browser tab initializes its address bar and iframe from tab.path,
+    // so a url navigation param must land on the record's path when the
+    // record is minted — not be dropped, and not be parked in meta.url
+    // (a field nothing reads).
+    const records = createNativeTabRecords()
+    const view = records.ensure({
+      id: 'tab-url', kind: 'browser', title: 'Browser', params: { url: 'https://a.test/x?y=1' }, scope,
+    })
+    expect(view.tab.path).toBe('https://a.test/x?y=1')
+    expect(view.tab.meta).toBeUndefined()
+  })
+
+  it('keeps a params.path seed when both path and url arrive', () => {
+    const records = createNativeTabRecords()
+    const view = records.ensure({
+      id: 'tab-both', kind: 'editor', title: 'a.ts', params: { path: '/work/a.ts', url: 'https://a.test' }, scope,
+    })
+    expect(view.tab.path).toBe('/work/a.ts')
+  })
+
+  it('refreshes the path from a url seed on navigation without writing meta.url', () => {
+    const records = createNativeTabRecords()
+    records.ensure({ id: 'tab-nav', kind: 'browser', title: 'Browser', params: { url: 'https://a.test' }, scope })
+    records.update('tab-nav', { title: 'renamed' })
+    const view = records.ensure({ id: 'tab-nav', kind: 'browser', title: 'Browser', params: { url: 'https://b.test' }, scope })
+    expect(view.tab).toMatchObject({ id: 'tab-nav', path: 'https://b.test', title: 'renamed' })
+    expect(view.tab.meta).toBeUndefined()
   })
 
   it('calls the descriptor factory once for a record that arrives without seed fields', () => {
@@ -142,6 +172,21 @@ describe('service routing into the native surface', () => {
       sessionId: 's1',
       kind: 'my-plugin:doc',
       params: { title: 'Spec', path: '/work/spec.md' },
+      revealIfOpened: true,
+    }])
+  })
+
+  it('carries a browser url seed to the native surface as navigation params', () => {
+    // Regression #654: the surface must receive the url seed verbatim — the
+    // tab adapter is what lands it on the synthetic record's path.
+    const { service, calls } = mount()
+    service.registerTab({ id: 'browser', title: 'Browser', component: () => null })
+    service.openTab({ type: 'browser', url: 'https://example.com/x', title: 'example.com' }, scope)
+    expect(calls).toEqual([{
+      op: 'openTab',
+      sessionId: 's1',
+      kind: 'browser',
+      params: { title: 'example.com', url: 'https://example.com/x' },
       revealIfOpened: true,
     }])
   })
