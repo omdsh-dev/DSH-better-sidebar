@@ -414,7 +414,6 @@ export const fr: Record<string, string> = {
   pluginSidenoteDesc: 'Side chat façon Codex + annotations sur sélection : forker la session en cours dans un panneau latéral persistant (archivée hors de la liste des sessions, plusieurs instances, commande /side, survit au rechargement, le modèle suit la session principale) ; sélectionner un texte assistant → badge numéroté + éditeur de notes → un chip « N annotations » qui accompagne votre prochain message, ou poser sa question directement dans un side chat',
   pluginSshTunnelDesc: 'Onglet « Tunnel SSH » de better-sidebar : inventaire multi-machines + autorisations par projet + clés conservées localement ; outil de modèle SSHManager (exec/SFTP/stratégies de session) ; terminal interactif central et SFTP à deux volets',
   pluginTurnReviewDesc: 'Passerelle humaine sur le diff de « ce dernier tour » : Approve / Request changes, sans forker la session ; fichiers regroupés par session principale / sous-agent / non attribués, cochez les fichiers pour renvoyer + commentaire facultatif ; cliquez un fichier pour voir le diff entre l’instantané de début de tour et maintenant. Ce n’est pas /rewind',
-  pluginVideoPreviewDesc: 'Aperçu vidéo en ligne dans l’éditeur better-sidebar (.mp4/.webm/.mov/.mkv/.avi, etc.), avec une route hôte /video prenant en charge HTTP Range (206) ; barre de progression déplaçable, non limité par la mediaLimit de 20 Mo',
   pluginDocsPanelDesc: '« Documentation globale » dans la barre latérale DSH : notes Markdown globales, lisibles depuis n’importe quel espace de travail — sélection dans la liste, saut via le plan flottant, ouverture externe Chrome / VS Code, copie de code, répertoire configurable (défaut ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'Le navigateur d’agent pour DeepSeek Harness : 32 outils ego_* pilotent un vrai Chromium ; un onglet natif « ego browser » dans la barre latérale montre en direct chaque page visitée par l’agent — cliquez, glissez et tapez pour reprendre la main. Enregistre l’onglet automatiquement si better-sidebar est présent, sinon une bulle flottante',
   pluginBilingualReaderDesc: 'Lire des PDF dans la barre latérale DSH : affichage PDF natif, sélectionnez du texte pour le traduire avec le LLM, avec contexte et totalement isolé de la conversation principale',
@@ -441,6 +440,5 @@ export const fr: Record<string, string> = {
   pluginOfficeName: 'Aperçu Office',
   pluginMdExportName: 'Exportation Markdown',
   pluginCodeNavName: 'Navigateur d’aperçu de code',
-  pluginVideoPreviewName: 'Aperçu vidéo',
   presetDshDesktopDesc: 'Mode avancé Electron (sans bordure) : macOS réserve 20px en haut ; Windows réserve 32px pour la barre de titre sans WCO',
 }

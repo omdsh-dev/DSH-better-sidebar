@@ -421,7 +421,6 @@ export const th: Record<string, string> = {
   pluginSidenoteDesc: 'แชทข้างแบบ Codex + คำอธิบายประกอบจากการเลือกข้อความ: fork เซสชันปัจจุบันออกไปเป็นแผงข้างแบบถาวร (ถูกเก็บออกจากรายการเซสชัน, รองรับหลายอินสแตนซ์, คำสั่ง /side, อยู่รอดหลังรีโหลด, โมเดลตามเซสชันหลัก); เลือกข้อความของ assistant → badge แสดงหมายเลข + ตัวแก้ไขโน้ต → chip "N คำอธิบายประกอบ" ที่แนบไปกับข้อความถัดไป หรือถามตรง ๆ ในแชทข้างเลย',
   pluginSshTunnelDesc: 'tab SSH Tunnel: รายการโฮสต์หลายเครื่อง + การอนุญาตต่อโปรเจกต์ + secrets ในเครื่อง; เครื่องมือ SSHManager (exec/SFTP/กลยุทธ์เซสชัน); เทอร์มินัลโต้ตอบกลางและ SFTP แบบสองพาเนล',
   pluginTurnReviewDesc: 'ประตูมนุษย์บนรอบที่เพิ่งเสร็จสิ้น: Approve / Request changes ต่อพาธพร้อมความคิดเห็นที่ไม่บังคับ; พาธจัดกลุ่มตามเซสชันหลัก / ตัวแทนย่อย / ไม่ระบุแหล่งที่มา; diff แบบ snapshot-vs-now อินไลน์ก่อนตัดสินใจ ไม่มีการ fork, ไม่มี /rewind',
-  pluginVideoPreviewDesc: 'พรีวิววิดีโอแบบอินไลน์ (.mp4/.webm/.mov/.mkv/.avi ฯลฯ) สำหรับตัวแก้ไข better-sidebar โดยสนับสนุนด้วย route /video โฮสต์เฉพาะพร้อมรองรับ HTTP Range (206) — การ scrub ทำงานได้และไฟล์ไม่จำกัดโดย mediaLimit 20MB',
   pluginDocsPanelDesc: 'เอกสารส่วนกลางในแถบด้านข้าง DSH: อ่านบันทึก Markdown ของคุณเองจากพื้นที่ทำงานใดๆ — รายการไฟล์, เค้าโครง, เปิดใน Chrome / VS Code และปุ่มคัดลอก; ไดเรกทอรีเอกสารสามารถกำหนดค่าได้ (ค่าเริ่มต้น ~/.dsh/docs)',
   pluginEgoBrowserDesc: 'เบราว์เซอร์เอเจนต์สำหรับ DeepSeek Harness: เครื่องมือ ego_* 32 ตัวขับเคลื่อน Chromium จริง แท็บ «ego browser» เนทีฟในแถบด้านข้างแสดงทุกหน้าที่เอเจนต์เยี่ยมชมแบบสด — คลิก ลาก และพิมพ์เพื่อเข้าไปควบคุมแทนได้ ลงทะเบียนแท็บอัตโนมัติเมื่อมี better-sidebar มิฉะนั้นจะใช้บับเบิลลอย',
   pluginBilingualReaderDesc: 'อ่าน PDF ในแถบด้านข้าง DSH: แสดง PDF ต้นฉบับ เลือกข้อความเพื่อแปลด้วย LLM พร้อมบริบทและแยกจากการสนทนาหลักโดยสิ้นเชิง',
@@ -448,6 +447,5 @@ export const th: Record<string, string> = {
   pluginOfficeName: 'พรีวิว Office',
   pluginMdExportName: 'ส่งออก Markdown',
   pluginCodeNavName: 'ตัวนำทางพรีวิวโค้ด',
-  pluginVideoPreviewName: 'พรีวิววิดีโอ',
   presetDshDesktopDesc: 'โหมดขั้นสูงของ Electron (ไร้กรอบ): macOS จองแถบด้านบน 20px; Windows จอง 32px ให้แถบหัวเรื่องเมื่อไม่มี WCO',
 }
