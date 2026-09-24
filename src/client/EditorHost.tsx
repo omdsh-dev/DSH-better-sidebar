@@ -36,6 +36,7 @@ import { createFrameBatcher } from './frame-batcher.ts'
 import { openSidebarFile } from './sidebar-file.ts'
 import { openWithSshActive, openWithUrl, parseOpenWithConfig, resolveOpenWithTargets } from './open-with.ts'
 import { updatePluginSettings } from './plugin-settings.ts'
+import { recalledAnchor, saveRecalledAnchor, saveRecalledExpanded } from './native/tree-memory.ts'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
@@ -102,8 +103,21 @@ export function EditorHost(props: {
   revealed: string[]
   onToggleDir: (path: string) => void
   onReferenceFile: (path: string, isDir: boolean) => void
+  /**
+   * The native content identity of this window (a `dsh-resource://…` address
+   * or a page address), used to key the tree's remembered reading position.
+   * Absent for the plugin's own bottom workbench, which does not persist one.
+   */
+  memoryKey?: string
 }) {
-  const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile } = props
+  const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile, memoryKey } = props
+  const treeAnchor = memoryKey === undefined ? undefined : recalledAnchor(scope.sessionId, memoryKey)
+  const rememberAnchor = memoryKey === undefined
+    ? undefined
+    : (path: string, _offset: number, folders: string[]): void => {
+      saveRecalledAnchor(scope.sessionId, memoryKey, path)
+      saveRecalledExpanded(scope.sessionId, memoryKey, folders)
+    }
   const path = tab.path ?? ''
   const title = tab.title
   // A folder window: the model's `sidebar_open` (or any caller) opens a
@@ -389,6 +403,8 @@ export function EditorHost(props: {
           cwd={folderRoot ?? scope.cwd}
           expanded={expanded}
           revealed={revealed}
+          anchor={treeAnchor}
+          onAnchor={rememberAnchor}
           onToggle={onToggleDir}
           onOpenFile={openFile}
           onOpenFileNewTab={openFileNewTab}
@@ -514,6 +530,8 @@ export function EditorHost(props: {
               cwd={scope.cwd}
               expanded={expanded}
               revealed={revealed}
+              anchor={treeAnchor}
+              onAnchor={rememberAnchor}
               onToggle={onToggleDir}
               onOpenFile={openFile}
               onOpenFileNewTab={openFileNewTab}

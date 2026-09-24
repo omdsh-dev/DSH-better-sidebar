@@ -73,8 +73,15 @@ export function TreePanel(props: {
   full?: boolean
   /** The sidebar registry service (file-icon registrations; passed through to FileTree). */
   service?: BetterSidebarService
+  /**
+   * The row this tree should come back to (absolute path) — the reading
+   * position the host persisted for this tab (see FileTree's `anchor`).
+   */
+  anchor?: string
+  /** Report the clicked file and its only required ancestor folders. */
+  onAnchor?: (path: string, offset: number, expanded: string[]) => void
 }) {
-  const { sessionId, cwd, store, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onPathRenamed, onPathDeleted, full, service } = props
+  const { sessionId, cwd, store, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onPathRenamed, onPathDeleted, full, service, anchor, onAnchor } = props
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -265,6 +272,8 @@ export function TreePanel(props: {
           onUploadRequest={startUpload}
           busy={busy}
           service={service}
+          anchor={anchor}
+          onAnchor={onAnchor}
         />
       ) : (
         <div className={css.explorerBody}>
