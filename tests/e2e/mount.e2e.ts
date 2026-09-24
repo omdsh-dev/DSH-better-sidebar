@@ -31,7 +31,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, expect, type APIRequestContext } from '@playwright/test'
-import { PAGE_URL, createHostApi, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
+import { PAGE_URL, ORIGIN, createHostApi, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
 
 /** Workspace the sidebar renders against (created by the lane's seeding). */
 const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-workspace')
@@ -39,6 +39,25 @@ const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-
 /** A file seeded into the workspace, opened through the Files window's tree to
  *  exercise the file-open path (editor chunk = client-editor.js). */
 const SEEDED_FILE = 'hello.txt'
+
+/** A tiny MP4 stub (real `ftyp` + `free` boxes, padded `mdat` payload),
+ *  opened through the tree to exercise the built-in VIDEO viewer and the media
+ *  route's byte-range contract. Decoding is deliberately not asserted: headless
+ *  Chromium ships no proprietary codecs, so the viewer legitimately renders its
+ *  download fallback — the lane accepts either pane state and proves the 206
+ *  path with a direct ranged GET instead. */
+const SEEDED_VIDEO_FILE = 'clip.mp4'
+
+/** 4 KiB so a range request has something real to slice. */
+const SEEDED_VIDEO_BYTES = ((): Buffer => {
+  const boxes = Buffer.from([
+    0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, // size=24, 'ftyp'
+    0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02, 0x00, // 'isom', minor version
+    0x69, 0x73, 0x6f, 0x6d, 0x69, 0x73, 0x6f, 0x32, // 'isomiso2'
+    0x00, 0x00, 0x00, 0x08, 0x66, 0x72, 0x65, 0x65, // size=8, 'free'
+  ])
+  return Buffer.concat([boxes, Buffer.alloc(4096 - boxes.length, 0x21)])
+})()
 
 /** A markdown file with a mermaid fence, opened through the Files window's
  *  tree to force the lazily-packed mermaid chunk (client-mermaid.js) to load
@@ -85,6 +104,9 @@ let seededSessionId: string
 async function seedSession(): Promise<void> {
   mkdirSync(WORKSPACE_PATH, { recursive: true })
   writeFileSync(join(WORKSPACE_PATH, SEEDED_FILE), 'hello from the mount lane\n')
+  // The video probe file: an .mp4 whose extension must route to the built-in
+  // video viewer (media route, not a download card).
+  writeFileSync(join(WORKSPACE_PATH, SEEDED_VIDEO_FILE), SEEDED_VIDEO_BYTES)
   // The mermaid-chunk probe file: a markdown doc whose preview must fetch
   // client-mermaid.js and render the fence into an SVG diagram. The
   // reference-style link's definition sits AFTER the fence: it only
@@ -478,6 +500,57 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     'the plugin editor must render the seeded file inside the native tab',
   ).toBeVisible({ timeout: 30_000 })
   await page.waitForTimeout(1_500)
+  await assertNoCrash()
+
+  // Built-in video preview: the seeded .mp4 must open in the video viewer (not
+  // a download card), and the media route must answer a byte range with 206 —
+  // the contract that makes scrubbing work and that a whole-file 200 cannot
+  // provide. Decoding is the engine's business (headless Chromium carries no
+  // proprietary codecs), so the pane may legitimately be in either state; the
+  // ranged GET below is the deterministic half.
+  await pane.getByRole('tab', { name: /Files|文件/ }).first().click()
+  const videoRow = pane.locator(`[role="button"][title$="${SEEDED_VIDEO_FILE}"]:visible`)
+  await expect(
+    videoRow,
+    `the seeded "${SEEDED_VIDEO_FILE}" file must appear in the plugin's explorer`,
+  ).toHaveCount(1, { timeout: 30_000 })
+  await videoRow.click({ position: { x: 8, y: 8 } })
+  const videoView = pane.locator('[data-dsh-video-view]')
+  await expect(
+    videoView,
+    'the seeded mp4 must open in the built-in video viewer, not the download pane',
+  ).toHaveCount(1, { timeout: 30_000 })
+  const videoState = await videoView.getAttribute('data-dsh-video-view')
+  expect(['player', 'fallback'], `unexpected video pane state "${videoState}"`).toContain(videoState)
+  if (videoState === 'player') {
+    await expect(
+      videoView.locator('video[src*="/sidebar/file?"]'),
+      'the player must stream the file through the media route',
+    ).toHaveCount(1)
+  } else {
+    await expect(
+      videoView.locator('a[href*="/sidebar/file?"]'),
+      'the decode fallback must still offer the download route',
+    ).toHaveCount(1)
+  }
+  const mediaQuery = new URLSearchParams({
+    sessionId: seededSessionId,
+    path: join(WORKSPACE_PATH, SEEDED_VIDEO_FILE),
+    cwd: WORKSPACE_PATH,
+  })
+  const ranged = await api.get(`${ORIGIN}/sidebar/file?${mediaQuery.toString()}`, {
+    headers: { Range: 'bytes=0-3' },
+  })
+  expect(ranged.status(), `ranged media GET: ${ranged.status()} ${await ranged.text()}`).toBe(206)
+  expect(ranged.headers()['content-range']).toBe(`bytes 0-3/${SEEDED_VIDEO_BYTES.length}`)
+  expect(ranged.headers()['accept-ranges']).toBe('bytes')
+  expect(ranged.headers()['content-type']).toBe('video/mp4')
+  // The same route still serves the whole file when no range is asked for
+  // (the plugin's own download affordances depend on it), with the length a
+  // player needs.
+  const whole = await api.get(`${ORIGIN}/sidebar/file?${mediaQuery.toString()}`)
+  expect(whole.status()).toBe(200)
+  expect(whole.headers()['content-length']).toBe(String(SEEDED_VIDEO_BYTES.length))
   await assertNoCrash()
 
   // The mermaid chunk (client-mermaid.js) only loads when a previewed markdown

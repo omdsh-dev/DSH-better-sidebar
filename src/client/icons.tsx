@@ -68,6 +68,16 @@ export const IconMarkdownOutline16 = ({ size = 16, className }: IconProps) => (
   </svg>
 )
 
+/** Video viewer glyph: a screen with a filled play triangle. Video is the one
+ *  read-only preview the host does not render itself, so the plugin keeps its
+ *  own pane (and this glyph) for it. */
+export const IconVideoOutline16 = ({ size = 16, className }: IconProps) => (
+  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1.5" y="3" width="13" height="10" rx="2" stroke="currentColor" strokeWidth="1.5" />
+    <path d="m6.25 5.9 4 2.1-4 2.1z" fill="currentColor" stroke="none" />
+  </svg>
+)
+
 /** HTML viewer glyph: a document frame with a "‹/›" tag pair. */
 export const IconHtmlOutline16 = ({ size = 16, className }: IconProps) => (
   <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">

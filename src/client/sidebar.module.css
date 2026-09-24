@@ -1279,6 +1279,37 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 /* Binary / download-only files (legacy OLE .doc/.xls/.ppt, unknown binaries):
    a centered notice plus a download link — the user always gets the file. */
+.editorMediaWrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  padding: 12px;
+}
+
+.editorImage {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.editorVideo {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+/* Failure pane shared by the image and video viewers (missing media URL,
+   refused request, undecodable container) inside the same centering wrapper:
+   the download-instead affordance the binary-download viewer also uses. */
+.editorMediaFallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
 .editorBinary {
   flex: 1;
   display: flex;

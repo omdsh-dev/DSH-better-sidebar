@@ -1,6 +1,6 @@
 /**
- * The 3 built-in file viewer descriptors (markdown / html / code), exactly
- * like external plugins register theirs.
+ * The 4 built-in file viewer descriptors (video / markdown / html / code),
+ * exactly like external plugins register theirs.
  *
  * DSH 0.1.7 ships `ui-sidebar-documentpreview`, its own code / spreadsheet /
  * office / pdf / image / html / markdown / text previews with zoom and
@@ -15,7 +15,10 @@
  *    the host's equivalents are read-only previews.
  * The yielded ids (image / pdf / binary-download) are deliberately NOT
  * registered here; an external plugin may still claim them through this
- * service. Office previews (.docx / .xlsx / .pptx) were already not built
+ * service. VIDEO is the exception that earns its place: the host ships no
+ * video preview, so the plugin keeps a `video` viewer (a native `<video>`
+ * playing through the byte-range `/sidebar/file` route) rather than pointing
+ * readers at an ecosystem plugin for it. Office previews (.docx / .xlsx / .pptx) were already not built
  * in — they live in the recommended office plugin (see plugins-viewers.ts),
  * which registers the same ids through this service.
  *
@@ -32,9 +35,11 @@
  */
 import { IconCodeOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { lazyChunkComponent } from '../lazy-chunk.tsx'
+import { VideoView } from '../VideoView.tsx'
 import {
   IconMarkdownOutline16,
   IconHtmlOutline16,
+  IconVideoOutline16,
 } from '../icons.tsx'
 import type { ComponentType } from 'react'
 import type { FileViewerDescriptor, FileViewerProps } from '../service.ts'
@@ -48,9 +53,29 @@ import { t } from '../locales.ts'
  */
 const LazyTextEditor = lazyChunkComponent<FileViewerProps>('editor', (mod) => mod.TextEditor as ComponentType<FileViewerProps> | undefined)
 
-/** The 3 built-in file viewer descriptors. */
+/**
+ * Extensions the built-in video viewer claims (lowercase, no leading dot).
+ * Container support is the engine's business — a codec the browser cannot
+ * decode renders the pane's own fallback instead of a dead player.
+ */
+const VIDEO_EXTS: readonly string[] = [
+  'mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'qt', 'mkv',
+  'avi', 'wmv', 'flv', 'm2ts', 'mpeg', 'mpg', '3gp', '3g2',
+]
+
+/** The 4 built-in file viewer descriptors. */
 export function builtinViewers(): readonly FileViewerDescriptor[] {
   return [
+    {
+      id: 'video',
+      title: () => t('viewerVideo'),
+      icon: (size: number) => <IconVideoOutline16 size={size} />,
+      exts: VIDEO_EXTS,
+      fetchStrategy: 'mediaUrl',
+      component: ({ scope, path, title, mediaUrl }) => (
+        <VideoView scope={scope} path={path} title={title} mediaUrl={mediaUrl} />
+      ),
+    },
     {
       id: 'markdown',
       title: () => t('viewerMarkdown'),
