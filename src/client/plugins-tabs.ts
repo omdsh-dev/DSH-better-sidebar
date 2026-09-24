@@ -87,6 +87,19 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add "github:meyaomiao/dsh-github-workbench#v0.1.0"',
   },
   {
+    id: 'dsh-ide-git',
+    name: () => t('pluginIdeGitName'),
+    url: 'https://github.com/KannaKuron/dsh-ide-git',
+    description: () => t('pluginIdeGitDesc'),
+    // Published on npm. better-sidebar is an OPTIONAL peer: without it the
+    // plugin registers into DSH's own right sidebar (ctx.sidebarRightTabs +
+    // the keyed sidebar.right.pane.tab seat, with a guide capsule as the
+    // entry), so the install line carries no prerequisite. A better-sidebar
+    // that loads late takes the native registration down and hosts the tab
+    // itself, so the two channels never draw the panel twice.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-ide-git',
+  },
+  {
     id: 'dsh-sidebar-qa',
     name: () => t('pluginSidebarQaName'),
     url: 'https://github.com/ChenRuoT/dsh-sidebar-qa',
