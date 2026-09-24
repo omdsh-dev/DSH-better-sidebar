@@ -37,6 +37,13 @@ export interface SidebarConfig {
   readLimit?: number
   /** Media route cap (bytes); larger binaries are refused. */
   mediaLimit?: number
+  /**
+   * Media route cap (bytes) for VIDEO files (`.mp4`, `.webm`, `.mkv`, …).
+   * Clips are routinely far larger than images, so they get their own cap; the
+   * route streams them with byte ranges instead of reading them whole, so this
+   * is a safety bound, not a memory bound.
+   */
+  videoLimit?: number
   /** Upload route cap (bytes); larger files are refused without touching disk. */
   uploadLimit?: number
   /** Explorer row bound of one level. */
@@ -47,6 +54,7 @@ export interface SidebarConfig {
 const LimitsSchema = z.object({
   readLimit: z.number().step(1).min(1).default(512 * 1024),
   mediaLimit: z.number().step(1).min(1).default(20 * 1024 * 1024),
+  videoLimit: z.number().step(1).min(1).default(2 * 1024 * 1024 * 1024),
   uploadLimit: z.number().step(1).min(1).default(128 * 1024 * 1024),
   listLimit: z.number().step(1).min(1).default(1000),
 })
@@ -55,6 +63,8 @@ const LimitsSchema = z.object({
 export interface ResolvedSidebarConfig {
   readLimit: number
   mediaLimit: number
+  /** The media route cap for video files (see {@link SidebarConfig.videoLimit}). */
+  videoLimit: number
   uploadLimit: number
   listLimit: number
 }
@@ -69,6 +79,7 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
   return {
     readLimit: config?.readLimit ?? 512 * 1024,
     mediaLimit: config?.mediaLimit ?? 20 * 1024 * 1024,
+    videoLimit: config?.videoLimit ?? 2 * 1024 * 1024 * 1024,
     uploadLimit: config?.uploadLimit ?? 128 * 1024 * 1024,
     listLimit: config?.listLimit ?? 1000,
   }
