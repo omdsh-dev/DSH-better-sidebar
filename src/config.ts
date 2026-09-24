@@ -35,7 +35,7 @@ export {
 export interface SidebarConfig {
   /** Read cap of one text file (bytes); larger files return truncated. */
   readLimit?: number
-  /** Media route cap (bytes); larger binaries are refused. */
+  /** Media route cap in bytes (defaults to 64 MiB); larger binaries are refused. */
   mediaLimit?: number
   /** Upload route cap (bytes); larger files are refused without touching disk. */
   uploadLimit?: number
@@ -46,7 +46,7 @@ export interface SidebarConfig {
 /** Schemastery schema for the deployment-provided host limits. */
 const LimitsSchema = z.object({
   readLimit: z.number().step(1).min(1).default(512 * 1024),
-  mediaLimit: z.number().step(1).min(1).default(20 * 1024 * 1024),
+  mediaLimit: z.number().step(1).min(1).default(64 * 1024 * 1024),
   uploadLimit: z.number().step(1).min(1).default(128 * 1024 * 1024),
   listLimit: z.number().step(1).min(1).default(1000),
 })
@@ -68,7 +68,7 @@ export interface ResolvedSidebarConfig {
 export function resolveSidebarConfig(config: SidebarConfig | undefined): ResolvedSidebarConfig {
   return {
     readLimit: config?.readLimit ?? 512 * 1024,
-    mediaLimit: config?.mediaLimit ?? 20 * 1024 * 1024,
+    mediaLimit: config?.mediaLimit ?? 64 * 1024 * 1024,
     uploadLimit: config?.uploadLimit ?? 128 * 1024 * 1024,
     listLimit: config?.listLimit ?? 1000,
   }
