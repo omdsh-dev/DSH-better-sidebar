@@ -8,6 +8,11 @@
  * install terminal — it starts with `cd ~/.dsh` so the install runs with
  * the DSH home as the working directory). Data integrity is guarded by
  * `tests/plugin-list.spec.ts`.
+ *
+ * `dsh-video-preview` used to be listed here; the built-in `video` viewer
+ * replaced it, and the two cannot coexist — the service rejects a duplicate
+ * viewer id, so installing the third-party plugin on top of the built-in would
+ * fail its registration (`FileViewerDescriptor.id` is `video` in both).
  */
 import { t } from './locales.ts'
 import type { PluginEntry } from './plugins-shared.ts'
@@ -34,12 +39,5 @@ export const builtinViewerPlugins: readonly PluginEntry[] = [
     url: 'https://github.com/AnakinCao/dsh-code-nav',
     description: () => t('pluginCodeNavDesc'),
     install: 'cd ~/.dsh && dsh plugin --profile web add https://github.com/AnakinCao/dsh-code-nav.git',
-  },
-  {
-    id: 'dsh-video-preview',
-    name: () => t('pluginVideoPreviewName'),
-    url: 'https://github.com/zemul/dsh-video-preview',
-    description: () => t('pluginVideoPreviewDesc'),
-    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-video-preview',
   },
 ]

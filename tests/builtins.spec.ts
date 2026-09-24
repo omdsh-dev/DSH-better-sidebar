@@ -184,10 +184,10 @@ describe('built-in tab registrations', () => {
 })
 
 describe('built-in file viewer registrations', () => {
-  it('registers the 3 built-in file viewers (the read-only previews yielded to the host)', () => {
+  it('registers the 4 built-in file viewers (the host-rendered previews yielded, video kept)', () => {
     const { service } = setup()
     expect(service.getFileViewers().map(v => v.id).sort()).toEqual(
-      ['code', 'html', 'markdown'],
+      ['code', 'html', 'markdown', 'video'],
     )
     // The yielded ids are gone: the host's own document preview
     // (ui-sidebar-documentpreview) owns images, pdf, spreadsheets, office
@@ -200,6 +200,28 @@ describe('built-in file viewer registrations', () => {
     // office plugin (which registers the ids through this service).
     for (const id of ['docx', 'xlsx', 'pptx']) {
       expect(service.getFileViewers().map(v => v.id)).not.toContain(id)
+    }
+  })
+
+  it('video claims the playable containers through the byte-range media route', () => {
+    // Video is the one read-only preview the host does NOT render, so the
+    // plugin keeps it: `mediaUrl` hands the pane a `/sidebar/file` URL that
+    // answers byte ranges (that is what makes scrubbing work), and the viewer
+    // owns the decode-failure fallback.
+    const { service } = setup()
+    const video = service.getFileViewers().find(v => v.id === 'video')
+    expect(video?.fetchStrategy).toBe('mediaUrl')
+    expect(video?.exts).toEqual([
+      'mp4', 'm4v', 'webm', 'ogv', 'ogg', 'mov', 'qt', 'mkv',
+      'avi', 'wmv', 'flv', 'm2ts', 'mpeg', 'mpg', '3gp', '3g2',
+    ])
+    for (const path of ['clip.mp4', 'clip.webm', 'clip.MKV', 'clip.mov']) {
+      expect(service.matchFileViewer(path)?.id, path).toBe('video')
+    }
+    // The yielded previews stay yielded: adding video must not reopen the
+    // image/pdf/binary ids the host now owns.
+    for (const path of ['shot.png', 'report.pdf', 'blob.zzz']) {
+      expect(service.matchFileViewer(path)?.id, path).not.toBe('image')
     }
   })
 

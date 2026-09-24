@@ -1,6 +1,6 @@
 /**
  * dsh-better-sidebar host half: the /sidebar JSON API (explorer listing, file
- * read/write, git), the /sidebar/file media route (images), the /sidebar/html
+ * read/write, git), the /sidebar/file media route (byte-range aware), the /sidebar/html
  * preview route, the /sidebar/bundle lazy-chunk route (client code splits),
  * and the two WebSocket upgrades (sidebar_open pushes). Every route passes the same
  * browser-trust fence as the /api gateway — Host-header loopback or the
@@ -13,8 +13,9 @@
  * session's authoritative cwd comes from the session store.
  */
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, extname, isAbsolute, join } from 'node:path'
-import type { IncomingMessage } from 'node:http'
+import { createReadStream } from 'node:fs'
+import { basename, dirname, isAbsolute, join } from 'node:path'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
 import { parse as parseYaml } from 'yaml'
@@ -34,6 +35,16 @@ import { renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
+import {
+  contentRangeHeader,
+  headerValue,
+  ifRangeMatches,
+  isVideoPath,
+  mediaETag,
+  mediaTypeForPath,
+  parseRangeHeader,
+  unsatisfiedContentRange,
+} from './media-route.ts'
 import { isTrustedApiRequest } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
 import { createDirectoryWatchers, type DirectoryWatchers } from './fs-watch.ts'
@@ -73,25 +84,12 @@ export const name = 'dsh-better-sidebar'
 export const inject = ['webServer', 'sessions', 'webRuntime', 'tools']
 
 /** Content types for the media route, by extension. */
-const MEDIA_TYPES: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-  '.bmp': 'image/bmp',
-  '.ico': 'image/x-icon',
-  '.avif': 'image/avif',
-  '.pdf': 'application/pdf',
-  '.html': 'text/html',
-  '.htm': 'text/html',
-}
-
-/** Content type served by /sidebar/file (binary-safe fallback for unknowns). */
-export function mediaTypeForPath(path: string): string {
-  return MEDIA_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream'
-}
+/**
+ * The media route's pure helpers (content types, the video extension set,
+ * byte-range parsing) live in their own module; `mediaTypeForPath` stays
+ * re-exported here because host tests read it off the plugin entry.
+ */
+export { mediaTypeForPath } from './media-route.ts'
 
 /**
  * Resolve a session's authoritative working directory. The attached session
@@ -896,7 +894,13 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // (see bundle-route.ts / src/client/chunk-loader.ts).
   ctx.effect(() => registerBundleRoute(ctx, fence), 'dsh-better-sidebar: /sidebar/bundle chunk route')
 
-  // ── Media route (images for the editor) ─────────────────────────────────
+  // ── Media route (any binary the sidebar itself renders) ─────────────────
+  // Streams the file with byte-range support (206) so a `<video>` element can
+  // seek, and so a multi-hundred-MB clip never lands in memory: video gets its
+  // own `videoLimit` cap instead of the image-oriented `mediaLimit`. The
+  // host's own previews (DSH 0.1.7 `ui-sidebar-documentpreview`) fetch images
+  // and PDFs through their own routes; this one serves what the plugin's
+  // viewers and its downloaded-file affordances need.
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
     path: '/sidebar/file',
@@ -919,19 +923,63 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
         const path = await ensureWorkspacePath(cwd, raw, fenceEnabledOf(() => settingsFace))
         const info = await stat(path)
-        if (!info.isFile() || info.size > resolved.mediaLimit) {
+        const limit = isVideoPath(path) ? resolved.videoLimit : resolved.mediaLimit
+        if (!info.isFile() || info.size > limit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)
         }
-        const type = mediaTypeForPath(path)
-        const body = await readFile(path)
+        const etag = mediaETag(info.size, info.mtimeMs)
+        const lastModified = info.mtime.toUTCString()
         // Raw bytes either way (binary-safe); ?download=1 switches the
         // disposition so the browser saves the file instead of showing it.
-        const headers: Record<string, string> = { 'content-type': type, 'cache-control': 'no-cache' }
+        const headers: Record<string, string> = {
+          'content-type': mediaTypeForPath(path),
+          'cache-control': 'no-cache',
+          'accept-ranges': 'bytes',
+          etag,
+          'last-modified': lastModified,
+        }
         if (url.searchParams.get('download') === '1') {
           headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(basename(path))}`
         }
-        res.writeHead(200, headers)
-        res.end(body)
+        // A stale `If-Range` guard means the player's copy no longer matches
+        // the file: answer 200 with the fresh whole body instead of a slice of
+        // something else (RFC 9110 §13.1.5).
+        const ifRange = headerValue(req.headers['if-range'])
+        const requested = ifRangeMatches(ifRange, etag, lastModified)
+          ? parseRangeHeader(headerValue(req.headers.range), info.size)
+          : { kind: 'full' as const }
+        if (requested.kind === 'unsatisfiable') {
+          res.writeHead(416, {
+            ...headers,
+            'content-range': unsatisfiedContentRange(info.size),
+            'content-length': '0',
+          })
+          res.end()
+          return
+        }
+        const slice = requested.kind === 'partial' ? requested.range : undefined
+        if (slice === undefined) {
+          res.writeHead(200, { ...headers, 'content-length': String(info.size) })
+        } else {
+          res.writeHead(206, {
+            ...headers,
+            'content-range': contentRangeHeader(slice, info.size),
+            'content-length': String(slice.end - slice.start + 1),
+          })
+        }
+        const stream = slice === undefined
+          ? createReadStream(path)
+          : createReadStream(path, { start: slice.start, end: slice.end })
+        // The host passes the real Node ServerResponse; the vendored mirror
+        // declares only the JSON-route subset (writeHead/end), so the streaming
+        // path casts at this boundary — the same practice as the WebSocket
+        // upgrade handlers below.
+        const out = res as unknown as ServerResponse
+        // A file deleted/truncated mid-stream tears the response down instead
+        // of leaving a short body the player waits on forever.
+        stream.on('error', () => out.destroy())
+        out.on('close', () => stream.destroy())
+        stream.pipe(out)
       } catch (error) {
         writeError(res, error)
       }

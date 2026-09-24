@@ -3,7 +3,7 @@
 > 面向 **消费插件开发者**：如何让你的插件向 better-sidebar 注册新的侧边栏页面（tab）和文件类型预览器。
 >
 > 适用版本：**v0.4.0+**（`ctx.betterSidebar` 服务）；声明式设置 **v0.4.1+**；text/number 设置行 **v0.11.0+**；badge/生命周期/定向打开/插件设置/版本探测 **v0.12.0+**；select 设置行（`settingSelect`）与外链认领（`urlTarget`）**v0.13.0+**；统一 `@deepseek-ai/cordis` 类型基底 **v0.15.2+**。当前版本 **v0.21.1**（npm dist-tag `latest`，peer 下限 `^0.1.7-rc.1`，仅支持 DSH **0.1.7-rc.1+**）。**v0.19.0 移除了自绘右侧面板与自由窗口**（见 §0、§11）；**自 v0.20.0 开发线起**（**注意：0.20.0 从未发布到 npm，这些变更全部落在 v0.21.1**）插件**移除了自带的终端**（宿主 0.1.6 的 `ui-sidebar-terminal` 取代，见 §4.4）、**移除了终端固定（pin）**，并在 0.1.7 上**把浏览器视图与只读文件预览整体让给宿主**（`ui-sidebar-browser` / `ui-sidebar-documentpreview`，见 §4.4、§5.4）、**收敛了外链接管**（见 §4.1）、**重写了设置接入面**（`SettingsForms`，见 §8.2）、**给文件树加了实时刷新**（见 §10）；同时**删除了轮尾产物行接管**（DSH 0.1.6 把 `conversation.chat.turnTail` 从 chain 改成只能追加的 list，替换语义不复存在）。
-> 权威代码：`src/client/service.ts`（服务实现）、`src/client/builtins/`（内置 5 tab + 3 viewer 参考实现）、`lib/types/client/service.d.ts`（类型声明）。
+> 权威代码：`src/client/service.ts`（服务实现）、`src/client/builtins/`（内置 5 tab + 4 viewer 参考实现）、`lib/types/client/service.d.ts`（类型声明）。
 > 仓库开发规则（硬约束 / CI / 发版）见 [AGENTS.md](../AGENTS.md)。
 
 ---
@@ -44,7 +44,7 @@ better-sidebar 从 v0.4.0 起把自己改造成一个**注册表服务**：
 - **新页面（tab）**：注册一种新的侧边栏 tab 类型，出现在侧边栏 `+` 菜单里，用户点击后在自己的分栏里打开你的 React 页面；
 - **文件预览器（file viewer）**：注册一种文件类型预览器，让用户在侧边栏打开文件时走你的渲染组件（覆盖或补充内置的 markdown/html/code）。**宿主自己也有文档预览**——DSH 0.1.7 的 `ui-sidebar-documentpreview` 拿走了表格 / PDF / 图片 / Office 等只读格式，本插件因此**拒绝**认领那些扩展名，你的 viewer 也接不到它们（清单与原因见 §5.4）。
 
-内置的 5 个 tab（editor / git——「文件变动」统一 tab（Git 视角 + 本轮文件视角）/ subagent / sidechat / diff）和 3 个 viewer（markdown / html / code）**自己也是通过同一套 API 注册的**（吃自己的狗粮），所以外部插件的能力与内置功能完全对等。**不再内置 terminal / browser 两个 tab 类型**：DSH 0.1.6 自带右列终端（`ui-sidebar-terminal`、kind `terminal`），浏览器是 0.1.6 的 `ui-sidebar-browser`（kind `browser`，**0.1.7 起只在 desktop profile 挂载**，Web profile 没有这个 kind）；插件的同名类型会让读者看到两份实现。同理，0.1.7 的 `ui-sidebar-documentpreview` 让插件的 image / pdf / Office / 表格预览失去意义，那三个 viewer 描述符（image / pdf / binary-download）已删除。
+内置的 5 个 tab（editor / git——「文件变动」统一 tab（Git 视角 + 本轮文件视角）/ subagent / sidechat / diff）和 4 个 viewer（video / markdown / html / code）**自己也是通过同一套 API 注册的**（吃自己的狗粮），所以外部插件的能力与内置功能完全对等。**不再内置 terminal / browser 两个 tab 类型**：DSH 0.1.6 自带右列终端（`ui-sidebar-terminal`、kind `terminal`），浏览器是 0.1.6 的 `ui-sidebar-browser`（kind `browser`，**0.1.7 起只在 desktop profile 挂载**，Web profile 没有这个 kind）；插件的同名类型会让读者看到两份实现。同理，0.1.7 的 `ui-sidebar-documentpreview` 让插件的 image / pdf / Office / 表格预览失去意义，那三个 viewer 描述符（image / pdf / binary-download）已删除。**视频是唯一的例外**：宿主没有视频预览，插件因此保留 `video` viewer（原生 `<video>` + `/sidebar/file` 字节范围），并停止在推荐目录里推 `dsh-video-preview`（两者 viewer id 相同，同时安装会注册失败）。
 
 关键机制一句话：better-sidebar 的 client half 在 `apply()` 开头执行 `ctx.provide('betterSidebar', service)`（`src/client/index.tsx`），消费插件在 `inject` 里声明 `'betterSidebar'`，Cordis 保证服务就绪后才激活你的插件，然后你调用 `ctx.betterSidebar.registerTab(...)` / `registerFileViewer(...)` 完成注册，返回的 disposer 由 Cordis fiber 在卸载（HMR / 禁用）时自动调用。
 
@@ -484,7 +484,7 @@ interface FileViewerProps {
 |---|---|---|---|
 | `none` | 不需要字节 | （无） | 自渲染（如纯 UI） |
 | `fsRead` | `/sidebar/api` 的 `fs.read` | `content`, `truncated` | 文本类（CSV/JSON/XML） |
-| `mediaUrl` | `/sidebar/file` 媒体路由 URL | `mediaUrl` | 图片/PDF（viewer 自己 fetch 字节） |
+| `mediaUrl` | `/sidebar/file` 媒体路由 URL | `mediaUrl` | 视频（`<video>` 自己 fetch 字节；该路由支持 HTTP Range 206，视频按 `videoLimit`（默认 2 GiB）流式下发，可拖进度条） |
 | `custom` | viewer 的 `load()` 函数 | `customData` | 自定义协议（如远程拉取） |
 | `binary-download` | 不预览，显示下载按钮 | （无） | 无客户端渲染器的二进制格式。**本插件现在没有任何内置 viewer 用这条策略**（`binary-download` viewer 已让给宿主）；策略本身仍在契约里，你的 viewer 可以照用 |
 
@@ -1103,7 +1103,7 @@ better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"），�
 - **`src/client/FileTree.tsx`** / **`TreePanel.tsx`** / **`src/fs-search.ts`**：文件树 / 树面板 / host 文件名搜索（`fs.search`；`tests/fs-search.spec.ts`）
 - **`src/client/markdown-html.ts`** / **`MarkdownHtml.tsx`** / **`md-toc.tsx`**：markdown 内嵌 HTML 管线与目录大纲（注意 `md-toc.tsx` 头注释的「子组件读父 ref 为 null」时序陷阱）
 - **`src/agent-opens.ts`** / **`/sidebar/ws/agent-opens`**：模型主动打开（`sidebar_open` 工具 + `agentOpenTools` 设置，默认关闭）；文件夹窗口 = `meta.dir: true` 的 editor tab（[设计文档](plans/2026-08-23-agent-open-tools-design.md)）
-- **`tests/service.spec.ts`** / **`tests/builtins.spec.ts`**：注册表生命周期 / 匹配算法 / dedupe / createTab / 启用态 gating；内置清单断言（5 tab + 3 viewer + 声明式元数据，并显式断言 image / pdf / binary-download **不在**内置清单里、但作为公开契约仍可被第三方注册）
+- **`tests/service.spec.ts`** / **`tests/builtins.spec.ts`**：注册表生命周期 / 匹配算法 / dedupe / createTab / 启用态 gating；内置清单断言（5 tab + 4 viewer + 声明式元数据，并显式断言 image / pdf / binary-download **不在**内置清单里、但作为公开契约仍可被第三方注册）
 - **`src/fs-watch.ts`** / **`src/client/use-dir-watch.ts`**：文件树实时刷新（按展开目录 watch，150ms 去抖、每连接 64 个句柄上限；`tests/fs-watch.spec.ts` 守护）
 - **`docs/plans/`**：逐特性设计文档（含实施偏差记录，以现状为准）；入口如 `2026-08-11-service-registry-design.md` / `2026-08-11-declarative-sidebar-settings-design.md`
 

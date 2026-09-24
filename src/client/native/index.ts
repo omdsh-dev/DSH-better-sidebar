@@ -25,6 +25,7 @@
 import type { Context } from '../../context-types.ts'
 import { t } from '../locales.ts'
 import { parseFileAddress } from '../resource-address.ts'
+import { fileTabTarget } from './file-tab.ts'
 import type { BetterSidebarService, TabDescriptor } from '../service.ts'
 import type { SidebarStore } from '../state.ts'
 import {
@@ -199,14 +200,19 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
     if (tabs === undefined) return
     const live = new Map<string, Registration>()
 
+    /** One session's workspace root from the client's own list summary. */
+    const sessionCwdOf = (sessionId: string): string | undefined =>
+      ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd
+    // A session-scoped address may carry a workspace-RELATIVE path (how the
+    // chat opens the files a turn produced); resolve it against that session's
+    // cwd so the tab, its title and every `/sidebar/file` URL or fs call built
+    // from it hold the absolute path the host routes require.
     const fileParamsOf = (info: NativeTabInfo): NativeTabParams | undefined => {
-      const address = parseFileAddress(info.tab.contentId)
-      return address === undefined ? undefined : { path: address.path }
+      const target = fileTabTarget(info.tab.contentId, sessionCwdOf)
+      return target === undefined ? undefined : { path: target.path }
     }
-    const fileSessionIdOf = (info: NativeTabInfo): string | undefined => {
-      const address = parseFileAddress(info.tab.contentId)
-      return address !== undefined && address.scope === 'session' ? address.sessionId : undefined
-    }
+    const fileSessionIdOf = (info: NativeTabInfo): string | undefined =>
+      fileTabTarget(info.tab.contentId, sessionCwdOf)?.sessionId
 
     /** Register the body + chip-title slots for one native implementation id. */
     const registerSlots = (

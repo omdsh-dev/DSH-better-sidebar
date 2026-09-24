@@ -7,6 +7,7 @@
  * request). Failures surface as {@link SidebarApiError} with the wire code.
  */
 import { encodeHtmlUrl } from '../html-route.ts'
+import { isAbsolutePath, resolveSidebarPath } from './paths.ts'
 import type { LastActivity } from '../subagent-activity.ts'
 import type { SidechatLiveEvent, SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
 import type { SidebarJobView, SidebarSessionEvent } from '../context-types.ts'
@@ -248,29 +249,44 @@ function openExternal(payload: OpenExternalPayload): Promise<OpenExternalResult>
   }
 }
 
+/**
+ * The absolute spelling of one workspace path for a host route.
+ *
+ * A path can reach the client RELATIVE to the session's workspace root — a
+ * session-scoped file address spells it that way (`fileAddressFor` keeps the
+ * files a turn produced relative, and the chat opens them that way) — while
+ * the host resolves relative paths against the session cwd only for the
+ * Windows/WSL projection and otherwise rejects them outright
+ * (`"emote_verify/final/x.png" is not an absolute path`). Resolving here keeps
+ * media, download and fs calls on the absolute spelling the explorer uses.
+ */
+function absolutePath(scope: SessionScope, path: string): string {
+  return isAbsolutePath(path) ? path : resolveSidebarPath(scope.cwd, path)
+}
+
 /** The sidebar API surface (session scope threaded through every call). */
 export const api = {
   sessionCwd: (scope: SessionScope, signal?: AbortSignal) =>
     call<{ sessionId: string; cwd: string; root: string; parent: string | null }>('session.cwd', scopePayload(scope, {}), signal),
   fsTree: (scope: SessionScope, path: string, signal?: AbortSignal) =>
-    call<{ path: string; entries: FsEntry[]; truncated: boolean }>('fs.tree', scopePayload(scope, { path }), signal),
+    call<{ path: string; entries: FsEntry[]; truncated: boolean }>('fs.tree', scopePayload(scope, { path: absolutePath(scope, path) }), signal),
   /** Global recursive file-name search rooted at the session cwd (the editor
    *  side panel's search box); matches are cwd-relative '/'-separated paths. */
   fsSearch: (scope: SessionScope, query: string, signal?: AbortSignal) =>
     call<{ matches: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query }), signal),
   fsRead: (scope: SessionScope, path: string, signal?: AbortSignal) =>
-    call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
+    call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path: absolutePath(scope, path) }), signal),
   fsWrite: (scope: SessionScope, path: string, content: string) =>
-    call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
+    call<{ ok: true }>('fs.write', scopePayload(scope, { path: absolutePath(scope, path), content })),
   /** Rename one tree row within its directory (single-segment name; the
    *  server refuses existing destinations, the workspace root, and — while
    *  the fence is armed — anything resolving outside the workspace). */
   fsRename: (scope: SessionScope, path: string, name: string) =>
-    call<{ path: string }>('fs.rename', scopePayload(scope, { path, name })),
+    call<{ path: string }>('fs.rename', scopePayload(scope, { path: absolutePath(scope, path), name })),
   /** Permanently delete one tree row (recursive for directories; a symlink
    *  row unlinks the link only). The UI confirms before calling this. */
   fsRemove: (scope: SessionScope, path: string) =>
-    call<{ path: string }>('fs.remove', scopePayload(scope, { path })),
+    call<{ path: string }>('fs.remove', scopePayload(scope, { path: absolutePath(scope, path) })),
   /** Upload one file's raw bytes into `dir` (keeps the folder tree via
    *  `relativePath`); the host streams it under the session workspace. */
   uploadFile: (scope: SessionScope, dir: string, relativePath: string, body: Blob, signal?: AbortSignal) =>
@@ -409,7 +425,7 @@ export function downloadUrl(scope: SessionScope, path: string): string {
 
 /** Shared URL builder for the /sidebar/file route (media vs download). */
 function fileUrl(scope: SessionScope, path: string, download: boolean): string {
-  const params = new URLSearchParams({ sessionId: scope.sessionId, path })
+  const params = new URLSearchParams({ sessionId: scope.sessionId, path: absolutePath(scope, path) })
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
   if (download) params.set('download', '1')
   return `/sidebar/file?${params.toString()}`
