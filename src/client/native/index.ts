@@ -222,7 +222,17 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
         name: 'sidebar.right.pane.tab.title',
         key: id,
-        inject: () => ({ records, service, descriptorId: injected.descriptorId }),
+        // The chip draws a FILE tab's own glyph, so it needs the same
+        // address-derived seed the body gets: a file tab's address names the
+        // file it shows, and the chip must be able to draw it BEFORE — and
+        // without — the plugin-side record, which exists only after the body
+        // has rendered (and is gone again once the body unmounts).
+        inject: () => ({
+          records,
+          service,
+          descriptorId: injected.descriptorId,
+          ...(params.paramsOf === undefined ? {} : { paramsOf: params.paramsOf }),
+        }),
       }, NativeTabTitle)),
     ]
 
