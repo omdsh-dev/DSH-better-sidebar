@@ -33,6 +33,9 @@ export function referenceInChat(
 ): void {
   const rel = relativeTo(cwd ?? '', path)
   if (isDir) {
+    // The folder mention stays plain text so DSH's own decoration and
+    // completion keep working; `appendToDraft` keeps it off the whole-draft
+    // write while the draft holds a reference chip.
     appendToDraft(ctx, sessionId, `@${rel === '.' ? './' : `${rel}/`}`)
     return
   }

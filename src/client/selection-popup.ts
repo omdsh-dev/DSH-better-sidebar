@@ -26,19 +26,23 @@
  * caller preventDefaults it to keep the selection/caret alive until the
  * click commits (the hook's capture-phase listener runs first and must not
  * hide for it).
+ *
+ * The committed payload is opaque to this hook: the viewer selection popup
+ * commits a chip payload (label + model text), while the callers that only
+ * need text keep the default `string`.
  */
 import { useEffect, useRef, useState, type RefObject } from 'react'
 
 /** The floating "add to conversation" action: payload + viewport anchor. */
-export interface SelectionPopup {
-  insert: string
+export interface SelectionPopup<T = string> {
+  insert: T
   left: number
   top: number
 }
 
-export interface SelectionPopupOptions {
+export interface SelectionPopupOptions<T = string> {
   /** Commit the payload into the composer draft (button click). */
-  onCommit(insert: string): void
+  onCommit(insert: T): void
   /**
    * The DOM surface that must stay on screen for the popup to live: the
    * markdown preview container in preview mode, the CodeMirror host
@@ -47,20 +51,22 @@ export interface SelectionPopupOptions {
   getSurface(): HTMLElement | null
 }
 
-export interface SelectionPopupControls {
+export interface SelectionPopupControls<T = string> {
   /** The current popup (null = hidden). */
-  popup: SelectionPopup | null
+  popup: SelectionPopup<T> | null
   /** Attach to the portaled button element. */
   buttonRef: RefObject<HTMLButtonElement>
   /** Anchor the popup above a selection (viewport-clamped). */
-  show(insert: string, left: number, top: number): void
+  show(insert: T, left: number, top: number): void
   /** Hide the popup (idempotent). */
   hide(): void
   /** The button's click: commit the stored payload, then hide. */
   commit(): void
 }
 
-export function useSelectionPopup(options: SelectionPopupOptions): SelectionPopupControls {
+export function useSelectionPopup<T = string>(
+  options: SelectionPopupOptions<T>,
+): SelectionPopupControls<T> {
   // Latest-callback refs: the dismissal listeners live for the mount's
   // lifetime, so they must not capture stale closures across renders.
   const onCommitRef = useRef(options.onCommit)
@@ -68,16 +74,16 @@ export function useSelectionPopup(options: SelectionPopupOptions): SelectionPopu
   onCommitRef.current = options.onCommit
   getSurfaceRef.current = options.getSurface
 
-  const [popup, setPopup] = useState<SelectionPopup | null>(null)
+  const [popup, setPopup] = useState<SelectionPopup<T> | null>(null)
   /** Live mirror for click/event-time reads (no re-render race). */
-  const popupRef = useRef<SelectionPopup | null>(null)
+  const popupRef = useRef<SelectionPopup<T> | null>(null)
   /** The portaled button itself (for the outside-click guard). */
   const buttonRef = useRef<HTMLButtonElement>(null)
   /** The surface visibility observer (created lazily on open). */
   const observerRef = useRef<IntersectionObserver | null>(null)
 
-  const show = (insert: string, left: number, top: number): void => {
-    const next: SelectionPopup = {
+  const show = (insert: T, left: number, top: number): void => {
+    const next: SelectionPopup<T> = {
       insert,
       left: Math.min(Math.max(left, 80), window.innerWidth - 80),
       top,
