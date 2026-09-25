@@ -34,6 +34,18 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/Fisfzy/ego-browser.git',
   },
   {
+  {
+    id: '@modusensus/dsh-mneme',
+    name: () => t('pluginMnemeName'),
+    url: 'https://github.com/modusensus/dsh-mneme',
+    description: () => t('pluginMnemeDesc'),
+    // Dual-mount like flowglass — registers a native "Memory Library" tab
+    // (memories/entities/status/settings views) when better-sidebar is
+    // present and keeps its standalone sidebar sheet as a fallback.
+    // Published on npm (scoped); install the prerequisite first.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add @modusensus/dsh-mneme',
+  },
+  {
     id: 'dsh-better-overleaf',
     name: () => t('pluginBetterOverleafName'),
     url: 'https://github.com/Hoemr/dsh-better-overleaf',
