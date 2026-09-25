@@ -145,6 +145,9 @@ export function createNativeTabRecords(): NativeTabRecords {
             id,
             type: kind as TabType,
             title: params?.title ?? seeded?.title ?? title,
+            ...(params?.path === undefined && params?.url !== undefined
+              ? { path: params.url }  // #654: map the url onto path for file-less kinds
+              : {}),
             ...(params?.path === undefined ? {} : { path: params.path }),
             ...(params?.diff === undefined ? {} : { diff: params.diff }),
             ...(meta === undefined ? {} : { meta }),
@@ -163,6 +166,11 @@ export function createNativeTabRecords(): NativeTabRecords {
       const patch: Partial<SidebarTab> = {}
       if (params?.path !== undefined && params.path !== existing.tab.path) patch.path = params.path
       if (params?.diff !== undefined) patch.diff = params.diff
+      // #654: a re-navigation to a new URL moves the address too (the
+      // component's address bar and iframe both read `tab.path`).
+      if (params?.url !== undefined && params.path === undefined) {
+        patch.path = params.url
+      }
       if (params?.url !== undefined) {
         const meta = typeof existing.tab.meta === 'object' && existing.tab.meta !== null
           ? existing.tab.meta as Record<string, unknown>

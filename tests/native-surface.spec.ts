@@ -21,9 +21,29 @@ describe('createNativeTabRecords', () => {
     const view = records.ensure({
       id: 'tab-1', kind: 'browser', title: 'Browser', params: { url: 'https://a.test', meta: { k: 1 } }, scope,
     })
-    expect(view.tab).toMatchObject({ id: 'tab-1', type: 'browser', title: 'Browser', meta: { k: 1 } })
+    expect(view.tab).toMatchObject({ id: 'tab-1', type: 'browser', title: 'Browser', meta: { k: 1 }, path: 'https://a.test' })
     expect(view.scope).toBe(scope)
     expect(view.expanded).toEqual([])
+  })
+
+  it('re-navigation to a new URL moves the path too (#654)', () => {
+    const records = createNativeTabRecords()
+    records.ensure({
+      id: 'tab-9', kind: 'browser', title: 'Browser', params: { url: 'https://first.test' }, scope,
+    })
+    records.ensure({
+      id: 'tab-9', kind: 'browser', title: 'Browser', params: { url: 'https://second.test' }, scope,
+    })
+    expect(records.get('tab-9')?.tab).toMatchObject({ path: 'https://second.test' })
+  })
+
+  it('an explicit path param still wins over the url (#654 does not break editor tabs)', () => {
+    const records = createNativeTabRecords()
+    records.ensure({
+      id: 'tab-10', kind: 'editor', title: 'Editor', params: { path: '/work/a.ts', url: 'https://ignored' }, scope,
+    })
+    expect(records.get('tab-10')?.tab).toMatchObject({ path: '/work/a.ts' })
+    expect(records.get('tab-10')?.tab.path).not.toBe('https://ignored')
   })
 
   it('calls the descriptor factory once for a record that arrives without seed fields', () => {
