@@ -115,6 +115,45 @@ describe('ChangesTab', () => {
     }
   })
 
+  it('renders the untracked full-addition in the preview pane, not a blank body', async () => {
+    // An untracked file (git diff never lists it) loads through the fs.read
+    // fallback, which sets diffText='' on purpose and carries the content via
+    // `untracked`. The pane's render condition must fire for that shape too —
+    // the regression here was a COMPLETELY BLANK pane body (neither the
+    // renderer nor the "no text changes" note rendered), while the dedicated
+    // diff tab (DiffTab) showed the file correctly.
+    mockGit([{ path: 'notes/new.ts', xy: '??' }])
+    vi.spyOn(api, 'gitDiff').mockResolvedValue({ diff: '' })
+    vi.spyOn(api, 'fsRead').mockResolvedValue({ kind: 'text', content: 'brand new content\nsecond line\n', truncated: false })
+
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root: Root = createRoot(container)
+    try {
+      mount(root)
+      await flushEffects()
+
+      const row = [...container.querySelectorAll<HTMLButtonElement>('button')]
+        .find(button => button.textContent?.includes('notes/new.ts'))
+      expect(row).toBeDefined()
+
+      await act(async () => { row!.click() })
+      await flushEffects()
+
+      // The pane renders the untracked content as a full-file addition: the
+      // file block header and the added rows are both present (.ts is a
+      // source path, so the block starts expanded — the rows are the proof;
+      // a folded block would only show the header).
+      expect(container.textContent).toContain('notes/new.ts')
+      expect(container.textContent).toContain('brand new content')
+      expect(container.textContent).not.toContain('没有文本差异')
+      expect(container.textContent).not.toContain('No text changes')
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
+
   it('folds the polled session events into session-lens rows and the badge cache', async () => {
     mockGit([])
     const ops = vi.spyOn(api, 'changesOps')
