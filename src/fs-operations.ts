@@ -23,7 +23,7 @@ import { createWriteStream } from 'node:fs'
 import { access, lstat, mkdir, realpath, rename, rm, stat, unlink } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { isWithin, requireAbsolute } from './fs-tree.ts'
-import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
+import { absoluteInWorkspace, ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
 import { resolveSessionPath } from './session-path.ts'
 import { SidebarError } from './wire.ts'
 
@@ -31,7 +31,7 @@ import { SidebarError } from './wire.ts'
 export interface WorkspaceUploadInput {
   /** The session workspace root; target and directory must stay inside it. */
   cwd: string
-  /** Absolute upload directory chosen by the client (inside `cwd`). */
+  /** Upload directory chosen by the client, absolute or workspace-relative (inside `cwd`). */
   dir: string
   /** Relative path below `dir` (absolute paths, '.', '..' and empty segments refused). */
   relativePath: string
@@ -56,7 +56,7 @@ export interface WorkspaceUploadInput {
  */
 export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise<{ path: string; size: number }> {
   const { cwd, dir, relativePath, chunks, limit, fence = true } = input
-  const base = requireAbsolute(dir)
+  const base = requireAbsolute(absoluteInWorkspace(cwd, dir))
   await ensureWorkspacePath(cwd, base, fence)
   if (relativePath === '' || relativePath.startsWith('/') || relativePath.startsWith('\\')) {
     throw new SidebarError('bad-request', 'relativePath must stay below the upload directory', 400)
@@ -107,7 +107,7 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
 export interface WorkspaceRenameInput {
   /** The session workspace root; the renamed entry must stay inside it. */
   cwd: string
-  /** Absolute path of the row as the tree displays it (may be a symlink). */
+  /** Path of the row as the tree displays it, absolute or workspace-relative (may be a symlink). */
   path: string
   /** The new base name (single segment — rename never moves across directories). */
   name: string
@@ -116,14 +116,17 @@ export interface WorkspaceRenameInput {
 }
 
 /** Resolve one existing entry for a link-aware mutation: the lexical row path
- * plus its fully resolved real target (fence-checked). ENOENT becomes an
- * fs-error, mirroring path-security's resolveRealPath semantics. */
+ * plus its fully resolved real target (fence-checked). A relative row path
+ * joins the session workspace root first (the tree always sends absolute
+ * paths; the join keeps the route lenient to the same relative spellings
+ * chat links use). ENOENT becomes an fs-error, mirroring path-security's
+ * resolveRealPath semantics. */
 async function resolveEntry(
   cwd: string,
   target: string,
   fence: boolean,
 ): Promise<{ absolute: string; real: string; realCwd: string }> {
-  const absolute = requireAbsolute(resolveSessionPath(cwd, target))
+  const absolute = requireAbsolute(resolveSessionPath(cwd, absoluteInWorkspace(cwd, target)))
   let real: string
   let realCwd: string
   try {
@@ -186,7 +189,7 @@ export async function renameWorkspaceEntry(input: WorkspaceRenameInput): Promise
 export interface WorkspaceRemoveInput {
   /** The session workspace root; the removed entry must stay inside it. */
   cwd: string
-  /** Absolute path of the row as the tree displays it (may be a symlink). */
+  /** Path of the row as the tree displays it, absolute or workspace-relative (may be a symlink). */
   path: string
   /** Whether workspace containment is enforced (the `workspaceFence` setting; on by default). */
   fence?: boolean
