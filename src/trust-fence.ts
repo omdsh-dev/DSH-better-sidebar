@@ -12,6 +12,9 @@ import type { IncomingHttpHeaders } from 'node:http'
 /** The request facts the fence reads (structural subset of IncomingMessage). */
 interface ApiTrustRequest {
   headers: IncomingHttpHeaders
+  /** Present on a real node request; the bfcache exception is media-route only. */
+  method?: string
+  url?: string
 }
 
 function header(headers: IncomingHttpHeaders, name: string): string | undefined {
@@ -56,7 +59,8 @@ function isTrustedAuthority(hostUrl: URL, trustedHosts: readonly string[]): bool
 
 /**
  * Decide whether one sidebar request may reach the plugin routes.
- * @param request - node HTTP request facts (headers).
+ * @param request - node HTTP request facts (headers, and the method/url the
+ *   media-route exception is scoped to).
  * @param trustedHosts - non-loopback authorities this deployment serves.
  * @returns true when the Host is ours (loopback or trusted) and browser markers are same-origin.
  */
@@ -66,7 +70,28 @@ export function isTrustedApiRequest(request: ApiTrustRequest, trustedHosts: read
   const hostUrl = parseAuthority(host)
   if (hostUrl === undefined) return false
   if (!isLoopbackHostname(hostUrl.hostname) && !isTrustedAuthority(hostUrl, trustedHosts)) return false
-  if (header(request.headers, 'sec-fetch-site') === 'cross-site') return false
+  const fetchSite = header(request.headers, 'sec-fetch-site')
+  if (fetchSite === 'cross-site') {
+    // Chromium can restore a same-origin image from bfcache with a stale
+    // cross-site marker. The exception is deliberately narrow: the media route
+    // only, browser image subresources only (`no-cors` + `image`), and the
+    // unforgeable Referer must name this exact authority. API requests, uploads,
+    // HTML previews, foreign embeds and Referer-less requests stay refused.
+    const referer = header(request.headers, 'referer')
+    const mediaRequest = request.method === 'GET' && (request.url ?? '').startsWith('/sidebar/file')
+    const restoredImage = mediaRequest
+      && header(request.headers, 'sec-fetch-mode') === 'no-cors'
+      && header(request.headers, 'sec-fetch-dest') === 'image'
+      && referer !== undefined
+      && (() => {
+        try {
+          return new URL(referer).host === hostUrl.host
+        } catch {
+          return false
+        }
+      })()
+    if (!restoredImage) return false
+  }
   // Origin fence: when a browser attaches an Origin it must name this
   // hostname (the Host fence above already bound the authority, so the port
   // must not re-decide trust). Comparing hostname, not host: some Chromium
