@@ -354,10 +354,18 @@ describe('session cwd resolution over the API route', () => {
   }
 
   const invokeGet = async (route: SidebarWebRoute, url: string): Promise<{ status: number; body: string }> => {
-    const out: { status: number; body: string } = { status: 200, body: '' }
+    return (await invokeGetFull(route, url))
+  }
+
+  /** invokeGet plus the response headers (for header contracts). */
+  const invokeGetFull = async (route: SidebarWebRoute, url: string): Promise<{ status: number; body: string; headers: Record<string, string> }> => {
+    const out: { status: number; body: string; headers: Record<string, string> } = { status: 200, body: '', headers: {} }
     const req = { method: 'GET', url, headers: { host: '127.0.0.1:3080' } } as never
     const res = {
-      writeHead: (status: number) => { out.status = status },
+      writeHead: (status: number, headers?: Record<string, string>) => {
+        out.status = status
+        if (headers !== undefined) out.headers = headers
+      },
       end: (chunk: unknown) => { out.body += String(chunk ?? '') },
     } as never
     await route.handler(req, res)
@@ -558,6 +566,50 @@ describe('session cwd resolution over the API route', () => {
       expect(JSON.parse(mediaResult.body)).toMatchObject({ ok: false, error: { code: 'forbidden' } })
       expect(htmlResult).toMatchObject({ status: 403 })
       expect(JSON.parse(htmlResult.body)).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('serves an SVG with a sandboxing CSP so a direct navigation cannot run its script', async () => {
+    // An SVG is a scriptable document. Served bare on the GUI origin, opening
+    // this URL directly runs its <script> with same-origin access to
+    // /sidebar/api/*. The html route already sandboxes; the media route must
+    // match. <img> embedding is unaffected (CSP applies to documents).
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-svg-security-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    const svgPath = join(workspace, 'logo.svg')
+    writeFileSync(svgPath, '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const media = routes.find(route => route.path === '/sidebar/file')!
+      const res = await invokeGetFull(media, `/sidebar/file?sessionId=security&path=${encodeURIComponent(svgPath)}`)
+      expect(res.status).toBe(200)
+      expect(res.headers['content-type']).toBe('image/svg+xml')
+      expect(res.headers['content-security-policy']).toContain('sandbox')
+      expect(res.headers['x-content-type-options']).toBe('nosniff')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves an ordinary image response free of the SVG sandbox headers', async () => {
+    // The guard is scoped to the scriptable type: a PNG must not gain a
+    // sandbox directive (nothing to sandbox, and it would be a behaviour
+    // change for existing image previews).
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-png-security-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    const pngPath = join(workspace, 'pixel.png')
+    writeFileSync(pngPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const media = routes.find(route => route.path === '/sidebar/file')!
+      const res = await invokeGetFull(media, `/sidebar/file?sessionId=security&path=${encodeURIComponent(pngPath)}`)
+      expect(res.status).toBe(200)
+      expect(res.headers['content-type']).toBe('image/png')
+      expect(res.headers['content-security-policy']).toBeUndefined()
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
