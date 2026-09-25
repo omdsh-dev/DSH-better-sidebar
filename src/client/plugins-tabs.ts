@@ -34,6 +34,17 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/Fisfzy/ego-browser.git',
   },
   {
+    id: 'dsh-agent-persona',
+    name: () => t('pluginAgentPersonaName'),
+    url: 'https://github.com/Awoodwhale/dsh-agent-persona',
+    description: () => t('pluginAgentPersonaDesc'),
+    // Scopes system-prompt personas by workspace or session and serves them from a
+    // 「人设」tab (with its own settings page). The tab registers through this plugin's
+    // service, so better-sidebar is installed first; the package is on npm, so the
+    // install line needs no git form.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-agent-persona',
+  },
+  {
     id: 'dsh-better-overleaf',
     name: () => t('pluginBetterOverleafName'),
     url: 'https://github.com/Hoemr/dsh-better-overleaf',
