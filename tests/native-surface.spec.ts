@@ -327,6 +327,89 @@ describe('registerNativeSurface lifecycle (service-driven registration)', () => 
     dispose()
   })
 
+  it('does not surface `already registered` when an earlier registration half-failed', () => {
+    // The failure this pins down, as observed on a real DSH 0.1.7 profile:
+    //
+    //   [dsh-better-sidebar] native register files error:
+    //   sidebarRight: tab type id "dsh-better-sidebar:files" is already registered
+    //
+    // The host registry takes the id inside the registration's effect while
+    // its duplicate guard is a synchronous `ids.has(id)` — so a `register`
+    // call whose effect runs (taking the id) but whose promise rejects leaves
+    // the caller with NO handle: `live.set(...)` never runs. The next `sync`
+    // — and the store calls `sync` INLINE on every preference write, session
+    // switch and state mutation — then calls `register` again for an id the
+    // host still holds, and the guard throws.
+    //
+    // `sync` is subscribed to both the descriptor registry and the sidebar
+    // store, so the second call is not hypothetical: it is the next frame.
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'editor', title: 'Files', component: () => null, icon: () => null })
+    const records = createNativeTabRecords()
+
+    const held = new Set<string>()
+    const registerCalls: string[] = []
+    // The FIRST `files` registration takes the id in the host and then fails
+    // (the effect ran, the caller got nothing). Every later attempt must not
+    // turn that half-failure into a user-visible `already registered` error.
+    let halfFailedOnce = false
+    const registry = {
+      register: (definition: { id: string }) => {
+        registerCalls.push(definition.id)
+        if (held.has(definition.id)) {
+          throw new Error(`sidebarRight: tab type id "${definition.id}" is already registered`)
+        }
+        held.add(definition.id)
+        if (definition.id === 'dsh-better-sidebar:files' && !halfFailedOnce) {
+          halfFailedOnce = true
+          throw new Error('sidebarRight: the registration effect rejected')
+        }
+        return () => { held.delete(definition.id) }
+      },
+    }
+    const failures: string[] = []
+    let bodyCleanup: (() => void) | undefined
+    const ctx = {
+      inject: (_deps: readonly string[], callback: (injected: { get: (name: string) => unknown }) => void) => {
+        bodyCleanup = callback({ get: () => registry }) as unknown as (() => void) | undefined
+        return { dispose: () => { bodyCleanup?.(); bodyCleanup = undefined } }
+      },
+      get: () => registry,
+      slots: {
+        inject: (_key: string, callback: () => () => void) => callback(),
+        register: () => () => {},
+      },
+    }
+    registerNativeSurface({
+      ctx: ctx as never,
+      store,
+      service,
+      records,
+      reportFailure: (phase: string) => { failures.push(phase) },
+    })
+
+    // The half-failure itself is reported once (the host contract broke and
+    // that must stay visible — #700's whole point).
+    expect(failures.some(phase => phase.includes('files'))).toBe(true)
+
+    // Now drive `sync` the way the store does. The id is still taken in the
+    // host, and the plugin has no handle for it, so an unguarded `register`
+    // throws `is already registered`. The fix absorbs it and keeps the
+    // takeover working instead of trading a crash for a missing explorer.
+    const failuresBefore = failures.length
+    store.setPrefs({ ...store.getPrefs() })
+    const newlyReported = failures.slice(failuresBefore)
+    expect(
+      newlyReported.filter(phase => phase.includes('files')),
+      'a re-entrant sync must not report `already registered` for an id it no longer owns',
+    ).toEqual([])
+    expect(held.has('dsh-better-sidebar:files')).toBe(true)
+
+    bodyCleanup?.()
+  })
+
   it('claims exactly the extensions DSH has no preview for (the nine restored formats included)', () => {
     // DSH 0.1.7 handed every read-only preview to `ui-sidebar-documentpreview`,
     // and `canOpen` returning false is what gives the address away. The host's
