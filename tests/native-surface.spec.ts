@@ -26,6 +26,32 @@ describe('createNativeTabRecords', () => {
     expect(view.expanded).toEqual([])
   })
 
+  it('addresses a page opened by url on creation, so the tab can load it', () => {
+    // A link taken over by the sidebar opens the browser with a `url` seed and
+    // no `path`; the view reads `tab.path` on mount, so the seed has to become
+    // the address here or the tab opens empty.
+    const records = createNativeTabRecords()
+    const view = records.ensure({
+      id: 'tab-url', kind: 'browser', title: 'localhost', params: { url: 'http://localhost:5173/app?x=1' }, scope,
+    })
+    expect(view.tab.path).toBe('http://localhost:5173/app?x=1')
+  })
+
+  it('prefers an explicit path over the url form of the same seed', () => {
+    const records = createNativeTabRecords()
+    const view = records.ensure({
+      id: 'tab-both', kind: 'editor', title: 'a.ts', params: { path: '/work/a.ts', url: 'https://a.test' }, scope,
+    })
+    expect(view.tab.path).toBe('/work/a.ts')
+  })
+
+  it('re-addresses an existing record on a url navigation', () => {
+    const records = createNativeTabRecords()
+    records.ensure({ id: 'tab-nav', kind: 'browser', title: 'a.test', params: { url: 'https://a.test' }, scope })
+    const view = records.ensure({ id: 'tab-nav', kind: 'browser', title: 'b.test', params: { url: 'https://b.test' }, scope })
+    expect(view.tab.meta).toEqual({ url: 'https://b.test' })
+  })
+
   it('calls the descriptor factory once for a record that arrives without seed fields', () => {
     const records = createNativeTabRecords()
     const mint = vi.fn(() => ({ title: 'Side chat', meta: { autoCreate: true } }))
