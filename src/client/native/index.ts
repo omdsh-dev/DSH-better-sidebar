@@ -156,6 +156,24 @@ interface Registration {
   readonly dispose: () => void
 }
 
+/**
+ * Whether the host registry rejected a registration because the id is taken.
+ *
+ * `@deepseek-ai/dsh-client-ui-sidebar-right` throws
+ * `sidebarRight: tab type id "<id>" is already registered`, and the sibling
+ * kind guard throws `… tab kind "<kind>" is already registered (…)`. Both mean
+ * "the registry already holds this", which is exactly the case a re-entrant
+ * `sync()` must tolerate rather than propagate. Matching on the message is the
+ * only handle available: the host exports no error class for it, and the two
+ * guards are separate `throw new Error` sites.
+ * @param error - the value thrown by `register`.
+ * @returns true when the registry refused a duplicate id.
+ */
+function isAlreadyRegisteredError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('is already registered')
+}
+
 /** Everything the registrations need. */
 export interface NativeSurfaceDeps {
   readonly ctx: Context
@@ -197,6 +215,20 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
   const seat = ctx.inject(['sidebarRightTabs'], (injected) => {
     const tabs = injected.get('sidebarRightTabs') as unknown as NativeTabRegistry | undefined
     if (tabs === undefined) return
+    // The live registrations live OUTSIDE `sync()` so a re-entrant call can
+    // release what an earlier one registered before it re-registers.
+    //
+    // `sync` is subscribed to BOTH the descriptor registry and the sidebar
+    // store, and `SidebarStore.notify()` runs its listeners INLINE — so every
+    // preference write, session switch and state mutation calls `sync`
+    // synchronously, more than once per frame. The host registry's duplicate
+    // guard is a synchronous `ids.has(id)`, while its `ids.add(id)` runs
+    // inside the registration's effect, so a registration that throws AFTER
+    // the host has already taken the id leaves `live` without a handle for it
+    // (the `live.set` never ran) — and the next `sync` then calls `register`
+    // on an id that is still held. That is the observed
+    // `sidebarRight: tab type id "dsh-better-sidebar:files" is already
+    // registered`.
     const live = new Map<string, Registration>()
 
     const fileParamsOf = (info: NativeTabInfo): NativeTabParams | undefined => {
@@ -231,46 +263,56 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       const id = nativeId(descriptor.id)
       const isEditor = descriptor.id === EDITOR_KIND
       const icon = descriptor.icon
-      const disposeType = tabs.register({
-        id,
-        kind: descriptor.id,
-        ...(isEditor
-          ? {
-            patterns: ['dsh-resource://file/**'],
-            canOpen: (address: string) => {
-              const file = parseFileAddress(address)
-              // A non-file address, or one of the formats the built-in
-              // previews own, leaves the address to DSH's own `text` type.
-              return file !== undefined && !hostOwnedPath(file.path)
-            },
-          }
-          : {}),
-        // An external implementation outranks the product's own viewers, which
-        // is what lets the plugin's editor take over file addresses.
-        priority: 'extension',
-        // A resource tab is titled by the file it shows; a page tab keeps the
-        // descriptor's own title.
-        title: (address: string) => (isEditor ? fileTitleOf(address) ?? titleOf(descriptor) : titleOf(descriptor)),
-        // No guide entry for the editor: its page identity is the `files`
-        // kind takeover below (same view, same title), so listing both would
-        // offer the reader two identical "Files" rows. The type itself stays
-        // registered as the file RESOURCE viewer.
-        ...(descriptor.hidden === true || isEditor
-          ? {}
-          : {
-            guide: [{
-              // DSH 0.1.6-alpha.2 made `id` REQUIRED and unique per provider
-              // (a duplicate throws `sidebarRight: duplicate guide entry id`).
-              // The descriptor id is already unique per implementation, which
-              // is exactly the uniqueness the registry asks for.
-              id: descriptor.id,
-              order: descriptor.order ?? 100,
-              title: () => titleOf(descriptor),
-              ...guideDescriptionOf(descriptor),
-              ...guideIconOf(icon),
-            }],
-          }),
-      })
+      // Same last-resort idempotence as `registerFilesKind`: a type the host
+      // already holds is reused instead of aborting this descriptor's whole
+      // registration (which would also skip its body/title slots below).
+      let disposeType: () => void
+      try {
+        disposeType = tabs.register({
+          id,
+          kind: descriptor.id,
+          ...(isEditor
+            ? {
+              patterns: ['dsh-resource://file/**'],
+              canOpen: (address: string) => {
+                const file = parseFileAddress(address)
+                // A non-file address, or one of the formats the built-in
+                // previews own, leaves the address to DSH's own `text` type.
+                return file !== undefined && !hostOwnedPath(file.path)
+              },
+            }
+            : {}),
+          // An external implementation outranks the product's own viewers, which
+          // is what lets the plugin's editor take over file addresses.
+          priority: 'extension',
+          // A resource tab is titled by the file it shows; a page tab keeps the
+          // descriptor's own title.
+          title: (address: string) => (isEditor ? fileTitleOf(address) ?? titleOf(descriptor) : titleOf(descriptor)),
+          // No guide entry for the editor: its page identity is the `files`
+          // kind takeover below (same view, same title), so listing both would
+          // offer the reader two identical "Files" rows. The type itself stays
+          // registered as the file RESOURCE viewer.
+          ...(descriptor.hidden === true || isEditor
+            ? {}
+            : {
+              guide: [{
+                // DSH 0.1.6-alpha.2 made `id` REQUIRED and unique per provider
+                // (a duplicate throws `sidebarRight: duplicate guide entry id`).
+                // The descriptor id is already unique per implementation, which
+                // is exactly the uniqueness the registry asks for.
+                id: descriptor.id,
+                order: descriptor.order ?? 100,
+                title: () => titleOf(descriptor),
+                ...guideDescriptionOf(descriptor),
+                ...guideIconOf(icon),
+              }],
+            }),
+        })
+      } catch (error) {
+        if (!isAlreadyRegisteredError(error)) throw error
+        // Already held: keep the host's row, contribute nothing to dispose.
+        disposeType = () => {}
+      }
       const slots = registerSlots(
         id,
         { ctx, store, service, records, descriptorId: descriptor.id },
@@ -285,25 +327,42 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
     /** One `files`-kind takeover: the plugin's explorer under the built-in kind. */
     const registerFilesKind = (editor: TabDescriptor | undefined): (() => void) => {
       const id = 'dsh-better-sidebar:files'
-      const disposeType = tabs.register({
-        id,
-        kind: FILES_KIND,
-        priority: 'extension',
-        title: () => t('files'),
-        guide: [{
-          // Required and unique per provider since DSH 0.1.6-alpha.2. This
-          // takeover is its own implementation id, so its guide row takes
-          // that same id.
-          id: 'files',
-          order: 10,
+      // Last-resort idempotence. The re-entry guard above already disposes a
+      // previous run's registrations before this one registers, so reaching
+      // this catch means the host still holds the id for a reason this module
+      // cannot see (an aggregate bundle mounting the same package under its
+      // own entry id is the known one). The host's guard is a synchronous
+      // `ids.has(id)` check, and its `ids.add(id)` happens inside the
+      // registration's effect — so a same-tick second registration can also
+      // slip past the host's own check and blow up on the effect instead.
+      // Reusing the existing type keeps the takeover WORKING instead of
+      // trading a crash for a missing explorer.
+      let disposeType: () => void
+      try {
+        disposeType = tabs.register({
+          id,
+          kind: FILES_KIND,
+          priority: 'extension',
           title: () => t('files'),
-          // The takeover IS the editor descriptor's page, so it carries the
-          // editor's glyph AND guide line: without them the "Files" row is
-          // the only guide entry with a blank icon slot and no description.
-          ...guideDescriptionOf(editor),
-          ...guideIconOf(editor?.icon),
-        }],
-      })
+          guide: [{
+            // Required and unique per provider since DSH 0.1.6-alpha.2. This
+            // takeover is its own implementation id, so its guide row takes
+            // that same id.
+            id: 'files',
+            order: 10,
+            title: () => t('files'),
+            // The takeover IS the editor descriptor's page, so it carries the
+            // editor's glyph AND guide line: without them the "Files" row is
+            // the only guide entry with a blank icon slot and no description.
+            ...guideDescriptionOf(editor),
+            ...guideIconOf(editor?.icon),
+          }],
+        })
+      } catch (error) {
+        if (!isAlreadyRegisteredError(error)) throw error
+        // Already held: keep the host's row, contribute nothing to dispose.
+        disposeType = () => {}
+      }
       const slots = registerSlots(id, { ctx, store, service, records, descriptorId: EDITOR_KIND }, {})
       return () => {
         for (const dispose of slots.reverse()) dispose()
