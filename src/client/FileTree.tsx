@@ -653,6 +653,7 @@ export function FileTree(props: {
             <div
               role="button"
               tabIndex={0}
+              data-entry-type="dir"
               className={clsx(
                 css.explorerRow, css.explorerDir, entry.hidden && css.explorerHidden,
                 dropTarget === entry.path && css.explorerRowDropTarget,
@@ -660,6 +661,7 @@ export function FileTree(props: {
               )}
               data-dsh-revealed={revealedSet.has(entry.path) ? 'true' : undefined}
               style={{ paddingLeft: depth * 22 + 6 }}
+              title={entry.path}
               onClick={() => { onToggle(entry.path) }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
@@ -685,6 +687,7 @@ export function FileTree(props: {
           key={entry.path}
           role="button"
           tabIndex={0}
+          data-entry-type="file"
           className={clsx(
             css.explorerRow, entry.hidden && css.explorerHidden, entry.broken && css.explorerBroken,
             dropTarget === parentOf(entry.path) && css.explorerRowDropTarget,
@@ -743,6 +746,8 @@ export function FileTree(props: {
             </div>
           )}
           <div
+            data-entry-type="dir"
+            title={root}
             className={clsx(css.explorerRow, dropTarget === root && css.explorerRowDropTarget)}
             style={{ paddingLeft: 6 }}
             onDragOver={(event) => { handleRowDragOver(event, root) }}
