@@ -43,6 +43,15 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-better-overleaf',
   },
   {
+    id: 'dsh-dev-git-graph',
+    name: 'dsh-dev-git-graph 提交图',
+    url: 'https://github.com/kp-z/dsh-dev-git-graph',
+    description: () => t('pluginDevGitGraphDesc'),
+    // Optional peer of dsh-better-sidebar (native tab + DiffTab reuse when
+    // present, overlay fallback when not); published on npm.
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-dev-git-graph',
+  },
+  {
     id: 'dsh-docs-panel',
     name: () => t('pluginDocsPanelName'),
     url: 'https://github.com/mlosun/dsh-docs-panel',
