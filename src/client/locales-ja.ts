@@ -446,5 +446,7 @@ export const ja: Record<string, string> = {
   pluginMdExportName: 'Markdown エクスポート',
   pluginCodeNavName: 'コードプレビューナビゲーター',
   pluginVideoPreviewName: '動画プレビュー',
+  pluginDshMemoryDeltaName: 'dsh-memory-delta メモリ',
+  pluginDshMemoryDeltaDesc: 'セッションをまたぐ記憶：変化した部分だけを注入し（変化がなければ何も注入しません）、レビュー期日のリマインド、関連度順の検索、サイドバーのタブを備えます。',
   presetDshDesktopDesc: 'Electron 高度モード（枠なし）：macOS は上部 20px、Windows は WCO 未提供時に 32px のタイトルバー分を確保',
 }

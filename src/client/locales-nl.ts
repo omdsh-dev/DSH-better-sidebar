@@ -444,5 +444,7 @@ export const nl: Record<string, string> = {
   pluginMdExportName: 'Markdown-export',
   pluginCodeNavName: 'Codevoorvertoning-navigator',
   pluginVideoPreviewName: 'Videovoorvertoning',
+  pluginDshMemoryDeltaName: 'dsh-memory-delta Geheugen',
+  pluginDshMemoryDeltaDesc: 'Geheugen tussen sessies: alleen wat is gewijzigd wordt geïnjecteerd (niets als er niets is gewijzigd), met herinnering aan de controledatum, relevantiegerangschikt zoeken en een zijbalktabblad.',
   presetDshDesktopDesc: 'Geavanceerde Electronmodus (zonder rand): macOS reserveert 20px bovenaan; Windows reserveert 32px voor de titelbalk wanneer WCO niet beschikbaar is',
 }

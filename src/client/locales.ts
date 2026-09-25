@@ -434,6 +434,7 @@ export const zh = {
   pluginDocsPanelDesc: 'DSH 侧边栏里的「全局文档」：全局 Markdown 笔记，任何工作区随时可读——列表点选阅读、悬浮大纲跳转、Chrome / VS Code 外部打开、代码复制，目录可配置（默认 ~/.dsh/docs）',
   pluginEgoBrowserDesc: '把 CitroLabs/ego-lite 接进 DeepSeek Harness 的 agent 浏览器：32 个 ego_* 工具驱动真实 Chromium，侧边栏原生「ego 浏览器」Tab 实时观察 agent 逛的每个页面，可直接点击/拖拽/输入接管；装 better-sidebar 时自动注册 Tab，没装则退回浮动浮窗',
   pluginBilingualReaderDesc: '在 DSH 侧边栏读论文 PDF：原生 PDF 显示，选中一段文字即用大模型划词翻译，结合上下文、完全隔离主对话，只作阅读辅助',
+  pluginDshMemoryDeltaDesc: '跨会话记忆：只注入变化的部分（无变化时零注入），带到期复核提醒、相关度排序检索和侧边栏页签。',
   pluginSentinelName: 'dsh-sentinel 唤醒系统',
   pluginEgoBrowserName: 'ego-browser Agent 浏览器',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf 标签页',
@@ -453,6 +454,7 @@ export const zh = {
   pluginMdExportName: 'Markdown 导出插件',
   pluginCodeNavName: '代码预览导航',
   pluginVideoPreviewName: '视频预览插件',
+  pluginDshMemoryDeltaName: 'dsh-memory-delta 记忆',
   presetDshDesktopDesc: 'Electron 高级模式（无边框）：macOS 顶栏 20px、Windows 无 WCO 时 32px 标题栏让位',
 }
 
@@ -869,6 +871,7 @@ export const en: Record<keyof typeof zh, string> = {
   pluginEgoBrowserDesc: 'The agent browser for DeepSeek Harness: 32 ego_* tools drive a real Chromium, with a native sidebar "ego browser" tab giving a live view of every page the agent visits — you can click, drag, and type to take over. Registers the tab automatically when better-sidebar is present, otherwise falls back to a floating bubble',
   pluginBetterOverleafDesc: 'Overleaf tab for better-sidebar: direct-CDP browser login (third-party Chromium supported), project list/switch, local git mirrors under <workspace>/overleaf/, two-way git sync with read-only API fallback, and file preview through the sidebar workbench',
   pluginBilingualReaderDesc: 'Read paper PDFs in the DSH sidebar: native PDF rendering, select text to translate it with the LLM, using context while staying fully isolated from the main conversation — a reading aid only',
+  pluginDshMemoryDeltaDesc: 'Cross-session memory that injects only what changed — nothing at all when nothing changed — with review-date reminders, relevance-ranked search and a sidebar tab.',
   pluginSentinelName: 'dsh-sentinel Wake-up System',
   pluginEgoBrowserName: 'ego-browser Agent Browser',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf Tab',
@@ -888,6 +891,7 @@ export const en: Record<keyof typeof zh, string> = {
   pluginMdExportName: 'Markdown Export',
   pluginCodeNavName: 'Code Preview Navigator',
   pluginVideoPreviewName: 'Video Preview',
+  pluginDshMemoryDeltaName: 'dsh-memory-delta Memory',
   presetDshDesktopDesc: 'Electron advanced (frameless) mode: macOS reserves a 20px top strip; Windows reserves a 32px title bar when WCO is unavailable',
 }
 

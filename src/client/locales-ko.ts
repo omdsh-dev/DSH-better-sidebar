@@ -438,5 +438,7 @@ export const ko: Record<string, string> = {
   pluginMdExportName: 'Markdown 내보내기',
   pluginCodeNavName: '코드 미리보기 내비게이터',
   pluginVideoPreviewName: '동영상 미리보기',
+  pluginDshMemoryDeltaName: 'dsh-memory-delta 메모리',
+  pluginDshMemoryDeltaDesc: '세션 간 기억: 변경된 부분만 주입하고(변경이 없으면 아무것도 주입하지 않음), 검토 시점 알림, 관련도 정렬 검색, 사이드바 탭을 제공합니다.',
   presetDshDesktopDesc: 'Electron 고급 모드(테두리 없음): macOS는 상단에 20px, Windows는 WCO가 없을 때 타이틀 바에 32px를 확보',
 }

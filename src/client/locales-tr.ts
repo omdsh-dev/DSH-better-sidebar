@@ -446,5 +446,7 @@ export const tr: Record<string, string> = {
   pluginMdExportName: 'Markdown dışa aktarma',
   pluginCodeNavName: 'Kod önizleme gezgini',
   pluginVideoPreviewName: 'Video önizlemesi',
+  pluginDshMemoryDeltaName: 'dsh-memory-delta Bellek',
+  pluginDshMemoryDeltaDesc: 'Oturumlar arası bellek: yalnızca değişenler enjekte edilir (değişiklik yoksa hiçbir şey), gözden geçirme tarihi hatırlatması, alaka sıralı arama ve kenar çubuğu sekmesi ile.',
   presetDshDesktopDesc: 'Electron gelişmiş (çerçevesiz) mod: macOS üstte 20px ayırır; Windows, WCO yokken başlık çubuğu için 32px ayırır',
 }
