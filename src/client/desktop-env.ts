@@ -66,6 +66,25 @@ function parseTitlebarInset(raw: string | null): number {
   return Math.min(120, Math.max(0, Math.round(parsed)))
 }
 
+/**
+ * Absolute base for the plugin's own WebSocket routes.
+ *
+ * A desktop shell may serve the GUI from a custom scheme: the official Electron
+ * shell uses `dsh-app://app/`, whose `location.host` is the literal string
+ * `app`. Resolving `/sidebar/ws/*` against that origin produces `ws://app/...`,
+ * which can never complete a DNS lookup — every socket the sidebar opens then
+ * fails with a connection error. The shell publishes the Host's real base
+ * through `__DSH_TRANSPORT__.streamBaseUrl`, the same source DSH's own downlink
+ * mux resolves through (`stream-client.ts` in `@deepseek-ai/dsh-api-gateway`),
+ * so prefer it and fall back to `document.baseURI` for ordinary http(s) pages.
+ * @returns A URL string usable as the base argument of `new URL`.
+ */
+export function sidebarWebSocketBase(): string {
+  const transport = (globalThis as { __DSH_TRANSPORT__?: { streamBaseUrl?: string } }).__DSH_TRANSPORT__
+  const base = transport?.streamBaseUrl
+  return base !== undefined && base !== '' ? base : document.baseURI
+}
+
 /** Test hook: drop the memo so the next parse re-reads the URL/globals. */
 export function resetDesktopEnvForTests(): void {
   cached = undefined

@@ -12,6 +12,7 @@ import { isNarrowWidth } from '../breakpoints.ts'
 import { detectNewDirectSubagent } from '../subagent-detect.ts'
 import { detectNewJob } from '../subagent-jobs.ts'
 import { api } from '../api.ts'
+import { sidebarWebSocketBase } from '../desktop-env.ts'
 import { mountedSessionId } from '../native/surface.ts'
 import { usePolling } from '../use-polling.ts'
 import { t } from '../locales.ts'
@@ -122,7 +123,7 @@ export function useHostFeeds(feeds: {
     let failures = 0
     const connect = (): void => {
       if (closed) return
-      const url = new URL('/sidebar/ws/agent-opens', location.origin)
+      const url = new URL('/sidebar/ws/agent-opens', sidebarWebSocketBase())
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
       url.search = new URLSearchParams({ sessionId }).toString()
       socket = new WebSocket(url.toString())
