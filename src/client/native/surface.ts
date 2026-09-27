@@ -10,10 +10,13 @@
  *
  * - the surface exists only while a session's panel is mounted, and the
  *   service's public face (`ISidebarRight`) writes only into THAT session.
- *   The controller also carries `openTabIn` / `openResourceIn` /
- *   `closeIn`, which act on any session whose store the runtime has minted;
- *   both are probed at call time, and an open for a session that has no
- *   store yet is QUEUED and replayed when that session comes on screen;
+ *   "Which session that is" comes from the controller's `mounted` observation
+ *   ({@link mountedSessions}) — never from the session list, which has no
+ *   current-session field. The controller also carries `openTabIn` /
+ *   `openResourceIn` / `closeIn`, which act on any session whose store the
+ *   runtime has minted; both are probed at call time, and an open for a
+ *   session that has no store yet is QUEUED and replayed when that session
+ *   comes on screen;
  * - layout state is memory-only, so a queued open is not durable either.
  */
 import type { Context } from '../../context-types.ts'
@@ -26,11 +29,24 @@ type Pending =
   | { kind: 'tab'; sessionId: string; tabKind: string; params: NativeTabParams; revealIfOpened: boolean }
   | { kind: 'resource'; sessionId: string; address: string; line: number | undefined; revealIfOpened: boolean }
 
+/**
+ * The observation "which session's seat is on screen": DSH 0.1.7 publishes it
+ * as `ISidebarRight.mounted` (`ObservableSnapshot<SessionId | undefined>`, set
+ * only when the mounted seat really changes). `undefined` means NO seat is
+ * drawn — a global panel, or a right column that was never mounted.
+ */
+export interface MountedSessions {
+  getSnapshot(): string | undefined
+  subscribe(listener: () => void): () => void
+}
+
 /** The controller face this module uses (a structural slice of `ISidebarRight`). */
 interface NativeController {
   openTab(kind: string, options?: { params?: unknown; revealIfOpened?: boolean }): void
   openResource(address: string, options?: { params?: unknown; revealIfOpened?: boolean }): void
   close(tabId: string): void
+  /** The mounted-seat observation (0.1.7 `ISidebarRight.mounted`). */
+  mounted?: MountedSessions
   /** Not part of `ISidebarRight`: the concrete controller's per-session writes. */
   openTabIn?(sessionId: string, kind: string, options?: { params?: unknown; revealIfOpened?: boolean }): void
   openResourceIn?(sessionId: string, address: string, options?: { params?: unknown; revealIfOpened?: boolean }): void
@@ -41,35 +57,82 @@ interface NativeController {
 export interface NativeSurface extends SidebarSurface {
   /** Replay opens that were queued for a session that had no mounted surface. */
   flushPending(): void
-  /** Stop observing the session list. */
+  /** Stop observing the session list and the mounted-seat feed. */
   dispose(): void
 }
 
-/** The active session id, as the client list reports it. */
-function activeSessionId(ctx: Context): string | undefined {
+/** The native controller, probed at call time (the service can arrive late). */
+function controllerOf(ctx: Context): NativeController | undefined {
   try {
-    return ctx.sessions.list.getSnapshot().current
+    return ctx.get('sidebarRight') as unknown as NativeController | undefined
   } catch {
     return undefined
   }
 }
 
 /**
+ * The on-screen-session feed, as anything outside this module should read it.
+ *
+ * The session-list snapshot carries NO current-session field in any DSH
+ * release (0.1.6 and 0.1.7 both publish only `ids` / `byId` / `phase` plus
+ * projections), so a read of one was always `undefined`: `mounted` is the
+ * only sanctioned source, and the plugin's own type invented the field it
+ * used to read.
+ *
+ * The probe tolerates a host without `mounted` (or a controller the runtime
+ * has not provided yet — the seat race this plugin already hit once on
+ * 0.1.5): the session list then doubles as the change pulse, so a late
+ * service is still picked up on the next list publish instead of never.
+ *
+ * @param ctx - the client context.
+ * @returns the observable face of the mounted seat's session id.
+ */
+export function mountedSessions(ctx: Context): MountedSessions {
+  return {
+    getSnapshot: () => {
+      try {
+        const mounted = controllerOf(ctx)?.mounted
+        return typeof mounted?.getSnapshot === 'function' ? mounted.getSnapshot() : undefined
+      } catch {
+        return undefined
+      }
+    },
+    subscribe: (listener) => {
+      const mounted = controllerOf(ctx)?.mounted
+      return typeof mounted?.subscribe === 'function'
+        ? mounted.subscribe(listener)
+        : ctx.sessions.list.subscribe(listener)
+    },
+  }
+}
+
+/**
+ * The session whose seat is on screen, or `undefined` — no seat is mounted
+ * (global panel, column not mounted) or the host has no mounted feed. Callers
+ * treat `undefined` as "not this session": nothing the plugin draws belongs to
+ * that surface, so it must neither write into it nor manage its column.
+ *
+ * @param ctx - the client context.
+ * @returns the on-screen session id, when there is one.
+ */
+export function mountedSessionId(ctx: Context): string | undefined {
+  return mountedSessions(ctx).getSnapshot()
+}
+
+/**
  * Bind the plugin's write face to the native controller.
  * @param ctx - the client context (session list + `ctx.sidebarRight`).
  * @param records - the plugin's native tab record registry.
- * @returns the surface, plus a disposer unbinding its session subscription.
+ * @returns the surface, plus a disposer unbinding its two feed subscriptions.
  */
 export function createNativeSurface(ctx: Context, records: NativeTabRecords): NativeSurface {
   const pending: Pending[] = []
-  const controller = (): NativeController | undefined =>
-    ctx.get('sidebarRight') as unknown as NativeController | undefined
+  const controller = (): NativeController | undefined => controllerOf(ctx)
 
   const place = (entry: Pending): boolean => {
     const api = controller()
     if (api === undefined) return false
-    const active = activeSessionId(ctx)
-    const onScreen = active !== undefined && active === entry.sessionId
+    const onScreen = mountedSessionId(ctx) === entry.sessionId
     if (entry.kind === 'tab') {
       const options = { params: entry.params, revealIfOpened: entry.revealIfOpened }
       if (onScreen) {
@@ -109,7 +172,18 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
     if (!place(entry)) pending.push(entry)
   }
 
-  const unsubscribe = ctx.sessions.list.subscribe(flushPending)
+  // Two feeds flush the queue: the mounted seat (a session coming on screen)
+  // and the session list, which also stays the pulse that picks the native
+  // service up when it is provided after this surface was created.
+  let mountedUnsubscribe: (() => void) | undefined
+  const onListChange = (): void => {
+    if (mountedUnsubscribe === undefined) {
+      const mounted = controller()?.mounted
+      if (typeof mounted?.subscribe === 'function') mountedUnsubscribe = mounted.subscribe(flushPending)
+    }
+    flushPending()
+  }
+  const unsubscribeList = ctx.sessions.list.subscribe(onListChange)
   return {
     openTab({ sessionId, kind, params, revealIfOpened }) {
       enqueue({ kind: 'tab', sessionId, tabKind: kind, params, revealIfOpened })
@@ -126,7 +200,7 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
       records.drop(tabId)
       const api = controller()
       if (api !== undefined) {
-        if (sessionId === activeSessionId(ctx)) api.close(tabId)
+        if (sessionId === mountedSessionId(ctx)) api.close(tabId)
         else if (api.closeIn !== undefined) api.closeIn(sessionId, tabId)
       }
       return { type: record.tab.type, title: record.tab.title }
@@ -144,6 +218,9 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
     },
     has: tabId => records.has(tabId),
     flushPending,
-    dispose: () => { unsubscribe() },
+    dispose: () => {
+      unsubscribeList()
+      mountedUnsubscribe?.()
+    },
   }
 }

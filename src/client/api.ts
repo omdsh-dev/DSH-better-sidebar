@@ -7,11 +7,16 @@
  * request). Failures surface as {@link SidebarApiError} with the wire code.
  */
 import { encodeHtmlUrl } from '../html-route.ts'
-import { resolveSidebarPath } from './produced-files.ts'
-import type { LastActivity } from '../subagent-activity.ts'
+import { resolveSidebarPath } from './paths.ts'
 import type { SidechatLiveEvent, SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
-import type { SidebarSessionEvent } from '../context-types.ts'
-import type { BrowserProbeResult } from './browser.ts'
+import type {
+  SidebarCreateTeamTaskRequest,
+  SidebarChildLiveView,
+  SidebarSessionEvent,
+  SidebarTeamTaskView,
+  SidebarUpdateTeamTaskRequest,
+} from '../context-types.ts'
+import type { WorkflowRunView } from '../workflow-runs.ts'
 
 /** One wire failure. */
 export class SidebarApiError extends Error {
@@ -97,38 +102,30 @@ export interface FsTextResult { kind: 'text'; content: string; truncated: boolea
  *  `head` carries the first bytes (base64) for viewer detect sniffing. */
 export interface FsBinaryResult { kind: 'binary'; size: number; truncated: boolean; head: string }
 
+/** The `subagents.live` response: one row per tree child (and the root). */
+export type SubagentLiveResult = { live: Record<string, SidebarChildLiveView> }
+
+/** The `workflows.list` response: the tree's folded workflow runs. */
+export type WorkflowsListResult = { runs: WorkflowRunView[] }
+
+/** The `teams.taskCreate` request payload (minus the rootSessionId). */
+export type TeamsTaskCreateRequest = SidebarCreateTeamTaskRequest
+
+/** The `teams.taskUpdate` request payload (minus the rootSessionId). */
+export type TeamsTaskUpdateRequest = SidebarUpdateTeamTaskRequest
+
 /**
- * One jobs.output response: the output the MODEL has read so far for the
- * job (replayed from the owner session's event log — the model's
- * job_output cursor is never touched, so the pane can never steal the
- * agent's bytes). `read` is false until the model actually called
- * job_output for the job.
+ * One team-task write as CALLERS consume it. The board's READ path has no
+ * route at all (it rides the Lead Session's `agentTeam` projection, see
+ * team-projection.ts), and a rejected write is a RESULT rather than an
+ * exception: the route answers 409 `team-conflict` for a stale revision and
+ * 400 `team-error` otherwise, {@link writeTask} turns that failed envelope
+ * back into `{ok:false, code, message}`, and the task window routes on the
+ * code (a stale revision deserves its own wording, not "operation failed").
  */
-export interface JobOutputResult {
-  text: string
-  /** True when the host capped the text at its output limit. */
-  truncated: boolean
-  /** Whether the model has read the job at least once. */
-  read: boolean
-}
-
-/** The `subagents.live` response: running child id → latest activity. */
-export type SubagentLiveResult = { live: Record<string, LastActivity> }
-
-/** Terminal dependency status (mirror of the host's depsStatus; issue #140). */
-export type TerminalDepsStatus =
-  | { ok: true }
-  | {
-    ok: false
-    /** The require-time error message (module missing, native binding broken…). */
-    cause: string
-    /** The pasteable repair command (terminal/cmd). */
-    command: string
-    /** The detected profile name (null when undetected → the command defaults to web). */
-    profile: string | null
-    /** Optional supplementary hint (fallback command only). */
-    note?: string
-  }
+export type TeamsTaskMutationResult =
+  | { ok: true; value: SidebarTeamTaskView }
+  | { ok: false; code?: string; message: string }
 
 /**
  * Parse one `/sidebar` JSON response envelope into its value. A non-ok
@@ -162,6 +159,29 @@ async function call<T>(method: string, payload: Record<string, unknown>, signal?
     throw new SidebarApiError('network', error instanceof Error ? error.message : String(error))
   }
   return readEnvelope<T>(response)
+}
+
+/**
+ * One team-task write with the rejection turned back into a RESULT. Every
+ * other `/sidebar/api` caller lets a failed envelope throw (that is what
+ * {@link readEnvelope} is for); here the route's error CODE is data the task
+ * window needs — `team-conflict` means "someone changed this task, refresh",
+ * which is a different sentence from every other failure.
+ * @param method - `teams.taskCreate` or `teams.taskUpdate`.
+ * @param payload - the request plus its `rootSessionId`.
+ */
+async function writeTask(
+  method: string,
+  payload: Record<string, unknown>,
+): Promise<TeamsTaskMutationResult> {
+  try {
+    return { ok: true, value: await call<SidebarTeamTaskView>(method, payload) }
+  } catch (error) {
+    if (error instanceof SidebarApiError) {
+      return { ok: false, code: error.code, message: error.message }
+    }
+    throw error
+  }
 }
 
 /**
@@ -339,43 +359,28 @@ export const api = {
   /** Cherry-pick one commit onto the current branch. */
   gitCherryPick: (scope: SessionScope, hash: string, worktree?: string) =>
     call<{ ok: true }>('git.cherry-pick', gitPayload(scope, worktree, { hash })),
-  /** Release a terminal's process immediately (tab closed; the WS close frame
-   *  may be unreachable while the socket is down, so the host also accepts
-   *  this explicit route). */
-  ptyClose: (scope: SessionScope, tab: string) =>
-    call<{ ok: true }>('pty.close', scopePayload(scope, { tab })),
-  /** Release an agent terminal by uuid (tab closed while WS was down). */
-  agentPtyClose: (uuid: string) =>
-    call<{ ok: true }>('agent-pty.close', { uuid }),
-  /** Skip every active terminal_wait_for on one agent terminal (the wait
-   *  banner's skip button). Idempotent: {skipped:0} when none is active. */
-  agentSkipWait: (uuid: string) =>
-    call<{ ok: true; skipped: number }>('agent-pty.skip-wait', { uuid }),
-  /** Terminal dependency status (issue #140): after a WS close 1011 with
-   *  reason `pty-deps-missing` the view fetches the full repair details here
-   *  (the close reason itself is capped at 123 bytes). */
-  terminalDeps: () =>
-    call<TerminalDepsStatus>('terminal.deps', {}),
-  /**
-   * The output the model has read so far for one background job (replayed
-   * from the owner session's event log — never the model's job_output
-   * cursor). The scope MUST be the job's OWNER session.
-   */
-  jobOutput: (scope: SessionScope, id: string, signal?: AbortSignal) =>
-    call<JobOutputResult>('jobs.output', scopePayload(scope, { id }), signal),
-  /** Request cancellation of one background job (live jobs flip to stopping). */
-  jobKill: (scope: SessionScope, id: string, reason?: string) =>
-    call<{ ok: true; outcome: 'requested' | 'already-finished' }>('jobs.kill', scopePayload(scope, {
-      id,
-      ...(reason !== undefined ? { reason } : {}),
-    })),
   /**
    * One batch live-preview fetch for the whole Subagent tree. The payload is
    * the already-resolved topology ROOT (not a session scope); the host
-   * enumerates descendants once and folds running children's activity.
+   * enumerates descendants once and folds every child's newest process range
+   * into the main agent's merged-activity summary.
    */
   subagentsLive: (rootSessionId: string, signal?: AbortSignal) =>
     call<SubagentLiveResult>('subagents.live', { rootSessionId }, signal),
+  /**
+   * The workflow runs of the whole tree, folded host-side from the
+   * `tool-workflow/*` session events (the same four types the official
+   * workflow-run panel folds). Empty when the tree never ran a workflow —
+   * absence is the normal case, never an error.
+   */
+  workflowsList: (rootSessionId: string, signal?: AbortSignal) =>
+    call<WorkflowsListResult>('workflows.list', { rootSessionId }, signal),
+  /** Create one shared task on the root-led team. */
+  teamsTaskCreate: (rootSessionId: string, req: TeamsTaskCreateRequest) =>
+    writeTask('teams.taskCreate', { rootSessionId, ...req }),
+  /** CAS-mutate one shared task; a stale revision yields `team-conflict`. */
+  teamsTaskUpdate: (rootSessionId: string, req: TeamsTaskUpdateRequest) =>
+    writeTask('teams.taskUpdate', { rootSessionId, ...req }),
   /** Create a Side Chat thread: a child session seeded with the parent's
    *  full log up to now. Empty question = immediate create (Codex-style):
    *  the thread opens empty, the first prompt carries the boundary. */
@@ -404,9 +409,6 @@ export const api = {
       childId,
       ...(afterSeq !== undefined ? { afterSeq } : {}),
     }, signal),
-  /** The effective terminal shell and its display name (plugin-global). */
-  shellGet: () =>
-    call<{ shell: string; name: string }>('shell.get', {}),
   /** Read the side card preferences (plugin-global, no session scope). */
   settingsGet: () =>
     call<{ value?: unknown; revision?: number; externalDisable?: boolean }>('settings.get', {}),
@@ -416,10 +418,6 @@ export const api = {
       patch,
       ...(expectedRevision !== undefined ? { expectedRevision } : {}),
     }),
-  /** Probe a URL's response headers (the sidebar browser's embeddability
-   *  check; see the host's browser.probe route). */
-  browserProbe: (url: string, signal?: AbortSignal) =>
-    call<BrowserProbeResult>('browser.probe', { url }, signal),
   /** External open for the file tree's "open with" menu. Remote SSH editor
    *  URLs are launched on the browser/client machine; reveal and local URLs
    *  keep using the host's platform opener. */

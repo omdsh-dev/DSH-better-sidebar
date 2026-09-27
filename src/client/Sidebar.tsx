@@ -21,22 +21,21 @@
  * conversations swaps the workbench.
  *
  * The shell binds the workbench actions to the store and dispatches tab
- * content to the views. New tabs come from the + menu (explorer / git /
- * terminal; editors open from the explorer).
+ * content to the views. New tabs come from the + menu (explorer / git;
+ * editors open from the explorer).
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from 'react'
 import { useSyncExternalStore } from 'react'
 import clsx from 'clsx'
-import { IconCloseFill14, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseFillRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { referenceInChat as referenceInChatShared } from './reference-in-chat.ts'
 import {
-  BOTTOM_MIN, CONVERSATION_MIN, agentUuidOf, firstLeaf, isAgentTabId,
+  BOTTOM_MIN, CONVERSATION_MIN,
   leafWithTab, moveTab, moveTabToEdge, openDiffTab, resizeSplitIn,
-  setBottomHeight, setTabPin, toggleBottomPanel, toggleExpanded,
+  setBottomHeight, toggleBottomPanel, toggleExpanded,
   type DropZone, type SidebarStore, type SidebarTab,
 } from './state.ts'
-import { getPinnedHomeScope } from './pinned.ts'
 import { IconPanelBottomOutline16 } from './icons.tsx'
 import { Workbench, type WorkbenchActions } from './split-pane.tsx'
 import { useViewportSize } from './breakpoints.ts'
@@ -48,7 +47,7 @@ import { computeTitleBarStrip } from './titlebar-strip.ts'
 import { TabContent, buildNewTabOptions } from './sidebar/TabContent.tsx'
 import { useCenterColumn } from './sidebar/use-center-column.ts'
 import { useHostFeeds } from './sidebar/use-host-feeds.ts'
-import { usePinnedTabs } from './sidebar/use-pinned-tabs.ts'
+import { mountedSessions } from './native/surface.ts'
 import type { TabDragPayload } from './TabBar.tsx'
 import { t } from './locales.ts'
 import { api } from './api.ts'
@@ -197,7 +196,17 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     useMemo(() => (callback: () => void) => ctx.sessions.list.subscribe(callback), [ctx]),
     useCallback(() => ctx.sessions.list.getSnapshot(), [ctx]),
   )
-  const current = sessionList.current
+  // Which conversation is on screen. The session-list snapshot has no
+  // current-session field in ANY DSH release, so the old read of one was
+  // permanently `undefined` and `store.setSession` below never bound a
+  // session: DSH 0.1.7 publishes the mounted seat instead
+  // (`ctx.sidebarRight.mounted`), and that is what the per-session state
+  // follows.
+  const mounted = useMemo(() => mountedSessions(ctx), [ctx])
+  const current = useSyncExternalStore(
+    useCallback((callback: () => void) => mounted.subscribe(callback), [mounted]),
+    useCallback(() => mounted.getSnapshot(), [mounted]),
+  )
 
   // Per-session sidebar state.
   const snapshot = useSyncExternalStore(
@@ -268,7 +277,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   // While the session's header is still hydrating (or the session is blank),
   // the list summary may carry no cwd; ask the host once (it falls back to
-  // the process cwd) so the explorer root and terminal cwd are real from
+  // the process cwd) so the explorer root and the git rows are real from
   // first paint instead of showing "no session".
   const [fetchedCwd, setFetchedCwd] = useState<string | undefined>(undefined)
   useEffect(() => {
@@ -295,10 +304,10 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     [state, ctx, sessionId, cwd],
   )
 
-  // Host feeds (sidebar/use-host-feeds.ts): the agent-terminals / agent-opens
-  // WebSocket pushes and the subagent / background-job auto-activation
-  // triggers, all keyed on the current session. The jump-back ref is the one
-  // piece the render side consumes (renderTab's onSubagentJump arms it).
+  // Host feeds (sidebar/use-host-feeds.ts): the agent-opens WebSocket push
+  // and the subagent / background-job auto-activation triggers, all keyed on
+  // the current session. The jump-back ref is the one piece the render side
+  // consumes (renderTab's onSubagentJump arms it).
   const { subagentJumpRef } = useHostFeeds({ ctx, store, sessionList, sessionId })
 
   // Center-column tracking (sidebar/use-center-column.ts): the bottom
@@ -310,36 +319,10 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const { centerRectRef, centerMeasured, measureCenter, draggingRef } = useCenterColumn(bottomRef, state?.bottomOpen)
 
-  /**
-   * Bottom-panel first-expansion auto terminal: the FIRST time the user
-   * expands the bottom panel in a session, try to open a fresh terminal tab
-   * there. "Try" is literal — the terminal's own quota and enable switch
-   * gate the attempt (a full quota or a disabled terminal type makes it a
-   * no-op). Gated on the bottomPanelAutoTerminal pref (the terminal tab's
-   * nested settings toggle, default on). Only a false→true TRANSITION fires
-   * (a panel persisted open never counts as an expansion), and the session's
-   * bottomOpenedOnce flag is set atomically with the first fire so later
-   * expansions never repeat it.
-   */
-  const bottomWasOpenRef = useRef<boolean | undefined>(undefined)
-  useEffect(() => {
-    if (state === undefined) return
-    const wasOpen = bottomWasOpenRef.current
-    bottomWasOpenRef.current = state.bottomOpen
-    if (wasOpen === undefined || wasOpen || !state.bottomOpen) return
-    if (state.bottomOpenedOnce) return
-    if (store.getPrefs().bottomPanelAutoTerminal === false) return
-    if (ctx.get('betterSidebar')?.isTabEnabled('terminal') === false) return
-    // Land the tab in the bottom panel's first pane; the once-flag is set
-    // atomically so later expansions never repeat the auto-open.
-    store.reduce(s => ({ ...s, activePane: firstLeaf(s.bottomSplits).id, bottomOpenedOnce: true }))
-    ctx.get('betterSidebar')?.openTab({ type: 'terminal', target: 'bottom' })
-  }, [state, store, ctx])
-
   // The bottom panel's height drag (top edge strip). Drags write the size
   // DIRECTLY to the DOM (panel style + the layout CSS variable) instead of
   // round-tripping the store on every pointer move — a store reduce
-  // re-renders the workbench (terminals, editors…) per move, which is the
+  // re-renders the workbench (editors, trees…) per move, which is the
   // visible drag lag. The store is committed once on pointer up
   // (clamping + persistence).
   const bottomDrag = useRef({ startY: 0, startHeight: 0 })
@@ -527,28 +510,10 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   const actions: WorkbenchActions = useMemo(() => ({
     closeTab: (paneId, tabId) => {
-      // A closed terminal releases its pty immediately — including when its
-      // socket is mid-reconnect, where the unmount close frame never reaches
-      // the host and the process would hold the quota until the grace ends.
-      // Agent terminals (tabId `agent:<uuid>`) close through a different
-      // host route: the WS close frame is the primary path (sent by
-      // TerminalView on unmount), and the agent-pty.close HTTP route is the
-      // fallback when the WS is down.
-      const current = store.getSnapshot().state
-      const leaf = current === undefined ? undefined : leafWithTab(current.bottomSplits, tabId)
-      const tab = leaf?.tabs.find(candidate => candidate.id === tabId)
       // Route through the service: the tab-bar close is the canonical close
       // path (finds the pane itself, fires descriptor.onClose); the session
       // scope (with its cwd) rides to the callback.
       ctx.get('betterSidebar')?.closeTab(tabId, sessionId === undefined ? undefined : { sessionId, cwd })
-      if (tab?.type === 'terminal') {
-        if (isAgentTabId(tabId)) {
-          const uuid = agentUuidOf(tabId)
-          void api.agentPtyClose(uuid).catch(() => { /* the host may already have released it */ })
-        } else if (sessionId !== undefined) {
-          void api.ptyClose({ sessionId, cwd }, tabId).catch(() => { /* the host may already have released it */ })
-        }
-      }
     },
     activateTab: (paneId, tabId) => {
       // Route through the service: same reducer (finds the pane, sets the
@@ -573,20 +538,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     resizeSplit: (splitId, index, deltaFrac) => {
       store.reduce(s => resizeSplitIn(s, splitId, index, deltaFrac))
     },
-    // Pin/unpin a terminal tab (v0.17.0+): the home cwd is snapshotted at
-    // pin time so a workspace-scoped pin only resurfaces in sessions whose
-    // cwd matches. Unpin passes null — the tab stays open in its home
-    // session, just unmarked.
-    pinTab: (tabId, scope) => {
-      store.reduce(s => setTabPin(s, tabId, scope === null ? null : { scope, homeCwd: cwd }))
-    },
   }), [store, sessionId, cwd, ctx])
-
-  // Pinned virtual tabs (sidebar/use-pinned-tabs.ts): cross-session pinned
-  // tabs inject into the bottom workbench's first leaf, and the actions are
-  // wrapped so pinned virtual ids route to the HOME session (reduceFor +
-  // revision bump).
-  const { augmentedTree, wrappedActions } = usePinnedTabs({ store, sessionId, cwd, snapshot, actions })
 
   /**
    * The explorer's @-reference button. Directories append the folder mention
@@ -650,15 +602,6 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    * strip must never break because a plugin's badge computation failed.
    */
   const tabBadgeOf = (tab: SidebarTab): ReactNode => {
-    // Agent-terminal wait indicator (sidebar-internal, deliberately NOT a
-    // TabDescriptor.badge — that API is type-keyed and shared with external
-    // plugins, and cannot address one tab): the agent-terminals push mirrors
-    // the model's live terminal_wait_for into state.agentWaits; an agent tab
-    // whose uuid is waiting shows the hourglass pill.
-    if (isAgentTabId(tab.id)) {
-      const wait = state.agentWaits?.[agentUuidOf(tab.id)]
-      if (wait !== undefined) return <span className={css.tabBadge}>{'⏳'}</span>
-    }
     const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
     if (descriptor?.badge === undefined) return null
     let value: string | number | null | undefined
@@ -681,19 +624,12 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
    * with the tab so diff tabs can split below their source pane.
    */
   const renderTab = (tab: SidebarTab, active: boolean, paneId: string) => {
-    // Pinned virtual tabs: pass the home session's scope (sessionId + cwd) so
-    // TerminalView's WS URL resolves to the home PTY, and effectiveTabId so
-    // the descriptor component receives the ORIGINAL tab id (the virtual id
-    // is only a display key). Regular tabs: effectiveTabId is undefined (no
-    // override), scope is the current session's.
-    const home = getPinnedHomeScope(tab)
     return (
       <TabContent
         tab={tab}
-        effectiveTabId={home?.tabId}
         paneId={paneId}
-        sessionId={home?.sessionId ?? sessionId}
-        cwd={home?.cwd ?? cwd}
+        sessionId={sessionId}
+        cwd={cwd}
         expanded={state.expanded}
         revealed={state.revealed ?? []}
         onToggleDir={(path) => { store.reduce(s => toggleExpanded(s, path)) }}
@@ -720,8 +656,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         that, `centerRect` is the {0,0} fallback and `right` computes to the
         full viewport width — the panel (and its overflow content) would
         flash full-width for a frame until the first measurement lands.
-        Rendering stays unconditional so the mount/render chain (auto-terminal
-        etc.) is never gated on geometry.
+        Rendering stays unconditional so the mount/render chain is never
+        gated on geometry.
       */}
       <div
         ref={bottomRef}
@@ -784,15 +720,15 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             aria-label={t('collapseBottomPanel')}
             onClick={() => { store.reduce(toggleBottomPanel) }}
           >
-            <IconCloseFill14 />
+            <IconCloseFillRegular size={14} />
           </button>
         </Tooltip>
         <div className={css.panelBody}>
           <Workbench
             state={state}
-            tree={augmentedTree}
+            tree={state.bottomSplits}
             newTabOptions={newTabOptions}
-            actions={wrappedActions}
+            actions={actions}
             onNewTab={onNewTab}
             renderTab={renderTab}
             getTabIcon={tabIconOf}

@@ -4,6 +4,7 @@
  * (their full behavior suites live in the standalone dsh-file-trace plugin).
  */
 import { describe, expect, it } from 'vitest'
+import { createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { extractFileOps, groupByFile, knownContentBefore, parseReadContent, parseReadLines } from '../src/client/changes/ops.ts'
 import { diffLines, buildDiffSegments, coalesceInline, diffInline } from '../src/client/diff/rows.ts'
 import { langOfPath, scanLine } from '../src/client/diff/highlight.ts'
@@ -19,10 +20,26 @@ function call(seq: number, name: string, callId: string, args: unknown, time = s
   return ev('tool/call', seq, time, { name, callId, arguments: JSON.stringify(args) })
 }
 
-/** A tool/result event carrying one tool-result block with inner text. */
+/** A tool/result event carrying one first-class tool-role message (the 0.1.7
+ *  shape: result blocks and `isError` at the message's own top level). */
 function result(seq: number, callId: string, text: string, isError = false, time = seq): SidebarSessionEvent {
   return ev('tool/result', seq, time, {
     message: {
+      role: 'tool',
+      source: { kind: 'tool', callId },
+      toolCallId: callId,
+      isError,
+      content: [{ type: 'text', text }],
+    },
+  })
+}
+
+/** The retired 0.1.6 shape: a role-'user' message wrapping the result in one
+ *  `tool-result` content block. Historical logs still carry it. */
+function legacyResult(seq: number, callId: string, text: string, isError = false, time = seq): SidebarSessionEvent {
+  return ev('tool/result', seq, time, {
+    message: {
+      role: 'user',
       source: { kind: 'tool', callId },
       content: [{ type: 'tool-result', isError, content: [{ type: 'text', text }] }],
     },
@@ -94,6 +111,32 @@ describe('extractFileOps', () => {
       call(3, 'read', 'r', { file_path: 'z.ts' }),
     ])
     expect(ops.map(op => op.callId)).toEqual(['r'])
+  })
+
+  it('reads the tool/result message dsh-llm actually produces (producer round-trip)', () => {
+    const message = createToolResultMessage({
+      callId: ToolCallId('r'),
+      content: [{ type: 'text', text: 'produced file body' }],
+      isError: false,
+    })
+    const ops = extractFileOps([
+      call(1, 'read', 'r', { file_path: 'a.ts' }),
+      ev('tool/result', 2, 2, { message: message as unknown as Record<string, unknown> }),
+    ])
+    expect(ops[0]!.running).toBe(false)
+    expect(ops[0]!.read).toBe('produced file body')
+  })
+
+  it('reads a LEGACY 0.1.6-era tool-result wrapper (historical logs keep that shape)', () => {
+    const ops = extractFileOps([
+      // No content in the model's arguments, so the settled result supplies it.
+      call(1, 'write', 'w', { file_path: 'a' }),
+      legacyResult(2, 'w', 'legacy write detail'),
+      call(3, 'read', 'r', { file_path: 'b' }),
+      legacyResult(4, 'r', 'cannot read "b": not found', true),
+    ])
+    expect(ops.find(op => op.kind === 'write')?.content).toBe('legacy write detail')
+    expect(ops.find(op => op.kind === 'read')?.errorText).toBe('cannot read "b": not found')
   })
 
   it('groups by file newest-first and recovers prior write content', () => {

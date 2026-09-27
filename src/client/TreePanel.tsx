@@ -17,7 +17,7 @@
  */
 import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
-import { IconFolderOpen16, IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconFolderOpenRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
 import type { BetterSidebarService } from './service.ts'
 import type { SidebarStore } from './state.ts'
@@ -25,7 +25,7 @@ import { FileTree } from './FileTree.tsx'
 import { IconUploadOutline16 } from './icons.tsx'
 import type { OpenWithTarget } from './open-with.ts'
 import { t } from './locales.ts'
-import { resolveSidebarPath } from './produced-files.ts'
+import { resolveSidebarPath } from './paths.ts'
 import { UploadOverlay } from './UploadOverlay.tsx'
 import {
   summarizeResults, uploadHintText, uploadItemsFromFiles, uploadToDir,
@@ -195,7 +195,7 @@ export function TreePanel(props: {
           title={t('refresh')}
           onClick={() => { setRefreshTick(tick => tick + 1) }}
         >
-          <IconRefreshOutline16 size={14} />
+          <IconRefreshOutlineRegular size={14} />
         </button>
         <button
           type="button"
@@ -215,7 +215,7 @@ export function TreePanel(props: {
           disabled={busy}
           onClick={() => { folderInputRef.current?.click() }}
         >
-          <IconFolderOpen16 size={14} />
+          <IconFolderOpenRegular size={14} />
         </button>
         <input
           ref={fileInputRef}

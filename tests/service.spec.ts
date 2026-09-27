@@ -330,8 +330,8 @@ describe('service.openTab dedupe', () => {
       id: 'counter',
       title: 'Counter',
       createTab: (state) => ({
-        tab: { id: `counter:${state.nextTerminal}`, type: 'counter', title: `C${state.nextTerminal}` },
-        patch: { nextTerminal: state.nextTerminal + 1 },
+        tab: { id: `counter:${state.nextBrowser}`, type: 'counter', title: `C${state.nextBrowser}` },
+        patch: { nextBrowser: state.nextBrowser + 1 },
       }),
       component: () => null,
     })
@@ -343,7 +343,7 @@ describe('service.openTab dedupe', () => {
     expect(tabs).toHaveLength(2)
     expect(tabs[0]!.id).toBe('counter:1')
     expect(tabs[1]!.id).toBe('counter:2')
-    expect(state.nextTerminal).toBe(3)
+    expect(state.nextBrowser).toBe(3)
   })
 
   it('a caller-provided title wins over the descriptor title (editor shows the file name)', () => {
@@ -557,7 +557,7 @@ describe('state subscription (v0.12.0)', () => {
     const snapshot = service.getSnapshot()
     expect(snapshot.sessionId).toBe('s1')
     expect(snapshot.state).toBeDefined()
-    expect(snapshot.prefs.agentTerminalTools).toBe(false)
+    expect(snapshot.prefs.agentOpenTools).toBe(false)
   })
 
   it('subscribeState fires on state changes but NOT on registry changes', () => {

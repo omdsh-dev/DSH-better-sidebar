@@ -6,6 +6,7 @@
  * the preset resolution.
  */
 import { describe, expect, it } from 'vitest'
+import { createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { SidebarHistoryEntry, SidebarSessionEvent, SidebarSessionSummary } from '../src/context-types.ts'
 import type { AssistantLiveChunk } from '../src/assistant-live.ts'
 import {
@@ -20,10 +21,32 @@ import {
   threadHasCompletedTurn,
   threadTrailingPending,
   SIDE_BOUNDARY_PROMPT,
-  SIDE_INJECTION_PLUGIN,
+  SIDE_INJECTION_SOURCE_KIND,
   SIDE_LABEL_PREFIX,
   type SeedEvent,
 } from '../src/sidechat-core.ts'
+
+/** One 0.1.6-era tool/result message: a user-role message whose single
+ *  `tool-result` content block nests the result blocks and carries `isError`. */
+function legacyToolResultMessage(callId: string, text: string, isError = false): Record<string, unknown> {
+  return {
+    role: 'user',
+    source: { kind: 'tool', callId },
+    content: [{ type: 'tool-result', toolCallId: callId, isError, content: [{ type: 'text', text }] }],
+  }
+}
+
+/** One 0.1.7 tool/result message: a first-class tool-role message whose
+ *  `content` holds the result blocks and whose `isError` lives on the message. */
+function toolRoleResultMessage(callId: string, text: string, isError = false): Record<string, unknown> {
+  return {
+    role: 'tool',
+    source: { kind: 'tool', callId },
+    toolCallId: callId,
+    content: [{ type: 'text', text }],
+    isError,
+  }
+}
 
 /** One log event fixture (structural, seq === index like the live contract).
  *  Surface-eligible events carry their required `surfaceOp: 'append'`
@@ -70,10 +93,7 @@ function completedTurn(seq: number, turn: number, over: {
     events.push(ev('tool/result', next++, {
       turn,
       step: 1,
-      message: {
-        source: { kind: 'tool', callId: tool.callId },
-        content: [{ type: 'tool-result', toolCallId: tool.callId, isError: false, content: [{ type: 'text', text: tool.result ?? 'ok' }] }],
-      },
+      message: toolRoleResultMessage(tool.callId, tool.result ?? 'ok'),
     }))
   }
   if (over.text !== undefined) {
@@ -125,10 +145,7 @@ describe('buildSidechatInheritance', () => {
       ev('tool/result', 4, {
         turn: 1,
         step: 1,
-        message: {
-          source: { kind: 'tool', callId: 'c1' },
-          content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'ok' }] }],
-        },
+        message: toolRoleResultMessage('c1', 'ok'),
       }),
       ev('assistant/message', 5, { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'a' }] } }),
       ev('step/end', 6, { turn: 1, step: 1 }),
@@ -181,10 +198,7 @@ describe('buildSidechatInheritance', () => {
       ev('tool/result', 4, {
         turn: 1,
         step: 1,
-        message: {
-          source: { kind: 'tool', callId: 'c1' },
-          content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'hit' }] }],
-        },
+        message: toolRoleResultMessage('c1', 'hit'),
       }),
       ev('assistant/message', 5, { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'found it' }] }, stream: [] }),
     ]
@@ -243,13 +257,12 @@ describe('buildOpenTurnSnapshot', () => {
       ev('turn/start', 0, { turn: 1 }),
       ev('step/start', 1, { turn: 1, step: 1 }),
       ev('tool/call', 5, { turn: 1, step: 1, callId: 'c1', name: 'read', arguments: '{"path":"a.txt"}' }),
+      // The shape 0.1.7's createToolResultMessage writes: a first-class
+      // tool-role message with the result blocks at the top level.
       ev('tool/result', 6, {
         turn: 1,
         step: 1,
-        message: {
-          source: { kind: 'tool', callId: 'c1' },
-          content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'file body' }] }],
-        },
+        message: toolRoleResultMessage('c1', 'file body'),
       }),
       ev('tool/call', 7, { turn: 1, step: 1, callId: 'c2', name: 'bash', arguments: '{"cmd":"long"}' }),
     ]
@@ -264,6 +277,42 @@ describe('buildOpenTurnSnapshot', () => {
     expect(snapshot).toContain('`read` — arguments: `{"path":"a.txt"}`')
     expect(snapshot).toContain('Result: file body')
     expect(snapshot).toContain('`bash` (executing)')
+  })
+
+  it('reads the tool/result message dsh-llm actually produces (producer round-trip)', () => {
+    // createToolResultMessage is the producer of every live tool/result row:
+    // the fixture shapes above must match what it emits, not a guess.
+    const message = createToolResultMessage({
+      callId: ToolCallId('c1'),
+      content: [{ type: 'text', text: 'produced body' }],
+      isError: false,
+    })
+    const events = [
+      ev('turn/start', 0, { turn: 1 }),
+      ev('step/start', 1, { turn: 1, step: 1 }),
+      ev('tool/call', 2, { turn: 1, step: 1, callId: 'c1', name: 'read', arguments: '{"path":"a"}' }),
+      ev('tool/result', 3, { turn: 1, step: 1, message: message as unknown as Record<string, unknown> }),
+    ]
+    const snapshot = buildOpenTurnSnapshot(events)
+    expect(snapshot).not.toBeNull()
+    expect(snapshot).toContain('Result: produced body')
+  })
+
+  it('reads a LEGACY 0.1.6-wrapped tool result (historical logs keep that shape)', () => {
+    const events = [
+      ev('turn/start', 0, { turn: 1 }),
+      ev('step/start', 1, { turn: 1, step: 1 }),
+      ev('tool/call', 5, { turn: 1, step: 1, callId: 'c1', name: 'read', arguments: '{"path":"old.txt"}' }),
+      ev('tool/result', 6, {
+        turn: 1,
+        step: 1,
+        message: legacyToolResultMessage('c1', 'legacy body'),
+      }),
+      ev('tool/call', 7, { turn: 1, step: 1, callId: 'c2', name: 'bash', arguments: '{"cmd":"long"}' }),
+    ]
+    const snapshot = buildOpenTurnSnapshot(events)
+    expect(snapshot).not.toBeNull()
+    expect(snapshot).toContain('Result: legacy body')
   })
 })
 
@@ -360,7 +409,7 @@ describe('isContextInjectionMessage', () => {
   it('recognizes plugin-stamped sources structurally', () => {
     expect(isContextInjectionMessage({
       content: [{ type: 'text', text: 'runtime context' }],
-      source: { kind: 'plugin', plugin: SIDE_INJECTION_PLUGIN },
+      source: { kind: SIDE_INJECTION_SOURCE_KIND },
     })).toBe(true)
     expect(isContextInjectionMessage({
       content: [{ type: 'text', text: 'q' }],

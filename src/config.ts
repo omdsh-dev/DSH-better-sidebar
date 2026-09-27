@@ -2,14 +2,20 @@
  * Serializable configuration and defaults for the sidebar host half. Loader
  * schema validation normally fills defaults; {@link resolveSidebarConfig}
  * applies the same defaults for direct callers that bypass the Loader.
+ *
+ * Schemastery comes from DSH, not from the public `schemastery` package, and
+ * that is load-bearing rather than stylistic: only DSH's build WRAPS a
+ * `meta.volatile` field in a cosmokit `Volatile` reference when it parses the
+ * config. The Loader's volatile-commit path walks those references
+ * (`volatileEntries` / `updateVolatile`), so a schema built with the public
+ * package produces plain values, leaves the loader nothing to commit, and
+ * **silently drops every live preference write** — the write reports success
+ * and the effective value never changes.
  * @module dsh-better-sidebar/config
  */
 
-import z from 'schemastery'
+import z from '@deepseek-ai/schemastery'
 import {
-  TERMINAL_FONT_SIZE_DEFAULT,
-  TERMINAL_FONT_SIZE_MAX,
-  TERMINAL_FONT_SIZE_MIN,
   TITLE_BAR_STRIP_DEFAULT,
   TITLE_BAR_STRIP_MAX,
   TITLE_BAR_STRIP_MIN,
@@ -19,9 +25,6 @@ import {
 export {
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
-  TERMINAL_FONT_SIZE_DEFAULT,
-  TERMINAL_FONT_SIZE_MAX,
-  TERMINAL_FONT_SIZE_MIN,
   TITLE_BAR_STRIP_DEFAULT,
   TITLE_BAR_STRIP_MAX,
   TITLE_BAR_STRIP_MIN,
@@ -38,38 +41,14 @@ export interface SidebarConfig {
   uploadLimit?: number
   /** Explorer row bound of one level. */
   listLimit?: number
-  /** Terminals per session. */
-  terminalsPerSession?: number
-  /** How long a disconnected terminal process survives awaiting a reconnect. */
-  reconnectGraceMs?: number
-  /**
-   * Terminal shell (absolute path or bare executable name) for BOTH the UI
-   * terminal tabs and the model-facing `terminal_*` tools. Empty = auto:
-   * POSIX follows `$SHELL` then the account login shell; Windows follows
-   * `DSH_SIDEBAR_SHELL`, then probes for `pwsh.exe`, then falls back to the
-   * inbox `powershell.exe` (5.1). Set it from `cordis.patch.yml` / profile
-   * plugin config, e.g. `config: { shell: /bin/zsh }`.
-   */
-  shell?: string
-  /**
-   * Optional arguments passed to the shell executable. When non-empty these
-   * REPLACE the automatic platform defaults (POSIX `-l` / Windows none), so
-   * the deployment has full control over how the shell starts. When omitted
-   * the existing default behavior is kept.
-   */
-  shellArgs?: string[]
 }
 
-/** Schemastery schema for the plugin configuration. */
-export const Config: z<SidebarConfig> = z.object({
+/** Schemastery schema for the deployment-provided host limits. */
+const LimitsSchema = z.object({
   readLimit: z.number().step(1).min(1).default(512 * 1024),
   mediaLimit: z.number().step(1).min(1).default(20 * 1024 * 1024),
   uploadLimit: z.number().step(1).min(1).default(128 * 1024 * 1024),
   listLimit: z.number().step(1).min(1).default(1000),
-  terminalsPerSession: z.number().step(1).min(1).default(3),
-  reconnectGraceMs: z.number().step(1).min(0).default(30_000),
-  shell: z.string().default(''),
-  shellArgs: z.array(z.string()).default([]),
 })
 
 /** Fully defaulted sidebar host settings. */
@@ -78,12 +57,6 @@ export interface ResolvedSidebarConfig {
   mediaLimit: number
   uploadLimit: number
   listLimit: number
-  terminalsPerSession: number
-  reconnectGraceMs: number
-  /** The configured terminal shell; empty means the host auto-resolves it. */
-  shell: string
-  /** Explicit shell arguments; empty means use the platform defaults. */
-  shellArgs: string[]
 }
 
 /**
@@ -98,10 +71,6 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
     mediaLimit: config?.mediaLimit ?? 20 * 1024 * 1024,
     uploadLimit: config?.uploadLimit ?? 128 * 1024 * 1024,
     listLimit: config?.listLimit ?? 1000,
-    terminalsPerSession: config?.terminalsPerSession ?? 3,
-    reconnectGraceMs: config?.reconnectGraceMs ?? 30_000,
-    shell: config?.shell?.trim() ?? '',
-    shellArgs: config?.shellArgs ?? [],
   }
 }
 
@@ -111,15 +80,12 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
 export const PrefsSchema: z<SidebarPrefs> = z.object({
   autoOpenSubagent: z.boolean().default(true),
   autoOpenJobs: z.boolean().default(true),
-  agentTerminalTools: z.boolean().default(false),
+  tasksViewMode: z.union([z.const('graph'), z.const('tree')]).default('graph'),
+  mobileNoAutoOpen: z.boolean().default(true),
+  mobileDefaultTree: z.boolean().default(true),
   agentOpenTools: z.boolean().default(false),
-  bottomPanelAutoTerminal: z.boolean().default(true),
-  terminalFontFamily: z.string().default(''),
-  terminalFontSize: z.number().step(1).min(TERMINAL_FONT_SIZE_MIN).max(TERMINAL_FONT_SIZE_MAX).default(TERMINAL_FONT_SIZE_DEFAULT),
   editorExplorer: z.boolean().default(false),
   workspaceFence: z.boolean().default(true),
-  terminalShell: z.string().default(''),
-  terminalShellArgs: z.string().default(''),
   titleBarScheme: z.union([z.const('auto'), z.const('web'), z.const('preset'), z.const('custom')]),
   titleBarPresetId: z.string(),
   customCss: z.string(),
@@ -127,11 +93,6 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   titleBarStripPx: z.number().step(1).min(TITLE_BAR_STRIP_MIN).max(TITLE_BAR_STRIP_MAX).default(TITLE_BAR_STRIP_DEFAULT),
   htmlViewerNoSandbox: z.boolean().default(false),
   htmlViewerDefaultUnsafe: z.boolean().default(false),
-  browserNoSandbox: z.boolean().default(false),
-  browserInterceptLinks: z.boolean().default(true),
-  browserInterceptHttp: z.boolean().default(true),
-  browserInterceptHttps: z.boolean().default(false),
-  browserAllowedLoopback: z.string().default(''),
   // Per-feature enable switches are OPEN maps (any tab/viewer id, built-in or
   // external): an absent key means enabled, so old documents resolve to {}
   // (everything on) with no migration. Non-boolean values fail validation.
@@ -143,3 +104,38 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   // keys as unknown schema fields.
   pluginSettings: z.dict(z.dict(z.any())).default({}),
 })
+
+// ── The Loader row schema ───────────────────────────────────────────────────
+//
+// DSH 0.1.7 replaced the registrable settings namespace with a forms service
+// over the profile's own entries: a form is addressed by the row's Loader
+// entry id and read from `entry.fiber.runtime.Config`, i.e. THIS export.
+// There is no longer anywhere else for the user preferences to live, so they
+// are merged into the row schema beside the deployment limits.
+//
+// Every preference field is volatile, and BOTH halves of that matter:
+//   - the Loader's `equalExceptVolatile` ignores volatile fields, so a
+//     preference edit is recognised as volatile-only and takes the live-commit
+//     path (`loader/volatile-update`) instead of remounting the plugin, while
+//     the ordinary limit fields above keep the remount semantics they had;
+//   - DSH's schemastery WRAPS a volatile field in a `Volatile` reference while
+//     parsing, which is the thing that path commits into. Marking a field
+//     volatile on the public schemastery build sets the same `meta` flag but
+//     produces plain values, and the commit then silently has nothing to do —
+//     which is why this module imports schemastery from DSH (see the header).
+//
+// `.volatile()` RETURNS A COPY (`extra()` does), so the marked schemas have to
+// be collected — calling it for its side effect leaves every field non-volatile
+// and the settings service then reports "no volatile fields" for the row.
+const volatilePrefs = Object.fromEntries(
+  Object.entries(PrefsSchema.dict ?? {}).map(([key, field]) => [key, field.volatile()]),
+)
+
+/**
+ * Config schema of this plugin's Loader row: deployment limits plus the live
+ * user preferences.
+ */
+export const Config = z.object({
+  ...LimitsSchema.dict,
+  ...volatilePrefs,
+}) as z<SidebarConfig & SidebarPrefs>

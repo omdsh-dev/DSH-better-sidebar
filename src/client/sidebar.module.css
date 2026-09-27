@@ -444,41 +444,60 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   display: none;
 }
 
-/* An empty pane's welcome cards: a responsive grid of compact cards — as
+/* An empty pane's welcome cards: a responsive grid of openable types — as
    many per row as the pane width allows; rows that cannot fit the pane
-   height are clipped (never scrolled or squeezed smaller). */
+   height are clipped (never scrolled or squeezed smaller).
+
+   The card itself mirrors DSH's OWN guide capsule (the built-in tab types'
+   entry box, `ui-sidebar-right`'s GuideBody / `ui-sidebar-terminal`'s
+   TerminalGuide): one hairline in the l4 weight, a 24px radius, the layer-1
+   fill and the 56px floor. The two surfaces are the same thing — "pick what
+   opens here" — so they must not read as two different design systems.
+   The column floor is wider than before because a 24px radius needs the
+   room; the vertical gap keeps the capsule proportions. */
 .paneEmptyCards {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   align-content: start;
-  gap: 8px;
+  gap: 12px;
   padding: 12px;
   overflow: hidden;
 }
 
 .paneCard {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
+  justify-content: flex-start;
+  gap: 14px;
   min-width: 0;
-  padding: 12px 8px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
+  min-height: 56px;
+  box-sizing: border-box;
+  padding: 14px 20px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 24px;
   background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-secondary);
-  font: var(--dsw-font-xxs-strong-12);
+  color: var(--dsw-alias-label-primary);
+  /* The host capsule sets a raw `font-size: 15px` with no token behind it;
+     the ladder's nearest step is the 14px medium row, so the label reads at
+     the same weight as DSH's own entry without inventing a literal. */
+  font: var(--dsw-font-s-strong-14);
   cursor: pointer;
-  text-align: center;
+  text-align: left;
+}
+
+/* The glyph takes the host capsule's secondary ink; the label carries the
+   primary ink (same split as the host's guide entry). */
+.paneCard > svg {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
 }
 
 .paneCard:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-  border-color: var(--dsw-alias-border-l2);
+  border-color: var(--dsw-alias-border-l4);
 }
 
 .paneCard:disabled {
@@ -607,20 +626,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .tabBarPlus:hover {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
-}
-
-/* ── Pinned-terminal tab (v0.17.0+) ───────────────────────────────────── */
-
-/* Pinned virtual tabs (injected from other sessions) render inline in the
-   tab bar with a pin icon and a subtle tint to distinguish them from the
-   session's own tabs. Token-driven so skins follow. */
-.pinnedTab {
-  color: var(--dsw-alias-label-tertiary);
-  font-style: italic;
-}
-
-.pinnedTab:hover {
-  color: var(--dsw-alias-label-secondary);
 }
 
 /* ── Explorer ──────────────────────────────────────────────────────────── */
@@ -1576,22 +1581,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-primary);
 }
 
-.editorImageWrap {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: auto;
-  padding: 12px;
-}
-
-.editorImage {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-}
-
 .editorMd {
   flex: 1;
   min-height: 0;
@@ -1865,68 +1854,7 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   pointer-events: auto !important;
 }
 
-/* ── Terminal ──────────────────────────────────────────────────────────── */
-
-.terminalWrap {
-  flex: 1;
-  min-height: 0;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  background: var(--dsw-alias-bg-base);
-}
-
-.terminal {
-  flex: 1;
-  min-height: 0;
-  padding: 6px 4px 6px 8px;
-}
-
-.terminal :global(.xterm) {
-  height: 100%;
-}
-
-.terminalBanner {
-  flex: none;
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 3px 10px;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-state-warn-label);
-  background: var(--dsw-alias-state-warn-tertiary);
-}
-
-/* The attempted ws URL, shown when the connection failed (diagnosis). */
-.terminalBannerUrl {
-  flex-basis: 100%;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  word-break: break-all;
-  opacity: 0.85;
-}
-
-/* The "Agent 正在等待 {needle}" wait banner: a warn-toned strip above the
-   terminal surface while the model blocks in terminal_wait_for; the needle
-   ellipsizes inline and the full text rides the title tooltip. */
-.terminalWaitBanner {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 10px;
-  font: var(--dsw-font-xxxs-11);
-  color: var(--dsw-alias-state-warn-label);
-  background: var(--dsw-alias-state-warn-tertiary);
-}
-
-.terminalWaitNeedle {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* ── Crash containment ─────────────────────────────────────────────────── */
 
 .boundaryError {
   position: fixed;
@@ -1946,6 +1874,8 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   overflow: auto;
 }
 
+/* The retry pill of the crash UI: the per-tab RenderBoundary block and the
+   lazy-chunk load failure both render it, so the terminal-era name stays. */
 .terminalRetry {
   flex: none;
   padding: 1px 8px;
@@ -1960,65 +1890,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .terminalRetry:hover {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
-}
-
-/* The node-pty dependency failure banner (issue #140): a taller warn block
-   carrying the pasteable repair command (bash / cmd / PowerShell). */
-.terminalDepsBanner {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-state-warn-label);
-  background: var(--dsw-alias-state-warn-tertiary);
-}
-
-.terminalDepsTitle {
-  font: var(--dsw-font-xxs-strong-12);
-  color: var(--dsw-alias-state-warn-primary);
-}
-
-.terminalDepsHint {
-  opacity: 0.9;
-}
-
-.terminalDepsCommandRow {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-/* The command the user pastes into a terminal / cmd. Selectable, wrapping,
-   and scrollable when long (Windows paths can get very long). */
-.terminalRepairCommand {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  padding: 6px 8px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-all;
-  user-select: text;
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-layer-2);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 4px;
-  max-height: 160px;
-  overflow: auto;
-}
-
-.terminalDepsNote {
-  opacity: 0.85;
-}
-
-.terminalDepsActions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 /* The PER-TAB error strip: fills one tab's content area (unlike
@@ -2118,52 +1989,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 /* A history row: line 1 = hash + subject, line 2 = ref badges + author/date
    (badges live on the second line so they never crowd the subject). */
-
-/* ── Intercepted produced-files row ────────────────────────────────────── */
-
-.producedRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 4px 0;
-}
-
-.producedLabel {
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.producedChip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 200px;
-  padding: 2px 8px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 999px;
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-secondary);
-  font: var(--dsw-font-xxs-12);
-  cursor: pointer;
-  overflow: hidden;
-}
-
-.producedChip:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-.producedChip span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.producedMore {
-  font: var(--dsw-font-xxs-12);
-  color: var(--dsw-alias-label-tertiary);
-}
 
 /* ── Shared interaction rules ──────────────────────────────────────────── */
 

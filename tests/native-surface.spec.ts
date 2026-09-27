@@ -11,7 +11,7 @@ import { act } from 'react-dom/test-utils'
 import { createNativeTabRecords, NativeTabBody, NativeTabTitle } from '../src/client/native/tab-adapter.tsx'
 import { registerNativeSurface } from '../src/client/native/index.ts'
 import { createBetterSidebarService, type SidebarSurface } from '../src/client/service.ts'
-import { createSidebarStore } from '../src/client/state.ts'
+import { createSidebarStore, type SidebarTab } from '../src/client/state.ts'
 
 const scope = { sessionId: 's1', cwd: '/work' }
 
@@ -89,7 +89,18 @@ describe('service routing into the native surface', () => {
     store.setSession('s1')
     const service = createBetterSidebarService(store)
     service.setSurface(surface)
-    service.registerTab({ id: 'terminal', title: 'Terminal', component: () => null, createTab: state => ({ tab: { id: `terminal:${state.nextTerminal}`, type: 'terminal', title: 'Terminal', meta: { n: state.nextTerminal } } }) })
+    service.registerTab({
+      id: 'my-plugin:term',
+      title: 'Terminal',
+      component: () => null,
+      createTab: state => ({
+        // A `terminal`-shaped tab id (the plugin no longer ships that type,
+        // but the service treats the descriptor id as an open string) keeps
+        // this fixture's native routing identical.
+        tab: { id: `terminal:${state.nextBrowser}`, type: 'terminal', title: 'Terminal', meta: { n: state.nextBrowser } },
+        patch: { nextBrowser: state.nextBrowser + 1 },
+      }),
+    })
     service.registerTab({ id: 'git', title: 'Changes', component: () => null })
     service.registerTab({ id: 'editor', title: 'Files', component: () => null, icon: () => null })
     return { surface, calls, service }
@@ -97,11 +108,11 @@ describe('service routing into the native surface', () => {
 
   it('opens a page type natively, carrying the descriptor factory seed', () => {
     const { service, calls } = mount()
-    service.openTab({ type: 'terminal' }, scope)
+    service.openTab({ type: 'my-plugin:term' }, scope)
     expect(calls).toEqual([{
       op: 'openTab',
       sessionId: 's1',
-      kind: 'terminal',
+      kind: 'my-plugin:term',
       params: { title: 'Terminal', meta: { n: 1 } },
       revealIfOpened: false,
     }])
@@ -117,6 +128,53 @@ describe('service routing into the native surface', () => {
     const { service, calls } = mount()
     service.openTab({ type: 'editor' }, scope)
     expect(calls).toEqual([{ op: 'openTab', sessionId: 's1', kind: 'files', params: {}, revealIfOpened: true }])
+  })
+
+  it('keeps a component type path seed on the page open (no resource reroute)', () => {
+    // Regression #632: a path seed on a component type was rerouted into
+    // openResource, so the editor (the dsh-resource://file/** claimant)
+    // received the open and the registered component never mounted.
+    const { service, calls } = mount()
+    service.registerTab({ id: 'my-plugin:doc', title: 'Doc', component: () => null })
+    service.openTab({ type: 'my-plugin:doc', path: '/work/spec.md', title: 'Spec' }, scope)
+    expect(calls).toEqual([{
+      op: 'openTab',
+      sessionId: 's1',
+      kind: 'my-plugin:doc',
+      params: { title: 'Spec', path: '/work/spec.md' },
+      revealIfOpened: true,
+    }])
+  })
+
+  it('carries the path seed and meta on a multi-instance component open', () => {
+    const { service, calls } = mount()
+    service.registerTab({
+      id: 'my-plugin:console',
+      title: 'Console',
+      createTab: (state) => ({
+        tab: { id: `console:${state.nextBrowser}`, type: 'my-plugin:console', title: 'Console' },
+        patch: { nextBrowser: state.nextBrowser + 1 },
+      }),
+      component: () => null,
+    })
+    service.openTab({ type: 'my-plugin:console', path: '/work/x.md', meta: { k: 1 } }, scope)
+    expect(calls).toEqual([{
+      op: 'openTab',
+      sessionId: 's1',
+      kind: 'my-plugin:console',
+      params: { title: 'Console', path: '/work/x.md', meta: { k: 1 } },
+      // Multi-instance kinds mint a fresh tab per open: no forced reveal.
+      revealIfOpened: false,
+    }])
+  })
+
+  it('reports a component path seed to onOpen on the synthetic tab', () => {
+    const { service } = mount()
+    const seen: Array<SidebarTab | undefined> = []
+    service.registerTab({ id: 'my-plugin:doc', title: 'Doc', onOpen: (tab) => { seen.push(tab) }, component: () => null })
+    service.openTab({ type: 'my-plugin:doc', path: '/work/spec.md' }, scope)
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({ type: 'my-plugin:doc', path: '/work/spec.md' })
   })
 
   it('keeps a bottom-targeted open in the plugin layout', () => {
@@ -250,8 +308,87 @@ describe('registerNativeSurface lifecycle (service-driven registration)', () => 
     expect(browserGuide?.[0]?.description).toBeUndefined()
     expect('description' in (browserGuide?.[0] ?? {})).toBe(false)
     expect(browserGuide?.[0]?.title?.()).toBe('Browser')
+    // DSH 0.1.6-alpha.2 made `SidebarRightGuideEntry.id` REQUIRED and unique
+    // per provider: a registration whose guide entries carry no id collides
+    // on `undefined` and `SidebarRightTabRegistry.register` throws
+    // `duplicate guide entry id`, which cordis swallows — leaving the whole
+    // native surface silently empty (no guide row, no plugin tab types).
+    const guideIds: string[] = []
+    for (const entry of registered) {
+      const guide = entry.guide as Array<{ id?: unknown }> | undefined
+      for (const item of guide ?? []) {
+        expect(typeof item.id, `guide id of ${entry.kind}`).toBe('string')
+        guideIds.push(item.id as string)
+      }
+    }
+    expect(guideIds.length).toBeGreaterThan(0)
+    expect(new Set(guideIds).size).toBe(guideIds.length)
 
     dispose()
+  })
+
+  it('claims exactly the extensions DSH has no preview for (the nine restored formats included)', () => {
+    // DSH 0.1.7 handed every read-only preview to `ui-sidebar-documentpreview`,
+    // and `canOpen` returning false is what gives the address away. The host's
+    // renderer tables cover xlsx/xls/csv/tsv, pdf, the eight common image
+    // formats, doc/docx/ppt/pptx and the flat-ODS text fallback — nine
+    // extensions that were refused here as well have NO host renderer at all,
+    // and refusing them swapped the plugin's binary-download pane for the
+    // host's "Preview is not available for this file type yet" dead end. This
+    // pins both directions so the refusal list can never drift wider than the
+    // host again; the host files behind the boundary are named in
+    // src/client/native/index.ts.
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'editor', title: 'Files', component: () => null })
+    const records = createNativeTabRecords()
+    let canOpen: ((address: string) => boolean) | undefined
+    const ctx = {
+      inject: (_deps: readonly string[], callback: (injected: { get: () => unknown }) => void) => {
+        callback({
+          get: () => ({
+            register: (definition: { kind: string; canOpen?: (address: string) => boolean }) => {
+              if (definition.kind === 'editor') canOpen = definition.canOpen
+              return () => {}
+            },
+          }),
+        })
+        return { dispose: () => {} }
+      },
+      get: () => undefined,
+      slots: { inject: (_key: string, callback: () => () => void) => callback(), register: () => () => {} },
+    }
+    registerNativeSurface({ ctx: ctx as never, store, service, records })
+    expect(canOpen, 'the editor type registered no canOpen').toBeTypeOf('function')
+    const open = canOpen as (address: string) => boolean
+
+    /** One session-scoped file address, the shape the chat hands the sidebar. */
+    const file = (name: string) => `dsh-resource://file/session/s1/${name}`
+
+    // Formats the host renders: DSH's own preview must own them.
+    for (const name of [
+      'book.xlsx', 'legacy.xls', 'data.csv', 'data.tsv', 'flat.fods',
+      'paper.pdf', 'photo.png', 'photo.jpg', 'anim.gif', 'photo.webp', 'art.svg',
+      'tile.bmp', 'favicon.ico', 'report.docx', 'report.doc', 'deck.pptx', 'deck.ppt',
+    ]) {
+      expect(open(file(name)), name).toBe(false)
+    }
+
+    // Formats the host has NO renderer for: the plugin claims them, so the
+    // `code` catch-all reaches the binary-download pane instead of a dead end.
+    for (const name of [
+      'macro.xlsb', 'sheet.xlt', 'template.xltx', 'macro.xltm',
+      'flat.ods', 'flat.ots', 'notes.dot', 'notes.dotx', 'next.avif',
+    ]) {
+      expect(open(file(name)), name).toBe(true)
+    }
+
+    // The three viewers the plugin keeps on purpose, and a non-file address.
+    for (const name of ['README.md', 'page.html', 'main.ts']) {
+      expect(open(file(name)), name).toBe(true)
+    }
+    expect(open('sidebar://editor')).toBe(false)
   })
 })
 

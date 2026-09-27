@@ -15,10 +15,9 @@ export type SidebarErrorCode =
   | 'too-large'
   | 'fs-error'
   | 'git-error'
-  | 'pty-error'
-  | 'pty-deps-missing'
-  | 'shell-not-found'
   | 'job-error'
+  | 'team-error'
+  | 'team-conflict'
   | 'sidechat-error'
   | 'subagents-unavailable'
   | 'settings-rejected'
@@ -31,7 +30,7 @@ export class SidebarError extends Error {
     readonly code: SidebarErrorCode,
     message: string,
     readonly status = 400,
-    /** Optional structured context (e.g. `{ shell }` for shell-not-found). */
+    /** Optional structured context carried alongside the code. */
     readonly meta?: Record<string, string>,
   ) {
     super(message)

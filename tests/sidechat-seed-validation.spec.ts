@@ -19,7 +19,8 @@ import { buildSidechatInheritance } from '../src/sidechat-core.ts'
 
 /** One live-style event with the surface marker message events carry, and
  *  the REAL message shapes the validator demands (id/role/source/content;
- *  tool/result messages carry role 'user' + one tool-result block). */
+ *  a tool/result carries the first-class role-'tool' message 0.1.7 writes —
+ *  v4 refuses the retired role-'user' + `tool-result` wrapper). */
 function ev(type: string, seq: number, data: Record<string, unknown>): SidebarSessionEvent {
   const event: SidebarSessionEvent = { type, seq, time: seq * 1000, data }
   if (type === 'user/message' || type === 'assistant/message' || type === 'tool/result') {
@@ -38,6 +39,31 @@ function assistantMessage(text: string): Record<string, unknown> {
     role: 'assistant',
     content: [{ type: 'text', text }],
     source: { kind: 'model', provider: 'test', model: 'model-x' },
+  }
+}
+
+/** The 0.1.7 tool/result message: first-class tool role, result blocks and
+ *  `isError` at the message's own top level (dsh-llm's createToolResultMessage). */
+function toolResultMessage(callId: string, text: string, isError = false): Record<string, unknown> {
+  return {
+    id: `m-${callId}`,
+    role: 'tool',
+    source: { kind: 'tool', callId },
+    toolCallId: callId,
+    content: [{ type: 'text', text }],
+    isError,
+  }
+}
+
+/** The retired 0.1.6 shape: a role-'user' message wrapping the result in one
+ *  `tool-result` content block. Historical logs still carry it, but the v4
+ *  seed validator refuses it — the plugin's own readers must still read it. */
+function legacyToolResultMessage(callId: string, text: string, isError = false): Record<string, unknown> {
+  return {
+    id: `m-${callId}`,
+    role: 'user',
+    source: { kind: 'tool', callId },
+    content: [{ type: 'tool-result', toolCallId: callId, isError, content: [{ type: 'text', text }] }],
   }
 }
 
@@ -88,6 +114,40 @@ describe('sidechat seed against the real dsh-session validator', () => {
     expect(snapshot).not.toBeNull()
     const child = Session.create('session-validator-fallback' as SessionId, seed as never)
     expect(child.snapshotEvents().map(event => event.type).at(-1)).toBe('session/end-seed')
+  })
+
+  it('refuses the retired 0.1.6 tool-result wrapper (why every fixture uses the tool-role message)', () => {
+    const legacy = [
+      ev('user/message', 0, userMessage('q')),
+      ev('turn/start', 1, { turn: 1 }),
+      ev('step/start', 2, { turn: 1, step: 1 }),
+      ev('tool/call', 3, { turn: 1, step: 1, callId: 'c1', name: 'bash', arguments: '{}' }),
+      ev('tool/result', 4, { turn: 1, step: 1, message: legacyToolResultMessage('c1', 'ok') }),
+      ev('turn/end', 5, { turn: 1, reason: { kind: 'completed' } }),
+    ]
+    // Session format v4 made tool results first-class role-'tool' messages;
+    // a seed still carrying the wrapper cannot be adopted at all.
+    expect(() => Session.create('session-validator-legacy' as SessionId, legacy as never))
+      .toThrow(/message must have role "tool"/)
+  })
+
+  it('still READS a legacy 0.1.6-shaped tool result when building the snapshot (compat)', () => {
+    // Historical logs keep the wrapper shape forever, so the plugin's own
+    // readers must keep reading it even though the validator refuses it.
+    const log = [
+      ev('user/message', 0, userMessage('q')),
+      ev('turn/start', 1, { turn: 1 }),
+      ev('step/start', 2, { turn: 1, step: 1 }),
+      ev('tool/call', 3, { turn: 1, step: 1, callId: 'c1', name: 'bash', arguments: '{"cmd":"ls"}' }),
+      ev('tool/result', 4, { turn: 1, step: 1, message: legacyToolResultMessage('c1', 'legacy ok') }),
+      // A second call with no result yet: the open turn cannot be closed
+      // honestly, so the inheritance falls back to the snapshot — where the
+      // legacy-shaped result above must still surface.
+      ev('tool/call', 5, { turn: 1, step: 1, callId: 'c2', name: 'bash', arguments: '{"cmd":"sleep"}' }),
+    ]
+    const { snapshot } = buildSidechatInheritance(log)
+    expect(snapshot).not.toBeNull()
+    expect(snapshot).toContain('Result: legacy ok')
   })
 
   it('accepts the durable subagent descriptor the routes append to the seed', () => {
@@ -181,15 +241,7 @@ describe('sidechat seed fork markers vs the reconstructed inbox', () => {
     ev('step/start', 11, { turn: 2, step: 1 }),
     ev('user/message', 12, pendingMessage('m-q2', 'user', 'q2')),
     ev('tool/call', 13, { turn: 2, step: 1, callId: 'c1', name: 'bash', arguments: '{}' }),
-    ev('tool/result', 14, {
-      turn: 2, step: 1,
-      message: {
-        id: 'm-r',
-        role: 'user',
-        content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'ok' }] }],
-        source: { kind: 'tool', callId: 'c1' },
-      },
-    }),
+    ev('tool/result', 14, { turn: 2, step: 1, message: toolResultMessage('c1', 'ok') }),
     ev('agent/inbox/spliced', 15, {
       target: 'next-step',
       start: 0,

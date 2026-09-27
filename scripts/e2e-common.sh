@@ -40,15 +40,44 @@ e2e_require_cmd() {
 # ── DSH_CMD 解析 ─────────────────────────────────────────────────────────────
 # PATH 上的 dsh 优先，否则 npx 拉官方包（同 scripts/install.sh）。DSH_CMD
 # 缺省值（`dsh`）由调用方从环境变量取好传入。
+#
+# 回退的 npx 版本是显式钉死的：不钉就会解析 npm 的 `latest` dist-tag，而
+# 0.1.7 线目前只有预发布（`latest` 仍是 0.1.5-rc.3），冒烟会静静地挂到一
+# 个插件已不支持的宿主上。**必须写精确版本，不能写 `@alpha`**：0.1.7-rc.1
+# 上线时 `alpha` 指的是 0.1.7-alpha.2，rc.1 走的是 `next`。钉版必须与
+# package.json 的 peer 下限同步。
+DSH_NPX_SPEC="${DSH_NPX_SPEC:-@deepseek-ai/dsh@0.1.7-rc.1}"
 e2e_resolve_dsh_cmd() {
+  local explicit="${DSH_CMD}"
   if ! command -v "$DSH_CMD" >/dev/null 2>&1; then
     if command -v npx >/dev/null 2>&1; then
-      say "PATH 上无 ${DSH_CMD}，回退 npx -y --package @deepseek-ai/dsh"
-      DSH_CMD="npx -y --package @deepseek-ai/dsh dsh"
+      say "PATH 上无 ${DSH_CMD}，回退 npx -y --package ${DSH_NPX_SPEC}"
+      DSH_CMD="npx -y --package ${DSH_NPX_SPEC} dsh"
     else
       die "未找到 $DSH_CMD 或 npx；请先安装 DSH CLI（npm i -g @deepseek-ai/dsh）或用 DSH_CMD 指定"
     fi
   fi
+  e2e_check_dsh_version "$explicit"
+}
+
+# 解析出的 CLI 版本必须与 peer 下限同一条支持线。这不是洁癖：宿主只比
+# 基线早一个预发布时，`dsh plugin add` 的 bundle 协调会静默不写
+# `dsh.profile.bundles`——CLI 退出码仍是 0，lane 却挂在「挂载未注册」上，
+# 排查方向完全被带偏（本机 PATH 上的 dsh 一直是上一版，0.1.6-alpha.1 与
+# 0.1.6-alpha.2 各实测过一次）。DSH_CMD 显式给出时不拦（调用方明确知道自
+# 己在挂什么），只告警。
+e2e_check_dsh_version() {
+  local explicit="$1" actual expected
+  expected="${DSH_EXPECT_VERSION:-0.1.7-rc.1}"
+  # `dsh --version` 冷启动要走 npx，给足预算；拿不到版本就只告警。
+  actual="$($DSH_CMD --version 2>/dev/null | tr -d '[:space:]' | head -c 64 || true)"
+  case "$actual" in
+    "$expected"|"$expected"*) return 0 ;;
+  esac
+  if [ "$explicit" = "dsh" ] && [ -n "$actual" ]; then
+    die "PATH 上的 dsh 是 ${actual}，本仓库的基线是 ${expected}（peer 下限同一支持线）。请改用 DSH_CMD='npx -y --package @deepseek-ai/dsh@${expected} dsh'，或安装该版本。"
+  fi
+  warn "DSH_CMD 版本为 ${actual:-未知}，基线是 ${expected}——真机证据落在非基线宿主上。"
 }
 
 # ── tarball 解析 ─────────────────────────────────────────────────────────────
@@ -103,10 +132,9 @@ e2e_cleanup() {
 
 # ── scratch profile 三件套 ───────────────────────────────────────────────────
 # 引导 scratch profile（web 模板，镜像 dsh initProfile）；先写
-# pnpm-workspace.yaml 的 allowBuilds / minimumReleaseAgeExclude，避免 pnpm 11
-# strict-dep-builds 拦截 node-pty/protobufjs 或拒绝 <24h 新版本——同 install.sh。
-# @deepseek-ai/* 通配与仓库根 pnpm-workspace.yaml 同策：钉的 DSH alpha 常在
-# 发布后 24h 内跑 lane，没有豁免会被 minimumReleaseAge 直接拒装。
+# pnpm-workspace.yaml 的 minimumReleaseAgeExclude，避免 pnpm 11 拒绝 <24h 新版本
+# ——同 install.sh。@deepseek-ai/* 通配与仓库根 pnpm-workspace.yaml 同策：钉的
+# DSH alpha 常在发布后 24h 内跑 lane，没有豁免会被 minimumReleaseAge 直接拒装。
 e2e_write_profile() {
   mkdir -p "$1"
   cat > "$1/package.json" <<EOF
@@ -128,10 +156,6 @@ packages:
 
 nodeLinker: hoisted
 autoInstallPeers: false
-
-allowBuilds:
-  node-pty: true
-  protobufjs: true
 
 minimumReleaseAgeExclude:
   - dsh-better-sidebar

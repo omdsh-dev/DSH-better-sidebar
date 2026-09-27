@@ -1,0 +1,67 @@
+/**
+ * Graph-only styles of the workflow graph (TasksGraph.tsx) — the two pieces
+ * tasks-graph.module.css does not carry:
+ *
+ *  - the card title, clamped to TWO lines (the card reserve in
+ *    tasks-graph-layout.ts is sized for exactly that clamp and for the token's
+ *    18px title line: a single ellipsized line left too few CJK characters to
+ *    tell two siblings apart), and
+ *  - the hydration hint drawn over an empty canvas.
+ *
+ * Everything else the graph wears (the dotted canvas, the bezier edges, the
+ * node cards, the control cluster) stays in tasks-graph.module.css — one source
+ * of truth per rule.
+ *
+ * Skin contract: colors resolve to `--dsw-alias-*`, type to `--dsw-font-*` —
+ * tokens only, no literal, no palette class, no shadow on a static panel.
+ */
+
+/* Card line 1 of an agent / run node. `-webkit-box` + `-webkit-line-clamp` is
+ * the only way to cap WRAPPED text with an ellipsis, and `overflow-wrap:
+ * anywhere` keeps an unbroken run id from forcing one wide line. The recipe
+ * mirrors the tree row title in tasks-graph.module.css (12px strong) so only
+ * the truncation differs; the untruncated text stays in the element's `title`.
+ * The clamp count and the token's 18px line are PAIRED with the layout's
+ * `NODE_TITLE_LINES` / `NODE_TITLE_LINE_H`: the card reserves that block, so
+ * changing either side alone leaves the card taller or shorter than its box. */
+.nodeTitle {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font: var(--dsw-font-xxs-strong-12);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* The fold aggregate carries a count, not a name: it recedes one rung in both
+ * weight and ink (the plain-ink node title). */
+.nodeTitlePlain {
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* The graph twin of the tree's loading row: centred over the canvas and
+ * click-transparent, so pan / zoom / node clicks stay live underneath. It sits
+ * above the transformed node layer (z-index auto) and below the control
+ * cluster (z-index 6). */
+.loading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: none;
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* The hint's glyph is decoration: the copy line carries the message. */
+.loadingGlyph {
+  display: inline-flex;
+  flex: none;
+}

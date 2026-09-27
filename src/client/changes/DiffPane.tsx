@@ -9,12 +9,12 @@
  * diff tab via the shell.
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { IconCloseOutline16, IconRefreshOutline16, IconRightUpOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCloseOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineRegular, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionScope } from '../api.ts'
 import { api, htmlUrl } from '../api.ts'
 import { t } from '../locales.ts'
 import { baseName } from '../paths.ts'
-import { resolveSidebarPath } from '../produced-files.ts'
+import { resolveSidebarPath } from '../paths.ts'
 import { HTML_IFRAME_SANDBOX } from '../html-preview.ts'
 import type { SidebarDiffRef, SidebarTab } from '../state.ts'
 import { DiffRows, ReadRows } from '../diff/DiffRows.tsx'
@@ -108,7 +108,13 @@ function PaneToggle(props: { on: boolean; label: string; title?: string; onClick
  *  lifted out); the plain path stays byte-for-byte for documents without
  *  any. */
 function MdReadingView(props: { text: string }) {
-  const codeLabels = { copyLabel: t('copy'), copiedLabel: t('copied') }
+  const codeLabels = {
+    copyLabel: t('copy'),
+    copiedLabel: t('copied'),
+    codeLabel: t('codeBlockTitle'),
+    wrapLabel: t('codeBlockWrap'),
+    unwrapLabel: t('codeBlockUnwrap'),
+  }
   const hasMermaid = splitMermaidBlocks(props.text).some((block) => block.kind === 'mermaid')
   return (
     <div className={css.paneBody}>
@@ -492,7 +498,7 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
               disabled={loading}
               onClick={() => { setTick(value => value + 1) }}
             >
-              <IconRefreshOutline16 size={14} />
+              <IconRefreshOutlineRegular size={14} />
             </button>
             <button
               type="button"
@@ -501,7 +507,7 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
               title={t('changesOpenDiffTab')}
               onClick={onExpand}
             >
-              <IconRightUpOutline16 size={14} />
+              <IconRightUpOutlineRegular size={14} />
             </button>
           </>
         )}
@@ -544,7 +550,7 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
           title={t('changesClosePreview')}
           onClick={onClose}
         >
-          <IconCloseOutline16 size={14} />
+          <IconCloseOutlineRegular size={14} />
         </button>
       </div>
       {target.kind === 'op' && htmlOp && rendering && htmlRenderSrc !== ''

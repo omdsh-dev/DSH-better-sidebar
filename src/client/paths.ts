@@ -83,3 +83,16 @@ export function extOf(path: string): string {
   const base = path.slice(at + 1).toLowerCase()
   return base.includes('/') || base.includes('\\') ? '' : base
 }
+
+/**
+ * Resolve a (possibly relative) path against the session cwd for the sidebar.
+ * Absolute detection mirrors the host (see {@link isAbsolutePath}): POSIX
+ * roots, drive letters and UNC shares must not be joined onto the cwd.
+ */
+export function resolveSidebarPath(cwd: string | undefined, path: string): string {
+  if (isAbsolutePath(path)) return path
+  const base = cwd ?? ''
+  if (base === '') return path
+  const separator = base.includes('\\') ? '\\' : '/'
+  return `${base.replace(/[\\/]+$/, '')}${separator}${path}`
+}

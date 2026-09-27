@@ -114,4 +114,24 @@ describe('DSH community-market manifest compatibility', () => {
   it('declares an exact SemVer version (no range or tag; prerelease allowed for the alpha track)', () => {
     expect(pkg.version).toMatch(EXACT_SEMVER)
   })
+
+  it('keeps every DSH peer a floating range the host runtime can satisfy', () => {
+    // DSH 0.1.7-rc.1 added a startup compatibility preflight
+    // (packages/boot/app-boot/src/plugin-compatibility.ts): for every peer
+    // named `@deepseek-ai/dsh` or `@deepseek-ai/dsh-*`, the host evaluates
+    // `semver.satisfies(runtimeVersion, range, { includePrerelease: true })`
+    // and DISABLES the whole profile row when it fails — one stderr line in a
+    // log nobody reads, no dialog, and `peerDependenciesMeta.optional` grants
+    // no exemption. An exact pin (the style devDependencies use) or a
+    // comparator carrying no prerelease (`^0.1.7`) would therefore make the
+    // plugin silently stop loading, so the published ranges must stay carets
+    // on the baseline tuple. `pnpm peers check` cannot see this: it validates
+    // the resolved dev tree, not the range shape a host will read.
+    const peers = pkg.peerDependencies ?? {}
+    const dshPeers = Object.keys(peers).filter(name => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))
+    expect(dshPeers.length).toBeGreaterThan(10)
+    for (const name of dshPeers) {
+      expect(peers[name], name).toMatch(/^\^0\.1\.7-[a-z0-9.]+$/)
+    }
+  })
 })

@@ -15,20 +15,13 @@
 # cordis.patch.yml, remove it before switching to the bundle channel to
 # avoid double-mounting (two Node halves, two sidebars).
 #
-# To choose the terminal shell, add `config.shell` to the inserted plugin
-# row (or to the profile's manual cordis.patch.yml mount line). When omitted,
-# the host keeps resolving $SHELL / the login shell / powershell.exe.
-# `config.shellArgs` optionally supplies explicit startup arguments; when
-# non-empty they replace the automatic POSIX `-l` login flag:
+# The `config.shell` / `config.shellArgs` rows are gone with the plugin's own
+# terminal (DSH 0.1.6 ships its own right-Sidebar terminal, and its shell is
+# chosen from the shell menu there):
 #
 #   - insert:
 #       - id: better-sidebar
 #         name: 'dsh-better-sidebar'
-#         config:
-#           shell: /bin/zsh
-#           shellArgs:
-#             - --noprofile
-#             - --no-rc
 #
 # Aggregate double-mount guard: aggregate bundles (e.g. @linxin666/dsh-web-ui-all)
 # may already mount this package under their own entry id (e.g.

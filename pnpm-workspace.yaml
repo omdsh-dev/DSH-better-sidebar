@@ -1,13 +1,6 @@
 packages:
   - .
 
-# node-pty's install script copies its shipped prebuilt binaries into place
-# (no source compilation on supported platforms); pnpm 10+ blocks dependency
-# build scripts unless approved.
-allowBuilds:
-  node-pty: true
-  protobufjs: true
-
 # The @deepseek-ai/* packages declare their dsh-* siblings as peerDependencies
 # (the DSH host bundle provides them all at mount time). This repo installs
 # every peer the dev tree needs as a direct devDependency pinned to the
@@ -24,7 +17,6 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/cordis@4.0.1-rc.1 || 4.0.1'
   - '@deepseek-ai/cosmokit@1.8.2-rc.1 || 1.8.2'
   - '@deepseek-ai/dsh-agent-default-model@0.0.1-rc.1'
-  - '@deepseek-ai/dsh-agent-presets@0.0.1-rc.1'
   - '@deepseek-ai/dsh-agent@0.0.1-rc.1'
   - '@deepseek-ai/dsh-api-remotes@0.0.1-rc.1'
   - '@deepseek-ai/dsh-atomic-write@0.0.1-rc.1'
@@ -32,7 +24,6 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-brand@0.0.1-rc.1'
   - '@deepseek-ai/dsh-client-connection@0.0.1-rc.1'
   - '@deepseek-ai/dsh-client-locale@0.0.1-rc.1'
-  - '@deepseek-ai/dsh-client-runtime@0.0.1-rc.1'
   - '@deepseek-ai/dsh-client-schema-form@0.0.1-rc.1'
   - '@deepseek-ai/dsh-client-ui-conversation@0.0.1-rc.1'
   - '@deepseek-ai/dsh-client-ui-primitives@0.0.1-rc.1'
@@ -40,7 +31,6 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-client-ui-slash@0.0.1-rc.1'
   - '@deepseek-ai/dsh-client-ui-slots@0.0.1-rc.1'
   - '@deepseek-ai/dsh-client-web-react@0.0.1-rc.1'
-  - '@deepseek-ai/dsh-code-runtime@0.0.1-rc.1'
   - '@deepseek-ai/dsh-commands@0.0.1-rc.1'
   - '@deepseek-ai/dsh-compact@0.0.1-rc.1'
   - '@deepseek-ai/dsh-credentials@0.0.1-rc.1'

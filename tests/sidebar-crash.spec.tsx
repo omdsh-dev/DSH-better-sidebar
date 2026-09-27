@@ -67,15 +67,23 @@ function mountSidebar(): MountedSidebar {
   // services return stable objects) — a fresh object per call loops forever.
   const localeSnapshot = { active: 'en' }
   const sessionsSnapshot = {
-    current: sessionId,
     // cwd present → api.sessionCwd is never called in these tests.
     byId: { [sessionId]: { cwd: '/tmp' } },
+  }
+  // The conversation on screen is the native surface's mounted seat
+  // (`ctx.sidebarRight.mounted`); the session-list snapshot never had a
+  // current-session field, so the shell binds its per-session state to THIS.
+  const mounted = {
+    getSnapshot: () => sessionId,
+    subscribe: () => () => {},
   }
   const ctx = {
     locale: { subscribe: () => () => {}, getSnapshot: () => localeSnapshot },
     sessions: { list: { subscribe: () => () => {}, getSnapshot: () => sessionsSnapshot } },
     betterSidebar: service,
-    get: (name: string) => name === 'betterSidebar' ? service : undefined,
+    get: (name: string) => name === 'betterSidebar'
+      ? service
+      : name === 'sidebarRight' ? { mounted } : undefined,
   }
   const root: Root = createRoot(container)
   act(() => { root.render(createElement(Sidebar, { ctx: ctx as never, store })) })

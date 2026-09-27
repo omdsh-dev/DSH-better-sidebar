@@ -3,7 +3,7 @@ import {
   activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, CONVERSATION_MIN, createSidebarStore,
   insertLeafAt, makeDefaultState, moveTab, moveTabToEdge, openDiffTab,
   openTabInBottomPane, patchTab, resizeSplit,
-  resizeSplitIn, revealPaths, sanitizeState, setBottomHeight, setTabPin,
+  resizeSplitIn, revealPaths, sanitizeState, setBottomHeight,
   splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded,
   type SidebarState, type SidebarTab, type SplitNode,
 } from '../src/client/state.ts'
@@ -13,7 +13,7 @@ describe('sidebar state', () => {
 
   it('sanitizeState migrates persisted explorer tabs to editor home tabs', () => {
     const valid = sanitizeState({
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:1',
       expanded: [],
       bottomSplits: {
@@ -117,7 +117,7 @@ describe('sidebar state', () => {
 
   it('sanitize drops diff tabs (ephemeral, like VSCode diff editors)', () => {
     const valid = sanitizeState({
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:1',
       expanded: [],
       bottomSplits: {
@@ -138,7 +138,7 @@ describe('sidebar state', () => {
     expect((valid?.bottomSplits as { active: string | null }).active).toBeNull()
     // A leaf of ONLY diff tabs survives as an empty pane (welcome cards).
     const onlyDiff = sanitizeState({
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:1',
       expanded: [],
       bottomSplits: {
@@ -154,7 +154,7 @@ describe('sidebar state', () => {
 
   it('sanitize removes a pane emptied by ephemeral diff tabs', () => {
     const valid = sanitizeState({
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:diff',
       expanded: [],
       bottomSplits: {
@@ -314,7 +314,7 @@ describe('sidebar state', () => {
 
   it('sanitize accepts nextBrowser (defaulting a missing/malformed one to 1)', () => {
     const base = {
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:1',
       expanded: [],
       bottomSplits: {
@@ -391,7 +391,7 @@ describe('sidebar state', () => {
 
   it('sanitize defaults the bottom fields for older persisted states and repairs a broken bottom tree', () => {
     const base = {
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:1',
       expanded: [],
     }
@@ -726,106 +726,6 @@ describe('revealPaths (show in folder)', () => {
   })
 })
 
-describe('pinned terminals (v0.17.0)', () => {
-  // setTabPin reads neither window nor localStorage directly, but the
-  // pinnedTab-aware sanitize round-trip below uses JSON.parse/stringify
-  // only — keep this block window-less for parity with the main describe.
-  const state = (): SidebarState => makeDefaultState()
-
-  it('setTabPin marks a terminal in the workbench', () => {
-    let s = state()
-    s = openTabInBottomPane(s, { id: 'terminal:1', type: 'terminal', title: 'T' })
-    s = setTabPin(s, 'terminal:1', { scope: 'workspace', homeCwd: '/proj' })
-    const tab = allLeaves(s.bottomSplits).flatMap(l => l.tabs).find(t => t.id === 'terminal:1')!
-    expect(tab.pin).toEqual({ scope: 'workspace', homeCwd: '/proj' })
-  })
-
-  it('setTabPin with null clears the pin marker but keeps the tab', () => {
-    let s = state()
-    s = openTabInBottomPane(s, { id: 'terminal:1', type: 'terminal', title: 'T' })
-    s = setTabPin(s, 'terminal:1', { scope: 'global' })
-    s = setTabPin(s, 'terminal:1', null)
-    const tab = allLeaves(s.bottomSplits).flatMap(l => l.tabs).find(t => t.id === 'terminal:1')!
-    expect(tab.pin).toBeUndefined()
-    expect(tabOpenIn(s, 'terminal:1')).toBe(true)
-  })
-
-  it('setTabPin on an unknown tab id is a strict same-reference no-op', () => {
-    const s = state()
-    expect(setTabPin(s, 'ghost', { scope: 'global' })).toBe(s)
-    expect(setTabPin(s, 'ghost', null)).toBe(s)
-  })
-
-  it('setTabPin is idempotent: setting the same pin twice returns the same reference', () => {
-    let s = state()
-    s = openTabInBottomPane(s, { id: 'terminal:1', type: 'terminal', title: 'T' })
-    s = setTabPin(s, 'terminal:1', { scope: 'workspace', homeCwd: '/p' })
-    const once = s
-    s = setTabPin(s, 'terminal:1', { scope: 'workspace', homeCwd: '/p' })
-    expect(s).toBe(once)
-  })
-
-  it('sanitizeState preserves a legal pin and strips an illegal scope (keeps the tab)', () => {
-    const g = globalThis as Record<string, unknown>
-    g.window = { clearTimeout: () => {}, setTimeout: () => 0, innerWidth: 1024, innerHeight: 768 }
-    g.localStorage = { getItem: () => null, setItem: () => {} }
-    try {
-      const legal = JSON.parse(JSON.stringify(makeDefaultState())) as {
-        bottomSplits: { kind: 'leaf'; id: string; tabs: SidebarTab[]; active: string | null }
-      }
-      legal.bottomSplits.tabs.push({
-        id: 'terminal:1', type: 'terminal', title: 'T',
-        pin: { scope: 'workspace', homeCwd: '/proj' },
-      } as SidebarTab)
-      legal.bottomSplits.active = 'terminal:1'
-      const restored = sanitizeState(legal)!
-      const tab = (restored.bottomSplits as { tabs: SidebarTab[] }).tabs.find(t => t.id === 'terminal:1')!
-      expect(tab.pin).toEqual({ scope: 'workspace', homeCwd: '/proj' })
-
-      // Illegal scope drops the pin, keeps the tab.
-      const illegal = JSON.parse(JSON.stringify(makeDefaultState())) as {
-        bottomSplits: { kind: 'leaf'; id: string; tabs: SidebarTab[]; active: string | null }
-      }
-      illegal.bottomSplits.tabs.push({
-        id: 'terminal:2', type: 'terminal', title: 'T2',
-        pin: { scope: 'bogus', homeCwd: '/x' },
-      } as unknown as SidebarTab)
-      illegal.bottomSplits.active = 'terminal:2'
-      const cleaned = sanitizeState(illegal)!
-      const tab2 = (cleaned.bottomSplits as { tabs: SidebarTab[] }).tabs.find(t => t.id === 'terminal:2')!
-      expect(tab2.pin).toBeUndefined()
-      expect(tab2.id).toBe('terminal:2')
-
-      // Non-string homeCwd drops homeCwd but keeps a global pin.
-      const weirdHome = JSON.parse(JSON.stringify(makeDefaultState())) as {
-        bottomSplits: { kind: 'leaf'; id: string; tabs: SidebarTab[]; active: string | null }
-      }
-      weirdHome.bottomSplits.tabs.push({
-        id: 'terminal:3', type: 'terminal', title: 'T3',
-        pin: { scope: 'global', homeCwd: 42 },
-      } as unknown as SidebarTab)
-      weirdHome.bottomSplits.active = 'terminal:3'
-      const weird = sanitizeState(weirdHome)!
-      const tab3 = (weird.bottomSplits as { tabs: SidebarTab[] }).tabs.find(t => t.id === 'terminal:3')!
-      expect(tab3.pin).toEqual({ scope: 'global' })
-
-      // Older state without pin loads unchanged.
-      const legacy = JSON.parse(JSON.stringify(makeDefaultState())) as {
-        bottomSplits: { kind: 'leaf'; id: string; tabs: SidebarTab[]; active: string | null }
-      }
-      legacy.bottomSplits.tabs.push({ id: 'terminal:4', type: 'terminal', title: 'T4' } as SidebarTab)
-      legacy.bottomSplits.active = 'terminal:4'
-      const legacyRestored = sanitizeState(legacy)!
-      const tab4 = (legacyRestored.bottomSplits as { tabs: SidebarTab[] }).tabs.find(t => t.id === 'terminal:4')!
-      expect(tab4.pin).toBeUndefined()
-    } finally {
-      delete g.window
-      delete g.localStorage
-    }
-  })
-})
-
-
 describe('URL reset escape hatch (issue #369)', () => {
   // Same browser-global stubs as the v0.12.0 block above; loadState reads
   // window.location.search (reset param) and localStorage (persisted state).
@@ -842,7 +742,7 @@ describe('URL reset escape hatch (issue #369)', () => {
 
   /** A persisted layout whose restored git tab would re-hang the page. */
   const frozenState = JSON.stringify({
-    nextTerminal: 1,
+    nextBrowser: 1,
     activePane: 'pane:1',
     expanded: [],
     bottomSplits: { kind: 'leaf', id: 'pane:1', active: 'g1', tabs: [{ id: 'g1', type: 'git', title: 'Git' }] },

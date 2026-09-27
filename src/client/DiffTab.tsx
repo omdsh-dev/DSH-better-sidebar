@@ -9,14 +9,14 @@
  * renderer — the same one the changes tab's inline preview uses.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { IconRefreshOutline16 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionScope } from './api.ts'
 import { api } from './api.ts'
 import type { SidebarDiffRef } from './state.ts'
 import { DiffFiles } from './diff/DiffFiles.tsx'
 import { displayPath, foldRowsFromContents, type DiffFile, type DiffRow, type FoldSegment } from './diff/rows.ts'
 import { t } from './locales.ts'
-import { resolveSidebarPath } from './produced-files.ts'
+import { resolveSidebarPath } from './paths.ts'
 import css from './sidebar.module.css'
 
 /** The loaded diff surface (untracked content rendered as a full addition). */
@@ -170,7 +170,7 @@ export function DiffTab(props: { sessionId: string; cwd: string | undefined; dif
           title={t('refresh')}
           onClick={refresh}
         >
-          <IconRefreshOutline16 size={14} />
+          <IconRefreshOutlineRegular size={14} />
         </button>
       </div>
       {loading && <div className={css.gitPlaceholder}>{t('loading')}</div>}

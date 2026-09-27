@@ -32,23 +32,10 @@ describe('dsh-better-sidebar plugin export shape', () => {
     expect(resolved.readLimit).toBe(512 * 1024)
     expect(resolved.mediaLimit).toBe(20 * 1024 * 1024)
     expect(resolved.listLimit).toBe(1000)
-    expect(resolved.terminalsPerSession).toBe(3)
-    expect(resolved.reconnectGraceMs).toBe(30_000)
-    // The terminal shell config defaults to auto-resolution (empty shell =
-    // the platform chain in defaultShell()).
-    expect(resolved.shell).toBe('')
-    // Shell args default to an empty list; non-empty values replace the
-    // automatic platform login flag.
-    expect(resolved.shellArgs).toEqual([])
     const configured = (schema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
-    })({ shell: 'pwsh.exe' })
-    expect(configured.shell).toBe('pwsh.exe')
-    const configuredWithArgs = (schema as unknown as {
-      (input: Record<string, unknown> | undefined): Record<string, unknown>
-    })({ shell: '/bin/zsh', shellArgs: ['--noprofile', '--no-rc'] })
-    expect(configuredWithArgs.shell).toBe('/bin/zsh')
-    expect(configuredWithArgs.shellArgs).toEqual(['--noprofile', '--no-rc'])
+    })({ readLimit: 1024 })
+    expect(configured.readLimit).toBe(1024)
   })
 
   it('registers the side card preferences schema with the documented defaults', async () => {
@@ -63,15 +50,9 @@ describe('dsh-better-sidebar plugin export shape', () => {
     expect(resolved.autoOpenSubagent).toBe(true)
     // A new background job auto-opens the Jobs page too.
     expect(resolved.autoOpenJobs).toBe(true)
-    // The terminal tools default OFF (the feature is dormant until the user
-    // enables it in the side card settings).
-    expect(resolved.agentTerminalTools).toBe(false)
-    // The sidebar-open tool defaults OFF too (same dormant-until-enabled rule).
+    // The sidebar-open tool defaults OFF (dormant until the user enables it
+    // in the side card settings).
     expect(resolved.agentOpenTools).toBe(false)
-    // The terminal font customizations default to the theme (empty family)
-    // and 13px.
-    expect(resolved.terminalFontFamily).toBe('')
-    expect(resolved.terminalFontSize).toBe(13)
     // The position-compat scheme is declared WITHOUT a schema default so a
     // stored document that predates it resolves without the field — the
     // CLIENT parsePrefs then applies the conservative `auto` default (or

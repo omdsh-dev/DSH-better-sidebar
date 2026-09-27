@@ -13,8 +13,8 @@
  *   hardcode: single-instance (`() => type`), per-path (`tab => tab.path`),
  *   and per-id (`tab => tab.id` for diff tabs whose id is change-derived).
  *   `single: true` is sugar for `dedupeKey: () => id`.
- * - `createTab` lets a descriptor own tab instantiation (the terminal
- *   builtin uses it to mint `terminal:<n>` ids and bump `nextTerminal`).
+ * - `createTab` lets a descriptor own tab instantiation (the side chat
+ *   builtin uses it to mint one `sidechat:<threadId>` tab per thread).
  * - `matchFileViewer` walks descriptors in priority order (desc, stable):
  *   per descriptor it tries `detect` first (when `head` bytes are given),
  *   then `exts`; `exts: []` is a catch-all that matches any path.
@@ -201,23 +201,22 @@ export interface TabDescriptor {
   dedupeKey?: (tab: SidebarTab) => string | undefined
   /**
    * Custom tab creation (minting the `SidebarTab` and any state patches).
-   * Return `null` to refuse creation. The terminal builtin uses this to
-   * mint `terminal:<n>` ids and bump `nextTerminal`.
+   * Return `null` to refuse creation. The side chat builtin uses this to mint
+   * one tab per thread and to park a pending thread id in `meta`.
    * When omitted, a default `{ id, type, title }` tab is created.
    */
   createTab?: (state: SidebarState) => { tab: SidebarTab; patch?: Partial<SidebarState> } | null
   /**
    * External-link target claim (v0.13.0+): when a GUI external-link click
-   * is taken over (the `browserInterceptLinks` master AND the URL's
-   * protocol flag — `browserInterceptHttp` / `browserInterceptHttps` —
-   * are on), the first registered tab whose `urlTarget(url)` returns true
-   * is opened with `openTab({ type, url, title: hostname })` — the URL is
-   * the whole payload (the tab reads it from `tab.path`). Registration
+   * is taken over, the first registered tab whose `urlTarget(url)` returns
+   * true is opened with `openTab({ type, url, title: hostname })` — the URL
+   * is the whole payload (the tab reads it from `tab.path`). Registration
    * order wins (first claim first served); a disabled tab type is skipped;
    * a throwing predicate is swallowed (console.error, the type is skipped).
-   * The built-in browser tab declares NO urlTarget — it stays the implicit
-   * fallback target, so plugins can never be shadowed by it. To host more
-   * than one URL at a time, mint per-URL ids through `createTab` (the
+   * A click no type claims is NOT taken over at all: it stays with whoever
+   * rendered the link (DSH 0.1.7's own chat view routes http(s) by the
+   * user's link-opening preference and falls back to a real browser tab).
+   * To host more than one URL at a time, mint per-URL ids through `createTab` (the
    * browser builtin's pattern); otherwise the id safety net focuses the
    * existing tab of the same type and the new URL is not applied.
    */
@@ -396,7 +395,13 @@ export interface OpenTabSeed {
   type: string
   /** Overrides the descriptor's title when given (the editor tab shows the file name). */
   title?: string
-  /** A file path (the editor tab's content seed). */
+  /**
+   * A file path. Meaning follows the type: the `editor` kind (the only one
+   * claiming `dsh-resource://file/**`) opens its path seeds as file
+   * resources; every other kind treats the path as component state — it
+   * rides the navigation params onto the tab record's `path` (v0.19.2+; on
+   * v0.19.0/v0.19.1 every path seed was rerouted into a file open).
+   */
   path?: string
   /** A diff reference (the diff tab's content seed). */
   diff?: SidebarTab['diff']
@@ -422,7 +427,7 @@ export interface OpenTabSeed {
 export interface NativeTabParams {
   /** Overrides the descriptor's title for this instance. */
   title?: string
-  /** A file path (the editor window's content seed). */
+  /** A file path (the editor window's content seed; component kinds carry their own). */
   path?: string
   /** A URL the tab navigates to on mount (the browser tab's seed). */
   url?: string
@@ -628,7 +633,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.19.1'
+export const SIDEBAR_SERVICE_VERSION = '0.22.0'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -885,10 +890,15 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     const callbackScope: SessionScope = scope ?? { sessionId: targetSessionId }
     // ── Native right Sidebar ──────────────────────────────────────────────
     // With the native surface installed, every open except an explicit
-    // bottom-panel one lands there: a file path becomes a resource address
-    // (the native registry routes it to the plugin's file type), a path-less
-    // editor open becomes the `files` page kind, and everything else becomes
-    // a page open carrying the seed as navigation params.
+    // bottom-panel one lands there. The path seed's meaning depends on the
+    // type: `editor` is the only kind registered with
+    // `dsh-resource://file/**` patterns (src/client/native/index.ts), so its
+    // path seeds become resource addresses (the native registry routes the
+    // address back to the editor); a path-less editor open becomes the
+    // `files` page kind. Every OTHER type keeps the page open — its path is
+    // component state, not a file to open — and rides the seed (path
+    // included) as navigation params, which the tab adapter merges onto the
+    // synthetic record's `tab.path` for the registered component.
     if (surface !== undefined && seed.target !== 'bottom') {
       const state = store.getSnapshot().state
       // The descriptor's own factory mints what a view needs beyond the seed:
@@ -911,21 +921,27 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
         ...(seed.diff === undefined ? {} : { diff: seed.diff }),
         ...(seed.meta === undefined && minted?.tab.meta === undefined ? {} : { meta: seed.meta ?? minted?.tab.meta }),
       }
-      if (seed.path !== undefined) {
-        surface.openResource({
-          sessionId: targetSessionId,
-          address: surface.fileAddress(targetSessionId, scope?.cwd, seed.path),
-          revealIfOpened: true,
-        })
-      } else if (seed.type === 'editor') {
-        // The path-less editor window IS the file explorer.
-        surface.openTab({ sessionId: targetSessionId, kind: 'files', params: {}, revealIfOpened: true })
+      if (seed.type === 'editor') {
+        if (seed.path !== undefined) {
+          surface.openResource({
+            sessionId: targetSessionId,
+            address: surface.fileAddress(targetSessionId, scope?.cwd, seed.path),
+            revealIfOpened: true,
+          })
+        } else {
+          // The path-less editor window IS the file explorer.
+          surface.openTab({ sessionId: targetSessionId, kind: 'files', params: {}, revealIfOpened: true })
+        }
       } else {
+        // A component type's path seed stays on the page open (regression
+        // #632: rerouting every path seed into openResource sent the open to
+        // the editor, so the registered component never mounted).
         surface.openTab({
           sessionId: targetSessionId,
           kind: seed.type,
           params: {
             title,
+            ...(seed.path === undefined ? {} : { path: seed.path }),
             ...(seed.url === undefined ? {} : { url: seed.url }),
             ...(seed.diff === undefined ? {} : { diff: seed.diff }),
             ...(synthetic.meta === undefined ? {} : { meta: synthetic.meta }),
@@ -952,7 +968,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     // native sidebar owns the right column).
     const land = openTabInBottomPane
     const reducer = (state: SidebarState): SidebarState => {
-      // Let the descriptor mint the tab (terminal's nextTerminal bump, etc.).
+      // Let the descriptor mint the tab (and any state patch it owns).
       let tab: SidebarTab
       let next: SidebarState
       if (descriptor.createTab !== undefined) {

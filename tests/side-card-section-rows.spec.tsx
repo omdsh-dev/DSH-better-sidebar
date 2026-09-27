@@ -40,9 +40,9 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
   it('commits the raw text on blur and adopts the canonical return', () => {
     const commits: Array<[string, string]> = []
     const toggle: SidebarSettingToggle = {
-      key: 'terminalFontFamily',
+      key: 'titleBarPresetId',
       type: 'text',
-      title: () => 'Font family',
+      title: () => 'Preset id',
     }
     const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
@@ -55,7 +55,7 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
     }))
     const input = container.querySelector('input')!
     typeAndBlur(input, 'Monaco')
-    expect(commits).toEqual([['terminalFontFamily', 'Monaco']])
+    expect(commits).toEqual([['titleBarPresetId', 'Monaco']])
     // The canonical return is adopted into the draft.
     expect(input.value).toBe('Monaco')
     unmount()
@@ -64,56 +64,57 @@ describe('FeatureSettingsRows typed rows (interactive)', () => {
   it('clamps numbers into the declared bounds on commit', () => {
     const commits: Array<[string, number]> = []
     const toggle: SidebarSettingToggle = {
-      key: 'terminalFontSize',
+      key: 'titleBarStripPx',
       type: 'number',
-      title: () => 'Font size',
-      min: 9,
-      max: 32,
+      title: () => 'Shift distance',
+      min: 0,
+      max: 120,
     }
     const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
-      prefs: { ...prefs, terminalFontSize: 13 },
+      prefs: { ...prefs, titleBarStripPx: 40 },
       onToggle: () => {},
       onCommit: (t, raw) => {
         const parsed = Number(raw)
-        const clamped = Math.min(32, Math.max(9, Math.round(parsed)))
+        const clamped = Math.min(120, Math.max(0, Math.round(parsed)))
         commits.push([t.key, clamped])
         return String(clamped)
       },
     }))
     const input = container.querySelector('input')!
-    typeAndBlur(input, '40')
-    expect(commits).toEqual([['terminalFontSize', 32]])
-    expect(input.value).toBe('32')
+    // Above the declared max: the commit clamps to 120.
+    typeAndBlur(input, '130')
+    expect(commits).toEqual([['titleBarStripPx', 120]])
+    expect(input.value).toBe('120')
     unmount()
   })
 
   it('clamps an emptied number input to the lower bound on commit (width-row precedent)', () => {
     const commits: Array<[string, number]> = []
     const toggle: SidebarSettingToggle = {
-      key: 'terminalFontSize',
+      key: 'titleBarStripPx',
       type: 'number',
-      title: () => 'Font size',
-      min: 9,
-      max: 32,
+      title: () => 'Shift distance',
+      min: 0,
+      max: 120,
     }
     const { container, unmount } = renderRoot(createElement(FeatureSettingsRows, {
       toggles: [toggle],
-      prefs: { ...prefs, terminalFontSize: 13 },
+      prefs: { ...prefs, titleBarStripPx: 40 },
       onToggle: () => {},
       // The parent mirrors the real handler: an emptied number parses to 0
       // and clamps into the bounds (a browser number input never holds a
       // non-numeric string — the draft can only be empty or numeric).
       onCommit: (t, raw) => {
-        const clamped = Math.min(32, Math.max(9, Math.round(Number(raw))))
+        const clamped = Math.min(120, Math.max(0, Math.round(Number(raw))))
         commits.push([t.key, clamped])
         return String(clamped)
       },
     }))
     const input = container.querySelector('input')!
     typeAndBlur(input, '')
-    expect(commits).toEqual([['terminalFontSize', 9]])
-    expect(input.value).toBe('9')
+    expect(commits).toEqual([['titleBarStripPx', 0]])
+    expect(input.value).toBe('0')
     unmount()
   })
 
