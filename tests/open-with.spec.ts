@@ -8,6 +8,7 @@ import {
   isValidCustomEditor,
   newCustomEditorId,
   normalizeUrlPath,
+  openWithResourcePath,
   openWithSshActive,
   openWithUrl,
   parseOpenWithConfig,
@@ -90,12 +91,20 @@ describe('openWithUrl', () => {
     expect(openWithUrl(byId('zed'), '/x/y', parseOpenWithConfig({}))).toBe('zed://file//x/y')
   })
 
-  it('builds SSH-remote URLs for VSCode-family targets in SSH mode', () => {
+  it('forces SSH files into goto/file semantics for VSCode-family targets', () => {
     const config = parseOpenWithConfig({ sshHost: 'dev' })
     expect(openWithUrl(byId('vscode'), '/home/u/f.ts', config))
-      .toBe('vscode://vscode-remote/ssh-remote+dev/home/u/f.ts')
-    expect(openWithUrl(byId('cursor'), '/home/u/f.ts', config))
-      .toBe('cursor://vscode-remote/ssh-remote+dev/home/u/f.ts')
+      .toBe('vscode://vscode-remote/ssh-remote+dev/home/u/f.ts:1:1')
+    expect(openWithUrl(byId('cursor'), '/home/u/README', config))
+      .toBe('cursor://vscode-remote/ssh-remote+dev/home/u/README:1:1')
+  })
+
+  it('keeps SSH directory URLs trailing-slash terminated', () => {
+    const config = parseOpenWithConfig({ sshHost: 'dev' })
+    expect(openWithUrl(byId('vscode'), '/home/u/project/', config))
+      .toBe('vscode://vscode-remote/ssh-remote+dev/home/u/project/')
+    expect(openWithUrl(byId('cursor'), '/', config))
+      .toBe('cursor://vscode-remote/ssh-remote+dev/')
   })
 
   it('keeps the local URL form for non-VSCode-family targets even in SSH mode', () => {
@@ -120,13 +129,20 @@ describe('openWithUrl', () => {
     })
     const targets = resolveOpenWithTargets(config)
     expect(openWithUrl(targets[targets.length - 1]!, '/r/f.ts', config))
-      .toBe('myfork://vscode-remote/ssh-remote+dev/r/f.ts')
+      .toBe('myfork://vscode-remote/ssh-remote+dev/r/f.ts:1:1')
   })
 })
 
 describe('helpers', () => {
   it('normalizeUrlPath converts backslashes to slashes', () => {
     expect(normalizeUrlPath('a\\b\\c')).toBe('a/b/c')
+  })
+
+  it('openWithResourcePath preserves file/directory kind across URL normalization', () => {
+    expect(openWithResourcePath('/home/u/project', true)).toBe('/home/u/project/')
+    expect(openWithResourcePath('/home/u/project/', true)).toBe('/home/u/project/')
+    expect(openWithResourcePath('/home/u/README', false)).toBe('/home/u/README')
+    expect(openWithResourcePath('C:\\Users\\u\\project', true)).toBe('C:/Users/u/project/')
   })
 
   it('openWithSshActive trims the host', () => {
