@@ -1,6 +1,6 @@
 /** Filesystem path guards shared by sidebar APIs that access a session workspace. */
 import { realpath } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { isWithin, requireAbsolute } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
 import { SidebarError } from './wire.ts'
@@ -19,6 +19,29 @@ function assertWithinWorkspace(workspace: string, target: string): void {
   if (!isWithin(workspace, target)) {
     throw new SidebarError('forbidden', `path "${target}" is outside workspace`, 403)
   }
+}
+
+/**
+ * Resolve a client-supplied route target inside the session namespace: an
+ * absolute target passes through (including the outside-workspace spelling,
+ * which the fence judges afterwards), while a workspace-relative one joins
+ * the session cwd.
+ *
+ * The media route needs this because a native file address
+ * (`dsh-resource://file/session/<sid>/<path>`) spells a file inside the
+ * session workspace RELATIVE to that workspace's root, so since the native
+ * right-Sidebar migration the image / PDF / download viewers hand the route a
+ * workspace-relative path. The JSON APIs have always read their `path` field
+ * this way (`fs.read` → `resolveGitPath`), which is why only the media channel
+ * broke; joining here also covers a client that has not resolved a cwd yet and
+ * third-party viewers built on `ctx.betterSidebar`'s media URL.
+ *
+ * @param cwd - The session's authoritative working directory.
+ * @param target - The client-supplied path (workspace-relative or absolute).
+ * @returns An absolute path for `requireAbsolute` / `ensureWorkspacePath`.
+ */
+export function resolveWorkspaceTarget(cwd: string, target: string): string {
+  return isAbsolute(target) ? target : join(cwd, target)
 }
 
 /**
