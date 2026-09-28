@@ -620,7 +620,12 @@ export function FileTree(props: {
 
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
-    if (level === undefined) {
+    // Both the not-yet-requested level (`undefined`) and the in-flight marker
+    // `loadDir` stores (`{}` — no entries, no error yet) draw the loading row.
+    // Without the second half the marker rendered as an EMPTY level (zero
+    // rows), so expanding a fresh folder flashed "loading row → nothing under
+    // the folder (looks collapsed again) → entries" for the whole request.
+    if (level === undefined || (level.entries === undefined && level.error === undefined)) {
       return <div className={css.explorerRow} style={{ paddingLeft: depth * 22 + 6 }}>{t('loading')}</div>
     }
     if (level.error !== undefined) {
