@@ -533,6 +533,31 @@ describe('session cwd resolution over the API route', () => {
     }
   })
 
+  it('concurrent fs.write calls to the same path do not corrupt each other', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-concurrent-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const target = join(workspace, 'notes.txt')
+      const draftA = 'A'.repeat(200000)
+      const draftB = 'B'.repeat(200000)
+      // Two editors of the same file ("open to the side" mints a second tab
+      // for one path) saving within the temp→rename window. Guards the
+      // contract: every concurrent save succeeds and the published file is
+      // one complete draft (never byte-mixed, never a failed rename).
+      const results = await Promise.allSettled([
+        invoke(route, 'fs.write', { sessionId: 'concurrent', path: target, content: draftA }),
+        invoke(route, 'fs.write', { sessionId: 'concurrent', path: target, content: draftB }),
+      ])
+      for (const result of results) expect(result.status).toBe('fulfilled')
+      const written = readFileSync(target, 'utf8')
+      expect([draftA, draftB]).toContain(written)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('rejects media and HTML reads through a workspace symlink', async () => {
     if (!canCreateSymlink) return
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-route-symlink-security-'))
