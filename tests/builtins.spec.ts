@@ -1,5 +1,7 @@
 /**
- * Built-in registration tests: the plugin registers 5 tabs and 3 file
+ * Built-in registration tests: the plugin registers its tabs (5 native +
+ * the bottom-workbench terminal, which needs the host's public client
+ * terminal service) and 3 file
  * viewers through the same service external plugins use (dogfooding);
  * the catch-all `code` viewer and the html sandbox settings pin the
  * registry's behavior. The read-only previews (image / pdf /
@@ -23,16 +25,37 @@ import { createSidebarStore } from '../src/client/state.ts'
 import { registerBuiltins } from '../src/client/builtins/index.ts'
 import { parkSidechatReopen } from '../src/client/SideChatView.tsx'
 
-function setup(): { service: ReturnType<typeof createBetterSidebarService>; store: ReturnType<typeof createSidebarStore>; dispose: () => void } {
+/**
+ * 宿主终端服务的最小桩：`registerBuiltins` 只对它做结构探测（`view` +
+ * `retainTabs`），底部终端类型是否注册由它的存在与否决定。
+ */
+const hostTerminalsStub = {
+  view: () => { throw new Error('the stub terminal service is never driven by this suite') },
+  retainTabs: () => {},
+}
+
+function setup(terminals: unknown = hostTerminalsStub): { service: ReturnType<typeof createBetterSidebarService>; store: ReturnType<typeof createSidebarStore>; dispose: () => void } {
   const store = createSidebarStore()
   const service = createBetterSidebarService(store)
-  const dispose = registerBuiltins({} as Context, service)
+  // 真实 ctx 是 cordis Context（客户端服务经 ctx.get 读取）；这里只提供 get。
+  const ctx = { get: (name: string) => (name === 'webTerminals' ? terminals : undefined) } as unknown as Context
+  const dispose = registerBuiltins(ctx, service)
   return { service, store, dispose }
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 5 built-in tabs (the host owns terminal and browser)', () => {
+  it('registers the built-in tabs (the host still owns the native terminal and browser kinds)', () => {
     const { service } = setup()
+    expect(service.getTabs().map(t => t.id).sort()).toEqual(
+      ['diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal'],
+    )
+  })
+
+  it('without the host terminal service the bottom terminal type is not registered', () => {
+    // 老宿主没有公开的客户端终端服务：不注册这个类型，+ 菜单里就不会出现一个
+    // 点开即报错的终端（本插件的支持面因此不因这个特性收窄）。
+    // （传 null 而不是 undefined 来绕开参数默认值——默认值就是「有服务」的桩。）
+    const { service } = setup(null)
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
       ['diff', 'editor', 'git', 'sidechat', 'subagent'],
     )
@@ -69,8 +92,12 @@ describe('built-in tab registrations', () => {
     // the host no longer substituting a generic fallback, a tab without one
     // renders the title alone — so every visible tab declares the real
     // purpose of its page, and no two may read identically.
+    //
+    // 例外：底部专属类型（bottomOnly）不镜像到原生右侧栏，也就不进那页 guide
+    // （description 的唯一渲染处），因此不需要（也不该）声明它。
     const { service } = setup()
-    const visible = service.getTabs().filter(descriptor => descriptor.hidden !== true)
+    const visible = service.getTabs()
+      .filter(descriptor => descriptor.hidden !== true && descriptor.bottomOnly !== true)
     expect(visible.length).toBeGreaterThan(0)
     for (const descriptor of visible) {
       expect(descriptor.description, `${descriptor.id} must declare a description`).toBeDefined()
@@ -102,11 +129,18 @@ describe('built-in tab registrations', () => {
     }
   })
 
-  it('the side chat tab sits between tasks and the removed terminal slot in the + menu', () => {
+  it('the + menu keeps its slot order: side chat 35, bottom terminal 40', () => {
     const { service } = setup()
     const sidechat = service.getTab('sidechat')
     expect(sidechat?.order).toBe(35)
     expect(sidechat?.hidden).not.toBe(true)
+    // The terminal restored the historical slot after side chat — but as a
+    // bottom-workbench-only type: visible in the + menu, and skipped by the
+    // native right-Sidebar registration (native/index.ts).
+    const terminal = service.getTab('terminal')
+    expect(terminal?.order).toBe(40)
+    expect(terminal?.hidden).not.toBe(true)
+    expect(terminal?.bottomOnly).toBe(true)
   })
 
   it('side chat mints one tab per thread (Codex-style multi-instance)', () => {

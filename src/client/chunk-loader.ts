@@ -50,7 +50,7 @@
  * client.js); an edit that does land while a core HMR happens is caught by
  * the ETag comparison on the next activation.
  */
-export type ChunkName = 'editor' | 'mermaid' | 'locale'
+export type ChunkName = 'editor' | 'mermaid' | 'locale' | 'terminal'
 
 /** The module exports a chunk factory provides (namespace-ish record). */
 export type ChunkExports = Record<string, unknown>

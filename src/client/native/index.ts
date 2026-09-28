@@ -375,6 +375,10 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
     const sync = (): void => {
       const wanted = new Map<string, () => () => void>()
       for (const descriptor of service.getTabs()) {
+        // 底部专属类型（bottomOnly）不进原生右侧栏：宿主自己已经有同名 kind
+        // （终端），再注册一个只会遮蔽宿主并在 guide 里多出一行。live 里若还留着
+        // 旧注册，下面的对账会把它们正常释放。
+        if (descriptor.bottomOnly === true) continue
         if (!service.isTabEnabled(descriptor.id)) continue
         wanted.set(descriptor.id, () => registerDescriptor(descriptor))
       }

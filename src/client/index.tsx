@@ -20,6 +20,7 @@ import { RenderBoundary } from './RenderBoundary.tsx'
 import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
+import { attachTerminalRetention } from './terminal/retention-host.ts'
 import { createNativeSurface } from './native/surface.ts'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
@@ -191,6 +192,17 @@ export function apply(ctx: Context): void {
   ctx.effect(
     () => registerBuiltins(ctx, service),
     'dsh-better-sidebar: register built-in tabs and viewers',
+  )
+  // 底部终端的「窗口保留」：宿主的保留登记表是最后写入者胜，而宿主自己的终端
+  // UI 会按它自己的 tab 列表反复登记，所以本插件按「宿主右侧栏终端 + 本插件底部
+  // 终端」的并集、在它那轮之后重放一次，否则底部终端会被宿主判为未保留而回收。
+  // 宿主未提供终端服务时 `attachTerminalRetention` 返回 undefined（no-op）。
+  ctx.effect(
+    () => {
+      const retention = attachTerminalRetention(ctx, sidebarStore)
+      return () => { retention?.dispose() }
+    },
+    'dsh-better-sidebar: terminal window hold',
   )
   try {
     // rc.8+ exposes the client module system as the `ctx.modules` service;

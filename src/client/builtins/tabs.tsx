@@ -1,20 +1,27 @@
 /**
  * The built-in tab descriptors: the plugin registers its own pages
- * (editor / git — the unified changes tab / subagent / sidechat / browser /
+ * (editor / git — the unified changes tab / subagent / sidechat / terminal /
  * diff) through
  * the same {@link BetterSidebarService} external plugins use — eating its
  * own dogfood. The editor IS the files window (the old standalone explorer
  * merged into it).
  *
  * DSH 0.1.6-alpha.2 ships its own right-Sidebar terminal and browser tab
- * types, so this plugin contributes neither: the host's `terminal` kind owns
- * interactive shells outright, and the host's `browser` kind (delegated to
- * from the chat's http(s) links) owns embedded pages. See
+ * types, so this plugin contributes neither **as native types**: the host's
+ * `terminal` kind owns interactive shells outright, and the host's `browser`
+ * kind (delegated to from the chat's http(s) links) owns embedded pages. See
  * docs/plans/2026-09-21-dsh-0.1.6-alpha.2-adaptation.md.
+ *
+ * The bottom workbench's terminal is the one exception on the plugin side: it
+ * is a **view only** (`bottomOnly`, so it never shadows the host's kind or
+ * adds a second guide row) driving the host's own public client terminal
+ * service — the PTY, session ownership, shell choice, reconnection and
+ * cleanup all stay with the host. See
+ * docs/plans/2026-09-28-bottom-dock-terminal-via-host.md.
  */
 import { IconCodeOutlineRegular, IconPanelLeftOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
-  changesTabIcon, filesTabIcon, sidechatTabIcon, tasksTabIcon,
+  changesTabIcon, filesTabIcon, sidechatTabIcon, tasksTabIcon, terminalTabIcon,
 } from './tab-icons.tsx'
 import { t } from '../locales.ts'
 import { openSidebarFile } from '../sidebar-file.ts'
@@ -25,9 +32,12 @@ import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
 import { consumeSidechatSeed, SideChatView, sidechatThreadIdOf } from '../SideChatView.tsx'
 import { api } from '../api.ts'
+import { TERMINAL_KIND } from '../terminal/kind.ts'
+import { TerminalTabView } from '../terminal/terminal-tab.tsx'
 import type { TabDescriptor } from '../service.ts'
 
-/** The 5 built-in tab descriptors (the host owns terminal and browser). */
+/** The built-in tab descriptors. The host keeps owning the native terminal
+ *  and browser kinds; the terminal descriptor below is bottom-workbench-only. */
 export function builtinTabs(): readonly TabDescriptor[] {
   return [
     {
@@ -211,6 +221,18 @@ export function builtinTabs(): readonly TabDescriptor[] {
       component: ({ ctx, scope, tab, visible }) => (
         <SideChatView ctx={ctx} scope={scope} tab={tab} visible={visible} />
       ),
+    },
+    {
+      // 终端（底部工作台）：类型只进本插件注册表（bottomOnly，不碰宿主的
+      // native `terminal` kind / guide），正文在 client-terminal 懒加载 chunk 里。
+      // 进程分配、会话归属、外壳选择、重连与关闭清理全部由宿主的公开客户端
+      // 服务 `ctx.webTerminals` 负责（见 terminal/types.ts 的契约说明）。
+      id: TERMINAL_KIND,
+      title: () => t('terminal'),
+      icon: terminalTabIcon,
+      order: 40,
+      bottomOnly: true,
+      component: TerminalTabView,
     },
     {
       id: 'diff',

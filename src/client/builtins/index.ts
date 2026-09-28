@@ -8,6 +8,7 @@
  */
 import type { Context } from '../../context-types.ts'
 import type { BetterSidebarService } from '../service.ts'
+import { hasHostTerminals } from '../terminal/terminal-tab.tsx'
 import { builtinTabs } from './tabs.tsx'
 import { builtinViewers } from './viewers.tsx'
 
@@ -22,7 +23,11 @@ export function registerBuiltins(
   service: BetterSidebarService,
 ): () => void {
   const disposers: (() => void)[] = []
+  // 底部终端复用宿主的公开客户端终端服务；服务缺失的宿主（老版本）上不注册这个
+  // 类型，免得 + 菜单里多出一个点开即报错的终端。
+  const terminalHost = hasHostTerminals(ctx)
   for (const tab of builtinTabs()) {
+    if (tab.bottomOnly === true && !terminalHost) continue
     disposers.push(service.registerTab(tab))
   }
   for (const viewer of builtinViewers()) {

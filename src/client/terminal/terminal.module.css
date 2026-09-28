@@ -1,0 +1,62 @@
+/* 底部工作台的终端视图：xterm 铺满面板，状态/错误行贴在顶部。 */
+
+.root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* xterm 需要一个有确定尺寸的宿主；尺寸由 fit addon 量这个盒子得到。 */
+.host {
+  position: absolute;
+  inset: 0;
+  padding: 4px 6px 0;
+  overflow: hidden;
+}
+
+/* 状态行浮在终端上方：加载中/断线/出错时给出文案与重试。 */
+.status {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--dsw-alias-bg-layer-1);
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.statusText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.error {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* 与 sidebar.module.css 的 .terminalRetry 同一观感（该类的既有消费者是
+   lazy-chunk 的加载失败态）。 */
+.retry {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-strong-11);
+  cursor: pointer;
+}
+
+.retry:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}

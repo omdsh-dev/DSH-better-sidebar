@@ -180,6 +180,15 @@ export interface TabDescriptor {
   /** Hide from the + menu (the editor tab is opened by file-open, not by the menu). */
   hidden?: boolean
   /**
+   * 只属于本插件底部工作台：**不镜像到 DSH 原生右侧栏**（不注册 native 类型、
+   * 不产生 guide 条目），只能从本插件的 + 菜单/服务打开。默认 false（照旧镜像）。
+   *
+   * 现成的用例是终端：宿主自己的 `terminal` kind 已经拥有交互式 shell，插件再
+   * 注册一个同名 kind 会遮蔽宿主实现并在 guide 里多出一条 terminal 行——挂载
+   * e2e 正是钉「宿主 terminal 恰好 1 条」这条边界。
+   */
+  bottomOnly?: boolean
+  /**
    * + menu disabled predicate (e.g. terminal at capacity). Receives the
    * session scope and the live sidebar state (counts, expansions).
    */
