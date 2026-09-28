@@ -100,6 +100,8 @@ export const ar: Record<string, string> = {
   terminalDepsHint: 'شغّل الأمر التالي في طرفية أو cmd على جهاز DSH للإصلاح، ثم أعد المحاولة (يبقى node-pty متزامناً مع إصدار نواة DSH):',
   terminalDepsProfile: ' (الملف الشخصي المكتشف: {profile})',
   terminalShellNotFound: 'لم يتم العثور على الصدفة المُعدَّة: {name} — تحقق من مسار الصدفة في الإعدادات → Side card → Terminal',
+  settingsTerminalFontTitle: 'خط الطرفية',
+  settingsTerminalFontDesc: 'فارغ = خط شيفرة DSH',
   preview: 'معاينة',
   toc: 'الفهرس',
   edit: 'تحرير',

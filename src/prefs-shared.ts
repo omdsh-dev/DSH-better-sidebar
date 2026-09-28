@@ -102,6 +102,13 @@ export interface SidebarPrefs {
    */
   customCss: string
   /**
+   * 底部终端使用的字体族（`''` = 跟随 DSH 的代码字体 `--ds-font-family-code`）。
+   * 只作用于本插件的终端视图（宿主右侧栏的终端有它自己的设置）。要显示
+   * oh-my-zsh / powerlevel10k 提示符里的 Powerline / Nerd Font 图标，必须填一个
+   * 带这些字形的字体族，例如 `MesloLGS NF`。
+   */
+  terminalFontFamily: string
+  /**
    * LEGACY (kept for read-migration and downgrade mirroring only): position
    * compatibility mode flag. The UI writes `titleBarScheme` instead; a
    * stored `true` without a scheme migrates to the `custom` scheme (with
@@ -184,6 +191,7 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   titleBarScheme: 'auto',
   titleBarPresetId: '',
   customCss: '',
+  terminalFontFamily: '',
   titleBarCompat: false,
   titleBarStripPx: TITLE_BAR_STRIP_DEFAULT,
   htmlViewerNoSandbox: false,

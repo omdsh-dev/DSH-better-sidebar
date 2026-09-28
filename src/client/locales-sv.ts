@@ -82,6 +82,8 @@ export const sv: Record<string, string> = {
   terminalDepsHint: 'Kör kommandot nedan i en terminal eller cmd på DSH-maskinen för att reparera det, försök sedan igen (node-pty hålls synkad med DSH-kärnversionen):',
   terminalDepsProfile: ' (upptäckt profil: {profile})',
   terminalShellNotFound: 'Konfigurerat skal hittades inte: {name} — kontrollera skalsökvägen under Inställningar → Side card → Terminal',
+  settingsTerminalFontTitle: 'Terminaltypsnitt',
+  settingsTerminalFontDesc: 'Tomt följer DSH-kodtypsnittet',
   preview: 'Förhandsgranska',
   toc: 'Innehållsförteckning',
   edit: 'Redigera',

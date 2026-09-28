@@ -43,6 +43,7 @@ describe('side card preferences', () => {
         titleBarScheme: 'auto',
         titleBarPresetId: '',
         customCss: '',
+        terminalFontFamily: '',
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
@@ -67,6 +68,7 @@ describe('side card preferences', () => {
         titleBarScheme: 'auto',
         titleBarPresetId: '',
         customCss: '',
+        terminalFontFamily: '',
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
@@ -91,6 +93,7 @@ describe('side card preferences', () => {
         titleBarScheme: 'auto',
         titleBarPresetId: '',
         customCss: '',
+        terminalFontFamily: '',
         titleBarCompat: false,
         titleBarStripPx: 40,
         htmlViewerNoSandbox: false,
@@ -156,6 +159,9 @@ describe('side card preferences', () => {
     expect((await loadPrefs(wire({ titleBarPresetId: 5 }))).titleBarPresetId).toBe('')
     expect((await loadPrefs(wire({}))).customCss).toBe('')
     expect((await loadPrefs(wire({ customCss: 7 }))).customCss).toBe('')
+    expect((await loadPrefs(wire({}))).terminalFontFamily).toBe('')
+    expect((await loadPrefs(wire({ terminalFontFamily: 7 }))).terminalFontFamily).toBe('')
+    expect((await loadPrefs(wire({ terminalFontFamily: 'MesloLGS NF' }))).terminalFontFamily).toBe('MesloLGS NF')
     // Valid values survive verbatim (including the explicit web scheme).
     const picked = await loadPrefs(wire({ titleBarScheme: 'preset', titleBarPresetId: 'dsh-desktop', customCss: 'html { }' }))
     expect(picked.titleBarScheme).toBe('preset')

@@ -99,6 +99,8 @@ export const tr: Record<string, string> = {
   terminalDepsHint: 'Onarmak için DSH makinesindeki bir terminalde veya cmd’de aşağıdaki komutu çalıştırın, sonra yeniden deneyin (node-pty, DSH çekirdek sürümüyle senkron kalır):',
   terminalDepsProfile: ' (algılanan profil: {profile})',
   terminalShellNotFound: 'Yapılandırılan kabuk bulunamadı: {name} — Ayarlar → Side card → Terminal altındaki kabuk yolunu denetleyin',
+  settingsTerminalFontTitle: 'Terminal yazı tipi',
+  settingsTerminalFontDesc: 'Boş = DSH kod yazı tipi',
   preview: 'Önizleme',
   toc: 'İçindekiler',
   edit: 'Düzenle',

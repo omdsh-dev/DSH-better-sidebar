@@ -101,6 +101,8 @@ export const pl: Record<string, string> = {
   terminalDepsHint: 'Uruchom poniższe polecenie w terminalu lub cmd na maszynie DSH, aby to naprawić, a następnie ponów (node-pty pozostaje w synchronizacji z wersją rdzenia DSH):',
   terminalDepsProfile: ' (wykryty profil: {profile})',
   terminalShellNotFound: 'Nie znaleziono skonfigurowanej powłoki: {name} — sprawdź ścieżkę powłoki w Ustawienia → Side card → Terminal',
+  settingsTerminalFontTitle: 'Czcionka terminala',
+  settingsTerminalFontDesc: 'Puste = czcionka kodu DSH',
   preview: 'Podgląd',
   toc: 'Spis treści',
   edit: 'Edytuj',

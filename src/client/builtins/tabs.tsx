@@ -232,6 +232,18 @@ export function builtinTabs(): readonly TabDescriptor[] {
       icon: terminalTabIcon,
       order: 40,
       bottomOnly: true,
+      // 字体是终端唯一必配的渲染项：xterm 量字宽用的是具体字体族，CSS var() 在
+      // canvas 里不生效，所以留空才跟随 DSH 的代码字体；Nerd Font 图标（oh-my-zsh /
+      // p10k 提示符）必须由用户显式指定带这些字形的字体族。
+      settings: {
+        toggles: [{
+          key: 'terminalFontFamily',
+          type: 'text',
+          title: () => t('settingsTerminalFontTitle'),
+          desc: () => t('settingsTerminalFontDesc'),
+          placeholder: 'MesloLGS NF',
+        }],
+      },
       component: TerminalTabView,
     },
     {

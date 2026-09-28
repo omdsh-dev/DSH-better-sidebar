@@ -95,6 +95,8 @@ export const ru: Record<string, string> = {
   terminalDepsHint: 'Выполните приведённую ниже команду в терминале или cmd на машине DSH, затем нажмите «Повторить» (node-pty остаётся синхронизированным с версией ядра DSH):',
   terminalDepsProfile: ' (обнаружен profile: {profile})',
   terminalShellNotFound: 'Настроенная оболочка не найдена: {name} — проверьте путь к оболочке в Настройки → Side card → Terminal',
+  settingsTerminalFontTitle: 'Шрифт терминала',
+  settingsTerminalFontDesc: 'Пусто — шрифт кода DSH',
   preview: 'Предпросмотр',
   toc: 'Оглавление',
   edit: 'Изменить',

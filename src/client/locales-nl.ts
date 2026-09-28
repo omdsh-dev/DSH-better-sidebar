@@ -97,6 +97,8 @@ export const nl: Record<string, string> = {
   terminalDepsHint: 'Voer het onderstaande commando uit in een terminal of cmd op de DSH-machine om het te herstellen en probeer het opnieuw (node-pty blijft in sync met de DSH-coreversie):',
   terminalDepsProfile: ' (gedetecteerde profile: {profile})',
   terminalShellNotFound: 'Geconfigureerde shell niet gevonden: {name} — controleer het shell-pad onder Instellingen → Side card → Terminal',
+  settingsTerminalFontTitle: 'Lettertype van de terminal',
+  settingsTerminalFontDesc: 'Leeg volgt het DSH-codelettertype',
   preview: 'Voorbeeld',
   toc: 'Inhoudsopgave',
   edit: 'Bewerken',

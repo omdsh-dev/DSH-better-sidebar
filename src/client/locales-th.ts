@@ -99,6 +99,8 @@ export const th: Record<string, string> = {
   terminalDepsHint: 'เรียกใช้คำสั่งด้านล่างในเทอร์มินัลหรือ cmd บนเครื่อง DSH เพื่อซ่อมแซม แล้วกดลองอีกครั้ง (node-pty ต้องซิงค์กับเวอร์ชันหลักของ DSH):',
   terminalDepsProfile: ' (ตรวจพบ profile: {profile})',
   terminalShellNotFound: 'ไม่พบ shell ที่กำหนดไว้: {name} — ตรวจสอบพาธ shell ใน การตั้งค่า → Side card → Terminal',
+  settingsTerminalFontTitle: 'ฟอนต์ของเทอร์มินัล',
+  settingsTerminalFontDesc: 'ว่าง = ฟอนต์โค้ดของ DSH',
   preview: 'พรีวิว',
   toc: 'สารบัญ',
   edit: 'แก้ไข',

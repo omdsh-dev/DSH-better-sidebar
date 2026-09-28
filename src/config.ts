@@ -89,6 +89,7 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   titleBarScheme: z.union([z.const('auto'), z.const('web'), z.const('preset'), z.const('custom')]),
   titleBarPresetId: z.string(),
   customCss: z.string(),
+  terminalFontFamily: z.string().default(''),
   titleBarCompat: z.boolean().default(false),
   titleBarStripPx: z.number().step(1).min(TITLE_BAR_STRIP_MIN).max(TITLE_BAR_STRIP_MAX).default(TITLE_BAR_STRIP_DEFAULT),
   htmlViewerNoSandbox: z.boolean().default(false),

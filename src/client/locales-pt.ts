@@ -82,6 +82,8 @@ export const pt: Record<string, string> = {
   terminalDepsHint: 'Execute o comando abaixo em um terminal ou cmd na máquina do DSH para reparar e tente novamente (node-pty permanece em sincronia com a versão do núcleo do DSH):',
   terminalDepsProfile: ' (perfil detectado: {profile})',
   terminalShellNotFound: 'Shell configurado não encontrado: {name} — verifique o caminho do shell em Configurações → Side card → Terminal',
+  settingsTerminalFontTitle: 'Fonte do terminal',
+  settingsTerminalFontDesc: 'Vazio segue a fonte de código do DSH',
   preview: 'Pré-visualizar',
   toc: 'Sumário',
   edit: 'Editar',

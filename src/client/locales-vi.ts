@@ -99,6 +99,8 @@ export const vi: Record<string, string> = {
   terminalDepsHint: 'Chạy lệnh sau trong terminal hoặc cmd trên máy DSH để sửa, rồi nhấn thử lại (node-pty đồng bộ phiên bản với lõi DSH):',
   terminalDepsProfile: ' (phát hiện profile: {profile})',
   terminalShellNotFound: 'Không tìm thấy shell đã cấu hình: {name} — kiểm tra đường dẫn shell trong Cài đặt → Side card → Terminal',
+  settingsTerminalFontTitle: 'Phông chữ terminal',
+  settingsTerminalFontDesc: 'Trống = phông mã DSH',
   preview: 'Xem trước',
   toc: 'Mục lục',
   edit: 'Chỉnh sửa',

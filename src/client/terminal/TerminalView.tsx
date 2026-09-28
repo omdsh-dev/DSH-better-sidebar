@@ -36,6 +36,16 @@ function codeFontFamily(): string {
   return token === '' ? FALLBACK_FONT : `${token}, ${FALLBACK_FONT}`
 }
 
+/**
+ * 终端最终使用的字体栈：偏好为空时跟随 DSH 的代码字体；非空则以用户填的字体族
+ * 打头（后面仍留兜底栈，避免字体缺失时整块渲染失败）。
+ * @param preference - `SidebarPrefs.terminalFontFamily`。
+ */
+function terminalFontStack(preference: string | undefined): string {
+  const chosen = preference?.trim() ?? ''
+  return chosen === '' ? codeFontFamily() : `${chosen}, ${FALLBACK_FONT}`
+}
+
 /** 视图外壳需要展示的最小状态（变化时才 setState，避免帧率被 React 追上）。 */
 interface Chrome {
   phase: string
@@ -73,6 +83,7 @@ export function TerminalBody({ ctx, store, scope, tab, visible }: TabComponentPr
   const hostRef = useRef<HTMLDivElement | null>(null)
   const measureRef = useRef<((state: TerminalState) => void) | null>(null)
   const liveRef = useRef<{ view: TerminalViewFace; contentId: string } | null>(null)
+  const termRef = useRef<Terminal | null>(null)
   const visibleRef = useRef(visible)
   // tab.meta 只在挂载时读一次（读进 effect 依赖会与 effect 内的持久化互相触发），
   // 重试时会先把它换成新的内容身份。
@@ -107,13 +118,14 @@ export function TerminalBody({ ctx, store, scope, tab, visible }: TabComponentPr
     }
 
     const term = new Terminal({
-      fontFamily: codeFontFamily(),
+      fontFamily: terminalFontStack(store.getPrefs().terminalFontFamily),
       fontSize: 12,
       lineHeight: 1.2,
       scrollback: 5_000,
       cursorBlink: true,
       theme: terminalTheme(),
     })
+    termRef.current = term
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(host)
@@ -164,6 +176,7 @@ export function TerminalBody({ ctx, store, scope, tab, visible }: TabComponentPr
     return () => {
       measureRef.current = null
       liveRef.current = null
+      termRef.current = null
       offState()
       offData.dispose()
       observer.disconnect()
@@ -184,6 +197,21 @@ export function TerminalBody({ ctx, store, scope, tab, visible }: TabComponentPr
     const live = liveRef.current
     if (visible && live !== null) measureRef.current?.(live.view.state.getSnapshot())
   }, [visible])
+
+  // 字体偏好变化就地生效：换字体族后重新量一次尺寸（字形宽度变了），不重建模拟器
+  // ——终端内容、回滚缓冲与远端进程全程保留。
+  useEffect(() => {
+    const apply = (): void => {
+      const next = terminalFontStack(store.getPrefs().terminalFontFamily)
+      const term = termRef.current
+      if (term === null || term.options.fontFamily === next) return
+      term.options.fontFamily = next
+      const live = liveRef.current
+      if (live !== null) measureRef.current?.(live.view.state.getSnapshot())
+    }
+    apply()
+    return store.subscribe(apply)
+  }, [store])
 
   /** 重试：结束失败的那个宿主终端，换一个内容身份让宿主分配新终端。 */
   const retry = (): void => {

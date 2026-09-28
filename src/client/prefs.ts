@@ -79,6 +79,9 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     customCss: typeof record.customCss === 'string'
       ? record.customCss
       : SIDEBAR_PREFS_DEFAULTS.customCss,
+    terminalFontFamily: typeof record.terminalFontFamily === 'string'
+      ? record.terminalFontFamily
+      : SIDEBAR_PREFS_DEFAULTS.terminalFontFamily,
     titleBarCompat: typeof record.titleBarCompat === 'boolean'
       ? record.titleBarCompat
       : SIDEBAR_PREFS_DEFAULTS.titleBarCompat,
