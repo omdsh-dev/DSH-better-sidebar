@@ -9,6 +9,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { createNativeTabRecords, NativeTabBody, NativeTabTitle } from '../src/client/native/tab-adapter.tsx'
+import { createNativeSurface } from '../src/client/native/surface.ts'
 import { registerNativeSurface } from '../src/client/native/index.ts'
 import { createBetterSidebarService, type SidebarSurface } from '../src/client/service.ts'
 import { createSidebarStore, type SidebarTab } from '../src/client/state.ts'
@@ -193,6 +194,30 @@ describe('service routing into the native surface', () => {
     expect(() => service.closeTab('other', scope)).not.toThrow()
   })
 
+  it('hands the native close meta to descriptor.onClose', () => {
+    // Regression #644: the native close path projected the record down to
+    // type/title, starving meta-driven lifecycle consumers (recently-closed
+    // records, reopen flows).
+    const surface: SidebarSurface = {
+      openTab: () => {},
+      openResource: () => {},
+      fileAddress: () => 'addr',
+      close: () => ({ type: 'my-plugin:term', title: 'T', meta: { threadId: 't-9' } }),
+      update: () => false,
+      activate: () => false,
+      has: () => true,
+    }
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const service = createBetterSidebarService(store)
+    service.setSurface(surface)
+    const seen: SidebarTab[] = []
+    service.registerTab({ id: 'my-plugin:term', title: 'Terminal', component: () => null, onClose: tab => { seen.push(tab) } })
+    service.closeTab('native-1', scope)
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({ id: 'native-1', type: 'my-plugin:term', title: 'T', meta: { threadId: 't-9' } })
+  })
+
   it('refuses a disabled type before touching the surface', () => {
     const { service, calls } = mount()
     service.setSurface(undefined)
@@ -209,6 +234,76 @@ describe('service routing into the native surface', () => {
     })
     service.openTab({ type: 'missing' }, scope)
     expect(calls).toEqual([])
+  })
+})
+
+describe('createNativeSurface activate/close (the real adapter)', () => {
+  const mountSurface = (): {
+    surface: ReturnType<typeof createNativeSurface>
+    records: ReturnType<typeof createNativeTabRecords>
+    focus: ReturnType<typeof vi.fn>
+    close: ReturnType<typeof vi.fn>
+  } => {
+    const focus = vi.fn()
+    const close = vi.fn()
+    const controller = {
+      openTab: () => {},
+      openResource: () => {},
+      close,
+      // `ISidebarRight.focus` (dsh >= 0.1.5): the face activate() rides.
+      focus,
+      mounted: { getSnapshot: () => 's1', subscribe: () => () => {} },
+      openTabIn: () => {},
+      openResourceIn: () => {},
+      closeIn: () => {},
+    }
+    const records = createNativeTabRecords()
+    const ctx = {
+      get: (name: string) => (name === 'sidebarRight' ? controller : undefined),
+      sessions: { list: { subscribe: () => () => {}, getSnapshot: () => ({}) } },
+    }
+    const surface = createNativeSurface(ctx as never, records)
+    return { surface, records, focus, close }
+  }
+
+  it('activate focuses an existing record through the controller focus face', () => {
+    // Regression #644: activate() used to return records.has(tabId) without
+    // focusing anything — external plugins with multi-instance native tabs
+    // (dsh-sidenote's side chats) could never bring a tab to the front.
+    const { surface, records, focus } = mountSurface()
+    records.ensure({ id: 'tab-9', kind: 'sidechat', title: 'Side Chat', params: { meta: { threadId: 't-1' } }, scope })
+    expect(surface.activate('tab-9')).toBe(true)
+    expect(focus).toHaveBeenCalledTimes(1)
+    expect(focus).toHaveBeenCalledWith('tab-9')
+  })
+
+  it('activate leaves unknown ids alone and reports them', () => {
+    const { surface, focus } = mountSurface()
+    expect(surface.activate('missing')).toBe(false)
+    expect(focus).not.toHaveBeenCalled()
+  })
+
+  it('close returns the record meta and rides the on-screen face for the mounted session', () => {
+    const { surface, records, close } = mountSurface()
+    records.ensure({ id: 'tab-10', kind: 'sidechat', title: 'hello thread', params: { meta: { threadId: 't-7' } }, scope })
+    const closed = surface.close('s1', 'tab-10')
+    expect(closed).toEqual({ type: 'sidechat', title: 'hello thread', meta: { threadId: 't-7' } })
+    // The mounted seat is s1's, so the host close rode the on-screen face.
+    expect(close).toHaveBeenCalledWith('tab-10')
+    expect(records.has('tab-10')).toBe(false)
+  })
+
+  it('close of a non-mounted session rides the per-session face', () => {
+    const { surface, records } = mountSurface()
+    records.ensure({ id: 'tab-11', kind: 'sidechat', title: 'bg', params: undefined, scope })
+    const closed = surface.close('s2', 'tab-11')
+    expect(closed).toEqual({ type: 'sidechat', title: 'bg' })
+  })
+
+  it('close of an unknown id is undefined (a strict no-op)', () => {
+    const { surface, close } = mountSurface()
+    expect(surface.close('s1', 'missing')).toBeUndefined()
+    expect(close).not.toHaveBeenCalled()
   })
 })
 

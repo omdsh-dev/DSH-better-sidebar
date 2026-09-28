@@ -47,6 +47,8 @@ interface NativeController {
   close(tabId: string): void
   /** The mounted-seat observation (0.1.7 `ISidebarRight.mounted`). */
   mounted?: MountedSessions
+  /** `ISidebarRight.focus` — focuses the tab and the pane holding it (dsh >= 0.1.5). */
+  focus?(tabId: string): void
   /** Not part of `ISidebarRight`: the concrete controller's per-session writes. */
   openTabIn?(sessionId: string, kind: string, options?: { params?: unknown; revealIfOpened?: boolean }): void
   openResourceIn?(sessionId: string, address: string, options?: { params?: unknown; revealIfOpened?: boolean }): void
@@ -203,7 +205,11 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
         if (sessionId === mountedSessionId(ctx)) api.close(tabId)
         else if (api.closeIn !== undefined) api.closeIn(sessionId, tabId)
       }
-      return { type: record.tab.type, title: record.tab.title }
+      return {
+        type: record.tab.type,
+        title: record.tab.title,
+        ...(record.tab.meta === undefined ? {} : { meta: record.tab.meta }),
+      }
     },
     update(tabId, patch) {
       if (!records.has(tabId)) return false
@@ -211,10 +217,12 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
       return true
     },
     activate(tabId) {
-      // The native surface has no cross-pane activation face the plugin needs:
-      // a tab is focused by opening its (kind, address) again, which the
-      // native open already de-duplicates.
-      return records.has(tabId)
+      if (!records.has(tabId)) return false
+      // External plugin tabs (multi-instance kinds like side chats) carry no
+      // (kind, address) identity to re-open against, so "open again to focus"
+      // cannot work for them — focus through the controller's own face.
+      controller()?.focus?.(tabId)
+      return true
     },
     has: tabId => records.has(tabId),
     flushPending,
