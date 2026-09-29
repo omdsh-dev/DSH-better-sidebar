@@ -14,7 +14,6 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { FileTree } from '../src/client/FileTree.tsx'
-import { createSidebarStore } from '../src/client/state.ts'
 
 import { setupReactAct } from './test-utils.ts'
 setupReactAct()
@@ -28,12 +27,15 @@ afterEach(() => { scrollIntoView.mockClear() })
 
 vi.mock('../src/client/api.ts', () => ({
   api: {
-    fsTree: async () => ({
-      entries: [
+    fsTrees: async (_scope: unknown, paths: readonly string[]) => ({
+      levels: paths.map(path => ({ path, entries: [
         { name: 'src', path: '/tmp/src', isDir: true },
         { name: 'a.ts', path: '/tmp/a.ts', isDir: false },
-      ],
+      ], truncated: false })),
     }),
+    // The tree reads the shared git-status store; a non-repo answer keeps
+    // every row plain (this spec is about the reveal scroll).
+    gitStatus: async () => ({ isRepo: false, entries: [] }),
   },
   downloadUrl: () => '/sidebar/file',
 }))
@@ -56,7 +58,6 @@ async function mountTree(bodyScroll: { top: number; client: number; height: numb
     root.render(createElement(FileTree, {
       sessionId: 's1',
       cwd: '/tmp',
-      store: createSidebarStore(),
       expanded: [],
       revealed,
       onToggle: () => {},

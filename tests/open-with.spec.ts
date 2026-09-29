@@ -63,10 +63,16 @@ describe('resolveOpenWithTargets', () => {
     expect(targets.map(target => target.id)).toEqual(['explorer', 'vscode', 'cursor', 'zed', 'custom:e1'])
   })
 
-  it('drops local-only targets in SSH mode (file manager, Zed, non-VSCode custom)', () => {
+  it('drops the local-only URL openers in SSH mode but KEEPS reveal (file manager)', () => {
     const config = parseOpenWithConfig({ sshHost: 'dev', customEditors: [localCustom, familyCustom] })
     const targets = resolveOpenWithTargets(config)
-    expect(targets.map(target => target.id)).toEqual(['vscode', 'cursor', 'custom:e2'])
+    // Zed and the non-VSCode custom editor cannot reach a remote path. The
+    // `explorer` target stays: reveal runs on the host machine (the one that
+    // owns the workspace) and is the only reveal left when the DSH host's own
+    // open-in-app capability is unavailable.
+    expect(targets.map(target => target.id)).toEqual(['explorer', 'vscode', 'cursor', 'custom:e2'])
+    expect(targets[0]?.kind).toBe('reveal')
+    expect(targets.filter(target => target.kind === 'reveal')).toHaveLength(1)
   })
 
   it('prunes unknown pinned ids only when resolving (the parse keeps them)', () => {

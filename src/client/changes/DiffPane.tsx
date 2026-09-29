@@ -2,16 +2,16 @@
  * The changes tab's shared bottom preview pane: one selected target — a git
  * worktree change, a commit patch, or a session file op — rendered through
  * the unified diff stack (the same one the diff tab uses). Git targets load
- * on demand (refreshable, with the untracked full-addition fallback); op
- * targets are pure snapshots (diff / read view / error text). The pane is
- * resizable by drag (clamped; the height commits to the tab's persisted
- * meta on release) and by keyboard; git targets can expand into a dedicated
- * diff tab via the shell.
+ * through the shared {@link useGitDiffTarget} hook (refreshable, with the
+ * untracked full-addition fallback); op targets are pure snapshots (diff /
+ * read view / error text). The pane is resizable by drag (clamped; the
+ * height commits to the tab's persisted meta on release) and by keyboard;
+ * git targets can expand into a dedicated diff tab via the shell.
  */
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { IconCloseOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineRegular, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionScope } from '../api.ts'
-import { api, htmlUrl } from '../api.ts'
+import { htmlUrl } from '../api.ts'
 import { t } from '../locales.ts'
 import { baseName } from '../paths.ts'
 import { resolveSidebarPath } from '../paths.ts'
@@ -21,7 +21,8 @@ import { DiffRows, ReadRows } from '../diff/DiffRows.tsx'
 import { PdfView } from '../PdfView.tsx'
 import { DiffFiles } from '../diff/DiffFiles.tsx'
 import { langOfPath } from '../diff/highlight.ts'
-import { buildDiffSegments, diffLines, diffStats, displayPath, foldRowsFromContents, parseUnifiedDiff, unifiedSegments, type DiffFile, type DiffRow, type FoldSegment } from '../diff/rows.ts'
+import { buildDiffSegments, diffLines, diffStats, parseUnifiedDiff, unifiedSegments, type DiffRow } from '../diff/rows.ts'
+import { useGitDiffTarget } from '../diff/use-git-diff.ts'
 import { parseReadContent, parseReadLines, type FileOp } from './ops.ts'
 import { redactText } from '../redact.ts'
 import { rewriteLocalImageUrls } from '../markdown-images.ts'
@@ -29,12 +30,23 @@ import { markdownTextProps } from '../markdown-labels.tsx'
 import { splitMermaidBlocks } from '../mermaid-blocks.ts'
 import { LazyMermaidMarkdown } from '../mermaid-lazy.tsx'
 import { createFrameBatcher } from '../frame-batcher.ts'
+import { Chip, IconButton, Notice, StatusBadge } from '../ui/index.ts'
 import css from './changes.module.css'
 import diffCss from '../diff/diff.module.css'
 
 /** Drag handle height clamp (px) and keyboard-resize step. */
 const HEIGHT_MIN = 140
 const HEIGHT_STEP = 24
+
+/**
+ * Clamp one pane height to the pane's own bounds: never below the content
+ * minimum, never above 70% of the window. Both the drag handler and the
+ * RESTORE path (a height persisted under a taller window) run through this,
+ * so a saved value can never open the pane taller than the viewport allows.
+ */
+export function clampPaneHeight(value: number): number {
+  return Math.min(Math.max(value, HEIGHT_MIN), Math.round(window.innerHeight * 0.7))
+}
 
 /** The redaction preference, persisted under the repo's sidebar storage
  *  prefix (see state.ts's `dsh-sidebar:v1`). */
@@ -84,21 +96,10 @@ export function HtmlRenderPreview(props: { src: string; title: string }) {
   )
 }
 
-/** One header pill toggle — the redaction / reading / render toggles share
- *  the shape (on-state styling + aria-pressed). */
+/** One header pill toggle — the redaction / reading / render toggles share the
+ *  shape: the global {@link Chip} (its active state is the "on" picture). */
 function PaneToggle(props: { on: boolean; label: string; title?: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      className={css.mdToggle}
-      data-on={props.on ? 'true' : undefined}
-      aria-pressed={props.on}
-      title={props.title}
-      onClick={props.onClick}
-    >
-      {props.label}
-    </button>
-  )
+  return <Chip active={props.on} title={props.title} onClick={props.onClick}>{props.label}</Chip>
 }
 
 /** The reading-mode body of one markdown op target: the shared MarkdownText
@@ -157,146 +158,10 @@ export interface DiffPaneProps {
 }
 
 export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExpand }: DiffPaneProps) {
-  // ── Git target loading (mirrors the diff tab: staged-side fallback, the
-  //    untracked full-addition fallback, refresh by tick). ─────────────────
-  const [tick, setTick] = useState(0)
-  const [loading, setLoading] = useState(target.kind === 'git')
-  const [error, setError] = useState<string | null>(null)
-  const [diffText, setDiffText] = useState<string | null>(null)
-  const [untracked, setUntracked] = useState<string | undefined>(undefined)
-  // The staged flag of the side ACTUALLY rendered: when the requested side's
-  // diff came back empty the load falls back to the other side, and the fold
-  // expansion must read that side's revisions (else the sliced line numbers
-  // land on the wrong contents).
-  const [effectiveStaged, setEffectiveStaged] = useState<boolean | null>(null)
+  // ── Git target loading (the shared loader: staged-side fallback, the
+  //    untracked full-addition fallback, refresh by tick, fold cache). ─────
   const gitRef = target.kind === 'git' ? target.ref : null
-  // The scope every git call of this target shares (repoRoot folded in when
-  // the ref carries one, exactly like the load effect's paneScope).
-  const gitScope = useMemo<SessionScope>(() => ({
-    sessionId: scope.sessionId,
-    cwd: scope.cwd,
-    ...(gitRef?.repoRoot !== undefined ? { repoRoot: gitRef.repoRoot } : {}),
-  }), [scope.sessionId, scope.cwd, gitRef?.repoRoot])
-
-  useEffect(() => {
-    if (gitRef === null) return
-    let cancelled = false
-    const paneScope: SessionScope = {
-      sessionId: scope.sessionId,
-      cwd: scope.cwd,
-      ...(gitRef.repoRoot !== undefined ? { repoRoot: gitRef.repoRoot } : {}),
-    }
-    setLoading(true)
-    setError(null)
-    setDiffText(null)
-    setUntracked(undefined)
-    setEffectiveStaged(null)
-    const load = async (): Promise<void> => {
-      try {
-        if (gitRef.kind === 'commit') {
-          const result = await api.gitCommitDiff(paneScope, gitRef.hashFull, gitRef.worktree)
-          if (!cancelled) setDiffText(result.diff)
-          return
-        }
-        let result = await api.gitDiff(paneScope, gitRef.path, gitRef.staged, gitRef.worktree)
-        if (result.diff === '') {
-          // The requested side is empty — try the OTHER side once (the change
-          // may have moved sides after the preview target was minted).
-          const other = await api.gitDiff(paneScope, gitRef.path, !gitRef.staged, gitRef.worktree)
-          if (other.diff !== '') {
-            result = other
-            if (!cancelled) setEffectiveStaged(!gitRef.staged)
-          }
-        }
-        if (result.diff !== '') {
-          if (!cancelled) setDiffText(result.diff)
-          return
-        }
-        // Empty diff: an untracked file (git diff never lists it) falls back
-        // to a full-file addition from its content.
-        if (gitRef.untracked === true && !gitRef.staged) {
-          const text = await api.fsRead(paneScope, resolveSidebarPath(gitRef.repoRoot ?? gitRef.worktree ?? scope.cwd, gitRef.path))
-          if (!cancelled && text.kind === 'text') {
-            setDiffText('')
-            setUntracked(text.content)
-          }
-          return
-        }
-        if (!cancelled) setDiffText('')
-      } catch (reason) {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason))
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    void load()
-    return () => { cancelled = true }
-  }, [gitRef, scope.sessionId, scope.cwd, tick])
-
-  // ── On-demand git fold expansion: a fold's hidden rows come from both
-  //    sides' full contents (git.show / fsRead), fetched ONCE per file so
-  //    sibling folds share the request, then sliced by each fold's line
-  //    ranges. The cache dies with the target or a refresh tick. ───────────
-  const foldContents = useRef(new Map<string, Promise<{ old: string; new: string }>>())
-  useEffect(() => { foldContents.current = new Map() }, [gitRef, tick])
-  const foldLoader = useMemo(() => {
-    if (gitRef === null) return undefined
-    const sidesOf = (file: DiffFile): Promise<{ old: string; new: string }> => {
-      // Both sides empty cannot cover a non-empty fold — treat it as a failed
-      // fetch so the fold degrades to the unavailable marker instead of
-      // silently expanding to nothing (the symptom of a bad rev or path
-      // reading null on both sides).
-      const ofSides = (oldContent: string | null, newContent: string | null): { old: string; new: string } => {
-        if ((oldContent ?? '') === '' && (newContent ?? '') === '') throw new Error('no content on either side')
-        return { old: oldContent ?? '', new: newContent ?? '' }
-      }
-      const fetchSides = async (): Promise<{ old: string; new: string }> => {
-        if (gitRef.kind === 'commit') {
-          // The patch's -m --first-parent shape: old side from the parent,
-          // new side from the commit (a root commit's parent read fails → '').
-          const [oldSide, newSide] = await Promise.all([
-            file.oldPath === '/dev/null'
-              ? Promise.resolve({ content: null })
-              : api.gitShow(gitScope, `${gitRef.hashFull}^`, displayPath(file.oldPath), gitRef.worktree),
-            file.newPath === '/dev/null'
-              ? Promise.resolve({ content: null })
-              : api.gitShow(gitScope, gitRef.hashFull, displayPath(file.newPath), gitRef.worktree),
-          ])
-          return ofSides(oldSide.content, newSide.content)
-        }
-        // Worktree change: staged is HEAD vs index, unstaged is index vs
-        // worktree (the worktree side reads the live file).
-        const staged = effectiveStaged ?? gitRef.staged
-        if (staged) {
-          const [oldSide, newSide] = await Promise.all([
-            file.oldPath === '/dev/null'
-              ? Promise.resolve({ content: null })
-              : api.gitShow(gitScope, 'HEAD', displayPath(file.oldPath), gitRef.worktree),
-            file.newPath === '/dev/null'
-              ? Promise.resolve({ content: null })
-              : api.gitShow(gitScope, ':0', displayPath(file.newPath), gitRef.worktree),
-          ])
-          return ofSides(oldSide.content, newSide.content)
-        }
-        const [oldSide, worktree] = await Promise.all([
-          file.oldPath === '/dev/null'
-            ? Promise.resolve({ content: null })
-            : api.gitShow(gitScope, ':0', displayPath(file.oldPath), gitRef.worktree),
-          api.fsRead(gitScope, resolveSidebarPath(gitRef.repoRoot ?? gitRef.worktree ?? scope.cwd, displayPath(file.newPath))).catch(() => null),
-        ])
-        return ofSides(oldSide.content, worktree !== null && worktree.kind === 'text' ? worktree.content : null)
-      }
-      const path = displayPath(file.newPath === '/dev/null' ? file.oldPath : file.newPath)
-      let promise = foldContents.current.get(path)
-      if (promise === undefined) {
-        promise = fetchSides()
-        foldContents.current.set(path, promise)
-      }
-      return promise
-    }
-    return (file: DiffFile, segment: FoldSegment): Promise<readonly DiffRow[]> =>
-      sidesOf(file).then(sides => foldRowsFromContents(segment, sides.old, sides.new))
-  }, [gitRef, gitScope, effectiveStaged, scope])
+  const { loading, error, diffText, untracked, refresh, resolveFold } = useGitDiffTarget(gitRef, scope)
 
   // ── Op target material (pure snapshots; the prior content came with the
   //    target so a running op shows what is already known). ────────────────
@@ -422,7 +287,7 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
   //    shell). Arrow keys resize by a step for keyboard users. ────────────
   const [dragHeight, setDragHeight] = useState<number | null>(null)
   const paneHeight = dragHeight ?? height
-  const clamp = (value: number): number => Math.min(Math.max(value, HEIGHT_MIN), Math.round(window.innerHeight * 0.7))
+  const clamp = clampPaneHeight
   const dragOrigin = useRef<{ y: number; h: number } | null>(null)
   // Pointer streams fire several times per frame; one setState per event
   // re-rendered the whole pane at event cadence (see frame-batcher).
@@ -471,15 +336,15 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
       />
       <div className={css.diffHead}>
         {target.kind === 'op' && (
-          <span className={css.diffKind} data-kind={target.op.kind}>
+          <StatusBadge tone={target.op.kind}>
             {t(target.op.kind === 'read' ? 'changesRead' : target.op.kind === 'write' ? 'changesWrite' : 'changesEdit')}
-          </span>
+          </StatusBadge>
         )}
         {target.kind === 'git' && target.ref.kind === 'worktree' && (
-          <span className={css.diffKind} data-kind="git">{target.ref.staged ? t('staged') : t('unstaged')}</span>
+          <StatusBadge tone="neutral">{target.ref.staged ? t('staged') : t('unstaged')}</StatusBadge>
         )}
         {target.kind === 'git' && target.ref.kind === 'commit' && (
-          <span className={css.diffKind} data-kind="git">{target.ref.hash}</span>
+          <StatusBadge tone="neutral">{target.ref.hash}</StatusBadge>
         )}
         <span className={css.diffPath} title={title}>{title}</span>
         {stats !== null && (stats.added > 0 || stats.deleted > 0) && (
@@ -490,25 +355,19 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
         )}
         {target.kind === 'git' && (
           <>
-            <button
-              type="button"
-              className={css.iconButton}
-              aria-label={t('refresh')}
-              title={t('refresh')}
+            <IconButton
+              size="sm"
+              icon={<IconRefreshOutlineRegular size={14} />}
+              label={t('refresh')}
               disabled={loading}
-              onClick={() => { setTick(value => value + 1) }}
-            >
-              <IconRefreshOutlineRegular size={14} />
-            </button>
-            <button
-              type="button"
-              className={css.iconButton}
-              aria-label={t('changesOpenDiffTab')}
-              title={t('changesOpenDiffTab')}
+              onClick={refresh}
+            />
+            <IconButton
+              size="sm"
+              icon={<IconRightUpOutlineRegular size={14} />}
+              label={t('changesOpenDiffTab')}
               onClick={onExpand}
-            >
-              <IconRightUpOutlineRegular size={14} />
-            </button>
+            />
           </>
         )}
         {redactionHit && (
@@ -543,15 +402,12 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
             onClick={() => { setRenderingPdf(value => !value) }}
           />
         )}
-        <button
-          type="button"
-          className={css.iconButton}
-          aria-label={t('changesClosePreview')}
-          title={t('changesClosePreview')}
+        <IconButton
+          size="sm"
+          icon={<IconCloseOutlineRegular size={14} />}
+          label={t('changesClosePreview')}
           onClick={onClose}
-        >
-          <IconCloseOutlineRegular size={14} />
-        </button>
+        />
       </div>
       {target.kind === 'op' && htmlOp && rendering && htmlRenderSrc !== ''
         ? <HtmlRenderPreview src={htmlRenderSrc} title={target.path} />
@@ -566,9 +422,9 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
         : target.kind === 'op' && op !== null && op.isError
         ? (
           <div className={css.paneBody}>
-            <div className={css.readError} role="alert">
+            <Notice kind="error" className={css.readError}>
               {op.errorText ?? t('changesError')}
-            </div>
+            </Notice>
           </div>
         )
         : target.kind === 'op' && op !== null && op.kind === 'read'
@@ -582,26 +438,32 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
               <div className={css.paneBody}>
                 {op !== null && op.kind === 'write'
                   && prior === undefined
-                  && <div className={css.priorUnknown}>{t('changesPriorUnknown')}</div>}
+                  && <Notice kind="hint" tone="inline">{t('changesPriorUnknown')}</Notice>}
                 <DiffRows key={target.op.callId} segments={opSegments} lang={opLang} />
               </div>
             )
             : loading
-              ? <div className={css.paneBody}><div className={css.gitPlaceholder}>{t('loading')}</div></div>
+              ? <div className={css.paneBody}><Notice kind="loading" tone="page">{t('loading')}</Notice></div>
               : error !== null
-                ? <div className={css.paneBody}><div className={css.gitError}>{t('diffLoadError')}: {error}</div></div>
+                ? (
+                  <div className={css.paneBody}>
+                    <Notice kind="error">{t('diffLoadError')}: {error}</Notice>
+                  </div>
+                )
                 : (
                   <div className={css.paneBody}>
-                    {diffText !== null && diffText !== '' && (
+                    {/* The untracked fallback has NO diff text (git diff never
+                        lists the file): its content is the whole render. */}
+                    {((diffText !== null && diffText !== '') || untracked !== undefined) && (
                       <DiffFiles
-                        diff={diffText}
-                        resolveFold={foldLoader}
+                        diff={diffText ?? ''}
+                        resolveFold={resolveFold}
                         untrackedPath={untracked !== undefined && target.ref.kind === 'worktree' ? target.ref.path : undefined}
                         untrackedContent={untracked}
                       />
                     )}
                     {diffText === '' && untracked === undefined && (
-                      <div className={css.gitEmpty}>{t('diffEmpty')}</div>
+                      <Notice kind="empty" tone="page">{t('diffEmpty')}</Notice>
                     )}
                   </div>
                 )}

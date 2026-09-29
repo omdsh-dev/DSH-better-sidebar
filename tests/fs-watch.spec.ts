@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { listDirectory } from '../src/fs-tree.ts'
 import { createDirectoryWatchers, type DirectoryWatchEvent } from '../src/fs-watch.ts'
 
 /** Generous delivery budget: the module debounces at 150 ms, the OS adds its own latency. */
@@ -35,6 +36,28 @@ const withScratch = (run: (dir: string) => Promise<void> | void): Promise<void> 
 const settle = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 
 describe('directory watchers', () => {
+  it('drops the level cache for a changed directory before it pushes', async () => {
+    await withScratch(async (dir) => {
+      const events: DirectoryWatchEvent[] = []
+      // Warm the listing cache with the pre-change level…
+      const before = await listDirectory(dir, 100)
+      expect(before.entries).toEqual([])
+      const watchers = createDirectoryWatchers(event => events.push(event), () => {})
+      try {
+        expect(watchers.add(dir)).toBe(true)
+        writeFileSync(join(dir, 'new.txt'), 'x')
+        await vi.waitFor(() => { expect(events.length).toBeGreaterThan(0) }, { timeout: DELIVERY_TIMEOUT_MS })
+        // …then the re-list the client is about to send must NOT be answered
+        // from that warm entry (the watcher invalidates before pushing).
+        const after = await listDirectory(dir, 100)
+        expect(after).not.toBe(before)
+        expect(after.entries.map(entry => entry.name)).toEqual(['new.txt'])
+      } finally {
+        watchers.close()
+      }
+    })
+  })
+
   it('folds a burst of changes into a single notice', async () => {
     await withScratch(async (dir) => {
       const events: DirectoryWatchEvent[] = []

@@ -9,7 +9,7 @@
  * only, no editor chrome); file tabs keep the full chrome in both modes.
  */
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createElement, useEffect, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
@@ -17,6 +17,34 @@ import type { Context } from '../src/context-types.ts'
 import { EditorHost } from '../src/client/EditorHost.tsx'
 import { createBetterSidebarService, type FileViewerProps } from '../src/client/service.ts'
 import { allLeaves, createSidebarStore, type SidebarTab } from '../src/client/state.ts'
+
+// The tree mounts inside EditorHost in these scenarios, so the api seam must
+// answer without a host (the sibling FileTree specs mock it the same way).
+vi.mock('../src/client/api.ts', () => ({
+  api: {
+    // The tree lists its visible set in ONE batched call.
+    fsTrees: async (_scope: unknown, paths: readonly string[]) => ({
+      levels: paths.map(path => ({
+        path,
+        entries: [
+          { name: 'sub', path: '/tmp/sub', isDir: true },
+          { name: 'a.ts', path: '/tmp/a.ts', isDir: false },
+        ],
+        truncated: false,
+      })),
+    }),
+    // The shared git-status store polls this; a non-repo answer keeps rows plain.
+    gitStatus: async () => ({ isRepo: false, entries: [] }),
+    archiveBuild: async () => ({ id: 'ar-1', entries: 1 }),
+    archiveStatus: async () => ({ state: 'ready', done: 1, total: 1, bytes: 1 }),
+    openExternal: async () => ({ started: true }),
+  },
+  archiveDownloadUrl: () => '/sidebar/archive?id=ar-1',
+  downloadUrl: () => '/sidebar/file',
+  mediaUrl: () => '/sidebar/file',
+  archiveUrl: () => '/sidebar/archive',
+  isOutsideWorkspaceMessage: () => false,
+}))
 
 // The act() environment flag (React 18.2 reads it before flushing effects).
 import { setupReactAct } from './test-utils.ts'
@@ -79,6 +107,41 @@ function mountHost(ctx: Context, store: ReturnType<typeof createSidebarStore>, t
     // The real app re-renders the host with the fresh tab on every store
     // change (Sidebar subscribes); mirror that after mutating the store.
     rerender: () => { act(render) },
+    unmount: () => {
+      act(() => { root.unmount() })
+      container.remove()
+    },
+  }
+}
+
+/**
+ * Mount the host AND let the docked tree finish its async level load (the
+ * context-menu scenarios need the file row in the DOM). The scope carries the
+ * session cwd — without a root the docked tree has nothing to list.
+ */
+async function mountHostWithTreeWithCwd(ctx: Context, store: ReturnType<typeof createSidebarStore>, tab: () => SidebarTab): Promise<{
+  container: HTMLDivElement
+  unmount: () => void
+}> {
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  await act(async () => {
+    root.render(createElement(EditorHost, {
+      ctx,
+      store,
+      scope: { sessionId: 'editor-home-session', cwd: '/tmp' },
+      tab: tab(),
+      expanded: [],
+      revealed: [],
+      onToggleDir: () => {},
+      onReferenceFile: () => {},
+    }))
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+  return {
+    container,
     unmount: () => {
       act(() => { root.unmount() })
       container.remove()
@@ -328,6 +391,168 @@ describe('EditorHost (files window)', () => {
       expect(html).toContain('Search files by name…')
       expect(html).not.toContain('Pick a file from the tree panel')
       expect(html).not.toContain('File path (relative')
+    } finally {
+      unmount()
+    }
+  })
+})
+
+/**
+ * "Open to the Side" from a NATIVE tab must reach the host's own split, not
+ * the plugin's bottom workbench: a native right-Sidebar tab is absent from
+ * `bottomSplits`, so the old code fell through to `firstLeaf` — a pane the
+ * user had not expanded, i.e. "the menu item does nothing".
+ */
+describe('EditorHost "open to the side"', () => {
+  /** A service whose openTab calls are recorded (surface undefined = native). */
+  function spyService(store: ReturnType<typeof createSidebarStore>): {
+    service: ReturnType<typeof createBetterSidebarService>
+    opens: Array<{ type: string; path?: string; target?: string }>
+  } {
+    const service = createBetterSidebarService(store)
+    const opens: Array<{ type: string; path?: string; target?: string }> = []
+    const real = service.openTab.bind(service)
+    service.openTab = ((seed, scope) => {
+      opens.push({ type: seed.type, ...(seed.path === undefined ? {} : { path: seed.path }), ...(seed.target === undefined ? {} : { target: seed.target }) })
+      real(seed, scope)
+    }) as typeof service.openTab
+    return { service, opens }
+  }
+
+  /** The fake client ctx (service + session feed); cwd matches api.fsTree. */
+  function fakeCtx(service: ReturnType<typeof createBetterSidebarService>): Context {
+    const sessionsSnapshot = { byId: { 'editor-home-session': { cwd: '/tmp' } }, current: 'editor-home-session' }
+    return {
+      betterSidebar: service,
+      get: (name: string) => name === 'betterSidebar' ? service : undefined,
+      sessions: { list: { subscribe: () => () => {}, getSnapshot: () => sessionsSnapshot } },
+    } as unknown as Context
+  }
+
+  /** Mount a native-hosting editor window whose tab is NOT in bottomSplits. */
+  async function mountNative(ctx: Context, store: ReturnType<typeof createSidebarStore>, service: ReturnType<typeof createBetterSidebarService>): Promise<{
+    container: HTMLDivElement
+    unmount: () => void
+  }> {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    // The tab record the native seat hands the component: an editor window for
+    // /tmp/a.ts whose id never enters the plugin's own layout.
+    const nativeTab: SidebarTab = {
+      id: 'native-editor-1',
+      type: 'editor',
+      title: 'a.ts',
+      path: '/tmp/a.ts',
+      meta: { treeOpen: true },
+    }
+    await act(async () => {
+      root.render(createElement(EditorHost, {
+        ctx,
+        store,
+        // The tree needs a root: the real seat hands the session cwd in scope.
+        scope: { sessionId: 'editor-home-session', cwd: '/tmp' },
+        visible: true,
+        tab: nativeTab,
+        expanded: [],
+        revealed: [],
+        onToggleDir: () => {},
+        onReferenceFile: () => {},
+      }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    void service
+    return {
+      container,
+      unmount: () => {
+        act(() => { root.unmount() })
+        container.remove()
+      },
+    }
+  }
+
+  function clickOpenToSide(container: HTMLDivElement): void {
+    const row = [...container.querySelectorAll<HTMLElement>('[role="button"]')]
+      .find(el => el.querySelector('[class*="explorerName"]')?.textContent === 'a.ts')
+    if (row === undefined) {
+      throw new Error(`file row not found; names=${[...container.querySelectorAll('[class*="explorerName"]')].map(el => el.textContent).join('|')}; html=${container.innerHTML.slice(0, 400)}`)
+    }
+    act(() => {
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 30 }))
+    })
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+      .find(el => el.textContent?.trim() === 'Open to the Side')
+    if (item === undefined) throw new Error('side-open menu item not found')
+    act(() => { item.click() })
+  }
+
+  function tabCount(store: ReturnType<typeof createSidebarStore>): number {
+    return allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs).length
+  }
+
+  it('asks the service for a side open and leaves the bottom workbench untouched', async () => {
+    const store = createSidebarStore()
+    const { service, opens } = spyService(store)
+    service.registerTab({ id: 'editor', title: 'Editor', dedupeKey: (tab) => tab.path, component: () => null })
+    store.setSession('editor-home-session')
+    // A native surface is what makes the service native-hosted at all: the
+    // fake records what the service asks of the host (the real one forwards to
+    // `ctx.sidebarRight`).
+    const placed: Array<{ address: string; preferNewPane?: boolean; revealIfOpened?: boolean }> = []
+    service.setSurface({
+      openTab: () => {},
+      openResource: (input) => { placed.push({ address: input.address, ...(input.preferNewPane === undefined ? {} : { preferNewPane: input.preferNewPane }), revealIfOpened: input.revealIfOpened }) },
+      fileAddress: (sessionId, cwd, path) => `dsh-resource://file/${sessionId}${path}`,
+      close: () => undefined,
+      update: () => false,
+      activate: () => false,
+      has: () => false,
+    })
+    const ctx = fakeCtx(service)
+    const { container, unmount } = await mountNative(ctx, store, service)
+    try {
+      const before = tabCount(store)
+      clickOpenToSide(container)
+      // 1) EditorHost routed the gesture to the service with the side target…
+      expect(opens).toContainEqual({ type: 'editor', path: '/tmp/a.ts', target: 'side' })
+      // 2) …and the service asked the HOST for a second pane, permitting a
+      //    duplicate resource so a split really happens.
+      expect(placed).toHaveLength(1)
+      expect(placed[0]).toMatchObject({ address: expect.stringContaining('/tmp/a.ts'), preferNewPane: true, revealIfOpened: false })
+      // 3) The bottom workbench is untouched: the open went to the host.
+      expect(tabCount(store)).toBe(before)
+    } finally {
+      unmount()
+    }
+  })
+
+  it('keeps the bottom-workbench split for a tab that lives there', async () => {
+    const store = createSidebarStore()
+    const { service } = spyService(store)
+    service.registerTab({ id: 'editor', title: 'Editor', dedupeKey: (tab) => tab.path, component: () => null })
+    store.setSession('editor-home-session')
+    const ctx = fakeCtx(service)
+    const opens: Array<{ target?: string }> = []
+    const real = service.openTab.bind(service)
+    service.openTab = ((seed, scope) => { opens.push({ ...(seed.target === undefined ? {} : { target: seed.target }) }); real(seed, scope) }) as typeof service.openTab
+    store.setPrefs({ ...store.getPrefs(), editorExplorer: false })
+    service.openTab({
+      type: 'editor', title: 'a.ts', path: '/tmp/a.ts', id: 'editor:/tmp/a.ts', meta: { treeOpen: true },
+    })
+    const fileTab = (): SidebarTab =>
+      allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
+        .find(tab => tab.path === '/tmp/a.ts')!
+    // The tree needs a root: the real seat hands the session cwd in scope.
+    const treeCtx = ctx as unknown as { betterSidebar: unknown }
+    const { container, unmount } = await mountHostWithTreeWithCwd(treeCtx as unknown as Context, store, fileTab)
+    try {
+      const before = tabCount(store)
+      clickOpenToSide(container)
+      // A bottom-workbench tab keeps the plugin's own split: a NEW tab in the
+      // same pane family, and no side open was requested.
+      expect(opens.every(open => open.target === undefined)).toBe(true)
+      expect(tabCount(store)).toBe(before + 1)
     } finally {
       unmount()
     }

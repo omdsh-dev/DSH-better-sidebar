@@ -2,6 +2,33 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### v0.24.1
+
+> 🎁 **本版包含从 v0.22.1 起的全部内容**（v0.23.0 的文件页 / 文件变动页 UI/UX 重构与性能打磨、v0.24.0 的 DSH 0.2.0-rc.1 支持线前移，以及本节的修复）。
+>
+> 🐞 **修复版**：文件树「一操作就整体刷新」的两处根因。① 原生承载面（`src/client/native/index.ts` 的 `sync()`）把 `files` 接管项当成多余注册——它按 KIND 记账、永远不在 `wanted` 里，于是**每次会话状态写入**都被 dispose + 重建；替换 slot 注册等于替换宿主的 slot entry，**整个插件 tab body 被卸载重挂**（展开/收起、切 tab、拖底部工作台都会触发）→ 文件树丢失层缓存、滚动位置与目录 watcher，并重新 `fs.trees([root, ...expanded])` 重列整棵可见树。② 目录实时刷新（`FileTree.tsx` 的 `retryDir`）**先把该层缓存删掉**再请求，行被占位替换后重建（构建 / 格式化 / 模型跑 bash 时整层闪空）。
+
+- 🧪 判别性证据：真实挂载 lane 新增 `tests/e2e/zz-expand-refresh.e2e.ts`（展开只请求该层、tab body 存活、行数不归零；回退任一修复即红），配套两个 jsdom 单测（回退后 `registered` 6 → 12、`disposed` 全是 `dsh-better-sidebar:files`；另一条断言重列期间旧行仍在屏）
+- 📉 修复后实测（40 子项目录）：展开 `fs.trees` payload 由 `[root, big]`（空缓存特征）变为 **`[big]`**，新开 WebSocket 1 → **0**，被删行 45 → **0**，外部写入由「删 40 建 40」变为 **只增 1 行**
+- 🔧 `src/fs-watch.ts` / `use-dir-watch.ts` / `TreePanel.tsx` / `tab-adapter.tsx` 零改动（`fs.watch` 新建自身不投递事件，已实测证伪）
+
+### v0.24.0
+
+> 📦 **支持线前移**：仅适配 DSH **0.2.0-rc.1+**（peer 下限 `^0.2.0-rc.1`，CI 钉 `@deepseek-ai/dsh@0.2.0-rc.1`）。**0.1.7 线（含 npm `latest` 的 0.1.7-rc.2）请固定 v0.22.1（0.1.7 线最后发布的版本）**——宿主 0.2.0 的启动兼容性预检按 `semver.satisfies(宿主版本, peer范围, {includePrerelease:true})` 判定，caret 范围跨 minor 不成立（实测 `^0.1.7-rc.1` 对 `0.2.0-rc.1` 为 **false**，整行会被静默禁用），因此本版不保留任何 0.1.7 兼容分支。
+
+- 📦 **基线抬到 `0.2.0-rc.1`**：14 条 DSH peer + 27 个 `@deepseek-ai/*` devDependencies 同步钉版；`dsh.plugin.json` 的 `engines.dsh` 随之前移；挂载 lane（`scripts/e2e-common.sh`）与 CI 钉版同步。
+- 🔍 **适配前的实测结论（纯增量，故无运行时改动）**：本插件消费的 19 个宿主包里**零个值导出被删除**；类型面仅 `dsh-client-ui-primitives`（`DisclosureRow`/`TextShimmer`/`Tooltip` 新增可选 prop、overlay 顶部内距）、`dsh-session`（新增 `ToolCallRecovery`）、`dsh-api-remotes`（新增 product-analytics remote）有变化；会话格式仍 **v4**（无迁移包）、`SUBAGENT_DESCRIPTOR_VERSION` 仍 **3**、`dsh/lib/bin.js`（`dsh plugin` / `dsh web` / 启动行 / `--version`）与 `dsh-client-modules` 运行时**逐字节相同**、web profile 的客户端 inject 列表相同、`ui-primitives` 的裸 import 集合相同（无需新增测试期依赖）。
+- 🧩 **宿主 web profile 组成变化与本插件无关但已核对**：新增 desktop-only 的 `product-analytics` / `desktop-product-telemetry`（web profile 上 `disabled`）；原先就 `disabled` 的 `time-context` / `schedule` / `ui-schedule` 三行移入可选的 `dsh-experimental-schedule-bundle`。「宿主 tab 只有 terminal、browser 缺席」的挂载断言不受影响。
+- 🧪 **测试与规则**：`tests/market-manifest.spec.ts` 的 peer 形状断言改为钉当前基线 tuple，并把「caret 跨 minor 必失效」写进注释（这条与 §3.4 第 12 条里「includePrerelease 更宽松」的经验不冲突：宽松只发生在同一 minor 内）。
+- ⚠️ **唯一残留**：可选集成 `@huanlin/dsh-plugin-better-locale`（未被任何源码/测试 import，仅结构化运行时探测）的 peer 钉在 `^0.1.0-rc.8`，其最新 0.4.3 同样钉 `^0.1.5-rc.2`——两者在 0.2.0 上都会被宿主预检禁用，故 `pnpm peers check` 会报它的 5 条 unmet peer。这是上游未适配 0.2.0 的结果，与本插件自身 14 条 peer 无关。
+### v0.23.0
+
+> 🧭 **开发线版本（从未发布到 npm，全部内容随 v0.24.1 一并发布）**：文件页与文件变动页的整体 UI/UX 重构，加上一轮性能与交互打磨。文件页新增 **Ctrl/Cmd 与 Shift 多选**（VS Code 语义）、批量操作条、**Git 变更着色**（与 VS Code 同色的新增/修改/删除/冲突，目录带汇总点）、**新建文件夹**、拖拽上传体验重做；**多选可右键「压缩并下载」**，打包在宿主侧成为带进度的任务（`archive.build` / `archive.status`，逐条目回调，4 并发 + 5 分钟 TTL + sessionId 绑定）。「打开方式」改为**双源并存**：宿主探测到的本机关联应用（资源管理器 / VS Code / Cursor / Zed / 自定义编辑器，含 SSH 远端）与插件自研目标，可用设置开关 `openWithPluginTargets` 强制并存；右键菜单收敛层级（一级只留默认动作，应用列表进子菜单）。文件变动页**重构为层级树**，Git 视角（工作区 / 暂存 / 历史）与 Agent 视角（会话内改动）各自保留，目录行可暂存/取消暂存。交互与性能：`/sidebar/api/fs.tree` 实测 **22.8ms → 3.8ms**（10k 条目，readdir 一次取回 + 只为 cap 建行 + 小写比较排序 + 1.5s 目录级缓存，由写操作与 fs-watch 失效），新增批量路由 `fs.trees`（挂载/刷新的 N+1 请求变 1 个），右键菜单打开不再重列目录、行不再随 git 轮询重渲染。修掉「在侧边打开」没有效果（原来只写未展开的底部工作台，现按承载面分流到宿主 `openResource(preferNewPane)` 真正分栏）。
+
+- ⚠️ **行为变更（安全相关）**：**删除工作区路径检测**——插件 fs 路由（tree/read/write/rename/remove/mkdir/媒体/HTML/upload/archive）不再做包含性检查，可读写宿主用户能访问的任意路径（仅受 OS 权限约束），`workspaceFence` 设置与围栏提示一并移除。
+- 🧩 抽出可复用的全局组件与共享 store（`IconButton` / `Chip` / `SectionHeader` / `Notice` / `ConfirmDialog` / `StatusBadge` + 共享 git 状态 store），皮肤契约（`tests/theme.spec.ts`）继续守护；ZIP 打包器自研（无第三方依赖）并修掉非 latin1 文件名的下载头 500（RFC 5987）。
+- 🐞 同时修掉：关闭文件后返回文件树时展开状态被重置（原生承载面的展开集合原先按 tab 记录，现改为**每会话状态**的投影）。
+
 ### v0.22.1
 
 > 📦 **正式版**（npm `latest`）：仅支持 **DSH 0.1.7-rc.1+**（peer 下限 `^0.1.7-rc.1`，CI 钉 `@deepseek-ai/dsh@0.1.7-rc.1`）——**支持线不变**，0.21.1 / 0.22.0 的用户直接升级即可；**DSH 0.1.6-alpha.2 及更早请继续固定 v0.19.1**。这是一次补丁版：两个缺陷在真机上可稳定复现，而当时的单元测试**全绿**。

@@ -207,6 +207,15 @@ export interface NativeSurfaceDeps {
  */
 export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
   const { ctx, store, service, records, reportFailure } = deps
+  // Bind the store BEFORE any body can render: the per-session state is the
+  // authority for the explorer's expansion set, so the native surface and the
+  // workbench share one set per session and a closed tab cannot drop it.
+  // (Restored after the v0.22.1 merge: main's branch rewrote this function
+  // without the call, and taking that file wholesale silently disabled every
+  // folder toggle — the records then have no store to read from or write to,
+  // so `toggleExpanded` returns without touching anything. Only the real-host
+  // lane could see it; the jsdom specs bind the records themselves.)
+  records.attachStore(store)
   // Wait for the tab-type REGISTRY (a service), not for the slot declaration:
   // the native seat declares `sidebar.right.pane.tab` BEFORE it provides
   // `sidebarRightTabs`, so a declaration-triggered registration reads the

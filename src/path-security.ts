@@ -1,82 +1,65 @@
-/** Filesystem path guards shared by sidebar APIs that access a session workspace. */
-import { realpath } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
-import { isWithin, requireAbsolute } from './fs-tree.ts'
+/**
+ * Lexical path resolution for the sidebar's filesystem routes.
+ *
+ * ⚠️ **This module no longer enforces workspace containment.** It used to
+ * canonicalize through `realpath` and reject anything outside the session
+ * workspace; the user asked for that guard to be removed, so the sidebar fs
+ * routes now reach any path the HOST USER can reach, bounded only by OS
+ * permissions (and by the browser-trust fence on the routes themselves).
+ *
+ * What remains is the part every caller still needs: turn the client's
+ * (possibly session-relative) target into one absolute, lexically-normalized
+ * path. `resolveSessionPath` joins it under the session cwd, `resolve()`
+ * collapses `.` / `..` segments, and {@link requireAbsolute} rejects
+ * non-absolute input. No `realpath`, no `isWithin`, no 403.
+ *
+ * Kept as one module (and the old names kept) so the call sites read the same
+ * way they did with the fence: the change is the SEMANTICS — "resolve" rather
+ * than "guard".
+ */
+import { requireAbsolute } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
-import { SidebarError } from './wire.ts'
 
-/** Resolve a path and convert filesystem resolution failures to an API error. */
-async function resolveRealPath(path: string, label: string): Promise<string> {
-  try {
-    return await realpath(path)
-  } catch (error) {
-    throw new SidebarError('fs-error', `cannot resolve ${label} "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
-  }
-}
-
-/** Reject a resolved path whose real filesystem target escapes the workspace. */
-function assertWithinWorkspace(workspace: string, target: string): void {
-  if (!isWithin(workspace, target)) {
-    throw new SidebarError('forbidden', `path "${target}" is outside workspace`, 403)
-  }
+/**
+ * Resolve an existing path to one absolute, lexically-normalized target.
+ *
+ * @param cwd - Session workspace directory (the base of relative targets).
+ * @param target - Client-supplied absolute or session-relative path.
+ * @param _fence - IGNORED. Kept as a positional parameter so every call site
+ *  (and the route tests) did not have to change shape in the same commit; the
+ *  containment decision it used to carry is gone for good. New code should
+ *  omit it.
+ * @returns The absolute path used for the filesystem operation.
+ * @deprecated The name is historical — this is now plain resolution. Use
+ *  {@link resolveTarget} in new code.
+ */
+export async function ensureWorkspacePath(cwd: string, target: string, _fence?: boolean): Promise<string> {
+  return resolveTarget(cwd, target)
 }
 
 /**
- * Resolve an existing workspace path through symlinks and (unless disarmed)
- * enforce containment.
+ * Resolve a path for a WRITE destination (which may not exist yet).
  *
- * @param cwd - Session workspace directory.
- * @param target - Client-supplied absolute path in the session's namespace.
- * @param fence - Whether containment is enforced (the settings-page
- * `workspaceFence` switch). Even when false the paths are still resolved
- * through symlinks so callers always receive the canonical target.
- * @returns The canonical absolute path used for the filesystem operation.
+ * Lexical only, exactly like {@link ensureWorkspacePath}: a missing target is
+ * returned as the caller composed it (its parent is created on demand), and an
+ * existing symlink in the path is NOT resolved — the caller writes through it,
+ * which is what "no containment policy" means.
+ *
+ * @param cwd - Session workspace directory (the base of relative targets).
+ * @param target - Client-supplied absolute or session-relative path.
+ * @param _fence - IGNORED (see {@link ensureWorkspacePath}).
+ * @returns The absolute destination path.
+ * @deprecated The name is historical — this is now plain resolution.
  */
-export async function ensureWorkspacePath(cwd: string, target: string, fence = true): Promise<string> {
-  const absolute = requireAbsolute(resolveSessionPath(cwd, target))
-  const [realCwd, realTarget] = await Promise.all([
-    resolveRealPath(cwd, 'workspace'),
-    resolveRealPath(absolute, 'target'),
-  ])
-  if (fence) assertWithinWorkspace(realCwd, realTarget)
-  return realTarget
+export async function ensureWorkspaceWritePath(cwd: string, target: string, _fence?: boolean): Promise<string> {
+  return resolveTarget(cwd, target)
 }
 
 /**
- * Validate a write destination, including destinations that do not exist yet.
- * Existing targets are resolved to catch symlinks; missing targets are checked
- * against the nearest existing ancestor before the caller creates or renames.
- * The returned path is rebuilt from that canonical ancestor, so an existing
- * symlink is never left in the path passed to the write operation.
- *
- * @param cwd - Session workspace directory.
- * @param target - Client-supplied absolute destination path in the session's namespace.
- * @param fence - Whether containment is enforced (the settings-page
- * `workspaceFence` switch). Resolution/canonicalization is identical either way.
- * @returns A canonical path for an existing target or its nearest existing ancestor.
+ * The single resolution primitive: session-relative targets resolve under the
+ * session cwd, absolute targets stay absolute, and the result is `resolve()`d
+ * (lexical `..` collapse). Throws fs-error for a non-absolute result.
  */
-export async function ensureWorkspaceWritePath(cwd: string, target: string, fence = true): Promise<string> {
-  const absolute = requireAbsolute(resolveSessionPath(cwd, target))
-  const realCwd = await resolveRealPath(cwd, 'workspace')
-  let existingPath = absolute
-  const missingSegments: string[] = []
-
-  for (;;) {
-    try {
-      const realTarget = await realpath(existingPath)
-      if (fence) assertWithinWorkspace(realCwd, realTarget)
-      return missingSegments.reduce((path, segment) => join(path, segment), realTarget)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        if (error instanceof SidebarError) throw error
-        throw new SidebarError('fs-error', `cannot resolve target "${existingPath}": ${error instanceof Error ? error.message : String(error)}`, 400)
-      }
-      const parent = dirname(existingPath)
-      if (parent === existingPath) {
-        throw new SidebarError('fs-error', `cannot resolve target "${absolute}"`, 400)
-      }
-      missingSegments.unshift(basename(existingPath))
-      existingPath = parent
-    }
-  }
+export function resolveTarget(cwd: string, target: string): string {
+  return requireAbsolute(resolveSessionPath(cwd, target))
 }

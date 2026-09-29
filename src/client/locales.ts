@@ -69,6 +69,12 @@ export const zh = {
   editorEmptyHint: '从右侧文件树或上方路径输入框选择文件开始预览',
   openFileNewTab: '在新 Tab 中打开',
   openFileSide: '在侧边打开',
+  zipProgress: '正在打包 {done}/{total}',
+  settingsOpenWithPluginTitle: '始终显示插件自研的打开方式',
+  settingsOpenWithPluginDesc: '默认只在宿主探测不到本机关联应用时显示插件自研的打开方式（资源管理器 / VS Code / Cursor / Zed / 自定义编辑器、SSH 远端）；打开后宿主应用与插件目标并存',
+  zipDownload: '压缩并下载',
+  zipDownloadCount: '压缩并下载（{count} 项）',
+  zipFailed: '打包失败：{message}',
   openWithMenu: '在应用中打开',
   openWithSshSuffix: ' (SSH)',
   pinOpenWith: '固定到菜单',
@@ -89,6 +95,30 @@ export const zh = {
   openWithSettingsFamilyDesc: '该编辑器使用 VSCode 的 URL 协议（支持 SSH 远端打开）',
   openWithSettingsRemove: '删除',
   openWithSettingsInvalidHint: '名称或模板（需含 {path} 且以 scheme:// 开头）未填写的编辑器不会出现在菜单中',
+  openInAppDefault: '用默认应用打开',
+  openInAppEmpty: '没有可用于打开它的应用',
+  openInAppFailed: '无法打开：{path}',
+  revealInFileManager: '在文件管理器中显示',
+  filesSelected: '已选择 {count} 项',
+  clearSelection: '取消选择',
+  copyPaths: '复制路径',
+  deleteSelected: '删除所选',
+  deleteSelectedTitle: '删除选中的 {count} 项？',
+  deleteSelectedDesc: '这些文件与文件夹将被永久删除，无法恢复。',
+  newFolder: '新建文件夹',
+  newFolderPlaceholder: '文件夹名称',
+  newFolderInvalid: '文件夹名称无效',
+  filesTruncated: '该目录条目过多，仅显示前一部分',
+  gitStatusModified: '已修改',
+  gitStatusAdded: '新增',
+  gitStatusDeleted: '已删除',
+  gitStatusUntracked: '未跟踪',
+  gitStatusRenamed: '已重命名',
+  gitStatusConflict: '有冲突',
+  changesClean: '工作区没有变更',
+  changesNoHistory: '还没有提交历史',
+  changesStageFailed: '暂存失败：{message}',
+  changesOpGone: '该操作已不在会话记录中',
   newTab: '新建标签页',
   brokenSymlink: '失效的软链接',
   close: '关闭',
@@ -133,7 +163,6 @@ export const zh = {
   error: '加载失败',
   retry: '重试',
   notRepo: '当前目录不是 git 仓库',
-  noChanges: '没有变更',
   statusTruncated: '变更过多，仅显示前 2000 条',
   stage: '暂存',
   unstage: '取消暂存',
@@ -247,10 +276,6 @@ export const zh = {
   settingsJobsDesc: '当前会话出现新的后台任务时，自动激活任务管理页（每个新任务都会触发）；宽屏同时展开侧边栏，窄屏不强制展开全屏抽屉；关闭后需手动打开',
   settingsToolsTitle: '为模型注入终端工具',
   settingsToolsDesc: '开启后，模型可通过 terminal_create 等 8 个工具创建并操作侧边栏终端（默认关闭）',
-  settingsFenceTitle: '工作区路径检测',
-  settingsFenceDesc: '开启后，侧栏的文件功能仅能访问会话工作区内的路径（默认）；关闭后可访问主机上任意文件——关闭期间页面内脚本也将获得同等访问能力',
-  fenceErrorReason: '此路径在会话工作区之外，已被工作区检测拦截',
-  fenceDisableAction: '关闭工作区检测',
   settingsBottomTerminalTitle: '底部面板首次展开自动开终端',
   settingsBottomTerminalDesc: '每次会话中第一次展开底部面板时，尝试在底部面板自动打开一个新终端标签（终端数量上限仍会限制；默认开启）',
   settingsFontFamilyTitle: '终端字体',
@@ -556,6 +581,12 @@ export const en: Record<keyof typeof zh, string> = {
   editorEmptyHint: 'Pick a file from the tree panel or the path input above to start previewing',
   openFileNewTab: 'Open in New Tab',
   openFileSide: 'Open to the Side',
+  zipProgress: 'Archiving {done}/{total}',
+  settingsOpenWithPluginTitle: 'Always show the plugin\u2019s own Open with targets',
+  settingsOpenWithPluginDesc: 'By default the plugin\u2019s own targets (file manager / VS Code / Cursor / Zed / custom editors, SSH remotes) show only when the host reports no local associated application; turn this on to keep both side by side',
+  zipDownload: 'Zip and download',
+  zipDownloadCount: 'Zip and download ({count} items)',
+  zipFailed: 'Archive failed: {message}',
   openWithMenu: 'Open with',
   openWithSshSuffix: ' (SSH)',
   pinOpenWith: 'Pin to menu',
@@ -576,6 +607,30 @@ export const en: Record<keyof typeof zh, string> = {
   openWithSettingsFamilyDesc: 'This editor speaks the VSCode URL dialect (supports SSH-remote opens)',
   openWithSettingsRemove: 'Remove',
   openWithSettingsInvalidHint: 'Editors with a missing name or a template without {path} / scheme:// are not shown in the menu',
+  openInAppDefault: 'Open with default app',
+  openInAppEmpty: 'No application can open it',
+  openInAppFailed: 'Could not open: {path}',
+  revealInFileManager: 'Reveal in File Manager',
+  filesSelected: '{count} selected',
+  clearSelection: 'Clear selection',
+  copyPaths: 'Copy paths',
+  deleteSelected: 'Delete selected',
+  deleteSelectedTitle: 'Delete {count} selected items?',
+  deleteSelectedDesc: 'These files and folders will be permanently deleted. This cannot be undone.',
+  newFolder: 'New folder',
+  newFolderPlaceholder: 'Folder name',
+  newFolderInvalid: 'Invalid folder name',
+  filesTruncated: 'This folder has too many entries; only the first ones are shown',
+  gitStatusModified: 'Modified',
+  gitStatusAdded: 'Added',
+  gitStatusDeleted: 'Deleted',
+  gitStatusUntracked: 'Untracked',
+  gitStatusRenamed: 'Renamed',
+  gitStatusConflict: 'Conflicted',
+  changesClean: 'No changes in the working tree',
+  changesNoHistory: 'No commits yet',
+  changesStageFailed: 'Staging failed: {message}',
+  changesOpGone: 'This operation is no longer in the session log',
   newTab: 'New tab',
   brokenSymlink: 'Broken symlink',
   close: 'Close',
@@ -620,7 +675,6 @@ export const en: Record<keyof typeof zh, string> = {
   error: 'Failed to load',
   retry: 'Retry',
   notRepo: 'This directory is not a git repository',
-  noChanges: 'No changes',
   statusTruncated: 'Too many changes; showing the first 2,000 entries',
   stage: 'Stage',
   unstage: 'Unstage',
@@ -734,10 +788,6 @@ export const en: Record<keyof typeof zh, string> = {
   settingsJobsDesc: 'Activate the Tasks page whenever a new background job appears for the current conversation (every new job triggers); wide viewports also expand the side card, while narrow full-screen drawers are not forced open; turn off to open it manually',
   settingsToolsTitle: 'Inject terminal tools for the model',
   settingsToolsDesc: 'When enabled, the model can create and drive sidebar terminals through the 8 terminal_* tools (off by default)',
-  settingsFenceTitle: 'Workspace path fence',
-  settingsFenceDesc: 'On, the sidebar\'s file features only reach paths inside the session workspace (default); off, any file on the host is reachable — page scripts gain the same reach while it is off',
-  fenceErrorReason: 'This path is outside the session workspace and was blocked by the workspace fence',
-  fenceDisableAction: 'Turn off the workspace fence',
   settingsBottomTerminalTitle: 'Auto-open a terminal on the bottom panel\'s first expansion',
   settingsBottomTerminalDesc: 'When the bottom panel is expanded for the first time in a session, try to open a fresh terminal tab there (the terminal quota still applies; on by default)',
   settingsFontFamilyTitle: 'Terminal font family',
@@ -1073,6 +1123,21 @@ export function attachLocale(service: {
  * @returns the translated text, or undefined when unavailable.
  */
 export function chatT(key: string, params?: Record<string, string | number>): string | undefined {
+  return hostT('chat', key, params)
+}
+
+/**
+ * Translate a key in one of the HOST's own locale namespaces. Same contract
+ * and same deliberately-untyped seam as {@link chatT} — the plugin reads host
+ * wording it would otherwise have to duplicate across 20 dictionaries (the
+ * chat activity line, the open-in-app application names).
+ *
+ * @param ns - host namespace (e.g. `'open-in-app'`).
+ * @param key - full namespace key (e.g. `'app.vscode'`).
+ * @param params - `{name}` placeholders to interpolate (the host does this).
+ * @returns the translated text, or undefined when unavailable.
+ */
+export function hostT(ns: string, key: string, params?: Record<string, string | number>): string | undefined {
   const service = localeService
   if (service === undefined) return undefined
   try {
@@ -1080,7 +1145,7 @@ export function chatT(key: string, params?: Record<string, string | number>): st
     // reference (`const bind = service.bind; bind('chat')`) throws
     // "Cannot read properties of undefined (reading 'bound')" — caught by the
     // real-host mount lane, invisible to closure fakes in unit tests.
-    const translate = service.bind?.('chat')
+    const translate = service.bind?.(ns)
     if (typeof translate !== 'function') return undefined
     const text = translate(key, params)
     return typeof text === 'string' && text !== '' && text !== key ? text : undefined

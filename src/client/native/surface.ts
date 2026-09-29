@@ -26,8 +26,8 @@ import type { NativeTabRecords } from './tab-adapter.tsx'
 
 /** One open the surface could not place yet. */
 type Pending =
-  | { kind: 'tab'; sessionId: string; tabKind: string; params: NativeTabParams; revealIfOpened: boolean }
-  | { kind: 'resource'; sessionId: string; address: string; line: number | undefined; revealIfOpened: boolean }
+  | { kind: 'tab'; sessionId: string; tabKind: string; params: NativeTabParams; revealIfOpened: boolean; preferNewPane: boolean }
+  | { kind: 'resource'; sessionId: string; address: string; line: number | undefined; revealIfOpened: boolean; preferNewPane: boolean }
 
 /**
  * The observation "which session's seat is on screen": DSH 0.1.7 publishes it
@@ -42,14 +42,14 @@ export interface MountedSessions {
 
 /** The controller face this module uses (a structural slice of `ISidebarRight`). */
 interface NativeController {
-  openTab(kind: string, options?: { params?: unknown; revealIfOpened?: boolean }): void
-  openResource(address: string, options?: { params?: unknown; revealIfOpened?: boolean }): void
+  openTab(kind: string, options?: { params?: unknown; revealIfOpened?: boolean; preferNewPane?: boolean }): void
+  openResource(address: string, options?: { params?: unknown; revealIfOpened?: boolean; preferNewPane?: boolean }): void
   close(tabId: string): void
   /** The mounted-seat observation (0.1.7 `ISidebarRight.mounted`). */
   mounted?: MountedSessions
   /** Not part of `ISidebarRight`: the concrete controller's per-session writes. */
-  openTabIn?(sessionId: string, kind: string, options?: { params?: unknown; revealIfOpened?: boolean }): void
-  openResourceIn?(sessionId: string, address: string, options?: { params?: unknown; revealIfOpened?: boolean }): void
+  openTabIn?(sessionId: string, kind: string, options?: { params?: unknown; revealIfOpened?: boolean; preferNewPane?: boolean }): void
+  openResourceIn?(sessionId: string, address: string, options?: { params?: unknown; revealIfOpened?: boolean; preferNewPane?: boolean }): void
   closeIn?(sessionId: string, tabId: string): void
 }
 
@@ -134,7 +134,11 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
     if (api === undefined) return false
     const onScreen = mountedSessionId(ctx) === entry.sessionId
     if (entry.kind === 'tab') {
-      const options = { params: entry.params, revealIfOpened: entry.revealIfOpened }
+      const options = {
+        params: entry.params,
+        revealIfOpened: entry.revealIfOpened,
+        ...(entry.preferNewPane ? { preferNewPane: true } : {}),
+      }
       if (onScreen) {
         api.openTab(entry.tabKind, options)
         return true
@@ -148,6 +152,7 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
     const options = {
       ...(entry.line === undefined ? {} : { params: { line: entry.line } }),
       revealIfOpened: entry.revealIfOpened,
+      ...(entry.preferNewPane ? { preferNewPane: true } : {}),
     }
     if (onScreen) {
       api.openResource(entry.address, options)
@@ -185,11 +190,11 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
   }
   const unsubscribeList = ctx.sessions.list.subscribe(onListChange)
   return {
-    openTab({ sessionId, kind, params, revealIfOpened }) {
-      enqueue({ kind: 'tab', sessionId, tabKind: kind, params, revealIfOpened })
+    openTab({ sessionId, kind, params, revealIfOpened, preferNewPane }) {
+      enqueue({ kind: 'tab', sessionId, tabKind: kind, params, revealIfOpened, preferNewPane: preferNewPane === true })
     },
-    openResource({ sessionId, address, line, revealIfOpened }) {
-      enqueue({ kind: 'resource', sessionId, address, line, revealIfOpened })
+    openResource({ sessionId, address, line, revealIfOpened, preferNewPane }) {
+      enqueue({ kind: 'resource', sessionId, address, line, revealIfOpened, preferNewPane: preferNewPane === true })
     },
     fileAddress(sessionId, cwd, path) {
       return fileAddressFor(sessionId, cwd, path)
