@@ -21,6 +21,7 @@ import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
 import { attachTerminalRetention } from './terminal/retention-host.ts'
+import { attachTerminalFontOverride } from './terminal-font.ts'
 import { createNativeSurface } from './native/surface.ts'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
@@ -200,6 +201,13 @@ export function apply(ctx: Context): void {
   ctx.effect(
     () => registerBuiltins(ctx, service),
     'dsh-better-sidebar: register built-in tabs and viewers',
+  )
+  // 终端字体也作用于 DSH 自己的终端：宿主的 `ui-sidebar-terminal` 把 fontFamily 写死且没有
+  // 设置项，所以偏好通过一条 CSS 变量 + `!important` 规则透过去（偏好为空时变量不设置，
+  // 整条声明失效 → 零副作用）。见 src/client/terminal-font.ts。
+  ctx.effect(
+    () => attachTerminalFontOverride(sidebarStore),
+    'dsh-better-sidebar: terminal font override',
   )
   // 底部终端的「窗口保留」：宿主的保留登记表是最后写入者胜，而宿主自己的终端
   // UI 会按它自己的 tab 列表反复登记，所以本插件按「宿主右侧栏终端 + 本插件底部

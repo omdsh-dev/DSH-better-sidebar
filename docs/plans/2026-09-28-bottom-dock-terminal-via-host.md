@@ -111,3 +111,17 @@ xterm 用 canvas 量字宽，`font-family: var(--ds-font-family-code), fallback`
   registry 打包脚本）同步包含 `terminal`。
 - 挂载 lane（`pnpm test:mount`）：本插件不改它的既有断言；它继续钉「host terminal 恰好 1 条」这条守卫
   （即本实现绝不遮蔽宿主）。真机（桌面壳 + 真实 oh-my-zsh 会话）验证了创建/输入/尺寸/刷新恢复/关闭清理与字体。
+
+## 附：字体偏好也作用于宿主自己的终端
+
+宿主的 `ui-sidebar-terminal` 把 `fontFamily` **写死**成 `monospace` / `ui-monospace, …`，没有任何
+字体设置项（0.2.0-rc.1 实读其 client bundle）——于是同一个 p10k / Powerline 提示符在底部工作台
+终端里正常、在右侧栏终端里是 tofu。宿主终端用的是 xterm 的 **DOM 渲染器**（`DomRenderer`，无
+webgl / canvas addon），字体经 CSS 生效，因此插件的「终端字体」偏好同时以一条 CSS 变量 +
+`!important` 规则透传过去（`src/client/terminal-font.ts`）：
+
+- 偏好为空 ⇒ 不设置变量 ⇒ 整条声明失效，完全回落到宿主自己的字体（零副作用）；
+- 偏好非空 ⇒ `.xterm-rows` / `.xterm-screen` 一起换字体，底部终端与右侧栏终端观感一致。
+- 取舍：xterm 仍按**初始化时的 `options.fontFamily`** 量字宽，只改绘制字体；所选字体与
+  `monospace` 的 ASCII 字宽不一致时可能出现列位轻微漂移（Nerd Font 的 mono 变体通常与
+  Menlo/Monaco 同宽，实测无感）。彻底的做法是宿主把字体做成设置项。
