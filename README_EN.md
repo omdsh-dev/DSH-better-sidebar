@@ -80,6 +80,8 @@ What this plugin adds on top of DSH's stock sidebar:
 > | `0.1.0-rc.8` / `0.1.1` | `dsh plugin --profile web add dsh-better-sidebar@0.17.1` | `^0.1.0-rc.8` |
 >
 > Swap `web` for your own profile name. **Older versions are pinned exactly** (`@0.19.1`, not `@latest`), because `latest` moves forward with each new stable cut; conversely, do **not** install 0.19.1 on a 0.1.7 alpha — it would simply break.
+>
+> ⚠️ **A host older than the row above does not error out — it crashes while rendering**: the plugin imports its icons and primitives from the host's client packages **by name**, older hosts do not export those names, the bundle's bare property read yields `undefined`, and React throws `Element type is invalid` (`React error #130` in a production build) — every sidebar pane stays blank and it reads like a component bug inside the plugin. Only hosts from **0.1.7-rc.1** on run the startup peer preflight that silently disables a mismatched row; **hosts below 0.1.7-rc.1 have no such gate**, so the mismatch reaches the renderer. When you see `#130`, check the host version first and pick the row above (or upgrade the host).
 
 ```sh
 dsh plugin --profile web add dsh-better-sidebar@latest
