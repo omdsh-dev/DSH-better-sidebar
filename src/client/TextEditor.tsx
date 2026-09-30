@@ -19,7 +19,7 @@ import clsx from 'clsx'
 import { EditorState } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
-import { IconCheckOutline16, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutlineRegular, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
 import { api, htmlUrl } from './api.ts'
 import { markdownPreviewSource } from './markdown-frontmatter.ts'
@@ -363,7 +363,13 @@ export function TextEditor(props: FileViewerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [scope.sessionId, scope.cwd, path],
   )
-  const codeLabels = { copyLabel: t('copy'), copiedLabel: t('copied') }
+  const codeLabels = {
+    copyLabel: t('copy'),
+    copiedLabel: t('copied'),
+    codeLabel: t('codeBlockTitle'),
+    wrapLabel: t('codeBlockWrap'),
+    unwrapLabel: t('codeBlockUnwrap'),
+  }
 
   /**
    * Selection popup for the markdown preview: a mouse-up inside the preview
@@ -462,7 +468,7 @@ export function TextEditor(props: FileViewerProps) {
             title={`${t('save')} (Ctrl/Cmd+S)`}
             onClick={save}
           >
-            <IconCheckOutline16 />
+            <IconCheckOutlineRegular />
           </button>
         )}
         {saveLabel !== '' && <span className={clsx(css.editorStatus, saveState === 'failed' && css.editorStatusError)}>{saveLabel}</span>}

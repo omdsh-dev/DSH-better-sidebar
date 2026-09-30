@@ -36,12 +36,6 @@ export interface SidebarTab {
   /** Plugin-owned state (v0.12.0+): MUST be JSON-serializable — it is
    *  persisted with the layout and restored verbatim on reload. */
   meta?: unknown
-  /** Pinned-terminal marker (v0.17.0+): a pinned terminal tab survives a
-   *  session switch in its home session's state and surfaces in the
-   *  PinnedRail of every session the scope allows. `homeCwd` is the cwd
-   *  snapshot at pin time — a `workspace`-scoped pin is only visible to
-   *  sessions whose cwd matches it. Absent = unpinned (legacy states). */
-  pin?: { scope: 'workspace' | 'global'; homeCwd?: string }
 }
 
 /** A tab group. */
@@ -67,9 +61,7 @@ export type SplitNode = SidebarLeaf | SidebarSplit
 export interface SidebarState {
   /** The pane receiving newly opened tabs (the last pane the user touched). */
   activePane: string | null
-  /** Monotonic terminal tab counter (ids survive reloads). */
-  nextTerminal: number
-  /** Monotonic browser tab counter (ids survive reloads; mirrors nextTerminal). */
+  /** Monotonic browser tab counter (ids survive reloads). */
   nextBrowser: number
   /** Explorer expansion set (absolute directory paths). */
   expanded: string[]
@@ -83,22 +75,8 @@ export interface SidebarState {
   bottomOpen: boolean
   /** The bottom panel's height (clamped to the contract range). */
   bottomHeight: number
-  /**
-   * Whether the bottom panel has been expanded at least once in this
-   * session — the FIRST expansion tries to auto-open a terminal tab (gated
-   * on the bottomPanelAutoTerminal pref); later expansions never do.
-   */
-  bottomOpenedOnce: boolean
   /** The bottom workbench's split tree. */
   bottomSplits: SplitNode
-  /**
-   * Live agent-terminal wait state (uuid → the wait the model currently
-   * blocks on in `terminal_wait_for`), mirrored from the host's
-   * agent-terminals push. Transient by design: sanitizeState never restores
-   * it, so a reload starts clean and the next push (sent immediately on WS
-   * attach) repopulates it.
-   */
-  agentWaits: Record<string, { needle: string; since: number }>
 }
 
 export const TAB_MAX_WIDTH = 160
@@ -167,15 +145,12 @@ export function makeDefaultState(): SidebarState {
   const bottomLeaf: SidebarLeaf = { kind: 'leaf', id: uid('pane'), tabs: [], active: null }
   return {
     activePane: bottomLeaf.id,
-    nextTerminal: 1,
     nextBrowser: 1,
     expanded: [],
     revealed: [],
     bottomOpen: false,
     bottomHeight: BOTTOM_DEFAULT,
-    bottomOpenedOnce: false,
     bottomSplits: bottomLeaf,
-    agentWaits: {},
   }
 }
 
@@ -389,72 +364,10 @@ export function patchTab(
 }
 
 /**
- * Set or clear the pin marker on one open tab (v0.17.0+). A pin marker is
- * structural metadata (NOT display fields like title/path), so it walks
- * the workbench's split tree exactly like {@link patchTab}. Passing `null` clears the pin
- * (the tab stays open in its home session); passing a `{ scope, homeCwd }`
- * object sets it. An unknown tab id is a strict no-op (same reference
- * returned) so a stale pin request never churns the state or rewrites
- * localStorage.
- * @param state - the current per-session sidebar state.
- * @param tabId - the tab to pin/unpin.
- * @param pin - the pin marker to set, or null to clear.
- * @returns the next state (or the same reference when the tab is missing
- *          or the pin marker is already the requested value).
- */
-export function setTabPin(
-  state: SidebarState,
-  tabId: string,
-  pin: { scope: 'workspace' | 'global'; homeCwd?: string } | null,
-): SidebarState {
-  let changed = false
-  const apply = (tab: SidebarTab): SidebarTab => {
-    // Pin is terminal-only (design YAGNI): a defensive guard keeps the
-    // invariant even if a caller accidentally targets a non-terminal tab.
-    if (tab.type !== 'terminal') return tab
-    // Idempotent: setting the same pin (deep-equal on scope + homeCwd) is a
-    // no-op so re-clicking the menu item never churns the state.
-    if (pin === null) {
-      if (tab.pin === undefined) return tab
-    } else if (
-      tab.pin !== undefined
-      && tab.pin.scope === pin.scope
-      && tab.pin.homeCwd === pin.homeCwd
-    ) {
-      return tab
-    }
-    changed = true
-    const { pin: _omit, ...rest } = tab
-    return pin === null ? rest : { ...rest, pin }
-  }
-  const walk = (node: SplitNode): SplitNode => {
-    if (node.kind === 'leaf') {
-      // Find the target tab without rebuilding the whole array: only clone
-      // when the tab is actually here and apply changed it (idempotent
-      // no-ops return the same tab reference, so === holds).
-      const idx = node.tabs.findIndex(tab => tab.id === tabId)
-      if (idx < 0) return node
-      const oldTab = node.tabs[idx]!
-      const newTab = apply(oldTab)
-      if (newTab === oldTab) return node
-      const tabs = node.tabs.slice()
-      tabs[idx] = newTab
-      return { ...node, tabs }
-    }
-    const children = node.children.map(walk)
-    // Only rebuild if at least one child actually changed reference.
-    if (children.every((child, i) => child === node.children[i])) return node
-    return { ...node, children }
-  }
-  const bottomSplits = walk(state.bottomSplits)
-  return changed ? { ...state, bottomSplits } : state
-}
-
-/**
  * Land a tab in the workbench's first pane — the plugin's own opens (its
- * bottom-panel + menu, the auto-terminal, and every open when no native
- * surface is installed): the plugin owns no right column any more (DSH's
- * native sidebar is the right one), so the bottom workbench is the only tree.
+ * bottom-panel + menu, and every open when no native surface is installed):
+ * the plugin owns no right column any more (DSH's native sidebar is the
+ * right one), so the bottom workbench is the only tree.
  * @param state - the session state.
  * @param tab - the tab to land.
  * @returns the next state, with the bottom panel open.
@@ -652,129 +565,6 @@ export function resizeSplitIn(state: SidebarState, splitId: string, index: numbe
   return { ...state, [key]: resizeSplit(state[key], splitId, index, delta) }
 }
 
-/** Prefix marking a tab id as an agent-owned terminal (suffix is the uuid). */
-export const AGENT_TAB_PREFIX = 'agent:'
-
-/** Whether a tab id refers to an agent-owned terminal. */
-export function isAgentTabId(tabId: string): boolean {
-  return tabId.startsWith(AGENT_TAB_PREFIX)
-}
-
-/** Extract the agent terminal uuid from an `agent:<uuid>` tab id. */
-export function agentUuidOf(tabId: string): string {
-  return tabId.slice(AGENT_TAB_PREFIX.length)
-}
-
-/** Build the sidebar tab id for one agent terminal uuid. */
-export function agentTabId(uuid: string): string {
-  return `${AGENT_TAB_PREFIX}${uuid}`
-}
-
-/** Shallow equality of two agent-wait maps (same keys, same needle+since). */
-function sameAgentWaits(
-  a: SidebarState['agentWaits'] | undefined,
-  b: Record<string, { needle: string; since: number }>,
-): boolean {
-  if (a === undefined) return Object.keys(b).length === 0
-  const aKeys = Object.keys(a)
-  if (aKeys.length !== Object.keys(b).length) return false
-  for (const key of aKeys) {
-    const av = a[key]
-    const bv = b[key]
-    if (av === undefined || bv === undefined) return false
-    if (av.needle !== bv.needle || av.since !== bv.since) return false
-  }
-  return true
-}
-
-/** Fold the pushed terminal snapshots into the authoritative wait map. */
-function serverWaitsOf(
-  agentTerminals: ReadonlyArray<{ uuid: string; title: string; waiting?: { needle: string; since: number } | null }>,
-): Record<string, { needle: string; since: number }> {
-  const serverWaits: Record<string, { needle: string; since: number }> = {}
-  for (const terminal of agentTerminals) {
-    if (terminal.waiting !== undefined && terminal.waiting !== null) {
-      serverWaits[terminal.uuid] = { needle: terminal.waiting.needle, since: terminal.waiting.since }
-    }
-  }
-  return serverWaits
-}
-
-/**
- * Reconcile the sidebar's agent-terminal tabs with the host's live list.
- * The host pushes the current list of agent terminals (created by the model
- * through the `terminal_create` tool) over a dedicated WebSocket; this
- * reducer mirrors that list into tabs: new uuids get a tab, vanished uuids
- * lose theirs. The agent owns the lifetime — the user closing a tab sends a
- * WS close frame that kills the pty, which fires a change, which converges
- * the view. Idempotent: a no-op when the lists already match.
- * @param state - the current per-session sidebar state.
- * @param agentTerminals - the live agent terminal snapshots from the host.
- * @returns the next state (or the same reference if no change was needed).
- */
-export function reconcileAgentTerminals(
-  state: SidebarState,
-  agentTerminals: ReadonlyArray<{ uuid: string; title: string; waiting?: { needle: string; since: number } | null }>,
-): SidebarState {
-  const existingTabs = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs)
-  const existingAgentTabs = existingTabs.filter(tab => isAgentTabId(tab.id))
-  const existingUuids = new Set(existingAgentTabs.map(tab => agentUuidOf(tab.id)))
-  const serverUuids = new Set(agentTerminals.map(t => t.uuid))
-  const toAdd = agentTerminals.filter(t => !existingUuids.has(t.uuid))
-  // Pinned agent terminals (v0.17.0+) are EXEMPT from removal: the agent
-  // closed them or the pty exited, but the user pinned them so the tab
-  // stays as a disconnected surface. The xterm view's reconnect-failure
-  // banner is the user-visible "disconnected" signal (the design's M3
-  // convergence: no title suffix, no meta write — the tab keeps its uuid
-  // so a later reconcile push revives it if the agent reopens the same one).
-  const toRemove = existingAgentTabs.filter(tab => !serverUuids.has(agentUuidOf(tab.id)) && tab.pin === undefined)
-  // Mirror the live wait state from the push (authoritative: a vanished
-  // waiting field simply drops the entry). A waits-only change must still
-  // produce a new state — the tab add/remove no-change check alone would
-  // swallow banner updates.
-  const serverWaits = serverWaitsOf(agentTerminals)
-  if (toAdd.length === 0 && toRemove.length === 0 && sameAgentWaits(state.agentWaits, serverWaits)) return state
-  // Remove tabs whose uuids vanished from the server list (the agent closed
-  // them, or the pty exited and was reaped). Reuse closeTab's leaf cleanup.
-  let bottomSplits = state.bottomSplits
-  for (const tab of toRemove) {
-    const leaf = leafWithTab(bottomSplits, tab.id)
-    if (leaf !== undefined) {
-      bottomSplits = closeTab({ ...state, bottomSplits }, leaf.id, tab.id).bottomSplits
-    }
-  }
-  // Add tabs for new uuids (the agent created a terminal). They land in the
-  // workbench's landing pane via openTabInBottomPane; the next reconcile is a
-  // no-op for them.
-  let next: SidebarState = { ...state, bottomSplits }
-  for (const terminal of toAdd) {
-    const tab: SidebarTab = {
-      id: agentTabId(terminal.uuid),
-      type: 'terminal',
-      title: terminal.title,
-    }
-    next = openTabInBottomPane(next, tab)
-  }
-  return { ...next, agentWaits: serverWaits }
-}
-
-/**
- * Mirror ONLY the authoritative agent-wait map from a push — no tab
- * add/remove reconciliation. Used while the `terminal` tab type is disabled:
- * the tab surface is frozen, but a wait that resolves during that window
- * must still clear its banner state, or a re-enabled terminal keeps a stale
- * banner/⏳ until some unrelated host event fires the next full reconcile.
- * Idempotent: a no-op when the map already matches.
- */
-export function mirrorAgentWaits(
-  state: SidebarState,
-  agentTerminals: ReadonlyArray<{ uuid: string; title: string; waiting?: { needle: string; since: number } | null }>,
-): SidebarState {
-  const serverWaits = serverWaitsOf(agentTerminals)
-  if (sameAgentWaits(state.agentWaits, serverWaits)) return state
-  return { ...state, agentWaits: serverWaits }
-}
-
 // ── The per-session store ──────────────────────────────────────────────────
 
 const STORAGE_PREFIX = 'dsh-sidebar:v1'
@@ -855,12 +645,10 @@ function loadState(sessionId: string): SidebarState {
 export function sanitizeState(parsed: unknown): SidebarState | undefined {
   if (parsed === null || typeof parsed !== 'object') return undefined
   const record = parsed as Record<string, unknown>
-  if (typeof record.nextTerminal !== 'number' || !Number.isInteger(record.nextTerminal) || record.nextTerminal < 1) {
-    return undefined
-  }
-  // nextBrowser arrived in a later build; a missing or malformed value on an
-  // OLDER persisted state defaults to 1 so existing layouts keep loading
-  // (unlike nextTerminal, which is strict — it predates the v1 shape).
+  // A missing or malformed counter defaults to 1 rather than rejecting the
+  // whole layout: these counters only name NEW tabs, so restarting one at 1
+  // can at worst reuse a free id, while refusing the state would drop every
+  // open tab of a session that was persisted by an older build.
   const nextBrowser = typeof record.nextBrowser === 'number' && Number.isInteger(record.nextBrowser) && record.nextBrowser >= 1
     ? record.nextBrowser
     : 1
@@ -899,20 +687,12 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     // A stale duplicate pane id may have been re-ided; follow the rename so
     // new tabs still land in the pane the user was using.
     activePane,
-    nextTerminal: record.nextTerminal,
     nextBrowser,
     expanded: record.expanded as string[],
     revealed: [],
     bottomOpen,
     bottomHeight,
-    // An older persisted state never expanded the bottom panel (the field
-    // arrived later): defaulting to false gives it the first-expansion
-    // auto-terminal exactly once after the upgrade.
-    bottomOpenedOnce: record.bottomOpenedOnce === true,
     bottomSplits,
-    // The agent wait state is TRANSIENT (like revealed): never restored from
-    // storage — the host's first push after attach repopulates it.
-    agentWaits: {},
   }
 }
 
@@ -980,22 +760,9 @@ function sanitizePersistedTab(tab: unknown): SidebarTab | 'diff' | undefined {
     ...(typeof candidate.path === 'string' ? { path: candidate.path } : {}),
     ...(candidate.meta !== undefined ? { meta: candidate.meta } : {}),
   }
-  // `pin` (v0.17.0+): a pinned-terminal marker. Whitelist-validate the
-  // shape so a hand-edited / corrupted pin never crashes the rail's
-  // resolver: an unknown scope or a non-string homeCwd drops the pin
-  // silently (the tab survives, just unpinned — the legacy behavior).
-  // Pin is terminal-only: a non-terminal tab carrying a persisted pin
-  // (e.g. from a hand-edited state) has it stripped here.
-  const pin = (candidate as Record<string, unknown>).pin
-  if (pin !== null && typeof pin === 'object' && !Array.isArray(pin) && result.type === 'terminal') {
-    const pinRecord = pin as Record<string, unknown>
-    if (pinRecord.scope === 'workspace' || pinRecord.scope === 'global') {
-      const homeCwd = pinRecord.homeCwd
-      result.pin = homeCwd === undefined || typeof homeCwd === 'string'
-        ? { scope: pinRecord.scope, ...(typeof homeCwd === 'string' ? { homeCwd } : {}) }
-        : { scope: pinRecord.scope }
-    }
-  }
+  // A persisted `pin` (the removed pinned-terminal marker) is simply not
+  // copied into the rebuilt tab: only known fields survive, so a stale
+  // layout loads unpinned instead of failing validation.
   return result
 }
 

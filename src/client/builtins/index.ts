@@ -8,7 +8,7 @@
  */
 import type { Context } from '../../context-types.ts'
 import type { BetterSidebarService } from '../service.ts'
-import { builtinTabs, type BuiltinTabOptions } from './tabs.tsx'
+import { builtinTabs } from './tabs.tsx'
 import { builtinViewers } from './viewers.tsx'
 
 /**
@@ -20,10 +20,9 @@ import { builtinViewers } from './viewers.tsx'
 export function registerBuiltins(
   ctx: Context,
   service: BetterSidebarService,
-  options: BuiltinTabOptions = {},
 ): () => void {
   const disposers: (() => void)[] = []
-  for (const tab of builtinTabs(ctx, options)) {
+  for (const tab of builtinTabs()) {
     disposers.push(service.registerTab(tab))
   }
   for (const viewer of builtinViewers()) {

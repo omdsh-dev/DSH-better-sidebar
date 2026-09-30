@@ -23,7 +23,9 @@ const media: MarkdownHtmlMedia = {
   path: '/ws/docs/README.md',
   origin: 'http://gui.origin',
 }
-const codeLabels = { copyLabel: 'Copy', copiedLabel: 'Copied' }
+const codeLabels = {
+  copyLabel: 'Copy', copiedLabel: 'Copied', codeLabel: 'Code block', wrapLabel: 'Wrap lines', unwrapLabel: 'Do not wrap lines',
+}
 
 async function renderDocument(text: string): Promise<{ container: HTMLElement; root: Root }> {
   const container = document.createElement('div')

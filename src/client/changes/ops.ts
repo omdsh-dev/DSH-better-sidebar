@@ -74,6 +74,8 @@ function pathOf(args: Record<string, unknown>): string | undefined {
 interface ToolResultMessageLike {
   source?: { kind?: unknown; callId?: unknown }
   content?: unknown
+  /** The 0.1.7 first-class tool message lifts the error flag onto the message. */
+  isError?: unknown
 }
 
 /** One 'tool-result' content block (inner blocks carry the text). */
@@ -83,33 +85,46 @@ interface ToolResultBlockLike {
   isError?: unknown
 }
 
-/** The finalized plain text of one tool result (inner text blocks joined). */
-function resultText(message: ToolResultMessageLike): string | undefined {
+/**
+ * The result blocks and error flag of one tool/result message, read under BOTH
+ * logged shapes: 0.1.6 wrapped the result in a single `type: 'tool-result'`
+ * content block on a user-role message (the text nested inside it, `isError`
+ * on the wrapper), 0.1.7's first-class tool-role message carries the blocks at
+ * the message's own top level with `isError` lifted onto the message.
+ * Historical logs keep the old shape forever, so both are read. Undefined when
+ * the message carries no block array.
+ */
+function resultOf(message: ToolResultMessageLike): { blocks: readonly unknown[]; isError: boolean } | undefined {
   if (!Array.isArray(message.content)) return undefined
-  const parts: string[] = []
   for (const block of message.content) {
     if (block === null || typeof block !== 'object') continue
-    const candidate = block as ToolResultBlockLike
-    if (candidate.type !== 'tool-result') continue
-    const inner = candidate.content
-    if (!Array.isArray(inner)) continue
-    for (const item of inner) {
-      if (item === null || typeof item !== 'object') continue
-      const textItem = item as { type?: unknown; text?: unknown }
-      if (textItem.type === 'text' && typeof textItem.text === 'string') parts.push(textItem.text)
+    const wrapper = block as ToolResultBlockLike
+    if (wrapper.type !== 'tool-result') continue
+    return {
+      blocks: Array.isArray(wrapper.content) ? wrapper.content as readonly unknown[] : [],
+      isError: wrapper.isError === true,
     }
+  }
+  return { blocks: message.content as readonly unknown[], isError: message.isError === true }
+}
+
+/** The finalized plain text of one tool result (its text blocks joined). */
+function resultText(message: ToolResultMessageLike): string | undefined {
+  const blocks = resultOf(message)?.blocks
+  if (blocks === undefined) return undefined
+  const parts: string[] = []
+  for (const item of blocks) {
+    if (item === null || typeof item !== 'object') continue
+    const textItem = item as { type?: unknown; text?: unknown }
+    if (textItem.type === 'text' && typeof textItem.text === 'string') parts.push(textItem.text)
   }
   return parts.length > 0 ? parts.join('\n') : undefined
 }
 
-/** Whether a tool result reported an error (the inner block's isError flag). */
+/** Whether a tool result reported an error (0.1.7's message-level flag, else
+ *  the 0.1.6 wrapper block's flag). */
 function resultIsError(message: ToolResultMessageLike): boolean {
-  if (!Array.isArray(message.content)) return false
-  return message.content.some((block) => {
-    if (block === null || typeof block !== 'object') return false
-    return (block as ToolResultBlockLike).type === 'tool-result'
-      && (block as ToolResultBlockLike).isError === true
-  })
+  return resultOf(message)?.isError === true
 }
 
 /**

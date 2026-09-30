@@ -4,41 +4,43 @@
  *
  * The route takes the already-resolved topology root (`rootSessionId`),
  * enumerates the whole descendant tree ONCE through the host subagent
- * runtime (`ctx.get('subagents')` / `listDescendants`), keeps only rows the
- * catalog reports running (`activity: 'running'` — the same gate the client
- * renders cards on), and folds the newest text/tool activity from each
- * child's attached session event log. It never touches DSH source and never
- * reads the model's `job_output` cursor.
+ * runtime (`ctx.get('subagents')` / `listDescendants`), and folds EVERY child
+ * session's newest process range with {@link foldProcess} — the plugin's port
+ * of the main agent's merged process summary (category counts + the one
+ * running call + its detail). It never touches DSH source and never reads the
+ * model's `job_output` cursor.
+ *
+ * Folding a settled child is cheap by construction: the default fold stops at
+ * the first range boundary it can report, so a child that is idle between
+ * turns costs a handful of event reads (`snapshotEvents()` itself returns the
+ * session's cached frozen snapshot, not a per-call copy).
  *
  * Degradation contract:
  * - `ctx.get('subagents')` missing or `listDescendants` failure → 503 (the
  *   Subagent page has no topology to show in such deployments anyway).
- * - One child's events missing/corrupt → that child is skipped, the rest of
- *   the batch still returns.
+ * - One child's events missing/corrupt → that child is still REPORTED (its
+ *   `running` flag is the catalog's), just without a summary; the rest of the
+ *   batch is unaffected.
  */
-import type { Context, SidebarSubagentsService } from './context-types.ts'
+import type {
+  Context,
+  SidebarChildLiveView,
+  SidebarSubagentsService,
+} from './context-types.ts'
 import { SIDE_LABEL_PREFIX } from './sidechat-core.ts'
-import { lastActivity, type LastActivity } from './subagent-activity.ts'
+import { foldProcess } from './process-activity.ts'
 import { requireString, SidebarError } from './wire.ts'
 
 /** The live-preview routes of the /sidebar JSON API. */
 export interface SidebarSubagentLiveRoutes {
   /**
-   * Fold one tree's running subagent histories into a compact live map.
+   * Fold one tree's subagent activity into a compact live map.
    * @param payload - `{ rootSessionId }`.
-   * @returns `{ live: Record<childSessionId, LastActivity> }`; children with
-   *   no text/tool yet are omitted.
+   * @returns `{ live: Record<sessionId, SidebarChildLiveView> }` over the
+   *   whole descendant catalog plus the topology root.
    */
-  live(payload: unknown): Promise<{ live: Record<string, LastActivity> }>
+  live(payload: unknown): Promise<{ live: Record<string, SidebarChildLiveView> }>
 }
-
-/**
- * The recent-message window of the live preview: only the last 12 surface
- * messages of a child's log are folded, matching the old per-card
- * `subagents.history({ maxMessages: 12 })` window. Keeps stale tool calls
- * out of the preview and bounds the backward scan per child.
- */
-export const LIVE_WINDOW_MESSAGES = 12
 
 /**
  * Build the live-preview routes bound to the plugin context.
@@ -67,25 +69,38 @@ export function buildSubagentLiveApi(ctx: Context): SidebarSubagentLiveRoutes {
         )
       }
 
-      const live: Record<string, LastActivity> = {}
+      const live: Record<string, SidebarChildLiveView> = {}
+      /**
+       * Fold one session into the map. `running` is the caller-visible activity
+       * flag: the catalog's for a child, undefined for the topology ROOT (the
+       * host cannot classify it, and the page already knows the answer from the
+       * session list). The fold's own `live` gate is that flag when it exists,
+       * and the LOG's evidence for the root.
+       */
+      const foldInto = (sessionId: string, running: boolean | undefined): void => {
+        const view: SidebarChildLiveView = running === undefined ? {} : { running }
+        try {
+          const events = ctx.sessions.get(sessionId)?.snapshotEvents() ?? []
+          const fold = foldProcess(events, { live: running !== false })
+          if (fold.current.counts.length > 0 || fold.current.running !== undefined) {
+            view.summary = fold.current
+          }
+          if (fold.text !== undefined) view.text = fold.text
+          if (fold.lastEventTime !== undefined) view.lastEventTime = fold.lastEventTime
+        } catch {
+          // One session's event log is not readable: keep the row (a child's
+          // running flag is the catalog's) and skip only its details.
+        }
+        live[sessionId] = view
+      }
+
+      foldInto(rootSessionId, undefined)
       for (const entry of descendants) {
-        // Same gate the client renders cards on: only catalog-running
-        // children get live lines (spec: "仅对 running 且非 Side Chat").
-        if (entry.kind !== 'child' || entry.activity !== 'running') continue
+        if (entry.kind !== 'child') continue
         // Side Chat threads ride the subagent origin but are sidebar tabs,
         // never topology — keep them out of the live map too.
         if (entry.label?.startsWith(SIDE_LABEL_PREFIX) ?? false) continue
-        try {
-          const activity = lastActivity(
-            ctx.sessions.get(entry.id)?.snapshotEvents() ?? [],
-            LIVE_WINDOW_MESSAGES,
-          )
-          if (activity.text !== undefined || activity.tool !== undefined) {
-            live[entry.id] = activity
-          }
-        } catch {
-          // One child's event log is not readable: skip only that child.
-        }
+        foldInto(entry.id, entry.activity === 'running')
       }
       return { live }
     },

@@ -19,7 +19,7 @@ import { useLayoutEffect, useMemo, useRef } from 'react'
 import { createElement, type ReactNode } from 'react'
 import DOMPurify from 'dompurify'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
-import { markdownTextProps } from './markdown-labels.tsx'
+import { markdownTextProps, type MarkdownCopyLabels } from './markdown-labels.tsx'
 import { resolveLocalMediaDest, rewriteLocalImageUrls } from './markdown-images.ts'
 import {
   analyzeHtmlSegment,
@@ -160,7 +160,7 @@ interface MarkdownSegmentProps {
   text: string
   hasMermaid: boolean
   media: MarkdownHtmlMedia
-  codeLabels: { copyLabel: string; copiedLabel: string }
+  codeLabels: MarkdownCopyLabels
 }
 
 /**
@@ -218,7 +218,7 @@ type PreparedSegment =
 interface MarkdownDocumentProps {
   info: AnalyzedMarkdownHtml
   media: MarkdownHtmlMedia
-  codeLabels: { copyLabel: string; copiedLabel: string }
+  codeLabels: MarkdownCopyLabels
 }
 
 /**

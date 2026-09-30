@@ -33,22 +33,17 @@ interface TabContentProps extends TabContentMemoKey {
 
 /** Render the content of one tab (dispatched by type). */
 export const TabContent = memo(function TabContent(props: TabContentProps) {
-  const { tab, effectiveTabId, sessionId, cwd, expanded, revealed, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff } = props
+  const { tab, sessionId, cwd, expanded, revealed, onToggleDir, onReferenceFile, ctx, store, visible, onSubagentJump, onOpenDiff } = props
   const scope = { sessionId, cwd }
   const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
   if (descriptor === undefined) {
     return <OrphanedTab ctx={ctx} store={store} scope={scope} tab={tab} visible={visible} />
   }
-  // For pinned virtual tabs, the tab descriptor's component (e.g. TerminalView)
-  // must receive the ORIGINAL tab id so it connects to the home session's PTY.
-  // The virtual tab's own id is a unique display key (prefixed); effectiveTabId
-  // restores the real id at the component boundary.
-  const componentTab = effectiveTabId !== undefined ? { ...tab, id: effectiveTabId } : tab
   return createElement(
     RenderBoundary,
     { className: css.tabBoundaryError },
     createElement(descriptor.component, {
-      ctx, store, scope, tab: componentTab, visible, expanded, revealed,
+      ctx, store, scope, tab, visible, expanded, revealed,
       onToggleDir, onReferenceFile, onOpenDiff, onSubagentJump,
     }),
   )
@@ -56,7 +51,7 @@ export const TabContent = memo(function TabContent(props: TabContentProps) {
 
 /** The + menu options for the current state, driven by the tab registry.
  * Hidden tabs (editor/diff) never show; `available` returning false shows
- * a disabled row (e.g. terminal at capacity) instead of hiding the option.
+ * a disabled row instead of hiding the option.
  * Tabs the user disabled in the side card settings are filtered out
  * entirely — re-enabling them is the settings page's job. */
 export function buildNewTabOptions(state: SidebarState, ctx: Context, scope: SessionScope): NewTabOption[] {

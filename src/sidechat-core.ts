@@ -36,10 +36,14 @@ export const LABEL_MAX_CHARS = 48
  *  the two plugins' threads render consistently in either UI). */
 export const SIDE_BOUNDARY_PREFIX = 'Side conversation boundary'
 
-/** The plugin identity stamped on the source of context-injection messages
- *  (boundary prompt + parked snapshot), so the transcript recognizes them
- *  structurally — not by text prefix. */
-export const SIDE_INJECTION_PLUGIN = 'dsh-better-sidebar'
+/** The plugin's producer-owned source kind, stamped on the source of
+ *  context-injection messages (boundary prompt + parked snapshot) so the
+ *  transcript recognizes them structurally — not by text prefix. Session
+ *  format v4 retired the bare `kind: 'plugin'` + `plugin` pair; a plugin is
+ *  now identified by its own `plugin:<name>` kind, which is exactly what
+ *  DSH's own v3→v4 migration derives for rows this plugin wrote earlier, so
+ *  both generations read back under one shape. */
+export const SIDE_INJECTION_SOURCE_KIND = 'plugin:dsh-better-sidebar'
 
 /**
  * The boundary prompt delivered as the thread's first user message: the
@@ -228,25 +232,37 @@ export function hasDanglingToolCall(events: readonly SidechatLogEvent[], turnSta
   return pending.size > 0
 }
 
-/** The plain text of one tool/result message (text blocks inside its
- *  `tool-result` content block). */
-function toolResultText(data: Record<string, unknown>): string {
-  const message = data.message as { content?: unknown } | undefined
-  const content = message?.content
-  if (!Array.isArray(content)) return ''
-  const parts: string[] = []
+/**
+ * The result content blocks of one tool/result message under BOTH logged
+ * shapes: 0.1.6 wrapped them in a single `type: 'tool-result'` content block
+ * on a user-role message, 0.1.7's first-class tool-role message carries them
+ * at the message's own top level. Historical logs keep the old shape forever,
+ * so both are read. Undefined when the message carries no block array.
+ */
+function resultBlocks(content: unknown): readonly unknown[] | undefined {
+  if (!Array.isArray(content)) return undefined
   for (const block of content) {
     if (block === null || typeof block !== 'object') continue
-    const candidate = block as { type?: unknown; content?: unknown }
-    if (candidate.type !== 'tool-result') continue
-    const inner = candidate.content
-    if (!Array.isArray(inner)) continue
-    for (const item of inner) {
-      if (item === null || typeof item !== 'object') continue
-      const textItem = item as { type?: unknown; text?: unknown }
-      if (textItem.type === 'text' && typeof textItem.text === 'string') {
-        parts.push(textItem.text)
-      }
+    const wrapper = block as { type?: unknown; content?: unknown }
+    if (wrapper.type === 'tool-result' && Array.isArray(wrapper.content)) {
+      return wrapper.content as readonly unknown[]
+    }
+  }
+  return content as readonly unknown[]
+}
+
+/** The plain text of one tool/result message (its text blocks, under either
+ *  of the two shapes {@link resultBlocks} reads). */
+function toolResultText(data: Record<string, unknown>): string {
+  const message = data.message as { content?: unknown } | undefined
+  const blocks = resultBlocks(message?.content)
+  if (blocks === undefined) return ''
+  const parts: string[] = []
+  for (const item of blocks) {
+    if (item === null || typeof item !== 'object') continue
+    const textItem = item as { type?: unknown; text?: unknown }
+    if (textItem.type === 'text' && typeof textItem.text === 'string') {
+      parts.push(textItem.text)
     }
   }
   return parts.join('\n')

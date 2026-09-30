@@ -15,10 +15,7 @@
  * ./subagent-lineage.ts — the single shared walk implementation — and are
  * re-exported below for their established import sites.
  */
-import type {
-  SidebarSessionList,
-  SidebarSubagentCatalog,
-} from '../context-types.ts'
+import type { SidebarSessionList } from '../context-types.ts'
 import { countSubagentDescendants, isSideThreadSummary, rootAncestor } from './subagent-lineage.ts'
 
 export { countSubagentDescendants, isSideThreadSummary, rootAncestor }
@@ -35,31 +32,6 @@ export function directSubagentCount(
       && !isSideThreadSummary(summary)) count += 1
   }
   return count
-}
-
-/**
- * Collect every catalog branch (an entry with `hasChildren`) reachable from
- * the root — the set of catalogs the always-expanded topology consumes.
- * Cycles fail soft.
- */
-export function collectBranchIds(
-  catalogs: Readonly<Record<string, SidebarSubagentCatalog>>,
-  rootId: string | undefined,
-): string[] {
-  const out: string[] = []
-  const seen = new Set<string>()
-  const visit = (parentId: string): void => {
-    if (seen.has(parentId)) return
-    seen.add(parentId)
-    for (const entry of catalogs[parentId]?.entries ?? []) {
-      if (entry.kind === 'child' && entry.hasChildren) {
-        out.push(entry.id)
-        visit(entry.id)
-      }
-    }
-  }
-  if (rootId !== undefined) visit(rootId)
-  return out
 }
 
 /**

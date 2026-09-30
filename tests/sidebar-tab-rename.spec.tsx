@@ -9,9 +9,7 @@
  *
  * - double-click → type → Enter lands the new title in the session layout
  *   (store state, which is what persistence writes), and
- * - a pinned VIRTUAL tab (a projection of another session's tab) routes its
- *   rename to the HOME session rather than no-op'ing against the viewer's
- *   own tree.
+ * - a tab type that owns its label (editor) never opens the editor.
  *
  * Harness mirrors tests/agent-wait-badge.spec.tsx (real shell + fake context
  * + stubbed WebSocket).
@@ -26,7 +24,7 @@ setupReactAct()
 
 import { Sidebar } from '../src/client/Sidebar.tsx'
 import {
-  createSidebarStore, openTabInBottomPane, setTabPin, type SidebarTab,
+  createSidebarStore, openTabInBottomPane, type SidebarTab,
 } from '../src/client/state.ts'
 import { createBetterSidebarService, type BetterSidebarService } from '../src/client/service.ts'
 
@@ -68,11 +66,16 @@ function mountSidebar(sessionId: string): { container: HTMLDivElement; store: Re
     current: sessionId,
     byId: { [sessionId]: { cwd: '/tmp' } },
   }
+  // The shell binds its per-session store to the MOUNTED seat (DSH 0.1.7's
+  // `sidebarRight.mounted`), not to the session list — without this probe the
+  // shell never binds a session and renders the empty panel host.
+  const mountedSeat = { getSnapshot: () => sessionId, subscribe: () => () => {} }
   const ctx = {
     locale: { subscribe: () => () => {}, getSnapshot: () => localeSnapshot },
     sessions: { list: { subscribe: () => () => {}, getSnapshot: () => sessionsSnapshot } },
+    sidebarRight: { mounted: mountedSeat },
     betterSidebar: service,
-    get: (name: string) => name === 'betterSidebar' ? service : undefined,
+    get: (name: string) => name === 'betterSidebar' ? service : name === 'sidebarRight' ? { mounted: mountedSeat } : undefined,
   }
   const root: Root = createRoot(container)
   act(() => { root.render(createElement(Sidebar, { ctx: ctx as never, store })) })
@@ -164,30 +167,5 @@ describe('Sidebar terminal-tab rename (shell wiring)', () => {
     expect(label).toBeDefined()
     act(() => { label!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })
     expect(container.querySelector('input')).toBeNull()
-  })
-
-  it('routes a pinned virtual tab rename to its HOME session', () => {
-    // One store, two sessions: `home` owns a globally pinned terminal, and
-    // the viewer sees it as a virtual tab in its own strip.
-    const homeSessionId = `rename-home-${++sessionSeq}`
-    const viewerSessionId = `rename-viewer-${++sessionSeq}`
-    const { container, store } = mountSidebar(viewerSessionId)
-    const homeTab: SidebarTab = { id: 'terminal:home-1', type: 'terminal', title: 'Deploy shell' }
-    // reduceFor loads the target session's state on demand; the viewer was
-    // never switched to `home`, exactly like a pinned tab opened elsewhere.
-    store.reduceFor(homeSessionId, s => setTabPin(openTabInBottomPane(s, homeTab), homeTab.id, { scope: 'global' }))
-    // reduceFor deliberately does NOT notify (a targeted open must not move
-    // the active session), so bounce through the home session and back to
-    // make the shell re-derive its pinned projection.
-    act(() => { store.setSession(homeSessionId) })
-    act(() => { store.setSession(viewerSessionId) })
-    expect(container.textContent).toContain('Deploy shell')
-
-    commitRename(openRenameEditor(container, 'Deploy shell'), ' prod')
-
-    // The rename landed in the HOME session's layout, not the viewer's.
-    expect(tabTitle(store, homeSessionId, homeTab.id)).toBe('Deploy shell prod')
-    expect(tabTitle(store, viewerSessionId, homeTab.id)).toBeUndefined()
-    expect(tabTitle(store, viewerSessionId, `pinned:${homeSessionId}:${homeTab.id}`)).toBeUndefined()
   })
 })

@@ -140,25 +140,37 @@ export function toolArgsSummary(args: string | undefined): string {
   return flatTruncate(args)
 }
 
-/** The plain text of a tool/result message (text blocks inside its
- *  `tool-result` content block). */
-function resultTextOf(data: Record<string, unknown>): string {
-  const message = data.message as { content?: unknown } | undefined
-  const content = message?.content
-  if (!Array.isArray(content)) return ''
-  const parts: string[] = []
+/**
+ * The result content blocks of one tool/result message under BOTH logged
+ * shapes: 0.1.6 wrapped them in a single `type: 'tool-result'` content block
+ * on a user-role message, 0.1.7's first-class tool-role message carries them
+ * at the message's own top level. Historical logs keep the old shape forever,
+ * so both are read. Undefined when the message carries no block array.
+ */
+function resultBlocks(content: unknown): readonly unknown[] | undefined {
+  if (!Array.isArray(content)) return undefined
   for (const block of content) {
     if (block === null || typeof block !== 'object') continue
-    const candidate = block as { type?: unknown; content?: unknown }
-    if (candidate.type !== 'tool-result') continue
-    const inner = candidate.content
-    if (!Array.isArray(inner)) continue
-    for (const item of inner) {
-      if (item === null || typeof item !== 'object') continue
-      const textItem = item as { type?: unknown; text?: unknown }
-      if (textItem.type === 'text' && typeof textItem.text === 'string') {
-        parts.push(textItem.text)
-      }
+    const wrapper = block as { type?: unknown; content?: unknown }
+    if (wrapper.type === 'tool-result' && Array.isArray(wrapper.content)) {
+      return wrapper.content as readonly unknown[]
+    }
+  }
+  return content as readonly unknown[]
+}
+
+/** The plain text of a tool/result message (its text blocks, under either of
+ *  the two shapes {@link resultBlocks} reads). */
+function resultTextOf(data: Record<string, unknown>): string {
+  const message = data.message as { content?: unknown } | undefined
+  const blocks = resultBlocks(message?.content)
+  if (blocks === undefined) return ''
+  const parts: string[] = []
+  for (const item of blocks) {
+    if (item === null || typeof item !== 'object') continue
+    const textItem = item as { type?: unknown; text?: unknown }
+    if (textItem.type === 'text' && typeof textItem.text === 'string') {
+      parts.push(textItem.text)
     }
   }
   return parts.join('\n')
