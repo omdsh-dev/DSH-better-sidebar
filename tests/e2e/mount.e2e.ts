@@ -116,6 +116,7 @@ async function seedSession(): Promise<void> {
     '  <script>alert(1)</script>',
     '</div>',
     '',
+    '<a id="readme-anchor"></a>',
     '## Setup',
     '',
     '[docs link][def]',
@@ -567,6 +568,26 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const details = pane.locator('details')
   await expect(details, 'the details run must render as a real element').toHaveCount(1, { timeout: 30_000 })
   await expect(details.locator('summary'), 'the details summary must render').toHaveCount(1)
+  // Direct child, not merely a descendant: HTML only honors a summary there,
+  // so a block-leaf wrapper in between silently swaps in the UA's own label.
+  await expect(
+    details.locator(':scope > summary'),
+    'the summary must be a direct child of <details>',
+  ).toHaveCount(1)
+  await expect(
+    details.locator(':scope > summary'),
+    'the authored summary text must be the disclosure label',
+  ).toHaveText('Steps')
+  // The bare anchor line: the id must survive as a real anchor, and the stray
+  // `</a>` half of the pair must never be printed as source text.
+  await expect(
+    pane.locator('a#readme-anchor'),
+    'an author anchor must keep its id for deep links',
+  ).toHaveCount(1)
+  await expect(
+    pane.locator('p:has(a#readme-anchor)'),
+    'the stray close tag must not be printed next to its anchor',
+  ).not.toContainText('</a>')
   await expect(
     details.locator('h3', { hasText: 'Inside' }),
     'the heading between the details tags must nest inside the element',

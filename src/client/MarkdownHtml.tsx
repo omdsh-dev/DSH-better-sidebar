@@ -46,6 +46,16 @@ export interface MarkdownHtmlMedia {
 /** Tag-like text in a rendered text node — the inline pass gate. */
 const TAGLIKE_TEXT_RE = /<\/?[a-zA-Z][a-zA-Z0-9-]*[\s/>]/
 
+/**
+ * A text node that is nothing but one close tag (`</a>`) at its edges. The host
+ * renderer emits one text node per raw-HTML token, so an author's
+ * `<a id="x"></a>` arrives as two sibling nodes: the open tag (which this pass
+ * swaps for a sanitized element) and this stray close tag. DOMPurify drops a
+ * lone close tag, so it can never be swapped — and unlike prose it carries no
+ * text a reader should see, so the pass deletes it instead of printing it.
+ */
+const ORPHAN_CLOSE_TAG_RE = /^<\/[a-zA-Z][a-zA-Z0-9-]*\s*>$/
+
 /** Explicit denylist on top of DOMPurify's defaults: no active content, no
  *  form chrome, no document-level elements inside a preview. */
 const PURIFY_FORBID_TAGS = [
@@ -86,6 +96,8 @@ function sanitizeHtmlBlock(source: string, media: MarkdownHtmlMedia): string {
  * Sanitize literal tag text from a rendered markdown text node. Returns null
  * when nothing real survived (pure prose like `a < b` — the DOMPurify output
  * has no element children), so the caller leaves the text node untouched.
+ * A node that is nothing but a close tag never reaches here — the caller drops
+ * it (see {@link ORPHAN_CLOSE_TAG_RE}).
  */
 function sanitizeInlineHtml(text: string, media: MarkdownHtmlMedia): string | null {
   const holder = document.createElement('span')
@@ -99,11 +111,25 @@ function sanitizeInlineHtml(text: string, media: MarkdownHtmlMedia): string | nu
 }
 
 /**
+ * React props for a sanitized element: `class`/`for` map to their React names,
+ * `style` is dropped (React needs an object; wrappers with inline styles are
+ * vanishingly rare and not worth a CSS parser), and event handlers / invalid
+ * attribute names never survive DOMPurify's defaults but are filtered anyway.
+ */
+function propsFromElement(element: Element): Record<string, string> {
+  const props: Record<string, string> = {}
+  for (const attr of element.attributes) {
+    if (/^on/i.test(attr.name) || !/^[a-zA-Z][a-zA-Z0-9:._-]*$/.test(attr.name)) continue
+    if (attr.name === 'style') continue
+    props[attr.name === 'class' ? 'className' : attr.name === 'for' ? 'htmlFor' : attr.name] = attr.value
+  }
+  return props
+}
+
+/**
  * Sanitize a wrapper open tag (`<details open>`) into React props. Returns
  * null when DOMPurify dropped the whole tag (denied element) — the renderer
- * then treats the wrapper as transparent. `class`/`for` map to their React
- * names; `style` is dropped (React needs an object; wrappers with inline
- * styles are vanishingly rare and not worth a CSS parser).
+ * then treats the wrapper as transparent.
  */
 function sanitizeTagProps(tag: string, attrs: string): Record<string, string> | null {
   const probe = DOMPurify.sanitize(`<${tag}${attrs}></${tag}>`, {
@@ -114,13 +140,37 @@ function sanitizeTagProps(tag: string, attrs: string): Record<string, string> | 
   holder.innerHTML = probe
   const element = holder.firstElementChild
   if (element === null || element.tagName.toLowerCase() !== tag) return null
-  const props: Record<string, string> = {}
-  for (const attr of element.attributes) {
-    if (/^on/i.test(attr.name) || !/^[a-zA-Z][a-zA-Z0-9:._-]*$/.test(attr.name)) continue
-    if (attr.name === 'style') continue
-    props[attr.name === 'class' ? 'className' : attr.name === 'for' ? 'htmlFor' : attr.name] = attr.value
+  return propsFromElement(element)
+}
+
+/**
+ * Split a sanitized HTML leaf whose first element is a `<summary>` into that
+ * summary's props/inner markup plus the remainder. HTML's content model makes
+ * the summary a disclosure widget **only** as a direct child of `<details>`,
+ * but every balanced leaf renders inside a block wrapper — so a README's
+ * `<details>` + `<summary>` would otherwise show the browser's own default
+ * label ("Details") and demote the authored text to body content. Returns
+ * null when the leaf's first element is anything else (or non-whitespace text
+ * precedes it), leaving the plain leaf path untouched. Media and anchors
+ * inside the hoisted summary go through the same hardening as any leaf.
+ */
+function splitLeadingSummary(
+  html: string,
+  media: MarkdownHtmlMedia,
+): { props: Record<string, string>; inner: string; rest: string } | null {
+  const holder = document.createElement('div')
+  holder.innerHTML = html
+  const first = holder.firstElementChild
+  if (first === null || first.tagName.toLowerCase() !== 'summary') return null
+  for (const node of holder.childNodes) {
+    if (node === first) break
+    if ((node.textContent ?? '').trim() !== '') return null
   }
-  return props
+  postProcessSanitized(first, media)
+  const props = propsFromElement(first)
+  const inner = first.innerHTML
+  first.remove()
+  return { props, inner, rest: holder.innerHTML }
 }
 
 /**
@@ -147,6 +197,13 @@ function runInlineHtmlPass(container: HTMLElement, media: MarkdownHtmlMedia): vo
   const targets: Text[] = []
   for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) targets.push(node as Text)
   for (const node of targets) {
+    // A lone close tag is not prose and cannot be sanitized into an element:
+    // drop it so `</a>` never renders as text (the matching open tag already
+    // became its element, so anchors keep their id and stay invisible).
+    if (ORPHAN_CLOSE_TAG_RE.test(node.data.trim())) {
+      node.remove()
+      continue
+    }
     const html = sanitizeInlineHtml(node.data, media)
     if (html === null) continue
     const span = document.createElement('span')
@@ -210,6 +267,8 @@ type PreparedHtmlPart =
   | { kind: 'html'; html: string }
   | { kind: 'open'; tag: string; props: Record<string, string> | null }
   | { kind: 'close' }
+  /** A `<summary>` hoisted out of a leaf so it can be a `<details>` direct child. */
+  | { kind: 'summary'; props: Record<string, string>; inner: string }
 
 type PreparedSegment =
   | { kind: 'markdown'; text: string; hasMermaid: boolean }
@@ -246,14 +305,36 @@ export function MarkdownDocument({ info, media, codeLabels }: MarkdownDocumentPr
         hasMermaid: splitMermaidBlocks(text).some((block) => block.kind === 'mermaid'),
       }
     }
-    return {
-      kind: 'html',
-      parts: analyzeHtmlSegment(segment.text).parts.map((part): PreparedHtmlPart => {
-        if (part.kind === 'html') return { kind: 'html', html: sanitizeHtmlBlock(part.html, media) }
-        if (part.kind === 'open') return { kind: 'open', tag: part.tag, props: sanitizeTagProps(part.tag, part.attrs) }
-        return { kind: 'close' }
-      }),
+    const parts: PreparedHtmlPart[] = []
+    /** Tag of the wrapper the previous part opened — the only place a
+     *  following leaf can hoist a `<summary>` out of its block wrapper. */
+    let openTag: string | null = null
+    for (const part of analyzeHtmlSegment(segment.text).parts) {
+      if (part.kind === 'html') {
+        const html = sanitizeHtmlBlock(part.html, media)
+        const summary = openTag === 'details' ? splitLeadingSummary(html, media) : null
+        if (summary === null) {
+          parts.push({ kind: 'html', html })
+        } else {
+          parts.push({ kind: 'summary', props: summary.props, inner: summary.inner })
+          // Anything after the summary keeps the plain block-leaf treatment.
+          if (summary.rest.trim() !== '') parts.push({ kind: 'html', html: summary.rest })
+        }
+        openTag = null
+        continue
+      }
+      if (part.kind === 'open') {
+        const props = sanitizeTagProps(part.tag, part.attrs)
+        parts.push({ kind: 'open', tag: part.tag, props })
+        // A denied wrapper renders transparent, so its children have no element
+        // to be a direct child of — never hoist a summary into that case.
+        openTag = props === null ? null : part.tag
+        continue
+      }
+      parts.push({ kind: 'close' })
+      openTag = null
     }
+    return { kind: 'html', parts }
   // `media` is a memoized object in the host (TextEditor); identity tracks
   // scope/path/origin changes so sanitization re-runs exactly when needed.
   }), [info, media])
@@ -275,6 +356,11 @@ export function MarkdownDocument({ info, media, codeLabels }: MarkdownDocumentPr
       if (part.kind === 'html') {
         if (part.html.trim() === '') continue
         emit(<HtmlLeaf key={`html-${key += 1}`} html={part.html} />)
+      } else if (part.kind === 'summary') {
+        // Emitted as a real element (not a block leaf) so it stays a direct
+        // child of the enclosing <details> — the content-model requirement for
+        // it to act as the disclosure widget, with the authored label.
+        emit(createElement('summary', { ...part.props, key: `summary-${key += 1}`, dangerouslySetInnerHTML: { __html: part.inner } }))
       } else if (part.kind === 'open') {
         frames.push({ tag: part.tag, props: part.props, children: [] })
       } else {

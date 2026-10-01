@@ -2238,7 +2238,11 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   padding: 4px 0;
 }
 
-.editorHtmlBlock summary {
+/* A `<summary>` the renderer hoisted out of a leaf is a direct child of its
+   `<details>` (see MarkdownHtml.tsx), so it no longer sits inside
+   `.editorHtmlBlock` — match it against the preview container too. */
+.editorHtmlBlock summary,
+.editorMd details > summary {
   cursor: pointer;
 }
 
