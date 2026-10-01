@@ -462,12 +462,18 @@ export interface SidebarSurface {
   fileAddress(sessionId: string, cwd: string | undefined, path: string): string
   /** Close one native tab; the closed record's type/title, or undefined when the id is not native. */
   close(sessionId: string, tabId: string): { type: string; title: string } | undefined
-  /** Patch a native tab's plugin-side record; false when it is not native. */
-  update(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): boolean
-  /** Focus a native tab; false when it is not native. */
-  activate(tabId: string): boolean
-  /** Whether a tab id belongs to the native surface. */
-  has(tabId: string): boolean
+  /**
+   * Patch a native tab's plugin-side record; false when it is not native.
+   * `sessionId` (optional) names the seat session the tab lives in: native tab
+   * ids restart per session and several sessions' tabs are alive at once
+   * (`keepMounted`), so a caller that knows its session should pass it.
+   * Omitted, the id resolves against the mounted seat.
+   */
+  update(tabId: string, patch: { title?: string; path?: string; meta?: unknown }, sessionId?: string): boolean
+  /** Focus a native tab; false when it is not native (same `sessionId` rule as `update`). */
+  activate(tabId: string, sessionId?: string): boolean
+  /** Whether a tab id belongs to the native surface (same `sessionId` rule as `update`). */
+  has(tabId: string, sessionId?: string): boolean
 }
 
 /**
@@ -585,8 +591,14 @@ export interface BetterSidebarService {
   getSnapshot(): SidebarSnapshot
   /** Subscribe to snapshot changes (session switch, state changes, prefs changes). Returns the disposer. */
   subscribeState(listener: () => void): () => void
-  /** Update an open tab's display fields (title / path / meta); a missing tab id is a no-op. */
-  updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void
+  /**
+   * Update an open tab's display fields (title / path / meta); a missing tab id
+   * is a no-op. `sessionId` names the seat session the tab lives in — native
+   * ids restart per session and several sessions' tabs stay mounted at once,
+   * so a component that knows its scope should pass it; omitted, a native id
+   * resolves against the mounted seat.
+   */
+  updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }, sessionId?: string): void
   /**
    * Activate an open tab (the tab-bar activation path; fires
    * descriptor.onActivate). An unknown tab id is a strict no-op. `scope`
@@ -1105,8 +1117,12 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   const subscribeState = (listener: () => void): (() => void) => store.subscribe(listener)
 
   /** Patch an open tab's display fields (a missing tab id is a no-op). */
-  const updateTab = (tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void => {
-    if (surface?.update(tabId, patch) === true) return
+  const updateTab = (
+    tabId: string,
+    patch: { title?: string; path?: string; meta?: unknown },
+    sessionId?: string,
+  ): void => {
+    if (surface?.update(tabId, patch, sessionId) === true) return
     store.reduce((state) => patchTab(state, tabId, {
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.path !== undefined ? { path: patch.path } : {}),
@@ -1116,7 +1132,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
 
   /** Activate an open tab (the tab-bar activation path; fires onActivate). */
   const activateTab = (tabId: string, scope?: SessionScope): void => {
-    if (surface?.activate(tabId) === true) return
+    if (surface?.activate(tabId, scope?.sessionId) === true) return
     let activated: SidebarTab | undefined
     store.reduce((state) => {
       // Unknown tab ids are a strict no-op (no state churn / notify).

@@ -83,9 +83,15 @@ function treeWidthOf(tab: SidebarTab): number {
     : TREE_WIDTH_DEFAULT
 }
 
-/** Merge a patch into the tab's persisted meta (rides the layout). */
-function patchMeta(ctx: Context, tab: SidebarTab, patch: Record<string, unknown>): void {
-  ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { ...metaOf(tab), ...patch } })
+/**
+ * Merge a patch into the tab's persisted meta (rides the layout).
+ *
+ * `sessionId` is the seat session: native ids restart per session and every
+ * visited tab's body stays mounted (0.1.7 `keepMounted`), so the tab this call
+ * means must be named, not inferred from whichever seat is on screen.
+ */
+function patchMeta(ctx: Context, tab: SidebarTab, sessionId: string, patch: Record<string, unknown>): void {
+  ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { ...metaOf(tab), ...patch } }, sessionId)
 }
 
 /** Clamp one dock width into the contract range. */
@@ -177,7 +183,7 @@ export function EditorHost(props: {
    */
   const openFile = (absolute: string): void => {
     if (inPlace) {
-      ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) })
+      ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) }, scope.sessionId)
     } else {
       openSidebarFile(ctx, scope.sessionId, absolute)
     }
@@ -317,7 +323,7 @@ export function EditorHost(props: {
     dragRef.current = null
     setDragWidth(null)
     const finalWidth = clampTreeWidth(drag.startWidth + (drag.startX - event.clientX))
-    if (finalWidth !== treeWidthOf(tab)) patchMeta(ctx, tab, { treeWidth: finalWidth })
+    if (finalWidth !== treeWidthOf(tab)) patchMeta(ctx, tab, scope.sessionId, { treeWidth: finalWidth })
   }
 
   useEffect(() => {
@@ -399,7 +405,7 @@ export function EditorHost(props: {
 
   const treeOpen = treeOpenOf(tab)
   /** Persist the panel flag on the tab (survives reloads with the layout). */
-  const toggleTree = (): void => { patchMeta(ctx, tab, { treeOpen: !treeOpen }) }
+  const toggleTree = (): void => { patchMeta(ctx, tab, scope.sessionId, { treeOpen: !treeOpen }) }
   const saveLabel = toolbar === null ? ''
     : toolbar.saveState === 'saving' ? t('loading')
       : toolbar.saveState === 'saved' ? t('saved')

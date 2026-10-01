@@ -330,8 +330,12 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // The sweep opened the Side Chat type, whose view auto-creates a thread and
   // polls the transcript — that poll MUST ride the plugin's own
   // sidechat.events route (the host transport this lane locks). The poll runs
-  // only while the tab is visible, so activate its chip first.
-  await pane.getByRole('tab', { name: /Side Chat|侧边对话|侧边聊天/ }).first().click()
+  // only while the tab is visible, so activate it first — THROUGH ITS GUIDE
+  // ENTRY, not by chip text: the chip follows the thread's own display title
+  // once the tab keeps its record (the state-retention fix), so `/Side Chat/`
+  // no longer names it.
+  if (await page.locator('[data-sidebar-right-guide]').count() === 0) await addTab.click()
+  await page.locator('[data-sidebar-right-guide-entry="sidechat"]').click()
   await expect
     .poll(
       () => page.evaluate(() =>
