@@ -49,7 +49,7 @@ import { useCenterColumn } from './sidebar/use-center-column.ts'
 import { useHostFeeds } from './sidebar/use-host-feeds.ts'
 import { mountedSessions } from './native/surface.ts'
 import type { TabDragPayload } from './TabBar.tsx'
-import { t } from './locales.ts'
+import { getCopyRevision, subscribeCopy, t } from './locales.ts'
 import { api } from './api.ts'
 import css from './sidebar.module.css'
 
@@ -105,6 +105,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     useCallback(() => ctx.locale.getSnapshot().active, [ctx]),
   )
   void localeRevision
+  // The native third-language dictionaries arriving (`attachLocaleDicts`, dsh 0.1.7 with no
+  // better-locale store) re-render the tree too; the memoized tab cells get it through `localeRevision`.
+  const copyRevision = useSyncExternalStore(subscribeCopy, getCopyRevision)
 
   // better-locale override freshness: when @huanlin/dsh-plugin-better-locale
   // is installed and the user picks an override language (e.g. ja), the
@@ -639,7 +642,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
         visible={state.bottomOpen && active}
         onSubagentJump={(childSessionId) => { subagentJumpRef.current = childSessionId }}
         onOpenDiff={(diffTab) => { store.reduce(s => openDiffTab(s, paneId, diffTab)) }}
-        localeRevision={localeRevision}
+        localeRevision={`${localeRevision}#${String(copyRevision)}`}
         tabsVersion={tabsVersion}
       />
     )

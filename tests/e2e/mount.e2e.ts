@@ -55,7 +55,7 @@ const SEEDED_README_FILE = 'readme-style.md'
  * renders a strip whose text starts with these prefixes instead of crashing
  * (see src/client/index.tsx `fail()` and src/client/RenderBoundary.tsx).
  */
-const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
+const CRASH_STRIP_PATTERNS = [/^Tracy Sidebar:/, /^\[dsh-better-sidebar\]/]
 
 /**
  * The tab types the plugin itself contributes, plus the host-owned kind the

@@ -48,6 +48,14 @@ function fileTag(file: DiffFile): string | null {
 export interface DiffFilesProps {
   /** Unified diff text (`git.diff` or `git.commit-diff` payloads). */
   diff: string
+  /**
+   * Open every file, whatever it is (0.18.0-tracy.1).
+   *
+   * The default keeps tests, docs and generated files folded, which is right for a commit holding
+   * a dozen files. It is wrong when the surface IS one file the reader just asked for: they press
+   * `.htaccess` and get a row saying `.htaccess`.
+   */
+  expandAll?: boolean
   /** Untracked-file content: when present, renders as a full-file addition instead of parsing. */
   untrackedPath?: string
   untrackedContent?: string
@@ -58,15 +66,19 @@ export interface DiffFilesProps {
   resolveFold?: (file: DiffFile, segment: FoldSegment) => Promise<readonly DiffRow[]>
 }
 
-export function DiffFiles({ diff, untrackedPath, untrackedContent, resolveFold }: DiffFilesProps) {
+export function DiffFiles({ diff, untrackedPath, untrackedContent, expandAll = false, resolveFold }: DiffFilesProps) {
   const parsed = useMemo(() => {
     if (untrackedPath !== undefined) {
       return { files: [untrackedFile(untrackedPath, untrackedContent ?? '')] }
     }
     return parseUnifiedDiff(diff)
   }, [diff, untrackedPath, untrackedContent])
-  const [expandedFiles, setExpandedFiles] = useState<Set<number>>(() => defaultExpandedFiles(parsed.files))
-  useEffect(() => { setExpandedFiles(defaultExpandedFiles(parsed.files)) }, [parsed])
+  const openAll = (files: readonly DiffFile[]): Set<number> => new Set(files.map((_, index) => index))
+  const [expandedFiles, setExpandedFiles] = useState<Set<number>>(() =>
+    expandAll ? openAll(parsed.files) : defaultExpandedFiles(parsed.files))
+  useEffect(() => {
+    setExpandedFiles(expandAll ? openAll(parsed.files) : defaultExpandedFiles(parsed.files))
+  }, [parsed, expandAll])
 
   // One in-flight/resolved promise per file+fold key, so a fold re-clicked
   // after a remount (file header collapsed and re-expanded) resolves without

@@ -38,6 +38,8 @@ interface FakeContext {
   }
   sessions: { get: (id: string) => { header: { cwd?: string } } | undefined }
   tools: { register: (tool: unknown) => () => void }
+  /** Tracy: the host half provides `sidebarFrame`. */
+  provide: (name: string, value: unknown) => void
   effect: (fn: () => void | (() => void), label?: string) => void
   /** The session/agent event feeds: nothing emits in these tests. */
   on: (event: string, listener: (payload: never) => void) => () => void
@@ -66,6 +68,7 @@ describe('host plugin smoke', () => {
       },
       sessions: { get: () => undefined },
       tools: { register: () => () => {} },
+      provide: () => {},
       // The DSH-vendored cordis runs the registration effect immediately and
       // keeps its cleanup for disposal.
       effect: (fn) => {
@@ -86,6 +89,9 @@ describe('host plugin smoke', () => {
       '/sidebar/bundle',
       '/sidebar/file',
       '/sidebar/html',
+      // Tracy: serves a framing-refused document from this origin so the
+      // browser tab can show it (Joomla and WordPress send X-Frame-Options).
+      '/sidebar/frame',
     ])
     expect(upgrades.map(route => route.path)).toEqual(['/sidebar/ws/agent-opens', '/sidebar/ws/fs-watch'])
     // Teardown runs without throwing.
@@ -107,6 +113,7 @@ describe('host plugin smoke', () => {
       },
       sessions: { get: () => ({ header: { cwd: directory } }) },
       tools: { register: () => () => {} },
+      provide: () => {},
       effect: (fn) => {
         const cleanup = fn()
         if (typeof cleanup === 'function') effects.push(cleanup)
@@ -317,6 +324,7 @@ describe('session cwd resolution over the API route', () => {
       },
       sessions: overrides.sessions ?? { get: () => undefined },
       tools: { register: () => () => {} },
+      provide: () => {},
       // The vendored cordis runs registration effects immediately.
       effect: (fn: () => void | (() => void)) => { fn() },
       // No settings service: the namespace registration never runs.
@@ -364,20 +372,20 @@ describe('session cwd resolution over the API route', () => {
     return out
   }
 
-  it('uses the client summary cwd while the session is detached', async () => {
+  it('refuses a session the harness cannot name, summary cwd or not (Tracy)', async () => {
+    // The client's summary must never STAND IN for the workspace: dsh-passwords
+    // lets a seat reach fs.read/fs.write and checks allowed_folders against the
+    // cwd its own grant recorded — never against the cwd in the request. This
+    // check is the only one that reads the request's directory at all.
     const route = mount()
-    const result = await invoke(route, 'session.cwd', { sessionId: 's-detached', cwd: '/tmp/summary-cwd' })
-    expect(result.ok).toBe(true)
-    // The summary cwd passes through requireAbsolute (platform resolve), so
-    // the expectation follows the platform's own normalization.
-    expect(result.value?.cwd).toBe(resolvePath('/tmp/summary-cwd'))
-  })
-
-  it('falls back to the process cwd with no summary cwd', async () => {
-    const route = mount()
-    const result = await invoke(route, 'session.cwd', { sessionId: 's-unknown' })
-    expect(result.ok).toBe(true)
-    expect(result.value?.cwd).toBe(process.cwd())
+    const withSummary = await invoke(route, 'session.cwd', { sessionId: 's-detached', cwd: '/tmp/summary-cwd' })
+    expect(withSummary.ok).toBe(false)
+    expect(withSummary.error?.message).toMatch(/no workspace directory/)
+    const without = await invoke(route, 'session.cwd', { sessionId: 's-unknown' })
+    expect(without.ok).toBe(false)
+    expect(without.error?.message).toMatch(/no workspace directory/)
+    // Never the harness's own directory either.
+    expect(without.value?.cwd).not.toBe(process.cwd())
   })
 
   it('resolves a cold (detached) session cwd through the persistence index', async () => {
@@ -416,30 +424,43 @@ describe('session cwd resolution over the API route', () => {
     expect(result.error?.message).toMatch(/invalid working directory/)
   })
 
-  it('falls back to the process cwd when persistence has no cwd for the session', async () => {
+  it('refuses when persistence knows the session but not its cwd (Tracy)', async () => {
+    // The process cwd was the last resort here. On a harness that serves many
+    // sites it is the HARNESS's own directory — the one place a customer's
+    // request must never land.
     const route = mount({
       sessionPersistence: {
         open: async () => ({ header: {}, read: async () => ({ events: [] }), close: async () => {} }),
       },
     })
     const result = await invoke(route, 'session.cwd', { sessionId: 's-blank' })
-    expect(result.ok).toBe(true)
-    expect(result.value?.cwd).toBe(process.cwd())
+    expect(result.ok).toBe(false)
+    expect(result.error?.message).toMatch(/no workspace directory/)
+    expect(result.value?.cwd).not.toBe(process.cwd())
   })
 
-  it('prefers the attached session header over the client summary', async () => {
+  it('prefers the attached session header, and refuses a summary that points elsewhere (Tracy)', async () => {
+    const attached = resolvePath('/attached-cwd')
     const route = mount({
       sessions: {
-        get: (id) => id === 's-attached' ? { header: { cwd: '/attached-cwd' } } : undefined,
+        get: (id) => id === 's-attached' ? { header: { cwd: attached } } : undefined,
       },
     })
-    const result = await invoke(route, 'session.cwd', { sessionId: 's-attached', cwd: '/tmp/summary-cwd' })
-    expect(result.ok).toBe(true)
-    expect(result.value?.cwd).toBe('/attached-cwd')
+    // A summary inside the workspace is honoured (a subdirectory scope)…
+    const inside = await invoke(route, 'session.cwd', { sessionId: 's-attached', cwd: join(attached, 'src') })
+    expect(inside.ok).toBe(true)
+    expect(inside.value?.cwd).toBe(join(attached, 'src'))
+    // …and one pointing outside is refused rather than quietly ignored: on a
+    // multi-site harness it names another tenant, not a stale folder.
+    const elsewhere = await invoke(route, 'session.cwd', { sessionId: 's-attached', cwd: '/tmp/summary-cwd' })
+    expect(elsewhere.ok).toBe(false)
+    expect(elsewhere.error?.message).toMatch(/outside the session workspace/)
   })
 
   it('rejects a non-absolute client cwd', async () => {
-    const route = mount()
+    const route = mount({
+      sessions: { get: () => ({ header: { cwd: resolvePath('/attached-cwd') } }) },
+    })
     const result = await invoke(route, 'session.cwd', { sessionId: 's-detached', cwd: 'relative/path' })
     expect(result.ok).toBe(false)
     expect(result.error?.message).toMatch(/invalid working directory/)
@@ -703,7 +724,7 @@ const createFakeSettings = (pre?: Record<string, Record<string, unknown>>) => {
  * @param home - a harness home holding a retired `settings.yaml`, when the test wants the legacy import to run.
  * @returns the mounted `/sidebar/api` route.
  */
-const mountWithSettings = (settings?: unknown, home?: string): SidebarWebRoute => {
+const mountWithSettings = (settings?: unknown, home?: string, sessionCwd?: string): SidebarWebRoute => {
   const routes: SidebarWebRoute[] = []
   const ctx = {
     webRuntime: { trustedHosts: [] },
@@ -711,8 +732,11 @@ const mountWithSettings = (settings?: unknown, home?: string): SidebarWebRoute =
       register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
       registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
     },
-    sessions: { get: () => undefined },
+    // Tracy: the fs routes resolve their cwd from the SESSION, never from the
+    // client payload, so a mount that exercises them needs a workspace.
+    sessions: { get: () => (sessionCwd === undefined ? undefined : { header: { cwd: sessionCwd } }) },
     tools: { register: () => () => {} },
+    provide: () => {},
     effect: (fn: () => void | (() => void)) => { fn() },
     inject: (deps: string[], callback: (sctx: { settings: unknown }) => void) => {
       if (deps.includes('settings') && settings !== undefined) callback({ settings })
@@ -846,29 +870,40 @@ describe('side card settings routes', () => {
     }
   })
 
-  it('disarms the workspace fence for the fs routes when the pref is off', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fence-off-'))
+  it('refuses to disarm the workspace fence, and keeps every fs route bounded (Tracy)', async () => {
+    // Upstream lets `workspaceFence: false` disarm the fs routes. This fork
+    // serves many customer sites from one process, so the switch does not
+    // exist: the settings route refuses the pref, and reads, writes and the
+    // rename/delete routes stay inside the session workspace.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fence-locked-'))
     const workspace = join(root, 'workspace')
     const outside = join(root, 'outside')
     mkdirSync(workspace)
     mkdirSync(outside)
     writeFileSync(join(outside, 'secret.txt'), 'global instructions')
     try {
-      const route = mountWithSettings(createFakeSettings())
-      // Default (fence on): the outside read is refused as usual…
+      const route = mountWithSettings(createFakeSettings(), undefined, workspace)
       const refused = await invoke(route, 'fs.read', { sessionId: 'fence', cwd: workspace, path: join(outside, 'secret.txt') })
       expect(refused).toMatchObject({ ok: false, error: { code: 'forbidden' } })
-      // …then the settings-page switch (or the fence notice's one-click off)
-      // disarms every fs route for paths outside the workspace.
+      // The switch is refused loudly, not stripped: a toggle that never
+      // sticks would look like a bug in the toggle.
       const off = await invoke(route, 'settings.update', { patch: { workspaceFence: false } })
-      expect(off.ok).toBe(true)
+      expect(off).toMatchObject({ ok: false, error: { code: 'settings-rejected' } })
+      expect(off.error?.message).toMatch(/cannot be turned off/)
+      // Other settings still write through the same route.
+      const other = await invoke(route, 'settings.update', { patch: { agentOpenTools: false } })
+      expect(other.ok).toBe(true)
+      // …and the fs routes are still bounded afterwards, the destructive
+      // ones included.
       const read = await invoke(route, 'fs.read', { sessionId: 'fence', cwd: workspace, path: join(outside, 'secret.txt') })
-      expect(read).toMatchObject({ ok: true, value: { kind: 'text', content: 'global instructions' } })
-      const tree = await invoke(route, 'fs.tree', { sessionId: 'fence', cwd: workspace, path: outside })
-      expect(tree).toMatchObject({ ok: true })
+      expect(read).toMatchObject({ ok: false, error: { code: 'forbidden' } })
       const write = await invoke(route, 'fs.write', { sessionId: 'fence', cwd: workspace, path: join(outside, 'written.txt'), content: 'ok' })
-      expect(write).toMatchObject({ ok: true })
-      expect(readFileSync(join(outside, 'written.txt'), 'utf8')).toBe('ok')
+      expect(write).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+      const rename = await invoke(route, 'fs.rename', { sessionId: 'fence', cwd: workspace, path: join(outside, 'secret.txt'), name: 'moved.txt' })
+      expect(rename).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+      const remove = await invoke(route, 'fs.remove', { sessionId: 'fence', cwd: workspace, path: join(outside, 'secret.txt') })
+      expect(remove).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+      expect(readFileSync(join(outside, 'secret.txt'), 'utf8')).toBe('global instructions')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -923,6 +958,7 @@ describe('agent sidebar-open tool gating', () => {
       },
       sessions: { get: () => undefined },
       tools: { register: () => { registered += 1; return () => { disposed += 1 } } },
+      provide: () => {},
       effect: (fn: () => void | (() => void)) => { fn() },
       inject: (deps: readonly string[], callback: (sctx: { settings: unknown }) => void) => {
         if (deps.includes('settings')) callback({ settings })

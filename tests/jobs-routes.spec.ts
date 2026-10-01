@@ -238,9 +238,40 @@ describe('jobs.output route (event replay)', () => {
   })
 })
 
+/** One registry job view, owned by `owner` or unowned. */
+const view = (id: string, owner?: string) => ({
+  id, kind: 'bash', label: id, status: 'running' as const, startedAt: 1, ...(owner === undefined ? {} : { owner }),
+})
+
+describe('jobs.list route (Tracy: the named session\'s own jobs only)', () => {
+
+  it('answers only the jobs the named session owns — never an unowned one', () => {
+    // The registry answers the caller's jobs AND every unowned job; a seat names only its own session.
+    const jobs = { list: vi.fn(() => [view('bash-1', 's1'), view('bash-2'), view('subagent-1', 's1')]) }
+    const api = buildJobsApi(ctxWith({ get: () => undefined }, jobs), 100)
+    expect(api.list({ sessionId: 's1' }).jobs.map(job => job.id)).toEqual(['bash-1', 'subagent-1'])
+    expect(jobs.list).toHaveBeenCalledWith('s1')
+  })
+})
+
 describe('jobs.kill route', () => {
+  it('refuses an unowned job or one another session owns, as an unknown one (404)', () => {
+    const jobs = {
+      list: vi.fn(() => [view('bash-1', 's1'), view('bash-2')]),
+      kill: vi.fn(() => 'requested' as const),
+    }
+    const api = buildJobsApi(ctxWith({ get: () => undefined }, jobs), 100)
+    for (const id of ['bash-2', 'bash-3']) {
+      expect(() => api.kill({ sessionId: 's1', id })).toThrowError(
+        expect.objectContaining<Partial<SidebarError>>({ code: 'job-error', status: 404 }),
+      )
+    }
+    expect(jobs.kill).not.toHaveBeenCalled()
+    expect(api.kill({ sessionId: 's1', id: 'bash-1' })).toEqual({ ok: true, outcome: 'requested' })
+  })
+
   it('kills with the forwarded reason and the owning session id', () => {
-    const jobs = { kill: vi.fn(() => 'requested' as const) }
+    const jobs = { list: () => [view('bash-1', 's1')], kill: vi.fn(() => 'requested' as const) }
     const api = buildJobsApi(ctxWith({ get: () => undefined }, jobs), 100)
     expect(api.kill({ sessionId: 's1', id: 'bash-1', reason: 'user pressed stop' }))
       .toEqual({ ok: true, outcome: 'requested' })
@@ -249,14 +280,14 @@ describe('jobs.kill route', () => {
   })
 
   it('defaults the reason when none is supplied', () => {
-    const jobs = { kill: vi.fn(() => 'already-finished' as const) }
+    const jobs = { list: () => [view('bash-1', 's1')], kill: vi.fn(() => 'already-finished' as const) }
     const api = buildJobsApi(ctxWith({ get: () => undefined }, jobs), 100)
     expect(api.kill({ sessionId: 's1', id: 'bash-1' })).toEqual({ ok: true, outcome: 'already-finished' })
     expect(jobs.kill).toHaveBeenCalledWith('bash-1', 's1', 'user requested via sidebar')
   })
 
   it('maps registry refusals to a 404 job-error', () => {
-    const jobs = { kill: vi.fn(() => { throw new Error('unknown job bash-9') }) }
+    const jobs = { list: () => [view('bash-9', 's1')], kill: vi.fn(() => { throw new Error('job bash-9 already removed') }) }
     const api = buildJobsApi(ctxWith({ get: () => undefined }, jobs), 100)
     expect(() => api.kill({ sessionId: 's1', id: 'bash-9' })).toThrowError(
       expect.objectContaining<Partial<SidebarError>>({ code: 'job-error', status: 404 }),

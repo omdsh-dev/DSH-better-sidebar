@@ -121,7 +121,7 @@ export const zh = {
   terminalWaitBanner: 'Agent 正在等待 {needle}',
   terminalSkipWait: '跳过等待',
   terminalDepsFailed: '终端依赖 node-pty 加载失败',
-  terminalDepsHint: '在 DSH 所在环境的终端或 cmd 中执行以下命令修复，然后点重试（node-pty 与 DSH 核心保持同一版本）：',
+  terminalDepsHint: '在 Tracy 所在环境的终端或 cmd 中执行以下命令修复，然后点重试（node-pty 与 Tracy 核心保持同一版本）：',
   terminalDepsProfile: '（检测到 profile：{profile}）',
   terminalShellNotFound: '未找到配置的 Shell：{name}，请到 设置 → 侧边卡片 → 终端 检查 Shell 路径',
   preview: '预览',
@@ -246,12 +246,12 @@ export const zh = {
   settingsOpenToolsTitle: '为模型注入侧边栏打开工具',
   settingsOpenToolsDesc: '开启后，模型可通过 sidebar_open 工具在侧边栏主动打开文件、文件夹和 HTTP(S) 网页（默认关闭）',
   settingsTitleBarTitle: '位置兼容模式',
-  settingsTitleBarDesc: '选择顶栏兼容方案：自动检测（默认，保守）/ DSH官方Web / 已知桌面壳 / 自定义方案（下移距离 + 自定义 CSS）',
+  settingsTitleBarDesc: '选择顶栏兼容方案：自动检测（默认，保守）/ Tracy Cowork 官方 Web / 已知桌面壳 / 自定义方案（下移距离 + 自定义 CSS）',
   settingsTitleBarStripTitle: '下移距离',
   settingsTitleBarStripDesc: '标题栏条带高度：侧边栏按钮与内容下移的像素数（0–120，默认 40；自定义方案下生效）',
   settingsSchemeAutoTitle: '自动检测',
   settingsSchemeAutoDesc: '保守方案：仅在 Window Controls Overlay 标准 API 可用时按真实标题栏高度让位；网页环境下不做任何修改',
-  settingsSchemeWebTitle: 'DSH官方Web',
+  settingsSchemeWebTitle: 'Tracy Cowork 官方 Web',
   settingsSchemeWebDesc: '显式声明运行在官方网页版：不做任何适配（连标准 WCO 几何也不适用）',
   settingsSchemeCustomTitle: '自定义方案',
   settingsSchemeCustomDesc: '完全由你控制：注入自定义 CSS（可覆盖内置样式），并指定标题栏下移距离',
@@ -296,6 +296,14 @@ export const zh = {
   viewerCode: '代码',
   viewerHtml: 'HTML',
   browser: '浏览器',
+  browserSites: '切换网站',
+  browserSitesLoading: '正在加载网站…',
+  browserSitesRetry: '无法加载网站。重试',
+  browserSitesEmpty: '没有可用的网站',
+  browserLiveEdit: '实时编辑',
+  browserSiteSettings: '设置',
+  browserSiteTeam: '团队',
+  browserSiteHistory: '历史',
   browserPlaceholder: '输入网址，例如 example.com',
   browserGo: '前往',
   browserBack: '后退',
@@ -321,6 +329,79 @@ export const zh = {
   browserEmbedBlocked: '{host} 拒绝了嵌入请求',
   browserEmbedBlockedDesc: '该站点通过 X-Frame-Options / frame-ancestors 禁止在其它页面中显示，无法在侧边栏内加载。可在浏览器中直接打开',
   browserEmbedAnyway: '仍然加载',
+  editButton: '编辑',
+  editTitle: '编辑：点击页面上的任意内容进行修改',
+  editUnavailable: '此页面暂时无法编辑。再次点击“编辑”重试。',
+  editHint: '点击页面上的任意内容进行编辑',
+  editHintExit: '按 Esc 返回交互',
+  editUnavailablePage: '此页面暂时无法编辑。重新加载页面后再试。',
+  editReloadPage: '重新加载',
+  modeInteractive: '交互',
+  modeInteractiveTitle: '交互：像访客一样使用网站',
+  browserMode: '模式',
+  browserZoom: '缩放',
+  browserCopyLink: '复制此页面在此模式下的链接',
+  browserLinkCopied: '链接已复制',
+  browserLinkCopyFailed: '无法复制链接',
+  editClose: '关闭',
+  editPlaceholder: '描述这里要改成什么…',
+  editSend: '发送给 Tracy',
+  editFailedNoSession: '未发送：此对话已不再打开。',
+  editFailedSiteMismatch: '未发送：此页面属于另一个站点。',
+  editFailedReadonly: '未发送：此对话无法接收新消息。',
+  editFailedRejected: '未发送：聊天未接受该消息。',
+  editFailedTimeout: '聊天没有响应。你的文字已保留，请重试。',
+  editFailedNoListener: '未发送：此页面上的聊天尚未就绪。',
+  editFailedUnknown: '未发送。你的文字已保留，请重试。',
+  editNotSaved: '未保存。',
+  commentErrTooLong: '内容太长，无法保存。请控制在 {max} 个字符以内。',
+  commentErrRateLimit: '短时间内保存次数太多。请等一分钟再试。',
+  commentErrSignedOut: '你已退出登录。请重新登录后再试。',
+  commentErrNoSeat: '你在这个网站上已没有席位。请向网站所有者申请。',
+  commentErrNotYours: '只有作者本人可以修改这条内容。',
+  commentErrNetwork: '无法连接服务器。请检查网络后再试。',
+  commentErrFile: '有文件无法保存。请移除它或重试。',
+  commentErrUnknown: '无法保存。你的文字已保留，请重试。',
+  commentCharCount: '{count} / {max}',
+  commentRootDeleted: '评论已删除',
+  commentTitle: '评论',
+  commentCloseTitle: '关闭（Esc）',
+  commentHiddenNow: '{name}（当前已隐藏）',
+  commentLostKept: '此评论已被删除。你的文字已保留。',
+  commentLostAdd: '添加为新评论',
+  commentLostDiscard: '丢弃',
+  commentErrNotSentNetwork: '未发送。请检查网络连接后重试。',
+  commentAdd: '添加评论',
+  commentDelete: '删除',
+  commentDeleted: '已删除',
+  commentUndo: '撤销',
+  commentEdit: '编辑',
+  commentCopyLink: '复制链接',
+  commentMore: '更多',
+  commentThread: '评论讨论串',
+  commentReply: '回复',
+  commentReplyPlaceholder: '回复…',
+  commentResolve: '解决',
+  commentResolvedBy: '已由 {name} 解决 · 回复会重新打开',
+  commentRemoved: '消息已删除',
+  commentPinLabel: '{name} 的评论',
+  commentYou: '你',
+  editNotSent: '未发送。',
+  refreshWorking: 'Tracy 正在处理',
+  refreshUpdated: '新版本已更新',
+  refreshReady: '新版本已就绪',
+  commentsButton: '评论',
+  commentsButtonCount: '评论，{count}',
+  editFailedTooLong: '一次发送的内容太多，请减少评论数量。',
+  attachButton: '添加附件',
+  attachTitle: '添加附件，也可以拖放或粘贴到这里',
+  attachRemove: '移除 {name}',
+  attachTooLarge: '{name} 太大，单个文件最大 {limit}',
+  attachTooMany: '文件太多，一次最多 {limit} 个',
+  attachOpen: '打开 {name}',
+  editFailedAttachmentTooLarge: '有文件太大，无法发到对话，请换一个小一些的文件',
+  editFailedAttachmentFailed: '有文件未能添加到对话，请重试',
+  editSave: '保存',
   subagent: '任务管理',
   openSubagent: '任务管理',
   subagentMainAgent: '主代理',
@@ -406,8 +487,8 @@ export const zh = {
   addPluginsTabCardDesc: '注册新的侧边栏页面',
   addPluginsViewerCard: '添加预览插件',
   addPluginsViewerCardDesc: '注册新的文件类型预览',
-  addPluginsTabDesc: '侧边栏页面（Tab）可以由插件扩展。插件通过 ctx.betterSidebar 服务注册；点击「安装」复制安装命令，粘贴到 DSH 所在环境的终端执行。',
-  addPluginsViewerDesc: '文件预览器可以由插件扩展。插件通过 ctx.betterSidebar 服务注册；点击「安装」复制安装命令，粘贴到 DSH 所在环境的终端执行。',
+  addPluginsTabDesc: '侧边栏页面（Tab）可以由插件扩展。插件通过 ctx.betterSidebar 服务注册；点击「安装」复制安装命令，粘贴到 Tracy 所在环境的终端执行。',
+  addPluginsViewerDesc: '文件预览器可以由插件扩展。插件通过 ctx.betterSidebar 服务注册；点击「安装」复制安装命令，粘贴到 Tracy 所在环境的终端执行。',
   addPluginsBrowseMore: '在 GitHub 上浏览更多插件（topic: dsh-better-sidebar）',
   addPluginsSearch: '搜索插件名称 / 描述…',
   addPluginsNoMatch: '没有匹配的插件',
@@ -420,7 +501,7 @@ export const zh = {
   pluginFlowglassDesc: '实时会话流程图：三列泳道展示用户、助手与工具调用，支持并行分组、子代理支线、逐层钻取和实时状态；安装 better-sidebar 后注册原生「流镜」Tab，未安装时保留独立抽屉',
   pluginGitForgeDesc: 'better-sidebar「Git 凭据」Tab：GitHub/Gitea 等 Forge 账号库 + 按项目授权 + push 策略硬拦；token 仅存本地 secrets，不进模型上下文；提供只读 GitForge 工具与 agent HTTPS credential helper',
   pluginGithubWorkbenchDesc: 'better-sidebar「GitHub 工作台」Tab：远端仓库目录树 + Issues / Pull requests / Actions 页签，读之外支持新建 Issue/PR、评论、编辑、关闭重开、squash·merge·rebase 合并（强确认）与重跑/取消 CI；仓库弹层自动拉取有权限列表并支持公开仓搜索；未装 better-sidebar 时自动降级为独立右侧面板',
-  pluginSuhuangScrollDesc: '把本地苏黄共阅 Runtime 接入 DSH 设置与 better-sidebar，支持模型配置、连接测试和连续阅卷控制；使用前需安装 Suhuang Scroll Runtime 与 dsh-better-sidebar',
+  pluginSuhuangScrollDesc: '把本地苏黄共阅 Runtime 接入 Tracy 设置与 better-sidebar，支持模型配置、连接测试和连续阅卷控制；使用前需安装 Suhuang Scroll Runtime 与 dsh-better-sidebar',
   pluginBetterOverleafDesc: 'better-sidebar 的 Overleaf 标签页：直连 CDP 浏览器登录（支持第三方 Chromium），项目列表/切换，<workspace>/overleaf/ 本地 git 镜像，git 双向同步（API 只读兜底），文件预览走侧边栏工作台',
   pluginGitRemotesDesc: 'better-sidebar Git 远程 Tab：看分支/上游/ahead-behind，fetch（可 prune）、ff-only pull、确认后才 push。不替换内置 Git 的暂存/提交，也不提供 force-push 或模型自动推送',
   pluginSentinelDesc: '条件驱动的 agent 唤醒系统：文件/进程/端口/HTTP/命令/webhook 传感器，条件达成自动唤醒休眠会话；注册「哨兵」Tab 展示服务器全局监控表',
@@ -431,9 +512,9 @@ export const zh = {
   pluginTurnReviewDesc: '对「刚刚这一回合」的 diff 做 Approve / Request changes 的人闸门：只审上一回合，不 fork 会话；文件按主会话/子代理/未归因分组，按文件勾选打回 + 可选评语，点文件先看回合开始快照 vs 现在的 diff。不是 /rewind',
   pluginVideoPreviewDesc: '在 better-sidebar 编辑器内联预览视频文件（.mp4/.webm/.mov/.mkv/.avi 等），自带支持 HTTP Range（206）的 /video 宿主路由，可拖动进度条、不受 20MB mediaLimit 限制',
   pluginCodeNavDesc: '代码预览导航：按文件类型自动识别语言并高亮语法，符号大纲（类/方法/变量筛选 + 一键跳转），文件内查找（全部匹配高亮、上/下一处、区分大小写），接管 better-sidebar 的代码文件预览',
-  pluginDocsPanelDesc: 'DSH 侧边栏里的「全局文档」：全局 Markdown 笔记，任何工作区随时可读——列表点选阅读、悬浮大纲跳转、Chrome / VS Code 外部打开、代码复制，目录可配置（默认 ~/.dsh/docs）',
-  pluginEgoBrowserDesc: '把 CitroLabs/ego-lite 接进 DeepSeek Harness 的 agent 浏览器：32 个 ego_* 工具驱动真实 Chromium，侧边栏原生「ego 浏览器」Tab 实时观察 agent 逛的每个页面，可直接点击/拖拽/输入接管；装 better-sidebar 时自动注册 Tab，没装则退回浮动浮窗',
-  pluginBilingualReaderDesc: '在 DSH 侧边栏读论文 PDF：原生 PDF 显示，选中一段文字即用大模型划词翻译，结合上下文、完全隔离主对话，只作阅读辅助',
+  pluginDocsPanelDesc: 'Tracy 侧边栏里的「全局文档」：全局 Markdown 笔记，任何工作区随时可读——列表点选阅读、悬浮大纲跳转、Chrome / VS Code 外部打开、代码复制，目录可配置（默认 ~/.dsh/docs）',
+  pluginEgoBrowserDesc: '把 CitroLabs/ego-lite 接进 Tracy Cowork 的 agent 浏览器：32 个 ego_* 工具驱动真实 Chromium，侧边栏原生「ego 浏览器」Tab 实时观察 agent 逛的每个页面，可直接点击/拖拽/输入接管；装 better-sidebar 时自动注册 Tab，没装则退回浮动浮窗',
+  pluginBilingualReaderDesc: '在 Tracy 侧边栏读论文 PDF：原生 PDF 显示，选中一段文字即用大模型划词翻译，结合上下文、完全隔离主对话，只作阅读辅助',
   pluginSentinelName: 'dsh-sentinel 唤醒系统',
   pluginEgoBrowserName: 'ego-browser Agent 浏览器',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf 标签页',
@@ -556,7 +637,7 @@ export const en: Record<keyof typeof zh, string> = {
   terminalWaitBanner: 'Agent is waiting for {needle}',
   terminalSkipWait: 'Skip wait',
   terminalDepsFailed: 'Terminal dependency node-pty failed to load',
-  terminalDepsHint: 'Run the command below in a terminal or cmd on the DSH machine to repair it, then retry (node-pty stays in sync with the DSH core version):',
+  terminalDepsHint: 'Run the command below in a terminal or cmd on the Tracy machine to repair it, then retry (node-pty stays in sync with the Tracy core version):',
   terminalDepsProfile: ' (detected profile: {profile})',
   terminalShellNotFound: 'Configured shell not found: {name} — check the shell path under Settings → Side card → Terminal',
   preview: 'Preview',
@@ -681,12 +762,12 @@ export const en: Record<keyof typeof zh, string> = {
   settingsOpenToolsTitle: 'Inject the sidebar-open tool for the model',
   settingsOpenToolsDesc: 'When enabled, the model can actively open files, folders, and HTTP(S) pages in the sidebar through the sidebar_open tool (off by default)',
   settingsTitleBarTitle: 'Position compatibility mode',
-  settingsTitleBarDesc: 'Pick the title-bar compatibility scheme: auto-detect (default, conservative) / DSH official web / known desktop shells / custom (shift distance + custom CSS)',
+  settingsTitleBarDesc: 'Pick the title-bar compatibility scheme: auto-detect (default, conservative) / Tracy Cowork web / known desktop shells / custom (shift distance + custom CSS)',
   settingsTitleBarStripTitle: 'Shift distance',
   settingsTitleBarStripDesc: 'Title-bar strip height: how far the sidebar buttons and content move down in px (0–120, default 40; applies under the custom scheme)',
   settingsSchemeAutoTitle: 'Auto-detect',
   settingsSchemeAutoDesc: 'Conservative: only the standard Window Controls Overlay API contributes (real caption-overlay height); plain web environments get no modification',
-  settingsSchemeWebTitle: 'DSH official web',
+  settingsSchemeWebTitle: 'Tracy Cowork web',
   settingsSchemeWebDesc: 'Explicitly declare the official web UI: no adaptation at all (not even standard WCO geometry)',
   settingsSchemeCustomTitle: 'Custom',
   settingsSchemeCustomDesc: 'Full control: inject custom CSS (can override built-in styles) and set the title-bar shift distance',
@@ -731,6 +812,14 @@ export const en: Record<keyof typeof zh, string> = {
   viewerCode: 'Code',
   viewerHtml: 'HTML',
   browser: 'Browser',
+  browserSites: 'Switch site',
+  browserSitesLoading: 'Loading sites…',
+  browserSitesRetry: 'Could not load sites. Retry',
+  browserSitesEmpty: 'No sites available',
+  browserLiveEdit: 'Live Edit',
+  browserSiteSettings: 'Settings',
+  browserSiteTeam: 'Team',
+  browserSiteHistory: 'History',
   browserPlaceholder: 'Enter a URL, e.g. example.com',
   browserGo: 'Go',
   browserBack: 'Back',
@@ -756,6 +845,79 @@ export const en: Record<keyof typeof zh, string> = {
   browserEmbedBlocked: '{host} refused to be embedded',
   browserEmbedBlockedDesc: 'The site forbids being displayed inside other pages (X-Frame-Options / frame-ancestors), so it cannot load in the sidebar. Open it directly in your browser instead.',
   browserEmbedAnyway: 'Load anyway',
+  editButton: 'Edit',
+  editTitle: 'Edit: click anything on the page to change it',
+  editUnavailable: 'Edit is unavailable on this page right now. Press Edit to try again.',
+  editHint: 'Click anything on the page to edit',
+  editHintExit: 'Esc for Interactive',
+  editUnavailablePage: 'Editing is not available on this page right now. Reload the page to try again.',
+  editReloadPage: 'Reload',
+  modeInteractive: 'Interactive',
+  modeInteractiveTitle: 'Interactive: use the site as a visitor',
+  browserMode: 'Mode',
+  browserZoom: 'Zoom',
+  browserCopyLink: 'Copy link to this page in this mode',
+  browserLinkCopied: 'Link copied',
+  browserLinkCopyFailed: 'Could not copy the link',
+  editClose: 'Close',
+  editPlaceholder: 'Describe what should change…',
+  editSend: 'Send to Tracy',
+  editFailedNoSession: 'Not sent: this conversation is no longer open.',
+  editFailedSiteMismatch: 'Not sent: this page belongs to another site.',
+  editFailedReadonly: 'Not sent: this conversation cannot take new messages.',
+  editFailedRejected: 'Not sent: the chat did not accept it.',
+  editFailedTimeout: 'The chat did not answer. Your text is kept. Try again.',
+  editFailedNoListener: 'Not sent: the chat is not ready on this page.',
+  editFailedUnknown: 'Not sent. Your text is kept. Try again.',
+  editNotSaved: 'Not saved.',
+  commentErrTooLong: 'Too long to save. Keep it to {max} characters or fewer.',
+  commentErrRateLimit: 'Too many saves in a short time. Wait a minute, then try again.',
+  commentErrSignedOut: 'You are signed out. Sign in again, then try again.',
+  commentErrNoSeat: 'You no longer have a seat on this site. Ask the site owner for one.',
+  commentErrNotYours: 'Only the person who wrote this can change it.',
+  commentErrNetwork: 'Could not reach the server. Check your connection, then try again.',
+  commentErrFile: 'A file could not be saved. Remove it or try again.',
+  commentErrUnknown: 'Could not save. Your words are kept. Try again.',
+  commentCharCount: '{count} / {max}',
+  commentRootDeleted: 'Comment deleted',
+  commentTitle: 'Comment',
+  commentCloseTitle: 'Close (Esc)',
+  commentHiddenNow: '{name} (hidden now)',
+  commentLostKept: 'This comment was deleted. Your words are kept.',
+  commentLostAdd: 'Add as new comment',
+  commentLostDiscard: 'Discard',
+  commentErrNotSentNetwork: 'Not sent. Check your connection and try again.',
+  commentAdd: 'Add comment',
+  commentDelete: 'Delete',
+  commentDeleted: 'Deleted',
+  commentUndo: 'Undo',
+  commentEdit: 'Edit',
+  commentCopyLink: 'Copy link',
+  commentMore: 'More',
+  commentThread: 'Comment thread',
+  commentReply: 'Reply',
+  commentReplyPlaceholder: 'Reply…',
+  commentResolve: 'Resolve',
+  commentResolvedBy: 'Resolved by {name} · a reply reopens it',
+  commentRemoved: 'Message deleted',
+  commentPinLabel: 'Comment by {name}',
+  commentYou: 'You',
+  editNotSent: 'Not sent.',
+  refreshWorking: 'Tracy is working',
+  refreshUpdated: 'New version updated',
+  refreshReady: 'New version ready',
+  commentsButton: 'Comments',
+  commentsButtonCount: 'Comments, {count}',
+  editFailedTooLong: 'Too much to send at once. Send fewer comments',
+  attachButton: 'Attach files',
+  attachTitle: 'Attach files, or drop or paste them here',
+  attachRemove: 'Remove {name}',
+  attachTooLarge: '{name} is too large. Files can be up to {limit}',
+  attachTooMany: 'Too many files: up to {limit} at once',
+  attachOpen: 'Open {name}',
+  editFailedAttachmentTooLarge: 'A file is too large for the chat. Send a smaller one',
+  editFailedAttachmentFailed: 'A file could not be added to the chat. Try again',
+  editSave: 'Save',
   subagent: 'Tasks',
   openSubagent: 'Tasks',
   subagentMainAgent: 'Main agent',
@@ -841,8 +1003,8 @@ export const en: Record<keyof typeof zh, string> = {
   addPluginsTabCardDesc: 'Register a new sidebar page',
   addPluginsViewerCard: 'Add preview plugins',
   addPluginsViewerCardDesc: 'Register a file-type preview',
-  addPluginsTabDesc: 'Sidebar pages (tabs) can be extended by plugins. Plugins register through the ctx.betterSidebar service; clicking Install copies the install command — paste it into a terminal where your DSH profile lives and run it.',
-  addPluginsViewerDesc: 'File previewers can be extended by plugins. Plugins register through the ctx.betterSidebar service; clicking Install copies the install command — paste it into a terminal where your DSH profile lives and run it.',
+  addPluginsTabDesc: 'Sidebar pages (tabs) can be extended by plugins. Plugins register through the ctx.betterSidebar service; clicking Install copies the install command — paste it into a terminal where your Tracy profile lives and run it.',
+  addPluginsViewerDesc: 'File previewers can be extended by plugins. Plugins register through the ctx.betterSidebar service; clicking Install copies the install command — paste it into a terminal where your Tracy profile lives and run it.',
   addPluginsBrowseMore: 'Browse more plugins on GitHub (topic: dsh-better-sidebar)',
   addPluginsSearch: 'Search by plugin name or description…',
   addPluginsNoMatch: 'No plugins match',
@@ -861,14 +1023,14 @@ export const en: Record<keyof typeof zh, string> = {
   pluginSidebarQaDesc: 'Select-and-ask: Select conversation text → ask in the right-side panel → a dedicated follow-up session (❓追问) in the same workspace; a fast no-thinking model compresses the main context and injects it with the quote, without interrupting the main conversation. Follow-ups nest, continue, and archive',
   pluginSidenoteDesc: 'Codex-style side chat + selection annotations: fork the current session into a persistent side panel (archived out of the session list, multi-instance, /side command, survives reload, model follows the main session); select assistant text → numbered badge + note editor → an "N annotations" chip that rides your next message, or ask straight into a side chat',
   pluginSshTunnelDesc: 'SSH Tunnel tab: multi-host inventory + per-project grants + local secrets; SSHManager tool (exec/SFTP/session strategies); center interactive terminal and dual-pane SFTP',
-  pluginSuhuangScrollDesc: 'Connect the local Suhuang Scroll Runtime to DSH settings and better-sidebar for model configuration, connection tests, and continuous grading controls; requires Suhuang Scroll Runtime and dsh-better-sidebar',
+  pluginSuhuangScrollDesc: 'Connect the local Suhuang Scroll Runtime to Tracy settings and better-sidebar for model configuration, connection tests, and continuous grading controls; requires Suhuang Scroll Runtime and dsh-better-sidebar',
   pluginTurnReviewDesc: 'A human gate on the just-finished turn: Approve / Request changes per path with an optional comment; paths grouped by main session / subagent / unattributed; inline snapshot-vs-now diff before you decide. No fork, no /rewind',
   pluginVideoPreviewDesc: 'Inline video preview (.mp4/.webm/.mov/.mkv/.avi etc.) for the better-sidebar editor, backed by a dedicated /video host route with HTTP Range (206) support — scrubbing works and files are not capped by the 20MB mediaLimit',
   pluginCodeNavDesc: 'Code preview navigator: detects the language by file type and highlights syntax, symbol outline (class / method / variable filters + one-click jump), and in-file search (highlight all matches, prev/next, match case) — takes over code file preview in the better-sidebar editor',
-  pluginDocsPanelDesc: 'Global docs in the DSH sidebar: read your own Markdown notes from any workspace — a file list, an outline, open in Chrome / VS Code, and copy buttons; the docs directory is configurable (default ~/.dsh/docs)',
-  pluginEgoBrowserDesc: 'The agent browser for DeepSeek Harness: 32 ego_* tools drive a real Chromium, with a native sidebar "ego browser" tab giving a live view of every page the agent visits — you can click, drag, and type to take over. Registers the tab automatically when better-sidebar is present, otherwise falls back to a floating bubble',
+  pluginDocsPanelDesc: 'Global docs in the Tracy sidebar: read your own Markdown notes from any workspace — a file list, an outline, open in Chrome / VS Code, and copy buttons; the docs directory is configurable (default ~/.dsh/docs)',
+  pluginEgoBrowserDesc: 'The agent browser for Tracy Cowork: 32 ego_* tools drive a real Chromium, with a native sidebar "ego browser" tab giving a live view of every page the agent visits — you can click, drag, and type to take over. Registers the tab automatically when better-sidebar is present, otherwise falls back to a floating bubble',
   pluginBetterOverleafDesc: 'Overleaf tab for better-sidebar: direct-CDP browser login (third-party Chromium supported), project list/switch, local git mirrors under <workspace>/overleaf/, two-way git sync with read-only API fallback, and file preview through the sidebar workbench',
-  pluginBilingualReaderDesc: 'Read paper PDFs in the DSH sidebar: native PDF rendering, select text to translate it with the LLM, using context while staying fully isolated from the main conversation — a reading aid only',
+  pluginBilingualReaderDesc: 'Read paper PDFs in the Tracy sidebar: native PDF rendering, select text to translate it with the LLM, using context while staying fully isolated from the main conversation — a reading aid only',
   pluginSentinelName: 'dsh-sentinel Wake-up System',
   pluginEgoBrowserName: 'ego-browser Agent Browser',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf Tab',
@@ -955,6 +1117,53 @@ export function attachBetterLocale(store: typeof betterLocaleStore): void {
 }
 
 /**
+ * The plugin's own third-language dictionaries (the lazy `locale` chunk's `localeDicts`), attached when
+ * DSH itself runs a language other than zh/en and no better-locale store is there to carry them
+ * (dsh 0.1.7: `vi` is a native DSH language, added by dsh-locale-vi through `addLanguage`, and
+ * better-locale publishes no `ctx.betterLocale`). Without them `t()` fell through to English: TCH
+ * e2e UI fine-tune L4, the Browser toolbar read "Comments 4" in a Vietnamese interface.
+ */
+let ownDicts: Record<string, Record<string, string>> | undefined
+/** Bumped on every {@link attachLocaleDicts}: surfaces that call `t()` outside a locale seat re-render on it. */
+let copyRevision = 0
+const copyListeners = new Set<() => void>()
+
+/**
+ * Attach (or detach, with undefined) the third-language dictionaries `t()` reads for the DSH active
+ * locale when no better-locale override answered. Notifies {@link subscribeCopy} listeners.
+ */
+export function attachLocaleDicts(dicts: Record<string, Record<string, string>> | undefined): void {
+  ownDicts = dicts
+  copyRevision += 1
+  for (const fn of copyListeners) fn()
+}
+
+/** Listen for {@link attachLocaleDicts} (a `useSyncExternalStore` subscribe). */
+export function subscribeCopy(fn: () => void): () => void {
+  copyListeners.add(fn)
+  return () => { copyListeners.delete(fn) }
+}
+
+/** The copy revision (a `useSyncExternalStore` snapshot): changes whenever the dictionaries do. */
+export function getCopyRevision(): number {
+  return copyRevision
+}
+
+/**
+ * The attached dictionary for a locale id: the exact id (any case: `zh-HK`), else its language
+ * (`vi-VN` → `vi`). Never for zh or en, whose own chain runs.
+ */
+function ownDictFor(active: string): Record<string, string> | undefined {
+  if (ownDicts === undefined || active === '') return undefined
+  const lower = active.toLowerCase()
+  const exact = Object.keys(ownDicts).find(id => id.toLowerCase() === lower)
+  if (exact !== undefined) return ownDicts[exact]
+  const language = lower.split('-')[0]!
+  if (language === 'zh' || language === 'en') return undefined
+  return ownDicts[language]
+}
+
+/**
  * The active locale id ('zh' | 'en'): the DSH locale service's snapshot when
  * attached, else the browser language.
  */
@@ -977,7 +1186,9 @@ export function t(key: CopyKey, params?: Record<string, string | number>): strin
   const dshActive = localeService?.getSnapshot().active ?? ''
   const override = betterLocaleStore?.getOverride(dshActive, LOCALE_NS, key)
   let text: string | undefined = override
-  // 2. Fall back to the zh/en chain when no override matched.
+  // 2. The DSH active locale's own dictionary (a native third language, no override store).
+  if (text === undefined) text = ownDictFor(dshActive !== '' ? dshActive : activeLocale())?.[key]
+  // 3. Fall back to the zh/en chain when nothing above matched.
   if (text === undefined) {
     const dict = activeLocale().toLowerCase().startsWith('zh') ? zh : en
     text = dict[key]

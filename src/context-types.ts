@@ -30,6 +30,20 @@
  */
 import type { Context as CordisContext } from '@deepseek-ai/cordis'
 import type { BetterSidebarService } from './client/service.ts'
+import type { FrameCredentialProvider } from './frame-proxy.ts'
+
+/**
+ * Tracy: the host-side seam of the frame route — how this deployment signs a viewer into the sites
+ * it frames. Absent by default: the route sends nothing extra until a consumer registers one.
+ */
+export interface SidebarFrameService {
+  /**
+   * Register the provider. Last registration wins; the disposer clears it.
+   * @param provider - given a target URL, what to send with the request.
+   * @returns A disposer, so a plugin that unloads stops being consulted.
+   */
+  useCredentials(provider: FrameCredentialProvider): () => void
+}
 
 /** The request face route handlers see (structural subset of node's
  *  IncomingMessage: the URL/method/header reads and the async body
@@ -146,6 +160,11 @@ export interface SidebarSessionSummary {
   parentId?: string
   /** Whether the session's agent is currently running. */
   running?: boolean
+  /**
+   * Tracy: local retention counts by reference source (dsh 0.1.6-alpha.2+): the main view holds
+   * the session it shows under `mainView`. Read through `mainSessionId()` (client/main-session.ts).
+   */
+  retainedBy?: Readonly<Partial<Record<string, number>>>
 }
 
 /** Durable parent/child address that selects subagent transport in the client. */
@@ -192,6 +211,8 @@ export interface SidebarJobView {
   startedAt: number
   /** Epoch ms when the job settled; absent while live. */
   finishedAt?: number
+  /** Owning session id; absent for an unowned job (the registry's `JobView.owner`). */
+  owner?: string
 }
 
 /**
@@ -313,6 +334,11 @@ export interface SidebarSessionHandle {
 
 /** The client session list snapshot the sidebar subscribes to. */
 export interface SidebarSessionList {
+  /**
+   * Tracy: the main view's session as dsh up to 0.1.6-alpha.1 published it; absent since (read
+   * `retainedBy.mainView` on the rows). Only `mainSessionId()` (client/main-session.ts) reads it.
+   */
+  current?: string | undefined
   byId: Record<string, SidebarSessionSummary>
   /**
    * Host-computed projection values per session (DSH 0.1.7). The only field
@@ -610,6 +636,11 @@ export interface SidebarContextShape {
    */
   betterSidebar: BetterSidebarService
   /**
+   * Tracy: the HOST-side seam of the frame route (see {@link SidebarFrameService}). Mirror image
+   * of `betterSidebar`: provided by the host half, undefined in the browser.
+   */
+  sidebarFrame: SidebarFrameService
+  /**
    * String-keyed session feed subscribe (the vendored cordis `on` is keyed
    * to its typed Events map; the harness session feed is a plain string
    * event). The listener receives every appended session event with the
@@ -641,5 +672,6 @@ export type Context = CordisContext & SidebarContextShape
 declare module '@deepseek-ai/cordis' {
   interface Context {
     betterSidebar: BetterSidebarService
+    sidebarFrame: SidebarFrameService
   }
 }

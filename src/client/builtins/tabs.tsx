@@ -25,6 +25,7 @@ import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
 import { consumeSidechatSeed, SideChatView, sidechatThreadIdOf } from '../SideChatView.tsx'
 import { api } from '../api.ts'
+import { randomId } from '../random-id.ts'
 import type { TabDescriptor } from '../service.ts'
 
 /** The 5 built-in tab descriptors (the host owns terminal and browser). */
@@ -68,10 +69,6 @@ export function builtinTabs(): readonly TabDescriptor[] {
               desc: () => t('editorExplorerSplitDesc'),
             },
           ],
-        }, {
-          key: 'workspaceFence',
-          title: () => t('settingsFenceTitle'),
-          desc: () => t('settingsFenceDesc'),
         }],
         render: ({ pluginSettings, updatePluginSetting }) => (
           <OpenWithSettings pluginSettings={pluginSettings} updatePluginSetting={updatePluginSetting} />
@@ -172,7 +169,7 @@ export function builtinTabs(): readonly TabDescriptor[] {
         }
         return {
           tab: {
-            id: `sidechat:new-${crypto.randomUUID()}`,
+            id: `sidechat:new-${randomId()}`,
             type: 'sidechat',
             title: t('sideChatUntitled'),
             meta: { autoCreate: true },

@@ -50,6 +50,7 @@ import {
   type TerminalBlockLabels,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
+import { switchMainSession } from './main-session.ts'
 import { IconHistoryOutline16, IconSaveOutline16 } from './icons.tsx'
 import type { Context, SidebarHistoryEntry, SidebarSessionEvent } from '../context-types.ts'
 import {
@@ -676,7 +677,7 @@ export function SideChatView(props: {
       if (binding !== undefined && title !== '') {
         await binding.session.rename(title)
       }
-      ctx.sessions.open?.(newId)
+      switchMainSession(ctx, newId)
       setSaved(true)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))

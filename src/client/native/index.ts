@@ -21,12 +21,26 @@
  * registered later (an external plugin) gets its native type too, and a type
  * the user disabled in the side-card settings is unregistered — so it is
  * absent from the native guide and `openTab` refuses it.
+ *
+ * Tracy (0.21.1-tracy.1): a descriptor's `available(ctx, scope, state)` also
+ * decides whether its type carries a GUIDE entry. DSH's tab-type registry is
+ * static (`guide` is read once per registration), so the predicate is asked
+ * for the ON-SCREEN session whenever that session, its cwd, the plugin's
+ * registry or its store changes (and when a registrant calls
+ * `service.refreshAvailable()`), and only the TYPE is re-registered when the
+ * answer flips — the body and title slots stay, so an open tab of that kind
+ * keeps drawing. Before this, `available` gated only the bottom workbench's +
+ * menu and the native guide listed every kind unconditionally: three Build
+ * plugins (one per CMS) showed "Build" ×3 and "Live site" ×3 on a
+ * single-CMS site (measured 26/09/2026 on the native profile).
  */
 import type { Context } from '../../context-types.ts'
 import { t } from '../locales.ts'
 import { parseFileAddress } from '../resource-address.ts'
 import type { BetterSidebarService, TabDescriptor } from '../service.ts'
-import type { SidebarStore } from '../state.ts'
+import { makeDefaultState, type SidebarStore } from '../state.ts'
+import type { SessionScope } from '../api.ts'
+import { mountedSessions } from './surface.ts'
 import {
   NativeTabBody,
   NativeTabTitle,
@@ -92,6 +106,8 @@ interface NativeTabRegistry {
     canOpen?: (address: string) => boolean
     title: (address: string) => string
     guide?: readonly { id: string; order: number; title: () => string; description?: () => string; icon?: unknown }[]
+    preferredWidth?: number
+    keepMounted?: boolean
   }): () => void
 }
 
@@ -153,7 +169,24 @@ function fileTitleOf(address: string): string | undefined {
 
 /** One descriptor's live native registrations. */
 interface Registration {
+  /** Whether the type is currently registered WITH its guide entry. */
+  readonly listed: boolean
+  /** Re-register the type (only) with or without its guide entry. */
+  readonly relist?: (listed: boolean) => void
   readonly dispose: () => void
+}
+
+/**
+ * Subscribe without letting a host that lacks the feed break registration.
+ * @param subscribe - the feed's subscribe call.
+ * @returns the disposer, or a no-op when the feed is missing.
+ */
+function safeSubscribe(subscribe: () => () => void): () => void {
+  try {
+    return subscribe()
+  } catch {
+    return () => {}
+  }
 }
 
 /** Everything the registrations need. */
@@ -222,16 +255,17 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
         name: 'sidebar.right.pane.tab.title',
         key: id,
-        inject: () => ({ records, service, descriptorId: injected.descriptorId }),
+        inject: (sessionId: string) => ({ records, service, descriptorId: injected.descriptorId, sessionId,
+          activeTab: () => (ctx.get('sidebarRight') as { active?: () => { id: string; kind: string } | undefined } | undefined)?.active?.() }),
       }, NativeTabTitle)),
     ]
 
-    /** One descriptor's native type + body + title, as one disposable. */
-    const registerDescriptor = (descriptor: TabDescriptor): (() => void) => {
+    /** One descriptor's native TYPE, with its guide entry only when `listed`. */
+    const registerType = (descriptor: TabDescriptor, listed: boolean): (() => void) => {
       const id = nativeId(descriptor.id)
       const isEditor = descriptor.id === EDITOR_KIND
       const icon = descriptor.icon
-      const disposeType = tabs.register({
+      return tabs.register({
         id,
         kind: descriptor.id,
         ...(isEditor
@@ -248,6 +282,10 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         // An external implementation outranks the product's own viewers, which
         // is what lets the plugin's editor take over file addresses.
         priority: 'extension',
+        ...(descriptor.preferredWidth === undefined ? {} : { preferredWidth: descriptor.preferredWidth }),
+        // Tracy: a live page (the site preview) keeps its body, and so its frame and scroll, while
+        // another tab is selected.
+        ...(descriptor.keepMounted === true ? { keepMounted: true } : {}),
         // A resource tab is titled by the file it shows; a page tab keeps the
         // descriptor's own title.
         title: (address: string) => (isEditor ? fileTitleOf(address) ?? titleOf(descriptor) : titleOf(descriptor)),
@@ -255,7 +293,10 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         // kind takeover below (same view, same title), so listing both would
         // offer the reader two identical "Files" rows. The type itself stays
         // registered as the file RESOURCE viewer.
-        ...(descriptor.hidden === true || isEditor
+        // An unavailable descriptor (its `available` answered false for the
+        // on-screen session) stays registered — open tabs keep their type —
+        // but offers no guide row.
+        ...(descriptor.hidden === true || isEditor || !listed
           ? {}
           : {
             guide: [{
@@ -271,26 +312,78 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
             }],
           }),
       })
+    }
+
+    /** One descriptor's native type + body + title, as one registration. */
+    const registerDescriptor = (descriptor: TabDescriptor, listed: boolean): Registration => {
+      const id = nativeId(descriptor.id)
+      const isEditor = descriptor.id === EDITOR_KIND
+      let disposeType = registerType(descriptor, listed)
       const slots = registerSlots(
         id,
         { ctx, store, service, records, descriptorId: descriptor.id },
         isEditor ? { paramsOf: fileParamsOf, sessionIdOf: fileSessionIdOf } : {},
       )
-      return () => {
-        for (const dispose of slots.reverse()) dispose()
-        disposeType()
+      const registration = {
+        listed,
+        relist: (next: boolean) => {
+          // The disposer is synchronous (a cordis sync effect), so the id is
+          // free again before the second registration claims it.
+          disposeType()
+          disposeType = registerType(descriptor, next)
+          registration.listed = next
+        },
+        dispose: () => {
+          for (const dispose of slots.reverse()) dispose()
+          disposeType()
+        },
+      }
+      return registration
+    }
+
+    const mounted = mountedSessions(ctx)
+    /**
+     * Whether a descriptor offers its guide entry to the on-screen session.
+     * A descriptor without `available` always does; a throwing predicate is
+     * reported and fails OPEN (listed), which is what the guide did before
+     * the predicate was consulted at all.
+     */
+    const listedNow = (descriptor: TabDescriptor): boolean => {
+      // A host tab policy that does not list the type wins over `available`.
+      if (!service.isTabListed(descriptor.id)) return false
+      const available = descriptor.available
+      if (available === undefined) return true
+      try {
+        const sessionId = mounted.getSnapshot()
+        const cwd = sessionId === undefined ? undefined : ctx.sessions?.list?.getSnapshot().byId[sessionId]?.cwd
+        const scope: SessionScope = cwd === undefined ? { sessionId: sessionId ?? '' } : { sessionId: sessionId ?? '', cwd }
+        const state = (sessionId === undefined ? undefined : store.getSessionStates().get(sessionId)) ?? makeDefaultState()
+        return available(ctx, scope, state)
+      } catch (error) {
+        reportFailure?.(`available ${descriptor.id}`, error)
+        return true
       }
     }
 
     /** One `files`-kind takeover: the plugin's explorer under the built-in kind. */
-    const registerFilesKind = (editor: TabDescriptor | undefined): (() => void) => {
+    /**
+     * One `files`-kind takeover: the plugin's explorer under the built-in kind.
+     * Like a descriptor's registration, a change of "listed" re-registers the
+     * TYPE only (its guide row); the body/title slots stay, because slots
+     * registered again from inside a sync can land on an inactive context and
+     * leave the type behind, which every later sync then reports as "already
+     * registered" (measured on the local stand, 28/09/2026).
+     */
+    const registerFilesKind = (editor: TabDescriptor | undefined, listed: boolean): Registration => {
       const id = 'dsh-better-sidebar:files'
-      const disposeType = tabs.register({
+      const registerFilesType = (withGuide: boolean): (() => void) => tabs.register({
         id,
         kind: FILES_KIND,
         priority: 'extension',
         title: () => t('files'),
-        guide: [{
+        // The Files row is the editor's page, so it is listed exactly when the
+        // editor type is (host tab policy, Tracy 0.21.1-tracy.13).
+        guide: !withGuide ? [] : [{
           // Required and unique per provider since DSH 0.1.6-alpha.2. This
           // takeover is its own implementation id, so its guide row takes
           // that same id.
@@ -304,31 +397,43 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
           ...guideIconOf(editor?.icon),
         }],
       })
+      let disposeType = registerFilesType(listed)
       const slots = registerSlots(id, { ctx, store, service, records, descriptorId: EDITOR_KIND }, {})
-      return () => {
-        for (const dispose of slots.reverse()) dispose()
-        disposeType()
+      const registration = {
+        listed,
+        relist: (next: boolean) => {
+          // Synchronous disposer: the id is free before the next registration.
+          disposeType()
+          disposeType = registerFilesType(next)
+          registration.listed = next
+        },
+        dispose: () => {
+          for (const dispose of slots.reverse()) dispose()
+          disposeType()
+        },
       }
+      return registration
     }
 
     /** Bring the live registrations in line with the registry + the settings. */
     const sync = (): void => {
-      const wanted = new Map<string, () => () => void>()
+      const wanted = new Map<string, { descriptor: TabDescriptor; listed: boolean }>()
       for (const descriptor of service.getTabs()) {
         if (!service.isTabEnabled(descriptor.id)) continue
-        wanted.set(descriptor.id, () => registerDescriptor(descriptor))
+        wanted.set(descriptor.id, { descriptor, listed: listedNow(descriptor) })
       }
       for (const [descriptorId, registration] of live) {
-        if (wanted.has(descriptorId)) continue
+        if (wanted.has(descriptorId) || descriptorId === FILES_KIND) continue
         registration.dispose()
         live.delete(descriptorId)
       }
-      for (const [descriptorId, create] of wanted) {
-        if (live.has(descriptorId)) continue
+      for (const [descriptorId, { descriptor, listed }] of wanted) {
+        const existing = live.get(descriptorId)
         // One descriptor must not take the rest of the surface down with it:
         // report and continue so the remaining types still register.
         try {
-          live.set(descriptorId, { dispose: create() })
+          if (existing === undefined) live.set(descriptorId, registerDescriptor(descriptor, listed))
+          else if (existing.listed !== listed) existing.relist?.(listed)
         } catch (error) {
           reportFailure?.(`register ${descriptorId}`, error)
         }
@@ -336,10 +441,20 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       // The built-in files kind follows the editor type's switch: with the
       // editor disabled the plugin has no explorer to put there.
       const wantsFiles = service.isTabEnabled(EDITOR_KIND)
+      const filesListed = service.isTabListed(EDITOR_KIND)
+      const files = live.get(FILES_KIND)
+      if (wantsFiles && files !== undefined && files.listed !== filesListed) {
+        // Its guide row flipped: re-register the type only, the slots stay.
+        try {
+          files.relist?.(filesListed)
+        } catch (error) {
+          reportFailure?.(`relist ${FILES_KIND}`, error)
+        }
+      }
       const hasFiles = live.has(FILES_KIND)
       if (wantsFiles && !hasFiles) {
         try {
-          live.set(FILES_KIND, { dispose: registerFilesKind(service.getTab(EDITOR_KIND)) })
+          live.set(FILES_KIND, registerFilesKind(service.getTab(EDITOR_KIND), filesListed))
         } catch (error) {
           reportFailure?.(`register ${FILES_KIND}`, error)
         }
@@ -350,7 +465,14 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       }
     }
 
-    const disposeSubscriptions = [service.subscribe(sync), store.subscribe(sync)]
+    const disposeSubscriptions = [
+      service.subscribe(sync),
+      store.subscribe(sync),
+      // `available` is asked about the on-screen session: follow which session
+      // that is, and its cwd (the list summary hydrates it after mount).
+      safeSubscribe(() => mounted.subscribe(sync)),
+      safeSubscribe(() => ctx.sessions.list.subscribe(sync)),
+    ]
     sync()
     return () => {
       for (const registration of live.values()) registration.dispose()

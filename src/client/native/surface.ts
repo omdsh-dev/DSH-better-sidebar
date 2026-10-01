@@ -217,6 +217,8 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
       return records.has(tabId)
     },
     has: tabId => records.has(tabId),
+    tabOf: tabId => records.get(tabId)?.tab,
+    tabsOfType: type => records.tabs().filter(tab => tab.type === type),
     flushPending,
     dispose: () => {
       unsubscribeList()

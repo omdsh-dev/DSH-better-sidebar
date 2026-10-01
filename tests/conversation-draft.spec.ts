@@ -85,6 +85,64 @@ describe('probeComposerCaret', () => {
   })
 })
 
+/**
+ * Current dsh DOM (issue #299): the composer lives in
+ * `#root centerCol > [data-slot="main"] > [data-slot="main.conversation"]`;
+ * a sidebar tab in the same column may carry its own textarea.
+ */
+function mountCurrentComposer(draft: string, caret: number): { composer: HTMLTextAreaElement; noise: HTMLTextAreaElement } {
+  const root = document.createElement('div')
+  root.id = 'root'
+  const col = document.createElement('div')
+  const noise = document.createElement('textarea')
+  noise.setAttribute('data-phase', 'plain')
+  noise.value = draft
+  noise.setSelectionRange(0, 0)
+  col.append(noise)
+  const main = document.createElement('div')
+  main.setAttribute('data-slot', 'main')
+  main.style.display = 'contents'
+  const conversation = document.createElement('div')
+  conversation.setAttribute('data-slot', 'main.conversation')
+  const composer = document.createElement('textarea')
+  composer.setAttribute('data-phase', 'plain')
+  composer.value = draft
+  composer.setSelectionRange(caret, caret)
+  conversation.append(composer)
+  main.append(conversation)
+  col.append(main)
+  root.append(col)
+  document.body.append(root)
+  return { composer, noise }
+}
+
+describe('composer lookup against the current dsh slot (issue #299)', () => {
+  it('reads the caret from the main.conversation composer, not a textarea elsewhere in the column', () => {
+    mountCurrentComposer('hello world', 5)
+    expect(probeComposerCaret('hello world')).toEqual({ start: 5, end: 5 })
+  })
+
+  it('restores the caret on the main.conversation composer only', async () => {
+    const { composer, noise } = mountCurrentComposer('AB', 1)
+    placeComposerCaretAfterInsert('A C B', 2)
+    composer.value = 'A C B'
+    noise.value = 'A C B'
+    noise.setSelectionRange(0, 0)
+    await tick()
+    expect(composer.selectionStart).toBe(2)
+    expect(noise.selectionStart).toBe(0)
+  })
+
+  it('still falls back to a bare data-phase textarea when no slot is mounted', () => {
+    const textarea = document.createElement('textarea')
+    textarea.setAttribute('data-phase', 'plain')
+    textarea.value = 'hi'
+    textarea.setSelectionRange(1, 1)
+    document.body.append(textarea)
+    expect(probeComposerCaret('hi')).toEqual({ start: 1, end: 1 })
+  })
+})
+
 describe('insertAtCaret', () => {
   it('appends at the end when the caret is unknown (pre-fix behavior)', () => {
     expect(insertAtCaret('', 'X', null)).toBe('X')

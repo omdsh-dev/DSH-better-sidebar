@@ -67,7 +67,7 @@ import {
   treeSessionIds,
   type TreeJob,
 } from './subagent-jobs.ts'
-import { api, type JobOutputResult } from './api.ts'
+import { api, isForbiddenError, type JobOutputResult } from './api.ts'
 import { usePolling } from './use-polling.ts'
 import { IconStopOutline16 } from './icons.tsx'
 import { t } from './locales.ts'
@@ -216,16 +216,31 @@ function useSubagentLive(
   active: boolean,
 ): Readonly<Record<string, LastActivity>> {
   const [live, setLive] = useState<Record<string, LastActivity>>({})
+  // Tracy (TCH e2e v3 X07): roots whose live read was refused (403). A seat account may not read
+  // `subagents.live` (dsh-passwords keeps it to the owner), and asking every tick only repeated
+  // the refusal (290 × 403 in one run). The ref stops the next tick at once; the state turns the
+  // poller off on the next render. Any other failure keeps the retry.
+  const refusedRef = useRef<ReadonlySet<string>>(new Set())
+  const [refused, setRefused] = useState<ReadonlySet<string>>(() => new Set())
 
   // A new tree must never inherit another root's live previews.
   useEffect(() => { setLive({}) }, [rootId])
 
   const poll = useCallback(async (signal: AbortSignal): Promise<void> => {
-    if (rootId === undefined) return
-    const result = await api.subagentsLive(rootId, signal)
+    if (rootId === undefined || refusedRef.current.has(rootId)) return
+    let result: Awaited<ReturnType<typeof api.subagentsLive>>
+    try {
+      result = await api.subagentsLive(rootId, signal)
+    } catch (error) {
+      if (!signal.aborted && isForbiddenError(error)) {
+        refusedRef.current = new Set(refusedRef.current).add(rootId)
+        setRefused(refusedRef.current)
+      }
+      throw error
+    }
     if (!signal.aborted) setLive(result.live)
   }, [rootId])
-  usePolling(rootId !== undefined && active, poll, {
+  usePolling(rootId !== undefined && active && !refused.has(rootId), poll, {
     intervalMs: POLL_MS,
     mode: 'self-scheduling',
     immediate: true,
@@ -480,21 +495,39 @@ function JobsSection(props: {
   // tree's jobs are one read per tree session — fanned out on each tick and
   // keyed by owner for the (pure) collection below.
   const treeIds = useMemo(() => [...treeSessionIds(byId, rootId)], [byId, rootId])
+  // Tracy: sessions whose `jobs.list` answered 403 — the account may not read
+  // this session's list (dsh-passwords holds it to the seat's session grant), so they
+  // are never asked again while the page lives (TCH #515). Filtered here, not
+  // in the tick, so a re-render or a new tree list never re-asks them; a 503
+  // or a dropped read is not a refusal and keeps the retry. The ref holds the
+  // same set for the tick itself, which may run again before React renders.
+  const forbiddenRef = useRef<ReadonlySet<string>>(new Set())
+  const [forbiddenIds, setForbiddenIds] = useState<ReadonlySet<string>>(() => new Set())
+  const pollIds = useMemo(() => treeIds.filter(id => !forbiddenIds.has(id)), [treeIds, forbiddenIds])
   const [jobsBySession, setJobsBySession] = useState<Readonly<Record<string, readonly SidebarJobView[]>>>({})
   const poll = useCallback(async (signal: AbortSignal): Promise<void> => {
-    const entries = await Promise.all(treeIds.map(async (sessionId): Promise<[string, readonly SidebarJobView[]]> => {
+    const refused: string[] = []
+    const asked = pollIds.filter(id => !forbiddenRef.current.has(id))
+    if (asked.length === 0) return
+    const entries = await Promise.all(asked.map(async (sessionId): Promise<[string, readonly SidebarJobView[]]> => {
       try {
         const result = await api.jobsList(sessionId, signal)
         return [sessionId, result.jobs]
-      } catch {
+      } catch (error) {
         // A host without the jobs service (503) or one dropped read degrades
         // to an empty set for THIS session; the next tick retries.
+        if (isForbiddenError(error)) refused.push(sessionId)
         return [sessionId, []]
       }
     }))
-    if (!signal.aborted) setJobsBySession(Object.fromEntries(entries))
-  }, [treeIds])
-  usePolling(active && treeIds.length > 0, poll, {
+    if (signal.aborted) return
+    setJobsBySession(Object.fromEntries(entries))
+    if (refused.length > 0) {
+      forbiddenRef.current = new Set([...forbiddenRef.current, ...refused])
+      setForbiddenIds(forbiddenRef.current)
+    }
+  }, [pollIds])
+  usePolling(active && pollIds.length > 0, poll, {
     intervalMs: JOBS_POLL_MS,
     mode: 'self-scheduling',
     immediate: true,

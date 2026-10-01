@@ -28,6 +28,7 @@ import {
 } from './state.ts'
 import { baseName, extOf } from './paths.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
+import { DiffFiles as DiffView } from './diff/DiffFiles.tsx'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
 
@@ -159,6 +160,14 @@ export interface TabComponentProps {
 }
 
 /** Describes one kind of sidebar tab (builtins register themselves too). */
+/** A host's policy over tab types (`setTabPolicy`, Tracy 0.21.1-tracy.14). */
+export interface TabPolicy {
+  /** False: the type does not exist for this deployment's viewers. */
+  isAllowed(id: string): boolean
+  /** False: the type is left out of the + menu and the native guide. */
+  isListed(id: string): boolean
+}
+
 export interface TabDescriptor {
   /** Unique id; also the `SidebarTab.type` value (`'explorer'`, `'my-plugin:db'`). */
   id: string
@@ -180,8 +189,24 @@ export interface TabDescriptor {
   /** Hide from the + menu (the editor tab is opened by file-open, not by the menu). */
   hidden?: boolean
   /**
+   * Tracy: the right panel width in px this tab reads best at. While it is the
+   * active tab, DSH's native right Sidebar asks the frame to open the panel at
+   * this width until the user drags the divider (`SidebarRightTabDefinition.
+   * preferredWidth`). Omit for the frame default, room for a site at desktop width.
+   */
+  preferredWidth?: number
+  /**
+   * Tracy: keep the tab's body mounted while another tab is selected (`SidebarRightTabDefinition.
+   * keepMounted`). DSH's dock otherwise unmounts a hidden body, which for a live page (the site
+   * preview's frame) means loading it again from the top when the person comes back.
+   */
+  keepMounted?: boolean
+  /**
    * + menu disabled predicate (e.g. terminal at capacity). Receives the
    * session scope and the live sidebar state (counts, expansions).
+   * Tracy (0.21.1-tracy.1): on the native right Sidebar the same answer, asked
+   * for the on-screen session, decides whether the type offers its GUIDE
+   * entry — false keeps the type registered but off the guide.
    */
   available?: (ctx: Context, scope: SessionScope, state: SidebarState) => boolean
   /**
@@ -462,6 +487,10 @@ export interface SidebarSurface {
   activate(tabId: string): boolean
   /** Whether a tab id belongs to the native surface. */
   has(tabId: string): boolean
+  /** Tracy: one native tab's synthetic record, or undefined when the id is not native (or not mounted). */
+  tabOf?(tabId: string): SidebarTab | undefined
+  /** Tracy: the live native records of one tab type (mounted bodies only). */
+  tabsOfType?(type: string): readonly SidebarTab[]
 }
 
 /**
@@ -523,6 +552,23 @@ export interface BetterSidebarService {
    * derived flows gate on it).
    */
   isTabEnabled(id: string): boolean
+  /**
+   * Tracy (0.21.1-tracy.14): whether a tab type is offered in the + menu and
+   * the native guide. Only a host tab policy (`setTabPolicy`) says no; the
+   * type still opens from its own entry points. Feature 'setTabPolicy'.
+   */
+  isTabListed(id: string): boolean
+  /**
+   * Tracy (0.21.1-tracy.14): install the host's policy over tab types — which
+   * exist for this deployment's viewers (`isAllowed`, folded into
+   * `isTabEnabled`, so a refused type has no entry and `openTab` refuses it,
+   * and the viewer's own switch cannot bring it back) and which are listed
+   * (`isListed`). The side card knows no host id; the host maps its own
+   * settings onto tab ids. A later call replaces the policy and re-syncs the
+   * surface; the disposer restores the default (everything allowed and listed).
+   * Feature 'setTabPolicy'.
+   */
+  setTabPolicy(policy: TabPolicy): () => void
   /** Whether a file viewer is enabled (absent `viewersEnabled[id]` = enabled). */
   isViewerEnabled(id: string): boolean
   /**
@@ -549,8 +595,9 @@ export interface BetterSidebarService {
    * Sidebar). An open carrying a `path` or `url` goes through the native
    * surface instead, which never touches this state.
    *
-   * Note: `available` gates the + menu's disabled state only — it does NOT
-   * refuse `openTab` (only the settings disable switch does).
+   * Note: `available` gates the + menu's disabled state and the native
+   * guide's listing only — it does NOT refuse `openTab` (only the settings
+   * disable switch does).
    */
   openTab(seed: OpenTabSeed, scope?: SessionScope): void
   /**
@@ -562,6 +609,14 @@ export interface BetterSidebarService {
   closeTab(tabId: string, scope?: SessionScope): void
   /** Subscribe to registry changes (register/dispose). */
   subscribe(listener: () => void): () => void
+  /**
+   * Tracy (0.21.1-tracy.1): ask every descriptor's `available` again. The
+   * native guide re-asks it on its own when the on-screen session, its cwd,
+   * the registry or the store changes; a registrant whose answer changed for
+   * a reason the side card cannot see (its own lookup finished) calls this.
+   * Feature 'refreshAvailable'.
+   */
+  refreshAvailable(): void
   /** The plugin version this service instance was built from ('0.12.0'). */
   readonly version: string
   /**
@@ -590,10 +645,50 @@ export interface BetterSidebarService {
   /** Open a file in the sidebar editor of `scope`'s session (title defaults to the file name). */
   openFile(scope: SessionScope, path: string, title?: string): void
   /**
+   * Tracy (0.18.1-tracy.5, rewritten for the native surface in 0.21.1-tracy.1): reload one open
+   * tab's CONTENT without changing what it shows — the `tracy:browser` tab re-fetches the address
+   * it already holds, as if the person pressed its refresh button. A missing tab id is a strict
+   * no-op, and a tab type that does not watch for this simply re-renders.
+   *
+   * The signal is a nonce on the tab's meta (`reloadNonce`, plus `reloadMode`), minted here and
+   * never taken from the caller, so two reloads in the same millisecond are still two distinct
+   * values. A native tab is patched through the native surface's record (`surface.update`); a
+   * bottom-workbench tab through the store.
+   *
+   * `mode` says what the caller believes changed, so the tab can pick the cheapest way to show it:
+   * `'style'` means only stylesheets moved, and a page carrying Tracy's preview agent then swaps
+   * them in place without reloading. Anything else, or nothing, is a full refresh; an unknown value
+   * degrades to the full refresh, because a caller guessing wrong must cost a reload, never a page
+   * that silently did not update.
+   */
+  reloadTab(tabId: string, mode?: string): void
+  /**
+   * Tracy (0.21.1-tracy.1): the open tabs of one type — the live native records (a native body that
+   * is not mounted has no record) followed by the bottom workbench's tabs of the active session.
+   * Native tab ids are minted by DSH, so this is how a consumer finds the id `reloadTab` needs.
+   */
+  openTabsOf(type: string): readonly SidebarTab[]  /**
    * Install (or clear) the native right-Sidebar write face.
    * @internal Called once by the client half; not part of the consumer API.
    */
   setSurface(surface: SidebarSurface | undefined): void
+  /**
+   * Tracy (0.17.1-tracy.25): the side card's own diff renderer, handed to plugins.
+   *
+   * A plugin cannot import it: bundling `dsh-better-sidebar` into a plugin's client would ship a
+   * second copy of the whole side card to the browser, so the component travels through the
+   * service instead — the host owns the code, the plugin owns the text.
+   *
+   * Only the RENDERER is reusable. The built-in diff TAB asks dsh's git service, which can only
+   * see a repository inside the lane; Tracy's Changes tab reads its diffs from the fleet, where
+   * the webroot's git actually lives.
+   */
+  DiffView(props: {
+    diff: string
+    untrackedPath?: string
+    untrackedContent?: string
+    expandAll?: boolean
+  }): ReactNode
 }
 
 /** The file name of a path (both separators). */
@@ -633,7 +728,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.21.1'
+export const SIDEBAR_SERVICE_VERSION = '0.21.1-tracy.38'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features
@@ -669,6 +764,14 @@ export const SIDEBAR_FEATURES = [
   'urlTarget',
   'settingSelect',
   'fileIcons',
+  // Tracy: BetterSidebarService.DiffView (the diff renderer seam).
+  'diffView',
+  // Tracy: BetterSidebarService.reloadTab / openTabsOf.
+  'reloadTab',
+  // Tracy: BetterSidebarService.refreshAvailable (the native guide honours `available`).
+  'refreshAvailable',
+  // Tracy 0.21.1-tracy.14: host tab policy (isTabListed / setTabPolicy).
+  'setTabPolicy',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -840,7 +943,21 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
 
   // The enable switches come from the user's side card prefs (the shared
   // store the service is bound to): an absent key means enabled.
-  const isTabEnabled = (id: string): boolean => store.getPrefs().tabsEnabled[id] !== false
+  // The host's policy sits above the viewer's switch: a type it refuses is
+  // disabled whatever the prefs say.
+  let tabPolicy: TabPolicy | undefined
+  const isTabEnabled = (id: string): boolean =>
+    store.getPrefs().tabsEnabled[id] !== false && (tabPolicy?.isAllowed(id) ?? true)
+  const isTabListed = (id: string): boolean => tabPolicy?.isListed(id) ?? true
+  const setTabPolicy = (policy: TabPolicy): (() => void) => {
+    tabPolicy = policy
+    notify()
+    return () => {
+      if (tabPolicy !== policy) return
+      tabPolicy = undefined
+      notify()
+    }
+  }
   const isViewerEnabled = (id: string): boolean => store.getPrefs().viewersEnabled[id] !== false
 
   const matchFileViewer = (path: string, head?: Uint8Array): FileViewerDescriptor | undefined => {
@@ -1122,6 +1239,39 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     }
   }
 
+  /** Tracy: see {@link BetterSidebarService.reloadTab}. */
+  let reloads = 0
+  const reloadTab = (tabId: string, mode?: string): void => {
+    const nonceMeta = (meta: unknown): Record<string, unknown> => {
+      reloads += 1
+      return {
+        ...(typeof meta === 'object' && meta !== null ? meta as Record<string, unknown> : {}),
+        reloadNonce: `reload:${String(Date.now())}:${String(reloads)}`,
+        // Written every time, including as `undefined`: a mode left over from the previous reload
+        // would make the NEXT one cheaper than it is allowed to be, and the page would not update.
+        reloadMode: mode,
+      }
+    }
+    const native = surface?.tabOf?.(tabId)
+    if (native !== undefined) {
+      surface?.update(tabId, { meta: nonceMeta(native.meta) })
+      return
+    }
+    store.reduce((state) => {
+      const tab = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).find(candidate => candidate.id === tabId)
+      return tab === undefined ? state : patchTab(state, tabId, { meta: nonceMeta(tab.meta) })
+    })
+  }
+
+  /** Tracy: see {@link BetterSidebarService.openTabsOf}. */
+  const openTabsOf = (type: string): readonly SidebarTab[] => {
+    const state = store.getSnapshot().state
+    const bottom = state === undefined
+      ? []
+      : allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).filter(tab => tab.type === type)
+    return [...(surface?.tabsOfType?.(type) ?? []), ...bottom]
+  }
+
   /** Open a file in the sidebar editor of `scope`'s session (title defaults
    *  to the file name; the tab id is path-derived, like the internal
    *  open-path interception, so distinct files open side by side). */
@@ -1142,11 +1292,14 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     folderIcon,
     getTab,
     isTabEnabled,
+    isTabListed,
+    setTabPolicy,
     isViewerEnabled,
     matchFileViewer,
     openTab,
     closeTab,
     subscribe,
+    refreshAvailable: notify,
     version: SIDEBAR_SERVICE_VERSION,
     features: SIDEBAR_FEATURES,
     getSnapshot,
@@ -1155,6 +1308,9 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     activateTab,
     openFile,
     setSurface: (next: SidebarSurface | undefined) => { surface = next },
+    DiffView,
+    reloadTab,
+    openTabsOf,
   }
 }
 

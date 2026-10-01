@@ -480,7 +480,7 @@ export function EditorHost(props: {
           {showEmpty && <div className={css.editorPlaceholder}>{t('editorEmptyHint')}</div>}
           {!showEmpty && load.status === 'loading' && <div className={css.editorPlaceholder}>{t('loading')}</div>}
           {!showEmpty && load.status === 'error' && (isOutsideWorkspaceMessage(load.message)
-            ? <FenceErrorNotice store={store} onDisabled={() => { setReloadSeq(sequence => sequence + 1) }} />
+            ? <FenceErrorNotice />
             : <div className={css.editorError}>{load.message}</div>)}
           {!showEmpty && load.status === 'binary' && <BinaryDownload scope={scope} path={path} />}
           {!showEmpty && load.status === 'ready' && createElement(load.viewer.component, {

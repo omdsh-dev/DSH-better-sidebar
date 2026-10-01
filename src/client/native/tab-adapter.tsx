@@ -30,6 +30,9 @@ import { referenceInChat } from '../reference-in-chat.ts'
 import type { BetterSidebarService } from '../service.ts'
 import type { SidebarStore, SidebarTab, TabType } from '../state.ts'
 import css from '../sidebar.module.css'
+import { BrowserTabTitle } from '../BrowserTabTitle.tsx'
+import { getCopyRevision, subscribeCopy } from '../locales.ts'
+import { browserIdentityParams, rememberBrowserIdentity } from './browser-identity.ts'
 
 /** The chip glyph's size: the tab strip's own icon scale. */
 const CHIP_ICON_SIZE = 14
@@ -110,6 +113,8 @@ export interface NativeTabRecords {
   get(id: string): View | undefined
   /** Whether this id belongs to a native tab (vs the plugin's own layout). */
   has(id: string): boolean
+  /** Tracy: every live synthetic record (mounted native bodies), in mint order. */
+  tabs(): readonly SidebarTab[]
   /** Merge a patch into the synthetic record (the `updateTab` path). */
   update(id: string, patch: { title?: string; path?: string; meta?: unknown }): void
   /** Forget a record (the native tab closed). */
@@ -139,7 +144,14 @@ export function createNativeTabRecords(): NativeTabRecords {
       const existing = views.get(id)
       if (existing === undefined) {
         const seeded = params?.title === undefined && params?.meta === undefined ? mint?.() : undefined
-        const meta = params?.meta ?? seeded?.meta
+        const seededMeta = params?.meta ?? seeded?.meta
+        // Tracy: a first open's `url` seed lands in `meta.url`, exactly where a
+        // later navigation puts it (below). Upstream dropped it here once its
+        // own browser tab was gone, so the first open of a URL-seeded page
+        // (Tracy's `tracy:browser`) arrived with no address at all.
+        const meta = params?.url === undefined
+          ? seededMeta
+          : { ...(typeof seededMeta === 'object' && seededMeta !== null ? seededMeta as Record<string, unknown> : {}), url: params.url }
         const minted: View = {
           tab: {
             id,
@@ -180,6 +192,7 @@ export function createNativeTabRecords(): NativeTabRecords {
     },
     get: id => views.get(id),
     has: id => views.has(id),
+    tabs: () => Array.from(views.values(), view => view.tab),
     update(id, patch) {
       const entry = views.get(id)
       if (entry === undefined) return
@@ -262,15 +275,29 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
   const info = useTabInfo()
   const nativeTab = info.tab
   const version = useRecordVersion(records, nativeTab.id)
+  // The plugin's `t()` reads a module holder, not a locale seat: re-render when its dictionaries arrive
+  // or the DSH language changes (TCH e2e L4: the vi Browser toolbar stayed "Comments 4").
+  const copy = useSyncExternalStore(subscribeCopy, getCopyRevision)
+  // Optional: a minimal context (tests, a host without the locale service) has no `locale`.
+  const locale = (ctx as { locale?: Context['locale'] }).locale
+  const language = useSyncExternalStore(
+    useMemo(() => (listener: () => void) => locale?.subscribe(listener) ?? (() => {}), [locale]),
+    () => locale?.getSnapshot().active,
+  )
+  void copy
+  void language
   const sessionId = props.sessionIdOf?.(info) ?? props.sessionId
   const cwd = useSessionCwd(ctx, sessionId)
   const scope = useMemo((): SessionScope => ({ sessionId, cwd }), [sessionId, cwd])
   // `version` is not read: it only forces this render when the record changed.
   void version
   const derived = props.paramsOf?.(info)
-  const params = derived === undefined && nativeTab.navigation.params === undefined
+  const rawParams = derived === undefined && nativeTab.navigation.params === undefined
     ? undefined
     : { ...derived, ...nativeTab.navigation.params }
+  const params = useMemo(() => descriptorId === 'tracy:browser'
+    ? browserIdentityParams(sessionId, nativeTab.id, rawParams) : rawParams,
+  [descriptorId, sessionId, nativeTab.id, nativeTab.navigation.params, derived])
   const descriptor = service.getTab(descriptorId)
   const view = records.ensure({
     id: nativeTab.id,
@@ -335,8 +362,11 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
 
 /** What a title registration injects. */
 export interface NativeTitleInjected {
+  readonly sessionId?: string
   readonly records: NativeTabRecords
   readonly service: BetterSidebarService
+  /** Selected tab in the active native pane; title visibility also includes inactive tabs. */
+  readonly activeTab?: () => { id: string; kind: string } | undefined
   /** The descriptor id this title belongs to (one registration per descriptor). */
   readonly descriptorId: string
 }
@@ -364,6 +394,31 @@ export function NativeTabTitle(props: NativeTitleInjected & NativeBodyFrameworkP
   )
   const record = records.get(nativeTab.id)
   const title = record?.tab.title ?? nativeTab.title
+  if (descriptorId === 'tracy:browser') {
+    const params = browserIdentityParams(props.sessionId, nativeTab.id, nativeTab.navigation.params)
+    return <BrowserTabTitle tab={record?.tab} params={params} title={title}
+      isActiveDestination={(kind, siteKey) => {
+        const selected = props.activeTab?.()
+        if (selected?.kind !== kind) return false
+        if (kind === 'tracy:browser') return selected.id === nativeTab.id
+        const selectedMeta = records.get(selected.id)?.tab.meta as { siteKey?: unknown } | undefined
+        return selectedMeta?.siteKey === undefined || selectedMeta.siteKey === siteKey
+      }}
+      openLocal={(kind, siteKey) => {
+        service.openTab({ type: kind, meta: { siteKey } },
+          props.sessionId === undefined ? undefined : { sessionId: props.sessionId })
+      }}
+      rememberSite={siteKey => {
+        const meta = {
+          ...(typeof params?.meta === 'object' ? params.meta : {}),
+          ...(typeof record?.tab.meta === 'object' ? record.tab.meta : {}),
+        } as Record<string, unknown>
+        rememberBrowserIdentity(props.sessionId, nativeTab.id, siteKey, meta.url ?? params?.url)
+        if (record !== undefined && meta.siteKey !== siteKey) service.updateTab(nativeTab.id, {
+          title: siteKey, meta: { ...meta, siteKey },
+        })
+      }} />
+  }
   // `version` is read so a title/path/meta mutation re-renders the chip; the
   // icon itself is derived from the record, never stored.
   void version

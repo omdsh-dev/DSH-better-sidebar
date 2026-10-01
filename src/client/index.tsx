@@ -12,6 +12,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Context } from '../context-types.ts'
 import { createSidebarStore } from './state.ts'
+import { registerSiteVisits } from './site-visits.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
 import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
@@ -19,15 +20,17 @@ import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
-import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
 import { createNativeSurface } from './native/surface.ts'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
+import { registerMentionInterception, warmMentionPath } from './mention-open.ts'
+import type { ChatFileMentionsService } from './mention-intercept.ts'
+import { createMentionScopeDefinition } from './mention-scope.ts'
 import { registerImeGuard } from './ime-guard.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { loadBootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
 import { api } from './api.ts'
-import { LOCALE_NS, attachLocale, attachBetterLocale, t, zh, en } from './locales.ts'
+import { LOCALE_NS, attachLocale, attachBetterLocale, attachLocaleDicts, t, zh, en } from './locales.ts'
 import { loadChunk } from './chunk-loader.ts'
 import css from './sidebar.module.css'
 import './layout.css'
@@ -52,6 +55,7 @@ export const inject = ['slots', 'sessions', 'locale', 'modules', 'connection']
  * @param ctx - the client cordis context (slots, sessions).
  */
 export function apply(ctx: Context): void {
+  ctx.effect(registerSiteVisits, 'dsh-better-sidebar: workspace visits')
   // The sidebar follows the DSH i18n system: attach the locale service so
   // the module-level t()/isZh() resolve the Host-backed language preference
   // (and switch live — the Sidebar root subscribes to it), and register the
@@ -83,6 +87,8 @@ export function apply(ctx: Context): void {
   // the ja dict once the store becomes available.
   ctx.effect(() => {
     let dispose: (() => void) | undefined
+    /** The native-language dictionaries were asked for (at most once per activation). */
+    let nativeDictsRequested = false
     // Guards the async chunk registration below: a sync() re-run (or fiber
     // disposal) that lands while the chunk is still in flight must render
     // that registration moot.
@@ -101,7 +107,18 @@ export function apply(ctx: Context): void {
           }
         | undefined
       attachBetterLocale(store)
-      if (store !== undefined) {
+      if (store === undefined) {
+        // No override store (dsh 0.1.7: a third language is native to DSH, e.g. vi from
+        // dsh-locale-vi): the sidebar's own dictionary for that language rides the same lazy chunk,
+        // attached once to its `t()` (TCH e2e L4: the vi Browser toolbar read "Comments 4").
+        const active = ctx.locale.getSnapshot().active.toLowerCase()
+        if (!nativeDictsRequested && active !== '' && !active.startsWith('zh') && !active.startsWith('en')) {
+          nativeDictsRequested = true
+          void loadChunk('locale')
+            .then(mod => { attachLocaleDicts(mod.localeDicts as Record<string, Record<string, string>>) })
+            .catch(() => { nativeDictsRequested = false /* the zh/en chain runs; the next switch retries */ })
+        }
+      } else {
         // The 19 override dictionaries ride the lazy `locale` chunk: until
         // it lands, the store has no betterSidebar entries and t() keeps
         // the zh/en chain; the store's own revision bump on register
@@ -125,6 +142,7 @@ export function apply(ctx: Context): void {
       unsubscribe()
       dispose?.()
       attachBetterLocale(undefined)
+      attachLocaleDicts(undefined)
     }
   }, 'dsh-better-sidebar: better-locale lazy integration')
   // A failure anywhere in the client lifecycle must never take the app down
@@ -175,12 +193,12 @@ export function apply(ctx: Context): void {
     }),
     'dsh-better-sidebar: native right-Sidebar registrations',
   )
-  // The bottom workbench's expand/collapse button in DSH's session header
-  // (the header's corner seat belongs to the native sidebar's own control).
-  ctx.effect(
-    () => registerBottomToggle(ctx, sidebarStore),
-    'dsh-better-sidebar: bottom-workbench toggle',
-  )
+  // Tracy: the bottom workbench's expand/collapse button (upstream's
+  // `registerBottomToggle`, DSH's session header) is NOT registered. A Tracy
+  // profile puts nothing in the bottom workbench, so the button toggles an
+  // empty panel — measured 24/09 on the local stand: the state flipped and
+  // nothing was drawn. The workbench itself stays, so restoring this one call
+  // brings the control back.
   ctx.effect(
     () => () => { nativeSurface.dispose(); service.setSurface(undefined) },
     'dsh-better-sidebar: native right-Sidebar surface',
@@ -334,6 +352,63 @@ export function apply(ctx: Context): void {
         unmount()
       }
     }, 'dsh-better-sidebar: sidebar mount')
+
+    // Tracy: prose file mentions. Two halves that must both be present: the
+    // Turn-data accumulator (registered on uiConversation's event definitions,
+    // exactly like ui-deliverables registers its own) collects the paths a
+    // turn's tool calls named and warms their directory listings as the events
+    // arrive; the chatFileMentions wrapper reads that scope back when the turn
+    // closes. Warming from the accumulator rather than at resolve time is
+    // forced by the runtime: MarkdownText's resolve() is synchronous and a
+    // settled turn does not re-render, so a listing fetched later would arrive
+    // too late.
+    const mentionFiber = ctx.inject(['chatFileMentions', 'uiConversation'], (scoped) => {
+      const mentions = scoped.get('chatFileMentions') as ChatFileMentionsService | undefined
+      const conversation = scoped.get('uiConversation') as
+        { events?: { register?: (definition: unknown) => unknown } } | undefined
+      if (mentions === undefined || conversation?.events?.register === undefined) return
+      // Re-registering the definition is what wakes a settled conversation:
+      // the registry calls refresh() on every definition change, which
+      // rebuilds each bound session and re-runs forClosing — the only hook
+      // that re-resolves prose mentions once a listing has landed.
+      const register = conversation.events.register
+      let disposeDefinition: (() => void) | undefined
+      const install = (): void => {
+        disposeDefinition?.()
+        disposeDefinition = register.call(
+          conversation.events,
+          createMentionScopeDefinition((path) => { warmMentionPath(ctx, path) }),
+        ) as () => void
+      }
+      try {
+        install()
+      } catch (error) {
+        fail('interception', error)
+        return
+      }
+      scoped.effect(
+        () => {
+          try {
+            const dispose = registerMentionInterception(ctx, sidebarStore, mentions, () => {
+              try {
+                install()
+              } catch (error) {
+                fail('interception', error)
+              }
+            })
+            return () => {
+              dispose()
+              disposeDefinition?.()
+            }
+          } catch (error) {
+            fail('interception', error)
+            return () => {}
+          }
+        },
+        'dsh-better-sidebar: prose mention interception',
+      )
+    })
+    ctx.effect(() => () => { void mentionFiber.dispose() }, 'dsh-better-sidebar: mention interception fiber')
 
     ctx.effect(
       () => {

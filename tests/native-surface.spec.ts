@@ -12,6 +12,7 @@ import { createNativeTabRecords, NativeTabBody, NativeTabTitle } from '../src/cl
 import { registerNativeSurface } from '../src/client/native/index.ts'
 import { createBetterSidebarService, type SidebarSurface } from '../src/client/service.ts'
 import { createSidebarStore, type SidebarTab } from '../src/client/state.ts'
+import { tracyBrowserTab } from '../src/client/builtins/tracy-browser.tsx'
 
 const scope = { sessionId: 's1', cwd: '/work' }
 
@@ -389,6 +390,43 @@ describe('registerNativeSurface lifecycle (service-driven registration)', () => 
       expect(open(file(name)), name).toBe(true)
     }
     expect(open('sidebar://editor')).toBe(false)
+  })
+})
+
+/**
+ * Tracy (TCH e2e v3 X08, 30/09/2026): the site preview keeps its body mounted while another tab is
+ * selected. DSH's dock renders a hidden tab's body only when its type says `keepMounted`; without
+ * it, selecting any other tab unmounted the preview, and coming back loaded the page again from
+ * the top (scroll 1659 → 0, the Refresh state lost).
+ */
+describe('the site preview stays mounted behind another tab (X08)', () => {
+  it('registers tracy:browser with keepMounted, and only that type', () => {
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const service = createBetterSidebarService(store)
+    service.registerTab(tracyBrowserTab())
+    service.registerTab({ id: 'editor', title: 'Files', component: () => null })
+    const records = createNativeTabRecords()
+    const kept: Record<string, boolean | undefined> = {}
+    const ctx = {
+      inject: (_deps: readonly string[], callback: (injected: { get: () => unknown }) => void) => {
+        callback({
+          get: () => ({
+            register: (definition: { kind: string; keepMounted?: boolean }) => {
+              kept[definition.kind] = definition.keepMounted
+              return () => {}
+            },
+          }),
+        })
+        return { dispose: () => {} }
+      },
+      get: () => undefined,
+      slots: { inject: (_key: string, callback: () => () => void) => callback(), register: () => () => {} },
+    }
+    registerNativeSurface({ ctx: ctx as never, store, service, records })
+    expect(kept['tracy:browser']).toBe(true)
+    expect(kept.editor).toBeUndefined()
+    expect(kept.files).toBeUndefined()
   })
 })
 

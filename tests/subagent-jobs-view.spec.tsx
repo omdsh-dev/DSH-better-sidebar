@@ -65,6 +65,8 @@ const killCalls: Array<{ sessionId: string; id: string }> = []
 let jobsByOwner: Record<string, SidebarJobView[]> = {}
 /** The owner sessions the page actually read (the fence's unit of access). */
 let jobListCalls: string[] = []
+/** Per owner session: answer `jobs.list` with this failure instead. */
+let jobListFailures: Record<string, { status: number; body: string } | 'network'> = {}
 
 function jsonResponse(value: unknown): Response {
   return { ok: true, status: 200, json: async () => value } as unknown as Response
@@ -101,6 +103,7 @@ beforeEach(() => {
   outputCalls.length = 0
   killCalls.length = 0
   jobListCalls = []
+  jobListFailures = {}
   jobsByOwner = {
     root: [{ id: 'bash-1', kind: 'bash', label: 'sleep 300', status: 'running', startedAt: 1_000 }],
     child: [{ id: 'bash-2', kind: 'bash', label: 'echo hi', status: 'completed', startedAt: 2_000, finishedAt: 3_000 }],
@@ -114,6 +117,11 @@ beforeEach(() => {
     if (method === 'jobs.list') {
       const owner = body.sessionId ?? ''
       jobListCalls.push(owner)
+      const failure = jobListFailures[owner]
+      if (failure === 'network') throw new TypeError('Failed to fetch')
+      if (failure !== undefined) {
+        return { ok: false, status: failure.status, json: async () => JSON.parse(failure.body) as unknown } as unknown as Response
+      }
       return jsonResponse({ ok: true, value: { jobs: jobsByOwner[owner] ?? [] } })
     }
     if (method === 'jobs.output') {
@@ -461,5 +469,64 @@ describe('SubagentView background jobs', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  describe('a 403 on jobs.list stops asking for that session (TCH #515)', () => {
+    const readsOf = (owner: string): number => jobListCalls.filter(id => id === owner).length
+    const REFUSAL = { status: 403, body: '<!doctype html><p>This feature is only available to the owner account</p>' }
+
+    it('the refused session is asked once in a minute; the rest of the tree keeps polling', async () => {
+      vi.useFakeTimers()
+      try {
+        jobListFailures = { root: REFUSAL }
+        const store = makeStore(baseSnapshot())
+        const { container, unmount } = await renderPage(store)
+        await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+        expect(readsOf('root')).toBe(1)
+        expect(readsOf('child')).toBeGreaterThanOrEqual(15)
+        // The readable session's job still shows; the refused one is simply absent.
+        expect(container.textContent).toContain('echo hi')
+        expect(container.textContent).not.toContain('sleep 300')
+        unmount()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('a whole tree refused goes quiet, and a new tree list does not re-ask it', async () => {
+      vi.useFakeTimers()
+      try {
+        jobListFailures = { root: REFUSAL, child: { status: 403, body: '' } }
+        const store = makeStore(baseSnapshot())
+        const { unmount } = await renderPage(store)
+        await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
+        const settled = jobListCalls.length
+        expect(settled).toBe(2)
+        // A new list identity with the same sessions (every snapshot push does this).
+        act(() => { store.set({ ...baseSnapshot() }) })
+        await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+        expect(jobListCalls).toHaveLength(settled)
+        unmount()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it.each([
+      { label: '503', failure: { status: 503, body: '{"ok":false,"error":{"code":"job-error","message":"not mounted"}}' } },
+      { label: 'network failure', failure: 'network' as const },
+    ])('a $label is not a refusal: the session keeps being asked', async ({ failure }) => {
+      vi.useFakeTimers()
+      try {
+        jobListFailures = { root: failure }
+        const store = makeStore(baseSnapshot())
+        const { unmount } = await renderPage(store)
+        await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+        expect(readsOf('root')).toBeGreaterThanOrEqual(10)
+        unmount()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 })

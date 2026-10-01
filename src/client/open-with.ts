@@ -10,6 +10,7 @@
  * the exported types and functions.
  */
 import type { CopyKey } from './locales.ts'
+import { randomId } from './random-id.ts'
 
 /** One user-configured editor (persisted in `pluginSettings['editor'].openWith`). */
 export interface CustomEditor {
@@ -205,12 +206,9 @@ export function normalizeUrlPath(path: string): string {
   return path.replace(/\\/g, '/')
 }
 
-/** A fresh custom-editor id (uuid when available, time-based fallback). */
+/** A fresh custom-editor id (see `random-id.ts` for the insecure-context fallback). */
 export function newCustomEditorId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
+  return randomId()
 }
 
 /** Validate one custom-editor row before the settings panel accepts it. */

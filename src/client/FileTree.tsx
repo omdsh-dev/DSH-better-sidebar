@@ -112,8 +112,8 @@ const ChatDropIllustration = () => (
 export function FileTree(props: {
   sessionId: string
   cwd: string | undefined
-  /** The sidebar store: the fence-refusal notice writes the `workspaceFence` pref through it. */
-  store: SidebarStore
+  /** The sidebar store. Unused since the fence notice lost its one-click off (0.18.1-tracy.1); kept so callers read as upstream's. */
+  store?: SidebarStore
   expanded: string[]
   /** Files highlighted by a "Show in folder" reveal (absolute paths). */
   revealed: string[]
@@ -155,7 +155,7 @@ export function FileTree(props: {
    */
   service?: BetterSidebarService
 }) {
-  const { sessionId, cwd, store, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onPathRenamed, onPathDeleted, refreshTick, onUploadRequest, busy, service } = props
+  const { sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin, onReferenceFile, onPathRenamed, onPathDeleted, refreshTick, onUploadRequest, busy, service } = props
   const [data, setData] = useState<Record<string, LevelData>>({})
   /**
    * Registry revision for the file-icon feature: bumps on ANY registry
@@ -630,7 +630,7 @@ export function FileTree(props: {
       if (isOutsideWorkspaceMessage(level.error)) {
         return (
           <div style={{ paddingLeft: depth * 22 + 6 }}>
-            <FenceErrorNotice store={store} onDisabled={() => { retryDir(dir) }} />
+            <FenceErrorNotice />
           </div>
         )
       }

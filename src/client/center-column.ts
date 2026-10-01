@@ -11,6 +11,18 @@
  */
 const CENTER_COLUMN_SELECTOR = '#root [data-slot="main.conversation"], #root [data-slot="conversation"]'
 
+/**
+ * Tracy: the conversation slot host itself, current name first. The composer
+ * lookup (conversation-draft.ts) scopes its textarea query to this slot, so a
+ * textarea in another pane is never picked.
+ * @param doc - the document to search.
+ * @returns the slot host, or null before the AppFrame renders.
+ */
+export function findConversationSlot(doc: Document = document): Element | null {
+  return doc.querySelector('#root [data-slot="main.conversation"]')
+    ?? doc.querySelector('#root [data-slot="conversation"]')
+}
+
 /** Match Sidebar's existing last-resort retry cadence (issue #248). */
 export const CENTER_COLUMN_REVALIDATE_MS = 1500
 

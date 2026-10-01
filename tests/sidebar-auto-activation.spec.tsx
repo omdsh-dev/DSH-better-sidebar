@@ -119,20 +119,32 @@ type MountedStore = ReturnType<typeof makeMountedStore>
 /** `ctx.sidebarRight`, replaced by a stand-in column: `isExpanded` reports the
  *  current state, `toggleExpanded` flips it and counts the calls, and `mounted`
  *  is the seat observation the shell binds its per-session state to. */
-interface NativeColumnSpy {
-  face: { isExpanded: () => boolean; toggleExpanded: () => void; mounted: MountedStore }
-  toggles: number
+interface NativeColumnFaceSpy {
+  isExpanded: () => boolean
+  toggleExpanded: () => void
   mounted: MountedStore
+  /** The active tab of the active pane (`ISidebarRight.active`). */
+  active: () => { id: string; kind: string } | undefined
 }
 
-function makeNativeColumnSpy(expanded: boolean, mounted: string | undefined): NativeColumnSpy {
+interface NativeColumnSpy {
+  face: NativeColumnFaceSpy
+  toggles: number
+  mounted: MountedStore
+  /** The kind of the tab the stand-in column reports as active (mutable). */
+  activeKind: string | undefined
+}
+
+function makeNativeColumnSpy(expanded: boolean, mounted: string | undefined, activeKind?: string): NativeColumnSpy {
   const spy = {
     toggles: 0,
     expanded,
+    activeKind,
     mounted: makeMountedStore(mounted),
-    face: {} as { isExpanded: () => boolean; toggleExpanded: () => void; mounted: MountedStore },
+    face: {} as NativeColumnFaceSpy,
   }
   spy.face = {
+    active: () => spy.activeKind === undefined ? undefined : { id: `tab-${spy.activeKind}`, kind: spy.activeKind },
     isExpanded: () => spy.expanded,
     toggleExpanded: () => {
       spy.toggles += 1
@@ -164,8 +176,20 @@ interface MountedSidebar {
   sessionId: string
   /** The stubbed `jobs.list` registry, keyed by OWNER session (mutable). */
   jobs: Record<string, SidebarJobView[]>
+  /** Per OWNER session: answer `jobs.list` with this failure instead (mutable). */
+  failures: Record<string, JobListFailure>
   unmount: () => void
 }
+
+/**
+ * A refused or failed `jobs.list`: an HTTP status with a raw body (a gateway's
+ * HTML refusal page, a JSON envelope, nothing, garbage), a transport failure,
+ * or a response the test releases itself (`deferred`).
+ */
+type JobListFailure =
+  | { status: number; body: string }
+  | 'network'
+  | { deferred: Promise<{ status: number; body: string }> }
 
 let sessionSeq = 0
 const mounted: MountedSidebar[] = []
@@ -179,7 +203,7 @@ function setViewport(width: number): void {
 function mountSidebar(
   width: number,
   bottomOpen = false,
-  options: { columnExpanded?: boolean } = {},
+  options: { columnExpanded?: boolean; activeKind?: string } = {},
 ): MountedSidebar {
   setViewport(width)
   vi.stubGlobal('WebSocket', FakeWebSocket)
@@ -191,6 +215,7 @@ function mountSidebar(
   }
   const feed = makeSessionFeed(initial)
   const jobs: Record<string, SidebarJobView[]> = {}
+  const failures: Record<string, JobListFailure> = {}
   // The jobs feed is polled through the plugin's own route (0.1.7 removed the
   // snapshot's jobs mirror): the registry below is what a test mutates.
   vi.stubGlobal('fetch', async (url: string | URL | Request, init?: RequestInit) => {
@@ -199,6 +224,16 @@ function mountSidebar(
     const body = JSON.parse(String(init?.body)) as { sessionId?: string }
     const owner = body.sessionId ?? ''
     jobListReads.push(owner)
+    const failure = failures[owner]
+    if (failure === 'network') throw new TypeError('Failed to fetch')
+    if (failure !== undefined) {
+      const { status, body: raw } = 'deferred' in failure ? await failure.deferred : failure
+      return {
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => JSON.parse(raw) as unknown,
+      } as unknown as Response
+    }
     return {
       ok: true,
       status: 200,
@@ -213,7 +248,7 @@ function mountSidebar(
   const surface = makeNativeSurfaceSpy()
   service.setSurface(surface.surface)
   service.registerTab({ id: 'subagent', title: 'Subagent', component: JumpHarness })
-  const column = makeNativeColumnSpy(options.columnExpanded ?? false, sessionId)
+  const column = makeNativeColumnSpy(options.columnExpanded ?? false, sessionId, options.activeKind)
   const localeSnapshot = { active: 'en' }
   const ctx = {
     locale: { subscribe: () => () => {}, getSnapshot: () => localeSnapshot },
@@ -235,6 +270,7 @@ function mountSidebar(
     column,
     sessionId,
     jobs,
+    failures,
     unmount: () => {
       act(() => { root.unmount() })
       container.remove()
@@ -455,5 +491,133 @@ describe('Sidebar background-activity auto-activation (#162)', () => {
     switchToChild(sidebar)
     expectNativeTasksOpen(sidebar, 'child')
     expect(sidebar.column.toggles).toBe(0)
+  })
+})
+
+/** How many times the stubbed `jobs.list` was read for one owner session. */
+function readsFor(sessionId: string): number {
+  return jobListReads.filter(owner => owner === sessionId).length
+}
+
+/** The refusal page dsh-passwords answers a seat account with (TCH #515). */
+const GATEWAY_403_HTML = '<!doctype html><html><body>This feature is only available to the owner account</body></html>'
+
+/**
+ * Tracy (TCH e2e v3 X08, 30/09/2026): background activity never takes the column away from the
+ * site preview. While `tracy:browser` is the active tab of the on-screen session, a new subagent
+ * or job opens nothing (the Tasks page stays one click away in the guide); the topology jump-back
+ * is the user's own click and still opens.
+ */
+describe('a background activation never takes over an active site preview (X08)', () => {
+  it.each([
+    { source: 'subagent', width: 1024 },
+    { source: 'job', width: 1024 },
+    { source: 'subagent', width: 390 },
+    { source: 'job', width: 390 },
+  ] as const)('$source at $width px leaves an active Browser tab in place', async ({ source, width }) => {
+    const sidebar = mountSidebar(width, false, { columnExpanded: true, activeKind: 'tracy:browser' })
+    await publishActivity(sidebar, source)
+    expect(sidebar.surface.opens).toEqual([])
+    expect(sidebar.column.toggles).toBe(0)
+  })
+
+  it('another active tab still gets the Tasks page', async () => {
+    const sidebar = mountSidebar(1024, false, { columnExpanded: true, activeKind: 'files' })
+    await publishActivity(sidebar, 'job')
+    expectNativeTasksOpen(sidebar, sidebar.sessionId)
+  })
+})
+
+describe('the job poll stops on a 403 (TCH #515)', () => {
+  it.each([
+    { label: 'gateway HTML page', body: GATEWAY_403_HTML },
+    { label: 'JSON error envelope', body: '{"ok":false,"error":{"code":"forbidden","message":"forbidden"}}' },
+    { label: 'empty body', body: '' },
+    { label: 'malformed JSON', body: '{"ok":' },
+  ])('a 403 with a $label is asked once, not every tick for a minute', async ({ body }) => {
+    const sidebar = mountSidebar(1024)
+    sidebar.failures[sidebar.sessionId] = { status: 403, body }
+    const before = readsFor(sidebar.sessionId)
+    await flushFeeds()
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    // At most the one read already in flight when the failure was installed.
+    expect(readsFor(sidebar.sessionId) - before).toBeLessThanOrEqual(1)
+    const settled = readsFor(sidebar.sessionId)
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    expect(readsFor(sidebar.sessionId)).toBe(settled)
+    expect(sidebar.surface.opens).toEqual([])
+  })
+
+  it.each([
+    { label: '503 (no jobs service)', failure: { status: 503, body: '{"ok":false,"error":{"code":"job-error","message":"not mounted"}}' } },
+    { label: '500 HTML', failure: { status: 500, body: '<html>boom</html>' } },
+    { label: 'network failure', failure: 'network' as const },
+  ])('a $label keeps the poll retrying, and is never read as an empty list', async ({ failure }) => {
+    const sidebar = mountSidebar(1024)
+    // A job already running when the page loads: the baseline holds it.
+    sidebar.jobs[sidebar.sessionId] = [{ id: 'bash-0', kind: 'bash', label: 'x', status: 'running', startedAt: 1 }]
+    await flushFeeds()
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    sidebar.failures[sidebar.sessionId] = failure
+    const before = readsFor(sidebar.sessionId)
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+    expect(readsFor(sidebar.sessionId) - before).toBeGreaterThanOrEqual(4)
+    // Recovery with the same list: had a failure been read as an empty list,
+    // the old job would now look new and open the Tasks page.
+    delete sidebar.failures[sidebar.sessionId]
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    expect(sidebar.surface.opens).toEqual([])
+    sidebar.jobs[sidebar.sessionId] = [
+      ...sidebar.jobs[sidebar.sessionId]!,
+      { id: 'bash-1', kind: 'bash', label: 'y', status: 'running', startedAt: 2 },
+    ]
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    expectNativeTasksOpen(sidebar, sidebar.sessionId)
+  })
+
+  it('a refusal for one session does not stop the poll of the session switched to', async () => {
+    const sidebar = mountSidebar(1024)
+    sidebar.failures[sidebar.sessionId] = { status: 403, body: GATEWAY_403_HTML }
+    await flushFeeds()
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_000) })
+    const refusedReads = readsFor(sidebar.sessionId)
+    switchToChild(sidebar)
+    await flushFeeds()
+    const before = readsFor('child')
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+    expect(readsFor('child') - before).toBeGreaterThanOrEqual(4)
+    expect(readsFor(sidebar.sessionId)).toBe(refusedReads)
+  })
+
+  it('a refusal that lands after the switch neither stops the new session nor marks the old one', async () => {
+    const sidebar = mountSidebar(1024)
+    await flushFeeds()
+    let release: (answer: { status: number; body: string }) => void = () => {}
+    sidebar.failures[sidebar.sessionId] = { deferred: new Promise(resolve => { release = resolve }) }
+    // The next tick's read of the first session hangs on the deferred answer.
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    switchToChild(sidebar)
+    await act(async () => { release({ status: 403, body: GATEWAY_403_HTML }) })
+    await flushFeeds()
+    const before = readsFor('child')
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+    expect(readsFor('child') - before).toBeGreaterThanOrEqual(4)
+    // Back on the first session its poll resumes: the stale refusal marked nothing.
+    delete sidebar.failures[sidebar.sessionId]
+    act(() => { sidebar.column.mounted.set(sidebar.sessionId) })
+    await flushFeeds()
+    const parentBefore = readsFor(sidebar.sessionId)
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+    expect(readsFor(sidebar.sessionId) - parentBefore).toBeGreaterThanOrEqual(4)
+  })
+
+  it('unmounting leaves no poll behind', async () => {
+    const sidebar = mountSidebar(1024)
+    await flushFeeds()
+    sidebar.unmount()
+    mounted.splice(mounted.indexOf(sidebar), 1)
+    const before = readsFor(sidebar.sessionId)
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    expect(readsFor(sidebar.sessionId)).toBe(before)
   })
 })

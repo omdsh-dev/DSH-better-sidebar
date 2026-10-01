@@ -7,18 +7,33 @@
  * request). Failures surface as {@link SidebarApiError} with the wire code.
  */
 import { encodeHtmlUrl } from '../html-route.ts'
+import { dshUrl } from './page-base.ts'
+import type { BrowserProbeResult } from './browser.ts'
 import type { LastActivity } from '../subagent-activity.ts'
 import type { SidechatLiveEvent, SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
 import type { SidebarJobView, SidebarSessionEvent } from '../context-types.ts'
 
-/** One wire failure. */
+/** One wire failure. `status` is the HTTP status when a response arrived (absent for a network failure). */
 export class SidebarApiError extends Error {
   constructor(
     readonly code: string,
     message: string,
+    readonly status?: number,
   ) {
     super(message)
   }
+}
+
+/**
+ * Tracy: whether a wire failure is a 403 — the caller is not allowed this route at all, whatever
+ * the body says. A gateway in front of dsh may refuse a route to an account before dsh sees it, and
+ * answers with an HTML page (dsh-passwords refuses `browser.probe` to seat accounts, and `jobs.list`
+ * for a session the seat does not hold),
+ * so the status, not the parsed envelope, is what identifies it. A poller that gets this stops:
+ * retrying a refusal only repeats it (TCH #515: 24 × 403 a minute from one idle page).
+ */
+export function isForbiddenError(error: unknown): boolean {
+  return error instanceof SidebarApiError && error.status === 403
 }
 
 /**
@@ -127,6 +142,7 @@ async function readEnvelope<T>(response: Response): Promise<T> {
     throw new SidebarApiError(
       parsed?.error?.code ?? 'http',
       parsed?.error?.message ?? `HTTP ${response.status}`,
+      response.status,
     )
   }
   return parsed.value as T
@@ -135,7 +151,7 @@ async function readEnvelope<T>(response: Response): Promise<T> {
 async function call<T>(method: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   let response: Response
   try {
-    response = await fetch(`/sidebar/api/${method}`, {
+    response = await fetch(dshUrl(`/sidebar/api/${method}`), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
@@ -165,7 +181,7 @@ async function fetchUpload<T>(
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
   let response: Response
   try {
-    response = await fetch(`/sidebar/upload?${params.toString()}`, {
+    response = await fetch(dshUrl(`/sidebar/upload?${params.toString()}`), {
       method: 'POST',
       headers: { 'content-type': 'application/octet-stream' },
       body,
@@ -336,7 +352,9 @@ export const api = {
    * `jobs.list` route. The registry's access fence admits a job to its OWNER
    * session (and to unowned jobs) only, so a caller that needs the whole tree
    * asks once per tree session. A host without the jobs service answers 503:
-   * the rejection is the caller's to degrade from (an empty section).
+   * the rejection is the caller's to degrade from (an empty section). Tracy:
+   * a 403 ({@link isForbiddenError}) means the account may not read this
+   * session's list (dsh-passwords holds it to the seat's session grant), and the caller stops asking.
    */
   jobsList: (sessionId: string, signal?: AbortSignal) =>
     call<{ jobs: SidebarJobView[] }>('jobs.list', { sessionId }, signal),
@@ -390,6 +408,13 @@ export const api = {
       patch,
       ...(expectedRevision !== undefined ? { expectedRevision } : {}),
     }),
+  /** Tracy: probe a URL's embeddability (the host fetches its headers; the
+   *  client judges X-Frame-Options / CSP frame-ancestors — see the host's
+   *  browser.probe route). Used by the `tracy:browser` tab. A 403
+   *  ({@link isForbiddenError}: dsh-passwords keeps the route owner-only)
+   *  ends probing for the tab's lifetime. */
+  browserProbe: (url: string, signal?: AbortSignal) =>
+    call<BrowserProbeResult>('browser.probe', { url }, signal),
   /** External open for the file tree's "open with" menu. Remote SSH editor
    *  URLs are launched on the browser/client machine; reveal and local URLs
    *  keep using the host's platform opener. */
@@ -412,7 +437,9 @@ function fileUrl(scope: SessionScope, path: string, download: boolean): string {
   const params = new URLSearchParams({ sessionId: scope.sessionId, path })
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
   if (download) params.set('download', '1')
-  return `/sidebar/file?${params.toString()}`
+  // Under the page's mount when it has one (see page-base.ts): `<img src>` and `<a href>` would
+  // otherwise bypass the `<base>` tag with a root-absolute path.
+  return dshUrl(`/sidebar/file?${params.toString()}`)
 }
 
 /**
@@ -424,5 +451,7 @@ function fileUrl(scope: SessionScope, path: string, download: boolean): string {
  * client-side platform signal is needed.
  */
 export function htmlUrl(scope: SessionScope, path: string): string {
-  return encodeHtmlUrl(scope.sessionId, path)
+  // `encodeHtmlUrl` stays root-relative: the host decodes that exact form. The page's mount is
+  // added here, on the client side only.
+  return dshUrl(encodeHtmlUrl(scope.sessionId, path))
 }

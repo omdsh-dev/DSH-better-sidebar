@@ -9,6 +9,7 @@
 import type { Context } from '../../context-types.ts'
 import type { BetterSidebarService } from '../service.ts'
 import { builtinTabs } from './tabs.tsx'
+import { tracyBrowserTab } from './tracy-browser.tsx'
 import { builtinViewers } from './viewers.tsx'
 
 /**
@@ -25,6 +26,8 @@ export function registerBuiltins(
   for (const tab of builtinTabs()) {
     disposers.push(service.registerTab(tab))
   }
+  // Tracy: the site preview page (`tracy:browser`), see tracy-browser.tsx.
+  disposers.push(service.registerTab(tracyBrowserTab()))
   for (const viewer of builtinViewers()) {
     disposers.push(service.registerFileViewer(viewer))
   }

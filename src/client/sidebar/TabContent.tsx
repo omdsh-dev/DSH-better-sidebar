@@ -53,12 +53,13 @@ export const TabContent = memo(function TabContent(props: TabContentProps) {
  * Hidden tabs (editor/diff) never show; `available` returning false shows
  * a disabled row instead of hiding the option.
  * Tabs the user disabled in the side card settings are filtered out
- * entirely — re-enabling them is the settings page's job. */
+ * entirely — re-enabling them is the settings page's job. A host tab policy
+ * that does not list a type drops it here too (Tracy 0.21.1-tracy.13). */
 export function buildNewTabOptions(state: SidebarState, ctx: Context, scope: SessionScope): NewTabOption[] {
   const service = ctx.get('betterSidebar')
   if (service === undefined) return []
   return service.getTabs()
-    .filter(d => !d.hidden && service.isTabEnabled(d.id))
+    .filter(d => !d.hidden && service.isTabEnabled(d.id) && service.isTabListed(d.id))
     .sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
     .map(d => ({
       id: d.id,

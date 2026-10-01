@@ -5,6 +5,51 @@ import { isWithin, requireAbsolute } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
 import { SidebarError } from './wire.ts'
 
+/**
+ * Which directory a sidebar request is allowed to work in.
+ *
+ * 🔒 THE DIRECTORY IS A TENANT SELECTOR, NOT A CONVENIENCE. Every scoped
+ * sidebar call carries an optional client `cwd` — the session's directory as
+ * the client's own list summary remembers it, sent so a request that arrives
+ * before the session attaches still lands somewhere sensible. On a harness
+ * that serves one workspace that only chose a folder. On a harness that serves
+ * many customer sites, ONE process has every site mounted: an unchecked client
+ * directory is a read of another tenant's files, and on the terminal route the
+ * subprocess provider reads the SITE out of this very path and runs the shell
+ * in that site's container (with no sandbox stamp for it to cross-check).
+ *
+ * The rule, one for every route: the session's own workspace is authoritative;
+ * a client value is honoured only when it names a directory INSIDE it, and
+ * refused loudly otherwise — a request aimed at another tenant is answered
+ * with an error, not quietly redirected. A `..` segment is refused outright
+ * rather than normalized away: this module does no I/O, so it cannot tell a
+ * symlink from a directory, and a path that climbs out and back in must not
+ * get the benefit of the doubt.
+ * @param sessionCwd - the session's authoritative workspace directory.
+ * @param clientCwd - the directory the client asked for, if any.
+ * @returns the directory to work in.
+ * @throws {SidebarError} when the client's directory is not absolute, or not inside the workspace.
+ */
+export function workspaceCwd(sessionCwd: string, clientCwd?: string): string {
+  const workspace = requireAbsolute(sessionCwd)
+  if (clientCwd === undefined || clientCwd === '') return workspace
+  if (clientCwd.split(/[\\/]/).includes('..')) {
+    throw new SidebarError('forbidden', `working directory "${clientCwd}" leaves the session workspace`, 403)
+  }
+  let requested: string
+  try {
+    // requireAbsolute() resolves separators and `.` segments; the `..` refusal
+    // above has already run, so nothing can be normalized back into the workspace.
+    requested = requireAbsolute(clientCwd)
+  } catch {
+    throw new SidebarError('bad-request', `invalid working directory "${clientCwd}"`)
+  }
+  if (!isWithin(workspace, requested)) {
+    throw new SidebarError('forbidden', `working directory "${clientCwd}" is outside the session workspace`, 403)
+  }
+  return requested
+}
+
 /** Resolve a path and convert filesystem resolution failures to an API error. */
 async function resolveRealPath(path: string, label: string): Promise<string> {
   try {

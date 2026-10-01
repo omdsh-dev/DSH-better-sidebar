@@ -1416,6 +1416,45 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 /* ── Browser tab ──────────────────────────────────────────────────────── */
 
+.browserSiteTrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.browserSiteTrigger:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.browserSiteIcon {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+}
+
+.browserSiteMenu {
+  max-width: min(320px, calc(100vw - 24px));
+}
+
+.browserSiteMenuHost {
+  display: inline-flex;
+}
+
+.browserSiteIcon img {
+  display: block;
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+}
+
 .browser {
   flex: 1;
   min-height: 0;
@@ -1455,6 +1494,32 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   font: var(--dsw-font-xxxs-11);
   color: var(--dsw-alias-state-warn-label);
   background: var(--dsw-alias-state-warn-tertiary);
+}
+
+/* The loading line under the address bar: Chrome's tab spinner, drawn as a 2 px sweep. Present
+   at all times so the bar's height never changes; only its animation comes and goes. */
+.browserProgress {
+  flex: none;
+  height: 2px;
+  margin-top: -2px;
+  /* A faint track the whole width, and a sweep of the brand colour running along it. */
+  background-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 22%, transparent);
+  background-image: linear-gradient(90deg, transparent 0%, var(--dsw-alias-brand-primary) 50%, transparent 100%);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  opacity: 0;
+  animation: tracy-browser-progress 1.1s ease-in-out infinite;
+  animation-play-state: paused;
+}
+
+.browserProgress[data-loading='true'] {
+  opacity: 1;
+  animation-play-state: running;
+}
+
+@keyframes tracy-browser-progress {
+  from { background-position: -40% 0; }
+  to { background-position: 140% 0; }
 }
 
 .browserFrame {
@@ -1521,6 +1586,884 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 .browserBlockedButton:hover {
   background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* ── Edit mode (comment-to-edit; Tracy, 27/09/2026) ──────────────────────
+   Port of the cut-down drawing Mockups/Browser comment (Brian, 27/09 pm;
+   packages/dev/tracy-design/src/mockups/browser-comment.mock.stories.tsx)
+   to plain CSS on dsh tokens. The drawing's primary is dsh's
+   --dsw-alias-brand-primary; its popover surface is --dsw-alias-bg-layer-2
+   with the lv3 shadow. The picker's outline (dashed while pointing, solid
+   once picked) is drawn by the page inside the frame, not here. */
+
+/* The mode bar (Brian, 27/09 pm, third pass — like Claude Design): at the
+   right end of the address bar, the zoom value, then a two-option segmented
+   control Interactive | Edit. The selected segment is filled with the label
+   colour (the drawing's bg-foreground / text-background); the other stays
+   flat inside one outlined group. */
+.modeBar {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 2px;
+}
+
+/* The zoom chip: dsh's Pill drawn NEUTRAL, as the approved stories draw it
+   (ToolbarCommentsSplit…, 29/09: a plain outlined select). The brand tint it
+   wore since 27/09 read as a mode that is on, at 100 % too (acceptance F10).
+   The same height and outline as the segments beside it. Doubled selector so
+   it wins over Pill's own look whichever stylesheet loads last. The list it
+   opens is dsh's Menu, unstyled here. */
+.modeBar .zoomChip {
+  flex: none;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-base);
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l1);
+}
+
+.modeBar .zoomChip:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.modeBar .zoomChip:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 50%, transparent);
+  outline-offset: 1px;
+}
+
+.modeSegments {
+  flex: none;
+  display: inline-flex;
+  align-items: stretch;
+  height: 28px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.modeSegment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-strong-12);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.modeSegment + .modeSegment {
+  border-left: 1px solid var(--dsw-alias-border-l1);
+}
+
+.modeSegment:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.modeSegmentOn,
+.modeSegmentOn:hover {
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-base);
+}
+
+.modeSegmentUnavailable,
+.modeSegmentUnavailable:hover {
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.modeSegment:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 50%, transparent);
+  outline-offset: -2px;
+}
+
+/* The frame and the layer laid exactly over it. A zoomed frame keeps this
+   box as its layout box and is drawn at scale from the top centre
+   (BrowserView frameZoomStyle, the approved drawing's Zoomed75): below 100 %
+   on a neutral backdrop; above it the first view is the same top-centre crop,
+   and the stage's scroll box reaches the clipped edges (decision 6). */
+.browserStage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Fills the stage; scrolls only above 100 % (overflow is set inline by
+   ZoomStage). Its sibling, the comment layer, stays over the visible area. */
+.browserScroll {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The stage's size at or below 100 %; stage x f above it (canvasZoomStyle). */
+.browserCanvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.browserStageZoomed {
+  background: var(--dsw-alias-bg-document-preview);
+}
+
+.browserFrameZoomed {
+  box-shadow: 0 0 0 1px var(--dsw-alias-border-l1), 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.commentOverlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+
+@keyframes tracy-comment-spin {
+  to { transform: rotate(360deg); }
+}
+
+.commentSpin {
+  flex: none;
+  animation: tracy-comment-spin 0.9s linear infinite;
+}
+
+/* "Click anything on the page to comment · Esc to exit" at the bottom. */
+.commentHint {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 24px);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-base);
+  font: var(--dsw-font-xxs-12);
+  white-space: nowrap;
+  box-shadow: var(--dsw-shadow-lv3);
+}
+
+.commentHintExit {
+  opacity: 0.6;
+}
+
+/* A compact frame (F13, 320 px): the short sentence, wrapping inside the frame instead of cut. */
+.commentHintCompact {
+  white-space: normal;
+  text-align: center;
+  border-radius: 12px;
+  width: max-content;
+}
+
+/*
+ * Edit is on but the page in the frame has no picker (TCH e2e v7 ADDR-9): said where the hint stands,
+ * with Reload. It wraps in any frame width instead of being cut.
+ */
+.commentUnavailable {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 10px;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  padding: 6px 12px;
+  border-radius: 12px;
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-base);
+  font: var(--dsw-font-xxs-12);
+  text-align: center;
+  pointer-events: auto;
+}
+
+.commentUnavailableReload {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* A send that failed after its popover closed, said at the top of the page for a few seconds. */
+.commentNotice {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  max-width: calc(100% - 24px);
+  padding: 6px 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-state-warn-label);
+  font: var(--dsw-font-xxs-12);
+  box-shadow: var(--dsw-shadow-lv3);
+}
+
+/* "Deleted · Undo" (Brian 29/09 22:45; 23:05: in the deleted message's spot in the thread card).
+   One line (round 5, acceptance v3 TH-8: it broke into "Deleted" / "·" / "Undo (5)"). */
+.threadDeleted {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding-bottom: 6px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  white-space: nowrap;
+}
+
+.threadDeleted > * {
+  flex: none;
+}
+
+/* The thread card's messages stack in a column (`.threadMessage`, declared later): the notice stays a row. */
+.threadMessage.threadDeleted {
+  flex-direction: row;
+  align-items: baseline;
+}
+
+/* The countdown (Brian 23:20): a thin bar under the line, empty when the window ends. */
+.commentCountdown {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--dsw-alias-label-tertiary);
+  transform-origin: left center;
+  animation-name: tracy-comment-countdown;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes tracy-comment-countdown {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+
+.commentNoticeDot {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.commentUndo {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* The popover: a text box, then close · Send to Tracy ↵ (Enter sends, Shift+Enter is a new line). */
+.commentPopover {
+  position: absolute;
+  /* Above the author bubbles (3), as the stories stack popover z-30 over pin z-20. */
+  z-index: 4;
+  box-sizing: border-box;
+  max-height: calc(100% - 16px);
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  box-shadow: var(--dsw-shadow-lv3);
+  font: var(--dsw-font-xxs-12);
+  text-align: left;
+  pointer-events: auto;
+}
+
+.commentTextarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 60px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-s-14);
+  /* It grows with its words (CommentLayer's useAutoGrow, up to 200 px, then scrolls inside): no handle. */
+  resize: none;
+  overflow-y: hidden;
+}
+
+.commentTextarea:focus {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-brand-primary) 20%, transparent);
+}
+
+.commentError {
+  margin-top: 6px;
+  color: var(--dsw-alias-state-warn-label);
+  font: var(--dsw-font-xxxs-11);
+}
+
+/* Round 11 (V5-3): the box's comment was deleted elsewhere; its words stay. One plain, muted line. */
+.commentLost {
+  margin-top: 6px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+}
+
+/* The count near the limit (round 5, TH-2): muted from 90 %, the warning colour past the limit. */
+.commentCount {
+  margin-top: 4px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.commentCountOver {
+  color: var(--dsw-alias-state-warn-label);
+  font-weight: 600;
+}
+
+.commentFoot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.commentFootEnd {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.commentClose {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.commentClose:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.commentSend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-brand-primary-invert, #fff);
+  font: var(--dsw-font-xxs-strong-12);
+  cursor: pointer;
+}
+
+.commentSend:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 80%, transparent);
+}
+
+.commentSend:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Another comment is being edited. */
+.commentPinDim {
+  opacity: 0.4;
+}
+
+/* Interactive | Edit as icons only (the drawing's px-1.5). */
+.modeSegmentIcon {
+  padding: 0 6px;
+}
+
+/* The count: a 16 px brand disc; grey at 0, the same size. */
+.commentsCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-strong-11);
+  font-size: 9px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* Over the button's top-right corner, inside the toolbar: the bar has 6 px above
+   the split (padding), so 4 px up plus the 2 px ring stay in it — at -6 px the
+   ring was cut by the bar's top edge (acceptance F17, 560/380/320 px). */
+.commentsCountCorner {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  box-shadow: 0 0 0 2px var(--dsw-alias-bg-base);
+}
+
+/* ── People comments (stage 6, 29/09/2026; stories PopoverTwoButtons… · ThreadCardSendToChat ·
+   ToolbarCommentsButton… · Refresh…) ──────────────────────────────────────────────────────── */
+
+/* The popover's header row: "Comment", muted, and the ✕ at the right (h-8). */
+.commentHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  margin: -4px -4px 4px 0;
+}
+
+.commentHeadTitle {
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-s-strong-14);
+}
+
+/* Round 8: the picked element is hidden now (a hover menu closed, an offcanvas slid away) — the box
+   stays where it stood and names it, "Newsletter (hidden now)", muted and cut to one line. */
+.commentHiddenNote {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0 8px;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxs-12);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.threadHiddenNote {
+  margin: 0 0 6px;
+}
+
+/* verify6 L2: the name shortens, the "(hidden now)" words never do. */
+.hiddenNoteRow {
+  display: flex;
+  align-items: baseline;
+}
+
+.hiddenNoteName {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.hiddenNoteFixed {
+  flex: none;
+  white-space: pre;
+}
+
+/* Typed words: the box keeps the brand line (the stories' border-primary/60). */
+.commentTextareaFilled {
+  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary) 60%, transparent);
+}
+
+/* The Enter button's key, small and muted after its label (↵). */
+.commentKeyHint {
+  margin-left: 6px;
+  font: var(--dsw-font-xxxs-11);
+  opacity: 0.6;
+}
+
+/* The outline button: "Add comment", "Save", "Reply", "Resolve" (h-8, px-3, 13 px). */
+.commentSecondary {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-strong-12);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.commentSecondary:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.commentSecondary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.commentFoot .commentSend {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* "Delete" in the edit popover: a small red link at the foot's left. */
+.commentDelete {
+  flex: none;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxs-12);
+  cursor: pointer;
+}
+
+.commentDelete:hover {
+  text-decoration: underline;
+}
+
+/* The author's bubble: 22 px, the initial inside, its bottom-left corner square (pointing at the
+   block's top-left), filled in the author's colour (inline, `authorColor` — the same hash and list as
+   tracy-chat-input), a ring of the page background. */
+.commentAvatarPin {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50% 50% 50% 0;
+  box-shadow: 0 0 0 2px var(--dsw-alias-bg-base), 0 1px 2px rgba(0, 0, 0, 0.12);
+  color: #fff;
+  font: var(--dsw-font-xxxs-strong-11);
+  cursor: pointer;
+  pointer-events: auto;
+  z-index: 3;
+}
+
+.commentAvatarPin:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 50%, transparent);
+  outline-offset: 2px;
+}
+
+/* The thread card: the popover's box, messages then the reply row. Round 5 (acceptance v3 TH-5): the
+   card never scrolls as a whole; its message list does (`.threadList`), so the reply box and its
+   buttons stay in view at the card's foot however long the thread. */
+.threadCard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  overflow: hidden;
+}
+
+.threadCard > * {
+  flex: none;
+}
+
+.threadCard > .threadList {
+  flex: 0 1 auto;
+  min-height: 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin-right: -6px;
+  padding-right: 6px;
+}
+
+.threadList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Round 6 (acceptance v4 thread): the reply a link or the Comments view revealed, where the card opened. */
+.threadMessage.threadFocus {
+  margin: -4px -6px;
+  padding: 4px 30px 4px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent);
+}
+
+/* A first message deleted under live replies (round 5, TH-4): "Comment deleted", muted. */
+.threadText.threadTombstone {
+  color: var(--dsw-alias-label-tertiary);
+  font-style: italic;
+}
+
+.threadCard .commentFoot {
+  margin-top: 0;
+}
+
+.threadMessage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 24px;
+}
+
+.threadMessageHead {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* A long name gives way (ellipsis), never the time (round 5, TH-9: "22 / min / ago"). */
+.threadAuthor {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-strong-12);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threadAge {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  white-space: nowrap;
+}
+
+.threadText {
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* F14: ⋮ Copy link's "Link copied" under the ⋮, right-aligned so it stays inside the card. */
+.threadMoreSlot .copyLinkTip {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
+/* dsh's Menu wraps its anchor: the slot, not the button, is what stands at the message's top-right. */
+.threadMoreSlot {
+  position: absolute;
+  top: -2px;
+  right: 0;
+  display: inline-flex;
+}
+
+.threadMore {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.threadMore:hover,
+.threadMore[aria-expanded='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* Resolve on the first message's head row (Brian 23:08): the Comments tab row's small text button. */
+.threadResolve {
+  flex: none;
+  margin-left: auto;
+  padding: 0 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  cursor: pointer;
+}
+
+.threadResolve:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* While a box is open: catches the first click over the frame and the pins (under the box). */
+.commentShield {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: auto;
+  background: transparent;
+}
+
+/* A click outside that could not close the box (words typed): a short ring pulse. */
+@keyframes tracy-comment-flash {
+  0%, 100% { box-shadow: var(--dsw-shadow-lv3); }
+  40% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent), var(--dsw-shadow-lv3); }
+}
+
+.commentFlash {
+  animation: tracy-comment-flash 0.5s ease-in-out;
+}
+
+.threadResolved {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.threadReply {
+  min-height: 36px;
+}
+
+/* "Comments N" (rule 9): one grey button, the height of the segments beside it. */
+.commentsButton {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-strong-12);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.commentsButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.commentsButton:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--dsw-alias-brand-primary) 50%, transparent);
+  outline-offset: -2px;
+}
+
+/* Compact: the icon alone, the count as a corner badge. */
+.commentsButtonIcon {
+  padding: 0 6px;
+}
+
+/* Refresh with Tracy's progress: the chip under the button (dark, its arrow on the button's centre). */
+.refreshWrap {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+}
+
+.refreshReady,
+.refreshReady:hover:not(:disabled) {
+  background: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-brand-primary-invert, #fff);
+}
+
+.refreshChip {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: -6px;
+  z-index: 20;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--dsw-alias-tooltip-bg);
+  color: var(--dsw-static-neutral-bluish-00);
+  font: var(--dsw-font-xxs-strong-12);
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: var(--dsw-shadow-lv3);
+}
+
+.refreshChip::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 16px;
+  width: 8px;
+  height: 8px;
+  background: inherit;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+/* The copy button in Go's slot, and its own "Link copied" bubble under it
+   (story ToolbarCopyLinkCopied) — dsh's tooltip look, shown for 1.5 s. */
+.copyLink {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+}
+
+.copyLinkTip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  z-index: 20;
+  transform: translateX(-50%);
+  padding: 3px 7px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-tooltip-bg);
+  color: var(--dsw-static-neutral-bluish-00);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .editorCm {
@@ -2230,4 +3173,145 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .tocFlash {
   animation: dsh-toc-flash 1.2s ease-out;
   border-radius: 4px;
+}
+
+/* Files in a comment box (TCH attachments contract): the paperclip at the foot's left, the size of the
+   Page comment box's outline icon button in the stories (`size-7`), and the chips under the text. */
+.commentAttach {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.commentAttach:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.attachChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.attachChip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  height: 40px;
+  box-sizing: border-box;
+  padding: 0 22px 0 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+}
+
+/* An image chip is its thumbnail, a 40 px square. */
+.attachChipImage {
+  width: 40px;
+  padding: 0;
+}
+
+.attachThumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.attachChipText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.attachName {
+  max-width: 160px;
+  overflow: hidden;
+  font: var(--dsw-font-xxs-12);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachSize {
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+}
+
+.attachRemove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--dsw-alias-bg-base) 85%, transparent);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.attachRemove:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+/* A kept file in the thread card opens in a new tab; no ✕, so no room kept for it. */
+.attachLink {
+  padding-right: 8px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.attachChipImage.attachLink {
+  padding: 0;
+}
+
+.attachLink:hover {
+  border-color: var(--dsw-alias-border-l2);
+}
+
+/* A file dragged over a box that takes files. */
+.commentDropOn {
+  border-color: var(--dsw-alias-brand-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-brand-primary) 20%, transparent), var(--dsw-shadow-lv3);
+}
+
+/* Over the page frame for the length of a file drag while a box is open: a drop here is ignored. */
+.commentDropCatch {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: auto;
+}
+
+/* With the paperclip at its left, the 340 px popover's foot keeps "Add comment ⇧↵" and "Send to Tracy ⌘↵"
+   on the paperclip's row in English (measured 30/09: 28 + 6 + 285 px wanted 319 of 318 at 10 px padding);
+   a longer language may still wrap, as the foot always could. */
+.commentFoot:has(> .commentAttach),
+.commentFoot:has(> .commentAttach) .commentFootEnd {
+  gap: 6px;
+}
+
+.commentFoot:has(> .commentAttach) .commentSecondary,
+.commentFoot:has(> .commentAttach) .commentSend {
+  padding: 0 8px;
 }

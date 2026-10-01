@@ -33,7 +33,7 @@ export class RenderBoundary extends Component<{ children?: ReactNode; className?
     if (this.state.error !== null) {
       return (
         <div className={this.props.className}>
-          <span>dsh-better-sidebar: {this.state.error}</span>
+          <span>Tracy Sidebar: {this.state.error}</span>
           <button
             type="button"
             className={css.terminalRetry}

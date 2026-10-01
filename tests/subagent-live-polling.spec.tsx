@@ -259,3 +259,52 @@ describe('SubagentView live polling', () => {
     unmount()
   })
 })
+
+/**
+ * Tracy (TCH e2e v3 X07/X08, 30/09/2026): a seat account may not read `subagents.live`
+ * (dsh-passwords keeps it to the owner), and the page asked again every tick: 290 × 403 in one
+ * run. A 403 ends the live poll for that root; any other failure keeps retrying.
+ */
+describe('SubagentView live poll stops on a 403', () => {
+  function stubLive(status: number, liveCalls: string[]): void {
+    vi.stubGlobal('fetch', async (url: string | URL | Request, init?: RequestInit) => {
+      const method = String(url).split('/').pop()
+      if (method === 'subagents.live') {
+        const body = JSON.parse(String(init?.body)) as { rootSessionId?: string }
+        liveCalls.push(body.rootSessionId ?? '')
+        if (status === 200) return jsonResponse({ ok: true, value: { live: {} } })
+        return { ok: false, status, json: async () => ({ ok: false, error: { code: 'forbidden', message: 'forbidden' } }) } as unknown as Response
+      }
+      if (method === 'jobs.list') return jsonResponse({ ok: true, value: { jobs: [] } })
+      throw new Error(`unexpected fetch ${String(url)}`)
+    })
+  }
+
+  it('asks once, then never again for that root', async () => {
+    vi.useFakeTimers()
+    const liveCalls: string[] = []
+    stubLive(403, liveCalls)
+    const store = makeStore(runningSnapshot())
+    const { unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store, vi.fn()) }),
+    )
+    await act(async () => { await Promise.resolve() })
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+    expect(liveCalls).toEqual(['root'])
+    unmount()
+  })
+
+  it('a 500 keeps the retry', async () => {
+    vi.useFakeTimers()
+    const liveCalls: string[] = []
+    stubLive(500, liveCalls)
+    const store = makeStore(runningSnapshot())
+    const { unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store, vi.fn()) }),
+    )
+    await act(async () => { await Promise.resolve() })
+    await act(async () => { await vi.advanceTimersByTimeAsync(9_000) })
+    expect(liveCalls.length).toBeGreaterThan(2)
+    unmount()
+  })
+})

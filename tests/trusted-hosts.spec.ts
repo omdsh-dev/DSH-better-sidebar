@@ -70,7 +70,12 @@ function mount(initialTrustedHosts: readonly string[] = []): {
       register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
       registerUpgrade: (route: SidebarWebUpgradeRoute) => { upgrades.push(route); return () => {} },
     },
-    sessions: { get: () => undefined },
+    // Tracy: these tests measure the ORIGIN fence, so the session must
+    // resolve — a session with no workspace is refused by the cwd fence (400)
+    // and would hide whether the origin was accepted at all.
+    sessions: { get: () => ({ header: { cwd: process.cwd() } }) },
+    // Tracy: the host half provides `sidebarFrame`.
+    provide: () => {},
     tools: { register: () => () => {} },
     effect: (fn: () => void | (() => void)) => {
       const cleanup = fn()

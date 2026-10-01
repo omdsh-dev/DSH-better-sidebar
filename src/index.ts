@@ -31,10 +31,13 @@ import {
 import { parentOf, requireAbsolute, listDirectory, rootLabel } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
 import { renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from './fs-operations.ts'
-import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
+import { ensureWorkspacePath, ensureWorkspaceWritePath, workspaceCwd } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
 import { decodeHtmlUrl } from './html-route.ts'
-import { isTrustedApiRequest } from './trust-fence.ts'
+import { isLoopbackHostname, isTrustedApiRequest } from './trust-fence.ts'
+import { extractFrameAncestors } from './browser-probe.ts'
+import { frameUrlRefusal, frameableHtml, frameRequestHeaders, hostOriginFor } from './frame-proxy.ts'
+import type { FrameCredentialProvider } from './frame-proxy.ts'
 import { registerBundleRoute } from './bundle-route.ts'
 import { createDirectoryWatchers, type DirectoryWatchers } from './fs-watch.ts'
 import { launchExternal } from './open-external.ts'
@@ -57,6 +60,8 @@ export type { SidebarConfig, ResolvedSidebarConfig }
 // Also re-export the service descriptor types so consumers can type their
 // registerTab / registerFileViewer arguments without reaching into /client.
 export type { Context } from './context-types.ts'
+export type { SidebarFrameService } from './context-types.ts'
+export type { FrameCredentials, FrameCredentialProvider } from './frame-proxy.ts'
 export type {
   BetterSidebarService,
   TabDescriptor,
@@ -94,44 +99,74 @@ export function mediaTypeForPath(path: string): string {
 }
 
 /**
- * Resolve a session's authoritative working directory. The attached session
- * header wins; while the session is still hydrating from persistence (the
- * web client attaches the current conversation a moment after page load, so
- * the very first sidebar requests can arrive detached) the caller's own
- * list-summary cwd is used; the session-persistence index is queried as a
- * last resort for cold (not-yet-attached) sessions so a detached first
- * request still resolves the correct project instead of the host process
- * cwd (which on Windows is the DSH source root after `dsh.cmd`'s `pushd`,
- * causing every user-project path to be misclassified as "outside
- * workspace"). The host process cwd is the FINAL fallback for deployments
- * without persistence (tests / stripped-down hosts); production always
- * provides persistence, so the bug-fix path (header → client → persistence)
- * always resolves the real session cwd before reaching it.
+ * Tracy: the stored workspace of a cold (not-yet-attached) session, or undefined.
+ *
+ * Reads the stored HEADER only — a read handle is opened and closed without
+ * pulling the event log, which the cwd does not need. A backend that has no
+ * such session, or no persistence at all, answers "unknown", not an
+ * exception: the caller refuses an unknown workspace itself.
+ * @param ctx - the plugin context.
+ * @param sessionId - conversation id.
+ * @returns the recorded cwd, or undefined when nothing recorded one.
+ */
+async function persistedCwdOf(ctx: Context, sessionId: string): Promise<string | undefined> {
+  const persistence = ctx.get('sessionPersistence')
+  if (persistence === undefined) return undefined
+  let handle: Awaited<ReturnType<typeof persistence.open>> | undefined
+  try {
+    handle = await persistence.open(sessionId, 'read')
+    const cwd = handle.header.cwd
+    return typeof cwd === 'string' ? cwd : undefined
+  } catch {
+    return undefined
+  } finally {
+    await handle?.close().catch(() => {})
+  }
+}
+
+/**
+ * Resolve the directory a scoped sidebar request works in.
+ *
+ * THE AUTHORITY, IN ORDER: the attached session's header, then the
+ * session-persistence index for a session this context has not attached. A
+ * client-supplied `cwd` never substitutes for it — it is only honoured when it
+ * names a directory INSIDE it ({@link workspaceCwd}), and a session the
+ * harness cannot name is refused.
+ *
+ * 🔒 Tracy (0.18.1-tracy.1+) — FAIL-CLOSED, AND THE PLUGIN IS THE ONLY FENCE
+ * HERE. dsh-passwords lets a seat through to the sidebar's fs routes and checks
+ * `allowed_folders` against the cwd its own GRANT recorded for the session —
+ * never against the `cwd` or `path` in the request. On a harness serving many
+ * customer sites, accepting a client directory the harness has not confirmed
+ * would let a seat with one legitimate grant read (and with `allow_upload`,
+ * write) any absolute path on the box. Upstream's order (header → client cwd →
+ * persistence → `process.cwd()`) is therefore NOT kept: `process.cwd()` is the
+ * harness's own directory, the one place a customer's request must never land.
+ * @param ctx - the plugin context.
+ * @param sessionId - conversation id, as the client sends it (the storage id).
+ * @param clientCwd - the directory the client asked for, if any.
+ * @returns the directory to work in.
+ * @throws {SidebarError} when the harness names no workspace, or the client named one outside it.
  */
 async function sessionCwdOf(ctx: Context, sessionId: string, clientCwd?: string): Promise<string> {
   const session = ctx.sessions.get(sessionId)
-  const headerCwd = session?.header.cwd
-  if (headerCwd !== undefined && headerCwd !== '') return headerCwd
-  if (clientCwd !== undefined && clientCwd !== '') {
-    try {
-      return requireAbsolute(clientCwd)
-    } catch {
-      throw new SidebarError('bad-request', `invalid working directory "${clientCwd}"`)
-    }
-  }
-  const persistence = ctx.get('sessionPersistence')
-  if (persistence !== undefined) {
-    const persisted = await readPersistedSession(persistence, sessionId)
-    const metaCwd = persisted.header.cwd
+  let workspace = session?.header.cwd
+  if (workspace === undefined || workspace === '') {
+    const metaCwd = await persistedCwdOf(ctx, sessionId)
     if (metaCwd !== undefined && metaCwd !== '') {
       try {
-        return requireAbsolute(metaCwd)
+        workspace = requireAbsolute(metaCwd)
       } catch {
+        // A corrupt persistence row must not flow into the fence, where it
+        // would be resolved against the host process cwd.
         throw new SidebarError('bad-request', `invalid working directory "${metaCwd}"`)
       }
     }
   }
-  return process.cwd()
+  if (workspace === undefined || workspace === '') {
+    throw new SidebarError('bad-request', `session "${sessionId}" has no workspace directory yet`, 400)
+  }
+  return workspaceCwd(workspace, clientCwd)
 }
 
 /** Optional repository selected by the Git panel when cwd is a container. */
@@ -230,16 +265,20 @@ export interface SidebarSettingsFace {
 }
 
 /**
- * Whether the workspace fence is armed for the sidebar's filesystem routes
- * (the settings-page `workspaceFence` switch under the files card's gear).
- * An absent settings service or a missing field keeps the fence ON — the
- * containment default never depends on the settings surface being reachable.
+ * Whether the workspace fence is armed for the sidebar's filesystem routes.
+ *
+ * 🔒 ALWAYS, in this fork (0.18.1-tracy.1+). Upstream lets the `workspaceFence`
+ * pref disarm the containment guard. On a harness that serves many customer
+ * sites from ONE process (one dsh per host, every site mounted) a disarmed
+ * fence is a seat reading — and with `fs.remove`, deleting recursively — any
+ * path on the host by absolute name. The pref is refused at the settings
+ * routes below, so a stored document never carries `false`; this reader
+ * ignores it regardless, so a document written before the refusal existed
+ * cannot disarm anything either. The signature stays so every call site
+ * reads as upstream's.
  */
-function fenceEnabledOf(getSettings: () => SidebarSettingsFace | undefined): boolean {
-  const settings = getSettings()
-  const value = settings?.get().value
-  if (value === null || typeof value !== 'object') return true
-  return (value as Record<string, unknown>).workspaceFence !== false
+function fenceEnabledOf(_getSettings: () => SidebarSettingsFace | undefined): boolean {
+  return true
 }
 
 function buildApi(
@@ -505,6 +544,13 @@ function buildApi(
       if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) {
         throw new SidebarError('bad-request', 'patch must be a plain object')
       }
+      // Tracy: the fence switch is not a setting here (see fenceEnabledOf):
+      // refused loudly rather than stripped, so the caller learns the
+      // deployment has no such switch instead of watching a toggle that never
+      // sticks.
+      if ((patch as Record<string, unknown>).workspaceFence === false) {
+        throw new SidebarError('settings-rejected', 'the workspace fence cannot be turned off in this deployment', 400)
+      }
       const expectedRevision = typeof record?.expectedRevision === 'number' ? record.expectedRevision : undefined
       try {
         return await settings.update(patch as Record<string, unknown>, expectedRevision)
@@ -513,6 +559,77 @@ function buildApi(
           throw new SidebarError('settings-conflict', error.message, 409)
         }
         throw new SidebarError('settings-rejected', error instanceof Error ? error.message : String(error), 400)
+      }
+    },
+    // Tracy browser tab (`tracy:browser`): the host fetches the response
+    // HEADERS of the address the tab is about to show, so the client can tell
+    // a site that refuses framing (X-Frame-Options / CSP frame-ancestors) and
+    // route it through /sidebar/frame instead of a blank frame. The probe is
+    // display-only, restricted to http(s) non-loopback URLs with a hard
+    // timeout, and gated by the same trust fence as every other route.
+    'browser.probe': async (payload) => {
+      const raw = requireString(payload, 'url')
+      let parsed: URL
+      try {
+        parsed = new URL(raw)
+      } catch {
+        throw new SidebarError('bad-request', 'invalid url', 400)
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new SidebarError('bad-request', 'only http/https urls can be probed', 400)
+      }
+      // Mirror the browser tab's address-bar policy: loopback stays unreachable
+      // from the sidebar, so probing it would leak nothing the tab could use.
+      // (0.21.1-tracy.1: the loopback allowlist pref left with upstream's
+      // browser tab; the Tracy browser has no allowlist.)
+      if (isLoopbackHostname(parsed.hostname)) {
+        throw new SidebarError('bad-request', 'local addresses are not probed', 400)
+      }
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 8000)
+      try {
+        let response = await fetch(parsed, { method: 'HEAD', redirect: 'follow', signal: controller.signal })
+        // Some servers answer HEAD with 405/501; retry once as GET (the
+        // body is discarded — only the headers matter).
+        let retriedFromHeadRejection = false
+        if (response.status === 405 || response.status === 501) {
+          response = await fetch(parsed, { method: 'GET', redirect: 'follow', signal: controller.signal })
+          retriedFromHeadRejection = true
+        }
+        // Some servers (e.g. aliyun consoles) answer HEAD without the
+        // X-Frame-Options / CSP headers that only their GET response
+        // carries. Without those signals the embeddability check below
+        // would wrongly report the site as embeddable and the plain iframe
+        // would surface the browser's misleading "refused to connect".
+        // Retry once as GET when both signals are absent (body discarded).
+        // A 405/501 retry already fetched the GET response, so the signals
+        // are either there or genuinely absent — another GET adds nothing.
+        const hasEmbedSignals = response.headers.get('content-security-policy') !== null
+          || response.headers.get('x-frame-options') !== null
+        if (!hasEmbedSignals && !retriedFromHeadRejection && response.status !== 405 && response.status !== 501) {
+          response = await fetch(parsed, { method: 'GET', redirect: 'follow', signal: controller.signal })
+        }
+        const csp = response.headers.get('content-security-policy')
+        const frameAncestors = extractFrameAncestors(csp)
+        const xFrameOptions = response.headers.get('x-frame-options')
+        // The GET fallbacks stream a real body that nothing reads; "body
+        // discarded" is not automatic with fetch, so cancel it explicitly to
+        // release the socket (a large/streaming response would otherwise stay
+        // pinned after the timer clears).
+        void response.body?.cancel()
+        return {
+          reachable: true,
+          url: response.url,
+          status: response.status,
+          ...(xFrameOptions !== null ? { xFrameOptions } : {}),
+          ...(frameAncestors !== undefined ? { frameAncestors } : {}),
+        }
+      } catch {
+        // DNS / TLS / connection / timeout: nothing to judge — the client
+        // keeps the plain iframe.
+        return { reachable: false }
+      } finally {
+        clearTimeout(timer)
       }
     },
     // External open for the file tree's "open with" menu: reveal a path in
@@ -999,6 +1116,127 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       }
     },
   }), 'dsh-better-sidebar: /sidebar/html preview route')
+
+  /**
+   * How the deployment signs a viewer into the sites it frames — registered by a consumer
+   * plugin, absent by default.
+   *
+   * 🔒 THIS PLUGIN CANNOT MINT THE CREDENTIAL ITSELF, and should not try. Which seat book to
+   * ask, which session format to sign, which header the site's login plugin reads — all of it
+   * is a fact about the deployment. What belongs here is only the seam: the consumer says "for
+   * this host, send these", and the route carries them.
+   *
+   * One provider, last registration wins. A list would mean deciding whose credential beats
+   * whose for a given host, and there is no honest way to answer that from here.
+   */
+  let frameCredentials: FrameCredentialProvider | null = null
+
+  // ── Frame route (Tracy: embed a site that forbids being framed) ─────────
+  //
+  // Joomla and WordPress both send `X-Frame-Options: SAMEORIGIN` by default, so the browser tab
+  // shows "refused to connect" for a site that is perfectly healthy — measured 2026-08-31, where
+  // `curl` answered 200 and the frame answered an error page. The header is set by the server and
+  // enforced by the browser; nothing inside the page can opt out. Fetching the document here and
+  // serving it again is the only way to embed it.
+  //
+  // ONLY THE DOCUMENT IS PROXIED. `frameableHtml` injects a `<base>` so the page's own assets and
+  // links resolve against the origin site — stylesheets and images are never subject to
+  // `X-Frame-Options`, so copying their bytes through here would buy nothing.
+  //
+  // 🔒 Cookies do NOT travel. A page behind a login renders logged out, and that is the honest
+  // behaviour: forwarding the viewer's cookies to an arbitrary third-party host is exactly the
+  // thing a proxy like this must never do.
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'prefix',
+    path: '/sidebar/frame',
+    handler: async (req, res) => {
+      if (!fence(req)) {
+        res.writeHead(403)
+        res.end('forbidden')
+        return
+      }
+      if (req.method !== 'GET') {
+        res.writeHead(405)
+        res.end()
+        return
+      }
+      const target = new URL(req.url ?? '/', 'http://dsh.internal').searchParams.get('url') ?? ''
+      const refusal = frameUrlRefusal(target)
+      if (refusal !== null) {
+        writeError(res, new SidebarError('bad-request', `url refused: ${refusal}`, 400))
+        return
+      }
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 15000)
+      try {
+        // A plain viewer identity. Forwarding the browser's own headers would carry its Referer
+        // and language into a third-party request the person never made themselves. What the
+        // deployment adds on top rides through the provider, which is checked before it is used.
+        let credentials = null
+        if (frameCredentials !== null) {
+          try {
+            credentials = await frameCredentials(new URL(target))
+          } catch (error) {
+            // A provider that throws must not take the page down: the frame still opens, it just
+            // opens signed out — the same trade `siteDoors.ts` makes when a mint fails.
+            console.error('dsh-better-sidebar: frame credential provider threw', error)
+          }
+        }
+        const upstream = await fetch(target, {
+          redirect: 'follow',
+          signal: controller.signal,
+          headers: frameRequestHeaders({ accept: 'text/html,application/xhtml+xml' }, credentials),
+        })
+        const type = upstream.headers.get('content-type') ?? ''
+        if (!type.includes('html')) {
+          // Anything that is not a document does not need this route: it was never refused in
+          // the first place, and passing it through would make this a general-purpose proxy.
+          throw new SidebarError('bad-request', `not a document (${type || 'no content-type'})`, 415)
+        }
+        // Where this route lives, so the injected script can build an ABSOLUTE URL back to it.
+        // Taken from the request rather than configured: the sidebar is reached on whatever
+        // authority the person typed, and a configured one would be wrong for half of them.
+        // Behind a reverse proxy that publishes dsh under a path, that includes the mount prefix
+        // the webserver reports; hosts older than that method report the root.
+        const mountOf = (ctx.webServer as { mountOf?: (request: typeof req) => string }).mountOf
+        const selfOrigin = hostOriginFor(req.headers, typeof mountOf === 'function' ? mountOf.call(ctx.webServer, req) : '')
+        const html = frameableHtml(await upstream.text(), upstream.url, selfOrigin)
+        res.writeHead(upstream.status, {
+          'content-type': 'text/html; charset=utf-8',
+          'cache-control': 'no-store',
+          'referrer-policy': 'no-referrer',
+          // The point of the route: no framing headers of our own, so the iframe renders. The
+          // fetched page's own X-Frame-Options / CSP are dropped by not being copied.
+          'x-content-type-options': 'nosniff',
+        })
+        res.end(html)
+      } catch (error) {
+        // A refusal from the far side is information, not a crash: say which address failed so
+        // the tab can show something better than a blank frame.
+        writeError(
+          res,
+          error instanceof SidebarError
+            ? error
+            : new SidebarError('fs-error', `could not fetch ${target}`, 502),
+        )
+      } finally {
+        clearTimeout(timer)
+      }
+    },
+  }), 'dsh-better-sidebar: /sidebar/frame embed route')
+
+  /**
+   * The seam itself. A consumer plugin injects `sidebarFrame` and registers how this deployment
+   * signs a viewer in; the disposer clears it, so a plugin that unloads stops being consulted.
+   */
+  ctx.provide('sidebarFrame', {
+    useCredentials(provider: FrameCredentialProvider) {
+      frameCredentials = provider
+      return () => {
+        if (frameCredentials === provider) frameCredentials = null
+      }
+    },
+  })
 
   // ── Agent opens push WebSocket ─────────────────────────────────────────
   // Pushes `sidebar_open` requests for one session to the sidebar view: the

@@ -13,6 +13,7 @@
  * the FileViewerProps toolbar callbacks so the host's path-input header
  * renders the controls instead.
  */
+import { dshRoot } from './page-base.ts'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
@@ -330,7 +331,7 @@ export function TextEditor(props: FileViewerProps) {
   /** The preview source with local image destinations rewritten to absolute
    *  media URLs (see {@link rewriteLocalImageUrls}). */
   const previewText = markdown
-    ? rewriteLocalImageUrls(previewMdText, scope, path, window.location.origin)
+    ? rewriteLocalImageUrls(previewMdText, scope, path, dshRoot())
     : previewMdText
   /** md/mermaid block split for the preview (mermaid fences lift out). Split
    *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
@@ -359,7 +360,7 @@ export function TextEditor(props: FileViewerProps) {
    *  `media` identity, so a fresh object per render would re-sanitize every
    *  keystroke. */
   const htmlMedia = useMemo<MarkdownHtmlMedia>(
-    () => ({ scope, path, origin: window.location.origin }),
+    () => ({ scope, path, origin: dshRoot() }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [scope.sessionId, scope.cwd, path],
   )

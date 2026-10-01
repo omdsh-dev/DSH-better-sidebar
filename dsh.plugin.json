@@ -1,6 +1,6 @@
 {
   "id": "dsh-external/dsh-better-sidebar",
-  "version": "0.21.1",
+  "version": "0.21.1-tracy.38",
   "main": "./lib/index.js",
   "description": "更好用的右侧边栏——文件树、编辑器、文件变动、任务和侧边对话都收在这一栏里，每个会话互不干扰。暴露服务供其他插件注册侧边栏页面与文件预览器",
   "engines": {

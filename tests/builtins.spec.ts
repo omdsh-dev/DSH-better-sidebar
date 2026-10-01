@@ -33,8 +33,9 @@ function setup(): { service: ReturnType<typeof createBetterSidebarService>; stor
 describe('built-in tab registrations', () => {
   it('registers the 5 built-in tabs (the host owns terminal and browser)', () => {
     const { service } = setup()
+    // Tracy: plus `tracy:browser`, the site preview page (builtins/tracy-browser.tsx).
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['diff', 'editor', 'git', 'sidechat', 'subagent'],
+      ['diff', 'editor', 'git', 'sidechat', 'subagent', 'tracy:browser'],
     )
   })
 
@@ -89,7 +90,8 @@ describe('built-in tab registrations', () => {
 
   it('only diff is hidden from the + menu; editor is the visible files window (order 10)', () => {
     const { service } = setup()
-    expect(service.getTabs().filter(t => t.hidden).map(t => t.id)).toEqual(['diff'])
+    // Tracy: `tracy:browser` is opened by consumers with an address, never from the guide.
+    expect(service.getTabs().filter(t => t.hidden).map(t => t.id)).toEqual(['diff', 'tracy:browser'])
     const editor = service.getTab('editor')
     expect(editor?.hidden).toBe(false)
     expect(editor?.order).toBe(10)
@@ -139,7 +141,8 @@ describe('built-in tab registrations', () => {
   it('the editor tab declares its merged-mode (embedded file tree) setting', () => {
     const { service } = setup()
     const toggles = service.getTab('editor')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual(['editorExplorer', 'workspaceFence'])
+    // No `workspaceFence` row: the fence has no switch in this fork (src/index.ts fenceEnabledOf).
+    expect(toggles.map(t => t.key)).toEqual(['editorExplorer'])
     expect(toggles[0]?.title).toBeDefined()
     expect(toggles[0]?.desc).toBeDefined()
     // The merged mode is an iconed select (merged vs separate), not a switch.
@@ -147,9 +150,6 @@ describe('built-in tab registrations', () => {
     const options = toggles[0]?.options ?? []
     expect(options.map(o => o.value)).toEqual([true, false])
     expect(options.every(o => o.icon !== undefined && o.title !== undefined)).toBe(true)
-    // The workspace fence switch rides the same card as a plain boolean row.
-    expect(toggles[1]?.title).toBeDefined()
-    expect(toggles[1]?.desc).toBeDefined()
     // The open-with configuration (SSH host + custom editors) is the custom
     // panel rendered below the declarative rows.
     expect(service.getTab('editor')?.settings?.render).toBeDefined()

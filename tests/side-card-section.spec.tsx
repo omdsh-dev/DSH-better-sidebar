@@ -175,7 +175,7 @@ describe('SideCardSection declarative inventory', () => {
     // dropdown (the closed anchor shows the picked option — NOT a native
     // <select>).
     expect(html).toContain('Position compatibility mode')
-    expect(html).toContain('Pick the title-bar compatibility scheme: auto-detect (default, conservative) / DSH official web / known desktop shells / custom (shift distance + custom CSS)')
+    expect(html).toContain('Pick the title-bar compatibility scheme: auto-detect (default, conservative) / Tracy Cowork web / known desktop shells / custom (shift distance + custom CSS)')
     expect(html).not.toContain('<select')
     expect(html).toContain('>Auto-detect<')
     // One general-row switch remains (agentOpenTools), off by default — the

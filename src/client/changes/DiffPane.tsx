@@ -13,6 +13,7 @@ import { IconCloseOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineR
 import type { SessionScope } from '../api.ts'
 import { api, htmlUrl } from '../api.ts'
 import { t } from '../locales.ts'
+import { dshRoot } from '../page-base.ts'
 import { baseName } from '../paths.ts'
 import { resolveSidebarPath } from '../paths.ts'
 import { HTML_IFRAME_SANDBOX } from '../html-preview.ts'
@@ -375,7 +376,7 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
   }, [mdOp, op, prior])
   const readingText = useMemo(
     () => (mdOp && reading && readingSrc !== '' && target.kind === 'op'
-      ? rewriteLocalImageUrls(readingSrc, scope, target.path, window.location.origin)
+      ? rewriteLocalImageUrls(readingSrc, scope, target.path, dshRoot())
       : ''),
     [mdOp, reading, readingSrc, scope, target],
   )

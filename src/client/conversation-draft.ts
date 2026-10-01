@@ -33,6 +33,7 @@
  * position (A|B + C + D → ACD|B).
  */
 import type { Context, SidebarConversation } from '../context-types.ts'
+import { findConversationSlot } from './center-column.ts'
 
 /** A resolved composer caret/selection in draft coordinates. */
 export interface DraftCaret {
@@ -84,14 +85,17 @@ export function insertAtCaret(draft: string, text: string, caret: DraftCaret | n
 }
 
 /**
- * Locate the composer `<textarea>` in the conversation column: prefer the
- * `data-phase`-tagged textarea (the composer's marker), falling back to any
- * textarea in the column, then to a bare data-phase textarea (older host
- * layouts without the column attribute). Null in jsdom-less hosts.
+ * Locate the composer `<textarea>` in the conversation slot (current
+ * `main.conversation` or legacy `conversation`, see
+ * {@link findConversationSlot}): prefer the `data-phase`-tagged textarea
+ * (the composer's marker), falling back to any textarea in the slot, then to
+ * a bare data-phase textarea (older host layouts without the slot
+ * attribute). Scoped to the slot, not the whole center column, so a textarea
+ * in another tab is never picked. Null in jsdom-less hosts.
  */
 function findComposerTextarea(): HTMLTextAreaElement | null {
   if (typeof document === 'undefined') return null
-  const column = document.querySelector('#root [data-slot="conversation"]')
+  const column = findConversationSlot(document)
   const find = (scope: ParentNode): HTMLTextAreaElement | null =>
     scope.querySelector('textarea[data-phase]') ?? scope.querySelector('textarea')
   return column !== null

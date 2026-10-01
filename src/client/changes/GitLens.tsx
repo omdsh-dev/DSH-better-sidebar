@@ -92,7 +92,7 @@ const WORKTREE_RECHECK_TICKS = 15
 
 export interface GitLensProps {
   scope: SessionScope
-  /** The sidebar store: reads the `workspaceFence` pref (see the open guard below). */
+  /** The sidebar store (upstream read the `workspaceFence` pref here; Tracy's fence has no off switch). */
   store: SidebarStore
   onOpenFile: (path: string) => void
   /** Preview one change in the shared bottom pane (worktree or commit ref). */
@@ -104,7 +104,7 @@ export interface GitLensProps {
 }
 
 export function GitLens(props: GitLensProps) {
-  const { scope, store, onOpenFile, onPreview, selectedRef, visible } = props
+  const { scope, onOpenFile, onPreview, selectedRef, visible } = props
   const [status, setStatus] = useState<GitStatusResult | null>(null)
   const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
   const [selectedWorktree, setSelectedWorktree] = useState<string | undefined>()
@@ -621,9 +621,9 @@ export function GitLens(props: GitLensProps) {
               // opened in the editor while the host's workspace fence is
               // armed: it rejects every path under that checkout. Hide the
               // action for that checkout so the menu does not offer a no-op
-              // that confuses the user; with the fence disarmed (the
-              // `workspaceFence` pref) the open is allowed through.
-              ...(fileMenu !== null && (store.getPrefs().workspaceFence === false || isWithinWorkspace(scope.cwd ?? '', resolveSidebarPath(repoRoot ?? selectedWorktree ?? scope.cwd, fileMenu.entry.path)))
+              // that confuses the user. Tracy: the fence has no off switch
+              // (fenceEnabledOf in src/index.ts), so the pref is not consulted.
+              ...(fileMenu !== null && (isWithinWorkspace(scope.cwd ?? '', resolveSidebarPath(repoRoot ?? selectedWorktree ?? scope.cwd, fileMenu.entry.path)))
                 ? [{ id: 'open', label: t('openEditor'), icon: <IconCodeOutlineRegular size={14} /> }]
                 : []),
               fileMenu?.staged === true
@@ -647,7 +647,7 @@ export function GitLens(props: GitLensProps) {
                 // racing repo switch could still reach here with a path
                 // the host would reject. No-op in that case — unless the
                 // workspace fence is disarmed by pref.
-                if (store.getPrefs().workspaceFence !== false && !isWithinWorkspace(scope.cwd ?? '', resolved)) return
+                if (!isWithinWorkspace(scope.cwd ?? '', resolved)) return
                 onOpenFile(resolved)
                 return
               }

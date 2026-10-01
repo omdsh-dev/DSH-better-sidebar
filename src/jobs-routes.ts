@@ -211,6 +211,15 @@ function createJobOutputMirror(ctx: Context): { entries(sessionId: string): read
 }
 
 /**
+ * Tracy: the jobs `sessionId` itself owns, from the registry's caller view (which adds every
+ * unowned job). What makes the jobs routes session-scoped, so the gate can hold them to the seat's
+ * session grant like the Files tab's routes.
+ */
+function ownJobs(jobs: SidebarJobsService, sessionId: string): SidebarJobView[] {
+  return jobs.list(sessionId).filter(job => job.owner === sessionId)
+}
+
+/**
  * Build the jobs routes bound to the plugin context. `list` reads the
  * registry's own projection, `output` merges the owner session's event log
  * with the live job_output mirror, and `kill` cancels through the registry.
@@ -237,7 +246,10 @@ export function buildJobsApi(ctx: Context, outputLimit: number): SidebarJobsRout
     list(payload) {
       const sessionId = requireString(payload, 'sessionId')
       try {
-        return { jobs: requireJobs().list(sessionId) }
+        // Tracy: the named session's OWN jobs only. The registry also answers every unowned job to
+        // any caller; kept, a job one customer's work left unowned would list for every seat on
+        // the host, and the gate in front of dsh could only close the whole route (TCH #515).
+        return { jobs: ownJobs(requireJobs(), sessionId) }
       } catch (error) {
         if (error instanceof SidebarError) throw error
         throw registryError(error)
@@ -285,6 +297,11 @@ export function buildJobsApi(ctx: Context, outputLimit: number): SidebarJobsRout
       const reason = typeof record?.reason === 'string' && record.reason !== ''
         ? record.reason
         : 'user requested via sidebar'
+      // Tracy: the same fence as `list` — the registry lets any caller kill an unowned job, so a job
+      // the named session does not own is answered exactly like an unknown one.
+      if (!ownJobs(jobs, sessionId).some(job => job.id === id)) {
+        throw registryError(new Error(`unknown job "${id}"`))
+      }
       try {
         // The 0.1.7 registry fences by SessionId, not by live Agent.
         return { ok: true, outcome: jobs.kill(id, sessionId, reason) }
