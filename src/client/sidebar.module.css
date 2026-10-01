@@ -1857,27 +1857,46 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .mermaidModalStage {
   width: 90vw;
   height: 80vh;
+  box-sizing: border-box;
   overflow: hidden;
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.mermaidModalStage :global(svg) {
-  max-width: none;
-  max-height: none;
-  cursor: grab;
-  transform-origin: center center;
-  user-select: none;
-  -webkit-user-drag: none;
+  /* The zoom modal's FIXED viewport surface. The white card used to be painted
+     on the diagram's own <svg> — the very element the modal transforms — so
+     `scale()` grew the white area together with the diagram and the
+     content:viewport ratio never changed (issue #683: "跟没有缩放没区别").
+     The paint belongs to the viewport, the transform to the content. */
   background: var(--dsw-alias-bg-layer-1);
   padding: 16px;
   border-radius: 12px;
 }
 
-.mermaidModalStage :global(svg):active {
+/* The clipping box INSIDE the padding ring: the (transformed) svg overflows
+   here, so the white ring survives any zoom, and the whole area — not just the
+   drawn diagram — is a drag surface. */
+.mermaidViewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+}
+
+.mermaidViewport:active {
   cursor: grabbing;
+}
+
+.mermaidModalStage :global(svg) {
+  max-width: none;
+  max-height: none;
+  transform-origin: center center;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .mermaidModalHint {
