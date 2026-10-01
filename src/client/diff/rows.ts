@@ -493,15 +493,24 @@ export function displayPath(path: string): string {
   return path
 }
 
-/** The diff's add/del/mod row counts (the "+n −m" header chips). */
+/**
+ * The diff's insert/delete counts (the "+n −m" header chips), in git's
+ * accounting: one rewritten line is one insertion plus one deletion. It
+ * renders as a pair of `mod` rows (one per side), so count SIDES rather than
+ * rows — counting each `mod` row as both an add and a delete reported a
+ * single-line rewrite as +2 −2, which matched neither `git diff --numstat`
+ * nor the `-old` / `+new` pair drawn on screen.
+ */
 export function diffStats(segments: readonly DiffSegment[]): { added: number; deleted: number } {
   let added = 0
   let deleted = 0
   for (const segment of segments) {
     if (segment.kind !== 'hunk') continue
     for (const row of segment.rows) {
-      if (row.kind === 'add' || row.kind === 'mod') added += 1
-      if (row.kind === 'del' || row.kind === 'mod') deleted += 1
+      const onNewSide = row.kind === 'add' || (row.kind === 'mod' && row.newLine !== undefined)
+      const onOldSide = row.kind === 'del' || (row.kind === 'mod' && row.oldLine !== undefined)
+      if (onNewSide) added += 1
+      if (onOldSide) deleted += 1
     }
   }
   return { added, deleted }

@@ -3,8 +3,8 @@
  * into the shared DiffRow segments — rewrite pairing applies inside git
  * hunks exactly like session-op diffs, the unemitted context gaps between
  * hunks become folds carrying their line ranges (expandable on demand via
- * foldRowsFromContents), and the header stats (+n −m) count mods on both
- * sides.
+ * foldRowsFromContents), and the header stats (+n −m) count one rewritten
+ * line as one insertion plus one deletion (git's own accounting).
  */
 import { describe, expect, it } from 'vitest'
 import { parseUnifiedDiff, unifiedSegments, diffLines, pairMods, diffStats, untrackedFile, foldRowsFromContents, type FoldSegment } from '../src/client/diff/rows.ts'
@@ -93,14 +93,38 @@ describe('unifiedSegments', () => {
     expect(rows[1]).toMatchObject({ kind: 'meta', text: ' No newline at end of file' })
   })
 
-  it('counts header stats with mods on both sides', () => {
+  it('counts a rewritten line as one insertion plus one deletion', () => {
     const file = parseUnifiedDiff(twoHunks).files[0]!
-    // Hunk 1 pairs 1 del + 1 add (2 mod rows); hunk 2 pairs 1 of its 1 del
-    // with 1 of its 2 adds (2 mod rows) leaving 1 pure add: 5 added, 4 deleted.
-    expect(diffStats(unifiedSegments(file))).toEqual({ added: 5, deleted: 4 })
+    // Hunk 1 rewrites 1 line; hunk 2 rewrites 1 line and adds 1 outright.
+    // Each rewrite is 1 insertion + 1 deletion (git's accounting), so
+    // 3 added, 2 deleted — not the 5/4 that counting both mod rows gave.
+    expect(diffStats(unifiedSegments(file))).toEqual({ added: 3, deleted: 2 })
     // A full-file addition (untracked fallback) counts every row once.
     const untracked = untrackedFile('new.ts', 'a\nb\n')
     expect(diffStats(unifiedSegments(untracked))).toEqual({ added: 2, deleted: 0 })
+  })
+
+  it('matches git numstat on a single-line rewrite', () => {
+    // `git diff --numstat` for this pair of contents prints `1  1  t.txt`;
+    // the chips used to print +2 −2 for it.
+    const file = parseUnifiedDiff([
+      'diff --git a/t.txt b/t.txt',
+      '--- a/t.txt',
+      '+++ b/t.txt',
+      '@@ -1,3 +1,3 @@',
+      ' a',
+      '-b',
+      '+B',
+      ' c',
+    ].join('\n')).files[0]!
+    expect(diffStats(unifiedSegments(file))).toEqual({ added: 1, deleted: 1 })
+  })
+
+  it('keeps the session-op lane on the same accounting', () => {
+    // The changes tab's op summary takes the same function over diffLines
+    // rows, so a rewrite there is 1/1 as well (it used to read +2 −2).
+    expect(diffStats([{ kind: 'hunk', rows: diffLines('a\nb\nc\n', 'a\nB\nc\n') }])).toEqual({ added: 1, deleted: 1 })
+    expect(diffStats([{ kind: 'hunk', rows: diffLines('a\n', 'a\nb\n') }])).toEqual({ added: 1, deleted: 0 })
   })
 })
 
