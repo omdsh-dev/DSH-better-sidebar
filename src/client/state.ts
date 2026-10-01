@@ -270,23 +270,35 @@ export function moveTabToEdge(
   const source = leafWithTab(node, tabId)
   if (source === undefined) return state
   const tab = source.tabs.find(candidate => candidate.id === tabId)!
-  let emptied = false
-  let splits = mapLeaf(node, source.id, (leaf) => {
-    leaf.tabs = leaf.tabs.filter(candidate => candidate.id !== tabId)
-    if (leaf.active === tabId) leaf.active = leaf.tabs[leaf.tabs.length - 1]?.id ?? null
-    if (leaf.tabs.length === 0) emptied = true
-  })
-  if (emptied) splits = removeLeafAt(splits, source.id)
   if (zone === 'center') {
+    let emptied = false
+    let splits = mapLeaf(node, source.id, (leaf) => {
+      leaf.tabs = leaf.tabs.filter(candidate => candidate.id !== tabId)
+      if (leaf.active === tabId) leaf.active = leaf.tabs[leaf.tabs.length - 1]?.id ?? null
+      if (leaf.tabs.length === 0) emptied = true
+    })
+    if (emptied) splits = removeLeafAt(splits, source.id)
     splits = mapLeaf(splits, toPane, (leaf) => {
       leaf.tabs = [...leaf.tabs, tab]
       leaf.active = tab.id
     })
     return { ...state, bottomSplits: splits, activePane: toPane }
   }
+  // Edge zones split the target pane first, then lift the tab out of its
+  // source pane. Doing it the other way around breaks a self-drop: removing
+  // the tab empties the source leaf and removeLeafAt deletes it from the
+  // tree, so insertLeafAt targets an id that no longer exists and the
+  // dragged tab is silently discarded.
   const dir = zone === 'left' || zone === 'right' ? 'row' : 'col'
-  const result = insertLeafAt(splits, toPane, dir, tab, zone === 'left' || zone === 'up')
-  return { ...state, bottomSplits: result.node, activePane: result.leafId }
+  const inserted = insertLeafAt(node, toPane, dir, tab, zone === 'left' || zone === 'up')
+  let emptied = false
+  let splits = mapLeaf(inserted.node, source.id, (leaf) => {
+    leaf.tabs = leaf.tabs.filter(candidate => candidate.id !== tabId)
+    if (leaf.active === tabId) leaf.active = leaf.tabs[leaf.tabs.length - 1]?.id ?? null
+    if (leaf.tabs.length === 0) emptied = true
+  })
+  if (emptied) splits = removeLeafAt(splits, source.id)
+  return { ...state, bottomSplits: splits, activePane: inserted.leafId }
 }
 
 /**
@@ -1002,8 +1014,31 @@ export class SidebarStore {
     this.persistTimers.set(sessionId, timer)
   }
 
+  /**
+   * Fan one store change out to every subscribed listener. A throwing
+   * listener is CONTAINED instead of aborting the loop.
+   *
+   * `service.subscribeState` hands this store's own `subscribe` to consumer
+   * plugins, and `notify()` runs inline in whatever call site mutated the
+   * store — `setSession` from the Sidebar's mount effect, `reduce` from a
+   * click handler. An exception escaping here therefore surfaces as a
+   * render/commit-phase error, and the shell's ROOT RenderBoundary swaps the
+   * ENTIRE sidebar for its error strip: one plugin misreading a field this
+   * store no longer carries (0.19.0 dropped the right column's `splits`
+   * tree) takes the panel down for every other plugin and for the user.
+   *
+   * Isolating per listener also keeps the remaining listeners running —
+   * React's own useSyncExternalStore callback shares this loop, so a crash
+   * in one subscriber no longer costs the healthy ones their re-render.
+   */
   private notify(): void {
-    for (const listener of [...this.listeners]) listener()
+    for (const listener of [...this.listeners]) {
+      try {
+        listener()
+      } catch (error) {
+        console.error('[dsh-better-sidebar] store listener error:', error)
+      }
+    }
   }
 }
 

@@ -17,6 +17,8 @@
  * way they did with the fence: the change is the SEMANTICS — "resolve" rather
  * than "guard".
  */
+import { homedir } from 'node:os'
+import { isAbsolute, join } from 'node:path'
 import { requireAbsolute } from './fs-tree.ts'
 import { resolveSessionPath } from './session-path.ts'
 
@@ -61,5 +63,15 @@ export async function ensureWorkspaceWritePath(cwd: string, target: string, _fen
  * (lexical `..` collapse). Throws fs-error for a non-absolute result.
  */
 export function resolveTarget(cwd: string, target: string): string {
-  return requireAbsolute(resolveSessionPath(cwd, target))
+  // #713: `~` names the user's home directory, not a session-relative path —
+  // expand it before the join so it is not pasted after the cwd (ENOENT).
+  const homeExpanded = target === '~' || target.startsWith('~/') || target.startsWith('~\\')
+    ? join(homedir(), target.slice(1))
+    : target
+  // #646: the ecosystem passes session-relative targets (e.g. `openFile(scope,
+  // 'pastes/x.txt')` keeps `pastes/x.txt` in the tab). Join them onto the
+  // session cwd before the absolute check so every entry point (fs.read /
+  // write / rename / remove / upload, media, html) shares ONE contract.
+  const joined = isAbsolute(homeExpanded) ? homeExpanded : join(cwd, homeExpanded)
+  return requireAbsolute(resolveSessionPath(cwd, joined))
 }

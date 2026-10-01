@@ -12,6 +12,7 @@
  * All operations are conversation-scoped: requests carry a sessionId and the
  * session's authoritative cwd comes from the session store.
  */
+import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path'
 import type { IncomingMessage } from 'node:http'
@@ -311,8 +312,12 @@ function buildApi(
       }
       const levels = await Promise.all(paths.map(async (raw): Promise<SidebarFsLevel> => {
         // A session-relative path is accepted here (the tree already carries
-        // cwd-relative paths); `fs.tree` itself keeps requiring absolute input.
-        const requested = isAbsolute(raw) ? raw : `${cwd}${sep}${raw}`
+        // cwd-relative paths); `fs.tree` itself keeps requiring absolute
+        // input. A `~` target is home-relative (#713) and must reach the
+        // shared resolver UNJOINED — pasting it after the cwd would hide the
+        // marker from the home expansion.
+        const homeRelative = raw === '~' || raw.startsWith('~/') || raw.startsWith('~\\')
+        const requested = isAbsolute(raw) || homeRelative ? raw : `${cwd}${sep}${raw}`
         try {
           return await listDirectory(await ensureWorkspacePath(cwd, requested), resolved.listLimit)
         } catch (error) {
@@ -347,10 +352,14 @@ function buildApi(
       const { cwd } = await cwdOf(payload)
       const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'))
       const content = requireString(payload, 'content')
-      const tmp = `${path}.dsh-sidebar-tmp-${process.pid}`
+      // Per-request temp name (same pattern as writeWorkspaceUpload): a
+      // pid-suffixed name is shared by every concurrent save to the same
+      // path, letting two writers interleave into one temp file — and the
+      // failure-path rm could delete the other writer's in-flight temp.
+      const tmp = join(dirname(path), `.${basename(path)}.dsh-sidebar-tmp-${randomUUID()}.tmp`)
       try {
         await mkdir(dirname(path), { recursive: true })
-        await writeFile(tmp, content, 'utf8')
+        await writeFile(tmp, content, { encoding: 'utf8', flag: 'wx' })
         await rename(tmp, path)
       } catch (error) {
         await rm(tmp, { force: true }).catch(() => {})
@@ -912,8 +921,13 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       }
       try {
         const payload = await readJsonBody(req)
-        const handler = api[method]
-        if (handler === undefined) {
+        // Own properties only. The dispatch table is an object literal, so a
+        // bare lookup resolved Object.prototype members as "methods":
+        // POST /sidebar/api/constructor answered 200 {}, toString answered
+        // 200 "[object Undefined]", valueOf/hasOwnProperty answered 500.
+        // The typeof guard also rejects a non-function own value.
+        const handler = Object.hasOwn(api, method) ? api[method] : undefined
+        if (typeof handler !== 'function') {
           throw new SidebarError('not-found', `unknown sidebar API method "${method}"`, 404)
         }
         writeOk(res, await handler(payload))
@@ -1023,6 +1037,14 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
         const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+        // Resolution is the shared contract's alone: relative joins the
+        // session cwd, absolute stays, `~` expands against the home (#713),
+        // remote-mirror namespaces project. Pre-joining here would paste a
+        // `~` target after the cwd and hide it from the resolver.
+        // Resolution is the shared contract's alone: relative joins the
+        // session cwd, absolute stays, `~` expands against the home (#713),
+        // remote-mirror namespaces project. Pre-joining here would paste a
+        // `~` target after the cwd and hide it from the resolver.
         const path = await ensureWorkspacePath(cwd, raw)
         const info = await stat(path)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
@@ -1033,6 +1055,16 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // Raw bytes either way (binary-safe); ?download=1 switches the
         // disposition so the browser saves the file instead of showing it.
         const headers: Record<string, string> = { 'content-type': type, 'cache-control': 'no-cache' }
+        // An SVG is a scriptable DOCUMENT, not an inert image: navigating to
+        // this URL directly would run its <script> in the GUI's origin, with
+        // same-origin access to /sidebar/api/*. The sibling html route already
+        // sandboxes for exactly this reason; mirror it here. The CSP applies
+        // to the document, so <img src> embedding is unaffected.
+        if (type === 'image/svg+xml') {
+          headers['content-security-policy'] = "sandbox; object-src 'none'"
+          headers['x-content-type-options'] = 'nosniff'
+          headers['referrer-policy'] = 'no-referrer'
+        }
         if (url.searchParams.get('download') === '1') {
           headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(basename(path))}`
         }

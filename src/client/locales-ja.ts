@@ -508,6 +508,8 @@ export const ja: Record<string, string> = {
   changesRedactBanner: "マスク済み",
   pluginAgentPersonaName: 'dsh-agent-persona ペルソナ',
   pluginSentinelName: 'dsh-sentinel ウェイクアップシステム',
+  pluginMnemeName: 'dsh-mneme メモリライブラリ',
+  pluginMnemeDesc: 'セッションをまたぐ記憶エンジン：autoDream によるバックグラウンドの記憶統合、セッションの要約とユーザープロファイル、SQLite + 手動編集できる Markdown ミラー、完全オフラインでプライベート。better-sidebar インストール時に「メモリライブラリ」Tab を登録（記憶/エンティティ/状態/設定の 4 ビュー）、未インストール時はサイドバーの独立パネルを保持',
   pluginEgoBrowserName: 'ego-browser エージェントブラウザー',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf タブ',
   pluginDocsPanelName: 'dsh-docs-panel グローバルドキュメント',

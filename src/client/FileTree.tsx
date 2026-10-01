@@ -640,8 +640,10 @@ export function FileTree(props: {
    * a directory each cost exactly one POST — not one per level (the N+1 the
    * file list was reported for). Levels already loaded (including the empty
    * placeholder of an in-flight fetch) are left alone, so an expand only asks
-   * for what is genuinely missing; a stale response — the cache was wiped by a
-   * refresh tick — is dropped instead of overwriting fresher data.
+   * for what is genuinely missing — but only a LISTING settles a level: a
+   * cached failure is asked for again, so one bad read does not stick for the
+   * rest of the mount. A stale response — the cache was wiped by a refresh
+   * tick — is dropped instead of overwriting fresher data.
    *
    * A level the host failed to read comes back with its own `error` and is
    * stored on that level alone (the other levels render normally). When the
@@ -655,7 +657,18 @@ export function FileTree(props: {
     const force = options?.force === true
     const wanted = force
       ? [...new Set(paths)]
-      : paths.filter(path => dataRef.current[path] === undefined)
+      : paths.filter((path) => {
+          // Only a LISTING settles a level: both failure branches below store
+          // their error in this same cache, so treating every entry as
+          // "already loaded" made one failed read (a host restart, a transient
+          // fs error) stick for the rest of the mount — the automatic load
+          // path re-ran for the expanded set and skipped the level, and the
+          // only ways out were a refresh tick or a remount. An error entry
+          // stays retryable; the empty `{}` placeholder of an in-flight load
+          // is still a hit (a re-render must not duplicate the open request).
+          const cached = dataRef.current[path]
+          return cached === undefined || cached.error !== undefined
+        })
     if (wanted.length === 0) return
     const generation = generationRef.current
     // A FORCED re-list (a refresh tick) keeps the listing on screen until the
@@ -1528,7 +1541,15 @@ export function FileTree(props: {
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
     const head = newFolder?.dir === dir ? renderNewFolderRow(dir, depth) : null
-    if (level === undefined) {
+    // Both the not-yet-requested level (`undefined`) and the in-flight marker
+    // `loadLevels` stores (`{}` — no entries, no error yet) draw the loading
+    // row. Without the second half the marker fell into `entries ?? []` and
+    // rendered an EMPTY level (zero rows), so expanding a fresh folder flashed
+    // "loading row → nothing under the folder (looks collapsed again) →
+    // entries" for the whole request — and a fresh mount showed a blank body
+    // under the root row. A settled level always carries `entries` (an
+    // unreadable one carries `error` too), so this never misfires.
+    if (level === undefined || (level.entries === undefined && level.error === undefined)) {
       return (
         <>
           {head}

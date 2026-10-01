@@ -436,7 +436,8 @@ export function SideChatView(props: {
     setError(null)
     try {
       const { childId } = await api.sidechatStart(scope.sessionId)
-      ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { threadId: childId } })
+      // Name the seat session: the same native id names a tab in every session.
+      ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { threadId: childId } }, scope.sessionId)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -460,12 +461,12 @@ export function SideChatView(props: {
     const title = threadDisplayTitle(display)
     if (title !== '' && title !== tab.title) {
       try {
-        ctx.get('betterSidebar')?.updateTab(tab.id, { title })
+        ctx.get('betterSidebar')?.updateTab(tab.id, { title }, scope.sessionId)
       } catch {
         // A stale title is cosmetic; the thread keeps working.
       }
     }
-  }, [summary, tab.id, tab.title, ctx])
+  }, [summary, tab.id, tab.title, ctx, scope.sessionId])
 
   /** One transcript pull: the thread's own events beyond the cached tail
    *  (first attach = the whole seed-cut slice; polls = afterSeq deltas),

@@ -32,7 +32,7 @@ import { BinaryDownload } from './binary-download.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
 import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
-import { openSidebarFile } from './sidebar-file.ts'
+import { openClaimedNativeFile, openSidebarFile } from './sidebar-file.ts'
 import { openWithSshActive, openWithUrl, parseOpenWithConfig, resolveOpenWithTargets } from './open-with.ts'
 import { updatePluginSettings } from './plugin-settings.ts'
 import { createOpenInApp } from './open-in-app.ts'
@@ -83,9 +83,15 @@ function treeWidthOf(tab: SidebarTab): number {
     : TREE_WIDTH_DEFAULT
 }
 
-/** Merge a patch into the tab's persisted meta (rides the layout). */
-function patchMeta(ctx: Context, tab: SidebarTab, patch: Record<string, unknown>): void {
-  ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { ...metaOf(tab), ...patch } })
+/**
+ * Merge a patch into the tab's persisted meta (rides the layout).
+ *
+ * `sessionId` is the seat session: native ids restart per session and every
+ * visited tab's body stays mounted (0.1.7 `keepMounted`), so the tab this call
+ * means must be named, not inferred from whichever seat is on screen.
+ */
+function patchMeta(ctx: Context, tab: SidebarTab, sessionId: string, patch: Record<string, unknown>): void {
+  ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { ...metaOf(tab), ...patch } }, sessionId)
 }
 
 /** Clamp one dock width into the contract range. */
@@ -174,10 +180,18 @@ export function EditorHost(props: {
    * Open a file from THIS window (tree click / search row / path input):
    * merged mode switches this tab in place (stable id, meta survives);
    * split mode opens a per-path dedupe tab through openSidebarFile.
+   *
+   * A file another native tab type claims (a `.drawio` canvas, say) diverts
+   * to THAT type's tab in BOTH modes (#695) — an in-place switch would
+   * swallow it into this plugin's editor, and the claiming type could never
+   * render from the tree. Both helpers fall back verbatim for every other
+   * file, so the editor keeps exactly its previous behavior.
    */
   const openFile = (absolute: string): void => {
     if (inPlace) {
-      ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) })
+      if (!openClaimedNativeFile(ctx, scope.sessionId, scope.cwd, absolute)) {
+        ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) }, scope.sessionId)
+      }
     } else {
       openSidebarFile(ctx, scope.sessionId, absolute)
     }
@@ -205,6 +219,10 @@ export function EditorHost(props: {
     // workbench's splits. A natively-hosted tab (right Sidebar) is absent
     // from them even while it is on screen.
     if (service !== undefined && !store.tabOpen(scope.sessionId, tab.id)) {
+      // The seed names the editor type, but the native branch of openTab
+      // turns an editor PATH seed into a resource address and lets the HOST's
+      // tab registry decide the claiming type (#695) — a third-party type
+      // with a more specific pattern receives this side gesture too.
       service.openTab({ type: 'editor', path: absolute, target: 'side' }, scope)
       return
     }
@@ -317,7 +335,7 @@ export function EditorHost(props: {
     dragRef.current = null
     setDragWidth(null)
     const finalWidth = clampTreeWidth(drag.startWidth + (drag.startX - event.clientX))
-    if (finalWidth !== treeWidthOf(tab)) patchMeta(ctx, tab, { treeWidth: finalWidth })
+    if (finalWidth !== treeWidthOf(tab)) patchMeta(ctx, tab, scope.sessionId, { treeWidth: finalWidth })
   }
 
   useEffect(() => {
@@ -399,7 +417,7 @@ export function EditorHost(props: {
 
   const treeOpen = treeOpenOf(tab)
   /** Persist the panel flag on the tab (survives reloads with the layout). */
-  const toggleTree = (): void => { patchMeta(ctx, tab, { treeOpen: !treeOpen }) }
+  const toggleTree = (): void => { patchMeta(ctx, tab, scope.sessionId, { treeOpen: !treeOpen }) }
   const saveLabel = toolbar === null ? ''
     : toolbar.saveState === 'saving' ? t('loading')
       : toolbar.saveState === 'saved' ? t('saved')
@@ -472,7 +490,7 @@ export function EditorHost(props: {
           </div>
         )}
         {toolbar?.dirty === true && <span className={css.dirtyDot} title={t('unsaved')} />}
-        {toolbar?.editable === true && (
+        {toolbar?.editable === true && toolbar?.truncated !== true && (
           <button
             type="button"
             className={css.iconButton}

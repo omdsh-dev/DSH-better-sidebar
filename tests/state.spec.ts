@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, CONVERSATION_MIN, createSidebarStore,
   insertLeafAt, makeDefaultState, moveTab, moveTabToEdge, openDiffTab,
@@ -245,6 +245,40 @@ describe('sidebar state', () => {
     const after = s.bottomSplits as { tabs: { id: string }[] }
     expect(after.tabs[after.tabs.length - 1]!.id).toBe(first)
     expect(after.tabs).toHaveLength(2)
+  })
+
+  it('dragging a pane\'s only tab onto its own edge splits in place instead of losing the tab', () => {
+    let s = state()
+    s = openTabInBottomPane(s, { id: 'git', type: 'git', title: 'Git' })
+    s = splitPane(s, 'col')
+    const split = s.bottomSplits as Extract<SplitNode, { kind: 'split' }>
+    const paneA = split.children[0] as { id: string; tabs: { id: string }[] }
+    const paneB = split.children[1] as { id: string }
+    const tabId = paneA.tabs[0]!.id
+    s = moveTab(s, paneA.id, tabId, paneB.id)
+    // paneB now holds the single tab; dropping it onto paneB's own edge
+    // used to empty paneB, delete its leaf, and discard the tab entirely.
+    s = moveTabToEdge(s, paneB.id, tabId, paneB.id, 'left')
+    const leaves = allLeaves(s.bottomSplits)
+    expect(leaves).toHaveLength(1)
+    expect(leaves[0]!.tabs.map(t => t.id)).toEqual([tabId])
+    expect(s.activePane).toBe(leaves[0]!.id)
+  })
+
+  it('dragging one of several tabs onto its own pane edge splits the pane with the dragged tab', () => {
+    let s = state()
+    s = openTabInBottomPane(s, { id: 'git', type: 'git', title: 'Git' })
+    s = openTabInBottomPane(s, { id: 't2', type: 'terminal', title: 'T2' })
+    const leaf = s.bottomSplits as { id: string; tabs: { id: string }[] }
+    const first = leaf.tabs[0]!.id
+    s = moveTabToEdge(s, leaf.id, first, leaf.id, 'right')
+    const leaves = allLeaves(s.bottomSplits)
+    expect(leaves).toHaveLength(2)
+    const dragged = leaves.find(candidate => candidate.tabs.some(t => t.id === first))
+    const kept = leaves.find(candidate => candidate !== dragged)
+    expect(dragged!.tabs.map(t => t.id)).toEqual([first])
+    expect(kept!.tabs.map(t => t.id)).toEqual([leaf.tabs[1]!.id])
+    expect(s.activePane).toBe(dragged!.id)
   })
 
   it('closing the last tab removes the pane (promotes the sibling)', () => {
@@ -789,5 +823,65 @@ describe('URL reset escape hatch (issue #369)', () => {
     store.setSession('s1')
     const leaf = store.getSnapshot().state!.bottomSplits as { tabs: { type: string }[] }
     expect(leaf.tabs.map(tab => tab.type)).toEqual([])
+  })
+})
+
+/**
+ * listener isolation. `service.subscribeState` is this store's own
+ * `subscribe`, so a consumer plugin's listener throws INSIDE notify() — and
+ * notify() runs inline in the mutating call site (setSession from the
+ * Sidebar's mount effect, reduce from a click handler). An escaping throw
+ * therefore lands in the React commit phase, where the shell's ROOT
+ * RenderBoundary swaps the whole sidebar for its error strip.
+ */
+describe('store listener isolation', () => {
+  // Same browser-global stubs as the blocks above: setSession → loadState
+  // reads window.location.search and localStorage.
+  beforeEach(() => {
+    const g = globalThis as Record<string, unknown>
+    g.window = { clearTimeout: () => {}, setTimeout: () => 0, innerWidth: 1024, innerHeight: 800, location: { search: '' } }
+    g.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} }
+  })
+  afterEach(() => {
+    const g = globalThis as Record<string, unknown>
+    delete g.window
+    delete g.localStorage
+  })
+
+  it('contains a throwing listener and still delivers the change to the rest', () => {
+    const store = createSidebarStore()
+    const delivered: string[] = []
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    store.subscribe(() => {
+      delivered.push('throwing')
+      throw new Error('third-party listener boom')
+    })
+    store.subscribe(() => { delivered.push('healthy') })
+    // The mutation must not throw out of the store, and the throwing
+    // listener must not rob the healthy ones of their notification (React's
+    // own useSyncExternalStore callback shares this loop in the real shell).
+    expect(() => store.setSession('s1')).not.toThrow()
+    expect(delivered).toEqual(['throwing', 'healthy'])
+    // The mutation itself still landed.
+    expect(store.getSnapshot().sessionId).toBe('s1')
+    expect(store.getSnapshot().state).toBeDefined()
+    // The crash is reported, not swallowed silently.
+    expect(errorSpy).toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
+  it('keeps notifying every listener on later mutations (the loop recovers)', () => {
+    const store = createSidebarStore()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let healthyCalls = 0
+    store.subscribe(() => { throw new Error('boom') })
+    store.subscribe(() => { healthyCalls += 1 })
+    store.setSession('s1')
+    const afterFirst = healthyCalls
+    // A later mutation notifies again: the throwing listener was neither
+    // dropped from the set nor left the loop half-iterated.
+    store.reduce(toggleBottomPanel)
+    expect(healthyCalls).toBe(afterFirst + 1)
+    errorSpy.mockRestore()
   })
 })

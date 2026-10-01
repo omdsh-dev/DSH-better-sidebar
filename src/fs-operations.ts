@@ -24,15 +24,14 @@ import { createWriteStream } from 'node:fs'
 import { access, lstat, mkdir, rename, rm, stat, unlink } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { invalidateDirectoryCache, requireAbsolute } from './fs-tree.ts'
-import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
-import { resolveSessionPath } from './session-path.ts'
+import { ensureWorkspaceWritePath, resolveTarget } from './path-security.ts'
 import { SidebarError } from './wire.ts'
 
 /** Inputs of one upload: the session scope plus the request body stream. */
 export interface WorkspaceUploadInput {
   /** The session workspace root (the base of session-relative targets). */
   cwd: string
-  /** Absolute upload directory chosen by the client. */
+  /** Upload directory chosen by the client — absolute, session-relative, or `~`-relative (#713). */
   dir: string
   /** Relative path below `dir` (absolute paths, '.', '..' and empty segments refused). */
   relativePath: string
@@ -57,8 +56,9 @@ export interface WorkspaceUploadInput {
  */
 export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise<{ path: string; size: number }> {
   const { cwd, dir, relativePath, chunks, limit } = input
-  const base = requireAbsolute(dir)
-  await ensureWorkspacePath(cwd, base)
+  // The shared resolution contract: an absolute `dir` normalizes, a
+  // session-relative one joins the cwd, `~` expands against the home (#713).
+  const base = resolveTarget(cwd, dir)
   if (relativePath === '' || relativePath.startsWith('/') || relativePath.startsWith('\\')) {
     throw new SidebarError('bad-request', 'relativePath must stay below the upload directory', 400)
   }
@@ -110,7 +110,7 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
 export interface WorkspaceRenameInput {
   /** The session workspace root (the base of session-relative targets). */
   cwd: string
-  /** Absolute path of the row as the tree displays it (may be a symlink). */
+  /** Row path as the tree displays it (may be a symlink); absolute, session-relative, or `~`-relative. */
   path: string
   /** The new base name (single segment — rename never moves across directories). */
   name: string
@@ -119,16 +119,19 @@ export interface WorkspaceRenameInput {
 }
 
 /**
- * Resolve one existing entry for a link-aware mutation: the lexical row path
- * plus the resolved workspace root (for the "never rename/remove the root"
- * check). No realpath, no containment: the path exists (lstat decides) and the
+ * Resolve one existing entry for a link-aware mutation through the SHARED
+ * resolution contract: session-relative targets join the cwd, `~` targets
+ * expand against the home (#713), remote-mirror namespaces project, and
+ * everything lands on one absolute, lexically-normalized path (plus the
+ * resolved workspace root for the "never rename/remove the root" check).
+ * No realpath, no containment: the path exists (lstat decides) and the
  * operation addresses it as written.
  */
 async function resolveEntry(
   cwd: string,
   target: string,
 ): Promise<{ absolute: string; real: string; realCwd: string }> {
-  const absolute = requireAbsolute(resolveSessionPath(cwd, target))
+  const absolute = resolveTarget(cwd, target)
   const realCwd = requireAbsolute(cwd)
   return { absolute, real: absolute, realCwd }
 }

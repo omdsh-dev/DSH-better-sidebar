@@ -21,7 +21,10 @@
  * comment — so a produced UNC path is never joined onto the cwd.
  */
 export function isAbsolutePath(path: string): boolean {
-  return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || /^[\\/]{2}[^\\/]/.test(path)
+  // A `~`-relative path (`~`, `~/...`, `~\...`) names the user's home, not a
+  // session-relative path (#713): never join it onto the cwd client-side.
+  return path === '~' || path.startsWith('~/') || path.startsWith('~\\')
+    || path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || /^[\\/]{2}[^\\/]/.test(path)
 }
 
 /**

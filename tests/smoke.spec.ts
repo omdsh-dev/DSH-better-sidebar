@@ -6,12 +6,13 @@
 import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join, resolve as resolvePath } from 'node:path'
+import { tmpdir, homedir } from 'node:os'
+import { dirname, join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { apply, FS_TREES_MAX_PATHS, mediaTypeForPath } from '../src/index.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import { encodeHtmlUrl } from '../src/html-route.ts'
+import { downloadUrl, htmlUrl } from '../src/client/api.ts'
 import * as git from '../src/git.ts'
 import { listDirectory } from '../src/fs-tree.ts'
 import type { SidebarWebRoute, SidebarWebUpgradeRoute } from '../src/context-types.ts'
@@ -209,7 +210,7 @@ describe('git destructive operations (scratch repository)', () => {
   }
 
   const gitRun = (cwd: string, args: string[]): string => {
-    const result = spawnSync('git', ['-C', cwd, '--no-pager', '-c', 'color.ui=false', ...args], {
+    const result = spawnSync('git', ['-C', cwd, '--no-pager', '-c', 'color.ui=false', '-c', 'core.quotePath=false', ...args], {
       encoding: 'utf8',
       env: { ...process.env, ...FIXTURE_IDENTITY },
     })
@@ -300,6 +301,42 @@ describe('git destructive operations (scratch repository)', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('never parses a revision-shaped operand as a git option', async () => {
+    const dir = makeScratchRepo()
+    try {
+      const hash = (await git.log(dir))[0]!.hashFull
+      // Every revision form the UI actually sends must keep working.
+      await expect(git.show(dir, 'HEAD', 'a.txt')).resolves.toContain('one')
+      await expect(git.show(dir, hash, 'a.txt')).resolves.toContain('one')
+      await expect(git.commitDiff(dir, hash)).resolves.toContain('a.txt')
+      // Operand-shaped option strings must NOT be honoured as flags. Before
+      // --end-of-options, `show(dir, '--stat', ...)` was consumed as a flag and
+      // returned empty, blanking the Changes tab's diff/blame panes.
+      for (const hostile of ['--stat', '--output=nul', '-n', '--no-color']) {
+        const content = await git.show(dir, hostile, 'a.txt')
+        expect(content, hostile).toBeNull()
+      }
+      await expect(git.commitDiff(dir, '--stat')).rejects.toThrow()
+      await expect(git.revert(dir, '--abort')).rejects.toThrow()
+      await expect(git.cherryPick(dir, '--abort')).rejects.toThrow()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the index revision selector (:0) working', async () => {
+    // `:0` is git's own index syntax and the UI uses it for the worktree side
+    // of a diff, so the operand guard must not reject it.
+    const dir = makeScratchRepo()
+    try {
+      writeFileSync(join(dir, 'a.txt'), 'staged-change\n')
+      gitRun(dir, ['add', 'a.txt'])
+      await expect(git.show(dir, ':0', 'a.txt')).resolves.toContain('staged-change')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('session cwd resolution over the API route', () => {
@@ -355,10 +392,18 @@ describe('session cwd resolution over the API route', () => {
   }
 
   const invokeGet = async (route: SidebarWebRoute, url: string): Promise<{ status: number; body: string }> => {
-    const out: { status: number; body: string } = { status: 200, body: '' }
+    return (await invokeGetFull(route, url))
+  }
+
+  /** invokeGet plus the response headers (for header contracts). */
+  const invokeGetFull = async (route: SidebarWebRoute, url: string): Promise<{ status: number; body: string; headers: Record<string, string> }> => {
+    const out: { status: number; body: string; headers: Record<string, string> } = { status: 200, body: '', headers: {} }
     const req = { method: 'GET', url, headers: { host: '127.0.0.1:3080' } } as never
     const res = {
-      writeHead: (status: number) => { out.status = status },
+      writeHead: (status: number, headers?: Record<string, string>) => {
+        out.status = status
+        if (headers !== undefined) out.headers = headers
+      },
       end: (chunk: unknown) => { out.body += String(chunk ?? '') },
     } as never
     await route.handler(req, res)
@@ -379,6 +424,37 @@ describe('session cwd resolution over the API route', () => {
     const result = await invoke(route, 'session.cwd', { sessionId: 's-unknown' })
     expect(result.ok).toBe(true)
     expect(result.value?.cwd).toBe(process.cwd())
+  })
+
+  it('answers 404 for Object.prototype member names instead of resolving them as methods', async () => {
+    // The dispatch table is an object literal, so a bare lookup used to find
+    // Object.prototype members and treat them as handlers: `constructor`
+    // answered 200 {}, `toString` answered 200 "[object Undefined]", and
+    // `valueOf` / `hasOwnProperty` answered 500. All must be the documented 404.
+    const route = mount()
+    for (const method of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__']) {
+      const result = await invoke(route, method, {})
+      expect(result, method).toMatchObject({ ok: false, status: 404, error: { code: 'not-found' } })
+    }
+    // A genuinely unknown method keeps its existing 404 contract.
+    const unknown = await invoke(route, 'no-such-method', {})
+    expect(unknown).toMatchObject({ ok: false, status: 404, error: { code: 'not-found' } })
+  })
+
+  it('reports a git failure as a 4xx git error, not an internal 500', async () => {
+    // `GitCommandError` used to fall through to the generic branch and surface
+    // as 500 "internal", which reads as a plugin crash and hid the localized
+    // not-a-repository copy the client already renders. A non-repository cwd
+    // must answer 409 not-repo.
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-git-notrepo-'))
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: dir } }) } })
+      const notRepo = await invoke(route, 'git.branch', { sessionId: 's', cwd: dir })
+      expect(notRepo).toMatchObject({ ok: false, status: 409, error: { code: 'not-repo' } })
+      expect(notRepo.error?.message).not.toContain('internal')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('resolves a cold (detached) session cwd through the persistence index', async () => {
@@ -543,6 +619,89 @@ describe('session cwd resolution over the API route', () => {
     }
   })
 
+  it('serves relative previews and assets without rewriting external absolute paths', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-preview-paths-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(join(workspace, 'pages'), { recursive: true })
+    mkdirSync(outside)
+    writeFileSync(join(workspace, 'pages', 'report.html'), '<link rel="stylesheet" href="./style.css"><p>workspace</p>')
+    writeFileSync(join(workspace, 'pages', 'style.css'), 'body { color: red; }')
+    const external = join(outside, 'report.html')
+    writeFileSync(external, '<p>external</p>')
+    // A shadow at the old fallback destination must never win.
+    const shadow = join(workspace, external.replace(/^[\\/]+/, ''))
+    if (process.platform !== 'win32') {
+      mkdirSync(dirname(shadow), { recursive: true })
+      writeFileSync(shadow, '<p>wrong shadow</p>')
+    }
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const html = routes.find(route => route.path === '/sidebar/html')!
+      const file = routes.find(route => route.path === '/sidebar/file')!
+      const scope = { sessionId: 'preview', cwd: workspace }
+      const page = htmlUrl(scope, 'pages/report.html')
+      expect(await invokeGet(html, page)).toMatchObject({ status: 200, body: expect.stringContaining('workspace') })
+      const asset = new URL('./style.css', new URL(page, 'http://localhost')).pathname
+      expect(await invokeGet(html, asset)).toMatchObject({ status: 200, body: 'body { color: red; }' })
+      // Missing cwd exercises the server's relative-only fallback.
+      expect(await invokeGet(file, downloadUrl({ sessionId: scope.sessionId }, 'pages/report.html')))
+        .toMatchObject({ status: 200, body: expect.stringContaining('workspace') })
+      expect(await invokeGet(html, htmlUrl(scope, external)))
+        .toMatchObject({ status: 200, body: '<p>external</p>' })
+      expect(await invokeGet(file, downloadUrl(scope, external)))
+        .toMatchObject({ status: 200, body: '<p>external</p>' })
+      rmSync(external)
+      expect((await invokeGet(html, htmlUrl(scope, external))).status).toBe(500)
+      expect((await invokeGet(file, downloadUrl(scope, external))).status).toBe(500)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('concurrent fs.write calls to the same path do not corrupt each other', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-concurrent-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const target = join(workspace, 'notes.txt')
+      const draftA = 'A'.repeat(200000)
+      const draftB = 'B'.repeat(200000)
+      // Two editors of the same file ("open to the side" mints a second tab
+      // for one path) saving within the temp→rename window. Guards the
+      // contract: every concurrent save succeeds and the published file is
+      // one complete draft (never byte-mixed, never a failed rename).
+      const results = await Promise.allSettled([
+        invoke(route, 'fs.write', { sessionId: 'concurrent', path: target, content: draftA }),
+        invoke(route, 'fs.write', { sessionId: 'concurrent', path: target, content: draftB }),
+      ])
+      for (const result of results) expect(result.status).toBe('fulfilled')
+      const written = readFileSync(target, 'utf8')
+      expect([draftA, draftB]).toContain(written)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('serves a home-relative media path (the ~ marker reaches the shared resolver, #713)', async () => {
+    // A real file under the user's home: the ~ expansion must happen on the
+    // ROUTE side (resolveTarget), not be pre-joined onto the session cwd.
+    const dirName = `.dsh-sidebar-selftest-${process.pid.toString(36)}`
+    const dir = join(homedir(), dirName)
+    mkdirSync(dir, { recursive: true })
+    const target = join(dir, 'note.txt')
+    writeFileSync(target, 'home sweet home')
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: dir } }) } })
+      const file = routes.find(route => route.path === '/sidebar/file')!
+      expect(await invokeGet(file, downloadUrl({ sessionId: 'home' }, `~/${dirName}/note.txt`)))
+        .toMatchObject({ status: 200, body: 'home sweet home' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('serves media and HTML through a workspace symlink (fence removed)', async () => {
     if (!canCreateSymlink) return
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-route-symlink-security-'))
@@ -569,6 +728,50 @@ describe('session cwd resolution over the API route', () => {
       expect(mediaResult).toMatchObject({ status: 200 })
       expect(htmlResult).toMatchObject({ status: 200 })
       expect(htmlResult.body).toContain('outside')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('serves an SVG with a sandboxing CSP so a direct navigation cannot run its script', async () => {
+    // An SVG is a scriptable document. Served bare on the GUI origin, opening
+    // this URL directly runs its <script> with same-origin access to
+    // /sidebar/api/*. The html route already sandboxes; the media route must
+    // match. <img> embedding is unaffected (CSP applies to documents).
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-svg-security-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    const svgPath = join(workspace, 'logo.svg')
+    writeFileSync(svgPath, '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const media = routes.find(route => route.path === '/sidebar/file')!
+      const res = await invokeGetFull(media, `/sidebar/file?sessionId=security&path=${encodeURIComponent(svgPath)}`)
+      expect(res.status).toBe(200)
+      expect(res.headers['content-type']).toBe('image/svg+xml')
+      expect(res.headers['content-security-policy']).toContain('sandbox')
+      expect(res.headers['x-content-type-options']).toBe('nosniff')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves an ordinary image response free of the SVG sandbox headers', async () => {
+    // The guard is scoped to the scriptable type: a PNG must not gain a
+    // sandbox directive (nothing to sandbox, and it would be a behaviour
+    // change for existing image previews).
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-png-security-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    const pngPath = join(workspace, 'pixel.png')
+    writeFileSync(pngPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const media = routes.find(route => route.path === '/sidebar/file')!
+      const res = await invokeGetFull(media, `/sidebar/file?sessionId=security&path=${encodeURIComponent(pngPath)}`)
+      expect(res.status).toBe(200)
+      expect(res.headers['content-type']).toBe('image/png')
+      expect(res.headers['content-security-policy']).toBeUndefined()
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
