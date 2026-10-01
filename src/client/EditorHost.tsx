@@ -25,21 +25,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createElement } from 'react'
 import clsx from 'clsx'
-import { IconCheckOutline16, IconFolderOpen16, IconRefreshOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconCheckOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
-import { api, isOutsideWorkspaceMessage, mediaUrl, type SessionScope } from './api.ts'
+import { api, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
-import { FenceErrorNotice } from './FenceErrorNotice.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
 import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
-import { openSidebarFile } from './intercept.tsx'
+import { openSidebarFile } from './sidebar-file.ts'
 import { openWithSshActive, openWithUrl, parseOpenWithConfig, resolveOpenWithTargets } from './open-with.ts'
 import { updatePluginSettings } from './plugin-settings.ts'
+import { createOpenInApp } from './open-in-app.ts'
 import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
-import { resolveSidebarPath } from './produced-files.ts'
+import { resolveSidebarPath } from './paths.ts'
 import { closePathTabs, retargetPathTabs } from './tree-mutations.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
 import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, type SidebarStore, type SidebarTab } from './state.ts'
@@ -98,12 +98,16 @@ export function EditorHost(props: {
   store: SidebarStore
   scope: SessionScope
   tab: SidebarTab
+  /** Whether this tab is the active one with its panel open: a parked tab
+   *  must not keep polling (the workbench keeps every tab body mounted). */
+  visible?: boolean
   expanded: string[]
   revealed: string[]
   onToggleDir: (path: string) => void
   onReferenceFile: (path: string, isDir: boolean) => void
 }) {
   const { ctx, store, scope, tab, expanded, revealed, onToggleDir, onReferenceFile } = props
+  const visible = props.visible !== false
   const path = tab.path ?? ''
   const title = tab.title
   // A folder window: the model's `sidebar_open` (or any caller) opens a
@@ -135,6 +139,14 @@ export function EditorHost(props: {
     useCallback((callback: () => void) => store.subscribe(callback), [store]),
     useCallback(() => store.getSnapshot().prefs.editorExplorer, [store]),
   )
+  // The DSH-native "open with" capability (host open-in-app): one adapter per
+  // window, shared by every row menu below. The plugin no longer owns a
+  // target list, a URL vocabulary or a spawn route — the host reports which
+  // applications are actually installed for THIS path.
+  const openInApp = useMemo(() => createOpenInApp(ctx), [ctx])
+  // The plugin's own service (native-tab opens, "open to the side"): absent in
+  // stripped-down hosts, where every flow degrades to the bottom workbench.
+  const service = ctx.get('betterSidebar')
   // The file tree's "open with" configuration (pluginSettings['editor']): a
   // blob subscription, so a pin click or a settings-page edit re-renders the
   // menu immediately. The parsed config also drives which targets are shown
@@ -145,6 +157,11 @@ export function EditorHost(props: {
   )
   const openWithConfig = useMemo(() => parseOpenWithConfig(editorBlob.openWith), [editorBlob])
   const openWithTargets = useMemo(() => resolveOpenWithTargets(openWithConfig), [openWithConfig])
+  // The declarative "always show the plugin's own targets" switch (the editor
+  // card's pluginToggles row): a plain boolean on the SAME blob, so both the
+  // settings page and the tree's menu see one value. Absent/false keeps the
+  // host-first behavior (the tree decides what to hide).
+  const openWithShowPluginTargets = editorBlob.openWithPluginTargets === true
   // A path-less tab shows the empty-state hint in merged mode — and in split
   // mode it is the standalone explorer (tree-only, see the render below). A
   // folder tab is a folder window in BOTH modes: the tree rooted at the
@@ -162,21 +179,35 @@ export function EditorHost(props: {
     if (inPlace) {
       ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) })
     } else {
-      openSidebarFile(ctx, store, scope.sessionId, absolute)
+      openSidebarFile(ctx, scope.sessionId, absolute)
     }
   }
 
   /** The context menu's explicit "new tab" escape (per-path dedupe). */
   const openFileNewTab = (absolute: string): void => {
-    openSidebarFile(ctx, store, scope.sessionId, absolute)
+    openSidebarFile(ctx, scope.sessionId, absolute)
   }
 
   /**
    * The context menu's "open to the side": a fresh editor tab (uid id — the
    * `'editor:' + path` convention would clash with the id safety net on a
    * second side-open of the same file) in a rightward split of THIS pane.
+   *
+   * Native right-Sidebar tabs do NOT live in `bottomSplits`, so the bottom
+   * branch would fall through to `firstLeaf` — a pane the user has not
+   * expanded, i.e. "nothing happened". Those tabs instead ask the host for a
+   * second pane through the service (`target: 'side'` → the host's
+   * `preferNewPane`), which is the same gesture in the surface the user is
+   * actually looking at.
    */
   const openFileSide = (absolute: string): void => {
+    // `store.tabOpen` answers from THIS session's own state map — the bottom
+    // workbench's splits. A natively-hosted tab (right Sidebar) is absent
+    // from them even while it is on screen.
+    if (service !== undefined && !store.tabOpen(scope.sessionId, tab.id)) {
+      service.openTab({ type: 'editor', path: absolute, target: 'side' }, scope)
+      return
+    }
     store.reduce((state) => {
       const pane = leafWithTab(state.bottomSplits, tab.id) ?? firstLeaf(state.bottomSplits)
       const fresh: SidebarTab = {
@@ -384,7 +415,7 @@ export function EditorHost(props: {
       <div className={css.editor}>
         <TreePanel
           full
-          store={store}
+          visible={visible}
           sessionId={scope.sessionId}
           cwd={folderRoot ?? scope.cwd}
           expanded={expanded}
@@ -393,6 +424,8 @@ export function EditorHost(props: {
           onOpenFile={openFile}
           onOpenFileNewTab={openFileNewTab}
           onOpenFileSide={openFileSide}
+          openInApp={openInApp}
+          openWithShowPluginTargets={openWithShowPluginTargets}
           openWithTargets={openWithTargets}
           openWithPinned={openWithConfig.pinned}
           openWithSsh={openWithSshActive(openWithConfig)}
@@ -447,7 +480,7 @@ export function EditorHost(props: {
             title={`${t('save')} (Ctrl/Cmd+S)`}
             onClick={() => { controlsRef.current?.save() }}
           >
-            <IconCheckOutline16 size={14} />
+            <IconCheckOutlineRegular size={14} />
           </button>
         )}
         {saveLabel !== '' && (
@@ -461,7 +494,7 @@ export function EditorHost(props: {
             title={t('refresh')}
             onClick={refreshFile}
           >
-            <IconRefreshOutline14 size={14} />
+            <IconRefreshOutlineRegular size={14} />
           </button>
         )}
         <button
@@ -472,16 +505,14 @@ export function EditorHost(props: {
           aria-pressed={treeOpen}
           onClick={toggleTree}
         >
-          <IconFolderOpen16 size={14} />
+          <IconFolderOpenRegular size={14} />
         </button>
       </div>
       <div className={css.editorBody}>
         <div className={css.editorMain}>
           {showEmpty && <div className={css.editorPlaceholder}>{t('editorEmptyHint')}</div>}
           {!showEmpty && load.status === 'loading' && <div className={css.editorPlaceholder}>{t('loading')}</div>}
-          {!showEmpty && load.status === 'error' && (isOutsideWorkspaceMessage(load.message)
-            ? <FenceErrorNotice store={store} onDisabled={() => { setReloadSeq(sequence => sequence + 1) }} />
-            : <div className={css.editorError}>{load.message}</div>)}
+          {!showEmpty && load.status === 'error' && <div className={css.editorError}>{load.message}</div>}
           {!showEmpty && load.status === 'binary' && <BinaryDownload scope={scope} path={path} />}
           {!showEmpty && load.status === 'ready' && createElement(load.viewer.component, {
             ctx, store, scope, path, title,
@@ -509,7 +540,7 @@ export function EditorHost(props: {
               onPointerCancel={onResizeEnd}
             />
             <TreePanel
-              store={store}
+              visible={visible}
               sessionId={scope.sessionId}
               cwd={scope.cwd}
               expanded={expanded}
@@ -518,6 +549,8 @@ export function EditorHost(props: {
               onOpenFile={openFile}
               onOpenFileNewTab={openFileNewTab}
               onOpenFileSide={openFileSide}
+              openInApp={openInApp}
+              openWithShowPluginTargets={openWithShowPluginTargets}
               openWithTargets={openWithTargets}
               openWithPinned={openWithConfig.pinned}
               openWithSsh={openWithSshActive(openWithConfig)}

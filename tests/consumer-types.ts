@@ -53,8 +53,8 @@ const tab: TabDescriptor = {
   single: false,
   dedupeKey: (t: SidebarTab) => t.id,
   createTab: (state: SidebarState) => ({
-    tab: { id: `my-plugin:db:${state.nextTerminal}`, type: 'my-plugin:db', title: 'DB', meta: { n: state.nextTerminal } },
-    patch: { nextTerminal: state.nextTerminal + 1 },
+    tab: { id: `my-plugin:db:${state.nextBrowser}`, type: 'my-plugin:db', title: 'DB', meta: { n: state.nextBrowser } },
+    patch: { nextBrowser: state.nextBrowser + 1 },
   }),
   badge: (ctx, scope, state) => (state.expanded.length > 0 ? state.expanded.length : null),
   onOpen: (tab: SidebarTab, scope: SessionScope) => { void tab; void scope },

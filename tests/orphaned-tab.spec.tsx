@@ -23,7 +23,7 @@ function typesOf(node: unknown): string[] {
 describe('sanitize keeps unregistered tab types', () => {
   it('preserves a persisted tab of an unknown type with its title/path', () => {
     const raw = {
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: null,
       expanded: [],
       bottomSplits: {
@@ -47,7 +47,7 @@ describe('sanitize keeps unregistered tab types', () => {
 
   it('an unknown type alone in a pane still sanitizes cleanly', () => {
     const raw = {
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: null,
       expanded: [],
       bottomSplits: {

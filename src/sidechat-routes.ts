@@ -40,7 +40,7 @@ import {
   liveEventsOf,
   resolvePresetId,
   SIDE_BOUNDARY_PROMPT,
-  SIDE_INJECTION_PLUGIN,
+  SIDE_INJECTION_SOURCE_KIND,
   SIDE_NEW_THREAD_TITLE,
   sideLabel,
   type SeedEvent,
@@ -52,6 +52,22 @@ import {
 import type { AssistantLiveBuffer } from './assistant-live.ts'
 import { requireString, SidebarError } from './wire.ts'
 import { readPersistedSession } from './session-store.ts'
+
+/**
+ * The plugin's producer-owned message source kind. Message sources are a
+ * merge-extensible sum type — DSH 0.1.7 has no shared catch-all `plugin`
+ * kind, so every producer declares its own in its own module (the same
+ * `declare module` seam dsh-time-context / dsh-tmux-context use). The kind
+ * itself is {@link SIDE_INJECTION_SOURCE_KIND}: exactly the `plugin:<name>`
+ * value DSH's own v3→v4 migration derives for the rows this plugin wrote
+ * under 0.1.6, so old and new logs carry one shape.
+ */
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    /** Side-chat context injection (boundary prompt + parked in-progress snapshot). */
+    'dsh-better-sidebar': { kind: typeof SIDE_INJECTION_SOURCE_KIND }
+  }
+}
 
 /** The six Side Chat routes of the sidebar API (wire method names). */
 export interface SidechatRoutes {
@@ -153,13 +169,15 @@ function admitFollowup(agent: Agent, blocks: ContentBlock[]): void {
  * log therefore records two user/message events (injection, then question)
  * instead of one wrapped blob: the transcript shows the question as a user
  * bubble and collapses the injection as a context row. The injection source
- * is stamped `kind: 'plugin'` so recognition is structural; its text still
- * opens with SIDE_BOUNDARY_PREFIX, keeping boundaryDelivered intact.
+ * carries the plugin's producer-owned kind (`plugin:dsh-better-sidebar` —
+ * session format v4 refuses the retired bare `kind: 'plugin'`) so recognition
+ * is structural; its text still opens with SIDE_BOUNDARY_PREFIX, keeping
+ * boundaryDelivered intact.
  */
 function admitFirstContact(agent: Agent, injectionText: string, question: string): void {
   agent.inject(createUserMessage({
     content: textPrompt(injectionText),
-    source: { kind: 'plugin', plugin: SIDE_INJECTION_PLUGIN },
+    source: { kind: SIDE_INJECTION_SOURCE_KIND },
   }))
   admitFollowup(agent, textPrompt(question))
 }

@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { SUBAGENT_DESCRIPTOR_VERSION } from '@deepseek-ai/dsh-subagent'
 import { buildSidechatApi } from '../src/sidechat-routes.ts'
 import { SidebarError } from '../src/wire.ts'
-import { SIDE_BOUNDARY_PROMPT, SIDE_INJECTION_PLUGIN, SIDE_NEW_THREAD_TITLE, sideLabel } from '../src/sidechat-core.ts'
+import { SIDE_BOUNDARY_PROMPT, SIDE_INJECTION_SOURCE_KIND, SIDE_NEW_THREAD_TITLE, sideLabel } from '../src/sidechat-core.ts'
 import type { Context } from '../src/context-types.ts'
 
 /** A fake live agent (inject/followup/cancel spied). */
@@ -163,9 +163,12 @@ describe('sidechat.start', () => {
     })
     // First contact is SPLIT: the boundary rides agent.inject (plugin-stamped
     // context, no wake), the question is the follow-up that wakes the driver.
+    // The stamp is the plugin's producer-owned kind: session format v4
+    // refuses the retired bare `kind: 'plugin'` at log read-back.
     expect(child.inject).toHaveBeenCalledTimes(1)
-    const injection = child.inject.mock.calls[0]![0] as { content: Array<{ type: string; text: string }>; source: { kind: string; plugin: string } }
-    expect(injection.source).toEqual({ kind: 'plugin', plugin: SIDE_INJECTION_PLUGIN })
+    const injection = child.inject.mock.calls[0]![0] as { content: Array<{ type: string; text: string }>; source: { kind: string } }
+    expect(injection.source).toEqual({ kind: SIDE_INJECTION_SOURCE_KIND })
+    expect(injection.source).toEqual({ kind: 'plugin:dsh-better-sidebar' })
     expect(injection.content[0]!.text.startsWith(SIDE_BOUNDARY_PROMPT)).toBe(true)
     expect(injection.content[0]!.text).not.toContain('explain the event flow')
     expect(child.followup).toHaveBeenCalledTimes(1)
@@ -259,7 +262,7 @@ describe('sidechat.start', () => {
     await api['sidechat.prompt']({ childId, text: 'explain the event flow' })
     expect(child.inject).toHaveBeenCalledTimes(1)
     const injection = child.inject.mock.calls[0]![0] as { content: Array<{ text: string }>; source: { kind: string } }
-    expect(injection.source.kind).toBe('plugin')
+    expect(injection.source.kind).toBe(SIDE_INJECTION_SOURCE_KIND)
     expect(injection.content[0]!.text.startsWith(SIDE_BOUNDARY_PROMPT)).toBe(true)
     expect(injection.content[0]!.text).toContain('`bash` (executing)')
     expect(child.followup).toHaveBeenCalledTimes(1)
@@ -399,7 +402,7 @@ function threadLog(): Array<ReturnType<typeof ev>> {
     ev('turn/end', 1, { turn: 0, reason: { kind: 'completed' } }),
     ev('session/end-seed', 2),
     ev('subagent/descriptor', 3, { mode: 'continuable' }),
-    ev('user/message', 4, { content: [{ type: 'text', text: 'Side conversation boundary.' }], source: { kind: 'plugin', plugin: 'dsh-better-sidebar' } }),
+    ev('user/message', 4, { content: [{ type: 'text', text: 'Side conversation boundary.' }], source: { kind: SIDE_INJECTION_SOURCE_KIND } }),
     ev('user/message', 5, { content: [{ type: 'text', text: 'the side question' }], source: { kind: 'user' } }),
     ev('assistant/attempt', 6, { turn: 1, step: 1, stream: [] }),
     ev('assistant/attempt', 7, { turn: 1, step: 1, stream: [] }),

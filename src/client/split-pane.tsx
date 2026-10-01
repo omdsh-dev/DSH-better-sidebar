@@ -29,12 +29,6 @@ export interface WorkbenchActions {
   /** Reorder within a pane (drop onto another tab inserts before it). */
   moveTabBefore: (payload: TabDragPayload, toPane: string, beforeTabId: string) => void
   resizeSplit: (splitId: string, index: number, deltaFrac: number) => void
-  /**
-   * Pin/unpin a terminal tab (v0.17.0+). The shell snapshots the home cwd
-   * at pin time; null clears the pin. Optional: when undefined the tab
-   * context menu hides the pin entry (legacy callers).
-   */
-  pinTab?: (tabId: string, scope: 'workspace' | 'global' | null) => void
 }
 
 /** One divider: pointer-capture drag translating px deltas into fractions.
@@ -214,15 +208,13 @@ function LeafView(props: {
           if (before === null) actions.moveTabToEdge(payload, leaf.id, 'center')
           else actions.moveTabBefore(payload, leaf.id, before)
         }}
-        onPinTab={actions.pinTab}
       />
       {leaf.tabs.length > 0 ? (
         /*
           Every tab stays MOUNTED (inactive ones hidden), so switching tabs
-          never tears down the content: a terminal keeps its pty connection
-          and scrollback, an editor keeps its CodeMirror view and unsaved
-          draft, explorer/git keep their loaded data. The unmount (and the
-          terminal's close frame) happens only when a tab is truly closed.
+          never tears down the content: an editor keeps its CodeMirror view
+          and unsaved draft, explorer/git keep their loaded data. The unmount
+          happens only when a tab is truly closed.
         */
         <div className={css.paneContent}>
           {leaf.tabs.map(tab => (

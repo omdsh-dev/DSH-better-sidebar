@@ -14,7 +14,10 @@
  *   record + `navigation.params` and kept live across navigations, so a
  *   component that retitles itself (`updateTab`) or rewrites its path (the
  *   editor's in-place file switch) keeps working;
- * - the explorer's per-tab expansion/reveal sets;
+ * - the explorer's expansion/reveal sets: EXPANSION lives in the per-session
+ *   state the workbench already uses (one set per session, shared by every
+ *   native tab of that session — a closed tab cannot drop it), while the
+ *   transient "show in folder" reveal stays per tab;
  * - the per-kind instance counter behind titles like "Terminal 2".
  *
  * Nothing here is a singleton: the registry is created once per client
@@ -28,6 +31,7 @@ import { RenderBoundary } from '../RenderBoundary.tsx'
 import { OrphanedTab } from '../OrphanedTab.tsx'
 import { referenceInChat } from '../reference-in-chat.ts'
 import type { BetterSidebarService } from '../service.ts'
+import { toggleExpanded } from '../state.ts'
 import type { SidebarStore, SidebarTab, TabType } from '../state.ts'
 import css from '../sidebar.module.css'
 
@@ -77,7 +81,15 @@ export interface NativeTabInfo {
 interface View {
   tab: SidebarTab
   scope: SessionScope
+  /**
+   * A PROJECTION of the session's expansion set (never an authoritative copy):
+   * refreshed from the store on every `ensure` and on every store change, so
+   * every native tab of one session shows the same set and reopening a tab
+   * cannot reset it. Cached only for referential stability — a fresh array on
+   * each render would re-run the tree's load effect for nothing.
+   */
   expanded: string[]
+  /** The transient "show in folder" highlight: per tab by design. */
   revealed: string[]
   /** Bumped on every mutation; the components subscribe to it. */
   version: number
@@ -114,7 +126,14 @@ export interface NativeTabRecords {
   update(id: string, patch: { title?: string; path?: string; meta?: unknown }): void
   /** Forget a record (the native tab closed). */
   drop(id: string): void
-  /** Toggle one directory in a record's expansion set. */
+  /**
+   * Bind the plugin store — the per-session state is the AUTHORITY for every
+   * view's expansion set. Idempotent; the first call also subscribes to store
+   * changes so a toggle made anywhere (the workbench, another native tab, a
+   * persisted restore) refreshes every native view.
+   */
+  attachStore(store: SidebarStore): void
+  /** Toggle one directory in a record's SESSION expansion set. */
   toggleExpanded(id: string, path: string): void
   /** Mint the next instance number of a kind (titles like "Terminal 2"). */
   nextInstance(kind: string): number
@@ -122,6 +141,11 @@ export interface NativeTabRecords {
   versionOf(id: string): number
   /** Subscribe to record changes (title/path/meta/expanded). */
   subscribe(listener: () => void): () => void
+}
+
+/** Whether two expansion sets hold the same paths in the same order. */
+function samePaths(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((path, index) => path === right[index])
 }
 
 /** Create the record registry for one client activation. */
@@ -134,7 +158,39 @@ export function createNativeTabRecords(): NativeTabRecords {
     views.set(id, { ...view, version: view.version + 1 })
     notify()
   }
+  /** The session-state authority (bound through {@link NativeTabRecords.attachStore}). */
+  let store: SidebarStore | undefined
+  /** The session's expansion set (absent session = nothing expanded yet). */
+  const expandedOf = (sessionId: string): string[] =>
+    store?.getSessionStates().get(sessionId)?.expanded ?? []
+  /**
+   * Re-read every view's expansion projection from the session state. Views
+   * that changed get a version bump (which is what re-renders their bodies);
+   * identical sets keep their array identity so the tree's `expanded` prop —
+   * and therefore its load effect — stays stable.
+   */
+  const syncExpanded = (): void => {
+    if (store === undefined) return
+    // One map copy for the whole pass (getSessionStates copies by contract).
+    const states = store.getSessionStates()
+    let changed = false
+    for (const [id, entry] of views) {
+      const next = states.get(entry.scope.sessionId)?.expanded ?? []
+      if (samePaths(entry.expanded, next)) continue
+      views.set(id, { ...entry, expanded: next, version: entry.version + 1 })
+      changed = true
+    }
+    if (changed) notify()
+  }
   return {
+    attachStore(next) {
+      if (store === next) return
+      store = next
+      // One listener for the whole registry: the store lives as long as this
+      // activation, so the returned disposer is not kept.
+      next.subscribe(syncExpanded)
+      syncExpanded()
+    },
     ensure({ id, kind, title, params, scope, mint }) {
       const existing = views.get(id)
       if (existing === undefined) {
@@ -150,7 +206,7 @@ export function createNativeTabRecords(): NativeTabRecords {
             ...(meta === undefined ? {} : { meta }),
           },
           scope,
-          expanded: [],
+          expanded: expandedOf(scope.sessionId),
           revealed: [],
           version: 0,
         }
@@ -168,6 +224,13 @@ export function createNativeTabRecords(): NativeTabRecords {
           ? existing.tab.meta as Record<string, unknown>
           : {}
         patch.meta = { ...meta, url: params.url }
+      }
+      // The expansion set always mirrors the CURRENT session state (a record
+      // reused for another session must not keep the previous one's set).
+      const expanded = expandedOf(scope.sessionId)
+      if (existing.scope.sessionId !== scope.sessionId || !samePaths(existing.expanded, expanded)) {
+        views.set(id, { ...existing, scope, expanded, tab: { ...existing.tab, ...patch } })
+        return views.get(id)!
       }
       if (existing.scope.cwd !== scope.cwd) {
         views.set(id, { ...existing, scope, tab: { ...existing.tab, ...patch } })
@@ -190,11 +253,17 @@ export function createNativeTabRecords(): NativeTabRecords {
     },
     toggleExpanded(id, path) {
       const entry = views.get(id)
-      if (entry === undefined) return
-      const expanded = entry.expanded.includes(path)
-        ? entry.expanded.filter(candidate => candidate !== path)
-        : [...entry.expanded, path]
-      put(id, { ...entry, expanded })
+      if (entry === undefined || store === undefined) return
+      const sessionId = entry.scope.sessionId
+      // The ACTIVE session goes through `reduce` (it notifies, so the native
+      // views refresh through the subscription); a background session goes
+      // through `reduceFor`, which deliberately stays silent — refresh here.
+      if (store.getSnapshot().sessionId === sessionId) {
+        store.reduce(state => toggleExpanded(state, path))
+        return
+      }
+      store.reduceFor(sessionId, state => toggleExpanded(state, path))
+      syncExpanded()
     },
     nextInstance(kind) {
       const next = (instances.get(kind) ?? 0) + 1

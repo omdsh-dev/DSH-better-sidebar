@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { isAbsolutePath, relativeTo } from '../src/client/paths.ts'
-import { resolveSidebarPath } from '../src/client/produced-files.ts'
+import { resolveSidebarPath } from '../src/client/paths.ts'
 import { htmlUrl } from '../src/client/api.ts'
 
 describe('path helpers', () => {
