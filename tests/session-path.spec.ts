@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { resolveSessionPath } from '../src/session-path.ts'
 
 const WSL_CWD = '\\\\wsl.localhost\\archlinux\\home\\zdaar\\project'
+const WINDOWS_CWD = 'C:\\Users\\zdaar\\project'
 
 describe('resolveSessionPath', () => {
   it('maps a Linux absolute path into the WSL distro root on win32', () => {
@@ -33,13 +34,29 @@ describe('resolveSessionPath', () => {
     expect(resolveSessionPath(WSL_CWD, forwardSlash, 'win32')).toBe(forwardSlash)
   })
 
-  it('does not reinterpret slash-rooted paths for ordinary Windows sessions', () => {
-    expect(resolveSessionPath('C:\\Users\\zdaar\\project', '/tmp/a.ts', 'win32')).toBe('/tmp/a.ts')
+  it('maps Git Bash / MSYS drive paths for ordinary Windows sessions', () => {
+    expect(resolveSessionPath(WINDOWS_CWD, '/e/project/foo.py', 'win32'))
+      .toBe('E:\\project\\foo.py')
+    expect(resolveSessionPath(WINDOWS_CWD, '/c/Users/zdaar/file.md', 'win32'))
+      .toBe('C:\\Users\\zdaar\\file.md')
+    expect(resolveSessionPath(WINDOWS_CWD, '/E/', 'win32')).toBe('E:\\')
+  })
+
+  it('keeps WSL path semantics ahead of MSYS drive mapping', () => {
+    expect(resolveSessionPath(WSL_CWD, '/e/project/foo.py', 'win32'))
+      .toBe('\\\\wsl.localhost\\archlinux\\e\\project\\foo.py')
+  })
+
+  it('does not reinterpret other slash-rooted paths for ordinary Windows sessions', () => {
+    expect(resolveSessionPath(WINDOWS_CWD, '/tmp/a.ts', 'win32')).toBe('/tmp/a.ts')
+    expect(resolveSessionPath(WINDOWS_CWD, '/ab/cd', 'win32')).toBe('/ab/cd')
+    expect(resolveSessionPath(WINDOWS_CWD, '/e', 'win32')).toBe('/e')
     expect(resolveSessionPath('\\\\server\\share\\project', '/tmp/a.ts', 'win32')).toBe('/tmp/a.ts')
   })
 
   it('does not reinterpret paths on non-Windows hosts', () => {
     expect(resolveSessionPath('/home/zdaar/project', '/tmp/a.ts', 'linux')).toBe('/tmp/a.ts')
+    expect(resolveSessionPath('/home/zdaar/project', '/e/project/a.ts', 'linux')).toBe('/e/project/a.ts')
     expect(resolveSessionPath('/Users/zdaar/project', '/tmp/a.ts', 'darwin')).toBe('/tmp/a.ts')
   })
 
