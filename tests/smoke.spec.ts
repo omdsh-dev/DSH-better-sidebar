@@ -7,11 +7,12 @@ import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve as resolvePath } from 'node:path'
+import { dirname, join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { apply, FS_TREES_MAX_PATHS, mediaTypeForPath } from '../src/index.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import { encodeHtmlUrl } from '../src/html-route.ts'
+import { downloadUrl, htmlUrl } from '../src/client/api.ts'
 import * as git from '../src/git.ts'
 import { listDirectory } from '../src/fs-tree.ts'
 import type { SidebarWebRoute, SidebarWebUpgradeRoute } from '../src/context-types.ts'
@@ -538,6 +539,46 @@ describe('session cwd resolution over the API route', () => {
       const write = await invoke(route, 'fs.write', { sessionId: 'security', path: written, content: 'hack' })
       expect(write.ok).toBe(true)
       expect(readFileSync(written, 'utf8')).toBe('hack')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('serves relative previews and assets without rewriting external absolute paths', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-preview-paths-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(join(workspace, 'pages'), { recursive: true })
+    mkdirSync(outside)
+    writeFileSync(join(workspace, 'pages', 'report.html'), '<link rel="stylesheet" href="./style.css"><p>workspace</p>')
+    writeFileSync(join(workspace, 'pages', 'style.css'), 'body { color: red; }')
+    const external = join(outside, 'report.html')
+    writeFileSync(external, '<p>external</p>')
+    // A shadow at the old fallback destination must never win.
+    const shadow = join(workspace, external.replace(/^[\\/]+/, ''))
+    if (process.platform !== 'win32') {
+      mkdirSync(dirname(shadow), { recursive: true })
+      writeFileSync(shadow, '<p>wrong shadow</p>')
+    }
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const html = routes.find(route => route.path === '/sidebar/html')!
+      const file = routes.find(route => route.path === '/sidebar/file')!
+      const scope = { sessionId: 'preview', cwd: workspace }
+      const page = htmlUrl(scope, 'pages/report.html')
+      expect(await invokeGet(html, page)).toMatchObject({ status: 200, body: expect.stringContaining('workspace') })
+      const asset = new URL('./style.css', new URL(page, 'http://localhost')).pathname
+      expect(await invokeGet(html, asset)).toMatchObject({ status: 200, body: 'body { color: red; }' })
+      // Missing cwd exercises the server's relative-only fallback.
+      expect(await invokeGet(file, downloadUrl({ sessionId: scope.sessionId }, 'pages/report.html')))
+        .toMatchObject({ status: 200, body: expect.stringContaining('workspace') })
+      expect(await invokeGet(html, htmlUrl(scope, external)))
+        .toMatchObject({ status: 200, body: '<p>external</p>' })
+      expect(await invokeGet(file, downloadUrl(scope, external)))
+        .toMatchObject({ status: 200, body: '<p>external</p>' })
+      rmSync(external)
+      expect((await invokeGet(html, htmlUrl(scope, external))).status).toBe(500)
+      expect((await invokeGet(file, downloadUrl(scope, external))).status).toBe(500)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

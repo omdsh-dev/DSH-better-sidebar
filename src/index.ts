@@ -1023,7 +1023,10 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
         const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
-        const path = await ensureWorkspacePath(cwd, raw)
+        // Only relative requests need a workspace base. Absolute paths may
+        // intentionally point outside the workspace and must stay unchanged.
+        const target = isAbsolute(raw) ? raw : join(cwd, raw)
+        const path = await ensureWorkspacePath(cwd, target)
         const info = await stat(path)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
           throw new SidebarError('fs-error', 'not a file or too large', 400)
