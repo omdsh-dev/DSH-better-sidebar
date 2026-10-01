@@ -364,7 +364,20 @@ export function buildTasksModel(input: TasksModelInput): TasksNode[] {
       // reports EVERY child with an explicit `running` flag, and a row keeps
       // its disclosure unless its own catalog is known-empty.
       const view = childLive(live, entry.id)
-      const activity: 'running' | 'inactive' = view?.running === true ? 'running' : 'inactive'
+      // …but that flag is SESSION RESIDENCY, not "an agent is running": the
+      // host's own field doc says it means "recursive catalog listing observed
+      // a resident Session … does not encode a durable outcome or guarantee
+      // continuation delivery". After a crash-restart, opening a child's
+      // history retains its session WITHOUT starting an agent, so residency
+      // reads `running` for a child nothing is driving (issue #800: the card
+      // showed 运行中 with a live preview line for an interrupted subagent).
+      // The session summary's `running` is the authoritative run bit — the root
+      // card below reads it, so does DSH's own subagent dropdown, and
+      // ./subagent-lineage.ts already counts descendants from it — so it wins
+      // whenever the host reports the field; the catalog flag stays the
+      // fallback for a deployment whose summaries do not carry it.
+      const running = summary?.running ?? (view?.running === true)
+      const activity: 'running' | 'inactive' = running ? 'running' : 'inactive'
       const state: TasksNodeState = activity === 'running'
         ? 'running'
         : team !== undefined ? teamState(team.status) : 'done'

@@ -805,7 +805,12 @@ describe('Tasks page: the shared task window', () => {
         summary: { counts: [{ kind: 'read', count: 2 }], runningDetail: '' },
       },
     }
-    const store = makeStore(snapshotWithChildren(2))
+    // A running child says so in BOTH channels: the live flag is the catalog's
+    // session RESIDENCY, the summary's `running` is the authoritative run bit
+    // (see the #800 case below for what residency alone means after a restart).
+    const snapshot = snapshotWithChildren(2)
+    snapshot.byId['child-0']!.running = true
+    const store = makeStore(snapshot)
     const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
     )
@@ -822,6 +827,46 @@ describe('Tasks page: the shared task window', () => {
     expect(bar.textContent).toBeTruthy()
     const settled = container.querySelector('[data-graph-node="child-1"]') as HTMLElement
     expect(settled.querySelector('[data-card-bar]')?.getAttribute('data-running')).toBeNull()
+    unmount()
+  })
+
+  it('a retained-but-not-running child is NOT a running card (issue #800)', async () => {
+    // After a crash-restart, opening an interrupted child's history RETAINS its
+    // session without starting an agent: the catalog's `activity` — which the
+    // live channel reports as `running` — flips to running while the
+    // authoritative summary still says `running: false`. The card must follow
+    // the summary; the old reading showed 运行中 (with a live preview line) for a
+    // subagent nothing was driving.
+    livePayload = { 'child-0': { running: true, text: 'half-finished line' } }
+    const store = makeStore(snapshotWithChildren(2))
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+    )
+    await flushJobs()
+    // Both children are settled now, so the global fold holds them: unfold.
+    const foldToggle = container.querySelector('button[aria-label="展开已完成的节点"]') as HTMLButtonElement
+    await act(async () => { foldToggle.click() })
+    const child = container.querySelector('[data-graph-node="child-0"]') as HTMLElement
+    expect(child).not.toBeNull()
+    const bar = child.querySelector('[data-card-bar]') as HTMLElement
+    expect(bar.getAttribute('data-running')).toBeNull()
+    expect(bar.textContent).toContain('已完成')
+    unmount()
+  })
+
+  it('falls back to the catalog flag when the host carries no summary running bit', async () => {
+    // Older hosts: the summary has no `running` field, so the live channel's
+    // flag is all there is — the pre-#800 reading must survive.
+    livePayload = { 'child-0': { running: true, summary: { counts: [], runningDetail: '' } } }
+    const snapshot = snapshotWithChildren(2)
+    delete snapshot.byId['child-0']!.running
+    const store = makeStore(snapshot)
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+    )
+    await flushJobs()
+    const bar = container.querySelector('[data-graph-node="child-0"] [data-card-bar]') as HTMLElement
+    expect(bar.getAttribute('data-running')).toBe('true')
     unmount()
   })
 
@@ -936,7 +981,9 @@ describe('Tasks page: the shared task window', () => {
 
   it('offers no fold chevron on a running card or on the current session', async () => {
     livePayload = { 'child-0': { running: true, summary: { counts: [], runningDetail: '' } } }
-    const store = makeStore(snapshotWithChildren(2))
+    const snapshot = snapshotWithChildren(2)
+    snapshot.byId['child-0']!.running = true
+    const store = makeStore(snapshot)
     const { container, unmount } = renderRoot(
       createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
     )
