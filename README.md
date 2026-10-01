@@ -1,4 +1,5 @@
 # dsh-better-sidebar
+[![DSH Insights health](https://dsh-insights.com/badge/omdsh-dev/DSH-better-sidebar.svg)](https://dsh-insights.com/p/omdsh-dev/DSH-better-sidebar/)
 
 > [!IMPORTANT]
 > **v0.19.0 起接入 DSH 原生侧边栏**：右列就是 DSH 自己的右侧栏，插件把每个 tab 类型注册为原生 tab（不再自绘右侧面板），只保留自绘的底部工作台与开放给所有插件的 `ctx.betterSidebar` 服务。
