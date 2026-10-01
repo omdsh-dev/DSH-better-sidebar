@@ -6,6 +6,10 @@
  * `-C <cwd>` on the session's working directory and `--no-pager` /
  * `-c color.ui=false` so output stays machine-readable.
  *
+ * A repository whose owner differs from the running user is refused by git's
+ * own CVE-2022-24765 guard (git ≥ 2.35.2); {@link runGit} answers that
+ * refusal per command — see the `safe.directory` retry below (issue #690).
+ *
  * Commits use the user's git global identity untouched (never sets
  * user.name/user.email).
  */
@@ -156,14 +160,53 @@ export function parseLogLines(output: string): GitLogEntry[] {
   return rows
 }
 
-/** Run one git command; resolves with stdout, rejects with GitCommandError. */
-function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise<string> {
-  const full = ['-C', cwd, '--no-pager', '-c', 'color.ui=false', ...args]
+/**
+ * git's CVE-2022-24765 guard (git ≥ 2.35.2) refuses to read a repository whose
+ * owner differs from the running user — the shape behind issue #690 is a
+ * root-run DSH over a site directory owned by `www`, where changing the owner
+ * is not an option. The refusal is per command and self-describing: git names
+ * the directory it refused, which is exactly what `safe.directory` takes.
+ * Answering it with `-c safe.directory=<dir>` therefore stays narrow — no
+ * config file is written, `*` is never used, and the next command faces the
+ * guard again.
+ */
+const DUBIOUS_OWNERSHIP = /dubious ownership/i
+/** The directory named by the refusal (`fatal: detected dubious ownership in
+ *  repository at '/srv/site'`). */
+const REFUSED_REPOSITORY = /detected dubious ownership in repository at '([^']*)'/
+
+/** The repository path a dubious-ownership refusal names, or undefined when
+ *  the message carries no path (an older or reworded git) — the caller then
+ *  falls back to the cwd it already ran in. */
+export function refusedRepository(message: string): string | undefined {
+  const path = REFUSED_REPOSITORY.exec(message)?.[1]
+  return path === undefined || path === '' ? undefined : path
+}
+
+/** Child environment for every git call. `GIT_OPTIONAL_LOCKS=0` keeps the
+ *  read-only panel from taking write locks; `LC_ALL=C` keeps stdout AND stderr
+ *  stable, which is what makes the refused path above parseable. */
+const GIT_ENV = { GIT_OPTIONAL_LOCKS: '0', LC_ALL: 'C' } as const
+
+/** One spawn. `safe` directories ride in as per-invocation `safe.directory`
+ *  overrides (empty on the first attempt, so a healthy repository sees the
+ *  exact same argv it always did). */
+function spawnGit(
+  cwd: string,
+  args: string[],
+  timeoutMs: number,
+  safe: readonly string[],
+): Promise<string> {
+  const full = [
+    '-C', cwd, '--no-pager', '-c', 'color.ui=false',
+    ...safe.flatMap(dir => ['-c', `safe.directory=${dir}`]),
+    ...args,
+  ]
   return new Promise<string>((resolvePromise, reject) => {
     const child = spawn('git', full, {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+      env: { ...process.env, ...GIT_ENV },
     })
     let stdout = ''
     let stderr = ''
@@ -185,6 +228,24 @@ function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise<string
         reject(new GitCommandError(stderr.trim() || `git exited with ${String(code)}`, 'git-error', args.join(' ')))
       }
     })
+  })
+}
+
+/**
+ * Run one git command; resolves with stdout, rejects with GitCommandError.
+ *
+ * A dubious-ownership refusal is retried ONCE with the refused repository
+ * (plus the cwd, which is the answer when the message named no path) trusted
+ * for that invocation only. Anything else — including a second refusal — is
+ * reported as-is, so a repository git cannot be talked into reading still
+ * surfaces its real error instead of a misleading "not a git repository".
+ */
+function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise<string> {
+  return spawnGit(cwd, args, timeoutMs, []).catch((error: unknown) => {
+    if (!(error instanceof GitCommandError) || !DUBIOUS_OWNERSHIP.test(error.message)) throw error
+    const refused = refusedRepository(error.message)
+    const trust = refused === undefined || refused === cwd ? [cwd] : [refused, cwd]
+    return spawnGit(cwd, args, timeoutMs, trust)
   })
 }
 
