@@ -284,6 +284,18 @@ function buildApi(
   // service's own CAS result union (conflicts stay distinct).
   const teamsApi: SidebarTeamsRoutes = buildTeamsApi(ctx)
   return {
+    'session.phase': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      const session = ctx.sessions.get(sessionId)
+      if (session === undefined) return { blank: false }
+      // 与宿主会话列表投影同一规则：日志里没有 user/assistant message 即 blank ——
+      // blank 会话里宿主不渲染会话头，插件挂在 header.utilities 的入口随之不可达，
+      // 客户端据该字段把入口补到右上角（issue #698 / #623）。
+      const blank = !session
+        .snapshotEvents()
+        .some((event) => event.type === 'user/message' || event.type === 'assistant/message')
+      return { blank }
+    },
     'session.cwd': async (payload) => {
       const { sessionId, cwd } = await cwdOf(payload)
       return { sessionId, cwd, root: rootLabel(cwd), parent: parentOf(cwd) ?? null }

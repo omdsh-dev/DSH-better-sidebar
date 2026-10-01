@@ -278,7 +278,9 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // control is registered into DSH's session-header utilities (the header's
   // corner belongs to the native sidebar), and the workbench host itself is
   // mounted. Both are stable addressing surfaces for user CSS / presets.
-  await expect(page.locator('[data-dsh-bottom-toggle]')).toBeAttached({ timeout: 30_000 })
+  // 宿主会为每个保留会话渲染隐藏的会话头副本（rect 仍在）——入口断言看**可见**的那个，
+  // 而不是统计 attached 节点数。
+  await expect(page.locator('[data-dsh-bottom-toggle]:visible').first()).toBeAttached({ timeout: 30_000 })
   await expect(page.locator('[data-dsh-bottom-panel]')).toBeAttached()
 
   // DSH 0.1.5 owns the right column: the plugin contributes tab TYPES to the

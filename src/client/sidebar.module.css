@@ -106,6 +106,16 @@
    the 34px tab-strip band so it never covers the pane headers below),
    transparent fill, secondary ink; hover raises the fill. No border, no
    shadow — the icon alone is the affordance. */
+/* 空白会话（宿主不渲染会话头）时的底部工作台入口（sidebar/dock-fallback.tsx）：
+   fixed 定位到宿主「Open right sidebar」按钮左侧紧邻，top/left 由 JS 按 rect 对齐。 */
+.dockFallback {
+  position: fixed;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  z-index: 40;
+}
+
 .toggleButton {
   display: flex;
   align-items: center;

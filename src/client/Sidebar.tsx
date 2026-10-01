@@ -30,6 +30,7 @@ import clsx from 'clsx'
 import { IconCloseFillRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { referenceInChat as referenceInChatShared } from './reference-in-chat.ts'
+import { DockFallback } from './sidebar/dock-fallback.tsx'
 import {
   BOTTOM_MIN, CONVERSATION_MIN,
   leafWithTab, moveTab, moveTabToEdge, openDiffTab, resizeSplitIn,
@@ -218,6 +219,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   const state = snapshot.state
   const sessionId = snapshot.sessionId
   const summaryCwd = sessionId === undefined ? undefined : sessionList.byId[sessionId]?.cwd
+  // 空白会话（无 user/assistant message）里宿主不渲染会话头，本插件的会话头入口不可达：
+  // 由 DockFallback 自行按会话相位决定是否渲染（sidebar/dock-fallback.tsx），二者互斥。
 
   // Title-bar / shell compatibility (the "位置兼容模式" scheme):
   //   auto    — CONSERVATIVE: only the standard Window Controls Overlay
@@ -562,6 +565,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // in DSH's session header, which does not exist without a session.
     return <div data-dsh-panel-host {...osFileDragShield} />
   }
+  const blankEntry = <DockFallback store={store} />
 
   const bottomPanelHeight = bottomPushHeight({
     open: true,
@@ -647,6 +651,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   return (
     <div data-dsh-panel-host {...osFileDragShield}>
+      {blankEntry}
       {/*
         The bottom workbench: it squeezes ONLY the center column (the agent
         output area): it starts at the app shell's own left sidebar and ends

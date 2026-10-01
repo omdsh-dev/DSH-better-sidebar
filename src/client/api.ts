@@ -499,3 +499,21 @@ function fileUrl(scope: SessionScope, path: string, download: boolean): string {
 export function htmlUrl(scope: SessionScope, path: string): string {
   return encodeHtmlUrl(scope.sessionId, path)
 }
+
+/** One session-phase read: whether the session is still blank (no messages). */
+export interface SessionPhase {
+  /** True while the session has neither a user nor an assistant message. */
+  blank: boolean
+}
+
+/**
+ * Read one session's blank phase. Blank sessions do not render the host's
+ * session header, so the plugin's header-registered dock entry is unreachable
+ * there (issue #698/#623) — the client uses this to render its fallback entry.
+ * @param sessionId - the session to read.
+ * @param signal - optional abort signal.
+ * @returns the phase (`blank: false` when the session does not exist).
+ */
+export async function sessionPhase(sessionId: string, signal?: AbortSignal): Promise<SessionPhase> {
+  return call<SessionPhase>('session.phase', { sessionId }, signal)
+}

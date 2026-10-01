@@ -206,8 +206,9 @@ test('measure: bottom-strip drag frame pacing', async ({ page }) => {
   // The plugin pushes no width ever (the right column is DSH's native
   // Sidebar), so the drag must never write --dsh-sidebar-width — the guard
   // the drag lane locks, recorded here for the perf story.
-  const bottomExpand = page.locator('[data-dsh-bottom-toggle]')
-  await expect(bottomExpand).toHaveCount(1)
+  // 同上：入口按「屏幕内可见」断言与点击（其它会话的隐藏副本不算数）。
+  const bottomExpand = page.locator('[data-dsh-bottom-toggle]:visible').first()
+  await expect(bottomExpand).toBeVisible()
   await bottomExpand.click()
   await expect
     .poll(async () => {
