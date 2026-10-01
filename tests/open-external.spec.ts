@@ -24,6 +24,11 @@ describe('revealCommand', () => {
     expect(revealCommand('/a/b.txt', 'linux')).toEqual({ command: 'xdg-open', args: ['/a'] })
     expect(revealCommand('/', 'linux')).toEqual({ command: 'xdg-open', args: ['/'] })
   })
+
+  it('android (Termux): `termux-open` hands the parent dir to the Android chooser', () => {
+    expect(revealCommand('/a/b.txt', 'android')).toEqual({ command: 'termux-open', args: ['/a'] })
+    expect(revealCommand('/', 'android')).toEqual({ command: 'termux-open', args: ['/'] })
+  })
 })
 
 describe('urlCommand', () => {
@@ -40,6 +45,10 @@ describe('urlCommand', () => {
 
   it('linux: `xdg-open <url>` launches the registered protocol handler', () => {
     expect(urlCommand('zed://file/x', 'linux')).toEqual({ command: 'xdg-open', args: ['zed://file/x'] })
+  })
+
+  it('android (Termux): `termux-open-url <url>` dispatches the Android intent', () => {
+    expect(urlCommand('vscode://file/x', 'android')).toEqual({ command: 'termux-open-url', args: ['vscode://file/x'] })
   })
 })
 
