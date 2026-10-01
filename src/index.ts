@@ -260,13 +260,18 @@ function buildApi(
     const clientCwd = typeof record?.cwd === 'string' && record.cwd !== '' ? record.cwd : undefined
     return { sessionId, cwd: await sessionCwdOf(ctx, sessionId, clientCwd) }
   }
-  /** Resolve the optional Git-panel checkout selector against the authoritative
+  /** Resolve the optional Git-panel checkout selector against the selected
    * session repository. Unlike `cwd`, `worktree` is never trusted directly. */
   const gitCwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
     const base = await cwdOf(payload)
     const record = payload as { worktree?: unknown } | null
     const requested = typeof record?.worktree === 'string' && record.worktree !== '' ? record.worktree : undefined
-    return { sessionId: base.sessionId, cwd: await git.resolveWorktree(base.cwd, requested) }
+    if (requested === undefined) return base
+    // A container workspace is not itself a repository. Validate the checkout
+    // against the selected child (or the default discovered repository), just
+    // as the inventory does, before accepting the requested worktree path.
+    const root = await git.repoRoot(base.cwd, selectedRepoOf(payload))
+    return { sessionId: base.sessionId, cwd: await git.resolveWorktree(root, requested) }
   }
   // Subagent live previews: one batch request instead of N per-child
   // `subagents.history` calls. The route degrades to a 503 when the host

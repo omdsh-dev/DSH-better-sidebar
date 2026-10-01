@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
@@ -364,6 +364,52 @@ describe('session cwd resolution over the API route', () => {
     await route.handler(req, res)
     return out
   }
+
+  it('loads branches and history when switching child repositories and their linked checkouts', async () => {
+    const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), 'sidebar-multi-repo-')))
+    const cwd = join(scratch, 'workspace')
+    mkdirSync(cwd)
+    const run = (dir: string, args: string[]): void => {
+      const result = spawnSync('git', ['-C', dir, '-c', 'user.name=Test', '-c', 'user.email=test@dsh.invalid', ...args], { encoding: 'utf8' })
+      if (result.status !== 0) throw new Error(result.stderr)
+    }
+    const a = join(cwd, 'a')
+    const b = join(cwd, 'b')
+    const linked = join(scratch, 'b-linked')
+    const unrelated = join(scratch, 'unrelated')
+    try {
+      for (const [path, branch] of [[a, 'a-main'], [b, 'b-main'], [unrelated, 'other']]) {
+        run(scratch, ['init', '-q', path!])
+        run(path!, ['checkout', '-q', '-b', branch!])
+        run(path!, ['commit', '-q', '--allow-empty', '-m', branch!])
+      }
+      run(b, ['worktree', 'add', '-q', '-b', 'b-linked', linked])
+      const route = mount({ sessions: { get: () => ({ header: { cwd } }) } })
+      const base = { sessionId: 'multi', cwd }
+      expect(await invoke(route, 'git.log', base)).toMatchObject({ ok: true, value: [{ subject: 'a-main' }] })
+      // Match the UI: inventory first, then both repoRoot and worktree on
+      // derived requests. Switching back used to fail just like switching away.
+      for (const [repoRoot, worktree, branch, subject] of [
+        [b, b, 'b-main', 'b-main'],
+        [a, a, 'a-main', 'a-main'],
+        [b, linked, 'b-linked', 'b-main'],
+      ]) {
+        expect(await invoke(route, 'git.worktrees', { ...base, repoRoot })).toMatchObject({ ok: true })
+        const payload = { ...base, repoRoot, worktree }
+        // Primary status omits worktree, but must still select the child.
+        const statusPayload = worktree === repoRoot ? { ...base, repoRoot } : payload
+        expect(await invoke(route, 'git.status', statusPayload)).toMatchObject({ ok: true, value: { branch } })
+        expect(await invoke(route, 'git.branch', payload)).toMatchObject({ ok: true, value: { current: branch } })
+        expect(await invoke(route, 'git.log', { ...payload, count: 1, skip: 0 })).toMatchObject({ ok: true, value: [{ subject }] })
+        expect(await invoke(route, 'git.log', { ...payload, count: 1, skip: 1 })).toMatchObject({ ok: true, value: [] })
+      }
+      for (const worktree of [a, unrelated]) {
+        expect(await invoke(route, 'git.log', { ...base, repoRoot: b, worktree })).toMatchObject({ ok: false })
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true })
+    }
+  })
 
   it('uses the client summary cwd while the session is detached', async () => {
     const route = mount()

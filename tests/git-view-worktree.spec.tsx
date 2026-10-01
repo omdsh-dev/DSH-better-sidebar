@@ -197,9 +197,10 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       scope.repoRoot === REPO_B ? repoBWorktrees : []
     ))
     const status = vi.spyOn(api, 'gitStatus').mockImplementation(async (scope) => (
-      scope.cwd === REPO_B
-        ? { isRepo: true, branch: 'b-main', entries: [], root: REPO_B, repositories: [REPO_B] }
-        : { isRepo: true, branch: 'a-main', entries: [], root: REPO_A, repositories: [REPO_A, REPO_B] }
+      // Attached sessions ignore the client's cwd override; repoRoot selects the child.
+      scope.repoRoot === REPO_B
+        ? { isRepo: true, branch: 'b-main', entries: [{ path: 'b-change.ts', xy: ' M' }], root: REPO_B, repositories: [REPO_B] }
+        : { isRepo: true, branch: 'a-main', entries: [{ path: 'a-change.ts', xy: ' M' }], root: REPO_A, repositories: [REPO_A, REPO_B] }
     ))
     vi.spyOn(api, 'gitBranch').mockImplementation(async (scope) => (
       scope.repoRoot === REPO_B ? { current: 'b-main', names: ['b-main'] } : { current: 'a-main', names: ['a-main'] }
@@ -231,9 +232,21 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       // Exactly ONE full refresh for the switch (not a burst).
       expect(worktrees.mock.calls.length).toBe(listingsBefore + 1)
       // The shared status follows the same selection.
-      expect(status.mock.calls.some(([scope]) => scope.cwd === REPO_B)).toBe(true)
+      expect(status.mock.calls.at(-1)![0]).toMatchObject({ sessionId: 'session', cwd: WS, repoRoot: REPO_B })
+      expect(container.querySelector(`[title="${t('branch')}: b-main"]`)).not.toBeNull()
+      expect(container.querySelector('[data-path="b-change.ts"]')).not.toBeNull()
+      expect(container.querySelector('[data-path="a-change.ts"]')).toBeNull()
       const worktreeSelect = container.querySelectorAll<HTMLSelectElement>('select')[1]!
       expect(worktreeSelect.value).toBe(REPO_B)
+
+      await act(async () => {
+        repoSelect.value = REPO_A
+        repoSelect.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+      await flushEffects()
+      expect(container.querySelector(`[title="${t('branch')}: a-main"]`)).not.toBeNull()
+      expect(container.querySelector('[data-path="a-change.ts"]')).not.toBeNull()
+      expect(container.querySelector('[data-path="b-change.ts"]')).toBeNull()
     } finally {
       act(() => { root.unmount() })
       container.remove()

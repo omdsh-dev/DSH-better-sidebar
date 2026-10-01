@@ -338,9 +338,9 @@ export function GitLens(props: GitLensProps) {
     return repoRootRef.current === undefined ? { ...base } : { ...base, repoRoot: repoRootRef.current }
   }, [])
 
-  // The status store keys on the checkout being LISTED: a selected child
-  // repository becomes the effective cwd, which is also what makes the status
-  // and the inventory agree after a repo switch.
+  // Keep the session cwd and pass the child selection explicitly: an attached
+  // session overrides client cwd, so changing cwd alone still reads the first
+  // repository. The status store includes repoRoot in its cache key.
   // The status store keys on `worktree`; the PRIMARY checkout is exactly what
   // an unscoped status call resolves to, so passing its path would mint a
   // second key (and a second 2.5s `git status` poll) for the same answer the
@@ -350,7 +350,7 @@ export function GitLens(props: GitLensProps) {
     ? selectedWorktree
     : undefined
   const status = useGitStatus(
-    { sessionId: scope.sessionId, cwd: repoRoot ?? scope.cwd },
+    { sessionId: scope.sessionId, cwd: scope.cwd, repoRoot },
     { worktree: statusWorktree, visible },
   )
   const snapshot: GitStatusResult | null = status.snapshot
