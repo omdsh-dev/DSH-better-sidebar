@@ -8,6 +8,11 @@
  * through the Loader (`entry.options.name === 'connection'`, which never
  * matched the row's module-specifier name), so trustedHosts stayed empty and
  * every remote /sidebar request was 403 "forbidden".
+ *
+ * A second group pins the one origin the fence admits without an authority
+ * match: the desktop shell's `dsh-app://app` page, whose WebSocket upgrades
+ * reach the Host directly and therefore carry an origin no Host authority can
+ * name.
  */
 import { describe, expect, it } from 'vitest'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -57,6 +62,7 @@ function req(
 /** Mount apply() against a fake context with a replaceable webRuntime trust list. */
 function mount(initialTrustedHosts: readonly string[] = []): {
   api: (r: IncomingMessage, s: ServerResponse) => Promise<void>
+  upgrade: (path: string) => SidebarWebUpgradeRoute['handler']
   setTrustedHosts: (hosts: readonly string[]) => void
   cleanup: () => void
 } {
@@ -86,6 +92,11 @@ function mount(initialTrustedHosts: readonly string[] = []): {
   if (api === undefined) throw new Error('test setup: /sidebar/api route not registered')
   return {
     api: api as (r: IncomingMessage, s: ServerResponse) => Promise<void>,
+    upgrade: (path) => {
+      const handler = upgrades.find(route => route.path === path)?.handler
+      if (handler === undefined) throw new Error(`test setup: ${path} upgrade route not registered`)
+      return handler
+    },
     setTrustedHosts: (hosts) => { runtime.trustedHosts = [...hosts] },
     cleanup: () => { for (const cleanup of effects) cleanup() },
   }
@@ -227,6 +238,86 @@ describe('remote-access trust (webRuntime.trustedHosts)', () => {
       const after = fakeRes()
       await api(remoteDomainRequest(), after as unknown as ServerResponse)
       expect(after.status).toBe(200)
+    } finally {
+      cleanup()
+    }
+  })
+})
+
+/**
+ * The desktop shell serves the GUI from `dsh-app://app`, and its WebSocket
+ * upgrades reach the Host directly (the scheme handler does not carry
+ * upgrades), so a handshake carries an origin no Host authority can name.
+ * Refusing it destroys every /sidebar/ws socket — agent-opens pushes, fs-watch
+ * refreshes — while the forwarded HTTP routes keep working, because the shell
+ * strips the origin header before forwarding those.
+ */
+describe('desktop shell application origin', () => {
+  /** The shell page's own origin, as its handshakes and fetches present it. */
+  const SHELL_ORIGIN = 'dsh-app://app'
+
+  it('accepts the shell page origin on a loopback Host', async () => {
+    const { api, cleanup } = mount([])
+    try {
+      const res = fakeRes()
+      await api(req('POST', '/sidebar/api/session.cwd', {
+        host: '127.0.0.1:19488',
+        origin: SHELL_ORIGIN,
+      }, '{"sessionId":"test-session"}'), res as unknown as ServerResponse)
+      expect(res.status).toBe(200)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('never carries the shell origin past the Host fence', async () => {
+    // The addition is an origin exception, not an authority: an untrusted Host
+    // must still refuse even when the request wears the shell's own origin.
+    const { api, cleanup } = mount([])
+    try {
+      const res = fakeRes()
+      await api(req('POST', '/sidebar/api/session.cwd', {
+        host: 'evil.example',
+        origin: SHELL_ORIGIN,
+      }, '{"sessionId":"test-session"}'), res as unknown as ServerResponse)
+      expect(res.status).toBe(403)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('matches the shell origin exactly, not by scheme and not by suffix', async () => {
+    const { api, cleanup } = mount([])
+    try {
+      for (const origin of ['dsh-app://evil', 'dsh-app://app.evil.example', 'http://evil.example']) {
+        const res = fakeRes()
+        await api(req('POST', '/sidebar/api/session.cwd', {
+          host: '127.0.0.1:19488',
+          origin,
+        }, '{"sessionId":"test-session"}'), res as unknown as ServerResponse)
+        expect(res.status, origin).toBe(403)
+      }
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('destroys a cross-site handshake before the upgrade completes', async () => {
+    // The fence runs ahead of ws's own handshake handling, so its verdict on
+    // the upgrade path is observable as whether the socket gets destroyed.
+    const { upgrade, cleanup } = mount([])
+    try {
+      const socket = {
+        destroyed: false,
+        destroy(): void { this.destroyed = true },
+      }
+      await upgrade('/sidebar/ws/agent-opens')(req('GET', '/sidebar/ws/agent-opens?sessionId=test-session', {
+        host: '127.0.0.1:19488',
+        origin: 'http://evil.example',
+        connection: 'Upgrade',
+        upgrade: 'websocket',
+      }), socket, new Uint8Array())
+      expect(socket.destroyed).toBe(true)
     } finally {
       cleanup()
     }
