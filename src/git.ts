@@ -192,6 +192,12 @@ function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise<string
  *  A home-directory cwd can hold hundreds of visible folders (Library, iCloud
  *  mounts…); probing them all serially is what froze the panel in #369. */
 const DISCOVERY_LIMIT = 200
+/** How many BFS levels the nested-repo discovery descends below cwd; repo
+ *  roots up to depth DISCOVERY_MAX_DEPTH - 1 are detected (level d holds
+ *  depth-(d-1) dirs, whose entries are read for `.git`). 4 is the minimum
+ *  useful value. Cost stays bounded by the depth ≤ 3 directory count; the
+ *  depth-4 frontier is collected but never expanded. */
+const DISCOVERY_MAX_DEPTH = 4
 /** Per-probe and direct-discovery budget. `rev-parse` is millisecond-scale on
  *  a healthy checkout; a probe that needs longer is a stalled mount and is
  *  better abandoned than waited on. */
@@ -222,9 +228,10 @@ async function directRepoRoot(cwd: string): Promise<string> {
   return out.trim()
 }
 
-/** Discover the current repository or direct child repositories. Results are
- *  cached per cwd and concurrent callers share one in-flight scan, so opening
- *  the panel (three parallel git.* requests) costs a single discovery pass. */
+/** Discover the current repository plus child repositories nested up to
+ *  DISCOVERY_MAX_DEPTH - 1 levels below cwd. Results are cached per cwd and
+ *  concurrent callers share one in-flight scan, so opening the panel (three
+ *  parallel git.* requests) costs a single discovery pass. */
 export function repoRoots(cwd: string): Promise<string[]> {
   const cached = repoRootsCache.get(cwd)
   if (cached !== undefined && cached.expires > Date.now()) return Promise.resolve(cached.roots)
@@ -245,25 +252,41 @@ export function repoRoots(cwd: string): Promise<string[]> {
   return promise
 }
 
+/** Breadth-first scan below `cwd`: one `readdir` per visited directory, no
+ *  per-child git process (dirent `.git` presence — directory, worktree file
+ *  or symlink form — decides). Keeps the serial `rev-parse`-per-child storm
+ *  that froze the panel in #369 structurally impossible. The scan descends
+ *  into repositories it finds, so repos embedded inside other repos (vendored
+ *  checkouts that are not submodules) are discovered too. */
 async function discoverRepoRoots(cwd: string): Promise<string[]> {
+  const roots: string[] = []
   try {
-    return [await directRepoRoot(cwd)]
+    roots.push(await directRepoRoot(cwd))
   } catch {
-    const entries = await readdir(cwd, { withFileTypes: true }).catch(() => [])
-    const roots: string[] = []
-    for (const entry of entries
-      .filter(entry => entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules')
-      .sort((left, right) => left.name.localeCompare(right.name))
-      .slice(0, DISCOVERY_LIMIT)) {
-      try {
-        const root = await directRepoRoot(join(cwd, entry.name))
-        if (!roots.some(existing => pathIdentity(existing) === pathIdentity(root))) roots.push(root)
-      } catch {
-        // Ordinary child directory; keep discovering sibling repositories.
-      }
-    }
-    return roots
+    // Current directory is not a Git repository root.
   }
+
+  let level = [cwd]
+  for (let depth = 1; depth <= DISCOVERY_MAX_DEPTH && level.length > 0; depth++) {
+    const next: string[] = []
+    for (const dir of level.slice(0, DISCOVERY_LIMIT)) {
+      const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+      let hasGit = false
+      const subdirs: string[] = []
+      for (const entry of entries) {
+        if (entry.name === '.git') {
+          // Worktrees and submodules carry `.git` as a file (or symlink), not a directory.
+          if (entry.isDirectory() || entry.isFile() || entry.isSymbolicLink()) hasGit = true
+        } else if (entry.isDirectory() && !entry.isSymbolicLink() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
+          subdirs.push(entry.name)
+        }
+      }
+      if (hasGit && dir !== cwd && !roots.some(existing => pathIdentity(existing) === pathIdentity(dir))) roots.push(dir)
+      for (const name of subdirs.sort((left, right) => left.localeCompare(right))) next.push(join(dir, name))
+    }
+    level = next
+  }
+  return roots
 }
 
 /** Resolve the selected repository, defaulting to the first discovered root. */
