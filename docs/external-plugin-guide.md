@@ -248,6 +248,19 @@ interface TabDescriptor {
    */
   badge?: (ctx: Context, scope: SessionScope, state: SidebarState) => string | number | null | undefined
   /**
+   * tab 栏右侧操作区（v0.25.0+）：tab 激活时，返回的 ReactNode 渲染在该 pane 的
+   * tab 栏右端（+ 按钮右侧、面板关闭按钮左侧，右对齐）。让 tab 把自己的工具栏
+   * 直接放进 tab 栏，而不是在内容区顶部再单独渲染一行头部。返回 null/undefined
+   * 完全不渲染（连空容器都不挂载）；抛错被吞掉（不渲染操作）。每次 tab 栏渲染
+   * 都会调用——保持廉价。
+   *
+   * `tab` 是当前渲染的打开实例：`single: false` 且有分栏时同一类型可同时开多个
+   * 实例、每个 pane 各渲染自己的 tab 栏，重启/关闭等操作必须针对 `tab` 而不是
+   * 「该类型的那个 tab」。`paneId` 是这条 tab 栏所在的 pane（与
+   * `state.activePane` 比较可知该 pane 是否为聚焦 pane）。
+   */
+  rightActions?: (ctx: Context, scope: SessionScope, state: SidebarState, tab: SidebarTab, paneId: string) => ReactNode
+  /**
    * 生命周期回调（v0.12.0+），只由 SERVICE 路径触发：
    * - onOpen：openTab 真正**新建** tab 后（dedupe/id 安全网聚焦不算打开）；
    * - onActivate：tab 被聚焦时（dedupe 聚焦、id 安全网聚焦、tab 栏点击激活）；
@@ -705,7 +718,7 @@ interface BetterSidebarService {
   /** 能力清单（只增不删，唯一例外：v0.19.0 删除了 'floatWindows'）：
    *  'badge' | 'tabLifecycle' | 'updateTab' | 'openFile' | 'targetedOpen' |
    *  'stateSubscription' | 'tabMeta' | 'pluginSettings' | 'urlTarget' |
-   *  'settingSelect' | 'fileIcons'
+   *  'settingSelect' | 'fileIcons' | 'rightActions'
    *  ——用 `features.includes('xxx')` 按能力 gate。 */
   readonly features: readonly string[]
   /** 当前快照：激活 sessionId + 其状态（面板几何/打开的 tabs/展开集）+ prefs。

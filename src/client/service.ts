@@ -236,6 +236,23 @@ export interface TabDescriptor {
    */
   badge?: (ctx: Context, scope: SessionScope, state: SidebarState) => string | number | null | undefined
   /**
+   * Right-aligned action area for the tab strip (v0.25.0+). When the tab is
+   * active, the returned ReactNode renders at the right end of its pane's
+   * tab strip (between the + button and the panel's close control). Lets a
+   * descriptor put its toolbar directly in the strip instead of a separate
+   * header row below it. Returning null/undefined renders nothing at all
+   * (not even an empty wrapper); a throw is swallowed (no actions shown).
+   * Called on every tab-strip render, so keep it cheap.
+   *
+   * `tab` is the open instance this strip is rendering for: with
+   * `single: false` and split panes, several instances of one type can be
+   * open at once and every pane renders its own strip, so toolbar actions
+   * (restart / close / …) must target `tab`, never "the" tab of this type.
+   * `paneId` is that strip's pane (compare with `state.activePane` to tell
+   * whether the pane is the focused one).
+   */
+  rightActions?: (ctx: Context, scope: SessionScope, state: SidebarState, tab: SidebarTab, paneId: string) => ReactNode
+  /**
    * Lifecycle callbacks (v0.12.0+). Fired by the SERVICE paths only:
    * `onOpen` when an open actually creates a tab (a dedupe/id-safety-net
    * focus is NOT an open — it fires `onActivate` instead), `onActivate`
@@ -658,6 +675,8 @@ export const SIDEBAR_SERVICE_VERSION = '0.24.1'
  *   external file-tree icons overriding the built-in glyphs, matched by
  *   extension (`exts`), exact file name (`names`), or directory name
  *   (`folderNames`).
+ * - 'rightActions' (v0.25.0): TabDescriptor.rightActions — the active tab's
+ *   right-aligned action area rendered at the tab strip's right end.
  *
  * v0.19.0 REMOVED 'floatWindows': the free-window feature is gone (DSH 0.1.5
  * owns the right column, so the plugin keeps only its bottom workbench).
@@ -675,6 +694,7 @@ export const SIDEBAR_FEATURES = [
   'urlTarget',
   'settingSelect',
   'fileIcons',
+  'rightActions',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */

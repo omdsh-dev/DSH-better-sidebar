@@ -617,6 +617,26 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }
 
   /**
+   * The active tab's right-aligned action area from the tab-type registry:
+   * a descriptor that declares `rightActions` supplies its own toolbar
+   * rendered at its pane's tab-strip right end. The open `tab` and its
+   * `paneId` ride along so the resolver can target the right instance (a
+   * split workbench renders one strip per pane, each with its own active
+   * tab). A throwing resolver is swallowed (no actions) — the tab strip
+   * must never break because a plugin's resolver failed.
+   */
+  const tabRightActionsOf = (tab: SidebarTab, paneId: string): ReactNode => {
+    const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
+    if (descriptor?.rightActions === undefined) return null
+    try {
+      return descriptor.rightActions(ctx, { sessionId, cwd }, state, tab, paneId)
+    } catch (error) {
+      console.error('[dsh-better-sidebar] tab rightActions error:', error)
+      return null
+    }
+  }
+
+  /**
    * Render one tab's content. `active` (from the workbench) tells whether
    * this tab is the active one in its pane; combined with the panel's
    * open/closed state it gates live views (the Subagent topology pauses its
@@ -733,6 +753,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={renderTab}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            getTabRightActions={tabRightActionsOf}
           />
         </div>
       </div>

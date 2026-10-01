@@ -660,6 +660,25 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   color: var(--dsw-alias-label-primary);
 }
 
+/* The active tab's right-aligned action area: sits at the tab strip's right
+   end (after the + button, before the panel's close control). Content-sized
+   (`0 1 auto`): it takes only the width its buttons need and may shrink
+   (clipped) if the strip runs out of room, while .tabList (flex: 1) keeps
+   absorbing the free space — an equal flex:1 split here would halve the tab
+   scrollport for even a tiny toolbar. Content is opaque to the tab strip's
+   own layout (the strip reserves the close control's width via
+   .bottomPanel .tabBar's padding-right, so this area never underlaps it). */
+.tabBarRightActions {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding-right: 4px;
+  overflow: hidden;
+}
+
 /* ── Explorer ──────────────────────────────────────────────────────────── */
 
 .explorer {
