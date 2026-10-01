@@ -34,12 +34,25 @@ describe('git subprocess spawning', () => {
     expect(spawnMock).toHaveBeenCalledTimes(1)
     expect(spawnMock).toHaveBeenCalledWith(
       'git',
-      ['-C', 'C:\\repo', '--no-pager', '-c', 'color.ui=false', 'rev-parse', '--is-inside-work-tree'],
+      ['-C', 'C:\\repo', '--no-pager', '-c', 'color.ui=false', '-c', 'core.quotePath=false', 'rev-parse', '--is-inside-work-tree'],
       expect.objectContaining({ windowsHide: true }),
     )
   })
 
   it('falls back when worktree list does not support -z', async () => {
+    // The subcommand starts after runGit's own prefix (`-C <cwd>
+    // --no-pager` plus any number of `-c key=value` flags), so find it
+    // instead of counting: pinning the count breaks on every added `-c`.
+    const subcommandOf = (args: string[]): string[] => {
+      let at = 0
+      while (at < args.length) {
+        if (args[at] === '-C' || args[at] === '-c') { at += 2; continue }
+        if (args[at] === '--no-pager') { at += 1; continue }
+        break
+      }
+      return args.slice(at)
+    }
+
     const gitChild = (stdoutText = '', stderrText = '', code = 0): EventEmitter => {
       const child = new EventEmitter()
       const stdout = new PassThrough()
@@ -54,7 +67,7 @@ describe('git subprocess spawning', () => {
     }
 
     spawnMock.mockImplementation((_file: string, args: string[]) => {
-      const command = args.slice(5)
+      const command = subcommandOf(args)
       if (command[0] === 'rev-parse' && command[1] === '--is-inside-work-tree') return gitChild('true\n')
       if (command[0] === 'rev-parse' && command[1] === '--show-toplevel') return gitChild('C:\\repo\n')
       if (command[0] === 'rev-parse' && command[1] === '--abbrev-ref') return gitChild('main\n')

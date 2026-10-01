@@ -7,7 +7,7 @@
  * sides.
  */
 import { describe, expect, it } from 'vitest'
-import { parseUnifiedDiff, unifiedSegments, diffLines, pairMods, diffStats, untrackedFile, foldRowsFromContents, type FoldSegment } from '../src/client/diff/rows.ts'
+import { parseUnifiedDiff, unifiedSegments, diffLines, pairMods, diffStats, untrackedFile, foldRowsFromContents, decodeGitPath, type FoldSegment } from '../src/client/diff/rows.ts'
 
 const twoHunks = [
   'diff --git a/a.ts b/a.ts',
@@ -174,5 +174,128 @@ describe('foldRowsFromContents', () => {
       { kind: 'context', oldLine: 2, newLine: 2, text: 'b' },
       { kind: 'context', oldLine: 3, newLine: 3, text: 'c' },
     ])
+  })
+})
+
+/**
+ * Path recovery for the sections git emits WITHOUT `---`/`+++`: a binary
+ * file, a pure rename and a mode-only change all reach the renderer as a
+ * header whose path has to come from somewhere else — otherwise the row is a
+ * badge with no file name, and the neighbouring rows' names make it look like
+ * the badge is theirs.
+ */
+describe('parseUnifiedDiff paths', () => {
+  const first = (lines: readonly string[]): { oldPath: string; newPath: string; binary: boolean; hunks: number } => {
+    const file = parseUnifiedDiff(lines.join('\n')).files[0]!
+    return { oldPath: file.oldPath, newPath: file.newPath, binary: file.binary, hunks: file.hunks.length }
+  }
+
+  it('names a new binary file from its own Binary files line', () => {
+    expect(first([
+      'diff --git a/docs/20_D2_Tree_current.jpg b/docs/20_D2_Tree_current.jpg',
+      'new file mode 100644',
+      'index 0000000..1234567',
+      'Binary files /dev/null and b/docs/20_D2_Tree_current.jpg differ',
+    ])).toEqual({
+      oldPath: '/dev/null',
+      newPath: 'b/docs/20_D2_Tree_current.jpg',
+      binary: true,
+      hunks: 0,
+    })
+  })
+
+  it('names a modified binary file on both sides', () => {
+    expect(first([
+      'diff --git a/docs/20.jpg b/docs/20.jpg',
+      'index 1234567..89abcde 100644',
+      'Binary files a/docs/20.jpg and b/docs/20.jpg differ',
+    ])).toEqual({ oldPath: 'a/docs/20.jpg', newPath: 'b/docs/20.jpg', binary: true, hunks: 0 })
+  })
+
+  it('keeps a spaced binary path whole (the ` and `/` b/` split stays honest)', () => {
+    expect(first([
+      'diff --git a/docs/img one.png b/docs/img one.png',
+      'index 1234567..89abcde 100644',
+      'Binary files a/docs/img one.png and b/docs/img one.png differ',
+    ])).toEqual({ oldPath: 'a/docs/img one.png', newPath: 'b/docs/img one.png', binary: true, hunks: 0 })
+  })
+
+  it('decodes a C-quoted binary header from a default-quotePath git', () => {
+    expect(first([
+      'diff --git "a/docs/\\344\\270\\255.jpg" "b/docs/\\344\\270\\255.jpg"',
+      'index 1234567..89abcde 100644',
+      'Binary files "a/docs/\\344\\270\\255.jpg" and "b/docs/\\344\\270\\255.jpg" differ',
+    ])).toEqual({ oldPath: 'a/docs/中.jpg', newPath: 'b/docs/中.jpg', binary: true, hunks: 0 })
+  })
+
+  it('names a pure rename from its rename lines', () => {
+    expect(first([
+      'diff --git a/old/name.md b/new/name.md',
+      'similarity index 100%',
+      'rename from old/name.md',
+      'rename to new/name.md',
+    ])).toEqual({ oldPath: 'old/name.md', newPath: 'new/name.md', binary: false, hunks: 0 })
+  })
+
+  it('names a mode-only change (no ---/+++ either)', () => {
+    expect(first([
+      'diff --git a/tools/run.sh b/tools/run.sh',
+      'old mode 100644',
+      'new mode 100755',
+    ])).toEqual({ oldPath: 'a/tools/run.sh', newPath: 'b/tools/run.sh', binary: false, hunks: 0 })
+  })
+
+  it('names a mode-only change whose path contains a space', () => {
+    expect(first([
+      'diff --git a/tools/run me.sh b/tools/run me.sh',
+      'old mode 100644',
+      'new mode 100755',
+    ])).toEqual({ oldPath: 'a/tools/run me.sh', newPath: 'b/tools/run me.sh', binary: false, hunks: 0 })
+  })
+
+  it('strips the TAB git appends to a spaced ---/+++ path', () => {
+    expect(first([
+      'diff --git a/docs/sp ace.md b/docs/sp ace.md',
+      '--- a/docs/sp ace.md\t',
+      '+++ b/docs/sp ace.md\t',
+      '@@ -1 +1 @@',
+      '-a',
+      '+b',
+    ])).toEqual({ oldPath: 'a/docs/sp ace.md', newPath: 'b/docs/sp ace.md', binary: false, hunks: 1 })
+  })
+
+  it('lets ---/+++ win over the fallbacks (rename plus content change)', () => {
+    expect(first([
+      'diff --git a/old.md b/new.md',
+      'similarity index 90%',
+      'rename from old.md',
+      'rename to new.md',
+      '--- a/old.md',
+      '+++ b/new.md',
+      '@@ -1 +1 @@',
+      '-a',
+      '+b',
+    ])).toEqual({ oldPath: 'a/old.md', newPath: 'b/new.md', binary: false, hunks: 1 })
+  })
+})
+
+describe('decodeGitPath', () => {
+  it('decodes git octal escapes as UTF-8 bytes', () => {
+    expect(decodeGitPath('"b/docs/\\346\\226\\207.md"')).toBe('b/docs/文.md')
+  })
+
+  it('decodes the single-character escapes', () => {
+    expect(decodeGitPath('"a/tab\\there.md"')).toBe('a/tab\there.md')
+    expect(decodeGitPath('"a/quote\\"name.md"')).toBe('a/quote"name.md')
+    expect(decodeGitPath('"a/back\\\\slash.md"')).toBe('a/back\\slash.md')
+  })
+
+  it('leaves an unquoted path alone', () => {
+    expect(decodeGitPath('a/中文 空格.md')).toBe('a/中文 空格.md')
+    expect(decodeGitPath('/dev/null')).toBe('/dev/null')
+  })
+
+  it('leaves a mismatched quote alone', () => {
+    expect(decodeGitPath('"mismatched')).toBe('"mismatched')
   })
 })

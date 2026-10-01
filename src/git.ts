@@ -4,7 +4,9 @@
  * with porcelain-parseable output formats (`-z` NUL framing, unit separators)
  * so parsing never depends on locale or color config. All commands run with
  * `-C <cwd>` on the session's working directory and `--no-pager` /
- * `-c color.ui=false` so output stays machine-readable.
+ * `-c color.ui=false` / `-c core.quotePath=false` so output stays
+ * machine-readable and paths stay literal (git's default C-quotes a non-ASCII
+ * path, which every diff surface would render as the file name).
  *
  * Commits use the user's git global identity untouched (never sets
  * user.name/user.email).
@@ -158,7 +160,12 @@ export function parseLogLines(output: string): GitLogEntry[] {
 
 /** Run one git command; resolves with stdout, rejects with GitCommandError. */
 function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise<string> {
-  const full = ['-C', cwd, '--no-pager', '-c', 'color.ui=false', ...args]
+  // `core.quotePath=false`: emit paths verbatim instead of C-quoting them
+  // (git's default turns a CJK/space path into an octal-escaped, quoted
+  // string, and every diff surface renders that string as the file name).
+  // The `-z`-framed porcelain callers are unaffected: git never quotes
+  // NUL-framed output.
+  const full = ['-C', cwd, '--no-pager', '-c', 'color.ui=false', '-c', 'core.quotePath=false', ...args]
   return new Promise<string>((resolvePromise, reject) => {
     const child = spawn('git', full, {
       stdio: ['ignore', 'pipe', 'pipe'],

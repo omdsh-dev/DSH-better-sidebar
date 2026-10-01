@@ -285,9 +285,9 @@ export interface DiffHunk {
 
 /** One parsed file section of a unified diff. */
 export interface DiffFile {
-  /** The `---` path verbatim ('/dev/null' for a new file). */
+  /** The old-side path ('/dev/null' for a new file); '' when git named none. */
   oldPath: string
-  /** The `+++` path verbatim ('/dev/null' for a deleted file). */
+  /** The new-side path ('/dev/null' for a deleted file); '' when git named none. */
   newPath: string
   /** The file changed with binary content: no hunks to draw. */
   binary: boolean
@@ -306,13 +306,108 @@ function parseHunkHeader(line: string): { oldStart: number; newStart: number; he
   return { oldStart: Number(match[1]), newStart: Number(match[3]), header: match[5] ?? '' }
 }
 
+/** A git C-quoted path literal (`"a/x y.md"`, escapes included). */
+const QUOTED_PATH = '"(?:[^"\\\\]|\\\\.)*"'
+
+/** git's single-character C escapes, mapped to their byte. */
+const C_ESCAPES: Record<string, number> = {
+  a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92,
+}
+
+const pathEncoder = new TextEncoder()
+const pathDecoder = new TextDecoder()
+
+/**
+ * Undo git's C-quoting of a path (`"a/\346\226\207.md"` → `a/中文.md`).
+ * git quotes a path holding a byte outside ASCII, a control character, a
+ * quote or a backslash; `-c core.quotePath=false` (see `runGit`) already
+ * removes the non-ASCII half for our own commands, so this is the remaining
+ * defensive half — and what keeps replayed/pasted diff text readable.
+ * Unquoted input comes back unchanged.
+ * @param raw - the path as it appears in the diff text.
+ * @returns the literal path.
+ */
+export function decodeGitPath(raw: string): string {
+  if (raw.length < 2 || !raw.startsWith('"') || !raw.endsWith('"')) return raw
+  const body = raw.slice(1, -1)
+  const bytes: number[] = []
+  for (let i = 0; i < body.length; i += 1) {
+    const char = body[i]!
+    if (char !== '\\') {
+      for (const byte of pathEncoder.encode(char)) bytes.push(byte)
+      continue
+    }
+    const escaped = body[i + 1]
+    const simple = escaped === undefined ? undefined : C_ESCAPES[escaped]
+    if (simple !== undefined) {
+      bytes.push(simple)
+      i += 1
+      continue
+    }
+    const octal = /^[0-7]{1,3}/.exec(body.slice(i + 1))
+    if (octal !== null) {
+      bytes.push(Number.parseInt(octal[0], 8))
+      i += octal[0].length
+      continue
+    }
+    // Unknown escape: keep the backslash verbatim.
+    for (const byte of pathEncoder.encode(char)) bytes.push(byte)
+  }
+  return pathDecoder.decode(new Uint8Array(bytes))
+}
+
+/** A `---`/`+++` header value: git appends a TAB when the path has a space. */
+function headerPath(raw: string): string {
+  return decodeGitPath(raw.endsWith('\t') ? raw.slice(0, -1) : raw)
+}
+
+/**
+ * Both sides of a `diff --git` header, or null when it cannot be split.
+ * Needed for the sections that never reach `---`/`+++` — a mode-only change
+ * (its path is the same on both sides, which is what the split looks for).
+ */
+function pathsFromGitHeader(rest: string): { oldPath: string; newPath: string } | null {
+  const quoted = new RegExp(`^(${QUOTED_PATH}) (${QUOTED_PATH})$`).exec(rest)
+  if (quoted !== null) return { oldPath: decodeGitPath(quoted[1]!), newPath: decodeGitPath(quoted[2]!) }
+  // Unquoted (core.quotePath=false) paths may contain spaces, so walk every
+  // ` b/` and keep the split whose sides name the same file.
+  for (let at = rest.indexOf(' b/'); at !== -1; at = rest.indexOf(' b/', at + 1)) {
+    const oldPath = rest.slice(0, at)
+    const newPath = rest.slice(at + 1)
+    if (oldPath.startsWith('a/') && newPath.startsWith('b/') && oldPath.slice(2) === newPath.slice(2)) {
+      return { oldPath, newPath }
+    }
+  }
+  return null
+}
+
+/** Both sides of a `Binary files A and B differ` line (A or B may be /dev/null). */
+function pathsFromBinaryLine(raw: string): { oldPath: string; newPath: string } | null {
+  const body = raw.slice('Binary files '.length).replace(/ differ$/, '')
+  const quoted = new RegExp(`^(${QUOTED_PATH}) and (${QUOTED_PATH})$`).exec(body)
+  if (quoted !== null) return { oldPath: decodeGitPath(quoted[1]!), newPath: decodeGitPath(quoted[2]!) }
+  for (let at = body.indexOf(' and '); at !== -1; at = body.indexOf(' and ', at + 1)) {
+    const oldPath = decodeGitPath(body.slice(0, at))
+    const newPath = decodeGitPath(body.slice(at + ' and '.length))
+    const oldSide = oldPath === '/dev/null' || oldPath.startsWith('a/')
+    const newSide = newPath === '/dev/null' || newPath.startsWith('b/')
+    if (oldSide && newSide) return { oldPath, newPath }
+  }
+  return null
+}
+
 /**
  * Parse `git diff --no-color` output into file sections and hunks. Rows
  * outside a file section (leading noise) and metadata rows between the
  * `diff --git`/`---`/`+++` headers and the first hunk (index lines, mode
- * changes, rename/similarity lines) are skipped; a section that never
- * reaches a hunk (a mode/rename-only change) stays hunkless so the caller
- * can still draw its path.
+ * changes, rename/similarity lines) are skipped.
+ *
+ * Paths come from whichever header names them: `---`/`+++` win when present,
+ * otherwise the section's own `rename from|to`, `Binary files … differ` or
+ * `diff --git` line supplies them. git emits no `---`/`+++` at all for a
+ * binary file, a pure rename and a mode-only change, so without those
+ * fallbacks the section renders as an anonymous header (the badge with no
+ * file name the reader cannot place).
  */
 export function parseUnifiedDiff(text: string): ParsedDiff {
   const files: DiffFile[] = []
@@ -330,22 +425,42 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
     if (raw.startsWith('diff --git ')) {
       flushHunk()
       current = { oldPath: '', newPath: '', binary: false, hunks: [] }
+      const headPaths = pathsFromGitHeader(raw.slice('diff --git '.length))
+      if (headPaths !== null) {
+        current.oldPath = headPaths.oldPath
+        current.newPath = headPaths.newPath
+      }
       files.push(current)
       continue
     }
     if (current === null) continue
+    if (raw.startsWith('rename from ')) {
+      current.oldPath = decodeGitPath(raw.slice('rename from '.length))
+      continue
+    }
+    if (raw.startsWith('rename to ')) {
+      current.newPath = decodeGitPath(raw.slice('rename to '.length))
+      continue
+    }
     if (raw.startsWith('Binary files ') || raw === 'GIT binary patch') {
       flushHunk()
       current.binary = true
+      if (raw.startsWith('Binary files ')) {
+        const binPaths = pathsFromBinaryLine(raw)
+        if (binPaths !== null) {
+          current.oldPath = binPaths.oldPath
+          current.newPath = binPaths.newPath
+        }
+      }
       continue
     }
     if (raw.startsWith('--- ')) {
       flushHunk()
-      current.oldPath = raw.slice(4)
+      current.oldPath = headerPath(raw.slice(4))
       continue
     }
     if (raw.startsWith('+++ ')) {
-      current.newPath = raw.slice(4)
+      current.newPath = headerPath(raw.slice(4))
       continue
     }
     const header = parseHunkHeader(raw)
