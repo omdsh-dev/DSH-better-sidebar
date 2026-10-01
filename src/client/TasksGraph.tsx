@@ -564,8 +564,14 @@ function renderAgentNode(
    * (independent of the page-level rule and of the idle head count). The
    * `settled` flag stays a separate idea — that one controls how the card
    * RECEDES, and an idle teammate is not finished work.
+   *
+   * The ROOT never offers it: the model pushes the root card unconditionally
+   * (it is the page's anchor and its tree's parent), so a chevron there is a
+   * control that cannot fire — exactly the dead-button shape the manual-fold
+   * design set out to avoid (issue #784). `parentId` is absent on the root row
+   * and only there.
    */
-  const foldable = settled || node.state === 'idle'
+  const foldable = (settled || node.state === 'idle') && node.parentId !== undefined
   return (
     <div
       key={node.id}

@@ -949,6 +949,68 @@ describe('Tasks page: the shared task window', () => {
     unmount()
   })
 
+  it('never draws the ROOT card its own fold chevron (issue #784)', async () => {
+    // The model pushes the root card unconditionally and never consults
+    // `foldedIds` for it, so a chevron there can only be a dead control — and
+    // it used to appear as soon as the reader stepped INTO a child session
+    // (the root is no longer `current`, and a settled root is `foldable`).
+    const snapshot = snapshotWithChildren(2)
+    snapshot.byId['root']!.running = false
+    const store = makeStore(snapshot)
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'child-0', active: true, ctx: makeCtx(store) }),
+    )
+    await flushJobs()
+    const root = container.querySelector('[data-graph-node="root"]') as HTMLElement
+    expect(root).not.toBeNull()
+    expect(root.querySelector('button[aria-label="收进已完成聚合"]')).toBeNull()
+    unmount()
+  })
+
+  it('never auto-folds a RE-PARENTED run member that is a real branch (issue #784)', async () => {
+    // A run member is usually a real catalog node re-parented under the run —
+    // not the synthetic leaf the old rule assumed — so the page-level fold used
+    // to take its whole subtree with it.
+    runsPayload = [{
+      runId: 'run-1',
+      name: 'audit',
+      originSessionId: 'root',
+      status: 'running',
+      startedSeq: 1,
+      startedAt: 0,
+      phases: [{
+        title: '扫描',
+        members: [
+          { childId: 'm1', label: '审计 A', seq: 2, phase: '扫描' },
+          { childId: 'm2', label: '审计 B', seq: 3, phase: '扫描' },
+        ],
+      }],
+    }]
+    const snapshot = snapshotWithRun()
+    // m1 keeps a loaded, NON-EMPTY catalog: it is a branching node. The
+    // projection map is a Readonly record, so replace it rather than mutate.
+    snapshot.projectionsBySession = {
+      ...(snapshot.projectionsBySession ?? {}),
+      m1: {
+        values: { subagentCatalog: [{ id: 'm1c', createdAt: 9, mode: 'one-shot', label: '子任务' }] },
+        state: 'ready',
+        error: null,
+      },
+      m1c: { values: { subagentCatalog: [] }, state: 'ready', error: null },
+    }
+    snapshot.byId['m1c'] = { id: 'm1c', displayTitle: 'm1c', origin: 'subagent', parentId: 'm1', running: false }
+    const store = makeStore(snapshot)
+    const { container, unmount } = renderRoot(
+      createElement(SubagentView, { sessionId: 'root', active: true, ctx: makeCtx(store) }),
+    )
+    await flushJobs()
+    // The branching member keeps its card; its settled LEAF sibling still folds
+    // into the run's aggregate.
+    expect(container.querySelector('[data-graph-node="m1"]')).not.toBeNull()
+    expect(container.querySelector('[data-graph-node="m2"]')).toBeNull()
+    unmount()
+  })
+
   it('badges a workflow run and its members with the phase they belong to', async () => {
     runsPayload = [{
       runId: 'run-1',

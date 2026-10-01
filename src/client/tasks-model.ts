@@ -149,9 +149,9 @@ export interface TasksModelInput {
    * Nodes the READER folded by hand (a settled card's bar chevron). This is a
    * PER-NODE trigger, not a second copy of the global rule, so it only has to
    * satisfy the guards that protect the reader from hiding live work: never a
-   * running node, never the current session, never a branching one. It is
-   * deliberately NOT subject to {@link isAutoFoldable} — the chevron is drawn
-   * on every settled card, and a trigger that cannot fire is a dead control.
+   * running node, never the current session. It is deliberately NOT subject to
+   * {@link isAutoFoldable} — the chevron is drawn on every settled card, and a
+   * trigger that cannot fire is a dead control.
    */
   foldedIds?: ReadonlySet<string>
 }
@@ -480,16 +480,22 @@ export function buildTasksModel(input: TasksModelInput): TasksNode[] {
       if (runNode === undefined) continue
       out.push(runNode)
       const members = memberNodes[index] ?? []
-      // The run's own members fold under the same two triggers and the same
-      // two groups; they need no leaf test (they are leaves by construction
-      // here) and no team guard (a run member is not a roster row).
+      // The run's own members fold under the same two triggers and the same two
+      // groups. The AUTOMATIC trigger applies the same STRUCTURAL guards as the
+      // parent's children — a member is often a RE-PARENTED catalog node (a real
+      // directory with `hasChildren`, team enrichment and its own run), not the
+      // synthetic leaf this loop used to assume, and folding one hid its whole
+      // branch (issue #784). The roster guard does not apply here: the member is
+      // not a roster row of this parent, and the idle head count is a
+      // roster-scanning rule — run members keep their own container's rule.
       const keptMembers: TasksAgentNode[] = []
       const runDone: TasksAgentNode[] = []
       const runIdle: TasksAgentNode[] = []
       for (const member of members) {
-        const hidden = (folded || foldedIds?.has(member.id) === true)
-          && nodeFoldable(member, currentSessionId)
-        if (!hidden) keptMembers.push(member)
+        const foldable = nodeFoldable(member, currentSessionId)
+        const auto = folded && foldable && isAutoFoldable(member, runsByOrigin, true)
+        const manual = foldedIds?.has(member.id) === true && foldable
+        if (!auto && !manual) keptMembers.push(member)
         else if (member.state === 'idle') runIdle.push(member)
         else runDone.push(member)
       }
