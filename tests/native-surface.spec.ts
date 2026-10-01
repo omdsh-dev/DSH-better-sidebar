@@ -9,7 +9,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { createNativeTabRecords, NativeTabBody, NativeTabTitle } from '../src/client/native/tab-adapter.tsx'
-import { registerNativeSurface } from '../src/client/native/index.ts'
+import { fileParamsOf, registerNativeSurface } from '../src/client/native/index.ts'
 import { createBetterSidebarService, type SidebarSurface } from '../src/client/service.ts'
 import { createSidebarStore, toggleExpanded, type SidebarTab } from '../src/client/state.ts'
 
@@ -142,6 +142,42 @@ describe('createNativeTabRecords', () => {
     records.ensure({ id: 'tab-6', kind: 'terminal', title: 'Terminal', params: undefined, scope })
     records.update('tab-6', { title: 'x' })
     expect(listener).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('fileParamsOf (the file-address seed, #826)', () => {
+  const infoOf = (contentId: string): Parameters<typeof fileParamsOf>[0] => ({
+    tab: {
+      id: 'tab-1',
+      kind: 'editor',
+      title: 'ignored',
+      contentId,
+      visible: true,
+      navigation: { address: contentId, params: undefined, revision: 0 },
+      signal: new AbortController().signal,
+    },
+  })
+
+  it('seeds a plain file address with its path and no title of its own', () => {
+    expect(fileParamsOf(infoOf('dsh-resource://file/session/s1/src/main.ts'))).toEqual({ path: 'src/main.ts' })
+  })
+
+  it('splits a `path:line` spec off the address and titles the tab after the file', () => {
+    // This is the #826 case: DSH reads a `#`-less markdown destination as the
+    // file name verbatim, so the address arrives naming `CMakeLists.txt:131`
+    // and the editor would read a file that does not exist.
+    expect(fileParamsOf(infoOf('dsh-resource://file/session/s1/omlx/csrc/CMakeLists.txt:131'))).toEqual({
+      path: 'omlx/csrc/CMakeLists.txt',
+      title: 'CMakeLists.txt',
+    })
+  })
+
+  it('keeps a colon-carrying name that is not a line spec', () => {
+    expect(fileParamsOf(infoOf('dsh-resource://file/session/s1/data:2024.csv'))).toEqual({ path: 'data:2024.csv' })
+  })
+
+  it('has no seed for a tab that is not a file address', () => {
+    expect(fileParamsOf(infoOf('sidebar://editor'))).toBeUndefined()
   })
 })
 
@@ -351,6 +387,10 @@ describe('registerNativeSurface lifecycle (service-driven registration)', () => 
     expect(editorType?.title('dsh-resource://file/session/s1/src/main.ts')).toBe('main.ts')
     expect(editorType?.title('dsh-resource://file/absolute/work/pkg/a/b.txt')).toBe('b.txt')
     expect(editorType?.title('sidebar://editor')).toBe('Files')
+    // #826: DSH's markdown grammar keeps a `path:line` spec in the address, and
+    // the host names the tab after the address — the tab is named after the
+    // FILE, not after the line reference.
+    expect(editorType?.title('dsh-resource://file/session/s1/src/main.ts:42')).toBe('main.ts')
     // The new-tab/guide list must offer ONE "Files" row: the `files` kind
     // takeover draws the same explorer the editor page would, so the editor
     // type contributes no guide entry of its own.

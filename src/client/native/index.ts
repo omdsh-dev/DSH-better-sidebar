@@ -24,6 +24,8 @@
  */
 import type { Context } from '../../context-types.ts'
 import { t } from '../locales.ts'
+import { splitTrailingLineSpec } from '../path-line.ts'
+import { baseName } from '../paths.ts'
 import { parseFileAddress } from '../resource-address.ts'
 import type { BetterSidebarService, TabDescriptor } from '../service.ts'
 import type { SidebarStore } from '../state.ts'
@@ -147,13 +149,36 @@ function guideIconOf(icon: TabDescriptor['icon']): { icon?: (props: { size?: num
 function fileTitleOf(address: string): string | undefined {
   const parsed = parseFileAddress(address)
   if (parsed === undefined) return undefined
-  const segments = parsed.path.split('/').filter(segment => segment !== '')
+  // A `path:line` spec DSH's markdown grammar left in the address names a
+  // LINE, not a file: the tab is titled after the file (#826).
+  const path = splitTrailingLineSpec(parsed.path)?.path ?? parsed.path
+  const segments = path.split('/').filter(segment => segment !== '')
   return segments.length === 0 ? undefined : segments[segments.length - 1]
 }
 
 /** One descriptor's live native registrations. */
 interface Registration {
   readonly dispose: () => void
+}
+
+/**
+ * The plugin-side seed a file-address tab carries.
+ *
+ * The path comes from the address, and that is also where a `path:line` spec
+ * the host's markdown grammar left in it has to come off: DSH reads a `#`-less
+ * destination as the file name verbatim, so `[a/b.c](a/b.c:131)` addresses a
+ * file called `b.c:131` and the editor reports it missing (#826). The tab
+ * TITLE is seeded from the same spec, because the host derives it from the same
+ * string and would otherwise label the tab `b.c:131`.
+ * @param info - the native tab record the body is drawing.
+ * @returns the seed, or `undefined` when the tab is not a file address.
+ */
+export function fileParamsOf(info: NativeTabInfo): NativeTabParams | undefined {
+  const address = parseFileAddress(info.tab.contentId)
+  if (address === undefined) return undefined
+  const spec = splitTrailingLineSpec(address.path)
+  if (spec === undefined) return { path: address.path }
+  return { path: spec.path, title: baseName(spec.path) }
 }
 
 /**
@@ -230,10 +255,6 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
     if (tabs === undefined) return
     const live = new Map<string, Registration>()
 
-    const fileParamsOf = (info: NativeTabInfo): NativeTabParams | undefined => {
-      const address = parseFileAddress(info.tab.contentId)
-      return address === undefined ? undefined : { path: address.path }
-    }
     const fileSessionIdOf = (info: NativeTabInfo): string | undefined => {
       const address = parseFileAddress(info.tab.contentId)
       return address !== undefined && address.scope === 'session' ? address.sessionId : undefined
