@@ -1341,7 +1341,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 .editorSearchResult {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   box-sizing: border-box;
   width: 100%;
   height: 28px;
@@ -1354,6 +1356,17 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   line-height: 28px;
   text-align: left;
   cursor: pointer;
+  overflow: hidden;
+}
+
+/* A directory hit is a navigation target, not an openable file: the folder
+   glyph and the dimmer label say so before the click. */
+.editorSearchResultDir {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.editorSearchResultLabel {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

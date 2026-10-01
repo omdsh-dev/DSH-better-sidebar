@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
-  activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, CONVERSATION_MIN, createSidebarStore,
+  activateTab, allLeaves, ancestorDirs, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, CONVERSATION_MIN, createSidebarStore,
   insertLeafAt, makeDefaultState, moveTab, moveTabToEdge, openDiffTab,
   openTabInBottomPane, patchTab, resizeSplit,
   resizeSplitIn, revealPaths, sanitizeState, setBottomHeight,
@@ -723,6 +723,27 @@ describe('revealPaths (show in folder)', () => {
   it('resolves nothing to the same reference (no churn)', () => {
     const base = makeDefaultState()
     expect(revealPaths(base, '/w', [])).toBe(base)
+  })
+})
+
+describe('ancestorDirs (the levels a lazy tree must expand)', () => {
+  it('lists the absolute ancestors below the explorer root, excluding the path itself', () => {
+    // The root itself is not a level the tree expands, and the target is not
+    // its own ancestor.
+    expect(ancestorDirs('/w/src', ['/w/src/sub/deep/a.ts'])).toEqual(['/w/src/sub', '/w/src/sub/deep'])
+    expect(ancestorDirs('/w/src', ['/w/src/a.ts'])).toEqual([])
+  })
+
+  it('keeps a Windows drive-letter root and a UNC prefix', () => {
+    expect(ancestorDirs('C:\\work', ['C:\\work\\src\\a.ts'])).toEqual(['C:\\work\\src'])
+    expect(ancestorDirs('\\\\server\\share', ['\\\\server\\share\\sub\\a.ts'])).toEqual(['\\\\server\\share\\sub'])
+  })
+
+  it('skips empty and non-string entries and de-duplicates shared ancestors', () => {
+    expect(ancestorDirs('/w', ['', '/w/a/b.ts', '/w/a/c.ts'])).toEqual(['/w/a'])
+    // Without a root there is nothing to anchor against, so every leading
+    // level is still reported (the caller only uses this when cwd is known).
+    expect(ancestorDirs(undefined, [undefined as unknown as string, '/a/b/c.ts'])).toEqual(['/a', '/a/b'])
   })
 })
 

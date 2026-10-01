@@ -23,6 +23,7 @@ import clsx from 'clsx'
 import { IconFolderOpenRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
 import type { BetterSidebarService } from './service.ts'
+import { ancestorDirs } from './state.ts'
 import { FileTree } from './FileTree.tsx'
 import { IconUploadOutline16 } from './icons.tsx'
 import type { OpenInApp } from './open-in-app.ts'
@@ -93,7 +94,7 @@ export function TreePanel(props: {
     onReferenceFile, onPathRenamed, onPathDeleted, visible, full, service,
   } = props
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
+  const [results, setResults] = useState<{ matches: string[]; dirs: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshTick, setRefreshTick] = useState(0)
 
@@ -195,6 +196,27 @@ export function TreePanel(props: {
   }, [sessionId, cwd, needle])
 
   const busy = upload !== null
+  /** Directory hits (the host reports them separately): a click navigates the
+   *  tree for those rows instead of opening them as files. */
+  const dirHits = new Set(results?.dirs)
+
+  /**
+   * Jump to a DIRECTORY hit in the tree. Results include directories (they
+   * show where matches live) and `fs.read` refuses one, so opening such a row
+   * as a file surfaced a bare `"…" is a directory` error. Expand the folder
+   * and its ancestors instead — `onToggle` FLIPS a row, so only collapsed
+   * paths are touched — and clear the query so the tree, not the parked
+   * results panel, is what the user sees next.
+   */
+  const openSearchDir = (rel: string): void => {
+    const target = resolveSidebarPath(cwd, rel)
+    if (cwd !== undefined) {
+      for (const path of [...ancestorDirs(cwd, [target]), target]) {
+        if (!expanded.includes(path)) onToggle(path)
+      }
+    }
+    setQuery('')
+  }
 
   return (
     <div className={clsx(css.editorTreePanel, full === true && css.editorTreePanelFull)}>
@@ -262,17 +284,25 @@ export function TreePanel(props: {
             {error === null && results !== null && results.matches.length === 0 && (
               <div className={css.editorSearchHint}>{t('editorSearchNoResults')}</div>
             )}
-            {error === null && results !== null && results.matches.map(rel => (
-              <button
-                key={rel}
-                type="button"
-                className={css.editorSearchResult}
-                title={rel}
-                onClick={() => { onOpenFile(resolveSidebarPath(cwd, rel)) }}
-              >
-                {rel}
-              </button>
-            ))}
+            {error === null && results !== null && results.matches.map((rel) => {
+              const isDirHit = dirHits.has(rel)
+              return (
+                <button
+                  key={rel}
+                  type="button"
+                  className={clsx(css.editorSearchResult, isDirHit && css.editorSearchResultDir)}
+                  title={rel}
+                  data-dsh-search-dir={isDirHit ? 'true' : undefined}
+                  onClick={() => {
+                    if (isDirHit) openSearchDir(rel)
+                    else onOpenFile(resolveSidebarPath(cwd, rel))
+                  }}
+                >
+                  {isDirHit && <IconFolderOpenRegular size={14} />}
+                  <span className={css.editorSearchResultLabel}>{rel}</span>
+                </button>
+              )
+            })}
             {error === null && results?.truncated === true && (
               <div className={css.editorSearchHint}>{t('editorSearchTruncated')}</div>
             )}

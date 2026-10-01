@@ -49,7 +49,7 @@ describe('fs-search', () => {
     const dir = makeFixture()
     try {
       const result = await searchFiles(dir, 'util')
-      expect(result).toEqual({ matches: ['src/util.ts'], truncated: false })
+      expect(result).toEqual({ matches: ['src/util.ts'], dirs: [], truncated: false })
       // A multi-level match list is sorted and relative (never absolute).
       const md = await searchFiles(dir, '.md')
       expect(md.truncated).toBe(false)
@@ -68,8 +68,13 @@ describe('fs-search', () => {
     try {
       expect((await searchFiles(dir, 'index.ts')).matches).toEqual(['src/Index.TS'])
       expect((await searchFiles(dir, 'INDEX.TS')).matches).toEqual(['src/Index.TS'])
-      // Directory names match too (the client can hint where matches live).
-      expect((await searchFiles(dir, 'SRC')).matches).toEqual(['src'])
+      const dirHit = await searchFiles(dir, 'SRC')
+      // Directory names match too (the client can hint where matches live)…
+      expect(dirHit.matches).toEqual(['src'])
+      // …and they are reported as directories, so the list navigates the tree
+      // instead of opening one as a file (`fs.read` refuses a directory).
+      expect(dirHit).toEqual({ matches: ['src'], dirs: ['src'], truncated: false })
+      expect((await searchFiles(dir, 'util')).dirs).toEqual([])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -111,8 +116,8 @@ describe('fs-search', () => {
   it('an empty (or whitespace) query matches nothing without walking', async () => {
     const dir = makeFixture()
     try {
-      expect(await searchFiles(dir, '')).toEqual({ matches: [], truncated: false })
-      expect(await searchFiles(dir, '   ')).toEqual({ matches: [], truncated: false })
+      expect(await searchFiles(dir, '')).toEqual({ matches: [], dirs: [], truncated: false })
+      expect(await searchFiles(dir, '   ')).toEqual({ matches: [], dirs: [], truncated: false })
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -126,7 +131,24 @@ describe('fs-search', () => {
       symlinkSync(dir, join(dir, 'loop'))
       symlinkSync(join(dir, 'src'), join(dir, 'src-link'))
       const result = await searchFiles(dir, 'util')
-      expect(result).toEqual({ matches: ['src/util.ts'], truncated: false })
+      expect(result).toEqual({ matches: ['src/util.ts'], dirs: [], truncated: false })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(!canSymlink)('classifies a symlinked hit by its target (link to a directory is a directory)', async () => {
+    const dir = makeFixture()
+    try {
+      symlinkSync(join(dir, 'src'), join(dir, 'src-link'))
+      symlinkSync(join(dir, 'README.md'), join(dir, 'readme-link.md'))
+      // `fs.read` stats through the link, so a link to a directory must be
+      // reported as a directory row too; a link to a file stays a file hit.
+      expect(await searchFiles(dir, 'src-link')).toEqual({ matches: ['src-link'], dirs: ['src-link'], truncated: false })
+      expect(await searchFiles(dir, 'readme-link')).toEqual({ matches: ['readme-link.md'], dirs: [], truncated: false })
+      // A dangling link cannot be classified, so it stays a plain entry.
+      symlinkSync(join(dir, 'gone'), join(dir, 'dangling-link'))
+      expect(await searchFiles(dir, 'dangling-link')).toEqual({ matches: ['dangling-link'], dirs: [], truncated: false })
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -165,7 +187,7 @@ describe('fs-search', () => {
     const dir = makeFixture()
     try {
       const missing = join(dir, 'does-not-exist')
-      expect(await searchFiles(missing, 'x')).toEqual({ matches: [], truncated: false })
+      expect(await searchFiles(missing, 'x')).toEqual({ matches: [], dirs: [], truncated: false })
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

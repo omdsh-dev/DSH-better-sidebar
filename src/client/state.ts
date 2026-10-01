@@ -509,6 +509,33 @@ export function toggleExpanded(state: SidebarState, path: string): SidebarState 
 }
 
 /**
+ * The absolute ancestor directories between the explorer root (`cwd`) and each
+ * given path, EXCLUDING the paths themselves: the levels a lazy tree must have
+ * expanded before those rows can exist. Empty strings and non-strings are
+ * skipped; the result is de-duplicated in first-seen order.
+ * @param cwd - the explorer's root (session working directory).
+ * @param files - absolute paths whose ancestors are wanted.
+ */
+export function ancestorDirs(cwd: string | undefined, files: readonly string[]): string[] {
+  const found = new Set<string>()
+  const rootParts = (cwd ?? '').split(/[\\/]+/).filter(part => part !== '')
+  for (const file of files) {
+    if (typeof file !== 'string' || file === '') continue
+    const parts = file.split(/[\\/]+/).filter(part => part !== '' && part !== '.')
+    const separator = file.includes('\\') ? '\\' : '/'
+    // Keep the original leading separator(s) when rebuilding ancestor dirs:
+    // FileTree matches expansion against ABSOLUTE paths, so dropping the
+    // root (POSIX `/w/src` → `w/src`) or a UNC prefix (`\\server\share`)
+    // would leave every ancestor collapsed and the row unreachable.
+    const prefix = file.startsWith('/') ? '/' : file.startsWith('\\\\') ? '\\\\' : file.startsWith('\\') ? '\\' : ''
+    for (let i = rootParts.length; i < parts.length - 1; i++) {
+      found.add(prefix + parts.slice(0, i + 1).join(separator))
+    }
+  }
+  return [...found]
+}
+
+/**
  * Reveal files in the explorer: expand every ancestor directory between the
  * explorer root and each file (so the lazy tree actually shows the row) and
  * record the paths for highlighting. The reveal set is transient —
@@ -519,25 +546,11 @@ export function toggleExpanded(state: SidebarState, path: string): SidebarState 
  * @returns the next state, or the same reference when nothing is revealed.
  */
 export function revealPaths(state: SidebarState, cwd: string | undefined, files: readonly string[]): SidebarState {
-  const expanded = new Set(state.expanded)
-  const revealed: string[] = []
-  const rootParts = (cwd ?? '').split(/[\\/]+/).filter(part => part !== '')
-  for (const file of files) {
-    if (typeof file !== 'string' || file === '') continue
-    revealed.push(file)
-    const parts = file.split(/[\\/]+/).filter(part => part !== '' && part !== '.')
-    const separator = file.includes('\\') ? '\\' : '/'
-    // Keep the original leading separator(s) when rebuilding ancestor dirs:
-    // FileTree matches expansion against ABSOLUTE paths, so dropping the
-    // root (POSIX `/w/src` �W `w/src`) or a UNC prefix (`\\server\share`)
-    // would leave every ancestor collapsed and the row unreachable.
-    const prefix = file.startsWith('/') ? '/' : file.startsWith('\\\\') ? '\\\\' : file.startsWith('\\') ? '\\' : ''
-    for (let i = rootParts.length; i < parts.length - 1; i++) {
-      expanded.add(prefix + parts.slice(0, i + 1).join(separator))
-    }
-  }
+  const revealed = files.filter(file => typeof file === 'string' && file !== '')
   if (revealed.length === 0) return state
-  return { ...state, expanded: [...expanded], revealed }
+  const expanded = new Set(state.expanded)
+  for (const dir of ancestorDirs(cwd, revealed)) expanded.add(dir)
+  return { ...state, expanded: [...expanded], revealed: [...revealed] }
 }
 
 /** Adjust one split divider: `i` is the left/top child index, delta in fractions. */

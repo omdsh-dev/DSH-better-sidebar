@@ -12,7 +12,7 @@
  */
 // @vitest-environment jsdom
 import { beforeAll, afterEach, describe, expect, it, vi } from 'vitest'
-import { createElement } from 'react'
+import { createElement, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { TreePanel } from '../src/client/TreePanel.tsx'
@@ -38,7 +38,8 @@ function defaultListing(path: string): Listing {
 
 const { fsTrees, fsSearch } = vi.hoisted(() => ({
   fsTrees: vi.fn(async (_scope: unknown, paths: readonly string[]) => ({ levels: paths.map(path => defaultListing(path)) })),
-  fsSearch: vi.fn(async () => ({ matches: ['a.ts'], truncated: false })),
+  fsSearch: vi.fn(async (): Promise<{ matches: string[]; dirs: string[]; truncated: boolean }> =>
+    ({ matches: ['a.ts'], dirs: [], truncated: false })),
 }))
 
 vi.mock('../src/client/api.ts', () => ({
@@ -58,7 +59,7 @@ interface Harness {
   unmount: () => void
 }
 
-function mountPanel(): Harness {
+function mountPanel(overrides: Partial<ComponentProps<typeof TreePanel>> = {}): Harness {
   const container = document.createElement('div')
   document.body.append(container)
   const root: Root = createRoot(container)
@@ -71,6 +72,7 @@ function mountPanel(): Harness {
       onToggle: () => {},
       onOpenFile: () => {},
       onReferenceFile: () => {},
+      ...overrides,
     }))
   })
   return {
@@ -116,7 +118,8 @@ afterEach(() => {
   document.body.innerHTML = ''
   fsTrees.mockReset()
   fsTrees.mockImplementation(async (_scope: unknown, paths: readonly string[]) => ({ levels: paths.map(path => defaultListing(path)) }))
-  fsSearch.mockClear()
+  fsSearch.mockReset()
+  fsSearch.mockImplementation(async () => ({ matches: ['a.ts'], dirs: [], truncated: false }))
 })
 
 describe('TreePanel search keeps the tree mounted', () => {
@@ -182,5 +185,66 @@ describe('TreePanel refresh and truncated levels', () => {
     const notice = [...harness.container.querySelectorAll<HTMLElement>('[data-kind="hint"]')]
       .find(el => el.textContent?.includes('too many entries'))
     expect(notice).toBeDefined()
+  })
+})
+
+describe('TreePanel directory hits navigate instead of opening', () => {
+  /** The search rows, in list order (the tree's own rows are not buttons here). */
+  function resultRows(container: HTMLElement): HTMLButtonElement[] {
+    return [...resultsBody(container).querySelectorAll<HTMLButtonElement>('button[class*="editorSearchResult"]')]
+  }
+
+  it('expands a directory hit in the tree and never asks to open it as a file', async () => {
+    fsSearch.mockResolvedValue({ matches: ['src', 'src/a.ts'], dirs: ['src'], truncated: false })
+    const onToggle = vi.fn()
+    const onOpenFile = vi.fn()
+    harness = mountPanel({ onToggle, onOpenFile })
+    await act(async () => {})
+    await search(harness.container, 'src')
+
+    const dirRow = resultRows(harness.container).find(row => row.textContent === 'src')!
+    expect(dirRow.getAttribute('data-dsh-search-dir')).toBe('true')
+    expect(resultRows(harness.container).find(row => row.textContent === 'src/a.ts')!
+      .getAttribute('data-dsh-search-dir')).toBeNull()
+
+    await act(async () => { dirRow.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    // `fs.read` refuses a directory, so this row navigates instead of opening.
+    expect(onOpenFile).not.toHaveBeenCalled()
+    expect(onToggle).toHaveBeenCalledWith('/tmp/src')
+    // The query is cleared, so the tree (expanded at src) is what shows next.
+    expect(harness.container.querySelector<HTMLInputElement>('input[class*="editorSearchInput"]')!.value).toBe('')
+    expect(resultsBody(harness.container).hasAttribute('hidden')).toBe(true)
+    expect(treeBody(harness.container).hasAttribute('hidden')).toBe(false)
+  })
+
+  it('expands every ancestor of a nested hit, but only collapsed ones', async () => {
+    fsSearch.mockResolvedValue({ matches: ['src/deep', 'src/deep/a.ts'], dirs: ['src/deep'], truncated: false })
+    const onToggle = vi.fn()
+    harness = mountPanel({ cwd: '/w/app', expanded: ['/w/app/src'], onToggle })
+    await act(async () => {})
+    await search(harness.container, 'deep')
+
+    const dirRow = resultRows(harness.container).find(row => row.textContent === 'src/deep')!
+    await act(async () => { dirRow.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    // /w/app is the explorer root and /w/app/src is already open: only the hit
+    // itself is toggled (a repeat toggle would COLLAPSE an open ancestor).
+    expect(onToggle).toHaveBeenCalledTimes(1)
+    expect(onToggle).toHaveBeenCalledWith('/w/app/src/deep')
+  })
+
+  it('still opens a file hit, leaving the expansion state untouched', async () => {
+    fsSearch.mockResolvedValue({ matches: ['src', 'src/a.ts'], dirs: ['src'], truncated: false })
+    const onToggle = vi.fn()
+    const onOpenFile = vi.fn()
+    harness = mountPanel({ onToggle, onOpenFile })
+    await act(async () => {})
+    await search(harness.container, 'src')
+
+    const fileRow = resultRows(harness.container).find(row => row.textContent === 'src/a.ts')!
+    await act(async () => { fileRow.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(onOpenFile).toHaveBeenCalledWith('/tmp/src/a.ts')
+    expect(onToggle).not.toHaveBeenCalled()
+    // A file open keeps the results list up (only a navigation clears it).
+    expect(resultsBody(harness.container).hasAttribute('hidden')).toBe(false)
   })
 })
