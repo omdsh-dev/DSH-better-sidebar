@@ -505,6 +505,8 @@ export const tr: Record<string, string> = {
   changesRedactOffLabel: "Maskeleme yok",
   changesRedactBanner: "Maskelendi",
   pluginSentinelName: 'dsh-sentinel Uyandırma sistemi',
+  pluginFileTraceName: 'dsh-file-trace Dosya İzleme',
+  pluginFileTraceDesc: 'Modelin okuduğu, yazdığı veya düzenlediği her dosyayı kaydeder; içerik ve satır bazlı diff ile gruplu liste, Markdown okuma modu ve gizli bilgi maskeleme; better-sidebar yokken bağımsız yüzen pencere',
   pluginEgoBrowserName: 'ego-browser Ajan tarayıcısı',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf sekmesi',
   pluginDocsPanelName: 'dsh-docs-panel Genel belgeler',

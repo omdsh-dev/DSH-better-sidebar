@@ -497,6 +497,8 @@ export const ko: Record<string, string> = {
   changesRedactOffLabel: "마스킹 해제",
   changesRedactBanner: "마스킹됨",
   pluginSentinelName: 'dsh-sentinel 웨이크업 시스템',
+  pluginFileTraceName: 'dsh-file-trace 파일 추적',
+  pluginFileTraceDesc: '모델이 읽기·쓰기·편집한 모든 파일을 기록해 파일별 내용과 줄 단위 diff로 보여 줍니다. Markdown 읽기 모드와 민감정보 마스크 포함, better-sidebar 미설치 시 독립 플로팅 창',
   pluginEgoBrowserName: 'ego-browser 에이전트 브라우저',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf 탭',
   pluginDocsPanelName: 'dsh-docs-panel 전역 문서',

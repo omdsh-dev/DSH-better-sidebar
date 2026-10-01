@@ -498,6 +498,8 @@ export const fr: Record<string, string> = {
   changesRedactOffLabel: "Sans masquage",
   changesRedactBanner: "Masqué",
   pluginSentinelName: 'dsh-sentinel Système de réveil',
+  pluginFileTraceName: 'dsh-file-trace Suivi de fichiers',
+  pluginFileTraceDesc: 'Enregistre chaque fichier lu, écrit ou modifié par le modèle ; liste groupée avec contenus et diffs ligne à ligne, mode lecture Markdown et masquage des secrets ; fenêtre flottante autonome sans better-sidebar',
   pluginEgoBrowserName: 'ego-browser Navigateur d’agents',
   pluginBetterOverleafName: 'dsh-better-overleaf Onglet Overleaf',
   pluginDocsPanelName: 'dsh-docs-panel Docs globales',

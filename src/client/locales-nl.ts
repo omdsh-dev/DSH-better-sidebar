@@ -503,6 +503,8 @@ export const nl: Record<string, string> = {
   changesRedactOffLabel: "Zonder redactie",
   changesRedactBanner: "Geredigeerd",
   pluginSentinelName: 'dsh-sentinel Weksysteem',
+  pluginFileTraceName: 'dsh-file-trace Bestandstracering',
+  pluginFileTraceDesc: 'Legt elk bestand vast dat het model leest, schrijft of bewerkt; gegroepeerde lijst met inhoud en regeldiffs, Markdown-leesmodus en geheimmaskering; zonder better-sidebar een zelfstandig zwevend venster',
   pluginEgoBrowserName: 'ego-browser Agentbrowser',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf-tab',
   pluginDocsPanelName: 'dsh-docs-panel Globale documenten',

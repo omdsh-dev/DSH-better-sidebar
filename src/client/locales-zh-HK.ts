@@ -520,6 +520,8 @@ export const zhHK: Record<string, string> = {
   changesRedactOffLabel: "脫敏關",
   changesRedactBanner: "已脫敏",
   pluginSentinelName: 'dsh-sentinel 喚醒系統',
+  pluginFileTraceName: 'dsh-file-trace 檔案追蹤',
+  pluginFileTraceDesc: '記錄模型讀取/寫入/編輯的每一個檔案，按檔案分組查看內容與逐行 diff；含 Markdown 閱讀模式與敏感內容遮罩，未裝 better-sidebar 時為獨立浮動視窗',
   pluginEgoBrowserName: 'ego-browser Agent 瀏覽器',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf 標籤',
   pluginDocsPanelName: 'dsh-docs-panel 全域文件',

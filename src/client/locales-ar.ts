@@ -506,6 +506,8 @@ export const ar: Record<string, string> = {
   changesRedactOffLabel: "بدون تنقيع",
   changesRedactBanner: "مُنقّى",
   pluginSentinelName: 'dsh-sentinel نظام الاستيقاظ',
+  pluginFileTraceName: 'dsh-file-trace تتبّع الملفات',
+  pluginFileTraceDesc: 'يسجّل كل ملف يقرأه النموذج أو يكتبه أو يعدّله؛ قائمة مجمّعة بالمحتويات وفروقات سطر بسطر، مع وضع قراءة Markdown وإخفاء الأسرار؛ نافذة عائمة مستقلة بدون better-sidebar',
   pluginEgoBrowserName: 'ego-browser متصفح الوكيل',
   pluginBetterOverleafName: 'dsh-better-overleaf تبويب Overleaf',
   pluginDocsPanelName: 'dsh-docs-panel مستندات عامة',

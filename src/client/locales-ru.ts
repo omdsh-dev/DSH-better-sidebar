@@ -503,6 +503,8 @@ export const ru: Record<string, string> = {
   changesRedactOffLabel: "Без маскировки",
   changesRedactBanner: "Замаскировано",
   pluginSentinelName: 'dsh-sentinel Система пробуждения',
+  pluginFileTraceName: 'dsh-file-trace Отслеживание файлов',
+  pluginFileTraceDesc: 'Записывает каждый файл, который модель читает, записывает или изменяет; сгруппированный список с содержимым и построчными diff, режим чтения Markdown и маскирование секретов; без better-sidebar — отдельное плавающее окно',
   pluginEgoBrowserName: 'ego-browser Браузер агента',
   pluginBetterOverleafName: 'dsh-better-overleaf Вкладка Overleaf',
   pluginDocsPanelName: 'dsh-docs-panel Глобальные документы',

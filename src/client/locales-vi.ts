@@ -505,6 +505,8 @@ export const vi: Record<string, string> = {
   changesRedactOffLabel: "Không làm mờ",
   changesRedactBanner: "Đã làm mờ",
   pluginSentinelName: 'dsh-sentinel Hệ thống đánh thức',
+  pluginFileTraceName: 'dsh-file-trace Truy vết tệp',
+  pluginFileTraceDesc: 'Ghi lại mọi tệp mô hình đọc, ghi hoặc chỉnh sửa; danh sách nhóm theo tệp với nội dung và diff từng dòng, chế độ đọc Markdown và che dữ liệu nhạy cảm; cửa sổ nổi độc lập khi không có better-sidebar',
   pluginEgoBrowserName: 'ego-browser Trình duyệt agent',
   pluginBetterOverleafName: 'dsh-better-overleaf Tab Overleaf',
   pluginDocsPanelName: 'dsh-docs-panel Tài liệu toàn cục',

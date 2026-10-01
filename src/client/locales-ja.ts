@@ -508,6 +508,8 @@ export const ja: Record<string, string> = {
   changesRedactBanner: "マスク済み",
   pluginAgentPersonaName: 'dsh-agent-persona ペルソナ',
   pluginSentinelName: 'dsh-sentinel ウェイクアップシステム',
+  pluginFileTraceName: 'dsh-file-trace ファイル追跡',
+  pluginFileTraceDesc: 'モデルが読み取り・書き込み・編集したすべてのファイルを記録し、ファイルごとに内容と行単位 diff を表示。Markdown 閲覧モードと機密マスク付き。better-sidebar 未導入時は単独のフローティングウィンドウ',
   pluginEgoBrowserName: 'ego-browser エージェントブラウザー',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf タブ',
   pluginDocsPanelName: 'dsh-docs-panel グローバルドキュメント',

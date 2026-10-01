@@ -488,6 +488,8 @@ export const sv: Record<string, string> = {
   changesRedactOffLabel: "Utan maskning",
   changesRedactBanner: "Maskerat",
   pluginSentinelName: 'dsh-sentinel Väcksystem',
+  pluginFileTraceName: 'dsh-file-trace Filspårning',
+  pluginFileTraceDesc: 'Registrerar varje fil modellen läser, skriver eller redigerar; grupperad lista med innehåll och rad-diffs, Markdown-läsläge och hemlighetsmaskering; utan better-sidebar ett fristående flytande fönster',
   pluginEgoBrowserName: 'ego-browser Agentwebbläsare',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf-flik',
   pluginDocsPanelName: 'dsh-docs-panel Globala dokument',

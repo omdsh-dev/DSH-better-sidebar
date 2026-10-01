@@ -505,6 +505,8 @@ export const th: Record<string, string> = {
   changesRedactOffLabel: "ไม่ซ่อน",
   changesRedactBanner: "ถูกซ่อนแล้ว",
   pluginSentinelName: 'dsh-sentinel ระบบปลุกเตือน',
+  pluginFileTraceName: 'dsh-file-trace ติดตามไฟล์',
+  pluginFileTraceDesc: 'บันทึกทุกไฟล์ที่โมเดลอ่าน เขียน หรือแก้ไข; รายการแบ่งตามไฟล์พร้อมเนื้อหาและ diff รายบรรทัด โหมดอ่าน Markdown และการพรางข้อมูลลับ; เป็นหน้าต่างลอยแยกเมื่อไม่มี better-sidebar',
   pluginEgoBrowserName: 'ego-browser เบราว์เซอร์เอเจนต์',
   pluginBetterOverleafName: 'dsh-better-overleaf แท็บ Overleaf',
   pluginDocsPanelName: 'dsh-docs-panel เอกสารส่วนกลาง',

@@ -491,6 +491,8 @@ export const de: Record<string, string> = {
   changesRedactOffLabel: "Ohne Schwärzung",
   changesRedactBanner: "Geschwärzt",
   pluginSentinelName: 'dsh-sentinel Wecksystem',
+  pluginFileTraceName: 'dsh-file-trace Dateiverfolgung',
+  pluginFileTraceDesc: 'Zeichnet jede Datei auf, die das Modell liest, schreibt oder bearbeitet; gruppierte Liste mit Inhalten und Zeilen-Diffs, Markdown-Lesemodus und Geheimnis-Maskierung; ohne better-sidebar eigenständiges schwebendes Fenster',
   pluginEgoBrowserName: 'ego-browser Agent-Browser',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf-Tab',
   pluginDocsPanelName: 'dsh-docs-panel Globale Dokumente',

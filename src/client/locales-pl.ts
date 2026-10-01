@@ -507,6 +507,8 @@ export const pl: Record<string, string> = {
   changesRedactOffLabel: "Bez redakcji",
   changesRedactBanner: "Zredagowano",
   pluginSentinelName: 'dsh-sentinel System wybudzania',
+  pluginFileTraceName: 'dsh-file-trace Śledzenie plików',
+  pluginFileTraceDesc: 'Zapisuje każdy plik odczytany, zapisany lub edytowany przez model; pogrupowana lista z zawartością i diffami linia po linii, tryb czytania Markdown i maskowanie sekretów; bez better-sidebar osobne okno pływające',
   pluginEgoBrowserName: 'ego-browser Przeglądarka agenta',
   pluginBetterOverleafName: 'dsh-better-overleaf Karta Overleaf',
   pluginDocsPanelName: 'dsh-docs-panel Dokumenty globalne',

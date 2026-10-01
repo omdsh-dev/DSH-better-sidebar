@@ -503,6 +503,8 @@ export const id: Record<string, string> = {
   changesRedactOffLabel: "Tanpa redaksi",
   changesRedactBanner: "Teredaksi",
   pluginSentinelName: 'dsh-sentinel Sistem bangun',
+  pluginFileTraceName: 'dsh-file-trace Pelacakan File',
+  pluginFileTraceDesc: 'Mencatat setiap file yang dibaca, ditulis, atau diedit model; daftar terkelompok dengan konten dan diff per baris, mode baca Markdown dan penyamaran rahasia; jendela mengambang mandiri tanpa better-sidebar',
   pluginEgoBrowserName: 'ego-browser Peramban agen',
   pluginBetterOverleafName: 'dsh-better-overleaf Tab Overleaf',
   pluginDocsPanelName: 'dsh-docs-panel Dokumen global',

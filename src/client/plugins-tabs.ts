@@ -83,6 +83,17 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-docs-panel',
   },
   {
+    id: '@dsh-external/dsh-file-trace',
+    name: () => t('pluginFileTraceName'),
+    url: 'https://github.com/lhh010/dsh-file-trace',
+    description: () => t('pluginFileTraceDesc'),
+    // Dual mount: registers the native "File Trace" tab when better-sidebar
+    // is present (optional peer), standalone floating window otherwise.
+    // GitHub-sourced with committed lib/ — the pinned github: tag installs
+    // without a local build.
+    install: "cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add '@dsh-external/dsh-file-trace@github:lhh010/dsh-file-trace#v0.3.24'",
+  },
+  {
     id: 'dsh-tylina',
     name: () => t('pluginTylinaName'),
     url: 'https://github.com/tylina/dsh-tylina',

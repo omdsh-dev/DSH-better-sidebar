@@ -505,6 +505,8 @@ export const hi: Record<string, string> = {
   changesRedactOffLabel: "बिना रिडैक्शन",
   changesRedactBanner: "रिडैक्टेड",
   pluginSentinelName: 'dsh-sentinel वेक-अप सिस्टम',
+  pluginFileTraceName: 'dsh-file-trace फ़ाइल ट्रैसिंग',
+  pluginFileTraceDesc: 'मॉडल द्वारा पढ़ी/लिखी/संपादित हर फ़ाइल दर्ज करता है; सामग्री और लाइन-बाय-लाइन diff के साथ समूहबद्ध सूची, Markdown पढ़ने का मोड और गुप्त मास्किंग; better-sidebar के बिना स्वतंत्र फ़्लोटिंग विंडो',
   pluginEgoBrowserName: 'ego-browser एजेंट ब्राउज़र',
   pluginBetterOverleafName: 'dsh-better-overleaf Overleaf टैब',
   pluginDocsPanelName: 'dsh-docs-panel ग्लोबल डॉक्स',
