@@ -50,6 +50,9 @@ import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 import { readPersistedSession } from './session-store.ts'
+// Shared with the client's batch splitter: the two halves must agree on the
+// row bound, so it lives in a dependency-free module both can import.
+import { FS_TREES_MAX_PATHS } from './fs-batch.ts'
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
@@ -75,8 +78,9 @@ export { archiveNameOf, collectZipEntries, contentDispositionOf, disambiguateArc
 /** Plugin identity for cordis.yml rows. */
 export const name = 'dsh-better-sidebar'
 
-/** Row bound of one `fs.trees` batch request (a mount/refresh sends what it shows). */
-export const FS_TREES_MAX_PATHS = 64
+/** Row bound of one `fs.trees` batch request (a mount/refresh sends what it
+ *  shows, split into cap-sized batches by the client — see `fs-batch.ts`). */
+export { FS_TREES_MAX_PATHS }
 
 /** One level of an `fs.trees` batch: either a listing or that level's failure. */
 export interface SidebarFsLevel {

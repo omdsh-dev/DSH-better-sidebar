@@ -49,7 +49,8 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
 import { VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
-import { api, archiveBuild, archiveDownloadUrl, archiveStatus, downloadUrl, type FsEntry } from './api.ts'
+import { api, archiveBuild, archiveDownloadUrl, archiveStatus, downloadUrl, type FsEntry, type FsLevel } from './api.ts'
+import { FS_TREES_MAX_PATHS } from '../fs-batch.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
 import { isImeComposition } from './ime-guard.ts'
@@ -662,33 +663,56 @@ export function FileTree(props: {
     // fresh one arrives: no blank frame, and a failed refresh degrades to the
     // previous listing plus a hint instead of an empty tree.
     if (!force) for (const path of wanted) storeLevel(path, {})
+    // The host rows ONE `fs.trees` request at FS_TREES_MAX_PATHS and refuses a
+    // larger one OUTRIGHT (`too many paths`), which used to blank the WHOLE
+    // tree for a session whose persisted expansion set reached the cap. Split
+    // the visible set into cap-sized batches and keep the per-level error
+    // identity the batch route is built around: a batch that fails marks only
+    // the levels it carried.
+    const batches: string[][] = []
+    for (let index = 0; index < wanted.length; index += FS_TREES_MAX_PATHS) {
+      batches.push(wanted.slice(index, index + FS_TREES_MAX_PATHS))
+    }
     // The route takes no signal: the GENERATION counter is the staleness guard
     // (a refresh tick or an unmount bumps it, so a late answer is dropped).
-    api.fsTrees({ sessionId, cwd }, wanted).then((result) => {
+    type BatchOutcome =
+      | { batch: string[]; ok: true; levels: FsLevel[] }
+      | { batch: string[]; ok: false; message: string }
+    void Promise.all(batches.map(async (batch): Promise<BatchOutcome> => {
+      try {
+        return { batch, ok: true, levels: (await api.fsTrees({ sessionId, cwd }, batch)).levels }
+      } catch (error: unknown) {
+        return { batch, ok: false, message: error instanceof Error ? error.message : String(error) }
+      }
+    })).then((settled) => {
       if (generation !== generationRef.current) return
       setLoadError(null)
-      for (const level of result.levels) {
-        storeLevel(level.path, {
-          entries: level.entries,
-          truncated: level.truncated,
-          ...(level.error !== undefined ? { error: level.error } : {}),
-        })
-      }
-    }).catch((error: unknown) => {
-      if (generation !== generationRef.current) return
-      const message = error instanceof Error ? error.message : String(error)
+      let failure = ''
       let keptListing = false
-      for (const path of wanted) {
-        const level = dataRef.current[path]
-        if (level?.entries !== undefined) {
-          keptListing = true
+      for (const outcome of settled) {
+        if (outcome.ok) {
+          for (const level of outcome.levels) {
+            storeLevel(level.path, {
+              entries: level.entries,
+              truncated: level.truncated,
+              ...(level.error !== undefined ? { error: level.error } : {}),
+            })
+          }
           continue
         }
-        storeLevel(path, { error: message })
+        if (failure === '') failure = outcome.message
+        for (const path of outcome.batch) {
+          const level = dataRef.current[path]
+          if (level?.entries !== undefined) {
+            keptListing = true
+            continue
+          }
+          storeLevel(path, { error: outcome.message })
+        }
       }
       // Levels that had a listing keep it; the hint explains why they are not
       // fresher. With nothing to keep, the per-level rows already say it.
-      setLoadError(keptListing ? message : null)
+      if (failure !== '') setLoadError(keptListing ? failure : null)
     })
   }, [sessionId, cwd, storeLevel])
 
