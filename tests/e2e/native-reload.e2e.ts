@@ -28,6 +28,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { PAGE_URL, createHostApi, hostRpc, sendFirstMessage } from './host'
+// The strip's addressable contract comes from the module that owns it.
+import { DIAGNOSTIC_STRIP_ID } from '../../src/client/diagnostic-strip.ts'
 
 /** Workspace the sidebar renders against (created by this lane's seeding). */
 const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-workspace')
@@ -138,7 +140,11 @@ test('the native tab types survive an in-page client entry replacement', async (
   const registrationErrors = consoleErrors.filter(message => REGISTRATION_ERROR.test(message))
   expect(registrationErrors, registrationErrors.join('\n')).toEqual([])
   await expect(
-    page.locator('body > div', { hasText: 'native register files error' }),
+    // Addressed by the strip's stable id: `fail()` renders one row per phase
+    // INSIDE this host, so the old `body > div` shape stopped matching as soon
+    // as the strip gained a container — it would have passed while a strip was
+    // pinned, which is exactly the false green this lane exists to prevent.
+    page.locator(`#${DIAGNOSTIC_STRIP_ID}`, { hasText: 'native register files error' }),
     'the failure strip must not be pinned',
   ).toHaveCount(0)
   // The Files takeover works again after the replacement: the guide row is
