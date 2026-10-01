@@ -1829,7 +1829,15 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 .mermaidModalToolbar {
   position: absolute;
-  top: 16px;
+  /* Issue #805: the shell draws the native caption strip (minimize /
+     maximize / close) OVER the top-right of the page, and events in that band
+     never reach the document. A toolbar pinned at a bare 16px therefore keeps
+     only `36 - strip` px of its buttons clickable (10px of 36 at the reporter's
+     42px overlay) while `elementFromPoint` still answers the button, so it
+     reads as "the button is dead". Yield the SAME strip the shell publishes
+     (`titlebar-strip.ts`: real WCO geometry → shell contract parameter →
+     preset/manual): 0px keeps plain browsers exactly as they were. */
+  top: calc(var(--dsh-title-bar-strip, 0px) + 16px);
   right: 16px;
   display: flex;
   gap: 8px;
