@@ -144,6 +144,11 @@ export function TextEditor(props: FileViewerProps) {
         CodeMirrorView.contentAttributes.of({ spellcheck: 'false' }),
         cmSurfaceTheme,
         themeComp.of(dark),
+        // A truncated read only carries the first readLimit bytes; edits made
+        // on partial content must never be saved over the full file (issue
+        // #732), so the document is rendered read-only until a full read
+        // replaces it.
+        ...(truncated === true ? [EditorState.readOnly.of(true)] : []),
         ...(language !== null ? [language] : []),
         CodeMirrorView.updateListener.of((update) => {
           if (update.docChanged) {
@@ -215,7 +220,7 @@ export function TextEditor(props: FileViewerProps) {
     // tab's lifetime, and the dark flip is handled by the reconfigure
     // effect below (recreating the view here would drop the draft).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content, path])
+  }, [content, path, truncated])
 
   // Scheme flip: re-theme in place (the compartment holds only the
   // scheme-dependent extensions; everything else is untouched).
@@ -290,6 +295,11 @@ export function TextEditor(props: FileViewerProps) {
   const save = (): void => {
     const view = viewRef.current
     if (view === null || savingRef.current) return
+    // Defense in depth for issue #732: a truncated read only holds the first
+    // readLimit bytes, and fs.write replaces the whole file — saving partial
+    // content would destroy the tail. The readOnly extension already blocks
+    // edits; this guards the keymap path against future trigger points.
+    if (truncated === true) return
     savingRef.current = true
     setSaveState('saving')
     api.fsWrite(scope, path, view.state.doc.toString()).then(() => {
@@ -422,7 +432,7 @@ export function TextEditor(props: FileViewerProps) {
   const lastToolbarRef = useRef('')
   useEffect(() => {
     if (!hostToolbar) return
-    const state: EditorToolbarState = { modes: markdown || html, mode, dirty, editable, saveState }
+    const state: EditorToolbarState = { modes: markdown || html, mode, dirty, editable, truncated: truncated === true, saveState }
     const key = JSON.stringify(state)
     if (lastToolbarRef.current === key) return
     lastToolbarRef.current = key
@@ -460,7 +470,7 @@ export function TextEditor(props: FileViewerProps) {
           </div>
         )}
         {dirty && <span className={css.dirtyDot} title={t('unsaved')} />}
-        {editable && (
+        {editable && truncated !== true && (
           <button
             type="button"
             className={css.iconButton}
@@ -476,7 +486,7 @@ export function TextEditor(props: FileViewerProps) {
       )}
       {editable && (
         <>
-          {truncated === true && mode === 'edit' && <div className={css.editorBanner}>{t('truncation')}</div>}
+          {truncated === true && <div className={css.editorBanner}>{t('truncation')}</div>}
           <div
             className={clsx(css.editorCm, (markdown || html) && mode === 'preview' && css.editorCmHidden)}
             ref={hostRef}

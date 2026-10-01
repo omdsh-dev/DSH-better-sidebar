@@ -296,6 +296,10 @@ export interface EditorToolbarState {
   dirty: boolean
   /** Whether saving applies (text content loaded). */
   editable: boolean
+  /** Whether the loaded text was truncated at readLimit — the editor is
+   *  read-only and saving is disabled (issue #732: saving partial content
+   *  would overwrite and destroy the tail of the file). */
+  truncated?: boolean
   saveState: 'idle' | 'saving' | 'saved' | 'failed'
 }
 
