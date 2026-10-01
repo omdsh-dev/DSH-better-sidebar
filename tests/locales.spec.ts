@@ -6,7 +6,7 @@
  * interpolation.
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { LOCALE_NS, attachBetterLocale, attachLocale, attachLocaleDicts, en, getCopyRevision, isZh, relativeTime, subscribeCopy, t, zh } from '../src/client/locales.ts'
+import { LOCALE_NS, attachBetterLocale, attachLocale, chatT, en, isZh, relativeTime, t, zh } from '../src/client/locales.ts'
 import { localeDicts } from '../src/client/chunks/locale.tsx'
 
 /** Minimal structural fake of the DSH LocaleService face the sidebar uses. */
@@ -37,7 +37,6 @@ function stubNavigatorLanguage(lang: string | undefined): void {
 afterEach(() => {
   attachLocale(undefined)
   attachBetterLocale(undefined)
-  attachLocaleDicts(undefined)
   stubNavigatorLanguage(undefined)
 })
 
@@ -120,16 +119,55 @@ describe('locales (DSH i18n following)', () => {
     }
     expect(Object.keys(localeDicts), 'every shipped third language rides the locale chunk').toContain('ja')
   })
+})
 
-  it('the Edit copy of all 21 dictionaries never names a status "Changed" (Brian 29/09: the word is "Updated")', () => {
-    const dicts: Array<[string, Record<string, string>]> = [['zh', zh as Record<string, string>], ['en', en as Record<string, string>], ...Object.entries(localeDicts) as Array<[string, Record<string, string>]>]
-    expect(dicts).toHaveLength(21)
-    for (const [lang, dict] of dicts) {
-      for (const [key, value] of Object.entries(dict)) {
-        if (!/^(edit|mode)/.test(key)) continue
-        expect(value, `${lang}.${key}`).not.toMatch(/\bchanged\b/i)
-      }
-    }
+/**
+ * A locale service whose `bind` reads instance state, exactly like DSH's own
+ * (`LocaleRuntime.bind` touches `this.bound`). A detached call — the natural
+ * refactor `const bind = service.bind; bind('chat')` — throws here, which is
+ * what a real host did before the mount lane caught it.
+ */
+class FakeLocaleWithBind {
+  active = 'zh'
+  private readonly dicts: Record<string, Record<string, string>> = {
+    chat: { 'message.stepProcess.done.read': '已读取文件' },
+  }
+  getSnapshot(): { active: string } {
+    return { active: this.active }
+  }
+  bind(ns: string): (key: string, params?: Record<string, string | number>) => string {
+    // The `this` read that makes a detached call blow up.
+    const dict: Record<string, string> = this.dicts[ns] ?? {}
+    return (key) => dict[key] ?? key
+  }
+}
+
+describe('locales (host chat namespace bridge)', () => {
+  it('reads the host namespace through a METHOD call on the attached service', () => {
+    attachLocale(new FakeLocaleWithBind())
+    expect(chatT('message.stepProcess.done.read')).toBe('已读取文件')
+  })
+
+  it('answers undefined for a namespace or key the host does not serve', () => {
+    attachLocale(new FakeLocaleWithBind())
+    // An unregistered host namespace resolves to the key itself: the caller
+    // must see "unavailable", never the raw `message.…` key.
+    expect(chatT('message.stepProcess.read')).toBeUndefined()
+  })
+
+  it('answers undefined when the attached face has no bind at all', () => {
+    attachLocale({ getSnapshot: () => ({ active: 'en' }) })
+    expect(chatT('message.stepProcess.done.read')).toBeUndefined()
+    attachLocale(undefined)
+    expect(chatT('message.stepProcess.done.read')).toBeUndefined()
+  })
+
+  it('never lets a throwing host seam break a render', () => {
+    attachLocale({
+      getSnapshot: () => ({ active: 'en' }),
+      bind: () => { throw new TypeError("Cannot read properties of undefined (reading 'bound')") },
+    })
+    expect(chatT('message.stepProcess.done.read')).toBeUndefined()
   })
 })
 
@@ -264,39 +302,5 @@ describe('locales (better-locale override)', () => {
       expect(text, `ja translation for "${key}"`).toBeTruthy()
       expect(text, `ja translation for "${key}"`).not.toBe(key)
     }
-  })
-})
-
-describe('a native third language with no better-locale store (dsh 0.1.7; TCH e2e L4: the vi toolbar read "Comments 4")', () => {
-  it('the sidebar\'s own dictionary for the DSH active locale wins over the en fallback once attached', () => {
-    const locale = new FakeLocale()
-    locale.switchTo('vi')
-    attachLocale(locale)
-    expect(t('commentsButton')).toBe(en.commentsButton)
-    attachLocaleDicts(localeDicts)
-    expect(t('commentsButton')).toBe(localeDicts.vi!.commentsButton)
-    expect(t('commentsButtonCount', { count: 4 })).toBe(localeDicts.vi!.commentsButtonCount!.replace('{count}', '4'))
-  })
-
-  it('a region tag reads its language (vi-VN → vi); zh and en keep their own chain', () => {
-    const locale = new FakeLocale()
-    attachLocale(locale)
-    attachLocaleDicts(localeDicts)
-    locale.switchTo('vi-VN')
-    expect(t('commentsButton')).toBe(localeDicts.vi!.commentsButton)
-    locale.switchTo('zh')
-    expect(t('commentsButton')).toBe(zh.commentsButton)
-    locale.switchTo('en')
-    expect(t('commentsButton')).toBe(en.commentsButton)
-  })
-
-  it('attaching the dictionaries tells subscribers, so the Browser toolbar re-renders in the new language', () => {
-    let calls = 0
-    const off = subscribeCopy(() => { calls += 1 })
-    const before = getCopyRevision()
-    attachLocaleDicts(localeDicts)
-    expect(calls).toBe(1)
-    expect(getCopyRevision()).toBe(before + 1)
-    off()
   })
 })

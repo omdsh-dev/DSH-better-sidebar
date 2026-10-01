@@ -624,7 +624,7 @@ describe('the page\'s real address (Brian, 27/09 evening)', () => {
   })
 
   it('"Copy link" copies the site door with the page and the mode, never the session', async () => {
-    const writeText = vi.fn(async () => {})
+    const writeText = vi.fn(async (_text: string) => {})
     Object.defineProperty(globalThis, 'navigator', {
       value: { language: 'en-US', platform: 'MacIntel', userAgent: 'x', clipboard: { writeText } },
       configurable: true,

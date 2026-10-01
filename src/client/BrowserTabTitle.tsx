@@ -140,8 +140,26 @@ export function BrowserTabTitle({ tab, params, title, active, isActiveDestinatio
   return <>
     {/* Portaled menu presses still bubble through the tab chip's React tree. Stop the chip's drag
         handler on pointerdown so the row receives its click and can switch workspaces. */}
-    <span className={css.browserSiteMenuHost} onPointerDown={event => { event.stopPropagation() }}>
-    <Menu open={open} portal compact autoFocus collisionAvoidance listClassName={css.browserSiteMenu} onClose={() => { setOpen(false) }}
+    <span className={css.browserSiteMenuHost}
+      onPointerDown={event => { event.stopPropagation() }}
+      onClickCapture={event => {
+        const row = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('button[role="menuitem"][aria-haspopup="menu"]') : null
+        if (row === null) return
+        const key = row.textContent?.trim()
+        const site = sites.find(candidate => candidate.siteKey === key)
+        if (site === undefined || !site.agent) return
+        setOpen(false)
+        if (site.siteKey !== workspaceSiteKey()) {
+          openOtherSite(workspaceUrl(site, 'tracy:browser'))
+          return
+        }
+        const query = new URLSearchParams(window.location.search)
+        if (isActiveDestination !== undefined ? isActiveDestination('tracy:browser', site.siteKey)
+          : active || (query.get('tab') === 'tracy:browser' && (query.get('site') === null || query.get('site') === key))) return
+        openLocal?.('tracy:browser', site.siteKey)
+      }}
+    >
+    <Menu open={open} portal compact autoFocus listClassName={css.browserSiteMenu} onClose={() => { setOpen(false) }}
       selectedId={siteKey}
       items={status === 'loading' ? [{ id: 'loading', label: t('browserSitesLoading'), disabled: true }]
         : status === 'error' ? [{ id: 'retry', label: t('browserSitesRetry') }]

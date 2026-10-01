@@ -2230,14 +2230,13 @@ describe('round 5: the Comments view\'s page box (chat-input fix/comment-r5-chat
 describe('round 6: one act, one controller — the conversation on screen (acceptance v4 SEND-v4-new-1)', () => {
   // dsh mints native tab ids per conversation (`tab1`, `tab2`, …), so the Browser tab of the conversation
   // left behind — kept mounted since round 5 — can carry the SAME id as the one on screen.
-  let other: CommentMode
   let otherFrame: HTMLIFrameElement
   function Pair(props: { shown: 's1' | 's2' }) {
     const [api] = useState(() => createCommentApi({ siteKey: 'northgate' }))
     const [apiB] = useState(() => createCommentApi({ siteKey: 'northgate' }))
     const common = { url: HOME, tracySite: true, domainsKnown: true, viaHost: false, edit: true, setMode: () => {}, tabId: 'tab-1' }
     mode = useCommentMode({ ...common, frameRef: { current: iframe }, sessionId: 's1', api, active: props.shown === 's1', conversationShown: props.shown === 's1' })
-    other = useCommentMode({ ...common, frameRef: { current: otherFrame }, sessionId: 's2', api: apiB, active: props.shown === 's2', conversationShown: props.shown === 's2' })
+    useCommentMode({ ...common, frameRef: { current: otherFrame }, sessionId: 's2', api: apiB, active: props.shown === 's2', conversationShown: props.shown === 's2' })
     return null
   }
   async function mountPair(shown: 's1' | 's2' = 's1'): Promise<void> {

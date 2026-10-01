@@ -251,7 +251,7 @@ describe('tracy:browser registration', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ sites: [
       { siteKey: 'b.test', status: 'accepted', platform: 'wordpress', copyUrl: 'https://b.test/', agent: '/' },
     ] }))))
-    const { host, root } = await mount(createElement(BrowserTabTitle, { tab: undefined, title: 'Browser', openOtherSite }))
+    const { host, root } = await mount(createElement(BrowserTabTitle, { tab: undefined, params: undefined, title: 'Browser', openOtherSite }))
     try {
       await act(async () => { host.querySelector('button')!.click() })
       const parent = document.querySelector<HTMLButtonElement>('[role="menuitem"][aria-haspopup="menu"]')!

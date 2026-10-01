@@ -87,6 +87,7 @@ describe('host plugin smoke', () => {
       '/sidebar/api',
       '/sidebar/upload',
       '/sidebar/bundle',
+      '/sidebar/archive',
       '/sidebar/file',
       '/sidebar/html',
       // Tracy: serves a framing-refused document from this origin so the
@@ -798,7 +799,6 @@ describe('side card settings routes', () => {
       autoOpenJobs: true,
       agentOpenTools: false,
       editorExplorer: false,
-      workspaceFence: true,
       // These title-bar fields are declared without a schema default on
       // purpose, so a document predating them migrates rather than flips.
       titleBarCompat: false,

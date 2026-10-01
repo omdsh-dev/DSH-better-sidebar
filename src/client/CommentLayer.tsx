@@ -1036,7 +1036,6 @@ export function ThreadCard(props: { mode: CommentMode; rect: PreviewPickRect | n
     // eslint-disable-next-line react-hooks/exhaustive-deps -- follows the count of own replies
   }, [mode.ownReplies])
   // After every render (the card capped beside its element, a message added, its place settled)…
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- after every render; nothing happens when the size did not move
   useLayoutEffect(() => { keepAim() })
   // …and a size change no render causes (a thumbnail loading, a font arriving).
   const openThreadId = root?.id ?? null

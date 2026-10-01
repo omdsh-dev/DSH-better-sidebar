@@ -5,30 +5,20 @@
  * jump-back). All of it reacts to the host's live feeds for the CURRENT
  * session; the sidebar shell only consumes the returned jump-back ref.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import type { Context, SidebarJobView, SidebarSessionList } from '../../context-types.ts'
 import type { SidebarStore } from '../state.ts'
 import { isNarrowWidth } from '../breakpoints.ts'
 import { detectNewDirectSubagent } from '../subagent-detect.ts'
 import { detectNewJob } from '../subagent-jobs.ts'
-import { api, isForbiddenError } from '../api.ts'
+import { clientJobs, useJobsSnapshot } from '../jobs-client.ts'
 import { dshUrl } from '../page-base.ts'
 import { mountedSessionId } from '../native/surface.ts'
-import { usePolling } from '../use-polling.ts'
 import { t } from '../locales.ts'
 
 /** How many consecutive reconnect failures stop the agent-opens push loop
  * (the loop restarts on session switch). */
 const FAILURE_LIMIT = 3
-
-/**
- * Background-job poll cadence (ms) for the job auto-open trigger. DSH 0.1.7
- * removed the client session snapshot's jobs mirror, so the trigger reads the
- * plugin's `jobs.list` route on a timer instead of reacting to a push. One
- * in-process registry read per tick bounds the auto-open latency at this
- * value.
- */
-const JOB_POLL_MS = 2_000
 
 /**
  * Subagent auto-open debounce (ms). The host delivers a new child's origin
@@ -49,14 +39,9 @@ const AUTO_OPEN_DEBOUNCE_MS = 500
 interface NativeColumnFace {
   isExpanded?: () => boolean
   toggleExpanded?: () => void
-  /** The active tab of the active pane (`ISidebarRight.active`). */
   active?: () => { kind: string } | undefined
 }
 
-/**
- * Tracy: the site preview's tab kind (`BrowserView.tsx` `TRACY_BROWSER_KIND`, repeated here so this
- * feed module does not import the whole view).
- */
 const SITE_PREVIEW_KIND = 'tracy:browser'
 
 /**
@@ -85,10 +70,6 @@ const SITE_PREVIEW_KIND = 'tracy:browser'
  */
 function activateTasksPage(ctx: Context, sessionId: string, options: { background: boolean }): void {
   const column = ctx.get('sidebarRight') as unknown as NativeColumnFace | undefined
-  // Tracy (TCH e2e v3 X08): background activity never takes the column away from the site
-  // preview. Opening Tasks there selected it mid-turn, so the person lost the Refresh control and
-  // the page they were reading. The Tasks page stays one click away in the guide; the jump-back
-  // (`background: false`) is the person's own click and still opens.
   if (options.background && mountedSessionId(ctx) === sessionId && column?.active?.()?.kind === SITE_PREVIEW_KIND) return
   const park = options.background
     // The face acts on the MOUNTED session: parking is only meaningful (and
@@ -136,8 +117,6 @@ export function useHostFeeds(feeds: {
     let failures = 0
     const connect = (): void => {
       if (closed) return
-      // Tracy: under the page's mount when it has one (page-base.ts, P7) — a root-absolute path skips
-      // `<base href>` and, behind Tracy's `/<siteKey>/` mount, asks the bare root (403: nothing of dsh's there).
       const url = new URL(dshUrl('/sidebar/ws/agent-opens'), location.origin)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
       url.search = new URLSearchParams({ sessionId }).toString()
@@ -208,6 +187,11 @@ export function useHostFeeds(feeds: {
    * baseline starts at the current count — so a deliberate layout is never
    * fought.
    *
+   * MOBILE: while the viewport is narrow (the plugin's own bracket), the
+   * `mobileNoAutoOpen` preference suppresses this takeover entirely — on a
+   * phone the Tasks page costs the whole screen, and the reader has not asked
+   * for it. The viewport is read when the trigger FIRES, like the park gate.
+   *
    * The decision is DEBOUNCED (AUTO_OPEN_DEBOUNCE_MS): a Side Chat thread
    * is also a subagent-origin child, and its 'Side: ' title lands one frame
    * after its origin — an immediate check would misread that first frame as
@@ -228,6 +212,7 @@ export function useHostFeeds(feeds: {
       autoOpenPendingRef.current = null
       if (!detectNewDirectSubagent(baseline, ctx.sessions.list.getSnapshot(), sessionId)) return
       if (!store.getPrefs().autoOpenSubagent) return
+      if (store.getPrefs().mobileNoAutoOpen && isNarrowWidth(window.innerWidth)) return
       if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
       activateTasksPage(ctx, sessionId, { background: true })
     }, AUTO_OPEN_DEBOUNCE_MS)
@@ -251,61 +236,49 @@ export function useHostFeeds(feeds: {
    * (0 → N only), ANY new job id triggers: the agent may start several jobs in
    * one session, and each should surface.
    *
-   * The list is POLLED: DSH 0.1.7 stopped mirroring background jobs into the
-   * client session snapshot, so the registry (fenced per OWNER session) is
-   * read through the plugin's `jobs.list` route. A fresh page load never
-   * triggers — the FIRST successful read only arms the baseline — and a host
-   * without the jobs service (503) leaves the baseline unarmed, so the first
-   * list that does arrive is never mistaken for new work.
+   * MOBILE: `mobileNoAutoOpen` suppresses this one too on a narrow viewport
+   * (one switch for both triggers — a phone should not be taken over by either
+   * kind of background work).
    *
-   * Tracy: a 403 ends the poll for that session (`jobsForbidden`) — the account
-   * may not read this session's list (dsh-passwords holds `jobs.list` to the
-   * seat's session grant), and retrying every tick only repeated the refusal (TCH #515).
-   * Only a 403 does: a dropped read or a 503 keeps the retry. A refusal that
-   * lands after the session switched away is dropped with the rest of the
-   * stale response, so it never stops the new session's poll. The ref holds
-   * the same set for the tick itself: the state turns the poller off, but
-   * only once React renders, and a tick must not ask again before that.
+   * The roster is PUSHED by the host's own client jobs service: one
+   * reference-counted `watchRows` stream for the current session replaces the
+   * 3s `jobs.list` poll this used to run. A fresh page load never triggers —
+   * the FIRST frame only arms the baseline — and a deployment without the
+   * jobs service leaves the baseline unarmed, so the first roster that does
+   * arrive is never mistaken for new work.
+   *
+   * `detectNewJob` also compares against the moment the watch STARTED: the
+   * first frame of a session that already had running jobs must not surface
+   * them as new work.
    */
+  const jobsService = clientJobs(ctx)
+  const jobsSnapshot = useJobsSnapshot(jobsService)
   const jobBaselineRef = useRef<readonly SidebarJobView[] | undefined>(undefined)
-  const jobsForbiddenRef = useRef<ReadonlySet<string>>(new Set())
-  const [jobsForbidden, setJobsForbidden] = useState<ReadonlySet<string>>(() => new Set())
-  // A session switch voids the previous session's baseline BEFORE the poller
-  // below restarts on the new id (effects run in declaration order).
-  useEffect(() => { jobBaselineRef.current = undefined }, [sessionId])
-  const pollJobs = useCallback(async (signal: AbortSignal): Promise<void> => {
-    if (sessionId === undefined || jobsForbiddenRef.current.has(sessionId)) return
-    let jobs: readonly SidebarJobView[]
-    try {
-      const result = await api.jobsList(sessionId, signal)
-      jobs = result.jobs
-    } catch (error) {
-      // No jobs service, or a dropped read: keep the last baseline and let the
-      // next tick retry (never treat an unreadable list as an empty one).
-      if (!signal.aborted && isForbiddenError(error)) {
-        jobsForbiddenRef.current = new Set(jobsForbiddenRef.current).add(sessionId)
-        setJobsForbidden(jobsForbiddenRef.current)
-        // Thrown, not returned: the self-scheduling loop's catch still arms
-        // one more tick, but the state above disables the poller before it
-        // fires — and a thrown refusal can never be read as an empty list.
-        throw error
-      }
-      return
+  const jobWatchStartRef = useRef<number | undefined>(undefined)
+  useEffect(() => {
+    if (jobsService === undefined || sessionId === undefined) return
+    const release = jobsService.watchRows(sessionId)
+    // A session switch voids the previous session's baseline AND its clock.
+    jobWatchStartRef.current = Date.now()
+    jobBaselineRef.current = undefined
+    return () => {
+      release()
+      jobBaselineRef.current = undefined
+      jobWatchStartRef.current = undefined
     }
-    if (signal.aborted) return
+  }, [jobsService, sessionId])
+  useEffect(() => {
+    if (jobsService === undefined || sessionId === undefined) return
+    const rows = jobsSnapshot.rows[sessionId] ?? []
     const prev = jobBaselineRef.current
-    jobBaselineRef.current = jobs
+    jobBaselineRef.current = rows
     if (prev === undefined) return
-    if (!detectNewJob(prev, jobs)) return
+    if (!detectNewJob(prev, rows, jobWatchStartRef.current)) return
     if (!store.getPrefs().autoOpenJobs) return
+    if (store.getPrefs().mobileNoAutoOpen && isNarrowWidth(window.innerWidth)) return
     if (ctx.get('betterSidebar')?.isTabEnabled('subagent') === false) return
     activateTasksPage(ctx, sessionId, { background: true })
-  }, [sessionId, store, ctx])
-  usePolling(sessionId !== undefined && !jobsForbidden.has(sessionId), pollJobs, {
-    intervalMs: JOB_POLL_MS,
-    mode: 'self-scheduling',
-    immediate: true,
-  })
+  }, [jobsService, jobsSnapshot, sessionId, store, ctx])
 
   /**
    * Topology jump-back: clicking a subagent node on the Subagent page calls

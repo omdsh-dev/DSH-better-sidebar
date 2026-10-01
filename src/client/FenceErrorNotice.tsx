@@ -15,7 +15,7 @@ import css from './sidebar.module.css'
 export function FenceErrorNotice() {
   return (
     <div className={css.fenceError}>
-      <span>{t('fenceErrorReason')}</span>
+      <span>{t('changesError')}</span>
     </div>
   )
 }

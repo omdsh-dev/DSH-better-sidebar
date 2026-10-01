@@ -9,7 +9,6 @@
  * status mapping mirror the official ui-jobs header list.
  */
 import type {
-  SidebarSessionList,
   SidebarJobStatus,
   SidebarJobView,
 } from '../context-types.ts'
@@ -35,42 +34,31 @@ export { treeSessionIds }
 
 /**
  * Whether a NEW background job appeared for the current session between two
- * consecutive reads of its job list (a job id the previous list lacked).
- * Unlike the subagent auto-open (0 → N only), ANY new job id triggers: the
- * agent may start several jobs over a session, and each new one should
- * surface the Tasks page containing the background-jobs section. A fresh page
- * load never triggers — the caller builds its baseline from the first list it
- * reads instead of comparing against one (see the poller in
- * sidebar/use-host-feeds.ts).
+ * roster frames (a job id the previous frame lacked). Unlike the subagent
+ * auto-open (0 → N only), ANY new job id triggers: the agent may start
+ * several jobs over a session, and each new one should surface the Tasks page
+ * that contains the background-jobs section.
+ *
+ * `since` (epoch ms) is the moment the caller STARTED watching the roster, and
+ * it is what keeps a page load honest now that the roster arrives as a push
+ * stream: the host's client jobs model drops a session's key when it sees no
+ * jobs, so an empty first frame is indistinguishable from "not delivered yet".
+ * A job that already existed when the watcher opened therefore looks brand new
+ * to an id-set diff — comparing its start time against `since` filters it out,
+ * while a job the agent starts afterwards still triggers.
+ *
+ * @param prev - the previous frame's rows.
+ * @param next - the current frame's rows.
+ * @param since - epoch ms the watch began; omitted skips the age test.
+ * @returns whether genuinely new work appeared.
  */
 export function detectNewJob(
   prev: readonly SidebarJobView[],
   next: readonly SidebarJobView[],
+  since?: number,
 ): boolean {
   const prevIds = new Set(prev.map(job => job.id))
-  return next.some(job => !prevIds.has(job.id))
-}
-
-/**
- * Collect the background jobs of the whole current tree, owner-labeled. The
- * map is keyed by the OWNER session (the fence's unit of access): sessions the
- * caller could not read, or that returned nothing, contribute nothing — an
- * absent entry is an empty set, never a dropped row of another tree.
- */
-export function collectTreeJobs(
-  byId: SidebarSessionList['byId'],
-  jobsBySession: Readonly<Record<string, readonly SidebarJobView[]>> | undefined,
-  rootId: string | undefined,
-): TreeJob[] {
-  const rows: TreeJob[] = []
-  if (jobsBySession === undefined) return rows
-  for (const sessionId of treeSessionIds(byId, rootId)) {
-    const jobs = jobsBySession[sessionId]
-    if (jobs === undefined || jobs.length === 0) continue
-    const ownerTitle = byId[sessionId]?.displayTitle ?? sessionId
-    for (const job of jobs) rows.push({ ownerSessionId: sessionId, ownerTitle, job })
-  }
-  return rows
+  return next.some(job => !prevIds.has(job.id) && (since === undefined || job.startedAt >= since))
 }
 
 /**

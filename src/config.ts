@@ -76,13 +76,23 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
 
 // ── User-facing "Side card" preferences ─────────────────────────────────────
 
-/** Schemastery schema for the user-facing preferences (validated by the settings service). */
+/**
+ * Schemastery schema for the user-facing preferences (validated by the
+ * settings service).
+ *
+ * Asserted as `z<SidebarPrefs>` (the interface lives in `prefs-shared.ts`; the
+ * explicit annotation is also what keeps the emitted declaration portable).
+ * Unknown keys are TOLERATED by this schema and pass through untouched, which
+ * is what keeps a legacy `workspaceFence: true` in an old profile harmless.
+ */
 export const PrefsSchema: z<SidebarPrefs> = z.object({
   autoOpenSubagent: z.boolean().default(true),
   autoOpenJobs: z.boolean().default(true),
+  tasksViewMode: z.union([z.const('graph'), z.const('tree')]).default('graph'),
+  mobileNoAutoOpen: z.boolean().default(true),
+  mobileDefaultTree: z.boolean().default(true),
   agentOpenTools: z.boolean().default(false),
   editorExplorer: z.boolean().default(false),
-  workspaceFence: z.boolean().default(true),
   titleBarScheme: z.union([z.const('auto'), z.const('web'), z.const('preset'), z.const('custom')]),
   titleBarPresetId: z.string(),
   customCss: z.string(),

@@ -1,11 +1,24 @@
 import { afterAll, describe, expect, it } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from '../src/fs-operations.ts'
 
 /** The test workspace root (each suite gets its own temp tree). */
 const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-'))
+
+/** Symlink creation needs privileges on Windows; the link cases skip there. */
+const canSymlink = (() => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-probe-'))
+  try {
+    symlinkSync(dir, join(dir, 'probe-link'))
+    return true
+  } catch {
+    return false
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})()
 
 afterAll(() => {
   rmSync(root, { recursive: true, force: true })
@@ -92,30 +105,34 @@ describe('writeWorkspaceUpload', () => {
     })).rejects.toMatchObject({ code: 'bad-request' })
   })
 
-  it('refuses an upload directory outside the workspace', async () => {
+  it('refuses uploads into a directory outside the workspace', async () => {
     const outside = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-outside-'))
     try {
       await expect(writeWorkspaceUpload({
         cwd: root, dir: outside, relativePath: 'x.txt', chunks: chunksOf('x'), limit: 1024,
       })).rejects.toMatchObject({ code: 'forbidden' })
+      expect(existsSync(join(outside, 'x.txt'))).toBe(false)
     } finally {
       rmSync(outside, { recursive: true, force: true })
     }
   })
 
-  it('refuses upload directories and targets that resolve outside the workspace', async () => {
+  it('refuses an upload directory symlink that points outside the workspace', async () => {
+    if (!canSymlink) return
     const outside = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-symlink-outside-'))
     const link = join(root, 'upload-link')
     try {
       symlinkSync(outside, link)
       await expect(writeWorkspaceUpload({
-        cwd: root, dir: link, relativePath: 'x.txt', chunks: chunksOf('x'), limit: 1024,
+        cwd: root, dir: link, relativePath: 'a.txt', chunks: chunksOf('a'), limit: 1024,
       })).rejects.toMatchObject({ code: 'forbidden' })
       await expect(writeWorkspaceUpload({
-        cwd: root, dir: root, relativePath: 'upload-link/x.txt', chunks: chunksOf('x'), limit: 1024,
+        cwd: root, dir: root, relativePath: 'upload-link/b.txt', chunks: chunksOf('b'), limit: 1024,
       })).rejects.toMatchObject({ code: 'forbidden' })
+      expect(existsSync(join(outside, 'a.txt'))).toBe(false)
+      expect(existsSync(join(outside, 'b.txt'))).toBe(false)
     } finally {
-      rmSync(link, { force: true })
+      unlinkSync(link)
       rmSync(outside, { recursive: true, force: true })
     }
   })

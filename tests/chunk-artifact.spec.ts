@@ -14,10 +14,17 @@ import { describe, expect, it } from 'vitest'
 // (CodeMirror's UA probe).
 import './browser-globals.ts'
 import { CHUNK_EXTERNALS } from '../src/client/chunk-loader.ts'
+import { CHUNK_NAMES } from '../src/bundle-route.ts'
 
 const g = globalThis as Record<string, unknown>
 
-const CHUNKS = ['editor', 'mermaid']
+/**
+ * The chunk set, DERIVED from the host route's allowlist — the same registry
+ * `/sidebar/bundle` serves from (src/bundle-route.ts). Never hand-mirrored:
+ * the hand-written list that used to live here drifted (`locale` was
+ * missing), so the locale artifact went unguarded.
+ */
+const CHUNKS = CHUNK_NAMES
 
 /** All chunk artifacts present (tsdown emits the whole lib/ in one run). */
 const chunksBuilt = CHUNKS.every(name => existsSync(`lib/client-${name}.js`))

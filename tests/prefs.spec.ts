@@ -34,9 +34,11 @@ describe('side card preferences', () => {
       .toEqual({
         autoOpenSubagent: false,
         autoOpenJobs: true,
+        tasksViewMode: 'graph',
+        mobileNoAutoOpen: true,
+        mobileDefaultTree: true,
         agentOpenTools: true,
         editorExplorer: false,
-        workspaceFence: true,
         titleBarScheme: 'auto',
         titleBarPresetId: '',
         customCss: '',
@@ -55,9 +57,11 @@ describe('side card preferences', () => {
       .toEqual({
         autoOpenSubagent: true,
         autoOpenJobs: true,
+        tasksViewMode: 'graph',
+        mobileNoAutoOpen: true,
+        mobileDefaultTree: true,
         agentOpenTools: false,
         editorExplorer: false,
-        workspaceFence: true,
         titleBarScheme: 'auto',
         titleBarPresetId: '',
         customCss: '',
@@ -76,9 +80,11 @@ describe('side card preferences', () => {
       .toEqual({
         autoOpenSubagent: true,
         autoOpenJobs: true,
+        tasksViewMode: 'graph',
+        mobileNoAutoOpen: true,
+        mobileDefaultTree: true,
         agentOpenTools: false,
         editorExplorer: false,
-        workspaceFence: true,
         titleBarScheme: 'auto',
         titleBarPresetId: '',
         customCss: '',
@@ -106,6 +112,19 @@ describe('side card preferences', () => {
       .toBe(false)
   })
 
+  it('defaults both mobile adaptations to on; only an explicit false disarms one', async () => {
+    // Absent or malformed → ON: a phone is exactly the case these exist for,
+    // and each one only changes what happens on a NARROW viewport.
+    for (const key of ['mobileNoAutoOpen', 'mobileDefaultTree'] as const) {
+      expect((await loadPrefs(wire({})))[key]).toBe(true)
+      expect((await loadPrefs(wire({ [key]: 'yes' })))[key]).toBe(true)
+      expect((await loadPrefs(wire({ [key]: 1 })))[key]).toBe(true)
+      // Explicit booleans survive verbatim.
+      expect((await loadPrefs(wire({ [key]: false })))[key]).toBe(false)
+      expect((await loadPrefs(wire({ [key]: true })))[key]).toBe(true)
+    }
+  })
+
   it('defaults editorExplorer to false; only an explicit true enables the merged editor-explorer', async () => {
     // Absent or malformed → off (separate file windows are the default).
     expect((await loadPrefs(wire({}))).editorExplorer).toBe(false)
@@ -116,13 +135,13 @@ describe('side card preferences', () => {
     expect((await loadPrefs(wire({ editorExplorer: true }))).editorExplorer).toBe(true)
   })
 
-  it('defaults workspaceFence to true; only an explicit false disarms the containment guard', async () => {
-    // Absent or malformed → on (the fs routes keep refusing outside paths).
-    expect((await loadPrefs(wire({}))).workspaceFence).toBe(true)
-    expect((await loadPrefs(wire({ workspaceFence: 'no' }))).workspaceFence).toBe(true)
-    expect((await loadPrefs(wire({ workspaceFence: 0 }))).workspaceFence).toBe(true)
-    // An explicit false survives (the one-click off in the fence error notice).
-    expect((await loadPrefs(wire({ workspaceFence: false }))).workspaceFence).toBe(false)
+  it('no longer exposes a workspaceFence pref (the containment guard is gone)', async () => {
+    // The field was retired together with the fence: whatever a stored
+    // document (or a legacy profile) still carries, the typed prefs the client
+    // consumes do not have it — there is nothing left to arm or disarm.
+    expect('workspaceFence' in await loadPrefs(wire({}))).toBe(false)
+    expect('workspaceFence' in await loadPrefs(wire({ workspaceFence: true }))).toBe(false)
+    expect('workspaceFence' in await loadPrefs(wire({ workspaceFence: false }))).toBe(false)
   })
 
   it('defaults the title-bar scheme to the conservative auto with no preset or custom CSS', async () => {

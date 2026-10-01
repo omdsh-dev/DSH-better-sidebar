@@ -13,7 +13,7 @@
  * that one cached level and re-lists it. Folders the reader collapsed are
  * un-watched, so a long session does not accumulate handles.
  */
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { dshUrl } from './page-base.ts'
 
 /** One server frame: a stale directory, a watch verdict, or a refusal. */
@@ -48,15 +48,23 @@ const RETRY_MAX_MS = 15_000
 export function useDirectoryWatch(options: DirectoryWatchOptions): void {
   const { sessionId, root, dirs, onStale } = options
   // The expanded set is a fresh array on every render, so neither the socket
-  // effect nor the staleness callback may depend on their identity.
-  const wantedRef = useRef<string[]>([])
-  wantedRef.current = root === undefined ? [...dirs] : [root, ...dirs]
+  // effect nor the staleness callback may depend on their identity. The
+  // CONTENT key (NUL-joined paths — no path can contain one) is what the
+  // arrays are derived from, so a re-render with the same expanded set
+  // rebuilds neither the wanted list nor the effect dependency.
+  const dirsKey = dirs.join('\u0000')
+  const wanted = useMemo(() => {
+    const listed = dirsKey === '' ? [] : dirsKey.split('\u0000')
+    return root === undefined ? listed : [root, ...listed]
+  }, [root, dirsKey])
+  const wantedRef = useRef(wanted)
+  wantedRef.current = wanted
   const staleRef = useRef(onStale)
   staleRef.current = onStale
   /** Set by the socket effect; reconciles the host's watch set with the tree's. */
   const reconcileRef = useRef<() => void>(() => {})
   // One string per expanded-set change: a stable dependency for the effect below.
-  const wantedKey = wantedRef.current.join('\u0000')
+  const wantedKey = useMemo(() => wanted.join('\u0000'), [wanted])
 
   useEffect(() => {
     if (sessionId === undefined) return

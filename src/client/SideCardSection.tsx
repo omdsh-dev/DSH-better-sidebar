@@ -900,6 +900,36 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
         </div>
       </div>
 
+      {/* 手机: the narrow-viewport adaptations. Both switches only ever change
+          what happens on a NARROW viewport (the plugin's own 768px bracket),
+          so a desktop reader's behaviour is untouched whatever they pick —
+          and neither one rewrites the wide-viewport switches above. */}
+      <div className={css.group}>
+        <div className={css.groupHeading}>{t('settingsMobileTitle')}</div>
+        <div className={css.row}>
+          <span className={css.rowText}>
+            <span className={css.title}>{t('settingsMobileNoAutoOpenTitle')}</span>
+            <span className={css.desc}>{t('settingsMobileNoAutoOpenDesc')}</span>
+          </span>
+          <Switch
+            label={t('settingsMobileNoAutoOpenTitle')}
+            checked={prefs.mobileNoAutoOpen}
+            onChange={(next) => { applyPref({ mobileNoAutoOpen: next }) }}
+          />
+        </div>
+        <div className={css.row}>
+          <span className={css.rowText}>
+            <span className={css.title}>{t('settingsMobileTreeTitle')}</span>
+            <span className={css.desc}>{t('settingsMobileTreeDesc')}</span>
+          </span>
+          <Switch
+            label={t('settingsMobileTreeTitle')}
+            checked={prefs.mobileDefaultTree}
+            onChange={(next) => { applyPref({ mobileDefaultTree: next }) }}
+          />
+        </div>
+      </div>
+
       {/* 侧边栏内容: one small card per registered tab type in a responsive
           grid; features declaring `settings.toggles` open their settings in
           the popup (gear corner button) instead of nested inline rows. */}

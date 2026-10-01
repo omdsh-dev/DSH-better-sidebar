@@ -517,6 +517,28 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const modal = page.locator('[data-mermaid-modal]')
   await pane.locator('[data-mermaid-diagram] svg').first().click()
   await expect(modal, 'clicking the diagram must open the zoom modal').toHaveCount(1, { timeout: 10_000 })
+  // While it is up, the modal is the plugin's OTHER viewport-sized BODY CHILD:
+  // without the app-region reset the shell's blanket `body > :not(#root)`
+  // no-drag makes it cancel every window-drag strip (and the macOS
+  // double-click-title zoom) until it closes — issue #772. Measured against the
+  // SHELL's own darwin rules (present in this page's stylesheet, activated by
+  // the platform attribute) rather than a copy: the modal must compute the
+  // neutral `none`, while its toolbar buttons keep `no-drag` so a click on them
+  // is never a window drag.
+  const modalRegions = await page.evaluate(() => {
+    const previous = document.documentElement.dataset.platform
+    document.documentElement.dataset.platform = 'darwin'
+    const modalElement = document.querySelector('[data-mermaid-modal]')
+    const region = (element: Element | null): string => element === null
+      ? 'missing'
+      : getComputedStyle(element).getPropertyValue('-webkit-app-region').trim()
+    const result = { modal: region(modalElement), button: region(modalElement?.querySelector('button') ?? null) }
+    if (previous === undefined) delete document.documentElement.dataset.platform
+    else document.documentElement.dataset.platform = previous
+    return result
+  })
+  expect(modalRegions.modal, 'the zoom modal must opt out of app-region computation').toBe('none')
+  expect(modalRegions.button, 'its buttons must stay no-drag').toBe('no-drag')
   await page.keyboard.press('Escape')
   await expect(modal, 'Esc must close the zoom modal').toHaveCount(0, { timeout: 10_000 })
   await assertNoCrash()
@@ -615,6 +637,61 @@ test('conservative auto: URL stamps alone never modify the layout; plugin chrome
     return false
   })
   expect(hasNoDragRule, 'the bundle must ship the drag-region opt-out rule').toBe(true)
+  // The plugin host is a direct body child, so on macOS it picks up the
+  // shell's blanket `body > :not(#root) { no-drag }` and — because app-region
+  // ignores pointer-events — the viewport-sized layer inside it cancelled every
+  // window-drag strip beneath it (issue #772). A text match only proves the
+  // declaration shipped, so this probe reproduces the SHELL's two darwin rules
+  // verbatim, flips the platform attribute the shell stamps, and reads the
+  // COMPUTED property. Two things to know when reading the expectations below:
+  // the strip itself computes `drag` in every configuration (a fix validated
+  // against the strip alone proves nothing), and `[data-dsh-panel-host]` is NOT
+  // a body child (it lives inside the host), so its own value is pinned by the
+  // unit guard rather than by this probe — see the `layer` expectation.
+  const regions = await page.evaluate(() => {
+    const style = document.createElement('style')
+    style.textContent = [
+      'html[data-platform=darwin] [data-window-drag]{-webkit-app-region:drag}',
+      'html[data-platform=darwin] body>:not(#root){-webkit-app-region:no-drag}',
+    ].join('\n')
+    const strip = document.createElement('div')
+    strip.setAttribute('data-window-drag', '')
+    strip.style.cssText = 'position:fixed;top:0;left:0;right:0;height:8px'
+    const probe = document.createElement('div')
+    document.head.appendChild(style)
+    // INSIDE #root: the shell's real drag strip is a frame child, not a body
+    // child — a body child would be caught by the blanket rule itself (it is
+    // id-bearing, so it outranks the `[data-window-drag]` rule).
+    const root = document.querySelector('#root')
+    ;(root ?? document.body).appendChild(strip)
+    const host = document.querySelector('[data-dsh-better-sidebar]')
+    const layer = document.querySelector('[data-dsh-panel-host]')
+    // This stamp-only page has no session, so the panel host has no child of
+    // its own; `probe` stands in for the workbench panel the same `> *`
+    // selector targets in a real session.
+    layer?.appendChild(probe)
+    const previous = document.documentElement.dataset.platform
+    document.documentElement.dataset.platform = 'darwin'
+    const read = (element: Element | null): string => element === null
+      ? 'missing'
+      : getComputedStyle(element).getPropertyValue('-webkit-app-region').trim()
+    const result = { strip: read(strip), host: read(host), layer: read(layer), layerChild: read(probe) }
+    probe.remove()
+    strip.remove()
+    style.remove()
+    if (previous === undefined) delete document.documentElement.dataset.platform
+    else document.documentElement.dataset.platform = previous
+    return result
+  })
+  expect(regions.strip, 'the drag strip itself must keep computing `drag`').toBe('drag')
+  expect(regions.host, 'the plugin host must not take the shell blanket no-drag').toBe('none')
+  // NOT discriminating here, and kept as a regression nail only: the layer is
+  // not a body child, and this engine does not propagate the property into it,
+  // so it reads `none` pre- and post-fix. Its rule is pinned by
+  // tests/panel-host-css.spec.ts; in Electron (#772's CDP reading) the layer
+  // DOES end up no-drag through that propagation.
+  expect(regions.layer, 'the panel layer must keep its own reset').toBe('none')
+  expect(regions.layerChild, 'panels stay no-drag so their controls keep receiving clicks').toBe('no-drag')
 })
 
 test('standard WCO geometry drives the strip reactively (issue #257)', async ({ page }) => {

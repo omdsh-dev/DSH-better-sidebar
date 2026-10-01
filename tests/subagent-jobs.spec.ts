@@ -1,10 +1,10 @@
 /**
- * Pure-helper tests for the Subagent page's background-job section:
- * tree-membership collection, ordering, and status presentation mapping.
+ * Pure-helper tests for the Tasks page's background-job presentation:
+ * tree-membership, ordering, status mapping, and the auto-open trigger's
+ * "is this really new work?" rule.
  */
 import { describe, expect, it } from 'vitest'
 import {
-  collectTreeJobs,
   detectNewJob,
   formatJobDuration,
   isJobLive,
@@ -61,31 +61,6 @@ describe('treeSessionIds', () => {
   })
 })
 
-describe('collectTreeJobs', () => {
-  it('collects jobs of the whole tree with owner titles, ignoring outside sessions', () => {
-    const byId = {
-      root: summary('root'),
-      child: summary('child', { origin: 'subagent', parentId: 'root' }),
-    }
-    // The map is the client's per-owner read of `jobs.list` (the registry's
-    // fence admits a job to its owner session only), keyed by that owner.
-    const jobsByOwner = {
-      root: [job('bash-1')],
-      child: [job('bash-2', { status: 'completed', finishedAt: 2_000 })],
-      stranger: [job('bash-9')],
-    }
-    const rows = collectTreeJobs(byId, jobsByOwner, 'root')
-    expect(rows.map(row => [row.ownerSessionId, row.ownerTitle, row.job.id]))
-      .toEqual([['root', 'title-root', 'bash-1'], ['child', 'title-child', 'bash-2']])
-  })
-
-  it('returns an empty list for an absent read or empty sets', () => {
-    const byId = { root: summary('root') }
-    expect(collectTreeJobs(byId, undefined, 'root')).toEqual([])
-    expect(collectTreeJobs(byId, {}, 'root')).toEqual([])
-  })
-})
-
 describe('orderJobs', () => {
   it('puts live rows first in start order, then settled rows newest-first', () => {
     const row = (id: string, status: SidebarJobStatus, startedAt: number, finishedAt?: number) => ({
@@ -138,10 +113,11 @@ describe('status presentation helpers', () => {
 describe('detectNewJob', () => {
   /**
    * The baseline rule the auto-open trigger adds on top of this helper: the
-   * FIRST list a page reads only arms the baseline (the poller keeps
-   * `prev === undefined` until a read succeeds), so a conversation that is
-   * already running jobs when the page loads never pops the Tasks page. The
-   * helper itself is pure over two lists.
+   * FIRST frame a page observes only arms the baseline, so a conversation that
+   * is already running jobs when the page loads never pops the Tasks page. The
+   * helper itself is pure over two frames — plus the WATCH CLOCK (`since`),
+   * which is what keeps that promise now that the roster is a push stream
+   * whose empty frames are indistinguishable from "not delivered yet".
    */
   it('fires on EVERY job id the previous list lacked, and on nothing else', () => {
     // A new id appears (the first job, then another one alongside it).
@@ -156,8 +132,22 @@ describe('detectNewJob', () => {
     // are not new work.
     expect(detectNewJob([job('bash-1')], [job('bash-1')])).toBe(false)
     expect(detectNewJob([job('bash-1'), job('bash-2')], [job('bash-2')])).toBe(false)
-    // The first list of a fresh page is compared against itself by the caller
-    // (prev stays undefined until a read succeeds) — the helper's quiet case.
+    // The first frame of a fresh page is compared against itself by the caller
+    // (prev stays undefined until a frame lands) — the helper's quiet case.
     expect(detectNewJob([], [])).toBe(false)
+  })
+
+  it('ignores work that started before the watcher opened', () => {
+    const watchStart = 10_000
+    // The page mounts while a job already runs: its id is new to the id-set
+    // diff, but its start time predates the watch.
+    expect(detectNewJob([], [job('bash-1', { startedAt: 500 })], watchStart)).toBe(false)
+    // Work the agent starts after the watcher opened still triggers.
+    expect(detectNewJob([], [job('bash-1', { startedAt: 10_000 })], watchStart)).toBe(true)
+    expect(detectNewJob([], [job('bash-1', { startedAt: 12_000 })], watchStart)).toBe(true)
+    // An already-seen id never triggers, however new its stamp.
+    expect(detectNewJob([job('bash-1')], [job('bash-1', { startedAt: 20_000 })], watchStart)).toBe(false)
+    // Omitting the clock keeps the old id-set behaviour.
+    expect(detectNewJob([], [job('bash-1', { startedAt: 0 })])).toBe(true)
   })
 })

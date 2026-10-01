@@ -189,6 +189,11 @@ function safeSubscribe(subscribe: () => () => void): () => void {
   }
 }
 
+/** Release a native registration without masking teardown or registration errors. */
+function disposeSafely(dispose: () => void, what: string): void {
+  try { dispose() } catch (error) { console.error(`[dsh-better-sidebar] ${what} release failed:`, error) }
+}
+
 /** Everything the registrations need. */
 export interface NativeSurfaceDeps {
   readonly ctx: Context
@@ -246,19 +251,24 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       id: string,
       injected: Omit<NativeBodyInjected, 'sessionId'>,
       params: Pick<NativeBodyInjected, 'paramsOf' | 'sessionIdOf'>,
-    ): Array<() => void> => [
-      ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
-        name: 'sidebar.right.pane.tab',
-        key: id,
-        inject: (sessionId: string) => ({ ...injected, ...params, sessionId }),
-      }, NativeTabBody)),
-      ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
-        name: 'sidebar.right.pane.tab.title',
-        key: id,
-        inject: (sessionId: string) => ({ records, service, descriptorId: injected.descriptorId, sessionId,
-          activeTab: () => (ctx.get('sidebarRight') as { active?: () => { id: string; kind: string } | undefined } | undefined)?.active?.() }),
-      }, NativeTabTitle)),
-    ]
+) : Array<() => void> => {
+      const disposers: Array<() => void> = []
+      try {
+        disposers.push(ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+          name: 'sidebar.right.pane.tab', key: id,
+          inject: (sessionId: string) => ({ ...injected, ...params, sessionId }),
+        }, NativeTabBody)))
+        disposers.push(ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
+          name: 'sidebar.right.pane.tab.title', key: id,
+          inject: (sessionId: string) => ({ records, service, descriptorId: injected.descriptorId, sessionId,
+            activeTab: () => (ctx.get('sidebarRight') as { active?: () => { id: string; kind: string } | undefined } | undefined)?.active?.() }),
+        }, NativeTabTitle)))
+      } catch (error) {
+        for (const dispose of disposers.reverse()) disposeSafely(dispose, `native tab slot "${id}"`)
+        throw error
+      }
+      return disposers
+    }
 
     /** One descriptor's native TYPE, with its guide entry only when `listed`. */
     const registerType = (descriptor: TabDescriptor, listed: boolean): (() => void) => {
@@ -319,11 +329,17 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       const id = nativeId(descriptor.id)
       const isEditor = descriptor.id === EDITOR_KIND
       let disposeType = registerType(descriptor, listed)
-      const slots = registerSlots(
-        id,
-        { ctx, store, service, records, descriptorId: descriptor.id },
-        isEditor ? { paramsOf: fileParamsOf, sessionIdOf: fileSessionIdOf } : {},
-      )
+      let slots: Array<() => void>
+      try {
+        slots = registerSlots(
+          id,
+          { ctx, store, service, records, descriptorId: descriptor.id },
+          isEditor ? { paramsOf: fileParamsOf, sessionIdOf: fileSessionIdOf } : {},
+        )
+      } catch (error) {
+        disposeSafely(disposeType, `native tab type "${id}"`)
+        throw error
+      }
       const registration = {
         listed,
         relist: (next: boolean) => {
@@ -334,8 +350,8 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
           registration.listed = next
         },
         dispose: () => {
-          for (const dispose of slots.reverse()) dispose()
-          disposeType()
+          for (const dispose of slots.reverse()) disposeSafely(dispose, `native tab slot "${id}"`)
+          disposeSafely(disposeType, `native tab type "${id}"`)
         },
       }
       return registration
@@ -398,7 +414,9 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         }],
       })
       let disposeType = registerFilesType(listed)
-      const slots = registerSlots(id, { ctx, store, service, records, descriptorId: EDITOR_KIND }, {})
+      let slots: Array<() => void>
+      try { slots = registerSlots(id, { ctx, store, service, records, descriptorId: EDITOR_KIND }, {}) }
+      catch (error) { disposeSafely(disposeType, `native tab type "${id}"`); throw error }
       const registration = {
         listed,
         relist: (next: boolean) => {
@@ -408,8 +426,8 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
           registration.listed = next
         },
         dispose: () => {
-          for (const dispose of slots.reverse()) dispose()
-          disposeType()
+          for (const dispose of slots.reverse()) disposeSafely(dispose, `native tab slot "${id}"`)
+          disposeSafely(disposeType, `native tab type "${id}"`)
         },
       }
       return registration
@@ -424,7 +442,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       }
       for (const [descriptorId, registration] of live) {
         if (wanted.has(descriptorId) || descriptorId === FILES_KIND) continue
-        registration.dispose()
+        disposeSafely(registration.dispose, `native tab type "${descriptorId}"`)
         live.delete(descriptorId)
       }
       for (const [descriptorId, { descriptor, listed }] of wanted) {
@@ -460,7 +478,8 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         }
       }
       if (!wantsFiles && hasFiles) {
-        live.get(FILES_KIND)?.dispose()
+        const takeover = live.get(FILES_KIND)
+        if (takeover !== undefined) disposeSafely(takeover.dispose, 'the native files takeover')
         live.delete(FILES_KIND)
       }
     }
@@ -475,9 +494,9 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
     ]
     sync()
     return () => {
-      for (const registration of live.values()) registration.dispose()
+      for (const registration of live.values()) disposeSafely(registration.dispose, 'a native tab registration')
       live.clear()
-      for (const dispose of disposeSubscriptions.reverse()) dispose()
+      for (const dispose of disposeSubscriptions.reverse()) disposeSafely(dispose, 'a native tab subscription')
     }
   })
   return () => {

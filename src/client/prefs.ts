@@ -45,15 +45,21 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     autoOpenJobs: typeof record.autoOpenJobs === 'boolean'
       ? record.autoOpenJobs
       : SIDEBAR_PREFS_DEFAULTS.autoOpenJobs,
+    tasksViewMode: record.tasksViewMode === 'tree' || record.tasksViewMode === 'graph'
+      ? record.tasksViewMode
+      : SIDEBAR_PREFS_DEFAULTS.tasksViewMode,
+    mobileNoAutoOpen: typeof record.mobileNoAutoOpen === 'boolean'
+      ? record.mobileNoAutoOpen
+      : SIDEBAR_PREFS_DEFAULTS.mobileNoAutoOpen,
+    mobileDefaultTree: typeof record.mobileDefaultTree === 'boolean'
+      ? record.mobileDefaultTree
+      : SIDEBAR_PREFS_DEFAULTS.mobileDefaultTree,
     agentOpenTools: typeof record.agentOpenTools === 'boolean'
       ? record.agentOpenTools
       : SIDEBAR_PREFS_DEFAULTS.agentOpenTools,
     editorExplorer: typeof record.editorExplorer === 'boolean'
       ? record.editorExplorer
       : SIDEBAR_PREFS_DEFAULTS.editorExplorer,
-    workspaceFence: typeof record.workspaceFence === 'boolean'
-      ? record.workspaceFence
-      : SIDEBAR_PREFS_DEFAULTS.workspaceFence,
     // The title-bar scheme (auto | web | preset | custom). The schema
     // declares the field WITHOUT a default, so documents written by older
     // plugin versions resolve without it — migrate from the legacy fields:

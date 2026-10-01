@@ -11,9 +11,14 @@
  * not the whole workspace — because `fs.watch` is one OS handle per directory
  * and a deep tree would exhaust them. Collapsing a folder or closing the
  * socket releases its handle.
+ *
+ * A debounced change also drops the host's listing cache for that directory
+ * (`invalidateDirectoryCache`), so the re-list the client is about to ask for
+ * cannot be answered from a level cached before the change.
  * @module dsh-better-sidebar/fs-watch
  */
 import { watch, type FSWatcher } from 'node:fs'
+import { invalidateDirectoryCache } from './fs-tree.ts'
 
 /** How long a burst of filesystem events is folded into a single push. */
 const DEBOUNCE_MS = 150
@@ -80,7 +85,14 @@ export function createDirectoryWatchers(
     if (entry === undefined || entry.timer !== undefined) return
     entry.timer = setTimeout(() => {
       entry.timer = undefined
-      if (watchers.has(dir)) push({ dir })
+      if (!watchers.has(dir)) return
+      // The host's listing cache would otherwise answer the re-list with the
+      // pre-change level for up to its TTL. The write routes invalidate
+      // themselves; this covers everything that changed BEHIND the plugin
+      // (another editor, a build, the model's own bash), which is exactly why
+      // the watcher exists.
+      invalidateDirectoryCache(dir)
+      push({ dir })
     }, DEBOUNCE_MS)
     // A pending re-list must never hold the host process open.
     entry.timer.unref()

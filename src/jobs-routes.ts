@@ -19,8 +19,13 @@
  *   0.1.6 one compared a live Agent). Absent registry → 503, mirroring the
  *   settings routes' optional-service downgrade.
  */
-import type { Context, SidebarJobsService, SidebarJobView, SidebarSessionEvent } from './context-types.ts'
+import type { Context, SidebarJobView, SidebarSessionEvent } from './context-types.ts'
 import { requireString, SidebarError } from './wire.ts'
+
+interface SidebarJobsService {
+  list(sessionId: string): SidebarJobView[]
+  kill(id: string, sessionId: string, reason: string): 'requested' | 'already-finished'
+}
 
 /** The background-job routes of the sidebar API. */
 export interface SidebarJobsRoutes {
@@ -230,7 +235,7 @@ function ownJobs(jobs: SidebarJobsService, sessionId: string): SidebarJobView[] 
  *   texts are sliced and flagged `truncated` (mirrors the fs.read cap).
  */
 export function buildJobsApi(ctx: Context, outputLimit: number): SidebarJobsRoutes {
-  const jobs = ctx.get('jobs')
+  const jobs = ctx.get('jobs') as unknown as SidebarJobsService | undefined
   const mirror = createJobOutputMirror(ctx)
   /** Registry refusals become a 404 job-error; unknown and foreign ids are indistinguishable. */
   const registryError = (error: unknown): SidebarError =>

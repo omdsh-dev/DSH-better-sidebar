@@ -491,6 +491,66 @@ describe('service.openTab in the bottom workbench', () => {
   })
 })
 
+describe('service.openTab target: side (native split)', () => {
+  /** A store + service with a recording native surface installed. */
+  function nativeSetup(): {
+    store: ReturnType<typeof createSidebarStore>
+    service: ReturnType<typeof createBetterSidebarService>
+    placed: Array<{ address: string; preferNewPane?: boolean; revealIfOpened?: boolean }>
+  } {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'editor', title: 'Editor', dedupeKey: (tab) => tab.path, component: () => null })
+    store.setSession('s1')
+    const placed: Array<{ address: string; preferNewPane?: boolean; revealIfOpened?: boolean }> = []
+    service.setSurface({
+      openTab: () => {},
+      openResource: (input) => {
+        placed.push({
+          address: input.address,
+          ...(input.preferNewPane === undefined ? {} : { preferNewPane: input.preferNewPane }),
+          revealIfOpened: input.revealIfOpened,
+        })
+      },
+      fileAddress: (sessionId, cwd, path) => `dsh-resource://file/${sessionId}${path}`,
+      close: () => undefined,
+      update: () => false,
+      activate: () => false,
+      has: () => false,
+    })
+    return { store, service, placed }
+  }
+
+  it('a side-targeted path open asks the host for a NEW pane and permits duplicates', () => {
+    const { service, placed } = nativeSetup()
+    service.openTab({ type: 'editor', path: '/w/a.ts', target: 'side' })
+    expect(placed).toHaveLength(1)
+    expect(placed[0]).toMatchObject({ address: 'dsh-resource://file/s1/w/a.ts', preferNewPane: true, revealIfOpened: false })
+  })
+
+  it('a plain (right) open keeps the host reveal and does not ask for a split', () => {
+    const { service, placed } = nativeSetup()
+    service.openTab({ type: 'editor', path: '/w/a.ts' })
+    expect(placed).toHaveLength(1)
+    // Absent (not merely falsy) — the host then uses its own default placement.
+    expect(placed[0]!.preferNewPane).toBeUndefined()
+    expect(placed[0]!.revealIfOpened).toBe(true)
+  })
+
+  it('a side-targeted open never lands in the bottom workbench', () => {
+    const { store, service } = nativeSetup()
+    const before = allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(l => l.tabs).length
+    service.openTab({ type: 'editor', path: '/w/a.ts', target: 'side' })
+    expect(allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(l => l.tabs)).toHaveLength(before)
+  })
+
+  it('a bottom-targeted open still lands in the bottom workbench', () => {
+    const { store, service } = nativeSetup()
+    service.openTab({ type: 'editor', path: '/w/a.ts', target: 'bottom' })
+    expect(allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(l => l.tabs).some(t => t.path === '/w/a.ts')).toBe(true)
+  })
+})
+
 describe('service.openTab auto-expand for content opens', () => {
   /** Collapse the bottom workbench (the plugin's only panel). */
   const collapseWorkbench = (store: ReturnType<typeof createSidebarStore>): void => {

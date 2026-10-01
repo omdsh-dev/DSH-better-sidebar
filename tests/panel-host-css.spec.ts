@@ -44,4 +44,41 @@ describe('panel host layer css', () => {
     expect(degraded, 'the degraded-mode rule must exist').toBeDefined()
     expect(degraded).not.toMatch(/overflow\s*:/)
   })
+
+  it('keeps the app-region opt-out that un-breaks macOS window drag (issue #772)', () => {
+    // The shell's `html[data-platform=darwin] body > :not(#root) { no-drag }`
+    // carries an id in its specificity, so only `initial !important` wins;
+    // `initial` computes to the NEUTRAL `none` (does not subtract from the
+    // drag region) while `no-drag` is the subtracting value — and the literal
+    // keyword `none` is NOT neutral (it computes to `no-drag`), which is
+    // exactly why this guard pins `initial`. Hence the split: decorative
+    // viewport-sized layers opt out, their panels stay no-drag so controls
+    // keep receiving clicks. Dropping the `!important` silently re-breaks
+    // window drag / double-click-title zoom on macOS (there is no macOS
+    // runner to catch it), so pin the shape here where Linux `pnpm test`
+    // fails instead.
+    const text = stripComments(css)
+    expect(text, 'the panel host must opt out of app-region computation').toMatch(
+      /:global\(\[data-dsh-panel-host\]\)\s*\{[^}]*-webkit-app-region:\s*initial\s*!important/,
+    )
+    expect(text, 'panels must stay no-drag').toMatch(
+      /:global\(\[data-dsh-panel-host\]\)\s*>\s*\*\s*\{[^}]*-webkit-app-region:\s*no-drag/,
+    )
+    expect(text, 'the mermaid zoom modal is the other persistent viewport-sized body child').toMatch(
+      /\.mermaidModal\s*\{[^}]*-webkit-app-region:\s*initial\s*!important/,
+    )
+    // The interactive popups must NOT get `initial`: they are buttons/handles
+    // the shell already keeps no-drag, and outranking that rule makes a press
+    // start a window drag (the #103/#111 click-swallow class). Checked per
+    // DECLARATION BLOCK, not per single-selector rule: a selector list
+    // (`.selectionPopup, .other { … initial !important }`) would slip past a
+    // simple "class immediately followed by {" pattern.
+    const resets = [...text.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter(([, , body]) => /-webkit-app-region:\s*initial/.test(body ?? ''))
+    expect(resets.length, 'the file must declare the app-region opt-out').toBeGreaterThan(0)
+    const resetSelectors = resets.map(([, selector]) => selector ?? '').join(',')
+    for (const excluded of ['selectionPopup']) {
+      expect(resetSelectors, `${excluded} must not opt out of app-region`).not.toContain(excluded)
+    }
+  })
 })
