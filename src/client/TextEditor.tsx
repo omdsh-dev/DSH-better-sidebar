@@ -28,9 +28,9 @@ import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
-import { appendToDraft } from './conversation-draft.ts'
+import { appendToDraft, insertSelectionReference } from './conversation-draft.ts'
 import { useSelectionPopup } from './selection-popup.ts'
-import { buildSelectionInsert, linesOfSelection } from './selection-payload.ts'
+import { buildSelectionInsert, linesOfSelection, type SelectionInsert } from './selection-payload.ts'
 import { analyzeMarkdownHtml } from './markdown-html.ts'
 import { LazyMermaidMarkdown, MarkdownDocument, type MarkdownHtmlMedia } from './MarkdownHtml.tsx'
 import { MdToc } from './md-toc.tsx'
@@ -92,8 +92,18 @@ export function TextEditor(props: FileViewerProps) {
    * listeners (outside mousedown, Escape, hidden tab/window, surface
    * leaving the viewport) — see selection-popup.ts.
    */
-  const selectionPopup = useSelectionPopup({
-    onCommit: (insert) => { appendToDraft(ctx, scope.sessionId, insert) },
+  const selectionPopup = useSelectionPopup<SelectionInsert>({
+    onCommit: (insert) => {
+      // One compact `<path>[:lines]` chip carries the payload the draft used
+      // to show as a quoted block; a host without the chip path (no session
+      // scope, no conversation service, no `draftRev` to span-CAS against)
+      // still gets the plain payload. The fallback can no longer cost the
+      // draft its chips — it stops short of the whole-draft write once one
+      // exists.
+      if (!insertSelectionReference(ctx, scope.sessionId, insert)) {
+        appendToDraft(ctx, scope.sessionId, insert.text)
+      }
+    },
     // The surface that must stay on screen: the markdown preview container
     // in preview mode, the CodeMirror host otherwise.
     getSurface: () => (markdown && mode === 'preview' ? mdRef.current : hostRef.current),

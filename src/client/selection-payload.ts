@@ -4,11 +4,15 @@
  * here is string math — no React, no ctx — so the unit tests cover it
  * directly.
  *
- * Insert shape (agreed with the product owner):
- * - Selection ≤ SELECTION_LIMIT characters: a fenced code block whose info
+ * Insert shape (the composer chip):
+ * - The popup commits a structured reference chip labelled `相对路径:起止行`
+ *   (`conversation-draft.ts` mints it), so a stack of references stays one
+ *   compact line instead of filling the draft with quoted text.
+ * - The chip's model form is the pre-chip payload, unchanged: selection
+ *   ≤ SELECTION_LIMIT characters serialize to a fenced code block whose info
  *   line is `相对路径:起止行` and whose body is the selected text.
  * - Selection over the limit: a single plain-text line `相对路径:起止行`
- *   (no fence, no content).
+ *   (no fence, no content) — as the label and the model form alike.
  * - The path is relative to the session cwd (the same projection the
  *   explorer's @ button uses); an unknown cwd falls back to the absolute
  *   path.
@@ -41,19 +45,31 @@ export function headerOf(path: string, cwd: string | undefined, lines?: Selectio
 }
 
 /**
- * The full text appended to the composer draft for one selection.
- * Over the limit the content is dropped: the plain path line is the whole
- * payload (an empty fenced block would just occupy the draft).
+ * One selection's insert payload: the chip label the composer shows and the
+ * text that chip serializes to for the model.
+ */
+export interface SelectionInsert {
+  /** The chip's inline label: `相对路径:起止行` (the fence's info line). */
+  label: string
+  /** The model form the chip serializes to on send. */
+  text: string
+}
+
+/**
+ * The payload inserted into the composer draft for one selection.
+ * Over the limit the content is dropped: the plain path line is both the
+ * chip label and the whole payload (an empty fenced block would only carry
+ * the same information).
  */
 export function buildSelectionInsert(
   path: string,
   cwd: string | undefined,
   lines: SelectionLines | undefined,
   selected: string,
-): string {
+): SelectionInsert {
   const header = headerOf(path, cwd, lines)
-  if (selected.length > SELECTION_LIMIT) return header
-  return `\`\`\`${header}\n${selected}\n\`\`\``
+  if (selected.length > SELECTION_LIMIT) return { label: header, text: header }
+  return { label: header, text: `\`\`\`${header}\n${selected}\n\`\`\`` }
 }
 
 /** 1-based line number of a character index in a text. */
