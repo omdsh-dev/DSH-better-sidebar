@@ -1321,11 +1321,17 @@ export function FileTree(props: {
   /** The job being polled (state so the poller starts/stops with it). */
   const [archiveJobId, setArchiveJobId] = useState<string | null>(null)
   const archiveJobRef = useRef<{ id: string; name: string } | null>(null)
+  /** Whether the CURRENT job's `ready` status was already handed to the
+   *  download. The download route CONSUMES the task, so a second hand-off
+   *  would either fetch a deleted id (404 → a bogus `zipFailed` strip next to
+   *  a file that did land) or click the anchor twice. */
+  const archiveHandedOffRef = useRef(false)
 
   /** End the job: drop the progress line and release the guard. */
   const settleArchive = useCallback((): void => {
     archiveBusyRef.current = false
     archiveJobRef.current = null
+    archiveHandedOffRef.current = false
     setArchiveJobId(null)
     setArchiveBusy(false)
     setArchiveProgress(null)
@@ -1379,7 +1385,7 @@ export function FileTree(props: {
     // The poller swallows a rejected task (it must keep the loop alive), so
     // every failure is caught HERE and turned into the strip's `zipFailed`.
     try {
-      const status = await archiveStatus(job.id)
+      const status = await archiveStatus({ sessionId, cwd }, job.id)
       // The transport may deliver a response after teardown; the signal is the
       // only reliable staleness guard (the route call takes no signal).
       if (signal.aborted) return
@@ -1388,17 +1394,27 @@ export function FileTree(props: {
         archiveHandlersRef.current.fail(status.error ?? `HTTP ${status.state}`)
         return
       }
-      if (status.state === 'ready') archiveHandlersRef.current.save(job.id, job.name)
+      if (status.state === 'ready') {
+        // Hand the job over exactly ONCE, and stop polling BEFORE the download
+        // starts: the GET releases the task, so the next tick would see 404 and
+        // paint `zipFailed` over a download that actually succeeded (or, while
+        // the first GET is still in flight, start a second one).
+        if (archiveHandedOffRef.current) return
+        archiveHandedOffRef.current = true
+        setArchiveJobId(null)
+        archiveHandlersRef.current.save(job.id, job.name)
+      }
     } catch (error: unknown) {
       if (signal.aborted) return
       archiveHandlersRef.current.fail(error instanceof Error ? error.message : String(error))
     }
-  }, []), { intervalMs: 250, mode: 'self-scheduling', immediate: true })
+  }, [cwd, sessionId]), { intervalMs: 250, mode: 'self-scheduling', immediate: true })
 
   const downloadArchive = (paths: readonly string[]): void => {
     if (archiveBusyRef.current) return
     const name = paths.length === 1 ? `${baseName(paths[0]!)}.zip` : 'archive.zip'
     archiveBusyRef.current = true
+    archiveHandedOffRef.current = false
     setArchiveBusy(true)
     setArchiveProgress(null)
     void archiveBuild({ sessionId, cwd }, paths, name)

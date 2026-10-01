@@ -466,9 +466,12 @@ export interface ArchiveBuildStatus {
   error?: string
 }
 
-/** Poll one archive build (its id came from {@link archiveBuild}). */
-export function archiveStatus(id: string): Promise<ArchiveBuildStatus> {
-  return call<ArchiveBuildStatus>('archive.status', { id })
+/** Poll one archive build (its id came from {@link archiveBuild}). The session
+ *  scope rides along exactly like `archive.build`: the host requires BOTH keys
+ *  (`requireString(payload, 'id')` + `requireString(payload, 'sessionId')`), so
+ *  a bare `{ id }` payload is refused with a 400 and the status is never read. */
+export function archiveStatus(scope: SessionScope, id: string): Promise<ArchiveBuildStatus> {
+  return call<ArchiveBuildStatus>('archive.status', scopePayload(scope, { id }))
 }
 
 /**
