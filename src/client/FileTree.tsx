@@ -88,6 +88,23 @@ function parentOf(path: string): string {
   return at <= 0 ? path : path.slice(0, at)
 }
 
+/** A direct child path of one tree level (row paths may use either separator;
+ *  node:fs accepts the mixed form on Windows, where this runs). */
+export function joinChild(dir: string, name: string): string {
+  return `${dir.replace(/[\\/]+$/, '')}/${name}`
+}
+
+/** Client-side collision guard for the inline new-file editor: `fs.write`
+ *  overwrites silently (unlike `fs.mkdir`, which refuses existing
+ *  destinations server-side), so the tree must refuse taken names itself.
+ *  Case-insensitive: the primary platforms (Windows/macOS) resolve names
+ *  that way, and on case-sensitive ones a refusal is merely conservative. */
+export function nameTaken(entries: readonly { name: string }[] | undefined, name: string): boolean {
+  if (entries === undefined) return false
+  const want = name.toLowerCase()
+  return entries.some((entry) => entry.name.toLowerCase() === want)
+}
+
 /** Only OS file drags belong to the upload surface; in-app drags (tab reorder,
  *  split zones) must pass through untouched to the pane's tab-drop handling
  *  (mirror of Sidebar.tsx's panel-host shield gate). */
@@ -514,6 +531,8 @@ export function FileTree(props: {
   const [renaming, setRenaming] = useState<{ path: string; value: string } | null>(null)
   /** The inline new-folder editor: the directory it inserts into plus the buffer. */
   const [newFolder, setNewFolder] = useState<{ dir: string; value: string } | null>(null)
+  /** The inline new-file editor: the directory it inserts into plus the buffer. */
+  const [newFile, setNewFile] = useState<{ dir: string; value: string } | null>(null)
   /** The delete awaiting the confirmation modal's yes (single row). */
   const [confirmDelete, setConfirmDelete] = useState<{ path: string; isDir: boolean; name: string } | null>(null)
   /** The batch delete awaiting the confirmation modal's yes. */
@@ -953,6 +972,7 @@ export function FileTree(props: {
   const startNewFolder = (dir: string): void => {
     const live = propsRef.current
     if (live.cwd !== undefined && dir !== live.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
+    setNewFile(null)
     setNewFolder({ dir, value: '' })
   }
 
@@ -986,6 +1006,56 @@ export function FileTree(props: {
   const cancelNewFolder = (): void => {
     newFolderRef.current = null
     setNewFolder(null)
+  }
+
+  // ── New file ───────────────────────────────────────────────────────────────
+  const newFileRef = useRef(newFile)
+  newFileRef.current = newFile
+
+  /** Open the inline editor at the TOP of `dir`'s level (expanding it first). */
+  const startNewFile = (dir: string): void => {
+    const live = propsRef.current
+    if (live.cwd !== undefined && dir !== live.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
+    setNewFolder(null)
+    setNewFile({ dir, value: '' })
+  }
+
+  /**
+   * Commit the inline new-file name: Enter, blur, or the editor's own
+   * cancel path. The ref guard makes the commit idempotent — a blur that
+   * lands after Enter must not fire a second write. Creates an empty file
+   * through the existing `fs.write` route (no server change needed); the
+   * collision guard is client-side because `fs.write` overwrites silently.
+   */
+  const commitNewFile = (dir: string, raw: string): void => {
+    if (newFileRef.current === null) return
+    newFileRef.current = null
+    setNewFile(null)
+    const name = raw.trim()
+    const live = propsRef.current
+    if (live.cwd === undefined) return
+    if (!validName(name)) {
+      setActionError(t('newFileInvalid'))
+      return
+    }
+    if (nameTaken(dataRef.current[dir]?.entries, name)) {
+      setActionError(t('newFileExists'))
+      return
+    }
+    api.fsWrite({ sessionId: live.sessionId, cwd: live.cwd }, joinChild(dir, name), '')
+      .then(() => {
+        setActionError(null)
+        if (dir !== live.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
+        retryDir(dir)
+      })
+      .catch((error: unknown) => {
+        setActionError(error instanceof Error ? error.message : String(error))
+      })
+  }
+
+  const cancelNewFile = (): void => {
+    newFileRef.current = null
+    setNewFile(null)
   }
 
   // ── Batch delete ───────────────────────────────────────────────────────
@@ -1525,9 +1595,46 @@ export function FileTree(props: {
     </div>
   )
 
+  /** The inline new-file editor at the top of one level: the same
+   *  interaction contract as the new-folder editor (Enter commits, Escape
+   *  cancels, blur commits, IME guarded). The glyph follows the typed
+   *  name so the extension icon updates while typing. */
+  const renderNewFileRow = (dir: string, depth: number): ReactNode => {
+    const probe = newFile?.value.trim() !== '' ? joinChild(dir, newFile?.value.trim() ?? '') : joinChild(dir, 'untitled')
+    return (
+      <div className={clsx(css.explorerRow, css.explorerRenaming)} style={{ paddingLeft: depth * 22 + 6 }}>
+        {service !== undefined ? service.fileIcon(probe, 14) : builtinFileIcon(probe, 14)}
+        <input
+          ref={renameInputRef}
+          className={css.explorerRenameInput}
+          value={newFile?.value ?? ''}
+          placeholder={t('newFilePlaceholder')}
+          aria-label={t('newFile')}
+          spellCheck={false}
+          onChange={(event) => {
+            setNewFile(prev => prev === null ? prev : { ...prev, value: event.target.value })
+          }}
+          onKeyDown={(event) => {
+            if (isImeComposition(event)) return
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              commitNewFile(dir, newFile?.value ?? '')
+            } else if (event.key === 'Escape') {
+              event.preventDefault()
+              cancelNewFile()
+            }
+          }}
+          onBlur={() => { commitNewFile(dir, newFile?.value ?? '') }}
+        />
+      </div>
+    )
+  }
+
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
-    const head = newFolder?.dir === dir ? renderNewFolderRow(dir, depth) : null
+    const head = newFolder?.dir === dir
+      ? renderNewFolderRow(dir, depth)
+      : newFile?.dir === dir ? renderNewFileRow(dir, depth) : null
     if (level === undefined) {
       return (
         <>
@@ -1771,6 +1878,9 @@ export function FileTree(props: {
           ...(rowMenu?.isDir === true
             ? [{ id: 'new-folder', label: t('newFolder'), icon: <IconPlusOutlineRegular size={14} /> }]
             : []),
+          ...(rowMenu?.isDir === true
+            ? [{ id: 'new-file', label: t('newFile'), icon: <IconCodeOutlineRegular size={14} /> }]
+            : []),
           // 5: ZIP of the current selection (≥2 rows, or one lone directory).
           ...(rowMenu === null ? [] : zipEntries(rowMenu)),
           // 6: copy, then the mutations (never on the workspace root row).
@@ -1829,6 +1939,10 @@ export function FileTree(props: {
           }
           if (id === 'new-folder') {
             startNewFolder(target.path)
+            return
+          }
+          if (id === 'new-file') {
+            startNewFile(target.path)
             return
           }          if (id === 'rename') {
             setRenaming({ path: target.path, value: baseName(target.path) })
