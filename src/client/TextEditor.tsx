@@ -217,6 +217,25 @@ export function TextEditor(props: FileViewerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content, path])
 
+  // Native sidebar tabs stay mounted while another tab is active. If a file
+  // is opened while that host is hidden, CodeMirror can measure its viewport at
+  // zero and retain an empty virtualized viewport after the tab is revealed.
+  // Re-measure both on mount and whenever the host's box changes so returning
+  // to a parked editor always repaints its document without remounting it.
+  useEffect(() => {
+    const host = hostRef.current
+    const view = viewRef.current
+    if (host === null || view === null) return
+    const measure = (): void => {
+      if (host.isConnected && host.offsetWidth > 0 && host.offsetHeight > 0) view.requestMeasure()
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(host)
+    return () => { observer.disconnect() }
+  }, [content, path])
+
   // Scheme flip: re-theme in place (the compartment holds only the
   // scheme-dependent extensions; everything else is untouched).
   useEffect(() => {
