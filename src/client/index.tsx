@@ -19,6 +19,7 @@ import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { createNativeTabRecords } from './native/tab-adapter.tsx'
 import { registerNativeSurface } from './native/index.ts'
+import { registerSideCommand } from './side-command.ts'
 import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
 import { createNativeSurface } from './native/surface.ts'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
@@ -199,6 +200,10 @@ export function apply(ctx: Context): void {
   ctx.effect(
     () => registerBuiltins(ctx, service),
     'dsh-better-sidebar: register built-in tabs and viewers',
+  )
+  ctx.effect(
+    () => registerSideCommand(ctx, service, sidebarStore),
+    'dsh-better-sidebar: side-chat composer command',
   )
   try {
     // rc.8+ exposes the client module system as the `ctx.modules` service;
