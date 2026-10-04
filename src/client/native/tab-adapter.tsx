@@ -111,6 +111,13 @@ export interface NativeTabRecords {
     params: NativeTabParams | undefined
     scope: SessionScope
     /**
+     * The native navigation revision this call carries. The surface re-sends
+     * the last navigation on every render, so the seed meta is adopted once
+     * per revision — see {@link navigationRevisions}. Absent (the plugin's own
+     * layout, older callers) never re-adopts.
+     */
+    revision?: number
+    /**
      * The descriptor's own factory, called ONCE for a record that arrives
      * without seed fields (a native guide open, which knows nothing about the
      * plugin's per-instance minting): it supplies the title and the meta a
@@ -152,6 +159,17 @@ function samePaths(left: readonly string[], right: readonly string[]): boolean {
 export function createNativeTabRecords(): NativeTabRecords {
   const views = new Map<string, View>()
   const instances = new Map<string, number>()
+  /**
+   * Native tab id -> the navigation revision whose seed meta was last adopted.
+   *
+   * `meta` has two writers: the opener's navigation (a new revision carrying
+   * new `params.meta`) and the plugin's own `updateTab` (a view binding state
+   * it derives at runtime — the side chat writes its thread id that way). The
+   * native surface re-delivers the SAME navigation on every render, so
+   * adopting the seed meta unconditionally would overwrite the second writer
+   * on each pass; only a revision this tab has not seen may seed.
+   */
+  const navigationRevisions = new Map<string, number>()
   const listeners = new Set<() => void>()
   const notify = (): void => { for (const listener of listeners) listener() }
   const put = (id: string, view: View): void => {
@@ -191,7 +209,7 @@ export function createNativeTabRecords(): NativeTabRecords {
       next.subscribe(syncExpanded)
       syncExpanded()
     },
-    ensure({ id, kind, title, params, scope, mint }) {
+    ensure({ id, kind, title, params, scope, revision, mint }) {
       const existing = views.get(id)
       if (existing === undefined) {
         const seeded = params?.title === undefined && params?.meta === undefined ? mint?.() : undefined
@@ -211,20 +229,36 @@ export function createNativeTabRecords(): NativeTabRecords {
           version: 0,
         }
         views.set(id, minted)
+        // The seed meta of THIS revision is now the adopted one: a later
+        // re-delivery of the same navigation must not re-adopt it.
+        if (revision !== undefined) navigationRevisions.set(id, revision)
         return minted
       }
       // A navigation may carry new seed fields (the editor's in-place switch,
-      // a browser tab pointed at another URL); the record's identity and any
-      // plugin-side mutation (title/meta from updateTab) stay.
+      // a browser tab pointed at another URL, a side chat switching threads);
+      // the record's identity and any plugin-side mutation (title from
+      // updateTab) stay. `meta` is the exception — see below.
       const patch: Partial<SidebarTab> = {}
       if (params?.path !== undefined && params.path !== existing.tab.path) patch.path = params.path
       if (params?.diff !== undefined) patch.diff = params.diff
+      // The host re-delivers the SAME navigation on every render, so adopting
+      // `params.meta` here unconditionally would overwrite the meta the view
+      // itself wrote through `updateTab` (the side chat binds its thread that
+      // way) on every pass — the tab would fall back to its unbound state and
+      // mint thread after thread. Only a navigation this tab has not adopted
+      // yet may seed; everything else leaves the plugin-written meta alone.
+      const navigationChanged = revision !== undefined && navigationRevisions.get(id) !== revision
+      if (navigationChanged) navigationRevisions.set(id, revision)
+      let nextMeta: unknown
+      if (navigationChanged && params?.meta !== undefined) nextMeta = params.meta
       if (params?.url !== undefined) {
-        const meta = typeof existing.tab.meta === 'object' && existing.tab.meta !== null
-          ? existing.tab.meta as Record<string, unknown>
-          : {}
-        patch.meta = { ...meta, url: params.url }
+        const base = nextMeta ?? existing.tab.meta
+        nextMeta = {
+          ...(typeof base === 'object' && base !== null ? base as Record<string, unknown> : {}),
+          url: params.url,
+        }
       }
+      if (nextMeta !== undefined) patch.meta = nextMeta
       // The expansion set always mirrors the CURRENT session state (a record
       // reused for another session must not keep the previous one's set).
       const expanded = expandedOf(scope.sessionId)
@@ -249,6 +283,9 @@ export function createNativeTabRecords(): NativeTabRecords {
       put(id, { ...entry, tab: { ...entry.tab, ...patch } })
     },
     drop(id) {
+      // The revision ledger dies with the record: an id reused later arrives
+      // with its own navigation.
+      navigationRevisions.delete(id)
       if (views.delete(id)) notify()
     },
     toggleExpanded(id, path) {
@@ -347,6 +384,7 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
     title: nativeTab.title,
     params,
     scope,
+    revision: nativeTab.navigation.revision,
     mint: () => {
       const state = store.getSnapshot().state
       if (descriptor?.createTab === undefined || state === undefined) return undefined
