@@ -31,6 +31,7 @@ import { api, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
 import { clearEditorDirty, setEditorDirty } from './editor-dirty.ts'
+import { advancePreviewWriteCursor, INITIAL_PREVIEW_WRITE_CURSOR } from './editor-auto-refresh.ts'
 import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
 import { openClaimedNativeFile, openSidebarFile } from './sidebar-file.ts'
@@ -41,6 +42,7 @@ import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './paths.ts'
+import { usePolling } from './use-polling.ts'
 import { closePathTabs, retargetPathTabs } from './tree-mutations.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
 import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, type SidebarStore, type SidebarTab } from './state.ts'
@@ -311,6 +313,8 @@ export function EditorHost(props: {
   // its state and registers its commands (both null/absent for viewers
   // without a toolbar — image, pdf, binary download).
   const [toolbar, setToolbar] = useState<EditorToolbarState | null>(null)
+  const toolbarRef = useRef(toolbar)
+  toolbarRef.current = toolbar
   const controlsRef = useRef<EditorToolbarControls | null>(null)
   const onToolbarState = useCallback((next: EditorToolbarState) => {
     setToolbar(prev => prev !== null && JSON.stringify(prev) === JSON.stringify(next) ? prev : next)
@@ -329,6 +333,23 @@ export function EditorHost(props: {
     setEditorDirty(tab.id, toolbar?.dirty === true, scope.sessionId, path)
     return () => { clearEditorDirty(tab.id) }
   }, [tab.id, toolbar?.dirty, scope.sessionId, path, isDir])
+
+  // 初次读取只建立事件游标；之后仅在文件写入成功且当前预览无草稿时刷新。
+  const previewCursorRef = useRef(INITIAL_PREVIEW_WRITE_CURSOR)
+  useEffect(() => {
+    previewCursorRef.current = INITIAL_PREVIEW_WRITE_CURSOR
+  }, [scope.sessionId, scope.cwd, path])
+  const pollPreviewWrites = useCallback(async (signal: AbortSignal): Promise<void> => {
+    const afterSeq = previewCursorRef.current.lastSeq
+    const response = await api.changesOps({ sessionId: scope.sessionId, cwd: scope.cwd }, afterSeq > 0 ? afterSeq : undefined, signal)
+    if (signal.aborted) return
+    const next = advancePreviewWriteCursor(previewCursorRef.current, response, scope.cwd, path)
+    previewCursorRef.current = next.cursor
+    if (next.changed && toolbarRef.current?.dirty !== true && toolbarRef.current?.mode !== 'edit') {
+      setReloadSeq(sequence => sequence + 1)
+    }
+  }, [scope.sessionId, scope.cwd, path])
+  usePolling(visible && path !== '' && !isDir, pollPreviewWrites, { intervalMs: 2_500, mode: 'self-scheduling', immediate: true })
 
   // The docked panel's drag-resize: pointer capture on the handle itself
   // (no window listeners — the captured pointer keeps tracking even off the
