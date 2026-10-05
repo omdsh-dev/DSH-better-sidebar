@@ -71,13 +71,13 @@ describe('test-registry path (vitest / jsdom-less environments)', () => {
 
   it('a failed load clears the cache so the next call retries', async () => {
     let calls = 0
-    registerChunkForTests('terminal', async () => {
+    registerChunkForTests('locale', async () => {
       calls += 1
       if (calls === 1) throw new Error('boom')
-      return { TerminalView: 'terminal-view' }
+      return { localeDicts: 'locale-dicts' }
     })
-    await expect(loadChunk('terminal')).rejects.toThrow('boom')
-    await expect(loadChunk('terminal')).resolves.toEqual({ TerminalView: 'terminal-view' })
+    await expect(loadChunk('locale')).rejects.toThrow('boom')
+    await expect(loadChunk('locale')).resolves.toEqual({ localeDicts: 'locale-dicts' })
     expect(calls).toBe(2)
   })
 })
@@ -131,11 +131,11 @@ describe('production path (script injection + global registry + externals requir
     const seen: string[] = []
     setChunkScriptLoaderForTests(async (src) => {
       seen.push(src)
-      simulateScript(src.endsWith('editor.js') ? 'editor' : 'terminal', () => ({}))
+      simulateScript(src.endsWith('editor.js') ? 'editor' : 'locale', () => ({}))
     })
-    await loadChunk('terminal')
+    await loadChunk('locale')
     await loadChunk('editor')
-    expect(seen).toEqual(['/sidebar/bundle/terminal.js', '/sidebar/bundle/editor.js'])
+    expect(seen).toEqual(['/sidebar/bundle/locale.js', '/sidebar/bundle/editor.js'])
     expect(modules.import).toHaveBeenCalledTimes(CHUNK_EXTERNALS.length)
   })
 
@@ -150,11 +150,11 @@ describe('production path (script injection + global registry + externals requir
   it('a script load failure rejects without materializing', async () => {
     const modules = installModuleSystem()
     setChunkScriptLoaderForTests(async () => { throw new Error('script 404') })
-    await expect(loadChunk('terminal')).rejects.toThrow('script 404')
+    await expect(loadChunk('locale')).rejects.toThrow('script 404')
     expect(modules.import).not.toHaveBeenCalled()
     // Cache cleared: the retry re-attempts the script load.
-    setChunkScriptLoaderForTests(async () => { simulateScript('terminal', () => ({ TerminalView: 'ok' })) })
-    await expect(loadChunk('terminal')).resolves.toEqual({ TerminalView: 'ok' })
+    setChunkScriptLoaderForTests(async () => { simulateScript('locale', () => ({ localeDicts: 'ok' })) })
+    await expect(loadChunk('locale')).resolves.toEqual({ localeDicts: 'ok' })
   })
 
   it('a script that ran but registered no factory fails with a clear error', async () => {
@@ -216,7 +216,7 @@ describe('revalidateChunksOnReactivate (HMR re-activation keeps unchanged chunks
   function stubBundleHead(etagFor: (name: string) => string | null | Error): void {
     vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
       const url = String(input)
-      const name = url.endsWith('terminal.js') ? 'terminal' : 'editor'
+      const name = url.endsWith('locale.js') ? 'locale' : 'editor'
       const etag = etagFor(name)
       if (etag instanceof Error) throw etag
       return {
@@ -268,13 +268,13 @@ describe('revalidateChunksOnReactivate (HMR re-activation keeps unchanged chunks
     let scriptCalls = 0
     setChunkScriptLoaderForTests(async () => {
       scriptCalls += 1
-      simulateScript('terminal', () => ({ TerminalView: 'tv' }))
+      simulateScript('locale', () => ({ localeDicts: 'ld' }))
     })
     stubBundleHead(() => new Error('HEAD unreachable'))
-    await loadChunk('terminal')
+    await loadChunk('locale')
     await settleEtag()
     await revalidateChunksOnReactivate()
-    await loadChunk('terminal')
+    await loadChunk('locale')
     expect(scriptCalls).toBe(2)
   })
 

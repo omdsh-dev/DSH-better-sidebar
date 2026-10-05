@@ -17,7 +17,6 @@ import { builtinTabs } from '../src/client/builtins/tabs.tsx'
 import { builtinViewers } from '../src/client/builtins/viewers.tsx'
 import { registerChunkForTests, resetChunks } from '../src/client/chunk-loader.ts'
 import { lazyChunkComponent } from '../src/client/lazy-chunk.tsx'
-import type { Context } from '../src/context-types.ts'
 import type { FileViewerProps, TabComponentProps } from '../src/client/service.ts'
 import css from '../src/client/sidebar.module.css'
 
@@ -72,8 +71,8 @@ describe('lazyChunkComponent', () => {
 
   it('props flow through to the chunk component', async () => {
     const Recorder = (props: { label: string }): ReactNode => createElement('div', { 'data-testid': 'rec', 'data-label': props.label })
-    registerChunkForTests('terminal', async () => ({ TerminalView: Recorder }))
-    const Wrapper = lazyChunkComponent<{ label: string }>('terminal', (mod) => mod.TerminalView as ComponentType<{ label: string }> | undefined)
+    registerChunkForTests('mermaid', async () => ({ MermaidMarkdown: Recorder }))
+    const Wrapper = lazyChunkComponent<{ label: string }>('mermaid', (mod) => mod.MermaidMarkdown as ComponentType<{ label: string }> | undefined)
     const { container, unmount } = renderRoot(createElement(Wrapper, { label: 'hello' }))
     await act(async () => {})
     expect(container.querySelector('[data-testid="rec"]')?.getAttribute('data-label')).toBe('hello')
@@ -93,14 +92,14 @@ describe('built-in descriptor contract (render-prop functions)', () => {
     }
   })
 
-  it('the terminal tab component keeps the same contract', () => {
-    const tabs = builtinTabs({} as Context)
-    const terminal = tabs.find(tab => tab.id === 'terminal')
-    expect(terminal).toBeDefined()
-    // The descriptor reads tab.id (the tabId mapping); a real tab is part of
-    // the contract — Sidebar always provides one.
-    const props = { tab: { id: 'terminal:1', type: 'terminal', title: '终端 1' } } as unknown as TabComponentProps
-    expect(() => terminal!.component(props)).not.toThrow()
+  it('a built-in tab component keeps the same contract', () => {
+    const tabs = builtinTabs()
+    const editor = tabs.find(tab => tab.id === 'editor')
+    expect(editor).toBeDefined()
+    // The descriptor renders from props; a real tab is part of the contract —
+    // Sidebar always provides one.
+    const props = { tab: { id: 'editor:1', type: 'editor', title: '文件' } } as unknown as TabComponentProps
+    expect(() => editor!.component(props)).not.toThrow()
   })
 
   it('a built-in viewer mounted without a chunk available degrades to the error + retry affordance (no crash)', async () => {
@@ -133,44 +132,26 @@ describe('built-in descriptor contract (render-prop functions)', () => {
     unmount()
   })
 
-  it('the terminal descriptor maps tab.id → tabId (TerminalView props are not TabComponentProps)', async () => {
-    let received: unknown
-    registerChunkForTests('terminal', async () => ({
-      TerminalView: ((props: { tabId: string }) => {
-        received = props.tabId
-        return createElement('div', { 'data-testid': 'terminal-tabid' }, props.tabId)
-      }) as unknown as ComponentType<Record<string, never>>,
-    }))
-    const tabs = builtinTabs({} as Context)
-    const terminal = tabs.find(tab => tab.id === 'terminal')!
+  it('the loader cache survives across descriptor mounts (chunk fetched once)', async () => {
+    let calls = 0
+    registerChunkForTests('editor', async () => {
+      calls += 1
+      return { TextEditor: Marker }
+    })
+    const markdown = builtinViewers().find(viewer => viewer.id === 'markdown')!
     const props = {
       ctx: {},
       store: undefined,
       scope: { sessionId: 's1', cwd: '/p' },
-      tab: { id: 'terminal:2', type: 'terminal', title: '终端 2' },
-      visible: true,
-    } as unknown as TabComponentProps
-    const { container, unmount } = renderRoot(createElement(terminal.component, props))
-    await act(async () => {})
-    expect(container.querySelector('[data-testid="terminal-tabid"]')?.textContent).toBe('terminal:2')
-    expect(received).toBe('terminal:2')
-    unmount()
-  })
-
-  it('the loader cache survives across descriptor mounts (chunk fetched once)', async () => {
-    let calls = 0
-    registerChunkForTests('terminal', async () => {
-      calls += 1
-      return { TerminalView: Marker }
-    })
-    const tabs = builtinTabs({} as Context)
-    const terminal = tabs.find(tab => tab.id === 'terminal')!
-    const props = { tab: { id: 'terminal:1', type: 'terminal', title: '终端 1' } } as unknown as TabComponentProps
-    const { container: first, unmount: unmountFirst } = renderRoot(createElement(terminal.component, props))
+      path: '/p/a.md',
+      title: 'a.md',
+      viewerId: 'markdown',
+    } as unknown as FileViewerProps
+    const { container: first, unmount: unmountFirst } = renderRoot(createElement(markdown.component, props))
     await act(async () => {})
     expect(first.querySelector('[data-testid="chunk-rendered"]')).not.toBeNull()
     unmountFirst()
-    const { container: second, unmount: unmountSecond } = renderRoot(createElement(terminal.component, props))
+    const { container: second, unmount: unmountSecond } = renderRoot(createElement(markdown.component, props))
     await act(async () => {})
     expect(second.querySelector('[data-testid="chunk-rendered"]')).not.toBeNull()
     unmountSecond()

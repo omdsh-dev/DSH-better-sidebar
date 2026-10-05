@@ -36,10 +36,14 @@ export const LABEL_MAX_CHARS = 48
  *  the two plugins' threads render consistently in either UI). */
 export const SIDE_BOUNDARY_PREFIX = 'Side conversation boundary'
 
-/** The plugin identity stamped on the source of context-injection messages
- *  (boundary prompt + parked snapshot), so the transcript recognizes them
- *  structurally — not by text prefix. */
-export const SIDE_INJECTION_PLUGIN = 'dsh-better-sidebar'
+/** The plugin's producer-owned source kind, stamped on the source of
+ *  context-injection messages (boundary prompt + parked snapshot) so the
+ *  transcript recognizes them structurally — not by text prefix. Session
+ *  format v4 retired the bare `kind: 'plugin'` + `plugin` pair; a plugin is
+ *  now identified by its own `plugin:<name>` kind, which is exactly what
+ *  DSH's own v3→v4 migration derives for rows this plugin wrote earlier, so
+ *  both generations read back under one shape. */
+export const SIDE_INJECTION_SOURCE_KIND = 'plugin:dsh-better-sidebar'
 
 /**
  * The boundary prompt delivered as the thread's first user message: the
@@ -228,25 +232,37 @@ export function hasDanglingToolCall(events: readonly SidechatLogEvent[], turnSta
   return pending.size > 0
 }
 
-/** The plain text of one tool/result message (text blocks inside its
- *  `tool-result` content block). */
-function toolResultText(data: Record<string, unknown>): string {
-  const message = data.message as { content?: unknown } | undefined
-  const content = message?.content
-  if (!Array.isArray(content)) return ''
-  const parts: string[] = []
+/**
+ * The result content blocks of one tool/result message under BOTH logged
+ * shapes: 0.1.6 wrapped them in a single `type: 'tool-result'` content block
+ * on a user-role message, 0.1.7's first-class tool-role message carries them
+ * at the message's own top level. Historical logs keep the old shape forever,
+ * so both are read. Undefined when the message carries no block array.
+ */
+function resultBlocks(content: unknown): readonly unknown[] | undefined {
+  if (!Array.isArray(content)) return undefined
   for (const block of content) {
     if (block === null || typeof block !== 'object') continue
-    const candidate = block as { type?: unknown; content?: unknown }
-    if (candidate.type !== 'tool-result') continue
-    const inner = candidate.content
-    if (!Array.isArray(inner)) continue
-    for (const item of inner) {
-      if (item === null || typeof item !== 'object') continue
-      const textItem = item as { type?: unknown; text?: unknown }
-      if (textItem.type === 'text' && typeof textItem.text === 'string') {
-        parts.push(textItem.text)
-      }
+    const wrapper = block as { type?: unknown; content?: unknown }
+    if (wrapper.type === 'tool-result' && Array.isArray(wrapper.content)) {
+      return wrapper.content as readonly unknown[]
+    }
+  }
+  return content as readonly unknown[]
+}
+
+/** The plain text of one tool/result message (its text blocks, under either
+ *  of the two shapes {@link resultBlocks} reads). */
+function toolResultText(data: Record<string, unknown>): string {
+  const message = data.message as { content?: unknown } | undefined
+  const blocks = resultBlocks(message?.content)
+  if (blocks === undefined) return ''
+  const parts: string[] = []
+  for (const item of blocks) {
+    if (item === null || typeof item !== 'object') continue
+    const textItem = item as { type?: unknown; text?: unknown }
+    if (textItem.type === 'text' && typeof textItem.text === 'string') {
+      parts.push(textItem.text)
     }
   }
   return parts.join('\n')
@@ -593,4 +609,87 @@ export function resolvePresetId(
     if (typeof preset === 'string') return preset
   }
   return header.agentPreset
+}
+
+/** One model route as the durable log records it (the shape of a
+ *  `model/selection` event payload and of the core `modelSelection`
+ *  projection rows). */
+export interface SidechatModelSelection {
+  provider: string
+  model: string
+  reasoningEffort?: string
+}
+
+/**
+ * The model selection a session CURRENTLY runs, projected from its durable
+ * log (mirror of the core `modelSelection` projection — replicated here
+ * like resolvePresetId to avoid a host dependency). An explicit
+ * `model/selection` event stays PENDING until a same-route `request/header`
+ * consumes it; the value the composer's model selector shows is
+ * `pending ?? lastUsed`.
+ *
+ * This is NOT what `agent.options.provider/model` holds: those freeze the
+ * creation-time deployment default and are never rewritten by a UI model
+ * switch — DSH 0.1.5 routes requests through the session-local selection
+ * and its `agent/request` waterfall instead. Anyone inheriting "the
+ * parent's current model" must read this projection; inheriting
+ * `parent.options` verbatim silently ships the stale creation default
+ * (issue #368).
+ *
+ * A `request/header` contributes provider/model/effort, EXCEPT when its
+ * effort is marked as an adapter default (`adapterDefaults.reasoningEffort`)
+ * which the core selection getter deliberately does not adopt as a sticky pick.
+ */
+export function parentModelSelection(
+  events: readonly SidechatLogEvent[],
+): SidechatModelSelection | undefined {
+  let pending: SidechatModelSelection | undefined
+  let lastUsed: SidechatModelSelection | undefined
+  for (const event of events) {
+    if (event.type === 'model/selection') {
+      const selection = looseSelection(dataOf(event))
+      if (selection !== undefined) pending = selection
+      continue
+    }
+    if (event.type !== 'request/header') continue
+    const header = (dataOf(event).header as {
+      config?: unknown
+      adapterDefaults?: { reasoningEffort?: boolean }
+    } | undefined)
+    const config = header?.config
+    if (config === null || typeof config !== 'object') continue
+    const selection = looseSelection(config as Record<string, unknown>)
+    if (selection === undefined) continue
+    const isDefaultEffort = header?.adapterDefaults?.reasoningEffort === true
+    lastUsed = {
+      provider: selection.provider,
+      model: selection.model,
+      ...(!isDefaultEffort && selection.reasoningEffort !== undefined ? { reasoningEffort: selection.reasoningEffort } : {}),
+    }
+    if (sameSelection(pending, lastUsed)) pending = undefined
+  }
+  return pending ?? lastUsed
+}
+
+function sameSelection(
+  left: SidechatModelSelection | undefined,
+  right: SidechatModelSelection | undefined,
+): boolean {
+  if (left === right) return true
+  if (left === undefined || right === undefined) return false
+  return left.provider === right.provider
+    && left.model === right.model
+    && left.reasoningEffort === right.reasoningEffort
+}
+
+/** Narrow one loose record into a model selection (non-empty strings only). */
+function looseSelection(data: Record<string, unknown>): SidechatModelSelection | undefined {
+  const { provider, model, reasoningEffort } = data
+  if (typeof provider !== 'string' || provider === '') return undefined
+  if (typeof model !== 'string' || model === '') return undefined
+  return {
+    provider,
+    model,
+    ...(typeof reasoningEffort === 'string' && reasoningEffort !== '' ? { reasoningEffort } : {}),
+  }
 }

@@ -14,7 +14,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest'
 import { readFileSync, readdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { resolve, sep } from 'node:path'
 import { colorAlpha, effectiveTokenValue, tokenValue } from '../src/client/theme.ts'
 
 afterEach(() => {
@@ -91,11 +91,30 @@ describe('effectiveTokenValue', () => {
  * `FileTypeIcon` artwork from a platform module (the host owns those pixels
  * and its own palette), and everything the plugin renders around them —
  * including the colored tab glyphs — rides theme tokens. So the guard is
- * simply that no plugin module carries a color literal, and that no icon
- * dataset sneaked back in as a chunk.
+ * simply that no plugin module carries a color literal, that every module
+ * stylesheet paints `color` from a token, and that no icon dataset sneaked
+ * back in as a chunk.
  */
 // jsdom has no file:// import.meta.url; vitest runs from the repo root.
 const ROOT = process.cwd()
+
+/** `color` as a property — never `background-color` / `scrollbar-color` / `-webkit-text-fill-color`. */
+const COLOR_PROPERTY = /(?:^|[;{\s])color\s*:\s*([^;}]+)/g
+
+/** Values that name no paint of their own and are therefore exempt. */
+const INERT_COLOR = /^(?:inherit|currentcolor|transparent)$/i
+
+/** A token allowed by the contract: the plugin's own `--dsw-*` or the host's `--ds-*`. */
+function isThemeToken(name: string): boolean {
+  return name.startsWith('dsw-') || name.startsWith('ds-')
+}
+
+/** Every `*.module.css` sheet under `src/client/`, as repo-relative POSIX paths. */
+function moduleStylesheets(): string[] {
+  return readdirSync(resolve(ROOT, 'src/client'), { recursive: true, encoding: 'utf8' })
+    .filter(name => name.endsWith('.module.css'))
+    .map(name => `src/client/${name.split(sep).join('/')}`)
+}
 
 describe('skin contract: the plugin owns no color of its own', () => {
   it('the icon modules carry no color literals', () => {
@@ -119,6 +138,86 @@ describe('skin contract: the plugin owns no color of its own', () => {
     for (const declaration of styles.matchAll(/color:\s*([^;]+);/g)) {
       expect(declaration[1], declaration[0]).toContain('var(--dsw-')
     }
+  })
+
+  it('every module stylesheet paints `color` from a theme token', () => {
+    const sheets = moduleStylesheets()
+    // Guard the scan itself: a glob that silently matches nothing would make
+    // this contract vacuous.
+    expect(sheets.length).toBeGreaterThan(5)
+    for (const file of sheets) {
+      const styles = readFileSync(resolve(ROOT, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+      for (const declaration of styles.matchAll(COLOR_PROPERTY)) {
+        const value = declaration[1]!.trim()
+        // `color: inherit` / `currentcolor` / `transparent` is the plugin
+        // deliberately taking the surrounding color, not painting one.
+        if (INERT_COLOR.test(value)) continue
+        // Dereference every var() — `color-mix()` chains are fine as long as
+        // the whole expression bottoms out in theme tokens.
+        const tokens = [...value.matchAll(/var\(--([a-z0-9-]+)/gi)].map(match => match[1]!)
+        expect(tokens.length, `${file}: color: ${value}`).toBeGreaterThan(0)
+        for (const name of tokens) expect(isThemeToken(name), `${file}: color: ${value}`).toBe(true)
+      }
+    }
+  })
+
+  it('the running bar sweeps the FULL width (a band either side, not a partial blob)', () => {
+    // Reader report: the first cut moved a 45%-wide band with
+    // `background-position`, so the bar was only ever partially lit. The
+    // corrected rule is a bar-wide band whose TRANSFORM travels one full width
+    // either side of the bar — entered at the left edge, covering the bar
+    // mid-flight, gone past the right edge.
+    const styles = readFileSync(resolve(ROOT, 'src/client/tasks-graph.module.css'), 'utf8')
+    const block = /\.cardBar\[data-running='true'\]::after \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    if (block === undefined) throw new Error('the running bar sweep rule must exist')
+    expect(block).toContain('width: 100%')
+    expect(block).toContain('transform: translateX(-100%)')
+    // No residual background-position travel (the partial-sweep mechanism).
+    expect(block).not.toContain('background-position')
+    expect(block).not.toContain('background-size')
+    const frames = /@keyframes dsh-tasks-bar-sweep \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    if (frames === undefined) throw new Error('the sweep keyframes must exist')
+    expect(frames).toContain('transform: translateX(-100%)')
+    expect(frames).toContain('transform: translateX(100%)')
+  })
+
+  it('the running bar keeps its state word and activity on ONE font stack', () => {
+    // Reader report: 运行中 and 正在分析请求 sat at different heights. The
+    // cause is metric, not layout — at 11px the sans stack is ascent/descent
+    // 11/2 against the mono stack's 10/3, so a mono activity line rests 1px
+    // lower. Both texts must therefore inherit the bar's own font.
+    const styles = readFileSync(resolve(ROOT, 'src/client/tasks-graph.module.css'), 'utf8')
+    const block = /\.barActivity \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    if (block === undefined) throw new Error('the .barActivity rule must exist')
+    expect(block).not.toContain('font-family')
+    expect(block).not.toContain('--ds-font-family-code')
+  })
+
+  it('the empty-pane welcome capsule follows the host guide recipe', () => {
+    // The card is the same surface as DSH's own guide capsule ("pick what
+    // opens here"), so this pins the shared geometry and the token-only
+    // paint. A literal here would drift away from the host under every skin.
+    const styles = readFileSync(resolve(ROOT, 'src/client/sidebar.module.css'), 'utf8')
+    const block = /\.paneCard \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    if (block === undefined) throw new Error('the .paneCard rule must exist in src/client/sidebar.module.css')
+    expect(block).toContain('border: 0.5px solid var(--dsw-alias-border-l4)')
+    expect(block).toContain('border-radius: 24px')
+    expect(block).toContain('background: var(--dsw-alias-bg-layer-1)')
+    expect(block).toContain('min-height: 56px')
+    expect(block).toContain('padding: 14px 20px')
+    // No paint of its own: every color-ish declaration resolves to a token,
+    // and the upstream-only spellings this repo must not copy are absent.
+    for (const declaration of block.matchAll(/(?:^|\n)\s*(?:background|border|color|font):\s*([^;]*);/g)) {
+      const value = declaration[1] ?? ''
+      // A literal here (hex, rgba, a named colour) would drift from the host
+      // under every skin, so any keyword whose value is not a token fails.
+      expect(
+        value === '' || value.includes('var(--dsw-'),
+        `${declaration[0].trim()} must paint through a --dsw-* token (got: ${value})`,
+      ).toBe(true)
+    }
+    expect(block).not.toContain('--dsw-alias-bg-l1')
+    expect(block).not.toContain('--dsw-alias-bg-l2')
   })
 
   it('no icon dataset is shipped as a lazy chunk', () => {

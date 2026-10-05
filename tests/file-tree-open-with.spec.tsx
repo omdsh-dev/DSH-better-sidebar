@@ -1,10 +1,7 @@
 /**
- * FileTree "open with" context menu: a row's right-click menu gains the
- * pinned direct rows and the parent submenu row; the submenu lists every
- * resolved target with a per-row pushpin, pinning never selects/closes the
- * menu, and selecting a child invokes the caller's open handler with the
- * row's absolute path (URL targets preserve file/directory kind). When the
- * caller wires nothing, the section is absent.
+ * FileTree's plugin open-with menu keeps editor targets in one submenu,
+ * preserves SSH file and directory paths, and retains the reveal target.
+ * Host and plugin visibility rules are covered by the companion spec.
  */
 // @vitest-environment jsdom
 import { beforeAll, afterEach, describe, expect, it, vi } from 'vitest'
@@ -12,10 +9,8 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { FileTree } from '../src/client/FileTree.tsx'
-import { createSidebarStore } from '../src/client/state.ts'
 import type { OpenWithTarget } from '../src/client/open-with.ts'
 
-// The act() environment flag (React 18.2 reads it before flushing effects).
 import { setupReactAct } from './test-utils.ts'
 setupReactAct()
 
@@ -26,14 +21,19 @@ beforeAll(() => {
 
 vi.mock('../src/client/api.ts', () => ({
   api: {
-    fsTree: async () => ({
-      entries: [
+    fsTrees: async (_scope: unknown, paths: readonly string[]) => ({
+      levels: paths.map(path => ({ path, entries: [
         { name: 'project', path: '/tmp/project', isDir: true },
+        { name: 'sub', path: '/tmp/sub', isDir: true },
         { name: 'a.ts', path: '/tmp/a.ts', isDir: false },
-      ],
+      ], truncated: false })),
     }),
+    // The tree reads the shared git-status store; a non-repo answer keeps
+    // every row plain.
+    gitStatus: async () => ({ isRepo: false, entries: [] }),
   },
   downloadUrl: () => '/sidebar/file',
+  isOutsideWorkspaceMessage: () => false,
 }))
 
 /** The resolved target list a caller (EditorHost) would hand FileTree. */
@@ -70,7 +70,6 @@ async function mountTree(overrides: {
     root.render(createElement(FileTree, {
       sessionId: 's1',
       cwd: '/tmp',
-      store: createSidebarStore(),
       expanded: [],
       revealed: [],
       onToggle: () => {},
@@ -87,12 +86,13 @@ async function mountTree(overrides: {
       onUploadRequest: () => {},
       busy: false,
     }))
+    await Promise.resolve()
   })
   return {
     container,
     onOpenWith,
     onToggleOpenWithPin,
-    unmount: () => { act(() => { root.unmount() }) },
+    unmount: () => { act(() => { root.unmount() }); container.remove() },
   }
 }
 
@@ -115,57 +115,85 @@ function openMenu(container: HTMLDivElement, name = 'a.ts'): void {
   act(() => { namedRow(container, name).dispatchEvent(event) })
 }
 
-describe('FileTree open-with menu', () => {
+function menuItems(): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+}
+
+function submenuRows(): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menu"] [role="menuitem"]')]
+}
+
+function submenuParent(): HTMLElement {
+  const parent = menuItems().find(item => item.getAttribute('aria-haspopup') === 'menu')
+  if (parent === undefined) throw new Error('submenu parent not found')
+  return parent
+}
+
+describe('FileTree plugin open-with menu', () => {
   let harness: Harness
   afterEach(() => {
     harness.unmount()
     document.body.innerHTML = ''
+    document.body.removeAttribute('data-dsh-sidebar-submenu')
   })
 
-  it('renders the pinned direct row and the submenu parent for a file row', async () => {
+  it('keeps application rows out of level 1 and lists them under the open-with submenu', async () => {
     harness = await mountTree()
     openMenu(harness.container)
-    const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
-    // The pinned VS Code sits at the top level (before the submenu parent).
-    expect(items.map(item => item.textContent?.trim())).toContain('VS Code')
-    const parent = items.find(item => item.getAttribute('aria-haspopup') === 'menu')
-    expect(parent?.textContent).toContain('Open with')
+    // Level 1: the one submenu parent — no application name sits on it.
+    expect(menuItems().map(item => item.textContent?.trim())).toContain('Open with')
+    for (const name of ['File Manager', 'VS Code', 'Cursor', 'Zed', 'Windsurf']) {
+      expect(menuItems().map(item => item.textContent?.trim())).not.toContain(name)
+    }
+    const parent = submenuParent()
     // The submenu parent carries the trailing chevron affordance (the
     // primitives Menu renders no arrow of its own), right-aligned inside a
     // full-width label row — the same structure the submenu children use.
-    expect(parent?.querySelector('[class*="openWithChevron"]')).not.toBeNull()
-    expect(parent?.querySelector('[class*="openWithLabel"]')).not.toBeNull()
+    expect(parent.querySelector('[class*="openWithChevron"]')).not.toBeNull()
+    expect(parent.querySelector('[class*="openWithLabel"]')).not.toBeNull()
   })
 
-  it('opens the submenu on click and lists every target with pin toggles', async () => {
+  it('lists every target in the submenu, each with a pin toggle', async () => {
     harness = await mountTree()
     openMenu(harness.container)
-    const parent = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
-      .find(item => item.getAttribute('aria-haspopup') === 'menu')
-    expect(parent).toBeDefined()
-    act(() => { parent!.click() })
-    // Sub child rows = menuitems inside the nested menu.
-    const children = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menu"] [role="menuitem"]')]
-    expect(children.map(item => item.textContent?.trim())).toEqual([
+    act(() => { submenuParent().click() })
+    expect(submenuRows().map(item => item.textContent?.trim())).toEqual([
       'File Manager', 'VS Code', 'Cursor', 'Zed', 'Windsurf',
     ])
-    expect(children.every(item => item.querySelector('[class*="openWithPin"]') !== null)).toBe(true)
-    // Pinned state is announced per row (and swaps the pushpin glyph).
-    const vscodeRow = children.find(item => item.textContent?.trim() === 'VS Code')
-    const cursorRow0 = children.find(item => item.textContent?.trim() === 'Cursor')
-    expect(vscodeRow?.querySelector('[aria-label="Unpin"]')).not.toBeNull()
-    expect(cursorRow0?.querySelector('[aria-label="Pin to menu"]')).not.toBeNull()
+    expect(submenuRows().every(item => item.querySelector('[class*="openWithPin"]') !== null)).toBe(true)
+    // Pinned state is carried per row by the pin's TITLE (it swaps the glyph
+    // and the hover hint).
+    const vscodeRow = submenuRows().find(item => item.textContent?.trim() === 'VS Code')
+    const cursorRow = submenuRows().find(item => item.textContent?.trim() === 'Cursor')
+    expect(vscodeRow?.querySelector('[title="Unpin"]')).not.toBeNull()
+    expect(cursorRow?.querySelector('[title="Pin to menu"]')).not.toBeNull()
+  })
+
+  it('keeps the pin a mouse hot zone, never a fake nested control', async () => {
+    // The Menu renders each row as `<button role="menuitem">`, so ANY
+    // role=button/tabIndex on the pin would be invalid nesting AND
+    // unreachable by keyboard (the row button owns focus). It is deliberately
+    // a plain span: the pin's nameable affordance is its `title`, and the
+    // reachable path to the same pinned list is the settings panel.
+    harness = await mountTree()
+    openMenu(harness.container)
+    act(() => { submenuParent().click() })
+    const vscodePin = submenuRows().find(item => item.textContent?.trim() === 'VS Code')!
+      .querySelector<HTMLElement>('[class*="openWithPin"]')!
+    expect(vscodePin.tagName).toBe('SPAN')
+    expect(vscodePin.getAttribute('role')).toBeNull()
+    expect(vscodePin.hasAttribute('tabindex')).toBe(false)
+    expect(vscodePin.getAttribute('title')).toBe('Unpin')
+    // The row itself stays the only interactive element of the entry.
+    expect(vscodePin.closest('[role="menuitem"]')?.tagName).toBe('BUTTON')
   })
 
   it('pin click toggles without selecting the row or closing the menu', async () => {
     harness = await mountTree()
     openMenu(harness.container)
-    const parent = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
-      .find(item => item.getAttribute('aria-haspopup') === 'menu')
-    act(() => { parent!.click() })
-    const cursorRow = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menu"] [role="menuitem"]')]
-      .find(item => item.textContent?.trim() === 'Cursor')
-    const pin = cursorRow!.querySelector<HTMLElement>('[class*="openWithPin"]')
+    act(() => { submenuParent().click() })
+    const cursorRow = submenuRows().find(item => item.textContent?.trim() === 'Cursor')!
+    const pin = cursorRow.querySelector<HTMLElement>('[class*="openWithPin"]')
     expect(pin).not.toBeNull()
     act(() => { pin!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })) })
     expect(harness.onToggleOpenWithPin).toHaveBeenCalledWith('cursor')
@@ -177,68 +205,59 @@ describe('FileTree open-with menu', () => {
   it('selecting a file submenu child keeps the raw file path and closes the menu', async () => {
     harness = await mountTree()
     openMenu(harness.container)
-    const parent = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
-      .find(item => item.getAttribute('aria-haspopup') === 'menu')
-    act(() => { parent!.click() })
-    const zedRow = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menu"] [role="menuitem"]')]
-      .find(item => item.textContent?.trim() === 'Zed')
-    act(() => { zedRow!.click() })
+    act(() => { submenuParent().click() })
+    const zedRow = submenuRows().find(item => item.textContent?.trim() === 'Zed')!
+    act(() => { zedRow.click() })
     expect(harness.onOpenWith).toHaveBeenCalledWith('zed', '/tmp/a.ts')
     // Selecting closes the row menu entirely.
     expect(document.querySelector('[role="menu"] [role="menu"]')).toBeNull()
-    expect(document.querySelector('[role="menuitem"]')).toBeNull()
+    expect(menuItems()).toHaveLength(0)
   })
 
   it('passes a trailing-slash path for directory URL targets', async () => {
     harness = await mountTree()
     openMenu(harness.container, 'project')
-    const parent = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
-      .find(item => item.getAttribute('aria-haspopup') === 'menu')
-    act(() => { parent!.click() })
-    const vscodeRow = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menu"] [role="menuitem"]')]
-      .find(item => item.textContent?.trim() === 'VS Code')
-    act(() => { vscodeRow!.click() })
+    act(() => { submenuParent().click() })
+    const vscodeRow = submenuRows().find(item => item.textContent?.trim() === 'VS Code')!
+    act(() => { vscodeRow.click() })
     expect(harness.onOpenWith).toHaveBeenCalledWith('vscode', '/tmp/project/')
   })
 
   it('keeps reveal targets on the raw directory path', async () => {
     harness = await mountTree()
     openMenu(harness.container, 'project')
-    const parent = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
-      .find(item => item.getAttribute('aria-haspopup') === 'menu')
-    act(() => { parent!.click() })
-    const explorerRow = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menu"] [role="menuitem"]')]
-      .find(item => item.textContent?.trim() === 'File Manager')
-    act(() => { explorerRow!.click() })
+    act(() => { submenuParent().click() })
+    const explorerRow = submenuRows().find(item => item.textContent?.trim() === 'File Manager')!
+    act(() => { explorerRow.click() })
     expect(harness.onOpenWith).toHaveBeenCalledWith('explorer', '/tmp/project')
   })
 
-  it('appends the SSH hint to VSCode-family labels in remote mode', async () => {
+  it('appends the SSH hint to VSCode-family labels in remote mode (reveal stays)', async () => {
+    // The SSH-resolved list keeps `explorer` (see resolveOpenWithTargets):
+    // reveal runs on the machine that owns the workspace, and it is the only
+    // reveal left when the DSH host's open-in-app capability is unavailable.
+    // Dropping it here would test a list the caller never produces.
     harness = await mountTree({
       openWithSsh: true,
-      openWithTargets: targets.filter(target => !target.localOnly),
+      openWithTargets: targets.filter(target => !target.localOnly || target.kind === 'reveal'),
       openWithPinned: [],
     })
     openMenu(harness.container)
-    const parent = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
-      .find(item => item.getAttribute('aria-haspopup') === 'menu')
-    act(() => { parent!.click() })
-    const children = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menu"] [role="menuitem"]')]
-    expect(children.map(item => item.textContent?.trim())).toEqual([
-      'VS Code (SSH)', 'Cursor (SSH)', 'Windsurf (SSH)',
+    act(() => { submenuParent().click() })
+    expect(submenuRows().map(item => item.textContent?.trim())).toEqual([
+      'File Manager', 'VS Code (SSH)', 'Cursor (SSH)', 'Windsurf (SSH)',
     ])
   })
 
-  it('hides the whole section when the caller wires no targets', async () => {
+  it('hides the submenu when the caller wires no targets (and no host handle)', async () => {
     harness = await mountTree({ openWithTargets: undefined })
     openMenu(harness.container)
-    const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
-    expect(items.some(item => item.textContent?.includes('Open with'))).toBe(false)
-    expect(items.some(item => item.getAttribute('aria-haspopup') === 'menu')).toBe(false)
+    expect(menuItems().some(item => item.textContent?.includes('Open with'))).toBe(false)
+    expect(menuItems().some(item => item.getAttribute('aria-haspopup') === 'menu')).toBe(false)
   })
 })
 
-describe('FileTree open-with menu flip geometry (submenu clamping)', () => {
+describe('FileTree plugin open-with menu flip geometry (submenu clamping)', () => {
   const ATTR = 'data-dsh-sidebar-submenu'
 
   let harness: Harness
@@ -254,13 +273,10 @@ describe('FileTree open-with menu flip geometry (submenu clamping)', () => {
     // room in jsdom's default viewport.
     openMenu(harness.container)
     expect(document.body.getAttribute(ATTR)).toBe('down')
-    const parent = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
-      .find(item => item.getAttribute('aria-haspopup') === 'menu')
-    act(() => { parent!.click() })
-    const zedRow = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menu"] [role="menuitem"]')]
-      .find(item => item.textContent?.trim() === 'Zed')
-    act(() => { zedRow!.click() })
-    expect(document.querySelector('[role="menuitem"]')).toBeNull()
+    act(() => { submenuParent().click() })
+    const zedRow = submenuRows().find(item => item.textContent?.trim() === 'Zed')!
+    act(() => { zedRow.click() })
+    expect(menuItems()).toHaveLength(0)
     expect(document.body.hasAttribute(ATTR)).toBe(false)
   })
 

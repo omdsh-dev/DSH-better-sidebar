@@ -30,8 +30,10 @@ function pathTabsOf(snapshot: SidebarSnapshot): SidebarTab[] {
 export function retargetPathTabs(ctx: Context, store: SidebarStore, oldPath: string, newPath: string): void {
   const service = ctx.get('betterSidebar')
   if (service === undefined) return
-  for (const tab of pathTabsOf(store.getSnapshot())) {
-    if (tab.path === oldPath) service.updateTab(tab.id, { path: newPath, title: baseName(newPath) })
+  // The tabs live in the snapshot's session: native ids restart per session.
+  const snapshot = store.getSnapshot()
+  for (const tab of pathTabsOf(snapshot)) {
+    if (tab.path === oldPath) service.updateTab(tab.id, { path: newPath, title: baseName(newPath) }, snapshot.sessionId)
   }
 }
 

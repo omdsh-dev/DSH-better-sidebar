@@ -74,7 +74,7 @@ FIXTURE_TGZ="$(ls "$TMP_DIR"/*.tgz 2>/dev/null | head -1 || true)"
 [ -n "$FIXTURE_TGZ" ] || die "fixture 打包失败"
 
 # ── 引导 scratch profile（web 模板）────────────────────────────────────────
-# 三件套 heredoc 及 pnpm-workspace 的 allowBuilds / minimumReleaseAgeExclude
+# 三件套 heredoc 及 pnpm-workspace 的 minimumReleaseAgeExclude
 # 理由见 e2e-common.sh 的 e2e_write_profile。
 PROFILE_DIR="$DSH_HOME/profiles/web"
 e2e_write_profile "$PROFILE_DIR"
@@ -108,14 +108,16 @@ if grep -q "duplicate prefix route" "$ERR_LOG" "$OUT_LOG" 2>/dev/null; then
   die "检测到 duplicate prefix route（双挂载未退让）"
 fi
 
-# 真实方法探活：terminal.deps 是插件自己的 handler（writeOk → HTTP 200 +
-# {"ok":true,...}）。成功响应证明至少一个实例真正注册了 /sidebar/api 路由
-# ——generic missing-route 404 无法冒充（P2: Probe a real sidebar API method）。
-DEPS="$(curl -s -X POST "$URL/sidebar/api/terminal.deps" 2>/dev/null || true)"
-if ! printf '%s' "$DEPS" | grep -q '"ok":true'; then
-  die "/sidebar/api/terminal.deps 未返回 ok:true（响应：$(printf '%s' "$DEPS" | head -c 200)）"
+# 真实方法探活：settings.get 是插件侧栏卡偏好的读取端（writeOk → HTTP 200 +
+# {"ok":true,...}；未挂 settings 服务的部署也照回 ok，值取缺省）。选它当哨兵
+# 的理由：/sidebar/api 是插件自己 fence 的 prefix 路由，未注册的方法统统 404，
+# 所以 {"ok":true} 只可能来自插件真实注册的 handler —— generic missing-route
+# 404 无法冒充（P2: Probe a real sidebar API method）。
+RESP="$(curl -s -X POST "$URL/sidebar/api/settings.get" 2>/dev/null || true)"
+if ! printf '%s' "$RESP" | grep -q '"ok":true'; then
+  die "/sidebar/api/settings.get 未返回 ok:true（响应：$(printf '%s' "$RESP" | head -c 200)）"
 fi
-say "/sidebar/api/terminal.deps → ok:true（真实 handler 存活）"
+say "/sidebar/api/settings.get → ok:true（真实 handler 存活）"
 
 STATUS="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/sidebar/api/__e2e_unknown__" 2>/dev/null || true)"
 say "/sidebar/api POST 未知方法 → HTTP ${STATUS}（期望 404）"

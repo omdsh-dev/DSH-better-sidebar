@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, CONVERSATION_MIN, createSidebarStore,
   insertLeafAt, makeDefaultState, moveTab, moveTabToEdge, openDiffTab,
   openTabInBottomPane, patchTab, resizeSplit,
-  resizeSplitIn, revealPaths, sanitizeState, setBottomHeight, setTabPin,
+  resizeSplitIn, revealPaths, sanitizeState, setBottomHeight,
   splitPane, tabOpenIn, toggleBottomPanel, toggleExpanded,
   type SidebarState, type SidebarTab, type SplitNode,
 } from '../src/client/state.ts'
@@ -13,7 +13,7 @@ describe('sidebar state', () => {
 
   it('sanitizeState migrates persisted explorer tabs to editor home tabs', () => {
     const valid = sanitizeState({
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:1',
       expanded: [],
       bottomSplits: {
@@ -117,7 +117,7 @@ describe('sidebar state', () => {
 
   it('sanitize drops diff tabs (ephemeral, like VSCode diff editors)', () => {
     const valid = sanitizeState({
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:1',
       expanded: [],
       bottomSplits: {
@@ -138,7 +138,7 @@ describe('sidebar state', () => {
     expect((valid?.bottomSplits as { active: string | null }).active).toBeNull()
     // A leaf of ONLY diff tabs survives as an empty pane (welcome cards).
     const onlyDiff = sanitizeState({
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:1',
       expanded: [],
       bottomSplits: {
@@ -154,7 +154,7 @@ describe('sidebar state', () => {
 
   it('sanitize removes a pane emptied by ephemeral diff tabs', () => {
     const valid = sanitizeState({
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:diff',
       expanded: [],
       bottomSplits: {
@@ -247,6 +247,40 @@ describe('sidebar state', () => {
     expect(after.tabs).toHaveLength(2)
   })
 
+  it('dragging a pane\'s only tab onto its own edge splits in place instead of losing the tab', () => {
+    let s = state()
+    s = openTabInBottomPane(s, { id: 'git', type: 'git', title: 'Git' })
+    s = splitPane(s, 'col')
+    const split = s.bottomSplits as Extract<SplitNode, { kind: 'split' }>
+    const paneA = split.children[0] as { id: string; tabs: { id: string }[] }
+    const paneB = split.children[1] as { id: string }
+    const tabId = paneA.tabs[0]!.id
+    s = moveTab(s, paneA.id, tabId, paneB.id)
+    // paneB now holds the single tab; dropping it onto paneB's own edge
+    // used to empty paneB, delete its leaf, and discard the tab entirely.
+    s = moveTabToEdge(s, paneB.id, tabId, paneB.id, 'left')
+    const leaves = allLeaves(s.bottomSplits)
+    expect(leaves).toHaveLength(1)
+    expect(leaves[0]!.tabs.map(t => t.id)).toEqual([tabId])
+    expect(s.activePane).toBe(leaves[0]!.id)
+  })
+
+  it('dragging one of several tabs onto its own pane edge splits the pane with the dragged tab', () => {
+    let s = state()
+    s = openTabInBottomPane(s, { id: 'git', type: 'git', title: 'Git' })
+    s = openTabInBottomPane(s, { id: 't2', type: 'terminal', title: 'T2' })
+    const leaf = s.bottomSplits as { id: string; tabs: { id: string }[] }
+    const first = leaf.tabs[0]!.id
+    s = moveTabToEdge(s, leaf.id, first, leaf.id, 'right')
+    const leaves = allLeaves(s.bottomSplits)
+    expect(leaves).toHaveLength(2)
+    const dragged = leaves.find(candidate => candidate.tabs.some(t => t.id === first))
+    const kept = leaves.find(candidate => candidate !== dragged)
+    expect(dragged!.tabs.map(t => t.id)).toEqual([first])
+    expect(kept!.tabs.map(t => t.id)).toEqual([leaf.tabs[1]!.id])
+    expect(s.activePane).toBe(dragged!.id)
+  })
+
   it('closing the last tab removes the pane (promotes the sibling)', () => {
     let s = state()
     s = openTabInBottomPane(s, { id: 'git', type: 'git', title: 'Git' })
@@ -314,7 +348,7 @@ describe('sidebar state', () => {
 
   it('sanitize accepts nextBrowser (defaulting a missing/malformed one to 1)', () => {
     const base = {
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:1',
       expanded: [],
       bottomSplits: {
@@ -391,7 +425,7 @@ describe('sidebar state', () => {
 
   it('sanitize defaults the bottom fields for older persisted states and repairs a broken bottom tree', () => {
     const base = {
-      nextTerminal: 1,
+      nextBrowser: 1,
       activePane: 'pane:1',
       expanded: [],
     }
@@ -726,106 +760,6 @@ describe('revealPaths (show in folder)', () => {
   })
 })
 
-describe('pinned terminals (v0.17.0)', () => {
-  // setTabPin reads neither window nor localStorage directly, but the
-  // pinnedTab-aware sanitize round-trip below uses JSON.parse/stringify
-  // only — keep this block window-less for parity with the main describe.
-  const state = (): SidebarState => makeDefaultState()
-
-  it('setTabPin marks a terminal in the workbench', () => {
-    let s = state()
-    s = openTabInBottomPane(s, { id: 'terminal:1', type: 'terminal', title: 'T' })
-    s = setTabPin(s, 'terminal:1', { scope: 'workspace', homeCwd: '/proj' })
-    const tab = allLeaves(s.bottomSplits).flatMap(l => l.tabs).find(t => t.id === 'terminal:1')!
-    expect(tab.pin).toEqual({ scope: 'workspace', homeCwd: '/proj' })
-  })
-
-  it('setTabPin with null clears the pin marker but keeps the tab', () => {
-    let s = state()
-    s = openTabInBottomPane(s, { id: 'terminal:1', type: 'terminal', title: 'T' })
-    s = setTabPin(s, 'terminal:1', { scope: 'global' })
-    s = setTabPin(s, 'terminal:1', null)
-    const tab = allLeaves(s.bottomSplits).flatMap(l => l.tabs).find(t => t.id === 'terminal:1')!
-    expect(tab.pin).toBeUndefined()
-    expect(tabOpenIn(s, 'terminal:1')).toBe(true)
-  })
-
-  it('setTabPin on an unknown tab id is a strict same-reference no-op', () => {
-    const s = state()
-    expect(setTabPin(s, 'ghost', { scope: 'global' })).toBe(s)
-    expect(setTabPin(s, 'ghost', null)).toBe(s)
-  })
-
-  it('setTabPin is idempotent: setting the same pin twice returns the same reference', () => {
-    let s = state()
-    s = openTabInBottomPane(s, { id: 'terminal:1', type: 'terminal', title: 'T' })
-    s = setTabPin(s, 'terminal:1', { scope: 'workspace', homeCwd: '/p' })
-    const once = s
-    s = setTabPin(s, 'terminal:1', { scope: 'workspace', homeCwd: '/p' })
-    expect(s).toBe(once)
-  })
-
-  it('sanitizeState preserves a legal pin and strips an illegal scope (keeps the tab)', () => {
-    const g = globalThis as Record<string, unknown>
-    g.window = { clearTimeout: () => {}, setTimeout: () => 0, innerWidth: 1024, innerHeight: 768 }
-    g.localStorage = { getItem: () => null, setItem: () => {} }
-    try {
-      const legal = JSON.parse(JSON.stringify(makeDefaultState())) as {
-        bottomSplits: { kind: 'leaf'; id: string; tabs: SidebarTab[]; active: string | null }
-      }
-      legal.bottomSplits.tabs.push({
-        id: 'terminal:1', type: 'terminal', title: 'T',
-        pin: { scope: 'workspace', homeCwd: '/proj' },
-      } as SidebarTab)
-      legal.bottomSplits.active = 'terminal:1'
-      const restored = sanitizeState(legal)!
-      const tab = (restored.bottomSplits as { tabs: SidebarTab[] }).tabs.find(t => t.id === 'terminal:1')!
-      expect(tab.pin).toEqual({ scope: 'workspace', homeCwd: '/proj' })
-
-      // Illegal scope drops the pin, keeps the tab.
-      const illegal = JSON.parse(JSON.stringify(makeDefaultState())) as {
-        bottomSplits: { kind: 'leaf'; id: string; tabs: SidebarTab[]; active: string | null }
-      }
-      illegal.bottomSplits.tabs.push({
-        id: 'terminal:2', type: 'terminal', title: 'T2',
-        pin: { scope: 'bogus', homeCwd: '/x' },
-      } as unknown as SidebarTab)
-      illegal.bottomSplits.active = 'terminal:2'
-      const cleaned = sanitizeState(illegal)!
-      const tab2 = (cleaned.bottomSplits as { tabs: SidebarTab[] }).tabs.find(t => t.id === 'terminal:2')!
-      expect(tab2.pin).toBeUndefined()
-      expect(tab2.id).toBe('terminal:2')
-
-      // Non-string homeCwd drops homeCwd but keeps a global pin.
-      const weirdHome = JSON.parse(JSON.stringify(makeDefaultState())) as {
-        bottomSplits: { kind: 'leaf'; id: string; tabs: SidebarTab[]; active: string | null }
-      }
-      weirdHome.bottomSplits.tabs.push({
-        id: 'terminal:3', type: 'terminal', title: 'T3',
-        pin: { scope: 'global', homeCwd: 42 },
-      } as unknown as SidebarTab)
-      weirdHome.bottomSplits.active = 'terminal:3'
-      const weird = sanitizeState(weirdHome)!
-      const tab3 = (weird.bottomSplits as { tabs: SidebarTab[] }).tabs.find(t => t.id === 'terminal:3')!
-      expect(tab3.pin).toEqual({ scope: 'global' })
-
-      // Older state without pin loads unchanged.
-      const legacy = JSON.parse(JSON.stringify(makeDefaultState())) as {
-        bottomSplits: { kind: 'leaf'; id: string; tabs: SidebarTab[]; active: string | null }
-      }
-      legacy.bottomSplits.tabs.push({ id: 'terminal:4', type: 'terminal', title: 'T4' } as SidebarTab)
-      legacy.bottomSplits.active = 'terminal:4'
-      const legacyRestored = sanitizeState(legacy)!
-      const tab4 = (legacyRestored.bottomSplits as { tabs: SidebarTab[] }).tabs.find(t => t.id === 'terminal:4')!
-      expect(tab4.pin).toBeUndefined()
-    } finally {
-      delete g.window
-      delete g.localStorage
-    }
-  })
-})
-
-
 describe('URL reset escape hatch (issue #369)', () => {
   // Same browser-global stubs as the v0.12.0 block above; loadState reads
   // window.location.search (reset param) and localStorage (persisted state).
@@ -842,7 +776,7 @@ describe('URL reset escape hatch (issue #369)', () => {
 
   /** A persisted layout whose restored git tab would re-hang the page. */
   const frozenState = JSON.stringify({
-    nextTerminal: 1,
+    nextBrowser: 1,
     activePane: 'pane:1',
     expanded: [],
     bottomSplits: { kind: 'leaf', id: 'pane:1', active: 'g1', tabs: [{ id: 'g1', type: 'git', title: 'Git' }] },
@@ -889,5 +823,65 @@ describe('URL reset escape hatch (issue #369)', () => {
     store.setSession('s1')
     const leaf = store.getSnapshot().state!.bottomSplits as { tabs: { type: string }[] }
     expect(leaf.tabs.map(tab => tab.type)).toEqual([])
+  })
+})
+
+/**
+ * listener isolation. `service.subscribeState` is this store's own
+ * `subscribe`, so a consumer plugin's listener throws INSIDE notify() — and
+ * notify() runs inline in the mutating call site (setSession from the
+ * Sidebar's mount effect, reduce from a click handler). An escaping throw
+ * therefore lands in the React commit phase, where the shell's ROOT
+ * RenderBoundary swaps the whole sidebar for its error strip.
+ */
+describe('store listener isolation', () => {
+  // Same browser-global stubs as the blocks above: setSession → loadState
+  // reads window.location.search and localStorage.
+  beforeEach(() => {
+    const g = globalThis as Record<string, unknown>
+    g.window = { clearTimeout: () => {}, setTimeout: () => 0, innerWidth: 1024, innerHeight: 800, location: { search: '' } }
+    g.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} }
+  })
+  afterEach(() => {
+    const g = globalThis as Record<string, unknown>
+    delete g.window
+    delete g.localStorage
+  })
+
+  it('contains a throwing listener and still delivers the change to the rest', () => {
+    const store = createSidebarStore()
+    const delivered: string[] = []
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    store.subscribe(() => {
+      delivered.push('throwing')
+      throw new Error('third-party listener boom')
+    })
+    store.subscribe(() => { delivered.push('healthy') })
+    // The mutation must not throw out of the store, and the throwing
+    // listener must not rob the healthy ones of their notification (React's
+    // own useSyncExternalStore callback shares this loop in the real shell).
+    expect(() => store.setSession('s1')).not.toThrow()
+    expect(delivered).toEqual(['throwing', 'healthy'])
+    // The mutation itself still landed.
+    expect(store.getSnapshot().sessionId).toBe('s1')
+    expect(store.getSnapshot().state).toBeDefined()
+    // The crash is reported, not swallowed silently.
+    expect(errorSpy).toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
+  it('keeps notifying every listener on later mutations (the loop recovers)', () => {
+    const store = createSidebarStore()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let healthyCalls = 0
+    store.subscribe(() => { throw new Error('boom') })
+    store.subscribe(() => { healthyCalls += 1 })
+    store.setSession('s1')
+    const afterFirst = healthyCalls
+    // A later mutation notifies again: the throwing listener was neither
+    // dropped from the set nor left the loop half-iterated.
+    store.reduce(toggleBottomPanel)
+    expect(healthyCalls).toBe(afterFirst + 1)
+    errorSpy.mockRestore()
   })
 })

@@ -5,17 +5,13 @@
  * (`descriptor.icon`), not in a type-keyed switch — the icon mapping was
  * registry-ized with the tab types.
  */
-import type { IconProps } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconPanelLeftOutlineRegular, type IconProps } from '@deepseek-ai/dsh-client-ui-primitives'
 
-/**
- * Bottom-panel toggle glyph (the "底栏" button): a frame with a filled strip
- * along its BOTTOM edge, in the app's outline style.
- */
+/** Bottom toggle: reuse the native panel glyph, rotated toward the bottom. */
 export const IconPanelBottomOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="1.5" y="2" width="13" height="12" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
-    <rect x="3.25" y="10" width="9.5" height="2.75" rx="1" fill="currentColor" stroke="none" />
-  </svg>
+  <span className={className} style={{ display: 'inline-flex', width: size, height: size, transform: 'rotate(-90deg)' }}>
+    <IconPanelLeftOutlineRegular size={size} />
+  </span>
 )
 
 /**
@@ -39,16 +35,6 @@ export const IconDiffOutline16 = ({ size = 16, className }: IconProps) => (
   </svg>
 )
 
-/**
- * Stop glyph for the background-job kill button: a filled square in the
- * app's outline scale (16), the universal "halt this work" mark.
- */
-export const IconStopOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor" stroke="none" />
-  </svg>
-)
-
 /** Upload glyph in the app's outline style: an arrow rising into a tray
  *  (the file-manager "upload into the workspace" action). */
 export const IconUploadOutline16 = ({ size = 16, className }: IconProps) => (
@@ -58,38 +44,7 @@ export const IconUploadOutline16 = ({ size = 16, className }: IconProps) => (
   </svg>
 )
 
-/**
- * Pin glyph in the app's outline style (1.5px stroke, currentColor): a pushpin
- * tilted to the lower-right. Used by the PinnedRail and the tab context menu's
- * pin entry (v0.17.0+).
- */
-export const IconPinOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M9.5 1.5 14.5 6.5 12.5 8.5 10 6 5.5 10.5 6 12 4.5 13.5 2.5 11.5 4 10 5.5 10.5 10 6 7.5 8.5 6.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-  </svg>
-)
-
 // ── File-viewer inventory glyphs (Side card settings page) ────────────────
-
-/** Image viewer glyph: a picture frame with a sun and a mountain. */
-export const IconImageOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" strokeWidth="1.5" />
-    <circle cx="5.5" cy="6" r="1.2" stroke="currentColor" strokeWidth="1.5" />
-    <path d="m3.5 12 3-3 2.25 2.25L11.5 8.5 13 10.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-)
-
-/** PDF viewer glyph: a document frame with the "PDF" label. */
-export const IconPdfOutline16 = ({ size = 16, className }: IconProps) => (
-  <svg width={size} height={size} className={className} viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M3.5 1.5h6.5L13.5 5v9.5h-10z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-    <path d="M9.5 1.5V5h4" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-    <path d="M5 13.5v-3h1.4c.75 0 1.1.32 1.1.85 0 .54-.35.85-1.1.85H5.3" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M8.3 13.5v-3h1.05c.8 0 1.35.5 1.35 1.5s-.55 1.5-1.35 1.5z" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M11.6 13.5v-3h1.3" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" />
-  </svg>
-)
 
 /** Markdown viewer glyph: the classic "M with a down arrow" badge. */
 export const IconMarkdownOutline16 = ({ size = 16, className }: IconProps) => (

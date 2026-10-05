@@ -6,8 +6,9 @@
  * pairing, and orphan failed results.
  */
 import { describe, expect, it } from 'vitest'
+import { createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { SidebarHistoryEntry, SidebarSessionEvent } from '../src/context-types.ts'
-import { SIDE_BOUNDARY_PREFIX, SIDE_BOUNDARY_PROMPT, SIDE_INJECTION_PLUGIN } from '../src/sidechat-core.ts'
+import { SIDE_BOUNDARY_PREFIX, SIDE_BOUNDARY_PROMPT, SIDE_INJECTION_SOURCE_KIND } from '../src/sidechat-core.ts'
 import {
   formatDurationMs,
   formatTokens,
@@ -35,12 +36,32 @@ function textBlocks(...texts: string[]): unknown[] {
   return texts.map(text => ({ type: 'text', text }))
 }
 
+/** One 0.1.6-era tool/result message (user role, nested `tool-result` wrapper). */
+function legacyResultMessage(callId: string, text: string, isError = false): Record<string, unknown> {
+  return {
+    role: 'user',
+    source: { kind: 'tool', callId },
+    content: [{ type: 'tool-result', toolCallId: callId, isError, content: textBlocks(text) }],
+  }
+}
+
+/** One 0.1.7 tool/result message (tool role, blocks + `isError` on the message). */
+function toolRoleResultMessage(callId: string, text: string, isError = false): Record<string, unknown> {
+  return {
+    role: 'tool',
+    source: { kind: 'tool', callId },
+    toolCallId: callId,
+    content: textBlocks(text),
+    isError,
+  }
+}
+
 describe('transcriptRows', () => {
   it('cuts the inherited seed at the last end-seed and renders the boundary as an injection row', () => {
     const entries = [
       entry(ev('user/message', 0, { content: textBlocks('inherited'), source: { kind: 'user' } })),
       entry(ev('session/end-seed', 1)),
-      entry(ev('user/message', 2, { content: textBlocks(`${SIDE_BOUNDARY_PREFIX}\n\nmode`), source: { kind: 'plugin', plugin: SIDE_INJECTION_PLUGIN } })),
+      entry(ev('user/message', 2, { content: textBlocks(`${SIDE_BOUNDARY_PREFIX}\n\nmode`), source: { kind: SIDE_INJECTION_SOURCE_KIND } })),
       entry(ev('user/message', 3, { content: textBlocks('the side question'), source: { kind: 'user' } })),
     ]
     const rows = transcriptRows(entries)
@@ -70,7 +91,7 @@ describe('transcriptRows', () => {
   it('renders any plugin-sourced context message as an injection row, boundary prefix or not', () => {
     const entries = [
       entry(ev('session/end-seed', 0)),
-      entry(ev('user/message', 1, { content: textBlocks('runtime context'), source: { kind: 'plugin', plugin: 'other-plugin' } })),
+      entry(ev('user/message', 1, { content: textBlocks('runtime context'), source: { kind: 'plugin:other-plugin' } })),
       entry(ev('user/message', 2, { content: textBlocks('q'), source: { kind: 'user' } })),
     ]
     const rows = transcriptRows(entries)
@@ -119,13 +140,12 @@ describe('transcriptRows', () => {
       entry(ev('turn/start', 1, { turn: 1 })),
       entry(ev('step/start', 2, { turn: 1, step: 1 })),
       entry(ev('tool/call', 3, { turn: 1, step: 1, callId: 'c1', name: 'read', arguments: '{"path":"a"}' })),
+      // The shape 0.1.7 writes: tool role, result blocks and `isError` at the
+      // message's own top level (no `tool-result` wrapper).
       entry(ev('tool/result', 4, {
         turn: 1,
         step: 1,
-        message: {
-          source: { kind: 'tool', callId: 'c1' },
-          content: [{ type: 'tool-result', toolCallId: 'c1', isError: true, content: [{ type: 'text', text: 'denied' }] }],
-        },
+        message: toolRoleResultMessage('c1', 'denied', true),
         error: { name: 'EACCES', code: 'EACCES' },
       })),
     ]
@@ -140,6 +160,42 @@ describe('transcriptRows', () => {
       failed: true,
       executing: false,
     })
+  })
+
+  it('reads the tool/result message dsh-llm actually produces (producer round-trip)', () => {
+    const message = createToolResultMessage({
+      callId: ToolCallId('c1'),
+      // A literal block array: the producer takes real ContentBlocks, not the
+      // loose `unknown[]` the log fixtures above are written with.
+      content: [{ type: 'text', text: 'produced output' }],
+      isError: false,
+    })
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('tool/call', 1, { callId: 'c1', name: 'bash', arguments: '{"command":"ls"}' })),
+      entry(ev('tool/result', 2, { message: message as unknown as Record<string, unknown> })),
+    ]
+    const rows = transcriptRows(entries)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ kind: 'tool', name: 'bash', resultText: 'produced output', executing: false })
+  })
+
+  it('reads a LEGACY 0.1.6-era tool result wrapper (historical logs keep that shape)', () => {
+    const entries = [
+      entry(ev('session/end-seed', 0)),
+      entry(ev('turn/start', 1, { turn: 1 })),
+      entry(ev('step/start', 2, { turn: 1, step: 1 })),
+      entry(ev('tool/call', 3, { turn: 1, step: 1, callId: 'c1', name: 'read', arguments: '{"path":"a"}' })),
+      entry(ev('tool/result', 4, {
+        turn: 1,
+        step: 1,
+        message: legacyResultMessage('c1', 'legacy denied', true),
+        error: { name: 'EACCES', code: 'EACCES' },
+      })),
+    ]
+    const rows = transcriptRows(entries)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ kind: 'tool', name: 'read', resultText: 'legacy denied', failed: true })
   })
 
   it('keeps a call executing until its result lands and surfaces orphan failures', () => {
@@ -158,10 +214,7 @@ describe('transcriptRows', () => {
       entry(ev('tool/result', 1, {
         turn: 1,
         step: 1,
-        message: {
-          source: { kind: 'tool', callId: 'gone' },
-          content: [{ type: 'tool-result', toolCallId: 'gone', isError: true, content: [{ type: 'text', text: 'boom' }] }],
-        },
+        message: toolRoleResultMessage('gone', 'boom', true),
         error: { name: 'X', code: 'X' },
       })),
     ]
@@ -216,10 +269,8 @@ describe('tool cards', () => {
     entry(ev('tool/result', seq, {
       turn: 1,
       step: 1,
-      message: {
-        source: { kind: 'tool', callId },
-        content: [{ type: 'tool-result', toolCallId: callId, content: [{ type: 'text', text }] }],
-      },
+      // The 0.1.7 first-class tool-role message shape.
+      message: toolRoleResultMessage(callId, text),
       ...extra,
     }))
 
