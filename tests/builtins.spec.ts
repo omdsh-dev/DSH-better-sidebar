@@ -1,39 +1,40 @@
 /**
- * Built-in registration tests: the plugin registers 7 tabs and 6 file
+ * Built-in registration tests: the plugin registers 5 tabs and 3 file
  * viewers through the same service external plugins use (dogfooding);
- * the catch-all `code` viewer, the NUL-sniffing `binary-download` viewer,
- * and the html sandbox settings pin the registry's behavior. (Office
- * previews are NOT built in — they moved to the recommended office plugin,
+ * the catch-all `code` viewer and the html sandbox settings pin the
+ * registry's behavior. The read-only previews (image / pdf /
+ * binary-download) were yielded to the host's own document preview
+ * (DSH 0.1.7 `ui-sidebar-documentpreview`) and legacy Office
+ * doc/xls/ppt now fall through to the host too. (Office previews were
+ * already NOT built in — they moved to the recommended office plugin,
  * see src/client/plugins-viewers.ts.) The git tab is the unified changes
  * tab (git lens + session lens, PR #471's file-trace merged in).
  */
 import { describe, expect, it } from 'vitest'
 import type { ReactElement } from 'react'
-import { VscCommentDiscussion, VscGitCommit, VscGlobe, VscLayers, VscTerminal } from 'react-icons/vsc'
+import { VscCommentDiscussion, VscGitCommit, VscLayers } from 'react-icons/vsc'
 // First import: browser globals before the xterm-carrying builtin graph loads.
 import './browser-globals.ts'
 
 import type { Context } from '../src/context-types.ts'
 import { createBetterSidebarService } from '../src/client/service.ts'
+import { planFsReadOutcome } from '../src/client/editor-load.ts'
 import { createSidebarStore } from '../src/client/state.ts'
-import { allLeaves } from '../src/client/state.ts'
 import { registerBuiltins } from '../src/client/builtins/index.ts'
-import type { BuiltinTabOptions } from '../src/client/builtins/tabs.tsx'
 import { parkSidechatReopen } from '../src/client/SideChatView.tsx'
-import { t } from '../src/client/locales.ts'
 
-function setup(options: BuiltinTabOptions = {}): { service: ReturnType<typeof createBetterSidebarService>; store: ReturnType<typeof createSidebarStore>; dispose: () => void } {
+function setup(): { service: ReturnType<typeof createBetterSidebarService>; store: ReturnType<typeof createSidebarStore>; dispose: () => void } {
   const store = createSidebarStore()
   const service = createBetterSidebarService(store)
-  const dispose = registerBuiltins({} as Context, service, options)
+  const dispose = registerBuiltins({} as Context, service)
   return { service, store, dispose }
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 7 built-in tabs', () => {
+  it('registers the 5 built-in tabs (the host owns terminal and browser)', () => {
     const { service } = setup()
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['browser', 'diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal'],
+      ['diff', 'editor', 'git', 'sidechat', 'subagent'],
     )
   })
 
@@ -101,7 +102,7 @@ describe('built-in tab registrations', () => {
     }
   })
 
-  it('the side chat tab sits between tasks and terminal in the + menu', () => {
+  it('the side chat tab sits between tasks and the removed terminal slot in the + menu', () => {
     const { service } = setup()
     const sidechat = service.getTab('sidechat')
     expect(sidechat?.order).toBe(35)
@@ -132,13 +133,18 @@ describe('built-in tab registrations', () => {
   it('the subagent tab declares its auto-open related settings', () => {
     const { service } = setup()
     const toggles = service.getTab('subagent')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual(['autoOpenSubagent', 'autoOpenJobs'])
+    expect(toggles.map(t => t.key)).toEqual(['autoOpenSubagent', 'autoOpenJobs', 'tasksViewMode'])
+    // The default-view row is a graph/tree select (values are strings).
+    const viewMode = toggles[2]
+    expect(viewMode?.type).toBe('select')
+    expect((viewMode?.options ?? []).map(o => o.value)).toEqual(['graph', 'tree'])
   })
 
   it('the editor tab declares its merged-mode (embedded file tree) setting', () => {
     const { service } = setup()
     const toggles = service.getTab('editor')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual(['editorExplorer', 'workspaceFence'])
+    // The workspace-fence switch is gone with the fence itself.
+    expect(toggles.map(t => t.key)).toEqual(['editorExplorer'])
     expect(toggles[0]?.title).toBeDefined()
     expect(toggles[0]?.desc).toBeDefined()
     // The merged mode is an iconed select (merged vs separate), not a switch.
@@ -146,89 +152,17 @@ describe('built-in tab registrations', () => {
     const options = toggles[0]?.options ?? []
     expect(options.map(o => o.value)).toEqual([true, false])
     expect(options.every(o => o.icon !== undefined && o.title !== undefined)).toBe(true)
-    // The workspace fence switch rides the same card as a plain boolean row.
-    expect(toggles[1]?.title).toBeDefined()
-    expect(toggles[1]?.desc).toBeDefined()
     // The open-with configuration (SSH host + custom editors) is the custom
     // panel rendered below the declarative rows.
     expect(service.getTab('editor')?.settings?.render).toBeDefined()
-  })
-
-  it('the terminal tab declares the model terminal-tools, auto-terminal, shell and custom-font settings', () => {
-    const { service } = setup()
-    const toggles = service.getTab('terminal')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual(['agentTerminalTools', 'bottomPanelAutoTerminal', 'terminalShell', 'terminalShellArgs', 'terminalFontFamily', 'terminalFontSize'])
-    // The shell rows are text inputs (empty = yaml/auto resolution), the
-    // font rows text/number inputs (not switches), with the size row bounded
-    // by the shared 9–32 contract.
-    expect(toggles[2]?.type).toBe('text')
-    expect(toggles[2]?.title).toBeDefined()
-    expect(toggles[2]?.placeholder).toBeDefined()
-    expect(toggles[3]?.type).toBe('text')
-    expect(toggles[3]?.title).toBeDefined()
-    expect(toggles[4]?.type).toBe('text')
-    expect(toggles[4]?.title).toBeDefined()
-    expect(toggles[4]?.placeholder).toBeDefined()
-    expect(toggles[5]?.type).toBe('number')
-    expect(toggles[5]?.min).toBe(9)
-    expect(toggles[5]?.max).toBe(32)
-    expect(toggles[5]?.unit).toBe('px')
-    // The first two rows stay plain boolean switches.
-    expect(toggles[0]?.type ?? 'switch').toBe('switch')
-    expect(toggles[1]?.type ?? 'switch').toBe('switch')
-  })
-
-  it('the browser tab declares its sandbox, link-takeover master and per-protocol settings', () => {
-    const { service } = setup()
-    const toggles = service.getTab('browser')?.settings?.toggles ?? []
-    expect(toggles.map(t => t.key)).toEqual([
-      'browserNoSandbox',
-      'browserInterceptLinks',
-      'browserInterceptHttp',
-      'browserInterceptHttps',
-      'browserAllowedLoopback',
-    ])
-    for (const toggle of toggles) {
-      expect(toggle.title).toBeDefined()
-      expect(toggle.desc).toBeDefined()
-    }
-  })
-
-  it('the browser createTab mints browser:<n> ids and bumps nextBrowser', () => {
-    const { service, store } = setup()
-    store.setSession('s1')
-    service.openTab({ type: 'browser' })
-    service.openTab({ type: 'browser' })
-    const state = store.getSnapshot().state!
-    const tabs = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'browser')
-    expect(tabs).toHaveLength(2)
-    expect(tabs[0]!.id).toBe('browser:1')
-    expect(tabs[1]!.id).toBe('browser:2')
-    expect(state.nextBrowser).toBe(3)
-  })
-
-  it('the terminal createTab uses shell-name titles and hidden uuid ids, allowing duplicates', () => {
-    const { service, store } = setup({ terminalTitle: () => 'bash' })
-    store.setSession('s1')
-    service.openTab({ type: 'terminal' })
-    service.openTab({ type: 'terminal' })
-    const state = store.getSnapshot().state!
-    const tabs = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).filter(t => t.type === 'terminal')
-    expect(tabs).toHaveLength(2)
-    expect(tabs[0]!.title).toBe('bash')
-    expect(tabs[1]!.title).toBe('bash')
-    expect(tabs[0]!.id).toMatch(/^terminal:[0-9a-f-]{36}$/)
-    expect(tabs[1]!.id).toMatch(/^terminal:[0-9a-f-]{36}$/)
-    expect(tabs[0]!.id).not.toBe(tabs[1]!.id)
-  })
-
-  it('the terminal createTab falls back to the localized terminal label before shell info resolves', () => {
-    const { service, store } = setup()
-    store.setSession('s1')
-    service.openTab({ type: 'terminal' })
-    const state = store.getSnapshot().state!
-    const tab = allLeaves(state.bottomSplits).flatMap(leaf => leaf.tabs).find(t => t.type === 'terminal')
-    expect(tab?.title).toBe(t('terminal'))
+    // The plugin-owned row (its value lives in pluginSettings['editor'], which
+    // EditorHost reads as `openWithPluginTargets`): a plain switch, default
+    // off = the host-first behavior.
+    const pluginToggles = service.getTab('editor')?.settings?.pluginToggles ?? []
+    expect(pluginToggles.map(t => t.key)).toEqual(['openWithPluginTargets'])
+    expect(pluginToggles[0]?.title).toBeDefined()
+    expect(pluginToggles[0]?.desc).toBeDefined()
+    expect(pluginToggles[0]?.type).toBeUndefined()
   })
 
   it('every built-in tab carries the settings-surface icon', () => {
@@ -256,29 +190,42 @@ describe('built-in tab registrations', () => {
     expect(glyphOf('subagent')).toBe(VscLayers)
     expect(glyphOf('git')).toBe(VscGitCommit)
     expect(glyphOf('sidechat')).toBe(VscCommentDiscussion)
-    expect(glyphOf('browser')).toBe(VscGlobe)
-    // The terminal glyph is the widest in the set, so it renders a step down
-    // from the strip's size. No outline: the glyphs stay exactly as the icon
-    // set draws them, only tinted through the wrapper's token.
-    const wrapper = iconOf('terminal') as ReactElement<{ children?: ReactElement }>
-    const terminal = wrapper.props.children as ReactElement<{ size?: number; style?: Record<string, unknown> }>
-    expect(terminal.type).toBe(VscTerminal)
-    expect(terminal.props.size).toBeLessThan(14)
-    expect(terminal.props.style).toBeUndefined()
   })
 })
 
 describe('built-in file viewer registrations', () => {
-  it('registers the 6 built-in file viewers (office previews live in the recommended office plugin)', () => {
+  it('registers the 3 built-in file viewers (the read-only previews yielded to the host)', () => {
     const { service } = setup()
     expect(service.getFileViewers().map(v => v.id).sort()).toEqual(
-      ['binary-download', 'code', 'html', 'image', 'markdown', 'pdf'],
+      ['code', 'html', 'markdown'],
     )
-    // Office previews are not built in: docx/xlsx/pptx files fall through to
-    // the download-only binary viewer (or a registered office plugin).
-    expect(service.getFileViewers().map(v => v.id)).not.toContain('docx')
-    expect(service.getFileViewers().map(v => v.id)).not.toContain('xlsx')
-    expect(service.getFileViewers().map(v => v.id)).not.toContain('pptx')
+    // The yielded ids are gone: the host's own document preview
+    // (ui-sidebar-documentpreview) owns images, pdf, spreadsheets, office
+    // and plain text; the plugin keeps only markdown / html / the editable
+    // code catch-all.
+    for (const id of ['image', 'pdf', 'binary-download']) {
+      expect(service.getFileViewers().map(v => v.id), `${id} must not be built in`).not.toContain(id)
+    }
+    // Office previews are not built in either: they live in the recommended
+    // office plugin (which registers the ids through this service).
+    for (const id of ['docx', 'xlsx', 'pptx']) {
+      expect(service.getFileViewers().map(v => v.id)).not.toContain(id)
+    }
+  })
+
+  it('the yielded viewer ids stay registrable by external plugins (public contract)', () => {
+    const { service } = setup()
+    // Dropping the built-in descriptors must not freeze the ids: the
+    // registry API keeps accepting them from third-party plugins.
+    const dispose = service.registerFileViewer({
+      id: 'image',
+      exts: ['png'],
+      fetchStrategy: 'mediaUrl',
+      component: () => null,
+    })
+    expect(service.matchFileViewer('photo.png')?.id).toBe('image')
+    dispose()
+    expect(service.matchFileViewer('photo.png')?.id).toBe('code')
   })
 
   it('code is the catch-all at the lowest priority', () => {
@@ -315,24 +262,43 @@ describe('built-in file viewer registrations', () => {
     expect(toggles[1]?.desc).toBeDefined()
   })
 
-  it('binary-download claims legacy office by extension (office previews are not built in)', () => {
+  it('no built-in viewer claims the yielded extensions (the host document preview does)', () => {
     const { service } = setup()
-    expect(service.matchFileViewer('old.doc')?.id).toBe('binary-download')
-    expect(service.matchFileViewer('old.xls')?.id).toBe('binary-download')
-    expect(service.matchFileViewer('old.ppt')?.id).toBe('binary-download')
-    // Modern office files (zip containers, NUL-free) fall through to the
-    // catch-all code viewer without an office plugin registered.
-    expect(service.matchFileViewer('book.docx', new Uint8Array([0x50, 0x4b, 0x03, 0x04]))?.id).toBe('code')
+    // The spreadsheet / pdf / image / office set yielded to the host: the
+    // only plugin-side match left is the catch-all code viewer, so the
+    // `editor` type can hand these addresses over (see native/index.ts's
+    // canOpen). Legacy doc/xls/ppt were previously claimed by the removed
+    // `binary-download` viewer and are now the host's too.
+    for (const path of [
+      'book.xlsx', 'legacy.xls', 'macro.xlsb', 'sheet.xlt', 'template.xltx', 'macro.xltm',
+      'flat.ods', 'flat.ots', 'flat.fods', 'data.csv', 'data.tsv',
+      'paper.pdf', 'photo.png', 'photo.jpg', 'anim.gif', 'photo.webp', 'art.svg',
+      'tile.bmp', 'favicon.ico', 'next.avif',
+      'report.docx', 'report.doc', 'notes.dot', 'notes.dotx',
+      'deck.pptx', 'deck.ppt',
+    ]) {
+      expect(service.matchFileViewer(path)?.id, path).toBe('code')
+    }
   })
 
-  it('binary-download NUL detect claims unknown-extension binaries over code', () => {
+  it('an unknown-extension binary still downloads (the catch-all + host fallback)', () => {
     const { service } = setup()
-    // First match (no head) falls to the catch-all code viewer...
+    // Without the removed `binary-download` descriptor no built-in viewer
+    // carries a `detect` probe, so the catch-all blind-claims everything...
     expect(service.matchFileViewer('blob.zzz')?.id).toBe('code')
-    // ...but the head re-match (NUL probe) routes it to binary-download.
-    expect(service.matchFileViewer('blob.zzz', new Uint8Array([0x01, 0x00, 0x02]))?.id).toBe('binary-download')
-    // A NUL-free blob stays with code.
-    expect(service.matchFileViewer('blob.zzz', new Uint8Array([0x61, 0x62]))?.id).toBe('code')
+    expect(service.getFileViewers().some(v => v.detect !== undefined)).toBe(false)
+    // ...and the head re-match (the same call the editor host makes on a
+    // binary fsRead result) finds no sniffer either: the fsRead catch-all
+    // cannot render binary, so planFsReadOutcome hands the host its
+    // `binary` outcome and the editor renders the download pane.
+    expect(service.matchFileViewer('blob.zzz', new Uint8Array([0x01, 0x00, 0x02]))?.id).toBe('code')
+    const code = service.getFileViewers().find(v => v.id === 'code')
+    expect(planFsReadOutcome(code!, {
+      binary: true,
+      content: '',
+      truncated: false,
+      head: Buffer.from([0x01, 0x00, 0x02]).toString('base64'),
+    }, (head) => service.matchFileViewer('blob.zzz', head), () => '/media')).toEqual({ kind: 'binary' })
   })
 
   it('every built-in viewer carries the declarative settings surface (title + icon)', () => {

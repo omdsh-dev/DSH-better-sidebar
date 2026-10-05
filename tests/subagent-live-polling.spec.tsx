@@ -37,10 +37,8 @@ function makeCtx(store: Store, historySpy: ReturnType<typeof vi.fn>): Context {
   return {
     sessions: {
       list: store,
-      setSubagentCatalogOpen: () => {},
       openSubagent: () => {},
       open: () => {},
-      refreshSubagents: async () => {},
     },
     connection: {
       api: {
@@ -48,6 +46,9 @@ function makeCtx(store: Store, historySpy: ReturnType<typeof vi.fn>): Context {
         subagents: { history: historySpy },
       },
     },
+    // No host jobs service in this harness: the page renders no jobs surface
+    // (and therefore issues no jobs request).
+    get: () => undefined,
   } as unknown as Context
 }
 
@@ -55,60 +56,55 @@ function jsonResponse(value: unknown): Response {
   return { ok: true, status: 200, json: async () => value } as unknown as Response
 }
 
-/** A topology snapshot with two running direct subagents and a ready catalog. */
+/** One `subagentCatalog` projection row (DSH 0.1.7 shape). */
+function entry(
+  id: string,
+  mode: 'one-shot' | 'continuable' | 'unknown',
+  label?: string,
+): { id: string; createdAt: number; mode: 'one-shot' | 'continuable' | 'unknown'; label?: string } {
+  return { id, createdAt: 1_000, mode, ...(label === undefined ? {} : { label }) }
+}
+
+/** One session's loaded projection snapshot. */
+function ready(entries: ReturnType<typeof entry>[]) {
+  return { values: { subagentCatalog: entries }, state: 'ready' as const, error: null }
+}
+
+/**
+ * A topology snapshot with two direct subagents and their catalogs. The rows
+ * carry no activity of their own any more: the live channel below is what
+ * marks a child running.
+ */
 function runningSnapshot(): SidebarSessionList {
   return {
-    current: 'root',
     byId: {
       root: { id: 'root', displayTitle: '主会话' },
       a: { id: 'a', displayTitle: 'A', origin: 'subagent', parentId: 'root', running: true },
       b: { id: 'b', displayTitle: 'B', origin: 'subagent', parentId: 'root', running: true },
     },
-    subagentsByParent: {
-      root: {
-        entries: [
-          { kind: 'child', id: 'a', activity: 'running', hasChildren: false, mode: 'one-shot', label: 'A' },
-          { kind: 'child', id: 'b', activity: 'running', hasChildren: false, mode: 'one-shot', label: 'B' },
-        ],
-        parentAvailable: true,
-        state: 'ready',
-        error: null,
-      },
+    projectionsBySession: {
+      root: ready([entry('a', 'one-shot', 'A'), entry('b', 'one-shot', 'B')]),
+      a: ready([]),
+      b: ready([]),
     },
-    jobsBySession: {},
   }
 }
 
 /** The same tree re-rooted under a new ancestor ('grand' becomes the root). */
 function reRootedSnapshot(): SidebarSessionList {
   return {
-    current: 'root',
     byId: {
       grand: { id: 'grand', displayTitle: '主会话' },
       root: { id: 'root', displayTitle: 'R', origin: 'subagent', parentId: 'grand', running: true },
       a: { id: 'a', displayTitle: 'A', origin: 'subagent', parentId: 'root', running: true },
       b: { id: 'b', displayTitle: 'B', origin: 'subagent', parentId: 'root', running: true },
     },
-    subagentsByParent: {
-      grand: {
-        entries: [
-          { kind: 'child', id: 'root', activity: 'running', hasChildren: true, mode: 'continuable', label: 'R' },
-        ],
-        parentAvailable: true,
-        state: 'ready',
-        error: null,
-      },
-      root: {
-        entries: [
-          { kind: 'child', id: 'a', activity: 'running', hasChildren: false, mode: 'one-shot', label: 'A' },
-          { kind: 'child', id: 'b', activity: 'running', hasChildren: false, mode: 'one-shot', label: 'B' },
-        ],
-        parentAvailable: true,
-        state: 'ready',
-        error: null,
-      },
+    projectionsBySession: {
+      grand: ready([entry('root', 'continuable', 'R')]),
+      root: ready([entry('a', 'one-shot', 'A'), entry('b', 'one-shot', 'B')]),
+      a: ready([]),
+      b: ready([]),
     },
-    jobsBySession: {},
   }
 }
 
@@ -132,7 +128,15 @@ describe('SubagentView live polling', () => {
       if (method === 'subagents.live') {
         const body = JSON.parse(String(init?.body)) as { rootSessionId?: string }
         liveCalls.push(body.rootSessionId ?? '')
-        return jsonResponse({ ok: true, value: { live: {} } })
+        return jsonResponse({
+          ok: true,
+          value: {
+            live: {
+              a: { running: true, summary: { counts: [{ kind: 'read', count: 1 }], runningDetail: '' } },
+              b: { running: true },
+            },
+          },
+        })
       }
       throw new Error(`unexpected fetch ${String(url)}`)
     })
@@ -145,7 +149,11 @@ describe('SubagentView live polling', () => {
     await act(async () => { await Promise.resolve() })
     expect(liveCalls).toEqual(['root'])
     expect(historySpy).not.toHaveBeenCalled()
-    expect(container.textContent).toContain('思考中…')
+    // The live map reached the cards: a running node's bar carries the sweep
+    // hook, and its merged activity line renders on the bar.
+    const bar = container.querySelector('[data-graph-node="a"] [data-running="true"]')
+    expect(bar).not.toBeNull()
+    expect(bar?.textContent).toBeTruthy()
 
     await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
     expect(liveCalls).toEqual(['root', 'root'])
@@ -182,7 +190,7 @@ describe('SubagentView live polling', () => {
 
     // Settle the first request; only then does the next 3s tick fire.
     await act(async () => {
-      resolveFirst?.(jsonResponse({ ok: true, value: { live: {} } }))
+      resolveFirst?.(jsonResponse({ ok: true, value: { live: { a: { running: true }, b: { running: true } } } }))
       await Promise.resolve()
     })
     await act(async () => { await vi.advanceTimersByTimeAsync(3_000) })
@@ -221,7 +229,7 @@ describe('SubagentView live polling', () => {
 
     // Settling the stale response must neither render nor schedule a poll.
     await act(async () => {
-      resolveFirst?.(jsonResponse({ ok: true, value: { live: { a: { text: 'stale' } } } }))
+      resolveFirst?.(jsonResponse({ ok: true, value: { live: { a: { running: true, text: 'stale' } } } }))
       await Promise.resolve()
     })
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
@@ -239,7 +247,11 @@ describe('SubagentView live polling', () => {
       if (method === 'subagents.live') {
         const body = JSON.parse(String(init?.body)) as { rootSessionId?: string }
         liveCalls.push(body.rootSessionId ?? '')
-        const live = body.rootSessionId === 'root' ? { a: { text: 'hello' } } : {}
+        // `text` is the child's newest assistant line, which the card shows in
+        // its detail POPOVER; the bar shows the merged activity summary.
+        const live = body.rootSessionId === 'root'
+          ? { a: { running: true, summary: { counts: [{ kind: 'read', count: 1 }], runningDetail: 'hello' } } }
+          : {}
         return jsonResponse({ ok: true, value: { live } })
       }
       throw new Error(`unexpected fetch ${String(url)}`)
@@ -251,7 +263,8 @@ describe('SubagentView live polling', () => {
     )
     await act(async () => { await Promise.resolve() })
     expect(liveCalls).toEqual(['root'])
-    expect(container.textContent).toContain('hello')
+    const bar = container.querySelector('[data-graph-node="a"] [data-running="true"]')
+    expect(bar?.textContent).toContain('hello')
 
     // The tree is re-rooted under a new ancestor: old rows must not leak.
     store.set(reRootedSnapshot())

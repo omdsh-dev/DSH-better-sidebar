@@ -33,8 +33,18 @@ import { PAGE_URL, createHostApi, hostRpc, sendFirstMessage } from './host'
  *  share seed paths with mount/drag). */
 const WORKSPACE_PATH = process.env.DSH_E2E_PERF_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-perf-workspace')
 
-/** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const NATIVE_TABS = ['files', 'git', 'subagent', 'sidechat', 'terminal', 'browser']
+/**
+ * Every tab type the composed guide must offer: the plugin's own four plus the
+ * host's `terminal`. This plugin deliberately ships neither terminal nor
+ * browser, so exactly one `terminal` entry proves it is not shadowing the host.
+ *
+ * `browser` is deliberately absent: DSH 0.1.7 mounts
+ * `@deepseek-ai/dsh-client-ui-sidebar-browser` only for the desktop profile and
+ * this lane drives the web profile, so demanding a `browser` entry would demand
+ * something the host itself stopped offering. mount.e2e.ts asserts the absence
+ * explicitly. The ids are the guides' `data-sidebar-right-guide-entry` keys.
+ */
+const NATIVE_TABS = ['files', 'git', 'subagent', 'sidechat', 'terminal'] as const
 
 let api: APIRequestContext
 

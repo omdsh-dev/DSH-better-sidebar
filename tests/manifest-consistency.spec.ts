@@ -18,6 +18,7 @@
 import { describe, expect, it } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { CHUNK_NAMES } from '../src/bundle-route.ts'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)))
@@ -48,7 +49,17 @@ interface PackageJson {
 const manifest = JSON.parse(readFileSync(resolve(ROOT, 'dsh.plugin.json'), 'utf8')) as PluginManifest
 const pkg = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')) as PackageJson
 
-/** The registry's strict id validation (manifest.ts / client-modules registerExternal): exactly two lowercase slash-separated segments. */
+/**
+ * The THIRD-PARTY registry channel's id rule (the community market validates
+ * `dsh.plugin.json`'s id itself): exactly two lowercase slash-separated
+ * segments.
+ *
+ * `dsh.plugin.json` is NOT a DSH contract — no DSH version reads it, and the
+ * official channel is `package.json`'s `dsh.bundle.patch` + `dsh.client` +
+ * `exports["./client"]` (asserted in tests/plugin-shape.spec.ts). This spec
+ * guards the registry channel's own shape so publishing there cannot break
+ * silently.
+ */
 const ID_PATTERN = /^(?!node_modules\/)(?:@[a-z0-9][a-z0-9-.]*\/[a-z0-9][a-z0-9-.]*|[a-z0-9][a-z0-9-.]*\/[a-z0-9][a-z0-9-.]*)$/
 
 /** Literal require() specifiers the frozen browser module table can answer. */
@@ -70,8 +81,23 @@ function bundleId(file: string): string {
   return match[1]!
 }
 
-/** The lazy chunk bundle names (mirror of src/bundle-route.ts CHUNK_NAMES). */
-const CHUNK_FILES = ['terminal', 'editor', 'mermaid'].map(name => `lib/client-${name}.js`)
+/**
+ * The lazy chunk bundles, DERIVED from the host route's registry (never
+ * hand-mirrored: the hand-written list drifted once — `locale` was missing
+ * from both this list and a later `package.json#files` cleanup, so a
+ * published tarball could not serve it).
+ */
+const CHUNK_FILES = CHUNK_NAMES.map(name => `lib/client-${name}.js`)
+
+/** Whether one `package.json#files` entry covers a built artifact path. */
+function publishListCovers(entry: string, file: string): boolean {
+  if (entry === file) return true
+  if (!entry.includes('*')) return false
+  // Only the `lib/client-*.js` shape is in play; a regex built from the entry
+  // is enough (escape everything else).
+  const pattern = new RegExp(`^${entry.split('*').map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')}$`)
+  return pattern.test(file)
+}
 
 /** The global registry slot a built chunk script assigns (its factory key). */
 function chunkSlot(file: string): string {
@@ -107,6 +133,31 @@ describe.skipIf(!libBuilt)('registry manifest consistency (dsh.plugin.json)', ()
     for (const file of CHUNK_FILES) {
       expect(existsSync(resolve(ROOT, file)), file).toBe(true)
       expect(chunkSlot(file), file).toBe(file.slice('lib/client-'.length, -'.js'.length))
+    }
+  })
+
+  it('every chunk is covered by package.json#files (a published tarball must serve it)', () => {
+    const files = (pkg as { files?: string[] }).files ?? []
+    for (const file of CHUNK_FILES) {
+      expect(
+        files.some(entry => publishListCovers(entry, file)),
+        `${file} is not covered by package.json#files (${files.join(', ')})`,
+      ).toBe(true)
+    }
+  })
+
+  it('every chunk is staged by scripts/package-registry.mjs (the registry channel ships its own file list)', () => {
+    // The community-registry channel installs the staged `registry/` tree
+    // wholesale, and /sidebar/bundle reads the chunk from THAT copy — a chunk
+    // missing from the staging list 404s there exactly like one missing from
+    // package.json#files does on npm. The list is read as source text because
+    // the script performs its copies at module scope (it cannot be imported).
+    const script = readFileSync(resolve(ROOT, 'scripts/package-registry.mjs'), 'utf8')
+    const start = script.indexOf('const files = [')
+    expect(start, 'scripts/package-registry.mjs declares no `const files = [` list').toBeGreaterThan(-1)
+    const staged = script.slice(start, script.indexOf(']', start))
+    for (const file of CHUNK_FILES) {
+      expect(staged.includes(`'${file}'`), `${file} is not staged by scripts/package-registry.mjs`).toBe(true)
     }
   })
 

@@ -32,23 +32,10 @@ describe('dsh-better-sidebar plugin export shape', () => {
     expect(resolved.readLimit).toBe(512 * 1024)
     expect(resolved.mediaLimit).toBe(20 * 1024 * 1024)
     expect(resolved.listLimit).toBe(1000)
-    expect(resolved.terminalsPerSession).toBe(3)
-    expect(resolved.reconnectGraceMs).toBe(30_000)
-    // The terminal shell config defaults to auto-resolution (empty shell =
-    // the platform chain in defaultShell()).
-    expect(resolved.shell).toBe('')
-    // Shell args default to an empty list; non-empty values replace the
-    // automatic platform login flag.
-    expect(resolved.shellArgs).toEqual([])
     const configured = (schema as unknown as {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
-    })({ shell: 'pwsh.exe' })
-    expect(configured.shell).toBe('pwsh.exe')
-    const configuredWithArgs = (schema as unknown as {
-      (input: Record<string, unknown> | undefined): Record<string, unknown>
-    })({ shell: '/bin/zsh', shellArgs: ['--noprofile', '--no-rc'] })
-    expect(configuredWithArgs.shell).toBe('/bin/zsh')
-    expect(configuredWithArgs.shellArgs).toEqual(['--noprofile', '--no-rc'])
+    })({ readLimit: 1024 })
+    expect(configured.readLimit).toBe(1024)
   })
 
   it('registers the side card preferences schema with the documented defaults', async () => {
@@ -63,15 +50,9 @@ describe('dsh-better-sidebar plugin export shape', () => {
     expect(resolved.autoOpenSubagent).toBe(true)
     // A new background job auto-opens the Jobs page too.
     expect(resolved.autoOpenJobs).toBe(true)
-    // The terminal tools default OFF (the feature is dormant until the user
-    // enables it in the side card settings).
-    expect(resolved.agentTerminalTools).toBe(false)
-    // The sidebar-open tool defaults OFF too (same dormant-until-enabled rule).
+    // The sidebar-open tool defaults OFF (dormant until the user enables it
+    // in the side card settings).
     expect(resolved.agentOpenTools).toBe(false)
-    // The terminal font customizations default to the theme (empty family)
-    // and 13px.
-    expect(resolved.terminalFontFamily).toBe('')
-    expect(resolved.terminalFontSize).toBe(13)
     // The position-compat scheme is declared WITHOUT a schema default so a
     // stored document that predates it resolves without the field — the
     // CLIENT parsePrefs then applies the conservative `auto` default (or
@@ -89,9 +70,14 @@ describe('dsh-better-sidebar plugin export shape', () => {
     // The separate file-window mode is the default (each file opens its own
     // tab; the merged editor-explorer is opt-in).
     expect(resolved.editorExplorer).toBe(false)
-    // The workspace fence (containment over the sidebar fs routes) defaults
-    // ON — the safe default never depends on the stored document.
-    expect(resolved.workspaceFence).toBe(true)
+    // The workspace fence is GONE: `workspaceFence` is no longer a declared
+    // schema field, so a resolved document does not carry it. A legacy stored
+    // value passes through the OPEN object schema untouched (and is inert).
+    expect(resolved.workspaceFence).toBeUndefined()
+    const legacy = (PrefsSchema as unknown as {
+      (input: Record<string, unknown> | undefined): Record<string, unknown>
+    })({ workspaceFence: true })
+    expect(legacy.workspaceFence).toBe(true)
     // A stored overridden value resolves through (the range contract is
     // enforced by the settings service on write); the new pref keeps its
     // default when the stored document predates it.

@@ -12,6 +12,13 @@
  * the tab and puts the column back to collapsed (src/client/sidebar/
  * use-host-feeds.ts `activateTasksPage`). The topology jump-back is an explicit
  * user gesture and always takes the host's expansion.
+ *
+ * "The current conversation" is the native surface's MOUNTED seat
+ * (`ctx.sidebarRight.mounted`): the session-list snapshot never carried a
+ * current-session field, so the park gate used to read a phantom one and was
+ * permanently false. Background jobs are likewise no longer mirrored into that
+ * snapshot — they arrive as whole-set rosters PUSHED by the host's client jobs
+ * service, so a job is delivered by publishing a frame.
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -30,7 +37,13 @@ import {
   type SidebarSurface,
   type TabComponentProps,
 } from '../src/client/service.ts'
-import type { Context, SidebarSessionList } from '../src/context-types.ts'
+import type {
+  Context,
+  SidebarClientJobsService,
+  SidebarJobsSnapshot,
+  SidebarJobView,
+  SidebarSessionList,
+} from '../src/context-types.ts'
 
 class FakeWebSocket {
   onmessage: ((event: { data: unknown }) => void) | null = null
@@ -89,18 +102,41 @@ function makeNativeSurfaceSpy(): NativeSurfaceSpy {
   }
 }
 
-/** `ctx.sidebarRight`, replaced by a stand-in column: `isExpanded` reports the
- *  current state, `toggleExpanded` flips it and counts the calls. */
-interface NativeColumnSpy {
-  face: { isExpanded: () => boolean; toggleExpanded: () => void }
-  toggles: number
+/** A subscribable seat observable (mirror of `ISidebarRight.mounted`). */
+function makeMountedStore(initial: string | undefined) {
+  let snapshot = initial
+  const listeners = new Set<() => void>()
+  return {
+    getSnapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    set(next: string | undefined): void {
+      if (next === snapshot) return
+      snapshot = next
+      for (const listener of [...listeners]) listener()
+    },
+  }
 }
 
-function makeNativeColumnSpy(expanded: boolean): NativeColumnSpy {
+type MountedStore = ReturnType<typeof makeMountedStore>
+
+/** `ctx.sidebarRight`, replaced by a stand-in column: `isExpanded` reports the
+ *  current state, `toggleExpanded` flips it and counts the calls, and `mounted`
+ *  is the seat observation the shell binds its per-session state to. */
+interface NativeColumnSpy {
+  face: { isExpanded: () => boolean; toggleExpanded: () => void; mounted: MountedStore }
+  toggles: number
+  mounted: MountedStore
+}
+
+function makeNativeColumnSpy(expanded: boolean, mounted: string | undefined): NativeColumnSpy {
   const spy = {
     toggles: 0,
     expanded,
-    face: {} as { isExpanded: () => boolean; toggleExpanded: () => void },
+    mounted: makeMountedStore(mounted),
+    face: {} as { isExpanded: () => boolean; toggleExpanded: () => void; mounted: MountedStore },
   }
   spy.face = {
     isExpanded: () => spy.expanded,
@@ -108,6 +144,7 @@ function makeNativeColumnSpy(expanded: boolean): NativeColumnSpy {
       spy.toggles += 1
       spy.expanded = !spy.expanded
     },
+    mounted: spy.mounted,
   }
   return spy
 }
@@ -131,7 +168,54 @@ interface MountedSidebar {
   surface: NativeSurfaceSpy
   column: NativeColumnSpy
   sessionId: string
+  /** The client jobs feed the auto-open trigger watches (push rosters). */
+  jobs: JobsFeed
   unmount: () => void
+}
+
+/**
+ * The host client jobs service double: `watchRows` opens a reference-counted
+ * roster stream and `publish` pushes a whole-set frame through the same
+ * subscribe/getSnapshot pair the trigger reads.
+ */
+interface JobsFeed {
+  service: SidebarClientJobsService
+  watched: string[]
+  released: string[]
+  publish(sessionId: string, jobs: readonly SidebarJobView[]): void
+}
+
+function makeJobsFeed(): JobsFeed {
+  let snapshot: SidebarJobsSnapshot = { rows: {}, observed: {} }
+  const listeners = new Set<() => void>()
+  const feed: JobsFeed = {
+    watched: [],
+    released: [],
+    service: {
+      state: {
+        getSnapshot: () => snapshot,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        },
+      },
+      watchRows(sessionId: string) {
+        feed.watched.push(sessionId)
+        return () => { feed.released.push(sessionId) }
+      },
+      observe: () => () => {},
+      kill: async () => {},
+    },
+    publish(sessionId, jobs) {
+      snapshot = { rows: { ...snapshot.rows, ...(jobs.length === 0 ? {} : { [sessionId]: [...jobs] }) }, observed: {} }
+      if (jobs.length === 0) {
+        const { [sessionId]: _dropped, ...rest } = snapshot.rows
+        snapshot = { rows: rest, observed: {} }
+      }
+      for (const listener of [...listeners]) listener()
+    },
+  }
+  return feed
 }
 
 let sessionSeq = 0
@@ -144,28 +228,34 @@ function setViewport(width: number): void {
 function mountSidebar(
   width: number,
   bottomOpen = false,
-  options: { columnExpanded?: boolean } = {},
+  options: { columnExpanded?: boolean; prefs?: Record<string, unknown> } = {},
 ): MountedSidebar {
   setViewport(width)
   vi.stubGlobal('WebSocket', FakeWebSocket)
   const sessionId = `auto-activation-${++sessionSeq}`
   const initial: SidebarSessionList = {
-    current: sessionId,
     byId: {
       [sessionId]: { id: sessionId, cwd: '/tmp', displayTitle: 'Root' },
     },
-    jobsBySession: { [sessionId]: [] },
   }
   const feed = makeSessionFeed(initial)
+  // Background jobs arrive through the host's own client jobs service
+  // (`ctx.jobs`): the feed below is what a test pushes rosters into.
+  const jobs = makeJobsFeed()
   const store = createSidebarStore()
-  store.setPrefs({ ...store.getPrefs(), autoOpenSubagent: true, autoOpenJobs: true })
+  store.setPrefs({
+    ...store.getPrefs(),
+    autoOpenSubagent: true,
+    autoOpenJobs: true,
+    ...options.prefs,
+  })
   store.setSession(sessionId)
   store.reduce(state => ({ ...state, bottomOpen }))
   const service = createBetterSidebarService(store)
   const surface = makeNativeSurfaceSpy()
   service.setSurface(surface.surface)
   service.registerTab({ id: 'subagent', title: 'Subagent', component: JumpHarness })
-  const column = makeNativeColumnSpy(options.columnExpanded ?? false)
+  const column = makeNativeColumnSpy(options.columnExpanded ?? false, sessionId)
   const localeSnapshot = { active: 'en' }
   const ctx = {
     locale: { subscribe: () => () => {}, getSnapshot: () => localeSnapshot },
@@ -173,7 +263,7 @@ function mountSidebar(
     betterSidebar: service,
     get: (name: string) => name === 'betterSidebar'
       ? service
-      : name === 'sidebarRight' ? column.face : undefined,
+      : name === 'sidebarRight' ? column.face : name === 'jobs' ? jobs.service : undefined,
   } as unknown as Context
   const container = document.createElement('div')
   document.body.append(container)
@@ -186,6 +276,7 @@ function mountSidebar(
     surface,
     column,
     sessionId,
+    jobs,
     unmount: () => {
       act(() => { root.unmount() })
       container.remove()
@@ -198,9 +289,9 @@ function mountSidebar(
 type ActivitySource = 'subagent' | 'job'
 
 /** Deliver one piece of background activity through the host's own feeds. */
-function publishActivity(sidebar: MountedSidebar, source: ActivitySource): void {
+async function publishActivity(sidebar: MountedSidebar, source: ActivitySource): Promise<void> {
   if (source === 'job') {
-    publishJob(sidebar)
+    await publishJob(sidebar)
     return
   }
   publishSubagent(sidebar)
@@ -209,7 +300,6 @@ function publishActivity(sidebar: MountedSidebar, source: ActivitySource): void 
 
 function publishSubagent(sidebar: MountedSidebar): void {
   const before = sidebar.feed.getSnapshot()
-  const sessionId = before.current!
   act(() => {
     sidebar.feed.set({
       ...before,
@@ -219,7 +309,7 @@ function publishSubagent(sidebar: MountedSidebar): void {
           id: 'child',
           displayTitle: 'Worker',
           origin: 'subagent',
-          parentId: sessionId,
+          parentId: sidebar.sessionId,
           running: true,
         },
       },
@@ -231,45 +321,55 @@ function flushSubagentDebounce(): void {
   act(() => { vi.advanceTimersByTime(500) })
 }
 
-function publishJob(sidebar: MountedSidebar): void {
-  const before = sidebar.feed.getSnapshot()
-  const sessionId = before.current!
-  act(() => {
-    sidebar.feed.set({
-      ...before,
-      jobsBySession: {
-        ...before.jobsBySession,
-        [sessionId]: [{
-          id: 'bash-1',
-          kind: 'bash',
-          label: 'sleep 30',
-          status: 'running',
-          startedAt: 1_000,
-        }],
-      },
-    })
-  })
+/**
+ * Deliver one new job: the roster frame the host's client service pushes. The
+ * job's start stamp is AFTER the watch began, which is what makes it "new
+ * work" rather than a job that was already running when the page mounted.
+ */
+async function publishJob(sidebar: MountedSidebar): Promise<void> {
+  await flushFeeds()
+  sidebar.jobs.publish(sessionIdOf(sidebar), [{
+    id: 'bash-1',
+    kind: 'bash',
+    label: 'sleep 30',
+    status: 'running',
+    startedAt: Date.now() + 1,
+  }])
+  await flushFeeds()
+}
+
+/** The conversation the sidebar is bound to (its own store's session). */
+function sessionIdOf(sidebar: MountedSidebar): string {
+  return sidebar.store.getSnapshot().sessionId ?? sidebar.sessionId
+}
+
+/** Let pending microtasks settle (the polled reads resolve outside timers). */
+async function flushFeeds(): Promise<void> {
+  for (let tick = 0; tick < 4; tick++) {
+    await act(async () => { await Promise.resolve() })
+  }
 }
 
 /** Switch the conversation to the child session the Tasks page jumped to. */
 function switchToChild(sidebar: MountedSidebar): void {
   const before = sidebar.feed.getSnapshot()
-  const parent = before.current!
   act(() => {
     sidebar.feed.set({
       ...before,
-      current: 'child',
       byId: {
         ...before.byId,
         child: {
           id: 'child',
           displayTitle: 'Worker',
           origin: 'subagent',
-          parentId: parent,
+          parentId: sidebar.sessionId,
           running: true,
         },
       },
     })
+    // The mounted seat is what moves the conversations: the shell binds its
+    // per-session state to it (the session list has no current-session field).
+    sidebar.column.mounted.set('child')
   })
 }
 
@@ -312,30 +412,74 @@ describe('Sidebar background-activity auto-activation (#162)', () => {
     { source: 'job', width: 390 },
     { source: 'subagent', width: 1024 },
     { source: 'job', width: 1024 },
-  ] as const)('$source activation at $width px activates the Tasks page in the native Sidebar', ({ source, width }) => {
-    const sidebar = mountSidebar(width)
-    publishActivity(sidebar, source)
+  ] as const)('$source activation at $width px activates the Tasks page in the native Sidebar', async ({ source, width }) => {
+    // The NARROW rows disarm the mobile adaptation on purpose: this lane pins
+    // the activate-and-park promise, while the suppression the mobile switch
+    // adds on narrow viewports has its own test below.
+    const sidebar = mountSidebar(width, false, { prefs: { mobileNoAutoOpen: false } })
+    await publishActivity(sidebar, source)
     expectNativeTasksOpen(sidebar, sidebar.sessionId)
     expectWorkbenchUntouched(sidebar)
     // Parking is the narrow-viewport half of the same promise.
     expect(sidebar.column.toggles).toBe(width < 768 ? 1 : 0)
   })
 
-  it.each(['subagent', 'job'] as const)('%s activation leaves a narrow fullscreen column to the park', (source) => {
-    const sidebar = mountSidebar(390)
-    publishActivity(sidebar, source)
+  it.each(['subagent', 'job'] as const)('%s activation leaves a narrow fullscreen column to the park', async (source) => {
+    const sidebar = mountSidebar(390, false, { prefs: { mobileNoAutoOpen: false } })
+    await publishActivity(sidebar, source)
     expect(sidebar.column.toggles).toBe(1)
   })
 
-  it('a narrow column the user already expanded is not closed under them', () => {
-    const sidebar = mountSidebar(390, false, { columnExpanded: true })
-    publishActivity(sidebar, 'subagent')
+  it('a narrow column the user already expanded is not closed under them', async () => {
+    const sidebar = mountSidebar(390, false, { columnExpanded: true, prefs: { mobileNoAutoOpen: false } })
+    await publishActivity(sidebar, 'subagent')
     expectNativeTasksOpen(sidebar, sidebar.sessionId)
     expect(sidebar.column.toggles).toBe(0)
   })
 
-  it('reads the viewport when the debounced activation fires, not when it arms', () => {
+  it('a page that loads with jobs already running never triggers; the next NEW job does', async () => {
     const sidebar = mountSidebar(1024)
+    // The conversation is already running work when the sidebar mounts: the
+    // first frame only ARMS the baseline (and the watch clock filters a job
+    // whose start stamp predates it), so it is never "new work".
+    sidebar.jobs.publish(sidebar.sessionId, [{
+      id: 'bash-0',
+      kind: 'bash',
+      label: 'already running',
+      status: 'running',
+      startedAt: Date.now() - 5_000,
+    }])
+    await flushFeeds()
+    expect(sidebar.surface.opens).toEqual([])
+    // A second, genuinely new job id is what surfaces the Tasks page.
+    sidebar.jobs.publish(sidebar.sessionId, [
+      {
+        id: 'bash-0',
+        kind: 'bash',
+        label: 'already running',
+        status: 'running',
+        startedAt: Date.now() - 5_000,
+      },
+      { id: 'bash-1', kind: 'bash', label: 'sleep 30', status: 'running', startedAt: Date.now() + 1 },
+    ])
+    await flushFeeds()
+    expectNativeTasksOpen(sidebar, sidebar.sessionId)
+  })
+
+  it('a session switch re-arms the job baseline instead of firing on the new session\'s jobs', async () => {
+    const sidebar = mountSidebar(1024)
+    sidebar.jobs.publish('child', [
+      { id: 'bash-9', kind: 'bash', label: 'child work', status: 'running', startedAt: Date.now() + 1 },
+    ])
+    switchToChild(sidebar)
+    await flushFeeds()
+    // The child's pre-existing job belongs to the NEW baseline, not to "new
+    // work in the session I am looking at" (the baseline resets on session).
+    expect(sidebar.surface.opens).toEqual([])
+  })
+
+  it('reads the viewport when the debounced activation fires, not when it arms', () => {
+    const sidebar = mountSidebar(1024, false, { prefs: { mobileNoAutoOpen: false } })
     publishSubagent(sidebar)
     setViewport(390)
     flushSubagentDebounce()
@@ -343,9 +487,35 @@ describe('Sidebar background-activity auto-activation (#162)', () => {
     expect(sidebar.column.toggles).toBe(1)
   })
 
-  it('leaves an already-open bottom workbench open and untouched', () => {
+  it('a NARROW viewport suppresses both triggers while the mobile switch is on', async () => {
+    // The mobile adaptation defaults to ON: on a phone the Tasks page costs
+    // the whole screen, so neither kind of background work may take it over.
+    const subagents = mountSidebar(390)
+    await publishActivity(subagents, 'subagent')
+    expect(subagents.surface.opens).toEqual([])
+    await publishActivity(subagents, 'job')
+    expect(subagents.surface.opens).toEqual([])
+
+    // Turning the switch off restores the old narrow behaviour: activate, then
+    // park the fullscreen column (the existing narrow promise).
+    const jobs = mountSidebar(390)
+    jobs.store.setPrefs({ ...jobs.store.getPrefs(), mobileNoAutoOpen: false })
+    await publishActivity(jobs, 'job')
+    expectNativeTasksOpen(jobs, jobs.sessionId)
+    expect(jobs.column.toggles).toBe(1)
+  })
+
+  it('the mobile switch never touches a WIDE viewport', async () => {
+    const sidebar = mountSidebar(1024)
+    await publishActivity(sidebar, 'subagent')
+    expectNativeTasksOpen(sidebar, sidebar.sessionId)
+    // Nothing was parked (there is no fullscreen column to park).
+    expect(sidebar.column.toggles).toBe(0)
+  })
+
+  it('leaves an already-open bottom workbench open and untouched', async () => {
     const sidebar = mountSidebar(1024, true)
-    publishActivity(sidebar, 'subagent')
+    await publishActivity(sidebar, 'subagent')
     expectNativeTasksOpen(sidebar, sidebar.sessionId)
     expectWorkbenchUntouched(sidebar, true)
   })

@@ -55,6 +55,13 @@ if (g.window === undefined) {
     innerWidth: 1024,
     innerHeight: 768,
     getComputedStyle: () => ({ getPropertyValue: () => '' }),
+    // DSH 0.1.7's ui-primitives subscribes at MODULE EVALUATION time (a shared
+    // scroll/resize placement effect), so a window stub without these throws
+    // before any spec body runs.
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => true,
+    matchMedia: () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
     // desktop-env.ts reads the shell's URL stamps from location.search
     // (Sidebar renders with parseDesktopEnv even in specs).
     location: { search: '' },

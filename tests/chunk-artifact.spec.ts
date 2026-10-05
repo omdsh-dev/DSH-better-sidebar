@@ -11,13 +11,20 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 // Browser globals first: chunk bodies probe `self`/`document` at evaluation
-// (xterm's UMD wrapper, CodeMirror's UA probe).
+// (CodeMirror's UA probe).
 import './browser-globals.ts'
 import { CHUNK_EXTERNALS } from '../src/client/chunk-loader.ts'
+import { CHUNK_NAMES } from '../src/bundle-route.ts'
 
 const g = globalThis as Record<string, unknown>
 
-const CHUNKS = ['terminal', 'editor', 'mermaid']
+/**
+ * The chunk set, DERIVED from the host route's allowlist — the same registry
+ * `/sidebar/bundle` serves from (src/bundle-route.ts). Never hand-mirrored:
+ * the hand-written list that used to live here drifted (`locale` was
+ * missing), so the locale artifact went unguarded.
+ */
+const CHUNKS = CHUNK_NAMES
 
 /** All chunk artifacts present (tsdown emits the whole lib/ in one run). */
 const chunksBuilt = CHUNKS.every(name => existsSync(`lib/client-${name}.js`))

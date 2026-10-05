@@ -21,7 +21,10 @@
  * comment — so a produced UNC path is never joined onto the cwd.
  */
 export function isAbsolutePath(path: string): boolean {
-  return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || /^[\\/]{2}[^\\/]/.test(path)
+  // A `~`-relative path (`~`, `~/...`, `~\...`) names the user's home, not a
+  // session-relative path (#713): never join it onto the cwd client-side.
+  return path === '~' || path.startsWith('~/') || path.startsWith('~\\')
+    || path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || /^[\\/]{2}[^\\/]/.test(path)
 }
 
 /**
@@ -82,4 +85,17 @@ export function extOf(path: string): string {
   if (at === -1) return ''
   const base = path.slice(at + 1).toLowerCase()
   return base.includes('/') || base.includes('\\') ? '' : base
+}
+
+/**
+ * Resolve a (possibly relative) path against the session cwd for the sidebar.
+ * Absolute detection mirrors the host (see {@link isAbsolutePath}): POSIX
+ * roots, drive letters and UNC shares must not be joined onto the cwd.
+ */
+export function resolveSidebarPath(cwd: string | undefined, path: string): string {
+  if (isAbsolutePath(path)) return path
+  const base = cwd ?? ''
+  if (base === '') return path
+  const separator = base.includes('\\') ? '\\' : '/'
+  return `${base.replace(/[\\/]+$/, '')}${separator}${path}`
 }

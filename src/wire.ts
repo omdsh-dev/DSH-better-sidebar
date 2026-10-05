@@ -5,6 +5,10 @@
  * (HTTP 4xx/5xx matching the code) on failure.
  */
 import type { SidebarHttpRequest, SidebarHttpResponse } from './context-types.ts'
+// Value import for the error-class branch in writeError. git.ts imports only
+// node builtins, so this introduces no cycle; wire.ts is host-half only and is
+// never reachable from the browser bundle.
+import { GitCommandError } from './git.ts'
 
 /** Machine-readable error codes of the sidebar API. */
 export type SidebarErrorCode =
@@ -15,10 +19,9 @@ export type SidebarErrorCode =
   | 'too-large'
   | 'fs-error'
   | 'git-error'
-  | 'pty-error'
-  | 'pty-deps-missing'
-  | 'shell-not-found'
   | 'job-error'
+  | 'team-error'
+  | 'team-conflict'
   | 'sidechat-error'
   | 'subagents-unavailable'
   | 'settings-rejected'
@@ -31,7 +34,7 @@ export class SidebarError extends Error {
     readonly code: SidebarErrorCode,
     message: string,
     readonly status = 400,
-    /** Optional structured context (e.g. `{ shell }` for shell-not-found). */
+    /** Optional structured context carried alongside the code. */
     readonly meta?: Record<string, string>,
   ) {
     super(message)
@@ -86,6 +89,19 @@ export function writeOk(res: SidebarHttpResponse, value: unknown): void {
 export function writeError(res: SidebarHttpResponse, error: unknown): void {
   if (error instanceof SidebarError) {
     writeJson(res, error.status, { ok: false, error: { code: error.code, message: error.message } })
+    return
+  }
+  // A git failure is a state/input problem the user caused (unknown ref, path
+  // outside the repository, not a repository), not a plugin fault. Reporting it
+  // as 500 "internal" reads as a crash and hides the localized not-a-repository
+  // copy the client already knows how to render; `not-repo` carries its own
+  // code (409) so that path is reachable at all.
+  if (error instanceof GitCommandError) {
+    const notRepo = error.code === 'not-repo'
+    writeJson(res, notRepo ? 409 : 400, {
+      ok: false,
+      error: { code: notRepo ? 'not-repo' : 'git-error', message: error.message },
+    })
     return
   }
   const message = error instanceof Error ? error.message : String(error)

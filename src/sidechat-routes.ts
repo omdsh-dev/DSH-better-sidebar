@@ -22,7 +22,7 @@
  *   AgentRegistry.resume, composing the preset the child recorded.
  */
 import { randomUUID } from 'node:crypto'
-import { createUserMessage, type ContentBlock, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId, type ContentBlock, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Agent, AgentSetup, CreateAgentOptions, ResumeAgentOptions } from '@deepseek-ai/dsh-agent'
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import type { Context as CordisContext } from '@deepseek-ai/cordis'
@@ -38,9 +38,10 @@ import {
   boundaryDelivered,
   buildSidechatInheritance,
   liveEventsOf,
+  parentModelSelection,
   resolvePresetId,
   SIDE_BOUNDARY_PROMPT,
-  SIDE_INJECTION_PLUGIN,
+  SIDE_INJECTION_SOURCE_KIND,
   SIDE_NEW_THREAD_TITLE,
   sideLabel,
   type SeedEvent,
@@ -52,6 +53,22 @@ import {
 import type { AssistantLiveBuffer } from './assistant-live.ts'
 import { requireString, SidebarError } from './wire.ts'
 import { readPersistedSession } from './session-store.ts'
+
+/**
+ * The plugin's producer-owned message source kind. Message sources are a
+ * merge-extensible sum type — DSH 0.1.7 has no shared catch-all `plugin`
+ * kind, so every producer declares its own in its own module (the same
+ * `declare module` seam dsh-time-context / dsh-tmux-context use). The kind
+ * itself is {@link SIDE_INJECTION_SOURCE_KIND}: exactly the `plugin:<name>`
+ * value DSH's own v3→v4 migration derives for the rows this plugin wrote
+ * under 0.1.6, so old and new logs carry one shape.
+ */
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    /** Side-chat context injection (boundary prompt + parked in-progress snapshot). */
+    'dsh-better-sidebar': { kind: typeof SIDE_INJECTION_SOURCE_KIND }
+  }
+}
 
 /** The six Side Chat routes of the sidebar API (wire method names). */
 export interface SidechatRoutes {
@@ -153,13 +170,15 @@ function admitFollowup(agent: Agent, blocks: ContentBlock[]): void {
  * log therefore records two user/message events (injection, then question)
  * instead of one wrapped blob: the transcript shows the question as a user
  * bubble and collapses the injection as a context row. The injection source
- * is stamped `kind: 'plugin'` so recognition is structural; its text still
- * opens with SIDE_BOUNDARY_PREFIX, keeping boundaryDelivered intact.
+ * carries the plugin's producer-owned kind (`plugin:dsh-better-sidebar` —
+ * session format v4 refuses the retired bare `kind: 'plugin'`) so recognition
+ * is structural; its text still opens with SIDE_BOUNDARY_PREFIX, keeping
+ * boundaryDelivered intact.
  */
 function admitFirstContact(agent: Agent, injectionText: string, question: string): void {
   agent.inject(createUserMessage({
     content: textPrompt(injectionText),
-    source: { kind: 'plugin', plugin: SIDE_INJECTION_PLUGIN },
+    source: { kind: SIDE_INJECTION_SOURCE_KIND },
   }))
   admitFollowup(agent, textPrompt(question))
 }
@@ -220,6 +239,19 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
         throw new SidebarError('sidechat-error', `parent session "${sessionId}" is not running`, 409)
       }
       const parentSession = parent.session
+      // The parent's CURRENT model route. agent.options freezes the
+      // creation-time deployment default — a composer model switch rides
+      // `model/selection` events + the session-local selection and never
+      // rewrites options — so the child inherits the durable projection
+      // (falling back to the options snapshot only when the log carries no
+      // selection at all). Inheriting parent.options verbatim silently
+      // shipped the stale default instead of the model the user sees
+      // selected in the parent composer (#368).
+      const parentSelection = parentModelSelection(
+        parentSession.snapshotEvents() as unknown as readonly SidechatLogEvent[],
+      )
+      const routeProvider = parentSelection?.provider ?? parent.options.provider
+      const routeModel = parentSelection?.model ?? parent.options.model
       const inheritance = buildSidechatInheritance(
         parentSession.snapshotEvents() as unknown as readonly SidechatLogEvent[],
         live?.chunksFor(sessionId) ?? [],
@@ -239,8 +271,8 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
         mode: 'continuable',
         provider: 'sidechat',
         label,
-        ...(parent.options.provider === undefined ? {} : { agentProvider: parent.options.provider }),
-        ...(parent.options.model === undefined ? {} : { agentModel: parent.options.model }),
+        ...(routeProvider === undefined ? {} : { agentProvider: routeProvider }),
+        ...(routeModel === undefined ? {} : { agentModel: routeModel }),
       })
       const descriptorEvent: SeedEvent = {
         type: 'subagent/descriptor',
@@ -259,6 +291,19 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
       // would then claim and send that stale message BEFORE the boundary +
       // question. The marker keeps `ownEvents()` at the end-seed boundary, so
       // the inherited inbox replays to empty.
+      const targetEffort = parentSelection !== undefined
+        ? (parentSelection.reasoningEffort === undefined ? undefined : ReasoningEffortId(parentSelection.reasoningEffort))
+        : parent.options.reasoningEffort
+      const childAgentOptions: CreateAgentOptions['agentOptions'] = {
+        ...parent.options,
+        ...(routeProvider === undefined ? {} : { provider: routeProvider }),
+        ...(routeModel === undefined ? {} : { model: routeModel }),
+      }
+      if (targetEffort !== undefined) {
+        childAgentOptions.reasoningEffort = targetEffort
+      } else {
+        delete childAgentOptions.reasoningEffort
+      }
       const options: CreateAgentOptions = {
         sessionId: childId,
         meta: {
@@ -271,7 +316,7 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
         },
         seed: seed as unknown as readonly SessionEvent[],
         inheritedEventCount: SessionLogOffset(seed.length),
-        agentOptions: { ...parent.options },
+        agentOptions: childAgentOptions,
         setup,
         signal: AbortSignal.timeout(CREATE_TIMEOUT_MS),
       }
@@ -286,6 +331,20 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
         throw new SidebarError('sidechat-error', `thread creation failed: ${error instanceof Error ? error.message : String(error)}`, 500)
       }
       threadDisposers.set(childId, () => handle.dispose())
+      // The fork markers above cut `ownEvents()`, but the RUNTIME inbox
+      // (`ReactLoopInbox` → ctx.sessionProjections) folds the FULL log —
+      // inherited seed prefix included — because the standard inbox
+      // projection's init ignores `inheritedEventCount` (DSH 0.1.5-rc.2).
+      // Whatever input sat unclaimed in the parent at the click moment
+      // therefore replays into the child's live inbox, and the first side
+      // prompt would claim and send it BEFORE the boundary + question (the
+      // long-conversation queued-input leak). Clearing durably right after
+      // create fences it: the compensating splices are the child's own
+      // events (persisted, so a cold resume stays clean; the transcript
+      // never renders them), and nothing has been sent yet, so the idle
+      // driver cannot have claimed anything — no race.
+      // See docs/plans/2026-09-13-sidechat-inbox-projection-leak.md.
+      handle.agent.inbox.clear()
       // Pin the thread label so the client can identify its threads by
       // title prefix (the rename is a live-session op, no RPC fence).
       const titles = ctx.get('sessionTitle') as SidebarSessionTitleService | undefined

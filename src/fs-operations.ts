@@ -1,37 +1,37 @@
 /**
- * Workspace-safe file mutations for the sidebar (the upload route today).
+ * File mutations for the sidebar (the upload route and the tree's renames,
+ * deletes and mkdirs).
  *
- * Every write is confined to the real session workspace: the upload
- * directory is resolved absolute and its target is checked through existing
- * filesystem ancestors, the relative path is sanitized (absolute paths, '.',
- * '..' and empty segments are refused), and the final target must stay inside
- * the workspace after symlink resolution. Bytes stream from the request body
- * to a uniquely named temp sibling
- * and are renamed into place, so a failed, aborted, or oversized upload never
- * leaves a partial file at the target path.
+ * ⚠️ **No workspace containment any more.** The guard was removed at the
+ * user's request, so these operations reach whatever the HOST USER can reach.
+ * What is still enforced is the SHAPE of a request: the relative upload path
+ * is sanitized (absolute paths, '.', '..' and empty segments are refused), a
+ * rename/mkdir name must be one path segment, an existing destination is
+ * refused instead of clobbered, and the session workspace root itself is never
+ * renamable or removable. Bytes stream from the request body to a uniquely
+ * named temp sibling and are renamed into place, so a failed, aborted, or
+ * oversized upload never leaves a partial file at the target path.
  *
- * The tree's rename/delete (below) are link-aware: existence and containment
- * are verified against the fully resolved target (a symlink pointing outside
- * the workspace is refused while the fence is armed), but the operation
- * itself addresses the lexical row path — renaming or deleting a symlink
- * row renames/unlinks the LINK, never its target, matching what the tree
- * row visually names (VS Code semantics).
+ * The tree's rename/delete are link-aware: they address the LEXICAL row path
+ * (lstat decides), so renaming or deleting a symlink row renames/unlinks the
+ * LINK, never its target — matching what the tree row visually names (VS Code
+ * semantics). Every mutation invalidates the directory cache of the level(s)
+ * it touched.
  */
 import { randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { createWriteStream } from 'node:fs'
-import { access, lstat, mkdir, realpath, rename, rm, stat, unlink } from 'node:fs/promises'
+import { access, lstat, mkdir, rename, rm, stat, unlink } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
-import { isWithin, requireAbsolute } from './fs-tree.ts'
-import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
-import { resolveSessionPath } from './session-path.ts'
+import { invalidateDirectoryCache, requireAbsolute } from './fs-tree.ts'
+import { ensureWorkspaceWritePath, resolveTarget } from './path-security.ts'
 import { SidebarError } from './wire.ts'
 
 /** Inputs of one upload: the session scope plus the request body stream. */
 export interface WorkspaceUploadInput {
-  /** The session workspace root; target and directory must stay inside it. */
+  /** The session workspace root (the base of session-relative targets). */
   cwd: string
-  /** Absolute upload directory chosen by the client (inside `cwd`). */
+  /** Upload directory chosen by the client — absolute, session-relative, or `~`-relative (#713). */
   dir: string
   /** Relative path below `dir` (absolute paths, '.', '..' and empty segments refused). */
   relativePath: string
@@ -39,7 +39,7 @@ export interface WorkspaceUploadInput {
   chunks: AsyncIterable<string | Uint8Array>
   /** Byte cap; an oversized upload is refused without touching the target. */
   limit: number
-  /** Whether workspace containment is enforced (the `workspaceFence` setting; on by default). */
+  /** @deprecated IGNORED — containment was removed. Do not pass it. */
   fence?: boolean
 }
 
@@ -51,13 +51,14 @@ export interface WorkspaceUploadInput {
  * target independent (each writes and renames its own file; the last rename
  * wins) and never blocks later uploads after a crashed process.
  *
- * @throws SidebarError with a wire code for containment, shape, and size
- * failures; the temp file is always removed on failure.
+ * @throws SidebarError with a wire code for shape and size failures; the temp
+ * file is always removed on failure.
  */
 export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise<{ path: string; size: number }> {
-  const { cwd, dir, relativePath, chunks, limit, fence = true } = input
-  const base = requireAbsolute(dir)
-  await ensureWorkspacePath(cwd, base, fence)
+  const { cwd, dir, relativePath, chunks, limit } = input
+  // The shared resolution contract: an absolute `dir` normalizes, a
+  // session-relative one joins the cwd, `~` expands against the home (#713).
+  const base = resolveTarget(cwd, dir)
   if (relativePath === '' || relativePath.startsWith('/') || relativePath.startsWith('\\')) {
     throw new SidebarError('bad-request', 'relativePath must stay below the upload directory', 400)
   }
@@ -66,7 +67,7 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
     throw new SidebarError('bad-request', 'relativePath must stay below the upload directory', 400)
   }
   const target = join(base, ...segments)
-  const safeTarget = await ensureWorkspaceWritePath(cwd, target, fence)
+  const safeTarget = await ensureWorkspaceWritePath(cwd, target)
   const tmp = join(dirname(safeTarget), `.${basename(safeTarget)}.dsh-upload-${randomUUID()}.tmp`)
   await mkdir(dirname(safeTarget), { recursive: true })
   const stream = createWriteStream(tmp, { flags: 'wx' })
@@ -92,6 +93,8 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
     if (streamError !== undefined) throw streamError
     await rename(tmp, safeTarget)
     const info = await stat(safeTarget)
+    // The target's level (and, for a new folder, its parent) is now stale.
+    invalidateDirectoryCache(dirname(safeTarget))
     return { path: target, size: info.size }
   } catch (error) {
     // Wait for the stream to fully close before unlinking (Windows locks open
@@ -105,36 +108,32 @@ export async function writeWorkspaceUpload(input: WorkspaceUploadInput): Promise
 
 /** Inputs of one tree-row rename. */
 export interface WorkspaceRenameInput {
-  /** The session workspace root; the renamed entry must stay inside it. */
+  /** The session workspace root (the base of session-relative targets). */
   cwd: string
-  /** Absolute path of the row as the tree displays it (may be a symlink). */
+  /** Row path as the tree displays it (may be a symlink); absolute, session-relative, or `~`-relative. */
   path: string
   /** The new base name (single segment — rename never moves across directories). */
   name: string
-  /** Whether workspace containment is enforced (the `workspaceFence` setting; on by default). */
+  /** @deprecated IGNORED — containment was removed. Do not pass it. */
   fence?: boolean
 }
 
-/** Resolve one existing entry for a link-aware mutation: the lexical row path
- * plus its fully resolved real target (fence-checked). ENOENT becomes an
- * fs-error, mirroring path-security's resolveRealPath semantics. */
+/**
+ * Resolve one existing entry for a link-aware mutation through the SHARED
+ * resolution contract: session-relative targets join the cwd, `~` targets
+ * expand against the home (#713), remote-mirror namespaces project, and
+ * everything lands on one absolute, lexically-normalized path (plus the
+ * resolved workspace root for the "never rename/remove the root" check).
+ * No realpath, no containment: the path exists (lstat decides) and the
+ * operation addresses it as written.
+ */
 async function resolveEntry(
   cwd: string,
   target: string,
-  fence: boolean,
 ): Promise<{ absolute: string; real: string; realCwd: string }> {
-  const absolute = requireAbsolute(resolveSessionPath(cwd, target))
-  let real: string
-  let realCwd: string
-  try {
-    ;[realCwd, real] = await Promise.all([realpath(cwd), realpath(absolute)])
-  } catch (error) {
-    throw new SidebarError('fs-error', `cannot resolve "${target}": ${error instanceof Error ? error.message : String(error)}`, 400)
-  }
-  if (fence && !isWithin(realCwd, real)) {
-    throw new SidebarError('forbidden', `path "${target}" is outside workspace`, 403)
-  }
-  return { absolute, real, realCwd }
+  const absolute = resolveTarget(cwd, target)
+  const realCwd = requireAbsolute(cwd)
+  return { absolute, real: absolute, realCwd }
 }
 
 /** Whether a path exists (ENOENT → false; other failures propagate). */
@@ -156,21 +155,21 @@ async function pathExists(target: string): Promise<boolean> {
  * renames the link, not its target. A no-op rename (same name) succeeds
  * without touching the filesystem.
  *
- * @throws SidebarError with a wire code for shape, containment, existence
- * and root failures.
+ * @throws SidebarError with a wire code for shape, existence and root
+ * failures.
  */
 export async function renameWorkspaceEntry(input: WorkspaceRenameInput): Promise<{ path: string }> {
-  const { cwd, path, name, fence = true } = input
+  const { cwd, path, name } = input
   if (name === '' || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
     throw new SidebarError('bad-request', 'name must be a single path segment', 400)
   }
-  const { absolute, real, realCwd } = await resolveEntry(cwd, path, fence)
+  const { absolute, real, realCwd } = await resolveEntry(cwd, path)
   if (real === realCwd) {
     throw new SidebarError('fs-error', 'cannot rename the workspace root', 400)
   }
   if (basename(absolute) === name) return { path: absolute }
   const destination = join(dirname(absolute), name)
-  const safeDestination = await ensureWorkspaceWritePath(cwd, destination, fence)
+  const safeDestination = await ensureWorkspaceWritePath(cwd, destination)
   if (await pathExists(safeDestination)) {
     throw new SidebarError('fs-error', `"${name}" already exists`, 409)
   }
@@ -179,16 +178,58 @@ export async function renameWorkspaceEntry(input: WorkspaceRenameInput): Promise
   } catch (error) {
     throw new SidebarError('fs-error', `cannot rename "${path}" to "${name}": ${error instanceof Error ? error.message : String(error)}`, 400)
   }
+  invalidateDirectoryCache(dirname(safeDestination))
   return { path: safeDestination }
+}
+
+/** Inputs of one new directory row. */
+export interface WorkspaceMkdirInput {
+  /** The session workspace root (the base of session-relative targets). */
+  cwd: string
+  /** Absolute path of the PARENT row as the tree displays it (a directory). */
+  path: string
+  /** The new directory's base name (single segment — mkdir never nests). */
+  name: string
+  /** @deprecated IGNORED — containment was removed. Do not pass it. */
+  fence?: boolean
+}
+
+/**
+ * Create one directory inside an existing tree row: `<path>/<name>`.
+ * The name must be a single path segment; an existing destination is refused
+ * (mkdir would otherwise fail with EEXIST anyway, but the explicit check
+ * yields the same "already exists" sentence rename uses); the parent row may
+ * be any directory the host user can write.
+ *
+ * @throws SidebarError with a wire code for shape and existence failures.
+ */
+export async function mkdirWorkspaceEntry(input: WorkspaceMkdirInput): Promise<{ path: string }> {
+  const { cwd, path, name } = input
+  if (name === '' || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
+    throw new SidebarError('bad-request', 'name must be a single path segment', 400)
+  }
+  const { absolute } = await resolveEntry(cwd, path)
+  const destination = await ensureWorkspaceWritePath(cwd, join(absolute, name))
+  if (await pathExists(destination)) {
+    throw new SidebarError('fs-error', `"${name}" already exists`, 409)
+  }
+  try {
+    await mkdir(destination)
+  } catch (error) {
+    throw new SidebarError('fs-error', `cannot create "${name}": ${error instanceof Error ? error.message : String(error)}`, 400)
+  }
+  // The PARENT level gained a row; the new directory's own level is empty.
+  invalidateDirectoryCache(absolute)
+  return { path: destination }
 }
 
 /** Inputs of one tree-row delete. */
 export interface WorkspaceRemoveInput {
-  /** The session workspace root; the removed entry must stay inside it. */
+  /** The session workspace root (the base of session-relative targets). */
   cwd: string
   /** Absolute path of the row as the tree displays it (may be a symlink). */
   path: string
-  /** Whether workspace containment is enforced (the `workspaceFence` setting; on by default). */
+  /** @deprecated IGNORED — containment was removed. Do not pass it. */
   fence?: boolean
 }
 
@@ -198,12 +239,11 @@ export interface WorkspaceRemoveInput {
  * only (lstat decides, so a link to a directory does not recurse into its
  * target). The workspace root itself is never removable.
  *
- * @throws SidebarError with a wire code for containment, existence and
- * root failures.
+ * @throws SidebarError with a wire code for existence and root failures.
  */
 export async function removeWorkspaceEntry(input: WorkspaceRemoveInput): Promise<{ path: string }> {
-  const { cwd, path, fence = true } = input
-  const { absolute, real, realCwd } = await resolveEntry(cwd, path, fence)
+  const { cwd, path } = input
+  const { absolute, real, realCwd } = await resolveEntry(cwd, path)
   if (real === realCwd) {
     throw new SidebarError('fs-error', 'cannot remove the workspace root', 400)
   }
@@ -214,5 +254,6 @@ export async function removeWorkspaceEntry(input: WorkspaceRemoveInput): Promise
   } catch (error) {
     throw new SidebarError('fs-error', `cannot remove "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
   }
+  invalidateDirectoryCache(dirname(absolute))
   return { path: absolute }
 }
