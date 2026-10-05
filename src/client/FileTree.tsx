@@ -55,7 +55,7 @@ import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
 import { isImeComposition } from './ime-guard.ts'
 import { useSubmenuFlip } from './menu-flip.ts'
 import type { OpenInApp, OpenInAppEntry } from './open-in-app.ts'
-import type { OpenWithTarget } from './open-with.ts'
+import { openWithResourcePath, type OpenWithTarget } from './open-with.ts'
 import { relativeTo } from './paths.ts'
 import { t } from './locales.ts'
 import type { BetterSidebarService } from './service.ts'
@@ -1828,7 +1828,12 @@ export function FileTree(props: {
           // The plugin's own targets share one id space (pinned rows and
           // submenu children alike), so the caller gets the target id + path.
           if (id.startsWith('open-with:')) {
-            onOpenWith?.(id.slice('open-with:'.length), target.path)
+            const targetId = id.slice('open-with:'.length)
+            const openTarget = openWithTargets?.find(item => item.id === targetId)
+            const openPath = openTarget?.kind === 'url'
+              ? openWithResourcePath(target.path, target.isDir)
+              : target.path
+            onOpenWith?.(targetId, openPath)
             return
           }
           if (id === 'reveal-in-file-manager') {

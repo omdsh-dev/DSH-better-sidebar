@@ -1,12 +1,7 @@
 /**
- * FileTree's PLUGIN open-with menu. Round three folded every application into
- * ONE submenu (`openWithMenu`), so with no host handle injected the level-1
- * menu carries just that submenu row, and the plugin's targets (file manager /
- * VS Code / Cursor / Zed / custom editors) are its rows — each with the
- * per-row pushpin that toggles without selecting the row, SSH suffixes in
- * remote mode, and (without the host) the reveal target kept, so reveal is
- * never lost. The host/plugin VISIBILITY rules live in
- * file-tree-open-in-app.spec.tsx.
+ * FileTree's plugin open-with menu keeps editor targets in one submenu,
+ * preserves SSH file and directory paths, and retains the reveal target.
+ * Host and plugin visibility rules are covered by the companion spec.
  */
 // @vitest-environment jsdom
 import { beforeAll, afterEach, describe, expect, it, vi } from 'vitest'
@@ -28,6 +23,7 @@ vi.mock('../src/client/api.ts', () => ({
   api: {
     fsTrees: async (_scope: unknown, paths: readonly string[]) => ({
       levels: paths.map(path => ({ path, entries: [
+        { name: 'project', path: '/tmp/project', isDir: true },
         { name: 'sub', path: '/tmp/sub', isDir: true },
         { name: 'a.ts', path: '/tmp/a.ts', isDir: false },
       ], truncated: false })),
@@ -100,18 +96,23 @@ async function mountTree(overrides: {
   }
 }
 
-/** The file row of the one-level tree. */
-function fileRow(container: HTMLDivElement): HTMLElement {
+/** One named tree row (role="button" with the name span). */
+function namedRow(container: HTMLDivElement, name: string): HTMLElement {
   const row = [...container.querySelectorAll<HTMLElement>('[role="button"]')]
-    .find(el => el.querySelector('[class*="explorerName"]')?.textContent === 'a.ts')
-  if (row === undefined) throw new Error('file row not found')
+    .find(el => el.querySelector('[class*="explorerName"]')?.textContent === name)
+  if (row === undefined) throw new Error(`${name} row not found`)
   return row
 }
 
-/** Open the row's context menu at a fixed cursor position. */
-function openMenu(container: HTMLDivElement): void {
+/** The file row of the one-level tree. */
+function fileRow(container: HTMLDivElement): HTMLElement {
+  return namedRow(container, 'a.ts')
+}
+
+/** Open one row's context menu at a fixed cursor position. */
+function openMenu(container: HTMLDivElement, name = 'a.ts'): void {
   const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 30 })
-  act(() => { fileRow(container).dispatchEvent(event) })
+  act(() => { namedRow(container, name).dispatchEvent(event) })
 }
 
 function menuItems(): HTMLElement[] {
@@ -201,7 +202,7 @@ describe('FileTree plugin open-with menu', () => {
     expect(document.querySelector('[role="menu"] [role="menu"]')).not.toBeNull()
   })
 
-  it('selecting a submenu child invokes onOpenWith with the row path and closes the menu', async () => {
+  it('selecting a file submenu child keeps the raw file path and closes the menu', async () => {
     harness = await mountTree()
     openMenu(harness.container)
     act(() => { submenuParent().click() })
@@ -211,6 +212,24 @@ describe('FileTree plugin open-with menu', () => {
     // Selecting closes the row menu entirely.
     expect(document.querySelector('[role="menu"] [role="menu"]')).toBeNull()
     expect(menuItems()).toHaveLength(0)
+  })
+
+  it('passes a trailing-slash path for directory URL targets', async () => {
+    harness = await mountTree()
+    openMenu(harness.container, 'project')
+    act(() => { submenuParent().click() })
+    const vscodeRow = submenuRows().find(item => item.textContent?.trim() === 'VS Code')!
+    act(() => { vscodeRow.click() })
+    expect(harness.onOpenWith).toHaveBeenCalledWith('vscode', '/tmp/project/')
+  })
+
+  it('keeps reveal targets on the raw directory path', async () => {
+    harness = await mountTree()
+    openMenu(harness.container, 'project')
+    act(() => { submenuParent().click() })
+    const explorerRow = submenuRows().find(item => item.textContent?.trim() === 'File Manager')!
+    act(() => { explorerRow.click() })
+    expect(harness.onOpenWith).toHaveBeenCalledWith('explorer', '/tmp/project')
   })
 
   it('appends the SSH hint to VSCode-family labels in remote mode (reveal stays)', async () => {
