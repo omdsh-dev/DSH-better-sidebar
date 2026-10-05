@@ -224,6 +224,10 @@ describe('git parsing', () => {
     const parsed = parseUnifiedDiff(diff)
     expect(parsed.files).toHaveLength(2)
     expect(parsed.files[0]!.binary).toBe(true)
+    // git prints no ---/+++ for the binary section: the name comes from its
+    // own `Binary files …` line.
+    expect(parsed.files[0]!.oldPath).toBe('a/img.png')
+    expect(parsed.files[0]!.newPath).toBe('b/img.png')
     expect(parsed.files[0]!.hunks).toHaveLength(0)
     const gone = parsed.files[1]!
     expect(gone.newPath).toBe('/dev/null')
@@ -234,7 +238,10 @@ describe('git parsing', () => {
     ])
   })
 
-  it('keeps mode/rename-only sections hunkless', () => {
+  it('names mode/rename-only sections while keeping them hunkless', () => {
+    // git prints no ---/+++ for these two shapes, so the paths come from the
+    // section's own header lines; a section that reached the renderer without
+    // a path drew a header with nothing but its badge.
     const parsed = parseUnifiedDiff([
       'diff --git a/run.sh b/run.sh',
       'old mode 100644',
@@ -246,8 +253,11 @@ describe('git parsing', () => {
       '',
     ].join('\n'))
     expect(parsed.files).toHaveLength(2)
-    expect(parsed.files[0]!.oldPath).toBe('')
+    expect(parsed.files[0]!.oldPath).toBe('a/run.sh')
+    expect(parsed.files[0]!.newPath).toBe('b/run.sh')
     expect(parsed.files[0]!.hunks).toHaveLength(0)
+    expect(parsed.files[1]!.oldPath).toBe('old.ts')
+    expect(parsed.files[1]!.newPath).toBe('new.ts')
     expect(parsed.files[1]!.hunks).toHaveLength(0)
   })
 

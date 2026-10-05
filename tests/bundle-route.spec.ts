@@ -117,9 +117,9 @@ describe('/sidebar/bundle route', () => {
     const { handler, cleanup } = setup()
     try {
       const res = fakeRes()
-      // 'terminal' is allowlisted but the scratch fixture only ships
+      // 'locale' is allowlisted but the scratch fixture only ships
       // client-editor.js — the built file is missing → 404.
-      await handler(req('GET', '/sidebar/bundle/terminal.js'), res as unknown as ServerResponse)
+      await handler(req('GET', '/sidebar/bundle/locale.js'), res as unknown as ServerResponse)
       expect(res.status).toBe(404)
     } finally {
       cleanup()
@@ -150,6 +150,6 @@ describe('/sidebar/bundle route', () => {
   })
 
   it('exports the chunk allowlist (mirror of src/client/chunk-loader.ts)', () => {
-    expect([...CHUNK_NAMES]).toEqual(['terminal', 'editor', 'mermaid', 'locale'])
+    expect([...CHUNK_NAMES]).toEqual(['editor', 'mermaid', 'locale'])
   })
 })

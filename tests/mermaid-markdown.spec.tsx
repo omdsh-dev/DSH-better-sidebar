@@ -27,7 +27,9 @@ vi.mock('mermaid', () => ({
 import mermaid from 'mermaid'
 import { MermaidMarkdown } from '../src/client/mermaid.tsx'
 
-const codeLabels = { copyLabel: 'Copy', copiedLabel: 'Copied' }
+const codeLabels = {
+  copyLabel: 'Copy', copiedLabel: 'Copied', codeLabel: 'Code block', wrapLabel: 'Wrap lines', unwrapLabel: 'Do not wrap lines',
+}
 
 async function renderMarkdown(text: string): Promise<{ container: HTMLElement; root: Root }> {
   const container = document.createElement('div')

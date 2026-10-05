@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest'
-import { resolve } from 'node:path'
-import { compareEntries, isWithin, parentOf, requireAbsolute, rootLabel } from '../src/fs-tree.ts'
+import { afterEach, describe, expect, it } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve, sep } from 'node:path'
+import { compareEntries, isWithin, invalidateDirectoryCache, listDirectory, parentOf, requireAbsolute, rootLabel } from '../src/fs-tree.ts'
 import { isWin32 } from './platform.ts'
 
 describe('fs-tree', () => {
@@ -94,5 +96,104 @@ describe('fs-tree', () => {
     expect(isWithin('\\\\server\\share\\proj', '\\\\server\\share\\proj\\src\\a.ts', 'win32')).toBe(true)
     expect(isWithin('\\\\server\\share\\proj', '\\\\server\\share\\proj2\\a.ts', 'win32')).toBe(false)
     expect(isWithin('\\\\server\\share\\proj', '\\\\other\\share\\a.ts', 'win32')).toBe(false)
+  })
+})
+
+describe('listDirectory (capped rows + cache)', () => {
+  const roots: string[] = []
+  const tempDir = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-list-'))
+    roots.push(dir)
+    return dir
+  }
+  afterEach(() => {
+    invalidateDirectoryCache()
+    while (roots.length > 0) rmSync(roots.pop()!, { recursive: true, force: true })
+  })
+
+  it('caps the rows and flags truncated', async () => {
+    const dir = tempDir()
+    for (let index = 0; index < 25; index += 1) {
+      writeFileSync(join(dir, `file-${String(index).padStart(2, '0')}.txt`), 'x')
+    }
+    mkdirSync(join(dir, 'zz-dir'))
+    const listing = await listDirectory(dir, 10)
+    expect(listing.path).toBe(dir)
+    // The cap is the row budget of one level; `truncated` is true whenever the
+    // level held MORE rows than the budget (regardless of which ones survived).
+    expect(listing.entries).toHaveLength(10)
+    expect(listing.truncated).toBe(true)
+    for (const entry of listing.entries) {
+      expect(entry.path).toBe(`${dir}${sep}${entry.name}`)
+      expect(entry.hidden).toBe(entry.name.startsWith('.'))
+    }
+  })
+
+  it('sorts directories first within the returned rows', async () => {
+    const dir = tempDir()
+    mkdirSync(join(dir, 'Dir-A'))
+    mkdirSync(join(dir, 'dir-b'))
+    writeFileSync(join(dir, 'a.txt'), 'a')
+    writeFileSync(join(dir, 'B.txt'), 'b')
+    const listing = await listDirectory(dir, 10)
+    // Directories first, then case-insensitive names (the comparator's contract
+    // applied to real rows).
+    expect(listing.entries.map(entry => entry.name)).toEqual(['Dir-A', 'dir-b', 'a.txt', 'B.txt'])
+    expect(listing.truncated).toBe(false)
+  })
+
+  it('does not flag truncated when the level fits', async () => {
+    const dir = tempDir()
+    writeFileSync(join(dir, 'a.txt'), 'a')
+    const listing = await listDirectory(dir, 10)
+    expect(listing.entries.map(entry => entry.name)).toEqual(['a.txt'])
+    expect(listing.truncated).toBe(false)
+  })
+
+  it('composes row paths with the platform separator', async () => {
+    const dir = tempDir()
+    writeFileSync(join(dir, 'a.txt'), 'a')
+    const listing = await listDirectory(dir, 10)
+    expect(listing.entries[0]!.path).toBe(`${dir}${sep}a.txt`)
+  })
+
+  it('serves a repeat listing from the TTL cache and re-reads after invalidation', async () => {
+    const dir = tempDir()
+    writeFileSync(join(dir, 'a.txt'), 'a')
+    const first = await listDirectory(dir, 10)
+    // A file created behind the plugin's back is invisible until the cache
+    // expires or an invalidation arrives (the writers call it explicitly).
+    writeFileSync(join(dir, 'b.txt'), 'b')
+    const cached = await listDirectory(dir, 10)
+    expect(cached).toBe(first)
+    expect(cached.entries.map(entry => entry.name)).toEqual(['a.txt'])
+    invalidateDirectoryCache(dir)
+    const fresh = await listDirectory(dir, 10)
+    expect(fresh).not.toBe(first)
+    expect(fresh.entries.map(entry => entry.name)).toEqual(['a.txt', 'b.txt'])
+  })
+
+  it('keys the cache by cap as well as by directory', async () => {
+    const dir = tempDir()
+    for (let index = 0; index < 5; index += 1) writeFileSync(join(dir, `f${index}.txt`), 'x')
+    const capped = await listDirectory(dir, 2)
+    const full = await listDirectory(dir, 10)
+    expect(capped.entries).toHaveLength(2)
+    expect(full.entries).toHaveLength(5)
+  })
+
+  it('invalidateDirectoryCache() with no argument clears every level', async () => {
+    const dir = tempDir()
+    writeFileSync(join(dir, 'a.txt'), 'a')
+    const first = await listDirectory(dir, 10)
+    invalidateDirectoryCache()
+    const second = await listDirectory(dir, 10)
+    expect(second).not.toBe(first)
+    expect(second).toEqual(first)
+  })
+
+  it('throws fs-error for a missing directory', async () => {
+    const dir = tempDir()
+    await expect(listDirectory(join(dir, 'nope'), 10)).rejects.toMatchObject({ code: 'fs-error' })
   })
 })

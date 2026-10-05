@@ -13,6 +13,9 @@
  *   /sidebar/html/S/Users/me/proj/index.html
  *     + ./style.css → /sidebar/html/S/Users/me/proj/style.css
  *   Windows: C:\Users\me\a.html → /sidebar/html/S/C%3A/Users/me/a.html
+ *   Home-relative (#713): ~/notes/x.html → /sidebar/html/S/~/notes/x.html —
+ *     the '~' first segment survives VERBATIM (the decoder keeps it unslashed
+ *     so the route's resolver still expands it against the user's home)
  *   UNC (\\server\share\... or //server/share/...):
  *     → /sidebar/html/S//server/share/proj/a.html  ('//' right after the
  *       sessionId marks the UNC prefix; the WHATWG URL keeps '//' intact so
@@ -92,6 +95,11 @@ export function decodeHtmlUrl(pathname: string): HtmlDecodeResult {
     // Rebuild the platform-neutral forward-slash form `//server/share/...`;
     // requireAbsolute() resolves it to the platform's own UNC/POSIX spelling.
     path = `//${tail.join('/')}`
+  } else if (tail[0] === '~') {
+    // A home-relative path ('~/notes/x.html', #713): keep it VERBATIM. Adding
+    // the leading slash would produce the absolute '/~/notes/...' and the
+    // route's shared resolver would never expand the '~' against the home.
+    path = tail.join('/')
   } else if (/^[A-Za-z]:$/.test(tail[0] ?? '')) {
     // A Windows drive segment ('D:') is the FIRST path segment of an encoded
     // drive path. Rejoining it with a leading slash would yield '/D:/work/...'

@@ -142,13 +142,22 @@ function viewProps(ctx: Context) {
 /** The sessions-list snapshot with one idle side thread bound to 'root'. */
 function threadStore(): ReturnType<typeof makeStore> {
   return makeStore({
-    current: 'root',
     byId: {
       root: { id: 'root', displayTitle: '主会话', running: false },
       t1: { id: 't1', displayTitle: 'Side: 线程一', origin: 'subagent', parentId: 'root', running: false },
     },
-    subagentsByParent: {},
-    jobsBySession: {},
+    // The side thread's parent catalog (DSH 0.1.7 projection shape); the view
+    // below reads the summary row, not the catalog, but the fixture is the
+    // real snapshot shape so a future reader cannot copy a phantom field.
+    projectionsBySession: {
+      root: {
+        values: {
+          subagentCatalog: [{ id: 't1', createdAt: 1_000, mode: 'continuable', label: 'Side: 线程一' }],
+        },
+        state: 'ready',
+        error: null,
+      },
+    },
   })
 }
 

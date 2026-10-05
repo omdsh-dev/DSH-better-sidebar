@@ -175,3 +175,22 @@ describe('relative asset resolution stays in-route', () => {
     })
   })
 })
+
+describe('home-relative html route paths (#713)', () => {
+  it('round-trips a ~/ path without inventing a leading slash', () => {
+    const url = encodeHtmlUrl('s', '~/notes/x.html')
+    expect(url).toBe('/sidebar/html/s/~/notes/x.html')
+    expect(decodeHtmlUrl(url)).toEqual({ ok: true, ref: { sessionId: 's', path: '~/notes/x.html' } })
+  })
+
+  it('relative assets of a home-relative document stay inside the route and keep the marker', () => {
+    const doc = `http://h${encodeHtmlUrl('s', '~/notes/x.html')}`
+    expect(new URL('./style.css', doc).pathname).toBe('/sidebar/html/s/~/notes/style.css')
+    expect(decodeHtmlUrl(new URL('./style.css', doc).pathname))
+      .toEqual({ ok: true, ref: { sessionId: 's', path: '~/notes/style.css' } })
+  })
+
+  it('round-trips a bare ~ (the home directory itself)', () => {
+    expect(decodeHtmlUrl(encodeHtmlUrl('s', '~'))).toEqual({ ok: true, ref: { sessionId: 's', path: '~' } })
+  })
+})

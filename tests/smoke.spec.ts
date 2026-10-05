@@ -3,18 +3,18 @@
  * exercises the real integrations — route registration, git against the
  * actual repository, and a real directory listing. Runs with `pnpm test`.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join, resolve as resolvePath } from 'node:path'
+import { tmpdir, homedir } from 'node:os'
+import { dirname, join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
-import { apply, mediaTypeForPath, wsCloseReasonOf } from '../src/index.ts'
-import { SidebarError } from '../src/wire.ts'
+import { apply, FS_TREES_MAX_PATHS, mediaTypeForPath } from '../src/index.ts'
+import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import { encodeHtmlUrl } from '../src/html-route.ts'
+import { downloadUrl, htmlUrl } from '../src/client/api.ts'
 import * as git from '../src/git.ts'
 import { listDirectory } from '../src/fs-tree.ts'
-import { defaultShell, PtyManager, type SidebarPty } from '../src/pty-manager.ts'
 import type { SidebarWebRoute, SidebarWebUpgradeRoute } from '../src/context-types.ts'
 
 /** Symlink creation may require elevated privileges on Windows. */
@@ -47,32 +47,6 @@ interface FakeContext {
   inject: (deps: readonly string[], callback: (sctx: never) => void) => () => void
   /** Optional services (jobs/agents) are read lazily; absent → undefined. */
   get: (key: string) => undefined
-}
-
-/**
- * The login-shell test spawns a real pty whose bash may still be writing to
- * the temp HOME (history files, etc.) when `disposeAll()` returns — `close()`
- * only requests the kill and the process exit lands asynchronously in
- * `onExit`. Deleting the directory immediately then races the shell and
- * fails with ENOTEMPTY on CI. Wait for the spawned handle to report `exited`
- * (bounded), then remove with a short retry loop as a belt-and-braces
- * fallback for any straggler fd.
- */
-async function rmTempDirAfterPtyExit(handle: { exited: boolean }, dir: string): Promise<void> {
-  const deadline = Date.now() + 2000
-  while (Date.now() < deadline && !handle.exited) {
-    await new Promise((resolve) => setTimeout(resolve, 50))
-  }
-  for (let attempt = 0; ; attempt++) {
-    try {
-      rmSync(dir, { recursive: true, force: true })
-      return
-    } catch (error) {
-      const busy = (error as NodeJS.ErrnoException).code === 'ENOTEMPTY' || (error as NodeJS.ErrnoException).code === 'EBUSY'
-      if (!busy || attempt >= 4) throw error
-      await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)))
-    }
-  }
 }
 
 describe('host plugin smoke', () => {
@@ -111,11 +85,12 @@ describe('host plugin smoke', () => {
       '/sidebar/api',
       '/sidebar/upload',
       '/sidebar/bundle',
+      '/sidebar/archive',
       '/sidebar/file',
       '/sidebar/html',
     ])
-    expect(upgrades.map(route => route.path)).toEqual(['/sidebar/ws/terminal', '/sidebar/ws/agent-terminals', '/sidebar/ws/agent-opens'])
-    // Teardown runs without throwing (pty manager has nothing open).
+    expect(upgrades.map(route => route.path)).toEqual(['/sidebar/ws/agent-opens', '/sidebar/ws/fs-watch'])
+    // Teardown runs without throwing.
     for (const cleanup of effects) cleanup()
   })
 
@@ -210,171 +185,6 @@ describe('host plugin smoke', () => {
     expect(await git.log(cwd, 5, 10_000)).toEqual([])
   })
 
-  it('pty manager releases the quota on close and respawns after exit', async () => {
-    const manager = new PtyManager(defaultShell(), 3)
-    try {
-      const first = manager.open('s1', 't1', process.cwd(), 80, 24)
-      expect(manager.keysOf('s1')).toHaveLength(1)
-      // Tab-close semantics (close frame): quota released immediately.
-      manager.scheduleClose(first.key, 0)
-      await new Promise(resolve => setTimeout(resolve, 50))
-      expect(manager.keysOf('s1')).toHaveLength(0)
-      // Reopen spawns a fresh process.
-      const second = manager.open('s1', 't1', process.cwd(), 80, 24)
-      expect(second).not.toBe(first)
-      expect(manager.keysOf('s1')).toHaveLength(1)
-      // After the shell exits, a reconnect respawns instead of reusing the dead handle.
-      second.pty.write('exit\r')
-      const deadline = Date.now() + 5000
-      while (!second.exited && Date.now() < deadline) {
-        await new Promise(resolve => setTimeout(resolve, 100))
-      }
-      expect(second.exited).toBe(true)
-      const third = manager.open('s1', 't1', process.cwd(), 80, 24)
-      expect(third.exited).toBe(false)
-      expect(third).not.toBe(second)
-    } finally {
-      manager.disposeAll()
-    }
-  })
-
-  it('pty manager: exited zombie handles do not consume the quota', async () => {
-    const manager = new PtyManager(defaultShell(), 1)
-    try {
-      const first = manager.open('s3', 't1', process.cwd(), 80, 24)
-      first.pty.write('exit\r')
-      const deadline = Date.now() + 5000
-      while (!first.exited && Date.now() < deadline) {
-        await new Promise(resolve => setTimeout(resolve, 100))
-      }
-      expect(first.exited).toBe(true)
-      // Quota is 1; the exited handle is swept, so a NEW tab can still spawn.
-      const second = manager.open('s3', 't2', process.cwd(), 80, 24)
-      expect(second.exited).toBe(false)
-      expect(manager.keysOf('s3')).toHaveLength(1)
-    } finally {
-      manager.disposeAll()
-    }
-  })
-
-  it('pty manager: a reconnect within the grace period cancels the pending close', async () => {
-    const manager = new PtyManager(defaultShell(), 3)
-    try {
-      const handle = manager.open('s2', 't1', process.cwd(), 80, 24)
-      manager.scheduleClose(handle.key, 200)
-      manager.open('s2', 't1', process.cwd(), 80, 24)
-      await new Promise(resolve => setTimeout(resolve, 400))
-      expect(manager.get(handle.key)).toBeDefined()
-    } finally {
-      manager.disposeAll()
-    }
-  })
-
-  it('pty manager: a parked pty survives past the reconnect grace (session switch)', async () => {
-    const manager = new PtyManager(defaultShell(), 3)
-    try {
-      const handle = manager.open('s2', 't1', process.cwd(), 80, 24)
-      manager.park(handle.key)
-      expect(manager.isParked(handle.key)).toBe(true)
-      // A parked pty does NOT enter the grace countdown — it stays alive
-      // well past any realistic reconnectGraceMs.
-      await new Promise(resolve => setTimeout(resolve, 300))
-      expect(manager.get(handle.key)).toBeDefined()
-      expect(manager.isParked(handle.key)).toBe(true)
-    } finally {
-      manager.disposeAll()
-    }
-  })
-
-  it('pty manager: a reconnecting view clears the parked state (switch back)', () => {
-    const manager = new PtyManager(defaultShell(), 3)
-    try {
-      const handle = manager.open('s2', 't1', process.cwd(), 80, 24)
-      manager.park(handle.key)
-      expect(manager.isParked(handle.key)).toBe(true)
-      // open() calls cancelClose(), which clears the parked state — the
-      // user switched back to the session and the view reattached.
-      manager.open('s2', 't1', process.cwd(), 80, 24)
-      expect(manager.isParked(handle.key)).toBe(false)
-      expect(manager.get(handle.key)).toBeDefined()
-    } finally {
-      manager.disposeAll()
-    }
-  })
-
-  it('pty manager: an explicit close frame on a parked pty still kills it', async () => {
-    const manager = new PtyManager(defaultShell(), 3)
-    try {
-      const handle = manager.open('s2', 't1', process.cwd(), 80, 24)
-      manager.park(handle.key)
-      // The user switched back and closed the tab — scheduleClose (the
-      // close-frame handler) clears the parked state and kills the pty.
-      manager.scheduleClose(handle.key, 0)
-      expect(manager.isParked(handle.key)).toBe(false)
-      await new Promise(resolve => setTimeout(resolve, 50))
-      expect(manager.get(handle.key)).toBeUndefined()
-    } finally {
-      manager.disposeAll()
-    }
-  })
-
-  it('pty manager: park on an unknown key is a no-op', () => {
-    const manager = new PtyManager(defaultShell(), 3)
-    expect(() => manager.park('s2:nonexistent')).not.toThrow()
-    expect(manager.isParked('s2:nonexistent')).toBe(false)
-  })
-
-  it('pty manager: reopening with a different cwd respawns in the new directory', async () => {
-    const manager = new PtyManager(defaultShell(), 3)
-    // A real second directory: os.tmpdir() exists on every platform ('/tmp'
-    // does not exist on Windows).
-    const other = tmpdir()
-    try {
-      const first = manager.open('s4', 't1', process.cwd(), 80, 24)
-      // The hydrate race: the first connect fell back to the process cwd,
-      // the reconnect carries the session's real cwd — the shell must move.
-      const second = manager.open('s4', 't1', other, 80, 24)
-      expect(second).not.toBe(first)
-      expect(second.cwd).toBe(other)
-      expect(manager.keysOf('s4')).toHaveLength(1)
-      // A same-cwd reconnect reattaches without respawning.
-      const third = manager.open('s4', 't1', other, 80, 24)
-      expect(third).toBe(second)
-      expect(manager.keysOf('s4')).toHaveLength(1)
-    } finally {
-      manager.disposeAll()
-    }
-  })
-
-  it.skipIf(process.platform === 'win32')('spawns the shell as a login shell (loads ~/.profile)', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'dsh-sidebar-login-'))
-    const previousHome = process.env.HOME
-    let handle: SidebarPty | undefined
-    try {
-      // A login bash reads ~/.profile (a non-login interactive bash reads
-      // ~/.bashrc instead), so this marker proves the spawn used a login
-      // argv — the terminal-emulator behavior the tab should match.
-      writeFileSync(join(home, '.profile'), 'export DSH_LOGIN_MARKER=loaded-from-profile\n')
-      process.env.HOME = home
-      const manager = new PtyManager('/bin/bash', 3)
-      try {
-        handle = manager.open('s5', 't1', process.cwd(), 80, 24)
-        handle.pty.write('echo $DSH_LOGIN_MARKER\r')
-        const deadline = Date.now() + 5000
-        while (!handle.transcript.includes('loaded-from-profile') && Date.now() < deadline) {
-          await new Promise(resolve => setTimeout(resolve, 50))
-        }
-        expect(handle.transcript).toContain('loaded-from-profile')
-      } finally {
-        manager.disposeAll()
-      }
-    } finally {
-      if (previousHome === undefined) delete process.env.HOME
-      else process.env.HOME = previousHome
-      await rmTempDirAfterPtyExit(handle ?? { exited: true }, home)
-    }
-  })
-
   it('lists the repository root level', async () => {
     const listing = await listDirectory(process.cwd(), 1000)
     expect(listing.entries.some(entry => entry.name === 'src' && entry.isDir)).toBe(true)
@@ -400,7 +210,7 @@ describe('git destructive operations (scratch repository)', () => {
   }
 
   const gitRun = (cwd: string, args: string[]): string => {
-    const result = spawnSync('git', ['-C', cwd, '--no-pager', '-c', 'color.ui=false', ...args], {
+    const result = spawnSync('git', ['-C', cwd, '--no-pager', '-c', 'color.ui=false', '-c', 'core.quotePath=false', ...args], {
       encoding: 'utf8',
       env: { ...process.env, ...FIXTURE_IDENTITY },
     })
@@ -491,6 +301,42 @@ describe('git destructive operations (scratch repository)', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('never parses a revision-shaped operand as a git option', async () => {
+    const dir = makeScratchRepo()
+    try {
+      const hash = (await git.log(dir))[0]!.hashFull
+      // Every revision form the UI actually sends must keep working.
+      await expect(git.show(dir, 'HEAD', 'a.txt')).resolves.toContain('one')
+      await expect(git.show(dir, hash, 'a.txt')).resolves.toContain('one')
+      await expect(git.commitDiff(dir, hash)).resolves.toContain('a.txt')
+      // Operand-shaped option strings must NOT be honoured as flags. Before
+      // --end-of-options, `show(dir, '--stat', ...)` was consumed as a flag and
+      // returned empty, blanking the Changes tab's diff/blame panes.
+      for (const hostile of ['--stat', '--output=nul', '-n', '--no-color']) {
+        const content = await git.show(dir, hostile, 'a.txt')
+        expect(content, hostile).toBeNull()
+      }
+      await expect(git.commitDiff(dir, '--stat')).rejects.toThrow()
+      await expect(git.revert(dir, '--abort')).rejects.toThrow()
+      await expect(git.cherryPick(dir, '--abort')).rejects.toThrow()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the index revision selector (:0) working', async () => {
+    // `:0` is git's own index syntax and the UI uses it for the worktree side
+    // of a diff, so the operand guard must not reject it.
+    const dir = makeScratchRepo()
+    try {
+      writeFileSync(join(dir, 'a.txt'), 'staged-change\n')
+      gitRun(dir, ['add', 'a.txt'])
+      await expect(git.show(dir, ':0', 'a.txt')).resolves.toContain('staged-change')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('session cwd resolution over the API route', () => {
@@ -546,10 +392,18 @@ describe('session cwd resolution over the API route', () => {
   }
 
   const invokeGet = async (route: SidebarWebRoute, url: string): Promise<{ status: number; body: string }> => {
-    const out: { status: number; body: string } = { status: 200, body: '' }
+    return (await invokeGetFull(route, url))
+  }
+
+  /** invokeGet plus the response headers (for header contracts). */
+  const invokeGetFull = async (route: SidebarWebRoute, url: string): Promise<{ status: number; body: string; headers: Record<string, string> }> => {
+    const out: { status: number; body: string; headers: Record<string, string> } = { status: 200, body: '', headers: {} }
     const req = { method: 'GET', url, headers: { host: '127.0.0.1:3080' } } as never
     const res = {
-      writeHead: (status: number) => { out.status = status },
+      writeHead: (status: number, headers?: Record<string, string>) => {
+        out.status = status
+        if (headers !== undefined) out.headers = headers
+      },
       end: (chunk: unknown) => { out.body += String(chunk ?? '') },
     } as never
     await route.handler(req, res)
@@ -570,6 +424,37 @@ describe('session cwd resolution over the API route', () => {
     const result = await invoke(route, 'session.cwd', { sessionId: 's-unknown' })
     expect(result.ok).toBe(true)
     expect(result.value?.cwd).toBe(process.cwd())
+  })
+
+  it('answers 404 for Object.prototype member names instead of resolving them as methods', async () => {
+    // The dispatch table is an object literal, so a bare lookup used to find
+    // Object.prototype members and treat them as handlers: `constructor`
+    // answered 200 {}, `toString` answered 200 "[object Undefined]", and
+    // `valueOf` / `hasOwnProperty` answered 500. All must be the documented 404.
+    const route = mount()
+    for (const method of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__']) {
+      const result = await invoke(route, method, {})
+      expect(result, method).toMatchObject({ ok: false, status: 404, error: { code: 'not-found' } })
+    }
+    // A genuinely unknown method keeps its existing 404 contract.
+    const unknown = await invoke(route, 'no-such-method', {})
+    expect(unknown).toMatchObject({ ok: false, status: 404, error: { code: 'not-found' } })
+  })
+
+  it('reports a git failure as a 4xx git error, not an internal 500', async () => {
+    // `GitCommandError` used to fall through to the generic branch and surface
+    // as 500 "internal", which reads as a plugin crash and hid the localized
+    // not-a-repository copy the client already renders. A non-repository cwd
+    // must answer 409 not-repo.
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-git-notrepo-'))
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: dir } }) } })
+      const notRepo = await invoke(route, 'git.branch', { sessionId: 's', cwd: dir })
+      expect(notRepo).toMatchObject({ ok: false, status: 409, error: { code: 'not-repo' } })
+      expect(notRepo.error?.message).not.toContain('internal')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('resolves a cold (detached) session cwd through the persistence index', async () => {
@@ -637,14 +522,6 @@ describe('session cwd resolution over the API route', () => {
     expect(result.error?.message).toMatch(/invalid working directory/)
   })
 
-  it('pty.close releases a terminal key (and rejects a missing tab)', async () => {
-    const route = mount()
-    const result = await invoke(route, 'pty.close', { sessionId: 's-pty', tab: 't1' })
-    expect(result.ok).toBe(true)
-    const missing = await invoke(route, 'pty.close', { sessionId: 's-pty' })
-    expect(missing.ok).toBe(false)
-  })
-
   it('git.diff resolves repo-relative paths (session in a subdirectory)', async () => {
     // The plugin repo's status paths are relative to the repo top level
     // (e.g. `src/git.ts`); a session whose cwd sits inside the repo must
@@ -674,17 +551,20 @@ describe('session cwd resolution over the API route', () => {
     expect(value.value?.content).toContain('runGit')
   })
 
-  it('rejects repo-root-relative fs.read paths outside a nested session workspace', async () => {
+  it('reads repo-root-relative paths outside a nested session workspace (fence removed)', async () => {
     const route = mount({
       sessions: {
         get: () => ({ header: { cwd: join(process.cwd(), 'src') } }),
       },
     })
+    // ⚠️ PERMISSION CHANGE: `package.json` sits ABOVE the nested session cwd.
+    // The containment guard is gone, so this now reads like any other path.
     const result = await invoke(route, 'fs.read', { sessionId: 's-sub', path: 'package.json' })
-    expect(result).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+    expect(result.ok).toBe(true)
+    expect((result.value as { content?: string } | undefined)?.content).toContain('"name"')
   })
 
-  it('rejects fs.tree paths outside the session workspace', async () => {
+  it('lists a directory outside the session workspace (fence removed)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-security-'))
     const workspace = join(root, 'workspace')
     const outside = join(root, 'outside')
@@ -695,13 +575,16 @@ describe('session cwd resolution over the API route', () => {
     try {
       const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
       const tree = await invoke(route, 'fs.tree', { sessionId: 'security', path: outside })
-      expect(tree).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+      expect(tree.ok).toBe(true)
+      const value = tree.value as unknown as { path: string; entries: Array<{ name: string }> }
+      expect(value.path).toBe(outside)
+      expect(value.entries.map(entry => entry.name)).toEqual(['secret.txt'])
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })
 
-  it('rejects fs.read paths outside the session workspace', async () => {
+  it('reads a file outside the session workspace (fence removed)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-security-'))
     const workspace = join(root, 'workspace')
     const outside = join(root, 'outside')
@@ -712,52 +595,183 @@ describe('session cwd resolution over the API route', () => {
     try {
       const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
       const read = await invoke(route, 'fs.read', { sessionId: 'security', path: outsideFile })
-      expect(read).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+      expect(read.ok).toBe(true)
+      expect((read.value as unknown as { kind: string; content: string }).content).toBe('secret')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })
 
-  it('rejects fs.write paths outside the session workspace', async () => {
+  it('writes a file outside the session workspace (fence removed)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-security-'))
     const workspace = join(root, 'workspace')
     const outside = join(root, 'outside')
     mkdirSync(workspace)
     mkdirSync(outside)
+    const written = join(outside, 'written.txt')
     try {
       const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
-      const write = await invoke(route, 'fs.write', { sessionId: 'security', path: join(outside, 'written.txt'), content: 'hack' })
-      expect(write).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+      const write = await invoke(route, 'fs.write', { sessionId: 'security', path: written, content: 'hack' })
+      expect(write.ok).toBe(true)
+      expect(readFileSync(written, 'utf8')).toBe('hack')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })
 
-  it('rejects media and HTML reads through a workspace symlink', async () => {
+  it('serves relative previews and assets without rewriting external absolute paths', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-preview-paths-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(join(workspace, 'pages'), { recursive: true })
+    mkdirSync(outside)
+    writeFileSync(join(workspace, 'pages', 'report.html'), '<link rel="stylesheet" href="./style.css"><p>workspace</p>')
+    writeFileSync(join(workspace, 'pages', 'style.css'), 'body { color: red; }')
+    const external = join(outside, 'report.html')
+    writeFileSync(external, '<p>external</p>')
+    // A shadow at the old fallback destination must never win.
+    const shadow = join(workspace, external.replace(/^[\\/]+/, ''))
+    if (process.platform !== 'win32') {
+      mkdirSync(dirname(shadow), { recursive: true })
+      writeFileSync(shadow, '<p>wrong shadow</p>')
+    }
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const html = routes.find(route => route.path === '/sidebar/html')!
+      const file = routes.find(route => route.path === '/sidebar/file')!
+      const scope = { sessionId: 'preview', cwd: workspace }
+      const page = htmlUrl(scope, 'pages/report.html')
+      expect(await invokeGet(html, page)).toMatchObject({ status: 200, body: expect.stringContaining('workspace') })
+      const asset = new URL('./style.css', new URL(page, 'http://localhost')).pathname
+      expect(await invokeGet(html, asset)).toMatchObject({ status: 200, body: 'body { color: red; }' })
+      // Missing cwd exercises the server's relative-only fallback.
+      expect(await invokeGet(file, downloadUrl({ sessionId: scope.sessionId }, 'pages/report.html')))
+        .toMatchObject({ status: 200, body: expect.stringContaining('workspace') })
+      expect(await invokeGet(html, htmlUrl(scope, external)))
+        .toMatchObject({ status: 200, body: '<p>external</p>' })
+      expect(await invokeGet(file, downloadUrl(scope, external)))
+        .toMatchObject({ status: 200, body: '<p>external</p>' })
+      rmSync(external)
+      expect((await invokeGet(html, htmlUrl(scope, external))).status).toBe(500)
+      expect((await invokeGet(file, downloadUrl(scope, external))).status).toBe(500)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('concurrent fs.write calls to the same path do not corrupt each other', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-concurrent-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const target = join(workspace, 'notes.txt')
+      const draftA = 'A'.repeat(200000)
+      const draftB = 'B'.repeat(200000)
+      // Two editors of the same file ("open to the side" mints a second tab
+      // for one path) saving within the temp→rename window. Guards the
+      // contract: every concurrent save succeeds and the published file is
+      // one complete draft (never byte-mixed, never a failed rename).
+      const results = await Promise.allSettled([
+        invoke(route, 'fs.write', { sessionId: 'concurrent', path: target, content: draftA }),
+        invoke(route, 'fs.write', { sessionId: 'concurrent', path: target, content: draftB }),
+      ])
+      for (const result of results) expect(result.status).toBe('fulfilled')
+      const written = readFileSync(target, 'utf8')
+      expect([draftA, draftB]).toContain(written)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('serves a home-relative media path (the ~ marker reaches the shared resolver, #713)', async () => {
+    // A real file under the user's home: the ~ expansion must happen on the
+    // ROUTE side (resolveTarget), not be pre-joined onto the session cwd.
+    const dirName = `.dsh-sidebar-selftest-${process.pid.toString(36)}`
+    const dir = join(homedir(), dirName)
+    mkdirSync(dir, { recursive: true })
+    const target = join(dir, 'note.txt')
+    writeFileSync(target, 'home sweet home')
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: dir } }) } })
+      const file = routes.find(route => route.path === '/sidebar/file')!
+      expect(await invokeGet(file, downloadUrl({ sessionId: 'home' }, `~/${dirName}/note.txt`)))
+        .toMatchObject({ status: 200, body: 'home sweet home' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('serves media and HTML through a workspace symlink (fence removed)', async () => {
     if (!canCreateSymlink) return
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-route-symlink-security-'))
     const workspace = join(root, 'workspace')
     const outside = join(root, 'outside')
     mkdirSync(workspace)
     mkdirSync(outside)
-    const mediaPath = join(outside, 'secret.png')
-    const htmlPath = join(outside, 'secret.html')
-    writeFileSync(mediaPath, 'not an image')
-    writeFileSync(htmlPath, '<p>secret</p>')
+    const mediaPath = join(outside, 'pic.png')
+    const htmlPath = join(outside, 'page.html')
+    // A real 1x1 PNG: the media route sniffs the magic bytes, a text file
+    // would be refused as "not a file or too large" for the wrong reason.
+    writeFileSync(mediaPath, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==', 'base64'))
+    writeFileSync(htmlPath, '<p>outside</p>')
     try {
       symlinkSync(outside, join(workspace, 'link'))
       const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
       const media = routes.find(route => route.path === '/sidebar/file')!
       const html = routes.find(route => route.path === '/sidebar/html')!
-      const mediaResult = await invokeGet(media, `/sidebar/file?sessionId=security&path=${encodeURIComponent(join(workspace, 'link', 'secret.png'))}`)
+      const mediaResult = await invokeGet(media, `/sidebar/file?sessionId=security&path=${encodeURIComponent(join(workspace, 'link', 'pic.png'))}`)
       // Use the production encoder so the URL is well-formed on every
       // platform (a Windows drive path needs the leading slash separator
       // that a naive join-without-separator drops).
-      const htmlResult = await invokeGet(html, encodeHtmlUrl('security', join(workspace, 'link', 'secret.html')))
-      expect(mediaResult).toMatchObject({ status: 403 })
-      expect(JSON.parse(mediaResult.body)).toMatchObject({ ok: false, error: { code: 'forbidden' } })
-      expect(htmlResult).toMatchObject({ status: 403 })
-      expect(JSON.parse(htmlResult.body)).toMatchObject({ ok: false, error: { code: 'forbidden' } })
+      const htmlResult = await invokeGet(html, encodeHtmlUrl('security', join(workspace, 'link', 'page.html')))
+      expect(mediaResult).toMatchObject({ status: 200 })
+      expect(htmlResult).toMatchObject({ status: 200 })
+      expect(htmlResult.body).toContain('outside')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('serves an SVG with a sandboxing CSP so a direct navigation cannot run its script', async () => {
+    // An SVG is a scriptable document. Served bare on the GUI origin, opening
+    // this URL directly runs its <script> with same-origin access to
+    // /sidebar/api/*. The html route already sandboxes; the media route must
+    // match. <img> embedding is unaffected (CSP applies to documents).
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-svg-security-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    const svgPath = join(workspace, 'logo.svg')
+    writeFileSync(svgPath, '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const media = routes.find(route => route.path === '/sidebar/file')!
+      const res = await invokeGetFull(media, `/sidebar/file?sessionId=security&path=${encodeURIComponent(svgPath)}`)
+      expect(res.status).toBe(200)
+      expect(res.headers['content-type']).toBe('image/svg+xml')
+      expect(res.headers['content-security-policy']).toContain('sandbox')
+      expect(res.headers['x-content-type-options']).toBe('nosniff')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves an ordinary image response free of the SVG sandbox headers', async () => {
+    // The guard is scoped to the scriptable type: a PNG must not gain a
+    // sandbox directive (nothing to sandbox, and it would be a behaviour
+    // change for existing image previews).
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-png-security-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    const pngPath = join(workspace, 'pixel.png')
+    writeFileSync(pngPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const media = routes.find(route => route.path === '/sidebar/file')!
+      const res = await invokeGetFull(media, `/sidebar/file?sessionId=security&path=${encodeURIComponent(pngPath)}`)
+      expect(res.status).toBe(200)
+      expect(res.headers['content-type']).toBe('image/png')
+      expect(res.headers['content-security-policy']).toBeUndefined()
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -776,7 +790,76 @@ describe('session cwd resolution over the API route', () => {
     }
   })
 
-  it.skipIf(!canCreateSymlink)('rejects workspace symlinks that resolve outside the workspace', async () => {
+  it('fs.trees returns every requested level in one batch, errors in place', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-trees-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(join(workspace, 'src', 'deep'), { recursive: true })
+    writeFileSync(join(workspace, 'src', 'a.ts'), 'a')
+    writeFileSync(join(workspace, 'src', 'deep', 'b.ts'), 'b')
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const result = await invoke(route, 'fs.trees', {
+        sessionId: 's-tree',
+        // A relative path, an absolute path and one that does not exist: the
+        // batch answers all three, the failure only on its own level.
+        paths: ['src', join(workspace, 'src', 'deep'), join(workspace, 'missing')],
+      })
+      expect(result.ok).toBe(true)
+      const levels = (result.value as unknown as { levels: Array<{ path: string; entries: Array<{ name: string }>; truncated: boolean; error?: string }> }).levels
+      expect(levels).toHaveLength(3)
+      expect(levels[0]).toMatchObject({ path: join(workspace, 'src'), truncated: false })
+      expect(levels[0]!.entries.map(entry => entry.name)).toEqual(['deep', 'a.ts'])
+      expect(levels[1]!.entries.map(entry => entry.name)).toEqual(['b.ts'])
+      expect(levels[1]!.error).toBeUndefined()
+      expect(levels[2]!.path).toBe(join(workspace, 'missing'))
+      expect(levels[2]!.entries).toEqual([])
+      expect(levels[2]!.truncated).toBe(false)
+      expect(levels[2]!.error).toMatch(/missing/)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fs.trees warms the same cache fs.tree reads (and vice versa)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-trees-cache-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    writeFileSync(join(workspace, 'a.txt'), 'a')
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const batch = await invoke(route, 'fs.trees', { sessionId: 's-tree', paths: [workspace] })
+      expect(batch.ok).toBe(true)
+      const level = (batch.value as unknown as { levels: Array<{ entries: Array<{ name: string }> }> }).levels[0]!
+      // A file created after the batch is invisible to the single-path route
+      // too — proof the two routes share one cache entry.
+      writeFileSync(join(workspace, 'b.txt'), 'b')
+      const single = await invoke(route, 'fs.tree', { sessionId: 's-tree', path: workspace })
+      expect((single.value as unknown as { entries: Array<{ name: string }> }).entries.map(entry => entry.name))
+        .toEqual(level.entries.map(entry => entry.name))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fs.trees rejects an empty list and an oversized batch', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-trees-guard-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const empty = await invoke(route, 'fs.trees', { sessionId: 's-tree', paths: [] })
+      expect(empty).toMatchObject({ ok: false, status: 400, error: { code: 'bad-request' } })
+      const tooMany = await invoke(route, 'fs.trees', {
+        sessionId: 's-tree',
+        paths: Array.from({ length: FS_TREES_MAX_PATHS + 1 }, () => workspace),
+      })
+      expect(tooMany).toMatchObject({ ok: false, status: 400, error: { code: 'bad-request' } })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(!canCreateSymlink)('lists a workspace symlink that resolves outside the workspace', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-symlink-security-'))
     const workspace = join(root, 'workspace')
     const outside = join(root, 'outside')
@@ -786,14 +869,16 @@ describe('session cwd resolution over the API route', () => {
     try {
       symlinkSync(outside, join(workspace, 'link'))
       const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      // No realpath: the link is followed like any other directory.
       const tree = await invoke(route, 'fs.tree', { sessionId: 'security', path: join(workspace, 'link') })
-      expect(tree).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+      expect(tree.ok).toBe(true)
+      expect((tree.value as unknown as { entries: Array<{ name: string }> }).entries.map(entry => entry.name)).toEqual(['secret.txt'])
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })
 
-  it.skipIf(!canCreateSymlink)('rejects fs.read through a workspace symlink', async () => {
+  it.skipIf(!canCreateSymlink)('reads through a workspace symlink', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-symlink-security-'))
     const workspace = join(root, 'workspace')
     const outside = join(root, 'outside')
@@ -804,13 +889,14 @@ describe('session cwd resolution over the API route', () => {
       symlinkSync(outside, join(workspace, 'link'))
       const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
       const read = await invoke(route, 'fs.read', { sessionId: 'security', path: join(workspace, 'link', 'secret.txt') })
-      expect(read).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+      expect(read.ok).toBe(true)
+      expect((read.value as unknown as { content: string }).content).toBe('secret')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })
 
-  it.skipIf(!canCreateSymlink)('rejects fs.write through a workspace symlink', async () => {
+  it.skipIf(!canCreateSymlink)('writes through a workspace symlink', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-symlink-security-'))
     const workspace = join(root, 'workspace')
     const outside = join(root, 'outside')
@@ -820,101 +906,146 @@ describe('session cwd resolution over the API route', () => {
       symlinkSync(outside, join(workspace, 'link'))
       const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
       const write = await invoke(route, 'fs.write', { sessionId: 'security', path: join(workspace, 'link', 'new.txt'), content: 'hack' })
-      expect(write).toMatchObject({ ok: false, status: 403, error: { code: 'forbidden' } })
+      expect(write.ok).toBe(true)
+      // The write landed on the link's TARGET (the link is not replaced).
+      expect(readFileSync(join(outside, 'new.txt'), 'utf8')).toBe('hack')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })
 })
+/**
+ * Invoke one `/sidebar/api/<method>` route against a fake Socket-ish pair.
+ * @param route - the mounted prefix route.
+ * @param method - the API method name.
+ * @param payload - the JSON request body.
+ * @returns the parsed envelope.
+ */
+const invoke = async (route: SidebarWebRoute, method: string, payload: unknown): Promise<{
+  ok: boolean
+  value?: unknown
+  error?: { code?: string; message: string }
+}> => {
+  const body = Buffer.from(JSON.stringify(payload))
+  const req = {
+    method: 'POST',
+    url: `/sidebar/api/${method}`,
+    headers: { host: '127.0.0.1:3080' },
+    [Symbol.asyncIterator]: async function* () { yield body },
+  } as never
+  const out: { status: number; body: string } = { status: 200, body: '' }
+  const res = {
+    writeHead: (status: number) => { out.status = status },
+    end: (chunk: unknown) => { out.body += String(chunk ?? '') },
+  } as never
+  await route.handler(req, res)
+  return JSON.parse(out.body) as { ok: boolean; value?: unknown; error?: { code?: string; message: string } }
+}
+
+/** The Loader entry id this plugin's row is mounted under in these tests. */
+const ENTRY_ID = 'better-sidebar'
+/** The fiber that row owns; the plugin matches it by identity. */
+const PLUGIN_FIBER = { name: 'dsh-better-sidebar' }
+
+/**
+ * A minimal settings FORMS seam: `describe`/`update`/`configure` over one
+ * entry, with the revision guard. DSH 0.1.7 replaced the registrable namespace
+ * with exactly this shape, so the plugin no longer owns the schema — it
+ * reports what `describe` gives it and writes through `update`.
+ * @param pre - user-layer values staged per entry id before the plugin mounts.
+ */
+const createFakeSettings = (pre?: Record<string, Record<string, unknown>>) => {
+  // The plugin's own row always exists in a real profile — it IS the row that
+  // mounted the plugin — so its form is addressable before anything is written.
+  const rows = new Map<string, { value: Record<string, unknown>; revision: number }>([
+    [ENTRY_ID, { value: {}, revision: 0 }],
+  ])
+  for (const [ns, value] of Object.entries(pre ?? {})) rows.set(ns, { value, revision: 0 })
+  return {
+    describe(options?: { redactSecrets?: boolean }) {
+      return [...rows.entries()].map(([ns, row]) => ({
+        ns,
+        value: { ...SIDEBAR_PREFS_DEFAULTS, ...row.value },
+        revision: row.revision,
+        ...(options?.redactSecrets === true ? {} : { user: row.value }),
+      }))
+    },
+    async update(ns: string, patch: Record<string, unknown>, expectedRevision?: number) {
+      const row = rows.get(ns)
+      if (row === undefined) throw new Error(`No configurable plugin entry "${ns}"`)
+      if (expectedRevision !== undefined && expectedRevision !== row.revision) {
+        throw new SettingsConflictError(ns as SettingsNamespace, expectedRevision, row.revision)
+      }
+      row.value = { ...row.value, ...patch }
+      row.revision += 1
+    },
+    configure() {
+      return () => {}
+    },
+  }
+}
+
+/**
+ * Mount the host plugin against a fake context carrying a settings seam.
+ * @param settings - the settings forms fake; omit to simulate a deployment with none.
+ * @param home - a harness home holding a retired `settings.yaml`, when the test wants the legacy import to run.
+ * @returns the mounted `/sidebar/api` route.
+ */
+const mountWithSettings = (settings?: unknown, home?: string): SidebarWebRoute => {
+  const routes: SidebarWebRoute[] = []
+  const ctx = {
+    webRuntime: { trustedHosts: [] },
+    webServer: {
+      register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
+      registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
+    },
+    sessions: { get: () => undefined },
+    tools: { register: () => () => {} },
+    effect: (fn: () => void | (() => void)) => { fn() },
+    inject: (deps: string[], callback: (sctx: { settings: unknown }) => void) => {
+      if (deps.includes('settings') && settings !== undefined) callback({ settings })
+      return () => {}
+    },
+    // The session/agent event feeds: nothing emits in these tests.
+    on: () => () => {},
+    // No jobs/agents services: the jobs routes degrade to a 503.
+    get: () => undefined,
+    fiber: PLUGIN_FIBER,
+    // The plugin discovers its own settings entry id from the loader, so a
+    // fake without these entries has NO settings face at all.
+    loader: {
+      entries: () => [{ options: { id: ENTRY_ID, name: 'dsh-better-sidebar' }, fiber: PLUGIN_FIBER }],
+          // The real loader settles before a form is addressable; the fake
+          // resolves immediately so the import runs on the same tick.
+          await: () => Promise.resolve(),
+    },
+    logger: { info: () => {}, warn: () => {}, debug: () => {}, error: () => {} },
+    ...(home === undefined ? {} : { profileContext: { home } }),
+  }
+  apply(ctx as never)
+  return routes.find(route => route.path === '/sidebar/api')!
+}
+
+describe('open.external route', () => {
+  it('rejects an unknown action with bad-request (before anything spawns)', async () => {
+    const route = mountWithSettings()
+    const result = await invoke(route, 'open.external', { action: 'open-ish', path: '/tmp/a.txt' })
+    expect(result).toMatchObject({ ok: false, error: { code: 'bad-request' } })
+  })
+
+  it('rejects http(s) URLs and relative reveal paths before spawning', async () => {
+    const route = mountWithSettings()
+    const https = await invoke(route, 'open.external', { action: 'url', url: 'https://example.com' })
+    expect(https).toMatchObject({ ok: false, error: { code: 'bad-request' } })
+    const relative = await invoke(route, 'open.external', { action: 'reveal', path: 'relative/path' })
+    expect(relative).toMatchObject({ ok: false, error: { code: 'fs-error' } })
+    // A missing field never reaches launchExternal either.
+    const empty = await invoke(route, 'open.external', { action: 'url' })
+    expect(empty).toMatchObject({ ok: false, error: { code: 'bad-request' } })
+  })
+})
 
 describe('side card settings routes', () => {
-  /** A minimal settings seam: register/describe/update with the revision guard. */
-  const createFakeSettings = (pre?: Record<string, Record<string, unknown>>) => {
-    const namespaces = new Map<string, {
-      schema: unknown
-      value: Record<string, unknown> | undefined
-      revision: number
-    }>()
-    for (const [ns, value] of Object.entries(pre ?? {})) {
-      namespaces.set(ns, { schema: (input: unknown) => input, value, revision: 0 })
-    }
-    const resolve = (entry: { schema: unknown; value: Record<string, unknown> | undefined }): unknown => {
-      const schema = entry.schema as (input: unknown) => unknown
-      return entry.value === undefined ? schema(undefined) : schema(entry.value)
-    }
-    return {
-      register(ns: string, schema: unknown) {
-        // Preserve a pre-seeded value: tests stage prefs through the `pre`
-        // map before the plugin mounts and registers the same namespace.
-        const existing = namespaces.get(ns)
-        namespaces.set(ns, { schema, value: existing?.value ?? undefined, revision: 0 })
-        return { get: () => ({}), watch: () => () => {}, update: async () => {}, replace: async () => {} }
-      },
-      describe() {
-        return [...namespaces.entries()].map(([ns, entry]) => ({
-          ns,
-          value: resolve(entry),
-          applies: 'live' as const,
-          revision: entry.revision,
-        }))
-      },
-      async update(ns: string, patch: Record<string, unknown>, expectedRevision?: number) {
-        const entry = namespaces.get(ns)
-        if (entry === undefined) throw new Error(`settings namespace "${ns}" is not registered`)
-        if (expectedRevision !== undefined && expectedRevision !== entry.revision) {
-          throw new SettingsConflictError(ns as SettingsNamespace, expectedRevision, entry.revision)
-        }
-        entry.value = { ...entry.value, ...patch }
-        entry.revision += 1
-      },
-    }
-  }
-
-  const mountWithSettings = (settings?: unknown): SidebarWebRoute => {
-    const routes: SidebarWebRoute[] = []
-    const ctx = {
-      webRuntime: { trustedHosts: [] },
-      webServer: {
-        register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
-        registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
-      },
-      sessions: { get: () => undefined },
-      tools: { register: () => () => {} },
-      effect: (fn: () => void | (() => void)) => { fn() },
-      inject: (deps: string[], callback: (sctx: { settings: unknown }) => void) => {
-        if (deps.includes('settings') && settings !== undefined) callback({ settings })
-        return () => {}
-      },
-      // The session/agent event feeds: nothing emits in these tests.
-      on: () => () => {},
-      // No jobs/agents services: the jobs routes degrade to a 503.
-      get: () => undefined,
-    }
-    apply(ctx as never)
-    return routes.find(route => route.path === '/sidebar/api')!
-  }
-
-  const invoke = async (route: SidebarWebRoute, method: string, payload: unknown): Promise<{
-    ok: boolean
-    value?: unknown
-    error?: { code?: string; message: string }
-  }> => {
-    const body = Buffer.from(JSON.stringify(payload))
-    const req = {
-      method: 'POST',
-      url: `/sidebar/api/${method}`,
-      headers: { host: '127.0.0.1:3080' },
-      [Symbol.asyncIterator]: async function* () { yield body },
-    } as never
-    const out: { status: number; body: string } = { status: 200, body: '' }
-    const res = {
-      writeHead: (status: number) => { out.status = status },
-      end: (chunk: unknown) => { out.body += String(chunk ?? '') },
-    } as never
-    await route.handler(req, res)
-    return JSON.parse(out.body) as { ok: boolean; value?: unknown; error?: { code?: string; message: string } }
-  }
-
   it('serves the schema defaults when the settings service is absent', async () => {
     const route = mountWithSettings(undefined)
     const result = await invoke(route, 'settings.get', {})
@@ -922,7 +1053,7 @@ describe('side card settings routes', () => {
     expect(result.value).toEqual({ value: undefined, revision: undefined, externalDisable: false })
   })
 
-  it('reports externalDisable false when the aionui namespace is absent', async () => {
+  it('reports externalDisable false when the aionui entry is absent', async () => {
     const route = mountWithSettings(createFakeSettings())
     const result = await invoke(route, 'settings.get', {})
     expect(result.ok).toBe(true)
@@ -936,100 +1067,92 @@ describe('side card settings routes', () => {
     expect((result.value as { externalDisable?: boolean }).externalDisable).toBe(true)
   })
 
-  it('serves the effective terminal shell and its display name', async () => {
-    const route = mountWithSettings(undefined)
-    const result = await invoke(route, 'shell.get', {})
-    expect(result.ok).toBe(true)
-    expect(result.value).toMatchObject({
-      shell: expect.any(String),
-      name: expect.any(String),
-    })
-    expect(String((result.value as { name: unknown }).name).length).toBeGreaterThan(0)
-  })
-
-  it('shell.get reflects the settings-page override with the quotes stripped', async () => {
-    const route = mountWithSettings(createFakeSettings({
-      'dsh-better-sidebar': {
-        terminalShell: '"C:\\Program Files\\PowerShell\\7\\pwsh.exe"',
-        terminalShellArgs: '-NoLogo',
-      },
-    }))
-    const result = await invoke(route, 'shell.get', {})
-    expect(result.ok).toBe(true)
-    expect(result.value).toMatchObject({
-      shell: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
-      name: 'pwsh',
-    })
-  })
-
-  it('maps a shell-not-found failure to the machine-readable close reason', async () => {
-    expect(wsCloseReasonOf(new SidebarError(
-      'shell-not-found',
-      'shell executable not found: "C:\\Program Files\\PowerShell\\7\\pwsh.exe"',
-      400,
-      { shell: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe' },
-    ))).toBe('shell-not-found:pwsh')
-    expect(wsCloseReasonOf(new Error('boom'))).toBe('boom')
-    expect(wsCloseReasonOf('plain')).toBe('plain')
-  })
-
-  it('caps the close reason by UTF-8 bytes so the ws 123-byte limit holds', () => {
-    // 200 CJK characters are ~600 bytes: a character-count slice would still
-    // overflow the cap `ws` enforces with Buffer.byteLength.
-    const reason = wsCloseReasonOf(new SidebarError(
-      'shell-not-found',
-      'shell executable not found',
-      400,
-      { shell: `/bin/${'终'.repeat(200)}` },
-    ))
-    expect(reason.startsWith('shell-not-found:')).toBe(true)
-    expect(Buffer.byteLength(reason)).toBeLessThanOrEqual(123)
-  })
-
-  it('reads the resolved prefs and writes a patch through the seam', async () => {
+  it('passes the entry form through and writes a patch back into it', async () => {
     const route = mountWithSettings(createFakeSettings())
     const read = await invoke(route, 'settings.get', {})
     expect(read.ok).toBe(true)
-    expect(read.value).toEqual({
-      value: {
-        autoOpenSubagent: true,
-        autoOpenJobs: true,
-        agentTerminalTools: false, agentOpenTools: false,
-        bottomPanelAutoTerminal: true,
-        terminalFontFamily: '',
-        terminalFontSize: 13,
-        editorExplorer: false,
-        workspaceFence: true,
-        terminalShell: '',
-        terminalShellArgs: '',
-        titleBarCompat: false,
-        titleBarStripPx: 40,
-        htmlViewerNoSandbox: false,
-        htmlViewerDefaultUnsafe: false,
-        browserNoSandbox: false,
-        browserInterceptLinks: true,
-        browserInterceptHttp: true,
-        browserInterceptHttps: false,
-        browserAllowedLoopback: '',
-        // The enable-switch maps default to {} (everything on).
-        tabsEnabled: {},
-        viewersEnabled: {},
-        // The plugin-owned settings map defaults to {} too.
-        pluginSettings: {},
-      },
-      revision: 0,
-      externalDisable: false,
+    const view = read.value as { value: Record<string, unknown>; revision: number }
+    expect(view.revision).toBe(0)
+    // The form belongs to the ENTRY, so what the route reports is exactly the
+    // field set this plugin's own preference contract declares.
+    expect(Object.keys(view.value).sort()).toEqual(Object.keys(SIDEBAR_PREFS_DEFAULTS).sort())
+    expect(view.value).toMatchObject({
+      autoOpenSubagent: true,
+      autoOpenJobs: true,
+      agentOpenTools: false,
+      editorExplorer: false,
+      // These title-bar fields are declared without a schema default on
+      // purpose, so a document predating them migrates rather than flips.
+      titleBarCompat: false,
+      titleBarStripPx: 40,
+      htmlViewerNoSandbox: false,
+      htmlViewerDefaultUnsafe: false,
+      // The enable-switch maps default to {} (everything on).
+      tabsEnabled: {},
+      viewersEnabled: {},
+      // The plugin-owned settings map defaults to {} too.
+      pluginSettings: {},
     })
 
     const written = await invoke(route, 'settings.update', { patch: { agentOpenTools: true } })
     expect(written.ok).toBe(true)
-    const view = written.value as { value: { agentOpenTools: boolean; terminalFontSize: number }; revision: number }
-    expect(view.value.agentOpenTools).toBe(true)
-    expect(view.value.terminalFontSize).toBe(13)
-    expect(view.revision).toBe(1)
+    const after = written.value as { value: { agentOpenTools: boolean; titleBarStripPx: number }; revision: number }
+    expect(after.value.agentOpenTools).toBe(true)
+    expect(after.value.titleBarStripPx).toBe(40)
+    expect(after.revision).toBe(1)
   })
 
-  it('disarms the workspace fence for the fs routes when the pref is off', async () => {
+  it('imports a pre-0.1.7 settings.yaml section once, keeping only declared fields', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-sidebar-legacy-prefs-'))
+    // DSH renames the retired document to `.imported` before importing any
+    // section, and it re-imports by SAME id — this section is keyed by the
+    // package name, which never matches the row id, so it is left behind. The
+    // unknown fields are the ones this release no longer declares; forwarding
+    // them would reject the whole patch and lose the preferences.
+    writeFileSync(join(home, 'settings.yaml.imported'), [
+      'dsh-better-sidebar:',
+      '  agentOpenTools: true',
+      '  titleBarStripPx: 22',
+      '  terminalFontSize: 13',
+      '  browserInterceptHttp: false',
+      'other-plugin:',
+      '  irrelevant: true',
+      '',
+    ].join('\n'))
+    try {
+      const settings = createFakeSettings()
+      mountWithSettings(settings, home)
+      // The import is fire-and-forget so a file read can never block loading;
+      // let its read and microtasks settle before asserting.
+      await new Promise(resolve => setTimeout(resolve, 100))
+      const row = settings.describe().find(candidate => candidate.ns === ENTRY_ID)
+      expect(row?.value).toMatchObject({ agentOpenTools: true, titleBarStripPx: 22 })
+      expect(row?.value).not.toHaveProperty('terminalFontSize')
+      expect(row?.value).not.toHaveProperty('browserInterceptHttp')
+      expect(row?.revision).toBe(1)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves a row that already has user values alone', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-sidebar-legacy-skip-'))
+    writeFileSync(join(home, 'settings.yaml'), 'dsh-better-sidebar:\n  agentOpenTools: true\n')
+    try {
+      const settings = createFakeSettings({ [ENTRY_ID]: { editorExplorer: true } })
+      mountWithSettings(settings, home)
+      await new Promise(resolve => setTimeout(resolve, 100))
+      const row = settings.describe().find(candidate => candidate.ns === ENTRY_ID)
+      // The row's own user layer wins: the import must never overwrite a value
+      // set after the upgrade.
+      expect(row?.value).toMatchObject({ editorExplorer: true, agentOpenTools: false })
+      expect(row?.revision).toBe(0)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('reaches outside the workspace with no pref set (the fence is gone)', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fence-off-'))
     const workspace = join(root, 'workspace')
     const outside = join(root, 'outside')
@@ -1037,14 +1160,10 @@ describe('side card settings routes', () => {
     mkdirSync(outside)
     writeFileSync(join(outside, 'secret.txt'), 'global instructions')
     try {
+      // ⚠️ PERMISSION CHANGE: the default is now "no containment", and there
+      // is no switch to arm it — the routes read/write wherever the host user
+      // can. (`workspaceFence` in an old profile is simply an unknown key.)
       const route = mountWithSettings(createFakeSettings())
-      // Default (fence on): the outside read is refused as usual…
-      const refused = await invoke(route, 'fs.read', { sessionId: 'fence', cwd: workspace, path: join(outside, 'secret.txt') })
-      expect(refused).toMatchObject({ ok: false, error: { code: 'forbidden' } })
-      // …then the settings-page switch (or the fence notice's one-click off)
-      // disarms every fs route for paths outside the workspace.
-      const off = await invoke(route, 'settings.update', { patch: { workspaceFence: false } })
-      expect(off.ok).toBe(true)
       const read = await invoke(route, 'fs.read', { sessionId: 'fence', cwd: workspace, path: join(outside, 'secret.txt') })
       expect(read).toMatchObject({ ok: true, value: { kind: 'text', content: 'global instructions' } })
       const tree = await invoke(route, 'fs.tree', { sessionId: 'fence', cwd: workspace, path: outside })
@@ -1052,6 +1171,13 @@ describe('side card settings routes', () => {
       const write = await invoke(route, 'fs.write', { sessionId: 'fence', cwd: workspace, path: join(outside, 'written.txt'), content: 'ok' })
       expect(write).toMatchObject({ ok: true })
       expect(readFileSync(join(outside, 'written.txt'), 'utf8')).toBe('ok')
+      // A legacy `workspaceFence: true` patch is just an unknown prefs key now
+      // (the schema no longer declares it): it must not fail the write and must
+      // not re-arm anything.
+      const legacy = await invoke(route, 'settings.update', { patch: { workspaceFence: true } })
+      expect(legacy.ok).toBe(true)
+      const stillOpen = await invoke(route, 'fs.read', { sessionId: 'fence', cwd: workspace, path: join(outside, 'secret.txt') })
+      expect(stillOpen).toMatchObject({ ok: true })
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -1062,7 +1188,7 @@ describe('side card settings routes', () => {
     await invoke(route, 'settings.update', { patch: { agentOpenTools: false } })
     // The second write carries the pre-write revision: the seam refuses it.
     const stale = await invoke(route, 'settings.update', {
-      patch: { terminalFontSize: 15 },
+      patch: { titleBarStripPx: 15 },
       expectedRevision: 0,
     })
     expect(stale.ok).toBe(false)
@@ -1076,156 +1202,32 @@ describe('side card settings routes', () => {
     expect(result.ok).toBe(false)
     expect(result.error?.message).toMatch(/plain object/)
   })
-  /** Fake fetch responses shaped like what the route consumes. */
-  const respond = (status: number, headers: Record<string, string>): Response =>
-    ({ status, url: 'https://site.example/', headers: new Headers(headers) }) as unknown as Response
-
-  it('reports X-Frame-Options and frame-ancestors from the target headers', async () => {
-    const route = mountWithSettings(undefined)
-    vi.stubGlobal('fetch', vi.fn(async () => respond(200, {
-      'x-frame-options': 'SAMEORIGIN',
-      'content-security-policy': "default-src 'self'; frame-ancestors 'none'",
-    })))
-    try {
-      const result = await invoke(route, 'browser.probe', { url: 'https://arxiv.org/' })
-      expect(result.ok).toBe(true)
-      expect(result.value).toEqual({
-        reachable: true,
-        url: 'https://site.example/',
-        status: 200,
-        xFrameOptions: 'SAMEORIGIN',
-        frameAncestors: ["'none'"],
-      })
-    } finally {
-      vi.unstubAllGlobals()
-    }
-  })
-
-  it('retries a 405 HEAD as GET', async () => {
-    const route = mountWithSettings(undefined)
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(respond(405, {}))
-      .mockResolvedValueOnce(respond(200, {}))
-    vi.stubGlobal('fetch', fetchMock)
-    try {
-      const result = await invoke(route, 'browser.probe', { url: 'https://example.com/' })
-      expect(result.ok).toBe(true)
-      expect(fetchMock).toHaveBeenCalledTimes(2)
-      expect(result.value).toMatchObject({ reachable: true, status: 200 })
-    } finally {
-      vi.unstubAllGlobals()
-    }
-  })
-
-  it('reports an unreachable target as reachable:false', async () => {
-    const route = mountWithSettings(undefined)
-    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ENOTFOUND') }))
-    try {
-      const result = await invoke(route, 'browser.probe', { url: 'https://example.com/' })
-      expect(result.ok).toBe(true)
-      expect(result.value).toEqual({ reachable: false })
-    } finally {
-      vi.unstubAllGlobals()
-    }
-  })
-
-  it('refuses non-http(s) and loopback URLs', async () => {
-    const route = mountWithSettings(undefined)
-    for (const url of ['javascript:alert(1)', 'file:///etc/passwd', 'http://127.0.0.1:8080/', 'http://localhost/']) {
-      const result = await invoke(route, 'browser.probe', { url })
-      expect(result.ok, url).toBe(false)
-      expect(result.error?.code, url).toBe('bad-request')
-    }
-  })
-})
-
-
-describe('agent terminal tool gating', () => {
-  it('injects the eight tools only when the side-card setting is enabled (default off)', () => {
-    let registered = 0
-    let disposed = 0
-    // The tools currently registered (registered minus disposed).
-    const live = (): number => registered - disposed
-    // A ref container: the watch callback is only assigned inside a closure,
-    // which TypeScript's control-flow analysis ignores (the bare variable
-    // would narrow to null and refuse the optional call).
-    const watcherRef: { current: (() => void) | null } = { current: null }
-    let enabled = false
-    const settings = {
-      register() {
-        return {
-          get: () => ({ agentTerminalTools: enabled }),
-          watch: (callback: () => void) => { watcherRef.current = callback; return () => {} },
-          update: async () => {},
-          replace: async () => {},
-        }
-      },
-      describe: () => [],
-      async update() {},
-    }
-    const ctx = {
-      webRuntime: { trustedHosts: [] },
-      webServer: {
-        register: (route: SidebarWebRoute) => { void route; return () => {} },
-        registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
-      },
-      sessions: { get: () => undefined },
-      tools: { register: () => { registered += 1; return () => { disposed += 1 } } },
-      effect: (fn: () => void | (() => void)) => { fn() },
-      inject: (deps: readonly string[], callback: (sctx: { settings: unknown }) => void) => {
-        if (deps.includes('settings')) callback({ settings })
-        return () => {}
-      },
-      // The session/agent event feeds: nothing emits in these tests.
-      on: () => () => {},
-      // No jobs/agents services: the jobs routes degrade to a 503.
-      get: () => undefined,
-    }
-    apply(ctx as never)
-    // Default off: no tools are registered even though the settings service is mounted.
-    expect(live()).toBe(0)
-    // Flipping the setting on registers all eight tools.
-    enabled = true
-    watcherRef.current?.()
-    expect(live()).toBe(8)
-    expect(disposed).toBe(0)
-    // Flipping it back off unregisters them (and releases any agent terminals).
-    enabled = false
-    watcherRef.current?.()
-    expect(live()).toBe(0)
-    expect(disposed).toBe(8)
-    // And a redundant toggle registers them fresh (no double-registration per
-    // flip: the guard only skips when the tools are already live).
-    enabled = true
-    watcherRef.current?.()
-    expect(live()).toBe(8)
-    expect(registered).toBe(16)
-  })
 })
 
 describe('agent sidebar-open tool gating', () => {
-  it('injects the one open tool only when the side-card setting is enabled (default off)', () => {
+  /**
+   * DSH 0.1.7 emits its settings change on the settings service's own context,
+   * which is not an ancestor of this plugin's fiber, so the gate cannot watch
+   * an event. It is re-evaluated whenever the client re-reads the form instead
+   * — which is exactly what the fenced `settings.get` route below does, and
+   * what the Side card page does on every `settings/document-updated` push.
+   */
+  const gatingCtx = (enabled: () => boolean, routes: SidebarWebRoute[]) => {
     let registered = 0
     let disposed = 0
-    const live = (): number => registered - disposed
-    const watcherRef: { current: (() => void) | null } = { current: null }
-    let enabled = false
     const settings = {
-      register() {
-        return {
-          get: () => ({ agentOpenTools: enabled, tabsEnabled: {} }),
-          watch: (callback: () => void) => { watcherRef.current = callback; return () => {} },
-          update: async () => {},
-          replace: async () => {},
-        }
-      },
-      describe: () => [],
+      describe: () => [{
+        ns: ENTRY_ID,
+        value: { ...SIDEBAR_PREFS_DEFAULTS, agentOpenTools: enabled() },
+        revision: 0,
+      }],
       async update() {},
+      configure: () => () => {},
     }
     const ctx = {
       webRuntime: { trustedHosts: [] },
       webServer: {
-        register: (route: SidebarWebRoute) => { void route; return () => {} },
+        register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
         registerUpgrade: (route: SidebarWebUpgradeRoute) => { void route; return () => {} },
       },
       sessions: { get: () => undefined },
@@ -1235,27 +1237,44 @@ describe('agent sidebar-open tool gating', () => {
         if (deps.includes('settings')) callback({ settings })
         return () => {}
       },
-      // The session/agent event feeds: nothing emits in these tests.
       on: () => () => {},
       get: () => undefined,
+      fiber: PLUGIN_FIBER,
+      loader: {
+        entries: () => [{ options: { id: ENTRY_ID, name: 'dsh-better-sidebar' }, fiber: PLUGIN_FIBER }],
+          // The real loader settles before a form is addressable; the fake
+          // resolves immediately so the import runs on the same tick.
+          await: () => Promise.resolve(),
+      },
+      logger: { info: () => {}, warn: () => {}, debug: () => {}, error: () => {} },
     }
-    apply(ctx as never)
-    // Default off: no open tool is registered even though the settings service is mounted.
-    expect(live()).toBe(0)
-    // Flipping the setting on registers the single sidebar_open tool.
+    return { ctx, live: () => registered - disposed, registrations: () => registered, disposals: () => disposed }
+  }
+
+  it('injects the one open tool only when the side-card setting is enabled (default off)', async () => {
+    let enabled = false
+    const routes: SidebarWebRoute[] = []
+    const harness = gatingCtx(() => enabled, routes)
+    apply(harness.ctx as never)
+    const route = routes.find(candidate => candidate.path === '/sidebar/api')!
+    // Default off: no open tool is registered even though settings is mounted.
+    expect(harness.live()).toBe(0)
+    // Switching the setting on and re-reading the form registers the one tool.
     enabled = true
-    watcherRef.current?.()
-    expect(live()).toBe(1)
-    expect(disposed).toBe(0)
-    // Flipping it back off unregisters it (and drains the undelivered queue).
+    await invoke(route, 'settings.get', {})
+    expect(harness.live()).toBe(1)
+    expect(harness.disposals()).toBe(0)
+    // Switching it back off unregisters it (and drains the undelivered queue).
     enabled = false
-    watcherRef.current?.()
-    expect(live()).toBe(0)
-    expect(disposed).toBe(1)
-    // And a redundant toggle registers it fresh (no double-registration).
+    await invoke(route, 'settings.get', {})
+    expect(harness.live()).toBe(0)
+    expect(harness.disposals()).toBe(1)
+    // A redundant re-read registers it fresh (no double-registration).
     enabled = true
-    watcherRef.current?.()
-    expect(live()).toBe(1)
-    expect(registered).toBe(2)
+    await invoke(route, 'settings.get', {})
+    expect(harness.live()).toBe(1)
+    await invoke(route, 'settings.get', {})
+    expect(harness.live()).toBe(1)
+    expect(harness.registrations()).toBe(2)
   })
 })

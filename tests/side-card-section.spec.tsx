@@ -92,12 +92,15 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('>Subagents<')
     // Default prefs: the general switch is off (agentOpenTools defaults off),
     // and both tabs + the image viewer cards are pressed (3 aria-pressed
-    // cards).
+    // cards). The mobile switches are NOT cards — they are rows in the 手机
+    // group, and their own defaults (both on) show up as checked checkboxes.
     // The nested auto-open toggle is NOT an inline card (it lives in the popup).
     expect(pressedCount(html, 'true')).toBe(3)
     expect(pressedCount(html, 'false')).toBe(0)
-    // The general toggles are custom switches (real checkboxes, none checked).
-    expect(html.match(/checked=""/g)?.length ?? 0).toBe(0)
+    // The custom switches are real checkboxes: the two mobile adaptations are
+    // on by default, agentOpenTools is not.
+    // The two mobile adaptations are on by default.
+    expect(html.match(/checked=""/g)?.length ?? 0).toBe(2)
     expect(html).not.toContain('Auto-open Subagents')
   })
 
@@ -110,6 +113,20 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('>File viewers</span><span')
     expect(html).toContain('>2</span>')
     expect(html).toContain('>1</span>')
+  })
+
+  it('renders the mobile group: heading + both narrow-viewport switches, on by default', () => {
+    const { store, service } = mount()
+    const html = renderSection(store, service)
+    expect(html).toContain('>Mobile</div>')
+    expect(html).toContain('auto-open on narrow screens')
+    expect(html).toContain('Default the Tasks page to the tree')
+    // Both are ON by default; disarming one shows up as an unchecked box.
+    expect(html).toContain('checked=""')
+    store.setPrefs({ ...store.getPrefs(), mobileNoAutoOpen: false, mobileDefaultTree: false })
+    const off = renderSection(store, service)
+    expect(off).toContain('>Mobile</div>')
+    expect(off).not.toContain('checked=""')
   })
 
   it('renders one small card per registered viewer: icon + title + exts', () => {
@@ -153,9 +170,10 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('>Subagents<')
     expect(html).toContain('>Image<')
     expect(pressedCount(html, 'false')).toBe(2)
-    // The explorer card stays pressed; no general switch is on by default.
+    // The explorer card stays pressed.
     expect(pressedCount(html, 'true')).toBe(1)
-    expect(html.match(/checked=""/g)?.length ?? 0).toBe(0)
+    // The two mobile adaptations are on by default.
+    expect(html.match(/checked=""/g)?.length ?? 0).toBe(2)
   })
 
   it('hides the gear of a disabled feature (its related settings are dormant)', () => {
@@ -178,10 +196,12 @@ describe('SideCardSection declarative inventory', () => {
     expect(html).toContain('Pick the title-bar compatibility scheme: auto-detect (default, conservative) / DSH official web / known desktop shells / custom (shift distance + custom CSS)')
     expect(html).not.toContain('<select')
     expect(html).toContain('>Auto-detect<')
-    // One general-row switch remains (agentOpenTools), off by default — the
-    // scheme row is a dropdown, not a switch.
-    expect(html.match(/type="checkbox"/g)?.length).toBe(1)
-    expect(html.match(/checked=""/g)?.length ?? 0).toBe(0)
+    // Three general-row switches remain (agentOpenTools off by default, plus
+    // the two mobile adaptations on) — the scheme row is a dropdown, not a
+    // switch.
+    expect(html.match(/type="checkbox"/g)?.length).toBe(3)
+    // The two mobile adaptations are on by default (agentOpenTools is not).
+    expect(html.match(/checked=""/g)?.length ?? 0).toBe(2)
     // Auto (default) needs no further settings → no gear.
     expect(html).not.toContain('Position compatibility mode Feature settings')
 
@@ -228,41 +248,41 @@ describe('FeatureSettingsRows (the secondary settings popup body)', () => {
     expect(html).toContain('checked=""')
   })
 
-  it('renders a text row as an input seeded with the pref value (empty = theme default)', () => {
+  it('renders a text row as an input seeded with the pref value', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
       toggles: [{
-        key: 'terminalFontFamily',
+        key: 'titleBarPresetId',
         type: 'text',
-        title: () => 'Font family',
-        desc: () => 'CSS stack',
+        title: () => 'Preset id',
+        desc: () => 'Named shell preset',
         placeholder: '"JetBrains Mono", monospace',
       }],
-      prefs: { ...prefs, terminalFontFamily: '"JetBrains Mono", monospace' },
+      prefs: { ...prefs, titleBarPresetId: '"JetBrains Mono", monospace' },
       onToggle: () => {},
       onCommit: () => '',
     }))
-    expect(html).toContain('Font family')
+    expect(html).toContain('Preset id')
     expect(html).toContain('placeholder="&quot;JetBrains Mono&quot;, monospace"')
     // The input carries the pref value (no switch for text rows).
     expect(html).toContain('value="&quot;JetBrains Mono&quot;, monospace"')
     expect(html).not.toContain('type="checkbox"')
   })
 
-  it('renders a number row with the pref value, the declared bounds and a unit suffix', () => {
+  it('renders a number row with the pref value, the declared bounds and a unit suffix (non-default bounds)', () => {
     const html = renderToString(createElement(FeatureSettingsRows, {
       toggles: [{
-        key: 'terminalFontSize',
+        key: 'titleBarStripPx',
         type: 'number',
-        title: () => 'Font size',
+        title: () => 'Shift distance',
         min: 9,
         max: 32,
         unit: 'px',
       }],
-      prefs: { ...prefs, terminalFontSize: 18 },
+      prefs: { ...prefs, titleBarStripPx: 18 },
       onToggle: () => {},
       onCommit: () => '18',
     }))
-    expect(html).toContain('Font size')
+    expect(html).toContain('Shift distance')
     expect(html).toContain('type="number"')
     expect(html).toContain('value="18"')
     expect(html).toContain('min="9"')

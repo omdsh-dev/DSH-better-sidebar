@@ -4,7 +4,9 @@
  * with porcelain-parseable output formats (`-z` NUL framing, unit separators)
  * so parsing never depends on locale or color config. All commands run with
  * `-C <cwd>` on the session's working directory and `--no-pager` /
- * `-c color.ui=false` so output stays machine-readable.
+ * `-c color.ui=false` / `-c core.quotePath=false` so output stays
+ * machine-readable and paths stay literal (git's default C-quotes a non-ASCII
+ * path, which every diff surface would render as the file name).
  *
  * Commits use the user's git global identity untouched (never sets
  * user.name/user.email).
@@ -158,7 +160,12 @@ export function parseLogLines(output: string): GitLogEntry[] {
 
 /** Run one git command; resolves with stdout, rejects with GitCommandError. */
 function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise<string> {
-  const full = ['-C', cwd, '--no-pager', '-c', 'color.ui=false', ...args]
+  // `core.quotePath=false`: emit paths verbatim instead of C-quoting them
+  // (git's default turns a CJK/space path into an octal-escaped, quoted
+  // string, and every diff surface renders that string as the file name).
+  // The `-z`-framed porcelain callers are unaffected: git never quotes
+  // NUL-framed output.
+  const full = ['-C', cwd, '--no-pager', '-c', 'color.ui=false', '-c', 'core.quotePath=false', ...args]
   return new Promise<string>((resolvePromise, reject) => {
     const child = spawn('git', full, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -430,10 +437,18 @@ export async function log(cwd: string, count = 30, skip = 0, selected?: string):
 /**
  * Content of a file at a revision (`git show <rev>:<path>`), or null when the
  * revision has no such path (a new/untracked file has no HEAD side).
+ *
+ * `--end-of-options` precedes the operand: without it a caller-supplied `rev`
+ * beginning with `-` is parsed as an OPTION rather than a revision, so
+ * `rev: "--output=NUL"` silently wrote to a file and returned empty instead of
+ * failing (the Changes tab's diff/blame panes then rendered blank). The
+ * sentinel ends option parsing, so the operand can never be a flag while every
+ * legitimate revision form still works (`HEAD`, `:0`, `<hash>^`, `HEAD~2`,
+ * `origin/main`, any branch name).
  */
 export async function show(cwd: string, rev: string, path: string, selected?: string): Promise<string | null> {
   try {
-    return await runGit(await repoRoot(cwd, selected), ['show', `${rev}:${path}`])
+    return await runGit(await repoRoot(cwd, selected), ['show', '--end-of-options', `${rev}:${path}`])
   } catch {
     return null
   }
@@ -441,9 +456,10 @@ export async function show(cwd: string, rev: string, path: string, selected?: st
 
 /** Full patch text of one commit (`git show` with the commit header suppressed).
  *  Merge commits show their diff against the first parent (`-m --first-parent`
- *  is a no-op for regular commits), so a history click always has content. */
+ *  is a no-op for regular commits), so a history click always has content.
+ *  `--end-of-options` keeps a caller-supplied hash from parsing as an option. */
 export async function commitDiff(cwd: string, hash: string, selected?: string): Promise<string> {
-  return runGit(await repoRoot(cwd, selected), ['show', '--no-ext-diff', '--no-color', '--format=', '-m', '--first-parent', hash])
+  return runGit(await repoRoot(cwd, selected), ['show', '--no-ext-diff', '--no-color', '--format=', '-m', '--first-parent', '--end-of-options', hash])
 }
 
 /** Discard the worktree changes of one path (`git checkout -- <path>`; the index is untouched). */
@@ -451,12 +467,14 @@ export async function discard(cwd: string, path: string, selected?: string): Pro
   await runGit(await repoRoot(cwd, selected), ['checkout', '--', path])
 }
 
-/** Revert one commit onto the current branch with an auto-generated message. */
+/** Revert one commit onto the current branch with an auto-generated message.
+ *  `--end-of-options` keeps a caller-supplied hash from parsing as an option. */
 export async function revert(cwd: string, hash: string, selected?: string): Promise<void> {
-  await runGit(await repoRoot(cwd, selected), ['revert', '--no-edit', hash])
+  await runGit(await repoRoot(cwd, selected), ['revert', '--no-edit', '--end-of-options', hash])
 }
 
-/** Cherry-pick one commit onto the current branch. */
+/** Cherry-pick one commit onto the current branch.
+ *  `--end-of-options` keeps a caller-supplied hash from parsing as an option. */
 export async function cherryPick(cwd: string, hash: string, selected?: string): Promise<void> {
-  await runGit(await repoRoot(cwd, selected), ['cherry-pick', hash])
+  await runGit(await repoRoot(cwd, selected), ['cherry-pick', '--end-of-options', hash])
 }

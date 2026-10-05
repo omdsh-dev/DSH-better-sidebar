@@ -137,9 +137,15 @@ function customIdOf(id: string): string {
 
 /**
  * The menu-visible open targets, in order (built-ins then custom editors).
- * In SSH mode the local-only targets (the OS file manager, Zed, custom
- * editors without the VSCode dialect) are dropped — they cannot reach a
- * remote path. Unknown pinned ids are pruned here too.
+ * In SSH mode the local-only URL openers (Zed, custom editors without the
+ * VSCode dialect) are dropped — they cannot reach a remote path. The
+ * `explorer` target is NOT dropped: it reveals a path in the file manager of
+ * the machine that owns the workspace, which is exactly where the host half
+ * runs, and it is the only reveal left when the DSH host's own open-in-app
+ * capability is unavailable (older host, no desktop session). A headless
+ * remote cannot raise a file manager anyway — that is the same silent
+ * no-op the other external launches already have. Unknown pinned ids are
+ * pruned here too.
  */
 export function resolveOpenWithTargets(config: OpenWithConfig): OpenWithTarget[] {
   const ssh = config.sshHost.trim() !== ''
@@ -156,7 +162,7 @@ export function resolveOpenWithTargets(config: OpenWithConfig): OpenWithTarget[]
         localOnly: !editor.isVscodeFamily,
       })),
   ]
-  return targets.filter(target => !(ssh && target.localOnly))
+  return targets.filter(target => !(ssh && target.localOnly && target.kind !== 'reveal'))
 }
 
 /** The SSH hint appended to a target's label in remote mode. */

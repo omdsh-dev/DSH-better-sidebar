@@ -13,11 +13,12 @@
  *     plugin's `[data-dsh-better-sidebar]` host mount;
  *  3. asserts the plugin's crash markers never appear (no RenderBoundary /
  *     fail() strips, no `pageerror`, no plugin-prefixed console errors);
- *  4. expands DSH's native right Sidebar, sweeps every built-in tab type
- *     through its guide page (Files / Changes / Tasks / Terminal / Browser) —
- *     including the lazily-fetched terminal chunk — and then opens seeded
- *     files through the Files window's tree (separate mode: each file opens
- *     its own new tab, the seeded home "Files" tab stays the explorer),
+ *  4. expands DSH's native right Sidebar, sweeps every tab type the COMPOSED
+ *     guide offers (the plugin's own Files / Changes / Tasks / Side chat, plus
+ *     whatever the host contributes — its own terminal and browser tab types
+ *     when those packages are mounted) through its guide page, and then opens
+ *     seeded files through the Files window's tree (separate mode: each file
+ *     opens its own new tab, the seeded home "Files" tab stays the explorer),
  *     while response waits armed before goto prove the lazily-fetched editor
  *     chunk (client-editor.js) and the mermaid chunk (client-mermaid.js,
  *     rendered SVG diagram + zoom modal) loaded.
@@ -56,8 +57,24 @@ const SEEDED_README_FILE = 'readme-style.md'
  */
 const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 
-/** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const NATIVE_TABS = ['files', 'git', 'subagent', 'sidechat', 'terminal', 'browser']
+/**
+ * The tab types the plugin itself contributes, plus the host-owned kind the
+ * guide is asserted to still offer.
+ *
+ * `terminal` is DSH's own right-Sidebar type: this plugin deliberately ships
+ * neither terminal nor browser (it used to own both), so the guide must show
+ * exactly ONE `terminal` entry when the host mounts that package — a second
+ * entry would mean the plugin is shadowing the host again.
+ *
+ * `browser` is deliberately NOT in this list and is asserted ABSENT below: DSH
+ * 0.1.7 disables `@deepseek-ai/dsh-client-ui-sidebar-browser` outside the
+ * desktop profile ("Web profiles opt in; Desktop retains sandboxed HTTP(S)
+ * Browser tabs"), and every lane here drives the web profile. Listing it would
+ * demand a guide entry the host itself has stopped offering.
+ */
+const PLUGIN_TABS = ['files', 'git', 'subagent', 'sidechat'] as const
+const HOST_OWNED_TABS = ['terminal'] as const
+const NATIVE_TABS: readonly string[] = [...PLUGIN_TABS, ...HOST_OWNED_TABS]
 
 let api: APIRequestContext
 /** The seeded session id (captured by seedSession; the Side Chat smoke's parent). */
@@ -99,6 +116,7 @@ async function seedSession(): Promise<void> {
     '  <script>alert(1)</script>',
     '</div>',
     '',
+    '<a id="readme-anchor"></a>',
     '## Setup',
     '',
     '[docs link][def]',
@@ -287,8 +305,17 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     ).toHaveCount(1)
   }
 
+  // The browser kind the plugin handed to the host is NOT offered on a web
+  // profile: DSH 0.1.7 mounts its browser package only for the desktop
+  // profile. Pinned rather than merely omitted, so a future lane that starts
+  // seeing a browser entry learns the host changed its mind.
+  await expect(
+    page.locator('[data-sidebar-right-guide-entry="browser"]'),
+    'the web profile must not offer a browser guide entry at DSH 0.1.7',
+  ).toHaveCount(0)
+
   // Sweep every type through the guide. Each open mounts a real viewer (the
-  // terminal fetches its lazy chunk); a failure anywhere surfaces as a
+  // editor and mermaid chunks arrive lazily); a failure anywhere surfaces as a
   // pageerror or a crash strip, both of which the next assertion sees. A pane
   // holds one guide tab, so re-seed it through the strip's add control before
   // every pick.
@@ -304,8 +331,12 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // The sweep opened the Side Chat type, whose view auto-creates a thread and
   // polls the transcript — that poll MUST ride the plugin's own
   // sidechat.events route (the host transport this lane locks). The poll runs
-  // only while the tab is visible, so activate its chip first.
-  await pane.getByRole('tab', { name: /Side Chat|侧边对话|侧边聊天/ }).first().click()
+  // only while the tab is visible, so activate it first — THROUGH ITS GUIDE
+  // ENTRY, not by chip text: the chip follows the thread's own display title
+  // once the tab keeps its record (the state-retention fix), so `/Side Chat/`
+  // no longer names it.
+  if (await page.locator('[data-sidebar-right-guide]').count() === 0) await addTab.click()
+  await page.locator('[data-sidebar-right-guide-entry="sidechat"]').click()
   await expect
     .poll(
       () => page.evaluate(() =>
@@ -361,7 +392,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const settingsGetBody = (await settingsGet.json()) as { value?: { tabsEnabled?: Record<string, boolean> } }
   const originalTabsEnabled = settingsGetBody.value?.tabsEnabled ?? {}
   /** The types this check switches off (leaving three entries, i.e. ≤4). */
-  const shrunken = ['git', 'subagent', 'terminal'] as const
+  const shrunken = ['git', 'subagent'] as const
   try {
     // Send the FULL map back (the route's patch is key-wise merged, so a
     // full map is correct whether the host merges or replaces).
@@ -491,6 +522,28 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const modal = page.locator('[data-mermaid-modal]')
   await pane.locator('[data-mermaid-diagram] svg').first().click()
   await expect(modal, 'clicking the diagram must open the zoom modal').toHaveCount(1, { timeout: 10_000 })
+  // While it is up, the modal is the plugin's OTHER viewport-sized BODY CHILD:
+  // without the app-region reset the shell's blanket `body > :not(#root)`
+  // no-drag makes it cancel every window-drag strip (and the macOS
+  // double-click-title zoom) until it closes — issue #772. Measured against the
+  // SHELL's own darwin rules (present in this page's stylesheet, activated by
+  // the platform attribute) rather than a copy: the modal must compute the
+  // neutral `none`, while its toolbar buttons keep `no-drag` so a click on them
+  // is never a window drag.
+  const modalRegions = await page.evaluate(() => {
+    const previous = document.documentElement.dataset.platform
+    document.documentElement.dataset.platform = 'darwin'
+    const modalElement = document.querySelector('[data-mermaid-modal]')
+    const region = (element: Element | null): string => element === null
+      ? 'missing'
+      : getComputedStyle(element).getPropertyValue('-webkit-app-region').trim()
+    const result = { modal: region(modalElement), button: region(modalElement?.querySelector('button') ?? null) }
+    if (previous === undefined) delete document.documentElement.dataset.platform
+    else document.documentElement.dataset.platform = previous
+    return result
+  })
+  expect(modalRegions.modal, 'the zoom modal must opt out of app-region computation').toBe('none')
+  expect(modalRegions.button, 'its buttons must stay no-drag').toBe('no-drag')
   await page.keyboard.press('Escape')
   await expect(modal, 'Esc must close the zoom modal').toHaveCount(0, { timeout: 10_000 })
   await assertNoCrash()
@@ -519,6 +572,26 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const details = pane.locator('details')
   await expect(details, 'the details run must render as a real element').toHaveCount(1, { timeout: 30_000 })
   await expect(details.locator('summary'), 'the details summary must render').toHaveCount(1)
+  // Direct child, not merely a descendant: HTML only honors a summary there,
+  // so a block-leaf wrapper in between silently swaps in the UA's own label.
+  await expect(
+    details.locator(':scope > summary'),
+    'the summary must be a direct child of <details>',
+  ).toHaveCount(1)
+  await expect(
+    details.locator(':scope > summary'),
+    'the authored summary text must be the disclosure label',
+  ).toHaveText('Steps')
+  // The bare anchor line: the id must survive as a real anchor, and the stray
+  // `</a>` half of the pair must never be printed as source text.
+  await expect(
+    pane.locator('a#readme-anchor'),
+    'an author anchor must keep its id for deep links',
+  ).toHaveCount(1)
+  await expect(
+    pane.locator('p:has(a#readme-anchor)'),
+    'the stray close tag must not be printed next to its anchor',
+  ).not.toContainText('</a>')
   await expect(
     details.locator('h3', { hasText: 'Inside' }),
     'the heading between the details tags must nest inside the element',
@@ -589,6 +662,61 @@ test('conservative auto: URL stamps alone never modify the layout; plugin chrome
     return false
   })
   expect(hasNoDragRule, 'the bundle must ship the drag-region opt-out rule').toBe(true)
+  // The plugin host is a direct body child, so on macOS it picks up the
+  // shell's blanket `body > :not(#root) { no-drag }` and — because app-region
+  // ignores pointer-events — the viewport-sized layer inside it cancelled every
+  // window-drag strip beneath it (issue #772). A text match only proves the
+  // declaration shipped, so this probe reproduces the SHELL's two darwin rules
+  // verbatim, flips the platform attribute the shell stamps, and reads the
+  // COMPUTED property. Two things to know when reading the expectations below:
+  // the strip itself computes `drag` in every configuration (a fix validated
+  // against the strip alone proves nothing), and `[data-dsh-panel-host]` is NOT
+  // a body child (it lives inside the host), so its own value is pinned by the
+  // unit guard rather than by this probe — see the `layer` expectation.
+  const regions = await page.evaluate(() => {
+    const style = document.createElement('style')
+    style.textContent = [
+      'html[data-platform=darwin] [data-window-drag]{-webkit-app-region:drag}',
+      'html[data-platform=darwin] body>:not(#root){-webkit-app-region:no-drag}',
+    ].join('\n')
+    const strip = document.createElement('div')
+    strip.setAttribute('data-window-drag', '')
+    strip.style.cssText = 'position:fixed;top:0;left:0;right:0;height:8px'
+    const probe = document.createElement('div')
+    document.head.appendChild(style)
+    // INSIDE #root: the shell's real drag strip is a frame child, not a body
+    // child — a body child would be caught by the blanket rule itself (it is
+    // id-bearing, so it outranks the `[data-window-drag]` rule).
+    const root = document.querySelector('#root')
+    ;(root ?? document.body).appendChild(strip)
+    const host = document.querySelector('[data-dsh-better-sidebar]')
+    const layer = document.querySelector('[data-dsh-panel-host]')
+    // This stamp-only page has no session, so the panel host has no child of
+    // its own; `probe` stands in for the workbench panel the same `> *`
+    // selector targets in a real session.
+    layer?.appendChild(probe)
+    const previous = document.documentElement.dataset.platform
+    document.documentElement.dataset.platform = 'darwin'
+    const read = (element: Element | null): string => element === null
+      ? 'missing'
+      : getComputedStyle(element).getPropertyValue('-webkit-app-region').trim()
+    const result = { strip: read(strip), host: read(host), layer: read(layer), layerChild: read(probe) }
+    probe.remove()
+    strip.remove()
+    style.remove()
+    if (previous === undefined) delete document.documentElement.dataset.platform
+    else document.documentElement.dataset.platform = previous
+    return result
+  })
+  expect(regions.strip, 'the drag strip itself must keep computing `drag`').toBe('drag')
+  expect(regions.host, 'the plugin host must not take the shell blanket no-drag').toBe('none')
+  // NOT discriminating here, and kept as a regression nail only: the layer is
+  // not a body child, and this engine does not propagate the property into it,
+  // so it reads `none` pre- and post-fix. Its rule is pinned by
+  // tests/panel-host-css.spec.ts; in Electron (#772's CDP reading) the layer
+  // DOES end up no-drag through that propagation.
+  expect(regions.layer, 'the panel layer must keep its own reset').toBe('none')
+  expect(regions.layerChild, 'panels stay no-drag so their controls keep receiving clicks').toBe('no-drag')
 })
 
 test('standard WCO geometry drives the strip reactively (issue #257)', async ({ page }) => {

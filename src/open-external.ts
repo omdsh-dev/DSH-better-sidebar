@@ -32,6 +32,14 @@ export function revealCommand(path: string, platform: NodeJS.Platform = process.
     // shell-free: a command shell would reinterpret valid path characters.
     case 'win32':
       return { command: 'explorer.exe', args: [`/select,${path}`] }
+    // Termux (the dominant Node runtime reporting platform "android") has no
+    // desktop file manager and no xdg-open; `termux-open` hands the path to
+    // Android's system open-with chooser. Fall through to the parent dir like
+    // Linux: Android has no select protocol either.
+    case 'android': {
+      const parent = parentOf(path)
+      return { command: 'termux-open', args: [parent ?? path] }
+    }
     default: {
       const parent = parentOf(path)
       return { command: 'xdg-open', args: [parent ?? path] }
@@ -48,6 +56,10 @@ export function urlCommand(url: string, platform: NodeJS.Platform = process.plat
     // `cmd /c start "" <url>` is the fallback if rundll32 misbehaves.
     case 'win32':
       return { command: 'rundll32.exe', args: ['url.dll,FileProtocolHandler', url] }
+    // Termux: `termux-open-url` is the Android intent dispatcher for URLs
+    // (termux-open would route through the content chooser first).
+    case 'android':
+      return { command: 'termux-open-url', args: [url] }
     default:
       return { command: 'xdg-open', args: [url] }
   }
