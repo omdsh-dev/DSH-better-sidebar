@@ -9,7 +9,7 @@
  * The command builders are pure — the platform is injectable — so every
  * per-platform branch is unit-testable without spawning anything.
  */
-import { spawn } from 'node:child_process'
+import { spawn, type SpawnOptions } from 'node:child_process'
 import { parentOf, requireAbsolute } from './fs-tree.ts'
 import { SidebarError } from './wire.ts'
 
@@ -28,10 +28,11 @@ export function revealCommand(path: string, platform: NodeJS.Platform = process.
   switch (platform) {
     case 'darwin':
       return { command: 'open', args: ['-R', path] }
-    // Explorer expects `/select,<path>` as one argument. Keep the spawn
-    // shell-free: a command shell would reinterpret valid path characters.
+    // Explorer expects `/select,"<path>"` as one command-line token: quoting
+    // only the path keeps its legacy switch parser happy when the path has
+    // spaces. launchExternal preserves that exact spelling verbatim below.
     case 'win32':
-      return { command: 'explorer.exe', args: [`/select,${path}`] }
+      return { command: 'explorer.exe', args: [`/select,"${path}"`] }
     // Termux (the dominant Node runtime reporting platform "android") has no
     // desktop file manager and no xdg-open; `termux-open` hands the path to
     // Android's system open-with chooser. Fall through to the parent dir like
@@ -65,6 +66,18 @@ export function urlCommand(url: string, platform: NodeJS.Platform = process.plat
   }
 }
 
+/** Spawn options shared by external open actions. Windows Explorer's
+ * `/select,` parser needs the path-only quotes produced by revealCommand to
+ * reach it unchanged; other actions keep Node's normal argv quoting. */
+export function externalSpawnOptions(
+  action: OpenExternalAction,
+  platform: NodeJS.Platform = process.platform,
+): SpawnOptions {
+  const options: SpawnOptions = { detached: true, stdio: 'ignore' }
+  if (platform === 'win32' && action === 'reveal') options.windowsVerbatimArguments = true
+  return options
+}
+
 /** Validate a URL-scheme open target: a parseable custom-scheme URL (never
  *  http/https — those would only dump the URL into a browser tab). */
 export function validateExternalUrl(raw: string): string {
@@ -94,7 +107,7 @@ export function launchExternal(action: OpenExternalAction, value: string): { sta
   const spec = action === 'reveal'
     ? revealCommand(requireAbsolute(value), platform)
     : urlCommand(validateExternalUrl(value), platform)
-  const child = spawn(spec.command, spec.args, { detached: true, stdio: 'ignore' })
+  const child = spawn(spec.command, spec.args, externalSpawnOptions(action, platform))
   child.on('error', () => { /* opener missing/denied: handled by the OS */ })
   child.unref()
   return { started: true }

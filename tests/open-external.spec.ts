@@ -5,7 +5,13 @@
  * OS outcome is not testable here.
  */
 import { describe, expect, it } from 'vitest'
-import { launchExternal, revealCommand, urlCommand, validateExternalUrl } from '../src/open-external.ts'
+import {
+  externalSpawnOptions,
+  launchExternal,
+  revealCommand,
+  urlCommand,
+  validateExternalUrl,
+} from '../src/open-external.ts'
 import { SidebarError } from '../src/wire.ts'
 
 describe('revealCommand', () => {
@@ -13,10 +19,10 @@ describe('revealCommand', () => {
     expect(revealCommand('/a/b.txt', 'darwin')).toEqual({ command: 'open', args: ['-R', '/a/b.txt'] })
   })
 
-  it('win32: passes /select,<path> as one shell-free Explorer argument', () => {
-    expect(revealCommand('C:\\work\\two words\\a.txt', 'win32')).toEqual({
+  it('win32: quotes only the Explorer reveal path and keeps special characters literal', () => {
+    expect(revealCommand('C:\\work\\two words (x) & y\\file #x.txt', 'win32')).toEqual({
       command: 'explorer.exe',
-      args: ['/select,C:\\work\\two words\\a.txt'],
+      args: ['/select,"C:\\work\\two words (x) & y\\file #x.txt"'],
     })
   })
 
@@ -28,6 +34,22 @@ describe('revealCommand', () => {
   it('android (Termux): `termux-open` hands the parent dir to the Android chooser', () => {
     expect(revealCommand('/a/b.txt', 'android')).toEqual({ command: 'termux-open', args: ['/a'] })
     expect(revealCommand('/', 'android')).toEqual({ command: 'termux-open', args: ['/'] })
+  })
+})
+
+describe('externalSpawnOptions', () => {
+  it('win32 reveal: preserves the path-only Explorer quotes verbatim', () => {
+    expect(externalSpawnOptions('reveal', 'win32')).toEqual({
+      detached: true,
+      stdio: 'ignore',
+      windowsVerbatimArguments: true,
+    })
+  })
+
+  it('keeps Node argv quoting for URL opens and non-Windows reveals', () => {
+    expect(externalSpawnOptions('url', 'win32')).toEqual({ detached: true, stdio: 'ignore' })
+    expect(externalSpawnOptions('reveal', 'darwin')).toEqual({ detached: true, stdio: 'ignore' })
+    expect(externalSpawnOptions('reveal', 'linux')).toEqual({ detached: true, stdio: 'ignore' })
   })
 })
 
