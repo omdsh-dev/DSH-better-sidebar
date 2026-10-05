@@ -26,6 +26,18 @@ function fakeGit(stdoutText = '', stderrText = '', code = 0): EventEmitter {
   return child
 }
 
+/** The `-c key=value` overrides runGit put in front of the subcommand.
+ *  Collected by name rather than by index: the flag set grows whenever a new
+ *  global `-c` lands (color.ui, core.quotePath, the per-invocation
+ *  safe.directory…), so a positional slice pins a shape nothing depends on. */
+function configFlagsOf(args: string[] | undefined): string[] {
+  const flags: string[] = []
+  for (let at = 0; at < (args?.length ?? 0); at += 1) {
+    if (args?.[at] === '-c') flags.push(args[at + 1] ?? '')
+  }
+  return flags
+}
+
 /** git ≥ 2.35.2's refusal, verbatim (the hint text included). */
 const DUBIOUS = "fatal: detected dubious ownership in repository at '/srv/site'\n"
   + 'To add an exception for this directory, call:\n\n'
@@ -45,12 +57,14 @@ describe('dubious-ownership retry (issue #690)', () => {
     // The first attempt is the argv a healthy repository always got...
     expect(calls[0]).toEqual([
       '-C', '/srv/site/wp-content', '--no-pager', '-c', 'color.ui=false',
+      '-c', 'core.quotePath=false',
       'rev-parse', '--is-inside-work-tree',
     ])
     // ...and the retry trusts exactly what git named (the repository ROOT, not
     // the cwd — the refusal names the root) plus the cwd, and never '*'.
     expect(calls[1]).toEqual([
       '-C', '/srv/site/wp-content', '--no-pager', '-c', 'color.ui=false',
+      '-c', 'core.quotePath=false',
       '-c', 'safe.directory=/srv/site',
       '-c', 'safe.directory=/srv/site/wp-content',
       'rev-parse', '--is-inside-work-tree',
@@ -88,7 +102,7 @@ describe('dubious-ownership retry (issue #690)', () => {
 
     await expect(isGitRepo('/srv/site')).resolves.toBe(true)
 
-    expect(calls[1]?.slice(5, 7)).toEqual(['-c', 'safe.directory=/srv/site'])
+    expect(configFlagsOf(calls[1])).toContain('safe.directory=/srv/site')
     expect(calls[1]?.some(arg => arg.includes('safe.directory=*'))).toBe(false)
   })
 
