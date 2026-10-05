@@ -539,6 +539,67 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const modal = page.locator('[data-mermaid-modal]')
   await pane.locator('[data-mermaid-diagram] svg').first().click()
   await expect(modal, 'clicking the diagram must open the zoom modal').toHaveCount(1, { timeout: 10_000 })
+  // Issue #683: the modal must zoom the CONTENT while the painted card stays
+  // put. Measured in the real browser because this is a LAYOUT defect — jsdom
+  // reports every rect as 0 and cannot tell the two apart. The pre-fix code
+  // painted the card on the transformed <svg>, so three "+" steps grew the
+  // white sheet 1.728× together with the diagram and the content:viewport
+  // ratio never changed ("跟没有缩放没区别"); the same three steps must now
+  // leave the viewport's box byte-identical.
+  const zoomGeometry = await page.evaluate(() => {
+    const viewport = document.querySelector<HTMLElement>('[data-mermaid-viewport]')
+    const stage = viewport?.parentElement ?? null
+    const svg = viewport?.querySelector('svg') ?? null
+    const box = (element: Element | null): { width: number; height: number } => {
+      const rect = element?.getBoundingClientRect()
+      return { width: Math.round(rect?.width ?? 0), height: Math.round(rect?.height ?? 0) }
+    }
+    const scaleOf = (element: Element | null): number => {
+      const matrix = /matrix\(([-\d.]+)/.exec(element === null ? '' : getComputedStyle(element).transform)
+      return matrix === null ? 1 : Number(matrix[1])
+    }
+    const before = {
+      stage: box(stage), viewport: box(viewport), svg: box(svg), scale: scaleOf(svg),
+      stageBackground: stage === null ? '' : getComputedStyle(stage).backgroundColor,
+      svgBackground: svg === null ? '' : getComputedStyle(svg).backgroundColor,
+      svgPadding: svg === null ? '' : getComputedStyle(svg).padding,
+    }
+    const zoomIn = [...document.querySelectorAll<HTMLButtonElement>('[data-mermaid-modal] button')]
+      .find(button => button.textContent === '+')
+    for (let step = 0; step < 3; step += 1) zoomIn?.click()
+    const after = { stage: box(stage), viewport: box(viewport), svg: box(svg), scale: scaleOf(svg) }
+    return { before, after }
+  })
+  expect(
+    zoomGeometry.before.scale,
+    'the modal must open framed at or below 1:1 instead of clipping the diagram at 100%',
+  ).toBeLessThanOrEqual(1)
+  expect(
+    zoomGeometry.before.svg.height,
+    'the framed diagram must fit inside the viewport',
+  ).toBeLessThanOrEqual(zoomGeometry.before.viewport.height + 1)
+  expect(
+    zoomGeometry.after.scale,
+    'the + button must scale the content up',
+  ).toBeGreaterThan(zoomGeometry.before.scale)
+  expect(zoomGeometry.after.svg, 'the content grows').not.toEqual(zoomGeometry.before.svg)
+  expect(
+    zoomGeometry.after.viewport,
+    'the viewport must NOT scale with the content (issue #683)',
+  ).toEqual(zoomGeometry.before.viewport)
+  expect(
+    zoomGeometry.after.stage,
+    'the painted card must NOT scale with the content either',
+  ).toEqual(zoomGeometry.before.stage)
+  expect(
+    zoomGeometry.before.stageBackground,
+    'the card surface belongs to the fixed stage',
+  ).not.toBe('rgba(0, 0, 0, 0)')
+  expect(
+    zoomGeometry.before.svgBackground,
+    'the transformed svg must carry no surface of its own',
+  ).toBe('rgba(0, 0, 0, 0)')
+  expect(zoomGeometry.before.svgPadding, 'nor the padding ring').toBe('0px')
   // While it is up, the modal is the plugin's OTHER viewport-sized BODY CHILD:
   // without the app-region reset the shell's blanket `body > :not(#root)`
   // no-drag makes it cancel every window-drag strip (and the macOS

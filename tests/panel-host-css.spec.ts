@@ -82,3 +82,44 @@ describe('panel host layer css', () => {
     }
   })
 })
+
+/**
+ * The mermaid zoom modal's surface must stay on the FIXED viewport, never on
+ * the element the modal transforms (issue #683).
+ *
+ * The white card used to be painted on the diagram's own `<svg>`, and the
+ * modal scales exactly that element — so every wheel step grew the white area
+ * together with the diagram and the content:viewport ratio never changed
+ * ("跟没有缩放没区别"). `mermaid.tsx` now transforms the content only; these
+ * assertions pin the CSS half, which is the half that silently regresses when
+ * someone moves the paint back for a cosmetic reason.
+ */
+describe('mermaid zoom modal surface css (issue #683)', () => {
+  /** Body of one rule, up to the un-indented closing brace. */
+  const ruleBody = (selector: string): string | undefined =>
+    new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([\\s\\S]*?)\\n\\}`)
+      .exec(stripComments(css))?.[1]
+
+  it('paints the card on the stage (the fixed viewport)', () => {
+    const stage = ruleBody('.mermaidModalStage')
+    expect(stage, 'the .mermaidModalStage rule must exist').toBeDefined()
+    expect(stage, 'the viewport owns the surface').toMatch(/background:\s*var\(--dsw-alias-/)
+    expect(stage, 'and the ring that survives zooming').toMatch(/padding:\s*16px/)
+  })
+
+  it('leaves the transformed svg with no surface of its own', () => {
+    const svg = ruleBody('.mermaidModalStage :global(svg)')
+    expect(svg, 'the .mermaidModalStage svg rule must exist').toBeDefined()
+    for (const paint of ['background', 'padding', 'border-radius']) {
+      expect(svg, `the transformed svg must not carry ${paint} (issue #683)`).not.toContain(paint)
+    }
+    expect(svg, 'the content still scales about its own centre').toMatch(/transform-origin:\s*center center/)
+  })
+
+  it('clips the transformed svg inside the padding ring', () => {
+    const viewport = ruleBody('.mermaidViewport')
+    expect(viewport, 'the .mermaidViewport rule must exist').toBeDefined()
+    expect(viewport).toMatch(/overflow:\s*hidden/)
+    expect(viewport).toMatch(/cursor:\s*grab/)
+  })
+})
