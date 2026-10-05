@@ -5,12 +5,13 @@
  * a previewed `.md` (`![alt](./img.png)`, an absolute `/cwd/img.png`, or a
  * reference definition) would otherwise fall back to its alt text. This
  * dependency-free helper rewrites those destinations into absolute
- * `/sidebar/file` media URLs (prefixed with the GUI's own origin) so
- * `MarkdownText` accepts them; the host media route then serves the bytes,
- * still restricted to files under the session cwd.
+ * `/sidebar/file` media URLs, resolved against the injected transport base so
+ * a reverse-proxy prefix survives; `MarkdownText` accepts them because they are
+ * absolute http(s), and the host media route then serves the bytes.
  */
 
 import type { SessionScope } from './api.ts'
+import { hostRouteUrl } from './host-route-url.ts'
 import { isAbsolutePath } from './paths.ts'
 
 /**
@@ -61,16 +62,16 @@ function normalizeLocalPath(path: string): string {
  * @param text - The raw markdown source (inline + reference images).
  * @param scope - The session scope (sessionId + cwd) for the media route.
  * @param filePath - The absolute path of the opened `.md` file.
- * @param origin - The GUI's own origin (`window.location.origin`); injected
- * so the core rewrite stays pure and unit-testable.
+ * @param baseUrl - The injected transport base (`hostTransportBase()` in the
+ * renderers); injected so the core rewrite stays pure and unit-testable.
  * @returns The markdown with local image destinations rewritten in place.
  */
 /**
  * Resolve one media destination against the session's media route: local
- * (relative or absolute) paths become absolute `/sidebar/file` URLs (prefixed
- * with the GUI's own origin so the shared MarkdownText http(s) allowlist
- * accepts them), while remote URLs, `#`-anchors and empty destinations are
- * returned untouched. Shared by the markdown image rewriter below and by the
+ * (relative or absolute) paths become absolute `/sidebar/file` URLs, resolved
+ * through `baseUrl` so the shared MarkdownText http(s) allowlist accepts them
+ * AND a reverse-proxy prefix is preserved, while remote URLs, `#`-anchors and
+ * empty destinations are returned untouched. Shared by the markdown image rewriter below and by the
  * preview's raw-HTML sanitizer (`markdown-html.tsx`, which meets the same
  * allowlist when rendering `<img src="./x.png">` inside HTML blocks).
  */
@@ -78,7 +79,7 @@ export function resolveLocalMediaDest(
   dest: string,
   scope: SessionScope,
   filePath: string,
-  origin: string,
+  baseUrl: string,
 ): string {
   const trimmed = dest.trim()
   if (trimmed === '' || trimmed.startsWith('#')) return dest
@@ -87,19 +88,20 @@ export function resolveLocalMediaDest(
   const directory = slash === -1 ? '/' : filePath.slice(0, slash + 1)
   const candidate = isAbsolutePath(trimmed) ? trimmed : directory + trimmed
   // Mirrors api.ts fileUrl/mediaUrl for the /sidebar/file media route, made
-  // absolute so the shared MarkdownText http(s) allowlist accepts it.
+  // absolute (and prefix-preserving) so the shared MarkdownText http(s)
+  // allowlist accepts it.
   const params = new URLSearchParams({ sessionId: scope.sessionId, path: normalizeLocalPath(candidate) })
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
-  return `${origin}/sidebar/file?${params.toString()}`
+  return hostRouteUrl(`sidebar/file?${params.toString()}`, baseUrl).href
 }
 
 export function rewriteLocalImageUrls(
   text: string,
   scope: SessionScope,
   filePath: string,
-  origin: string,
+  baseUrl: string,
 ): string {
-  const resolve = (dest: string): string => resolveLocalMediaDest(dest, scope, filePath, origin)
+  const resolve = (dest: string): string => resolveLocalMediaDest(dest, scope, filePath, baseUrl)
 
   // Mask fenced code blocks and inline code spans so image-looking text
   // inside documentation examples is never rewritten. The sentinel uses a

@@ -235,6 +235,9 @@ describe('FileTree zip and download', () => {
     expect(fetchMock).toHaveBeenCalledWith('/sidebar/archive/job-1')
     expect(downloads).toEqual(['blob:mock-1|archive.zip'])
     expect(progressLine(harness.container)).toBeNull()
+    // The poll carries the session scope: the host requires BOTH keys on
+    // `archive.status`, so a bare `{ id }` is refused with a 400.
+    expect(archiveStatus).toHaveBeenCalledWith({ sessionId: 's1', cwd: '/tmp' }, 'job-1')
     // The object URL is released on the next task.
     await act(async () => { await vi.advanceTimersByTimeAsync(1) })
     expect(revokedUrls).toEqual(['blob:mock-1'])
@@ -342,6 +345,40 @@ describe('FileTree zip and download', () => {
     expect(harness.container.querySelector('[role="alert"]')?.textContent)
       .toContain('Archive failed: HTTP 500')
     expect(downloads).toEqual([])
+  })
+
+  it('hands a ready job to the download exactly once, and stops polling first', async () => {
+    // The download is held open, so the 250ms poller would tick again while the
+    // GET is still in flight; `archiveStatus` keeps answering `ready`. The GET
+    // CONSUMES the task, so a second hand-off either double-downloads or reads a
+    // 404 and paints `zipFailed` beside a file that actually landed.
+    let releaseDownload: (response: Response) => void = () => {}
+    fetchMock.mockImplementation(async () => await new Promise<Response>(resolve => { releaseDownload = resolve }))
+    harness = await mountTree()
+    rightClick(rowByName(harness.container, 'sub'))
+    clickMenuitem('Zip and download')
+    await flush()
+    await poll()
+    await flush()
+    expect(archiveStatus).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(downloads).toEqual([])
+
+    // Three more poll intervals: no second download, no bogus failure strip.
+    await poll()
+    await poll()
+    await poll()
+    expect(archiveStatus).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(harness.container.querySelector('[role="alert"]')).toBeNull()
+
+    await act(async () => {
+      releaseDownload({ ok: true, status: 200, blob: async () => new Blob(['zip-bytes']) } as unknown as Response)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(downloads).toEqual(['blob:mock-1|sub.zip'])
+    expect(harness.container.querySelector('[role="alert"]')).toBeNull()
   })
 
   it('builds once while a job is in flight (double click guard)', async () => {

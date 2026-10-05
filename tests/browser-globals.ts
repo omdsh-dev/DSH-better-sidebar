@@ -28,6 +28,10 @@ const elementStub = (): Record<string, unknown> => ({
 
 if (g.document === undefined) {
   g.document = {
+    // desktop-env.ts's hostTransportBase() falls back to `document.baseURI`
+    // when the shell injected no __DSH_TRANSPORT__; the plugin's /sidebar/*
+    // URLs resolve against it, so specs pin one stable page base.
+    baseURI: 'http://localhost/',
     createElement: () => elementStub(),
     createDocumentFragment: () => elementStub(),
     addEventListener: () => {},

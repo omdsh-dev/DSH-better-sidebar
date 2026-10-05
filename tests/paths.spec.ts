@@ -1,7 +1,9 @@
+import './browser-globals.ts'
 import { describe, expect, it } from 'vitest'
-import { isAbsolutePath, relativeTo } from '../src/client/paths.ts'
+import { decodeHtmlUrl } from '../src/html-route.ts'
+import { isAbsolutePath, relativeTo, workspaceRelativePath } from '../src/client/paths.ts'
 import { resolveSidebarPath } from '../src/client/paths.ts'
-import { htmlUrl } from '../src/client/api.ts'
+import { downloadUrl, htmlUrl, mediaUrl } from '../src/client/api.ts'
 
 describe('path helpers', () => {
   it('derives relative paths under the cwd (and "." for the cwd itself)', () => {
@@ -56,14 +58,83 @@ describe('path helpers', () => {
     expect(isAbsolutePath('rel/x.ts')).toBe(false)
   })
 
+  it('treats ~ as home-absolute, never a session-relative path (#713)', () => {
+    expect(isAbsolutePath('~')).toBe(true)
+    expect(isAbsolutePath('~/notes/x.md')).toBe(true)
+    expect(isAbsolutePath('~\\notes\\x.md')).toBe(true)
+    // `~other-user` is NOT the home shorthand; it stays relative-shaped.
+    expect(isAbsolutePath('~other/x.ts')).toBe(false)
+  })
+
   it('htmlUrl always marks UNC paths (platform-neutral marker)', () => {
     // The marker is platform-neutral now: the host resolves the decoded
     // '//server/share/...' form per-platform, so no cwd/OS signal is needed.
     expect(htmlUrl({ sessionId: 's' }, '\\\\server\\share\\proj\\a.html'))
-      .toBe('/sidebar/html/s//server/share/proj/a.html')
+      .toBe('http://localhost/sidebar/html/s//server/share/proj/a.html')
     expect(htmlUrl({ sessionId: 's', cwd: '/home/me' }, '//server/share/a.html'))
-      .toBe('/sidebar/html/s//server/share/a.html')
+      .toBe('http://localhost/sidebar/html/s//server/share/a.html')
     expect(htmlUrl({ sessionId: 's', cwd: '/home/me' }, '/home/me/index.html'))
-      .toBe('/sidebar/html/s/home/me/index.html')
+      .toBe('http://localhost/sidebar/html/s/home/me/index.html')
+  })
+})
+
+describe('preview URL path resolution', () => {
+  it.each([
+    ['/home/project', 'pages/report.html', '/home/project/pages/report.html'],
+    ['/home/project/', '报告 #1.html', '/home/project/报告 #1.html'],
+    ['C:\\work\\project', 'pages/report.html', 'C:/work/project/pages/report.html'],
+    ['\\\\server\\share\\project', 'report.html', '//server/share/project/report.html'],
+    ['/home/project', '/tmp/report.html', '/tmp/report.html'],
+  ])('resolves %s + %s before encoding', (cwd, path, expected) => {
+    const scope = { sessionId: 'session #1', cwd }
+    const decoded = decodeHtmlUrl(new URL(htmlUrl(scope, path), 'http://localhost').pathname)
+    expect(decoded).toEqual({ ok: true, ref: { sessionId: scope.sessionId, path: expected } })
+    for (const build of [mediaUrl, downloadUrl]) {
+      const url = new URL(build(scope, path), 'http://localhost')
+      expect(url.searchParams.get('path')?.replace(/\\/g, '/')).toBe(expected)
+      expect(url.searchParams.get('cwd')).toBe(cwd)
+      expect(url.searchParams.get('download')).toBe(build === downloadUrl ? '1' : null)
+    }
+  })
+
+  it('keeps nested relative assets in the same session and document directory', () => {
+    const page = new URL(htmlUrl({ sessionId: 's', cwd: '/work/project' }, 'pages/report.html'), 'http://localhost')
+    for (const [asset, expected] of [['./style.css', '/work/project/pages/style.css'], ['../img/pic.png', '/work/project/img/pic.png']] as const) {
+      expect(decodeHtmlUrl(new URL(asset, page).pathname)).toEqual({ ok: true, ref: { sessionId: 's', path: expected } })
+    }
+  })
+
+  it('leaves relative file queries for server resolution when cwd is unavailable', () => {
+    expect(new URL(mediaUrl({ sessionId: 's' }, 'pic.png'), 'http://localhost').searchParams.get('path')).toBe('pic.png')
+  })
+})
+
+describe('workspaceRelativePath', () => {
+  it.each([
+    ['/work', '/work/src/a.ts', 'src/a.ts'],
+    ['/work/', '/work', '.'],
+    ['/', '/src/a.ts', 'src/a.ts'],
+    ['/', '/', '.'],
+    ['C:\\Work', 'c:/work/SRC/a.ts', 'SRC/a.ts'],
+    ['C:\\Work\\', 'c:/WORK', '.'],
+    ['C:\\', 'c:/SRC/a.ts', 'SRC/a.ts'],
+    ['C:\\Work', 'c:/work/my dir\\a.ts', 'my dir/a.ts'],
+    ['\\\\server\\share\\Work', '//SERVER/share/work/src/a.ts', 'src/a.ts'],
+  ])('projects %s / %s', (root, path, expected) => {
+    expect(workspaceRelativePath(root, path)).toBe(expected)
+  })
+
+  it.each([
+    [undefined, '/work/a.ts'],
+    ['', '/work/a.ts'],
+    ['work', '/work/a.ts'],
+    ['/work', '/outside/a.ts'],
+    ['/work', '/work-other/a.ts'],
+    ['/work', '/WORK/a.ts'],
+    ['/work', '/work/../outside/a.ts'],
+    ['/work', 'src/a.ts'],
+    ['C:/Work', 'D:/Work/a.ts'],
+  ])('refuses an unavailable root or unsafe projection %j / %s', (root, path) => {
+    expect(workspaceRelativePath(root, path)).toBeUndefined()
   })
 })

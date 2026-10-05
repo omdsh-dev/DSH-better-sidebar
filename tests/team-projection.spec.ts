@@ -104,6 +104,21 @@ describe('teamMembersOf', () => {
     expect(failed[0]?.status).toBe('failed')
   })
 
+  it('ignores the live channel residency when the summary says the agent is not running (issue #800)', () => {
+    // The live flag is the catalog's SESSION RESIDENCY: a retained session
+    // whose agent died in a crash-restart reads `running` there while the
+    // authoritative summary stays false. The summary wins.
+    const live: Record<string, SidebarChildLiveView | undefined> = { w: { running: true } }
+    const byId = { w: summary('w', { running: false }) }
+    expect(teamMembersOf(team(), live, byId)[0]?.status).toBe('idle')
+  })
+
+  it('takes the Summary running bit even when the live channel says otherwise', () => {
+    const live: Record<string, SidebarChildLiveView | undefined> = { w: { running: false } }
+    const byId = { w: summary('w', { running: true }) }
+    expect(teamMembersOf(team(), live, byId)[0]?.status).toBe('running')
+  })
+
   it('exposes the durable member error as the diagnostics list', () => {
     const rows = teamMembersOf(
       team({ members: [member({ phase: 'failed', error: 'spawn rejected' })] }),

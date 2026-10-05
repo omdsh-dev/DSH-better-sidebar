@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from '../src/fs-operations.ts'
+import { renameWorkspaceEntry, removeWorkspaceEntry, mkdirWorkspaceEntry, writeWorkspaceUpload } from '../src/fs-operations.ts'
 
 /** The test workspace root (each suite gets its own temp tree). */
 const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-upload-'))
@@ -260,5 +260,61 @@ describe('removeWorkspaceEntry', () => {
       .rejects.toMatchObject({ code: 'fs-error' })
     await expect(removeWorkspaceEntry({ cwd: root, path: join(root, 'no-such.txt') }))
       .rejects.toMatchObject({ code: 'fs-error' })
+  })
+})
+
+describe('session-relative targets (the shared resolution contract, #646)', () => {
+  it('uploads into a session-relative directory', async () => {
+    const ws = mkdtempSync(join(tmpdir(), 'dsh-sidebar-relupload-'))
+    try {
+      const { path, size } = await writeWorkspaceUpload({
+        cwd: ws,
+        dir: '.',
+        relativePath: 'up/rel.txt',
+        chunks: chunksOf('rel'),
+        limit: 64,
+      })
+      expect(path).toBe(join(ws, 'up', 'rel.txt'))
+      expect(size).toBe(3)
+      expect(readFileSync(path, 'utf8')).toBe('rel')
+      expect(tmpLeftovers(ws)).toEqual([])
+    } finally {
+      rmSync(ws, { recursive: true, force: true })
+    }
+  })
+
+  it('renames a session-relative row', async () => {
+    const ws = mkdtempSync(join(tmpdir(), 'dsh-sidebar-relrename-'))
+    try {
+      writeFileSync(join(ws, 'a.txt'), 'x')
+      const renamed = await renameWorkspaceEntry({ cwd: ws, path: 'a.txt', name: 'b.txt' })
+      expect(renamed.path).toBe(join(ws, 'b.txt'))
+      expect(existsSync(join(ws, 'b.txt'))).toBe(true)
+    } finally {
+      rmSync(ws, { recursive: true, force: true })
+    }
+  })
+
+  it('removes a session-relative row', async () => {
+    const ws = mkdtempSync(join(tmpdir(), 'dsh-sidebar-relremove-'))
+    try {
+      writeFileSync(join(ws, 'gone.txt'), 'x')
+      const removed = await removeWorkspaceEntry({ cwd: ws, path: 'gone.txt' })
+      expect(removed.path).toBe(join(ws, 'gone.txt'))
+      expect(existsSync(join(ws, 'gone.txt'))).toBe(false)
+    } finally {
+      rmSync(ws, { recursive: true, force: true })
+    }
+  })
+
+  it('mkdirs under a session-relative parent', async () => {
+    const ws = mkdtempSync(join(tmpdir(), 'dsh-sidebar-relmkdir-'))
+    try {
+      const made = await mkdirWorkspaceEntry({ cwd: ws, path: '.', name: 'sub' })
+      expect(made.path).toBe(join(ws, 'sub'))
+      expect(existsSync(join(ws, 'sub'))).toBe(true)
+    } finally {
+      rmSync(ws, { recursive: true, force: true })
+    }
   })
 })
