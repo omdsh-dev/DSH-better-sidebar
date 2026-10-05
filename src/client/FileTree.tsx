@@ -453,7 +453,7 @@ export function FileTree(props: {
   /** Whether the workspace is remote (appends the SSH hint to target labels). */
   openWithSsh?: boolean
   /** Open one plugin target externally (reveal or URL — the caller decides). */
-  onOpenWith?: (targetId: string, path: string) => void
+  onOpenWith?: (targetId: string, path: string) => void | Promise<void>
   /** Toggle one plugin target's pinned state (the submenu row's pushpin). */
   onToggleOpenWithPin?: (targetId: string) => void
   /** Insert `@<relative path>` into the composer draft (file vs directory). */
@@ -1137,8 +1137,9 @@ export function FileTree(props: {
 
   // ── Open in app ────────────────────────────────────────────────────────
   /** Report one failed hand-off (open / reveal / app listing) in the strip. */
-  const reportOpenFailure = useCallback((path: string): void => {
-    setActionError(t('openInAppFailed', { path }))
+  const reportOpenFailure = useCallback((path: string, error?: unknown): void => {
+    const detail = error instanceof Error ? error.message : error === undefined ? '' : String(error)
+    setActionError(`${t('openInAppFailed', { path })}${detail === '' ? '' : `: ${detail}`}`)
   }, [])
 
   /**
@@ -1981,7 +1982,14 @@ export function FileTree(props: {
           // The plugin's own targets share one id space (pinned rows and
           // submenu children alike), so the caller gets the target id + path.
           if (id.startsWith('open-with:')) {
-            onOpenWith?.(id.slice('open-with:'.length), target.path)
+            try {
+              const pending = onOpenWith?.(id.slice('open-with:'.length), target.path)
+              if (pending instanceof Promise) {
+                void pending.catch((error: unknown) => { reportOpenFailure(target.path, error) })
+              }
+            } catch (error: unknown) {
+              reportOpenFailure(target.path, error)
+            }
             return
           }
           if (id === 'reveal-in-file-manager') {

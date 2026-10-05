@@ -39,7 +39,7 @@ import { decodeHtmlUrl } from './html-route.ts'
 import { isTrustedApiRequest } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
 import { createDirectoryWatchers, type DirectoryWatchers } from './fs-watch.ts'
-import { launchExternal } from './open-external.ts'
+import { launchExternal, type BuiltinExternalEditor } from './open-external.ts'
 import { archiveNameOf, collectZipEntries, createArchiveTasks, disambiguateArchiveNames, respondArchiveDownload, type ArchiveTasks } from './archive-route.ts'
 import type { ZipEntry } from './zip.ts'
 import * as git from './git.ts'
@@ -944,18 +944,18 @@ function buildApi(
         throw new SidebarError('settings-rejected', error instanceof Error ? error.message : String(error), 400)
       }
     },
-    // External open for the file tree's "open with" menu: reveal a path in
-    // the OS file manager, or hand a custom-scheme URL (vscode://,
-    // cursor://, zed://, custom editors) to its registered handler. The
-    // client is a browser renderer where raw scheme navigation is
-    // unreliable, so the launch always goes through the host — the same
-    // fence as every other route, argv-only (no shell interpolation).
+    // 文件树的外部打开请求：内置编辑器保留启动身份，自定义协议交给系统处理。
     'open.external': (payload) => {
-      const record = payload as { action?: unknown } | null
-      const action = record?.action
-      if (action === 'reveal') return launchExternal('reveal', requireString(payload, 'path'))
-      if (action === 'url') return launchExternal('url', requireString(payload, 'url'))
-      throw new SidebarError('bad-request', 'action must be "reveal" or "url"')
+      const record = payload as { action?: unknown; editor?: unknown } | null
+      if (record?.action === 'reveal') return launchExternal({ action: 'reveal', path: requireString(payload, 'path') })
+      if (record?.action === 'url') return launchExternal({ action: 'url', url: requireString(payload, 'url') })
+      if (record?.action === 'editor') {
+        if (record.editor !== 'vscode' && record.editor !== 'cursor') {
+          throw new SidebarError('bad-request', 'editor must be "vscode" or "cursor"')
+        }
+        return launchExternal({ action: 'editor', editor: record.editor as BuiltinExternalEditor, path: requireString(payload, 'path') })
+      }
+      throw new SidebarError('bad-request', 'action must be "reveal", "editor" or "url"')
     },
     // Archive builds: collect the selection (fenced + disambiguated) and hand
     // the zipping to the background task table, so the tree can show progress

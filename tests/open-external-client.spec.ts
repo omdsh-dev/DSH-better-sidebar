@@ -68,6 +68,23 @@ describe('api.openExternal', () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe('http://localhost/sidebar/api/open.external')
   })
 
+  it('sends built-in editor requests to the host with editor identity intact', async () => {
+    const assign = vi.fn()
+    const fetchMock = hostOk()
+    vi.stubGlobal('window', { location: { assign } })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await api.openExternal({ action: 'editor', editor: 'vscode', path: 'C:\\Users\\u\\a.ts' })
+    await api.openExternal({ action: 'editor', editor: 'cursor', path: 'C:\\Users\\u\\b.ts' })
+
+    expect(assign).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls.map(call => JSON.parse(String(call[1]?.body)))).toEqual([
+      { action: 'editor', editor: 'vscode', path: 'C:\\Users\\u\\a.ts' },
+      { action: 'editor', editor: 'cursor', path: 'C:\\Users\\u\\b.ts' },
+    ])
+  })
+
   it('keeps reveal actions and http(s) lookalikes on the host opener', async () => {
     const assign = vi.fn()
     const fetchMock = hostOk()

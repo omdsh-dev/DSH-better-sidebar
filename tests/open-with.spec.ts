@@ -9,6 +9,7 @@ import {
   newCustomEditorId,
   normalizeUrlPath,
   openWithSshActive,
+  openWithRequest,
   openWithUrl,
   parseOpenWithConfig,
   resolveOpenWithTargets,
@@ -127,6 +128,36 @@ describe('openWithUrl', () => {
     const targets = resolveOpenWithTargets(config)
     expect(openWithUrl(targets[targets.length - 1]!, '/r/f.ts', config))
       .toBe('myfork://vscode-remote/ssh-remote+dev/r/f.ts')
+  })
+})
+
+describe('openWithRequest', () => {
+  const targets = resolveOpenWithTargets(parseOpenWithConfig({
+    customEditors: [{ id: 'custom', name: 'Custom', urlTemplate: 'custom://file/{path}', isVscodeFamily: true }],
+  }))
+  const target = (id: string): OpenWithTarget => {
+    const found = targets.find(item => item.id === id)
+    if (found === undefined) throw new Error(`no target ${id}`)
+    return found
+  }
+
+  it.each([
+    ['vscode', { action: 'editor', editor: 'vscode', path: 'C:\\Users\\u\\a.ts' }],
+    ['cursor', { action: 'editor', editor: 'cursor', path: 'C:\\Users\\u\\a.ts' }],
+  ] as const)('retains the local built-in %s editor identity', (id, request) => {
+    expect(openWithRequest(target(id), 'C:\\Users\\u\\a.ts', parseOpenWithConfig({}))).toEqual(request)
+  })
+
+  it('keeps SSH built-ins and custom editors on the URL request path', () => {
+    const config = parseOpenWithConfig({ sshHost: 'dev' })
+    expect(openWithRequest(target('vscode'), '/home/u/a.ts', config)).toEqual({
+      action: 'url',
+      url: 'vscode://vscode-remote/ssh-remote+dev/home/u/a.ts',
+    })
+    expect(openWithRequest(target('custom:custom'), '/home/u/a.ts', parseOpenWithConfig({}))).toEqual({
+      action: 'url',
+      url: 'custom://file//home/u/a.ts',
+    })
   })
 })
 

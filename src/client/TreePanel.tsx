@@ -67,7 +67,7 @@ export function TreePanel(props: {
   openWithTargets?: OpenWithTarget[]
   openWithPinned?: string[]
   openWithSsh?: boolean
-  onOpenWith?: (targetId: string, path: string) => void
+  onOpenWith?: (targetId: string, path: string) => void | Promise<void>
   onToggleOpenWithPin?: (targetId: string) => void
   /** Show the plugin's own open-with targets even when the host lists local
    *  applications for the path (the `openWithPluginTargets` setting; passed
