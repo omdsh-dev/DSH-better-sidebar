@@ -33,6 +33,7 @@
  * position (A|B + C + D → ACD|B).
  */
 import type { Context, SidebarConversation } from '../context-types.ts'
+import { workspaceRelativePath } from './paths.ts'
 
 /** A resolved composer caret/selection in draft coordinates. */
 export interface DraftCaret {
@@ -58,7 +59,7 @@ interface SpliceResult {
  */
 function spliceInsert(draft: string, text: string, caret: DraftCaret | null): SpliceResult {
   if (caret === null || draft === '') {
-    const next = draft.trim() === '' ? text : `${draft} ${text}`
+    const next = draft.trim() === '' ? text : `${draft}${/\s$/.test(draft) ? '' : ' '}${text}`
     return { draft: next, caretAfter: next.length }
   }
   const prefix = draft.slice(0, caret.start)
@@ -68,7 +69,7 @@ function spliceInsert(draft: string, text: string, caret: DraftCaret | null): Sp
   // (or the string edges) — mirrors how typing in the middle of a sentence
   // behaves.
   const left = prefix === '' || /\s$/.test(prefix) ? '' : ' '
-  const right = suffix === '' || /^\s/.test(suffix) ? '' : ' '
+  const right = suffix === '' || /^\s/.test(suffix) || /\s$/.test(text) ? '' : ' '
   return {
     draft: `${prefix}${left}${text}${right}${suffix}`,
     caretAfter: prefix.length + left.length + text.length,
@@ -195,20 +196,79 @@ export function appendToDraft(ctx: Context, sessionId: string, text: string): bo
 }
 
 /**
- * The DSH `@file` spelling for one relative path, mirroring the host grammar
+ * The DSH `@` spelling for one relative path, mirroring the host grammar
  * (`formatFileMention` in `@deepseek-ai/dsh-file-reference`): plain when
  * there is no whitespace, quoted when there is, and `undefined` when the
  * path contains a control character or an embedded quote the editor grammar
  * cannot represent.
+ *
+ * Files and folders share this one constructor so the quoting rule cannot
+ * drift between them. A folder spells the trailing slash *inside* the quotes
+ * (`@"my dir/"`, `@docs/`): the host's folder token matcher
+ * (`FOLDER_REF_RE` in `dsh-client-ui-conversation`) only accepts a quoted
+ * directory once the quote closes, and the message bubble's tokenizer
+ * (`@"[^"\n]+"` in `dsh-client-ui-primitives`) only classifies a closed
+ * quoted token as a folder — unquoted `@my dir/` decorates as a file chip
+ * covering just `my`. The host's own picker emits the *open* form
+ * (`@"my dir/`) while the user is still descending through completion; a
+ * programmatic reference is a finished mention, so it closes the quote.
  */
-export function fileMention(relativePath: string): { mention: string; label: string } | undefined {
+export function mentionFor(
+  relativePath: string,
+  kind: 'file' | 'folder',
+): { mention: string; label: string } | undefined {
   const path = relativePath.replace(/[\\/]+$/, '')
   // eslint-disable-next-line no-control-regex -- rejecting control characters is the point of this guard
   if (/[\u0000-\u001f\u007f-\u009f"]/u.test(path)) return undefined
-  const mention = /\s/u.test(path) ? `@"${path}"` : `@${path}`
+  const target = kind === 'folder' ? `${path}/` : path
+  const mention = /\s/u.test(target) ? `@"${target}"` : `@${target}`
   const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   const label = at === -1 ? path : path.slice(at + 1)
   return { mention, label }
+}
+
+/**
+ * A complete directory token (`@docs/`, `@"my dir/"`): the explorer inserts a
+ * finished mention, so the trailing slash sits inside the closing quote.
+ * Separators normalize to '/' first (the fs-tree spelling); the spelling
+ * itself is {@link mentionFor}'s single job, folder kind — this helper adds no
+ * quoting rule of its own.
+ */
+export function directoryMention(relativePath: string): string | undefined {
+  return mentionFor(relativePath.replace(/\\/g, '/'), 'folder')?.mention
+}
+
+/**
+ * Insert an explorer entry using WorkspaceView.path, selected by exact
+ * session membership (the same lookup as the native conversation shell).
+ * Read the public workspace snapshot at click time so reconnects and session
+ * changes cannot leave a captured root stale. Missing/unready membership or
+ * an unrepresentable path is a logged no-op; never guess from session cwd.
+ */
+export function insertWorkspaceReference(ctx: Context, sessionId: string, path: string, isDir: boolean): boolean {
+  try {
+    const snapshot = ctx.get('workspaces')?.list.getSnapshot()
+    const root = snapshot?.phase === 'ready' && snapshot.state === 'idle'
+      ? snapshot.items.find(workspace => workspace.sessionIds.includes(sessionId))?.path
+      : undefined
+    const relative = workspaceRelativePath(root, path)
+    if (relative === undefined) {
+      console.warn('[dsh-better-sidebar] reference insert skipped: workspace root unavailable or path outside workspace')
+      return false
+    }
+    const mention = isDir ? directoryMention(relative) : mentionFor(relative, 'file')?.mention
+    if (mention === undefined) {
+      console.warn('[dsh-better-sidebar] reference insert skipped: path cannot be represented as a mention')
+      return false
+    }
+    if (!isDir && insertFileReference(ctx, sessionId, relative)) return true
+    // The host adds space after a file chip, but not before it. Complete
+    // directory inserts need their own separator for the next @ click.
+    return appendToDraft(ctx, sessionId, isDir ? `${mention} ` : mention)
+  } catch (error) {
+    console.warn('[dsh-better-sidebar] workspace-reference insert failed:', error)
+    return false
+  }
 }
 
 /**
@@ -216,12 +276,12 @@ export function fileMention(relativePath: string): { mention: string; label: str
  * The chip displays `@<basename>` but serializes to `@<relative path>` on
  * send, so the reference stays a single link from trigger to basename.
  *
- * Directories are NOT handled here: DSH's folder grammar wants the trailing
- * slash as plain text (`@dir/`) so completion can descend, which
- * `appendToDraft` already covers.
+ * Directories keep the sidebar's plain-text completion behavior (`@dir/`)
+ * through `insertWorkspaceReference`. The rc.1 picker also supports folder
+ * chips on explicit selection; its drill action still inserts plain text.
  */
 export function insertFileReference(ctx: Context, sessionId: string, relativePath: string): boolean {
-  const reference = fileMention(relativePath)
+  const reference = mentionFor(relativePath, 'file')
   if (reference === undefined) return false
   try {
     const actx = ctx.sessions.scope(sessionId)

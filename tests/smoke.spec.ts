@@ -5,13 +5,15 @@
  */
 import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join, resolve as resolvePath } from 'node:path'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir, homedir } from 'node:os'
+import { dirname, join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { apply, FS_TREES_MAX_PATHS, mediaTypeForPath } from '../src/index.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import { encodeHtmlUrl } from '../src/html-route.ts'
+import { encodeText } from '../src/text-encoding.ts'
+import { downloadUrl, htmlUrl } from '../src/client/api.ts'
 import * as git from '../src/git.ts'
 import { listDirectory } from '../src/fs-tree.ts'
 import type { SidebarWebRoute, SidebarWebUpgradeRoute } from '../src/context-types.ts'
@@ -193,32 +195,59 @@ describe('host plugin smoke', () => {
 })
 
 /**
+ * Scratch-repository harness shared by the git tests. The fixture's commit
+ * identity comes from the GIT_AUTHOR / GIT_COMMITTER environment variables,
+ * confined to the fixture process: no git config is touched anywhere (the
+ * plugin never sets an identity, and neither does its test fixture).
+ */
+const FIXTURE_IDENTITY = {
+  GIT_AUTHOR_NAME: 'dsh-better-sidebar-test',
+  GIT_AUTHOR_EMAIL: 'test@dsh.invalid',
+  GIT_COMMITTER_NAME: 'dsh-better-sidebar-test',
+  GIT_COMMITTER_EMAIL: 'test@dsh.invalid',
+}
+
+/** Run one git command inside a fixture repository (throws on a non-zero exit). */
+const gitRun = (cwd: string, args: string[]): string => {
+  const result = spawnSync('git', ['-C', cwd, '--no-pager', '-c', 'color.ui=false', '-c', 'core.quotePath=false', ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, ...FIXTURE_IDENTITY },
+  })
+  if (result.status !== 0) {
+    throw new Error(result.stderr || `git ${args[0] ?? ''} exited with ${String(result.status)}`)
+  }
+  return result.stdout
+}
+
+/**
+ * A fresh repo on branch `main` holding the SAME file name at two levels:
+ * `README.md` and `pkg/README.md`, committed at `root-v1` / `pkg-v1` and then
+ * dirtied to `root-DIRTY` / `pkg-DIRTY`. This is the #765 collision — a
+ * session whose cwd is `<repo>/pkg` sends the repository-root-relative status
+ * path `README.md`, which also names a file one level below it.
+ */
+const makeNestedScratchRepo = (): string => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-git-nested-'))
+  gitRun(dir, ['init', '-q'])
+  // The same eol pin `makeScratchRepo` documents: the content assertions in
+  // the nested-cwd tests are byte-exact too.
+  gitRun(dir, ['config', 'core.autocrlf', 'false'])
+  gitRun(dir, ['checkout', '-q', '-b', 'main'])
+  writeFileSync(join(dir, 'README.md'), 'root-v1\n')
+  mkdirSync(join(dir, 'pkg'))
+  writeFileSync(join(dir, 'pkg', 'README.md'), 'pkg-v1\n')
+  gitRun(dir, ['add', '-A'])
+  gitRun(dir, ['commit', '-q', '-m', 'base'])
+  writeFileSync(join(dir, 'README.md'), 'root-DIRTY\n')
+  writeFileSync(join(dir, 'pkg', 'README.md'), 'pkg-DIRTY\n')
+  return dir
+}
+
+/**
  * Destructive git operations (discard / revert / cherry-pick) run against a
- * throwaway repository under the OS temp dir — never the plugin repo. The
- * fixture's commit identity comes from the GIT_AUTHOR / GIT_COMMITTER
- * environment variables, confined to the fixture process: no git config is
- * touched anywhere (the plugin never sets an identity, and neither does its
- * test fixture).
+ * throwaway repository under the OS temp dir — never the plugin repo.
  */
 describe('git destructive operations (scratch repository)', () => {
-  const FIXTURE_IDENTITY = {
-    GIT_AUTHOR_NAME: 'dsh-better-sidebar-test',
-    GIT_AUTHOR_EMAIL: 'test@dsh.invalid',
-    GIT_COMMITTER_NAME: 'dsh-better-sidebar-test',
-    GIT_COMMITTER_EMAIL: 'test@dsh.invalid',
-  }
-
-  const gitRun = (cwd: string, args: string[]): string => {
-    const result = spawnSync('git', ['-C', cwd, '--no-pager', '-c', 'color.ui=false', ...args], {
-      encoding: 'utf8',
-      env: { ...process.env, ...FIXTURE_IDENTITY },
-    })
-    if (result.status !== 0) {
-      throw new Error(result.stderr || `git ${args[0] ?? ''} exited with ${String(result.status)}`)
-    }
-    return result.stdout
-  }
-
   /** A fresh repo on branch `main` with one committed file `a.txt`. */
   const makeScratchRepo = (): string => {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-git-'))
@@ -253,6 +282,30 @@ describe('git destructive operations (scratch repository)', () => {
       const staged = await git.diff(dir, 'a.txt', true)
       expect(staged).toContain('-two')
       expect(staged).toContain('+CHANGED')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('discards the repo-root file, not the same-named one under the session cwd (#765)', async () => {
+    // The changes tree's rows carry REPOSITORY-root-relative paths, so a
+    // session whose cwd is `<repo>/pkg` still means `<repo>/README.md` when
+    // its row says `README.md`. Resolving that name session-relative first
+    // restored the same-named file one level down and left the file the row
+    // actually named dirty (the destructive half of #765).
+    const dir = makeNestedScratchRepo()
+    try {
+      const route = mountWithSettings()
+      const result = await invoke(route, 'git.discard', {
+        sessionId: 's-nested',
+        cwd: join(dir, 'pkg'),
+        path: 'README.md',
+      })
+      expect(result.ok).toBe(true)
+      expect(readFileSync(join(dir, 'README.md'), 'utf8')).toBe('root-v1\n')
+      // The same-named file under the session cwd was never the target.
+      expect(readFileSync(join(dir, 'pkg', 'README.md'), 'utf8')).toBe('pkg-DIRTY\n')
+      expect(gitRun(dir, ['status', '--porcelain'])).toBe(' M pkg/README.md\n')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -296,6 +349,42 @@ describe('git destructive operations (scratch repository)', () => {
       // An unknown revision fails before touching anything.
       await expect(git.revert(dir, 'deadbeef00000000000000000000000000000000')).rejects.toThrow()
       await expect(git.cherryPick(dir, 'deadbeef00000000000000000000000000000000')).rejects.toThrow()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('never parses a revision-shaped operand as a git option', async () => {
+    const dir = makeScratchRepo()
+    try {
+      const hash = (await git.log(dir))[0]!.hashFull
+      // Every revision form the UI actually sends must keep working.
+      await expect(git.show(dir, 'HEAD', 'a.txt')).resolves.toContain('one')
+      await expect(git.show(dir, hash, 'a.txt')).resolves.toContain('one')
+      await expect(git.commitDiff(dir, hash)).resolves.toContain('a.txt')
+      // Operand-shaped option strings must NOT be honoured as flags. Before
+      // --end-of-options, `show(dir, '--stat', ...)` was consumed as a flag and
+      // returned empty, blanking the Changes tab's diff/blame panes.
+      for (const hostile of ['--stat', '--output=nul', '-n', '--no-color']) {
+        const content = await git.show(dir, hostile, 'a.txt')
+        expect(content, hostile).toBeNull()
+      }
+      await expect(git.commitDiff(dir, '--stat')).rejects.toThrow()
+      await expect(git.revert(dir, '--abort')).rejects.toThrow()
+      await expect(git.cherryPick(dir, '--abort')).rejects.toThrow()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the index revision selector (:0) working', async () => {
+    // `:0` is git's own index syntax and the UI uses it for the worktree side
+    // of a diff, so the operand guard must not reject it.
+    const dir = makeScratchRepo()
+    try {
+      writeFileSync(join(dir, 'a.txt'), 'staged-change\n')
+      gitRun(dir, ['add', 'a.txt'])
+      await expect(git.show(dir, ':0', 'a.txt')).resolves.toContain('staged-change')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -355,15 +444,69 @@ describe('session cwd resolution over the API route', () => {
   }
 
   const invokeGet = async (route: SidebarWebRoute, url: string): Promise<{ status: number; body: string }> => {
-    const out: { status: number; body: string } = { status: 200, body: '' }
+    return (await invokeGetFull(route, url))
+  }
+
+  /** invokeGet plus the response headers (for header contracts). */
+  const invokeGetFull = async (route: SidebarWebRoute, url: string): Promise<{ status: number; body: string; headers: Record<string, string> }> => {
+    const out: { status: number; body: string; headers: Record<string, string> } = { status: 200, body: '', headers: {} }
     const req = { method: 'GET', url, headers: { host: '127.0.0.1:3080' } } as never
     const res = {
-      writeHead: (status: number) => { out.status = status },
+      writeHead: (status: number, headers?: Record<string, string>) => {
+        out.status = status
+        if (headers !== undefined) out.headers = headers
+      },
       end: (chunk: unknown) => { out.body += String(chunk ?? '') },
     } as never
     await route.handler(req, res)
     return out
   }
+
+  it('loads branches and history when switching child repositories and their linked checkouts', async () => {
+    const scratch = realpathSync.native(mkdtempSync(join(tmpdir(), 'sidebar-multi-repo-')))
+    const cwd = join(scratch, 'workspace')
+    mkdirSync(cwd)
+    const run = (dir: string, args: string[]): void => {
+      const result = spawnSync('git', ['-C', dir, '-c', 'user.name=Test', '-c', 'user.email=test@dsh.invalid', ...args], { encoding: 'utf8' })
+      if (result.status !== 0) throw new Error(result.stderr)
+    }
+    const a = join(cwd, 'a')
+    const b = join(cwd, 'b')
+    const linked = join(scratch, 'b-linked')
+    const unrelated = join(scratch, 'unrelated')
+    try {
+      for (const [path, branch] of [[a, 'a-main'], [b, 'b-main'], [unrelated, 'other']]) {
+        run(scratch, ['init', '-q', path!])
+        run(path!, ['checkout', '-q', '-b', branch!])
+        run(path!, ['commit', '-q', '--allow-empty', '-m', branch!])
+      }
+      run(b, ['worktree', 'add', '-q', '-b', 'b-linked', linked])
+      const route = mount({ sessions: { get: () => ({ header: { cwd } }) } })
+      const base = { sessionId: 'multi', cwd }
+      expect(await invoke(route, 'git.log', base)).toMatchObject({ ok: true, value: [{ subject: 'a-main' }] })
+      // Match the UI: inventory first, then both repoRoot and worktree on
+      // derived requests. Switching back used to fail just like switching away.
+      for (const [repoRoot, worktree, branch, subject] of [
+        [b, b, 'b-main', 'b-main'],
+        [a, a, 'a-main', 'a-main'],
+        [b, linked, 'b-linked', 'b-main'],
+      ]) {
+        expect(await invoke(route, 'git.worktrees', { ...base, repoRoot })).toMatchObject({ ok: true })
+        const payload = { ...base, repoRoot, worktree }
+        // Primary status omits worktree, but must still select the child.
+        const statusPayload = worktree === repoRoot ? { ...base, repoRoot } : payload
+        expect(await invoke(route, 'git.status', statusPayload)).toMatchObject({ ok: true, value: { branch } })
+        expect(await invoke(route, 'git.branch', payload)).toMatchObject({ ok: true, value: { current: branch } })
+        expect(await invoke(route, 'git.log', { ...payload, count: 1, skip: 0 })).toMatchObject({ ok: true, value: [{ subject }] })
+        expect(await invoke(route, 'git.log', { ...payload, count: 1, skip: 1 })).toMatchObject({ ok: true, value: [] })
+      }
+      for (const worktree of [a, unrelated]) {
+        expect(await invoke(route, 'git.log', { ...base, repoRoot: b, worktree })).toMatchObject({ ok: false })
+      }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true })
+    }
+  })
 
   it('uses the client summary cwd while the session is detached', async () => {
     const route = mount()
@@ -379,6 +522,37 @@ describe('session cwd resolution over the API route', () => {
     const result = await invoke(route, 'session.cwd', { sessionId: 's-unknown' })
     expect(result.ok).toBe(true)
     expect(result.value?.cwd).toBe(process.cwd())
+  })
+
+  it('answers 404 for Object.prototype member names instead of resolving them as methods', async () => {
+    // The dispatch table is an object literal, so a bare lookup used to find
+    // Object.prototype members and treat them as handlers: `constructor`
+    // answered 200 {}, `toString` answered 200 "[object Undefined]", and
+    // `valueOf` / `hasOwnProperty` answered 500. All must be the documented 404.
+    const route = mount()
+    for (const method of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__']) {
+      const result = await invoke(route, method, {})
+      expect(result, method).toMatchObject({ ok: false, status: 404, error: { code: 'not-found' } })
+    }
+    // A genuinely unknown method keeps its existing 404 contract.
+    const unknown = await invoke(route, 'no-such-method', {})
+    expect(unknown).toMatchObject({ ok: false, status: 404, error: { code: 'not-found' } })
+  })
+
+  it('reports a git failure as a 4xx git error, not an internal 500', async () => {
+    // `GitCommandError` used to fall through to the generic branch and surface
+    // as 500 "internal", which reads as a plugin crash and hid the localized
+    // not-a-repository copy the client already renders. A non-repository cwd
+    // must answer 409 not-repo.
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-sidebar-git-notrepo-'))
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: dir } }) } })
+      const notRepo = await invoke(route, 'git.branch', { sessionId: 's', cwd: dir })
+      expect(notRepo).toMatchObject({ ok: false, status: 409, error: { code: 'not-repo' } })
+      expect(notRepo.error?.message).not.toContain('internal')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('resolves a cold (detached) session cwd through the persistence index', async () => {
@@ -462,6 +636,28 @@ describe('session cwd resolution over the API route', () => {
     expect(typeof value.value?.diff).toBe('string')
   })
 
+  it('git.diff previews the repo-root file when the session cwd holds a same-named one (#765)', async () => {
+    // Same rows, but the collision is real: `<repo>/pkg/README.md` EXISTS, so
+    // a session-relative first resolution previewed that file's change while
+    // the row named `<repo>/README.md` (the preview half of #765).
+    const dir = makeNestedScratchRepo()
+    try {
+      const route = mount({
+        sessions: {
+          get: () => ({ header: { cwd: join(dir, 'pkg') } }),
+        },
+      })
+      const result = await invoke(route, 'git.diff', { sessionId: 's-nested', path: 'README.md', staged: false })
+      expect(result.ok).toBe(true)
+      const diff = (result as unknown as { value?: { diff: string } }).value?.diff ?? ''
+      expect(diff).toContain('a/README.md b/README.md')
+      expect(diff).toContain('+root-DIRTY')
+      expect(diff).not.toContain('pkg-DIRTY')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('fs.read resolves repo-relative paths (untracked diff fallback)', async () => {
     const route = mount({
       sessions: {
@@ -543,6 +739,137 @@ describe('session cwd resolution over the API route', () => {
     }
   })
 
+  it('serves relative previews and assets without rewriting external absolute paths', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-preview-paths-'))
+    const workspace = join(root, 'workspace')
+    const outside = join(root, 'outside')
+    mkdirSync(join(workspace, 'pages'), { recursive: true })
+    mkdirSync(outside)
+    writeFileSync(join(workspace, 'pages', 'report.html'), '<link rel="stylesheet" href="./style.css"><p>workspace</p>')
+    writeFileSync(join(workspace, 'pages', 'style.css'), 'body { color: red; }')
+    const external = join(outside, 'report.html')
+    writeFileSync(external, '<p>external</p>')
+    // A shadow at the old fallback destination must never win.
+    const shadow = join(workspace, external.replace(/^[\\/]+/, ''))
+    if (process.platform !== 'win32') {
+      mkdirSync(dirname(shadow), { recursive: true })
+      writeFileSync(shadow, '<p>wrong shadow</p>')
+    }
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const html = routes.find(route => route.path === '/sidebar/html')!
+      const file = routes.find(route => route.path === '/sidebar/file')!
+      const scope = { sessionId: 'preview', cwd: workspace }
+      const page = htmlUrl(scope, 'pages/report.html')
+      expect(await invokeGet(html, page)).toMatchObject({ status: 200, body: expect.stringContaining('workspace') })
+      const asset = new URL('./style.css', new URL(page, 'http://localhost')).pathname
+      expect(await invokeGet(html, asset)).toMatchObject({ status: 200, body: 'body { color: red; }' })
+      // Missing cwd exercises the server's relative-only fallback.
+      expect(await invokeGet(file, downloadUrl({ sessionId: scope.sessionId }, 'pages/report.html')))
+        .toMatchObject({ status: 200, body: expect.stringContaining('workspace') })
+      expect(await invokeGet(html, htmlUrl(scope, external)))
+        .toMatchObject({ status: 200, body: '<p>external</p>' })
+      expect(await invokeGet(file, downloadUrl(scope, external)))
+        .toMatchObject({ status: 200, body: '<p>external</p>' })
+      rmSync(external)
+      expect((await invokeGet(html, htmlUrl(scope, external))).status).toBe(500)
+      expect((await invokeGet(file, downloadUrl(scope, external))).status).toBe(500)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('concurrent fs.write calls to the same path do not corrupt each other', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-concurrent-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const target = join(workspace, 'notes.txt')
+      const draftA = 'A'.repeat(200000)
+      const draftB = 'B'.repeat(200000)
+      // Two editors of the same file ("open to the side" mints a second tab
+      // for one path) saving within the temp→rename window. Guards the
+      // contract: every concurrent save succeeds and the published file is
+      // one complete draft (never byte-mixed, never a failed rename).
+      const results = await Promise.allSettled([
+        invoke(route, 'fs.write', { sessionId: 'concurrent', path: target, content: draftA }),
+        invoke(route, 'fs.write', { sessionId: 'concurrent', path: target, content: draftB }),
+      ])
+      for (const result of results) expect(result.status).toBe('fulfilled')
+      const written = readFileSync(target, 'utf8')
+      expect([draftA, draftB]).toContain(written)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fs.write keeps the on-disk encoding of a GBK file (#523)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-encoding-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const target = join(workspace, 'legacy.cmd')
+      const text = '@echo off\r\necho 中文测试\r\n'
+      writeFileSync(target, encodeText(text, 'gbk'))
+      const read = await invoke(route, 'fs.read', { sessionId: 'encoding', path: target })
+      const value = read.value as { kind?: string; content?: string } | undefined
+      // The CP936 bytes decode to the text the file means, not to mojibake.
+      expect(value?.kind).toBe('text')
+      expect(value?.content).toBe(text)
+      // Saving that text back must not silently convert the file to UTF-8.
+      const write = await invoke(route, 'fs.write', { sessionId: 'encoding', path: target, content: value?.content })
+      expect(write.ok).toBe(true)
+      expect(readFileSync(target).equals(encodeText(text, 'gbk'))).toBe(true)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fs.read keeps a capped CJK UTF-8 file UTF-8 (the cap cuts a character, #523)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-readcap-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const target = join(workspace, 'big.txt')
+      // The default 512 KiB readLimit lands two bytes into a three-byte
+      // character; the GBK probe accepts that partial tail, so the read used
+      // to come back as 涓枃-style mojibake.
+      writeFileSync(target, Buffer.from('中'.repeat(174_763), 'utf8'))
+      const result = await invoke(route, 'fs.read', { sessionId: 'readcap', path: target })
+      const value = result.value as { kind?: string; content?: string; truncated?: boolean } | undefined
+      expect(value?.kind).toBe('text')
+      expect(value?.truncated).toBe(true)
+      // The known-good prefix reads as 中, with the usual replacement
+      // character for the cut tail — never as 涓枃 mojibake.
+      expect(value?.content?.startsWith('中中')).toBe(true)
+      expect(value?.content).not.toContain('涓')
+      expect(value?.content?.endsWith('\ufffd')).toBe(true)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('serves a home-relative media path (the ~ marker reaches the shared resolver, #713)', async () => {
+    // A real file under the user's home: the ~ expansion must happen on the
+    // ROUTE side (resolveTarget), not be pre-joined onto the session cwd.
+    const dirName = `.dsh-sidebar-selftest-${process.pid.toString(36)}`
+    const dir = join(homedir(), dirName)
+    mkdirSync(dir, { recursive: true })
+    const target = join(dir, 'note.txt')
+    writeFileSync(target, 'home sweet home')
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: dir } }) } })
+      const file = routes.find(route => route.path === '/sidebar/file')!
+      expect(await invokeGet(file, downloadUrl({ sessionId: 'home' }, `~/${dirName}/note.txt`)))
+        .toMatchObject({ status: 200, body: 'home sweet home' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('serves media and HTML through a workspace symlink (fence removed)', async () => {
     if (!canCreateSymlink) return
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-route-symlink-security-'))
@@ -569,6 +896,50 @@ describe('session cwd resolution over the API route', () => {
       expect(mediaResult).toMatchObject({ status: 200 })
       expect(htmlResult).toMatchObject({ status: 200 })
       expect(htmlResult.body).toContain('outside')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('serves an SVG with a sandboxing CSP so a direct navigation cannot run its script', async () => {
+    // An SVG is a scriptable document. Served bare on the GUI origin, opening
+    // this URL directly runs its <script> with same-origin access to
+    // /sidebar/api/*. The html route already sandboxes; the media route must
+    // match. <img> embedding is unaffected (CSP applies to documents).
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-svg-security-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    const svgPath = join(workspace, 'logo.svg')
+    writeFileSync(svgPath, '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const media = routes.find(route => route.path === '/sidebar/file')!
+      const res = await invokeGetFull(media, `/sidebar/file?sessionId=security&path=${encodeURIComponent(svgPath)}`)
+      expect(res.status).toBe(200)
+      expect(res.headers['content-type']).toBe('image/svg+xml')
+      expect(res.headers['content-security-policy']).toContain('sandbox')
+      expect(res.headers['x-content-type-options']).toBe('nosniff')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves an ordinary image response free of the SVG sandbox headers', async () => {
+    // The guard is scoped to the scriptable type: a PNG must not gain a
+    // sandbox directive (nothing to sandbox, and it would be a behaviour
+    // change for existing image previews).
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-png-security-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    const pngPath = join(workspace, 'pixel.png')
+    writeFileSync(pngPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const media = routes.find(route => route.path === '/sidebar/file')!
+      const res = await invokeGetFull(media, `/sidebar/file?sessionId=security&path=${encodeURIComponent(pngPath)}`)
+      expect(res.status).toBe(200)
+      expect(res.headers['content-type']).toBe('image/png')
+      expect(res.headers['content-security-policy']).toBeUndefined()
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -633,6 +1004,43 @@ describe('session cwd resolution over the API route', () => {
       const single = await invoke(route, 'fs.tree', { sessionId: 's-tree', path: workspace })
       expect((single.value as unknown as { entries: Array<{ name: string }> }).entries.map(entry => entry.name))
         .toEqual(level.entries.map(entry => entry.name))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fs.trees and fs.search apply the request exclude patterns', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-exclude-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(join(workspace, 'src'), { recursive: true })
+    mkdirSync(join(workspace, 'third_party', 'pkg'), { recursive: true })
+    writeFileSync(join(workspace, '.DS_Store'), 'junk')
+    writeFileSync(join(workspace, 'src', 'index.ts'), 'code')
+    writeFileSync(join(workspace, 'third_party', 'index.ts'), 'dep')
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      // `fs.trees` is the file tree's REAL entry (one POST per mount/expand):
+      // the exclude list has to reach this route or the pref does nothing.
+      const batch = await invoke(route, 'fs.trees', {
+        sessionId: 's-tree',
+        paths: [workspace],
+        exclude: ['.DS_Store', 'third_party'],
+      })
+      expect(batch.ok).toBe(true)
+      const levels = (batch.value as unknown as { levels: Array<{ entries: Array<{ name: string }> }> }).levels
+      expect(levels[0]!.entries.map(entry => entry.name)).toEqual(['src'])
+      // The search shares the one compiled matcher: excluded names never match
+      // and are never descended (a directory hit disappears with them).
+      const search = await invoke(route, 'fs.search', {
+        sessionId: 's-tree',
+        query: 'index',
+        exclude: ['third_party'],
+      })
+      expect((search.value as unknown as { matches: string[] }).matches).toEqual(['src/index.ts'])
+      // No exclude on the request → the unfiltered fast path, unchanged.
+      const plain = await invoke(route, 'fs.trees', { sessionId: 's-tree', paths: [workspace] })
+      const plainLevels = (plain.value as unknown as { levels: Array<{ entries: Array<{ name: string }> }> }).levels
+      expect(plainLevels[0]!.entries.map(entry => entry.name)).toEqual(['src', 'third_party', '.DS_Store'])
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

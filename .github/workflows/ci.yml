@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `dev` is the alpha integration branch (AGENTS.md §0): everything lands
+    # there first, so its post-merge state needs the same green signal `main`
+    # gets. `pull_request` below has no branch filter, so PRs targeting `dev`
+    # are already covered.
+    branches: [main, dev]
   pull_request:
   workflow_dispatch:
 
@@ -59,6 +63,12 @@ jobs:
   # runs the same typecheck / test / build / consumer-type-surface steps on
   # a real Windows runtime. The plugin-mount lane (real DSH + Playwright
   # Chromium) stays ubuntu-only and is deliberately NOT mirrored here.
+  #
+  # It also carries the search-engine gate: real fd/ripgrep binaries land on
+  # PATH (choco) before the suite runs, and the output-shape assertions run
+  # against them afterwards. Windows is where the engine output format bites
+  # hardest (backslash separators, CR line endings, console code pages);
+  # docs/ci-windows.md holds the red lines.
   ci-windows:
     runs-on: windows-latest
     timeout-minutes: 30
@@ -86,6 +96,12 @@ jobs:
         run: |
           git config --global user.name "dsh-better-sidebar-ci"
           git config --global user.email "ci@dsh.invalid"
+      # Real engine binaries for the output-shape assertions below. The probe
+      # inside src/search-engines.ts reads PATH, so the whole suite runs with
+      # engines present here; the specs never depend on that (they inject
+      # their own probes, and the one real-engine case skips when absent).
+      - name: Install fd / ripgrep (choco)
+        run: choco install fd ripgrep -y --no-progress
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Typecheck
@@ -118,6 +134,13 @@ jobs:
         run: pnpm build
       - name: Check consumer type surface
         run: pnpm check:consumer-types
+      # Output-shape assertions on the REAL engine binaries installed above:
+      # the plugin's own argv must produce '/'-separated, CR-free paths and
+      # hit a non-ASCII file name. An engine that is absent skips (so the
+      # script stays runnable on a dev machine); an assertion failure exits
+      # non-zero.
+      - name: Engine output-shape assertions (real fd/rg)
+        run: pnpm check:engines
 
   # Pack the plugin as an npm tarball, mount it into a REAL DSH instance
   # through the official `dsh plugin --profile web add` channel, and render

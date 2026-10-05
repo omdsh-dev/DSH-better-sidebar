@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { IconCloseOutlineRegular, IconRefreshOutlineRegular, IconRightUpOutlineRegular, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionScope } from '../api.ts'
 import { htmlUrl } from '../api.ts'
+import { hostTransportBase } from '../desktop-env.ts'
 import { t } from '../locales.ts'
 import { baseName } from '../paths.ts'
 import { resolveSidebarPath } from '../paths.ts'
@@ -240,7 +241,7 @@ export function DiffPane({ target, scope, height, onHeightCommit, onClose, onExp
   }, [mdOp, op, prior])
   const readingText = useMemo(
     () => (mdOp && reading && readingSrc !== '' && target.kind === 'op'
-      ? rewriteLocalImageUrls(readingSrc, scope, target.path, window.location.origin)
+      ? rewriteLocalImageUrls(readingSrc, scope, target.path, hostTransportBase())
       : ''),
     [mdOp, reading, readingSrc, scope, target],
   )

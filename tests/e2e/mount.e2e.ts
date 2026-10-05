@@ -116,6 +116,7 @@ async function seedSession(): Promise<void> {
     '  <script>alert(1)</script>',
     '</div>',
     '',
+    '<a id="readme-anchor"></a>',
     '## Setup',
     '',
     '[docs link][def]',
@@ -278,7 +279,9 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // control is registered into DSH's session-header utilities (the header's
   // corner belongs to the native sidebar), and the workbench host itself is
   // mounted. Both are stable addressing surfaces for user CSS / presets.
-  await expect(page.locator('[data-dsh-bottom-toggle]')).toBeAttached({ timeout: 30_000 })
+  // 宿主会为每个保留会话渲染隐藏的会话头副本（rect 仍在）——入口断言看**可见**的那个，
+  // 而不是统计 attached 节点数。
+  await expect(page.locator('[data-dsh-bottom-toggle]:visible').first()).toBeAttached({ timeout: 30_000 })
   await expect(page.locator('[data-dsh-bottom-panel]')).toBeAttached()
 
   // DSH 0.1.5 owns the right column: the plugin contributes tab TYPES to the
@@ -330,8 +333,12 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // The sweep opened the Side Chat type, whose view auto-creates a thread and
   // polls the transcript — that poll MUST ride the plugin's own
   // sidechat.events route (the host transport this lane locks). The poll runs
-  // only while the tab is visible, so activate its chip first.
-  await pane.getByRole('tab', { name: /Side Chat|侧边对话|侧边聊天/ }).first().click()
+  // only while the tab is visible, so activate it first — THROUGH ITS GUIDE
+  // ENTRY, not by chip text: the chip follows the thread's own display title
+  // once the tab keeps its record (the state-retention fix), so `/Side Chat/`
+  // no longer names it.
+  if (await page.locator('[data-sidebar-right-guide]').count() === 0) await addTab.click()
+  await page.locator('[data-sidebar-right-guide-entry="sidechat"]').click()
   await expect
     .poll(
       () => page.evaluate(() =>
@@ -477,6 +484,21 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     pane.locator('.cm-editor').first(),
     'the plugin editor must render the seeded file inside the native tab',
   ).toBeVisible({ timeout: 30_000 })
+  // Find-in-file (Cmd/Ctrl+F): the plain-text tab is a code viewer with no
+  // edit toggle — the editor is mounted in its "preview" (read-mostly)
+  // surface, which must search too. The extension rides the SHARED base
+  // extension list, so this proves the search panel opens in a real browser
+  // against the lazily-loaded editor chunk (the jsdom spec covers the unit
+  // level). Mod is Cmd on macOS, Ctrl everywhere else.
+  await pane.locator('.cm-content:visible').first().click()
+  await page.keyboard.press(`${process.platform === 'darwin' ? 'Meta' : 'Control'}+f`)
+  const searchPanel = pane.locator('.cm-panels-top .cm-search')
+  await expect(
+    searchPanel,
+    'Cmd/Ctrl+F must open the top-pinned search panel in the code viewer',
+  ).toHaveCount(1, { timeout: 10_000 })
+  await page.keyboard.press('Escape')
+  await expect(searchPanel, 'Escape must close the search panel').toHaveCount(0, { timeout: 10_000 })
   await page.waitForTimeout(1_500)
   await assertNoCrash()
 
@@ -567,6 +589,26 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const details = pane.locator('details')
   await expect(details, 'the details run must render as a real element').toHaveCount(1, { timeout: 30_000 })
   await expect(details.locator('summary'), 'the details summary must render').toHaveCount(1)
+  // Direct child, not merely a descendant: HTML only honors a summary there,
+  // so a block-leaf wrapper in between silently swaps in the UA's own label.
+  await expect(
+    details.locator(':scope > summary'),
+    'the summary must be a direct child of <details>',
+  ).toHaveCount(1)
+  await expect(
+    details.locator(':scope > summary'),
+    'the authored summary text must be the disclosure label',
+  ).toHaveText('Steps')
+  // The bare anchor line: the id must survive as a real anchor, and the stray
+  // `</a>` half of the pair must never be printed as source text.
+  await expect(
+    pane.locator('a#readme-anchor'),
+    'an author anchor must keep its id for deep links',
+  ).toHaveCount(1)
+  await expect(
+    pane.locator('p:has(a#readme-anchor)'),
+    'the stray close tag must not be printed next to its anchor',
+  ).not.toContainText('</a>')
   await expect(
     details.locator('h3', { hasText: 'Inside' }),
     'the heading between the details tags must nest inside the element',

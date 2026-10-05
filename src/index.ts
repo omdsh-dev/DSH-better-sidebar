@@ -12,6 +12,7 @@
  * All operations are conversation-scoped: requests carry a sessionId and the
  * session's authoritative cwd comes from the session store.
  */
+import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path'
 import type { IncomingMessage } from 'node:http'
@@ -33,6 +34,7 @@ import { resolveSessionPath } from './session-path.ts'
 import { mkdirWorkspaceEntry, renameWorkspaceEntry, removeWorkspaceEntry, writeWorkspaceUpload } from './fs-operations.ts'
 import { ensureWorkspacePath, ensureWorkspaceWritePath } from './path-security.ts'
 import { searchFiles } from './fs-search.ts'
+import { compileExcludePatterns } from './exclude-patterns.ts'
 import { decodeHtmlUrl } from './html-route.ts'
 import { isTrustedApiRequest } from './trust-fence.ts'
 import { registerBundleRoute } from './bundle-route.ts'
@@ -50,6 +52,25 @@ import { buildSidechatApi } from './sidechat-routes.ts'
 import { createAssistantLiveBuffer, type AssistantLiveBuffer } from './assistant-live.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
 import { readPersistedSession } from './session-store.ts'
+import { BlockAssembler, createUserMessage, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import {
+  buildCommitPrompt,
+  cleanSuggestion,
+  collectModelRoutes,
+  defaultRouteOf,
+  lowestReasoningEffortOf,
+  modelEntryOf,
+  normalizeLanguage,
+  parseModelRoute,
+  providerEntryOf,
+  truncateDiff,
+  type CommitModelRoute,
+} from './commit-message.ts'
+// Shared with the client's batch splitter: the two halves must agree on the
+// row bound, so it lives in a dependency-free module both can import.
+import { FS_TREES_MAX_PATHS } from './fs-batch.ts'
+import { activeWorktreeRootOf } from './active-worktree.ts'
+import { decodeTextBytes, encodeText, encodingOfFile } from './text-encoding.ts'
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
@@ -75,8 +96,9 @@ export { archiveNameOf, collectZipEntries, contentDispositionOf, disambiguateArc
 /** Plugin identity for cordis.yml rows. */
 export const name = 'dsh-better-sidebar'
 
-/** Row bound of one `fs.trees` batch request (a mount/refresh sends what it shows). */
-export const FS_TREES_MAX_PATHS = 64
+/** Row bound of one `fs.trees` batch request (a mount/refresh sends what it
+ *  shows, split into cap-sized batches by the client — see `fs-batch.ts`). */
+export { FS_TREES_MAX_PATHS }
 
 /** One level of an `fs.trees` batch: either a listing or that level's failure. */
 export interface SidebarFsLevel {
@@ -160,11 +182,12 @@ function selectedRepoOf(payload: unknown): string | undefined {
 }
 
 /**
- * Resolve a path that a git command reported — `git status`/`git diff`
- * print paths RELATIVE TO THE REPO TOP LEVEL, which may sit above the
- * session cwd (a session inside a subdirectory of a repository). Absolute
- * paths pass through; relative ones join the repo root (falling back to the
- * cwd when the root cannot be resolved, e.g. a bare directory).
+ * Resolve a relative path an EDITOR surface carried (the file tree, the
+ * editor buffer, and `fs.read`, which the untracked-diff fallback reads
+ * through): the session-relative interpretation wins when it names an
+ * existing path, with the repository root as the fallback. Git's
+ * status/diff ROWS deliberately do NOT come through here — they are
+ * repository-root-relative by construction, see {@link resolveStatusPath}.
  */
 async function resolveGitPath(cwd: string, raw: string, selected?: string): Promise<string> {
   if (isAbsolute(raw)) return requireAbsolute(resolveSessionPath(cwd, raw))
@@ -178,10 +201,195 @@ async function resolveGitPath(cwd: string, raw: string, selected?: string): Prom
   return requireAbsolute(join(root, raw))
 }
 
+/** Max providers / per-provider models the `git.models` catalog answers with.
+ *  The catalog only feeds the Git card's pinned-model dropdown, so a huge
+ *  deployment still resolves to a bounded, fast reply. */
+const MODEL_CATALOG_PROVIDER_LIMIT = 20
+const MODEL_CATALOG_MODEL_LIMIT = 50
+
+/** The Git card's plugin-owned settings key holding the pinned
+ *  `provider/model` route ('' or absent = follow the conversation). */
+const COMMIT_MODEL_SETTING_KEY = 'commitModel'
+
+/**
+ * The provider/model route the user PINNED for commit-message generation
+ * (the Git card's settings write `pluginSettings.git.commitModel`). Absent,
+ * empty or malformed means "follow the conversation" — a bad value must
+ * never lock the feature out, it falls back.
+ */
+function pinnedCommitRouteOf(getSettings: () => SidebarSettingsFace | undefined): CommitModelRoute | undefined {
+  const value = getSettings()?.get().value
+  if (value === null || typeof value !== 'object') return undefined
+  const pluginSettings = (value as { pluginSettings?: unknown }).pluginSettings
+  if (pluginSettings === null || typeof pluginSettings !== 'object') return undefined
+  const blob = (pluginSettings as Record<string, unknown>).git
+  if (blob === null || typeof blob !== 'object') return undefined
+  return parseModelRoute((blob as Record<string, unknown>)[COMMIT_MODEL_SETTING_KEY])
+}
+
+/**
+ * The provider/model route the CURRENT conversation runs on, read without
+ * spawning anything: the live agent's own options are authoritative, and a
+ * session that has not attached yet still carries its newest `request/header`
+ * event (the record the agent loop writes). Undefined while neither is
+ * available — a cold conversation with no request yet has no route to follow.
+ */
+function conversationModelRoute(ctx: Context, sessionId: string): CommitModelRoute | undefined {
+  const agents = ctx.get('agents') as { get(id: string): { options?: { provider?: unknown; model?: unknown } } | undefined } | undefined
+  const options = agents?.get(sessionId)?.options
+  if (options !== undefined
+    && typeof options.provider === 'string' && options.provider !== ''
+    && typeof options.model === 'string' && options.model !== '') {
+    return { provider: options.provider, model: options.model }
+  }
+  const events = ctx.sessions.get(sessionId)?.snapshotEvents()
+  if (events === undefined) return undefined
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index]
+    if (event === undefined || event.type !== 'request/header') continue
+    const config = (event.data as { header?: { config?: unknown } } | undefined)?.header?.config
+    if (config === null || typeof config !== 'object') continue
+    const provider = (config as { provider?: unknown }).provider
+    const model = (config as { model?: unknown }).model
+    if (typeof provider === 'string' && provider !== '' && typeof model === 'string' && model !== '') {
+      return { provider, model }
+    }
+  }
+  return undefined
+}
+
+/**
+ * The harness's DEFAULT model route (settings namespace `agent-default-model`):
+ * the route a brand-new conversation would use, so the suggestion still works
+ * on a session that has not sent its first message (no `request/header` yet)
+ * and in a deployment whose LLM adapters advertise no catalog.
+ */
+function defaultModelRoute(ctx: Context): CommitModelRoute | undefined {
+  const service = ctx.get('agentDefaultModel') as { currentSelection(): unknown } | undefined
+  return defaultRouteOf(service?.currentSelection())
+}
+
+/** Output budget of one suggestion: enough for a subject plus a short body,
+ *  and (with reasoning pinned to the lowest level) no more. */
+const SUGGEST_MAX_TOKENS = 512
+
+/** Hard deadline of one suggestion (the panel shows the model as busy while
+ *  it runs, so a stalled provider must not leave it spinning forever). */
+const SUGGEST_TIMEOUT_MS = 30_000
+
+/**
+ * The reasoning effort to request for one route: the LOWEST the model
+ * advertises, or undefined when it advertises none. A one-line commit message
+ * needs no deliberation, while a high default (the DeepSeek adapter defaults
+ * to `high` unless the connection says otherwise) both delays the answer and
+ * can consume the whole output budget, yielding an empty message.
+ */
+async function commitReasoningEffort(
+  llm: LlmServiceFace,
+  route: CommitModelRoute,
+): Promise<string | undefined> {
+  if (llm.resolveModelInfo === undefined) return undefined
+  const info = await Promise.resolve(llm.resolveModelInfo(route.provider, route.model))
+    .catch(() => undefined)
+  return lowestReasoningEffortOf((info as { reasoning?: { efforts?: unknown } } | undefined)?.reasoning?.efforts)
+}
+
+/** The LLM service surface this route uses (all optional: the service is a
+ *  harness surface the plugin deliberately does not depend on). */
+interface LlmServiceFace {
+  stream(options: GenerateOptions): AsyncIterable<StreamChunk>
+  resolveModelInfo?(provider: string, model: string): Promise<unknown>
+}
+
+/**
+ * One generation stream through the harness LLM service. The service is not
+ * injected (the plugin must not require it), so it is read through `ctx.get`
+ * and checked: a deployment without the LLM surface gets a clean 503 instead
+ * of a TypeError. Chunks are assembled with the harness's own BlockAssembler
+ * — the same chunk-to-message algorithm the agent loop uses.
+ */
+async function streamCommitMessage(
+  ctx: Context,
+  route: CommitModelRoute,
+  system: string,
+  user: string,
+): Promise<string> {
+  const llm = ctx.get('llm') as LlmServiceFace | undefined
+  if (llm === undefined) {
+    throw new SidebarError('git-suggest-error', 'the harness LLM service is unavailable', 503)
+  }
+  // Reasoning capability is read from the model itself: requesting an effort
+  // a non-reasoning model does not support is rejected by the harness
+  // (UNSUPPORTED_REASONING_EFFORT), so the field is omitted in that case.
+  const effort = await commitReasoningEffort(llm, route)
+  const assembler = new BlockAssembler()
+  try {
+    for await (const chunk of llm.stream({
+      provider: route.provider,
+      model: route.model,
+      messages: [createUserMessage({
+        content: [{ type: 'text', text: user }],
+        // The plugin's producer-owned source kind (0.1.7 removed the shared
+        // `plugin` catch-all): see SIDE_INJECTION_SOURCE_KIND.
+        source: { kind: 'plugin:dsh-better-sidebar' },
+      })],
+      system,
+      maxTokens: SUGGEST_MAX_TOKENS,
+      signal: AbortSignal.timeout(SUGGEST_TIMEOUT_MS),
+      ...(effort === undefined ? {} : { reasoningEffort: effort as GenerateOptions['reasoningEffort'] }),
+    })) {
+      assembler.push(chunk)
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new SidebarError(
+        'git-suggest-error',
+        `the model did not answer within ${Math.round(SUGGEST_TIMEOUT_MS / 1000)}s`,
+        504,
+      )
+    }
+    throw error
+  }
+  const message = cleanSuggestion(assembler.blocks()
+    .map(block => (block.type === 'text' ? block.text : ''))
+    .join(''))
+  if (message === '') {
+    // The finish reason separates "the model stopped without text" (often a
+    // reasoning model that spent its budget thinking) from a transport
+    // failure, so the panel's error line stays actionable.
+    const finish = (assembler.finish as { kind?: unknown } | undefined)?.kind
+    throw new SidebarError(
+      'git-suggest-error',
+      `the model returned an empty message (finish=${typeof finish === 'string' ? finish : 'unknown'})`,
+      500,
+    )
+  }
+  return message
+}
+
+/**
+ * Resolve a path a git status/diff ROW carried: the changes tree's rows and
+ * every action they offer (the inline diff preview, and the destructive
+ * discard). Git prints those paths RELATIVE TO THE REPO TOP LEVEL, which may
+ * sit above the session cwd, and the client forwards them verbatim — so a
+ * relative name ALWAYS joins the repository root. Joining the session cwd
+ * first instead hit a same-named file in the subdirectory the session sits
+ * in (#765: `git.discard` on the row `README.md` restored the `pkg/README.md`
+ * one level down and left the root `README.md` — the file the row names —
+ * dirty). Absolute paths pass through; a cwd outside any repository falls
+ * back to itself, where the git command fails exactly as it did before.
+ */
+async function resolveStatusPath(cwd: string, raw: string, selected?: string): Promise<string> {
+  if (isAbsolute(raw)) return requireAbsolute(resolveSessionPath(cwd, raw))
+  const root = await git.repoRoot(cwd, selected).catch(() => cwd)
+  return requireAbsolute(join(root, raw))
+}
+
 /** How many leading bytes a binary read returns for client-side detect sniffing. */
 const READ_HEAD_LIMIT = 4096
 
-/** Text read of a file with the size cap; binary detection via NUL probe.
+/** Text read of a file with the size cap; text encoding is detected before
+ *  the NUL-based binary fallback so UTF-16/UTF-32 text remains editable.
  *  Binary reads also return the first {@link READ_HEAD_LIMIT} bytes (base64)
  *  so the client can re-match viewers by content (`detect`). */
 async function readText(path: string, readLimit: number): Promise<{
@@ -189,6 +397,8 @@ async function readText(path: string, readLimit: number): Promise<{
   truncated: boolean
   binary: boolean
   size: number
+  /** Last-modified time (ms) — the save route's conflict baseline. */
+  mtimeMs: number
   head?: string
 }> {
   const info = await stat(path).catch((error: unknown) => {
@@ -206,15 +416,17 @@ async function readText(path: string, readLimit: number): Promise<{
     const buffer = Buffer.alloc(Math.min(size, readLimit))
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0)
     const slice = buffer.subarray(0, bytesRead)
-    const binary = slice.includes(0)
+    const decoded = decodeTextBytes(slice, truncated)
+    const binary = decoded === null
     const head = binary
       ? slice.subarray(0, Math.min(slice.length, READ_HEAD_LIMIT)).toString('base64')
       : undefined
     return {
-      content: binary ? '' : slice.toString('utf8'),
+      content: decoded?.content ?? '',
       truncated,
       binary,
       size,
+      mtimeMs: info.mtimeMs,
       head,
     }
   } finally {
@@ -258,15 +470,20 @@ function buildApi(
     const sessionId = requireString(payload, 'sessionId')
     const record = payload as { cwd?: unknown } | null
     const clientCwd = typeof record?.cwd === 'string' && record.cwd !== '' ? record.cwd : undefined
-    return { sessionId, cwd: await sessionCwdOf(ctx, sessionId, clientCwd) }
+    return { sessionId, cwd: await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId, clientCwd)) }
   }
-  /** Resolve the optional Git-panel checkout selector against the authoritative
+  /** Resolve the optional Git-panel checkout selector against the selected
    * session repository. Unlike `cwd`, `worktree` is never trusted directly. */
   const gitCwdOf = async (payload: unknown): Promise<{ sessionId: string; cwd: string }> => {
     const base = await cwdOf(payload)
     const record = payload as { worktree?: unknown } | null
     const requested = typeof record?.worktree === 'string' && record.worktree !== '' ? record.worktree : undefined
-    return { sessionId: base.sessionId, cwd: await git.resolveWorktree(base.cwd, requested) }
+    if (requested === undefined) return base
+    // A container workspace is not itself a repository. Validate the checkout
+    // against the selected child (or the default discovered repository), just
+    // as the inventory does, before accepting the requested worktree path.
+    const root = await git.repoRoot(base.cwd, selectedRepoOf(payload))
+    return { sessionId: base.sessionId, cwd: await git.resolveWorktree(root, requested) }
   }
   // Subagent live previews: one batch request instead of N per-child
   // `subagents.history` calls. The route degrades to a 503 when the host
@@ -284,15 +501,30 @@ function buildApi(
   // service's own CAS result union (conflicts stay distinct).
   const teamsApi: SidebarTeamsRoutes = buildTeamsApi(ctx)
   return {
+    'session.phase': async (payload) => {
+      const sessionId = requireString(payload, 'sessionId')
+      const session = ctx.sessions.get(sessionId)
+      if (session === undefined) return { blank: false }
+      // 与宿主会话列表投影同一规则：日志里没有 user/assistant message 即 blank ——
+      // blank 会话里宿主不渲染会话头，插件挂在 header.utilities 的入口随之不可达，
+      // 客户端据该字段把入口补到右上角（issue #698 / #623）。
+      const blank = !session
+        .snapshotEvents()
+        .some((event) => event.type === 'user/message' || event.type === 'assistant/message')
+      return { blank }
+    },
     'session.cwd': async (payload) => {
       const { sessionId, cwd } = await cwdOf(payload)
       return { sessionId, cwd, root: rootLabel(cwd), parent: parentOf(cwd) ?? null }
     },
     'fs.tree': async (payload) => {
       const { cwd } = await cwdOf(payload)
-      const record = payload as { path?: unknown }
+      const record = payload as { path?: unknown; exclude?: unknown }
       const target = record.path === undefined ? cwd : await ensureWorkspacePath(cwd, requireString(payload, 'path'))
-      return listDirectory(target, resolved.listLimit)
+      // The client's explorerExclude pref rides the request (compiled here so
+      // the listing and the singleton fold probe share one matcher).
+      const exclude = compileExcludePatterns(record.exclude, cwd)
+      return listDirectory(target, resolved.listLimit, exclude)
     },
     // Batch listing: one request for every level the tree has expanded, so a
     // mount/refresh costs one round trip instead of N. Each path rides the
@@ -301,7 +533,7 @@ function buildApi(
     // in place — the other levels still render.
     'fs.trees': async (payload) => {
       const { cwd } = await cwdOf(payload)
-      const record = payload as { paths?: unknown } | null
+      const record = payload as { paths?: unknown; exclude?: unknown } | null
       const paths = Array.isArray(record?.paths)
         ? record.paths.filter((value): value is string => typeof value === 'string' && value !== '')
         : []
@@ -309,12 +541,20 @@ function buildApi(
       if (paths.length > FS_TREES_MAX_PATHS) {
         throw new SidebarError('bad-request', `too many paths (max ${FS_TREES_MAX_PATHS})`)
       }
+      // The file tree's REAL entry (a mount/expand costs one POST): the
+      // explorerExclude pref has to be compiled here too, or the exclude list
+      // would simply not reach the only surface the explorer reads.
+      const exclude = compileExcludePatterns(record?.exclude, cwd)
       const levels = await Promise.all(paths.map(async (raw): Promise<SidebarFsLevel> => {
         // A session-relative path is accepted here (the tree already carries
-        // cwd-relative paths); `fs.tree` itself keeps requiring absolute input.
-        const requested = isAbsolute(raw) ? raw : `${cwd}${sep}${raw}`
+        // cwd-relative paths); `fs.tree` itself keeps requiring absolute
+        // input. A `~` target is home-relative (#713) and must reach the
+        // shared resolver UNJOINED — pasting it after the cwd would hide the
+        // marker from the home expansion.
+        const homeRelative = raw === '~' || raw.startsWith('~/') || raw.startsWith('~\\')
+        const requested = isAbsolute(raw) || homeRelative ? raw : `${cwd}${sep}${raw}`
         try {
-          return await listDirectory(await ensureWorkspacePath(cwd, requested), resolved.listLimit)
+          return await listDirectory(await ensureWorkspacePath(cwd, requested), resolved.listLimit, exclude)
         } catch (error) {
           // Per-level failure: the batch itself stays a success (one unreadable
           // directory must not blank the whole tree).
@@ -328,8 +568,9 @@ function buildApi(
       // cwd (not caller-targetable — the walk is unbounded by design and
       // must never escape the workspace), budgeted inside searchFiles.
       const { cwd } = await cwdOf(payload)
+      const record = payload as { exclude?: unknown }
       const query = requireString(payload, 'query')
-      return searchFiles(cwd, query)
+      return searchFiles(cwd, query, { exclude: compileExcludePatterns(record.exclude, cwd) })
     },
     'fs.read': async (payload) => {
       const { cwd } = await cwdOf(payload)
@@ -339,25 +580,52 @@ function buildApi(
       // cwd; thread it so the path resolves inside the authorized workspace.
       const selected = selectedRepoOf(payload)
       const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected))
-      const { content, truncated, binary, size, head } = await readText(path, resolved.readLimit)
-      if (binary) return { kind: 'binary', size, truncated, head }
-      return { kind: 'text', content, truncated }
+      const { content, truncated, binary, size, mtimeMs, head } = await readText(path, resolved.readLimit)
+      if (binary) return { kind: 'binary', size, truncated, mtimeMs, head }
+      return { kind: 'text', content, truncated, mtimeMs }
     },
     'fs.write': async (payload) => {
       const { cwd } = await cwdOf(payload)
       const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'))
       const content = requireString(payload, 'content')
-      const tmp = `${path}.dsh-sidebar-tmp-${process.pid}`
+      // Detect the encoding BEFORE the temp write so the save round-trips the
+      // bytes the file already used (GBK / UTF-16 / BOM'd UTF-8 stay put).
+      const encoding = await encodingOfFile(path)
+      // Optimistic concurrency: the client sends the mtime its draft was based
+      // on; a file that changed on disk since (the model wrote it, another tab
+      // saved, an external editor touched it) refuses the write instead of
+      // silently clobbering those bytes. Omitted (older callers) = no gate.
+      const record = payload as { expectedMtimeMs?: unknown } | null
+      const expected = typeof record?.expectedMtimeMs === 'number' && Number.isFinite(record.expectedMtimeMs)
+        ? record.expectedMtimeMs
+        : undefined
+      if (expected !== undefined) {
+        const current = await stat(path).then(info => info.mtimeMs).catch(() => undefined)
+        if (current !== undefined && current !== expected) {
+          throw new SidebarError(
+            'fs-conflict',
+            `"${path}" changed on disk since it was loaded (expected mtime ${expected}, found ${current})`,
+            409,
+          )
+        }
+      }
+      // Per-request temp name (same pattern as writeWorkspaceUpload): a
+      // pid-suffixed name is shared by every concurrent save to the same
+      // path, letting two writers interleave into one temp file — and the
+      // failure-path rm could delete the other writer's in-flight temp.
+      const tmp = join(dirname(path), `.${basename(path)}.dsh-sidebar-tmp-${randomUUID()}.tmp`)
       try {
         await mkdir(dirname(path), { recursive: true })
-        await writeFile(tmp, content, 'utf8')
+        await writeFile(tmp, encodeText(content, encoding), { flag: 'wx' })
         await rename(tmp, path)
       } catch (error) {
         await rm(tmp, { force: true }).catch(() => {})
         throw new SidebarError('fs-error', `cannot write "${path}": ${error instanceof Error ? error.message : String(error)}`, 400)
       }
       invalidateDirectoryCache(dirname(path))
-      return { ok: true }
+      // The fresh baseline the client adopts after a successful save.
+      const mtimeMs = await stat(path).then(info => info.mtimeMs).catch(() => undefined)
+      return { ok: true, ...(mtimeMs !== undefined ? { mtimeMs } : {}) }
     },
     // The tree row's rename: single-segment name, destination-existence and
     // workspace-root refusals, link-aware (renames the row, not its target).
@@ -406,7 +674,7 @@ function buildApi(
       const { cwd } = await gitCwdOf(payload)
       const record = payload as { path?: unknown; staged?: unknown }
       const repoRoot = selectedRepoOf(payload)
-      const path = record.path === undefined ? undefined : await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot)
+      const path = record.path === undefined ? undefined : await resolveStatusPath(cwd, requireString(payload, 'path'), repoRoot)
       return { diff: await git.diff(cwd, path, record.staged === true, repoRoot) }
     },
     'git.stage': async (payload) => {
@@ -427,6 +695,20 @@ function buildApi(
       const { cwd } = await gitCwdOf(payload)
       const message = requireString(payload, 'message')
       await git.commit(cwd, message, selectedRepoOf(payload))
+      return { ok: true }
+    },
+    // Ship a commit without leaving the panel. Both target the selected
+    // checkout through gitCwdOf/selectedRepoOf like every other git route, and
+    // both report git's own stderr: a missing upstream (push) or a diverged
+    // branch (pull is --ff-only) is the user's to resolve in a terminal.
+    'git.push': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      await git.push(cwd, selectedRepoOf(payload))
+      return { ok: true }
+    },
+    'git.pull': async (payload) => {
+      const { cwd } = await gitCwdOf(payload)
+      await git.pull(cwd, selectedRepoOf(payload))
       return { ok: true }
     },
     'git.branch': async (payload) => {
@@ -456,7 +738,7 @@ function buildApi(
     'git.discard': async (payload) => {
       const { cwd } = await gitCwdOf(payload)
       const repoRoot = selectedRepoOf(payload)
-      await git.discard(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), repoRoot), repoRoot)
+      await git.discard(cwd, await resolveStatusPath(cwd, requireString(payload, 'path'), repoRoot), repoRoot)
       return { ok: true }
     },
     'git.revert': async (payload) => {
@@ -481,6 +763,106 @@ function buildApi(
       const path = requireString(payload, 'path')
       const rev = requireString(payload, 'rev')
       return { content: await git.show(cwd, rev, path, repoRoot) }
+    },
+    // Commit-message suggestion: build a prompt from the pending changes and
+    // stream it through the harness LLM service (`ctx.llm`) — no agent is
+    // spawned, no session event is written, and the sidebar never sees a
+    // credential. The route is the one the user PINNED in the Git card's
+    // settings when set, else the route the conversation itself runs on.
+    // Staged changes win because they are exactly what `git commit` records;
+    // with nothing staged the unstaged diff is used, and a lone untracked set
+    // still yields a file-list-based message.
+    'git.suggest-message': async (payload) => {
+      const { cwd, sessionId } = await gitCwdOf(payload)
+      const repoRoot = selectedRepoOf(payload)
+      const language = normalizeLanguage((payload as { language?: unknown }).language)
+      // Pinned first, then the conversation's own route, then the harness
+      // default: a session that has not sent its first message has no
+      // `request/header` yet, but the default selection is still usable.
+      const route = pinnedCommitRouteOf(getSettings)
+        ?? conversationModelRoute(ctx, sessionId)
+        ?? defaultModelRoute(ctx)
+      if (route === undefined) {
+        throw new SidebarError('git-suggest-error', 'cannot resolve a model route for this conversation', 503)
+      }
+      const status = await git.status(cwd, repoRoot)
+      const staged = status.entries.filter(entry => entry.xy[0] !== ' ' && entry.xy[0] !== '?')
+      const untracked = status.entries.filter(entry => entry.xy === '??')
+      const unstaged = status.entries.filter(entry => entry.xy !== '??' && entry.xy[1] !== ' ' && entry.xy[1] !== '?')
+      if (staged.length === 0 && unstaged.length === 0 && untracked.length === 0) {
+        throw new SidebarError('git-suggest-empty', 'no pending changes', 400)
+      }
+      const focus = staged.length > 0
+        ? { diff: await git.diff(cwd, undefined, true, repoRoot), files: staged }
+        : unstaged.length > 0
+          ? { diff: await git.diff(cwd, undefined, false, repoRoot), files: unstaged }
+          : { diff: '', files: untracked }
+      const prompt = buildCommitPrompt(language, focus.files.map(entry => entry.path), truncateDiff(focus.diff))
+      const message = await streamCommitMessage(ctx, route, prompt.system, prompt.user)
+      return { message, provider: route.provider, model: route.model }
+    },
+    // The route the NEXT suggestion would use (pinned → the conversation's own
+    // → the harness default), which the generate button shows in its tooltip.
+    // Deliberately separate from `git.models`: this is one settings read plus
+    // one header scan, with no adapter catalog discovery.
+    'git.commit-model': (payload) => {
+      const record = (payload ?? {}) as { sessionId?: unknown }
+      const pinned = pinnedCommitRouteOf(getSettings)
+      const sessionId = typeof record.sessionId === 'string' ? record.sessionId : ''
+      const route = pinned
+        ?? (sessionId === '' ? undefined : conversationModelRoute(ctx, sessionId))
+        ?? defaultModelRoute(ctx)
+      return {
+        ...(route === undefined ? {} : { route }),
+        /** Whether the route above is a PINNED one (the panel may want to
+         *  label it differently from the conversation's own model). */
+        pinned: pinned !== undefined,
+      }
+    },
+    // The model catalog behind the Git card's pinned-route dropdown: every
+    // registered provider with the models its adapter advertises. Discovery is
+    // advisory and best-effort — a provider whose adapter cannot be asked
+    // (or that advertises nothing) is reported with an empty model list
+    // instead of failing the whole catalog.
+    'git.models': async (payload) => {
+      const record = (payload ?? {}) as { sessionId?: unknown }
+      const llm = ctx.get('llm') as {
+        listProviders(): unknown
+        listModels(provider: string): Promise<unknown>
+      } | undefined
+      const providers = llm === undefined ? [] : await Promise.resolve(llm.listProviders())
+        .then(listed => (Array.isArray(listed) ? listed.slice(0, MODEL_CATALOG_PROVIDER_LIMIT) : []))
+        .then(entries => Promise.all(entries.map(async (entry: unknown) => {
+          const parsed = providerEntryOf(entry)
+          if (parsed === undefined) return { provider: '', name: '', models: [] }
+          const models = await Promise.resolve(llm.listModels(parsed.provider))
+            .then(list => (Array.isArray(list) ? list.slice(0, MODEL_CATALOG_MODEL_LIMIT) : []))
+            .catch(() => [])
+          return {
+            provider: parsed.provider,
+            name: parsed.label,
+            models: models.flatMap((model: unknown) => {
+              const item = modelEntryOf(model)
+              return item === undefined ? [] : [{ id: item.id, name: item.name }]
+            }),
+          }
+        })))
+        .catch(() => [])
+      // The conversation-derived history: routes this session actually used
+      // (newest first). It is the catalog's stand-in before the harness
+      // advertises anything, and it is how a model the user picked in the
+      // chat becomes pinnable here.
+      const events = typeof record.sessionId === 'string'
+        ? ctx.sessions.get(record.sessionId)?.snapshotEvents() ?? []
+        : []
+      return {
+        // Whether the harness exposes an LLM surface at all: an empty
+        // catalog is then "no adapters registered", not "the route failed".
+        llm: llm !== undefined,
+        providers: providers.filter(provider => provider.provider !== ''),
+        recent: collectModelRoutes(events as readonly { type?: unknown; data?: unknown }[]),
+        default: defaultModelRoute(ctx),
+      }
     },
     // The session's file-tool events for the changes tab's session lens
     // (and its badge): the CLIENT runtime's sessions face has no event-log
@@ -912,8 +1294,13 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
       }
       try {
         const payload = await readJsonBody(req)
-        const handler = api[method]
-        if (handler === undefined) {
+        // Own properties only. The dispatch table is an object literal, so a
+        // bare lookup resolved Object.prototype members as "methods":
+        // POST /sidebar/api/constructor answered 200 {}, toString answered
+        // 200 "[object Undefined]", valueOf/hasOwnProperty answered 500.
+        // The typeof guard also rejects a non-function own value.
+        const handler = Object.hasOwn(api, method) ? api[method] : undefined
+        if (typeof handler !== 'function') {
           throw new SidebarError('not-found', `unknown sidebar API method "${method}"`, 404)
         }
         writeOk(res, await handler(payload))
@@ -949,7 +1336,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         if (sessionId === null || dir === null || relativePath === null || relativePath.trim() === '') {
           throw new SidebarError('bad-request', 'sessionId, dir, and relativePath are required')
         }
-        const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+        const cwd = await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined))
         const { path, size } = await writeWorkspaceUpload({
           cwd,
           dir,
@@ -1022,7 +1409,15 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         const sessionId = url.searchParams.get('sessionId')
         const raw = url.searchParams.get('path')
         if (sessionId === null || raw === null) throw new SidebarError('bad-request', 'sessionId and path are required')
-        const cwd = await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined)
+        const cwd = await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId, url.searchParams.get('cwd') ?? undefined))
+        // Resolution is the shared contract's alone: relative joins the
+        // session cwd, absolute stays, `~` expands against the home (#713),
+        // remote-mirror namespaces project. Pre-joining here would paste a
+        // `~` target after the cwd and hide it from the resolver.
+        // Resolution is the shared contract's alone: relative joins the
+        // session cwd, absolute stays, `~` expands against the home (#713),
+        // remote-mirror namespaces project. Pre-joining here would paste a
+        // `~` target after the cwd and hide it from the resolver.
         const path = await ensureWorkspacePath(cwd, raw)
         const info = await stat(path)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
@@ -1033,6 +1428,16 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // Raw bytes either way (binary-safe); ?download=1 switches the
         // disposition so the browser saves the file instead of showing it.
         const headers: Record<string, string> = { 'content-type': type, 'cache-control': 'no-cache' }
+        // An SVG is a scriptable DOCUMENT, not an inert image: navigating to
+        // this URL directly would run its <script> in the GUI's origin, with
+        // same-origin access to /sidebar/api/*. The sibling html route already
+        // sandboxes for exactly this reason; mirror it here. The CSP applies
+        // to the document, so <img src> embedding is unaffected.
+        if (type === 'image/svg+xml') {
+          headers['content-security-policy'] = "sandbox; object-src 'none'"
+          headers['x-content-type-options'] = 'nosniff'
+          headers['referrer-policy'] = 'no-referrer'
+        }
         if (url.searchParams.get('download') === '1') {
           headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(basename(path))}`
         }
@@ -1082,7 +1487,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         // back to the process cwd and is normally refused by the workspace
         // real-path guard, with the same semantics as the media route's
         // fallback.
-        const cwd = await sessionCwdOf(ctx, sessionId)
+        const cwd = await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId))
         const absolute = await ensureWorkspacePath(cwd, path)
         const info = await stat(absolute)
         if (!info.isFile() || info.size > resolved.mediaLimit) {
@@ -1229,7 +1634,7 @@ async function handleFsWatchFrame(
   const path = typeof frame.path === 'string' ? frame.path : undefined
   if (path === undefined || path === '') return
   try {
-    const cwd = await sessionCwdOf(ctx, sessionId)
+    const cwd = await activeWorktreeRootOf(ctx, sessionId, await sessionCwdOf(ctx, sessionId))
     const dir = await ensureWorkspacePath(cwd, path)
     if (frame.op === 'unwatch') {
       watchers.remove(dir)

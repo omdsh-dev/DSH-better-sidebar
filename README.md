@@ -241,6 +241,9 @@ dsh registry enable dsh-external/dsh-better-sidebar
 | 操作 | 按键 |
 |---|---|
 | 保存编辑 | `Ctrl/Cmd + S` |
+| 文件内查找 / 替换 | `Ctrl/Cmd + F`（面板含替换行；`Enter` / `Shift + Enter` 下一个 / 上一个，`Esc` 关闭） |
+| 查找下一个 / 上一个 | `Ctrl/Cmd + G` / `Shift + Ctrl/Cmd + G` |
+| 选中下一个相同片段 | `Ctrl/Cmd + D` |
 | Git 提交 | `Ctrl + Enter` |
 | 关闭 Tab | 鼠标中键 |
 | Tab 右键菜单 | 关闭 / 关闭其他页签 / 关闭左侧页签 / 关闭右侧页签（当前标签组） |
@@ -293,6 +296,7 @@ make clean          # 清理 lib/、*.tgz、playwright-report/、test-results/
 ## ⚠️ 已知限制
 
 - Git 无 push/pull/fetch；Markdown 预览提供手动刷新按钮，刷新未保存编辑前会确认是否丢弃草稿；文件树只对**已展开**的目录做 watch（折叠的目录不订阅，也不做全工作区递归扫描）；工具行内文件打开按钮不可拦截
+- 未保存草稿：关闭编辑器标签页、删除文件、浏览器刷新/关闭页面都会先确认（查找/替换面板只作用于当前编辑器，不做跨文件搜索）；磁盘上被其他来源改动后再保存会被拒绝（提示「重新载入」），不会静默覆盖对方字节
 - **只读预览的格式由宿主决定**：表格 / PDF / 图片 / Office 走 DSH 自己的 `ui-sidebar-documentpreview`，插件只渲染 Markdown / HTML 与可编辑的文本代码；宿主的实现（渲染细节、缩放、刷新时机）随 DSH 版本走
 - **浏览器视图只在 desktop profile 存在**：Web profile 没有宿主 `browser` kind，插件也不再自带浏览器 tab，因此网页 tab 只在 desktop profile 可用；登录态 / 第三方 Cookie / `X-Frame-Options` 等限制随宿主实现
 - HTML 预览渲染的是已保存文件（不反映未保存草稿）

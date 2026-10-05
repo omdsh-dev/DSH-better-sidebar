@@ -23,6 +23,7 @@ import clsx from 'clsx'
 import { IconFolderOpenRegular, IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
 import type { BetterSidebarService } from './service.ts'
+import { ancestorDirs } from './state.ts'
 import { FileTree } from './FileTree.tsx'
 import { IconUploadOutline16 } from './icons.tsx'
 import type { OpenInApp } from './open-in-app.ts'
@@ -73,6 +74,10 @@ export function TreePanel(props: {
    *  through to FileTree). */
   openWithShowPluginTargets?: boolean
   onReferenceFile: (path: string, isDir: boolean) => void
+  /** The explorerExclude pref patterns: the host filters the tree listing AND
+   *  the name search with them (passed through to FileTree, and carried on the
+   *  search request so both surfaces agree). */
+  exclude?: readonly string[]
   /** A tree rename landed (passed through to FileTree for tab retargeting). */
   onPathRenamed?: (oldPath: string, newPath: string) => void
   /** A tree delete landed (passed through to FileTree for tab closing). */
@@ -89,11 +94,11 @@ export function TreePanel(props: {
   const {
     sessionId, cwd, expanded, revealed, onToggle, onOpenFile, onOpenFileNewTab, onOpenFileSide,
     openInApp, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin,
-    openWithShowPluginTargets,
+    openWithShowPluginTargets, exclude,
     onReferenceFile, onPathRenamed, onPathDeleted, visible, full, service,
   } = props
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<{ matches: string[]; truncated: boolean } | null>(null)
+  const [results, setResults] = useState<{ matches: string[]; dirs: string[]; truncated: boolean } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshTick, setRefreshTick] = useState(0)
 
@@ -171,6 +176,12 @@ export function TreePanel(props: {
 
   const needle = query.trim()
   const searching = needle !== ''
+  // The search effect below must re-run on a CHANGED list, never on a churned
+  // array identity: the prefs store hands out one stable reference per
+  // document, but keying on the value is what makes that a guarantee rather
+  // than an assumption (a re-run resets the 300ms debounce, so a per-render
+  // identity would keep the search from ever settling).
+  const excludeKey = (exclude ?? []).join('\0')
   useEffect(() => {
     if (needle === '') {
       setResults(null)
@@ -178,8 +189,9 @@ export function TreePanel(props: {
       return
     }
     const controller = new AbortController()
+    const patterns = excludeKey === '' ? undefined : excludeKey.split('\0')
     const timer = window.setTimeout(() => {
-      api.fsSearch({ sessionId, cwd }, needle, controller.signal).then((found) => {
+      api.fsSearch({ sessionId, cwd }, needle, patterns, controller.signal).then((found) => {
         setResults(found)
         setError(null)
       }).catch((failure: unknown) => {
@@ -192,9 +204,30 @@ export function TreePanel(props: {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [sessionId, cwd, needle])
+  }, [sessionId, cwd, needle, excludeKey])
 
   const busy = upload !== null
+  /** Directory hits (the host reports them separately): a click navigates the
+   *  tree for those rows instead of opening them as files. */
+  const dirHits = new Set(results?.dirs)
+
+  /**
+   * Jump to a DIRECTORY hit in the tree. Results include directories (they
+   * show where matches live) and `fs.read` refuses one, so opening such a row
+   * as a file surfaced a bare `"…" is a directory` error. Expand the folder
+   * and its ancestors instead — `onToggle` FLIPS a row, so only collapsed
+   * paths are touched — and clear the query so the tree, not the parked
+   * results panel, is what the user sees next.
+   */
+  const openSearchDir = (rel: string): void => {
+    const target = resolveSidebarPath(cwd, rel)
+    if (cwd !== undefined) {
+      for (const path of [...ancestorDirs(cwd, [target]), target]) {
+        if (!expanded.includes(path)) onToggle(path)
+      }
+    }
+    setQuery('')
+  }
 
   return (
     <div className={clsx(css.editorTreePanel, full === true && css.editorTreePanelFull)}>
@@ -262,17 +295,25 @@ export function TreePanel(props: {
             {error === null && results !== null && results.matches.length === 0 && (
               <div className={css.editorSearchHint}>{t('editorSearchNoResults')}</div>
             )}
-            {error === null && results !== null && results.matches.map(rel => (
-              <button
-                key={rel}
-                type="button"
-                className={css.editorSearchResult}
-                title={rel}
-                onClick={() => { onOpenFile(resolveSidebarPath(cwd, rel)) }}
-              >
-                {rel}
-              </button>
-            ))}
+            {error === null && results !== null && results.matches.map((rel) => {
+              const isDirHit = dirHits.has(rel)
+              return (
+                <button
+                  key={rel}
+                  type="button"
+                  className={clsx(css.editorSearchResult, isDirHit && css.editorSearchResultDir)}
+                  title={rel}
+                  data-dsh-search-dir={isDirHit ? 'true' : undefined}
+                  onClick={() => {
+                    if (isDirHit) openSearchDir(rel)
+                    else onOpenFile(resolveSidebarPath(cwd, rel))
+                  }}
+                >
+                  {isDirHit && <IconFolderOpenRegular size={14} />}
+                  <span className={css.editorSearchResultLabel}>{rel}</span>
+                </button>
+              )
+            })}
             {error === null && results?.truncated === true && (
               <div className={css.editorSearchHint}>{t('editorSearchTruncated')}</div>
             )}
@@ -297,6 +338,7 @@ export function TreePanel(props: {
         onOpenWith={onOpenWith}
         onToggleOpenWithPin={onToggleOpenWithPin}
         openWithShowPluginTargets={openWithShowPluginTargets}
+        exclude={exclude}
         onReferenceFile={onReferenceFile}
         onPathRenamed={onPathRenamed}
         onPathDeleted={onPathDeleted}

@@ -250,6 +250,9 @@ WeChat / QQ group QR codes will live here. After uploading the QR images (drag t
 | Action | Keys |
 |---|---|
 | Save edits | `Ctrl/Cmd + S` |
+| Find / replace in file | `Ctrl/Cmd + F` (the panel carries the replace row; `Enter` / `Shift + Enter` next / previous, `Esc` closes) |
+| Find next / previous | `Ctrl/Cmd + G` / `Shift + Ctrl/Cmd + G` |
+| Select next occurrence | `Ctrl/Cmd + D` |
 | Git commit | `Ctrl + Enter` |
 | Close tab | Middle mouse button |
 | Tab context menu (right-click) | Close / Close Other Tabs / Close Tabs to the Left / Close Tabs to the Right (current pane) |
@@ -302,6 +305,7 @@ make clean          # remove lib/, *.tgz, playwright-report/, test-results/
 ## ⚠️ Known Limitations
 
 - Git has no push/pull/fetch; Markdown previews provide a manual refresh button with confirmation before discarding unsaved edits; the file tree only watches **expanded** directories (collapsed folders are unsubscribed, and there is no recursive whole-workspace scan); tool inline file-open buttons cannot be intercepted
+- Unsaved drafts: closing an editor tab, deleting the file, and refreshing/closing the page all confirm first (the find/replace panel covers the open editor only, not across files); a save is refused when the file changed on disk since it was loaded (a "Reload from disk" action is offered) instead of silently overwriting those bytes
 - **Which read-only previews exist is the host's call**: spreadsheets / PDF / images / Office go to DSH's own `ui-sidebar-documentpreview`, while the plugin renders only Markdown / HTML and the editable text buffer; the host implementation (rendering details, zoom, refresh timing) follows the DSH version
 - **The browser view exists only in the desktop profile**: the Web profile has no host `browser` kind and the plugin no longer ships a browser tab, so web tabs are desktop-only; login state / third-party cookies / `X-Frame-Options` limits follow the host implementation
 - HTML preview renders the saved file (not unsaved drafts)

@@ -83,6 +83,34 @@ describe('test-registry path (vitest / jsdom-less environments)', () => {
 })
 
 describe('production path (script injection + global registry + externals require)', () => {
+  it('injects the chunk script under the page prefix (reverse proxy, issue #753)', async () => {
+    installModuleSystem()
+    // The loader's fire-and-forget ETag HEAD rides along; stub it so no real
+    // request to the fake prefix host outlives this case.
+    vi.stubGlobal('fetch', vi.fn(async () => ({ headers: { get: () => null } }) as unknown as Response))
+    const loaded: string[] = []
+    setChunkScriptLoaderForTests(async (src) => {
+      loaded.push(src)
+      simulateScript('editor', () => ({ TextEditor: 'editor-view' }))
+    })
+    // The GUI served at `/dataops/proxy/3080/`: a leading-slash bundle URL
+    // would ask the origin root, where the proxy serves nothing → 404 and a
+    // chunk that never materializes.
+    const document = globalThis.document as { baseURI?: string }
+    const previous = document.baseURI
+    Object.defineProperty(document, 'baseURI', {
+      value: 'https://host.test/dataops/proxy/3080/',
+      configurable: true,
+      writable: true,
+    })
+    try {
+      await loadChunk('editor')
+    } finally {
+      Object.defineProperty(document, 'baseURI', { value: previous, configurable: true, writable: true })
+    }
+    expect(loaded).toEqual(['https://host.test/dataops/proxy/3080/sidebar/bundle/editor.js'])
+  })
+
   it('resolves externals through an injected ctx.modules system (rc.8 — no page global)', async () => {
     const modules = installModuleSystem()
     const loaded: string[] = []
@@ -91,7 +119,7 @@ describe('production path (script injection + global registry + externals requir
       simulateScript('editor', (require) => ({ TextEditor: `view:${String(require('react'))}` }))
     })
     const exports = await loadChunk('editor')
-    expect(loaded).toEqual(['/sidebar/bundle/editor.js'])
+    expect(loaded).toEqual(['http://localhost/sidebar/bundle/editor.js'])
     expect(exports).toEqual({ TextEditor: 'view:[object Object]' })
     expect(modules.import).toHaveBeenCalledTimes(CHUNK_EXTERNALS.length)
     // The injection also lands on a plugin-owned global so chunk-bundle
@@ -116,7 +144,7 @@ describe('production path (script injection + global registry + externals requir
       simulateScript('editor', (require) => ({ TextEditor: `view:${String(require('react'))}` }))
     })
     const exports = await loadChunk('editor')
-    expect(loaded).toEqual(['/sidebar/bundle/editor.js'])
+    expect(loaded).toEqual(['http://localhost/sidebar/bundle/editor.js'])
     expect(exports).toEqual({ TextEditor: 'view:[object Object]' })
     // Externals resolved through the module system's seed branch, once.
     expect(modules.import).toHaveBeenCalledTimes(CHUNK_EXTERNALS.length)
@@ -135,7 +163,7 @@ describe('production path (script injection + global registry + externals requir
     })
     await loadChunk('locale')
     await loadChunk('editor')
-    expect(seen).toEqual(['/sidebar/bundle/locale.js', '/sidebar/bundle/editor.js'])
+    expect(seen).toEqual(['http://localhost/sidebar/bundle/locale.js', 'http://localhost/sidebar/bundle/editor.js'])
     expect(modules.import).toHaveBeenCalledTimes(CHUNK_EXTERNALS.length)
   })
 

@@ -12,11 +12,15 @@
  * Row semantics are unchanged: directories first, case-insensitive name order
  * with a deterministic tie-break, POSIX-hidden entries flagged for dimming,
  * symlinks stat'ed once so a link to a directory expands like a directory and
- * a dangling one is flagged broken.
+ * a dangling one is flagged broken. Directory rows additionally get one
+ * bounded read of their own level to mark singleton-dir chains (`compact`)
+ * for the explorer's breadcrumb folding.
  */
-import { readdir, stat } from 'node:fs/promises'
+import { opendir, readdir, stat } from 'node:fs/promises'
+import type { Dir, Dirent } from 'node:fs'
 import { basename, dirname, isAbsolute, resolve, sep } from 'node:path'
 import { SidebarError } from './wire.ts'
+import type { ExcludeMatcher } from './exclude-patterns.ts'
 
 /** One explorer row. */
 export interface SidebarFsEntry {
@@ -28,6 +32,14 @@ export interface SidebarFsEntry {
   isSymlink: boolean
   /** For symlinks: the target is missing or unreadable (stat failed). */
   broken: boolean
+  /**
+   * Directory rows only: the contents are EXACTLY one child — the explorer
+   * folds such singleton chains into one breadcrumb row (VSCode's "compact
+   * folders"). The terminal link (sole child is a FILE) is marked too, so
+   * the row label never shifts when the chain expands. Symlink children
+   * never qualify: a self-referential link would otherwise fold forever.
+   */
+  compact?: boolean
 }
 
 /** One listed level. */
@@ -66,19 +78,25 @@ const SYMLINK_PROBE_CONCURRENCY = 32
 export const DIRECTORY_CACHE_TTL_MS = 1_500
 
 /**
- * The level cache, keyed by `"<absoluteDir>\0<cap>"`.
+ * The level cache, keyed by `"<absoluteDir>\0<cap>\0<excludeKey>"`.
  *
  * Keyed by ABSOLUTE PATH, not by session: a listing is a pure function of the
- * path plus the cap, and its rows already carry absolute paths, so sharing an
- * entry between two sessions that read the same directory is correct (and
- * desirable — one directory read serves both). Nothing session-scoped is
- * stored, so no session's data can leak into another's listing.
+ * path plus the cap AND the exclude pattern set, and its rows already carry
+ * absolute paths, so sharing an entry between two sessions that read the same
+ * directory is correct (and desirable — one directory read serves both).
+ * Nothing session-scoped is stored, so no session's data can leak into
+ * another's listing.
+ *
+ * The exclude set is part of the key, never ambient host state: a listing
+ * filtered by one pattern list must never be served to a request carrying
+ * another (the user's edit must show up on the next read, and the pattern list
+ * travels WITH the request — see {@link ExcludeMatcher.key}).
  */
 const directoryCache = new Map<string, { at: number; listing: SidebarFsListing }>()
 
 /** Cache key of one level read. */
-function cacheKey(path: string, maxEntries: number): string {
-  return `${path}\0${maxEntries}`
+function cacheKey(path: string, maxEntries: number, exclude?: ExcludeMatcher): string {
+  return `${path}\0${maxEntries}\0${exclude?.key ?? ''}`
 }
 
 /**
@@ -106,12 +124,12 @@ export function invalidateDirectoryCache(path?: string): void {
 const DIRECTORY_CACHE_MAX = 512
 
 /** Read one level through the cache when it is fresh. */
-async function listDirectoryCached(path: string, maxEntries: number): Promise<SidebarFsListing> {
-  const key = cacheKey(path, maxEntries)
+async function listDirectoryCached(path: string, maxEntries: number, exclude?: ExcludeMatcher): Promise<SidebarFsListing> {
+  const key = cacheKey(path, maxEntries, exclude)
   const now = Date.now()
   const hit = directoryCache.get(key)
   if (hit !== undefined && now - hit.at < DIRECTORY_CACHE_TTL_MS) return hit.listing
-  const listing = await readDirectory(path, maxEntries)
+  const listing = await readDirectory(path, maxEntries, exclude)
   // Bounded: a deep walk of many directories must not grow this map without
   // limit (entries are tiny, but an unbounded map in a long-lived host is a
   // leak). Map iteration order is insertion order, so the first key is oldest.
@@ -127,15 +145,18 @@ async function listDirectoryCached(path: string, maxEntries: number): Promise<Si
  * List one directory level (cached for {@link DIRECTORY_CACHE_TTL_MS}).
  * @param path - absolute directory path.
  * @param maxEntries - row bound of one level (extra rows flag `truncated`).
+ * @param exclude - compiled exclude-pattern probe (the explorerExclude pref):
+ *  matched entries are dropped from the listing AND the singleton fold probe,
+ *  so they never render nor block a breadcrumb fold.
  * @returns the sorted listing.
  * @throws {SidebarError} fs-error when the level is unreadable or not a directory.
  */
-export async function listDirectory(path: string, maxEntries = 1000): Promise<SidebarFsListing> {
-  return await listDirectoryCached(path, maxEntries)
+export async function listDirectory(path: string, maxEntries = 1000, exclude?: ExcludeMatcher): Promise<SidebarFsListing> {
+  return await listDirectoryCached(path, maxEntries, exclude)
 }
 
 /** Read one level straight from the filesystem (the cache's slow path). */
-async function readDirectory(path: string, maxEntries: number): Promise<SidebarFsListing> {
+async function readDirectory(path: string, maxEntries: number, exclude?: ExcludeMatcher): Promise<SidebarFsListing> {
   let dirents
   try {
     // One syscall batch instead of an `opendir` stream: `readdir` with types is
@@ -145,12 +166,19 @@ async function readDirectory(path: string, maxEntries: number): Promise<SidebarF
   } catch (error) {
     throw new SidebarError('fs-error', `cannot list "${path}": ${messageOf(error)}`, 400)
   }
-  const truncated = dirents.length > maxEntries
+  const prefix = path.endsWith(sep) ? path : `${path}${sep}`
+  // The user's exclude list removes matched rows entirely (VS Code's
+  // files.exclude semantics) — BEFORE the cap, so an excluded entry never
+  // consumes a row of the level's budget, and the same compiled matcher
+  // filters the singleton fold probe below.
+  const visible = exclude === undefined
+    ? dirents
+    : dirents.filter(dirent => !exclude(`${prefix}${dirent.name}`, dirent.name))
+  const truncated = visible.length > maxEntries
   // Build rows ONLY for the rows that survive the cap: composing a row costs
   // ~0.3µs (path concat + three flags), so an uncapped 10k level would spend
   // ~3ms on rows nobody will see.
-  const kept = truncated ? dirents.slice(0, maxEntries) : dirents
-  const prefix = path.endsWith(sep) ? path : `${path}${sep}`
+  const kept = truncated ? visible.slice(0, maxEntries) : visible
   const rows: SidebarFsEntry[] = new Array(kept.length)
   for (let index = 0; index < kept.length; index += 1) {
     const dirent = kept[index]!
@@ -170,6 +198,10 @@ async function readDirectory(path: string, maxEntries: number): Promise<SidebarF
   // maxEntries stat calls and stall the explorer. Non-symlink rows are skipped,
   // so levels without links stay as cheap as before.
   await probeSymlinkTargets(rows)
+  // Mark singleton-directory rows AFTER the symlink probe (it finalizes
+  // isDir/broken), so the client can fold compact chains without an extra
+  // round trip per collapsed level.
+  await probeCompactRows(rows, exclude)
   rows.sort(compareEntries)
   return { path, entries: rows, truncated }
 }
@@ -192,6 +224,67 @@ async function probeSymlinkTargets(rows: SidebarFsEntry[], concurrency = SYMLINK
     }
   })
   await Promise.all(workers)
+}
+
+/** How many compact probes run in flight during one level listing. */
+const COMPACT_PROBE_CONCURRENCY = 32
+
+/**
+ * Mark each directory row whose contents are EXACTLY one non-symlink child
+ * (`compact`), so the explorer can fold singleton chains into one breadcrumb
+ * row. The terminal link (sole FILE child) is marked too: the client
+ * preloads marked levels to stabilize the fold label before expansion.
+ * Bounded concurrency like the symlink probe: each probe is one opendir + up
+ * to two dirent reads, so a directory-heavy level stays responsive. Probe
+ * failures (unreadable child level) leave the row unmarked — it simply does
+ * not fold.
+ */
+async function probeCompactRows(rows: SidebarFsEntry[], exclude?: ExcludeMatcher, concurrency = COMPACT_PROBE_CONCURRENCY): Promise<void> {
+  let next = 0
+  const workers = Array.from({ length: Math.min(concurrency, rows.length) }, async () => {
+    for (;;) {
+      const index = next
+      next += 1
+      if (index >= rows.length) return
+      const row = rows[index]!
+      if (!row.isDir || row.broken) continue
+      if (await hasSingletonChild(row.path, exclude)) row.compact = true
+    }
+  })
+  await Promise.all(workers)
+}
+
+/**
+ * Whether `dir` holds exactly one EFFECTIVE entry (POSIX-hidden entries —
+ * dot-prefixed, e.g. macOS's `.DS_Store` — don't count, and neither do
+ * entries the user's exclude list removes) and that entry is NOT a symlink.
+ * Symlink children never qualify: the client's fold chain follows `compact`
+ * links eagerly, and a self-referential link would otherwise fold forever.
+ * Hidden/excluded entries never qualify either: the client walks chains
+ * with the same filters, so a fold never hides a visible row — the user's
+ * "show hidden files" switch only affects rendering, never the fold itself.
+ */
+async function hasSingletonChild(dir: string, exclude?: ExcludeMatcher): Promise<boolean> {
+  let level: Dir | undefined
+  try {
+    level = await opendir(dir)
+    let only: Dirent | null = null
+    for (;;) {
+      const entry = await level.read()
+      if (entry === null) break
+      if (entry.name.startsWith('.')) continue
+      if (exclude !== undefined && exclude(`${dir}${sep}${entry.name}`, entry.name)) continue
+      if (only !== null) return false
+      only = entry
+    }
+    // A dirent's isSymbolicLink() never follows targets — exactly the
+    // exclusion we want here (see above).
+    return only !== null && !only.isSymbolicLink()
+  } catch {
+    return false
+  } finally {
+    await level?.close().catch(() => undefined)
+  }
 }
 
 /** The root row label of a listing: the last path segment (or the full path at the filesystem root). */

@@ -73,10 +73,10 @@ export default tseslint.config(
     languageOptions: { globals: globals.browser },
   },
 
-  // host 侧插件入口与构建/运维脚本跑在 Node。eslint.config.js 自身不 ignore：
+  // host 侧插件入口、构建/运维脚本与 skill 自带脚本都跑在 Node。eslint.config.js 自身不 ignore：
   // 它就是一个普通 ESM 脚本，走 js recommended + node globals 正常通过。
   {
-    files: ['src/*.{js,mjs,cjs,ts}', 'scripts/**/*.{js,mjs,cjs,ts}', '*.config.ts', 'eslint.config.js'],
+    files: ['src/*.{js,mjs,cjs,ts}', 'scripts/**/*.{js,mjs,cjs,ts}', '.agents/skills/**/*.{js,mjs,cjs,ts}', '*.config.ts', 'eslint.config.js'],
     languageOptions: { globals: globals.node },
   },
 

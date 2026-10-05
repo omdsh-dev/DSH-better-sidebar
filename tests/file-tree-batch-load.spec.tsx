@@ -19,6 +19,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { FileTree } from '../src/client/FileTree.tsx'
+import { FS_TREES_MAX_PATHS } from '../src/fs-batch.ts'
 
 import { setupReactAct } from './test-utils.ts'
 setupReactAct()
@@ -165,6 +166,50 @@ describe('FileTree level loading is batched', () => {
     // Every level rendered (root + the 8 directories' children).
     expect(harness.container.textContent).toContain('d1-file.ts')
     expect(harness.container.textContent).toContain('d8-file.ts')
+  })
+
+  it('splits a visible set larger than the host cap into cap-sized batches', async () => {
+    // The expansion set persists per session, so a heavy session can cross the
+    // host's row bound. ONE oversized request used to be refused outright
+    // (`too many paths (max 64)`) and every level fell back to an error row;
+    // the tree now splits on the same number the host enforces.
+    const many = Array.from({ length: FS_TREES_MAX_PATHS + 6 }, (_, index) => `/tmp/d${index + 1}`)
+    harness = mountTree(many)
+    await flush()
+
+    expect(fsTrees).toHaveBeenCalledTimes(2)
+    const sizes = fsTrees.mock.calls.map(call => (call[1] as string[]).length).sort((a, b) => a - b)
+    expect(sizes).toEqual([6 + 1, FS_TREES_MAX_PATHS])
+    // Every visible path is asked for exactly once across the batches.
+    expect(fsTrees.mock.calls.flatMap(call => call[1] as string[]).sort()).toEqual(['/tmp', ...many].sort())
+    // …and the tree renders instead of collapsing into error rows.
+    expect(harness.container.textContent).toContain('d1-file.ts')
+    expect(harness.container.textContent).not.toContain('too many paths')
+  })
+
+  it('keeps one failed batch from blanking the levels another batch carried', async () => {
+    // Batching must not cost the route's per-level error identity: a batch that
+    // fails marks only ITS paths, never the whole visible set.
+    const many = Array.from({ length: FS_TREES_MAX_PATHS + 6 }, (_, index) => `/tmp/d${index + 1}`)
+    fsTrees.mockImplementation(async (_scope: unknown, paths: readonly string[]) => {
+      // The trailing (small) batch fails; the leading one keeps working.
+      if (paths.length < 32) throw new Error('too many paths (max 64)')
+      return {
+        levels: paths.map(path => path === '/tmp'
+          ? {
+              path,
+              entries: many.map(dir => ({ name: dir.slice('/tmp/'.length), path: dir, isDir: true })),
+              truncated: false,
+            }
+          : levelOf(path)),
+      }
+    })
+    harness = mountTree(many)
+    await flush()
+    // The levels the leading batch carried are NOT marked as failed…
+    expect(harness.container.textContent).toContain('d1-file.ts')
+    // …while the failed batch's own levels say why they are missing.
+    expect(harness.container.textContent).toContain('too many paths')
   })
 
   it('lists only the newly expanded directory (batch of 1)', async () => {

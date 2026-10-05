@@ -30,6 +30,7 @@ import clsx from 'clsx'
 import { IconCloseFillRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { Context } from '../context-types.ts'
 import { referenceInChat as referenceInChatShared } from './reference-in-chat.ts'
+import { DockFallback } from './sidebar/dock-fallback.tsx'
 import {
   BOTTOM_MIN, CONVERSATION_MIN,
   leafWithTab, moveTab, moveTabToEdge, openDiffTab, resizeSplitIn,
@@ -45,12 +46,13 @@ import { getWcoSnapshot, subscribeWco } from './wco.ts'
 import { getShellPreset } from './shell-presets.ts'
 import { computeTitleBarStrip } from './titlebar-strip.ts'
 import { TabContent, buildNewTabOptions } from './sidebar/TabContent.tsx'
+import { confirmDiscardDraft, dirtyCount, editorDirtyRevision, subscribeEditorDirty } from './editor-dirty.ts'
 import { useCenterColumn } from './sidebar/use-center-column.ts'
 import { useHostFeeds } from './sidebar/use-host-feeds.ts'
 import { mountedSessions } from './native/surface.ts'
 import type { TabDragPayload } from './TabBar.tsx'
 import { t } from './locales.ts'
-import { api } from './api.ts'
+import { useSessionRoot } from './use-session-root.ts'
 import css from './sidebar.module.css'
 
 /**
@@ -217,7 +219,25 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   const state = snapshot.state
   const sessionId = snapshot.sessionId
-  const summaryCwd = sessionId === undefined ? undefined : sessionList.byId[sessionId]?.cwd
+  // 空白会话（无 user/assistant message）里宿主不渲染会话头，本插件的会话头入口不可达：
+  // 由 DockFallback 自行按会话相位决定是否渲染（sidebar/dock-fallback.tsx），二者互斥。
+
+  // Unload guard: a browser refresh / tab close / navigation would drop every
+  // open unsaved draft at once. The listener is armed only while at least one
+  // draft is dirty (subscribeEditorDirty fires on every register/clear), so a
+  // clean session navigates away without a prompt. Every session's drafts
+  // count — the page is going away, not just the visible conversation. The
+  // message itself is the browser's own generic warning (custom text ignored).
+  const dirtyRevision = useSyncExternalStore(subscribeEditorDirty, () => editorDirtyRevision())
+  useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent): void => {
+      if (dirtyCount() === 0) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => { window.removeEventListener('beforeunload', onBeforeUnload) }
+  }, [dirtyRevision])
 
   // Title-bar / shell compatibility (the "位置兼容模式" scheme):
   //   auto    — CONSERVATIVE: only the standard Window Controls Overlay
@@ -275,21 +295,9 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     return () => { for (const tag of tags) tag.remove() }
   }, [presetCss, customCss, preset?.id])
 
-  // While the session's header is still hydrating (or the session is blank),
-  // the list summary may carry no cwd; ask the host once (it falls back to
-  // the process cwd) so the explorer root and the git rows are real from
-  // first paint instead of showing "no session".
-  const [fetchedCwd, setFetchedCwd] = useState<string | undefined>(undefined)
-  useEffect(() => {
-    setFetchedCwd(undefined)
-    if (sessionId === undefined || summaryCwd !== undefined) return
-    let cancelled = false
-    api.sessionCwd({ sessionId })
-      .then(result => { if (!cancelled) setFetchedCwd(result.cwd) })
-      .catch(() => { /* the explorer/git rows surface their own errors */ })
-    return () => { cancelled = true }
-  }, [sessionId, summaryCwd])
-  const cwd = summaryCwd ?? fetchedCwd
+  // The live root shared by both client surfaces: the host follows the
+  // session's active linked git worktree, the list summary only seeds first paint.
+  const cwd = useSessionRoot(ctx, sessionId)
 
   // The + menu options ride a memo so the workbench does not rebuild the
   // array identity across renders that did not change the store (drag state,
@@ -510,6 +518,11 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   const actions: WorkbenchActions = useMemo(() => ({
     closeTab: (paneId, tabId) => {
+      // An unsaved editor draft would be dropped by the unmount — ask first.
+      // The confirmation is the SAME guard the refresh button uses, so every
+      // close path (tab X, middle click, tab context menu, the tree's
+      // close-on-rename/delete) funnels through here and warns exactly once.
+      if (!confirmDiscardDraft(tabId, t('closeUnsavedConfirm'))) return
       // Route through the service: the tab-bar close is the canonical close
       // path (finds the pane itself, fires descriptor.onClose); the session
       // scope (with its cwd) rides to the callback.
@@ -541,20 +554,20 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }), [store, sessionId, cwd, ctx])
 
   /**
-   * The explorer's @-reference button. Directories append the folder mention
-   * (`@dir/`) as plain text so DSH's folder decoration and completion keep
-   * working; files insert a structured chip like the native `@` picker, so
-   * the whole reference stays one link instead of decorating only the
-   * leading folder. Resolves the session-scope ctx and the conversation
-   * input service at click time; a missing service or scope degrades to a
-   * logged no-op, never a crash. Defined above the no-session early return
-   * — a hook must never sit behind a conditional return (React counts hooks
-   * per render).
+   * The explorer's @-reference button. The token is spelled against the
+   * host-confirmed workspace root (see `referenceInChat`), directories as a
+   * complete plain-text folder mention so DSH's folder decoration and
+   * completion keep working, files as a structured chip like the native `@`
+   * picker. Resolves the session-scope ctx, the conversation input service
+   * and the workspace snapshot at click time; a missing service or an
+   * unresolved workspace degrades to a logged no-op, never a crash. Defined
+   * above the no-session early return — a hook must never sit behind a
+   * conditional return (React counts hooks per render).
    */
   const referenceInChat = useCallback((path: string, isDir: boolean): void => {
     if (sessionId === undefined) return
-    referenceInChatShared(ctx, sessionId, cwd, path, isDir)
-  }, [ctx, sessionId, cwd])
+    referenceInChatShared(ctx, sessionId, path, isDir)
+  }, [ctx, sessionId])
 
   if (state === undefined || sessionId === undefined) {
     // No conversation yet: the host stays mounted (the drag shield keeps
@@ -562,6 +575,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
     // in DSH's session header, which does not exist without a session.
     return <div data-dsh-panel-host {...osFileDragShield} />
   }
+  const blankEntry = <DockFallback store={store} />
 
   const bottomPanelHeight = bottomPushHeight({
     open: true,
@@ -617,6 +631,26 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }
 
   /**
+   * The active tab's right-aligned action area from the tab-type registry:
+   * a descriptor that declares `rightActions` supplies its own toolbar
+   * rendered at its pane's tab-strip right end. The open `tab` and its
+   * `paneId` ride along so the resolver can target the right instance (a
+   * split workbench renders one strip per pane, each with its own active
+   * tab). A throwing resolver is swallowed (no actions) — the tab strip
+   * must never break because a plugin's resolver failed.
+   */
+  const tabRightActionsOf = (tab: SidebarTab, paneId: string): ReactNode => {
+    const descriptor = ctx.get('betterSidebar')?.getTab(tab.type)
+    if (descriptor?.rightActions === undefined) return null
+    try {
+      return descriptor.rightActions(ctx, { sessionId, cwd }, state, tab, paneId)
+    } catch (error) {
+      console.error('[dsh-better-sidebar] tab rightActions error:', error)
+      return null
+    }
+  }
+
+  /**
    * Render one tab's content. `active` (from the workbench) tells whether
    * this tab is the active one in its pane; combined with the panel's
    * open/closed state it gates live views (the Subagent topology pauses its
@@ -647,6 +681,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
 
   return (
     <div data-dsh-panel-host {...osFileDragShield}>
+      {blankEntry}
       {/*
         The bottom workbench: it squeezes ONLY the center column (the agent
         output area): it starts at the app shell's own left sidebar and ends
@@ -733,6 +768,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
             renderTab={renderTab}
             getTabIcon={tabIconOf}
             getTabBadge={tabBadgeOf}
+            getTabRightActions={tabRightActionsOf}
           />
         </div>
       </div>
@@ -761,7 +797,7 @@ export function BottomDockToggle(props: { store: SidebarStore }) {
         aria-pressed={open}
         onClick={() => { store.reduce(toggleBottomPanel) }}
       >
-        <IconPanelBottomOutline16 />
+        <IconPanelBottomOutline16 size={15} />
       </button>
     </Tooltip>
   )

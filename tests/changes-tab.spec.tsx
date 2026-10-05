@@ -263,7 +263,7 @@ describe('ChangesTab', () => {
         .find(node => (node.textContent ?? '').includes(t('changesStageFailed', { message: 'index.lock exists' })))
       expect(alert).toBeDefined()
       // The ONE status line sits in the commit bar, directly under its input row.
-      const input = container.querySelector(`input[placeholder="${t('commitPlaceholder')}"]`)
+      const input = container.querySelector(`textarea[placeholder="${t('commitPlaceholder')}"]`)
       expect(input).not.toBeNull()
       expect(alert!.previousElementSibling?.contains(input)).toBe(true)
     } finally {

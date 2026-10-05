@@ -103,6 +103,26 @@ describe('useDirectoryWatch', () => {
     harness.unmount()
   })
 
+  it('opens the socket under the page prefix (reverse proxy, issue #753)', () => {
+    // The prefix is part of the page's own base: a leading-slash route leaves
+    // it, and the proxy never forwards the handshake to the host (1006).
+    const page = document as { baseURI?: string }
+    const previous = page.baseURI
+    Object.defineProperty(page, 'baseURI', {
+      value: 'https://host.test/dataops/proxy/3080/',
+      configurable: true,
+      writable: true,
+    })
+    try {
+      const harness = mountProbe(() => {})
+      expect(harness.socket().url)
+        .toBe('wss://host.test/dataops/proxy/3080/sidebar/ws/fs-watch?sessionId=s1')
+      harness.unmount()
+    } finally {
+      Object.defineProperty(page, 'baseURI', { value: previous, configurable: true, writable: true })
+    }
+  })
+
   it('sends nothing when a re-render repeats the same directories in a fresh array', () => {
     const harness = mountProbe(() => {})
     const socket = harness.socket()

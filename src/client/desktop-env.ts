@@ -66,6 +66,32 @@ function parseTitlebarInset(raw: string | null): number {
   return Math.min(120, Math.max(0, Math.round(parsed)))
 }
 
+/**
+ * Absolute base for the plugin's own host transports — the HTTP routes
+ * (`/sidebar/api/*`, `/sidebar/file`, `/sidebar/bundle/*`, …) and the
+ * WebSockets (`/sidebar/ws/*`) resolve through the same source
+ * (see `host-route-url.ts`).
+ *
+ * A desktop shell may serve the GUI from a custom scheme: the official Electron
+ * shell uses `dsh-app://app/`, whose `location.host` is the literal string
+ * `app`. Resolving a route against that origin produces `ws://app/...`, which
+ * can never complete a DNS lookup — every socket the sidebar opens then fails
+ * with a connection error. The shell publishes the Host's real base through
+ * `__DSH_TRANSPORT__.streamBaseUrl`, the same source DSH's own downlink mux
+ * resolves through (`stream-client.ts` in `@deepseek-ai/dsh-api-gateway`), so
+ * prefer it and fall back to `document.baseURI` for ordinary http(s) pages —
+ * that base is also what carries a reverse-proxy directory prefix.
+ * @returns A URL string usable as the base argument of `new URL`, or '' when
+ * neither source exists (non-DOM specs); route resolution then substitutes a
+ * placeholder origin it never actually requests.
+ */
+export function hostTransportBase(): string {
+  const transport = (globalThis as { __DSH_TRANSPORT__?: { streamBaseUrl?: string } }).__DSH_TRANSPORT__
+  const base = transport?.streamBaseUrl
+  if (base !== undefined && base !== '') return base
+  return typeof document !== 'undefined' && typeof document.baseURI === 'string' ? document.baseURI : ''
+}
+
 /** Test hook: drop the memo so the next parse re-reads the URL/globals. */
 export function resetDesktopEnvForTests(): void {
   cached = undefined

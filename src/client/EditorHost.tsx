@@ -30,9 +30,10 @@ import type { Context } from '../context-types.ts'
 import { api, mediaUrl, type SessionScope } from './api.ts'
 import { BinaryDownload } from './binary-download.tsx'
 import { planFirstMatch, planFsReadOutcome, type EditorLoadAction } from './editor-load.ts'
+import { clearEditorDirty, setEditorDirty } from './editor-dirty.ts'
 import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
-import { openSidebarFile } from './sidebar-file.ts'
+import { openClaimedNativeFile, openSidebarFile } from './sidebar-file.ts'
 import { openWithSshActive, openWithUrl, parseOpenWithConfig, resolveOpenWithTargets } from './open-with.ts'
 import { updatePluginSettings } from './plugin-settings.ts'
 import { createOpenInApp } from './open-in-app.ts'
@@ -48,7 +49,7 @@ import css from './sidebar.module.css'
 type EditorLoad =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; viewer: FileViewerDescriptor; content?: string; truncated?: boolean; mediaUrl?: string; customData?: unknown }
+  | { status: 'ready'; viewer: FileViewerDescriptor; content?: string; truncated?: boolean; mtimeMs?: number; mediaUrl?: string; customData?: unknown }
   | { status: 'binary' }
 
 /** The docked tree panel's width bounds (drag-resize clamps into them). */
@@ -83,9 +84,15 @@ function treeWidthOf(tab: SidebarTab): number {
     : TREE_WIDTH_DEFAULT
 }
 
-/** Merge a patch into the tab's persisted meta (rides the layout). */
-function patchMeta(ctx: Context, tab: SidebarTab, patch: Record<string, unknown>): void {
-  ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { ...metaOf(tab), ...patch } })
+/**
+ * Merge a patch into the tab's persisted meta (rides the layout).
+ *
+ * `sessionId` is the seat session: native ids restart per session and every
+ * visited tab's body stays mounted (0.1.7 `keepMounted`), so the tab this call
+ * means must be named, not inferred from whichever seat is on screen.
+ */
+function patchMeta(ctx: Context, tab: SidebarTab, sessionId: string, patch: Record<string, unknown>): void {
+  ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { ...metaOf(tab), ...patch } }, sessionId)
 }
 
 /** Clamp one dock width into the contract range. */
@@ -139,6 +146,15 @@ export function EditorHost(props: {
     useCallback((callback: () => void) => store.subscribe(callback), [store]),
     useCallback(() => store.getSnapshot().prefs.editorExplorer, [store]),
   )
+  // The exclude-pattern list (VS Code files.exclude style): the HOST filters
+  // the listing with it, so a changed list reloads the tree (FileTree wipes
+  // its level cache when the list's VALUE changes). The snapshot array
+  // identity is stable until prefs are rewritten, so useSyncExternalStore
+  // stays quiet.
+  const exclude = useSyncExternalStore(
+    useCallback((callback: () => void) => store.subscribe(callback), [store]),
+    useCallback(() => store.getSnapshot().prefs.explorerExclude, [store]),
+  )
   // The DSH-native "open with" capability (host open-in-app): one adapter per
   // window, shared by every row menu below. The plugin no longer owns a
   // target list, a URL vocabulary or a spawn route — the host reports which
@@ -174,10 +190,18 @@ export function EditorHost(props: {
    * Open a file from THIS window (tree click / search row / path input):
    * merged mode switches this tab in place (stable id, meta survives);
    * split mode opens a per-path dedupe tab through openSidebarFile.
+   *
+   * A file another native tab type claims (a `.drawio` canvas, say) diverts
+   * to THAT type's tab in BOTH modes (#695) — an in-place switch would
+   * swallow it into this plugin's editor, and the claiming type could never
+   * render from the tree. Both helpers fall back verbatim for every other
+   * file, so the editor keeps exactly its previous behavior.
    */
   const openFile = (absolute: string): void => {
     if (inPlace) {
-      ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) })
+      if (!openClaimedNativeFile(ctx, scope.sessionId, scope.cwd, absolute)) {
+        ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) }, scope.sessionId)
+      }
     } else {
       openSidebarFile(ctx, scope.sessionId, absolute)
     }
@@ -205,6 +229,10 @@ export function EditorHost(props: {
     // workbench's splits. A natively-hosted tab (right Sidebar) is absent
     // from them even while it is on screen.
     if (service !== undefined && !store.tabOpen(scope.sessionId, tab.id)) {
+      // The seed names the editor type, but the native branch of openTab
+      // turns an editor PATH seed into a resource address and lets the HOST's
+      // tab registry decide the claiming type (#695) — a third-party type
+      // with a more specific pattern receives this side gesture too.
       service.openTab({ type: 'editor', path: absolute, target: 'side' }, scope)
       return
     }
@@ -263,7 +291,7 @@ export function EditorHost(props: {
     retargetPathTabs(ctx, store, oldPath, newPath)
   }
   const onPathDeleted = (path: string): void => {
-    closePathTabs(ctx, store, path)
+    closePathTabs(ctx, store, path, t('closeUnsavedConfirm'))
   }
 
   // The viewer's toolbar, hoisted into THIS header: the text editor reports
@@ -277,6 +305,17 @@ export function EditorHost(props: {
   const onToolbarControls = useCallback((controls: EditorToolbarControls | null) => {
     controlsRef.current = controls
   }, [])
+
+  // Publish this tab's unsaved-draft state to the close/unload guards: the
+  // toolbar report already carries `dirty`, so no extra plumbing is needed.
+  // A path-less window (the files home) and folder windows never register.
+  // The cleanup clears on unmount (tab closed, session switched, in-place
+  // path switch remounts the viewer) so a guard can never outlive its draft.
+  useEffect(() => {
+    if (path === '' || isDir) return
+    setEditorDirty(tab.id, toolbar?.dirty === true, scope.sessionId, path)
+    return () => { clearEditorDirty(tab.id) }
+  }, [tab.id, toolbar?.dirty, scope.sessionId, path, isDir])
 
   // The docked panel's drag-resize: pointer capture on the handle itself
   // (no window listeners — the captured pointer keeps tracking even off the
@@ -317,7 +356,7 @@ export function EditorHost(props: {
     dragRef.current = null
     setDragWidth(null)
     const finalWidth = clampTreeWidth(drag.startWidth + (drag.startX - event.clientX))
-    if (finalWidth !== treeWidthOf(tab)) patchMeta(ctx, tab, { treeWidth: finalWidth })
+    if (finalWidth !== treeWidthOf(tab)) patchMeta(ctx, tab, scope.sessionId, { treeWidth: finalWidth })
   }
 
   useEffect(() => {
@@ -369,7 +408,10 @@ export function EditorHost(props: {
               truncated: result.truncated,
               head: result.kind === 'binary' ? result.head : undefined,
             }, (head) => ctx.get('betterSidebar')?.matchFileViewer(path, head), mediaUrlOf)
-            apply(outcome)
+            // Carry the read's mtime into the rendered viewer: the text
+            // editor uses it as the save baseline (fs-conflict on drift).
+            if (outcome.kind === 'render') setLoad({ ...outcome, status: 'ready', mtimeMs: result.mtimeMs })
+            else apply(outcome)
           }).catch((error: unknown) => {
             if (cancelled) return
             setLoad({ status: 'error', message: error instanceof Error ? error.message : String(error) })
@@ -399,7 +441,7 @@ export function EditorHost(props: {
 
   const treeOpen = treeOpenOf(tab)
   /** Persist the panel flag on the tab (survives reloads with the layout). */
-  const toggleTree = (): void => { patchMeta(ctx, tab, { treeOpen: !treeOpen }) }
+  const toggleTree = (): void => { patchMeta(ctx, tab, scope.sessionId, { treeOpen: !treeOpen }) }
   const saveLabel = toolbar === null ? ''
     : toolbar.saveState === 'saving' ? t('loading')
       : toolbar.saveState === 'saved' ? t('saved')
@@ -434,6 +476,7 @@ export function EditorHost(props: {
           onReferenceFile={onReferenceFile}
           onPathRenamed={onPathRenamed}
           onPathDeleted={onPathDeleted}
+          exclude={exclude}
           service={ctx.get('betterSidebar')}
         />
       </div>
@@ -472,7 +515,7 @@ export function EditorHost(props: {
           </div>
         )}
         {toolbar?.dirty === true && <span className={css.dirtyDot} title={t('unsaved')} />}
-        {toolbar?.editable === true && (
+        {toolbar?.editable === true && toolbar?.truncated !== true && (
           <button
             type="button"
             className={css.iconButton}
@@ -519,12 +562,14 @@ export function EditorHost(props: {
             viewerId: load.viewer.id,
             content: load.content,
             truncated: load.truncated,
+            mtimeMs: load.mtimeMs,
             mediaUrl: load.mediaUrl,
             customData: load.customData,
             // The viewer's toolbar always hoists into this host's header.
             toolbar: 'host',
             onToolbarState,
             onToolbarControls,
+            onReload: refreshFile,
           })}
         </div>
         {treeOpen && (
@@ -559,6 +604,7 @@ export function EditorHost(props: {
               onReferenceFile={onReferenceFile}
               onPathRenamed={onPathRenamed}
               onPathDeleted={onPathDeleted}
+              exclude={exclude}
               service={ctx.get('betterSidebar')}
             />
           </div>
