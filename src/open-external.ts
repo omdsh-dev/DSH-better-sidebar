@@ -11,8 +11,8 @@
  */
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { win32 as path } from 'node:path'
-import { parentOf, requireAbsolute } from './fs-tree.ts'
+import { posix as posixPath, win32 as winPath } from 'node:path'
+import { parentOf } from './fs-tree.ts'
 import { SidebarError } from './wire.ts'
 
 /** Requests handed to the host process for external applications. */
@@ -160,10 +160,11 @@ function editorUrl(editor: BuiltinExternalEditor, filePath: string): string {
 /** 按目标宿主平台验证并整理绝对文件路径。 */
 function requireExternalPath(value: string, platform: NodeJS.Platform): string {
   if (platform === 'win32') {
-    if (!path.isAbsolute(value)) throw new SidebarError('fs-error', `"${value}" is not an absolute path`, 400)
-    return path.normalize(value)
+    if (!winPath.isAbsolute(value)) throw new SidebarError('fs-error', `"${value}" is not an absolute path`, 400)
+    return winPath.normalize(value)
   }
-  return requireAbsolute(value)
+  if (!posixPath.isAbsolute(value)) throw new SidebarError('fs-error', `"${value}" is not an absolute path`, 400)
+  return posixPath.resolve(value)
 }
 
 /** 从 Windows 协议注册命令中提取可执行文件路径。 */
@@ -183,20 +184,20 @@ function lookupWindowsEditorExecutable(editor: BuiltinExternalEditor, env: NodeJ
   const executable = editor === 'vscode' ? 'Code.exe' : 'Cursor.exe'
   const cliName = editor === 'vscode' ? 'code' : 'cursor'
   const candidates = [
-    env.LOCALAPPDATA ? path.join(env.LOCALAPPDATA, 'Programs', appName, executable) : undefined,
-    env.ProgramFiles ? path.join(env.ProgramFiles, appName, executable) : undefined,
-    env['ProgramFiles(x86)'] ? path.join(env['ProgramFiles(x86)'], appName, executable) : undefined,
+    env.LOCALAPPDATA ? winPath.join(env.LOCALAPPDATA, 'Programs', appName, executable) : undefined,
+    env.ProgramFiles ? winPath.join(env.ProgramFiles, appName, executable) : undefined,
+    env['ProgramFiles(x86)'] ? winPath.join(env['ProgramFiles(x86)'], appName, executable) : undefined,
   ]
   for (const candidate of candidates) {
     if (candidate !== undefined && existsSync(candidate)) return candidate
   }
 
-  for (const directory of (env.PATH ?? '').split(path.delimiter)) {
-    const direct = path.join(directory, executable)
+  for (const directory of (env.PATH ?? '').split(winPath.delimiter)) {
+    const direct = winPath.join(directory, executable)
     if (existsSync(direct)) return direct
     for (const suffix of ['.exe', '.cmd', '.bat']) {
-      if (existsSync(path.join(directory, `${cliName}${suffix}`))) {
-        const adjacent = path.resolve(directory, '..', executable)
+      if (existsSync(winPath.join(directory, `${cliName}${suffix}`))) {
+        const adjacent = winPath.resolve(directory, '..', executable)
         if (existsSync(adjacent)) return adjacent
       }
     }

@@ -86,7 +86,7 @@ Cursor             (SSH)
 - `reveal`：darwin `open -R`；win32 `explorer.exe /select,`；linux `xdg-open <父目录>`（无统一 select 协议，KISS 打开所在目录）。
 - `url`：darwin `open`；win32 `rundll32 url.dll,FileProtocolHandler`；linux `xdg-open`。
 - `editor`：Windows 优先从 PATH、常见安装位置和协议注册项解析 VS Code / Cursor 可执行文件，按 `[nativePath]` 参数直接启动；找不到可执行文件时使用清理过环境的 Windows 协议分发。WSL 继续生成 Remote-WSL URL 并交给 Windows 协议处理器；SSH 和自定义编辑器继续使用 URL 请求。
-- 校验：`reveal` 路径必须绝对（`requireAbsolute`）；`url` 必须是 `scheme://` 自定义协议（拒绝 http/https）。
+- 校验：文件路径依目标平台验证为绝对路径；`url` 必须是 `scheme://` 自定义协议（拒绝 http/https）。
 - 启动失败会通过 API 错误返回，文件树显示失败路径和底层错误信息。
 
 **实施偏差（2026-09，#517 / PR #522）**：SSH 远程编辑器链接**不再经宿主路由执行**。DSH 部署在无头远端服务器时，宿主侧 `xdg-open` 无 DISPLAY/无编辑器，`vscode://` 静默失败。`api.openExternal`（`src/client/api.ts`）现把 `<scheme>://vscode-remote/ssh-remote+…` 形态的 URL 在浏览器客户端同步触发 `window.location.assign`（处于用户点击链内，外部协议交给本机编辑器经 Remote-SSH 打开远端文件）；reveal 与本地自定义编辑器 URL 仍走本节宿主路由。普通浏览器可处理自定义协议；禁止/未处理 `vscode://` 的 WebView 壳客户端需各自适配（见 #517 补充信息）。
