@@ -51,7 +51,7 @@ describe('HTML preview iframe sandbox', () => {
     expect(HTML_IFRAME_SANDBOX).not.toContain('allow-same-origin')
     expect(HTML_IFRAME_SANDBOX).not.toContain('allow-top-navigation')
     // Cross-origin framing by construction: route-src (never srcdoc).
-    expect(iframe).toContain('src="/sidebar/html/s1/p/a/index.html"')
+    expect(iframe).toContain('src="http://localhost/sidebar/html/s1/p/a/index.html"')
     expect(iframe).not.toContain('srcdoc=')
     // Referrer + permissions policy stay locked even when sandboxed.
     // (React SSR renders the referrerPolicy prop camelCase as written.)
@@ -135,7 +135,9 @@ describe('changes tab HTML render preview sandbox', () => {
     expect(iframe).toContain(`sandbox="${HTML_IFRAME_SANDBOX}"`)
     expect(HTML_IFRAME_SANDBOX).not.toContain('allow-same-origin')
     expect(HTML_IFRAME_SANDBOX).not.toContain('allow-top-navigation')
-    // Cross-origin framing by construction: route-src (never srcdoc).
+    // Cross-origin framing by construction: route-src (never srcdoc). The src
+    // here is the caller's literal (DiffPane passes htmlUrl(...)); this surface
+    // only frames what it is given.
     expect(iframe).toContain('src="/sidebar/html/s1/p/a/index.html"')
     expect(iframe).not.toContain('srcdoc=')
     expect(iframe).toContain('referrerPolicy="no-referrer"')

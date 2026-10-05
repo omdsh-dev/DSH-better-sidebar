@@ -16,6 +16,7 @@
 
 import z from '@deepseek-ai/schemastery'
 import {
+  EXPLORER_EXCLUDE_DEFAULTS,
   TITLE_BAR_STRIP_DEFAULT,
   TITLE_BAR_STRIP_MAX,
   TITLE_BAR_STRIP_MIN,
@@ -23,6 +24,7 @@ import {
 } from './prefs-shared.ts'
 
 export {
+  EXPLORER_EXCLUDE_DEFAULTS,
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
   TITLE_BAR_STRIP_DEFAULT,
@@ -93,6 +95,7 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   mobileDefaultTree: z.boolean().default(true),
   agentOpenTools: z.boolean().default(false),
   editorExplorer: z.boolean().default(false),
+  explorerExclude: z.array(z.string()).default([...EXPLORER_EXCLUDE_DEFAULTS]),
   titleBarScheme: z.union([z.const('auto'), z.const('web'), z.const('preset'), z.const('custom')]),
   titleBarPresetId: z.string(),
   customCss: z.string(),

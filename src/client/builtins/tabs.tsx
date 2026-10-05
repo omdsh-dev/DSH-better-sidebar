@@ -20,6 +20,7 @@ import { t } from '../locales.ts'
 import { openSidebarFile } from '../sidebar-file.ts'
 import { EditorHost } from '../EditorHost.tsx'
 import { OpenWithSettings } from '../open-with-settings.tsx'
+import { CommitModelSettings } from '../changes/CommitModelSettings.tsx'
 import { ChangesTab, opCountOf } from '../changes/ChangesTab.tsx'
 import { DiffTab } from '../DiffTab.tsx'
 import { SubagentView } from '../SubagentView.tsx'
@@ -43,7 +44,8 @@ export function builtinTabs(): readonly TabDescriptor[] {
       dedupeKey: (tab) => tab.path,
       // Declarative settings: the file-open behavior picker (in-place switch
       // vs per-path windows) renders as an iconed select row under the
-      // editor card's gear in the Side card settings page; the "open with"
+      // editor card's gear in the Side card settings page; the exclude-pattern
+      // rows (VS Code files.exclude style) sit below it, and the "open with"
       // configuration (SSH host + custom editors) is the custom panel BELOW
       // those rows — the settings seam renders rows first, custom panel after.
       // The workspace-fence switch is GONE: there is no containment to toggle.
@@ -67,6 +69,12 @@ export function builtinTabs(): readonly TabDescriptor[] {
               desc: () => t('editorExplorerSplitDesc'),
             },
           ],
+        }, {
+          key: 'explorerExclude',
+          type: 'patterns',
+          title: () => t('explorerExclude'),
+          desc: () => t('explorerExcludeDesc'),
+          patternsPlaceholder: t('explorerExcludePlaceholder'),
         }],
         // Plugin-owned rows (values live in `pluginSettings['editor']`): the
         // plugin's own open-with targets are shown only when the host reports
@@ -107,6 +115,12 @@ export function builtinTabs(): readonly TabDescriptor[] {
       icon: changesTabIcon,
       order: 20,
       single: true,
+      // Custom settings panel (not a declarative toggle row): the pinned
+      // commit-message model is picked from the DISCOVERED catalog, so the
+      // option list only exists at render time.
+      settings: {
+        render: CommitModelSettings,
+      },
       badge: (_ctx, scope) => {
         const count = opCountOf(scope.sessionId)
         return count === undefined || count === 0 ? null : count

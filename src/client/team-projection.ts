@@ -117,6 +117,11 @@ function memberStatus(
 ): TeamMemberRow['status'] {
   if (member.phase === 'failed') return 'failed'
   if (member.phase === 'provisioning') return 'provisioning'
-  const running = live[member.id]?.running ?? byId[member.id]?.running
+  // The summary's `running` is the authoritative run bit; the live channel's
+  // flag is the catalog's RESIDENCY, which reads `running` for a retained
+  // session that no agent is driving (a crash-restart — issue #800). Same rule
+  // as the task tree: authoritative wins, the live flag only stands in when the
+  // host's summaries do not carry the field.
+  const running = byId[member.id]?.running ?? live[member.id]?.running
   return running === true ? 'running' : 'idle'
 }

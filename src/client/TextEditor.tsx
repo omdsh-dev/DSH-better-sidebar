@@ -19,13 +19,16 @@ import clsx from 'clsx'
 import { EditorState } from '@codemirror/state'
 import { EditorView as CodeMirrorView, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
-import { IconCheckOutlineRegular, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { openSearchPanel } from '@codemirror/search'
+import { IconCheckOutlineRegular, IconSearchOutlineRegular, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
-import { api, htmlUrl } from './api.ts'
+import { api, htmlUrl, SidebarApiError } from './api.ts'
+import { hostTransportBase } from './desktop-env.ts'
 import { markdownPreviewSource } from './markdown-frontmatter.ts'
 import { rewriteLocalImageUrls } from './markdown-images.ts'
 import { languageForPath } from './lang.ts'
 import { cmSurfaceTheme, CmThemeCompartment } from './cm-themes.ts'
+import { cmSearchExtensions, CmSearchPhrases } from './cm-search.ts'
 import { isDarkScheme, subscribeColorScheme } from './theme.ts'
 import { SandboxStatusBar } from './SandboxStatusBar.tsx'
 import { appendToDraft } from './conversation-draft.ts'
@@ -35,7 +38,7 @@ import { analyzeMarkdownHtml } from './markdown-html.ts'
 import { LazyMermaidMarkdown, MarkdownDocument, type MarkdownHtmlMedia } from './MarkdownHtml.tsx'
 import { MdToc } from './md-toc.tsx'
 import { splitMermaidBlocks } from './mermaid-blocks.ts'
-import { t } from './locales.ts'
+import { localeSignature, t } from './locales.ts'
 import { HTML_IFRAME_SANDBOX } from './html-preview.ts'
 import type { EditorToolbarState, FileViewerProps } from './service.ts'
 import css from './sidebar.module.css'
@@ -58,11 +61,25 @@ export function TextEditor(props: FileViewerProps) {
   const [draft, setDraft] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+  /** The save was refused because the file changed on disk (fs-conflict). */
+  const [conflict, setConflict] = useState(false)
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<CodeMirrorView | null>(null)
   const savingRef = useRef(false)
+  /** The mtime the draft is based on (`null` = the file did not exist yet).
+   *  Seeded from the load, refreshed by every successful save, and reset by
+   *  the file-switch effect. */
+  const mtimeRef = useRef<number | null>(props.mtimeMs ?? null)
   /** The theme compartment of the current view (reconfigured on scheme flip). */
   const themeCompRef = useRef<CmThemeCompartment | null>(null)
+  /** The search-phrases compartment of the current view (reconfigured on a
+   *  language switch — the panel copy is baked into the EditorState). */
+  const searchPhrasesRef = useRef<CmSearchPhrases | null>(null)
+  /** The effective UI language (DSH locale id + better-locale override id).
+   *  Read during render and subscribed below: the tab-cell memo only
+   *  compares the DSH locale revision, so a better-locale override switch
+   *  would otherwise never reach this component. */
+  const [localeSig, setLocaleSig] = useState(() => localeSignature())
   /** The app's resolved color scheme; the editor re-themes in place on flips. */
   const [dark, setDark] = useState(() => isDarkScheme())
   /** The markdown preview container (selection-containment + line lookup). */
@@ -101,12 +118,36 @@ export function TextEditor(props: FileViewerProps) {
 
   useEffect(() => subscribeColorScheme(() => { setDark(isDarkScheme()) }), [])
 
+  // Keep `localeSig` fresh from BOTH language sources: the DSH locale service
+  // and (when @huanlin/dsh-plugin-better-locale is installed) the override
+  // store. The sidebar root re-renders the tree on a DSH locale switch, but
+  // an override switch is not part of the tab-cell memo key, so this
+  // component subscribes directly instead of relying on a parent render.
+  useEffect(() => {
+    const sync = (): void => { setLocaleSig(localeSignature()) }
+    sync()
+    const locale = ctx.locale as { subscribe?: (cb: () => void) => () => void } | undefined
+    type BetterLocaleStore = { subscribe?(listener: () => void): () => void }
+    const betterLocale = typeof ctx.get === 'function'
+      ? (ctx as unknown as { get(name: 'betterLocale'): BetterLocaleStore | undefined }).get('betterLocale')
+      : undefined
+    const offLocale = locale?.subscribe?.(sync)
+    const offOverride = betterLocale?.subscribe?.(sync)
+    return () => {
+      offLocale?.()
+      offOverride?.()
+    }
+  }, [ctx])
+
   // A new file (tab switch) starts clean: fresh preview mode, no draft.
   useEffect(() => {
     setMode('preview')
     setDraft(null)
     setDirty(false)
     setSaveState('idle')
+    setConflict(false)
+    // The freshly loaded bytes are the new save baseline.
+    mtimeRef.current = props.mtimeMs ?? null
     selectionPopup.hide()
     // hide() reads a live ref; the reset must fire only on a content (file)
     // swap, and the hook object's identity churns on every render.
@@ -134,6 +175,8 @@ export function TextEditor(props: FileViewerProps) {
     const language = languageForPath(path)
     const themeComp = new CmThemeCompartment()
     themeCompRef.current = themeComp
+    const searchPhrases = new CmSearchPhrases()
+    searchPhrasesRef.current = searchPhrases
     const state = EditorState.create({
       doc: content,
       extensions: [
@@ -144,6 +187,18 @@ export function TextEditor(props: FileViewerProps) {
         CodeMirrorView.contentAttributes.of({ spellcheck: 'false' }),
         cmSurfaceTheme,
         themeComp.of(dark),
+        // Find-in-file (Cmd/Ctrl+F): the top-pinned search panel plus the
+        // upstream search keymap, registered BEFORE the editor's own keymap
+        // below so the search bindings (Escape in particular — the editor
+        // keymap's `simplifySelection` shares that key) win while the panel
+        // is open, and the save key stays in the editor keymap unchanged.
+        ...cmSearchExtensions(),
+        searchPhrases.of(),
+        // A truncated read only carries the first readLimit bytes; edits made
+        // on partial content must never be saved over the full file (issue
+        // #732), so the document is rendered read-only until a full read
+        // replaces it.
+        ...(truncated === true ? [EditorState.readOnly.of(true)] : []),
         ...(language !== null ? [language] : []),
         CodeMirrorView.updateListener.of((update) => {
           if (update.docChanged) {
@@ -210,11 +265,31 @@ export function TextEditor(props: FileViewerProps) {
       view.destroy()
       viewRef.current = null
       themeCompRef.current = null
+      searchPhrasesRef.current = null
     }
     // The keymap's save() reads live refs; scope/path are stable for a
     // tab's lifetime, and the dark flip is handled by the reconfigure
     // effect below (recreating the view here would drop the draft).
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content, path, truncated])
+
+  // Native sidebar tabs stay mounted while another tab is active. If a file
+  // is opened while that host is hidden, CodeMirror can measure its viewport at
+  // zero and retain an empty virtualized viewport after the tab is revealed.
+  // Re-measure both on mount and whenever the host's box changes so returning
+  // to a parked editor always repaints its document without remounting it.
+  useEffect(() => {
+    const host = hostRef.current
+    const view = viewRef.current
+    if (host === null || view === null) return
+    const measure = (): void => {
+      if (host.isConnected && host.offsetWidth > 0 && host.offsetHeight > 0) view.requestMeasure()
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(host)
+    return () => { observer.disconnect() }
   }, [content, path])
 
   // Scheme flip: re-theme in place (the compartment holds only the
@@ -225,6 +300,17 @@ export function TextEditor(props: FileViewerProps) {
     if (view === null || themeComp === null) return
     view.dispatch({ effects: themeComp.reconfigure(dark) })
   }, [dark])
+
+  // Language switch: re-resolve the search panel copy in place. CodeMirror
+  // reads the `phrases` facet when it builds the panel, so the compartment
+  // must be reconfigured for the new language (the document, history,
+  // scroll, and keymaps survive — same in-place pattern as the theme flip).
+  useEffect(() => {
+    const view = viewRef.current
+    const searchPhrases = searchPhrasesRef.current
+    if (view === null || searchPhrases === null) return
+    view.dispatch({ effects: searchPhrases.reconfigure() })
+  }, [localeSig])
 
   // The editor may have been display:none while previewing; re-measure when
   // it becomes visible again (CodeMirror sizes itself on reveal). A mode
@@ -290,15 +376,33 @@ export function TextEditor(props: FileViewerProps) {
   const save = (): void => {
     const view = viewRef.current
     if (view === null || savingRef.current) return
+    // Defense in depth for issue #732: a truncated read only holds the first
+    // readLimit bytes, and fs.write replaces the whole file — saving partial
+    // content would destroy the tail. The readOnly extension already blocks
+    // edits; this guards the keymap path against future trigger points.
+    if (truncated === true) return
     savingRef.current = true
     setSaveState('saving')
-    api.fsWrite(scope, path, view.state.doc.toString()).then(() => {
+    // Optimistic concurrency: the draft was based on the bytes read at
+    // `mtimeMs`; a file that changed on disk since is REFUSED (fs-conflict)
+    // instead of clobbering whatever wrote it (the model, another tab, an
+    // external editor). `null` = the file did not exist when loaded.
+    api.fsWrite(scope, path, view.state.doc.toString(), mtimeRef.current ?? null).then((result) => {
       savingRef.current = false
+      // Adopt the fresh baseline the host reports (absent on a stat failure —
+      // keep the old one, the next save just re-checks).
+      if (typeof result.mtimeMs === 'number') mtimeRef.current = result.mtimeMs
       setDraft(null)
       setDirty(false)
+      setConflict(false)
       setSaveState('saved')
-    }).catch(() => {
+    }).catch((error: unknown) => {
       savingRef.current = false
+      if (error instanceof SidebarApiError && error.code === 'fs-conflict') {
+        setConflict(true)
+        setSaveState('idle')
+        return
+      }
       setSaveState('failed')
     })
   }
@@ -330,7 +434,7 @@ export function TextEditor(props: FileViewerProps) {
   /** The preview source with local image destinations rewritten to absolute
    *  media URLs (see {@link rewriteLocalImageUrls}). */
   const previewText = markdown
-    ? rewriteLocalImageUrls(previewMdText, scope, path, window.location.origin)
+    ? rewriteLocalImageUrls(previewMdText, scope, path, hostTransportBase())
     : previewMdText
   /** md/mermaid block split for the preview (mermaid fences lift out). Split
    *  only in preview mode: edit-mode keystrokes must not re-scan the source. */
@@ -359,7 +463,7 @@ export function TextEditor(props: FileViewerProps) {
    *  `media` identity, so a fresh object per render would re-sanitize every
    *  keystroke. */
   const htmlMedia = useMemo<MarkdownHtmlMedia>(
-    () => ({ scope, path, origin: window.location.origin }),
+    () => ({ scope, path, baseUrl: hostTransportBase() }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [scope.sessionId, scope.cwd, path],
   )
@@ -422,7 +526,7 @@ export function TextEditor(props: FileViewerProps) {
   const lastToolbarRef = useRef('')
   useEffect(() => {
     if (!hostToolbar) return
-    const state: EditorToolbarState = { modes: markdown || html, mode, dirty, editable, saveState }
+    const state: EditorToolbarState = { modes: markdown || html, mode, dirty, editable, truncated: truncated === true, saveState }
     const key = JSON.stringify(state)
     if (lastToolbarRef.current === key) return
     lastToolbarRef.current = key
@@ -464,6 +568,26 @@ export function TextEditor(props: FileViewerProps) {
           <button
             type="button"
             className={css.iconButton}
+            aria-label={t('searchFind')}
+            title={`${t('searchFind')} (Ctrl/Cmd+F)`}
+            onClick={() => {
+              // The panel lives in the CodeMirror surface: in preview mode the
+              // editor is hidden, so switch to edit first (the search panel is
+              // not part of the preview).
+              if (mode === 'preview' && (markdown || html)) setMode('edit')
+              const view = viewRef.current
+              if (view === null) return
+              view.focus()
+              openSearchPanel(view)
+            }}
+          >
+            <IconSearchOutlineRegular size={16} />
+          </button>
+        )}
+        {editable && truncated !== true && (
+          <button
+            type="button"
+            className={css.iconButton}
             aria-label={t('save')}
             title={`${t('save')} (Ctrl/Cmd+S)`}
             onClick={save}
@@ -476,7 +600,19 @@ export function TextEditor(props: FileViewerProps) {
       )}
       {editable && (
         <>
-          {truncated === true && mode === 'edit' && <div className={css.editorBanner}>{t('truncation')}</div>}
+          {truncated === true && <div className={css.editorBanner}>{t('truncation')}</div>}
+          {conflict && (
+            <div className={css.editorBanner}>
+              {t('saveConflict')}
+              <button
+                type="button"
+                className={css.editorBannerAction}
+                onClick={() => { props.onReload?.() }}
+              >
+                {t('saveConflictReload')}
+              </button>
+            </div>
+          )}
           <div
             className={clsx(css.editorCm, (markdown || html) && mode === 'preview' && css.editorCmHidden)}
             ref={hostRef}

@@ -106,6 +106,55 @@ function makeCtx(store: ReturnType<typeof makeStore>, connection?: Connection): 
   } as unknown as Context
 }
 
+/** The archive set feed + the archiving service — the two host faces the
+ *  header's archive button reaches for, neither of them on the plugin's own
+ *  context type (`workspaces` is the session list, `uiWorkspace` the session
+ *  surface), so both ride the same `get` probe the view uses. */
+interface ArchiveHost {
+  archivedIds: string[]
+  archiveSession: ReturnType<typeof vi.fn>
+  betterSidebar: { updateTab: ReturnType<typeof vi.fn>; openTab: ReturnType<typeof vi.fn> }
+}
+
+function makeArchiveHost(archivedIds: string[] = []): ArchiveHost {
+  return {
+    archivedIds,
+    archiveSession: vi.fn(async () => {}),
+    betterSidebar: { updateTab: vi.fn(), openTab: vi.fn() },
+  }
+}
+
+/** makeCtx plus the archive host faces (the archive cases' whole subject). */
+function makeArchiveCtx(store: ReturnType<typeof makeStore>, host: ArchiveHost): Context {
+  return {
+    sessions: { list: store },
+    get: (key: string) => {
+      if (key === 'betterSidebar') return host.betterSidebar
+      if (key === 'workspaces') {
+        return { list: { getSnapshot: () => ({ archivedSessionIds: host.archivedIds }), subscribe: vi.fn(() => () => {}) } }
+      }
+      if (key === 'uiWorkspace') return { archiveSession: host.archiveSession }
+      return undefined
+    },
+  } as unknown as Context
+}
+
+/** The header archive button (its aria-label is the only such name in the view). */
+function archiveButton(container: HTMLElement): HTMLButtonElement {
+  const button = container.querySelector<HTMLButtonElement>('button[aria-label="归档这条侧边对话（在会话列表的「显示已归档」里可找回）"]')
+  if (button === null) throw new Error('the header archive button is absent')
+  return button
+}
+
+/** Flush the click's promise chain (the archive request and the rebind). */
+async function clickArchive(button: HTMLButtonElement): Promise<void> {
+  await act(async () => {
+    button.click()
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
 function jsonResponse(value: unknown): Response {
   return { ok: true, status: 200, json: async () => value } as unknown as Response
 }
@@ -204,5 +253,82 @@ describe('SideChatView rendering', () => {
     const connected = renderRoot(createElement(SideChatView, viewProps(makeCtx(threadStore(), connection))))
     expect(connected.container.textContent ?? '').not.toContain('连接已断开')
     connected.unmount()
+  })
+})
+
+describe('SideChatView archive', () => {
+  it('archives the bound thread with stopActivity and rebinds the tab to the newest remaining thread', async () => {
+    const host = makeArchiveHost()
+    const store = makeStore({
+      byId: {
+        root: { id: 'root', displayTitle: '主会话', running: false },
+        t1: { id: 't1', displayTitle: 'Side: 线程一', origin: 'subagent', parentId: 'root', running: false },
+        t2: { id: 't2', displayTitle: 'Side: 线程二', origin: 'subagent', parentId: 'root', running: false },
+      },
+      // The host's own catalog carries the creation order the fallback ranks by.
+      projectionsBySession: {
+        root: {
+          values: {
+            subagentCatalog: [
+              { id: 't1', createdAt: 1_000, mode: 'continuable', label: 'Side: 线程一' },
+              { id: 't2', createdAt: 2_000, mode: 'continuable', label: 'Side: 线程二' },
+            ],
+          },
+          state: 'ready',
+          error: null,
+        },
+      },
+    })
+    const props = viewProps(makeArchiveCtx(store, host))
+    const { container, unmount } = renderRoot(createElement(SideChatView, props))
+    await act(async () => {})  // flush the initial transcript pull
+
+    await clickArchive(archiveButton(container))
+
+    // The host's own archive capability, once, with a running agent settled.
+    expect(host.archiveSession).toHaveBeenCalledTimes(1)
+    expect(host.archiveSession).toHaveBeenCalledWith('t1', { stopActivity: true })
+    // The tab moves to the newest remaining thread (t2 outranks t1 in the catalog).
+    expect(host.betterSidebar.updateTab).toHaveBeenCalledTimes(1)
+    expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: { threadId: 't2' } })
+    unmount()
+  })
+
+  it('disables the archive button while the thread runs and archives nothing on click', async () => {
+    const host = makeArchiveHost()
+    const store = makeStore({
+      byId: {
+        root: { id: 'root', displayTitle: '主会话', running: false },
+        t1: { id: 't1', displayTitle: 'Side: 线程一', origin: 'subagent', parentId: 'root', running: true },
+      },
+    })
+    const props = viewProps(makeArchiveCtx(store, host))
+    const { container, unmount } = renderRoot(createElement(SideChatView, props))
+    await act(async () => {})  // flush the initial transcript pull
+
+    const button = archiveButton(container)
+    expect(button.disabled).toBe(true)
+    // A disabled button swallows the click: no request, no rebind.
+    await clickArchive(button)
+    expect(host.archiveSession).not.toHaveBeenCalled()
+    expect(host.betterSidebar.updateTab).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('unbinds the tab to the empty state once no thread is left to switch to', async () => {
+    const host = makeArchiveHost()
+    const store = threadStore()  // the bound thread t1 is the only one under 'root'
+    const props = viewProps(makeArchiveCtx(store, host))
+    const { container, unmount } = renderRoot(createElement(SideChatView, props))
+    await act(async () => {})  // flush the initial transcript pull
+
+    await clickArchive(archiveButton(container))
+
+    expect(host.archiveSession).toHaveBeenCalledWith('t1', { stopActivity: true })
+    // `{}` rather than a dangling threadId: the panel unbinds instead of
+    // staying bound to the session the host just archived.
+    expect(host.betterSidebar.updateTab).toHaveBeenCalledTimes(1)
+    expect(host.betterSidebar.updateTab).toHaveBeenCalledWith('tab1', { meta: {} })
+    unmount()
   })
 })

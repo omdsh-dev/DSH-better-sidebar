@@ -39,6 +39,7 @@ describe('side card preferences', () => {
         mobileDefaultTree: true,
         agentOpenTools: true,
         editorExplorer: false,
+        explorerExclude: ['.DS_Store', 'Thumbs.db'],
         titleBarScheme: 'auto',
         titleBarPresetId: '',
         customCss: '',
@@ -62,6 +63,7 @@ describe('side card preferences', () => {
         mobileDefaultTree: true,
         agentOpenTools: false,
         editorExplorer: false,
+        explorerExclude: ['.DS_Store', 'Thumbs.db'],
         titleBarScheme: 'auto',
         titleBarPresetId: '',
         customCss: '',
@@ -85,6 +87,7 @@ describe('side card preferences', () => {
         mobileDefaultTree: true,
         agentOpenTools: false,
         editorExplorer: false,
+        explorerExclude: ['.DS_Store', 'Thumbs.db'],
         titleBarScheme: 'auto',
         titleBarPresetId: '',
         customCss: '',
@@ -123,6 +126,18 @@ describe('side card preferences', () => {
       expect((await loadPrefs(wire({ [key]: false })))[key]).toBe(false)
       expect((await loadPrefs(wire({ [key]: true })))[key]).toBe(true)
     }
+  })
+
+  it('defaults explorerExclude to the stock junk list; only a valid string array overrides it', async () => {
+    // Absent or malformed → the stock list.
+    expect((await loadPrefs(wire({}))).explorerExclude).toEqual(['.DS_Store', 'Thumbs.db'])
+    expect((await loadPrefs(wire({ explorerExclude: 'node_modules' }))).explorerExclude).toEqual(['.DS_Store', 'Thumbs.db'])
+    expect((await loadPrefs(wire({ explorerExclude: { a: 1 } }))).explorerExclude).toEqual(['.DS_Store', 'Thumbs.db'])
+    // Non-string entries drop out; blanks drop out; entries trim.
+    expect((await loadPrefs(wire({ explorerExclude: ['node_modules', 42, '  *.log  ', '', null] }))).explorerExclude)
+      .toEqual(['node_modules', '*.log'])
+    // An explicit empty array means "exclude nothing" and survives verbatim.
+    expect((await loadPrefs(wire({ explorerExclude: [] }))).explorerExclude).toEqual([])
   })
 
   it('defaults editorExplorer to false; only an explicit true enables the merged editor-explorer', async () => {

@@ -2,6 +2,11 @@
 
 > 本文档收录 dsh-better-sidebar 的完整发布历史（最新版摘要见 [README](README.md)；同步发布于 [GitHub Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases)）。
 
+### Unreleased
+
+- 🔍 **文件搜索优先走本机原生引擎（fd / ripgrep），缺失或失败自动回退 JS 遍历**（[#203](https://github.com/omdsh-dev/DSH-better-sidebar/issues/203)，PR [#303](https://github.com/omdsh-dev/DSH-better-sidebar/pull/303) 重写落地）：`fs.search` 之前是纯 JS 递归遍历，十万级目录秒级、10 万条访问预算一顶就静默截断。现在启动后惰性探测一次（每个候选二进制 `--version` 500ms 内验证通过才用，进程内缓存），探到就用引擎，探不到/运行失败回退原遍历；rg 优先用 DSH 自己捆绑的 `@vscode/ripgrep`（agent 侧搜索工具同一个二进制，从 CLI 入口的依赖树推导候选路径），fd 走 `--fixed-strings` 字面量匹配。噪声目录排除名单单源化到 `SKIP_DIR_NAMES`（18 项，walk 与两条 argv 共用），引擎输出统一归一化成 walk 契约（根相对、`/` 分隔、大小写不敏感），**路由与客户端零改动**。**目录命中按 #801 的契约同时产出 `dirs`**：fd 用 `--type d` 直接列目录，rg 由文件路径倒推匹配的目录段（`deriveRgMatches`）——唯一残留差异是**空目录在 rg 下不可见**（已记录）。运行失败禁用该引擎（坏二进制不该拖慢后续搜索），**超时只降级本次**（树太大不等于二进制坏）。调试插桩 `DSH_SEARCH_DEBUG=1` 写 `$DSH_HOME/search-debug.log`，默认完全静默。Windows 侧由 `ci-windows` lane 承载：`choco install fd ripgrep` + `pnpm check:engines` 对插件自己的 argv 做字节级断言（不得含 `\`/CR、非 ASCII 文件名必须命中）。
+- 🧪 测试：`tests/search-engines.spec.ts`（探测缓存 / 失败禁用 / 超时不禁用 / argv 对称性 / `deriveRgMatches` / 捆绑 rg 候选路径推导 / 真引擎在场时的端到端），`tests/fs-search.spec.ts` 的 dispatch 组（引擎优先、`dirs` 透传、预算透传、运行失败回退并禁用）。
+
 ### v0.24.1
 
 > 🎁 **本版包含从 v0.22.1 起的全部内容**（v0.23.0 的文件页 / 文件变动页 UI/UX 重构与性能打磨、v0.24.0 的 DSH 0.2.0-rc.1 支持线前移，以及本节的修复）。

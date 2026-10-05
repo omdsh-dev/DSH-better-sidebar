@@ -83,6 +83,17 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-docs-panel',
   },
   {
+    id: '@dsh-external/dsh-file-trace',
+    name: () => t('pluginFileTraceName'),
+    url: 'https://github.com/lhh010/dsh-file-trace',
+    description: () => t('pluginFileTraceDesc'),
+    // Dual mount: registers the native "File Trace" tab when better-sidebar
+    // is present (optional peer), standalone floating window otherwise.
+    // GitHub-sourced with committed lib/ — the pinned github: tag installs
+    // without a local build.
+    install: "cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add '@dsh-external/dsh-file-trace@github:lhh010/dsh-file-trace#v0.3.24'",
+  },
+  {
     id: 'dsh-tylina',
     name: () => t('pluginTylinaName'),
     url: 'https://github.com/tylina/dsh-tylina',
@@ -106,13 +117,6 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     // Peer-depends on dsh-better-sidebar (Git Forge tab). Install the
     // prerequisite first; the package is published on npm as dsh-git-forge.
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-git-forge@1.0.0',
-  },
-  {
-    id: 'dsh-git-remotes',
-    name: () => t('pluginGitRemotesName'),
-    url: 'https://github.com/yq04/dsh-git-remotes',
-    description: () => t('pluginGitRemotesDesc'),
-    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/yq04/dsh-git-remotes.git',
   },
   {
     id: 'dsh-github-workbench',
@@ -146,7 +150,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     // differential injection (only what changed), review-date reminders,
     // ranked search and a read-only sidebar tab. lib/ ships prebuilt, so the
     // pinned github:-form install needs no local build.
-    install: 'cd ~/.dsh && dsh plugin --profile web add "github:lpf20200901/dsh-memory-delta#v1.0.0"',
+    install: 'cd ~/.dsh && dsh plugin --profile web add "github:lpf20200901/dsh-memory-delta#v1.3.3"',
   },
   {
     id: 'dsh-sidebar-qa',
@@ -202,14 +206,6 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     // Peer-depends on dsh-better-sidebar (SSH Tunnel tab + center terminal/SFTP).
     // Install the prerequisite first; the package is published on npm as dsh-ssh-tunnel.
     install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add dsh-ssh-tunnel@1.0.0',
-  },
-  {
-    id: 'dsh-turn-review',
-    name: () => t('pluginTurnReviewName'),
-    url: 'https://github.com/yq04/dsh-turn-review',
-    description: () => t('pluginTurnReviewDesc'),
-    // Needs dsh-better-sidebar (optional peer) for the tab; no model tools.
-    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add git+https://github.com/yq04/dsh-turn-review.git',
   },
   {
     id: 'dsh-bilingual-reader',

@@ -5,7 +5,7 @@
  * (a 2 s poll inside `changes/GitLens.tsx`) while the file tree had no git
  * data at all — so a VS Code-style "color the changed rows" feature would
  * have added a SECOND poller of the same `git status --porcelain` call. The
- * store keeps one snapshot per `sessionId + cwd + worktree`, one poller per
+ * store keeps one snapshot per `sessionId + cwd + repoRoot + worktree`, one poller per
  * key while at least one VISIBLE consumer is subscribed, and one path index
  * built lazily per snapshot, so the tree (coloring) and the changes page
  * (list) read the same answer.
@@ -21,7 +21,7 @@
  * returned early, so a click during the poll silently did nothing).
  */
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
-import { api, type GitStatusResult } from '../api.ts'
+import { api, type GitStatusResult, type SessionScope } from '../api.ts'
 
 /** The semantic class of one changed path (drives the row's ink). */
 export type GitTone =
@@ -141,6 +141,7 @@ interface Slot {
   key: string
   sessionId: string
   cwd: string | undefined
+  repoRoot: string | undefined
   worktree: string | undefined
   snapshot: GitStatusResult | null
   loading: boolean
@@ -161,12 +162,13 @@ interface Slot {
 
 const slots = new Map<string, Slot>()
 
-function slotOf(sessionId: string, cwd: string | undefined, worktree: string | undefined): Slot {
-  const key = `${sessionId}\u0000${cwd ?? ''}\u0000${worktree ?? ''}`
+function slotOf(scope: SessionScope, worktree: string | undefined): Slot {
+  const { sessionId, cwd, repoRoot } = scope
+  const key = `${sessionId}\u0000${cwd ?? ''}\u0000${repoRoot ?? ''}\u0000${worktree ?? ''}`
   const existing = slots.get(key)
   if (existing !== undefined) return existing
   const slot: Slot = {
-    key, sessionId, cwd, worktree,
+    key, sessionId, cwd, repoRoot, worktree,
     snapshot: null, loading: false, error: false, version: 0, generation: 0,
     running: false, pending: false, visible: 0, pollMs: 2_500, timer: undefined,
     listeners: new Set(),
@@ -191,7 +193,7 @@ function fetchSlot(slot: Slot): void {
   const generation = ++slot.generation
   slot.loading = slot.snapshot === null
   notify(slot)
-  const scope = { sessionId: slot.sessionId, ...(slot.cwd !== undefined ? { cwd: slot.cwd } : {}) }
+  const scope: SessionScope = { sessionId: slot.sessionId, cwd: slot.cwd, repoRoot: slot.repoRoot }
   api.gitStatus(scope, slot.worktree)
     .then((snapshot) => {
       if (generation !== slot.generation) return
@@ -295,11 +297,11 @@ export interface GitStatusView {
  * linked worktree). The poll runs while `visible` is true, at `pollMs`.
  */
 export function useGitStatus(
-  scope: { sessionId: string; cwd?: string },
+  scope: SessionScope,
   options: { worktree?: string; visible?: boolean; pollMs?: number } = {},
 ): GitStatusView {
   const { worktree, visible = true, pollMs = 2_500 } = options
-  const slot = slotOf(scope.sessionId, scope.cwd, worktree)
+  const slot = slotOf(scope, worktree)
   const subscribe = useCallback((listener: () => void) => {
     slot.listeners.add(listener)
     return () => { slot.listeners.delete(listener) }

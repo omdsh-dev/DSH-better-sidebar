@@ -21,7 +21,7 @@ setupReactAct()
 const media: MarkdownHtmlMedia = {
   scope: { sessionId: 's1', cwd: '/ws' },
   path: '/ws/docs/README.md',
-  origin: 'http://gui.origin',
+  baseUrl: 'http://gui.origin/proxy/3080/',
 }
 const codeLabels = {
   copyLabel: 'Copy', copiedLabel: 'Copied', codeLabel: 'Code block', wrapLabel: 'Wrap lines', unwrapLabel: 'Do not wrap lines',
@@ -86,7 +86,7 @@ describe('MarkdownDocument (HTML leaves)', () => {
   it('rewrites local media sources through the /sidebar/file route', async () => {
     const { container, root } = await renderDocument('<picture><img src="./shot.png" alt="shot"/></picture>')
     const img = container.querySelector('img')
-    expect(img?.getAttribute('src')).toBe('http://gui.origin/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fshot.png&cwd=%2Fws')
+    expect(img?.getAttribute('src')).toBe('http://gui.origin/proxy/3080/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fshot.png&cwd=%2Fws')
     await unmount(root)
   })
 })
@@ -107,11 +107,81 @@ describe('MarkdownDocument (nesting + markdown runs)', () => {
     ].join('\n'))
     const details = container.querySelector('details')
     expect(details, 'the open part must lower following runs into a details element').not.toBeNull()
-    expect(details?.querySelector('summary')).not.toBeNull()
+    // Direct child, not just a descendant: HTML only treats a summary as the
+    // disclosure widget in that position (a nested one gets the UA's own
+    // "Details" label and the authored text drops into the body).
+    const summary = details?.querySelector(':scope > summary')
+    expect(summary, 'the summary must be a direct child of <details>').not.toBeNull()
+    expect(summary?.textContent).toBe('更新')
+    expect(summary?.querySelector('b'), 'inline markup inside the summary must survive').not.toBeNull()
     expect(details?.textContent).toContain('dsh plugin --profile web add x')
     // The close part pops the frame: the trailing markdown is a sibling.
     expect(details?.textContent).not.toContain('after the fold')
     expect(container.querySelector('details')?.nextElementSibling?.textContent).toContain('after the fold')
+    await unmount(root)
+  })
+
+  it('keeps the authored summary label and the markdown run inside <details>', async () => {
+    const { container, root } = await renderDocument([
+      '<details>',
+      '<summary>Implementation internals — click to expand</summary>',
+      '',
+      'The bundle is a static patch document.',
+      '',
+      '</details>',
+      '',
+      'outside the fold',
+    ].join('\n'))
+    const details = container.querySelector('details')
+    const summary = details?.querySelector(':scope > summary')
+    expect(summary?.textContent).toBe('Implementation internals — click to expand')
+    // The leaf wrapper must not sit between the details and its summary.
+    expect(details?.firstElementChild?.tagName).toBe('SUMMARY')
+    expect(details?.querySelector('[data-dsh-html-segment]'), 'no leaf wrapper around the summary').toBeNull()
+    const paragraph = [...(details?.querySelectorAll('p') ?? [])]
+      .find((node) => node.textContent?.includes('The bundle is a static patch document.'))
+    expect(paragraph, 'the following markdown run must stay inside the details').not.toBeUndefined()
+    expect(details?.textContent).not.toContain('outside the fold')
+    await unmount(root)
+  })
+
+  it('never injects a hardcoded disclosure label', async () => {
+    const { container, root } = await renderDocument([
+      '<details>',
+      '<summary>Folded details</summary>',
+      '',
+      'body',
+      '',
+      '</details>',
+    ].join('\n'))
+    expect(container.textContent).not.toContain('Details')
+    expect(container.textContent).not.toContain('详情')
+    await unmount(root)
+  })
+
+  it('keeps a summary leaf inside a non-details wrapper', async () => {
+    // The hoist is details-specific: a balanced run that merely starts with a
+    // summary (no <details> frame open) must still take the plain leaf path.
+    const { container, root } = await renderDocument([
+      '<div>',
+      '<summary>not a disclosure widget here</summary>',
+      '</div>',
+    ].join('\n'))
+    const leaf = container.querySelector('[data-dsh-html-segment]')
+    expect(leaf, 'the run must stay a sanitized leaf').not.toBeNull()
+    expect(leaf?.querySelector('summary')).not.toBeNull()
+    expect(container.querySelector('details')).toBeNull()
+    await unmount(root)
+  })
+
+  it('keeps trailing leaf content after a hoisted summary', async () => {
+    const { container, root } = await renderDocument([
+      '<details><summary>label</summary>',
+      'trailing html line',
+    ].join('\n'))
+    const details = container.querySelector('details')
+    expect(details?.querySelector(':scope > summary')?.textContent).toBe('label')
+    expect(details?.textContent).toContain('trailing html line')
     await unmount(root)
   })
 
@@ -178,6 +248,79 @@ describe('MarkdownDocument (inline pass)', () => {
   })
 })
 
+describe('MarkdownDocument (isolated close tags)', () => {
+  // The host renderer emits one text node per raw-HTML token, so a README's
+  // `<a id="x"></a>` arrives as two siblings: the open tag (sanitized into a
+  // real element) and a lone `</a>` that DOMPurify can only drop. That stray
+  // node used to fall through the "keep prose untouched" branch and print the
+  // source's `</a>` into the preview.
+  it('drops a stray close tag instead of printing it, keeping the anchor id', async () => {
+    const { container, root } = await renderDocument([
+      '<a id="understand-the-implementation"></a>',
+      '',
+      '## Heading',
+    ].join('\n'))
+    expect(container.textContent, 'the raw close tag must not reach the page').not.toContain('</a>')
+    const anchor = container.querySelector('a#understand-the-implementation')
+    expect(anchor, 'the anchor id must survive (deep links target it)').not.toBeNull()
+    expect(anchor?.textContent).toBe('')
+    expect(container.textContent).toContain('Heading')
+    await unmount(root)
+  })
+
+  it('drops isolated inline-only close tags that stay in the markdown run', async () => {
+    // Block-level close lines (`</div>`) are lifted into their own HTML run and
+    // never reach this pass; the tags below are inline-only, stay in the
+    // markdown run, and are the ones the pass has to drop.
+    const { container, root } = await renderDocument([
+      'before the run',
+      '',
+      '</a>',
+      '',
+      'between',
+      '',
+      '</sub>',
+      '',
+      'after the run',
+    ].join('\n'))
+    expect(container.textContent).not.toContain('</a>')
+    expect(container.textContent).not.toContain('</sub>')
+    expect(container.textContent).toContain('before the run')
+    expect(container.textContent).toContain('between')
+    expect(container.textContent).toContain('after the run')
+    await unmount(root)
+  })
+
+  it('never prints a stray block-level close line either', async () => {
+    // The block-run path (frame stack) already drops top-level stray closes —
+    // pinned here so the "no source close tag on screen" acceptance holds for
+    // block tags too, not just for the inline pass.
+    const { container, root } = await renderDocument([
+      'before',
+      '',
+      '</div>',
+      '',
+      '</p>',
+      '',
+      'after',
+    ].join('\n'))
+    expect(container.textContent).not.toContain('</div>')
+    expect(container.textContent).not.toContain('</p>')
+    expect(container.textContent).toContain('before')
+    expect(container.textContent).toContain('after')
+    await unmount(root)
+  })
+
+  it('leaves comparison prose untouched', async () => {
+    const { container, root } = await renderDocument([
+      'a < b and x </ y and 1 < 2 all stay text',
+    ].join('\n'))
+    expect(container.textContent).toContain('a < b and x </ y and 1 < 2 all stay text')
+    expect(container.querySelectorAll('[data-html-inline]').length).toBe(0)
+    await unmount(root)
+  })
+})
+
 describe('MarkdownDocument (local markdown images)', () => {
   it('renders markdown-syntax local images through the /sidebar/file route', async () => {
     const { container, root } = await renderDocument([
@@ -191,9 +334,9 @@ describe('MarkdownDocument (local markdown images)', () => {
     ].join('\n'))
     const imgs = [...container.querySelectorAll('img')]
     expect(imgs.length, 'both local images must render as <img>, not alt fallback').toBe(2)
-    expect(imgs[0]?.getAttribute('src')).toBe('http://gui.origin/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fassets%2Ficon.svg&cwd=%2Fws')
+    expect(imgs[0]?.getAttribute('src')).toBe('http://gui.origin/proxy/3080/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fassets%2Ficon.svg&cwd=%2Fws')
     expect(imgs[0]?.getAttribute('alt')).toBe('icon')
-    expect(imgs[1]?.getAttribute('src')).toBe('http://gui.origin/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Flogo.png&cwd=%2Fws')
+    expect(imgs[1]?.getAttribute('src')).toBe('http://gui.origin/proxy/3080/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Flogo.png&cwd=%2Fws')
     expect(imgs[1]?.getAttribute('alt')).toBe('logo')
     await unmount(root)
   })
@@ -206,7 +349,7 @@ describe('MarkdownDocument (local markdown images)', () => {
     ].join('\n'))
     const img = container.querySelector('img')
     expect(img, 'the markdown-syntax image after an HTML run must render').not.toBeNull()
-    expect(img?.getAttribute('src')).toBe('http://gui.origin/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fimg.png&cwd=%2Fws')
+    expect(img?.getAttribute('src')).toBe('http://gui.origin/proxy/3080/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fimg.png&cwd=%2Fws')
     await unmount(root)
   })
 
@@ -218,7 +361,7 @@ describe('MarkdownDocument (local markdown images)', () => {
   })
 
   it('is idempotent for already-rewritten media URLs', async () => {
-    const url = 'http://gui.origin/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fimg.png&cwd=%2Fws'
+    const url = 'http://gui.origin/proxy/3080/sidebar/file?sessionId=s1&path=%2Fws%2Fdocs%2Fimg.png&cwd=%2Fws'
     const { container, root } = await renderDocument(`![a](${url})`)
     const img = container.querySelector('img')
     expect(img?.getAttribute('src')).toBe(url)

@@ -230,6 +230,47 @@ describe('EditorHost (files window)', () => {
     }
   })
 
+  it('in-place mode: a file another native type claims opens THAT type\'s tab, not the editor (#695)', () => {
+    const { store, ctx } = setup()
+    const service = ctx.betterSidebar
+    // A host whose tab registry ranks a third-party `.drawio` canvas above
+    // this plugin's editor (a longer pattern in the same `extension` band
+    // wins), and whose native surface records the hand-off.
+    const resources: string[] = []
+    const claimedCtx = {
+      betterSidebar: service,
+      get: (name: string) => {
+        if (name === 'betterSidebar') return service
+        if (name === 'sidebarRightTabs') {
+          return { candidates: (address: string) => address.endsWith('.drawio') ? [{ kind: 'drawio' }] : [{ kind: 'editor' }] }
+        }
+        if (name === 'sidebarRight') {
+          return { openResource: (address: string) => { resources.push(address) } }
+        }
+        return undefined
+      },
+      sessions: ctx.sessions,
+    } as unknown as Context
+    store.setPrefs({ ...store.getPrefs(), editorExplorer: true })
+    service.openTab({ type: 'editor', title: 'a.ts', path: '/tmp/a.ts', id: 'editor:/tmp/a.ts', meta: { treeOpen: false } })
+    const fileTab = (): SidebarTab =>
+      allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
+        .find(tab => tab.path === '/tmp/a.ts')!
+    const { container, unmount } = mountHost(claimedCtx, store, fileTab)
+    try {
+      typeAndCommit(container.querySelector('input[placeholder^="File path"]')!, '/tmp/board.drawio')
+      // The claiming type received the file's session-scoped address…
+      expect(resources).toHaveLength(1)
+      expect(resources[0]).toContain('editor-home-session')
+      expect(resources[0]).toContain('board.drawio')
+      // …and the editor tab was NOT switched in place (its file is unchanged).
+      expect(fileTab().path).toBe('/tmp/a.ts')
+      expect(fileTab().title).toBe('a.ts')
+    } finally {
+      unmount()
+    }
+  })
+
   it('split mode: a file tab\'s path input Enter opens a NEW per-path tab; the source tab keeps its path', () => {
     const { store, ctx } = setup()
     store.setPrefs({ ...store.getPrefs(), editorExplorer: false })
@@ -364,6 +405,48 @@ describe('EditorHost (files window)', () => {
       act(() => { buttons.find(b => b.textContent === 'Edit')!.click() })
       act(() => { header.querySelector<HTMLButtonElement>('button[aria-label="Save"]')!.click() })
       expect(calls).toEqual(['mode:edit', 'save'])
+    } finally {
+      unmount()
+    }
+  })
+
+  it('the header hides the save button for a truncated load (#732)', () => {
+    const { store, ctx } = setup()
+    const service = ctx.betterSidebar
+    // The TextEditor contract reports `truncated` alongside `editable`; the
+    // host's merged header must not offer save while only partial content
+    // is loaded (fs.write would replace the whole file with the prefix).
+    let report: ((truncated: boolean) => void) | undefined
+    const FakeViewer = (viewerProps: FileViewerProps): ReactNode => {
+      useEffect(() => {
+        viewerProps.onToolbarControls?.({ setMode: () => {}, save: () => {} })
+        viewerProps.onToolbarState?.({ modes: true, mode: 'preview', dirty: false, editable: true, truncated: true, saveState: 'idle' })
+        report = (truncated) => {
+          viewerProps.onToolbarState?.({ modes: true, mode: 'preview', dirty: false, editable: true, truncated, saveState: 'idle' })
+        }
+        return () => { viewerProps.onToolbarControls?.(null) }
+        // Mount-only: re-running would re-fire the toolbar registration.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [])
+      return null
+    }
+    service.registerFileViewer({
+      id: 'test:fake',
+      exts: ['fake'],
+      fetchStrategy: 'none',
+      component: FakeViewer,
+    })
+    service.openTab({ type: 'editor', title: 'big.fake', path: '/tmp/big.fake', id: 'editor:/tmp/big.fake' })
+    const fileTab = (): SidebarTab =>
+      allLeaves(store.getSnapshot().state!.bottomSplits).flatMap(leaf => leaf.tabs)
+        .find(tab => tab.path === '/tmp/big.fake')!
+    const { container, unmount } = mountHost(ctx, store, fileTab)
+    try {
+      const header = container.querySelector('input')!.parentElement!
+      expect(header.querySelector('button[aria-label="Save"]')).toBeNull()
+      // A full read replacing the content re-enables saving.
+      act(() => { report!(false) })
+      expect(header.querySelector('button[aria-label="Save"]')).not.toBeNull()
     } finally {
       unmount()
     }

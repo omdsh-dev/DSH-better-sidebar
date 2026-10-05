@@ -82,9 +82,16 @@ describe('built-in tab registrations', () => {
     expect(new Set(lines).size, 'descriptions must differ per tab').toBe(visible.length)
   })
 
-  it('the changes tab declares no settings of its own (the diff always docks)', () => {
+  it('the changes tab declares only its pinned commit-model settings panel', () => {
+    // The Git card's gear renders ONE custom panel: which provider/model
+    // drafts commit messages (rendered, not a declarative toggle row,
+    // because the option list is discovered at runtime through git.models).
+    // No declarative toggle rows ride along with it.
     const { service } = setup()
-    expect(service.getTab('git')?.settings).toBeUndefined()
+    const settings = service.getTab('git')?.settings
+    expect(typeof settings?.render).toBe('function')
+    expect(settings?.toggles ?? []).toEqual([])
+    expect(settings?.pluginToggles ?? []).toEqual([])
   })
 
   it('only diff is hidden from the + menu; editor is the visible files window (order 10)', () => {
@@ -140,11 +147,11 @@ describe('built-in tab registrations', () => {
     expect((viewMode?.options ?? []).map(o => o.value)).toEqual(['graph', 'tree'])
   })
 
-  it('the editor tab declares its merged-mode (embedded file tree) setting', () => {
+  it('the editor tab declares its merged-mode (embedded file tree) and exclude-pattern settings', () => {
     const { service } = setup()
     const toggles = service.getTab('editor')?.settings?.toggles ?? []
     // The workspace-fence switch is gone with the fence itself.
-    expect(toggles.map(t => t.key)).toEqual(['editorExplorer'])
+    expect(toggles.map(t => t.key)).toEqual(['editorExplorer', 'explorerExclude'])
     expect(toggles[0]?.title).toBeDefined()
     expect(toggles[0]?.desc).toBeDefined()
     // The merged mode is an iconed select (merged vs separate), not a switch.
@@ -152,6 +159,12 @@ describe('built-in tab registrations', () => {
     const options = toggles[0]?.options ?? []
     expect(options.map(o => o.value)).toEqual([true, false])
     expect(options.every(o => o.icon !== undefined && o.title !== undefined)).toBe(true)
+    // The exclude list is a patterns row (editable string list): title/desc
+    // plus the add-input placeholder the shared row renderer reads.
+    expect(toggles[1]?.type).toBe('patterns')
+    expect(toggles[1]?.title).toBeDefined()
+    expect(toggles[1]?.desc).toBeDefined()
+    expect(toggles[1]?.patternsPlaceholder).toBeDefined()
     // The open-with configuration (SSH host + custom editors) is the custom
     // panel rendered below the declarative rows.
     expect(service.getTab('editor')?.settings?.render).toBeDefined()

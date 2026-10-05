@@ -24,6 +24,8 @@
  */
 import type { Context } from '../../context-types.ts'
 import { t } from '../locales.ts'
+import { splitTrailingLineSpec } from '../path-line.ts'
+import { baseName } from '../paths.ts'
 import { parseFileAddress } from '../resource-address.ts'
 import type { BetterSidebarService, TabDescriptor } from '../service.ts'
 import type { SidebarStore } from '../state.ts'
@@ -87,6 +89,7 @@ interface NativeTabRegistry {
     id: string
     kind: string
     multiple?: boolean
+    keepMounted?: boolean
     patterns?: readonly string[]
     priority?: 'extension' | 'builtin' | 'fallback'
     canOpen?: (address: string) => boolean
@@ -147,13 +150,36 @@ function guideIconOf(icon: TabDescriptor['icon']): { icon?: (props: { size?: num
 function fileTitleOf(address: string): string | undefined {
   const parsed = parseFileAddress(address)
   if (parsed === undefined) return undefined
-  const segments = parsed.path.split('/').filter(segment => segment !== '')
+  // A `path:line` spec DSH's markdown grammar left in the address names a
+  // LINE, not a file: the tab is titled after the file (#826).
+  const path = splitTrailingLineSpec(parsed.path)?.path ?? parsed.path
+  const segments = path.split('/').filter(segment => segment !== '')
   return segments.length === 0 ? undefined : segments[segments.length - 1]
 }
 
 /** One descriptor's live native registrations. */
 interface Registration {
   readonly dispose: () => void
+}
+
+/**
+ * The plugin-side seed a file-address tab carries.
+ *
+ * The path comes from the address, and that is also where a `path:line` spec
+ * the host's markdown grammar left in it has to come off: DSH reads a `#`-less
+ * destination as the file name verbatim, so `[a/b.c](a/b.c:131)` addresses a
+ * file called `b.c:131` and the editor reports it missing (#826). The tab
+ * TITLE is seeded from the same spec, because the host derives it from the same
+ * string and would otherwise label the tab `b.c:131`.
+ * @param info - the native tab record the body is drawing.
+ * @returns the seed, or `undefined` when the tab is not a file address.
+ */
+export function fileParamsOf(info: NativeTabInfo): NativeTabParams | undefined {
+  const address = parseFileAddress(info.tab.contentId)
+  if (address === undefined) return undefined
+  const spec = splitTrailingLineSpec(address.path)
+  if (spec === undefined) return { path: address.path }
+  return { path: spec.path, title: baseName(spec.path) }
 }
 
 /**
@@ -230,10 +256,6 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
     if (tabs === undefined) return
     const live = new Map<string, Registration>()
 
-    const fileParamsOf = (info: NativeTabInfo): NativeTabParams | undefined => {
-      const address = parseFileAddress(info.tab.contentId)
-      return address === undefined ? undefined : { path: address.path }
-    }
     const fileSessionIdOf = (info: NativeTabInfo): string | undefined => {
       const address = parseFileAddress(info.tab.contentId)
       return address !== undefined && address.scope === 'session' ? address.sessionId : undefined
@@ -269,7 +291,21 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         disposers.push(ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
           name: 'sidebar.right.pane.tab.title',
           key: id,
-          inject: () => ({ records, service, descriptorId: injected.descriptorId }),
+          // The chip draws a FILE tab's own glyph, so it needs the same
+          // address-derived seed the body gets: a file tab's address names the
+          // file it shows, and the chip must be able to draw it BEFORE — and
+          // without — the plugin-side record, which exists only after the body
+          // has rendered (and is gone again once the body unmounts).
+          // The chip is also drawn per session and BEFORE the body, so it needs
+          // its own session id: every session's tabs live in one registry, and
+          // a chip that guessed the session would show another one's title.
+          inject: (sessionId: string) => ({
+            records,
+            service,
+            descriptorId: injected.descriptorId,
+            sessionId,
+            ...(params.paramsOf === undefined ? {} : { paramsOf: params.paramsOf }),
+          }),
         }, NativeTabTitle)))
       } catch (error) {
         for (const dispose of disposers) disposeSafely(dispose, `native tab slot "${id}"`)
@@ -286,6 +322,11 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       const disposeType = tabs.register({
         id,
         kind: descriptor.id,
+        // 0.1.7: the host keeps a visited body MOUNTED through hiding,
+        // tab selection and Session switches, so the plugin's own React state
+        // (records, tree expansion, scroll, unsaved drafts) survives without
+        // the adapter faking it.
+        keepMounted: true,
         ...(isEditor
           ? {
             patterns: ['dsh-resource://file/**'],
@@ -351,6 +392,7 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       const disposeType = tabs.register({
         id,
         kind: FILES_KIND,
+        keepMounted: true,
         priority: 'extension',
         title: () => t('files'),
         guide: [{
@@ -388,10 +430,11 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
         wanted.set(descriptor.id, () => registerDescriptor(descriptor))
       }
       for (const [descriptorId, registration] of live) {
-        // `files` is this module's OWN takeover, never a descriptor: it is
-        // owned by the editor-type switch below. Re-creating it here on every
-        // notification used to put its host-side type through a
-        // tear-down/re-register window on each store commit — and a
+        // `files` is this module's OWN takeover, never a descriptor (`wanted`
+        // only ever holds descriptor ids): its lifetime belongs to the
+        // editor-type switch below. Disposing it here on EVERY notification
+        // (any prefs/state pulse, a Session switch included) re-mounted the
+        // explorer body and lost the tree's own component state — and a
         // re-registration attempted on an already-inactive context (a plugin
         // reload) left the type registered with nobody holding its disposer,
         // so the same id could never be registered again for the rest of the

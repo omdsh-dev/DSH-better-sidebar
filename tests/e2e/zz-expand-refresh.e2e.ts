@@ -358,7 +358,32 @@ test('a folder toggle re-lists that folder and nothing else', async ({ page }) =
     expand.requests[0],
     'expanding a folder must ask for that folder, not the whole visible set',
   ).toBe(`fs.trees[${BIG}]`)
-  expect(sibling.requests[0], 'expanding a sibling must ask for the sibling').toBe('fs.trees[bravo]')
+  // D is prefetch-AWARE, and zero requests here is a CACHE HIT, not a missing
+  // expansion. The host's `probeCompactRows` marks a directory whose sole
+  // child is a FILE as `compact` too — deliberately, so the client can preload
+  // marked levels and stabilize the fold label before expansion — and `bravo`
+  // holds exactly one file. The compact-preload effect in FileTree.tsx
+  // (`loadLevels(compactLoadTargets(...))`) therefore lists `bravo` whenever
+  // the LEVEL CACHE CHANGES (the root listing arriving is enough), while it is
+  // still collapsed. The click then renders straight from that cache: no
+  // request, but the child row does appear. Both readings are accepted, and
+  // the guard this phase really owes is the second one — bounding the SCOPE:
+  // whatever it asks for must be exactly the toggled level, never a payload
+  // carrying the root or the whole visible set (that is the empty-cache
+  // signature of a fresh mount, which is what used to re-list everything on
+  // every toggle). Do NOT "fix" the zero back into an expected request: an
+  // expansion is not supposed to re-list anything it already has.
+  expect(
+    sibling.requests.length,
+    'expanding a prefetched compact level lists at most that one level',
+  ).toBeLessThanOrEqual(1)
+  for (const request of sibling.requests) {
+    expect(request, 'expanding a sibling must ask for the sibling, never a wider set').toBe('fs.trees[bravo]')
+  }
+  expect(
+    sibling.added,
+    'the prefetched level must still render its child row (zero requests while rows appear)',
+  ).toBeGreaterThanOrEqual(1)
   // A2: the tree body survives every toggle. A replaced body unmounts the
   // explorer — level cache, scroll position and directory watcher with it —
   // and a reopened socket re-announces its whole watch set.

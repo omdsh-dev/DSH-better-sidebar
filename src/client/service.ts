@@ -27,6 +27,7 @@ import {
   type SidebarSnapshot, type SidebarState, type SidebarStore, type SidebarTab, type TabType,
 } from './state.ts'
 import { baseName, extOf } from './paths.ts'
+import { hostRouteUrl as resolveHostRoute } from './host-route-url.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import type { SessionScope } from './api.ts'
 import type { SidebarPrefs } from '../prefs-shared.ts'
@@ -49,7 +50,7 @@ export type { SessionScope } from './api.ts'
 export type { SidebarPrefs } from '../prefs-shared.ts'
 
 /** The row control a declarative setting renders as in the settings popup. */
-export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select'
+export type SidebarSettingToggleType = 'switch' | 'text' | 'number' | 'select' | 'patterns'
 
 /** One option of a `type: 'select'` setting row. */
 export interface SidebarSettingSelectOption {
@@ -74,7 +75,10 @@ export interface SidebarSettingSelectOption {
  *  'text' a free-form input committed on blur/Enter, 'number' a numeric
  *  input clamped to `min`/`max`, 'select' a dropdown over the declared
  *  `options` (single-pick writes the option's value; `multi: true` writes
- *  the array of picked values and defaults to false). */
+ *  the array of picked values and defaults to false), 'patterns' an
+ *  editable string list (chips with a remove button + an add input) that
+ *  commits the whole `string[]` value — the setting key must hold a string
+ *  array (the editor's `explorerExclude` glob list uses it). */
 export interface SidebarSettingToggle {
   /** The SidebarPrefs field this toggle reads and writes ('autoOpenSubagent'). */
   key: string
@@ -90,6 +94,8 @@ export interface SidebarSettingToggle {
   max?: number
   /** Input placeholder for `type: 'text'` rows. */
   placeholder?: string
+  /** Input placeholder for the add input of `type: 'patterns'` rows. */
+  patternsPlaceholder?: string
   /** Unit suffix rendered after the input (e.g. 'px' for a size row). */
   unit?: string
   /** Options of a `type: 'select'` row. */
@@ -236,6 +242,23 @@ export interface TabDescriptor {
    */
   badge?: (ctx: Context, scope: SessionScope, state: SidebarState) => string | number | null | undefined
   /**
+   * Right-aligned action area for the tab strip (v0.25.0+). When the tab is
+   * active, the returned ReactNode renders at the right end of its pane's
+   * tab strip (between the + button and the panel's close control). Lets a
+   * descriptor put its toolbar directly in the strip instead of a separate
+   * header row below it. Returning null/undefined renders nothing at all
+   * (not even an empty wrapper); a throw is swallowed (no actions shown).
+   * Called on every tab-strip render, so keep it cheap.
+   *
+   * `tab` is the open instance this strip is rendering for: with
+   * `single: false` and split panes, several instances of one type can be
+   * open at once and every pane renders its own strip, so toolbar actions
+   * (restart / close / …) must target `tab`, never "the" tab of this type.
+   * `paneId` is that strip's pane (compare with `state.activePane` to tell
+   * whether the pane is the focused one).
+   */
+  rightActions?: (ctx: Context, scope: SessionScope, state: SidebarState, tab: SidebarTab, paneId: string) => ReactNode
+  /**
    * Lifecycle callbacks (v0.12.0+). Fired by the SERVICE paths only:
    * `onOpen` when an open actually creates a tab (a dedupe/id-safety-net
    * focus is NOT an open — it fires `onActivate` instead), `onActivate`
@@ -272,6 +295,10 @@ export interface FileViewerProps {
   /** fsRead text content (fetchStrategy='fsRead'). */
   content?: string
   truncated?: boolean
+  /** Last-modified time (ms) of the loaded bytes — the built-in text editor's
+   *  save baseline (a file that changed on disk since refuses the write).
+   *  Absent for viewers/loads that carry no baseline. */
+  mtimeMs?: number
   /** mediaUrl for the path (fetchStrategy='mediaUrl'). */
   mediaUrl?: string
   /** custom load() return value (fetchStrategy='custom'). */
@@ -286,6 +313,8 @@ export interface FileViewerProps {
   /** Internal: the viewer registers its toolbar commands on mount (null on
    *  unmount). */
   onToolbarControls?: (controls: EditorToolbarControls | null) => void
+  /** Internal: reload the file from disk (the save-conflict banner's action). */
+  onReload?: () => void
 }
 
 /** The toolbar state a text editor reports to the host's merged-mode header. */
@@ -296,6 +325,10 @@ export interface EditorToolbarState {
   dirty: boolean
   /** Whether saving applies (text content loaded). */
   editable: boolean
+  /** Whether the loaded text was truncated at readLimit — the editor is
+   *  read-only and saving is disabled (issue #732: saving partial content
+   *  would overwrite and destroy the tail of the file). */
+  truncated?: boolean
   saveState: 'idle' | 'saving' | 'saved' | 'failed'
 }
 
@@ -460,14 +493,20 @@ export interface SidebarSurface {
   openResource(input: { sessionId: string; address: string; line?: number; revealIfOpened: boolean; preferNewPane?: boolean }): void
   /** The file address of one path (the native surface owns the grammar). */
   fileAddress(sessionId: string, cwd: string | undefined, path: string): string
-  /** Close one native tab; the closed record's type/title, or undefined when the id is not native. */
-  close(sessionId: string, tabId: string): { type: string; title: string } | undefined
-  /** Patch a native tab's plugin-side record; false when it is not native. */
-  update(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): boolean
-  /** Focus a native tab; false when it is not native. */
-  activate(tabId: string): boolean
-  /** Whether a tab id belongs to the native surface. */
-  has(tabId: string): boolean
+  /** Close one native tab; the closed record's type/title/meta, or undefined when the id is not native. */
+  close(sessionId: string, tabId: string): { type: string; title: string; meta?: unknown } | undefined
+  /**
+   * Patch a native tab's plugin-side record; false when it is not native.
+   * `sessionId` (optional) names the seat session the tab lives in: native tab
+   * ids restart per session and several sessions' tabs are alive at once
+   * (`keepMounted`), so a caller that knows its session should pass it.
+   * Omitted, the id resolves against the mounted seat.
+   */
+  update(tabId: string, patch: { title?: string; path?: string; meta?: unknown }, sessionId?: string): boolean
+  /** Focus a native tab through the host controller; false when it is not native (same `sessionId` rule as `update`). */
+  activate(tabId: string, sessionId?: string): boolean
+  /** Whether a tab id belongs to the native surface (same `sessionId` rule as `update`). */
+  has(tabId: string, sessionId?: string): boolean
 }
 
 /**
@@ -585,8 +624,14 @@ export interface BetterSidebarService {
   getSnapshot(): SidebarSnapshot
   /** Subscribe to snapshot changes (session switch, state changes, prefs changes). Returns the disposer. */
   subscribeState(listener: () => void): () => void
-  /** Update an open tab's display fields (title / path / meta); a missing tab id is a no-op. */
-  updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void
+  /**
+   * Update an open tab's display fields (title / path / meta); a missing tab id
+   * is a no-op. `sessionId` names the seat session the tab lives in — native
+   * ids restart per session and several sessions' tabs stay mounted at once,
+   * so a component that knows its scope should pass it; omitted, a native id
+   * resolves against the mounted seat.
+   */
+  updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }, sessionId?: string): void
   /**
    * Activate an open tab (the tab-bar activation path; fires
    * descriptor.onActivate). An unknown tab id is a strict no-op. `scope`
@@ -595,6 +640,17 @@ export interface BetterSidebarService {
   activateTab(tabId: string, scope?: SessionScope): void
   /** Open a file in the sidebar editor of `scope`'s session (title defaults to the file name). */
   openFile(scope: SessionScope, path: string, title?: string): void
+  /**
+   * Resolve one of the plugin's own host routes (`sidebar/api/fs.read`) into
+   * an absolute URL the page can fetch even when the GUI is served under a
+   * reverse-proxy directory (v0.25.0+; `features` contains 'hostRouteUrl').
+   *
+   * Never build these URLs with a leading slash yourself: that pins the
+   * request to the ORIGIN ROOT, so `/proxy/<port>/sidebar/api/…` leaves the
+   * prefix and 404s (and a desktop shell's `dsh-app://` origin is not
+   * reachable at all). `path` is taken with or without a leading slash.
+   */
+  hostRouteUrl(path: string): string
   /**
    * Install (or clear) the native right-Sidebar write face.
    * @internal Called once by the client half; not part of the consumer API.
@@ -658,6 +714,10 @@ export const SIDEBAR_SERVICE_VERSION = '0.24.1'
  *   external file-tree icons overriding the built-in glyphs, matched by
  *   extension (`exts`), exact file name (`names`), or directory name
  *   (`folderNames`).
+ * - 'rightActions' (v0.25.0): TabDescriptor.rightActions — the active tab's
+ *   right-aligned action area rendered at the tab strip's right end.
+ * - 'settingPatterns': SidebarSettingToggle type 'patterns' (editable
+ *   string-list row, committed as one string[] value).
  *
  * v0.19.0 REMOVED 'floatWindows': the free-window feature is gone (DSH 0.1.5
  * owns the right column, so the plugin keeps only its bottom workbench).
@@ -675,6 +735,9 @@ export const SIDEBAR_FEATURES = [
   'urlTarget',
   'settingSelect',
   'fileIcons',
+  'rightActions',
+  'settingPatterns',
+  'hostRouteUrl',
 ] as const
 
 /** Run one plugin callback; a throw is logged and never breaks the caller. */
@@ -925,16 +988,29 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       // Multi-instance kinds (terminal / browser / side chat / diff) mint a
       // fresh tab per open; single-instance kinds focus the existing one.
       const revealIfOpened = descriptor.createTab === undefined
+      // A url seed lands on `path`: the browser tab reads its address from
+      // there and persists navigations back to the same field
+      // (BrowserView's `persist`), so dropping the seed left an opened tab
+      // with an empty address bar. `path` means the file to open only for
+      // `editor`, which never carries a url seed.
+      const componentPath = seed.path ?? seed.url
       const synthetic: SidebarTab = {
         id: seed.id ?? minted?.tab.id ?? seed.type,
         type: seed.type,
         title,
-        ...(seed.path === undefined ? {} : { path: seed.path }),
+        ...(componentPath === undefined ? {} : { path: componentPath }),
         ...(seed.diff === undefined ? {} : { diff: seed.diff }),
         ...(seed.meta === undefined && minted?.tab.meta === undefined ? {} : { meta: seed.meta ?? minted?.tab.meta }),
       }
       if (seed.type === 'editor') {
         if (seed.path !== undefined) {
+          // No `kind` is named on the resource open: the HOST's tab registry
+          // decides the claiming type (#695), so a third-party type with a
+          // more specific pattern (a `.drawio` canvas at `extension` priority)
+          // receives the file and the plugin's editor only takes what nobody
+          // else claims. `claim()` throws when nothing recognizes the address;
+          // the editor's `dsh-resource://file/**` plus the built-in previews
+          // cover every file address in practice.
           surface.openResource({
             sessionId: targetSessionId,
             address: surface.fileAddress(targetSessionId, scope?.cwd, seed.path),
@@ -1071,7 +1147,12 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
         const descriptor = tabs.get(closedNative.type)
         if (descriptor !== undefined) {
           safeCall(() => descriptor.onClose?.(
-            { id: tabId, type: closedNative.type as TabType, title: closedNative.title },
+            {
+              id: tabId,
+              type: closedNative.type as TabType,
+              title: closedNative.title,
+              ...(closedNative.meta === undefined ? {} : { meta: closedNative.meta }),
+            },
             scope ?? { sessionId },
           ))
         }
@@ -1105,8 +1186,12 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   const subscribeState = (listener: () => void): (() => void) => store.subscribe(listener)
 
   /** Patch an open tab's display fields (a missing tab id is a no-op). */
-  const updateTab = (tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void => {
-    if (surface?.update(tabId, patch) === true) return
+  const updateTab = (
+    tabId: string,
+    patch: { title?: string; path?: string; meta?: unknown },
+    sessionId?: string,
+  ): void => {
+    if (surface?.update(tabId, patch, sessionId) === true) return
     store.reduce((state) => patchTab(state, tabId, {
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.path !== undefined ? { path: patch.path } : {}),
@@ -1116,7 +1201,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
 
   /** Activate an open tab (the tab-bar activation path; fires onActivate). */
   const activateTab = (tabId: string, scope?: SessionScope): void => {
-    if (surface?.activate(tabId) === true) return
+    if (surface?.activate(tabId, scope?.sessionId) === true) return
     let activated: SidebarTab | undefined
     store.reduce((state) => {
       // Unknown tab ids are a strict no-op (no state churn / notify).
@@ -1138,7 +1223,15 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
 
   /** Open a file in the sidebar editor of `scope`'s session (title defaults
    *  to the file name; the tab id is path-derived, like the internal
-   *  open-path interception, so distinct files open side by side). */
+   *  open-path interception, so distinct files open side by side).
+   *
+   *  The `editor` seed does NOT hard-code the winner (#695): with the native
+   *  surface installed, `openTab`'s native branch turns the path seed into a
+   *  resource address and the HOST's tab registry decides the claiming type —
+   *  a third-party type registered with a more specific pattern (a `.drawio`
+   *  canvas, say) renders its own tab, and the plugin's editor only takes
+   *  files nobody else claims. (This module holds no ctx, so the probe used
+   *  by the tree's own carriers lives in sidebar-file.ts instead.) */
   const openFile = (scope: SessionScope, path: string, title?: string): void => {
     openTab({ type: 'editor', title: title ?? baseNameOf(path), path, id: `editor:${path}` }, scope)
   }
@@ -1168,6 +1261,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     updateTab,
     activateTab,
     openFile,
+    hostRouteUrl: (path: string): string => resolveHostRoute(path).href,
     setSurface: (next: SidebarSurface | undefined) => { surface = next },
   }
 }
