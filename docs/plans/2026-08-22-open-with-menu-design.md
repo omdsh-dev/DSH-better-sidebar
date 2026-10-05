@@ -78,23 +78,29 @@ Cursor             (SSH)
 
 ```ts
 { action: 'reveal', path }  // 在文件管理器中显示/选中
+{ action: 'editor', editor: 'vscode' | 'cursor', path } // 本机内置编辑器
 { action: 'url', url }      // 交给注册的协议处理器
 ```
 
-- `src/open-external.ts`：纯函数 `revealCommand` / `urlCommand`（platform 可注入，单测覆盖三平台）+ `launchExternal`（`spawn(..., { detached: true, stdio: 'ignore' })` + `unref`）。
+- `src/open-external.ts`：纯函数 `revealCommand` / `urlCommand` / `editorCommand`（platform 与编辑器查找可注入）+ `launchExternal`（`spawn` 使用 argv 数组，清理 `ELECTRON_RUN_AS_NODE`，并等待 `spawn` / `error` 事件）。
 - `reveal`：darwin `open -R`；win32 `explorer.exe /select,`；linux `xdg-open <父目录>`（无统一 select 协议，KISS 打开所在目录）。
-- `url`：darwin `open`；win32 `rundll32 url.dll,FileProtocolHandler`（备选 `cmd /c start ""`）；linux `xdg-open`。
+- `url`：darwin `open`；win32 `rundll32 url.dll,FileProtocolHandler`；linux `xdg-open`。
+- `editor`：Windows 优先从 PATH、常见安装位置和协议注册项解析 VS Code / Cursor 可执行文件，按 `[nativePath]` 参数直接启动；找不到可执行文件时使用清理过环境的 Windows 协议分发。WSL 继续生成 Remote-WSL URL 并交给 Windows 协议处理器；SSH 和自定义编辑器继续使用 URL 请求。
 - 校验：`reveal` 路径必须绝对（`requireAbsolute`）；`url` 必须是 `scheme://` 自定义协议（拒绝 http/https）。
-- **Windows 平台命令为约定实现，需在 Windows 实机验证**（本机为 macOS；CI 覆盖 linux）。
+- 启动失败会通过 API 错误返回，文件树显示失败路径和底层错误信息。
 
-**实施偏差（2026-09，#517 / PR #522）**：SSH 远程编辑器链接**不再经宿主路由执行**。DSH 部署在无头远端服务器时，宿主侧 `xdg-open` 无 DISPLAY/无编辑器，`vscode://` 静默失败。`api.openExternal`（`src/client/api.ts`）现把 `<scheme>://vscode-remote/ssh-remote+…` 形态的 URL 在浏览器客户端同步触发 `window.location.assign`（处于用户点击链内，外部协议交给本机编辑器经 Remote-SSH 打开远端文件）；reveal 与本地编辑器 URL 仍走本节宿主路由。普通浏览器可处理自定义协议；禁止/未处理 `vscode://` 的 WebView 壳客户端需各自适配（见 #517 补充信息）。
+**实施偏差（2026-09，#517 / PR #522）**：SSH 远程编辑器链接**不再经宿主路由执行**。DSH 部署在无头远端服务器时，宿主侧 `xdg-open` 无 DISPLAY/无编辑器，`vscode://` 静默失败。`api.openExternal`（`src/client/api.ts`）现把 `<scheme>://vscode-remote/ssh-remote+…` 形态的 URL 在浏览器客户端同步触发 `window.location.assign`（处于用户点击链内，外部协议交给本机编辑器经 Remote-SSH 打开远端文件）；reveal 与本地自定义编辑器 URL 仍走本节宿主路由。普通浏览器可处理自定义协议；禁止/未处理 `vscode://` 的 WebView 壳客户端需各自适配（见 #517 补充信息）。
 
 **实施偏差（2026-09，右键菜单减重与子菜单视口钳制）**：本菜单（及 TabBar / GitLens / FreeWindow 右键菜单、「+」菜单）整体切到 primitives `Menu` 的 **`compact` 密度**（行高 26px / 12px 字 / 164px 卡片 / 7px 圆角），菜单图标随槽位 16→14、子菜单图钉 20→16。同时发现宿主子菜单**不受视口钳制**（`bottom:-4px` 从父行向上生长、`left:calc(100%+10px)` 向右展开，主列表的钳制与 `max-height` 收缩均不覆盖它）：树顶部右键时本子菜单伸出视口上沿，窄面板（280–400px）时伸出右沿。修复为插件侧方案 `src/client/menu-flip.ts`——菜单打开期间在 `<body>` 发布 `data-dsh-sidebar-submenu="down|left"` 方向 token（`y < vh/2` → down；`x + 400 > vw` → left，400 镜像宿主几何 218 卡片 + 10 间隙 + 165 子菜单 + 12 边距），`layout.css` 据此翻转子菜单生长方向与 `::before` 悬停桥；**属性的存续期即作用域**（仅我们的菜单打开时存在），宿主自有菜单不受影响。**不做** `max-height` + 滚动钳制：overflow 裁剪会切掉子菜单 `::before` 悬停桥（跨 10px 间隙会触发 mouseLeave 关卡）。残留见「已知限制」末两条。
+
+## Issue #412：Windows 内置编辑器启动
+
+Windows 文件树的 VS Code / Cursor 目标保留 `editor + path` 请求，由宿主直接启动编辑器可执行文件，避免 `rundll32` 对自定义协议的静默失败。可执行文件查找覆盖 PATH、常见安装位置和协议注册项；查找失败时仍走 Windows 协议分发。所有外部进程都删除继承环境中的 `ELECTRON_RUN_AS_NODE`，避免 DSH Desktop 的 Electron Node 模式影响外部 Electron 程序。WSL、SSH 和自定义编辑器继续使用各自原有 URL 路径。
 
 ## 已知限制
 
 - 路径含 `#`/`?` 的文件名经 URL 打开可能被浏览器当作 fragment/query（不处理，注释说明）。
-- 编辑器未安装/协议未注册：由 OS 弹提示或静默失败，不做安装检测。SSH 客户端分支同理——浏览器端 `location.assign` 无法探测协议 handler 是否存在，仍返回 `{started: true}`。
+- 编辑器未安装且 Windows 协议处理器也无法启动时，文件树会显示启动错误。SSH 客户端分支仍无法由浏览器端 `location.assign` 探测协议 handler 是否存在，调用会返回 `{started: true}`。
 - 自定义编辑器仅支持 URL 模板式，不支持 CLI 命令式；无 `{dir}` 占位符。
 - Linux reveal 退化为打开所在目录（精确 select 需要各文件管理器私有协议）。
 - SSH 模式为**全局**（非每会话）：DSH 无远程会话概念，文件树路径即宿主路径；该模型对应"DSH 跑在远端开发机上"的场景。

@@ -52,6 +52,12 @@ export interface OpenWithTarget {
   localOnly: boolean
 }
 
+/** 文件树菜单目标交给宿主或客户端协议处理器的请求。 */
+export type OpenWithExternalRequest =
+  | { action: 'reveal'; path: string }
+  | { action: 'editor'; editor: 'vscode' | 'cursor'; path: string }
+  | { action: 'url'; url: string }
+
 /** The default open-with configuration (fresh documents). */
 export const OPEN_WITH_DEFAULTS: OpenWithConfig = {
   sshHost: '',
@@ -190,6 +196,20 @@ export function openWithUrl(target: OpenWithTarget, path: string, config: OpenWi
   }
   if (!target.urlTemplate.includes('{path}') || !hasUrlScheme(target.urlTemplate)) return undefined
   return target.urlTemplate.replace('{path}', normalized)
+}
+
+/** 本地内置编辑器保留启动身份，SSH 与自定义目标继续使用 URL 请求。 */
+export function openWithRequest(
+  target: OpenWithTarget,
+  path: string,
+  config: OpenWithConfig,
+): OpenWithExternalRequest | undefined {
+  if (target.kind === 'reveal') return { action: 'reveal', path }
+  if (!openWithSshActive(config) && (target.id === 'vscode' || target.id === 'cursor')) {
+    return { action: 'editor', editor: target.id, path }
+  }
+  const url = openWithUrl(target, path, config)
+  return url === undefined ? undefined : { action: 'url', url }
 }
 
 /** Whether a template starts with a `scheme://` prefix (the only shape the

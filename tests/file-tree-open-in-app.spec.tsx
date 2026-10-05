@@ -441,8 +441,26 @@ describe('FileTree host apps vs plugin open-with targets', () => {
     await openMenu(harness.container, 'a.ts')
     await openSubmenu()
     expect(submenuRows().every(row => row.querySelector('[class*="openWithPin"]') !== null)).toBe(true)
-    clickSubmenuRow('Windsurf')
+    await act(async () => {
+      clickSubmenuRow('Windsurf')
+      await Promise.resolve()
+    })
     expect(harness.onOpenWith).toHaveBeenCalledWith('custom:w', '/tmp/a.ts')
+  })
+
+  it('shows a rejected plugin launch in the file tree error strip', async () => {
+    const handle = makeHandle({ available: () => false })
+    harness = await mountTree(handle, { targets: PLUGIN_TARGETS })
+    harness.onOpenWith.mockRejectedValueOnce(new Error('spawn Cursor.exe ENOENT'))
+    await openMenu(harness.container, 'a.ts')
+    await openSubmenu()
+    await act(async () => {
+      clickSubmenuRow('Windsurf')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(harness.container.querySelector('[role="alert"]')?.textContent)
+      .toContain('Could not open: /tmp/a.ts: spawn Cursor.exe ENOENT')
   })
 
   it('toggles a plugin pin without selecting the row', async () => {

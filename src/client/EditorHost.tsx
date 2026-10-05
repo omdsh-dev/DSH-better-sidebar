@@ -34,7 +34,7 @@ import { clearEditorDirty, setEditorDirty } from './editor-dirty.ts'
 import { baseName } from './FileTree.tsx'
 import { createFrameBatcher } from './frame-batcher.ts'
 import { openClaimedNativeFile, openSidebarFile } from './sidebar-file.ts'
-import { openWithSshActive, openWithUrl, parseOpenWithConfig, resolveOpenWithTargets } from './open-with.ts'
+import { openWithRequest, openWithSshActive, parseOpenWithConfig, resolveOpenWithTargets } from './open-with.ts'
 import { updatePluginSettings } from './plugin-settings.ts'
 import { createOpenInApp } from './open-in-app.ts'
 import { TreePanel } from './TreePanel.tsx'
@@ -254,22 +254,18 @@ export function EditorHost(props: {
    *  manager, or hand the target's URL to its opener — local `file` URLs go
    *  to the host's external opener, while the SSH-remote form for
    *  VSCode-family editors launches on the browser/client machine (see
-   *  api.openExternal). Failures are logged only — a missing handler is the
-   *  OS's/browser's dialog, not a sidebar error. */
-  const openWith = (targetId: string, absolute: string): void => {
+   *  api.openExternal). Rejections reach FileTree so it can display the
+   *  launch error beside the tree action controls. */
+  const openWith = async (targetId: string, absolute: string): Promise<void> => {
     const target = openWithTargets.find(item => item.id === targetId)
     if (target === undefined) return
-    if (target.kind === 'reveal') {
-      void api.openExternal({ action: 'reveal', path: absolute }).catch(
-        (error: unknown) => { console.error('open external failed', error) },
-      )
-      return
+    try {
+      const request = openWithRequest(target, absolute, openWithConfig)
+      if (request !== undefined) await api.openExternal(request)
+    } catch (error: unknown) {
+      console.error('open external failed', error)
+      throw error
     }
-    const url = openWithUrl(target, absolute, openWithConfig)
-    if (url === undefined) return
-    void api.openExternal({ action: 'url', url }).catch(
-      (error: unknown) => { console.error('open external failed', error) },
-    )
   }
 
   /** Toggle one target's pinned state. The write is serialized (see

@@ -1236,6 +1236,8 @@ describe('open.external route', () => {
     const route = mountWithSettings()
     const result = await invoke(route, 'open.external', { action: 'open-ish', path: '/tmp/a.txt' })
     expect(result).toMatchObject({ ok: false, error: { code: 'bad-request' } })
+    const unknownEditor = await invoke(route, 'open.external', { action: 'editor', editor: 'zed', path: '/tmp/a.txt' })
+    expect(unknownEditor).toMatchObject({ ok: false, error: { code: 'bad-request' } })
   })
 
   it('rejects http(s) URLs and relative reveal paths before spawning', async () => {
