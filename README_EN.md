@@ -380,11 +380,12 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
 ### 🖼️ Viewer Plugins (file previewers)
 
 <details>
-<summary><b>3 plugins (click to expand)</b></summary>
+<summary><b>4 plugins (click to expand)</b></summary>
 
 | Plugin | ⭐ | Description |
 |---|---|---|
 | [HuanLinOTO/dsh-plugin-better-sidebar-plugin-office](https://github.com/HuanLinOTO/dsh-plugin-better-sidebar-plugin-office) | <img alt="stars" src="https://img.shields.io/github/stars/HuanLinOTO/dsh-plugin-better-sidebar-plugin-office?style=flat&color=4d6bfe" /> | Office-suite preview (.docx / .xlsx / .pptx) as a separate bundle to slim the core (in the official recommended catalog) |
+| [HuanLinOTO/dsh-plugin-better-sidebar-plugin-audio](https://github.com/HuanLinOTO/dsh-plugin-better-sidebar-plugin-audio) | <img alt="stars" src="https://img.shields.io/github/stars/HuanLinOTO/dsh-plugin-better-sidebar-plugin-audio?style=flat&color=4d6bfe" /> | Audio preview: zoomable waveform player (click/drag seek, A-B loop, channel switch, playback rate) + live spectrum (bars/line/waterfall) + whole-file spectrogram, with its own Range-capable streaming media route |
 | [zemul/dsh-video-preview](https://github.com/zemul/dsh-video-preview) | <img alt="stars" src="https://img.shields.io/github/stars/zemul/dsh-video-preview?style=flat&color=4d6bfe" /> | Inline video preview: .mp4 / .webm / .mov / .mkv / .avi with a /video host route supporting HTTP Range scrubbing |
 | [dong-victor/dsh-better-sidebar-jupyter](https://github.com/dong-victor/dsh-better-sidebar-jupyter) | <img alt="stars" src="https://img.shields.io/github/stars/dong-victor/dsh-better-sidebar-jupyter?style=flat&color=4d6bfe" /> | Runnable `.ipynb` notebook view: lazy-start Python kernel, streaming outputs, save-back |
 
