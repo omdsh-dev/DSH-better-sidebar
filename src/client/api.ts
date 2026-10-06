@@ -464,13 +464,11 @@ export const api = {
    *  an empty list. Called on hover only — a file is never prefetched. */
   gitBlame: (scope: SessionScope, path: string, startLine: number, endLine: number, worktree?: string, signal?: AbortSignal) =>
     call<{ lines: GitBlameLine[] }>('git.blame', gitPayload(scope, worktree, { path, startLine, endLine }), signal),
-  /** The session's file-tool events for the changes tab's session lens: the
-   *  `tool/call` + `tool/result` rows past `afterSeq` (0 = whole window),
-   *  capped to the recent window host-side. The client runtime exposes no
-   *  event-log face, so the lens polls this delta route. */
-  changesOps: (scope: SessionScope, afterSeq?: number, signal?: AbortSignal) =>
+  /** 读取文件工具事件增量；后续请求等待事件或等待期限结束。 */
+  changesOps: (scope: SessionScope, afterSeq?: number, signal?: AbortSignal, wait = false) =>
     call<{ events: SidebarSessionEvent[]; lastSeq: number }>('changes.ops', scopePayload(scope, {
-      ...(afterSeq !== undefined && afterSeq > 0 ? { afterSeq } : {}),
+      ...(afterSeq !== undefined ? { afterSeq } : {}),
+      ...(wait ? { wait: true } : {}),
     }), signal),
   /** Discard the worktree changes of one file (the index is untouched). */
   gitDiscard: (scope: SessionScope, path: string, worktree?: string) =>

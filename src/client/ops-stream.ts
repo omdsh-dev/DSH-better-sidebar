@@ -16,14 +16,10 @@
  *   (editor tabs) elect ONE leader per session; that leader owns the single
  *   `usePolling` loop and every member reads the same published state. Any
  *   member leaving re-elects, and the loop stops when the last one goes.
- * - **The plugin's own `changes.ops` delta stream, on ONE poller per session.**
- *   No `fs.watch`, no `fsRead` fingerprint polling, and no per-tab interval —
- *   a per-tab poll would multiply the same request by the number of mounted
- *   editors. Requests ride `use-polling.ts` (the sidebar's one polling loop)
- *   on the changes tab's own 2.5s cadence, and stop entirely while no editor
- *   of the session is on screen. The plugin's OWN saves go through
- *   `/sidebar/file` and leave no session event, so a reload can never
- *   re-trigger itself.
+ * - 每个会话通过 `changes.ops` 保持一条工具事件流，由 `use-polling.ts` 调度。
+ *   两次响应之间间隔 2.5 秒；空窗请求等待宿主事件，最长 25 秒。
+ *   当前会话没有可见编辑器时停止请求。插件自行保存文件时使用 `/sidebar/file`，
+ *   不产生会话工具事件，因此不会引发重复刷新。
  * - **Settled successes only.** A `write`/`edit` call fires once its result
  *   landed without an error, so a half-written file never reaches a preview
  *   and a failed call never triggers a pointless reload.
@@ -129,7 +125,7 @@ interface Stream {
   listeners: Set<() => void>
   members: Set<Member>
   leader: Member | undefined
-  /** The delivered cursor (`0` = no cursor yet, so the next pull is the baseline). */
+  /** The delivered cursor (`-1` includes an eventual first event at seq 0). */
   seq: number
   /** Whether the baseline pull completed (only then may a delta publish). */
   primed: boolean
@@ -152,7 +148,7 @@ function streamOf(sessionId: string): Stream {
       listeners: new Set(),
       members: new Set(),
       leader: undefined,
-      seq: 0,
+      seq: -1,
       primed: false,
       events: [],
       published: new Set(),
@@ -212,7 +208,7 @@ function fold(stream: Stream, events: readonly SidebarSessionEvent[], baseline: 
 
 /** One leader's delta pull: advance the cursor, then fold (or baseline) it. */
 async function pullStream(stream: Stream, scope: SessionScope, signal: AbortSignal): Promise<void> {
-  const { events, lastSeq } = await api.changesOps(scope, stream.seq, signal)
+  const { events, lastSeq } = await api.changesOps(scope, stream.primed ? stream.seq : undefined, signal, stream.primed)
   // A torn-down run's answer must never publish state: the transport may
   // deliver an aborted response anyway.
   if (signal.aborted === true) return
