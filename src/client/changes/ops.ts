@@ -7,6 +7,7 @@
  * data). Pure — no React, no DOM.
  */
 import type { SidebarSessionEvent } from '../../context-types.ts'
+import { resolveSidebarPath } from '../paths.ts'
 
 /** The file-touching operation kinds the tracer distinguishes. */
 export type FileOpKind = 'read' | 'write' | 'edit'
@@ -16,7 +17,7 @@ export interface FileOp {
   /** Stable identity: the originating tool-call id. */
   readonly callId: string
   readonly kind: FileOpKind
-  /** Workspace-relative or absolute path exactly as the model spelled it. */
+  /** Path resolved against the session cwd when available. */
   readonly path: string
   /** Unix epoch ms of the call; the result time when only that is known. */
   readonly time: number
@@ -134,9 +135,10 @@ function resultIsError(message: ToolResultMessageLike): boolean {
  * Calls dispatched through a host tool such as run_code appear as their own
  * `tool/call` rows in the log, so nested file calls fold in naturally.
  * @param events - the session's append-only event log (oldest → newest).
+ * @param cwd - the session working directory used to resolve relative paths.
  * @returns the ordered operation list.
  */
-export function extractFileOps(events: readonly SidebarSessionEvent[]): FileOp[] {
+export function extractFileOps(events: readonly SidebarSessionEvent[], cwd?: string): FileOp[] {
   const byCall = new Map<string, FileOp>()
   for (const event of events) {
     if (event.type === 'tool/call') {
@@ -145,8 +147,9 @@ export function extractFileOps(events: readonly SidebarSessionEvent[]): FileOp[]
       const kind = kindOf(data.name)
       if (kind === undefined) continue
       const args = parseArgs(typeof data.arguments === 'string' ? data.arguments : '')
-      const path = pathOf(args)
-      if (path === undefined) continue
+      const rawPath = pathOf(args)
+      if (rawPath === undefined) continue
+      const path = resolveSidebarPath(cwd, rawPath)
       const base: FileOp = { callId: data.callId, kind, path, time: event.time, running: true, isError: false }
       if (kind === 'edit') {
         const oldString = args.old_string
