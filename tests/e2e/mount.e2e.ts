@@ -27,7 +27,7 @@
  * suite is serial (one server instance), and any crash trips the very next
  * assertion.
  */
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
@@ -49,6 +49,7 @@ const SEEDED_MD_FILE = 'diagram.md'
  *  inline tags in table cells), opened through the Files window's tree to
  *  prove raw-HTML runs render as sanitized DOM and the TOC outline works. */
 const SEEDED_README_FILE = 'readme-style.md'
+const SEEDED_WRITING_FILE = 'writing-mode.md'
 
 /**
  * The plugin's crash markers. The client mounts inside an error boundary that
@@ -85,6 +86,7 @@ let seededSessionId: string
 async function seedSession(): Promise<void> {
   mkdirSync(WORKSPACE_PATH, { recursive: true })
   writeFileSync(join(WORKSPACE_PATH, SEEDED_FILE), 'hello from the mount lane\n')
+  writeFileSync(join(WORKSPACE_PATH, SEEDED_WRITING_FILE), '# Writing\n\nA **bold** draft.\n')
   // The mermaid-chunk probe file: a markdown doc whose preview must fetch
   // client-mermaid.js and render the fence into an SVG diagram. The
   // reference-style link's definition sits AFTER the fence: it only
@@ -646,6 +648,21 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     details,
     'jumping into a collapsed details must expand it',
   ).toHaveAttribute('open', '')
+  await expect(pane.getByRole('button', { name: /Writing|写作/ }).first()).toBeDisabled()
+  await pane.getByRole('tab', { name: /Files|文件/ }).first().click()
+  const writingRow = pane.locator(`[role="button"][title$="${SEEDED_WRITING_FILE}"]:visible`)
+  await expect(writingRow).toHaveCount(1)
+  await writingRow.click({ position: { x: 8, y: 8 } })
+  const writingChunk = page.waitForResponse(response => response.url().includes('/sidebar/bundle/writing.js'), { timeout: 30_000 })
+  await pane.getByRole('button', { name: /Writing|写作/ }).first().click()
+  await writingChunk
+  const writingSurface = pane.locator('[contenteditable="true"]:visible').first()
+  await expect(writingSurface.locator('strong')).toContainText('bold')
+  await writingSurface.fill('Visual editing works')
+  await writingSurface.press('ControlOrMeta+s')
+  await expect.poll(() => readFileSync(join(WORKSPACE_PATH, SEEDED_WRITING_FILE), 'utf8')).toContain('Visual editing works')
+  await pane.getByRole('button', { name: /Source|源码/ }).first().click()
+  await expect(pane.locator('.cm-content:visible').first()).toContainText('Visual editing works')
   await assertNoCrash()
 
   // The plugin's own console prefix must never appear in errors, and no

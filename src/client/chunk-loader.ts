@@ -52,7 +52,7 @@
  */
 import { hostRouteUrl } from './host-route-url.ts'
 
-export type ChunkName = 'editor' | 'mermaid' | 'locale' | 'terminal'
+export type ChunkName = 'editor' | 'mermaid' | 'locale' | 'terminal' | 'writing'
 
 /** The module exports a chunk factory provides (namespace-ish record). */
 export type ChunkExports = Record<string, unknown>
