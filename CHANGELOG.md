@@ -4,6 +4,7 @@
 
 ### Unreleased
 
+- 🌿 **本轮文件显示完整路径**（[#875](https://github.com/omdsh-dev/DSH-better-sidebar/issues/875)）：会话事件里的相对路径按会话工作目录解析后再分组；同一文件的相对路径与绝对路径操作归入同一组，组头与预览使用解析后的路径。
 - 🪟 **修掉 CRLF 行尾文件在预览里的三层 `\r` 误判与「预览渲染两遍」（ci-windows 上暴露）**：Windows 检出下 README 的锚点用例全红，根因不是 slug 而是① `markdown-html.ts` 的 `isBlank`、`mermaid-blocks.ts` 的 `CLOSE_FENCE_RE`、`markdown-code.ts` 的 `closesFence` 都把行尾的 `\r` 当内容——于是 **HTML 段永不终止**（实测 `splitHtmlBlocks(README.md)`：LF 36 段 vs CRLF **4 段**，`# b` 被当原始 HTML 文字渲染）、**mermaid 围栏吞掉文件余下部分**、**链接改写从第一个围栏起全部失效**（首个分歧在第 16883 字节）；② `TextEditor` 的 draft 快照把 CodeMirror 归一化后的 LF 文档在挂载后一个 commit 发布出去，`previewMdText` 从 CRLF 翻成 LF，宿主 `MarkdownText` 于是重建了文本变化的标题节点——挂载那一趟写入的 **26/26 个 id 被丢弃**（断言时只剩 7/26、13/15 个 TOC 锚点 `id=missing`），MutationObserver 一个微任务后才自愈。现已把 draft 定义成「编辑」：与已加载正文逐字节相等（或行尾归一后相等）时不发布。
 - 🧪 测试：新增 `tests/markdown-crlf.spec.ts`（7 条 **CRLF ≡ LF** 不变式，覆盖分段器 / mask / 两个改写器 / mermaid 分段器）与两条真实渲染器用例（含把 `README.md` **在内存里**转成 CRLF，让 ubuntu / macOS lane 也跑 Windows 的拼写）；测试脚手架 `scanDocumentAnchors` 改为 CRLF 安全（实测 CRLF 标题 0 → 26）。判别性：还原三个扫描文件 → 9 条红；还原 `TextEditor` → CRLF 检出下 2 条红（即 CI 原症状）。
 - 📝 **已知未修（另立 [#871](https://github.com/omdsh-dev/DSH-better-sidebar/issues/871)）**：同一归一化意味着**保存会把 CRLF 文件写成 LF**（一次内容修改变成整文件 diff），需要产品取舍；本轮只修读取侧。

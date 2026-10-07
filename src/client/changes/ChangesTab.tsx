@@ -117,7 +117,7 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
         eventsRef.current = merged.length > EVENTS_CAP ? merged.slice(merged.length - EVENTS_CAP) : merged
       }
       if (lastSeq > seqRef.current) seqRef.current = lastSeq
-      const folded = extractFileOps(eventsRef.current)
+      const folded = extractFileOps(eventsRef.current, scope.cwd)
       opsRef.current = folded
       opCounts.set(scope.sessionId, folded.length)
       setOpsError(false)
