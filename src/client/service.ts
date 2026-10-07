@@ -335,9 +335,10 @@ export interface FileViewerProps {
 
 /** The toolbar state a text editor reports to the host's merged-mode header. */
 export interface EditorToolbarState {
-  /** Whether the preview/edit mode toggle applies (markdown/html). */
+  /** Whether the preview/source mode toggle applies (markdown/html). */
   modes: boolean
-  mode: 'preview' | 'edit'
+  mode: 'preview' | 'edit' | 'writing'
+  writingAvailable?: boolean
   dirty: boolean
   /** Whether saving applies (text content loaded). */
   editable: boolean
@@ -350,7 +351,7 @@ export interface EditorToolbarState {
 
 /** The commands the host's merged-mode header sends back to the viewer. */
 export interface EditorToolbarControls {
-  setMode(mode: 'preview' | 'edit'): void
+  setMode(mode: 'preview' | 'edit' | 'writing'): void
   save(): void
 }
 

@@ -1,7 +1,7 @@
 /**
  * The code/markdown file viewer: a CodeMirror 6 editor with line wrapping,
  * syntax highlighting (extension-keyed language), a dirty dot and Ctrl/Cmd+S
- * save, and a preview/edit toggle for markdown files. Registered as the
+ * save, and preview/source/writing modes for markdown files. Registered as the
  * `code` (catch-all) and `markdown` built-in viewers; the editor tab host
  * fetches the content through the fsRead strategy and passes it in props,
  * so this component never fetches or dispatches — it only edits.
@@ -48,11 +48,17 @@ import { MdToc } from './md-toc.tsx'
 import { splitMermaidBlocks } from './mermaid-blocks.ts'
 import { localeSignature, t } from './locales.ts'
 import { HTML_IFRAME_SANDBOX } from './html-preview.ts'
+import { lazyChunkComponent } from './lazy-chunk.tsx'
+import { supportsVisualMarkdown } from './markdown-visual.ts'
+import type { WritingEditorProps } from './WritingEditor.tsx'
 import type { EditorToolbarState, FileViewerProps } from './service.ts'
+import type { ComponentType } from 'react'
 import css from './sidebar.module.css'
 
 /** Previewable files (rendered output vs source editing). */
-type ViewMode = 'preview' | 'edit'
+type ViewMode = 'preview' | 'edit' | 'writing'
+const sessionModes = new Map<string, ViewMode>()
+const LazyWritingEditor = lazyChunkComponent<WritingEditorProps>('writing', mod => mod.WritingEditor as ComponentType<WritingEditorProps> | undefined)
 
 /** Per-file preview scroll memory. Module-level so it survives viewer
  *  remounts: the save-then-switch-to-preview reload (EditorHost #215 case B)
@@ -73,7 +79,18 @@ function sameDocument(a: string, b: string): boolean {
 
 export function TextEditor(props: FileViewerProps) {
   const { ctx, scope, path, viewerId, content, truncated } = props
-  const [mode, setMode] = useState<ViewMode>('preview')
+  const markdown = viewerId === 'markdown'
+  const [mode, setMode] = useState<ViewMode>(() => markdown ? sessionModes.get(scope.sessionId) ?? 'preview' : 'preview')
+  const modeRef = useRef(mode)
+  modeRef.current = mode
+  const chooseMode = useCallback((next: ViewMode): void => {
+    if (next === 'writing') {
+      const live = viewRef.current?.state.doc.toString()
+      if (live !== undefined) setDraft(live)
+    }
+    setMode(next)
+    if (markdown) sessionModes.set(scope.sessionId, next)
+  }, [markdown, scope.sessionId])
   /** The editor's current text (null while clean); preview renders this. */
   const [draft, setDraft] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -121,7 +138,6 @@ export function TextEditor(props: FileViewerProps) {
     mdRef.current = element
     markdownSurfaceRef(element)
   }, [markdownSurfaceRef])
-  const markdown = viewerId === 'markdown'
   const html = viewerId === 'html'
   /** The uncommitted-change gutter (issue #212): the `code` viewer only,
    *  gated by ONE boolean setting (on by default). Nothing else — no
@@ -200,9 +216,10 @@ export function TextEditor(props: FileViewerProps) {
     }
   }, [ctx])
 
-  // A new file (tab switch) starts clean: fresh preview mode, no draft.
+  // 切换文件时清除草稿，并恢复当前会话选定的编辑模式。
   useEffect(() => {
-    setMode('preview')
+    const remembered = markdown ? sessionModes.get(scope.sessionId) ?? 'preview' : 'preview'
+    setMode(remembered === 'writing' && !supportsVisualMarkdown(content ?? '') ? 'preview' : remembered)
     setDraft(null)
     setDirty(false)
     setSaveState('idle')
@@ -492,7 +509,7 @@ export function TextEditor(props: FileViewerProps) {
       // Adopt the fresh baseline the host reports (absent on a stat failure —
       // keep the old one, the next save just re-checks).
       if (typeof result.mtimeMs === 'number') mtimeRef.current = result.mtimeMs
-      setDraft(null)
+      setDraft(modeRef.current === 'writing' ? view.state.doc.toString() : null)
       setDirty(false)
       setConflict(false)
       setSaveState('saved')
@@ -513,6 +530,7 @@ export function TextEditor(props: FileViewerProps) {
 
   /** The markdown source the preview renders (draft wins over saved content). */
   const mdText = draft ?? content ?? ''
+  const writingAvailable = useMemo(() => markdown && truncated !== true && supportsVisualMarkdown(mdText), [markdown, truncated, mdText])
   /** Preview-only source with a closed leading YAML frontmatter block hidden.
    *  The raw `mdText` stays untouched for editing, saving, and selection line
    *  lookup. All preview renderers share this source so plain Markdown,
@@ -637,7 +655,7 @@ export function TextEditor(props: FileViewerProps) {
   const lastToolbarRef = useRef('')
   useEffect(() => {
     if (!hostToolbar) return
-    const state: EditorToolbarState = { modes: markdown || html, mode, dirty, editable, truncated: truncated === true, saveState }
+    const state: EditorToolbarState = { modes: markdown || html, mode, writingAvailable: markdown ? writingAvailable : undefined, dirty, editable, truncated: truncated === true, saveState }
     const key = JSON.stringify(state)
     if (lastToolbarRef.current === key) return
     lastToolbarRef.current = key
@@ -647,10 +665,10 @@ export function TextEditor(props: FileViewerProps) {
     if (!hostToolbar) return
     // `save` reads live refs only, and `setMode` is the stable state setter —
     // registering this render's closures is safe for the mount's lifetime.
-    props.onToolbarControls?.({ setMode, save })
+    props.onToolbarControls?.({ setMode: chooseMode, save })
     return () => { props.onToolbarControls?.(null) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hostToolbar])
+  }, [hostToolbar, chooseMode])
 
   return (
     <>
@@ -661,17 +679,18 @@ export function TextEditor(props: FileViewerProps) {
             <button
               type="button"
               className={clsx(css.editorModeButton, mode === 'preview' && css.editorModeActive)}
-              onClick={() => { setMode('preview') }}
+              onClick={() => { chooseMode('preview') }}
             >
               {t('preview')}
             </button>
             <button
               type="button"
               className={clsx(css.editorModeButton, mode === 'edit' && css.editorModeActive)}
-              onClick={() => { setMode('edit') }}
+              onClick={() => { chooseMode('edit') }}
             >
-              {t('edit')}
+              {t('sourceMode')}
             </button>
+            {markdown && <button type="button" className={clsx(css.editorModeButton, mode === 'writing' && css.editorModeActive)} disabled={!writingAvailable} title={!writingAvailable ? t('writingUnsupported') : undefined} onClick={() => { chooseMode('writing') }}>{t('writing')}</button>}
           </div>
         )}
         {dirty && <span className={css.dirtyDot} title={t('unsaved')} />}
@@ -685,7 +704,7 @@ export function TextEditor(props: FileViewerProps) {
               // The panel lives in the CodeMirror surface: in preview mode the
               // editor is hidden, so switch to edit first (the search panel is
               // not part of the preview).
-              if (mode === 'preview' && (markdown || html)) setMode('edit')
+              if (mode !== 'edit' && (markdown || html)) chooseMode('edit')
               const view = viewRef.current
               if (view === null) return
               view.focus()
@@ -725,7 +744,7 @@ export function TextEditor(props: FileViewerProps) {
             </div>
           )}
           <div
-            className={clsx(css.editorCm, (markdown || html) && mode === 'preview' && css.editorCmHidden)}
+            className={clsx(css.editorCm, (markdown || html) && mode !== 'edit' && css.editorCmHidden)}
             ref={hostRef}
           />
         </>
@@ -794,6 +813,12 @@ export function TextEditor(props: FileViewerProps) {
           </MarkdownDelegateProvider>
         </div>
       )}
+      {markdown && mode === 'writing' && writingAvailable && <LazyWritingEditor value={mdText} onChange={(value) => {
+        const view = viewRef.current
+        if (view === null) return
+        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } })
+        setDraft(value)
+      }} onSave={save} />}
       {html && mode === 'preview' && (
         <>
           <SandboxStatusBar

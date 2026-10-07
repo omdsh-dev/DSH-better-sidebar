@@ -1272,6 +1272,60 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
+.writingEditor {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.writingToolbar {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.writingToolButton {
+  min-width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-strong-11);
+  cursor: pointer;
+}
+
+.writingToolButton:hover, .writingToolButton[data-active] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.writingScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px clamp(20px, 6%, 64px) 80px;
+}
+
+.writingProse {
+  box-sizing: border-box;
+  width: min(100%, 760px);
+  min-height: 100%;
+  margin: 0 auto;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-sm-14);
+  line-height: 1.75;
+  outline: none;
+  caret-color: var(--dsw-alias-label-primary);
+}
+
+.writingProse > :first-child { margin-top: 0; }
+
 .editorTitle {
   flex: 1;
   min-width: 0;
@@ -1816,6 +1870,11 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 
 .editorModeButton:hover {
   color: var(--dsw-alias-label-primary);
+}
+
+.editorModeButton:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .editorModeActive {
