@@ -28,6 +28,8 @@
 
 **Also**: 📂 the `sidebar_open` tool lets the model open the sidebar itself · ⚡ ~325KB core at startup, heavy chunks load on demand · 🌏 i18n follows DSH · 📱 narrow screens switch to a full-width drawer
 
+- **🔗 Markdown paths in chat**: complete absolute `.md` / `.markdown` paths in inline code are clickable in each turn's final assistant message and open through the current session's file address in the native sidebar; missing files show a read error.
+
 ### 🌿 Git Graph (read-only commit graph)
 
 Switch to **Git Graph** at the top of the Git panel for commit nodes, forks and merge edges across local branches, remote-tracking branches and HEAD. The branch selector only filters history — it **never checks out or fetches**; each commit is one line (lane edges + ref pills + subject), hover shows the author and short hash, and selecting one opens its full message and diff in the bottom pane. History loads in pages; reference changes during pagination prompt a refresh; reads are bounded (200 commits per page, offset 10,000, 1,000 branches) and report an explicit error past a limit. Lightweight and annotated tags appear on commits in the graph, rows and details use neutral tag pills, and tag changes invalidate pagination. Tag decorations keep the first 5,000 tags by ref name, further bounded by an 8 MiB complete-line output prefix; excess tags are omitted without failing the graph.
