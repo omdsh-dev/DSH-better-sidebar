@@ -32,6 +32,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 import { PAGE_URL, createHostApi, gotoPage, hostRpc, sendFirstMessage, sidebarApi } from './host'
+// The strip's addressable contract (id + per-phase row attribute) comes from
+// the module that owns it, so the e2e locators cannot drift from the DOM.
+import { DIAGNOSTIC_PHASE_ATTR, DIAGNOSTIC_STRIP_ID } from '../../src/client/diagnostic-strip.ts'
 
 /** Workspace the sidebar renders against (created by the lane's seeding). */
 const WORKSPACE_PATH = process.env.DSH_E2E_WORKSPACE ?? join(tmpdir(), 'dsh-e2e-workspace')
@@ -49,13 +52,6 @@ const SEEDED_MD_FILE = 'diagram.md'
  *  inline tags in table cells), opened through the Files window's tree to
  *  prove raw-HTML runs render as sanitized DOM and the TOC outline works. */
 const SEEDED_README_FILE = 'readme-style.md'
-
-/**
- * The plugin's crash markers. The client mounts inside an error boundary that
- * renders a strip whose text starts with these prefixes instead of crashing
- * (see src/client/index.tsx `fail()` and src/client/RenderBoundary.tsx).
- */
-const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 
 /**
  * The tab types the plugin itself contributes, plus the host-owned kind the
@@ -269,15 +265,24 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
       .poll(async () => pageErrors, { timeout: 5_000 })
       .toEqual([])
     // Fail with the actual strip text so a regression is diagnosable from
-    // the test report alone (a strip renders the client fail() message).
-    const stripTexts = await sidebar.locator('div').evaluateAll(
-      (nodes, patterns) => nodes.filter((node) => {
-        const text = (node.textContent ?? '').trim()
-        return patterns.some((pattern) => pattern.test(text))
-      }).map((node) => (node.textContent ?? '').trim()),
-      CRASH_STRIP_PATTERNS,
+    // the test report alone. TWO reporters are covered, and they live in
+    // different trees: the RenderBoundary strip (root + per-tab) renders
+    // INSIDE the sidebar host as "dsh-better-sidebar: …", while `fail()`'s
+    // last-resort strip is pinned to <body>, OUTSIDE that host, and is
+    // reachable only through its stable id — the previous single
+    // sidebar-scoped locator could never see the latter.
+    const boundaryTexts = await sidebar.locator('div').evaluateAll(
+      (nodes) => nodes
+        .map((node) => (node.textContent ?? '').trim())
+        .filter((text) => text.startsWith('dsh-better-sidebar:')),
     )
-    expect(stripTexts, 'a dsh-better-sidebar error strip is present in the sidebar').toEqual([])
+    const failStripTexts = await page
+      .locator(`#${DIAGNOSTIC_STRIP_ID} [${DIAGNOSTIC_PHASE_ATTR}]`)
+      .evaluateAll((nodes) => nodes.map((node) => (node.textContent ?? '').trim()))
+    expect(
+      [...boundaryTexts, ...failStripTexts],
+      'a dsh-better-sidebar error strip is present in the page',
+    ).toEqual([])
   }
 
   // The native Sidebar's way in lives in the conversation header's corner,
