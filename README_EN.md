@@ -54,6 +54,7 @@ What this plugin adds on top of DSH's stock sidebar:
 - **💬 Side Chat** (absent upstream, beta): Codex-style side threads — inheriting the full parent context, running independently, promotable to a top-level session
 - **🖥️ Bottom workbench** (absent upstream): the right column belongs to DSH's native right sidebar; the plugin adds its own bottom workbench (drag-to-split panes, per-session persistence) that coexists with the native bar
 - **📂 Model-driven sidebar opens (opt-in)**: the `sidebar_open` tool lets the model actively open files / folders / web pages in the sidebar
+- **🔗 Markdown paths in chat**: complete absolute `.md` / `.markdown` paths in inline code are clickable in each turn's final assistant message and open through the current session's file address in the native sidebar; missing files show a read error
 - **🔌 Service API**: `ctx.betterSidebar` is open to every plugin (`registerTab` / `registerFileViewer`); the built-in 6 tabs + 3 viewers go through the same API, and **28+ ecosystem plugins** already build on it (see "🌐 Plugin Ecosystem")
 - **⚡ On-demand loading**: ~325KB core at startup, editor / Mermaid / third-language dictionaries load on demand · **🌏 i18n** follows DSH's language · **🔁 Session isolation** persists layout per session
 
