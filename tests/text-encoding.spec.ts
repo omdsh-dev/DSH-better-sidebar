@@ -103,6 +103,20 @@ describe('text encoding', () => {
     await expect(fileFormatOf(lf)).resolves.toEqual({ encoding: 'utf8', eol: 'lf' })
   })
 
+  // The same blind spot, seen from `fileFormatOf` on real bytes: a first line
+  // longer than the 4096-char vote window carries no vote, and one longer than
+  // the 64 KiB sniff window is truncated before its own break is even read.
+  // Both land on LF, so a save rewrites the file's CRLF (design doc §4).
+  it('reads a first line past the vote window — and past the sniff window — as LF', async () => {
+    const hidden = join(root, 'first-line-5k.txt')
+    writeFileSync(hidden, `${'a'.repeat(5000)}\r\nb\r\n`)
+    await expect(fileFormatOf(hidden)).resolves.toEqual({ encoding: 'utf8', eol: 'lf' })
+
+    const truncated = join(root, 'first-line-70k.txt')
+    writeFileSync(truncated, `${'a'.repeat(70_000)}\r\n`)
+    await expect(fileFormatOf(truncated)).resolves.toEqual({ encoding: 'utf8', eol: 'lf' })
+  })
+
   it('votes on the majority and ignores a lone CR', () => {
     // Same rule (and same 4096-char window) as the host backend's
     // detectLineEndings, so a plugin save and a model `edit` agree.
@@ -113,6 +127,13 @@ describe('text encoding', () => {
     expect(restoreEol('a\rb\r', 'lf')).toBe('a\rb\r')
     // Past the window only the prefix votes.
     expect(detectEol(`${'a\r\n'.repeat(3000)}b\n`)).toBe('crlf')
+    // The window's blind spot (#876 review, residual 1): with no line break AT
+    // ALL inside the first 4096 chars there is no vote to count, so the verdict
+    // falls through to LF — a >4 KiB first line hides the file's CRLF from the
+    // detector. Same criterion as the host backend (design doc §4), pinned with
+    // a discriminative pair that only moves the break across the 4096 boundary.
+    expect(detectEol(`${'a'.repeat(4000)}\r\nb\r\n`)).toBe('crlf')
+    expect(detectEol(`${'a'.repeat(5000)}\r\nb\r\n`)).toBe('lf')
   })
 
   it('restores CRLF without doubling an existing pair', () => {
