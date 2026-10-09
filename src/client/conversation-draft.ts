@@ -33,7 +33,7 @@
  * position (A|B + C + D → ACD|B).
  */
 import type { Context, SidebarConversation } from '../context-types.ts'
-import { workspaceRelativePath } from './paths.ts'
+import { baseName, workspaceRelativePath } from './paths.ts'
 
 /** A resolved composer caret/selection in draft coordinates. */
 export interface DraftCaret {
@@ -222,9 +222,7 @@ export function mentionFor(
   if (/[\u0000-\u001f\u007f-\u009f"]/u.test(path)) return undefined
   const target = kind === 'folder' ? `${path}/` : path
   const mention = /\s/u.test(target) ? `@"${target}"` : `@${target}`
-  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
-  const label = at === -1 ? path : path.slice(at + 1)
-  return { mention, label }
+  return { mention, label: baseName(path) }
 }
 
 /**

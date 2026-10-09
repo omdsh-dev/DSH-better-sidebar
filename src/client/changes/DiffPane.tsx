@@ -437,7 +437,7 @@ export function DiffPane({ target, ctx, scope, height, onHeightCommit, onClose, 
           </div>
         )
         : target.kind === 'op' && mdOp && reading && readingText !== ''
-        ? <MdReadingView text={readingText} ctx={ctx} scope={scope} path={target.kind === 'op' ? target.path : ''} />
+        ? <MdReadingView text={readingText} ctx={ctx} scope={scope} path={target.path} />
         : target.kind === 'op' && op !== null && op.isError
         ? (
           <div className={css.paneBody}>

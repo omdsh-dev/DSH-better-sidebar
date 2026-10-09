@@ -58,11 +58,6 @@ export function parseModelRoute(value: unknown): CommitModelRoute | undefined {
   return { provider, model }
 }
 
-/** Render one route back into its stored form (the select value). */
-export function formatModelRoute(route: CommitModelRoute): string {
-  return `${route.provider}/${route.model}`
-}
-
 /** Cap of the conversation-derived route list (the adapter catalog is
  *  capped separately, host-side). */
 export const MODEL_ROUTE_HISTORY_LIMIT = 20
@@ -136,19 +131,17 @@ export function lowestReasoningEffortOf(efforts: unknown): string | undefined {
     const id = entry !== null && typeof entry === 'object' ? (entry as { id?: unknown }).id : undefined
     if (typeof id === 'string' && id !== '') ids.push(id)
   }
-  const first = ids[0]
-  if (first === undefined) return undefined
-  let best = first
-  let bestRank = (REASONING_LEVEL_ORDER as readonly string[]).indexOf(best)
-  for (const id of ids.slice(1)) {
+  let best: string | undefined
+  let bestRank = Number.POSITIVE_INFINITY
+  for (const id of ids) {
     const rank = (REASONING_LEVEL_ORDER as readonly string[]).indexOf(id)
     if (rank < 0) continue
-    if (bestRank < 0 || rank < bestRank) {
+    if (rank < bestRank) {
       best = id
       bestRank = rank
     }
   }
-  return best
+  return best ?? ids[0]
 }
 
 /**

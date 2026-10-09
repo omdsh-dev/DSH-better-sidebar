@@ -252,19 +252,9 @@ function conversationModelRoute(ctx: Context, sessionId: string): CommitModelRou
     return { provider: options.provider, model: options.model }
   }
   const events = ctx.sessions.get(sessionId)?.snapshotEvents()
-  if (events === undefined) return undefined
-  for (let index = events.length - 1; index >= 0; index--) {
-    const event = events[index]
-    if (event === undefined || event.type !== 'request/header') continue
-    const config = (event.data as { header?: { config?: unknown } } | undefined)?.header?.config
-    if (config === null || typeof config !== 'object') continue
-    const provider = (config as { provider?: unknown }).provider
-    const model = (config as { model?: unknown }).model
-    if (typeof provider === 'string' && provider !== '' && typeof model === 'string' && model !== '') {
-      return { provider, model }
-    }
-  }
-  return undefined
+  // The newest route, through the same `request/header` reader the picker's
+  // candidate list uses — the shape is parsed in exactly one place.
+  return events === undefined ? undefined : collectModelRoutes(events, 1)[0]
 }
 
 /**

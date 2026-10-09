@@ -244,7 +244,7 @@ export function parseLogLines(output: string): GitLogEntry[] {
 }
 
 /** Run one git command; resolves with stdout, rejects with GitCommandError. */
-function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise<string> {
+export function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise<string> {
   // `core.quotePath=false`: emit paths verbatim instead of C-quoting them
   // (git's default turns a CJK/space path into an octal-escaped, quoted
   // string, and every diff surface renders that string as the file name).
@@ -278,12 +278,6 @@ function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise<string
       }
     })
   })
-}
-
-/** Raw stdout of one git command. Callers that only need text (no status
- *  parsing) should use this instead of re-implementing the spawn. */
-export function runGitRaw(cwd: string, args: string[], timeoutMs = 30_000): Promise<string> {
-  return runGit(cwd, args, timeoutMs)
 }
 
 /** One parsed `git blame --porcelain` row (the editor's hover blame). */

@@ -1800,6 +1800,25 @@ export function FileTree(props: {
     }
   }, [data])
 
+  /**
+   * One level's rows in the caller's chosen order, resolved ONCE per
+   * level-cache revision and reused by both walkers below: `renderLevel` draws
+   * them and {@link visibleRows} ranges over them, so re-sorting per render
+   * would both repeat the comparison and hand the memoized rows a fresh array.
+   * `sortEntries` copies (the level cache keeps the host's own order and is
+   * never reordered in place).
+   */
+  const entriesFor = useMemo(() => {
+    const cache = new Map<string, readonly FsEntry[]>()
+    return (dir: string): readonly FsEntry[] => {
+      const cached = cache.get(dir)
+      if (cached !== undefined) return cached
+      const sorted = sortEntries(data[dir]?.entries ?? [], sort)
+      cache.set(dir, sorted)
+      return sorted
+    }
+  }, [data, sort])
+
   // The Shift range walks the rows the user can actually see: the level's
   // rows in the SAME order `renderLevel` draws them (the sort choice), then
   // depth-first, expanded state decides. Recomputed with the level cache,
@@ -1809,7 +1828,7 @@ export function FileTree(props: {
     const walk = (dir: string): void => {
       const level = data[dir]
       if (level?.entries === undefined) return
-      for (const entry of sortEntries(level.entries, sort)) {
+      for (const entry of entriesFor(dir)) {
         // A folded row IS one row: its identity is the chain head (the level
         // entry the walk is on), and it descends into the chain TAIL — the
         // same shape `renderLevel` draws, so a Shift range covers what the
@@ -1822,7 +1841,7 @@ export function FileTree(props: {
     }
     if (root !== undefined) walk(root)
     return rows
-  }, [chainFor, data, expandedSet, root, sort])
+  }, [chainFor, data, entriesFor, expandedSet, root])
   visibleRowsRef.current = visibleRows
 
   /**
@@ -1870,13 +1889,15 @@ export function FileTree(props: {
           if (isLikelyImeKey(event)) return
           if (event.key === 'Enter') {
             event.preventDefault()
-            commitRename(entry.path, renaming?.value ?? '')
+            // A folded row renders at the chain HEAD while its menu addressed
+            // the TAIL: commit the path the editor was opened for.
+            commitRename(renaming?.path ?? entry.path, renaming?.value ?? '')
           } else if (event.key === 'Escape') {
             event.preventDefault()
             setRenaming(null)
           }
         }}
-        onBlur={() => { commitRename(entry.path, renaming?.value ?? '') }}
+        onBlur={() => { commitRename(renaming?.path ?? entry.path, renaming?.value ?? '') }}
       />
     </div>
   )
@@ -1986,9 +2007,8 @@ export function FileTree(props: {
         </>
       )
     }
-    // The ORDER is the caller's choice (the header's sort control); the level
-    // cache keeps the host's own order and is never reordered in place.
-    const entries = sortEntries(level.entries ?? [], sort)
+    // The ORDER is the caller's choice (the header's sort control).
+    const entries = entriesFor(dir)
     return (
       <>
         {head}

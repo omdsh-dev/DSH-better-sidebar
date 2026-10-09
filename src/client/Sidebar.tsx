@@ -488,7 +488,7 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
       // The confirmation is the SAME guard the refresh button uses, so every
       // close path (tab X, middle click, tab context menu, the tree's
       // close-on-rename/delete) funnels through here and warns exactly once.
-      if (!confirmDiscardDraft(tabId, t('closeUnsavedConfirm'))) return
+      if (!confirmDiscardDraft(tabId, t('closeUnsavedConfirm'), sessionId)) return
       // Route through the service: the tab-bar close is the canonical close
       // path (finds the pane itself, fires descriptor.onClose); the session
       // scope (with its cwd) rides to the callback.

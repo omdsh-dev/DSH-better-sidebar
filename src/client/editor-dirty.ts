@@ -9,16 +9,21 @@
  * - the browser unload (refresh / close tab / navigate away) through a
  *   `beforeunload` guard.
  *
- * Module-level and keyed by tab id — the same "one instance per client plugin
- * activation" lifetime the store has, since the module only loads with the
- * client bundle. An entry is written while a tab is dirty and deleted the
- * moment it goes clean (save) or its host unmounts (tab closed, session
- * switched), so a stale entry can never keep a guard armed.
+ * Module-level and keyed by `sessionId::tabId`: a tab id is unique only WITHIN
+ * one session — the native right column counts its own `tab1`…, and the bottom
+ * workbench reuses `editor:<path>` for the same file in every session. Keyed by
+ * the bare tab id, session B's editor mounting over the same id DELETED session
+ * A's record (its mount reports `dirty === false`), so A's still-live draft
+ * outlived its guard and a refresh dropped it without a word. The native
+ * surface accounts the same way (`viewKey`, native/tab-adapter.tsx).
+ * An entry is written while a tab is dirty and deleted the moment it goes
+ * clean (save) or its host unmounts (tab closed, in-place path switch), so a
+ * stale entry can never keep a guard armed.
  */
 
-/** One registered draft: the owning session (the guard's scope) and the file. */
+/** One registered draft: the id it was recorded under and the file. */
 interface DirtyEntry {
-  sessionId: string
+  tabId: string
   path: string
 }
 
@@ -26,6 +31,11 @@ const dirtyTabs = new Map<string, DirtyEntry>()
 const listeners = new Set<() => void>()
 /** Monotonic change counter: a stable `useSyncExternalStore` snapshot. */
 let revision = 0
+
+/** The map key of one tab: ids only identify a tab inside their session. */
+function keyOf(sessionId: string, tabId: string): string {
+  return `${sessionId}::${tabId}`
+}
 
 /** Notify every subscriber (the `beforeunload` guard). */
 function notify(): void {
@@ -38,37 +48,49 @@ function notify(): void {
  * ride along for scoped queries), `false` / `undefined` clears it.
  */
 export function setEditorDirty(tabId: string, dirty: boolean, sessionId: string, path: string): void {
-  const had = dirtyTabs.has(tabId)
+  const key = keyOf(sessionId, tabId)
   if (!dirty) {
-    if (had) {
-      dirtyTabs.delete(tabId)
-      notify()
-    }
+    if (dirtyTabs.delete(key)) notify()
     return
   }
-  const previous = dirtyTabs.get(tabId)
-  if (previous !== undefined && previous.sessionId === sessionId && previous.path === path) return
-  dirtyTabs.set(tabId, { sessionId, path })
+  const previous = dirtyTabs.get(key)
+  if (previous !== undefined && previous.path === path) return
+  dirtyTabs.set(key, { tabId, path })
   notify()
 }
 
-/** Drop a tab's entry (its editor host unmounted). Idempotent. */
-export function clearEditorDirty(tabId: string): void {
-  if (dirtyTabs.delete(tabId)) notify()
-}
-
-/** Whether one tab holds an unsaved draft. */
-export function isEditorDirty(tabId: string): boolean {
-  return dirtyTabs.has(tabId)
-}
-
-/** How many tabs of one session hold unsaved drafts. */
-export function dirtyCountForSession(sessionId: string): number {
-  let count = 0
-  for (const entry of dirtyTabs.values()) {
-    if (entry.sessionId === sessionId) count += 1
+/**
+ * Drop a tab's entry (its editor host unmounted). Idempotent.
+ * @param sessionId - the owning session; omitted drops the id in EVERY session
+ *  (the shape tests use for cleanup — a caller that knows its session should
+ *  always name it, or it would clear a same-numbered tab elsewhere).
+ */
+export function clearEditorDirty(tabId: string, sessionId?: string): void {
+  if (sessionId !== undefined) {
+    if (dirtyTabs.delete(keyOf(sessionId, tabId))) notify()
+    return
   }
-  return count
+  let removed = false
+  for (const [key, entry] of dirtyTabs) {
+    if (entry.tabId !== tabId) continue
+    dirtyTabs.delete(key)
+    removed = true
+  }
+  if (removed) notify()
+}
+
+/**
+ * Whether one tab holds an unsaved draft.
+ * @param sessionId - the owning session; omitted matches the id in any session
+ *  (the conservative read: a caller that cannot name the session should still
+ *  warn rather than pass a live draft through).
+ */
+export function isEditorDirty(tabId: string, sessionId?: string): boolean {
+  if (sessionId !== undefined) return dirtyTabs.has(keyOf(sessionId, tabId))
+  for (const entry of dirtyTabs.values()) {
+    if (entry.tabId === tabId) return true
+  }
+  return false
 }
 
 /** How many tabs hold unsaved drafts across every session (the unload guard). */
@@ -90,17 +112,19 @@ export function editorDirtyRevision(): number {
 /**
  * Ask before dropping `tabId`'s unsaved draft. Returns true when the caller
  * may proceed (the tab is clean, the user confirmed, or no `confirm` is
- * available — the same fallback the refresh guard uses). On confirm the
- * entry is cleared immediately, so a follow-up close in the same tick does
- * not double-prompt; the editor host's own cleanup would do it one commit
- * later anyway.
+ * available — letting a tab become unclosable would be worse than skipping one
+ * prompt). On confirm the entry is cleared immediately, so a follow-up close in
+ * the same tick does not double-prompt; the editor host's own cleanup would do
+ * it one commit later anyway.
  *
  * Shared by the sidebar's tab close and the file tree's close-on-delete so
  * both paths warn exactly once, with the same copy.
+ * @param sessionId - the owning session (see {@link isEditorDirty} for the
+ *  omitted case).
  */
-export function confirmDiscardDraft(tabId: string, message: string): boolean {
-  if (!dirtyTabs.has(tabId)) return true
+export function confirmDiscardDraft(tabId: string, message: string, sessionId?: string): boolean {
+  if (!isEditorDirty(tabId, sessionId)) return true
   const confirmed = typeof window.confirm === 'function' ? window.confirm(message) : true
-  if (confirmed) clearEditorDirty(tabId)
+  if (confirmed) clearEditorDirty(tabId, sessionId)
   return confirmed
 }

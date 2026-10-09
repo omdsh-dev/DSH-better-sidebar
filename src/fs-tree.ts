@@ -206,24 +206,35 @@ async function readDirectory(path: string, maxEntries: number, exclude?: Exclude
   return { path, entries: rows, truncated }
 }
 
-/** Probe each symlink row's target once (bounded concurrency, order-preserving). */
-async function probeSymlinkTargets(rows: SidebarFsEntry[], concurrency = SYMLINK_PROBE_CONCURRENCY): Promise<void> {
+/**
+ * Visit every row with at most `concurrency` visitors in flight, in row order.
+ * Both probes below spend one await per row (a network stat, an opendir) on a
+ * level that can hold thousands of rows, so the bound has to exist — and be
+ * shared, or the two probes drift into two different ones.
+ */
+async function forEachRow(rows: readonly SidebarFsEntry[], concurrency: number, visit: (row: SidebarFsEntry) => Promise<void>): Promise<void> {
   let next = 0
   const workers = Array.from({ length: Math.min(concurrency, rows.length) }, async () => {
     for (;;) {
       const index = next
       next += 1
       if (index >= rows.length) return
-      const row = rows[index]!
-      if (!row.isSymlink) continue
-      // stat follows the chain; any failure (missing target, ELOOP, permission)
-      // leaves the row as a broken file-shaped link the editor refuses to read.
-      const info = await stat(row.path).catch(() => undefined)
-      row.isDir = info !== undefined ? info.isDirectory() : row.isDir
-      row.broken = info === undefined
+      await visit(rows[index]!)
     }
   })
   await Promise.all(workers)
+}
+
+/** Probe each symlink row's target once (bounded concurrency, order-preserving). */
+async function probeSymlinkTargets(rows: SidebarFsEntry[], concurrency = SYMLINK_PROBE_CONCURRENCY): Promise<void> {
+  await forEachRow(rows, concurrency, async (row) => {
+    if (!row.isSymlink) return
+    // stat follows the chain; any failure (missing target, ELOOP, permission)
+    // leaves the row as a broken file-shaped link the editor refuses to read.
+    const info = await stat(row.path).catch(() => undefined)
+    row.isDir = info !== undefined ? info.isDirectory() : row.isDir
+    row.broken = info === undefined
+  })
 }
 
 /** How many compact probes run in flight during one level listing. */
@@ -240,18 +251,10 @@ const COMPACT_PROBE_CONCURRENCY = 32
  * not fold.
  */
 async function probeCompactRows(rows: SidebarFsEntry[], exclude?: ExcludeMatcher, concurrency = COMPACT_PROBE_CONCURRENCY): Promise<void> {
-  let next = 0
-  const workers = Array.from({ length: Math.min(concurrency, rows.length) }, async () => {
-    for (;;) {
-      const index = next
-      next += 1
-      if (index >= rows.length) return
-      const row = rows[index]!
-      if (!row.isDir || row.broken) continue
-      if (await hasSingletonChild(row.path, exclude)) row.compact = true
-    }
+  await forEachRow(rows, concurrency, async (row) => {
+    if (!row.isDir || row.broken) return
+    if (await hasSingletonChild(row.path, exclude)) row.compact = true
   })
-  await Promise.all(workers)
 }
 
 /**

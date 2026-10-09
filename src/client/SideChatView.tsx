@@ -511,7 +511,8 @@ export function SideChatView(props: {
    *  nothing else is left. */
   const newestThreadId = useCallback((candidates: readonly SideThreadRow[]): string | undefined => {
     const catalog = list.projectionsBySession?.[scope.sessionId]?.values.subagentCatalog
-    const rank = (id: string): number => catalog?.find(entry => entry.id === id)?.createdAt ?? 0
+    const createdAt = new Map((catalog ?? []).map(entry => [entry.id, entry.createdAt]))
+    const rank = (id: string): number => createdAt.get(id) ?? 0
     const real = candidates.filter(row => row.title !== SIDE_NEW_THREAD_TITLE)
     const pool = real.length > 0 ? real : candidates
     if (pool.length === 0) return undefined

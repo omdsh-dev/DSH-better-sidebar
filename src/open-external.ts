@@ -11,7 +11,7 @@
  */
 import { execFileSync, spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { parentOf, requireAbsolute } from './fs-tree.ts'
+import { messageOf, parentOf, requireAbsolute } from './fs-tree.ts'
 import { SidebarError } from './wire.ts'
 
 /** The two external open actions the route accepts. */
@@ -229,10 +229,6 @@ export function validateExternalUrl(raw: string): string {
     throw new SidebarError('bad-request', 'only custom-scheme urls can be opened externally')
   }
   return raw
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 /** One attempted launch that failed; kept for the aggregated error message. */

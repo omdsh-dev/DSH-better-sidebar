@@ -328,7 +328,7 @@ export function EditorHost(props: {
   useEffect(() => {
     if (path === '' || isDir) return
     setEditorDirty(tab.id, toolbar?.dirty === true, scope.sessionId, path)
-    return () => { clearEditorDirty(tab.id) }
+    return () => { clearEditorDirty(tab.id, scope.sessionId) }
   }, [tab.id, toolbar?.dirty, scope.sessionId, path, isDir])
 
   // The docked panel's drag-resize: pointer capture on the handle itself

@@ -171,21 +171,14 @@ const RUN_FIELD = 'terminalRun'
  * it: the old binding points at a process that is gone — a host restart, or a
  * terminal closed elsewhere — and reusing it would wedge the tab on
  * `missingTerminal` forever.
+ *
+ * The SAME value is the occurrence key the host memoizes one view by
+ * (`view(sessionId, key, contentId)`), so a run bump has to move both: the
+ * namespace is what keeps it from colliding with a host layout tab id (`tab1`).
  * @param run - the content-identity generation (0 for a tab's first terminal).
  */
 export function bottomTerminalContentId(run: number): string {
   return run === 0 ? TERMINAL_NS : `${TERMINAL_NS}#${run}`
-}
-
-/**
- * The occurrence key: what the host service memoizes one `TerminalView` by,
- * per session. It equals the content identity so both move together when a
- * replacement terminal is minted, and it is namespaced so it can never collide
- * with a host sidebar occurrence key (those are layout tab ids such as `tab1`).
- * @param run - the content-identity generation.
- */
-export function bottomTerminalKey(run: number): string {
-  return bottomTerminalContentId(run)
 }
 
 /** The content-identity generation a tab carries (absent/corrupt reads as 0). */
@@ -214,6 +207,6 @@ export function nextTerminalMeta(tab: { meta?: unknown }): Record<string, unknow
 export function closeBottomTerminal(ctx: Context, tab: { meta?: unknown }, sessionId: string): void {
   const service = webTerminals(ctx)
   if (service === undefined) return
-  const run = terminalRunOf(tab)
-  service.close(sessionId, bottomTerminalKey(run), bottomTerminalContentId(run))
+  const id = bottomTerminalContentId(terminalRunOf(tab))
+  service.close(sessionId, id, id)
 }

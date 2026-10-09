@@ -15,9 +15,9 @@ vi.mock('../src/git.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/git.ts')>()
   return {
     ...actual,
-    runGitRaw: (cwd: string, args: string[], timeoutMs?: number) => {
+    runGit: (cwd: string, args: string[], timeoutMs?: number) => {
       probed.push(cwd)
-      return actual.runGitRaw(cwd, args, timeoutMs)
+      return actual.runGit(cwd, args, timeoutMs)
     },
   }
 })

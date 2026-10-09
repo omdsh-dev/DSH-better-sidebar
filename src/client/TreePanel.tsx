@@ -19,7 +19,7 @@
  * drop over the file window uploads here and never reaches DSH's chat
  * intake.
  */
-import { useEffect, useRef, useState, type InputHTMLAttributes } from 'react'
+import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes } from 'react'
 import clsx from 'clsx'
 import { IconChevronsUpDownOutlineRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import { api } from './api.ts'
@@ -220,7 +220,7 @@ export function TreePanel(props: {
   const busy = upload !== null
   /** Directory hits (the host reports them separately): a click navigates the
    *  tree for those rows instead of opening them as files. */
-  const dirHits = new Set(results?.dirs)
+  const dirHits = useMemo(() => new Set(results?.dirs), [results])
 
   /**
    * Jump to a DIRECTORY hit in the tree. Results include directories (they

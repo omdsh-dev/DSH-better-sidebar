@@ -29,6 +29,17 @@ import { invalidateDirectoryCache, requireAbsolute } from './fs-tree.ts'
 import { ensureWorkspaceWritePath, resolveTarget } from './path-security.ts'
 import { SidebarError } from './wire.ts'
 
+/**
+ * The name SHAPE every file mutation shares: one path segment, no separators,
+ * no `.`/`..`. Shared by rename, mkdir and the new-file rule so the three
+ * entries refuse the same inputs with the same sentence.
+ */
+function assertSingleSegmentName(name: string): void {
+  if (name === '' || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
+    throw new SidebarError('bad-request', 'name must be a single path segment', 400)
+  }
+}
+
 /** Inputs of one upload: the session scope plus the request body stream. */
 export interface WorkspaceUploadInput {
   /** The session workspace root (the base of session-relative targets). */
@@ -208,9 +219,7 @@ async function pathExists(target: string): Promise<boolean> {
  */
 export async function renameWorkspaceEntry(input: WorkspaceRenameInput): Promise<{ path: string }> {
   const { cwd, path, name } = input
-  if (name === '' || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
-    throw new SidebarError('bad-request', 'name must be a single path segment', 400)
-  }
+  assertSingleSegmentName(name)
   const { absolute, realCwd } = resolveEntry(cwd, path)
   if (await isWorkspaceRoot(absolute, realCwd)) {
     throw new SidebarError('fs-error', 'cannot rename the workspace root', 400)
@@ -253,9 +262,7 @@ export interface WorkspaceMkdirInput {
  */
 export async function mkdirWorkspaceEntry(input: WorkspaceMkdirInput): Promise<{ path: string }> {
   const { cwd, path, name } = input
-  if (name === '' || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
-    throw new SidebarError('bad-request', 'name must be a single path segment', 400)
-  }
+  assertSingleSegmentName(name)
   const { absolute } = resolveEntry(cwd, path)
   const destination = await ensureWorkspaceWritePath(cwd, join(absolute, name))
   if (await pathExists(destination)) {
@@ -305,8 +312,8 @@ const RESERVED_FILE_NAMES = new Set([
 ])
 
 /**
- * The NEW FILE name rule: one path segment (the shared rename/mkdir rule) plus
- * the two Windows-only refusals — illegal characters and reserved device
+ * The NEW FILE name rule: one path segment ({@link assertSingleSegmentName})
+ * plus the two Windows-only refusals — illegal characters and reserved device
  * names. Refusing them HERE, as a shape error, is what lets the inline editor
  * say which rule was broken instead of surfacing a bare `EPERM` from the
  * filesystem on one platform and nothing at all on the others.
@@ -314,9 +321,7 @@ const RESERVED_FILE_NAMES = new Set([
  * @throws SidebarError with a wire code of `bad-request` for every refusal.
  */
 function assertCreatableFileName(name: string): void {
-  if (name === '' || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
-    throw new SidebarError('bad-request', 'name must be a single path segment', 400)
-  }
+  assertSingleSegmentName(name)
   const illegal = firstIllegalNameChar(name)
   if (illegal !== undefined) {
     throw new SidebarError('bad-request', `name contains a character that is not allowed in a file name: ${JSON.stringify(illegal)}`, 400)

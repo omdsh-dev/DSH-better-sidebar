@@ -24,7 +24,7 @@ import { stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, sep } from 'node:path'
 import type { Context, SidebarSessionEvent } from './context-types.ts'
 import { requireAbsolute } from './fs-tree.ts'
-import { runGitRaw } from './git.ts'
+import { runGit } from './git.ts'
 import { readPersistedSessionOf } from './session-store.ts'
 
 /** How long one computed root is reused before the event log is scanned again. */
@@ -76,7 +76,7 @@ async function gitTopLevelOf(cwd: string): Promise<string | undefined> {
   if (cwd === '' || !isAbsolute(cwd)) return undefined
   try {
     if (!(await stat(cwd)).isDirectory()) return undefined
-    return (await runGitRaw(cwd, ['rev-parse', '--show-toplevel'])).trim()
+    return (await runGit(cwd, ['rev-parse', '--show-toplevel'])).trim()
   } catch {
     return undefined
   }
@@ -168,7 +168,7 @@ async function isLinkedWorktree(top: string): Promise<boolean> {
   if (cached !== undefined) return cached
   let linked = false
   try {
-    const out = (await runGitRaw(top, ['rev-parse', '--absolute-git-dir', '--git-common-dir'])).trim().split(/\r?\n/)
+    const out = (await runGit(top, ['rev-parse', '--absolute-git-dir', '--git-common-dir'])).trim().split(/\r?\n/)
     const gitDir = out[0]
     const commonRaw = out[1] ?? ''
     if (gitDir !== undefined && gitDir !== '' && commonRaw !== '') {

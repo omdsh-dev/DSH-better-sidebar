@@ -105,7 +105,52 @@ function encodeUtf32(text: string, littleEndian: boolean): Buffer {
   return body
 }
 
-/** Detect BOM-less UTF-16 from the NUL-byte lane typical of scripts/config. */
+/**
+ * Whether one UTF-16 code unit is plausible as TEXT: tab / LF / CR, printable
+ * ASCII, or anything from U+00A0 up (letters, CJK, full-width punctuation)
+ * outside the surrogate range and the U+FFFE/FFFF tail. C0 controls other than
+ * whitespace, DEL and the whole C1 block never appear in text, while a 16-bit
+ * number stream spends a large share of its units exactly there.
+ */
+function isUtf16TextUnit(unit: number): boolean {
+  if (unit === 0x09 || unit === 0x0a || unit === 0x0d) return true
+  if (unit >= 0x20 && unit <= 0x7e) return true
+  if (unit >= 0xa0 && unit <= 0xd7ff) return true
+  return unit >= 0xe000 && unit <= 0xfffd
+}
+
+/**
+ * Whether the lane sample reads as text in the given byte order: at least 90%
+ * of its code units must be text units ({@link isUtf16TextUnit}). A low
+ * amplitude 16-bit table sits far below that, real script/config text at or
+ * near 100%.
+ * @param bytes - the buffer (only the lane sample is read).
+ * @param pairs - how many code units to judge (the caller's lane window).
+ * @param littleEndian - the byte order of the candidate lane.
+ */
+function looksLikeUtf16Text(bytes: Uint8Array, pairs: number, littleEndian: boolean): boolean {
+  if (pairs === 0) return false
+  let text = 0
+  for (let index = 0; index < pairs; index += 1) {
+    const unit = littleEndian
+      ? bytes[index * 2]! | (bytes[index * 2 + 1]! << 8)
+      : (bytes[index * 2]! << 8) | bytes[index * 2 + 1]!
+    if (isUtf16TextUnit(unit)) text += 1
+  }
+  return text * 10 >= pairs * 9
+}
+
+/**
+ * Detect BOM-less UTF-16 from the NUL-byte lane typical of scripts/config.
+ *
+ * The lane alone is NOT enough: a raw 16-bit little-endian stream (a sample
+ * table, an audio buffer) leaves the high byte 0 for every value below 256 and
+ * matches it exactly. Its code units then land all over the C0/C1 control
+ * blocks instead of text, so the candidate must also read as text
+ * ({@link looksLikeUtf16Text}) — otherwise a binary file opened as an editable
+ * buffer, and a save rewrote it as UTF-16 (dropping the trailing byte of an
+ * odd-length file, which `decodeUtf16` truncates in the same way).
+ */
 function bomlessUtf16(bytes: Uint8Array): 'utf16le' | 'utf16be' | undefined {
   if (bytes.length < 4) return undefined
   const pairs = Math.min(Math.floor(bytes.length / 2), 1024)
@@ -116,8 +161,10 @@ function bomlessUtf16(bytes: Uint8Array): 'utf16le' | 'utf16be' | undefined {
     if (bytes[i * 2 + 1] === 0) oddZeros += 1
   }
   const minimumZeros = Math.max(2, Math.floor(pairs * 0.2))
-  if (oddZeros >= minimumZeros && oddZeros >= evenZeros * 4) return 'utf16le'
-  if (evenZeros >= minimumZeros && evenZeros >= oddZeros * 4) return 'utf16be'
+  if (oddZeros >= minimumZeros && oddZeros >= evenZeros * 4
+    && looksLikeUtf16Text(bytes, pairs, true)) return 'utf16le'
+  if (evenZeros >= minimumZeros && evenZeros >= oddZeros * 4
+    && looksLikeUtf16Text(bytes, pairs, false)) return 'utf16be'
   return undefined
 }
 

@@ -150,7 +150,9 @@ export function DockFallback({ store }: { store: SidebarStore }): ReactNode {
   const [headerEntry, setHeaderEntry] = useState(headerEntryPresent)
   useEffect(() => {
     const onResize = (): void => {
-      setPos(measure())
+      // 坐标没变就不换 state 对象：500ms 的周期重测在版面静止时不该引起重渲染。
+      const next = measure()
+      setPos(prev => (prev.top === next.top && prev.left === next.left ? prev : next))
       setHeaderEntry(headerEntryPresent())
     }
     window.addEventListener('resize', onResize)

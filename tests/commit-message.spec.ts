@@ -11,7 +11,6 @@ import {
   cleanSuggestion,
   collectModelRoutes,
   defaultRouteOf,
-  formatModelRoute,
   lowestReasoningEffortOf,
   modelEntryOf,
   normalizeLanguage,
@@ -35,13 +34,6 @@ describe('parseModelRoute', () => {
     for (const value of [undefined, null, '', '   ', 'deepseek', '/model', 'provider/', 42, {}]) {
       expect(parseModelRoute(value), String(value)).toBeUndefined()
     }
-  })
-})
-
-describe('formatModelRoute', () => {
-  it('round-trips through parseModelRoute', () => {
-    const route = { provider: 'deepseek', model: 'deepseek-chat' }
-    expect(parseModelRoute(formatModelRoute(route))).toEqual(route)
   })
 })
 

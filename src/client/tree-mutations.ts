@@ -45,10 +45,11 @@ export function retargetPathTabs(ctx: Context, store: SidebarStore, oldPath: str
 export function closePathTabs(ctx: Context, store: SidebarStore, target: string, unsavedMessage: string): void {
   const service = ctx.get('betterSidebar')
   if (service === undefined) return
-  for (const tab of pathTabsOf(store.getSnapshot())) {
+  const snapshot = store.getSnapshot()
+  for (const tab of pathTabsOf(snapshot)) {
     const path = tab.path
     if (path === undefined || (path !== target && !isWithinWorkspace(target, path))) continue
-    if (!confirmDiscardDraft(tab.id, unsavedMessage)) continue
+    if (!confirmDiscardDraft(tab.id, unsavedMessage, snapshot.sessionId)) continue
     service.closeTab(tab.id)
   }
 }

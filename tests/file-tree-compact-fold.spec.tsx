@@ -28,12 +28,18 @@ beforeAll(() => {
   Object.defineProperty(window.navigator, 'language', { value: 'en-US', configurable: true })
 })
 
-const fsTrees = vi.hoisted(() => vi.fn())
+const { fsTrees, fsRename } = vi.hoisted(() => ({
+  fsTrees: vi.fn(),
+  fsRename: vi.fn(async (scope: unknown, path: string, name: string) => ({
+    path: `${path.slice(0, path.lastIndexOf('/') + 1)}${name}`,
+  })),
+}))
 
 vi.mock('../src/client/api.ts', () => ({
   api: {
     fsTree: vi.fn(),
     fsTrees: (...args: unknown[]) => fsTrees(...args),
+    fsRename: (...args: unknown[]) => fsRename(...(args as [unknown, string, string])),
     gitStatus: async () => ({ isRepo: false, entries: [] }),
   },
   downloadUrl: () => '/sidebar/file',
@@ -158,6 +164,40 @@ function rowByLabel(container: HTMLElement, label: string): HTMLElement {
   return row
 }
 
+/** One row by its rendered label (a folded row's label is the whole chain). */
+function rowByName(container: HTMLElement, name: string): HTMLElement {
+  const row = [...container.querySelectorAll<HTMLElement>('[class*="explorerRow"]')]
+    .find(element => element.querySelector('[class*="explorerName"]')?.textContent === name)
+  if (row === undefined) throw new Error(`no row "${name}" in ${JSON.stringify(rowLabels(container))}`)
+  return row
+}
+
+/** Right-click one row (the row menu addresses what the row's label names). */
+function openMenu(container: HTMLElement, name: string): void {
+  const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 30 })
+  act(() => { rowByName(container, name).dispatchEvent(event) })
+}
+
+/** Click one row-menu entry by its (English, locale-pinned) label. */
+function clickMenuitem(label: string): void {
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    .find(element => element.textContent === label)
+  if (item === undefined) throw new Error(`menuitem "${label}" not found`)
+  act(() => { item.click() })
+}
+
+/** Set a controlled input's value the React way (native setter + input). */
+function setNativeValue(element: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+  if (setter === undefined) throw new Error('no native value setter')
+  setter.call(element, value)
+  element.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
+function pressKey(element: HTMLElement, key: string): void {
+  element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+}
+
 /** Every path the tree has asked for, across all batches. */
 function requestedPaths(): string[] {
   return fsTrees.mock.calls.flatMap(call => call[1] as string[])
@@ -167,6 +207,7 @@ let harness: Harness
 beforeEach(() => {
   vi.stubGlobal('WebSocket', FakeSocket)
   fsTrees.mockReset()
+  fsRename.mockClear()
   fsTrees.mockImplementation(async (_scope: unknown, paths: readonly string[]) => ({
     levels: paths.map(path => levelOf(path)),
   }))
@@ -219,6 +260,22 @@ describe('FileTree breadcrumb folding', () => {
     // The folded row shows the tail's contents (the chain's end), never a/b's.
     expect(harness.container.textContent).toContain('leaf.txt')
     expect(rowLabels(harness.container).some(label => label.startsWith('a/b/c'))).toBe(true)
+  })
+
+  it('renames the chain TAIL the row shows, not the fold head', async () => {
+    // The row renders at `/tmp/a` (the chain head) and its menu addressed the
+    // TAIL, so the commit has to land on `/tmp/a/b/c` — the directory the label
+    // names. Committing the head renamed the PARENT directory instead.
+    harness = mountTree()
+    await flush()
+    openMenu(harness.container, 'a/b/c')
+    clickMenuitem('Rename')
+    const input = harness.container.querySelector<HTMLInputElement>('input[class*="explorerRenameInput"]')
+    expect(input).not.toBeNull()
+    expect(input!.value).toBe('c')
+    setNativeValue(input!, 'renamed')
+    await act(async () => { pressKey(input!, 'Enter') })
+    expect(fsRename).toHaveBeenCalledWith({ sessionId: 's1', cwd: '/tmp' }, '/tmp/a/b/c', 'renamed')
   })
 
   it('carries the exclude list on every request, and a changed list wipes the cache', async () => {

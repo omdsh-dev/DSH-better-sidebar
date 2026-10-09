@@ -971,7 +971,7 @@ export class SidebarStore {
   markUnread(type: TabType): boolean {
     const state = this.snapshot.state
     if (state === undefined || state.unread.includes(type)) return false
-    this.replaceCurrent(markUnread(state, type))
+    this.reduce(current => markUnread(current, type))
     return true
   }
 
@@ -997,26 +997,13 @@ export class SidebarStore {
     if (target === undefined) return false
     if (target === this.snapshot.sessionId) {
       if (state === undefined || !state.unread.includes(type)) return false
-      this.replaceCurrent(clearUnread(state, type))
+      this.reduce(current => clearUnread(current, type))
       return true
     }
     const stored = this.bySession.get(target)
     if (stored === undefined || !stored.unread.includes(type)) return false
     this.bySession.set(target, clearUnread(stored, type))
     return true
-  }
-
-  /**
-   * Commit a state this class already minted (identity-checked by the caller)
-   * as the current session's state, persisting it like any other change.
-   */
-  private replaceCurrent(state: SidebarState): void {
-    const sessionId = this.snapshot.sessionId
-    if (sessionId === undefined) return
-    this.bySession.set(sessionId, state)
-    this.snapshot = { sessionId, state, prefs: this.prefs }
-    this.schedulePersist(sessionId, state)
-    this.notify()
   }
 
   getSnapshot(): SidebarSnapshot {
