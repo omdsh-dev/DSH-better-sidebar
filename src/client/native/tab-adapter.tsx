@@ -23,15 +23,17 @@
  * Nothing here is a singleton: the registry is created once per client
  * activation and handed to every registration.
  */
-import { createElement, useMemo, useSyncExternalStore } from 'react'
+import { createElement, useEffect, useMemo, useSyncExternalStore } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import type { Context } from '../../context-types.ts'
 import type { SessionScope } from '../api.ts'
 import { RenderBoundary } from '../RenderBoundary.tsx'
 import { OrphanedTab } from '../OrphanedTab.tsx'
 import { referenceInChat } from '../reference-in-chat.ts'
+import { useSessionRoot } from '../use-session-root.ts'
 import type { BetterSidebarService } from '../service.ts'
-import { toggleExpanded } from '../state.ts'
+import { t } from '../locales.ts'
+import { isUnread, toggleExpanded } from '../state.ts'
 import type { SidebarStore, SidebarTab, TabType } from '../state.ts'
 import css from '../sidebar.module.css'
 
@@ -130,6 +132,14 @@ export interface NativeTabRecords {
     params: NativeTabParams | undefined
     scope: SessionScope
     /**
+     * The native navigation revision this call carries. The native surface
+     * re-delivers the LAST navigation on every render (its `useTabInfo`
+     * snapshot is stable until the host really navigates), so the seed `meta`
+     * is adopted once per revision — see {@link createNativeTabRecords}.
+     * Absent (the plugin's own layout, an older caller) never re-adopts.
+     */
+    revision?: number
+    /**
      * The descriptor's own factory, called ONCE for a record that arrives
      * without seed fields (a native guide open, which knows nothing about the
      * plugin's per-instance minting): it supplies the title and the meta a
@@ -184,6 +194,19 @@ function samePaths(left: readonly string[], right: readonly string[]): boolean {
 export function createNativeTabRecords(): NativeTabRecords {
   const views = new Map<string, View>()
   const instances = new Map<string, number>()
+  /**
+   * Record key -> the navigation revision whose seed meta was last adopted.
+   *
+   * `meta` has two writers: an opener's navigation (a page kind is
+   * re-delivered with fresh `params` on every open — the side chat switches
+   * threads that way) and the view itself through `updateTab` (a tab that
+   * minted a thread binds its id there). The native surface re-delivers the
+   * SAME navigation on every render, so adopting the seed unconditionally
+   * would let the plugin's own write be overwritten on the next pass: the tab
+   * would fall back to "unbound" and mint thread after thread. Only a
+   * revision this record has not adopted yet may seed.
+   */
+  const navigationRevisions = new Map<string, number>()
   const listeners = new Set<() => void>()
   const notify = (): void => { for (const listener of listeners) listener() }
   const put = (key: string, view: View): void => {
@@ -223,7 +246,7 @@ export function createNativeTabRecords(): NativeTabRecords {
       next.subscribe(syncExpanded)
       syncExpanded()
     },
-    ensure({ sessionId, id, kind, title, params, scope, mint }) {
+    ensure({ sessionId, id, kind, title, params, scope, revision, mint }) {
       const key = viewKey(sessionId, id)
       const existing = views.get(key)
       if (existing === undefined) {
@@ -239,6 +262,7 @@ export function createNativeTabRecords(): NativeTabRecords {
             type: kind as TabType,
             title: params?.title ?? seeded?.title ?? title,
             ...(path === undefined ? {} : { path }),
+            ...(params?.line === undefined ? {} : { line: params.line }),
             ...(params?.diff === undefined ? {} : { diff: params.diff }),
             ...(meta === undefined ? {} : { meta }),
           },
@@ -248,15 +272,32 @@ export function createNativeTabRecords(): NativeTabRecords {
           version: 0,
         }
         views.set(key, minted)
+        // The seed meta of THIS navigation is what the mint just adopted: a
+        // re-delivery of the same navigation must not re-adopt it (it would
+        // clobber the thread the view writes back through `updateTab`).
+        if (revision !== undefined) navigationRevisions.set(key, revision)
         return minted
       }
       // A navigation may carry new seed fields (the editor's in-place switch,
-      // a browser tab pointed at another URL); the record's identity and any
-      // plugin-side mutation (title/meta from updateTab) stay.
+      // a browser tab pointed at another URL, a side chat switching threads);
+      // the record's identity and any plugin-side mutation (title from
+      // `updateTab`) stay. `meta` is the exception — it also has a plugin-side
+      // writer, so only a navigation this record has not adopted yet may seed
+      // it (see {@link navigationRevisions}).
       const patch: Partial<SidebarTab> = {}
       const nextPath = params?.path ?? params?.url
       if (nextPath !== undefined && nextPath !== existing.tab.path) patch.path = nextPath
+      // The landing line clears as well as sets: an in-place switch from
+      // `a.c:131` to a bare `a.c` must not leave the old line behind and jump
+      // the reader back there. Compared against the current value so the
+      // common case (both absent) adds nothing to the patch and the record
+      // keeps its identity.
+      if (params?.line !== existing.tab.line) patch.line = params?.line
       if (params?.diff !== undefined) patch.diff = params.diff
+      if (revision !== undefined && navigationRevisions.get(key) !== revision) {
+        navigationRevisions.set(key, revision)
+        if (params?.meta !== undefined) patch.meta = params.meta
+      }
       // The expansion set always mirrors the CURRENT session state (a record
       // reused for another session must not keep the previous one's set).
       const expanded = expandedOf(scope.sessionId)
@@ -282,7 +323,11 @@ export function createNativeTabRecords(): NativeTabRecords {
       put(key, { ...entry, tab: { ...entry.tab, ...patch } })
     },
     drop(sessionId, id) {
-      if (views.delete(viewKey(sessionId, id))) notify()
+      const key = viewKey(sessionId, id)
+      // The revision ledger dies with the record: an id reused later arrives
+      // with its own navigation, and a stale entry would swallow its seed.
+      navigationRevisions.delete(key)
+      if (views.delete(key)) notify()
     },
     toggleExpanded(sessionId, id, path) {
       const entry = views.get(viewKey(sessionId, id))
@@ -307,6 +352,9 @@ export function createNativeTabRecords(): NativeTabRecords {
         const owner = separator === -1 ? key : key.slice(0, separator)
         if (!sessions.has(owner)) {
           views.delete(key)
+          // The ledger is part of the record (see `drop`): a session the user
+          // deleted must not leave its revisions behind.
+          navigationRevisions.delete(key)
           dropped = true
         }
       }
@@ -360,14 +408,6 @@ function useRecordVersion(records: NativeTabRecords, sessionId: string, id: stri
   )
 }
 
-/** The current session's workspace root, live from the client session list. */
-function useSessionCwd(ctx: Context, sessionId: string): string | undefined {
-  return useSyncExternalStore(
-    useMemo(() => (listener: () => void) => ctx.sessions.list.subscribe(listener), [ctx]),
-    () => ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd,
-  )
-}
-
 /**
  * One plugin tab rendered inside the native right Sidebar: the descriptor's
  * own component with the plugin's props, over a synthetic record minted from
@@ -391,7 +431,7 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
   const seatSessionId = props.sessionId
   const scopeSessionId = props.sessionIdOf?.(info) ?? seatSessionId
   const version = useRecordVersion(records, seatSessionId, nativeTab.id)
-  const cwd = useSessionCwd(ctx, scopeSessionId)
+  const cwd = useSessionRoot(ctx, scopeSessionId)
   const scope = useMemo((): SessionScope => ({ sessionId: scopeSessionId, cwd }), [scopeSessionId, cwd])
   // `version` is not read: it only forces this render when the record changed.
   void version
@@ -407,6 +447,7 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
     title: nativeTab.title,
     params,
     scope,
+    revision: nativeTab.navigation.revision,
     mint: () => {
       const state = store.getSnapshot().state
       if (descriptor?.createTab === undefined || state === undefined) return undefined
@@ -444,7 +485,7 @@ export function NativeTabBody(props: NativeBodyInjected & NativeBodyFrameworkPro
         expanded: view.expanded,
         revealed: view.revealed,
         onToggleDir: (path: string) => { records.toggleExpanded(seatSessionId, nativeTab.id, path) },
-        onReferenceFile: (path: string, isDir: boolean) => { referenceInChat(ctx, scopeSessionId, cwd, path, isDir) },
+        onReferenceFile: (path: string, isDir: boolean) => { referenceInChat(ctx, scopeSessionId, path, isDir) },
         onOpenDiff: (tab: SidebarTab) => {
           service.openTab({
             type: 'diff',
@@ -528,13 +569,50 @@ export function NativeTabTitle(props: NativeTitleInjected & NativeBodyFrameworkP
   const glyph = icon ?? (typeof descriptor?.icon === 'function'
     ? descriptor.icon(CHIP_ICON_SIZE)
     : descriptor?.icon)
-  if (glyph === undefined || glyph === null) return title
+  // "The reader has not looked at this page": the tab type this chip belongs
+  // to carries a mark (a background activation opened its page without taking
+  // the column over). The unread store subscription is what re-renders the
+  // chip when the mark appears or retires — the native record's own version
+  // does not move for either.
+  const unread = useSyncExternalStore(
+    listener => service.subscribeState(listener),
+    () => isUnread(service.getSnapshot().state, record?.tab.type ?? descriptorId),
+  )
+  // …and the chip is also what RETIRES the mark: this tab being visible means
+  // the reader is looking at its page now. Guarded on BOTH flags, so an
+  // inactive chip (the host draws every expanded tab's title) clears nothing
+  // and a chip with no mark never touches the store.
+  const type = record?.tab.type ?? descriptorId
+  const visible = nativeTab.visible === true
+  useEffect(() => {
+    if (visible && unread) service.clearUnread(type, sessionId)
+  }, [visible, unread, type, sessionId, service])
+  if (glyph === undefined || glyph === null) {
+    return unread ? <>{title}<UnreadDot /></> : title
+  }
   return (
     <>
       {/* Decorative: the chip's accessible name stays the title. */}
       <span className={css.chipIcon} aria-hidden="true">{glyph}</span>
       {title}
+      {unread ? <UnreadDot /> : null}
     </>
+  )
+}
+
+/**
+ * The native chip's unread mark. `role="img"` + a label so the dot is
+ * announced rather than skipped as decoration (the glyph beside it is the
+ * decorative one — `aria-hidden` — while this carries the state).
+ */
+function UnreadDot(): ReactNode {
+  return (
+    <span
+      className={css.chipUnread}
+      role="img"
+      aria-label={t('tabUnread')}
+      title={t('tabUnread')}
+    />
   )
 }
 

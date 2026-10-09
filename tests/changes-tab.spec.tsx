@@ -11,12 +11,13 @@
  */
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { ChangesTab, opCountOf } from '../src/client/changes/ChangesTab.tsx'
 import { createSidebarStore } from '../src/client/state.ts'
-import { api, type GitStatusResult, type GitWorktree } from '../src/client/api.ts'
+import { api, type GitStatusEntry, type GitStatusResult, type GitWorktree } from '../src/client/api.ts'
 import { t } from '../src/client/locales.ts'
 import type { Context } from '../src/context-types.ts'
 import type { SidebarTab } from '../src/client/state.ts'
@@ -54,7 +55,7 @@ function mount(root: Root, tab: SidebarTab = { id: 'git', type: 'git', title: 'C
   })
 }
 
-function mockGit(entries: Array<{ path: string; xy: string }>): void {
+function mockGit(entries: GitStatusEntry[]): void {
   vi.spyOn(api, 'gitWorktrees').mockResolvedValue([
     { path: MAIN, branch: 'main', current: true, changes: entries.length },
   ] as GitWorktree[])
@@ -133,6 +134,84 @@ describe('ChangesTab', () => {
       act(() => { root.unmount() })
       container.remove()
     }
+  })
+
+  /**
+   * Issue #131, appearance half: a pure rename is `0 0` in numstat, so its row
+   * prints no numbers — and a group whose ONLY changes are renames used to
+   * render an empty `+N −M` cluster in its header, because the total counted
+   * the (numberless) rename row as a contributor. The contrast case is the
+   * other half of the gate: with one row that really has numbers, the cluster
+   * is back and carries exactly those numbers.
+   */
+  it('renders no count cluster for a group whose only changes are pure renames (#131)', async () => {
+    mockGit([
+      { path: 'renamed.ts', xy: 'R ', counts: { additions: 0, deletions: 0 } },
+      { path: 'moved.md', xy: ' R', counts: { additions: 0, deletions: 0 } },
+    ])
+
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root: Root = createRoot(container)
+    try {
+      mount(root)
+      await flushEffects()
+
+      const staged = container.querySelector<HTMLElement>('[data-group="staged"]')
+      const unstaged = container.querySelector<HTMLElement>('[data-group="unstaged"]')
+      // Both groups really rendered their rename row, so the absence asserted
+      // below is the counts cluster's, not the whole group's.
+      expect(staged!.querySelectorAll('button[data-path]')).toHaveLength(1)
+      expect(unstaged!.querySelectorAll('button[data-path]')).toHaveLength(1)
+      expect(staged!.querySelector('[data-lines="group"]')).toBeNull()
+      expect(unstaged!.querySelector('[data-lines="group"]')).toBeNull()
+      // The renames are still listed with their count pill (the FILE count).
+      expect(staged!.querySelector('[data-count]')!.textContent).toBe('1')
+      expect(unstaged!.querySelector('[data-count]')!.textContent).toBe('1')
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
+
+  it('keeps the group total when a row in the group really has numbers (#131)', async () => {
+    mockGit([
+      { path: 'mode-only.ts', xy: ' M', counts: { additions: 0, deletions: 0 } },
+      { path: 'edited.ts', xy: ' M', counts: { additions: 3, deletions: 1 } },
+    ])
+
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root: Root = createRoot(container)
+    try {
+      mount(root)
+      await flushEffects()
+
+      const unstaged = container.querySelector<HTMLElement>('[data-group="unstaged"]')
+      const cluster = unstaged!.querySelector<HTMLElement>('[data-lines="group"]')
+      expect(cluster).not.toBeNull()
+      expect(cluster!.getAttribute('data-added')).toBe('3')
+      expect(cluster!.getAttribute('data-deleted')).toBe('1')
+      expect(cluster!.textContent).toContain('+3')
+      // The cluster is not merely present — it carries text (an EMPTY cluster
+      // is exactly the artifact this pair of cases is about).
+      expect(cluster!.textContent).not.toBe('')
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
+
+  it('sizes the count cluster from a font token, never from a bare px (#131)', () => {
+    // Skin contract (guide §12): visual values ride `--dsw-font-*` / `--ds-*`
+    // tokens. The row/band cluster is the one place in this sheet that used a
+    // literal `font-size: 10px`, two pixels off the smallest host token.
+    const sheet = readFileSync('src/client/changes/changes.module.css', 'utf8')
+    const block = sheet.match(/\n\.lineCounts \{([\s\S]*?)\n\}/)?.[1]
+    expect(block, 'the .lineCounts rule must exist in changes.module.css').toBeDefined()
+    expect(block!).toContain('font: var(--dsw-font-')
+    expect(block!).toContain('font-family: var(--ds-font-family-code')
+    expect(block!).not.toMatch(/font-size:\s*[\d.]+px/)
   })
 
   it('folds the polled session events into session-lens rows and the badge cache', async () => {
@@ -263,7 +342,7 @@ describe('ChangesTab', () => {
         .find(node => (node.textContent ?? '').includes(t('changesStageFailed', { message: 'index.lock exists' })))
       expect(alert).toBeDefined()
       // The ONE status line sits in the commit bar, directly under its input row.
-      const input = container.querySelector(`input[placeholder="${t('commitPlaceholder')}"]`)
+      const input = container.querySelector(`textarea[placeholder="${t('commitPlaceholder')}"]`)
       expect(input).not.toBeNull()
       expect(alert!.previousElementSibling?.contains(input)).toBe(true)
     } finally {
@@ -413,6 +492,94 @@ describe('ChangesTab', () => {
     expect(await paneHeightFor(5000)).toBe(`${String(Math.round(window.innerHeight * 0.7))}px`)
     // ...and an unusably small one is raised to the content minimum.
     expect(await paneHeightFor(50)).toBe('140px')
+  })
+
+  /**
+   * Issue #194: the branch band and the commit box must not scroll away with
+   * the list. The lens root is therefore a FIXED frame whose only scrollable
+   * child is the list body holding the change groups and the history — the two
+   * chrome bands are its siblings, not its contents.
+   */
+  it('keeps the branch band and the commit bar outside the one scroll body (#194)', async () => {
+    mockGit([{ path: 'src/a.ts', xy: ' M' }])
+    vi.spyOn(api, 'gitLog').mockResolvedValue([{
+      hash: 'abcdef0',
+      hashFull: 'abcdef0abcdef0abcdef0abcdef0abcdef0abcd',
+      subject: 'history row',
+      author: 'Test',
+      date: '2026-08-20 00:00:00 +0800',
+      refs: 'HEAD -> main',
+    }])
+
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root: Root = createRoot(container)
+    try {
+      mount(root)
+      await flushEffects()
+
+      const frame = container.querySelector<HTMLElement>('[data-git-root]')
+      const scroller = container.querySelector<HTMLElement>('[data-git-scroll]')
+      const head = container.querySelector<HTMLElement>('[data-git-head]')
+      const bar = container.querySelector<HTMLElement>('[data-commit-bar]')
+      expect(frame).not.toBeNull()
+      expect(scroller).not.toBeNull()
+      expect(head).not.toBeNull()
+      expect(bar).not.toBeNull()
+      // The frame is NOT the scroller: the root must never carry the scroll body.
+      expect(frame!.hasAttribute('data-git-scroll')).toBe(false)
+
+      // The branch band and the commit bar are the frame's own children, so
+      // neither can be carried out of the viewport by the list scrolling.
+      expect(head!.parentElement).toBe(frame)
+      expect(bar!.parentElement).toBe(frame)
+      expect(scroller!.contains(head!)).toBe(false)
+      expect(scroller!.contains(bar!)).toBe(false)
+
+      // The list body is what actually holds the change list and the history.
+      expect(scroller!.querySelector('[data-group="unstaged"] [data-path="src/a.ts"]')).not.toBeNull()
+      const historyRow = scroller!.querySelector<HTMLElement>('[role="button"]')
+      expect(historyRow).not.toBeNull()
+      expect(historyRow!.textContent).toContain('history row')
+
+      // The commit box is inside its bar, and the bar sits BELOW the scroller.
+      const input = container.querySelector('textarea')
+      expect(input).not.toBeNull()
+      expect(scroller!.contains(input!)).toBe(false)
+      expect(bar!.contains(input!)).toBe(true)
+      expect(scroller!.compareDocumentPosition(bar!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
+
+  it('scrolls the inner body only and no longer pins the commit bar with position: sticky (#194)', () => {
+    // jsdom has no layout engine, so the sheet itself is the evidence for the
+    // docking mechanic (the same pattern the explorer's batch bar uses).
+    const sheet = readFileSync('src/client/changes/changes.module.css', 'utf8')
+    const rule = (selector: string): string => {
+      const block = sheet.match(new RegExp(`\\n\\${selector} \\{([\\s\\S]*?)\\n\\}`))?.[1]
+      expect(block, `the ${selector} rule must exist in changes.module.css`).toBeDefined()
+      return block!
+    }
+
+    // The lens root is the fixed frame: it owns no scroll axis at all.
+    expect(rule('.git')).not.toContain('overflow')
+    expect(rule('.git')).toContain('display: flex')
+    // The inner body is the ONE vertical scroller (and clips the width).
+    expect(rule('.gitScroll')).toContain('overflow-y: auto')
+    expect(rule('.gitScroll')).toContain('overflow-x: hidden')
+    expect(rule('.gitScroll')).toContain('flex: 1')
+    // The commit bar is now a plain flex sibling — no sticky bottom, no
+    // stacking order over the (still sticky) group headers.
+    expect(rule('.commitBar')).not.toContain('position')
+    expect(rule('.commitBar')).not.toContain('sticky')
+    expect(rule('.commitBar')).not.toContain('z-index')
+    // The group headers still park on the inner body's top edge.
+    const groupHeader = rule('.group .groupHeader')
+    expect(groupHeader).toContain('position: sticky')
+    expect(groupHeader).toContain('top: 0')
   })
 
   it('polls the session events only while the session lens is on screen', async () => {

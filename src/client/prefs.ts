@@ -10,21 +10,16 @@
  */
 import type { api } from './api.ts'
 import {
-  clampTitleBarStrip,
+  EXPLORER_EXCLUDE_DEFAULTS,
   SIDEBAR_PREFS_DEFAULTS,
-  TITLE_BAR_SCHEMES,
-  TITLE_BAR_STRIP_DEFAULT,
   type SidebarPrefs,
-  type TitleBarScheme,
 } from '../prefs-shared.ts'
 
 export {
+  EXPLORER_EXCLUDE_DEFAULTS,
   SIDEBAR_PREFS_DEFAULTS,
-  TITLE_BAR_SCHEMES,
-  TITLE_BAR_STRIP_DEFAULT,
-  clampTitleBarStrip,
 }
-export type { SidebarPrefs, TitleBarScheme }
+export type { SidebarPrefs }
 
 /** The settings wire face the preferences need (a subset of the plugin api). */
 export type SidebarSettingsClient = Pick<typeof api, 'settingsGet' | 'settingsUpdate'>
@@ -38,6 +33,12 @@ export type SidebarSettingsClient = Pick<typeof api, 'settingsGet' | 'settingsUp
 export function parsePrefs(value: unknown): SidebarPrefs {
   if (value === null || typeof value !== 'object') return { ...SIDEBAR_PREFS_DEFAULTS }
   const record = value as Record<string, unknown>
+  // The result is built from DECLARED fields only, so a key this release no
+  // longer has — the retired title-bar compatibility set (`titleBarScheme` /
+  // `titleBarPresetId` / `titleBarCompat` / `titleBarStripPx`), a legacy
+  // `workspaceFence` — is dropped here instead of reaching the UI. The host
+  // schema passes unknown keys through untouched (config.ts); this is the
+  // typed face that makes them inert.
   return {
     autoOpenSubagent: typeof record.autoOpenSubagent === 'boolean'
       ? record.autoOpenSubagent
@@ -60,28 +61,13 @@ export function parsePrefs(value: unknown): SidebarPrefs {
     editorExplorer: typeof record.editorExplorer === 'boolean'
       ? record.editorExplorer
       : SIDEBAR_PREFS_DEFAULTS.editorExplorer,
-    // The title-bar scheme (auto | web | preset | custom). The schema
-    // declares the field WITHOUT a default, so documents written by older
-    // plugin versions resolve without it — migrate from the legacy fields:
-    // a document that ALREADY HAS VALUES (the manual compat flag on, or a
-    // non-default strip px — both only reachable through the old gear
-    // popup) maps to the `custom` scheme so the user's numbers keep
-    // working; a pristine document keeps the conservative `auto` scheme.
-    titleBarScheme: isTitleBarScheme(record.titleBarScheme)
-      ? record.titleBarScheme
-      : (record.titleBarCompat === true || hasLegacyStripValue(record.titleBarStripPx) ? 'custom' : 'auto'),
-    titleBarPresetId: typeof record.titleBarPresetId === 'string'
-      ? record.titleBarPresetId
-      : SIDEBAR_PREFS_DEFAULTS.titleBarPresetId,
+    editorGitGutter: typeof record.editorGitGutter === 'boolean'
+      ? record.editorGitGutter
+      : SIDEBAR_PREFS_DEFAULTS.editorGitGutter,
+    explorerExclude: stringArrayOf(record.explorerExclude),
     customCss: typeof record.customCss === 'string'
       ? record.customCss
       : SIDEBAR_PREFS_DEFAULTS.customCss,
-    titleBarCompat: typeof record.titleBarCompat === 'boolean'
-      ? record.titleBarCompat
-      : SIDEBAR_PREFS_DEFAULTS.titleBarCompat,
-    titleBarStripPx: typeof record.titleBarStripPx === 'number' && Number.isFinite(record.titleBarStripPx)
-      ? clampTitleBarStrip(record.titleBarStripPx)
-      : SIDEBAR_PREFS_DEFAULTS.titleBarStripPx,
     htmlViewerNoSandbox: typeof record.htmlViewerNoSandbox === 'boolean'
       ? record.htmlViewerNoSandbox
       : SIDEBAR_PREFS_DEFAULTS.htmlViewerNoSandbox,
@@ -112,6 +98,23 @@ function pluginSettingsMapOf(value: unknown): Record<string, Record<string, unkn
 }
 
 /**
+ * Validate the exclude-pattern list: a JSON array whose string entries
+ * survive (trimmed; blanks dropped). Anything else falls back to the stock
+ * list — the schema defaults already guard the wire shape, this is the
+ * client's second line.
+ */
+function stringArrayOf(value: unknown): string[] {
+  if (!Array.isArray(value)) return [...EXPLORER_EXCLUDE_DEFAULTS]
+  const out: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const trimmed = item.trim()
+    if (trimmed !== '') out.push(trimmed)
+  }
+  return out
+}
+
+/**
  * Validate one enable-switch map (per-tab / per-viewer). Only boolean values
  * survive; a non-object or a non-boolean entry falls back to the empty map /
  * drops the entry — an absent key means the feature stays enabled.
@@ -123,21 +126,6 @@ function booleanMapOf(value: unknown): Record<string, boolean> {
     if (typeof item === 'boolean') out[key] = item
   }
   return out
-}
-
-/** Type guard for the title-bar scheme union (anything else falls back). */
-function isTitleBarScheme(value: unknown): value is TitleBarScheme {
-  return typeof value === 'string' && (TITLE_BAR_SCHEMES as readonly string[]).includes(value)
-}
-
-/**
- * Whether the legacy document carries an explicit strip value (only
- * reachable through the old gear popup): a stored number different from the
- * default counts as "the user already configured something" and migrates to
- * the `custom` scheme.
- */
-function hasLegacyStripValue(value: unknown): boolean {
-  return typeof value === 'number' && Number.isFinite(value) && value !== TITLE_BAR_STRIP_DEFAULT
 }
 
 /**

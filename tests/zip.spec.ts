@@ -11,6 +11,7 @@
  *    workspace, covering the fence, the parameter guards and a full
  *    directory walk.
  */
+import './browser-globals.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
@@ -538,7 +539,7 @@ describe('disambiguateArchiveNames', () => {
 describe('archive task flow (build → status → download)', () => {
   it('archive client helpers build the frozen request/URL shapes', () => {
     expect(archiveDownloadUrl({ sessionId: 's-1' }, 'ar-9'))
-      .toBe('/sidebar/archive?sessionId=s-1&id=ar-9')
+      .toBe('http://localhost/sidebar/archive?sessionId=s-1&id=ar-9')
   })
 
   it('zips a selected file and a selected directory, walking it recursively', async () => {

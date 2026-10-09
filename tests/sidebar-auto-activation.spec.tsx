@@ -30,7 +30,8 @@ import { setupReactAct } from './test-utils.ts'
 setupReactAct()
 
 import { Sidebar } from '../src/client/Sidebar.tsx'
-import { allLeaves, createSidebarStore, type SidebarStore } from '../src/client/state.ts'
+import { allLeaves, createSidebarStore, type SidebarStore, type SidebarTab } from '../src/client/state.ts'
+import { t } from '../src/client/locales.ts'
 import {
   createBetterSidebarService,
   type BetterSidebarService,
@@ -123,20 +124,37 @@ function makeMountedStore(initial: string | undefined) {
 type MountedStore = ReturnType<typeof makeMountedStore>
 
 /** `ctx.sidebarRight`, replaced by a stand-in column: `isExpanded` reports the
- *  current state, `toggleExpanded` flips it and counts the calls, and `mounted`
- *  is the seat observation the shell binds its per-session state to. */
+ *  current state, `toggleExpanded` flips it and counts the calls, `active`
+ *  reports the page the reader is looking at, and `mounted` is the seat
+ *  observation the shell binds its per-session state to. */
 interface NativeColumnSpy {
-  face: { isExpanded: () => boolean; toggleExpanded: () => void; mounted: MountedStore }
+  face: {
+    isExpanded: () => boolean
+    toggleExpanded: () => void
+    active: () => { kind: string } | undefined
+    mounted: MountedStore
+  }
   toggles: number
   mounted: MountedStore
 }
 
-function makeNativeColumnSpy(expanded: boolean, mounted: string | undefined): NativeColumnSpy {
+/**
+ * `activeKind` is the kind of the tab on screen: 'editor' stands for anything
+ * the reader opened themselves (a file, a diff, a side chat). `mountSidebar`
+ * defaults it to the Tasks page itself, so the lanes that pin the
+ * activate-and-park promise keep reading a column whose open page the
+ * activation is allowed to re-focus.
+ */
+function makeNativeColumnSpy(
+  expanded: boolean,
+  mounted: string | undefined,
+  activeKind: string | undefined,
+): NativeColumnSpy {
   const spy = {
     toggles: 0,
     expanded,
     mounted: makeMountedStore(mounted),
-    face: {} as { isExpanded: () => boolean; toggleExpanded: () => void; mounted: MountedStore },
+    face: {} as NativeColumnSpy['face'],
   }
   spy.face = {
     isExpanded: () => spy.expanded,
@@ -144,6 +162,7 @@ function makeNativeColumnSpy(expanded: boolean, mounted: string | undefined): Na
       spy.toggles += 1
       spy.expanded = !spy.expanded
     },
+    active: () => (activeKind === undefined ? undefined : { kind: activeKind }),
     mounted: spy.mounted,
   }
   return spy
@@ -170,6 +189,8 @@ interface MountedSidebar {
   sessionId: string
   /** The client jobs feed the auto-open trigger watches (push rosters). */
   jobs: JobsFeed
+  /** The shell's own DOM: the bottom workbench strip renders inside it. */
+  container: HTMLDivElement
   unmount: () => void
 }
 
@@ -228,7 +249,7 @@ function setViewport(width: number): void {
 function mountSidebar(
   width: number,
   bottomOpen = false,
-  options: { columnExpanded?: boolean; prefs?: Record<string, unknown> } = {},
+  options: { columnExpanded?: boolean; activeKind?: string; prefs?: Record<string, unknown> } = {},
 ): MountedSidebar {
   setViewport(width)
   vi.stubGlobal('WebSocket', FakeWebSocket)
@@ -255,7 +276,11 @@ function mountSidebar(
   const surface = makeNativeSurfaceSpy()
   service.setSurface(surface.surface)
   service.registerTab({ id: 'subagent', title: 'Subagent', component: JumpHarness })
-  const column = makeNativeColumnSpy(options.columnExpanded ?? false, sessionId)
+  const column = makeNativeColumnSpy(
+    options.columnExpanded ?? false,
+    sessionId,
+    options.activeKind ?? 'subagent',
+  )
   const localeSnapshot = { active: 'en' }
   const ctx = {
     locale: { subscribe: () => () => {}, getSnapshot: () => localeSnapshot },
@@ -277,6 +302,7 @@ function mountSidebar(
     column,
     sessionId,
     jobs,
+    container,
     unmount: () => {
       act(() => { root.unmount() })
       container.remove()
@@ -383,6 +409,23 @@ function expectNativeTasksOpen(sidebar: MountedSidebar, sessionId: string): void
   }])
 }
 
+/**
+ * The unread dot, wherever it is drawn. The native chip lives in the HOST's
+ * tree (the plugin only contributes the `sidebar.right.pane.tab.title`
+ * content), so inside this shell the readable carrier is the bottom
+ * workbench's own strip; `tests/native-tab-unread.spec.tsx` renders the chip
+ * itself and pins that side.
+ */
+function unreadDots(sidebar: MountedSidebar): Element[] {
+  return [...sidebar.container.querySelectorAll(`[aria-label="${t('tabUnread')}"]`)]
+}
+
+/** The workbench tab holding one type, or undefined when it is not open there. */
+function workbenchTab(sidebar: MountedSidebar, type: string): SidebarTab | undefined {
+  return allLeaves(sidebar.store.getSnapshot().state!.bottomSplits)
+    .flatMap(leaf => leaf.tabs).find(tab => tab.type === type)
+}
+
 /** The plugin's own bottom workbench kept its own state and gained no tab. */
 function expectWorkbenchUntouched(sidebar: MountedSidebar, open = false): void {
   const state = sidebar.store.getSnapshot().state!
@@ -431,9 +474,123 @@ describe('Sidebar background-activity auto-activation (#162)', () => {
   })
 
   it('a narrow column the user already expanded is not closed under them', async () => {
-    const sidebar = mountSidebar(390, false, { columnExpanded: true, prefs: { mobileNoAutoOpen: false } })
+    const sidebar = mountSidebar(390, false, {
+      columnExpanded: true,
+      activeKind: 'subagent',
+      prefs: { mobileNoAutoOpen: false },
+    })
     await publishActivity(sidebar, 'subagent')
     expectNativeTasksOpen(sidebar, sidebar.sessionId)
+    expect(sidebar.column.toggles).toBe(0)
+  })
+
+  it.each(['subagent', 'job'] as const)(
+    'a WIDE column open on another page keeps it: %s activation does not take the column over',
+    async (source) => {
+      // The takeover gate. The reader is in a document (here: whatever kind the
+      // plugin opened for a `.md`) and the agent starts background work — the
+      // host's open would focus the Tasks page and throw that document out of
+      // view, which is exactly what must not happen.
+      const sidebar = mountSidebar(1024, false, { columnExpanded: true, activeKind: 'editor' })
+      await publishActivity(sidebar, source)
+      // The page is still CREATED — the event is never dropped — but without
+      // the focus op (`revealIfOpened: false` is exactly the host's "place it,
+      // do not focus it"): that pair is what the takeover gate used to buy by
+      // returning early, at the price of losing the page.
+      expect(sidebar.surface.opens).toEqual([{
+        sessionId: sidebar.sessionId,
+        kind: 'subagent',
+        params: expect.objectContaining({ title: expect.any(String) }),
+        revealIfOpened: false,
+      }])
+      // No park either: the column stays as the reader left it.
+      expect(sidebar.column.toggles).toBe(0)
+      // …and the page is announced instead of silently created. (The two
+      // CARRIERS of that announcement are pinned by the lanes below and by
+      // tests/native-tab-unread.spec.tsx; this lane is the mark itself.)
+      expect(sidebar.store.getSnapshot().state!.unread).toEqual(['subagent'])
+    },
+  )
+
+  it('a gated activation marks the page unread on the bottom strip, and activating it clears the mark', async () => {
+    // Both carriers read the same per-session mark, so the workbench strip is
+    // where this shell can see it: the Tasks page is open there and the reader
+    // is looking at a document in the native column instead.
+    const sidebar = mountSidebar(1024, true, { columnExpanded: true, activeKind: 'editor' })
+    act(() => {
+      sidebar.service.openTab(
+        { type: 'subagent', title: 'Tasks', target: 'bottom' },
+        { sessionId: sidebar.sessionId },
+      )
+    })
+    const tab = workbenchTab(sidebar, 'subagent')
+    expect(tab).toBeDefined()
+    expect(unreadDots(sidebar)).toHaveLength(0)
+
+    await publishActivity(sidebar, 'subagent')
+    expect(sidebar.store.getSnapshot().state!.unread).toEqual(['subagent'])
+    const dots = unreadDots(sidebar)
+    expect(dots).toHaveLength(1)
+    // Reached through the workbench its own activation path: the click IS the
+    // reader looking at the page.
+    act(() => { sidebar.service.activateTab(tab!.id, { sessionId: sidebar.sessionId }) })
+    expect(sidebar.store.getSnapshot().state!.unread).toEqual([])
+    expect(unreadDots(sidebar)).toHaveLength(0)
+  })
+
+  it('a column the reader is ALREADY on the Tasks page of raises no dot', async () => {
+    // The mark means "there is a page you have not looked at"; the re-focus
+    // path below is the reader already looking at it.
+    const sidebar = mountSidebar(1024, false, { columnExpanded: true, activeKind: 'subagent' })
+    await publishActivity(sidebar, 'subagent')
+    expect(sidebar.store.getSnapshot().state!.unread).toEqual([])
+    expect(unreadDots(sidebar)).toHaveLength(0)
+  })
+
+  it('a normal (revealed) activation raises no dot', async () => {
+    // Only the gated open is unread: an activation that really takes the
+    // column over has shown the reader the page already.
+    const sidebar = mountSidebar(1024, false, { columnExpanded: false, activeKind: 'editor' })
+    await publishActivity(sidebar, 'subagent')
+    expectNativeTasksOpen(sidebar, sidebar.sessionId)
+    expect(sidebar.store.getSnapshot().state!.unread).toEqual([])
+  })
+
+  it('a WIDE column already showing the Tasks page is still re-focused in place', async () => {
+    const sidebar = mountSidebar(1024, false, { columnExpanded: true, activeKind: 'subagent' })
+    await publishActivity(sidebar, 'subagent')
+    expectNativeTasksOpen(sidebar, sidebar.sessionId)
+    expect(sidebar.column.toggles).toBe(0)
+  })
+
+  it('a COLLAPSED column is not "in use": the page behind it does not block the activation', async () => {
+    // Nothing of the reader's is on screen while the column is collapsed, so
+    // the switches keep their promise there (the host expands it on open).
+    const sidebar = mountSidebar(1024, false, { activeKind: 'editor' })
+    await publishActivity(sidebar, 'subagent')
+    expectNativeTasksOpen(sidebar, sidebar.sessionId)
+  })
+
+  it('a host without the active-tab face keeps the plain activation', async () => {
+    const sidebar = mountSidebar(1024, false, { columnExpanded: true, activeKind: 'editor' })
+    // Nothing to compare against is not "the reader is elsewhere".
+    delete (sidebar.column.face as { active?: unknown }).active
+    await publishActivity(sidebar, 'subagent')
+    expectNativeTasksOpen(sidebar, sidebar.sessionId)
+  })
+
+  it('the topology jump-back still takes over a column the reader is using', () => {
+    // The node click IS the user asking for the Tasks page, so the takeover
+    // gate applies to background activity only.
+    const sidebar = mountSidebar(1024, false, { columnExpanded: true, activeKind: 'editor' })
+    act(() => {
+      sidebar.service.openTab(
+        { type: 'subagent', title: 'Tasks', target: 'bottom' },
+        { sessionId: sidebar.sessionId },
+      )
+    })
+    switchToChild(sidebar)
+    expectNativeTasksOpen(sidebar, 'child')
     expect(sidebar.column.toggles).toBe(0)
   })
 

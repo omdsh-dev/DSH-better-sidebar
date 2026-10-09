@@ -30,6 +30,7 @@ import {
   ConnectionIndicator,
   DiffBlock,
   IconApiOutlineRegular,
+  IconArchiveOutlineRegular,
   IconBrowseOutlineRegular,
   IconChevronRightOutlineRegular,
   IconEditOutlineRegular,
@@ -41,6 +42,7 @@ import {
   IconStopFillRegular,
   MarkdownText,
   Menu,
+  MarkdownDelegateProvider,
   ReadBlock,
   StateDot,
   TerminalBlock,
@@ -50,6 +52,7 @@ import {
   type TerminalBlockLabels,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { markdownTextProps } from './markdown-labels.tsx'
+import { useMarkdownSurface } from './use-markdown-surface.ts'
 import { IconHistoryOutline16, IconSaveOutline16 } from './icons.tsx'
 import type { Context, SidebarHistoryEntry, SidebarSessionEvent } from '../context-types.ts'
 import {
@@ -60,6 +63,7 @@ import {
   threadTrailingPending,
   type SidechatLiveEvent,
   type SidechatThreadInfo,
+  type SideThreadRow,
 } from '../sidechat-core.ts'
 import {
   formatDurationMs,
@@ -109,6 +113,60 @@ export function consumeSidechatSeed(): string | undefined {
  *  StrictMode / HMR must not mint two threads for one tab). */
 const inFlightStarts = new Set<string>()
 
+/** Where the last side-chat thread of each main session is remembered (the
+ *  client store's own key space, like the diff pane's redaction flag). */
+const LAST_THREAD_KEY = 'dsh-sidebar:v1:sidechat-thread'
+
+/** The in-memory mirror of {@link LAST_THREAD_KEY}. */
+const lastThreadBySession = new Map<string, string>()
+
+/** Whether the localStorage mirror has been read into the map yet. */
+let lastThreadsLoaded = false
+
+/**
+ * A native tab's record and its navigation params live in the host's memory
+ * only, so collapsing the sidebar (or restarting DSH) remounts the tab with
+ * NO thread bound — the autoCreate path — and the reader would land in a
+ * brand-new empty thread instead of the one they were in. Remembering the
+ * last thread per session is what makes the reattach below possible; the
+ * storage is best-effort (a denied or unparseable entry just means the
+ * reattach falls back to the newest thread).
+ */
+function loadLastThreads(): void {
+  if (lastThreadsLoaded) return
+  lastThreadsLoaded = true
+  try {
+    const raw = localStorage.getItem(LAST_THREAD_KEY)
+    if (raw === null) return
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return
+    for (const [sessionId, threadId] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof threadId === 'string') lastThreadBySession.set(sessionId, threadId)
+    }
+  } catch {
+    // No storage (or unreadable JSON): nothing was remembered.
+  }
+}
+
+/** The thread a session's side-chat tab was last bound to, if any. */
+function lastSidechatThread(sessionId: string): string | undefined {
+  loadLastThreads()
+  return lastThreadBySession.get(sessionId)
+}
+
+/** Remember the side-chat thread a session is bound to (also across reloads). */
+function rememberSidechatThread(sessionId: string, threadId: string): void {
+  loadLastThreads()
+  if (lastThreadBySession.get(sessionId) === threadId) return
+  lastThreadBySession.set(sessionId, threadId)
+  try {
+    localStorage.setItem(LAST_THREAD_KEY, JSON.stringify(Object.fromEntries(lastThreadBySession)))
+  } catch {
+    // A full or denied storage keeps the in-memory binding: reattaching
+    // within this page still works, only a reload loses it.
+  }
+}
+
 /** Per-thread transcript cache: thread-own events merged by seq (polls ride
  * the afterSeq delta and never re-download what they already hold). */
 interface ThreadCache {
@@ -131,6 +189,56 @@ interface RowLabels {
   terminal: TerminalBlockLabels
   diff: DiffBlockLabels
   read: ReadBlockLabels
+}
+
+/** The host services this view reaches for archiving. Neither face lives on
+ *  the plugin's own context type — `workspaces` is the session-list service and
+ *  `uiWorkspace` the session surface — so they are read through the same
+ *  structural probe the other views use for host services. */
+interface ArchivedSessionsFace {
+  list?: {
+    getSnapshot?: () => { archivedSessionIds?: readonly string[] }
+    subscribe?: (callback: () => void) => () => void
+  }
+}
+
+interface ArchiveSessionFace {
+  archiveSession?: (sessionId: string, options: { stopActivity: boolean }) => Promise<void>
+}
+
+/** A stable "nothing is archived" snapshot: the archive set feeds
+ *  `useSyncExternalStore`, and a fresh `[]` per read would re-render forever. */
+const NO_ARCHIVED_SESSIONS: readonly string[] = []
+
+/** The sessions the host currently hides as archived. A host without the
+ *  `workspaces` service (or a context that throws on `get`) reads as "nothing
+ *  is archived", so the thread menu simply keeps every thread. */
+function archivedSessionIdsOf(ctx: Context): readonly string[] {
+  try {
+    const service = ctx.get('workspaces') as unknown as ArchivedSessionsFace | undefined
+    return service?.list?.getSnapshot?.()?.archivedSessionIds ?? NO_ARCHIVED_SESSIONS
+  } catch {
+    return NO_ARCHIVED_SESSIONS
+  }
+}
+
+/** Subscribe to the host's archive set. DSH hides archived sessions from the
+ *  session list, so the thread menu has to follow the same set — otherwise it
+ *  would keep offering a thread the host refuses to open. */
+function useArchivedSessionIds(ctx: Context): readonly string[] {
+  const subscribe = useMemo(
+    () => (callback: () => void) => {
+      try {
+        const service = ctx.get('workspaces') as unknown as ArchivedSessionsFace | undefined
+        return service?.list?.subscribe?.(callback) ?? (() => {})
+      } catch {
+        return () => {}
+      }
+    },
+    [ctx],
+  )
+  const getSnapshot = useCallback(() => archivedSessionIdsOf(ctx), [ctx])
+  return useSyncExternalStore(subscribe, getSnapshot)
 }
 
 /** Merge history entries by event seq (newest wins), log order preserved. */
@@ -260,19 +368,21 @@ function toolLeading(name: string, failed: boolean): React.ReactNode {
   }
 }
 
-/** One row renderer (React keys ride the source event seq). */
-function renderRow(row: SidechatTranscriptRow, labels: RowLabels): React.ReactNode {
+/** One row renderer (React keys ride the source event seq). `rewrite` is the
+ *  surface's markdown link pass — the rows are model prose, so a relative link
+ *  resolves against the session cwd (see use-markdown-surface). */
+function renderRow(row: SidechatTranscriptRow, labels: RowLabels, rewrite: (text: string) => string): React.ReactNode {
   switch (row.kind) {
     case 'user':
       return (
         <div key={`${row.kind}:${row.seq}`} className={css.sidechatUser}>
-          <MarkdownText {...markdownTextProps(row.text, labels)} />
+          <MarkdownText {...markdownTextProps(rewrite(row.text), labels)} />
         </div>
       )
     case 'assistant':
       return (
         <div key={`${row.kind}:${row.seq}`} className={css.sidechatAssistant}>
-          <MarkdownText {...markdownTextProps(row.text, labels)} />
+          <MarkdownText {...markdownTextProps(rewrite(row.text), labels)} />
         </div>
       )
     case 'reasoning':
@@ -386,17 +496,34 @@ export function SideChatView(props: {
     useMemo(() => (callback: () => void) => ctx.sessions.list.subscribe(callback), [ctx]),
     useCallback(() => ctx.sessions.list.getSnapshot(), [ctx]),
   )
-  const threads = useMemo(
-    () => sideThreadRows(list.byId, scope.sessionId),
-    [list, scope.sessionId],
-  )
+  // Archived threads are dropped from the menu (and from the switch targets):
+  // the host hides archived sessions itself, and binding a tab to one would
+  // strand the panel on a session it refuses to open.
+  const archivedIds = useArchivedSessionIds(ctx)
+  const threads = useMemo(() => {
+    const archived = new Set(archivedIds)
+    return sideThreadRows(list.byId, scope.sessionId).filter(row => !archived.has(row.id))
+  }, [list, scope.sessionId, archivedIds])
+
+  /** The newest thread of `candidates`: the session list carries the thread
+   *  rows but not their age, so the creation order comes from the host's
+   *  subagent catalog. An untouched "new thread" placeholder only wins when
+   *  nothing else is left. */
+  const newestThreadId = useCallback((candidates: readonly SideThreadRow[]): string | undefined => {
+    const catalog = list.projectionsBySession?.[scope.sessionId]?.values.subagentCatalog
+    const rank = (id: string): number => catalog?.find(entry => entry.id === id)?.createdAt ?? 0
+    const real = candidates.filter(row => row.title !== SIDE_NEW_THREAD_TITLE)
+    const pool = real.length > 0 ? real : candidates
+    if (pool.length === 0) return undefined
+    return pool.reduce((newest, row) => (rank(row.id) > rank(newest.id) ? row : newest)).id
+  }, [list, scope.sessionId])
 
   // The thread this tab is bound to rides tab.meta (refresh-restored).
   const threadId = sidechatThreadIdOf(tab)
   const autoCreate = (tab.meta as { autoCreate?: unknown } | undefined)?.autoCreate === true
 
   const [composer, setComposer] = useState('')
-  const [busy, setBusy] = useState<'starting' | 'sending' | 'saving' | null>(null)
+  const [busy, setBusy] = useState<'starting' | 'sending' | 'saving' | 'archiving' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [revision, setRevision] = useState(0)
@@ -408,6 +535,18 @@ export function SideChatView(props: {
   const prevRowsRef = useRef<SidechatTranscriptRow[]>([])
   const controllerRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  /** Heading slugs, anchor jumps and `.md` link claiming for the transcript (a
+   *  prose surface: it renders no file of its own, so a relative link target
+   *  resolves against the session cwd). */
+  const { surfaceRef: chatSurfaceRef, openFile: openChatFile, rewrite: rewriteChatText } = useMarkdownSurface({
+    ctx,
+    sessionId: scope.sessionId,
+    cwd: scope.cwd,
+  })
+  const transcriptRef = useCallback((element: HTMLDivElement | null) => {
+    scrollRef.current = element
+    chatSurfaceRef(element)
+  }, [chatSurfaceRef])
   const composerRef = useRef<HTMLTextAreaElement | null>(null)
 
   const summary = threadId === undefined ? undefined : list.byId[threadId]
@@ -446,12 +585,41 @@ export function SideChatView(props: {
     }
   }, [ctx, scope.sessionId, tab.id])
 
-  // Codex-style immediate create: an autoCreate tab spawns its thread as
-  // soon as it first renders.
+  /**
+   * The existing thread an unbound side chat should reattach to: the binding
+   * this session was last in (kept only while the thread is still listed — a
+   * deleted or archived thread must not be revived), then the newest thread
+   * that already carries a real first prompt.
+   */
+  const reattachTarget = useCallback((): string | undefined => {
+    const remembered = lastSidechatThread(scope.sessionId)
+    if (remembered !== undefined && (threads.length === 0 || threads.some(row => row.id === remembered))) {
+      return remembered
+    }
+    return newestThreadId(threads)
+  }, [newestThreadId, scope.sessionId, threads])
+
+  // Codex-style immediate create: an autoCreate tab spawns its thread as soon
+  // as it first renders. A tab that LOST its binding (a panel collapse or a
+  // restart — the host holds navigation params in memory only, see
+  // loadLastThreads) reattaches to the thread the session was last in instead
+  // of leaving yet another orphan "Side: New thread" session behind.
   useEffect(() => {
     if (threadId !== undefined || !autoCreate || !visible) return
+    const reattach = reattachTarget()
+    if (reattach !== undefined) {
+      // Name the seat session: the same native id names a tab in every session.
+      ctx.get('betterSidebar')?.updateTab(tab.id, { meta: { threadId: reattach } }, scope.sessionId)
+      return
+    }
     void startThread()
-  }, [threadId, autoCreate, visible, startThread])
+  }, [threadId, autoCreate, visible, startThread, reattachTarget, ctx, tab.id, scope.sessionId])
+
+  // Remember the thread this tab holds, so reopening the panel (or a restart)
+  // reattaches it instead of minting another one.
+  useEffect(() => {
+    if (threadId !== undefined) rememberSidechatThread(scope.sessionId, threadId)
+  }, [threadId, scope.sessionId])
 
   // The tab title follows the thread's durable label (the first prompt
   // renames the thread; the strip picks it up here).
@@ -593,11 +761,27 @@ export function SideChatView(props: {
     scroller.scrollTop = scroller.scrollHeight
   }, [rows.length, threadId])
 
-  /** Open a NEW thread tab (createTab mints the autoCreate tab; its view
-   *  creates the thread on mount). */
-  const openNewThread = (): void => {
+  /** Open a NEW thread tab: the thread is created FIRST and parked for the
+   *  descriptor's createTab, so the tab that opens is already bound to it —
+   *  the pane never sits on the empty hero while a thread is being created,
+   *  and the native page kind (which re-delivers its one tab instead of
+   *  copying it) switches to the new thread through the same navigation the
+   *  thread menu uses. */
+  const openNewThread = async (): Promise<void> => {
     setMenuOpen(false)
-    ctx.get('betterSidebar')?.openTab({ type: 'sidechat' }, scope)
+    if (busy !== null) return
+    setBusy('starting')
+    setError(null)
+    try {
+      const { childId } = await api.sidechatStart(scope.sessionId)
+      rememberSidechatThread(scope.sessionId, childId)
+      parkSidechatReopen(childId)
+      ctx.get('betterSidebar')?.openTab({ type: 'sidechat' }, scope)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(null)
+    }
   }
 
   /** Switch to an existing thread: parked for createTab, deduped to the
@@ -661,6 +845,16 @@ export function SideChatView(props: {
     }
   }
 
+  /** The thread that should replace `excludeId` once it is archived: the newest
+   *  real thread first (the host's own subagent catalog carries the creation
+   *  order), the newest placeholder only when nothing else is left, and
+   *  `undefined` when the thread menu is empty — the tab then unbinds to the
+   *  empty state instead of staying bound to an archived session. */
+  const fallbackThreadId = useCallback(
+    (excludeId: string): string | undefined => newestThreadId(threads.filter(row => row.id !== excludeId)),
+    [newestThreadId, threads],
+  )
+
   const handleSave = async (): Promise<void> => {
     if (threadId === undefined || !canSave || busy !== null) return
     setBusy('saving')
@@ -686,6 +880,29 @@ export function SideChatView(props: {
     }
   }
 
+  /** Archive the bound thread on the host (the same capability the session
+   *  list's own archive action uses; `stopActivity` settles a running agent
+   *  first). The tab then moves to another live thread: leaving it bound to an
+   *  archived session would dead-end the panel, because the host refuses to
+   *  open archived sessions. */
+  const handleArchive = async (): Promise<void> => {
+    if (threadId === undefined || busy !== null) return
+    setBusy('archiving')
+    setError(null)
+    setSaved(false)
+    try {
+      const service = ctx.get('uiWorkspace') as unknown as ArchiveSessionFace | undefined
+      if (service?.archiveSession === undefined) throw new Error('the workspace service is unavailable')
+      await service.archiveSession(threadId, { stopActivity: true })
+      const next = fallbackThreadId(threadId)
+      ctx.get('betterSidebar')?.updateTab(tab.id, { meta: next === undefined ? {} : { threadId: next } })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(null)
+    }
+  }
+
   // ── unbound tab: the hero (fresh autoCreate tabs flash a creating state
   //    until the thread lands; legacy persisted tabs offer a manual start) ──
   if (threadId === undefined) {
@@ -699,11 +916,11 @@ export function SideChatView(props: {
               busy === 'starting' && css.sidechatShimmerText,
             )}
           >
-            {busy === 'starting' ? t('sideChatCreating') : t('sideChatEmpty')}
+            {busy === 'starting' || (autoCreate && error === null) ? t('sideChatCreating') : t('sideChatEmpty')}
           </div>
           <div className={css.sidechatHeroDesc}>{t('sideChatEmptyDesc')}</div>
           {error !== null && <div className={css.sidechatError}>{t('sideChatError', { message: error })}</div>}
-          {busy !== 'starting' && (
+          {busy !== 'starting' && (!autoCreate || error !== null) && (
             <button
               type="button"
               className={css.sidechatPrimaryBtn}
@@ -737,7 +954,7 @@ export function SideChatView(props: {
           )}
           items={menuItems}
           selectedId={threadId}
-          onSelect={(id) => { if (id === '$new') openNewThread(); else openExistingThread(id) }}
+          onSelect={(id) => { if (id === '$new') void openNewThread(); else openExistingThread(id) }}
           onClose={() => { setMenuOpen(false) }}
           align="end"
           portal
@@ -751,6 +968,16 @@ export function SideChatView(props: {
           title={`${t('sideChatSave')} — ${t('sideChatSaveTitle')}`}
         >
           <IconSaveOutline16 />
+        </button>
+        <button
+          type="button"
+          className={css.sidechatIconBtn}
+          onClick={() => void handleArchive()}
+          disabled={running || busy !== null}
+          title={running ? t('sideChatArchiveRunning') : t('sideChatArchive')}
+          aria-label={t('sideChatArchive')}
+        >
+          <IconArchiveOutlineRegular size={16} />
         </button>
       </div>
       {connectionState !== undefined && connectionState !== 'connected' && (
@@ -769,8 +996,13 @@ export function SideChatView(props: {
         && <div className={css.sidechatHint}>{t('sideChatPendingDrop')}</div>}
       {saved && <div className={css.sidechatHint}>{t('sideChatSaved')}</div>}
       {error !== null && <div className={css.sidechatError}>{t('sideChatError', { message: error })}</div>}
-      <div ref={scrollRef} className={css.sidechatScroll}>
-        {rows.map(row => renderRow(row, rowLabels))}
+      <div ref={transcriptRef} className={css.sidechatScroll}>
+        {/* The host delegate is what makes a local markdown link in a row
+            clickable at all (see use-markdown-surface), scoped to this
+            transcript so nothing outside it is claimed. */}
+        <MarkdownDelegateProvider openFile={openChatFile}>
+          {rows.map(row => renderRow(row, rowLabels, rewriteChatText))}
+        </MarkdownDelegateProvider>
       </div>
       {running && (
         <div className={css.sidechatStatus}>

@@ -16,7 +16,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { GitLens } from '../src/client/changes/GitLens.tsx'
 import { createSidebarStore } from '../src/client/state.ts'
-import { api, type GitLogEntry, type GitStatusResult, type GitWorktree } from '../src/client/api.ts'
+import { api, type GitLogEntry, type GitStatusEntry, type GitStatusResult, type GitWorktree } from '../src/client/api.ts'
 import type { BetterSidebarService } from '../src/client/service.ts'
 import { t } from '../src/client/locales.ts'
 import type { Context } from '../src/context-types.ts'
@@ -91,6 +91,13 @@ function mountGit(
       ...(options.ctx === undefined ? {} : { ctx: options.ctx }),
     }))
   })
+}
+
+/** A detached container + root; every case here unmounts it in its own finally. */
+function makeRoot(): { container: HTMLDivElement; root: Root } {
+  const container = document.createElement('div')
+  document.body.append(container)
+  return { container, root: createRoot(container) }
 }
 
 afterEach(() => { vi.restoreAllMocks() })
@@ -197,9 +204,10 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       scope.repoRoot === REPO_B ? repoBWorktrees : []
     ))
     const status = vi.spyOn(api, 'gitStatus').mockImplementation(async (scope) => (
-      scope.cwd === REPO_B
-        ? { isRepo: true, branch: 'b-main', entries: [], root: REPO_B, repositories: [REPO_B] }
-        : { isRepo: true, branch: 'a-main', entries: [], root: REPO_A, repositories: [REPO_A, REPO_B] }
+      // Attached sessions ignore the client's cwd override; repoRoot selects the child.
+      scope.repoRoot === REPO_B
+        ? { isRepo: true, branch: 'b-main', entries: [{ path: 'b-change.ts', xy: ' M' }], root: REPO_B, repositories: [REPO_B] }
+        : { isRepo: true, branch: 'a-main', entries: [{ path: 'a-change.ts', xy: ' M' }], root: REPO_A, repositories: [REPO_A, REPO_B] }
     ))
     vi.spyOn(api, 'gitBranch').mockImplementation(async (scope) => (
       scope.repoRoot === REPO_B ? { current: 'b-main', names: ['b-main'] } : { current: 'a-main', names: ['a-main'] }
@@ -231,9 +239,21 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       // Exactly ONE full refresh for the switch (not a burst).
       expect(worktrees.mock.calls.length).toBe(listingsBefore + 1)
       // The shared status follows the same selection.
-      expect(status.mock.calls.some(([scope]) => scope.cwd === REPO_B)).toBe(true)
+      expect(status.mock.calls.at(-1)![0]).toMatchObject({ sessionId: 'session', cwd: WS, repoRoot: REPO_B })
+      expect(container.querySelector(`[title="${t('branch')}: b-main"]`)).not.toBeNull()
+      expect(container.querySelector('[data-path="b-change.ts"]')).not.toBeNull()
+      expect(container.querySelector('[data-path="a-change.ts"]')).toBeNull()
       const worktreeSelect = container.querySelectorAll<HTMLSelectElement>('select')[1]!
       expect(worktreeSelect.value).toBe(REPO_B)
+
+      await act(async () => {
+        repoSelect.value = REPO_A
+        repoSelect.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+      await flushEffects()
+      expect(container.querySelector(`[title="${t('branch')}: a-main"]`)).not.toBeNull()
+      expect(container.querySelector('[data-path="a-change.ts"]')).not.toBeNull()
+      expect(container.querySelector('[data-path="b-change.ts"]')).toBeNull()
     } finally {
       act(() => { root.unmount() })
       container.remove()
@@ -418,7 +438,7 @@ describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
       const banner = [...container.querySelectorAll<HTMLElement>('[role="alert"]')]
         .find(node => (node.textContent ?? '').includes(`${t('checkoutError')}: dirty worktree`))
       expect(banner).toBeDefined()
-      const input = container.querySelector(`input[placeholder="${t('commitPlaceholder')}"]`)
+      const input = container.querySelector(`textarea[placeholder="${t('commitPlaceholder')}"]`)
       expect(input).not.toBeNull()
       // The commit bar owns only its own status line: the branch failure is
       // rendered ABOVE it, never under the commit input.
@@ -435,7 +455,7 @@ describe('GitLens (changes tab, git lens) change tree', () => {
   async function mountTree(
     container: HTMLElement,
     root: Root,
-    entries: Array<{ path: string; xy: string }>,
+    entries: Array<{ path: string; xy: string; counts?: GitStatusEntry['counts'] }>,
   ): Promise<void> {
     const changes = entries.filter(row => row.xy !== '  ').length
     vi.spyOn(api, 'gitWorktrees').mockResolvedValue([{ path: MAIN, branch: 'main', current: true, changes }])
@@ -444,12 +464,6 @@ describe('GitLens (changes tab, git lens) change tree', () => {
     vi.spyOn(api, 'gitLog').mockResolvedValue([])
     mountGit(root)
     await flushEffects()
-  }
-
-  function makeRoot(): { container: HTMLDivElement; root: Root } {
-    const container = document.createElement('div')
-    document.body.append(container)
-    return { container, root: createRoot(container) }
   }
 
   it('folds a directory row per group, independently of the same path on the other side', async () => {
@@ -669,6 +683,236 @@ describe('GitLens (changes tab, git lens) change tree', () => {
       act(() => { root.unmount() })
       container.remove()
       vi.useRealTimers()
+    }
+  })
+
+  /**
+   * Issue #131: the added/deleted line counts the status answer carries are
+   * what the file rows and the group headers print. The header's number is the
+   * sum of the numbers under it, and a row git has no numstat for (an untracked
+   * file, a binary blob) says so instead of printing an invented `+0 −0`.
+   */
+  describe('line counts (#131)', () => {
+    /** One rendered row's/band's count cluster, as its data attributes. */
+    function counted(container: HTMLElement, selector: string): { added: string | null; deleted: string | null; text: string } {
+      const node = container.querySelector<HTMLElement>(selector)
+      expect(node, selector).not.toBeNull()
+      return {
+        added: node!.getAttribute('data-added'),
+        deleted: node!.getAttribute('data-deleted'),
+        text: node!.textContent ?? '',
+      }
+    }
+
+    it('prints each row its own counts and each band the sum of its members', async () => {
+      const { container, root } = makeRoot()
+      try {
+        await mountTree(container, root, [
+          { path: 'src/a.ts', xy: ' M', counts: { additions: 4, deletions: 2 } },
+          { path: 'src/b.ts', xy: ' M', counts: { additions: 1, deletions: 0 } },
+          { path: 'docs/c.md', xy: 'M ', counts: { additions: 3, deletions: 3 } },
+        ])
+
+        expect(counted(container, '[data-path="src/a.ts"] [data-lines="count"]'))
+          .toEqual({ added: '4', deleted: '2', text: '+4−2' })
+        expect(counted(container, '[data-path="src/b.ts"] [data-lines="count"]'))
+          .toEqual({ added: '1', deleted: '0', text: '+1' })
+        expect(counted(container, '[data-path="docs/c.md"] [data-lines="count"]'))
+          .toEqual({ added: '3', deleted: '3', text: '+3−3' })
+
+        // Each band's total IS the sum of the rows under it (4+1 / 2+0 and
+        // 3 / 3) — and each group only counts its own members.
+        expect(counted(container, '[data-group="unstaged"] [data-lines="group"]'))
+          .toEqual({ added: '5', deleted: '2', text: '+5−2' })
+        expect(counted(container, '[data-group="staged"] [data-lines="group"]'))
+          .toEqual({ added: '3', deleted: '3', text: '+3−3' })
+
+        // The same numbers, read back off the DOM: band = Σ members.
+        const sumOf = (group: string, side: 'added' | 'deleted'): number =>
+          [...container.querySelectorAll<HTMLElement>(`[data-group="${group}"] [data-path] [data-lines="count"]`)]
+            .reduce((total, node) => total + Number(node.getAttribute(`data-${side}`)), 0)
+        expect(sumOf('unstaged', 'added')).toBe(5)
+        expect(sumOf('unstaged', 'deleted')).toBe(2)
+      } finally {
+        act(() => { root.unmount() })
+        container.remove()
+      }
+    })
+
+    it('says "new file" for an untracked entry and "binary" for a blob, inventing no numbers', async () => {
+      const { container, root } = makeRoot()
+      try {
+        await mountTree(container, root, [
+          { path: 'new.txt', xy: '??' },
+          { path: 'blob.bin', xy: ' M', counts: { binary: true } },
+        ])
+
+        expect(container.querySelector('[data-path="new.txt"] [data-lines="new"]')?.textContent)
+          .toBe(t('changesNewFile'))
+        expect(container.querySelector('[data-path="blob.bin"] [data-lines="binary"]')?.textContent)
+          .toBe(t('diffBinary'))
+        // Neither row claims a count...
+        expect(container.querySelector('[data-path="new.txt"] [data-lines="count"]')).toBeNull()
+        expect(container.querySelector('[data-path="blob.bin"] [data-lines="count"]')).toBeNull()
+        // ...and with nothing to sum, the band shows no total at all.
+        expect(container.querySelector('[data-group="unstaged"] [data-lines="group"]')).toBeNull()
+        // The count pill still reports how many files changed.
+        expect(container.querySelector('[data-group="unstaged"] [data-count]')?.textContent).toBe('2')
+      } finally {
+        act(() => { root.unmount() })
+        container.remove()
+      }
+    })
+
+    it('republishes the numbers when only the counts moved (same paths, same porcelain)', async () => {
+      vi.useFakeTimers()
+      const { container, root } = makeRoot()
+      try {
+        vi.spyOn(api, 'gitWorktrees').mockResolvedValue([{ path: MAIN, branch: 'main', current: true, changes: 1 }])
+        // Two answers with the SAME path and the SAME porcelain code: only the
+        // line counts moved (more lines appended to an already-modified file).
+        vi.spyOn(api, 'gitStatus')
+          .mockResolvedValueOnce({
+            isRepo: true, branch: 'main', entries: [{ path: 'src/a.ts', xy: ' M', counts: { additions: 1, deletions: 0 } }],
+          })
+          .mockResolvedValue({
+            isRepo: true, branch: 'main', entries: [{ path: 'src/a.ts', xy: ' M', counts: { additions: 7, deletions: 0 } }],
+          })
+        vi.spyOn(api, 'gitBranch').mockResolvedValue({ current: 'main', names: ['main'] })
+        vi.spyOn(api, 'gitLog').mockResolvedValue([])
+
+        mountGit(root)
+        await flushEffects()
+        expect(counted(container, '[data-path="src/a.ts"] [data-lines="count"]').added).toBe('1')
+
+        await act(async () => { await vi.advanceTimersByTimeAsync(2_600) })
+        await flushEffects()
+        // Both caches had to notice: the store's field-by-field snapshot
+        // compare AND the lens's content key. Either one ignoring the counts
+        // leaves the row printing its first reading forever.
+        expect(counted(container, '[data-path="src/a.ts"] [data-lines="count"]').added).toBe('7')
+        expect(counted(container, '[data-group="unstaged"] [data-lines="group"]').added).toBe('7')
+      } finally {
+        act(() => { root.unmount() })
+        container.remove()
+        vi.useRealTimers()
+      }
+    })
+  })
+})
+
+/**
+ * The lens lives in a REUSED tab instance (the workbench keeps one mounted
+ * component per tab id and swaps `scope`), so a destructive confirmation armed
+ * for a row of the previous project must not survive the swap: its `onConfirm`
+ * closure carries that row's path while `gitScopeNow()` already reads the new
+ * scope — the discard would land in the project that took over the pane.
+ */
+describe('GitLens (changes tab, git lens) scope swap', () => {
+  it('drops a pending discard confirmation when the scope changes', async () => {
+    // One primary checkout, so the view stays on MAIN's changed row.
+    const onlyMain: GitWorktree[] = [{ path: MAIN, branch: 'main', current: true, changes: 1 }]
+    vi.spyOn(api, 'gitWorktrees').mockResolvedValue(onlyMain)
+    vi.spyOn(api, 'gitStatus').mockImplementation(async (_scope, target) => statusFor(target))
+    vi.spyOn(api, 'gitBranch').mockImplementation(async (_scope, target) => ({
+      current: target === AGENT ? 'agent' : 'main',
+      names: target === AGENT ? ['agent'] : ['main'],
+    }))
+    vi.spyOn(api, 'gitLog').mockImplementation(async (_scope, _count, _skip, target) => logFor(target))
+    const discard = vi.spyOn(api, 'gitDiscard')
+
+    const { container, root } = makeRoot()
+    try {
+      mountGit(root, { scope: { sessionId: 's1', cwd: MAIN } })
+      await flushEffects()
+
+      const row = container.querySelector<HTMLElement>('[data-path="main-change.ts"]')
+      if (row === null) throw new Error('changed row not found')
+      act(() => {
+        row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 30 }))
+      })
+      const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .find(el => el.textContent === t('discard'))
+      if (item === undefined) throw new Error('discard menu item not found')
+      act(() => { item.click() })
+      expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+
+      // Another session takes over the same mounted instance.
+      mountGit(root, { scope: { sessionId: 's2', cwd: AGENT } })
+      await flushEffects()
+
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+      expect(discard).not.toHaveBeenCalled()
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
+
+  it('does not carry a half-typed commit message into the next scope', async () => {
+    // The Commit button asks only for a non-empty message and a staged row, so
+    // a draft typed against the previous project would submit verbatim under
+    // the new one — no confirmation in between. Driven through the submit
+    // itself rather than the button's disabled state: what has to hold is that
+    // the message is ABSENT, not merely that a gate is shut.
+    const commit = vi.spyOn(api, 'gitCommit').mockResolvedValue({ ok: true })
+    vi.spyOn(api, 'gitWorktrees').mockResolvedValue([{ path: MAIN, branch: 'main', current: true, changes: 1 }])
+    vi.spyOn(api, 'gitStatus').mockResolvedValue({
+      isRepo: true,
+      branch: 'main',
+      // 'M ' is a STAGED row: the commit path needs one to be reachable at all.
+      entries: [{ path: 'staged.ts', xy: 'M ' }],
+    })
+    vi.spyOn(api, 'gitBranch').mockImplementation(async (_scope, target) => ({
+      current: target === AGENT ? 'agent' : 'main',
+      names: target === AGENT ? ['agent'] : ['main'],
+    }))
+    vi.spyOn(api, 'gitLog').mockImplementation(async (_scope, _count, _skip, target) => logFor(target))
+
+    const { container, root } = makeRoot()
+    // Re-queried on every use: a re-render may hand back a different node, and
+    // a detached one keeps whatever its last render set.
+    const box = (): HTMLTextAreaElement | null =>
+      container.querySelector(`textarea[placeholder="${t('commitPlaceholder')}"]`)
+    const typeInto = async (text: string): Promise<void> => {
+      await act(async () => {
+        const node = box()
+        if (node === null) throw new Error('commit box not found')
+        // Native setter: a plain `node.value =` leaves React's tracker behind.
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(node, text)
+        node.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    const submit = async (): Promise<void> => {
+      await act(async () => {
+        box()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+      })
+      await act(async () => { await Promise.resolve() })
+    }
+    try {
+      mountGit(root, { scope: { sessionId: 's1', cwd: MAIN } })
+      await flushEffects()
+      await typeInto('fix: half typed in A')
+
+      // Another session takes over the same mounted instance. The draft stays
+      // behind with the project it was written for, so this submit finds no
+      // message to send.
+      mountGit(root, { scope: { sessionId: 's2', cwd: AGENT } })
+      await flushEffects()
+      await submit()
+      expect(commit).not.toHaveBeenCalled()
+
+      // Coming back to that project brings its own message back: the draft is
+      // the state a kept-mounted tab holds on #712's behalf.
+      mountGit(root, { scope: { sessionId: 's1', cwd: MAIN } })
+      await flushEffects()
+      await submit()
+      expect(commit).toHaveBeenCalledTimes(1)
+      expect(commit.mock.calls[0]?.[0]?.sessionId).toBe('s1')
+      expect(commit.mock.calls[0]?.[1]).toBe('fix: half typed in A')
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
     }
   })
 })

@@ -40,7 +40,7 @@
  * shows the wire error inline — a broken settings surface never crashes the
  * shell.
  */
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   IconChevronDownOutlineRegular,
   IconPlusOutlineRegular,
@@ -53,17 +53,11 @@ import clsx from 'clsx'
 // Type-only: pulls the settings shell's SlotMap merges ('settings.section').
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import {
-  TITLE_BAR_STRIP_MAX,
-  TITLE_BAR_STRIP_MIN,
-  type SidebarPrefs,
-} from '../prefs-shared.ts'
+import type { SidebarPrefs } from '../prefs-shared.ts'
 import { api } from './api.ts'
 import { parsePrefs } from './prefs.ts'
 import { AddPluginModal, type PluginKind } from './add-plugin-modal.tsx'
 import { t } from './locales.ts'
-import { parseDesktopEnv } from './desktop-env.ts'
-import { getShellPreset, getShellPresets } from './shell-presets.ts'
 import type { SidebarStore } from './state.ts'
 import type {
   BetterSidebarService,
@@ -107,17 +101,6 @@ function iconOf(icon: ReactNode | ((size: number) => ReactNode) | undefined, siz
 function tabOrder(a: TabDescriptor, b: TabDescriptor): number {
   if (a.hidden !== b.hidden) return a.hidden === true ? 1 : -1
   return (a.order ?? 100) - (b.order ?? 100)
-}
-
-/**
- * The scheme dropdown's current value: the plain scheme, or `preset:<id>`
- * while a preset is active. Falls back to `auto` when the stored preset id
- * is no longer registered (the strip resolves to 0 then anyway).
- */
-function titleBarSchemeValue(prefs: SidebarPrefs): string {
-  if (prefs.titleBarScheme !== 'preset') return prefs.titleBarScheme
-  const preset = getShellPreset(prefs.titleBarPresetId)
-  return preset !== undefined ? `preset:${preset.id}` : 'auto'
 }
 
 /** Viewer inventory order: priority desc (the catch-all `code` comes last). */
@@ -226,6 +209,9 @@ export function FeatureSettingsRows(props: {
    *  of picked values (`multi: true`). Optional: rows with no handler are
    *  display-only. */
   onSelectValue?: (toggle: SidebarSettingToggle, next: unknown) => void
+  /** Commit one patterns row: the whole string list after an add/remove.
+   *  Optional: rows with no handler are display-only. */
+  onPatterns?: (toggle: SidebarSettingToggle, next: string[]) => void
   /** Explicit value source (v0.12.0+): when given, rows read their values
    *  from it instead of the `prefs` face — plugin-owned rows read their
    *  own blob, so a plugin key can never collide with (or silently read)
@@ -233,12 +219,23 @@ export function FeatureSettingsRows(props: {
    *  the latter collides with the inherited Object.prototype.valueOf.) */
   valueSource?: (key: string) => unknown
 }) {
-  const { toggles, prefs, onToggle, onCommit, onSelectValue, valueSource } = props
+  const { toggles, prefs, onToggle, onCommit, onSelectValue, onPatterns, valueSource } = props
   const read = valueSource ?? ((key: string): unknown => (prefs as unknown as Record<string, unknown>)[key])
   return (
     <div className={css.popupRows}>
       {toggles.map(toggle => {
         const title = textOf(toggle.title)
+        if (toggle.type === 'patterns') {
+          return (
+            <PatternsRow
+              key={toggle.key}
+              toggle={toggle}
+              title={title}
+              value={read(toggle.key)}
+              onPatterns={onPatterns}
+            />
+          )
+        }
         if (toggle.type === 'select') {
           return (
             <SelectRow
@@ -330,10 +327,10 @@ function TypedRow(props: {
   )
 }
 /**
- * The multi-line custom-CSS input (scheme `custom`): a monospace textarea
- * whose draft is local state, committed on blur or Cmd/Ctrl+Enter through
- * the parent's handler. Keyed by the stored value so an external commit
- * remounts it with the canonical text (same pattern as TypedRow).
+ * The multi-line custom-CSS input (the user-space escape hatch): a monospace
+ * textarea whose draft is local state, committed on blur or Cmd/Ctrl+Enter
+ * through the parent's handler. Keyed by the stored value so an external
+ * commit remounts it with the canonical text (same pattern as TypedRow).
  */
 function CssDraft(props: {
   value: string
@@ -366,8 +363,7 @@ function CssDraft(props: {
  * per option (big-icon cards when any option carries an icon). Single-pick
  * commits the option's value and closes; `multi` toggles membership and
  * commits the picked values as an array (in options order), staying open.
- * Shared by the declarative select rows (SelectRow) and the title-bar
- * scheme dropdown on the General row.
+ * Used by the declarative select rows (SelectRow).
  */
 function SelectMenu(props: {
   label: string
@@ -487,6 +483,76 @@ function SelectRow(props: {
 }
 
 /**
+ * One patterns row (`type: 'patterns'`): an editable string list — the
+ * committed values render as removable chips, and a permanently-present
+ * input adds new entries (Enter or the add button; blanks and duplicates
+ * are dropped). Every add/remove commits the WHOLE list through the
+ * parent's onPatterns — the list is one atomic pref value.
+ */
+function PatternsRow(props: {
+  toggle: SidebarSettingToggle
+  title: string
+  value: unknown
+  onPatterns?: (toggle: SidebarSettingToggle, next: string[]) => void
+}) {
+  const { toggle, title, value, onPatterns } = props
+  const patterns = Array.isArray(value) ? value.filter(item => typeof item === 'string') as string[] : []
+  const [draft, setDraft] = useState('')
+  const commitAdd = (): void => {
+    const next = draft.trim()
+    setDraft('')
+    if (next === '' || patterns.includes(next)) return
+    onPatterns?.(toggle, [...patterns, next])
+  }
+  return (
+    <div className={css.patternsRow}>
+      <span className={css.rowText}>
+        <span className={css.title}>{title}</span>
+        {textOf(toggle.desc) !== '' && <span className={css.desc}>{textOf(toggle.desc)}</span>}
+      </span>
+      {patterns.length > 0 && (
+        <div className={css.patternsChips}>
+          {patterns.map((pattern, index) => (
+            <span key={`${pattern}:${index}`} className={css.patternsChip}>
+              {pattern}
+              <button
+                type="button"
+                className={css.patternsChipRemove}
+                aria-label={`${t('explorerExcludeRemove')} ${pattern}`}
+                title={t('explorerExcludeRemove')}
+                onClick={() => { onPatterns?.(toggle, patterns.filter((_, at) => at !== index)) }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className={css.patternsAdd}>
+        <Input
+          type="text"
+          className={css.patternsInput}
+          value={draft}
+          placeholder={toggle.patternsPlaceholder ?? toggle.placeholder}
+          aria-label={title}
+          spellCheck={false}
+          onChange={event => { setDraft(event.currentTarget.value) }}
+          onKeyDown={event => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              commitAdd()
+            }
+          }}
+        />
+        <button type="button" className={css.done} onClick={commitAdd}>
+          {t('explorerExcludeAdd')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/**
  * The secondary settings popup body of one feature (tab or viewer):
  * - the host-prefs `toggles` rows, then the plugin-owned `pluginToggles`
  *   rows (their values live in `pluginSettings[feature.id]`, projected onto
@@ -504,13 +570,15 @@ export function SettingsBody(props: {
   onToggle: (toggle: SidebarSettingToggle, next: boolean) => void
   onCommit: (toggle: SidebarSettingToggle, raw: string) => string
   onSelectValue: (toggle: SidebarSettingToggle, next: unknown) => void
+  onPatterns: (toggle: SidebarSettingToggle, next: string[]) => void
   onPluginToggle: (toggle: SidebarSettingToggle, next: boolean) => void
   onPluginCommit: (toggle: SidebarSettingToggle, raw: string) => string
   onPluginSelectValue: (toggle: SidebarSettingToggle, next: unknown) => void
+  onPluginPatterns: (toggle: SidebarSettingToggle, next: string[]) => void
   onPluginWrite: (key: string, value: unknown) => void
   onClose: () => void
 }) {
-  const { feature, prefs, store, service, onToggle, onCommit, onSelectValue, onPluginToggle, onPluginCommit, onPluginSelectValue, onPluginWrite, onClose } = props
+  const { feature, prefs, store, service, onToggle, onCommit, onSelectValue, onPatterns, onPluginToggle, onPluginCommit, onPluginSelectValue, onPluginPatterns, onPluginWrite, onClose } = props
   const render = feature.settings?.render
   const toggles = feature.settings?.toggles ?? []
   const pluginToggles = feature.settings?.pluginToggles ?? []
@@ -531,6 +599,7 @@ export function SettingsBody(props: {
               onToggle={onToggle}
               onCommit={onCommit}
               onSelectValue={onSelectValue}
+              onPatterns={onPatterns}
             />
           )}
           {pluginToggles.length > 0 && (
@@ -540,6 +609,7 @@ export function SettingsBody(props: {
               onToggle={onPluginToggle}
               onCommit={onPluginCommit}
               onSelectValue={onPluginSelectValue}
+              onPatterns={onPluginPatterns}
               valueSource={(key) => pluginBlob[key]}
             />
           )}
@@ -572,12 +642,6 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
   const [error, setError] = useState<string | null>(null)
   // Which feature's secondary settings popup is open (null = closed).
   const [settingsFor, setSettingsFor] = useState<TabDescriptor | FileViewerDescriptor | null>(null)
-  // Whether the position-compat strip popup (the gear on the 常规 row) is open.
-  const [stripSettingsOpen, setStripSettingsOpen] = useState(false)
-  // The parsed desktop environment (URL stamps — see desktop-env.ts). Used
-  // ONLY to badge matching presets in the scheme dropdown ("已检测");
-  // nothing is auto-applied.
-  const detectedEnv = useMemo(() => parseDesktopEnv(), [])
   // Whether the "add plugin" modal (a dashed card at the end of the
   // 侧边栏内容 / 文件预览 grids) is open, and for which extension point
   // (null = closed).
@@ -685,6 +749,11 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     applyPref({ [toggle.key]: next })
   }
 
+  /** Commit one declaratively-declared patterns row (the whole string list). */
+  const onPatternsSetting = (toggle: SidebarSettingToggle, next: string[]): void => {
+    applyPref({ [toggle.key]: next })
+  }
+
   /**
    * Commit one declaratively-declared text/number row. Numbers are parsed
    * and clamped to the toggle's declared min/max (an unparsable input falls
@@ -707,34 +776,7 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
     return raw
   }
 
-  /**
-   * Pick the title-bar / shell compatibility scheme. Mirrors the legacy
-   * `titleBarCompat` flag (true = anything but the conservative auto) so
-   * documents stay readable by older plugin versions.
-   */
-  /**
-   * Pick the title-bar / shell compatibility scheme from the dropdown. The
-   * option values are `auto` | `web` | `custom` | `preset:<id>`; selecting
-   * a preset stores both the scheme and its id. Mirrors the legacy
-   * `titleBarCompat` flag (true for preset/custom) so documents stay
-   * readable by older plugin versions.
-   */
-  const onSchemeSelect = (value: unknown): void => {
-    if (typeof value !== 'string') return
-    if (value === 'auto' || value === 'web' || value === 'custom') {
-      applyPref({ titleBarScheme: value, titleBarCompat: value === 'custom' })
-      return
-    }
-    if (value.startsWith('preset:') && getShellPreset(value.slice('preset:'.length)) !== undefined) {
-      applyPref({
-        titleBarScheme: 'preset',
-        titleBarPresetId: value.slice('preset:'.length),
-        titleBarCompat: true,
-      })
-    }
-  }
-
-  /** Commit the free-form custom CSS (scheme `custom`). */
+  /** Commit the free-form custom CSS (the user-space escape hatch). */
   const commitCustomCss = (raw: string): void => {
     applyPref({ customCss: raw })
   }
@@ -852,52 +894,23 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
             onChange={(next) => { applyPref({ agentOpenTools: next }) }}
           />
         </div>
-        <div className={css.row}>
-          <span className={css.rowText}>
-            <span className={css.title}>{t('settingsTitleBarTitle')}</span>
-            <span className={css.desc}>{t('settingsTitleBarDesc')}</span>
-          </span>
-          <span className={css.control}>
-            {/*
-              The scheme dropdown (the shared SelectMenu — NOT a native
-              select): 自动检测 (default) / DSH官方Web / 各壳兼容方案 /
-              自定义方案. Matching presets carry a 「已检测」 desc badge
-              (suggestion only). The 自定义方案 row keeps its gear (the
-              popup with the shift distance + custom CSS) — the other
-              schemes need no further settings.
-            */}
-            <SelectMenu
-              label={t('settingsTitleBarTitle')}
-              value={titleBarSchemeValue(prefs)}
-              options={[
-                { value: 'auto', title: t('settingsSchemeAutoTitle'), desc: t('settingsSchemeAutoDesc') },
-                { value: 'web', title: t('settingsSchemeWebTitle'), desc: t('settingsSchemeWebDesc') },
-                ...getShellPresets().map(preset => ({
-                  value: `preset:${preset.id}`,
-                  title: preset.title,
-                  // The preset desc is i18n-friendly (string or () => string)
-                  // — resolve it like every other settings text here.
-                  desc: preset.detect?.(detectedEnv) === true
-                    ? `${textOf(preset.desc)}（${t('settingsSchemeDetectedSuffix')}）`
-                    : textOf(preset.desc),
-                })),
-                { value: 'custom', title: t('settingsSchemeCustomTitle'), desc: t('settingsSchemeCustomDesc') },
-              ]}
-              onSelect={onSchemeSelect}
-            />
-            {prefs.titleBarScheme === 'custom' && (
-              <button
-                type="button"
-                className={css.rowGear}
-                aria-label={`${t('settingsTitleBarTitle')} ${t('settingsPopup')}`}
-                title={t('settingsPopup')}
-                onClick={() => { setStripSettingsOpen(true) }}
-              >
-                <IconSettingsOutlineRegular size={14} />
-              </button>
-            )}
-          </span>
-        </div>
+      </div>
+
+      {/* 自定义 CSS: the user-space escape hatch. The retired "位置兼容模式"
+          scheme dropdown (auto / web / shell presets / custom) lived on the
+          常规 row and its gear popup held this textarea next to a strip-px
+          number row; the whole strip mechanism was removed, so the textarea
+          is the only thing that row ever really owned and it now has its own
+          group. Applied whenever non-empty (last in the cascade). */}
+      <div className={css.group}>
+        <div className={css.groupHeading}>{t('settingsCustomCssTitle')}</div>
+        <CssDraft
+          key={prefs.customCss}
+          value={prefs.customCss}
+          label={t('settingsCustomCssTitle')}
+          placeholder={t('settingsCustomCssPlaceholder')}
+          onCommit={commitCustomCss}
+        />
       </div>
 
       {/* 手机: the narrow-viewport adaptations. Both switches only ever change
@@ -1042,59 +1055,16 @@ export function SideCardSection({ store, service }: SideCardSectionProps) {
             onToggle={onToggleSetting}
             onCommit={onCommitSetting}
             onSelectValue={onSelectSetting}
+            onPatterns={onPatternsSetting}
             onPluginToggle={(toggle, next) => { onPluginToggle(settingsFor.id, toggle, next) }}
             onPluginCommit={(toggle, raw) => onPluginCommitSetting(settingsFor.id, toggle, raw)}
             onPluginSelectValue={(toggle, next) => { applyPluginSetting(settingsFor.id, toggle.key, next) }}
+            onPluginPatterns={(toggle, next) => { applyPluginSetting(settingsFor.id, toggle.key, next) }}
             onPluginWrite={(key, value) => { applyPluginSetting(settingsFor.id, key, value) }}
             onClose={() => { setSettingsFor(null) }}
             store={store}
             service={service}
           />
-        </Modal>
-      )}
-
-      {/* The custom-scheme popup (opened by the gear next to the scheme
-          dropdown when 自定义方案 is active): the shift distance in px and
-          the free-form custom CSS. The OTHER schemes (自动检测 / DSH官方Web /
-          壳预设) need no further settings — the scheme itself is chosen on
-          the 常规 row. Mounted only while open (the Modal SSR rule above). */}
-      {stripSettingsOpen && (
-        <Modal
-          open
-          onClose={() => { setStripSettingsOpen(false) }}
-          title={t('settingsTitleBarTitle')}
-          description={t('settingsPopupDesc', { feature: t('settingsTitleBarTitle') })}
-          closeLabel={t('close')}
-          className={css.popupDialog}
-          footer={(
-            <button type="button" className={css.done} onClick={() => { setStripSettingsOpen(false) }}>
-              {t('settingsDone')}
-            </button>
-          )}
-        >
-          <div className={css.popupRows}>
-            <FeatureSettingsRows
-              toggles={[{
-                key: 'titleBarStripPx',
-                type: 'number',
-                title: () => t('settingsTitleBarStripTitle'),
-                desc: () => t('settingsTitleBarStripDesc'),
-                min: TITLE_BAR_STRIP_MIN,
-                max: TITLE_BAR_STRIP_MAX,
-                unit: 'px',
-              }]}
-              prefs={prefs}
-              onToggle={onToggleSetting}
-              onCommit={onCommitSetting}
-            />
-            <CssDraft
-              key={prefs.customCss}
-              value={prefs.customCss}
-              label={t('settingsCustomCssTitle')}
-              placeholder={t('settingsCustomCssPlaceholder')}
-              onCommit={commitCustomCss}
-            />
-          </div>
         </Modal>
       )}
 

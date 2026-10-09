@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  activateTab, allLeaves, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, CONVERSATION_MIN, createSidebarStore,
+  activateTab, allLeaves, ancestorDirs, BOTTOM_DEFAULT, BOTTOM_MIN, closeTab, CONVERSATION_MIN, createSidebarStore,
   insertLeafAt, makeDefaultState, moveTab, moveTabToEdge, openDiffTab,
   openTabInBottomPane, patchTab, resizeSplit,
   resizeSplitIn, revealPaths, sanitizeState, setBottomHeight,
@@ -733,6 +733,45 @@ describe('v0.12.0 store additions', () => {
   })
 })
 
+describe('unread mark persistence (v0.25.0)', () => {
+  // "A page the reader has not looked at" must outlive the mount that raised
+  // it (the mark is drawn by a chip that unmounts on every session switch and
+  // every page reload), so the mark rides the session's persisted state — and
+  // sanitizeState's `unread` branch is the ONLY thing that carries it back.
+  it('survives a reload: a fresh store reads the mark back from localStorage', () => {
+    const g = globalThis as Record<string, unknown>
+    const storage = new Map<string, string>()
+    const timers: Array<() => void> = []
+    g.window = {
+      clearTimeout: () => {},
+      setTimeout: (fn: () => void) => { timers.push(fn); return timers.length },
+      innerWidth: 1024,
+      innerHeight: 800,
+    }
+    g.localStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => { storage.set(key, value) },
+      removeItem: (key: string) => { storage.delete(key) },
+    }
+    try {
+      const first = createSidebarStore()
+      first.setSession('s1')
+      expect(first.markUnread('subagent')).toBe(true)
+      // The write is debounced; fire the pending timer the page would hit
+      // after the delay, then read the persisted layout back.
+      for (const fn of timers.splice(0)) fn()
+      expect(JSON.parse(storage.get('dsh-sidebar:v1:s1')!).unread).toEqual(['subagent'])
+      // A reload is a brand-new store over the SAME storage.
+      const reloaded = createSidebarStore()
+      reloaded.setSession('s1')
+      expect(reloaded.getSnapshot().state!.unread).toEqual(['subagent'])
+    } finally {
+      delete g.window
+      delete g.localStorage
+    }
+  })
+})
+
 describe('revealPaths (show in folder)', () => {
   it('expands ancestors with their ABSOLUTE path (leading separator preserved)', () => {
     // POSIX: the root (/w/src) is not itself expanded, but the subdirs
@@ -757,6 +796,27 @@ describe('revealPaths (show in folder)', () => {
   it('resolves nothing to the same reference (no churn)', () => {
     const base = makeDefaultState()
     expect(revealPaths(base, '/w', [])).toBe(base)
+  })
+})
+
+describe('ancestorDirs (the levels a lazy tree must expand)', () => {
+  it('lists the absolute ancestors below the explorer root, excluding the path itself', () => {
+    // The root itself is not a level the tree expands, and the target is not
+    // its own ancestor.
+    expect(ancestorDirs('/w/src', ['/w/src/sub/deep/a.ts'])).toEqual(['/w/src/sub', '/w/src/sub/deep'])
+    expect(ancestorDirs('/w/src', ['/w/src/a.ts'])).toEqual([])
+  })
+
+  it('keeps a Windows drive-letter root and a UNC prefix', () => {
+    expect(ancestorDirs('C:\\work', ['C:\\work\\src\\a.ts'])).toEqual(['C:\\work\\src'])
+    expect(ancestorDirs('\\\\server\\share', ['\\\\server\\share\\sub\\a.ts'])).toEqual(['\\\\server\\share\\sub'])
+  })
+
+  it('skips empty and non-string entries and de-duplicates shared ancestors', () => {
+    expect(ancestorDirs('/w', ['', '/w/a/b.ts', '/w/a/c.ts'])).toEqual(['/w/a'])
+    // Without a root there is nothing to anchor against, so every leading
+    // level is still reported (the caller only uses this when cwd is known).
+    expect(ancestorDirs(undefined, [undefined as unknown as string, '/a/b/c.ts'])).toEqual(['/a', '/a/b'])
   })
 })
 

@@ -60,4 +60,27 @@ describe.skipIf(!chunksBuilt)('built chunk artifacts', () => {
       }), name).not.toThrow()
     }
   })
+
+  /**
+   * The emulator's own DOM contract, present in xterm's runtime source AND in
+   * its stylesheet — either half landing in the core bundle means the lazy
+   * split broke. `@xterm/xterm` alone would be too weak a probe: the package
+   * NAME also shows up in doc comments and locale copy.
+   */
+  const XTERM_MARKER = 'xterm-char-measure-element'
+
+  it('the terminal chunk carries xterm and the core bundles carry none of it', () => {
+    // #774's whole build requirement: several hundred KB of emulator must not
+    // reach startup. The core bundle is what the plugin ships to every page
+    // load, so a static import of src/client/TerminalView.tsx (or of the
+    // xterm stylesheet) from a core module would show up here.
+    const chunk = readFileSync('lib/client-terminal.js', 'utf8')
+    expect(chunk).toContain(XTERM_MARKER)
+    expect(chunk).toContain('@xterm/xterm/lib/xterm.js')
+    for (const file of ['lib/client.js', 'lib/client-registry.js']) {
+      const source = readFileSync(file, 'utf8')
+      expect(source, `${file} must not bundle xterm`).not.toContain(XTERM_MARKER)
+      expect(source, `${file} must not resolve @xterm/xterm`).not.toContain('@xterm/xterm')
+    }
+  })
 })

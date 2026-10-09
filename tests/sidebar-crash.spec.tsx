@@ -57,12 +57,37 @@ interface MountedSidebar {
   unmount: () => void
 }
 
+/** Roots still mounted when a test ends. `afterEach` unmounts them: wiping the
+ *  DOM without unmounting leaves every effect cleanup un-run, and the 1s
+ *  `session.phase` poller in `session-phase.ts` then outlives the test — it
+ *  fires after jsdom is gone, React reads a missing `window` and the whole run
+ *  is red on `Errors 1` even though every test passed. */
+const mountedRoots: Array<() => void> = []
+
+/** Intervals created while a test runs. `session-phase.ts` polls through
+ *  `setInterval`; a live id here after the roots are unmounted means some
+ *  effect leaked a timer (see `mountedRoots`). */
+const liveIntervals = new Set<ReturnType<typeof setInterval>>()
+
 /** Mount the real Sidebar shell against a minimal context (real store + service). */
 /** Unique per-test session ids (see the comment inside). */
 let sessionSeq = 0
 
 function mountSidebar(): MountedSidebar {
   vi.stubGlobal('WebSocket', FakeWebSocket)
+  // The real timers, wrapped so `afterEach` can prove nothing outlived the
+  // test (vi.unstubAllGlobals restores both).
+  const realSetInterval = globalThis.setInterval
+  const realClearInterval = globalThis.clearInterval
+  vi.stubGlobal('setInterval', ((handler: never, timeout?: number) => {
+    const id = realSetInterval(handler, timeout)
+    liveIntervals.add(id)
+    return id
+  }) as never)
+  vi.stubGlobal('clearInterval', ((id: never) => {
+    liveIntervals.delete(id)
+    realClearInterval(id)
+  }) as never)
   const container = document.createElement('div')
   document.body.append(container)
   const store = createSidebarStore()
@@ -96,23 +121,53 @@ function mountSidebar(): MountedSidebar {
   }
   const root: Root = createRoot(container)
   act(() => { root.render(createElement(Sidebar, { ctx: ctx as never, store })) })
-  return {
-    container,
-    store,
-    service,
-    unmount: () => {
-      act(() => { root.unmount() })
-      container.remove()
-    },
+  // Idempotent: a test may unmount explicitly, and afterEach unmounts whatever
+  // is left (calling React's unmount twice throws).
+  let unmounted = false
+  const unmount = (): void => {
+    if (unmounted) return
+    unmounted = true
+    act(() => { root.unmount() })
+    container.remove()
   }
+  mountedRoots.push(unmount)
+  return { container, store, service, unmount }
 }
 
 afterEach(() => {
+  // Unmount FIRST: that is what runs the effects' cleanups, and the cleanups
+  // are what clear the pollers. Wiping the DOM instead (the old harness) left
+  // them armed and reddened CI with `window is not defined`.
+  for (const unmount of mountedRoots.splice(0).reverse()) unmount()
+  const leaked = liveIntervals.size
+  liveIntervals.clear()
+  expect(
+    leaked,
+    'every interval started by a test must be cleared before it ends — an armed one fires after jsdom is torn down',
+  ).toBe(0)
   document.body.innerHTML = ''
   // Belt and braces: drop any persisted layout a pending 200ms debounce
   // write left behind between tests (unique session ids already isolate).
   localStorage.clear()
   vi.unstubAllGlobals()
+})
+
+describe('test harness', () => {
+  // The leak guard itself lives in `afterEach` (no interval may outlive a
+  // test). A poll that never settles keeps the 1s `session.phase` interval
+  // armed from mount to the end of the test — which is exactly the state the
+  // old harness (wipe the DOM, never unmount) leaked past teardown: the timer
+  // fired after jsdom was gone, React read a missing `window`, and an
+  // all-green run went red on `Errors 1`. The assertion below proves the
+  // armed state was really reached, so this test cannot pass vacuously.
+  it('arms the session-phase poller, so afterEach has something to clear', () => {
+    vi.stubGlobal('fetch', () => new Promise(() => {}))
+    mountSidebar()
+    expect(
+      liveIntervals.size,
+      'the hanging route must leave the poller armed',
+    ).toBeGreaterThan(0)
+  })
 })
 
 describe('layout-push variable cleanup', () => {

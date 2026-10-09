@@ -5,7 +5,8 @@
  * are draggable; dropping onto another tab inserts before it, dropping on the
  * strip background appends to this pane. Right-clicking a tab opens the tab
  * context menu (close / close others / close to the left / close to the
- * right, the close ones scoped to this pane).
+ * right / close all — every close scoped to this pane — plus reveal the
+ * right-clicked tab's file in the OS file manager).
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
@@ -68,9 +69,38 @@ export function TabBar(props: {
   /** Badge resolver for tab labels (reads the descriptor's `badge`; the
    *  resolver returns the rendered pill or null). */
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /**
+   * Unread resolver for tab labels: the page has something the reader has not
+   * looked at yet (a background activation opened it without taking the column
+   * over). Rendered as a small dot beside the label; `false`/undefined draws
+   * nothing, so a strip with no marks is byte-identical to one that never had
+   * the feature.
+   */
+  isTabUnread?: (tab: SidebarTab) => boolean
+  /**
+   * Right-aligned action area resolver for the active tab: returns a
+   * ReactNode rendered at the tab strip's right end (between the + button
+   * and the panel's close control), or null/undefined for none. Lets a
+   * descriptor (e.g. a terminal tab) inject its own toolbar (new / split /
+   * restart) directly into the strip instead of a separate header row.
+   * Receives the strip's `paneId` alongside the active tab so the resolver
+   * can tell WHICH instance's strip it is decorating (split panes each
+   * render their own).
+   */
+  getTabRightActions?: (tab: SidebarTab, paneId: string) => ReactNode
+  /**
+   * Reveal one tab's associated file in the OS file manager — the tab
+   * context menu's reveal row, fed by the shell with the host's open-in-app
+   * capability. The row is disabled for a tab with no associated file (no
+   * `path`, e.g. the changes / tasks / side-chat / diff pages) and when the
+   * shell passes no resolver at all.
+   */
+  onRevealInFileManager?: (path: string) => void
 }) {
   const {
-    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge,
+    paneId, tabs, active, onActivate, onClose, onNewTab, newTabOptions, onDropTab, getTabIcon, getTabBadge, getTabRightActions,
+    isTabUnread,
+    onRevealInFileManager,
   } = props
   const [menuOpen, setMenuOpen] = useState(false)
   // The tab right-click context menu: the target tab plus the cursor
@@ -81,6 +111,22 @@ export function TabBar(props: {
   // The context target's index in the render-time tab snapshot; -1 when the
   // tab disappeared since the menu opened (the menu hides then).
   const tabMenuIndex = tabMenu === null ? -1 : tabs.findIndex(tab => tab.id === tabMenu.tabId)
+  // The context target's associated file: `path` carries it for file tabs
+  // (editor windows, folder windows included). The changes / tasks /
+  // side-chat / diff pages have none — a diff's repo-relative ref is not a
+  // path the host could reveal — so the reveal row greys out for them.
+  const tabMenuPath = tabs[tabMenuIndex]?.path
+  const canReveal = onRevealInFileManager !== undefined && tabMenuPath !== undefined && tabMenuPath !== ''
+
+  // The active tab's right-actions node, resolved up front so the render
+  // below can skip the wrapper entirely when there is nothing to show (an
+  // empty wrapper is a flex item and would still affect the strip layout).
+  // `false` is treated like null: React renders it as nothing anyway.
+  const activeRightTab = tabs.find(tab => tab.id === active)
+  const rightActions = getTabRightActions !== undefined && activeRightTab !== undefined
+    ? getTabRightActions(activeRightTab, paneId)
+    : null
+  const hasRightActions = rightActions !== null && rightActions !== undefined && rightActions !== false
 
   // Middle-click close: the press target is recorded on middle mousedown
   // (preventDefaulted to disarm Chrome's middle-click autoscroll — its
@@ -214,6 +260,16 @@ export function TabBar(props: {
             {getTabIcon?.(tab) ?? null}
             {getTabBadge?.(tab) ?? null}
             <span className={css.tabTitle}>{tab.title}</span>
+            {isTabUnread?.(tab) === true
+              ? (
+                <span
+                  className={css.tabUnreadDot}
+                  role="img"
+                  aria-label={t('tabUnread')}
+                  title={t('tabUnread')}
+                />
+              )
+              : null}
             <button
               type="button"
               className={css.tabClose}
@@ -263,10 +319,12 @@ export function TabBar(props: {
         {/*
           The tab context menu, positioned at the right-click cursor (portal
           so the panel's overflow clip cannot crop it). Close operations are
-          scoped to THIS pane: "close others/left/right" walk the render-time
-          tab snapshot and reuse the per-tab onClose path (which routes
-          through the service), so the target tab is never closed and the
-          pane never empties mid-loop.
+          scoped to THIS pane: "close others/left/right/all" walk the
+          render-time tab snapshot and reuse the per-tab onClose path (which
+          routes through the service), so every closed tab runs its own
+          lifecycle and the target tab is only closed by the operations that
+          mean it (close / close all). "Close all" is always available: the
+          menu only opens from a tab, so the pane always holds at least one.
         */}
         <Menu
           open={tabMenu !== null && tabMenuIndex >= 0}
@@ -276,6 +334,8 @@ export function TabBar(props: {
             { id: 'closeOthers', label: t('closeOtherTabs'), ...(tabs.length <= 1 ? { disabled: true } : {}) },
             { id: 'closeLeft', label: t('closeLeftTabs'), ...(tabMenuIndex <= 0 ? { disabled: true } : {}) },
             { id: 'closeRight', label: t('closeRightTabs'), ...(tabMenuIndex >= tabs.length - 1 ? { disabled: true } : {}) },
+            { id: 'closeAll', label: t('closeAllTabs') },
+            { id: 'revealInFileManager', label: t('revealTabInFileManager'), ...(canReveal ? {} : { disabled: true }) },
           ]}
           onSelect={(id) => {
             const target = tabMenu
@@ -293,6 +353,14 @@ export function TabBar(props: {
               for (const tab of tabs.slice(0, index)) onClose(tab.id)
             } else if (id === 'closeRight') {
               for (const tab of tabs.slice(index + 1)) onClose(tab.id)
+            } else if (id === 'closeAll') {
+              // EVERY tab in this pane, the right-clicked one included (that
+              // is what separates it from "close others") and the ones
+              // scrolled out of the strip's viewport included.
+              for (const tab of tabs) onClose(tab.id)
+            } else if (id === 'revealInFileManager') {
+              const path = tabs[index]?.path
+              if (path !== undefined && path !== '') onRevealInFileManager?.(path)
             }
           }}
           portal
@@ -302,6 +370,18 @@ export function TabBar(props: {
           anchor={<span />}
         />
       </div>
+      {/*
+        The active tab's right-aligned action area: rendered at the tab
+        strip's right end (after the + menu, before the panel's close
+        control). A descriptor that declares `rightActions` supplies its own
+        toolbar here (e.g. a terminal tab's new / split / restart buttons),
+        so the page's controls live in the strip instead of a separate header
+        row below it. The node is resolved BEFORE the wrapper is created: a
+        resolver returning null/undefined (or false) must leave the strip
+        exactly as it was — an empty flex item would still take part in the
+        strip's layout and change every existing tab bar.
+      */}
+      {hasRightActions ? <div className={css.tabBarRightActions}>{rightActions}</div> : null}
     </div>
   )
 }

@@ -35,6 +35,19 @@
 :global([data-dsh-panel-host]) {
   position: fixed;
   inset: 0;
+  /* Explicit viewport height — NOT a containing-block derivation (issue
+     #616). `inset: 0` alone sizes a fixed box from its containing block, and
+     a page-level `filter` / `backdrop-filter` / `transform` — exactly what a
+     glass skin puts on the shell wrapper or on <body> itself — REPLACES that
+     containing block with the ancestor's own padding box. The shell's content
+     is itself fixed/viewport-sized, so that box is zero-height: the host
+     collapses to 0px and the whole native right sidebar goes invisible while
+     its DOM (and every panel in it) is fully present. `vh` is measured
+     against the viewport instead, so the height survives any ancestor's
+     containing-block games; the over-constrained triple (top: 0 + height +
+     bottom: 0) resolves by ignoring `bottom`, keeping this a top-anchored
+     viewport-height layer. */
+  height: 100vh;
   z-index: 25;
   pointer-events: none;
   /* Clip at the viewport edge: collapsed panels slide off-screen with
@@ -42,7 +55,8 @@
      contributes to its ancestors' scrollable overflow — without this the
      hidden panels extended the document's scrollable area, making the whole
      page draggable left-right and up-down while any panel was collapsed.
-     The host is exactly viewport-sized (inset: 0), so the clip is invisible
+     The host is exactly viewport-sized (inset: 0 + the explicit 100vh
+     height above), so the clip is invisible
      until a panel slides in from the edge; internal scroll containers and
      the app's fixed overlay stack are unaffected. `clip`, not `hidden`: a
      hidden box stays a PROGRAMMATICALLY scrollable container, and a
@@ -106,6 +120,16 @@
    the 34px tab-strip band so it never covers the pane headers below),
    transparent fill, secondary ink; hover raises the fill. No border, no
    shadow — the icon alone is the affordance. */
+/* 空白会话（宿主不渲染会话头）时的底部工作台入口（sidebar/dock-fallback.tsx）：
+   fixed 定位到宿主「Open right sidebar」按钮左侧紧邻，top/left 由 JS 按 rect 对齐。 */
+.dockFallback {
+  position: fixed;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  z-index: 40;
+}
+
 .toggleButton {
   display: flex;
   align-items: center;
@@ -265,15 +289,6 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   -webkit-app-region: no-drag;
 }
 
-/* ── Position compatibility mode (Windows native title bar) ────────────── */
-
-/* Windows frameless / hidden-title-bar windows draw the native caption
-   strip (minimize / maximize / close) at the window's top-right corner,
-   OVER the web content. When the user enables the "position compatibility"
-   pref, the Sidebar shell publishes the strip height as
-   `--dsh-title-bar-strip` plus `body[data-dsh-title-bar-compat]` for the
-   user's own CSS; the plugin's remaining chrome (the bottom workbench) sits
-   at the window's bottom and is never under the top strip. */
 /* Icon button: the app's own icon-button pattern (ui-workspace) — a 28px
    circle, secondary label, hover fill; no border so the icon alone is the
    affordance. */
@@ -461,6 +476,30 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   align-items: center;
   margin-right: 6px;
   flex: none;
+}
+
+/* "This page has something you have not looked at": a small solid dot on the
+   tab, drawn on the native chip and on the bottom workbench strip alike. Static
+   by design — a pulsing marker on every new subagent is noise, and the two
+   carriers must read as the same thing. The chip is inline text (its content
+   IS the host's tab label), so the mark is an inline-block sitting on the text
+   baseline; the strip's own mark centres in its flex row instead. */
+.chipUnread {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--dsw-alias-danger);
+  vertical-align: middle;
+}
+
+.tabUnreadDot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dsw-alias-danger);
 }
 
 /* One tab's mounted content; inactive tabs stay mounted but hidden so
@@ -658,6 +697,25 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 .tabBarPlus:hover {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
+}
+
+/* The active tab's right-aligned action area: sits at the tab strip's right
+   end (after the + button, before the panel's close control). Content-sized
+   (`0 1 auto`): it takes only the width its buttons need and may shrink
+   (clipped) if the strip runs out of room, while .tabList (flex: 1) keeps
+   absorbing the free space — an equal flex:1 split here would halve the tab
+   scrollport for even a tiny toolbar. Content is opaque to the tab strip's
+   own layout (the strip reserves the close control's width via
+   .bottomPanel .tabBar's padding-right, so this area never underlaps it). */
+.tabBarRightActions {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding-right: 4px;
+  overflow: hidden;
 }
 
 /* ── Explorer ──────────────────────────────────────────────────────────── */
@@ -1341,7 +1399,9 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
 }
 
 .editorSearchResult {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   box-sizing: border-box;
   width: 100%;
   height: 28px;
@@ -1354,6 +1414,17 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   line-height: 28px;
   text-align: left;
   cursor: pointer;
+  overflow: hidden;
+}
+
+/* A directory hit is a navigation target, not an openable file: the folder
+   glyph and the dimmer label say so before the click. */
+.editorSearchResultDir {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.editorSearchResultLabel {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1452,6 +1523,66 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   font: var(--dsw-font-xxxs-11);
   color: var(--dsw-alias-state-warn-label);
   background: var(--dsw-alias-state-warn-tertiary);
+}
+
+/* Inline action of a banner (the save-conflict "reload" link). */
+.editorBannerAction {
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* ── Uncommitted-change gutter (issue #212) ─────────────────────────────────
+   VS Code's restraint: the line NUMBER takes the tone of its change, and a
+   2px bar sits at the far left of the numbers. The classes are handed to
+   CodeMirror as gutter-marker class names (see editor-git-gutter.ts), which
+   is why they are referenced from TS as well as styled here. The tones are
+   the file tree's own mapping (added/untracked green, modified amber,
+   deleted red). Deliberately nothing else: no end-of-line widget, no badge,
+   no animation, no gradient. */
+.editorGitAdd { color: var(--dsw-alias-state-success-primary); }
+.editorGitMod { color: var(--dsw-alias-state-warn-primary); }
+.editorGitDel { color: var(--dsw-alias-state-error-primary); }
+
+/* The bar column: 2px of ink, plus the hidden spacer that keeps the width
+   reserved while the file is clean (the numbers never shift sideways). */
+.editorGitBarGutter {
+  width: 2px;
+  min-width: 2px;
+}
+
+.editorGitBar,
+.editorGitBarSpacer {
+  width: 2px;
+  height: 100%;
+}
+
+.editorGitBarAdd { background: var(--dsw-alias-state-success-primary); }
+.editorGitBarMod { background: var(--dsw-alias-state-warn-primary); }
+.editorGitBarDel { background: var(--dsw-alias-state-error-primary); }
+
+/* Hover blame: plain text, two rows (author · when, then the summary). */
+.editorBlame {
+  max-width: 420px;
+  padding: 4px 8px;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-primary);
+}
+
+.editorBlameHead {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.editorBlameSummary {
+  margin-top: 2px;
+  color: var(--dsw-alias-label-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Live sandbox status row (HTML preview / browser tab): GREEN while the

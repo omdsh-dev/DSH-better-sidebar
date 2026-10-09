@@ -14,6 +14,7 @@ import { act } from 'react-dom/test-utils'
 import { DiffPane } from '../src/client/changes/DiffPane.tsx'
 import { DiffTab } from '../src/client/DiffTab.tsx'
 import { api } from '../src/client/api.ts'
+import type { Context } from '../src/context-types.ts'
 import type { SessionScope } from '../src/client/api.ts'
 import type { SidebarDiffRef } from '../src/client/state.ts'
 
@@ -69,6 +70,7 @@ describe('useGitDiffTarget through the inline preview pane (DiffPane)', () => {
       act(() => {
         root.render(createElement(DiffPane, {
           target: { kind: 'git', ref: worktree },
+          ctx: {} as Context,
           scope: SCOPE,
           height: 300,
           onHeightCommit: () => {},
@@ -101,6 +103,7 @@ describe('useGitDiffTarget through the inline preview pane (DiffPane)', () => {
       act(() => {
         root.render(createElement(DiffPane, {
           target: { kind: 'git', ref: worktree },
+          ctx: {} as Context,
           scope: SCOPE,
           height: 300,
           onHeightCommit: () => {},

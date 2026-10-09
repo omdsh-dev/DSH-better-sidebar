@@ -21,6 +21,16 @@ export interface DiffRow {
 }
 
 /**
+ * Cell ceiling for the dense LCS table: `oldLines.length * newLines.length`
+ * above this never builds the table (see {@link diffLines}). The table is one
+ * JS number per cell and measures at ~8 bytes/cell, so the cost is entirely
+ * about the input's line counts: a 5000×5000 pair allocates 193MB, a
+ * 10000×10000 pair 765MB. 4M cells ≈ 32MB keeps a worst case well inside a
+ * browser tab's budget while still pairing a 2000×2000 rewrite exactly.
+ */
+export const MAX_LCS_CELLS = 4_000_000
+
+/**
  * Longest-common-subsequence table over line equality.
  * @param oldLines - old side lines.
  * @param newLines - new side lines.
@@ -66,6 +76,13 @@ export function pairMods(rows: readonly DiffRow[]): DiffRow[] {
 /**
  * Line diff by LCS walk with rewrite pairing: the raw walk emits context/del/
  * add rows; `pairMods` marks rewritten pairs as 'mod'.
+ *
+ * Inputs whose line-count product exceeds {@link MAX_LCS_CELLS} skip the dense
+ * table entirely (it would allocate hundreds of MB on the main thread) and
+ * degrade to every old line as 'del' (old order, `oldLine` 1..n) followed by
+ * every new line as 'add' (new order, `newLine` 1..m). The degenerate output
+ * carries no 'context' and no 'mod' rows: pairing is skipped too, since with no
+ * alignment found every del/add pair would be marked rewritten.
  * @param oldText - the previous content; empty string diffs against nothing.
  * @param newText - the next content.
  * @returns ordered diff rows, old-side deletions before new-side additions.
@@ -73,6 +90,12 @@ export function pairMods(rows: readonly DiffRow[]): DiffRow[] {
 export function diffLines(oldText: string, newText: string): DiffRow[] {
   const oldLines = oldText.length === 0 ? [] : oldText.split('\n')
   const newLines = newText.length === 0 ? [] : newText.split('\n')
+  if (oldLines.length * newLines.length > MAX_LCS_CELLS) {
+    const rows: DiffRow[] = []
+    for (let i = 0; i < oldLines.length; i += 1) rows.push({ kind: 'del', oldLine: i + 1, text: oldLines[i]! })
+    for (let j = 0; j < newLines.length; j += 1) rows.push({ kind: 'add', newLine: j + 1, text: newLines[j]! })
+    return rows
+  }
   const table = lcsTable(oldLines, newLines)
   const raw: DiffRow[] = []
   let i = 0

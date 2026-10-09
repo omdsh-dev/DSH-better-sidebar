@@ -62,46 +62,33 @@ export interface SidebarPrefs {
    */
   editorExplorer: boolean
   /**
-   * Title-bar / shell compatibility scheme (the "位置兼容模式" setting):
-   * - `auto` (default): CONSERVATIVE — only the standard Window Controls
-   *   Overlay API (present in frameless Chromium shells that draw the
-   *   native caption buttons over web content) contributes real geometry;
-   *   without it nothing is modified, so plain-browser (web) behavior is
-   *   untouched.
-   * - `web`: EXPLICIT "DSH official web" — never adapt, not even WCO
-   *   geometry (the user declares they run the plain web UI).
-   * - `preset`: apply the built-in shell preset named by
-   *   `titleBarPresetId` (data-driven, opt-in — see shell-presets.ts).
-   * - `custom`: apply the free-form `customCss` (and the legacy
-   *   `titleBarStripPx` strip).
+   * Whether the `code` editor paints its uncommitted changes the way VS Code
+   * does (issue #212): the line number takes the tone of its change, a thin
+   * colored bar sits at the left of the numbers, and hovering a line shows
+   * that line's blame as a plain-text tooltip. On by default — there is ONE
+   * switch for the whole feature (no per-part toggles: no author / hash /
+   * date / summary switches, no end-of-line widget).
    */
-  titleBarScheme: TitleBarScheme
+  editorGitGutter: boolean
   /**
-   * The built-in shell preset id applied while `titleBarScheme` is
-   * `preset` ('' = no preset — nothing extra is applied).
+   * VS Code `files.exclude`-style glob patterns (the editor card's gear
+   * popup manages the list): matched entries are REMOVED from the file tree
+   * and the name search entirely — dot-prefixed rows otherwise render
+   * dimmed as usual. Supported shapes: a bare name
+   * (`Thumbs.db`) at any depth, a cwd-anchored path (`build/out`), a
+   * doublestar head for any depth (doublestar + slash + name), and `*` /
+   * `?` wildcards.
+   * Excluded entries never block the breadcrumb fold either (the host probe
+   * and the listing share the one compiled matcher).
    */
-  titleBarPresetId: string
+  explorerExclude: string[]
   /**
    * Free-form CSS injected into the page (last in the cascade, so it can
    * override the plugin's styles; use `!important` to override JS-written
-   * inline CSS variables). Applied while `titleBarScheme` is `custom`.
+   * inline CSS variables). The escape hatch for anything the settings rows
+   * do not cover — applied whenever it is non-empty.
    */
   customCss: string
-  /**
-   * LEGACY (kept for read-migration and downgrade mirroring only): position
-   * compatibility mode flag. The UI writes `titleBarScheme` instead; a
-   * stored `true` without a scheme migrates to the `custom` scheme (with
-   * `titleBarStripPx` preserved).
-   */
-  titleBarCompat: boolean
-  /**
-   * LEGACY (kept for read-migration and downgrade mirroring only): the
-   * reserved top strip height in px used by the `custom` scheme (0–120,
-   * default 40). Drives the `--dsh-title-bar-strip` CSS variable: the
-   * toggle cluster drops `strip + 3px` and the right panel's content
-   * starts `strip` px below its top edge.
-   */
-  titleBarStripPx: number
   /**
    * Whether the HTML previewer drops its sandboxed iframe. Sandbox ON (the
    * default) renders previewed HTML in an opaque-origin iframe that cannot
@@ -146,14 +133,8 @@ export interface SidebarPrefs {
   pluginSettings: Record<string, Record<string, unknown>>
 }
 
-/** Range contract of {@link SidebarPrefs.titleBarStripPx}. */
-export const TITLE_BAR_STRIP_MIN = 0
-export const TITLE_BAR_STRIP_MAX = 120
-export const TITLE_BAR_STRIP_DEFAULT = 40
-
-/** The title-bar / shell compatibility schemes (see {@link SidebarPrefs.titleBarScheme}). */
-export const TITLE_BAR_SCHEMES = ['auto', 'web', 'preset', 'custom'] as const
-export type TitleBarScheme = typeof TITLE_BAR_SCHEMES[number]
+/** The stock exclude list (VS Code ships a similar files.exclude default). */
+export const EXPLORER_EXCLUDE_DEFAULTS: readonly string[] = ['.DS_Store', 'Thumbs.db']
 
 /** Fallback prefs used whenever the settings document is unreachable or malformed. */
 export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
@@ -166,19 +147,12 @@ export const SIDEBAR_PREFS_DEFAULTS: SidebarPrefs = {
   mobileDefaultTree: true,
   agentOpenTools: false,
   editorExplorer: false,
-  titleBarScheme: 'auto',
-  titleBarPresetId: '',
+  editorGitGutter: true,
+  explorerExclude: [...EXPLORER_EXCLUDE_DEFAULTS],
   customCss: '',
-  titleBarCompat: false,
-  titleBarStripPx: TITLE_BAR_STRIP_DEFAULT,
   htmlViewerNoSandbox: false,
   htmlViewerDefaultUnsafe: false,
   tabsEnabled: {},
   viewersEnabled: {},
   pluginSettings: {},
-}
-
-/** Clamp one title-bar strip height into the contract range (shared by schema and client reads). */
-export function clampTitleBarStrip(value: number): number {
-  return Math.min(TITLE_BAR_STRIP_MAX, Math.max(TITLE_BAR_STRIP_MIN, Math.round(value)))
 }

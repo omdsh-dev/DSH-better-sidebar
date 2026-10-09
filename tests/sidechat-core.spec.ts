@@ -315,6 +315,27 @@ describe('buildOpenTurnSnapshot', () => {
     expect(snapshot).not.toBeNull()
     expect(snapshot).toContain('Result: legacy body')
   })
+
+  // Logs written by other producers (or by an older plugin) can carry rows the
+  // current shape does not describe: a non-array `content`, a message without
+  // one, a block that is not an object, a text block without a string. The
+  // guards in messageTexts/resultBlocks must skip them rather than throw — a
+  // single malformed row must not blank the whole open-turn snapshot.
+  it('skips malformed assistant content instead of throwing', () => {
+    const events = [
+      ev('turn/start', 0, { turn: 1 }),
+      ev('step/start', 1, { turn: 1, step: 1 }),
+      ev('assistant/message', 2, { turn: 1, step: 1, message: { content: 'not-an-array' } }),
+      ev('assistant/message', 3, { turn: 1, step: 1 }),
+      ev('assistant/message', 4, {
+        turn: 1,
+        step: 1,
+        message: { content: [null, { type: 'text' }, { type: 'text', text: 'kept' }] },
+      }),
+      ev('tool/call', 5, { turn: 1, step: 1, callId: 'c1', name: 'bash', arguments: '{}' }),
+    ]
+    expect(buildOpenTurnSnapshot(events)).toContain('kept')
+  })
 })
 
 describe('sideLabel', () => {

@@ -88,6 +88,16 @@ export function builtinViewers(): readonly FileViewerDescriptor[] {
       exts: [],
       priority: -100,
       fetchStrategy: 'fsRead',
+      // Declarative settings: ONE switch for the whole uncommitted-change
+      // gutter (line tint + left bar + hover blame). Deliberately no
+      // per-part switches.
+      settings: {
+        toggles: [{
+          key: 'editorGitGutter',
+          title: () => t('settingsEditorGitGutterTitle'),
+          desc: () => t('settingsEditorGitGutterDesc'),
+        }],
+      },
       component: (props) => <LazyTextEditor {...props} />,
     },
   ]

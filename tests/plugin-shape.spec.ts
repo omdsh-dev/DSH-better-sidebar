@@ -53,17 +53,17 @@ describe('dsh-better-sidebar plugin export shape', () => {
     // The sidebar-open tool defaults OFF (dormant until the user enables it
     // in the side card settings).
     expect(resolved.agentOpenTools).toBe(false)
-    // The position-compat scheme is declared WITHOUT a schema default so a
-    // stored document that predates it resolves without the field — the
-    // CLIENT parsePrefs then applies the conservative `auto` default (or
-    // migrates the legacy boolean), which is exactly what makes old
-    // documents migrate instead of silently flipping to a scheme. The
-    // legacy strip keeps its schema default of 40px.
+    // customCss (the user-space escape hatch) is declared WITHOUT a schema
+    // default — the client's parsePrefs supplies '' — so a document that
+    // never stored it resolves without the field.
+    expect(resolved.customCss).toBeUndefined()
+    // The title-bar compatibility keys are GONE (the whole strip mechanism
+    // was removed): a resolved document no longer declares them, so the
+    // settings form stops offering them.
     expect(resolved.titleBarScheme).toBeUndefined()
     expect(resolved.titleBarPresetId).toBeUndefined()
-    expect(resolved.customCss).toBeUndefined()
-    expect(resolved.titleBarCompat).toBe(false)
-    expect(resolved.titleBarStripPx).toBe(40)
+    expect(resolved.titleBarCompat).toBeUndefined()
+    expect(resolved.titleBarStripPx).toBeUndefined()
     // The enable-switch maps resolve to {} (everything on) for old documents.
     expect(resolved.tabsEnabled).toEqual({})
     expect(resolved.viewersEnabled).toEqual({})
@@ -78,6 +78,24 @@ describe('dsh-better-sidebar plugin export shape', () => {
       (input: Record<string, unknown> | undefined): Record<string, unknown>
     })({ workspaceFence: true })
     expect(legacy.workspaceFence).toBe(true)
+    // Same contract for the retired title-bar keys: a settings document
+    // written before the removal still carries them, and resolving it must
+    // neither throw nor drop the rest of the document — the values pass
+    // through untouched and are inert (the client's parsePrefs drops them;
+    // tests/prefs.spec.ts). This is the "old preference data is ignored
+    // safely" nail for the removal.
+    const retired = {
+      titleBarScheme: 'preset',
+      titleBarPresetId: 'dsh-desktop',
+      titleBarCompat: true,
+      titleBarStripPx: 56,
+    }
+    const withRetired = (PrefsSchema as unknown as {
+      (input: Record<string, unknown> | undefined): Record<string, unknown>
+    })({ ...retired, agentOpenTools: true })
+    expect(withRetired).toMatchObject({ ...retired, agentOpenTools: true })
+    expect(withRetired.autoOpenSubagent).toBe(true)
+    expect(withRetired.explorerExclude).toEqual(['.DS_Store', 'Thumbs.db'])
     // A stored overridden value resolves through (the range contract is
     // enforced by the settings service on write); the new pref keeps its
     // default when the stored document predates it.
@@ -89,11 +107,11 @@ describe('dsh-better-sidebar plugin export shape', () => {
     // verbatim. They are inert — the typed value the client consumes
     // (parsePrefs) drops them (tests/prefs.spec.ts) — and the defaults no
     // longer declare them.
-    // titleBarScheme / titleBarPresetId / customCss are declared WITHOUT a
-    // schema default (the client's parsePrefs supplies them), so they are
-    // absent from a resolved document that never stored them.
-    const { titleBarScheme, titleBarPresetId, customCss, ...schemaDefaults } = SIDEBAR_PREFS_DEFAULTS
-    void titleBarScheme; void titleBarPresetId; void customCss
+    // customCss is declared WITHOUT a schema default (the client's parsePrefs
+    // supplies it), so it is absent from a resolved document that never
+    // stored it.
+    const { customCss, ...schemaDefaults } = SIDEBAR_PREFS_DEFAULTS
+    void customCss
     expect(overridden).toEqual({ ...schemaDefaults, openByDefault: false, defaultWidthPercent: 45, changesDiffFloat: true })
   })
 })

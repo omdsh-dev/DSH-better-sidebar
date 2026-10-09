@@ -433,6 +433,7 @@ export function SubagentView(props: {
           rootId={rootId}
           task={task}
           members={teamMembers}
+          ctx={ctx}
           onClose={closePopover}
           anchor={popover.anchor}
         />

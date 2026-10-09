@@ -119,6 +119,8 @@ service.subscribe(() => {})
 const seed: OpenTabSeed = { type: 'my-plugin:db', title: 'DB', path: '/p', id: 'x', meta: { a: 1 } }
 service.openTab(seed)
 service.openTab(seed, { sessionId: 's1', cwd: '/p' })
+// `reveal: false` places the tab without focusing it (a background open).
+service.openTab({ ...seed, reveal: false })
 const _version: string = service.version
 service.features.includes('badge')
 const snapshot: SidebarSnapshot | undefined = service.getSnapshot()
@@ -126,6 +128,8 @@ void snapshot
 service.subscribeState(() => {})
 service.updateTab('tab:1', { title: 'T', path: '/p', meta: 1 })
 service.activateTab('tab:1')
+// Retiring the "new page" dot for one session's tab type.
+service.clearUnread('my-plugin:db', 's1')
 service.openFile({ sessionId: 's1', cwd: '/p' }, '/p/a.csv', 'Data')
 
 /** File-icon registration surface (feature `fileIcons`). */

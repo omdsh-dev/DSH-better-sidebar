@@ -10,8 +10,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
 import { createNativeTabRecords, NativeTabBody, NativeTabTitle } from '../src/client/native/tab-adapter.tsx'
 import { createNativeSurface } from '../src/client/native/surface.ts'
-import { registerNativeSurface } from '../src/client/native/index.ts'
-import { createBetterSidebarService, type SidebarSurface } from '../src/client/service.ts'
+import { fileParamsOf, registerNativeSurface } from '../src/client/native/index.ts'
+import { createBetterSidebarService, type SidebarSurface, type TabComponentProps } from '../src/client/service.ts'
 import { createSidebarStore, toggleExpanded, type SidebarTab } from '../src/client/state.ts'
 
 const scope = { sessionId: 's1', cwd: '/work' }
@@ -45,6 +45,51 @@ describe('createNativeTabRecords', () => {
     records.update('s1', 'tab-3', { title: 'renamed.ts' })
     const view = records.ensure({ sessionId: 's1', id: 'tab-3', kind: 'editor', title: 'b.ts', params: { path: '/work/b.ts' }, scope })
     expect(view.tab).toMatchObject({ id: 'tab-3', path: '/work/b.ts', title: 'renamed.ts' })
+  })
+
+  it('adopts a navigation seed meta once per revision (#762 / #684)', () => {
+    // The native surface re-delivers the LAST navigation on every render and
+    // bumps `revision` only for a real one: the seed meta must win for a new
+    // revision (the thread menu switching threads, #762) and leave the meta
+    // the VIEW wrote alone otherwise (#684: a re-adopted seed unbound the tab
+    // and made it mint thread after thread).
+    const records = createNativeTabRecords()
+    const sidechat = (revision: number, threadId: string) => records.ensure({
+      sessionId: 's1',
+      id: 'tab-11',
+      kind: 'sidechat',
+      title: 'Side Chat',
+      params: { meta: { threadId } },
+      scope,
+      revision,
+    })
+    sidechat(1, 't-1')
+    // The view binds the thread it minted — the plugin's own meta writer.
+    records.update('s1', 'tab-11', { meta: { threadId: 't-2' } })
+
+    sidechat(1, 't-1')
+    expect(records.get('s1', 'tab-11')?.tab.meta).toEqual({ threadId: 't-2' })
+
+    sidechat(2, 't-3')
+    expect(records.get('s1', 'tab-11')?.tab.meta).toEqual({ threadId: 't-3' })
+
+    // …and the re-delivery of THAT navigation does not undo the next binding.
+    records.update('s1', 'tab-11', { meta: { threadId: 't-4' } })
+    sidechat(2, 't-3')
+    expect(records.get('s1', 'tab-11')?.tab.meta).toEqual({ threadId: 't-4' })
+  })
+
+  it('never re-adopts the seed meta of a caller that carries no revision', () => {
+    // Absent revision = a caller that is not the native surface. It still mints
+    // the record from its seed, but it must NEVER overwrite a plugin-side
+    // binding afterwards — not even when the last navigation this record
+    // adopted carried a revision (an unguarded comparison would read that
+    // stored number as "a different navigation").
+    const records = createNativeTabRecords()
+    records.ensure({ sessionId: 's1', id: 'tab-12', kind: 'sidechat', title: 'Side Chat', params: { meta: { threadId: 't-1' } }, scope, revision: 5 })
+    records.update('s1', 'tab-12', { meta: { threadId: 't-2' } })
+    records.ensure({ sessionId: 's1', id: 'tab-12', kind: 'sidechat', title: 'Side Chat', params: { meta: { threadId: 't-9' } }, scope })
+    expect(records.get('s1', 'tab-12')?.tab.meta).toEqual({ threadId: 't-2' })
   })
 
   it('tracks expansion in the SESSION state and bumps the record version', () => {
@@ -144,6 +189,53 @@ describe('createNativeTabRecords', () => {
     records.ensure({ sessionId: 's1', id: 'tab-6', kind: 'terminal', title: 'Terminal', params: undefined, scope })
     records.update('s1', 'tab-6', { title: 'x' })
     expect(listener).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('fileParamsOf (the file-address seed, #826)', () => {
+  const infoOf = (contentId: string): Parameters<typeof fileParamsOf>[0] => ({
+    tab: {
+      id: 'tab-1',
+      kind: 'editor',
+      title: 'ignored',
+      contentId,
+      visible: true,
+      navigation: { address: contentId, params: undefined, revision: 0 },
+      signal: new AbortController().signal,
+    },
+  })
+
+  it('seeds a plain file address with its path and no title of its own', () => {
+    expect(fileParamsOf(infoOf('dsh-resource://file/session/s1/src/main.ts'))).toEqual({ path: 'src/main.ts' })
+  })
+
+  it('splits a `path:line` spec off the address, titles the tab after the file and keeps the line', () => {
+    // This is the #826 case: DSH reads a `#`-less markdown destination as the
+    // file name verbatim, so the address arrives naming `CMakeLists.txt:131`
+    // and the editor would read a file that does not exist. The line rides
+    // along in the same seed so the editor can land on it (#826 second half).
+    expect(fileParamsOf(infoOf('dsh-resource://file/session/s1/omlx/csrc/CMakeLists.txt:131'))).toEqual({
+      path: 'omlx/csrc/CMakeLists.txt',
+      title: 'CMakeLists.txt',
+      line: 131,
+    })
+  })
+
+  it('seeds only the FIRST line of a range or a line:column spec', () => {
+    // The editor has nowhere to put a second cursor; the start line is the
+    // one a reader can act on.
+    expect(fileParamsOf(infoOf('dsh-resource://file/session/s1/src/main.ts:40-60')))
+      .toMatchObject({ path: 'src/main.ts', line: 40 })
+    expect(fileParamsOf(infoOf('dsh-resource://file/session/s1/src/main.ts:40:7')))
+      .toMatchObject({ path: 'src/main.ts', line: 40 })
+  })
+
+  it('keeps a colon-carrying name that is not a line spec', () => {
+    expect(fileParamsOf(infoOf('dsh-resource://file/session/s1/data:2024.csv'))).toEqual({ path: 'data:2024.csv' })
+  })
+
+  it('has no seed for a tab that is not a file address', () => {
+    expect(fileParamsOf(infoOf('sidebar://editor'))).toBeUndefined()
   })
 })
 
@@ -498,6 +590,10 @@ describe('registerNativeSurface lifecycle (service-driven registration)', () => 
     expect(editorType?.title('dsh-resource://file/session/s1/src/main.ts')).toBe('main.ts')
     expect(editorType?.title('dsh-resource://file/absolute/work/pkg/a/b.txt')).toBe('b.txt')
     expect(editorType?.title('sidebar://editor')).toBe('Files')
+    // #826: DSH's markdown grammar keeps a `path:line` spec in the address, and
+    // the host names the tab after the address — the tab is named after the
+    // FILE, not after the line reference.
+    expect(editorType?.title('dsh-resource://file/session/s1/src/main.ts:42')).toBe('main.ts')
     // The new-tab/guide list must offer ONE "Files" row: the `files` kind
     // takeover draws the same explorer the editor page would, so the editor
     // type contributes no guide entry of its own.
@@ -729,6 +825,95 @@ describe('NativeTabBody full-height host wrapper', () => {
     expect(wrapper, 'the full-height host wrapper must exist').not.toBeNull()
     expect(wrapper!.querySelector('[data-stub-body]'), 'the descriptor component renders inside the wrapper').not.toBeNull()
     expect(wrapper!.childElementCount).toBe(1)
+    act(() => { root?.unmount() })
+    host.remove()
+  })
+})
+
+/**
+ * The revision the adapter READS off the native record is what gates the seed
+ * meta (the `createNativeTabRecords` cases above pin the gate itself): this
+ * pins the wiring at the real call site, where a missing `revision` would
+ * leave the gate permanently closed (the #762 fix silently absent) or
+ * permanently open (#684 back).
+ */
+describe('NativeTabBody — the navigation revision reaches the record', () => {
+  it('adopts a new navigation meta and keeps the plugin-written one across re-renders', () => {
+    const metaSeen: unknown[] = []
+    const store = createSidebarStore()
+    store.setSession('s1')
+    const service = createBetterSidebarService(store)
+    service.registerTab({
+      id: 'sidechat',
+      title: 'Side chat',
+      component: (props: TabComponentProps) => {
+        metaSeen.push((props.tab.meta as { threadId?: string } | undefined)?.threadId)
+        return null
+      },
+    })
+    const records = createNativeTabRecords()
+    const ctx = { sessions: { list: { subscribe: () => () => {}, getSnapshot: () => ({ byId: {} }) } } } as never
+    const navigation: { address: string; params: { meta?: unknown } | undefined; revision: number } = {
+      address: 'sidebar://sidechat',
+      params: { meta: { threadId: 't-1' } },
+      revision: 1,
+    }
+    const info = {
+      tab: {
+        id: 'native-7',
+        kind: 'sidechat',
+        title: 'Side chat',
+        contentId: 'sidebar://sidechat',
+        visible: true,
+        navigation,
+        signal: new AbortController().signal,
+      },
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    let root: Root | undefined
+    const draw = (): void => {
+      act(() => {
+        root!.render(createElement(NativeTabBody, {
+          sessionId: 's1',
+          ctx,
+          store,
+          service,
+          records,
+          descriptorId: 'sidechat',
+          useTabInfo: () => info,
+        }))
+      })
+    }
+    act(() => {
+      root = createRoot(host)
+      root.render(createElement(NativeTabBody, {
+        sessionId: 's1',
+        ctx,
+        store,
+        service,
+        records,
+        descriptorId: 'sidechat',
+        useTabInfo: () => info,
+      }))
+    })
+    expect(metaSeen.at(-1)).toBe('t-1')
+
+    // The view binds the thread it minted — the `updateTab` path.
+    act(() => { records.update('s1', 'native-7', { meta: { threadId: 't-2' } }) })
+    expect(metaSeen.at(-1)).toBe('t-2')
+
+    // A re-render re-delivers the SAME navigation (same revision).
+    draw()
+    expect(metaSeen.at(-1)).toBe('t-2')
+
+    // The thread menu navigates: the host replaces the params and bumps the
+    // revision, so the new thread must win.
+    navigation.params = { meta: { threadId: 't-3' } }
+    navigation.revision = 2
+    draw()
+    expect(metaSeen.at(-1)).toBe('t-3')
+
     act(() => { root?.unmount() })
     host.remove()
   })

@@ -34,7 +34,7 @@ better-sidebar 的桌面端适配历史上是"每壳一条补丁"：右上角开
 ### 标准件（`src/client/wco.ts` + `src/client/titlebar-strip.ts`）
 
 - `wco.ts`：模块级反应式 store（subscribe/getSnapshot，`useSyncExternalStore` 消费），特性检测 `navigator.windowControlsOverlay`，订阅 `geometrychange` 重读矩形（最大化/还原实时更新）；最后订阅者退订时解绑原生监听；`setWcoSourceForTests` 注入测试源。API 抛错视为 present+0（绝不崩布局）。
-- `titlebar-strip.ts`（唯一决策点，纯函数）：**⓪ `web` 方案强制 0 → ① WCO 真实高度（权威，0 也权威；`visible=false` 幽灵 API 视为缺失）→ ② URL `dsh-desktop-titlebar-inset`（0–120 clamp）→ ③ 预设 `stripFor`（仅 preset 方案）→ ④ 手动 `titleBarStripPx`（仅 custom 方案）→ ⑤ 0**。结果驱动 `body[data-dsh-title-bar-compat]` + `--dsh-title-bar-strip`（CSS 契约不变）。
+- `titlebar-strip.ts`（唯一决策点，纯函数）：**⓪ `web` 方案强制 0 → ① WCO 真实高度（权威，0 也权威；`visible=false` 幽灵 API 视为缺失）→ ② URL `dsh-desktop-titlebar-inset`（0–120 clamp）→ ③ 预设 `stripFor`（仅 preset 方案）→ ④ 手动 `titleBarStripPx`（仅 custom 方案）→ ⑤ 0**。结果驱动 `body[data-dsh-title-bar-compat]` + `--dsh-title-bar-strip`（CSS 契约不变）。（2026-10-05 起 ⓪ 与 ① 之间插入「壳自带窗口契约」，见文末实施偏差记录。）
 - `desktop-env.ts`：只做环境报告（desktop/mode/platform/titlebarInset），SSR 安全；移除旧 `win32OverlayTop` 硬编码。
 
 ### 预设与用户 CSS（`src/client/shell-presets.ts` + `Sidebar.tsx` effect）
@@ -71,6 +71,7 @@ better-sidebar 的桌面端适配历史上是"每壳一条补丁"：右上角开
 ## 实施偏差记录
 
 - 无。计划与实施一致；仅补充：schema 新字段必须无 default 才能让旧文档迁移（否则 settings 服务会把 default 填进解析结果、吞掉迁移），`plugin-shape.spec.ts` 断言了这一点。
+- **2026-10-05（issue #864，分支 `fix/864-desktop-window-contract`）**：取值链在 ⓪ 与 ① 之间插入**壳自带窗口契约**——官方 Electron 壳（DSH Desktop 2.x）通过客户端服务 `ctx.desktopWindow` 公布 `safeAreaInsets.top`，插件以结构化镜像探测（`src/context-types.ts` 的 `SidebarDesktopWindowService`、`src/client/desktop-env.ts` 的 `probeDesktopWindow`），**不写进 `dsh.client.inject`**（普通浏览器没有该服务，注入会让插件永远 pending）。壳存在时该值权威：compatibility / extended 报 0（壳已把整个页面放在自己的 36px frame 之下），advanced 报它画进内容的 caption 行（macOS 20 / win32 32）；壳不存在时 ②–⑤ 原样保留。`desktop-env.ts` 的 mode 同时接受第三种取值 `extended`（与 compatibility 同几何的独立 frame，**不套用 advanced 的预设顶部值**）。
 
 ## 存量 PR/issue 处置（合并后执行，均含哲学声明）
 

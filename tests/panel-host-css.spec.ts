@@ -37,6 +37,26 @@ describe('panel host layer css', () => {
     expect(hostRule).toMatch(/inset:\s*0/)
   })
 
+  it('pins an explicit viewport height, never a containing-block derivation (#616)', () => {
+    // `inset: 0` alone sizes a fixed box from its CONTAINING BLOCK, and a
+    // page-level `filter` / `backdrop-filter` / `transform` — exactly what a
+    // glass skin puts on the shell wrapper or on <body> itself — REPLACES
+    // that containing block with the ancestor's own padding box. The shell's
+    // content is itself fixed/viewport-sized, so that box is zero-height: the
+    // host collapses to 0px and the entire native right sidebar goes
+    // invisible while its DOM (and every panel inside) is fully present.
+    // `vh` resolves against the viewport, so the explicit height survives the
+    // swap; `auto` / `100%` do not, which is what this pin rejects.
+    expect(hostRule, 'the [data-dsh-panel-host] rule must exist').toBeDefined()
+    const heights = stripComments(hostRule!).match(/(?:^|[;{])\s*height\s*:\s*[^;}]+/g) ?? []
+    // Pin the WHOLE list, not the first hit: a second, later `height`
+    // (`auto` / `100%`) would win the cascade and silently restore the
+    // collapse. Sub-properties (`max-height`, `line-height`) do not match.
+    expect(
+      heights.map((declaration) => declaration.replace(/^[;{]\s*/, '').replace(/\s+/g, ' ').trim()),
+    ).toEqual(['height: 100vh'])
+  })
+
   it('does not reintroduce overflow on the degraded (absolute) layer', () => {
     const degraded = css.match(
       /:global\(\[data-dsh-panel-host\]\[data-dsh-panel-host-degraded\]\) \{([\s\S]*?)\n\}/,

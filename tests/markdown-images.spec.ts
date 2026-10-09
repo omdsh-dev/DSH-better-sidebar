@@ -86,6 +86,35 @@ describe('rewriteLocalImageUrls', () => {
     expect(out).toContain('/sidebar/file?')
   })
 
+  it('leaves every code-region form alone, tilde fences included', () => {
+    // The image pass had the SAME `~~~` blind spot as the link pass, and it
+    // predates this feature: on the 58d7f71 baseline
+    // `rewriteLocalImageUrls('~~~\n![i](./p.png)\n~~~')` already produced a
+    // `/sidebar/file` URL. Both passes now share one fence mask
+    // (`markdown-code.ts`).
+    const forms = [
+      '```\n![i](./p.png)\n```',
+      '````\n```\n![i](./p.png)\n```\n````',
+      '~~~\n![i](./p.png)\n~~~',
+      '~~~\nuse `![i](./p.png)` here\n~~~',
+    ]
+    for (const form of forms) {
+      const out = rewriteLocalImageUrls(form, scope, '/repo/readme.md', ORIGIN)
+      expect(out, form).toBe(form)
+      expect(out, form).not.toContain('/sidebar/file')
+    }
+    // A longer closing fence closes, and a real image after it is rewritten.
+    const after = rewriteLocalImageUrls('~~~\n![i](./p.png)\n~~~~\n\n![real](./real.png)', scope, '/repo/readme.md', ORIGIN)
+    expect(after).toContain('~~~\n![i](./p.png)\n~~~~')
+    expect(after).toMatch(/\[real\]\(.*\/sidebar\/file/)
+    // An unclosed fence runs to the end of the document.
+    expect(rewriteLocalImageUrls('~~~\n![i](./p.png)', scope, '/repo/readme.md', ORIGIN))
+      .toBe('~~~\n![i](./p.png)')
+    // A reference definition inside the fence is not harvested either.
+    const ref = rewriteLocalImageUrls('~~~\n![i][r]\n\n[r]: ./p.png\n~~~', scope, '/repo/readme.md', ORIGIN)
+    expect(ref).toBe('~~~\n![i][r]\n\n[r]: ./p.png\n~~~')
+  })
+
   it('does not rewrite a reference definition used only by a plain link', () => {
     // The `[manual][docs]` link references `[docs]: ./docs.md`, but that
     // definition must NOT be redirected to /sidebar/file because it is not

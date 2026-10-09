@@ -6,11 +6,14 @@
  * directories sort first, hidden entries render dimmed. The expansion set
  * lives in the per-session state (owned by the caller); the caller also owns
  * the refresh affordance — a `refreshTick` bump wipes the level cache so the
- * visible set reloads.
+ * visible set reloads. Chains of dirs holding exactly one real dir child each
+ * fold into one breadcrumb row (`a/b/c`, VSCode "compact folders"); clicking
+ * the row toggles the whole chain.
  *
  * Selection (VS Code semantics, no modifier = the old click semantics
  * untouched): Ctrl/Cmd+click toggles a row and sets the anchor, Shift+click
- * selects the visible range from the anchor, Escape / a blank click clears,
+ * selects the visible range from the anchor (in the tree's own row order —
+ * `sort` included), Escape / a blank click clears,
  * right-clicking outside the selection collapses it onto the row. A non-empty
  * selection shows the batch bar above the root row (copy paths / delete /
  * clear); the batch delete confirms once and removes sequentially.
@@ -25,8 +28,9 @@
  * context menu: file rows offer the caller's open escapes (new tab / to the
  * side, only when the callbacks exist), the host's "open in app" section and
  * a download action (the host serves raw bytes, binary-safe); directory rows
- * offer "upload here" and "new folder" (an inline editor at the top of that
- * level); every row can copy the relative or absolute path (with a brief
+ * offer "upload here", "new folder" and "new file" (an inline editor at the
+ * top of that level; the two creators are mutually exclusive); every row can
+ * copy the relative or absolute path (with a brief
  * "copied" label replacing the button after a successful write).
  *
  * Rows are memoized components (FileRow / DirRow) fed by stable callbacks and
@@ -49,10 +53,13 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { SiCursor, SiZedindustries } from 'react-icons/si'
 import { VscFolderOpened, VscLinkExternal, VscPin, VscPinned } from 'react-icons/vsc'
-import { api, archiveBuild, archiveDownloadUrl, archiveStatus, downloadUrl, type FsEntry } from './api.ts'
+import { api, archiveBuild, archiveDownloadUrl, archiveStatus, downloadUrl, type FsEntry, type FsLevel } from './api.ts'
+import { compactChain, compactLoadTargets } from './file-tree-compact.ts'
+import { DEFAULT_FILE_TREE_SORT, sortEntries, type FileTreeSort } from './file-tree-sort.ts'
+import { FS_TREES_MAX_PATHS } from '../fs-batch.ts'
 import { builtinFileIcon, builtinFolderIcon } from './file-icons.tsx'
 import { IconUploadOutline16, IconVscode16 } from './icons.tsx'
-import { isImeComposition } from './ime-guard.ts'
+import { isLikelyImeKey } from './ime-guard.ts'
 import { useSubmenuFlip } from './menu-flip.ts'
 import type { OpenInApp, OpenInAppEntry } from './open-in-app.ts'
 import type { OpenWithTarget } from './open-with.ts'
@@ -86,6 +93,25 @@ export function baseName(path: string): string {
 function parentOf(path: string): string {
   const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return at <= 0 ? path : path.slice(0, at)
+}
+
+/** A direct child path of one tree level (row paths may use either separator;
+ *  node:fs accepts the mixed form on Windows, where this runs). */
+export function joinChild(dir: string, name: string): string {
+  return `${dir.replace(/[\\/]+$/, '')}/${name}`
+}
+
+/** Client-side collision guard for the inline new-file editor: the typed name
+ *  must not already be taken in the level being edited. The SERVER refuses a
+ *  taken destination too — this is the same rule answered from the rows the
+ *  user is looking at, so the refusal arrives before a round trip (and on a
+ *  level whose listing is stale the server still has the last word).
+ *  Case-insensitive: the primary platforms (Windows/macOS) resolve names
+ *  that way, and on case-sensitive ones a refusal is merely conservative. */
+export function nameTaken(entries: readonly { name: string }[] | undefined, name: string): boolean {
+  if (entries === undefined) return false
+  const want = name.toLowerCase()
+  return entries.some((entry) => entry.name.toLowerCase() === want)
 }
 
 /** Only OS file drags belong to the upload surface; in-app drags (tab reorder,
@@ -180,7 +206,13 @@ interface ActivateModifiers {
  * one reads the live props/state through the refs the tree maintains.
  */
 interface RowActions {
-  activate(event: ActivateModifiers, path: string, isDir: boolean): void
+  /**
+   * Activate one row. `path` is the row's IDENTITY (the fold chain's head, so
+   * selection stays keyed to the rendered row); `chain` — directories only —
+   * names the links a plain click toggles, so a folded `a/b/c` row opens and
+   * closes as one row instead of only ever toggling its head.
+   */
+  activate(event: ActivateModifiers, path: string, isDir: boolean, chain?: readonly FsEntry[]): void
   contextMenu(event: MouseEvent<HTMLDivElement>, path: string, isDir: boolean): void
   reference(path: string, isDir: boolean): void
   dragOver(event: DragEvent<HTMLDivElement>, dir: string): void
@@ -282,6 +314,13 @@ const FileRow = memo(function FileRow(props: FileRowProps): ReactNode {
 /** One directory row's props (same stability rules as {@link FileRowProps}). */
 interface DirRowProps {
   entry: FsEntry
+  /**
+   * The fold chain this row renders: `[entry]` for an ordinary directory, or
+   * the singleton-dir breadcrumb (`a` → `a/b` → `a/b/c`) VSCode calls
+   * "compact folders". The array identity is stable while the level cache
+   * stands (see the chain cache in the tree body), so memo() still bails out.
+   */
+  chain: readonly FsEntry[]
   depth: number
   expanded: boolean
   iconsVersion: number
@@ -296,9 +335,13 @@ interface DirRowProps {
 }
 
 const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
-  const { entry, depth, expanded, iconsVersion, service, selected, revealed, dropTarget, gitChanged, copied, actions } = props
+  const { entry, chain, depth, expanded, iconsVersion, service, selected, revealed, dropTarget, gitChanged, copied, actions } = props
   void iconsVersion
-  const icon = service !== undefined ? service.folderIcon(entry.path, expanded, 14) : builtinFolderIcon(expanded, 14)
+  // The row's ACTIONS target the chain's deepest link: that is the directory
+  // the user sees expanded (`a/b/c`), so dropping into it, renaming it or
+  // opening a menu on it must address `c`, not the fold head `a`.
+  const target = chain[chain.length - 1]!
+  const icon = service !== undefined ? service.folderIcon(target.path, expanded, 14) : builtinFolderIcon(expanded, 14)
   return (
     <div
       role="button"
@@ -313,19 +356,28 @@ const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
       data-dsh-selected={selected ? 'true' : undefined}
       aria-pressed={selected}
       style={{ paddingLeft: depth * 22 + 6 }}
-      onClick={(event) => { actions.activate(event, entry.path, true) }}
+      // A folded row renders the whole chain (`a/b/c`) and a plain click
+      // toggles every link at once, so the breadcrumb opens and closes as one.
+      // EVERY directory row carries its full path here — a single-segment row
+      // is truncated by the label's ellipsis exactly like the breadcrumb, and
+      // the body never scrolls horizontally, so the tooltip is the only way to
+      // read a deep path (the same affordance `FileRow` gives a file).
+      title={target.path}
+      onClick={(event) => { actions.activate(event, entry.path, true, chain) }}
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
-          actions.activate(event, entry.path, true)
+          actions.activate(event, entry.path, true, chain)
         }
       }}
-      onDragOver={(event) => { actions.dragOver(event, entry.path) }}
-      onDrop={(event) => { actions.drop(event, entry.path, true) }}
-      onContextMenu={(event) => { actions.contextMenu(event, entry.path, true) }}
+      onDragOver={(event) => { actions.dragOver(event, target.path) }}
+      onDrop={(event) => { actions.drop(event, target.path, true) }}
+      onContextMenu={(event) => { actions.contextMenu(event, target.path, true) }}
     >
       {icon}
-      <span className={clsx(css.explorerName, gitChanged && css.explorerDirChanged)}>{entry.name}</span>
+      <span className={clsx(css.explorerName, gitChanged && css.explorerDirChanged)}>
+        {chain.length > 1 ? chain.map(link => link.name).join('/') : entry.name}
+      </span>
       {entry.isSymlink && <IconLinkOutlineRegular size={12} className={css.explorerSymlink} />}
       {copied
         ? <span className={css.explorerCopied}>{t('copied')}</span>
@@ -337,7 +389,7 @@ const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
             title={t('referenceFile')}
             onClick={(event) => {
               event.stopPropagation()
-              actions.reference(entry.path, true)
+              actions.reference(target.path, true)
             }}
           >
             {t('referenceFile')}
@@ -372,6 +424,9 @@ const RootRow = memo(function RootRow(props: RootRowProps): ReactNode {
     <div
       className={clsx(css.explorerRow, dropTarget && css.explorerRowDropTarget)}
       style={{ paddingLeft: 6 }}
+      // The root row prints only the workspace folder's BASENAME, so it needs
+      // the full path on hover like every other row.
+      title={path}
       onDragOver={(event) => { actions.dragOver(event, path) }}
       onDrop={(event) => { actions.drop(event, path, true) }}
       onContextMenu={(event) => { actions.contextMenu(event, path, true) }}
@@ -397,6 +452,41 @@ const RootRow = memo(function RootRow(props: RootRowProps): ReactNode {
     </div>
   )
 })
+
+/**
+ * The `(session, cwd)` pair a filesystem request runs under. `cwd` is
+ * undefined until the session snapshot resolves — no request may be issued
+ * then, which is why that case is `undefined` rather than a half-filled scope.
+ */
+type FsScope = { sessionId: string; cwd: string }
+
+/** The scope a set of props belongs to (undefined while `cwd` is unresolved). */
+function scopeOf(live: { sessionId: string; cwd: string | undefined }): FsScope | undefined {
+  return live.cwd === undefined ? undefined : { sessionId: live.sessionId, cwd: live.cwd }
+}
+
+/**
+ * Whether a scope captured when an action was ARMED is still the one on
+ * screen.
+ *
+ * The workbench REUSES this component across a session swap, so anything the
+ * user aimed at in project A (a confirmation, a selection, a drop target) can
+ * still be in state while project B is on screen. Clearing that state is the
+ * swap effect's job — but an effect is PASSIVE, and a click landing between
+ * the swap's commit and that effect reads the stale state while
+ * `propsRef.current` already holds the new scope. The request would then carry
+ * project B's scope with project A's absolute path, and the host applies it
+ * verbatim (containment was removed on purpose): a cross-project delete.
+ * Every mutation therefore re-checks the scope it was armed under, AT THE CALL
+ * SITE, instead of trusting the effect to have run.
+ * @param armed - The scope captured when the action was armed.
+ * @param live - The scope the component is rendering for now.
+ * @returns True only when both are present and identical.
+ */
+function sameScope(armed: FsScope | undefined, live: FsScope | undefined): boolean {
+  return armed !== undefined && live !== undefined
+    && armed.sessionId === live.sessionId && armed.cwd === live.cwd
+}
 
 export function FileTree(props: {
   sessionId: string
@@ -426,12 +516,18 @@ export function FileTree(props: {
   openWithPinned?: string[]
   /** Whether the workspace is remote (appends the SSH hint to target labels). */
   openWithSsh?: boolean
-  /** Open one plugin target externally (reveal or URL — the caller decides). */
-  onOpenWith?: (targetId: string, path: string) => void
+  /** Open one plugin target externally (reveal or URL — the caller decides).
+   *  It answers `false` (or rejects) when the hand-off did not happen, and the
+   *  strip then reports it exactly like the host-backed rows. */
+  onOpenWith?: (targetId: string, path: string) => void | boolean | Promise<void | boolean>
   /** Toggle one plugin target's pinned state (the submenu row's pushpin). */
   onToggleOpenWithPin?: (targetId: string) => void
   /** Insert `@<relative path>` into the composer draft (file vs directory). */
   onReferenceFile: (path: string, isDir: boolean) => void
+  /** The explorerExclude pref patterns: the HOST filters the listing with
+   *  them (excluded rows never arrive), so changing the list wipes the level
+   *  cache and reloads — the rows themselves need no client-side filter. */
+  exclude?: readonly string[]
   /** A rename landed (old row path → new path): the caller retargets open tabs. */
   onPathRenamed?: (oldPath: string, newPath: string) => void
   /** A delete landed: the caller closes tabs at or under the removed path. */
@@ -464,6 +560,12 @@ export function FileTree(props: {
    */
   openWithShowPluginTargets?: boolean
   /**
+   * The explorer's row order (the header control's choice). Absent → the
+   * server's own order, which {@link DEFAULT_FILE_TREE_SORT} reproduces, so an
+   * older caller renders exactly what it rendered before the control existed.
+   */
+  sort?: FileTreeSort
+  /**
    * The sidebar registry service: when present, externally registered file
    * icons (`registerFileIcon`) outrank the host's file-type artwork on file rows.
    * Absent → the built-ins alone (the host always passes it today).
@@ -476,9 +578,10 @@ export function FileTree(props: {
   const {
     sessionId, cwd, expanded, revealed, onOpenFileNewTab, onOpenFileSide,
     openInApp, openWithTargets, openWithPinned, openWithSsh, onOpenWith, onToggleOpenWithPin,
-    openWithShowPluginTargets,
+    openWithShowPluginTargets, exclude,
     onPathRenamed, onPathDeleted, refreshTick, onUploadRequest, busy, hidden, visible, service,
   } = props
+  const sort = props.sort ?? DEFAULT_FILE_TREE_SORT
   /** The live props for the stable callbacks below (identity churns per render). */
   const propsRef = useRef(props)
   propsRef.current = props
@@ -514,10 +617,18 @@ export function FileTree(props: {
   const [renaming, setRenaming] = useState<{ path: string; value: string } | null>(null)
   /** The inline new-folder editor: the directory it inserts into plus the buffer. */
   const [newFolder, setNewFolder] = useState<{ dir: string; value: string } | null>(null)
-  /** The delete awaiting the confirmation modal's yes (single row). */
-  const [confirmDelete, setConfirmDelete] = useState<{ path: string; isDir: boolean; name: string } | null>(null)
-  /** The batch delete awaiting the confirmation modal's yes. */
-  const [confirmDeleteSelected, setConfirmDeleteSelected] = useState(false)
+  /** The inline new-file editor: the directory it inserts into plus the buffer. */
+  const [newFile, setNewFile] = useState<{ dir: string; value: string } | null>(null)
+  /**
+   * The delete awaiting the confirmation modal's yes (single row), plus the
+   * scope it was ARMED under — see {@link sameScope}: the confirmation can
+   * outlive the project it was opened in, and the scope captured here is what
+   * keeps the request from landing in the next one.
+   */
+  const [confirmDelete, setConfirmDelete] =
+    useState<{ path: string; isDir: boolean; name: string; scope: FsScope } | null>(null)
+  /** The batch delete awaiting the confirmation modal's yes (plus its armed scope). */
+  const [confirmDeleteSelected, setConfirmDeleteSelected] = useState<FsScope | null>(null)
   /** True while the batch delete walks its paths (locks the dialog). */
   const [deletingSelected, setDeletingSelected] = useState(false)
   /** The last mutation failure (dismissable strip above the tree). */
@@ -564,8 +675,15 @@ export function FileTree(props: {
    */
   const reportDrop = useCallback((dir: string, transfer: DataTransfer | undefined): void => {
     if (propsRef.current.busy) return
+    // The traversal below is async, so the target directory is resolved
+    // against the scope that STARTED the drop, and the delivery is dropped
+    // outright if a session swap landed in between: `onUploadRequest` is read
+    // off the LATEST props, so without this the files would be uploaded into
+    // the next project's tree, at a directory path from this one.
+    const armed = scopeOf(propsRef.current)
     void uploadItemsFromDrop(transfer).then((items) => {
-      if (items.length > 0) propsRef.current.onUploadRequest(dir, items)
+      if (items.length === 0 || !sameScope(armed, scopeOf(propsRef.current))) return
+      propsRef.current.onUploadRequest(dir, items)
     })
   }, [])
   const handleBodyDrop = useCallback((event: DragEvent<HTMLDivElement>): void => {
@@ -633,6 +751,15 @@ export function FileTree(props: {
   }, [])
 
   /**
+   * The exclude list by VALUE. The caller owns the array identity (the prefs
+   * store hands out one stable reference per document), but the level cache,
+   * the request payload and the reload effect all key on the CONTENT: a
+   * value-equal list that churned identity would otherwise re-list the whole
+   * tree on every render. Declared here because `loadLevels` below reads it.
+   */
+  const excludeKey = (exclude ?? []).join('\0')
+
+  /**
    * List a SET of directories into the cache with ONE `fs.trees` request.
    *
    * The visible set (the workspace root plus every expanded directory) is
@@ -675,35 +802,58 @@ export function FileTree(props: {
     // fresh one arrives: no blank frame, and a failed refresh degrades to the
     // previous listing plus a hint instead of an empty tree.
     if (!force) for (const path of wanted) storeLevel(path, {})
+    // The host rows ONE `fs.trees` request at FS_TREES_MAX_PATHS and refuses a
+    // larger one OUTRIGHT (`too many paths`), which used to blank the WHOLE
+    // tree for a session whose persisted expansion set reached the cap. Split
+    // the visible set into cap-sized batches and keep the per-level error
+    // identity the batch route is built around: a batch that fails marks only
+    // the levels it carried.
+    const batches: string[][] = []
+    for (let index = 0; index < wanted.length; index += FS_TREES_MAX_PATHS) {
+      batches.push(wanted.slice(index, index + FS_TREES_MAX_PATHS))
+    }
     // The route takes no signal: the GENERATION counter is the staleness guard
     // (a refresh tick or an unmount bumps it, so a late answer is dropped).
-    api.fsTrees({ sessionId, cwd }, wanted).then((result) => {
+    type BatchOutcome =
+      | { batch: string[]; ok: true; levels: FsLevel[] }
+      | { batch: string[]; ok: false; message: string }
+    void Promise.all(batches.map(async (batch): Promise<BatchOutcome> => {
+      try {
+        return { batch, ok: true, levels: (await api.fsTrees({ sessionId, cwd }, batch, excludeKey === '' ? undefined : excludeKey.split('\0'))).levels }
+      } catch (error: unknown) {
+        return { batch, ok: false, message: error instanceof Error ? error.message : String(error) }
+      }
+    })).then((settled) => {
       if (generation !== generationRef.current) return
       setLoadError(null)
-      for (const level of result.levels) {
-        storeLevel(level.path, {
-          entries: level.entries,
-          truncated: level.truncated,
-          ...(level.error !== undefined ? { error: level.error } : {}),
-        })
-      }
-    }).catch((error: unknown) => {
-      if (generation !== generationRef.current) return
-      const message = error instanceof Error ? error.message : String(error)
+      let failure = ''
       let keptListing = false
-      for (const path of wanted) {
-        const level = dataRef.current[path]
-        if (level?.entries !== undefined) {
-          keptListing = true
+      for (const outcome of settled) {
+        if (outcome.ok) {
+          for (const level of outcome.levels) {
+            storeLevel(level.path, {
+              entries: level.entries,
+              truncated: level.truncated,
+              ...(level.error !== undefined ? { error: level.error } : {}),
+            })
+          }
           continue
         }
-        storeLevel(path, { error: message })
+        if (failure === '') failure = outcome.message
+        for (const path of outcome.batch) {
+          const level = dataRef.current[path]
+          if (level?.entries !== undefined) {
+            keptListing = true
+            continue
+          }
+          storeLevel(path, { error: outcome.message })
+        }
       }
       // Levels that had a listing keep it; the hint explains why they are not
       // fresher. With nothing to keep, the per-level rows already say it.
-      setLoadError(keptListing ? message : null)
+      if (failure !== '') setLoadError(keptListing ? failure : null)
     })
-  }, [sessionId, cwd, storeLevel])
+  }, [sessionId, cwd, excludeKey, storeLevel])
 
   /**
    * Re-list one directory in place (a watch notice, or the parent of a landed
@@ -778,6 +928,20 @@ export function FileTree(props: {
     forceNextLoad.current = true
   }, [refreshTick])
 
+  // The exclude patterns are applied HOST-side, so a changed list makes every
+  // cached level stale (the old rows include entries the list now removes, and
+  // miss entries it no longer hides): wipe the cache and let the load effect
+  // below re-list the visible set in one batch. Declared BEFORE it so the wipe
+  // lands first; the first pass only records the list.
+  const lastExclude = useRef(excludeKey)
+  useEffect(() => {
+    if (lastExclude.current === excludeKey) return
+    lastExclude.current = excludeKey
+    generationRef.current += 1
+    dataRef.current = {}
+    setData({})
+  }, [excludeKey])
+
   useEffect(() => {
     // Load the visible set in ONE batch request; already-loaded levels (kept
     // in the cache) are not refetched, so this asks only for what is new — a
@@ -788,6 +952,16 @@ export function FileTree(props: {
     forceNextLoad.current = false
     loadLevels([root, ...expanded], { force })
   }, [cwd, expanded, refreshTick, loadLevels])
+
+  useEffect(() => {
+    // A fold chain runs through COLLAPSED singleton directories, so their
+    // levels are loaded ahead of any expansion (without them the breadcrumb
+    // label would grow one segment at a time as the user clicks). Each arrival
+    // can reveal the next link, hence the rescan on every cache update;
+    // loadLevels skips what is already loaded, so this settles.
+    if (cwd === undefined) return
+    loadLevels(compactLoadTargets(dataRef.current))
+  }, [cwd, data, loadLevels])
 
   // A torn-down tree must not write the answer of an in-flight batch into a
   // dead component: bumping the generation makes every late response stale.
@@ -894,15 +1068,81 @@ export function FileTree(props: {
     setSelection(new Set())
   }, [setSelection])
 
+  /**
+   * Bumped by the swap effect below, and the boundary it marks is shared: the
+   * two asynchronous paths this component starts — the batch-delete walk and
+   * the archive build — capture their OWN scope, so the requests they issue
+   * stay correct across a swap, while everything they SETTLE (pruneTree, the
+   * error strip, the selection, the busy flags, the archive job) is state of
+   * the project on screen, which may no longer be the one they started in.
+   * Work whose generation is stale goes quiet instead.
+   */
+  const scopeGenRef = useRef(0)
+
+  /**
+   * A session/cwd swap REUSES this component: the workbench keeps one mounted
+   * instance per tab id, and tab ids restart per session. Every path-shaped
+   * piece of state here therefore outlives the project it was picked in — and
+   * the selection is the dangerous one, because "delete selected" sends THIS
+   * session's scope with the PREVIOUS session's absolute paths, which the host
+   * applies verbatim (containment was removed on purpose): it deleted another
+   * project's files. The rest is the same leak in harmless clothing — a menu,
+   * an inline editor, an armed confirmation aimed at a row that is no longer
+   * on screen.
+   */
+  useEffect(() => {
+    // The guarded clear spares a swap with nothing selected a re-render of the
+    // whole tree. It returns early when the selection is already empty, so the
+    // anchor is dropped here as well: deselecting the last row leaves an empty
+    // selection still holding one.
+    clearSelection()
+    anchorRef.current = null
+    kindRef.current.clear()
+    setRowMenu(null)
+    setApps(null)
+    setCopiedPath(null)
+    setRenaming(null)
+    setNewFolder(null)
+    // The ref is synced during render, so it still holds the previous session's
+    // editor until the next one — long enough for a blur in this tick to mkdir
+    // that dir under the new scope.
+    newFolderRef.current = null
+    setConfirmDelete(null)
+    setConfirmDeleteSelected(null)
+    // A batch walk of the PREVIOUS session may still be in flight: its flag
+    // must not lock the new session's bar, and the bump below retires the
+    // state it would otherwise settle here.
+    setDeletingSelected(false)
+    scopeGenRef.current += 1
+    setActionError(null)
+    setLoadError(null)
+    pendingUploadDir.current = undefined
+    resetDrop()
+  }, [sessionId, cwd, resetDrop, clearSelection])
+
   const copySelectedPaths = useCallback((): void => {
     void writeClipboard([...selectedRef.current].join('\n'))
   }, [])
 
-  /** Run the confirmed single-row delete: fs.remove + settle + close tabs. */
-  const performDelete = (target: { path: string; isDir: boolean }): void => {
-    if (cwd === undefined) return
-    api.fsRemove({ sessionId, cwd }, target.path)
+  /**
+   * Run the confirmed single-row delete: fs.remove + settle + close tabs.
+   *
+   * The confirmation carries the scope it was armed under, and the request is
+   * refused when that is no longer the scope on screen. Relying on the swap
+   * effect alone is not enough: a click that lands before React flushes that
+   * passive effect sends the NEW session's scope with the OLD project's
+   * absolute path, which the host applies verbatim — it deleted another
+   * project's file.
+   * @param target - The row awaiting deletion, plus its armed scope.
+   */
+  const performDelete = (target: { path: string; isDir: boolean; scope: FsScope }): void => {
+    if (!sameScope(target.scope, scopeOf(propsRef.current))) return
+    const generation = scopeGenRef.current
+    api.fsRemove(target.scope, target.path)
       .then(() => {
+        // A swap mid-flight retires the settle: it is state of the project on
+        // screen, which is no longer the one this request ran in.
+        if (generation !== scopeGenRef.current) return
         setActionError(null)
         pruneTree(target.path)
         onPathDeleted?.(target.path, target.isDir)
@@ -910,12 +1150,13 @@ export function FileTree(props: {
         setSelection(new Set())
       })
       .catch((error: unknown) => {
+        if (generation !== scopeGenRef.current) return
         setActionError(error instanceof Error ? error.message : String(error))
       })
   }
 
   // ── Stable row actions ─────────────────────────────────────────────────
-  const handleActivate = useCallback((event: ActivateModifiers, path: string, isDir: boolean): void => {
+  const handleActivate = useCallback((event: ActivateModifiers, path: string, isDir: boolean, chain?: readonly FsEntry[]): void => {
     if (event.ctrlKey || event.metaKey) {
       toggleSelect(path, isDir)
       return
@@ -926,8 +1167,18 @@ export function FileTree(props: {
     }
     // Plain click: the original semantics, plus dropping any selection.
     clearSelection()
-    if (isDir) propsRef.current.onToggle(path)
-    else propsRef.current.onOpenFile(path)
+    if (!isDir) {
+      propsRef.current.onOpenFile(path)
+      return
+    }
+    // A folded row toggles the WHOLE chain: expanding every link is what makes
+    // the tail's children render, and collapsing every link is the only way to
+    // close a chain an earlier expansion (before the fold formed) left open.
+    const links = chain !== undefined && chain.length > 0 ? chain.map(link => link.path) : [path]
+    const open = links.some(link => expandedSetRef.current.has(link))
+    for (const link of links) {
+      if (expandedSetRef.current.has(link) === open) propsRef.current.onToggle(link)
+    }
   }, [clearSelection, selectRange, toggleSelect])
 
   const handleContextMenu = useCallback((event: MouseEvent<HTMLDivElement>, path: string, isDir: boolean): void => {
@@ -966,6 +1217,7 @@ export function FileTree(props: {
   const startNewFolder = (dir: string): void => {
     const live = propsRef.current
     if (live.cwd !== undefined && dir !== live.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
+    setNewFile(null)
     setNewFolder({ dir, value: '' })
   }
 
@@ -1001,26 +1253,87 @@ export function FileTree(props: {
     setNewFolder(null)
   }
 
+  // ── New file ───────────────────────────────────────────────────────────
+  const newFileRef = useRef(newFile)
+  newFileRef.current = newFile
+
+  /** Open the inline editor at the TOP of `dir`'s level (expanding it first). */
+  const startNewFile = (dir: string): void => {
+    const live = propsRef.current
+    if (live.cwd !== undefined && dir !== live.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
+    setNewFolder(null)
+    setNewFile({ dir, value: '' })
+  }
+
+  /**
+   * Commit the inline new-file name: Enter, blur, or the editor's own cancel
+   * path. The ref guard makes the commit idempotent — a blur that lands after
+   * Enter must not fire a second create. Creates an EMPTY file through
+   * `fs.createFile` (the server refuses a taken destination without truncating
+   * it); a name the level already lists is refused here first, so the two
+   * obvious mistakes never cost a round trip.
+   */
+  const commitNewFile = (dir: string, raw: string): void => {
+    if (newFileRef.current === null) return
+    newFileRef.current = null
+    setNewFile(null)
+    const name = raw.trim()
+    const live = propsRef.current
+    if (live.cwd === undefined) return
+    if (!validName(name)) {
+      setActionError(t('newFileInvalid'))
+      return
+    }
+    if (nameTaken(dataRef.current[dir]?.entries, name)) {
+      setActionError(t('newFileExists'))
+      return
+    }
+    api.fsCreateFile({ sessionId: live.sessionId, cwd: live.cwd }, dir, name)
+      .then(() => {
+        setActionError(null)
+        if (dir !== live.cwd && !expandedSetRef.current.has(dir)) live.onToggle(dir)
+        retryDir(dir)
+      })
+      .catch((error: unknown) => {
+        setActionError(error instanceof Error ? error.message : String(error))
+      })
+  }
+
+  const cancelNewFile = (): void => {
+    newFileRef.current = null
+    setNewFile(null)
+  }
+
   // ── Batch delete ───────────────────────────────────────────────────────
   /**
    * Delete every selected row, ONE AT A TIME (the host refuses nothing here,
    * but a partial batch must be debuggable). The first failure stops the walk
    * and lands in the error strip; already-removed rows settle as they go.
    */
-  const performBatchDelete = (): void => {
+  const performBatchDelete = (armed: FsScope): void => {
     const live = propsRef.current
     if (live.cwd === undefined || deletingSelected) return
+    // The selection was built in the scope the confirmation was armed under,
+    // and the first fs.remove below is issued straight from the click handler —
+    // so this call-site check, not the passive swap effect, is what keeps the
+    // batch from pairing this session's scope with the previous session's
+    // paths (see {@link sameScope}).
+    if (!sameScope(armed, scopeOf(live))) {
+      setConfirmDeleteSelected(null)
+      return
+    }
     const paths = [...selectedRef.current]
-    setConfirmDeleteSelected(false)
+    setConfirmDeleteSelected(null)
     if (paths.length === 0) return
-    const scope = { sessionId: live.sessionId, cwd: live.cwd }
+    const generation = scopeGenRef.current
     setDeletingSelected(true)
     void (async () => {
       const removed: string[] = []
       for (const path of paths) {
         try {
-          await api.fsRemove(scope, path)
+          await api.fsRemove(armed, path)
         } catch (error: unknown) {
+          if (generation !== scopeGenRef.current) return
           setActionError(error instanceof Error ? error.message : String(error))
           // Keep the rows that were NOT removed selected, so a retry is one click.
           const next = new Set(selectedRef.current)
@@ -1029,11 +1342,14 @@ export function FileTree(props: {
           setDeletingSelected(false)
           return
         }
+        // Stale walk: the swap already released the busy flag.
+        if (generation !== scopeGenRef.current) return
         setActionError(null)
         pruneTree(path)
         live.onPathDeleted?.(path, kindRef.current.get(path) ?? false)
         removed.push(path)
       }
+      if (generation !== scopeGenRef.current) return
       setDeletingSelected(false)
       clearSelection()
     })()
@@ -1334,15 +1650,30 @@ export function FileTree(props: {
   /** The job being polled (state so the poller starts/stops with it). */
   const [archiveJobId, setArchiveJobId] = useState<string | null>(null)
   const archiveJobRef = useRef<{ id: string; name: string } | null>(null)
+  /** Whether the CURRENT job's `ready` status was already handed to the
+   *  download. The download route CONSUMES the task, so a second hand-off
+   *  would either fetch a deleted id (404 → a bogus `zipFailed` strip next to
+   *  a file that did land) or click the anchor twice. */
+  const archiveHandedOffRef = useRef(false)
 
   /** End the job: drop the progress line and release the guard. */
   const settleArchive = useCallback((): void => {
     archiveBusyRef.current = false
     archiveJobRef.current = null
+    archiveHandedOffRef.current = false
     setArchiveJobId(null)
     setArchiveBusy(false)
     setArchiveProgress(null)
   }, [])
+
+  // A session/cwd swap abandons the archive job with it — the progress strip
+  // belongs to the project that started the zip, and a leftover `archiveJobId`
+  // would keep the poller running in the new one, whose failures land as
+  // `zipFailed` there. A build still starting up is retired by the swap effect
+  // above (scopeGenRef), so it cannot pump its job back in after this.
+  useEffect(() => {
+    settleArchive()
+  }, [sessionId, cwd, settleArchive])
 
   const failArchive = useCallback((message: string): void => {
     setActionError(t('zipFailed', { message }))
@@ -1392,7 +1723,7 @@ export function FileTree(props: {
     // The poller swallows a rejected task (it must keep the loop alive), so
     // every failure is caught HERE and turned into the strip's `zipFailed`.
     try {
-      const status = await archiveStatus(job.id)
+      const status = await archiveStatus({ sessionId, cwd }, job.id)
       // The transport may deliver a response after teardown; the signal is the
       // only reliable staleness guard (the route call takes no signal).
       if (signal.aborted) return
@@ -1401,26 +1732,39 @@ export function FileTree(props: {
         archiveHandlersRef.current.fail(status.error ?? `HTTP ${status.state}`)
         return
       }
-      if (status.state === 'ready') archiveHandlersRef.current.save(job.id, job.name)
+      if (status.state === 'ready') {
+        // Hand the job over exactly ONCE, and stop polling BEFORE the download
+        // starts: the GET releases the task, so the next tick would see 404 and
+        // paint `zipFailed` over a download that actually succeeded (or, while
+        // the first GET is still in flight, start a second one).
+        if (archiveHandedOffRef.current) return
+        archiveHandedOffRef.current = true
+        setArchiveJobId(null)
+        archiveHandlersRef.current.save(job.id, job.name)
+      }
     } catch (error: unknown) {
       if (signal.aborted) return
       archiveHandlersRef.current.fail(error instanceof Error ? error.message : String(error))
     }
-  }, []), { intervalMs: 250, mode: 'self-scheduling', immediate: true })
+  }, [cwd, sessionId]), { intervalMs: 250, mode: 'self-scheduling', immediate: true })
 
   const downloadArchive = (paths: readonly string[]): void => {
     if (archiveBusyRef.current) return
     const name = paths.length === 1 ? `${baseName(paths[0]!)}.zip` : 'archive.zip'
+    const generation = scopeGenRef.current
     archiveBusyRef.current = true
+    archiveHandedOffRef.current = false
     setArchiveBusy(true)
     setArchiveProgress(null)
     void archiveBuild({ sessionId, cwd }, paths, name)
       .then(({ id, entries }) => {
+        if (generation !== scopeGenRef.current) return
         archiveJobRef.current = { id, name }
         setArchiveProgress({ done: 0, total: entries })
         setArchiveJobId(id)
       })
       .catch((error: unknown) => {
+        if (generation !== scopeGenRef.current) return
         failArchive(error instanceof Error ? error.message : String(error))
       })
   }
@@ -1438,21 +1782,47 @@ export function FileTree(props: {
    *  a parked tab unsubscribes from the poll. */
   const gitStatus = useGitStatus({ sessionId, cwd }, { visible: visible !== false })
 
-  // The Shift range walks the rows the user can actually see: depth-first,
-  // expanded state decides. Recomputed with the level cache, never rendered.
+  /**
+   * Fold chains (VSCode "compact folders"): resolved ONCE per level-cache
+   * revision and REUSED while it stands. {@link DirRow} is memoized on prop
+   * identity, so handing it a freshly built array on every render would
+   * re-render every directory row for a selection, a hover or a copy flash —
+   * exactly what the row memoization exists to prevent.
+   */
+  const chainFor = useMemo(() => {
+    const cache = new Map<string, readonly FsEntry[]>()
+    return (entry: FsEntry): readonly FsEntry[] => {
+      const cached = cache.get(entry.path)
+      if (cached !== undefined) return cached
+      const chain: readonly FsEntry[] = entry.compact === true ? compactChain(entry, path => data[path]) : [entry]
+      cache.set(entry.path, chain)
+      return chain
+    }
+  }, [data])
+
+  // The Shift range walks the rows the user can actually see: the level's
+  // rows in the SAME order `renderLevel` draws them (the sort choice), then
+  // depth-first, expanded state decides. Recomputed with the level cache,
+  // never rendered.
   const visibleRows = useMemo(() => {
     const rows: { path: string; isDir: boolean }[] = []
     const walk = (dir: string): void => {
       const level = data[dir]
       if (level?.entries === undefined) return
-      for (const entry of level.entries) {
+      for (const entry of sortEntries(level.entries, sort)) {
+        // A folded row IS one row: its identity is the chain head (the level
+        // entry the walk is on), and it descends into the chain TAIL — the
+        // same shape `renderLevel` draws, so a Shift range covers what the
+        // user sees.
         rows.push({ path: entry.path, isDir: entry.isDir })
-        if (entry.isDir && expandedSet.has(entry.path)) walk(entry.path)
+        if (!entry.isDir) continue
+        const chain = chainFor(entry)
+        if (chain.some(link => expandedSet.has(link.path))) walk(chain[chain.length - 1]!.path)
       }
     }
     if (root !== undefined) walk(root)
     return rows
-  }, [data, expandedSet, root])
+  }, [chainFor, data, expandedSet, root, sort])
   visibleRowsRef.current = visibleRows
 
   /**
@@ -1472,8 +1842,12 @@ export function FileTree(props: {
 
   /** The inline rename editor replacing one row (dirs and files alike):
    *  same indent/icon/height for a seamless swap, Enter/blur commits,
-   *  Escape cancels, IME composition keys never reach the handlers (the
-   *  shared isImeComposition guard). */
+   *  Escape cancels. Composition keys must not commit the name; this handler
+   *  is a NON-intercepting early return (no stopPropagation), so it asks the
+   *  conservative isLikelyImeKey — the document capture guard only swallows
+   *  keys inside a live composition window by design (bare legacy 229
+   *  keydowns pass it, #833), which is right for the guard and not enough
+   *  here. */
   const renderRenameRow = (entry: FsEntry, depth: number): ReactNode => (
     <div
       key={entry.path}
@@ -1493,7 +1867,7 @@ export function FileTree(props: {
           setRenaming(prev => prev === null ? prev : { ...prev, value: event.target.value })
         }}
         onKeyDown={(event) => {
-          if (isImeComposition(event)) return
+          if (isLikelyImeKey(event)) return
           if (event.key === 'Enter') {
             event.preventDefault()
             commitRename(entry.path, renaming?.value ?? '')
@@ -1509,7 +1883,7 @@ export function FileTree(props: {
 
   /** The inline new-folder editor at the top of one level: the same
    *  interaction contract as the rename editor (Enter commits, Escape
-   *  cancels, blur commits, IME guarded). */
+   *  cancels, blur commits, conservatively IME-guarded). */
   const renderNewFolderRow = (dir: string, depth: number): ReactNode => (
     <div className={clsx(css.explorerRow, css.explorerRenaming)} style={{ paddingLeft: depth * 22 + 6 }}>
       {dirRowIcon(dir, true)}
@@ -1524,7 +1898,7 @@ export function FileTree(props: {
           setNewFolder(prev => prev === null ? prev : { ...prev, value: event.target.value })
         }}
         onKeyDown={(event) => {
-          if (isImeComposition(event)) return
+          if (isLikelyImeKey(event)) return
           if (event.key === 'Enter') {
             event.preventDefault()
             commitNewFolder(dir, newFolder?.value ?? '')
@@ -1538,9 +1912,52 @@ export function FileTree(props: {
     </div>
   )
 
+  /**
+   * The inline new-file editor at the top of one level: the same interaction
+   * contract as the new-folder editor (Enter commits, Escape cancels, blur
+   * commits, conservatively IME-guarded). The glyph follows the typed name, so
+   * the extension's icon updates while typing (an empty buffer probes with a
+   * neutral carrier name).
+   */
+  const renderNewFileRow = (dir: string, depth: number): ReactNode => {
+    const typed = newFile?.value.trim() ?? ''
+    const probe = joinChild(dir, typed === '' ? 'untitled' : typed)
+    return (
+      <div className={clsx(css.explorerRow, css.explorerRenaming)} style={{ paddingLeft: depth * 22 + 6 }}>
+        {service !== undefined ? service.fileIcon(probe, 14) : builtinFileIcon(probe, 14)}
+        <input
+          ref={renameInputRef}
+          className={css.explorerRenameInput}
+          value={newFile?.value ?? ''}
+          placeholder={t('newFilePlaceholder')}
+          aria-label={t('newFile')}
+          spellCheck={false}
+          onChange={(event) => {
+            setNewFile(prev => prev === null ? prev : { ...prev, value: event.target.value })
+          }}
+          onKeyDown={(event) => {
+            if (isLikelyImeKey(event)) return
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              commitNewFile(dir, newFile?.value ?? '')
+            } else if (event.key === 'Escape') {
+              event.preventDefault()
+              cancelNewFile()
+            }
+          }}
+          onBlur={() => { commitNewFile(dir, newFile?.value ?? '') }}
+        />
+      </div>
+    )
+  }
+
   const renderLevel = (dir: string, depth: number): ReactNode => {
     const level = data[dir]
-    const head = newFolder?.dir === dir ? renderNewFolderRow(dir, depth) : null
+    // Only ONE inline creator is open at a time (each start closes the other),
+    // so the two are tested in a fixed order rather than merged.
+    const head = newFolder?.dir === dir
+      ? renderNewFolderRow(dir, depth)
+      : newFile?.dir === dir ? renderNewFileRow(dir, depth) : null
     // Both the not-yet-requested level (`undefined`) and the in-flight marker
     // `loadLevels` stores (`{}` — no entries, no error yet) draw the loading
     // row. Without the second half the marker fell into `entries ?? []` and
@@ -1569,33 +1986,48 @@ export function FileTree(props: {
         </>
       )
     }
-    const entries = level.entries ?? []
+    // The ORDER is the caller's choice (the header's sort control); the level
+    // cache keeps the host's own order and is never reordered in place.
+    const entries = sortEntries(level.entries ?? [], sort)
     return (
       <>
         {head}
         {entries.map((entry) => {
+          // Fold chains (VSCode "compact folders"): a chain of dirs holding
+          // exactly one real dir child each renders as ONE `a/b/c` row; the
+          // chain pauses at whatever the level cache has loaded. Resolved for
+          // directories only, and through the per-revision cache so DirRow's
+          // memoization survives an unrelated re-render.
+          const chain = entry.isDir ? chainFor(entry) : undefined
           // The row being renamed renders as its editor (no button semantics:
           // an editor is not a click target — and a nested interactive inside
-          // role="button" would be invalid anyway).
-          if (renaming?.path === entry.path) return renderRenameRow(entry, depth)
-          if (entry.isDir) {
-            const isOpen = expandedSet.has(entry.path)
+          // role="button" would be invalid anyway). A folded row's menu
+          // addressed its TAIL, so any chain link puts the whole row here.
+          if (renaming !== null && (renaming.path === entry.path || chain?.some(link => link.path === renaming.path) === true)) {
+            return renderRenameRow(entry, depth)
+          }
+          if (chain !== undefined) {
+            const tail = chain[chain.length - 1]!
+            const isOpen = chain.some(link => expandedSet.has(link.path))
             return (
               <div key={entry.path}>
                 <DirRow
                   entry={entry}
+                  chain={chain}
                   depth={depth}
                   expanded={isOpen}
                   iconsVersion={iconsVersion}
                   service={service}
                   selected={selected.has(entry.path)}
-                  revealed={revealedSet.has(entry.path)}
-                  dropTarget={dropTarget === entry.path}
+                  // Reveal-anchor: a reveal names a specific directory, which
+                  // may be a MID-chain link — mark the row that renders it.
+                  revealed={chain.some(link => revealedSet.has(link.path))}
+                  dropTarget={dropTarget === tail.path}
                   gitChanged={gitStatus.dirHasChanges(entry.path)}
                   copied={copiedPath === entry.path}
                   actions={actions}
                 />
-                {isOpen && renderLevel(entry.path, depth + 1)}
+                {isOpen && renderLevel(tail.path, depth + 1)}
               </div>
             )
           }
@@ -1694,7 +2126,10 @@ export function FileTree(props: {
               <span className={css.explorerSelectionText}>{t('filesSelected', { count: selected.size })}</span>
               <span className={css.explorerSelectionActions}>
                 <Chip onClick={copySelectedPaths}>{t('copyPaths')}</Chip>
-                <Chip onClick={() => { setConfirmDeleteSelected(true) }}>{t('deleteSelected')}</Chip>
+                <Chip onClick={() => {
+                  const armed = scopeOf(propsRef.current)
+                  if (armed !== undefined) setConfirmDeleteSelected(armed)
+                }}>{t('deleteSelected')}</Chip>
                 <Chip onClick={clearSelection}>{t('clearSelection')}</Chip>
               </span>
             </div>
@@ -1792,6 +2227,9 @@ export function FileTree(props: {
           ...(rowMenu?.isDir === true
             ? [{ id: 'new-folder', label: t('newFolder'), icon: <IconPlusOutlineRegular size={14} /> }]
             : []),
+          ...(rowMenu?.isDir === true
+            ? [{ id: 'new-file', label: t('newFile'), icon: <IconCodeOutlineRegular size={14} /> }]
+            : []),
           // 5: ZIP of the current selection (≥2 rows, or one lone directory).
           ...(rowMenu === null ? [] : zipEntries(rowMenu)),
           // 6: copy, then the mutations (never on the workspace root row).
@@ -1828,7 +2266,15 @@ export function FileTree(props: {
           // The plugin's own targets share one id space (pinned rows and
           // submenu children alike), so the caller gets the target id + path.
           if (id.startsWith('open-with:')) {
-            onOpenWith?.(id.slice('open-with:'.length), target.path)
+            // The caller owns the launch and answers whether it was accepted;
+            // a refusal (or a rejection) means nothing opened, so the failure
+            // lands in the same strip as the host-backed rows instead of only
+            // reaching the console (#412 was silence in this exact spot).
+            const pending = onOpenWith?.(id.slice('open-with:'.length), target.path)
+            void Promise.resolve(pending).then(
+              (accepted) => { if (accepted === false) reportOpenFailure(target.path) },
+              () => { reportOpenFailure(target.path) },
+            )
             return
           }
           if (id === 'reveal-in-file-manager') {
@@ -1851,12 +2297,19 @@ export function FileTree(props: {
           if (id === 'new-folder') {
             startNewFolder(target.path)
             return
-          }          if (id === 'rename') {
+          }
+          if (id === 'new-file') {
+            startNewFile(target.path)
+            return
+          }
+          if (id === 'rename') {
             setRenaming({ path: target.path, value: baseName(target.path) })
             return
           }
           if (id === 'delete') {
-            setConfirmDelete({ path: target.path, isDir: target.isDir, name: baseName(target.path) })
+            const armed = scopeOf(propsRef.current)
+            if (armed === undefined) return
+            setConfirmDelete({ path: target.path, isDir: target.isDir, name: baseName(target.path), scope: armed })
             return
           }
           copyPath(
@@ -1893,15 +2346,19 @@ export function FileTree(props: {
       {/* The batch delete: one confirmation for the whole selection, then one
           sequential fs.remove per row (the first failure stops the walk). */}
       <ConfirmDialog
-        open={confirmDeleteSelected}
+        open={confirmDeleteSelected !== null}
         title={t('deleteSelectedTitle', { count: selected.size })}
         description={t('deleteSelectedDesc')}
         confirmLabel={t('deleteSelected')}
         cancelLabel={t('cancel')}
         danger
         busy={deletingSelected}
-        onConfirm={performBatchDelete}
-        onClose={() => { setConfirmDeleteSelected(false) }}
+        onConfirm={() => {
+          const armed = confirmDeleteSelected
+          if (armed === null) return
+          performBatchDelete(armed)
+        }}
+        onClose={() => { setConfirmDeleteSelected(null) }}
       />
     </div>
   )

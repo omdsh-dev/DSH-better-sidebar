@@ -130,11 +130,11 @@ describe('DSH community-market manifest compatibility', () => {
     //
     // A caret NEVER spans a minor bump, even with `includePrerelease` on:
     // `^0.1.7-rc.1` expands to `>=0.1.7-rc.1 <0.2.0-0`, so it rejects
-    // `0.2.0-rc.1` (measured: false) and a 0.2.0 host would disable the row
+    // `0.2.0-rc.2` (measured: false) and a 0.2.0 host would disable the row
     // instead of loading the plugin. The support line therefore moves WITH the
     // baseline and is never widened to "cover both lines". (An explicit
     // comparator behaves differently — `>=0.1.1-rc.2 <0.2.0` does admit
-    // `0.2.0-rc.1`, because only carets get the `-0` upper bound — which is why
+    // `0.2.0-rc.2`, because only carets get the `-0` upper bound — which is why
     // the assertion below pins the baseline tuple instead of accepting any
     // caret that looks plausible.)
     const peers = pkg.peerDependencies ?? {}

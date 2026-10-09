@@ -1,12 +1,12 @@
 import { execFile, execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { parseUnifiedDiff } from '../src/client/diff/rows.ts'
-import { parseLogLines, parsePorcelainZ, repoRoots, status } from '../src/git.ts'
+import { checkout, parseLogLines, parseNumstat, parsePorcelainZ, repoRoots, status } from '../src/git.ts'
 
 const execFileAsync = promisify(execFile)
 const normalizePath = (path: string): string => path.replaceAll('\\', '/')
@@ -264,5 +264,147 @@ describe('git parsing', () => {
   it('parses an empty or junk diff into no files', () => {
     expect(parseUnifiedDiff('').files).toEqual([])
     expect(parseUnifiedDiff('no diff here\n').files).toEqual([])
+  })
+
+  it('never lets a branch operand reach git as an option (checkout)', async () => {
+    // A caller-supplied branch name went into argv as a bare operand, so `-f`
+    // was parsed as git's OPTION and force-discarded the worktree changes
+    // (`--work-tree=…` redirected the checkout). The sentinel ends option
+    // parsing — the same guard 4100e16 added to show / commitDiff / revert /
+    // cherryPick, which missed this call.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-git-checkout-'))
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: root })
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root })
+      execFileSync('git', ['config', 'user.name', 'test'], { cwd: root })
+      writeFileSync(join(root, 'a.txt'), 'committed\n')
+      execFileSync('git', ['add', 'a.txt'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: root })
+      execFileSync('git', ['branch', 'other'], { cwd: root })
+      writeFileSync(join(root, 'a.txt'), 'UNSAVED WORK\n')
+
+      await expect(checkout(root, '-f')).rejects.toThrow()
+      expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('UNSAVED WORK\n')
+
+      await expect(checkout(root, '--work-tree=/elsewhere')).rejects.toThrow()
+      expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('UNSAVED WORK\n')
+
+      // The guard must not break the real operation.
+      await checkout(root, 'other')
+      expect(execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim())
+        .toBe('other')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+/**
+ * Issue #131: the per-path added/deleted line counts ride the EXISTING status
+ * read (one batch, never one git process per file). The parser below is what
+ * turns `git diff --numstat` answers into those numbers.
+ */
+describe('numstat line counts (#131)', () => {
+  it('parses line-framed records into added/deleted per path', () => {
+    expect(parseNumstat(['2\t0\tsrc/a.ts', '0\t3\tsrc/b.ts', ''].join('\n'))).toEqual(new Map([
+      ['src/a.ts', { additions: 2, deletions: 0 }],
+      ['src/b.ts', { additions: 0, deletions: 3 }],
+    ]))
+  })
+
+  it('parses the production NUL framing (what status() actually runs)', () => {
+    // `git diff --numstat -z` puts the counts and the path in NUL-framed
+    // records, so a path with a newline or a quote stays lossless.
+    expect(parseNumstat(['12\t4\tsrc/a.ts', '1\t1\todd\nname.ts', ''].join('\0'))).toEqual(new Map([
+      ['src/a.ts', { additions: 12, deletions: 4 }],
+      ['odd\nname.ts', { additions: 1, deletions: 1 }],
+    ]))
+  })
+
+  it('reads a binary change as binary rather than as 0/0', () => {
+    // git prints `-` for both counts: there are no line counts to report, and
+    // a fabricated `0 0` would make a changed blob read as an empty change.
+    expect(parseNumstat('-\t-\tassets/logo.png\0')).toEqual(new Map([
+      ['assets/logo.png', { binary: true }],
+    ]))
+  })
+
+  it('attributes a rename to the NEW path (plain and brace notations)', () => {
+    expect(parseNumstat(['5\t1\told.txt => new.txt', ''].join('\n'))).toEqual(new Map([
+      ['new.txt', { additions: 5, deletions: 1 }],
+    ]))
+    // The brace form keeps the unchanged prefix/suffix around the arrow.
+    expect(parseNumstat(['3\t1\tsrc/{a => b}/x.ts', ''].join('\n'))).toEqual(new Map([
+      ['src/b/x.ts', { additions: 3, deletions: 1 }],
+    ]))
+  })
+
+  it('attributes a NUL-framed rename from its two name fields', () => {
+    // In `-z` framing the origin and the new name are their own NUL fields
+    // (origin first) — the format `status()` consumes.
+    expect(parseNumstat('0\t0\t\0src/a/y.ts\0src/b/z.ts\0')).toEqual(new Map([
+      ['src/b/z.ts', { additions: 0, deletions: 0 }],
+    ]))
+  })
+
+  it('keeps a path that literally contains an arrow under NUL framing', () => {
+    // `-z` framing never folds names into rename notation, so this is a real
+    // file name and must stay attributable to itself.
+    expect(parseNumstat('1\t0\ta => b.txt\0')).toEqual(new Map([
+      ['a => b.txt', { additions: 1, deletions: 0 }],
+    ]))
+  })
+
+  it('answers an empty map for empty or junk output', () => {
+    expect(parseNumstat('')).toEqual(new Map())
+    expect(parseNumstat('\0')).toEqual(new Map())
+    expect(parseNumstat('not a numstat record\nanother one\n')).toEqual(new Map())
+  })
+
+  it('carries counts, the binary marker and the untracked absence through status()', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-git-counts-'))
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: root })
+      execFileSync('git', ['config', 'user.email', 't@t'], { cwd: root })
+      execFileSync('git', ['config', 'user.name', 't'], { cwd: root })
+      // Rename detection is a user config (diff.renames / status.renames);
+      // pin it so this fixture means the same thing on every machine.
+      execFileSync('git', ['config', 'diff.renames', 'true'], { cwd: root })
+      execFileSync('git', ['config', 'status.renames', 'true'], { cwd: root })
+      writeFileSync(join(root, 'tracked.txt'), 'one\ntwo\n')
+      writeFileSync(join(root, 'renamed.txt'), 'same\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: root })
+
+      // ONE path changed on BOTH sides: one line staged, then one more in the
+      // worktree — the entry must report the sum of the two readings.
+      writeFileSync(join(root, 'tracked.txt'), 'one\ntwo\nthree\n')
+      execFileSync('git', ['add', 'tracked.txt'], { cwd: root })
+      writeFileSync(join(root, 'tracked.txt'), 'one\ntwo\nthree\nfour\n')
+      // A staged rename: the counts belong to the new path.
+      execFileSync('git', ['mv', 'renamed.txt', 'moved.txt'], { cwd: root })
+      // A binary blob, and an untracked file git will not diff at all.
+      writeFileSync(join(root, 'blob.bin'), Buffer.from([0, 1, 2, 3, 0, 5]))
+      execFileSync('git', ['add', 'blob.bin'], { cwd: root })
+      writeFileSync(join(root, 'untracked.txt'), 'brand new\n')
+
+      const result = await status(root)
+      const byPath = new Map(result.entries.map(entry => [entry.path, entry]))
+      expect(byPath.get('tracked.txt')).toEqual({
+        path: 'tracked.txt', xy: 'MM', counts: { additions: 2, deletions: 0 },
+      })
+      expect(byPath.get('moved.txt')).toEqual({
+        path: 'moved.txt', xy: 'R ', counts: { additions: 0, deletions: 0 },
+      })
+      expect(byPath.get('blob.bin')).toEqual({
+        path: 'blob.bin', xy: 'A ', counts: { binary: true },
+      })
+      // No numstat row exists for an untracked file: the entry keeps no counts
+      // at all, which is what the row renders as "new file".
+      expect(byPath.get('untracked.txt')).toEqual({ path: 'untracked.txt', xy: '??' })
+      expect(byPath.has('renamed.txt')).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

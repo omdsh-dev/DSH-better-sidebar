@@ -257,6 +257,12 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
     fileAddress(sessionId, cwd, path) {
       return fileAddressFor(sessionId, cwd, path)
     },
+    tabTypeOf(sessionId, tabId) {
+      // Read through the SESSION, like `close` above: one native id names a
+      // tab in every session, so a bare read can hand back another session's
+      // record and clear the wrong session's unread mark.
+      return records.get(sessionId, tabId)?.tab.type
+    },
     close(sessionId, tabId) {
       // Read through the SESSION: the same native id names a tab in every
       // session, so a bare read can hand back another session's record.

@@ -16,18 +16,14 @@
 
 import z from '@deepseek-ai/schemastery'
 import {
-  TITLE_BAR_STRIP_DEFAULT,
-  TITLE_BAR_STRIP_MAX,
-  TITLE_BAR_STRIP_MIN,
+  EXPLORER_EXCLUDE_DEFAULTS,
   type SidebarPrefs,
 } from './prefs-shared.ts'
 
 export {
+  EXPLORER_EXCLUDE_DEFAULTS,
   SIDEBAR_PREFS_DEFAULTS,
   SIDEBAR_PREFS_NS,
-  TITLE_BAR_STRIP_DEFAULT,
-  TITLE_BAR_STRIP_MAX,
-  TITLE_BAR_STRIP_MIN,
   type SidebarPrefs,
 } from './prefs-shared.ts'
 
@@ -83,7 +79,10 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
  * Asserted as `z<SidebarPrefs>` (the interface lives in `prefs-shared.ts`; the
  * explicit annotation is also what keeps the emitted declaration portable).
  * Unknown keys are TOLERATED by this schema and pass through untouched, which
- * is what keeps a legacy `workspaceFence: true` in an old profile harmless.
+ * is what keeps a legacy `workspaceFence: true` — or the retired title-bar
+ * compatibility keys (`titleBarScheme` / `titleBarPresetId` /
+ * `titleBarCompat` / `titleBarStripPx`, removed with the whole strip
+ * mechanism) — in an old profile harmless instead of fatal.
  */
 export const PrefsSchema: z<SidebarPrefs> = z.object({
   autoOpenSubagent: z.boolean().default(true),
@@ -93,11 +92,9 @@ export const PrefsSchema: z<SidebarPrefs> = z.object({
   mobileDefaultTree: z.boolean().default(true),
   agentOpenTools: z.boolean().default(false),
   editorExplorer: z.boolean().default(false),
-  titleBarScheme: z.union([z.const('auto'), z.const('web'), z.const('preset'), z.const('custom')]),
-  titleBarPresetId: z.string(),
+  editorGitGutter: z.boolean().default(true),
+  explorerExclude: z.array(z.string()).default([...EXPLORER_EXCLUDE_DEFAULTS]),
   customCss: z.string(),
-  titleBarCompat: z.boolean().default(false),
-  titleBarStripPx: z.number().step(1).min(TITLE_BAR_STRIP_MIN).max(TITLE_BAR_STRIP_MAX).default(TITLE_BAR_STRIP_DEFAULT),
   htmlViewerNoSandbox: z.boolean().default(false),
   htmlViewerDefaultUnsafe: z.boolean().default(false),
   // Per-feature enable switches are OPEN maps (any tab/viewer id, built-in or

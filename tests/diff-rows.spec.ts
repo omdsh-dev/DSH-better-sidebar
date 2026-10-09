@@ -7,7 +7,7 @@
  * line as one insertion plus one deletion (git's own accounting).
  */
 import { describe, expect, it } from 'vitest'
-import { parseUnifiedDiff, unifiedSegments, diffLines, pairMods, diffStats, untrackedFile, foldRowsFromContents, decodeGitPath, type FoldSegment } from '../src/client/diff/rows.ts'
+import { parseUnifiedDiff, unifiedSegments, diffLines, pairMods, diffStats, untrackedFile, foldRowsFromContents, decodeGitPath, MAX_LCS_CELLS, type FoldSegment } from '../src/client/diff/rows.ts'
 
 const twoHunks = [
   'diff --git a/a.ts b/a.ts',
@@ -144,6 +144,50 @@ describe('pairMods', () => {
   it('matches diffLines output (the LCS walk pairs rewrites the same way)', () => {
     const rows = diffLines('hello world', 'hello dsh')
     expect(rows.map(r => r.kind)).toEqual(['mod', 'mod'])
+  })
+})
+
+/**
+ * The dense LCS table is one JS number per cell at ~8 bytes each, so its cost
+ * is the input's line-count product: 5000×5000 cells measured 193MB and
+ * 10000×10000 cells 765MB. A session file op can hand `diffLines` a prior
+ * content that big (the op carries the whole previous file), so past
+ * MAX_LCS_CELLS the table is never built and the output degrades to
+ * all-deletions + all-additions.
+ */
+describe('diffLines scale guard', () => {
+  it('degrades a 10000×10000 pair to all-del + all-add, in order and fast', () => {
+    const oldLines = Array.from({ length: 10_000 }, (_, i) => `line ${String(i + 1)}`)
+    const newLines = oldLines.slice()
+    // One edit in the middle: the LCS walk would misalign every line after it.
+    newLines[4_999] = 'line 5000 changed'
+    const startedAt = performance.now()
+    const rows = diffLines(oldLines.join('\n'), newLines.join('\n'))
+    const elapsed = performance.now() - startedAt
+    // The guard is O(n+m); building the table here would be 100M cells.
+    expect(elapsed).toBeLessThan(2_000)
+    expect(rows).toHaveLength(20_000)
+    expect(rows.every(r => r.kind === 'del' || r.kind === 'add')).toBe(true)
+    const dels = rows.slice(0, 10_000)
+    const adds = rows.slice(10_000)
+    expect(dels.every(r => r.kind === 'del')).toBe(true)
+    expect(adds.every(r => r.kind === 'add')).toBe(true)
+    // Strictly increasing 1..10000 on each side, contiguous.
+    expect(dels.map(r => r.oldLine)).toEqual(Array.from({ length: 10_000 }, (_, i) => i + 1))
+    expect(adds.map(r => r.newLine)).toEqual(Array.from({ length: 10_000 }, (_, i) => i + 1))
+    expect(dels[4_999]).toMatchObject({ kind: 'del', oldLine: 5_000, text: 'line 5000' })
+    expect(adds[4_999]).toMatchObject({ kind: 'add', newLine: 5_000, text: 'line 5000 changed' })
+  })
+
+  it('still builds the table at exactly the cell limit (the bound is inclusive)', () => {
+    const side = Math.floor(Math.sqrt(MAX_LCS_CELLS))
+    expect(side * side).toBe(MAX_LCS_CELLS)
+    const text = Array.from({ length: side }, (_, i) => `line ${String(i + 1)}`).join('\n')
+    const rows = diffLines(text, text)
+    expect(rows).toHaveLength(side)
+    expect(rows.every(r => r.kind === 'context')).toBe(true)
+    expect(rows[0]).toMatchObject({ oldLine: 1, newLine: 1 })
+    expect(rows[side - 1]).toMatchObject({ oldLine: side, newLine: side })
   })
 })
 

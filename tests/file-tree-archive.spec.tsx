@@ -81,6 +81,8 @@ const POLL_MS = 250
 
 interface Harness {
   container: HTMLDivElement
+  /** Render — or RE-render in place, as a session swap does. */
+  show: (sessionId: string, cwd: string) => Promise<void>
   unmount: () => void
 }
 
@@ -88,23 +90,27 @@ async function mountTree(): Promise<Harness> {
   const container = document.createElement('div')
   document.body.append(container)
   const root: Root = createRoot(container)
-  await act(async () => {
-    root.render(createElement(FileTree, {
-      sessionId: 's1',
-      cwd: '/tmp',
-      expanded: [],
-      revealed: [],
-      onToggle: () => {},
-      onOpenFile: () => {},
-      onReferenceFile: () => {},
-      refreshTick: 0,
-      onUploadRequest: () => {},
-      busy: false,
-    }))
-    await Promise.resolve()
-  })
+  const show = async (sessionId: string, cwd: string): Promise<void> => {
+    await act(async () => {
+      root.render(createElement(FileTree, {
+        sessionId,
+        cwd,
+        expanded: [],
+        revealed: [],
+        onToggle: () => {},
+        onOpenFile: () => {},
+        onReferenceFile: () => {},
+        refreshTick: 0,
+        onUploadRequest: () => {},
+        busy: false,
+      }))
+      await Promise.resolve()
+    })
+  }
+  await show('s1', '/tmp')
   return {
     container,
+    show,
     unmount: () => { act(() => { root.unmount() }); container.remove() },
   }
 }
@@ -235,6 +241,9 @@ describe('FileTree zip and download', () => {
     expect(fetchMock).toHaveBeenCalledWith('/sidebar/archive/job-1')
     expect(downloads).toEqual(['blob:mock-1|archive.zip'])
     expect(progressLine(harness.container)).toBeNull()
+    // The poll carries the session scope: the host requires BOTH keys on
+    // `archive.status`, so a bare `{ id }` is refused with a 400.
+    expect(archiveStatus).toHaveBeenCalledWith({ sessionId: 's1', cwd: '/tmp' }, 'job-1')
     // The object URL is released on the next task.
     await act(async () => { await vi.advanceTimersByTimeAsync(1) })
     expect(revokedUrls).toEqual(['blob:mock-1'])
@@ -344,6 +353,40 @@ describe('FileTree zip and download', () => {
     expect(downloads).toEqual([])
   })
 
+  it('hands a ready job to the download exactly once, and stops polling first', async () => {
+    // The download is held open, so the 250ms poller would tick again while the
+    // GET is still in flight; `archiveStatus` keeps answering `ready`. The GET
+    // CONSUMES the task, so a second hand-off either double-downloads or reads a
+    // 404 and paints `zipFailed` beside a file that actually landed.
+    let releaseDownload: (response: Response) => void = () => {}
+    fetchMock.mockImplementation(async () => await new Promise<Response>(resolve => { releaseDownload = resolve }))
+    harness = await mountTree()
+    rightClick(rowByName(harness.container, 'sub'))
+    clickMenuitem('Zip and download')
+    await flush()
+    await poll()
+    await flush()
+    expect(archiveStatus).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(downloads).toEqual([])
+
+    // Three more poll intervals: no second download, no bogus failure strip.
+    await poll()
+    await poll()
+    await poll()
+    expect(archiveStatus).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(harness.container.querySelector('[role="alert"]')).toBeNull()
+
+    await act(async () => {
+      releaseDownload({ ok: true, status: 200, blob: async () => new Blob(['zip-bytes']) } as unknown as Response)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(downloads).toEqual(['blob:mock-1|sub.zip'])
+    expect(harness.container.querySelector('[role="alert"]')).toBeNull()
+  })
+
   it('builds once while a job is in flight (double click guard)', async () => {
     let release: (job: { id: string; entries: number }) => void = () => {}
     archiveBuild.mockImplementation(async () => await new Promise<{ id: string; entries: number }>(resolve => { release = resolve }))
@@ -384,5 +427,32 @@ describe('FileTree zip and download', () => {
     expect(archiveBuild).toHaveBeenCalledTimes(2)
     await poll()
     await flush()
+  })
+
+  it('does not resurrect a build that was still starting when the scope changed', async () => {
+    // The swap settles the archive. A build answering only afterwards used to
+    // pump its job id back in, restarting the poller in a project that never
+    // asked for a zip — and reporting the failure there.
+    let resolveBuild!: (value: { id: string; entries: number }) => void
+    archiveBuild.mockImplementationOnce(() => new Promise((resolve) => { resolveBuild = resolve }))
+
+    harness = await mountTree()
+    click(rowByName(harness.container, 'a.ts'), { ctrlKey: true })
+    click(rowByName(harness.container, 'b.ts'), { ctrlKey: true })
+    rightClick(rowByName(harness.container, 'b.ts'))
+    clickMenuitem('Zip and download (2 items)')
+    expect(archiveBuild).toHaveBeenCalledTimes(1)
+
+    // Another session takes over the same mounted instance.
+    await harness.show('s2', '/tmp/beta')
+    await flush()
+
+    // The build answers only now.
+    await act(async () => { resolveBuild({ id: 'job-stale', entries: 2 }) })
+    await flush()
+    await poll()
+
+    expect(archiveStatus).not.toHaveBeenCalled()
+    expect(progressLine(harness.container)).toBeNull()
   })
 })

@@ -236,6 +236,41 @@ describe('FileTree plugin open-with menu', () => {
     expect(menuItems().some(item => item.textContent?.includes('Open with'))).toBe(false)
     expect(menuItems().some(item => item.getAttribute('aria-haspopup') === 'menu')).toBe(false)
   })
+
+  /**
+   * #412's failure mode was a click that produced NO feedback at all: the host
+   * route answered `{ started: true }` for a launch that opened nothing. The
+   * caller now answers whether the hand-off was accepted, and both refusals
+   * (a `false` answer and a rejected launch) must land in the strip the
+   * host-backed rows already use.
+   */
+  it('reports a refused hand-off (caller answers false) in the action strip', async () => {
+    harness = await mountTree()
+    harness.onOpenWith.mockReturnValue(false)
+    openMenu(harness.container)
+    act(() => { submenuParent().click() })
+    const zedRow = submenuRows().find(item => item.textContent?.trim() === 'Zed')!
+    await act(async () => {
+      zedRow.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(harness.container.querySelector('[role="alert"]')?.textContent).toContain('Could not open: /tmp/a.ts')
+  })
+
+  it('reports a rejected hand-off in the same action strip', async () => {
+    harness = await mountTree()
+    harness.onOpenWith.mockRejectedValue(new Error('spawn cmd.exe ENOENT'))
+    openMenu(harness.container)
+    act(() => { submenuParent().click() })
+    const zedRow = submenuRows().find(item => item.textContent?.trim() === 'Zed')!
+    await act(async () => {
+      zedRow.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(harness.container.querySelector('[role="alert"]')?.textContent).toContain('Could not open: /tmp/a.ts')
+  })
 })
 
 describe('FileTree plugin open-with menu flip geometry (submenu clamping)', () => {

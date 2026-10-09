@@ -32,6 +32,13 @@ export interface SidebarTab {
   type: TabType
   title: string
   path?: string
+  /** The 1-based line a file reference named (`a/b.c#L131`, `a/b.c:131`).
+   *  Transient by design: `sanitizePersistedTab` copies a whitelist of known
+   *  fields, and this one is deliberately left out — a link's landing line is
+   *  a one-shot navigation target, and a reload that yanked the reader back
+   *  to a line they scrolled away from days ago would be worse than starting
+   *  at the top. Same spirit as `revealed`. */
+  line?: number
   diff?: SidebarDiffRef
   /** Plugin-owned state (v0.12.0+): MUST be JSON-serializable — it is
    *  persisted with the layout and restored verbatim on reload. */
@@ -71,6 +78,15 @@ export interface SidebarState {
    * unhighlighted.
    */
   revealed: string[]
+  /**
+   * Tab types whose page the reader has not looked at yet: written when a
+   * background activation opens its page WITHOUT taking the column over
+   * (src/client/sidebar/use-host-feeds.ts) and cleared the moment that page
+   * becomes the one on screen. Deliberately NOT transient — it survives the
+   * tab body's unmount, a session switch and a reload, because an unread page
+   * stays unread until it is read.
+   */
+  unread: TabType[]
   /** Whether the bottom panel (the plugin's one workbench) is open. */
   bottomOpen: boolean
   /** The bottom panel's height (clamped to the contract range). */
@@ -148,6 +164,7 @@ export function makeDefaultState(): SidebarState {
     nextBrowser: 1,
     expanded: [],
     revealed: [],
+    unread: [],
     bottomOpen: false,
     bottomHeight: BOTTOM_DEFAULT,
     bottomSplits: bottomLeaf,
@@ -343,6 +360,26 @@ export function activateTab(state: SidebarState, paneId: string, tabId: string):
   }
 }
 
+/**
+ * Mark one tab TYPE as having a page the reader has not looked at yet (the
+ * dot drawn on its tab). Identity-preserving when it is already marked, so a
+ * repeat activation does not churn the store (and therefore localStorage).
+ */
+export function markUnread(state: SidebarState, type: TabType): SidebarState {
+  return state.unread.includes(type) ? state : { ...state, unread: [...state.unread, type] }
+}
+
+/** Clear one tab type's unread mark (the reader just looked at its page). */
+export function clearUnread(state: SidebarState, type: TabType): SidebarState {
+  if (!state.unread.includes(type)) return state
+  return { ...state, unread: state.unread.filter(entry => entry !== type) }
+}
+
+/** Whether one tab type is currently marked unread. */
+export function isUnread(state: SidebarState | undefined, type: TabType): boolean {
+  return state !== undefined && state.unread.includes(type)
+}
+
 /** Update the display fields of one open tab (title / path / meta) without
  *  re-opening it. The browser tab persists its current URL and hostname
  *  title through this reducer so a reload restores the visited page. A
@@ -521,6 +558,33 @@ export function toggleExpanded(state: SidebarState, path: string): SidebarState 
 }
 
 /**
+ * The absolute ancestor directories between the explorer root (`cwd`) and each
+ * given path, EXCLUDING the paths themselves: the levels a lazy tree must have
+ * expanded before those rows can exist. Empty strings and non-strings are
+ * skipped; the result is de-duplicated in first-seen order.
+ * @param cwd - the explorer's root (session working directory).
+ * @param files - absolute paths whose ancestors are wanted.
+ */
+export function ancestorDirs(cwd: string | undefined, files: readonly string[]): string[] {
+  const found = new Set<string>()
+  const rootParts = (cwd ?? '').split(/[\\/]+/).filter(part => part !== '')
+  for (const file of files) {
+    if (typeof file !== 'string' || file === '') continue
+    const parts = file.split(/[\\/]+/).filter(part => part !== '' && part !== '.')
+    const separator = file.includes('\\') ? '\\' : '/'
+    // Keep the original leading separator(s) when rebuilding ancestor dirs:
+    // FileTree matches expansion against ABSOLUTE paths, so dropping the
+    // root (POSIX `/w/src` → `w/src`) or a UNC prefix (`\\server\share`)
+    // would leave every ancestor collapsed and the row unreachable.
+    const prefix = file.startsWith('/') ? '/' : file.startsWith('\\\\') ? '\\\\' : file.startsWith('\\') ? '\\' : ''
+    for (let i = rootParts.length; i < parts.length - 1; i++) {
+      found.add(prefix + parts.slice(0, i + 1).join(separator))
+    }
+  }
+  return [...found]
+}
+
+/**
  * Reveal files in the explorer: expand every ancestor directory between the
  * explorer root and each file (so the lazy tree actually shows the row) and
  * record the paths for highlighting. The reveal set is transient —
@@ -531,25 +595,11 @@ export function toggleExpanded(state: SidebarState, path: string): SidebarState 
  * @returns the next state, or the same reference when nothing is revealed.
  */
 export function revealPaths(state: SidebarState, cwd: string | undefined, files: readonly string[]): SidebarState {
-  const expanded = new Set(state.expanded)
-  const revealed: string[] = []
-  const rootParts = (cwd ?? '').split(/[\\/]+/).filter(part => part !== '')
-  for (const file of files) {
-    if (typeof file !== 'string' || file === '') continue
-    revealed.push(file)
-    const parts = file.split(/[\\/]+/).filter(part => part !== '' && part !== '.')
-    const separator = file.includes('\\') ? '\\' : '/'
-    // Keep the original leading separator(s) when rebuilding ancestor dirs:
-    // FileTree matches expansion against ABSOLUTE paths, so dropping the
-    // root (POSIX `/w/src` �W `w/src`) or a UNC prefix (`\\server\share`)
-    // would leave every ancestor collapsed and the row unreachable.
-    const prefix = file.startsWith('/') ? '/' : file.startsWith('\\\\') ? '\\\\' : file.startsWith('\\') ? '\\' : ''
-    for (let i = rootParts.length; i < parts.length - 1; i++) {
-      expanded.add(prefix + parts.slice(0, i + 1).join(separator))
-    }
-  }
+  const revealed = files.filter(file => typeof file === 'string' && file !== '')
   if (revealed.length === 0) return state
-  return { ...state, expanded: [...expanded], revealed }
+  const expanded = new Set(state.expanded)
+  for (const dir of ancestorDirs(cwd, revealed)) expanded.add(dir)
+  return { ...state, expanded: [...expanded], revealed: [...revealed] }
 }
 
 /** Adjust one split divider: `i` is the left/top child index, delta in fractions. */
@@ -666,6 +716,12 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     : 1
   if (typeof record.activePane !== 'string' && record.activePane !== null) return undefined
   if (!Array.isArray(record.expanded) || record.expanded.some(item => typeof item !== 'string')) return undefined
+  // Unread marks arrived in a later build: like the workbench fields below, a
+  // missing or malformed value on an OLDER persisted state defaults to "none
+  // unread" rather than rejecting the whole layout.
+  const unread = Array.isArray(record.unread)
+    ? (record.unread as unknown[]).filter((item): item is string => typeof item === 'string')
+    : []
   // Pane/split ids must be globally unique (the runtime uid counter is
   // shared), so a duplicate id gets a fresh one.
   const seen = new Set<string>()
@@ -702,6 +758,9 @@ export function sanitizeState(parsed: unknown): SidebarState | undefined {
     nextBrowser,
     expanded: record.expanded as string[],
     revealed: [],
+    // Restored, unlike `revealed`: an unread page is still unread after a
+    // reload, and this list is what draws its dot.
+    unread: unread,
     bottomOpen,
     bottomHeight,
     bottomSplits,
@@ -898,6 +957,66 @@ export class SidebarStore {
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
+  }
+
+  /**
+   * Mark one tab type as unread in the CURRENT session (the dot on its tab).
+   *
+   * Reached from the background-activation path alone, so it refuses to
+   * notify when there is nothing to draw: a repeat mark keeps the state
+   * reference AND skips the listener fan-out, which is what lets a test (and
+   * the render path) treat a notification as "the marker really changed".
+   * Returns whether the marker was set.
+   */
+  markUnread(type: TabType): boolean {
+    const state = this.snapshot.state
+    if (state === undefined || state.unread.includes(type)) return false
+    this.replaceCurrent(markUnread(state, type))
+    return true
+  }
+
+  /**
+   * Clear one tab type's unread mark in a NAMED session — the reader switched
+   * to that page. The current session goes through the publishing path (the
+   * dot has to disappear from the shell AND from the native chip, both of
+   * which read the published snapshot); a session that is not on screen takes
+   * the targeted path, which publishes nothing: its stored state is updated so
+   * the mark is already gone when the reader switches to it.
+   *
+   * `reduceFor` is deliberately not used for the current session: it never
+   * touches the published snapshot, so reading the mark back (or rendering
+   * from it) would keep seeing the old value.
+   *
+   * A type that is not marked is a strict no-op in both paths — no notify, no
+   * persist — so a carrier can call this on every visibility change.
+   * Returns whether a mark was cleared.
+   */
+  clearUnread(type: TabType, sessionId?: string): boolean {
+    const state = this.snapshot.state
+    const target = sessionId ?? this.snapshot.sessionId
+    if (target === undefined) return false
+    if (target === this.snapshot.sessionId) {
+      if (state === undefined || !state.unread.includes(type)) return false
+      this.replaceCurrent(clearUnread(state, type))
+      return true
+    }
+    const stored = this.bySession.get(target)
+    if (stored === undefined || !stored.unread.includes(type)) return false
+    this.bySession.set(target, clearUnread(stored, type))
+    return true
+  }
+
+  /**
+   * Commit a state this class already minted (identity-checked by the caller)
+   * as the current session's state, persisting it like any other change.
+   */
+  private replaceCurrent(state: SidebarState): void {
+    const sessionId = this.snapshot.sessionId
+    if (sessionId === undefined) return
+    this.bySession.set(sessionId, state)
+    this.snapshot = { sessionId, state, prefs: this.prefs }
+    this.schedulePersist(sessionId, state)
+    this.notify()
   }
 
   getSnapshot(): SidebarSnapshot {

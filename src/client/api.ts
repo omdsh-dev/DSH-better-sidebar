@@ -1,12 +1,14 @@
 /**
- * Typed fetch wrapper over the /sidebar JSON API. Every call posts to
- * `/sidebar/api/<method>` with the sessionId and — when known — the session's
- * cwd from the client's own list summary. The host prefers its attached
- * session header and uses the summary cwd only while the session is still
- * hydrating at page load (a detached session would otherwise fail the
+ * Typed fetch wrapper over the /sidebar JSON API. Every call posts through
+ * {@link hostRouteUrl} to `/sidebar/api/<method>` with the sessionId and —
+ * when known — the session's cwd from the client's own list summary (the
+ * route keeps a reverse-proxy prefix; see host-route-url.ts). The host prefers
+ * its attached session header and uses the summary cwd only while the session
+ * is still hydrating at page load (a detached session would otherwise fail the
  * request). Failures surface as {@link SidebarApiError} with the wire code.
  */
 import { encodeHtmlUrl } from '../html-route.ts'
+import { hostRouteUrl } from './host-route-url.ts'
 import { resolveSidebarPath } from './paths.ts'
 import type { SidechatLiveEvent, SidechatLogEvent, SidechatThreadInfo } from '../sidechat-core.ts'
 import type {
@@ -38,6 +40,9 @@ export interface FsEntry {
   isSymlink: boolean
   /** For symlinks: the target is missing or unreadable (stat failed). */
   broken: boolean
+  /** Directory rows only: the contents are exactly one non-symlink child
+   *  — the explorer folds such chains into one breadcrumb row. */
+  compact?: boolean
 }
 
 /** One level of a `fs.trees` batch: a listing, or that level's failure. */
@@ -49,10 +54,19 @@ export interface FsLevel {
   error?: string
 }
 
+/** One changed path's line-count summary (host git shape, mirroring
+ *  `GitLineCounts` in `src/git.ts`). A binary change is its own variant: git
+ *  reports `-`/`-` for it, so there are no counts to show. */
+export type GitLineCounts = { additions: number; deletions: number } | { binary: true }
+
 /** Git status entry (host git shape). */
 export interface GitStatusEntry {
   path: string
   xy: string
+  /** Lines gained/lost, index and worktree sides summed. ABSENT when git has
+   *  no numstat row for the path — untracked files never have one — so the row
+   *  must not read that absence as `0`. */
+  counts?: GitLineCounts
 }
 
 /** Git status snapshot. */
@@ -75,6 +89,42 @@ export interface GitWorktree {
   changes: number
 }
 
+/** One model a provider advertises (the pinned commit-message dropdown). */
+export interface GitModelInfo {
+  /** Provider-side model id (dispatched verbatim). */
+  id: string
+  /** Display name; equals `id` when the adapter reports none. */
+  name: string
+}
+
+/** One provider route with the models its adapter advertises. */
+export interface GitModelProvider {
+  provider: string
+  name: string
+  models: GitModelInfo[]
+}
+
+/** The model catalog `git.models` answers with. It merges three sources so
+ *  the picker is usable even before a conversation has run:
+ *  - `providers`: the adapters' own catalog (`llm.listModels`),
+ *  - `recent`: routes THIS session already used (newest first),
+ *  - `default`: the harness default selection (`agent-default-model`), which
+ *    exists without any session at all.
+ *  `llm` says whether the harness exposes an LLM surface: an empty catalog is
+ *  then "no adapters registered", not "the route failed". */
+export interface GitModelCatalog {
+  llm: boolean
+  providers: GitModelProvider[]
+  recent: GitModelRoute[]
+  default?: GitModelRoute
+}
+
+/** One pinned-model value: the route the host dispatches on. */
+export interface GitModelRoute {
+  provider: string
+  model: string
+}
+
 /** One git log row. */
 export interface GitLogEntry {
   /** Short hash (7+ chars, display). */
@@ -89,11 +139,24 @@ export interface GitLogEntry {
   refs: string
 }
 
-/** Text read result. */
-export interface FsTextResult { kind: 'text'; content: string; truncated: boolean }
+/** One `git blame --porcelain` row (the editor's hover blame). */
+export interface GitBlameLine {
+  /** 1-based line number in the file as it exists in the worktree. */
+  line: number
+  /** The blamed commit (40 hex chars; all zeros for an uncommitted line). */
+  hash: string
+  author: string
+  /** ISO 8601 author time carrying the author's own UTC offset. */
+  date: string
+  /** The commit's subject line. */
+  summary: string
+}
+
+/** Text read result. `mtimeMs` is the save route's conflict baseline. */
+export interface FsTextResult { kind: 'text'; content: string; truncated: boolean; mtimeMs?: number }
 /** Binary read result (no content; images load through the media route).
  *  `head` carries the first bytes (base64) for viewer detect sniffing. */
-export interface FsBinaryResult { kind: 'binary'; size: number; truncated: boolean; head: string }
+export interface FsBinaryResult { kind: 'binary'; size: number; truncated: boolean; mtimeMs?: number; head: string }
 
 /** The `subagents.live` response: one row per tree child (and the root). */
 export type SubagentLiveResult = { live: Record<string, SidebarChildLiveView> }
@@ -142,7 +205,7 @@ async function readEnvelope<T>(response: Response): Promise<T> {
 async function call<T>(method: string, payload: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   let response: Response
   try {
-    response = await fetch(`/sidebar/api/${method}`, {
+    response = await fetch(hostRouteUrl(`sidebar/api/${method}`).href, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
@@ -195,7 +258,7 @@ async function fetchUpload<T>(
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
   let response: Response
   try {
-    response = await fetch(`/sidebar/upload?${params.toString()}`, {
+    response = await fetch(hostRouteUrl(`sidebar/upload?${params.toString()}`).href, {
       method: 'POST',
       headers: { 'content-type': 'application/octet-stream' },
       body,
@@ -282,23 +345,42 @@ function openExternal(payload: OpenExternalPayload): Promise<OpenExternalResult>
 export const api = {
   sessionCwd: (scope: SessionScope, signal?: AbortSignal) =>
     call<{ sessionId: string; cwd: string; root: string; parent: string | null }>('session.cwd', scopePayload(scope, {}), signal),
-  fsTree: (scope: SessionScope, path: string, signal?: AbortSignal) =>
-    call<{ path: string; entries: FsEntry[]; truncated: boolean }>('fs.tree', scopePayload(scope, { path }), signal),
+  fsTree: (scope: SessionScope, path: string, exclude?: readonly string[], signal?: AbortSignal) =>
+    call<{ path: string; entries: FsEntry[]; truncated: boolean }>('fs.tree', scopePayload(scope, { path, exclude }), signal),
   /**
    * Batch listing: every requested level in ONE request (the tree's mount and
    * refresh send the expanded set instead of N `fsTree` calls). A level that
    * failed carries `error` in place — the batch itself still succeeds.
+   * `exclude` carries the explorerExclude pref: matched entries never arrive
+   * (the host filters, so no client-side pass is needed).
    */
-  fsTrees: (scope: SessionScope, paths: readonly string[], signal?: AbortSignal) =>
-    call<{ levels: FsLevel[] }>('fs.trees', scopePayload(scope, { paths: [...paths] }), signal),
-  /** Global recursive file-name search rooted at the session cwd (the editor
-   *  side panel's search box); matches are cwd-relative '/'-separated paths. */
-  fsSearch: (scope: SessionScope, query: string, signal?: AbortSignal) =>
-    call<{ matches: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query }), signal),
+  fsTrees: (scope: SessionScope, paths: readonly string[], exclude?: readonly string[], signal?: AbortSignal) =>
+    call<{ levels: FsLevel[] }>('fs.trees', scopePayload(scope, { paths: [...paths], exclude }), signal),
+  /** Global recursive file search rooted at the session cwd (the editor
+   *  side panel's search box). A name query matches cwd-relative
+   *  '/'-separated paths; a separator-carrying fragment matches by PATH;
+   *  a query naming one path (absolute, `~/…`, `./x`, `../x`) is stat'ed
+   *  through the same resolution fs.read uses and yields the RESOLVED
+   *  absolute target as the single match. `dirs` names the subset that is a
+   *  directory (the list navigates the tree for those — `fs.read` refuses a
+   *  directory). `exclude` carries the explorerExclude pref: matched entries
+   *  never match and are never descended (host-side, in lockstep with the
+   *  tree; a pasted direct-open path is explicit intent and skips it). */
+  fsSearch: (scope: SessionScope, query: string, exclude?: readonly string[], signal?: AbortSignal) =>
+    call<{ matches: string[]; dirs: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query, exclude }), signal),
   fsRead: (scope: SessionScope, path: string, signal?: AbortSignal) =>
     call<FsTextResult | FsBinaryResult>('fs.read', scopePayload(scope, { path }), signal),
-  fsWrite: (scope: SessionScope, path: string, content: string) =>
-    call<{ ok: true }>('fs.write', scopePayload(scope, { path, content })),
+  /** Save a file. `expectedMtimeMs` is the mtime the draft was based on: a
+   *  file that changed on disk since refuses with code `fs-conflict` (the
+   *  editor then offers a reload) instead of clobbering those bytes. `null`
+   *  (the file did not exist yet) and omitted (older callers) both mean no
+   *  gate. The response carries the fresh baseline. */
+  fsWrite: (scope: SessionScope, path: string, content: string, expectedMtimeMs?: number | null) =>
+    call<{ ok: true; mtimeMs?: number }>('fs.write', scopePayload(scope, {
+      path,
+      content,
+      ...(expectedMtimeMs !== undefined ? { expectedMtimeMs } : {}),
+    })),
   /** Rename one tree row within its directory (single-segment name; the
    *  server refuses existing destinations, the workspace root, and — while
    *  the fence is armed — anything resolving outside the workspace). */
@@ -313,6 +395,11 @@ export const api = {
    *  is armed — anything resolving outside the workspace). */
   fsMkdir: (scope: SessionScope, path: string, name: string) =>
     call<{ path: string }>('fs.mkdir', scopePayload(scope, { path, name })),
+  /** Create one EMPTY file row inside `path` (single-segment name; the server
+   *  refuses existing destinations — without truncating them — plus the
+   *  characters and Windows device names a file name may not use). */
+  fsCreateFile: (scope: SessionScope, path: string, name: string) =>
+    call<{ path: string }>('fs.createFile', scopePayload(scope, { path, name })),
   /** Upload one file's raw bytes into `dir` (keeps the folder tree via
    *  `relativePath`); the host streams it under the session workspace. */
   uploadFile: (scope: SessionScope, dir: string, relativePath: string, body: Blob, signal?: AbortSignal) =>
@@ -329,6 +416,29 @@ export const api = {
     call<{ ok: true }>('git.unstage', gitPayload(scope, worktree, { ...(path !== undefined ? { path } : {}) })),
   gitCommit: (scope: SessionScope, message: string, worktree?: string) =>
     call<{ ok: true }>('git.commit', gitPayload(scope, worktree, { message })),
+  /** Push the selected checkout's branch to its upstream; git's own failure
+   *  message (no upstream, auth, non-fast-forward) crosses the wire as-is. */
+  gitPush: (scope: SessionScope, worktree?: string) =>
+    call<{ ok: true }>('git.push', gitPayload(scope, worktree, {})),
+  /** Pull into the selected checkout (`--ff-only` host-side: a diverged branch
+   *  fails loudly rather than opening a merge editor nobody can answer). */
+  gitPull: (scope: SessionScope, worktree?: string) =>
+    call<{ ok: true }>('git.pull', gitPayload(scope, worktree, {})),
+  /** Ask the host to generate a commit message from the pending changes: it
+   *  streams the diff through the harness LLM on the pinned route (or the
+   *  conversation's own) and answers with the route actually used.
+   *  `language` follows the sidebar's active locale ('zh' | 'en'). */
+  gitSuggestMessage: (scope: SessionScope, language: 'zh' | 'en', worktree?: string) =>
+    call<{ message: string; provider: string; model: string }>('git.suggest-message', gitPayload(scope, worktree, { language })),
+  /** The discoverable provider/model catalog for the Git card's pinned-route
+   *  setting (advisory; empty when the harness exposes no LLM service). */
+  gitModels: (scope: SessionScope, signal?: AbortSignal) =>
+    call<GitModelCatalog>('git.models', scopePayload(scope, {}), signal),
+  /** The route the NEXT commit-message suggestion would use (pinned → the
+   *  conversation's own → the harness default); absent when none resolves.
+   *  Cheaper than `gitModels`: no catalog discovery. */
+  gitCommitModel: (scope: SessionScope, signal?: AbortSignal) =>
+    call<{ route?: GitModelRoute; pinned: boolean }>('git.commit-model', scopePayload(scope, {}), signal),
   gitBranch: (scope: SessionScope, worktree?: string, signal?: AbortSignal) =>
     call<{ current: string; names: string[] }>('git.branch', gitPayload(scope, worktree, {}), signal),
   gitCheckout: (scope: SessionScope, branch: string, worktree?: string) =>
@@ -347,6 +457,17 @@ export const api = {
    *  reads both sides' full contents through this. */
   gitShow: (scope: SessionScope, rev: string, path: string, worktree?: string, signal?: AbortSignal) =>
     call<{ content: string | null }>('git.show', gitPayload(scope, worktree, { rev, path }), signal),
+  /** ONE file's whole uncommitted change (worktree against HEAD, staged and
+   *  unstaged in one patch). The editor's change gutter maps this onto the
+   *  buffer's line numbers; untracked files are marked from the status store
+   *  instead, because no diff side ever lists them. */
+  gitDiffHead: (scope: SessionScope, path: string, worktree?: string, signal?: AbortSignal) =>
+    call<{ diff: string }>('git.diff-head', gitPayload(scope, worktree, { path }), signal),
+  /** Blame ONE line range (`git blame --porcelain -L`). Never throws: every
+   *  failure (untracked file, not a repository, command failure) answers with
+   *  an empty list. Called on hover only — a file is never prefetched. */
+  gitBlame: (scope: SessionScope, path: string, startLine: number, endLine: number, worktree?: string, signal?: AbortSignal) =>
+    call<{ lines: GitBlameLine[] }>('git.blame', gitPayload(scope, worktree, { path, startLine, endLine }), signal),
   /** The session's file-tool events for the changes tab's session lens: the
    *  `tool/call` + `tool/result` rows past `afterSeq` (0 = whole window),
    *  capped to the recent window host-side. The client runtime exposes no
@@ -467,9 +588,12 @@ export interface ArchiveBuildStatus {
   error?: string
 }
 
-/** Poll one archive build (its id came from {@link archiveBuild}). */
-export function archiveStatus(id: string): Promise<ArchiveBuildStatus> {
-  return call<ArchiveBuildStatus>('archive.status', { id })
+/** Poll one archive build (its id came from {@link archiveBuild}). The session
+ *  scope rides along exactly like `archive.build`: the host requires BOTH keys
+ *  (`requireString(payload, 'id')` + `requireString(payload, 'sessionId')`), so
+ *  a bare `{ id }` payload is refused with a 400 and the status is never read. */
+export function archiveStatus(scope: SessionScope, id: string): Promise<ArchiveBuildStatus> {
+  return call<ArchiveBuildStatus>('archive.status', scopePayload(scope, { id }))
 }
 
 /**
@@ -478,7 +602,7 @@ export function archiveStatus(id: string): Promise<ArchiveBuildStatus> {
  * scope rides along because the host answers only the session that built it.
  */
 export function archiveDownloadUrl(scope: SessionScope, id: string): string {
-  return `/sidebar/archive?${new URLSearchParams({ sessionId: scope.sessionId, id }).toString()}`
+  return hostRouteUrl(`sidebar/archive?${new URLSearchParams({ sessionId: scope.sessionId, id }).toString()}`).href
 }
 
 /** Shared URL builder for the /sidebar/file route (media vs download). */
@@ -486,7 +610,7 @@ function fileUrl(scope: SessionScope, path: string, download: boolean): string {
   const params = new URLSearchParams({ sessionId: scope.sessionId, path: resolveSidebarPath(scope.cwd, path) })
   if (scope.cwd !== undefined && scope.cwd !== '') params.set('cwd', scope.cwd)
   if (download) params.set('download', '1')
-  return `/sidebar/file?${params.toString()}`
+  return hostRouteUrl(`sidebar/file?${params.toString()}`).href
 }
 
 /**
@@ -498,5 +622,23 @@ function fileUrl(scope: SessionScope, path: string, download: boolean): string {
  * client-side platform signal is needed.
  */
 export function htmlUrl(scope: SessionScope, path: string): string {
-  return encodeHtmlUrl(scope.sessionId, resolveSidebarPath(scope.cwd, path))
+  return hostRouteUrl(encodeHtmlUrl(scope.sessionId, resolveSidebarPath(scope.cwd, path))).href
+}
+
+/** One session-phase read: whether the session is still blank (no messages). */
+export interface SessionPhase {
+  /** True while the session has neither a user nor an assistant message. */
+  blank: boolean
+}
+
+/**
+ * Read one session's blank phase. Blank sessions do not render the host's
+ * session header, so the plugin's header-registered dock entry is unreachable
+ * there (issue #698/#623) — the client uses this to render its fallback entry.
+ * @param sessionId - the session to read.
+ * @param signal - optional abort signal.
+ * @returns the phase (`blank: false` when the session does not exist).
+ */
+export async function sessionPhase(sessionId: string, signal?: AbortSignal): Promise<SessionPhase> {
+  return call<SessionPhase>('session.phase', { sessionId }, signal)
 }

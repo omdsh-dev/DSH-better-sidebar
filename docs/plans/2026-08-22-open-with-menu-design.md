@@ -100,13 +100,17 @@ Cursor             (SSH)
 - SSH 模式为**全局**（非每会话）：DSH 无远程会话概念，文件树路径即宿主路径；该模型对应"DSH 跑在远端开发机上"的场景。
 - 子菜单钳制为方向翻转而非高度裁剪：约 >15 个打开方式目标 + 矮视口 + 不利光标位仍可能溢出（compact 密度已把常规 4–8 目标场景收进安全区）。
 - 翻转阈值镜像宿主 `Menu.module.css` 几何常量（218/10/165/12）：宿主未来改尺寸时阈值偏保守（多翻一次方向），不会产生新越界；菜单打开期间窗口 resize 不重算 token，该次打开最坏退化为原始行为。
+- **「已启动但没打开」不可探测**（#412 修复后仍成立）：`start` 与 rundll32 在 handler 忽略 URL 时都退出 0，链只能观测「这一步有没有启动起来」，观测不到 Windows 侧协议 handler 是否真的做了事。
+
+**实施偏差（2026-10，#412 Windows「在应用中打开」没反应）**：上面的 `url` 分支在 win32 上**只有一个候选**（`rundll32`），而 `rundll32.exe` 在任何 Windows 上都存在、spawn 必然成功 → 路由照旧回 `{started: true}`、UI 毫无反馈——这就是 issue 里的「没反应」。四处改动：① `urlCommand` → **`urlCommands(url, platform, options): ExternalCommand[]`**（有序候选链；darwin/linux/android/WSL 仍是单元素，语义逐字不变），win32 链为 `cmd.exe /d /c start "" <url>` → `rundll32.exe url.dll,FileProtocolHandler <url>`（空首参是 `start` 的窗口标题，缺了它带引号的 URL 会被当成标题、只弹一个空控制台）。② URL 含 cmd 元字符 `& % ^ ! | < > "` 或控制字符时**跳过 cmd 分支**：Node 的 argv 引用拦不住 `cmd /c` 的第二次解析，`%VAR%` 会展开、`&`/`|` 会截断命令、`^` 会吞掉后一个字符、`"` 会打乱引用，直接走 rundll32（它以单个 argv 收到 URL，什么都不解释）。③ `launchExternal` 改为**顺序尝试候选**：只有 Node 发出 `spawn` 才算成功，同步抛错与 `error` 事件都推进到下一候选；**全部候选失败**时抛 `SidebarError('internal', …)`，消息里逐个列出命令与底层报错（走既有 `{ok:false,error:{code,message}}` 信封，UI 可提示）。④ 调用方一并改形状：`EditorHost.openWith` 返回「是否被接受」（失败仍 `console.error` 留痕），`FileTree` 据此把失败渲染进既有的 `openInAppFailed` 提示条——**复用词条，未新增任何词典 key**。测试缝 `WindowsOpenerOptions`（`cmdExecutable` / `rundll32Executable`）只为把两个可执行名换成「不可能存在」，从而让 **Windows lane 用真实 `spawn`** 断言失败被回报（见下）；生产代码永不设置它，也**绝不**在测试里拉起真的 `cmd.exe` / `rundll32.exe`（`detached: true` 会在 runner 上开真窗口）。`reveal` 侧未加同名缝：win32 只有 `explorer.exe` 一条，注入真名就等于在 CI 上开资源管理器窗口。
 
 ## 测试
 
 - `tests/open-with.spec.ts`：解析容错、目标解析与 SSH 过滤、URL 构建（本地/SSH/custom/坏模板）、校验器。
-- `tests/open-external.spec.ts`：三平台命令表、URL 校验、spawn 前校验。
+- `tests/open-external.spec.ts`：三平台命令表（`urlCommands` 候选链与顺序）、`& % ^ ! | < > "` 的 cmd 跳过规则、空格 URL 仍是单个 argv、失败回退顺序、全失败时的错误形状、URL 校验、spawn 前校验。
+- `tests/open-external-windows.spec.ts`（#412，Windows lane）：注入两个不存在的可执行名 + **真实 `spawn`**，断言两条候选都失败时错误被回报（而不是静默 `{started: true}`），且 `&` URL 只尝试 rundll32；**全程不拉起任何应用**。
 - `tests/open-external-client.spec.ts`（#522）：SSH remote URL 客户端分流（不触 fetch）、本地/reveal/http(s) 留宿主、导航抛错 reject。
-- `tests/file-tree-open-with.spec.tsx`（jsdom）：右键 → 子菜单/图钉；pin 不选中不关闭；选子项回调关闭菜单；SSH 标签后缀；未接线隐藏；翻转向量（down / down left / 卸载清理）。
+- `tests/file-tree-open-with.spec.tsx`（jsdom）：右键 → 子菜单/图钉；pin 不选中不关闭；选子项回调关闭菜单；SSH 标签后缀；未接线隐藏；翻转向量（down / down left / 卸载清理）；被拒/抛错的打开落进错误条（#412）。
 - `tests/menu-flip.spec.tsx`：方向 token 纯函数（四象限、边界、窄面板）+ hook 属性生命周期 + layout.css 选择器与属性名的跨文件一致性。
 - `tests/tab-bar-context-menu.spec.tsx`：追加翻转向量（顶部条 down、右缘 down left、下半空 token、卸载清理）。
 - `tests/e2e/mount.e2e.ts`：「+」菜单首行 computed 高度 ≤30px（compact 密度的布局级证据）。

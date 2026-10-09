@@ -147,8 +147,16 @@ function LeafView(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /** Unread mark resolver (see TabBar's `isTabUnread`). */
+  isTabUnread?: (tab: SidebarTab) => boolean
+  getTabRightActions?: (tab: SidebarTab, paneId: string) => ReactNode
+  /**
+   * Reveal a tab's file in the OS file manager (the tab context menu's
+   * reveal row; see TabBar). Absent → that row stays disabled.
+   */
+  onRevealInFileManager?: (path: string) => void
 }) {
-  const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const { leaf, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, getTabRightActions, onRevealInFileManager, isTabUnread } = props
   const [dropZone, setDropZone] = useState<DropZone | null>(null)
   const activeTab = leaf.tabs.find(tab => tab.id === leaf.active) ?? leaf.tabs[leaf.tabs.length - 1]
 
@@ -204,6 +212,9 @@ function LeafView(props: {
         newTabOptions={newTabOptions}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        isTabUnread={isTabUnread}
+        getTabRightActions={getTabRightActions}
+        onRevealInFileManager={onRevealInFileManager}
         onDropTab={(payload, before) => {
           if (before === null) actions.moveTabToEdge(payload, leaf.id, 'center')
           else actions.moveTabBefore(payload, leaf.id, before)
@@ -243,8 +254,12 @@ function NodeView(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /** Unread mark resolver (see TabBar's `isTabUnread`). */
+  isTabUnread?: (tab: SidebarTab) => boolean
+  getTabRightActions?: (tab: SidebarTab, paneId: string) => ReactNode
+  onRevealInFileManager?: (path: string) => void
 }) {
-  const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const { node, state, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, getTabRightActions, onRevealInFileManager, isTabUnread } = props
   if (node.kind === 'leaf') {
     return (
       <LeafView
@@ -255,6 +270,9 @@ function NodeView(props: {
         renderTab={renderTab}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        isTabUnread={isTabUnread}
+        getTabRightActions={getTabRightActions}
+        onRevealInFileManager={onRevealInFileManager}
       />
     )
   }
@@ -282,6 +300,9 @@ function NodeView(props: {
               renderTab={renderTab}
               getTabIcon={getTabIcon}
               getTabBadge={getTabBadge}
+              isTabUnread={isTabUnread}
+              getTabRightActions={getTabRightActions}
+              onRevealInFileManager={onRevealInFileManager}
             />
           </div>
         </Fragment>
@@ -303,8 +324,14 @@ export function Workbench(props: {
   renderTab: (tab: SidebarTab, active: boolean, paneId: string) => ReactNode
   getTabIcon?: (tab: SidebarTab) => ReactNode
   getTabBadge?: (tab: SidebarTab) => ReactNode
+  /** Unread mark resolver (see TabBar's `isTabUnread`). */
+  isTabUnread?: (tab: SidebarTab) => boolean
+  getTabRightActions?: (tab: SidebarTab, paneId: string) => ReactNode
+  /** Reveal a tab's file in the OS file manager (see TabBar); absent → the
+   *  tab context menu's reveal row is disabled. */
+  onRevealInFileManager?: (path: string) => void
 }) {
-  const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge } = props
+  const { state, tree, newTabOptions, actions, onNewTab, renderTab, getTabIcon, getTabBadge, getTabRightActions, onRevealInFileManager, isTabUnread } = props
   return (
     <div className={css.workbench}>
       <NodeView
@@ -316,6 +343,9 @@ export function Workbench(props: {
         renderTab={renderTab}
         getTabIcon={getTabIcon}
         getTabBadge={getTabBadge}
+        isTabUnread={isTabUnread}
+        getTabRightActions={getTabRightActions}
+        onRevealInFileManager={onRevealInFileManager}
       />
     </div>
   )

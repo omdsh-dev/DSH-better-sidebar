@@ -247,6 +247,7 @@ export function ChangesTab({ ctx, store, scope, tab, visible, onOpenFile, onOpen
         <DiffPane
           key={previewKey(previewTarget)}
           target={previewTarget}
+          ctx={ctx}
           scope={scope}
           height={paneHeight}
           onHeightCommit={(height) => { setPaneHeight(height); patchMeta({ previewH: height }) }}

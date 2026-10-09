@@ -24,6 +24,8 @@
  */
 import type { Context } from '../../context-types.ts'
 import { t } from '../locales.ts'
+import { splitTrailingLineSpec } from '../path-line.ts'
+import { baseName } from '../paths.ts'
 import { parseFileAddress } from '../resource-address.ts'
 import type { BetterSidebarService, TabDescriptor } from '../service.ts'
 import type { SidebarStore } from '../state.ts'
@@ -148,13 +150,43 @@ function guideIconOf(icon: TabDescriptor['icon']): { icon?: (props: { size?: num
 function fileTitleOf(address: string): string | undefined {
   const parsed = parseFileAddress(address)
   if (parsed === undefined) return undefined
-  const segments = parsed.path.split('/').filter(segment => segment !== '')
+  // A `path:line` spec DSH's markdown grammar left in the address names a
+  // LINE, not a file: the tab is titled after the file (#826).
+  const path = splitTrailingLineSpec(parsed.path)?.path ?? parsed.path
+  const segments = path.split('/').filter(segment => segment !== '')
   return segments.length === 0 ? undefined : segments[segments.length - 1]
 }
 
 /** One descriptor's live native registrations. */
 interface Registration {
   readonly dispose: () => void
+}
+
+/**
+ * The plugin-side seed a file-address tab carries.
+ *
+ * The path comes from the address, and that is also where a `path:line` spec
+ * the host's markdown grammar left in it has to come off: DSH reads a `#`-less
+ * destination as the file name verbatim, so `[a/b.c](a/b.c:131)` addresses a
+ * file called `b.c:131` and the editor reports it missing (#826). The tab
+ * TITLE is seeded from the same spec, because the host derives it from the same
+ * string and would otherwise label the tab `b.c:131`.
+ *
+ * The LINE rides along in the same seed. DSH's own `#L131` form already
+ * arrives as `navigation.params.line` (the host parses it and sends it down),
+ * so seeding it here is what makes both spellings land on the same row — see
+ * {@link NativeTabParams.line}. The range end and the column are deliberately
+ * dropped: {@link splitTrailingLineSpec} parses them, and a start line is all
+ * the editor has anywhere to put a cursor.
+ * @param info - the native tab record the body is drawing.
+ * @returns the seed, or `undefined` when the tab is not a file address.
+ */
+export function fileParamsOf(info: NativeTabInfo): NativeTabParams | undefined {
+  const address = parseFileAddress(info.tab.contentId)
+  if (address === undefined) return undefined
+  const spec = splitTrailingLineSpec(address.path)
+  if (spec === undefined) return { path: address.path }
+  return { path: spec.path, title: baseName(spec.path), line: spec.line }
 }
 
 /**
@@ -231,10 +263,6 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
     if (tabs === undefined) return
     const live = new Map<string, Registration>()
 
-    const fileParamsOf = (info: NativeTabInfo): NativeTabParams | undefined => {
-      const address = parseFileAddress(info.tab.contentId)
-      return address === undefined ? undefined : { path: address.path }
-    }
     const fileSessionIdOf = (info: NativeTabInfo): string | undefined => {
       const address = parseFileAddress(info.tab.contentId)
       return address !== undefined && address.scope === 'session' ? address.sessionId : undefined
@@ -406,6 +434,11 @@ export function registerNativeSurface(deps: NativeSurfaceDeps): () => void {
       const wanted = new Map<string, () => () => void>()
       for (const descriptor of service.getTabs()) {
         if (!service.isTabEnabled(descriptor.id)) continue
+        // A `bottomOnly` type lives in the plugin's own workbench and has no
+        // native tab: registering one would put a second capsule in the
+        // host's guide for a page it cannot draw (the bottom terminal is the
+        // case — the host owns the right-Sidebar `terminal` kind outright).
+        if (descriptor.bottomOnly === true) continue
         wanted.set(descriptor.id, () => registerDescriptor(descriptor))
       }
       for (const [descriptorId, registration] of live) {
