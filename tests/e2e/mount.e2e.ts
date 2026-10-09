@@ -335,7 +335,19 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     if (await page.locator('[data-sidebar-right-guide]').count() === 0) await addTab.click()
     const entry = page.locator(`[data-sidebar-right-guide-entry="${kind}"]`)
     await expect(entry, `guide entry "${kind}" must be reachable`).toHaveCount(1, { timeout: 30_000 })
+    let changesRequests = 0
+    /** 统计空窗期间浏览器实际发出的会话事件请求。 */
+    const countChangesRequest = (request: { url(): string }): void => {
+      if (request.url().includes('/sidebar/api/changes.ops')) changesRequests += 1
+    }
+    if (kind === 'git') page.on('request', countChangesRequest)
     await entry.click()
+    if (kind === 'git') {
+      await page.locator('[data-dsh-native-tab-host]:visible').getByRole('tab', { name: /^(Session|本轮文件)$/ }).click()
+      await page.waitForTimeout(8_000)
+      page.off('request', countChangesRequest)
+      expect(changesRequests, '空窗 8 秒内应有一次基线请求和一条等待中的增量请求').toBe(2)
+    }
     await page.waitForTimeout(1_500)
     await assertNoCrash()
   }
