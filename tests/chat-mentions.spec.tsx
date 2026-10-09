@@ -26,11 +26,14 @@ afterEach(async () => {
 
 describe('absolute Markdown chat mentions', () => {
   it('recognizes complete absolute Markdown paths on supported platforms', () => {
-    for (const path of ['/Users/x/notes/a.md', '/notes/README.MARKDOWN', 'C:\\notes\\a.md', 'D:/notes/a.MarkDown', '\\\\server\\share\\notes\\a.md', '//server/share/notes/a.md']) {
-      expect(isAbsoluteMarkdownPath(path), path).toBe(true)
+    for (const path of ['/Users/x/notes/a.md', '/notes/README.MARKDOWN', '//server/share/notes/a.md']) {
+      expect(isAbsoluteMarkdownPath(path, '/workspace'), path).toBe(true)
     }
-    for (const value of ['notes/a.md', 'a.md', '@notes/a.md', '/notes/a.txt', '/notes/a.md?raw=1', 'https://example.com/a.md', '/notes/a b.md', '/notes/a.md\n', 'C:notes\\a.md', '\\\\server\\share.md']) {
-      expect(isAbsoluteMarkdownPath(value), value).toBe(false)
+    for (const path of ['C:\\notes\\a.md', 'D:/notes/a.MarkDown', '\\\\server\\share\\notes\\a.md']) {
+      expect(isAbsoluteMarkdownPath(path, 'C:\\workspace'), path).toBe(true)
+    }
+    for (const value of ['notes/a.md', 'a.md', '@notes/a.md', '/notes/a.txt', '/notes/a.md?raw=1', 'https://example.com/a.md', '/notes/a b.md', '/notes/a.md\n', 'C:notes\\a.md', '\\\\server\\share.md', 'C:\\notes\\a.md', '\\\\server\\share\\notes\\a.md', '/notes/we\\ird.md']) {
+      expect(isAbsoluteMarkdownPath(value, '/workspace'), value).toBe(false)
     }
   })
 
@@ -50,6 +53,7 @@ describe('absolute Markdown chat mentions', () => {
 
   it('registers after the real Cordis service arrives and restores its method on release', async () => {
     const context = new CordisContext()
+    disposers.push(context.provide('sessions', { list: { getSnapshot: () => ({ byId: {} }) } } as never))
     const disposeMentions = registerChatMarkdownMentions(context as unknown as Context)
     disposers.push(disposeMentions)
     expect(context.get('chatFileMentions')).toBeUndefined()
@@ -67,12 +71,15 @@ describe('absolute Markdown chat mentions', () => {
     const mentions = service.forClosing(owner, 's1')
     expect(mentions?.resolve('/stock/a.md')).toBe(stockMatch)
     const path = '/Users/x/notes/a.md'
-    mentions?.resolve(path)?.open()
+    const existingLink = mentions?.resolve(path)
+    existingLink?.open()
     expect(opened).toEqual([path])
 
     await disposeMentions()
     expect(service.forClosing).toBe(originalForClosing)
     expect(service.forClosing(owner, 's1')?.resolve(path)).toBeUndefined()
+    existingLink?.open()
+    expect(opened).toEqual([path])
   })
 
   it('stops extending results when a later host wrapper remains installed', async () => {
