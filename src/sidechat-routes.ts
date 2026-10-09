@@ -23,7 +23,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { createUserMessage, ReasoningEffortId, type ContentBlock, type UserMessage } from '@deepseek-ai/dsh-llm'
-import type { Agent, AgentSetup, CreateAgentOptions, ResumeAgentOptions } from '@deepseek-ai/dsh-agent'
+import { type Agent, type AgentSetup, type CreateAgentOptions, type ModelSelectionRef, type ResumeAgentOptions } from '@deepseek-ai/dsh-agent'
 import { snapshotSubagentDescriptor } from '@deepseek-ai/dsh-subagent'
 import type { Context as CordisContext } from '@deepseek-ai/cordis'
 import type { SessionEvent, SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
@@ -37,6 +37,7 @@ import {
   boundaryDelivered,
   buildSidechatInheritance,
   liveEventsOf,
+  parseSidechatModelSelection,
   parentModelSelection,
   resolvePresetId,
   SIDE_BOUNDARY_PROMPT,
@@ -46,12 +47,18 @@ import {
   type SeedEvent,
   type SidechatLiveEvent,
   type SidechatLogEvent,
+  type SidechatModelSelection,
   type SidechatThreadInfo,
   threadOwnLogEvents,
 } from './sidechat-core.ts'
 import type { AssistantLiveBuffer } from './assistant-live.ts'
 import { requireString, SidebarError } from './wire.ts'
-import { readPersistedSession } from './session-store.ts'
+import { readPersistedSession, readPersistedSessionOf } from './session-store.ts'
+import {
+  recordSidechatSelection,
+  installSidechatModelRouting,
+  sidechatModelSelectionRef,
+} from './sidechat-model-selection.ts'
 
 /**
  * The plugin's producer-owned message source kind. Message sources are a
@@ -111,26 +118,46 @@ const threadDisposers = new Map<string, () => Promise<void>>()
  *  prompt is then delivered alone, a logged degradation). */
 const pendingSnapshots = new Map<string, string>()
 
-/** Resolve the parent's preset and build the child's composition setup
- *  (mirror of api-proxy's composeAgent minus the model-selection install —
- *  the child carries the parent's provider/model in agentOptions). */
-async function composeChildSetup(
-  ctx: Context,
-  presetId: string | undefined,
-): Promise<{ agentPreset?: string; setup: AgentSetup }> {
-  const presets = ctx.get('agentPresets') as SidebarAgentPresetsService | undefined
-  if (presets === undefined) {
-    return { setup: () => Promise.resolve() }
-  }
-  const resolved = await presets.resolve(presetId)
-  return {
-    agentPreset: resolved.id,
-    setup: async (agentCtx: CordisContext) => { await presets.mount(agentCtx, resolved.id) },
+const threadOperations = new Map<string, Promise<void>>()
+
+/** 按子线程顺序确定消息模型并提交消息。
+ *
+ * @param childId - Side Chat 子线程标识
+ * @param operation - 需要按顺序执行的操作
+ * @returns 操作结果
+ */
+async function withSidechatThreadOperation<T>(childId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = threadOperations.get(childId) ?? Promise.resolve()
+  let release!: () => void
+  const current = new Promise<void>(resolve => { release = resolve })
+  threadOperations.set(childId, current)
+  await previous
+  try {
+    return await operation()
+  } finally {
+    release()
+    if (threadOperations.get(childId) === current) threadOperations.delete(childId)
   }
 }
 
-/** Build the cold-resume setup from the thread's PERSISTED record (the
- *  recorded preset wins, newest selection event first). */
+/** Resolve the parent's preset and install the thread-local model routing. */
+async function composeChildSetup(
+  ctx: Context,
+  presetId: string | undefined,
+  modelSelection: ModelSelectionRef,
+): Promise<{ agentPreset?: string; setup: AgentSetup }> {
+  const presets = ctx.get('agentPresets') as SidebarAgentPresetsService | undefined
+  const resolved = presets === undefined ? undefined : await presets.resolve(presetId)
+  return {
+    ...(resolved === undefined ? {} : { agentPreset: resolved.id }),
+    setup: async (agentCtx: CordisContext, agent: Agent) => {
+      if (resolved !== undefined && presets !== undefined) await presets.mount(agentCtx, resolved.id)
+      installSidechatModelRouting(agentCtx, agent, modelSelection)
+    },
+  }
+}
+
+/** 根据子线程记录与父会话当前模型构造恢复时使用的 setup。 */
 async function composePersistedSetup(
   ctx: Context,
   childId: string,
@@ -141,12 +168,88 @@ async function composePersistedSetup(
   }
   const inspected = await readPersistedSession(persistence, childId)
   const presetId = resolvePresetId(inspected.header, inspected.events)
-  const presets = ctx.get('agentPresets') as SidebarAgentPresetsService | undefined
-  if (presets === undefined || presetId === undefined) {
-    return () => Promise.resolve()
+  const parentSessionId = typeof inspected.header.parentSession === 'string' ? inspected.header.parentSession : undefined
+  const ownEvents = threadOwnLogEvents(inspected.events as unknown as readonly SidechatLogEvent[])
+  const parentSelection = parentSessionId === undefined ? undefined : await parentModelSelectionOf(ctx, parentSessionId)
+  const initialSelection = parentSelection ?? parentModelSelection(ownEvents) ?? parseSidechatModelSelection({
+    provider: inspected.header.provider,
+    model: inspected.header.model,
+    reasoningEffort: inspected.header.reasoningEffort,
+  })
+  return (await composeChildSetup(ctx, presetId, sidechatModelSelectionRef(initialSelection))).setup
+}
+
+/** 读取 Agent 尚无请求记录时使用的当前部署默认模型。 */
+function defaultModelSelectionOf(ctx: Context): SidechatModelSelection | undefined {
+  const service = ctx.get('agentDefaultModel') as { currentSelection(): unknown } | undefined
+  return parseSidechatModelSelection(service?.currentSelection())
+}
+
+/** 父会话当前模型不可读时，读取旧子线程自身保存的模型路由。 */
+function agentModelSelectionOf(agent: Agent): SidechatModelSelection | undefined {
+  return parseSidechatModelSelection({
+    provider: agent.options.provider,
+    model: agent.options.model,
+    reasoningEffort: agent.options.reasoningEffort,
+  })
+}
+
+/** 按照 DSH 的顺序读取父会话当前有效模型。 */
+async function parentModelSelectionOf(ctx: Context, parentSessionId: string): Promise<SidechatModelSelection | undefined> {
+  const parent = liveThreadAgent(ctx, parentSessionId)
+  if (parent !== undefined) return liveParentModelSelectionOf(ctx, parent)
+  const inspected = await readPersistedSessionOf(ctx, parentSessionId)
+  if (inspected === undefined) return undefined
+  return parentModelSelection(inspected.events as unknown as readonly SidechatLogEvent[])
+    ?? defaultModelSelectionOf(ctx)
+}
+
+/** 按 DSH 的 projection、请求记录和部署默认模型读取实时父会话选择。 */
+function liveParentModelSelectionOf(ctx: Context, parent: Agent): SidechatModelSelection | undefined {
+  const projectionService = ctx.get('sessionProjections') as {
+    stateOf(session: Agent['session'], key: string): unknown
+  } | undefined
+  const projection = projectionService?.stateOf(parent.session, 'modelSelection') as { pending?: unknown } | undefined
+  const pending = parseSidechatModelSelection(projection?.pending)
+  if (pending !== undefined) return pending
+
+  if (projection !== undefined) {
+    const requestHeader = parent.session.requestHeader() as {
+      config?: unknown
+      adapterDefaults?: { reasoningEffort?: unknown }
+    } | undefined
+    const requestSelection = parseSidechatModelSelection(requestHeader?.config)
+    if (requestSelection !== undefined) {
+      return requestHeader?.adapterDefaults?.reasoningEffort === true || requestSelection.reasoningEffort === undefined
+        ? { provider: requestSelection.provider, model: requestSelection.model }
+        : requestSelection
+    }
+    return defaultModelSelectionOf(ctx) ?? agentModelSelectionOf(parent)
   }
-  const resolved = await presets.resolve(presetId)
-  return async (agentCtx: CordisContext) => { await presets.mount(agentCtx, resolved.id) }
+
+  const events = parent.session.snapshotEvents() as unknown as readonly SidechatLogEvent[]
+  return parentModelSelection(events) ?? defaultModelSelectionOf(ctx) ?? agentModelSelectionOf(parent)
+}
+
+/** Create and record the model route for one prompt before it enters the inbox. */
+async function createRoutedSidechatMessage(ctx: Context, agent: Agent, text: string): Promise<UserMessage> {
+  const parentSessionId = typeof agent.session.header.parentSession === 'string'
+    ? agent.session.header.parentSession
+    : undefined
+  const ownEvents = threadOwnLogEvents(agent.session.snapshotEvents() as unknown as readonly SidechatLogEvent[])
+  const selection = (parentSessionId === undefined ? undefined : await parentModelSelectionOf(ctx, parentSessionId))
+    ?? parentModelSelection(ownEvents)
+    ?? agentModelSelectionOf(agent)
+  if (selection === undefined) {
+    throw new SidebarError(
+      'sidechat-error',
+      `parent model selection is unavailable for thread "${agent.id}"`,
+      409,
+    )
+  }
+  const message = createUserMessage({ content: textPrompt(text), source: { kind: 'user' } })
+  recordSidechatSelection(agent.session, selection, message.id)
+  return message
 }
 
 /** One text-block prompt (the thread boundary + question, or a follow-up). */
@@ -155,8 +258,7 @@ function textPrompt(text: string): ContentBlock[] {
 }
 
 /** Admit one user message to a live agent through the stock followup path. */
-function admitFollowup(agent: Agent, blocks: ContentBlock[]): void {
-  const message: UserMessage = createUserMessage({ content: blocks, source: { kind: 'user' } })
+function admitFollowup(agent: Agent, message: UserMessage): void {
   agent.followup(message)
 }
 
@@ -174,18 +276,66 @@ function admitFollowup(agent: Agent, blocks: ContentBlock[]): void {
  * is structural; its text still opens with SIDE_BOUNDARY_PREFIX, keeping
  * boundaryDelivered intact.
  */
-function admitFirstContact(agent: Agent, injectionText: string, question: string): void {
+function admitFirstContact(agent: Agent, injectionText: string, message: UserMessage): void {
   agent.inject(createUserMessage({
     content: textPrompt(injectionText),
     source: { kind: SIDE_INJECTION_SOURCE_KIND },
   }))
-  admitFollowup(agent, textPrompt(question))
+  admitFollowup(agent, message)
+}
+
+/** Build model information from the current parent route and active request. */
+async function sidechatInfoOf(ctx: Context, agent: Agent, live: boolean): Promise<SidechatThreadInfo> {
+  const parentSessionId = typeof agent.session.header.parentSession === 'string'
+    ? agent.session.header.parentSession
+    : undefined
+  const events = threadOwnLogEvents(agent.session.snapshotEvents() as unknown as readonly SidechatLogEvent[])
+  const selection = (parentSessionId === undefined ? undefined : await parentModelSelectionOf(ctx, parentSessionId))
+    ?? parentModelSelection(events)
+    ?? agentModelSelectionOf(agent)
+  const header = agent.session.requestHeader()?.config
+  const preset = agent.session.header.agentPreset
+  return {
+    live,
+    ...(live ? { status: agent.status } : {}),
+    ...(selection?.provider === undefined ? {} : { provider: selection.provider }),
+    ...(selection?.model === undefined ? {} : { model: selection.model }),
+    ...(selection?.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
+    ...(live && agent.status === 'running' && header !== undefined
+      ? {
+        ...(typeof header.provider === 'string' ? { activeProvider: header.provider } : {}),
+        ...(typeof header.model === 'string' ? { activeModel: header.model } : {}),
+        ...(header.reasoningEffort === undefined ? {} : { activeReasoningEffort: String(header.reasoningEffort) }),
+      }
+      : {}),
+    ...(preset === undefined ? {} : { preset }),
+  }
 }
 
 /** The live thread agent, or undefined (cold — the caller resumes). */
 function liveThreadAgent(ctx: Context, childId: string): Agent | undefined {
   const agents = ctx.get('agents') as { get(id: string): Agent | undefined } | undefined
   return agents?.get(childId)
+}
+
+/** Return the live thread Agent, or resume it with its persisted setup. */
+async function requireSidechatAgent(ctx: Context, childId: string): Promise<Agent> {
+  const live = liveThreadAgent(ctx, childId)
+  if (live !== undefined) return live
+  const agents = ctx.get('agents') as {
+    resume(options: ResumeAgentOptions): Promise<{ agent: Agent; dispose(): Promise<void> }>
+  } | undefined
+  if (agents?.resume === undefined) {
+    throw new SidebarError('sidechat-error', 'the agents service is unavailable', 503)
+  }
+  const setup = await composePersistedSetup(ctx, childId)
+  try {
+    const handle = await agents.resume({ resumeSessionId: childId as SessionId, setup })
+    threadDisposers.set(childId, () => handle.dispose())
+    return handle.agent
+  } catch (error) {
+    throw new SidebarError('sidechat-error', `thread resume failed: ${error instanceof Error ? error.message : String(error)}`, 500)
+  }
 }
 
 /**
@@ -238,19 +388,18 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
         throw new SidebarError('sidechat-error', `parent session "${sessionId}" is not running`, 409)
       }
       const parentSession = parent.session
-      // The parent's CURRENT model route. agent.options freezes the
-      // creation-time deployment default — a composer model switch rides
-      // `model/selection` events + the session-local selection and never
-      // rewrites options — so the child inherits the durable projection
-      // (falling back to the options snapshot only when the log carries no
-      // selection at all). Inheriting parent.options verbatim silently
-      // shipped the stale default instead of the model the user sees
-      // selected in the parent composer (#368).
-      const parentSelection = parentModelSelection(
-        parentSession.snapshotEvents() as unknown as readonly SidechatLogEvent[],
-      )
-      const routeProvider = parentSelection?.provider ?? parent.options.provider
-      const routeModel = parentSelection?.model ?? parent.options.model
+      // 遵循 DSH 的选择顺序：会话待应用选择、最近请求、当前部署默认模型，最后读取 Agent 创建配置。
+      const parentSelection = await parentModelSelectionOf(ctx, sessionId)
+      const routeProvider = parentSelection?.provider
+      const routeModel = parentSelection?.model
+      const selectedEffort = parentSelection?.reasoningEffort
+      const initialSelection: SidechatModelSelection | undefined = routeProvider === undefined || routeModel === undefined
+        ? undefined
+        : {
+          provider: routeProvider,
+          model: routeModel,
+          ...(selectedEffort === undefined ? {} : { reasoningEffort: String(selectedEffort) }),
+        }
       const inheritance = buildSidechatInheritance(
         parentSession.snapshotEvents() as unknown as readonly SidechatLogEvent[],
         live?.chunksFor(sessionId) ?? [],
@@ -258,6 +407,7 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
       const { agentPreset, setup } = await composeChildSetup(
         ctx,
         resolvePresetId(parentSession.header, parentSession.snapshotEvents()),
+        sidechatModelSelectionRef(initialSelection),
       )
       const childId = `session-${randomUUID()}` as SessionId
       const label = question === '' ? SIDE_NEW_THREAD_TITLE : sideLabel(question)
@@ -290,9 +440,7 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
       // would then claim and send that stale message BEFORE the boundary +
       // question. The marker keeps `ownEvents()` at the end-seed boundary, so
       // the inherited inbox replays to empty.
-      const targetEffort = parentSelection !== undefined
-        ? (parentSelection.reasoningEffort === undefined ? undefined : ReasoningEffortId(parentSelection.reasoningEffort))
-        : parent.options.reasoningEffort
+      const targetEffort = selectedEffort === undefined ? undefined : ReasoningEffortId(selectedEffort)
       const childAgentOptions: CreateAgentOptions['agentOptions'] = {
         ...parent.options,
         ...(routeProvider === undefined ? {} : { provider: routeProvider }),
@@ -368,7 +516,11 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
       } else {
         const promptParts = [SIDE_BOUNDARY_PROMPT]
         if (inheritance.snapshot !== null) promptParts.push(inheritance.snapshot)
-        admitFirstContact(handle.agent, promptParts.join('\n\n'), question)
+        const message = createUserMessage({ content: textPrompt(question), source: { kind: 'user' } })
+        if (initialSelection !== undefined) {
+          recordSidechatSelection(handle.agent.session, initialSelection, message.id)
+        }
+        admitFirstContact(handle.agent, promptParts.join('\n\n'), message)
         pinTitle(sideLabel(question))
       }
       return { childId }
@@ -380,44 +532,31 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
       if (text === '') {
         throw new SidebarError('bad-request', 'text is required')
       }
-      let agent = liveThreadAgent(ctx, childId)
-      if (agent === undefined) {
-        // Cold thread: resume the persisted session under its recorded
-        // composition, then deliver the follow-up.
-        const agents = ctx.get('agents') as { resume(options: ResumeAgentOptions): Promise<{ agent: Agent; dispose(): Promise<void> }> } | undefined
-        if (agents?.resume === undefined) {
-          throw new SidebarError('sidechat-error', 'the agents service is unavailable', 503)
-        }
-        const setup = await composePersistedSetup(ctx, childId)
-        try {
-          const handle = await agents.resume({ resumeSessionId: childId as SessionId, setup })
-          threadDisposers.set(childId, () => handle.dispose())
-          agent = handle.agent
-        } catch (error) {
-          throw new SidebarError('sidechat-error', `thread resume failed: ${error instanceof Error ? error.message : String(error)}`, 500)
-        }
-      }
-      if (boundaryDelivered(agent.session.snapshotEvents() as unknown as readonly SidechatLogEvent[])) {
-        admitFollowup(agent, textPrompt(text))
-      } else {
-        // First message of an immediately-created thread: it carries the
-        // boundary (+ the snapshot parked at creation, if still around)
-        // and earns the thread its real label.
-        const parts = [SIDE_BOUNDARY_PROMPT]
-        const snapshot = pendingSnapshots.get(childId)
-        pendingSnapshots.delete(childId)
-        if (snapshot !== undefined) parts.push(snapshot)
-        admitFirstContact(agent, parts.join('\n\n'), text)
-        const titles = ctx.get('sessionTitle') as SidebarSessionTitleService | undefined
-        if (titles !== undefined) {
-          try {
-            titles.rename(agent.session, sideLabel(text))
-          } catch {
-            // Keep the placeholder title; the thread stays usable.
+      return withSidechatThreadOperation(childId, async () => {
+        const agent = await requireSidechatAgent(ctx, childId)
+        const message = await createRoutedSidechatMessage(ctx, agent, text)
+        if (boundaryDelivered(agent.session.snapshotEvents() as unknown as readonly SidechatLogEvent[])) {
+          admitFollowup(agent, message)
+        } else {
+          // First message of an immediately-created thread: it carries the
+          // boundary (+ the snapshot parked at creation, if still around)
+          // and earns the thread its real label.
+          const parts = [SIDE_BOUNDARY_PROMPT]
+          const snapshot = pendingSnapshots.get(childId)
+          pendingSnapshots.delete(childId)
+          if (snapshot !== undefined) parts.push(snapshot)
+          admitFirstContact(agent, parts.join('\n\n'), message)
+          const titles = ctx.get('sessionTitle') as SidebarSessionTitleService | undefined
+          if (titles !== undefined) {
+            try {
+              titles.rename(agent.session, sideLabel(text))
+            } catch {
+              // Keep the placeholder title; the thread stays usable.
+            }
           }
         }
-      }
-      return { accepted: true as const }
+        return { accepted: true as const }
+      })
     },
 
     'sidechat.cancel': async (payload: unknown) => {
@@ -448,22 +587,26 @@ export function buildSidechatApi(ctx: Context, live?: AssistantLiveBuffer): Side
       const childId = requireString(payload, 'childId')
       const agent = liveThreadAgent(ctx, childId)
       if (agent !== undefined) {
-        const preset = agent.session.header.agentPreset
-        return {
-          live: true,
-          status: agent.status,
-          ...(agent.options.provider === undefined ? {} : { provider: agent.options.provider }),
-          ...(agent.options.model === undefined ? {} : { model: agent.options.model }),
-          ...(preset === undefined ? {} : { preset }),
-        }
+        return sidechatInfoOf(ctx, agent, true)
       }
-      // Cold thread: only the persisted preset is worth reading back.
       const persistence = ctx.get('sessionPersistence') as SidebarSessionPersistenceService | undefined
       if (persistence !== undefined) {
         try {
           const inspected = await readPersistedSession(persistence, childId)
           const preset = resolvePresetId(inspected.header, inspected.events)
-          return { live: false, ...(preset === undefined ? {} : { preset }) }
+          const events = threadOwnLogEvents(inspected.events as unknown as readonly SidechatLogEvent[])
+          const parentSessionId = typeof inspected.header.parentSession === 'string'
+            ? inspected.header.parentSession
+            : undefined
+          const parentSelection = parentSessionId === undefined ? undefined : await parentModelSelectionOf(ctx, parentSessionId)
+          const selection = parentSelection ?? parentModelSelection(events)
+          return {
+            live: false,
+            ...(selection?.provider === undefined ? {} : { provider: selection.provider }),
+            ...(selection?.model === undefined ? {} : { model: selection.model }),
+            ...(selection?.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
+            ...(preset === undefined ? {} : { preset }),
+          }
         } catch {
           // Unknown/gone session: report a bare cold info.
         }
