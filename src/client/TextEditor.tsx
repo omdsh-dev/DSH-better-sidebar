@@ -63,6 +63,10 @@ type ViewMode = 'preview' | 'edit'
 const previewScrollMemory = new Map<string, number>()
 const previewScrollKey = (scope: { sessionId: string }, path: string): string => `${scope.sessionId}::${path}`
 
+/** The edit-mode twin of {@link previewScrollMemory}: the CodeMirror scroller's
+ *  own position, which a moved (detached + re-attached) tab body loses. */
+const editScrollMemory = new Map<string, number>()
+
 /** Whether two spellings are the SAME document — byte-equal, or equal once
  *  line endings are normalized CRLF/CR → LF. Line endings are not content:
  *  CodeMirror keeps every document with `\n` endings whatever the file used,
@@ -170,6 +174,11 @@ export function TextEditor(props: FileViewerProps) {
    *  from the module-level per-file memory so a full viewer rebuild
    *  (save-then-switch-to-preview reload) also keeps the position. */
   const previewScrollRef = useRef(previewScrollMemory.get(previewScrollKey(scope, path)) ?? 0)
+  /** The edit surface's remembered scroll position (see {@link editScrollMemory}). */
+  const editScrollRef = useRef(editScrollMemory.get(previewScrollKey(scope, path)) ?? 0)
+  /** True while {@link restoreEditScroll} is writing, so the scroll event it
+   *  causes is not mistaken for the user's own position. */
+  const restoringEditRef = useRef(false)
   /** True while a programmatic restore is in flight; raw scroll events caused
    *  by the restore (or by the browser clamping a collapsed reload container
    *  to 0) must not overwrite the remembered position. */
@@ -236,6 +245,7 @@ export function TextEditor(props: FileViewerProps) {
   // file's own entry (first open: none, so the preview starts at the top).
   useEffect(() => {
     previewScrollRef.current = previewScrollMemory.get(previewScrollKey(scope, path)) ?? 0
+    editScrollRef.current = editScrollMemory.get(previewScrollKey(scope, path)) ?? 0
   }, [scope, path])
 
   // Create the CodeMirror editor once the content is loaded. The view owns
@@ -341,7 +351,20 @@ export function TextEditor(props: FileViewerProps) {
     })
     const view = new CodeMirrorView({ state, parent: host })
     viewRef.current = view
+    // Edit-mode scroll memory. The native sidebar re-seats a tab while it is
+    // being saved (the chip's dirty mark, the change gutter), and a scroller
+    // that is detached from the document comes back with `scrollTop` 0 — the
+    // one piece of view state the DOM does not carry across a move. Record the
+    // user's own position here; the restore paths below put it back.
+    const scroller = view.scrollDOM
+    const onScroll = (): void => {
+      if (restoringEditRef.current) return
+      editScrollRef.current = scroller.scrollTop
+      editScrollMemory.set(previewScrollKey(scope, path), scroller.scrollTop)
+    }
+    scroller.addEventListener('scroll', onScroll, { passive: true })
     return () => {
+      scroller.removeEventListener('scroll', onScroll)
       view.destroy()
       viewRef.current = null
       themeCompRef.current = null
@@ -354,6 +377,36 @@ export function TextEditor(props: FileViewerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content, path])
 
+  /**
+   * Put the edit-mode scroll position back after the view was disturbed (a
+   * moved tab body, a reconfigured gutter, a collapsed container). Mirrors the
+   * preview's restore: a programmatic write is guarded so the scroll event it
+   * produces is not recorded as the user's own position, and a document that
+   * fits is left alone.
+   */
+  const restoreEditScroll = (): void => {
+    const view = viewRef.current
+    if (view === null) return
+    const want = editScrollRef.current
+    if (want <= 0) return
+    const scroller = view.scrollDOM
+    if (scroller.scrollTop === want) return
+    if (scroller.scrollHeight <= scroller.clientHeight) return
+    restoringEditRef.current = true
+    scroller.scrollTop = want
+    const clear = (): void => { restoringEditRef.current = false }
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(clear)
+    else setTimeout(clear, 0)
+  }
+
+  // Save-time restore: `saving → saved` and the change-gutter refresh are the
+  // two edges that re-seat the tab body, and the edit surface has no reload to
+  // hide behind (unlike the preview, which reloads deliberately).
+  useLayoutEffect(() => {
+    if (mode !== 'edit') return
+    restoreEditScroll()
+  }, [saveState, gitKinds, mode])
+
   // Native sidebar tabs stay mounted while another tab is active. If a file
   // is opened while that host is hidden, CodeMirror can measure its viewport at
   // zero and retain an empty virtualized viewport after the tab is revealed —
@@ -363,13 +416,17 @@ export function TextEditor(props: FileViewerProps) {
   // and moving a node never changes its border box, so a ResizeObserver alone
   // never fires for that path. An IntersectionObserver reports the reveal
   // itself; the rAF follow-up covers a reveal landing in the mount's own frame,
-  // where CodeMirror's first measure may still have read a zero box.
+  // where CodeMirror's first measure may still have read a zero box. Each
+  // reveal also re-applies the remembered scroll position for the same reason.
   useEffect(() => {
     const host = hostRef.current
     const view = viewRef.current
     if (host === null || view === null) return
     const measure = (): void => {
-      if (host.isConnected && host.offsetWidth > 0 && host.offsetHeight > 0) view.requestMeasure()
+      if (host.isConnected && host.offsetWidth > 0 && host.offsetHeight > 0) {
+        view.requestMeasure()
+        restoreEditScroll()
+      }
     }
     measure()
     const frame = typeof requestAnimationFrame === 'function'
