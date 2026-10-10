@@ -19,7 +19,13 @@ import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
 import { parse as parseYaml } from 'yaml'
-import type { Context, SidebarHttpRequest, SidebarSessionEvent, SidebarSettingsService } from './context-types.ts'
+import type {
+  Context,
+  SidebarHostConnection,
+  SidebarHttpRequest,
+  SidebarSessionEvent,
+  SidebarSettingsService,
+} from './context-types.ts'
 import {
   Config,
   resolveSidebarConfig,
@@ -109,8 +115,17 @@ export interface SidebarFsLevel {
   error?: string
 }
 
-/** Services required before mounting: the webserver routes, the session store, the web runtime's trusted hosts, and the tool registry. */
-export const inject = ['webServer', 'sessions', 'webRuntime', 'tools']
+/**
+ * Services required before mounting: the webserver routes, the session store,
+ * and the tool registry. `webRuntime` is deliberately NOT required any more —
+ * DSH 0.2.1-alpha.2 deleted that service, and requiring it left the whole host
+ * half `pending (waiting for service: webRuntime)` forever on such hosts: no
+ * `/sidebar/*` route ever registered, and because the client half still ships
+ * through `dsh.client`, the sidebar rendered while every request hit the
+ * host's method fallback (405). The fence now reads the connection service
+ * (see {@link SidebarHostConnection}) with the old service as fallback.
+ */
+export const inject = ['webServer', 'sessions', 'tools']
 
 /** Content types for the media route, by extension. */
 const MEDIA_TYPES: Record<string, string> = {
@@ -1185,18 +1200,41 @@ async function importLegacyPrefs(
 
 /**
  * Plugin body: mount the fenced routes and the sidebar_open push socket.
- * @param ctx - host plugin context (webServer, sessions, webRuntime).
+ * @param ctx - host plugin context (webServer, sessions, tools).
  * @param config - deployment-provided limits; the Loader validates against
  * {@link Config} and fills defaults, direct callers get them from
  * {@link resolveSidebarConfig}.
  */
 export function apply(ctx: Context, config?: SidebarConfig): void {
   const resolved = resolveSidebarConfig(config)
-  // The web runtime's bind-derived trust list (boot-sampled LAN literals
-  // plus --trusted-host authorities) — the authoritative source the /api
-  // gateway fence derives its list from. Read per request from the live
-  // service value; a replaced list takes effect without a plugin restart.
-  const fence = (req: SidebarHttpRequest): boolean => isTrustedApiRequest(req, ctx.webRuntime.trustedHosts)
+  // The browser-trust fence, resolved per request from the live services so a
+  // replaced trust list takes effect without a plugin restart.
+  //
+  // The vendored fence runs FIRST and keeps working on every host: it is the
+  // one carrying this plugin's two narrow additions to the /api gateway's rule
+  // — the bfcache-restored same-origin image on the media route (Chromium
+  // serves it with a stale `cross-site` marker) and the desktop shell's
+  // `dsh-app://app` origin on the upgrades the shell does not forward — plus,
+  // on hosts up to 0.2.0-rc.2, the whole bind-derived trust list.
+  //
+  // DSH 0.2.1-alpha.2 deleted `webRuntime` and moved the /api gateway's own
+  // fence behind the `connection` service, which is therefore consulted as a
+  // SUPPLEMENT (a fallback trust source), never as a replacement: the host's
+  // rule is stricter than the vendored one exactly where this plugin widened
+  // it on purpose — it compares the Origin port (Chromium/Edge can serialize a
+  // loopback Origin without its port), refuses the shell origin, and refuses
+  // bfcache-restored images. Swapping the fence wholesale would regress all
+  // three. 401 is not a refusal either: these routes never required the launch
+  // cookie (the editor's image src and the sandboxed HTML preview plus its
+  // relative assets are precisely the same-origin subresources that may lack
+  // it), so only 403 refuses.
+  const fence = (req: SidebarHttpRequest): boolean => {
+    if (isTrustedApiRequest(req, ctx.get('webRuntime')?.trustedHosts ?? [])) return true
+    const connection = ctx.get('connection') as unknown as SidebarHostConnection | undefined
+    return connection !== undefined
+      && typeof connection.requestRejection === 'function'
+      && connection.requestRejection({ headers: req.headers }) !== 403
+  }
   // The model-facing open-request registry: queues `sidebar_open` requests
   // per session and pushes them to connected sidebar views over the
   // `/sidebar/ws/agent-opens` socket.
