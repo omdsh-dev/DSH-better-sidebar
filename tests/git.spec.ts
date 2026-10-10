@@ -361,7 +361,7 @@ describe('numstat line counts (#131)', () => {
     expect(parseNumstat('not a numstat record\nanother one\n')).toEqual(new Map())
   })
 
-  it('carries counts, the binary marker and the untracked absence through status()', async () => {
+  it('carries each side\'s counts, the binary marker and the untracked absence through status()', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-git-counts-'))
     try {
       execFileSync('git', ['init', '-q'], { cwd: root })
@@ -376,8 +376,9 @@ describe('numstat line counts (#131)', () => {
       execFileSync('git', ['add', '-A'], { cwd: root })
       execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: root })
 
-      // ONE path changed on BOTH sides: one line staged, then one more in the
-      // worktree — the entry must report the sum of the two readings.
+      // ONE path changed on BOTH sides (porcelain 'MM'): one line staged, then
+      // one more in the worktree. The two diffs have different bases, so the
+      // entry carries two readings — never one number that adds them up.
       writeFileSync(join(root, 'tracked.txt'), 'one\ntwo\nthree\n')
       execFileSync('git', ['add', 'tracked.txt'], { cwd: root })
       writeFileSync(join(root, 'tracked.txt'), 'one\ntwo\nthree\nfour\n')
@@ -391,18 +392,54 @@ describe('numstat line counts (#131)', () => {
       const result = await status(root)
       const byPath = new Map(result.entries.map(entry => [entry.path, entry]))
       expect(byPath.get('tracked.txt')).toEqual({
-        path: 'tracked.txt', xy: 'MM', counts: { additions: 2, deletions: 0 },
+        path: 'tracked.txt',
+        xy: 'MM',
+        staged: { additions: 1, deletions: 0 },
+        unstaged: { additions: 1, deletions: 0 },
       })
       expect(byPath.get('moved.txt')).toEqual({
-        path: 'moved.txt', xy: 'R ', counts: { additions: 0, deletions: 0 },
+        path: 'moved.txt', xy: 'R ', staged: { additions: 0, deletions: 0 },
       })
       expect(byPath.get('blob.bin')).toEqual({
-        path: 'blob.bin', xy: 'A ', counts: { binary: true },
+        path: 'blob.bin', xy: 'A ', staged: { binary: true },
       })
-      // No numstat row exists for an untracked file: the entry keeps no counts
-      // at all, which is what the row renders as "new file".
+      // No numstat row exists for an untracked file on either side: the entry
+      // keeps no counts at all, which is what the row renders as "new file".
       expect(byPath.get('untracked.txt')).toEqual({ path: 'untracked.txt', xy: '??' })
       expect(byPath.has('renamed.txt')).toBe(false)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('never adds the two sides up: a line both diffs see is counted once per side', async () => {
+    // The double-count regression. Editing the SAME line twice — staged once,
+    // then edited again in the worktree — makes both numstat sides report the
+    // same single line. Summing them reported a 2-line change on the staged row
+    // AND on the unstaged one, while `git diff HEAD --numstat` says 1.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-git-both-sides-'))
+    try {
+      execFileSync('git', ['init', '-q'], { cwd: root })
+      execFileSync('git', ['config', 'user.email', 't@t'], { cwd: root })
+      execFileSync('git', ['config', 'user.name', 't'], { cwd: root })
+      writeFileSync(join(root, 'a.txt'), 'one\ntwo\nthree\n')
+      execFileSync('git', ['add', '-A'], { cwd: root })
+      execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: root })
+
+      writeFileSync(join(root, 'a.txt'), 'one\nTWO\nthree\n')
+      execFileSync('git', ['add', 'a.txt'], { cwd: root })
+      writeFileSync(join(root, 'a.txt'), 'one\nTwo\nthree\n')
+
+      const result = await status(root)
+      expect(result.entries).toEqual([{
+        path: 'a.txt',
+        xy: 'MM',
+        staged: { additions: 1, deletions: 1 },
+        unstaged: { additions: 1, deletions: 1 },
+      }])
+      // The reading the panel must never print: the sum of two diffs that saw
+      // the same line.
+      expect(JSON.stringify(result.entries)).not.toContain('"additions":2')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

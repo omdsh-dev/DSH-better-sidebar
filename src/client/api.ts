@@ -63,10 +63,14 @@ export type GitLineCounts = { additions: number; deletions: number } | { binary:
 export interface GitStatusEntry {
   path: string
   xy: string
-  /** Lines gained/lost, index and worktree sides summed. ABSENT when git has
-   *  no numstat row for the path — untracked files never have one — so the row
-   *  must not read that absence as `0`. */
-  counts?: GitLineCounts
+  /** Lines gained/lost on the INDEX side (index vs HEAD). ABSENT when git has
+   *  no numstat row for the path on that side — an untracked file has none — so
+   *  the row must not read that absence as `0`. */
+  staged?: GitLineCounts
+  /** Lines gained/lost on the WORKTREE side (worktree vs index). The two sides
+   *  are separate readings, never one summed number: a path changed on both
+   *  sides ('MM') is rendered once per band, each with its own. */
+  unstaged?: GitLineCounts
 }
 
 /** Git status snapshot. */

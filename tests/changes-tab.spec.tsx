@@ -146,8 +146,8 @@ describe('ChangesTab', () => {
    */
   it('renders no count cluster for a group whose only changes are pure renames (#131)', async () => {
     mockGit([
-      { path: 'renamed.ts', xy: 'R ', counts: { additions: 0, deletions: 0 } },
-      { path: 'moved.md', xy: ' R', counts: { additions: 0, deletions: 0 } },
+      { path: 'renamed.ts', xy: 'R ', staged: { additions: 0, deletions: 0 } },
+      { path: 'moved.md', xy: ' R', unstaged: { additions: 0, deletions: 0 } },
     ])
 
     const container = document.createElement('div')
@@ -176,8 +176,8 @@ describe('ChangesTab', () => {
 
   it('keeps the group total when a row in the group really has numbers (#131)', async () => {
     mockGit([
-      { path: 'mode-only.ts', xy: ' M', counts: { additions: 0, deletions: 0 } },
-      { path: 'edited.ts', xy: ' M', counts: { additions: 3, deletions: 1 } },
+      { path: 'mode-only.ts', xy: ' M', unstaged: { additions: 0, deletions: 0 } },
+      { path: 'edited.ts', xy: ' M', unstaged: { additions: 3, deletions: 1 } },
     ])
 
     const container = document.createElement('div')

@@ -80,9 +80,10 @@ describe('linked Git worktrees', () => {
       expect(listed.find(entry => !entry.current)).toMatchObject({ branch: 'agent', changes: 1 })
       expect(resolve(await resolveWorktree(main, agentPath))).toBe(resolve(agentPath))
       // The line counts ride the same status answer (#131): 'base' →
-      // 'changed by agent' is exactly one line replaced.
+      // 'changed by agent' is exactly one line replaced, on the worktree side
+      // (nothing is staged here, so the index side has no reading at all).
       expect((await status(await resolveWorktree(main, agentPath))).entries).toEqual([
-        { path: 'tracked.txt', xy: ' M', counts: { additions: 1, deletions: 1 } },
+        { path: 'tracked.txt', xy: ' M', unstaged: { additions: 1, deletions: 1 } },
       ])
       await expect(resolveWorktree(main, root)).rejects.toThrow('unknown linked worktree')
 

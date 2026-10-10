@@ -15,6 +15,10 @@
 import type { GitLineCounts, GitStatusEntry } from '../api.ts'
 import { statusOfXY, type GitFileStatus } from '../ui/index.ts'
 
+/** Which band's reading a tree carries: the index side or the worktree side.
+ *  Named after `GitStatusEntry`'s own fields so `entry[side]` is the reading. */
+export type ChangeSide = 'staged' | 'unstaged'
+
 /** One changed file (a leaf), carrying its porcelain status. */
 export interface ChangeFile {
   kind: 'file'
@@ -23,8 +27,11 @@ export interface ChangeFile {
   /** The repo-relative path exactly as git reported it (the row's identity). */
   path: string
   status: GitFileStatus
-  /** The path's line counts from the SAME status answer (#131). Absent when
-   *  git has no numstat row for the path — untracked files never have one. */
+  /** THIS GROUP's line counts for the path (#131) — the index side inside the
+   *  staged group, the worktree side inside the unstaged one. A path changed on
+   *  both sides ('MM') lands in both groups with a different reading each, and
+   *  the sum of the two is nobody's number. Absent when git has no numstat row
+   *  for the path on this side — untracked files never have one. */
   counts?: GitLineCounts
 }
 
@@ -110,9 +117,12 @@ function finishChildren(draft: DirDraft): ChangeNode[] {
  * Rows without a porcelain status (clean, ignored) are skipped, a repeated
  * path counts once, and an empty input yields an empty list.
  * @param entries - the group's `git status` entries.
+ * @param side - which band's reading to put on the leaves. The entries carry
+ *   both sides (a path can be in both groups), so the tree must be told which
+ *   one its rows stand for.
  * @returns the tree's roots, ready to render in order.
  */
-export function buildChangeTree(entries: readonly GitStatusEntry[]): ChangeNode[] {
+export function buildChangeTree(entries: readonly GitStatusEntry[], side: ChangeSide): ChangeNode[] {
   const root: DirDraft = { name: '', path: '', dirs: new Map(), files: [] }
   const seen = new Set<string>()
   for (const entry of entries) {
@@ -135,12 +145,13 @@ export function buildChangeTree(entries: readonly GitStatusEntry[]): ChangeNode[
     }
     // The FILE keeps git's own spelling (the lane previews, copies and menus
     // all resolve this path); only the directory rows use the split form.
+    const counts = entry[side]
     at.files.push({
       kind: 'file',
       name: segments[segments.length - 1]!,
       path: entry.path,
       status,
-      ...(entry.counts !== undefined ? { counts: entry.counts } : {}),
+      ...(counts !== undefined ? { counts } : {}),
     })
   }
   return finishChildren(root)

@@ -455,7 +455,7 @@ describe('GitLens (changes tab, git lens) change tree', () => {
   async function mountTree(
     container: HTMLElement,
     root: Root,
-    entries: Array<{ path: string; xy: string; counts?: GitStatusEntry['counts'] }>,
+    entries: Array<{ path: string; xy: string; staged?: GitStatusEntry['staged']; unstaged?: GitStatusEntry['unstaged'] }>,
   ): Promise<void> {
     const changes = entries.filter(row => row.xy !== '  ').length
     vi.spyOn(api, 'gitWorktrees').mockResolvedValue([{ path: MAIN, branch: 'main', current: true, changes }])
@@ -708,9 +708,9 @@ describe('GitLens (changes tab, git lens) change tree', () => {
       const { container, root } = makeRoot()
       try {
         await mountTree(container, root, [
-          { path: 'src/a.ts', xy: ' M', counts: { additions: 4, deletions: 2 } },
-          { path: 'src/b.ts', xy: ' M', counts: { additions: 1, deletions: 0 } },
-          { path: 'docs/c.md', xy: 'M ', counts: { additions: 3, deletions: 3 } },
+          { path: 'src/a.ts', xy: ' M', unstaged: { additions: 4, deletions: 2 } },
+          { path: 'src/b.ts', xy: ' M', unstaged: { additions: 1, deletions: 0 } },
+          { path: 'docs/c.md', xy: 'M ', staged: { additions: 3, deletions: 3 } },
         ])
 
         expect(counted(container, '[data-path="src/a.ts"] [data-lines="count"]'))
@@ -744,7 +744,7 @@ describe('GitLens (changes tab, git lens) change tree', () => {
       try {
         await mountTree(container, root, [
           { path: 'new.txt', xy: '??' },
-          { path: 'blob.bin', xy: ' M', counts: { binary: true } },
+          { path: 'blob.bin', xy: ' M', unstaged: { binary: true } },
         ])
 
         expect(container.querySelector('[data-path="new.txt"] [data-lines="new"]')?.textContent)
@@ -773,10 +773,10 @@ describe('GitLens (changes tab, git lens) change tree', () => {
         // line counts moved (more lines appended to an already-modified file).
         vi.spyOn(api, 'gitStatus')
           .mockResolvedValueOnce({
-            isRepo: true, branch: 'main', entries: [{ path: 'src/a.ts', xy: ' M', counts: { additions: 1, deletions: 0 } }],
+            isRepo: true, branch: 'main', entries: [{ path: 'src/a.ts', xy: ' M', unstaged: { additions: 1, deletions: 0 } }],
           })
           .mockResolvedValue({
-            isRepo: true, branch: 'main', entries: [{ path: 'src/a.ts', xy: ' M', counts: { additions: 7, deletions: 0 } }],
+            isRepo: true, branch: 'main', entries: [{ path: 'src/a.ts', xy: ' M', unstaged: { additions: 7, deletions: 0 } }],
           })
         vi.spyOn(api, 'gitBranch').mockResolvedValue({ current: 'main', names: ['main'] })
         vi.spyOn(api, 'gitLog').mockResolvedValue([])
@@ -796,6 +796,38 @@ describe('GitLens (changes tab, git lens) change tree', () => {
         act(() => { root.unmount() })
         container.remove()
         vi.useRealTimers()
+      }
+    })
+
+    it('gives each band its OWN side of a file changed on both sides, never the sum (#131 regression)', async () => {
+      const { container, root } = makeRoot()
+      try {
+        // One file, changed on both sides ('MM'): a one-line rewrite staged,
+        // then five lines appended in the worktree. The two diffs have
+        // different bases, so the path is listed once per band with its own
+        // reading — and the bands' totals are those readings. Summing them
+        // printed `+6 −1` on the staged band AND on the unstaged one.
+        await mountTree(container, root, [
+          {
+            path: 'a.txt',
+            xy: 'MM',
+            staged: { additions: 1, deletions: 1 },
+            unstaged: { additions: 5, deletions: 0 },
+          },
+        ])
+
+        expect(counted(container, '[data-group="unstaged"] [data-lines="group"]'))
+          .toEqual({ added: '5', deleted: '0', text: '+5' })
+        expect(counted(container, '[data-group="staged"] [data-lines="group"]'))
+          .toEqual({ added: '1', deleted: '1', text: '+1−1' })
+        // The path really is listed in both bands, each row printing its own
+        // side's numbers (unstaged band first, staged second).
+        const rows = [...container.querySelectorAll<HTMLElement>('button[data-path="a.txt"] [data-lines="count"]')]
+        expect(rows.map(node => `${node.getAttribute('data-added')}/${node.getAttribute('data-deleted')}`))
+          .toEqual(['5/0', '1/1'])
+      } finally {
+        act(() => { root.unmount() })
+        container.remove()
       }
     })
   })

@@ -21,11 +21,21 @@ export interface GitStatusEntry {
   path: string
   /** Two-letter index/worktree status (X Y), e.g. 'M ', ' M', 'A ', '??'. */
   xy: string
-  /** How many lines this path gained and lost, index and worktree sides
-   *  SUMMED (both are measured against HEAD). Absent when git has no numstat
-   *  row for the path — an untracked file never gets one — so "no counts" is
-   *  never rendered as a fabricated `0`. */
-  counts?: GitLineCounts
+  /** How many lines the INDEX side gained and lost (`git diff --cached`, index
+   *  against HEAD). Absent when git has no numstat row for the path on that
+   *  side — an untracked file has none — so "no counts" is never rendered as a
+   *  fabricated `0`. */
+  staged?: GitLineCounts
+  /** How many lines the WORKTREE side gained and lost (`git diff`, worktree
+   *  against the index). Absent for the same reason as {@link staged}.
+   *
+   *  The two sides are kept APART, never added up: a path can hold a change on
+   *  each side ('MM'), and the change panel renders such a path once per band
+   *  with that band's own reading. Summing the two readings would double-count
+   *  every line both diffs see — e.g. stage a line and keep editing the same
+   *  region, and `1 + 1` lines would be reported as a 2-line change on BOTH
+   *  the staged row and the unstaged one. */
+  unstaged?: GitLineCounts
 }
 
 /** One path's line-count summary from `git diff --numstat`. A binary change is
@@ -494,30 +504,6 @@ export async function currentBranch(cwd: string): Promise<string> {
 const GIT_STATUS_LIMIT = 2_000
 
 /**
- * Fold one path's counts from both numstat sides into a running map. A file
- * changed in the index AND in the worktree is measured on each side against
- * HEAD, so the two readings ADD UP; a binary reading on either side wins,
- * because then there is no line count to add.
- */
-function addLineCounts(into: Map<string, GitLineCounts>, from: Map<string, GitLineCounts>): void {
-  for (const [path, counts] of from) {
-    const previous = into.get(path)
-    if (previous === undefined) {
-      into.set(path, counts)
-      continue
-    }
-    if (!('additions' in previous) || !('additions' in counts)) {
-      into.set(path, { binary: true })
-      continue
-    }
-    into.set(path, {
-      additions: previous.additions + counts.additions,
-      deletions: previous.deletions + counts.deletions,
-    })
-  }
-}
-
-/**
  * Working-tree status (untracked included). `--untracked-files=all` lists
  * the contents of new directories as individual entries, while preserving
  * repository discovery and explicit repository selection for workspace roots.
@@ -527,6 +513,12 @@ function addLineCounts(into: Map<string, GitLineCounts>, from: Map<string, GitLi
  * per file, and callers keep their existing refresh cadence. A numstat failure
  * costs only the counts (the rows fall back to their count-less rendering) —
  * the status answer itself must never fail because of it.
+ *
+ * Each side keeps its own reading ({@link GitStatusEntry.staged} /
+ * {@link GitStatusEntry.unstaged}); they are never folded into one number. The
+ * two diffs have different bases (index vs HEAD, worktree vs index), so a path
+ * changed on both sides has two honest answers and no sum of them equals
+ * either.
  */
 export async function status(cwd: string, selected?: string): Promise<GitStatusResult> {
   const repositories = await repoRoots(cwd)
@@ -539,19 +531,24 @@ export async function status(cwd: string, selected?: string): Promise<GitStatusR
     runGit(root, ['diff', '--cached', '--numstat', '-z']).catch(() => ''),
   ])
   const parsed = parsePorcelainZ(raw)
-  const lineCounts = new Map<string, GitLineCounts>()
-  addLineCounts(lineCounts, parseNumstat(stagedNumstat))
-  addLineCounts(lineCounts, parseNumstat(unstagedNumstat))
+  const stagedCounts = parseNumstat(stagedNumstat)
+  const unstagedCounts = parseNumstat(unstagedNumstat)
   const truncated = parsed.length > GIT_STATUS_LIMIT
   const bounded = truncated ? parsed.slice(0, GIT_STATUS_LIMIT) : parsed
   return {
     isRepo: true,
     branch,
-    // Paths git has no numstat row for (untracked files) keep their entry
-    // untouched: the absence IS the information.
+    // Paths git has no numstat row for on either side (untracked files) keep
+    // their entry untouched: the absence IS the information.
     entries: bounded.map((entry): GitStatusEntry => {
-      const counts = lineCounts.get(entry.path)
-      return counts === undefined ? entry : { ...entry, counts }
+      const staged = stagedCounts.get(entry.path)
+      const unstaged = unstagedCounts.get(entry.path)
+      if (staged === undefined && unstaged === undefined) return entry
+      return {
+        ...entry,
+        ...(staged !== undefined ? { staged } : {}),
+        ...(unstaged !== undefined ? { unstaged } : {}),
+      }
     }),
     truncated,
     root,

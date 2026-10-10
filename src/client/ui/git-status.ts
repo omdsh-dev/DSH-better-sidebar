@@ -91,11 +91,8 @@ function joinRoot(root: string, rel: string): string {
 }
 
 /**
- * Whether two entries carry the same line counts. A numstat-only change — an
- * edit that adds lines without touching either porcelain letter, e.g. more
- * lines appended to an already-modified file — must still publish a NEW
- * snapshot: keeping the previous identity would freeze the row's numbers at
- * their first reading for as long as the porcelain codes stay put.
+ * Whether two sides carry the same line counts (both absent counts as equal —
+ * the entry simply has no reading on that side).
  */
 function sameCounts(left: GitLineCounts | undefined, right: GitLineCounts | undefined): boolean {
   if (left === right) return true
@@ -110,6 +107,12 @@ function sameCounts(left: GitLineCounts | undefined, right: GitLineCounts | unde
  * Whether two status snapshots carry the same information. Compared field by
  * field (never by serializing the whole object): the entries are the payload
  * and their order is stable, so a length + pairwise compare is enough.
+ *
+ * Both sides' counts are compared, each on its own: a numstat-only change — an
+ * edit that adds lines without touching either porcelain letter, e.g. more
+ * lines appended to an already-modified file — must still publish a NEW
+ * snapshot, because keeping the previous identity would freeze the row's
+ * numbers at their first reading for as long as the porcelain codes stay put.
  */
 function sameStatus(a: GitStatusResult, b: GitStatusResult): boolean {
   if (a === b) return true
@@ -120,7 +123,8 @@ function sameStatus(a: GitStatusResult, b: GitStatusResult): boolean {
     && a.repositories.some((root, index) => root !== b.repositories![index])) return false
   return a.entries.every((entry, index) => {
     const other = b.entries[index]!
-    return entry.path === other.path && entry.xy === other.xy && sameCounts(entry.counts, other.counts)
+    return entry.path === other.path && entry.xy === other.xy
+      && sameCounts(entry.staged, other.staged) && sameCounts(entry.unstaged, other.unstaged)
   })
 }
 
