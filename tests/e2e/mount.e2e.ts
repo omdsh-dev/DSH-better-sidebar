@@ -549,6 +549,32 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   const modal = page.locator('[data-mermaid-modal]')
   await pane.locator('[data-mermaid-diagram] svg').first().click()
   await expect(modal, 'clicking the diagram must open the zoom modal').toHaveCount(1, { timeout: 10_000 })
+  // Issue #805: the viewport-sized overlay is pinned to the WINDOW's top-right,
+  // which is exactly where the shell draws its native caption strip OVER the
+  // page (Electron `titleBarOverlay`; 42px on the reporter's Windows shell).
+  // Events in that band never reach the document, so a bare 16px inset leaves
+  // only the bottom ~10px of a 36px button clickable while
+  // `elementFromPoint` still answers the button — the control reads as dead.
+  // Measure the REAL layout: no strip keeps the 16px inset, a 42px strip moves
+  // the toolbar down by exactly that much. The variable is restored afterwards
+  // so the rest of the lane sees the environment it started with.
+  const toolbarInsets = await page.evaluate(() => {
+    const root = document.documentElement
+    const read = (): number | null => {
+      const toolbar = document.querySelector('[data-mermaid-modal] [data-mermaid-modal-toolbar]')
+      return toolbar === null ? null : Math.round(toolbar.getBoundingClientRect().top)
+    }
+    const previous = root.style.getPropertyValue('--dsh-title-bar-strip')
+    root.style.removeProperty('--dsh-title-bar-strip')
+    const plain = read()
+    root.style.setProperty('--dsh-title-bar-strip', '42px')
+    const stripped = read()
+    if (previous === '') root.style.removeProperty('--dsh-title-bar-strip')
+    else root.style.setProperty('--dsh-title-bar-strip', previous)
+    return { plain, stripped }
+  })
+  expect(toolbarInsets.plain, 'with no strip the toolbar keeps its 16px inset').toBe(16)
+  expect(toolbarInsets.stripped, 'a 42px title-bar strip must move the toolbar clear of it').toBe(58)
   // While it is up, the modal is the plugin's OTHER viewport-sized BODY CHILD:
   // without the app-region reset the shell's blanket `body > :not(#root)`
   // no-drag makes it cancel every window-drag strip (and the macOS
