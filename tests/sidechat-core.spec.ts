@@ -15,6 +15,7 @@ import {
   buildSidechatInheritance,
   hasDanglingToolCall,
   isContextInjectionMessage,
+  parseSidechatModelSelection,
   parentModelSelection,
   resolvePresetId,
   sideLabel,
@@ -520,5 +521,16 @@ describe('parentModelSelection', () => {
       ev('request/header', 3, {}),
       ev('model/selection', 4, { provider: 'p3', model: 'm3' }),
     ])).toEqual({ provider: 'p3', model: 'm3' })
+  })
+})
+
+describe('parseSidechatModelSelection', () => {
+  it('requires provider and model and drops an unusable reasoning effort', () => {
+    expect(parseSidechatModelSelection({ provider: '', model: 'm1' })).toBeUndefined()
+    expect(parseSidechatModelSelection({ provider: 'p1', model: '' })).toBeUndefined()
+    expect(parseSidechatModelSelection({ provider: 'p1', model: 'm1', reasoningEffort: '' }))
+      .toEqual({ provider: 'p1', model: 'm1' })
+    expect(parseSidechatModelSelection({ provider: 'p1', model: 'm1', reasoningEffort: 3 }))
+      .toEqual({ provider: 'p1', model: 'm1' })
   })
 })

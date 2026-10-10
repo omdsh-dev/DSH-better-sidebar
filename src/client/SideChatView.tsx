@@ -531,6 +531,9 @@ export function SideChatView(props: {
   const [menuOpen, setMenuOpen] = useState(false)
 
   const cacheRef = useRef<ThreadCache>({ entries: [], live: [] })
+  const infoRequestRef = useRef(0)
+  const boundThreadIdRef = useRef(threadId)
+  boundThreadIdRef.current = threadId
   // The previous poll's rows (see the mapping's reuse pass below).
   const prevRowsRef = useRef<SidechatTranscriptRow[]>([])
   const controllerRef = useRef<AbortController | null>(null)
@@ -564,7 +567,19 @@ export function SideChatView(props: {
   /** The agent-identity badge of the thread header (preset · model). */
   const agentBadge = useMemo(() => {
     if (info === null) return ''
-    return [info.preset, info.model ?? info.provider].filter(Boolean).join(' · ')
+    const routeLabel = (provider: string | undefined, model: string | undefined, effort: string | undefined): string | undefined => {
+      if (provider === undefined && model === undefined) return undefined
+      const route = provider !== undefined && model !== undefined ? `${provider}/${model}` : model ?? provider
+      if (route === undefined) return undefined
+      return effort === undefined ? route : `${route} (${effort})`
+    }
+    const selected = routeLabel(info.provider, info.model, info.reasoningEffort)
+      ?? (info.model ?? info.provider)
+    const active = routeLabel(info.activeProvider, info.activeModel, info.activeReasoningEffort)
+    const model = active !== undefined && selected !== undefined && active !== selected
+      ? `${active} → ${selected}`
+      : selected
+    return [info.preset, model].filter(Boolean).join(' · ')
   }, [info])
 
   /** Create this tab's thread (immediate-create tabs and hero retries). */
@@ -665,8 +680,10 @@ export function SideChatView(props: {
 
   /** The thread header badge pull (live state + preset/model identity). */
   const fetchInfo = useCallback(async (childId: string): Promise<void> => {
+    const request = ++infoRequestRef.current
     try {
-      setInfo(await api.sidechatInfo(childId))
+      const nextInfo = await api.sidechatInfo(childId)
+      if (request === infoRequestRef.current) setInfo(nextInfo)
     } catch {
       // The badge is decorative; a wire failure keeps the last value.
     }
@@ -675,6 +692,7 @@ export function SideChatView(props: {
   // Reset the transcript cache whenever the binding changes, then focus
   // the composer — it owns the first message of a fresh thread.
   useEffect(() => {
+    infoRequestRef.current += 1
     cacheRef.current = { entries: [], live: [] }
     prevRowsRef.current = []
     controllerRef.current?.abort()
@@ -682,20 +700,29 @@ export function SideChatView(props: {
     setSaved(false)
     setInfo(null)
     if (threadId !== undefined) {
-      void fetchInfo(threadId)
       window.setTimeout(() => composerRef.current?.focus(), 0)
     }
   }, [threadId, fetchInfo])
 
-  // One transcript pull on every input change (attach, visibility flip,
-  // run-state flip — the last one catches a thread's terminal state once it
-  // stops running).
+  // 面板显示、线程切换或运行状态变化时同步刷新转录与模型信息。
   useEffect(() => {
     if (!visible || threadId === undefined) return
     void fetchThread(threadId)
-    // `running` is not read here, but re-triggering this pull on run-state
-    // flips is load-bearing (see above); the badge fetch rides the ticks.
-  }, [visible, threadId, running, fetchThread])
+    void fetchInfo(threadId)
+    // 运行状态变化也会重新读取，确保空闲线程恢复显示时拿到当前模型。
+  }, [visible, threadId, running, fetchThread, fetchInfo])
+
+  useEffect(() => {
+    if (!visible || threadId === undefined) return
+    const binding = ctx.sessions.binding?.(scope.sessionId)
+    if (binding === undefined) return
+    const cleanups: Array<() => void> = []
+    const projection = binding.session.projections.faceOf('modelSelection')
+    if (projection !== undefined) {
+      cleanups.push(projection.subscribe(() => { void fetchInfo(threadId) }))
+    }
+    return () => { for (const cleanup of cleanups) cleanup() }
+  }, [ctx, fetchInfo, list, scope.sessionId, threadId, visible])
 
   // Poll while the tab is visible and the thread runs: transcript deltas +
   // badge refresh on a fixed cadence. Each pull self-guards (fetchThread

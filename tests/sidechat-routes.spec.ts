@@ -15,24 +15,36 @@ import { SIDE_BOUNDARY_PROMPT, SIDE_INJECTION_SOURCE_KIND, SIDE_NEW_THREAD_TITLE
 import type { Context } from '../src/context-types.ts'
 
 /** A fake live agent (inject/followup/cancel/inbox.clear spied). */
-function agent(id: string, over: { events?: unknown[]; header?: Record<string, unknown>; provider?: string; model?: string; reasoningEffort?: string } = {}) {
+function agent(id: string, over: { events?: unknown[]; header?: Record<string, unknown>; provider?: string; model?: string; reasoningEffort?: string; status?: 'idle' | 'running' } = {}) {
+  const events = over.events ?? []
+  const session = {
+    id,
+    header: { cwd: '/p', delegationDepth: 0, agentPreset: 'preset-a', parentSession: 'parent', ...over.header },
+    snapshotEvents: () => events,
+    append: (type: string, data: Record<string, unknown>) => {
+      events.push(ev(type, events.length, data))
+    },
+    requestHeader: () => {
+      for (let index = events.length - 1; index >= 0; index--) {
+        const event = events[index] as { type?: string; data?: { header?: { config?: unknown } } }
+        if (event?.type === 'request/header') return event.data?.header
+      }
+      return undefined
+    },
+  }
   return {
     id,
-    status: 'idle' as const,
+    status: over.status ?? 'idle',
     options: {
       provider: over.provider ?? 'test',
       model: over.model ?? 'model-x',
       ...(over.reasoningEffort !== undefined ? { reasoningEffort: over.reasoningEffort } : {}),
     },
-    session: {
-      id,
-      header: { cwd: '/p', delegationDepth: 0, agentPreset: 'preset-a', ...over.header },
-      snapshotEvents: () => over.events ?? [],
-    },
+    session,
     inject: vi.fn(),
     followup: vi.fn(),
     cancel: vi.fn(),
-    inbox: { clear: vi.fn() },
+    inbox: { clear: vi.fn(), nextTurn: [] as Array<{ id: string }> },
   }
 }
 
@@ -55,12 +67,12 @@ function happyServices(parent: AgentLike | undefined, child: AgentLike) {
   const mount = vi.fn(async () => {})
   /** The 0.1.5 persistence face: open(id, 'read') -> handle.read() -> close(). */
   const open = vi.fn(async (_id?: string): Promise<{
-    header: { agentPreset?: string; cwd?: string }
+    header: { agentPreset?: string; cwd?: string; parentSession?: string }
     inheritedEventCount: number
     read: () => Promise<{ events: unknown[] }>
     close: () => Promise<void>
   }> => ({
-    header: { agentPreset: 'preset-a' },
+    header: { agentPreset: 'preset-a', parentSession: 'parent' },
     inheritedEventCount: 0,
     read: async () => ({ events: [] }),
     close: async () => {},
@@ -85,12 +97,16 @@ function ctxWith(services: {
   agentPresets?: unknown
   sessionTitle?: unknown
   sessionPersistence?: unknown
+  agentDefaultModel?: unknown
+  sessionProjections?: unknown
 }): Context {
   const table: Record<string, unknown> = {
     ...(services.agents === undefined ? {} : { agents: services.agents }),
     ...(services.agentPresets === undefined ? {} : { agentPresets: services.agentPresets }),
     ...(services.sessionTitle === undefined ? {} : { sessionTitle: services.sessionTitle }),
     ...(services.sessionPersistence === undefined ? {} : { sessionPersistence: services.sessionPersistence }),
+    ...(services.agentDefaultModel === undefined ? {} : { agentDefaultModel: services.agentDefaultModel }),
+    ...(services.sessionProjections === undefined ? {} : { sessionProjections: services.sessionProjections }),
   }
   return {
     get: (key: string) => table[key],
@@ -322,6 +338,33 @@ describe('sidechat.start', () => {
     })
   })
 
+  it('inherits the parent options reasoning effort when no model history exists', async () => {
+    const parent = agent('parent', {
+      provider: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'high',
+    })
+    const child = agent('child')
+    const services = happyServices(parent, child)
+    const api = buildSidechatApi(ctxWith(services))
+
+    await api['sidechat.start']({ sessionId: 'parent', question: 'use the configured effort' })
+
+    const options = services.create.mock.calls[0]![0] as { agentOptions: Record<string, unknown> }
+    expect(options.agentOptions).toMatchObject({
+      provider: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'high',
+    })
+    const selection = child.session.snapshotEvents().find((event: unknown) =>
+      (event as { type?: string }).type === 'model/selection') as { data: Record<string, unknown> } | undefined
+    expect(selection?.data).toMatchObject({
+      provider: 'provider-a',
+      model: 'model-a',
+      reasoningEffort: 'high',
+    })
+  })
+
   it('inherits the parent last-used route from its request headers when no explicit switch is pending', async () => {
     const parent = agent('parent', {
       // agent.options still holds the creation default...
@@ -340,6 +383,37 @@ describe('sidechat.start', () => {
 
     const options = services.create.mock.calls[0]![0] as { agentOptions: Record<string, unknown> }
     expect(options.agentOptions).toEqual({ provider: 'gemini', model: 'gemini-3.7-flash-high' })
+  })
+
+  it('uses the current DSH default when the parent has no model history', async () => {
+    const parent = agent('parent', { provider: 'provider-a', model: 'model-a' })
+    const child = agent('child')
+    const services = happyServices(parent, child)
+    const api = buildSidechatApi(ctxWith({
+      ...services,
+      agentDefaultModel: { currentSelection: () => ({ provider: 'provider-b', model: 'model-b' }) },
+      sessionProjections: { stateOf: () => ({ lastUsed: null, pending: null }) },
+    }))
+
+    const { childId } = await api['sidechat.start']({ sessionId: 'parent', question: '' })
+    const options = services.create.mock.calls[0]![0] as { agentOptions: Record<string, unknown> }
+    expect(options.agentOptions).toMatchObject({ provider: 'provider-b', model: 'model-b' })
+    expect(parent.session.snapshotEvents()).toEqual([])
+    expect(child.session.snapshotEvents().some((event: unknown) =>
+      (event as { type?: string }).type === 'model/selection')).toBe(false)
+
+    services.get.mockImplementation(id => id === 'parent' ? parent : child)
+    child.session.snapshotEvents().push(ev('user/message', child.session.snapshotEvents().length, {
+      content: [{ type: 'text', text: SIDE_BOUNDARY_PROMPT }],
+      source: { kind: 'user' },
+    }))
+    await api['sidechat.prompt']({ childId, text: 'continue on the default model' })
+
+    const selections = child.session.snapshotEvents().filter((event: unknown) =>
+      (event as { type?: string }).type === 'model/selection') as Array<{ data: Record<string, unknown> }>
+    expect(selections.at(-1)?.data).toMatchObject({ provider: 'provider-b', model: 'model-b' })
+    expect(selections.at(-1)?.data.sidechat).toMatchObject({ messageId: expect.any(String) })
+    expect(child.followup).toHaveBeenCalledTimes(1)
   })
 
   it('inherits reasoningEffort from request headers when not marked as adapter default', async () => {
@@ -445,7 +519,8 @@ describe('sidechat.prompt', () => {
         }),
       ],
     })
-    const services = happyServices(undefined, child)
+    const parent = agent('parent')
+    const services = happyServices(parent, child)
     const api = buildSidechatApi(ctxWith(services))
     const result = await api['sidechat.prompt']({ childId: 'child', text: 'tell me more' })
     expect(result).toEqual({ accepted: true })
@@ -457,8 +532,9 @@ describe('sidechat.prompt', () => {
 
   it('cold-resumes the thread when the agent is gone', async () => {
     const child = agent('child')
-    const services = happyServices(undefined, child)
-    services.agents.get = vi.fn((_id: unknown) => undefined)
+    const parent = agent('parent')
+    const services = happyServices(parent, child)
+    services.agents.get = vi.fn((id: unknown) => id === 'parent' ? parent : undefined)
     const api = buildSidechatApi(ctxWith(services))
     await api['sidechat.prompt']({ childId: 'child', text: 'after restart' })
     expect(services.resume).toHaveBeenCalledTimes(1)
@@ -467,6 +543,135 @@ describe('sidechat.prompt', () => {
     expect(typeof resumeOptions.setup).toBe('function')
     expect(services.open).toHaveBeenCalledWith('child', 'read')
     expect(child.followup).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores and sends with the saved child model when the parent record cannot be read', async () => {
+    const persistedEvents = [
+      ev('session/end-seed', 0),
+      ev('user/message', 1, {
+        content: [{ type: 'text', text: `${SIDE_BOUNDARY_PROMPT}\n\nfirst question` }],
+        source: { kind: 'user' },
+      }),
+      ev('model/selection', 2, {
+        provider: 'saved-provider',
+        model: 'saved-model',
+        sidechat: { messageId: 'first-message' },
+      }),
+    ]
+    const child = agent('child', { events: persistedEvents })
+    const services = happyServices(undefined, child)
+    services.agents.get = vi.fn(() => undefined)
+    services.open = vi.fn(async (id?: string) => {
+      if (id === 'parent') throw new Error('parent record is unavailable')
+      return {
+        header: { cwd: '/p', agentPreset: 'preset-a', parentSession: 'parent' },
+        inheritedEventCount: 0,
+        read: async () => ({ events: persistedEvents }),
+        close: async () => {},
+      }
+    })
+    services.sessionPersistence.open = services.open
+    const api = buildSidechatApi(ctxWith(services))
+
+    await expect(api['sidechat.info']({ childId: 'child' })).resolves.toMatchObject({
+      live: false,
+      provider: 'saved-provider',
+      model: 'saved-model',
+    })
+    await expect(api['sidechat.prompt']({ childId: 'child', text: 'continue without parent history' }))
+      .resolves.toEqual({ accepted: true })
+
+    expect(services.open).toHaveBeenCalledWith('parent', 'read')
+    expect(child.followup).toHaveBeenCalledTimes(1)
+    const selectionEvents = child.session.snapshotEvents().filter((event: unknown) =>
+      (event as { type?: string }).type === 'model/selection') as Array<{ data: Record<string, unknown> }>
+    expect(selectionEvents.at(-1)?.data).toMatchObject({
+      provider: 'saved-provider',
+      model: 'saved-model',
+      sidechat: { messageId: expect.any(String) },
+    })
+  })
+
+  it('keeps the child model when a released parent has no model history', async () => {
+    const child = agent('child', {
+      provider: 'legacy-provider',
+      model: 'legacy-model',
+      events: [ev('user/message', 0, {
+        content: [{ type: 'text', text: `${SIDE_BOUNDARY_PROMPT}\n\nfirst question` }],
+        source: { kind: 'user' },
+      })],
+    })
+    const services = happyServices(undefined, child)
+    services.agents.get = vi.fn((id: unknown) => id === 'child' ? child : undefined)
+    const api = buildSidechatApi(ctxWith(services))
+
+    await api['sidechat.prompt']({ childId: 'child', text: 'continue after parent release' })
+
+    const selections = child.session.snapshotEvents().filter((event: unknown) =>
+      (event as { type?: string }).type === 'model/selection') as Array<{ data: Record<string, unknown> }>
+    expect(selections).toHaveLength(1)
+    expect(selections[0]?.data).toMatchObject({
+      provider: 'legacy-provider',
+      model: 'legacy-model',
+      sidechat: { messageId: expect.any(String) },
+    })
+    expect(child.followup).toHaveBeenCalledTimes(1)
+  })
+
+  it('captures the parent model for each follow-parent message and clears old effort', async () => {
+    const parent = agent('parent', {
+      events: [ev('model/selection', 0, { provider: 'provider-a', model: 'model-a', reasoningEffort: 'high' })],
+    })
+    const child = agent('child', {
+      events: [ev('user/message', 0, {
+        content: [{ type: 'text', text: `${SIDE_BOUNDARY_PROMPT}\n\nfirst question` }],
+        source: { kind: 'user' },
+      })],
+    })
+    const api = buildSidechatApi(ctxWith(happyServices(parent, child)))
+
+    await api['sidechat.prompt']({ childId: 'child', text: 'first route' })
+    parent.session.snapshotEvents().push(ev('model/selection', 1, { provider: 'provider-b', model: 'model-b' }))
+    await api['sidechat.prompt']({ childId: 'child', text: 'updated route' })
+
+    const selectionEvents = child.session.snapshotEvents().filter((event: unknown) =>
+      (event as { type?: string }).type === 'model/selection') as Array<{ data: Record<string, unknown> }>
+    expect(selectionEvents.at(-1)?.data).toMatchObject({ provider: 'provider-b', model: 'model-b' })
+    expect(selectionEvents.at(-1)?.data).not.toHaveProperty('reasoningEffort')
+    expect(selectionEvents.at(-1)?.data.sidechat).toMatchObject({ messageId: expect.any(String) })
+  })
+
+  it('routes each thread through its own parent session model', async () => {
+    const parentA = agent('parent-a', { events: [ev('model/selection', 0, { provider: 'provider-a', model: 'model-a' })] })
+    const parentB = agent('parent-b', { events: [ev('model/selection', 0, { provider: 'provider-b', model: 'model-b' })] })
+    const childA = agent('child-a', {
+      header: { parentSession: 'parent-a' },
+      events: [ev('user/message', 0, { content: [{ type: 'text', text: SIDE_BOUNDARY_PROMPT }], source: { kind: 'user' } })],
+    })
+    const childB = agent('child-b', {
+      header: { parentSession: 'parent-b' },
+      events: [ev('user/message', 0, { content: [{ type: 'text', text: SIDE_BOUNDARY_PROMPT }], source: { kind: 'user' } })],
+    })
+    const services = happyServices(parentA, childA)
+    services.agents.get = vi.fn((id: unknown) => ({
+      'parent-a': parentA,
+      'parent-b': parentB,
+      'child-a': childA,
+      'child-b': childB,
+    }[String(id)]))
+    const api = buildSidechatApi(ctxWith(services))
+
+    await api['sidechat.prompt']({ childId: 'child-a', text: 'session A' })
+    await api['sidechat.prompt']({ childId: 'child-b', text: 'session B' })
+
+    expect(childA.session.snapshotEvents().at(-1)).toMatchObject({
+      type: 'model/selection',
+      data: { provider: 'provider-a', model: 'model-a', sidechat: { messageId: expect.any(String) } },
+    })
+    expect(childB.session.snapshotEvents().at(-1)).toMatchObject({
+      type: 'model/selection',
+      data: { provider: 'provider-b', model: 'model-b', sidechat: { messageId: expect.any(String) } },
+    })
   })
 
   it('rejects blank text', async () => {
@@ -517,6 +722,48 @@ describe('sidechat.info', () => {
       provider: 'test',
       model: 'model-x',
       preset: 'preset-a',
+    })
+  })
+
+  it('uses the live request header without rescanning the parent event log', async () => {
+    const parent = agent('parent')
+    const child = agent('child')
+    const requestHeader = vi.spyOn(parent.session, 'requestHeader').mockReturnValue({
+      config: { provider: 'provider-b', model: 'model-b' },
+    })
+    const snapshotEvents = vi.spyOn(parent.session, 'snapshotEvents').mockImplementation(() => {
+      throw new Error('parent event log should not be scanned')
+    })
+    const services = happyServices(parent, child)
+    const api = buildSidechatApi(ctxWith({
+      ...services,
+      sessionProjections: { stateOf: () => ({ pending: null }) },
+    }))
+
+    await expect(api['sidechat.info']({ childId: 'child' })).resolves.toMatchObject({
+      provider: 'provider-b',
+      model: 'model-b',
+    })
+    expect(requestHeader).toHaveBeenCalledTimes(1)
+    expect(snapshotEvents).not.toHaveBeenCalled()
+  })
+
+  it('reports the executing route separately from the next parent route', async () => {
+    const parent = agent('parent', {
+      events: [ev('model/selection', 0, { provider: 'provider-b', model: 'model-b' })],
+    })
+    const child = agent('child', {
+      status: 'running',
+      header: { parentSession: 'parent' },
+      events: [ev('request/header', 0, { header: { config: { provider: 'provider-a', model: 'model-a' } } })],
+    })
+    const api = buildSidechatApi(ctxWith(happyServices(parent, child)))
+
+    await expect(api['sidechat.info']({ childId: 'child' })).resolves.toMatchObject({
+      provider: 'provider-b',
+      model: 'model-b',
+      activeProvider: 'provider-a',
+      activeModel: 'model-a',
     })
   })
 
