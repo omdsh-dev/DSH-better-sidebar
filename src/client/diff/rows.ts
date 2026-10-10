@@ -431,6 +431,13 @@ function pathsFromBinaryLine(raw: string): { oldPath: string; newPath: string } 
  * binary file, a pure rename and a mode-only change, so without those
  * fallbacks the section renders as an anonymous header (the badge with no
  * file name the reader cannot place).
+ *
+ * Both of those header branches are gated on `!inHunk`, because a hunk line can
+ * wear the same prefix: a deleted line is `-` plus its text, so deleting `-- x`
+ * emits `--- x` — a hunk line that starts exactly like the separator, and one
+ * that used to be read as a NEW file's header (truncating the hunk here, then
+ * stamping the deleted text onto the path). The hunk is the tiebreaker: git
+ * never writes `---`/`+++` inside one.
  */
 export function parseUnifiedDiff(text: string): ParsedDiff {
   const files: DiffFile[] = []
@@ -477,12 +484,12 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
       }
       continue
     }
-    if (raw.startsWith('--- ')) {
+    if (!inHunk && raw.startsWith('--- ')) {
       flushHunk()
       current.oldPath = headerPath(raw.slice(4))
       continue
     }
-    if (raw.startsWith('+++ ')) {
+    if (!inHunk && raw.startsWith('+++ ')) {
       current.newPath = headerPath(raw.slice(4))
       continue
     }
