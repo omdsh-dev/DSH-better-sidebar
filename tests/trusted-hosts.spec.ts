@@ -1,8 +1,9 @@
 /**
  * Remote-access trust regression tests: the /sidebar fence must accept a
- * reverse-proxy domain or LAN IP listed in the DSH web runtime's
- * `webRuntime.trustedHosts` — the same trust list the /api gateway accepts
- * (LAN IP literals sampled at bind plus `--trusted-host` authorities).
+ * reverse-proxy domain or LAN IP the /api gateway itself accepts — the DSH web
+ * runtime's `webRuntime.trustedHosts` on hosts up to 0.2.0-rc.2, and the
+ * `connection` service's own `requestRejection()` from 0.2.1-alpha.2 on (that
+ * release deleted `webRuntime`).
  *
  * Regression: the fence used to read the connection row's trustedHosts
  * through the Loader (`entry.options.name === 'connection'`, which never
@@ -20,7 +21,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../src/index.ts'
-import type { SidebarWebRoute, SidebarWebUpgradeRoute } from '../src/context-types.ts'
+import type { SidebarHostConnection, SidebarWebRoute, SidebarWebUpgradeRoute } from '../src/context-types.ts'
 
 interface FakeRes {
   status: number
@@ -62,8 +63,39 @@ function req(
   } as unknown as IncomingMessage
 }
 
-/** Mount apply() against a fake context with a replaceable webRuntime trust list. */
-function mount(initialTrustedHosts: readonly string[] = []): {
+/** A stand-in Host `connection` service (DSH 0.2.1-alpha.2+'s `ctx.connection`). */
+interface FakeHostConnection extends SidebarHostConnection {
+  /** Every request the fence handed to the host, in order. */
+  readonly seen: Array<Record<string, string | string[] | undefined>>
+}
+
+function fakeHostConnection(rejection: () => 401 | 403 | undefined): FakeHostConnection {
+  const seen: Array<Record<string, string | string[] | undefined>> = []
+  return {
+    seen,
+    requestRejection(request) {
+      seen.push(request.headers)
+      return rejection()
+    },
+  }
+}
+
+/**
+ * Mount apply() against a fake context with a replaceable webRuntime trust list
+ * and an optional Host `connection` service. Only the service the real host
+ * actually publishes is reachable through `ctx.get` — cordis throws on a
+ * direct read of an uninjected service, so the plugin goes through `get` and
+ * the fakes have to answer there too.
+ *
+ * `hostHasWebRuntime: false` models a 0.2.1-alpha.2+ host, which deleted the
+ * service: `ctx.get('webRuntime')` then answers undefined and the vendored
+ * fence degrades to "loopback + this plugin's own two widenings".
+ */
+function mount(
+  initialTrustedHosts: readonly string[] = [],
+  hostConnection?: FakeHostConnection,
+  hostHasWebRuntime = true,
+): {
   api: (r: IncomingMessage, s: ServerResponse) => Promise<void>
   upgrade: (path: string) => SidebarWebUpgradeRoute['handler']
   media: (r: IncomingMessage, s: ServerResponse) => Promise<void>
@@ -89,7 +121,12 @@ function mount(initialTrustedHosts: readonly string[] = []): {
     inject: () => () => {},
     // The session/agent event feeds: nothing emits in these tests.
     on: () => () => {},
-    get: () => undefined,
+    get: (key: string) =>
+      key === 'connection'
+        ? hostConnection
+        : key === 'webRuntime' && hostHasWebRuntime
+          ? runtime
+          : undefined,
   }
   apply(ctx as never)
   const api = routes.find(route => route.path === '/sidebar/api')?.handler
@@ -127,7 +164,7 @@ function lanRequest(): IncomingMessage {
   }, '{"sessionId":"test-session"}')
 }
 
-describe('remote-access trust (webRuntime.trustedHosts)', () => {
+describe('remote-access trust (webRuntime fallback, DSH <= 0.2.0-rc.2)', () => {
   it('accepts a reverse-proxy domain configured in webRuntime.trustedHosts', async () => {
     const { api, cleanup } = mount(['example.com'])
     try {
@@ -316,6 +353,143 @@ describe('remote-access trust (webRuntime.trustedHosts)', () => {
       const after = fakeRes()
       await api(remoteDomainRequest(), after as unknown as ServerResponse)
       expect(after.status).toBe(200)
+    } finally {
+      cleanup()
+    }
+  })
+})
+
+/**
+ * DSH 0.2.1-alpha.2 deleted `webRuntime` (which also used to strand the whole
+ * plugin as `pending (waiting for service: webRuntime)`) and moved the /api
+ * gateway's own fence behind the `connection` service. On such a host the
+ * connection service is the only surviving trust source, so the fence consults
+ * it — but only as a SUPPLEMENT: the host's rule is stricter than the vendored
+ * one exactly where this plugin widened it on purpose, and swapping the fence
+ * wholesale would regress those widenings. The last three tests guard that.
+ */
+describe('host connection fence (DSH 0.2.1-alpha.2+)', () => {
+  it('accepts a trusted remote authority through the connection service', async () => {
+    const connection = fakeHostConnection(() => undefined)
+    // No webRuntime at all (0.2.1+): the vendored fence cannot admit
+    // example.com on its own, so only the connection service can.
+    const { api, cleanup } = mount([], connection, false)
+    try {
+      const res = fakeRes()
+      await api(remoteDomainRequest(), res as unknown as ServerResponse)
+      expect(res.status).toBe(200)
+      // The host service decides on the request's own origin markers, so the
+      // fence must hand it the real headers rather than a synthesized pair.
+      expect(connection.seen[0]?.host).toBe('example.com')
+      expect(connection.seen[0]?.origin).toBe('https://example.com')
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('treats 401 (trusted, but without a browser session) as admitted, not refused', async () => {
+    // 401 is the connection service's browser-authentication half. These routes
+    // never asked for the launch cookie: the editor's image src and the
+    // sandboxed HTML preview (plus its relative assets) load them as
+    // same-origin subresources, and a sandboxed frame is exactly where that
+    // cookie is not guaranteed. A REMOTE request makes this hinge on the 401
+    // verdict alone (loopback is admitted by the vendored fence anyway).
+    const { api, cleanup } = mount([], fakeHostConnection(() => 401), false)
+    try {
+      const res = fakeRes()
+      await api(remoteDomainRequest(), res as unknown as ServerResponse)
+      expect(res.status).toBe(200)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('refuses a remote authority the connection service answers 403 for', async () => {
+    const { api, cleanup } = mount([], fakeHostConnection(() => 403), false)
+    try {
+      const res = fakeRes()
+      await api(remoteDomainRequest(), res as unknown as ServerResponse)
+      expect(res.status).toBe(403)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('consults the connection service per request, not once at apply', async () => {
+    let verdict: 401 | 403 | undefined = 403
+    const connection = fakeHostConnection(() => verdict)
+    const { api, cleanup } = mount([], connection, false)
+    try {
+      const before = fakeRes()
+      await api(remoteDomainRequest(), before as unknown as ServerResponse)
+      expect(before.status).toBe(403)
+      // The host's own trust list changes (a profile reload, or a
+      // `--trusted-host` reread): the mounted fence must follow the live
+      // service without a plugin restart.
+      verdict = undefined
+      const after = fakeRes()
+      await api(remoteDomainRequest(), after as unknown as ServerResponse)
+      expect(after.status).toBe(200)
+      expect(connection.seen).toHaveLength(2)
+    } finally {
+      cleanup()
+    }
+  })
+
+  /**
+   * The three widenings the vendored fence owns, with a 0.2.1+ host modelled as
+   * `connection` answering 403 — which is exactly what the real host rule does
+   * for each of these requests (it compares the Origin port, it refuses the
+   * `dsh-app:` scheme, and it refuses a `cross-site` marker outright). All
+   * three must still pass: the connection service may only ADD trust, never
+   * take the vendored widenings away.
+   */
+  it('keeps the port-less loopback Origin widening without a webRuntime', async () => {
+    const { api, cleanup } = mount([], fakeHostConnection(() => 403), false)
+    try {
+      const res = fakeRes()
+      await api(req('POST', '/sidebar/api/session.cwd', {
+        host: '127.0.0.1:3080',
+        'sec-fetch-site': 'same-origin',
+        origin: 'http://127.0.0.1',
+      }, '{"sessionId":"test-session"}'), res as unknown as ServerResponse)
+      expect(res.status).toBe(200)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('keeps the bfcache-restored image widening without a webRuntime', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fence-'))
+    const file = join(directory, 'shot.png')
+    writeFileSync(file, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    const { media, cleanup } = mount([], fakeHostConnection(() => 403), false)
+    try {
+      const query = new URLSearchParams({ sessionId: 'test-session', cwd: directory, path: file }).toString()
+      const res = fakeRes()
+      await media(req('GET', `/sidebar/file?${query}`, {
+        host: '127.0.0.1:3080',
+        'sec-fetch-site': 'cross-site',
+        'sec-fetch-mode': 'no-cors',
+        'sec-fetch-dest': 'image',
+        referer: 'http://127.0.0.1:3080/',
+      }), res as unknown as ServerResponse)
+      expect(res.status).toBe(200)
+    } finally {
+      cleanup()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the desktop-shell application origin without a webRuntime', async () => {
+    const { api, cleanup } = mount([], fakeHostConnection(() => 403), false)
+    try {
+      const res = fakeRes()
+      await api(req('POST', '/sidebar/api/session.cwd', {
+        host: '127.0.0.1:19488',
+        origin: 'dsh-app://app',
+      }, '{"sessionId":"test-session"}'), res as unknown as ServerResponse)
+      expect(res.status).toBe(200)
     } finally {
       cleanup()
     }

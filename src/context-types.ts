@@ -101,10 +101,32 @@ export interface SidebarSessionStore {
  * The web runtime service face (mirror of @deepseek-ai/dsh-web-app's
  * WebRuntimeValues): the bind-derived trust list the /api gateway's fence
  * accepts — LAN IP literals sampled when the server binds all interfaces,
- * plus explicit `--trusted-host` authorities.
+ * plus explicit `--trusted-host` authorities. DSH 0.2.1-alpha.2 deleted this
+ * service (the fence moved behind `connection`, see
+ * {@link SidebarHostConnection}), so it is optional and only absent hosts
+ * fall back to it.
  */
 export interface SidebarWebRuntime {
   trustedHosts: readonly string[]
+}
+
+/**
+ * The Host `connection` service's trust half (mirror of
+ * `@deepseek-ai/dsh-client-connection`'s HostConnectionHandle, DSH
+ * 0.2.1-alpha.2+). It is the authoritative Host/Origin fence the `/api`
+ * gateway itself applies; this plugin reads it through `ctx.get('connection')`
+ * because the client runtime publishes a *different* `connection` face under
+ * the same key (the Remote transport's reconnect life cycle, see
+ * {@link SidebarContextShape.connection}).
+ */
+export interface SidebarHostConnection {
+  /**
+   * Apply the Host/Origin fence and browser authentication to one Web route.
+   * @param request - request headers from the HTTP or upgrade request.
+   * @returns 403 for a refused authority, 401 for a trusted but unauthenticated
+   *   request, or undefined when both pass.
+   */
+  requestRejection(request: { headers: SidebarHttpRequest['headers'] }): 401 | 403 | undefined
 }
 
 /** Registration options the sidebar passes to `ctx.slots.register` (subset of the real options). */
@@ -755,8 +777,12 @@ export interface SidebarContextShape {
   webServer: SidebarWebServer
   /** The session store (host `.get`) and the client list feed (`.list`) faces. */
   sessions: SidebarSessionStore & SidebarSessionsService
-  /** The web runtime trust list (bind-derived). */
-  webRuntime: SidebarWebRuntime
+  /**
+   * The web runtime trust list (bind-derived). Optional: DSH 0.2.1-alpha.2
+   * removed the service, and the fence then comes from the Host connection
+   * service instead (see {@link SidebarHostConnection}).
+   */
+  webRuntime?: SidebarWebRuntime
   /** The client slot registry (register/inject). */
   slots: SidebarSlotsService
   /** The settings service face (prefs persistence + namespace reads). */
