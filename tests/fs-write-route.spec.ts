@@ -232,6 +232,36 @@ describe('fs.write route', () => {
     }
   })
 
+  // The detector's own boundary, pinned on purpose (#876 review, residual 1):
+  // a first line longer than the 4096-char vote window carries no vote, so the
+  // route reads the file as LF and rewrites its CRLF lines — the whole point of
+  // #871, lost for this shape. It is the HOST backend's criterion as well (the
+  // model's `edit` tool reaches the same verdict), so the plugin does not fork
+  // its own rule: the case is a documented decision, not an accident. Design
+  // doc §4 has the boundary table, §6 the tradeoff.
+  it('rewrites a >4 KiB first line to LF — the detector window boundary, by design', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-window-'))
+    try {
+      const workspace = join(root, 'ws')
+      mkdirSync(workspace)
+      const target = join(workspace, 'bundled.js')
+      const firstLine = 'a'.repeat(5000)
+      writeFileSync(target, `${firstLine}\r\nb\r\n`)
+      const route = mountApi(workspace)
+      const result = await invoke(route, 'fs.write', {
+        sessionId: 's',
+        path: target,
+        content: `${firstLine}\nb edited\n`,
+      })
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, status: 200 })
+      const written = readFileSync(target, 'utf8')
+      expect(written).toBe(`${firstLine}\nb edited\n`)
+      expect(written).not.toContain('\r')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('leaves an LF file LF — a save never introduces CR', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-lf-'))
     try {
