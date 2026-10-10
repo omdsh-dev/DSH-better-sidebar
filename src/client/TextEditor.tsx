@@ -71,6 +71,59 @@ function sameDocument(a: string, b: string): boolean {
   return a === b || a.replace(/\r\n?/g, '\n') === b.replace(/\r\n?/g, '\n')
 }
 
+/** Where the reader is in one file's EDITOR (the CodeMirror view): the
+ *  scroller's offset. Module-level for the same reason as the preview memory
+ *  above: every content swap re-creates the view (the manual refresh even
+ *  unmounts the whole viewer behind the host's loading state), so a reloaded
+ *  file came back at the top and the reader had to find their line again by
+ *  hand.
+ *
+ *  The offset is captured on SCROLL, exactly like the preview's — never from
+ *  the teardown read: the reload detaches the scroller before the effect
+ *  cleanup runs, and a detached element reports `scrollTop` 0 in a real
+ *  browser (jsdom keeps the value, so a teardown read looks deceptively fine
+ *  there and only fails on screen). */
+const editorViewMemory = new Map<string, number>()
+
+/** Capture the offset of a live scroller (the scroll listener's path). */
+function rememberEditorScroll(view: CodeMirrorView, key: string): void {
+  editorViewMemory.set(key, view.scrollDOM.scrollTop)
+}
+
+/** Keep the last offset a live scroller reported: once the host has detached
+ *  it, the read is 0 and must not overwrite the reader's place. */
+function rememberEditorTeardown(view: CodeMirrorView, key: string): void {
+  const top = view.scrollDOM.scrollTop
+  if (top > 0) editorViewMemory.set(key, top)
+}
+
+/**
+ * Put a freshly created view back where the reader was. The scroller is written
+ * DIRECTLY — never CodeMirror's `scrollIntoView`, which walks every scrollable
+ * ancestor and would drag the sidebar itself (the same reason the preview ->
+ * edit reveal writes the scroller by hand) — and the write is repeated after
+ * the new viewport has measured, because CodeMirror's own initial layout can
+ * land on top of a scrollTop written during construction.
+ *
+ * The SELECTION is deliberately left alone. Moving the caret is the line-jump
+ * reveal's job, and `tests/text-editor-line-jump.spec.tsx` pins that an
+ * ordinary open never jumps; restoring a remembered caret here would make every
+ * re-open of a file dispatch a selection it never asked for. The reader's place
+ * on screen is the offset.
+ */
+function restoreEditorView(view: CodeMirrorView, key: string): void {
+  const top = editorViewMemory.get(key)
+  if (top === undefined || top <= 0) return
+  view.scrollDOM.scrollTop = top
+  view.requestMeasure()
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      view.scrollDOM.scrollTop = top
+      view.requestMeasure()
+    })
+  })
+}
+
 export function TextEditor(props: FileViewerProps) {
   const { ctx, scope, path, viewerId, content, truncated, line } = props
   const [mode, setMode] = useState<ViewMode>('preview')
@@ -329,7 +382,16 @@ export function TextEditor(props: FileViewerProps) {
     })
     const view = new CodeMirrorView({ state, parent: host })
     viewRef.current = view
+    // The reader's place rides the SCROLL events (see editorViewMemory): by the
+    // time this effect's cleanup runs the host may already have detached the
+    // scroller, and a detached element has no scrollTop to read.
+    const memoryKey = previewScrollKey(scope, path)
+    const onScroll = (): void => { rememberEditorScroll(view, memoryKey) }
+    view.scrollDOM.addEventListener('scroll', onScroll)
+    restoreEditorView(view, memoryKey)
     return () => {
+      view.scrollDOM.removeEventListener('scroll', onScroll)
+      rememberEditorTeardown(view, memoryKey)
       view.destroy()
       viewRef.current = null
       themeCompRef.current = null
