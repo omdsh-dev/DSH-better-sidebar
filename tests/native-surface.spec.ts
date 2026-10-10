@@ -1290,3 +1290,49 @@ describe('NativeTabBody — co-resident seats', () => {
     again.unmount()
   })
 })
+
+/**
+ * The file tree's rename/delete reconciliation reads the right column's tabs
+ * through `pathTabs()` — the store cannot see them — and it retargets a renamed
+ * file with `updateTab`, i.e. a plugin-side write of `path`. The native surface
+ * re-delivers the LAST navigation on every render, so an ungated `path` patch
+ * let the host's (stale) address win on the next pass: the retarget was undone
+ * and the editor saved onto the old name again.
+ */
+describe('native records: path enumeration and the navigation gate', () => {
+  const scope = { sessionId: 's1' }
+
+  it('lists exactly the records that carry a file path, across seats', () => {
+    const records = createNativeTabRecords()
+    records.ensure({ sessionId: 's1', id: 'tab1', kind: 'editor', title: 'a.ts', params: { path: '/w/a.ts' }, scope })
+    records.ensure({ sessionId: 's1', id: 'tab2', kind: 'sidechat', title: 'chat', params: { meta: { threadId: 't' } }, scope })
+    // A chat link's address is session-scoped and its path workspace-relative:
+    // the record keeps that spelling and carries the cwd that resolves it.
+    records.ensure({ sessionId: 's2', id: 'tab1', kind: 'editor', title: 'b.ts', params: { path: 'b.ts' }, scope: { sessionId: 's2', cwd: '/w' } })
+    records.ensure({ sessionId: 's3', id: 'tab9', kind: 'browser', title: 'site', params: { url: 'https://example.test/x' }, scope: { sessionId: 's3' } })
+
+    expect(records.pathTabs().sort((left, right) => left.id.localeCompare(right.id))).toEqual([
+      { sessionId: 's1', scopeSessionId: 's1', cwd: undefined, id: 'tab1', path: '/w/a.ts' },
+      { sessionId: 's2', scopeSessionId: 's2', cwd: '/w', id: 'tab1', path: 'b.ts' },
+      // A browser seed lands on `path` too (the address bar reads it there).
+      { sessionId: 's3', scopeSessionId: 's3', cwd: undefined, id: 'tab9', path: 'https://example.test/x' },
+    ])
+  })
+
+  it('keeps a plugin-side retarget across a re-delivery of the same navigation', () => {
+    const records = createNativeTabRecords()
+    const navigate = (revision: number): void => {
+      records.ensure({ sessionId: 's1', id: 'tab1', kind: 'editor', title: 'a.ts', params: { path: '/w/a.ts' }, scope, revision })
+    }
+    navigate(5)
+    records.update('s1', 'tab1', { path: '/w/b.ts', title: 'b.ts' })
+
+    // The surface re-renders: same navigation, same revision.
+    navigate(5)
+    expect(records.get('s1', 'tab1')?.tab).toMatchObject({ path: '/w/b.ts', title: 'b.ts' })
+
+    // A REAL navigation still wins: the host is addressing this tab again.
+    navigate(6)
+    expect(records.get('s1', 'tab1')?.tab.path).toBe('/w/a.ts')
+  })
+})

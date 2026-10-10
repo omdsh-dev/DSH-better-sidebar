@@ -23,7 +23,7 @@
 import type { Context } from '../../context-types.ts'
 import { fileAddressFor } from '../resource-address.ts'
 import type { NativeTabParams, SidebarSurface } from '../service.ts'
-import type { NativeTabRecords } from './tab-adapter.tsx'
+import type { NativePathTab, NativeTabRecords } from './tab-adapter.tsx'
 
 /** One open the surface could not place yet. */
 type Pending =
@@ -67,6 +67,27 @@ export interface NativeSurface extends SidebarSurface {
   flushPending(): void
   /** Stop observing the session list and the mounted-seat feed. */
   dispose(): void
+  /**
+   * Every native tab bound to a file path. The file tree's rename/delete
+   * reconciliation walks BOTH tab spaces, and this is the only handle on the
+   * right column's records — the store cannot see them.
+   */
+  fileTabs(): NativePathTab[]
+}
+
+/**
+ * The live native surface, for the plugin's OWN reconciliation.
+ *
+ * Module-level like `editor-dirty.ts`: one instance per client-plugin
+ * activation, and the surface is the only thing that can enumerate the right
+ * column's tabs. `undefined` before the surface is installed (and in unit
+ * tests that never mount one), which the callers read as "no native tabs".
+ */
+let installed: NativeSurface | undefined
+
+/** The installed native surface, or undefined when none is live. */
+export function installedNativeSurface(): NativeSurface | undefined {
+  return installed
 }
 
 /** The native controller, probed at call time (the service can arrive late). */
@@ -247,7 +268,7 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
   }
   const unsubscribeList = ctx.sessions.list.subscribe(onListChange)
   evictGoneSessions()
-  return {
+  const surface: NativeSurface = {
     openTab({ sessionId, kind, params, revealIfOpened, preferNewPane }) {
       enqueue({ kind: 'tab', sessionId, tabKind: kind, params, revealIfOpened, preferNewPane: preferNewPane === true })
     },
@@ -295,10 +316,16 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
       return true
     },
     has: (tabId, sessionId) => sessionOf(tabId, sessionId) !== undefined,
+    fileTabs: () => records.pathTabs(),
     flushPending,
     dispose: () => {
       unsubscribeList()
       mountedUnsubscribe?.()
+      // Only the surface that is still the installed one clears the handle: a
+      // reload installs its replacement before the old one tears down.
+      if (installed === surface) installed = undefined
     },
   }
+  installed = surface
+  return surface
 }

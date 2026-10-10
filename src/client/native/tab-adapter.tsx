@@ -82,6 +82,15 @@ export interface NativeTabInfo {
 /** One native tab's plugin-side view state. */
 interface View {
   tab: SidebarTab
+  /**
+   * The SEAT session this record belongs to: the session the tab is drawn in,
+   * which is NOT `scope.sessionId` (a file address carries its own content
+   * session, and the two differ whenever a tab shows another session's file).
+   * Recorded rather than re-derived from the view key: `retain()` and
+   * `pathTabs()` both need it, the key encoding is an internal detail, and a
+   * session id may itself contain the separator.
+   */
+  seat: string
   scope: SessionScope
   /**
    * A PROJECTION of the session's expansion set (never an authoritative copy):
@@ -108,6 +117,26 @@ interface View {
  */
 function viewKey(sessionId: string, id: string): string {
   return `${sessionId}::${id}`
+}
+
+/** One native tab that carries a file path (the file tree's reconciliation
+ *  handle: the right column's tabs live only in these records). */
+export interface NativePathTab {
+  /** The SEAT session the tab is drawn in (native tab ids restart per session,
+   *  so this is what tells two same-numbered tabs apart). */
+  sessionId: string
+  /** The session the tab's CONTENT belongs to — the `scope.sessionId` its
+   *  editor runs with, and the half of the reconciliation's marker key the
+   *  editor itself can reproduce. */
+  scopeSessionId: string
+  /** That session's workspace root, for resolving `path` when the address
+   *  stored it workspace-relative (a chat link does). */
+  cwd: string | undefined
+  /** The native tab id. */
+  id: string
+  /** The path the tab is bound to — a file path, or a browser tab's address
+   *  (a url seed is stored on the same field). */
+  path: string
 }
 
 /** The plugin-side record registry for native tabs. */
@@ -149,6 +178,14 @@ export interface NativeTabRecords {
   }): View
   /** One record by its seat session and native tab id. */
   get(sessionId: string, id: string): View | undefined
+  /**
+   * Every record that carries a file path, across every live session. The file
+   * tree's rename/delete reconciliation walks BOTH tab spaces: the bottom
+   * workbench's splits come from the store, and the right column — where files
+   * actually open by default — only exists here. Without this the reconciliation
+   * silently skipped every native editor tab (its next save wrote the OLD name).
+   */
+  pathTabs(): NativePathTab[]
   /** Whether this seat session has a record for the id. */
   has(sessionId: string, id: string): boolean
   /** Merge a patch into the synthetic record (the `updateTab` path). */
@@ -267,6 +304,7 @@ export function createNativeTabRecords(): NativeTabRecords {
             ...(meta === undefined ? {} : { meta }),
           },
           scope,
+          seat: sessionId,
           expanded: expandedOf(scope.sessionId),
           revealed: [],
           version: 0,
@@ -281,12 +319,25 @@ export function createNativeTabRecords(): NativeTabRecords {
       // A navigation may carry new seed fields (the editor's in-place switch,
       // a browser tab pointed at another URL, a side chat switching threads);
       // the record's identity and any plugin-side mutation (title from
-      // `updateTab`) stay. `meta` is the exception — it also has a plugin-side
-      // writer, so only a navigation this record has not adopted yet may seed
-      // it (see {@link navigationRevisions}).
+      // `updateTab`) stay. `meta` and `path` are the exceptions — both also
+      // have a plugin-side writer, so only a navigation this record has not
+      // adopted yet may seed them (see {@link navigationRevisions}).
       const patch: Partial<SidebarTab> = {}
+      const adopted = revision !== undefined && navigationRevisions.get(key) !== revision ? revision : undefined
+      if (adopted !== undefined) {
+        navigationRevisions.set(key, adopted)
+        if (params?.meta !== undefined) patch.meta = params.meta
+      }
+      // `path` rides the same gate as `meta`: the file tree retargets an open
+      // editor onto a renamed file through `updateTab`, and while the host's
+      // address keeps naming the OLD path, honoring it on every render undid
+      // that retarget — the next save wrote a name the user had just renamed
+      // away, recreating it. Only a real navigation (a new revision) may move
+      // the record back onto its address.
       const nextPath = params?.path ?? params?.url
-      if (nextPath !== undefined && nextPath !== existing.tab.path) patch.path = nextPath
+      if (nextPath !== undefined && nextPath !== existing.tab.path && (revision === undefined || adopted !== undefined)) {
+        patch.path = nextPath
+      }
       // The landing line clears as well as sets: an in-place switch from
       // `a.c:131` to a bare `a.c` must not leave the old line behind and jump
       // the reader back there. Compared against the current value so the
@@ -294,10 +345,6 @@ export function createNativeTabRecords(): NativeTabRecords {
       // keeps its identity.
       if (params?.line !== existing.tab.line) patch.line = params?.line
       if (params?.diff !== undefined) patch.diff = params.diff
-      if (revision !== undefined && navigationRevisions.get(key) !== revision) {
-        navigationRevisions.set(key, revision)
-        if (params?.meta !== undefined) patch.meta = params.meta
-      }
       // The expansion set always mirrors the CURRENT session state (a record
       // reused for another session must not keep the previous one's set).
       const expanded = expandedOf(scope.sessionId)
@@ -315,6 +362,24 @@ export function createNativeTabRecords(): NativeTabRecords {
       return next
     },
     get: (sessionId, id) => views.get(viewKey(sessionId, id)),
+    pathTabs() {
+      const tabs: NativePathTab[] = []
+      for (const entry of views.values()) {
+        const path = entry.tab.path
+        // A browser tab's address lands on `path` too (a url seed is stored
+        // there), so this is every tab bound to a path or an address.
+        if (path !== undefined) {
+          tabs.push({
+            sessionId: entry.seat,
+            scopeSessionId: entry.scope.sessionId,
+            cwd: entry.scope.cwd,
+            id: entry.tab.id,
+            path,
+          })
+        }
+      }
+      return tabs
+    },
     has: (sessionId, id) => views.has(viewKey(sessionId, id)),
     update(sessionId, id, patch) {
       const key = viewKey(sessionId, id)
@@ -345,12 +410,8 @@ export function createNativeTabRecords(): NativeTabRecords {
     },
     retain(sessions) {
       let dropped = false
-      for (const key of [...views.keys()]) {
-        // The key's prefix is the seat session; a session id may itself carry
-        // the separator only if the host allowed one, so split on the first.
-        const separator = key.indexOf('::')
-        const owner = separator === -1 ? key : key.slice(0, separator)
-        if (!sessions.has(owner)) {
+      for (const [key, entry] of [...views]) {
+        if (!sessions.has(entry.seat)) {
           views.delete(key)
           // The ledger is part of the record (see `drop`): a session the user
           // deleted must not leave its revisions behind.

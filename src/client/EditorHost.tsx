@@ -42,7 +42,7 @@ import { TreePanel } from './TreePanel.tsx'
 import { t } from './locales.ts'
 import { relativeTo } from './paths.ts'
 import { resolveSidebarPath } from './paths.ts'
-import { closePathTabs, retargetPathTabs } from './tree-mutations.ts'
+import { clearRetargetedPath, closePathTabs, consumeRetargetedPath, pathTabKey, retargetPathTabs } from './tree-mutations.ts'
 import type { EditorToolbarControls, EditorToolbarState, FileViewerDescriptor } from './service.ts'
 import { firstLeaf, insertLeafAt, leafWithTab, mintTabId, type SidebarStore, type SidebarTab } from './state.ts'
 import css from './sidebar.module.css'
@@ -373,7 +373,35 @@ export function EditorHost(props: {
     if (finalWidth !== treeWidthOf(tab)) patchMeta(ctx, tab, scope.sessionId, { treeWidth: finalWidth })
   }
 
+  /** The rename-marker key for this tab (see `pathTabKey`): the session this
+   *  editor reads and writes in, plus the tab id. */
+  const retargetKey = pathTabKey(scope.sessionId, tab.id)
+  /** The path this editor last loaded (or was mounted on) — the rename retarget
+   *  announces itself as a move away from it. */
+  const loadedPathRef = useRef(path)
+  // A mounted editor is the only thing that can claim a retarget: once it is
+  // gone the announcement can never be applied, so it must not sit in the map
+  // for the rest of the page's life. A remount loads the record's current path
+  // either way, which is exactly what the marker would have preserved.
+  useEffect(() => () => { clearRetargetedPath(retargetKey) }, [retargetKey])
   useEffect(() => {
+    // A rename moved the file, not its bytes: the tab follows the new name
+    // (tree-mutations' retargetPathTabs) while the loaded document — and an
+    // unsaved draft, which lives only in the editor instance — stays put.
+    // Reloading here would swap the content for the very same bytes and drop
+    // the draft with it, so the retarget is consumed instead; the next save
+    // simply lands on the new name. A path that moved WITHOUT that marker is a
+    // real switch to another file, which must load as usual.
+    //
+    // This runs BEFORE the toolbar reset below: nothing reloads, so the viewer
+    // keeps reporting the state it already has — clearing it here dropped the
+    // dirty mark (and with it the close guard) of a draft that was still
+    // unsaved.
+    const previousPath = loadedPathRef.current
+    const movedPath = previousPath !== path
+    loadedPathRef.current = path
+    if (movedPath && consumeRetargetedPath(retargetKey, previousPath, path)) return
+    if (!movedPath) clearRetargetedPath(retargetKey)
     // A (re)load or a path-less tab clears any hoisted toolbar state — the
     // fresh viewer re-registers its own.
     setToolbar(null)

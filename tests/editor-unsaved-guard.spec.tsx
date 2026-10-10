@@ -23,7 +23,9 @@ import {
   clearEditorDirty, confirmDiscardDraft, dirtyCount, dirtyCountForSession, editorDirtyRevision,
   isEditorDirty, setEditorDirty, subscribeEditorDirty,
 } from '../src/client/editor-dirty.ts'
-import { closePathTabs } from '../src/client/tree-mutations.ts'
+import { clearRetargetedPath, closePathTabs, consumeRetargetedPath, pathTabKey, retargetPathTabs } from '../src/client/tree-mutations.ts'
+import { createNativeSurface } from '../src/client/native/surface.ts'
+import { createNativeTabRecords } from '../src/client/native/tab-adapter.tsx'
 
 setupReactAct()
 
@@ -235,6 +237,244 @@ describe('tree close-on-delete', () => {
     confirmSpy.mockReturnValue(true)
     closePathTabs(ctx, store, '/tmp/a.ts', 'discard?')
     expect(openTabIds(store)).not.toContain('editor:/tmp/a.ts')
+  })
+})
+
+describe('tree rename/delete reconciliation', () => {
+  /**
+   * A real native surface over a real record registry, installed on the
+   * service like the client half does. Native tabs are the DEFAULT place a file
+   * opens (with a native surface installed, `openTab` never touches the bottom
+   * splits), so a reconciliation that only walked `bottomSplits` skipped the
+   * tabs the user actually has open.
+   */
+  function mountNative(service: BetterSidebarService): {
+    records: ReturnType<typeof createNativeTabRecords>
+    close: ReturnType<typeof vi.fn>
+    context: Context
+  } {
+    const close = vi.fn()
+    const controller = {
+      openTab: () => {}, openResource: () => {}, close, focus: () => {},
+      mounted: { getSnapshot: () => 'native-scope', subscribe: () => () => {} },
+      openTabIn: () => {}, openResourceIn: () => {}, closeIn: () => {},
+    }
+    const records = createNativeTabRecords()
+    const surfaceCtx = {
+      get: (name: string) => (name === 'sidebarRight' ? controller : undefined),
+      sessions: { list: { subscribe: () => () => {}, getSnapshot: () => ({}) } },
+    }
+    const surface = createNativeSurface(surfaceCtx as never, records)
+    service.setSurface(surface)
+    const context = { betterSidebar: service, get: (name: string) => name === 'betterSidebar' ? service : undefined } as unknown as Context
+    return { records, close, context }
+  }
+
+  /** One editor record bound to a file, as a native open would mint it. */
+  const openNativeFile = (
+    records: ReturnType<typeof createNativeTabRecords>,
+    id: string,
+    path: string,
+  ): void => {
+    records.ensure({
+      sessionId: 'native-scope',
+      id,
+      kind: 'editor',
+      title: 'a.ts',
+      params: { path },
+      scope: { sessionId: 'native-scope' },
+    })
+  }
+
+  // Both registries are module-level: a leaked draft would break the
+  // neighbouring suites' counts, and a leftover retarget marker would suppress
+  // a later test's load.
+  const TEST_IDS = ['tab1', 'tab2', 'tab3', 'tab4', 'tab5']
+  const TEST_SEATS = ['native-scope', 'other-scope']
+  beforeEach(() => {
+    for (const id of TEST_IDS) {
+      clearEditorDirty(id)
+      for (const seat of TEST_SEATS) clearRetargetedPath(pathTabKey(seat, id))
+    }
+  })
+  afterEach(() => {
+    for (const id of TEST_IDS) {
+      clearEditorDirty(id)
+      for (const seat of TEST_SEATS) clearRetargetedPath(pathTabKey(seat, id))
+    }
+  })
+
+  it('retargets a native tab when the FILE it shows is renamed', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'editor', title: 'Files', dedupeKey: (tab) => tab.path, component: () => null })
+    store.setSession('native-scope')
+    const { records, context } = mountNative(service)
+    openNativeFile(records, 'tab1', '/ws/dir/a.ts')
+
+    retargetPathTabs(context, store, '/ws/dir/a.ts', '/ws/dir/b.ts')
+
+    expect(records.get('native-scope', 'tab1')?.tab).toMatchObject({ path: '/ws/dir/b.ts', title: 'b.ts' })
+    // The move is announced for the editor, which keeps its document (and any
+    // unsaved draft) instead of reloading the new name. Each announcement is
+    // claimed once — a second claim of the same move reports false, and so does
+    // a move this tab was never told about.
+    const key = pathTabKey('native-scope', 'tab1')
+    expect(consumeRetargetedPath(key, '/ws/dir/a.ts', '/ws/dir/b.ts')).toBe(true)
+    expect(consumeRetargetedPath(key, '/ws/dir/a.ts', '/ws/dir/b.ts')).toBe(false)
+    expect(consumeRetargetedPath(key, '/ws/dir/a.ts', '/ws/elsewhere.ts')).toBe(false)
+  })
+
+  it('retargets a tab opened from a CHAT LINK (its address stores a workspace-relative path)', () => {
+    // `fileAddressFor` spells a path inside the workspace relatively, so a tab
+    // opened from chat holds `src/a.ts` while the tree renames by absolute path.
+    // Comparing the two raw skipped exactly those tabs — the default way a file
+    // reaches this column — and left them bound to the name the user had just
+    // renamed away.
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'editor', title: 'Files', dedupeKey: (tab) => tab.path, component: () => null })
+    store.setSession('native-scope')
+    const { records, context } = mountNative(service)
+    records.ensure({
+      sessionId: 'native-scope',
+      id: 'tab2',
+      kind: 'editor',
+      title: 'a.ts',
+      params: { path: 'src/a.ts' },
+      scope: { sessionId: 'native-scope', cwd: '/ws' },
+    })
+
+    retargetPathTabs(context, store, '/ws/src/a.ts', '/ws/src/b.ts')
+
+    // The tab follows to the new name, spelled absolutely now: `fs.write`
+    // resolves either spelling, and the record keeps the host's address until
+    // the host navigates it again.
+    expect(records.get('native-scope', 'tab2')?.tab.path).toBe('/ws/src/b.ts')
+    // The announcement carries the tab's OWN old spelling — what its editor
+    // compares against.
+    expect(consumeRetargetedPath(pathTabKey('native-scope', 'tab2'), 'src/a.ts', '/ws/src/b.ts')).toBe(true)
+  })
+
+  it('keeps one seat\'s pending move when another seat clears its own (native ids restart per session)', () => {
+    // `tab1` names a tab in EVERY conversation, so a rename reaches two seats at
+    // once. Keyed by the id alone they shared one marker: whichever editor ran
+    // its effect first (even one whose own path did not move — it clears what it
+    // finds) wiped the other's pending move, and that editor reloaded the
+    // renamed file with the draft this mechanism exists to protect.
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'editor', title: 'Files', dedupeKey: (tab) => tab.path, component: () => null })
+    store.setSession('native-scope')
+    const { records, context } = mountNative(service)
+    openNativeFile(records, 'tab1', '/ws/a.ts')
+    records.ensure({
+      sessionId: 'other-scope',
+      id: 'tab1',
+      kind: 'editor',
+      title: 'a.ts',
+      params: { path: '/ws/a.ts' },
+      scope: { sessionId: 'other-scope' },
+    })
+
+    retargetPathTabs(context, store, '/ws/a.ts', '/ws/b.ts')
+
+    expect(records.get('native-scope', 'tab1')?.tab.path).toBe('/ws/b.ts')
+    expect(records.get('other-scope', 'tab1')?.tab.path).toBe('/ws/b.ts')
+    const here = pathTabKey('native-scope', 'tab1')
+    const there = pathTabKey('other-scope', 'tab1')
+    clearRetargetedPath(here)
+    expect(consumeRetargetedPath(there, '/ws/a.ts', '/ws/b.ts')).toBe(true)
+    expect(consumeRetargetedPath(here, '/ws/a.ts', '/ws/b.ts')).toBe(false)
+  })
+
+  it('keeps the loaded document when a rename moves an OPEN tab (the draft survives)', async () => {
+    const mounted = mountSidebarWithEditor()
+    try {
+      await act(async () => { await Promise.resolve() })
+      const readsBefore = fsRead.mock.calls.length
+      const tabOf = (): { id: string; path?: string } => allLeaves(mounted.store.getSnapshot().state!.bottomSplits)
+        .flatMap(leaf => leaf.tabs).find(candidate => candidate.path !== undefined)!
+      const id = tabOf().id
+      expect(isEditorDirty(id)).toBe(true)
+
+      const context = {
+        get: (name: string) => name === 'betterSidebar' ? mounted.service : undefined,
+      } as unknown as Context
+      act(() => { retargetPathTabs(context, mounted.store, '/tmp/a.ts', '/tmp/b.ts') })
+      await act(async () => { await Promise.resolve() })
+
+      // The tab follows the file…
+      expect(tabOf().path).toBe('/tmp/b.ts')
+      // …without re-reading it: a reload would replace the document with the
+      // same bytes and drop the draft, which lives only in the editor.
+      expect(fsRead.mock.calls.length).toBe(readsBefore)
+      expect(isEditorDirty(id)).toBe(true)
+    } finally {
+      mounted.unmount()
+    }
+  })
+
+  it('retargets the SUBTREE when a directory is renamed (both tab spaces)', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'editor', title: 'Files', dedupeKey: (tab) => tab.path, component: () => null })
+    store.setSession('native-scope')
+    const { records, context } = mountNative(service)
+    openNativeFile(records, 'tab2', '/ws/dir/deep/a.ts')
+    // …and one in the bottom workbench (`target: 'bottom'` is the one open that
+    // stays in the plugin's own layout), which the old code DID walk but only
+    // for an exact path match.
+    service.openTab({ type: 'editor', title: 'c.ts', path: '/ws/dir/c.ts', target: 'bottom' })
+    const before = records.get('native-scope', 'tab2')?.tab.path
+
+    retargetPathTabs(context, store, '/ws/dir', '/ws/renamed')
+
+    expect(before).toBe('/ws/dir/deep/a.ts')
+    expect(records.get('native-scope', 'tab2')?.tab.path).toBe('/ws/renamed/deep/a.ts')
+    const bottom = allLeaves(store.getSnapshot().state!.bottomSplits)
+      .flatMap(leaf => leaf.tabs).find(tab => tab.path !== undefined)
+    expect(bottom?.path).toBe('/ws/renamed/c.ts')
+  })
+
+  it('closes a native tab when its FILE is deleted, asking first when dirty', () => {
+    const confirmSpy = vi.fn().mockReturnValue(false)
+    vi.stubGlobal('confirm', confirmSpy)
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'editor', title: 'Files', dedupeKey: (tab) => tab.path, component: () => null })
+    store.setSession('native-scope')
+    const { records, close, context } = mountNative(service)
+    openNativeFile(records, 'tab3', '/ws/a.ts')
+    // The editor host registers the draft under the NATIVE tab id.
+    setEditorDirty('tab3', true, 'native-scope', '/ws/a.ts')
+
+    closePathTabs(context, store, '/ws/a.ts', 'discard?')
+    expect(confirmSpy).toHaveBeenCalledWith('discard?')
+    expect(records.has('native-scope', 'tab3')).toBe(true)
+    expect(close).not.toHaveBeenCalled()
+
+    confirmSpy.mockReturnValue(true)
+    closePathTabs(context, store, '/ws/a.ts', 'discard?')
+    expect(records.has('native-scope', 'tab3')).toBe(false)
+    // The host's own tab really closes too (the record alone would leave an
+    // empty pane behind).
+    expect(close).toHaveBeenCalledWith('tab3')
+  })
+
+  it('closes native tabs under a deleted DIRECTORY', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    service.registerTab({ id: 'editor', title: 'Files', dedupeKey: (tab) => tab.path, component: () => null })
+    store.setSession('native-scope')
+    const { records, context } = mountNative(service)
+    openNativeFile(records, 'tab4', '/ws/dir/deep/a.ts')
+    openNativeFile(records, 'tab5', '/ws/other.ts')
+
+    closePathTabs(context, store, '/ws/dir', 'discard?')
+
+    expect(records.has('native-scope', 'tab4')).toBe(false)
+    expect(records.has('native-scope', 'tab5')).toBe(true)
   })
 })
 
