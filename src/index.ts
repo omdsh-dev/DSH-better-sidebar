@@ -618,12 +618,18 @@ function buildApi(
         : undefined
       if (expected !== undefined) {
         const current = await stat(path).then(info => info.mtimeMs).catch(() => undefined)
-        if (current !== undefined && current !== expected) {
-          throw new SidebarError(
-            'fs-conflict',
-            `"${path}" changed on disk since it was loaded (expected mtime ${expected}, found ${current})`,
-            409,
-          )
+        // A NUMERIC baseline can only come from a successful read of a file
+        // that existed, so "no stat" is not "nothing to compare" — it means the
+        // path was removed (or renamed away) while the draft was open. Reading
+        // that as "no gate" wrote the draft back over the user's own deletion
+        // and re-created the file (and its parent directory) with no prompt.
+        // Creating a file is a different intent with its own entry points
+        // (`fs.createFile`, the upload writer), so refusing here costs nothing.
+        if (current !== expected) {
+          const why = current === undefined
+            ? `no longer exists on disk (expected mtime ${expected})`
+            : `changed on disk since it was loaded (expected mtime ${expected}, found ${current})`
+          throw new SidebarError('fs-conflict', `"${path}" ${why}`, 409)
         }
       }
       // Per-request temp name (same pattern as writeWorkspaceUpload): a

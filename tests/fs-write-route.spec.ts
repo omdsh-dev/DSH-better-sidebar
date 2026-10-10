@@ -10,10 +10,13 @@
  * 2. `expectedMtimeMs` is an optimistic-concurrency gate: a file that changed
  *    on disk since the draft was loaded refuses with `fs-conflict` (409)
  *    instead of clobbering the new bytes, and a successful save reports the
- *    fresh baseline the client adopts.
+ *    fresh baseline the client adopts. A file that is GONE at save time is the
+ *    same refusal — a numeric baseline proves it was read from an existing
+ *    file, so its absence is a change the user made, not permission to
+ *    re-create it.
  */
 import { describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../src/index.ts'
@@ -183,6 +186,68 @@ describe('fs.write route', () => {
       })
       expect(second).toMatchObject({ ok: true, status: 200 })
       expect(readFileSync(target, 'utf8')).toBe('disk-v3')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  // A baseline the client still holds means the draft was loaded from a file
+  // that existed. If the path is GONE at save time (the user removed it, the
+  // model ran `rm`, a branch switch took it away), the old code read the failed
+  // stat as "no baseline to compare" and wrote the draft back — re-creating the
+  // file, and its parent directory, with no prompt while reporting a clean
+  // save. Only "the file changed" was treated as a conflict; "the file is not
+  // there any more" is the same class of surprise.
+  it('refuses to re-create a file that was deleted since it was loaded', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-gone-'))
+    try {
+      const workspace = join(root, 'ws')
+      mkdirSync(workspace)
+      const target = join(workspace, 'draft.txt')
+      writeFileSync(target, 'disk-v1')
+      const route = mountApi(workspace)
+
+      const read = await invoke(route, 'fs.read', { sessionId: 's', path: target })
+      const baseline = read.value?.mtimeMs
+      expect(typeof baseline).toBe('number')
+
+      // The user (or something else) removed it while the draft was open.
+      rmSync(target, { force: true })
+
+      const stale = await invoke(route, 'fs.write', {
+        sessionId: 's', path: target, content: 'my-draft', expectedMtimeMs: baseline,
+      })
+      expect(stale).toMatchObject({ ok: false, status: 409, error: { code: 'fs-conflict' } })
+      // The deletion stands: nothing was written back, and no temp sibling
+      // survived the refusal.
+      expect(existsSync(target)).toBe(false)
+      expect(tempLeftovers(workspace)).toEqual([])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses the same way when the whole parent directory is gone', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-gonedir-'))
+    try {
+      const workspace = join(root, 'ws')
+      const nested = join(workspace, 'src')
+      mkdirSync(nested, { recursive: true })
+      const target = join(nested, 'draft.txt')
+      writeFileSync(target, 'disk-v1')
+      const route = mountApi(workspace)
+
+      const read = await invoke(route, 'fs.read', { sessionId: 's', path: target })
+      const baseline = read.value?.mtimeMs
+      // A rename/removal of the parent directory: the writer's `mkdir -p` used
+      // to rebuild the tree for a single file.
+      rmSync(nested, { recursive: true, force: true })
+
+      const stale = await invoke(route, 'fs.write', {
+        sessionId: 's', path: target, content: 'my-draft', expectedMtimeMs: baseline,
+      })
+      expect(stale).toMatchObject({ ok: false, status: 409, error: { code: 'fs-conflict' } })
+      expect(existsSync(nested)).toBe(false)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
