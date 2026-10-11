@@ -32,6 +32,13 @@ export interface SidebarTab {
   type: TabType
   title: string
   path?: string
+  /** The 1-based line a file reference named (`a/b.c#L131`, `a/b.c:131`).
+   *  Transient by design: `sanitizePersistedTab` copies a whitelist of known
+   *  fields, and this one is deliberately left out — a link's landing line is
+   *  a one-shot navigation target, and a reload that yanked the reader back
+   *  to a line they scrolled away from days ago would be worse than starting
+   *  at the top. Same spirit as `revealed`. */
+  line?: number
   diff?: SidebarDiffRef
   /** Plugin-owned state (v0.12.0+): MUST be JSON-serializable — it is
    *  persisted with the layout and restored verbatim on reload. */

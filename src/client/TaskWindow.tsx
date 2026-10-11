@@ -262,6 +262,10 @@ export function TaskWindow(props: TaskWindowProps): ReactNode {
     setDescription(seed.description)
     setSubjectTouched(false)
     setEditing(seed.creating)
+    // An armed "confirm delete" is the first half of a two-step aimed at THIS
+    // task. Carried into the next one it makes that reader's first click the
+    // delete itself.
+    setArmedDelete(false)
   }, [task?.id])
 
   const teammates = members.filter(member => member.role === 'teammate')

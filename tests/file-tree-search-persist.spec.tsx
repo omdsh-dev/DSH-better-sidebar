@@ -247,4 +247,23 @@ describe('TreePanel directory hits navigate instead of opening', () => {
     // A file open keeps the results list up (only a navigation clears it).
     expect(resultsBody(harness.container).hasAttribute('hidden')).toBe(false)
   })
+
+  // #879's direct-open branch can hand the list a DIRECTORY outside the cwd
+  // (a pasted absolute path). The tree is cwd-rooted, so there is nothing to
+  // expand: the row must clear the query WITHOUT toggling — `ancestorDirs`
+  // would otherwise synthesize cwd-length prefixes of the foreign path that
+  // match no tree row and persist as junk `expanded` entries.
+  it('clears the query for a directory hit outside the cwd without toggling anything', async () => {
+    fsSearch.mockResolvedValue({ matches: ['/elsewhere/records'], dirs: ['/elsewhere/records'], truncated: false })
+    const onToggle = vi.fn()
+    harness = mountPanel({ onToggle })
+    await act(async () => {})
+    await search(harness.container, '/elsewhere/records')
+
+    const dirRow = resultRows(harness.container).find(row => row.textContent === '/elsewhere/records')!
+    expect(dirRow.getAttribute('data-dsh-search-dir')).toBe('true')
+    await act(async () => { dirRow.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(onToggle).not.toHaveBeenCalled()
+    expect(harness.container.querySelector<HTMLInputElement>('input[class*="editorSearchInput"]')!.value).toBe('')
+  })
 })

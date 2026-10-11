@@ -262,6 +262,7 @@ export function createNativeTabRecords(): NativeTabRecords {
             type: kind as TabType,
             title: params?.title ?? seeded?.title ?? title,
             ...(path === undefined ? {} : { path }),
+            ...(params?.line === undefined ? {} : { line: params.line }),
             ...(params?.diff === undefined ? {} : { diff: params.diff }),
             ...(meta === undefined ? {} : { meta }),
           },
@@ -286,6 +287,12 @@ export function createNativeTabRecords(): NativeTabRecords {
       const patch: Partial<SidebarTab> = {}
       const nextPath = params?.path ?? params?.url
       if (nextPath !== undefined && nextPath !== existing.tab.path) patch.path = nextPath
+      // The landing line clears as well as sets: an in-place switch from
+      // `a.c:131` to a bare `a.c` must not leave the old line behind and jump
+      // the reader back there. Compared against the current value so the
+      // common case (both absent) adds nothing to the patch and the record
+      // keeps its identity.
+      if (params?.line !== existing.tab.line) patch.line = params?.line
       if (params?.diff !== undefined) patch.diff = params.diff
       if (revision !== undefined && navigationRevisions.get(key) !== revision) {
         navigationRevisions.set(key, revision)

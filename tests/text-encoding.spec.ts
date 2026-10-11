@@ -4,8 +4,10 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
   decodeTextBytes,
+  detectEol,
   encodeText,
-  encodingOfFile,
+  fileFormatOf,
+  restoreEol,
   type TextEncoding,
 } from '../src/text-encoding.ts'
 
@@ -75,17 +77,50 @@ describe('text encoding', () => {
     // The 64 KiB sniff window ends inside a three-byte character; the save
     // side must still recognize the file as UTF-8.
     writeFileSync(path, Buffer.from(`${'a'.repeat(64 * 1024 - 2)}中文`, 'utf8'))
-    await expect(encodingOfFile(path)).resolves.toBe('utf8')
+    await expect(fileFormatOf(path)).resolves.toMatchObject({ encoding: 'utf8' })
   })
 
   it('detects the on-disk encoding used for the next save', async () => {
     const path = join(root, 'legacy.cmd')
     writeFileSync(path, encodeText('@echo off\r\necho 中文\r\n', 'gbk'))
-    await expect(encodingOfFile(path)).resolves.toBe('gbk')
+    await expect(fileFormatOf(path)).resolves.toEqual({ encoding: 'gbk', eol: 'crlf' })
   })
 
-  it('defaults new files to UTF-8', async () => {
-    await expect(encodingOfFile(join(root, 'missing.txt'))).resolves.toBe('utf8')
+  it('defaults new files to UTF-8 + LF', async () => {
+    // A file that does not exist yet has no format to preserve. Deriving a
+    // project-wide convention is deliberately out of scope (#871): this only
+    // pins the default the route writes for a create.
+    await expect(fileFormatOf(join(root, 'missing.txt'))).resolves.toEqual({ encoding: 'utf8', eol: 'lf' })
+  })
+
+  it('reads a CRLF file as CRLF and an LF file as LF', async () => {
+    const crlf = join(root, 'crlf.txt')
+    writeFileSync(crlf, 'one\r\ntwo\r\nthree\r\n')
+    await expect(fileFormatOf(crlf)).resolves.toEqual({ encoding: 'utf8', eol: 'crlf' })
+
+    const lf = join(root, 'lf.txt')
+    writeFileSync(lf, 'one\ntwo\nthree\n')
+    await expect(fileFormatOf(lf)).resolves.toEqual({ encoding: 'utf8', eol: 'lf' })
+  })
+
+  it('votes on the majority and ignores a lone CR', () => {
+    // Same rule (and same 4096-char window) as the host backend's
+    // detectLineEndings, so a plugin save and a model `edit` agree.
+    expect(detectEol('a\r\nb\r\nc\n')).toBe('crlf')
+    expect(detectEol('a\nb\nc\r\n')).toBe('lf')
+    // A classic-Mac file is not CRLF and its `\r` bytes are never rewritten.
+    expect(detectEol('a\rb\r')).toBe('lf')
+    expect(restoreEol('a\rb\r', 'lf')).toBe('a\rb\r')
+    // Past the window only the prefix votes.
+    expect(detectEol(`${'a\r\n'.repeat(3000)}b\n`)).toBe('crlf')
+  })
+
+  it('restores CRLF without doubling an existing pair', () => {
+    expect(restoreEol('a\nb\n', 'crlf')).toBe('a\r\nb\r\n')
+    // The editor hands us LF, but a caller may pass CRLF through (a paste, a
+    // future caller): the naive split/join would emit `\r\r\n` here.
+    expect(restoreEol('a\r\nb\r\n', 'crlf')).toBe('a\r\nb\r\n')
+    expect(restoreEol('a\r\nb', 'crlf')).toBe('a\r\nb')
   })
 
   it('refuses silently lossy GBK writes', () => {

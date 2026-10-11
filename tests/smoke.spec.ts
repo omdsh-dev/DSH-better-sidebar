@@ -1046,6 +1046,35 @@ describe('session cwd resolution over the API route', () => {
     }
   })
 
+  // #879: a pasted absolute path is an open-this-file gesture, not a name
+  // filter. The route returns the stat'ed target as the single hit (the
+  // client resolves absolute match rows straight to the editor), and a
+  // missing target is an immediate empty result instead of a walk that burns
+  // its whole visit budget to report the same nothing.
+  it('fs.search stats an absolute query into a single direct-open hit', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-search-path-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(join(workspace, 'src'), { recursive: true })
+    writeFileSync(join(workspace, 'src', 'index.ts'), 'code')
+    try {
+      const route = mount({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const target = join(workspace, 'src', 'index.ts')
+      const hit = await invoke(route, 'fs.search', { sessionId: 's-search', query: target })
+      expect(hit.value).toEqual({ matches: [target], dirs: [], truncated: false })
+      const miss = await invoke(route, 'fs.search', { sessionId: 's-search', query: join(workspace, 'gone.ts') })
+      expect(miss.value).toEqual({ matches: [], dirs: [], truncated: false })
+      // A relative fragment searches the workspace tree by PATH (the name
+      // walk can never match a separator-carrying query), and a dot-anchored
+      // spelling resolves against the session cwd like fs.read does.
+      const fragment = await invoke(route, 'fs.search', { sessionId: 's-search', query: 'src/index' })
+      expect(fragment.value).toEqual({ matches: ['src/index.ts'], dirs: [], truncated: false })
+      const anchored = await invoke(route, 'fs.search', { sessionId: 's-search', query: './src/index.ts' })
+      expect(anchored.value).toEqual({ matches: [join(workspace, 'src', 'index.ts')], dirs: [], truncated: false })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('fs.trees rejects an empty list and an oversized batch', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-fs-trees-guard-'))
     const workspace = join(root, 'workspace')

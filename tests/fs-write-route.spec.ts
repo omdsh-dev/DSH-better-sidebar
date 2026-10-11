@@ -17,6 +17,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { apply } from '../src/index.ts'
+import { encodeText } from '../src/text-encoding.ts'
 import type { SidebarWebRoute } from '../src/context-types.ts'
 
 interface FakeContext {
@@ -198,6 +199,81 @@ describe('fs.write route', () => {
       const result = await invoke(route, 'fs.write', { sessionId: 's', path: target, content: 'overwritten' })
       expect(result).toMatchObject({ ok: true, status: 200 })
       expect(readFileSync(target, 'utf8')).toBe('overwritten')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  // #871: the editor transports an LF document (CodeMirror has no other line
+  // model), so writing it verbatim turned ONE edited line into a whole-file diff
+  // on every CRLF checkout. The route now restores the style the file already
+  // had — the SAME guarantee the host's own `edit` tool gives (dsh-fs-local's
+  // restoreLineEndings), which the host's `write` tool does not.
+  it('keeps a CRLF file CRLF when the editor saves its LF document (#871)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-crlf-'))
+    try {
+      const workspace = join(root, 'ws')
+      mkdirSync(workspace)
+      const target = join(workspace, 'win.txt')
+      writeFileSync(target, 'one\r\ntwo\r\nthree\r\n')
+      const route = mountApi(workspace)
+      const result = await invoke(route, 'fs.write', {
+        sessionId: 's',
+        path: target,
+        content: 'one\ntwo edited\nthree\n',
+      })
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, status: 200 })
+      const written = readFileSync(target, 'utf8')
+      expect(written).toBe('one\r\ntwo edited\r\nthree\r\n')
+      // No bare LF may survive — that is precisely the whole-file diff.
+      expect(written.replaceAll('\r\n', '')).not.toContain('\n')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves an LF file LF — a save never introduces CR', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-lf-'))
+    try {
+      const workspace = join(root, 'ws')
+      mkdirSync(workspace)
+      const target = join(workspace, 'posix.sh')
+      writeFileSync(target, 'one\ntwo\n')
+      const route = mountApi(workspace)
+      const result = await invoke(route, 'fs.write', {
+        sessionId: 's',
+        path: target,
+        content: 'one\ntwo edited\n',
+      })
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, status: 200 })
+      const written = readFileSync(target, 'utf8')
+      expect(written).toBe('one\ntwo edited\n')
+      expect(written).not.toContain('\r')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('composes the EOL restore with the encoding restore (GBK + CRLF, no \\r\\r\\n)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-write-gbk-crlf-'))
+    try {
+      const workspace = join(root, 'ws')
+      mkdirSync(workspace)
+      const target = join(workspace, 'legacy.cmd')
+      writeFileSync(target, encodeText('@echo off\r\necho 中文\r\n', 'gbk'))
+      const route = mountApi(workspace)
+      // An LF document (what the editor always sends) into a GBK + CRLF file:
+      // both restores have to fire for the bytes to match.
+      const result = await invoke(route, 'fs.write', {
+        sessionId: 's',
+        path: target,
+        content: '@echo off\necho 中文 saved\n',
+      })
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, status: 200 })
+      expect(readFileSync(target).equals(encodeText('@echo off\r\necho 中文 saved\r\n', 'gbk'))).toBe(true)
+      // Redundant with the byte comparison, but keeps the intent readable when
+      // that assertion ever gets relaxed.
+      expect(readFileSync(target).toString('utf8')).not.toContain('\r\r')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

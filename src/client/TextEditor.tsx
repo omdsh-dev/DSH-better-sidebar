@@ -78,7 +78,7 @@ function sameDocument(a: string, b: string): boolean {
 }
 
 export function TextEditor(props: FileViewerProps) {
-  const { ctx, scope, path, viewerId, content, truncated } = props
+  const { ctx, scope, path, viewerId, content, truncated, line } = props
   const markdown = viewerId === 'markdown'
   const [mode, setMode] = useState<ViewMode>(() => markdown ? sessionModes.get(scope.sessionId) ?? 'preview' : 'preview')
   const modeRef = useRef(mode)
@@ -361,9 +361,14 @@ export function TextEditor(props: FileViewerProps) {
 
   // Native sidebar tabs stay mounted while another tab is active. If a file
   // is opened while that host is hidden, CodeMirror can measure its viewport at
-  // zero and retain an empty virtualized viewport after the tab is revealed.
-  // Re-measure both on mount and whenever the host's box changes so returning
-  // to a parked editor always repaints its document without remounting it.
+  // zero and retain an empty virtualized viewport after the tab is revealed —
+  // the gutter still draws its line numbers while the document body stays
+  // blank. Re-measure on every reveal, not just on a box-size change: the
+  // host's `retainTab` parks a body by MOVING it into a hidden seat and back,
+  // and moving a node never changes its border box, so a ResizeObserver alone
+  // never fires for that path. An IntersectionObserver reports the reveal
+  // itself; the rAF follow-up covers a reveal landing in the mount's own frame,
+  // where CodeMirror's first measure may still have read a zero box.
   useEffect(() => {
     const host = hostRef.current
     const view = viewRef.current
@@ -372,11 +377,88 @@ export function TextEditor(props: FileViewerProps) {
       if (host.isConnected && host.offsetWidth > 0 && host.offsetHeight > 0) view.requestMeasure()
     }
     measure()
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(measure)
-    observer.observe(host)
-    return () => { observer.disconnect() }
+    const frame = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame(() => { measure() })
+      : undefined
+    const disposers: (() => void)[] = []
+    if (typeof ResizeObserver !== 'undefined') {
+      const resize = new ResizeObserver(measure)
+      resize.observe(host)
+      disposers.push(() => { resize.disconnect() })
+    }
+    if (typeof IntersectionObserver !== 'undefined') {
+      const intersection = new IntersectionObserver((entries) => {
+        if (entries.some(entry => entry.isIntersecting)) measure()
+      })
+      intersection.observe(host)
+      disposers.push(() => { intersection.disconnect() })
+    }
+    const onVisibility = (): void => {
+      if (document.visibilityState !== 'hidden') measure()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('resize', measure)
+    return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame)
+      for (const dispose of disposers) dispose()
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('resize', measure)
+    }
   }, [content, path])
+
+  /** The landing line already honoured, as `${path}#${line}`. The host keeps a
+   *  visited tab body mounted (`keepMounted`) and re-delivers its navigation on
+   *  every store notification, so without this a reader would be yanked back to
+   *  the same line each time — while a NEW line on the SAME file must land. */
+  const landedAtRef = useRef<string | null>(null)
+
+  // Land on the line a file reference named (`a/b.c#L131`, `a/b.c:131` — #826).
+  // One-shot per (file, line): an ordinary open carries no line and never
+  // fires, and a fresh reference re-fires it.
+  useEffect(() => {
+    if (line === undefined) {
+      landedAtRef.current = null
+      return
+    }
+    if (content === undefined) return
+    const view = viewRef.current
+    if (view === null) return
+    const key = `${path}#${line}`
+    if (landedAtRef.current === key) return
+    // A markdown/html file opens in preview, which has no source lines to put
+    // a cursor on. The reference asked for source, so land in the editor; the
+    // key is NOT recorded yet, so the re-run after the flip does the jump.
+    if ((markdown || html) && mode === 'preview') {
+      chooseMode('edit')
+      return
+    }
+    landedAtRef.current = key
+    // Out-of-range references clamp to the last line rather than throwing —
+    // the file can have changed since the link was written.
+    const doc = view.state.doc
+    const target = doc.line(Math.min(Math.max(line, 1), doc.lines)).from
+    // Position by writing the editor's OWN scroller (after a fresh measure)
+    // instead of CodeMirror's scrollIntoView: that path walks every scrollable
+    // ancestor — and even the window when the browser is zoomed
+    // (visualViewport < innerHeight) — which dragged the whole sidebar up when
+    // the reader was at the very end of the document. A plain scrollTop write
+    // on the editor scroller can never touch anything outside the editor.
+    view.requestMeasure()
+    view.dispatch({ selection: { anchor: target } })
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const block = view.lineBlockAt(target)
+        view.scrollDOM.scrollTop = Math.max(0, block.top - 8)
+        // CodeMirror's scroll-observer is async and can lag a direct write, so
+        // force a re-measure at the NEW scroll position or the virtualized
+        // viewport keeps rendering the old one.
+        view.requestMeasure()
+      })
+    })
+    // The reveal reads the live view ref; `markdown`/`html` are derived from
+    // `viewerId`, which the view-creation effect already keys on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content, path, line, mode])
 
   // Scheme flip: re-theme in place (the compartment holds only the
   // scheme-dependent extensions; everything else is untouched).

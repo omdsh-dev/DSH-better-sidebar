@@ -209,14 +209,25 @@ describe('fileParamsOf (the file-address seed, #826)', () => {
     expect(fileParamsOf(infoOf('dsh-resource://file/session/s1/src/main.ts'))).toEqual({ path: 'src/main.ts' })
   })
 
-  it('splits a `path:line` spec off the address and titles the tab after the file', () => {
+  it('splits a `path:line` spec off the address, titles the tab after the file and keeps the line', () => {
     // This is the #826 case: DSH reads a `#`-less markdown destination as the
     // file name verbatim, so the address arrives naming `CMakeLists.txt:131`
-    // and the editor would read a file that does not exist.
+    // and the editor would read a file that does not exist. The line rides
+    // along in the same seed so the editor can land on it (#826 second half).
     expect(fileParamsOf(infoOf('dsh-resource://file/session/s1/omlx/csrc/CMakeLists.txt:131'))).toEqual({
       path: 'omlx/csrc/CMakeLists.txt',
       title: 'CMakeLists.txt',
+      line: 131,
     })
+  })
+
+  it('seeds only the FIRST line of a range or a line:column spec', () => {
+    // The editor has nowhere to put a second cursor; the start line is the
+    // one a reader can act on.
+    expect(fileParamsOf(infoOf('dsh-resource://file/session/s1/src/main.ts:40-60')))
+      .toMatchObject({ path: 'src/main.ts', line: 40 })
+    expect(fileParamsOf(infoOf('dsh-resource://file/session/s1/src/main.ts:40:7')))
+      .toMatchObject({ path: 'src/main.ts', line: 40 })
   })
 
   it('keeps a colon-carrying name that is not a line spec', () => {

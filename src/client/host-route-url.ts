@@ -6,16 +6,29 @@
  * reverse-proxy directory (`https://host/dataops/proxy/3080/`) sends every
  * request OUTSIDE the prefix: the JSON API answers 404, lazy chunks never
  * load, media and HTML previews stay blank, and the WebSockets close with
- * 1006. Resolving a RELATIVE path against the injected transport base keeps
- * the request under the page's own directory — the same shape DSH's own client
- * uses (`new URL(REMOTE_STREAM_MUX_PATH.slice(1), __DSH_TRANSPORT__?.streamBaseUrl
- * ?? document.baseURI)` in `@deepseek-ai/dsh-api-gateway`).
+ * 1006. Resolving a RELATIVE path against the page's own base keeps the
+ * request under the page's own directory.
  *
- * The base is normalized to a directory first (search/hash dropped, trailing
- * slash forced) so a launch-token query cannot leak into the route and a
- * prefix written without its final slash cannot eat the last path segment.
+ * The two transports need DIFFERENT bases, and the desktop shell is why:
+ *
+ * - **HTTP** rides the PAGE base (`document.baseURI`). In the Electron shell
+ *   the page is `dsh-app://app/`, and the shell's protocol handler forwards
+ *   every non-static path to the Host (`protocol.handle` → `forwardWebRequest`
+ *   in the shell's `main.js`), so `dsh-app://app/sidebar/api/…` reaches the
+ *   Host same-origin — the exact shape `fetch('/sidebar/api/…')` produced
+ *   before the prefix fix. The shell also publishes
+ *   `__DSH_TRANSPORT__.streamBaseUrl` = the Host's real origin
+ *   (`new URL(hostUrl).origin`), which is a DIFFERENT origin from the page:
+ *   sending the plugin's JSON POSTs there makes them cross-origin, and the
+ *   plugin's routes answer no `Access-Control-Allow-*` headers (the shell's own
+ *   UI avoids this by going through the same-origin forwarding), so the browser
+ *   rejects them — every tree/git/editor request fails as "Failed to fetch".
+ * - **WebSocket** needs that injected base: a custom scheme cannot host `ws:`,
+ *   and `dsh-app://app`'s host is the literal string `app`, whose DNS lookup
+ *   never completes (see `desktop-env.ts`). The Host accepts the shell page's
+ *   origin on those sockets.
  */
-import { hostTransportBase } from './desktop-env.ts'
+import { hostHttpBase, hostTransportBase } from './desktop-env.ts'
 
 /** Placeholder origin for the non-DOM case (specs / SSR): resolution needs an
  *  absolute base, but the caller never issues the resulting request. */
@@ -30,7 +43,7 @@ const PLACEHOLDER_ORIGIN = 'http://dsh.internal/'
  * prefix so resolution stays pure.
  * @returns The absolute route URL (the base's origin + any prefix included).
  */
-export function hostRouteUrl(path: string, baseUrl: string = hostTransportBase()): URL {
+export function hostRouteUrl(path: string, baseUrl: string = hostHttpBase()): URL {
   return new URL(path.replace(/^\/+/, ''), directoryBase(baseUrl))
 }
 

@@ -25,12 +25,36 @@ export interface DecodedText {
   encoding: TextEncoding
 }
 
+/**
+ * Line-ending style a save must round-trip. Only CRLF is recognized: a lone
+ * `\r` (classic Mac) is neither counted by {@link detectEol} nor rewritten by
+ * {@link restoreEol}, which mirrors the host filesystem backend
+ * (`@deepseek-ai/dsh-fs-local`). Its `edit` tool is the reference behaviour
+ * here — it restores the style detected at read time instead of normalizing the
+ * file, so a model edit does not rewrite every line. The host's `write` tool
+ * does NOT do this (it writes the model's LF text verbatim), which is why the
+ * editor's own save has to carry the guarantee itself.
+ */
+export type TextEol = 'lf' | 'crlf'
+
+/** The on-disk format of a file: how its bytes are encoded and how its lines
+ *  end. Both are re-detected from disk before every save. */
+export interface FileFormat {
+  encoding: TextEncoding
+  eol: TextEol
+}
+
 const UTF8_BOM = Buffer.from([0xef, 0xbb, 0xbf])
 const UTF16LE_BOM = Buffer.from([0xff, 0xfe])
 const UTF16BE_BOM = Buffer.from([0xfe, 0xff])
 const UTF32LE_BOM = Buffer.from([0xff, 0xfe, 0x00, 0x00])
 const UTF32BE_BOM = Buffer.from([0x00, 0x00, 0xfe, 0xff])
 const ENCODING_SNIFF_LIMIT = 64 * 1024
+
+/** Sample the line-ending vote reads (characters, not bytes). Same window as
+ *  the host backend's `detectLineEndings`, so the plugin and the host reach the
+ *  same verdict about the same file. */
+const EOL_SNIFF_LIMIT = 4096
 
 const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true })
 const GBK_DECODER = new TextDecoder('gbk', { fatal: true })
@@ -315,12 +339,50 @@ export function encodeText(text: string, encoding: TextEncoding): Buffer {
   }
 }
 
-export async function encodingOfFile(path: string): Promise<TextEncoding> {
+/**
+ * Majority vote over the leading {@link EOL_SNIFF_LIMIT} characters: CRLF wins
+ * only when the CRLF pairs outnumber the bare LFs. A file with a single trailing
+ * CRLF among many LF lines therefore reads as LF, and a `\r`-only (classic Mac)
+ * file reads as LF without its bytes being touched — both the same verdict the
+ * host backend reaches, so a plugin save and a model `edit` agree.
+ */
+export function detectEol(text: string): TextEol {
+  const sample = text.slice(0, EOL_SNIFF_LIMIT)
+  const crlf = sample.split('\r\n').length - 1
+  const lines = sample.split('\n').length - 1
+  return crlf > lines - crlf ? 'crlf' : 'lf'
+}
+
+/**
+ * Convert the editor's LF document back to the file's own style before
+ * encoding. CRLF content is normalized first (unlike a naive `split('\n').join`
+ * this can never turn an existing pair into `\r\r\n`) — the same guard the host
+ * backend's `restoreLineEndings` documents. Everything else, including a lone
+ * `\r`, is passed through untouched.
+ */
+export function restoreEol(text: string, eol: TextEol): string {
+  if (eol === 'lf') return text
+  return text.replaceAll('\r\n', '\n').split('\n').join('\r\n')
+}
+
+/**
+ * Detect the on-disk format a save has to round-trip: byte encoding AND line
+ * endings, from one sniff read. Called before the temp write on every save, so
+ * the editor never silently converts GBK / UTF-16 / BOM'd UTF-8 bytes — nor a
+ * CRLF file to LF, which for a one-line edit would land as a whole-file diff
+ * (#871). A missing file yields UTF-8 + LF (see the comment below).
+ */
+export async function fileFormatOf(path: string): Promise<FileFormat> {
   let handle
   try {
     handle = await open(path, 'r')
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'utf8'
+    // A file that does not exist yet has no format to preserve. New files are
+    // written as UTF-8 + LF; deriving a project-wide convention (a sibling
+    // majority, a `.gitattributes` read, a preference) is a separate decision,
+    // deliberately not taken here — this batch only stops CHANGING a format a
+    // file already has.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { encoding: 'utf8', eol: 'lf' }
     throw error
   }
   try {
@@ -329,7 +391,13 @@ export async function encodingOfFile(path: string): Promise<TextEncoding> {
     const truncated = info.size > ENCODING_SNIFF_LIMIT
     const bytes = Buffer.alloc(Math.min(info.size, ENCODING_SNIFF_LIMIT))
     const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0)
-    return decodeTextBytes(bytes.subarray(0, bytesRead), truncated)?.encoding ?? 'utf8'
+    const decoded = decodeTextBytes(bytes.subarray(0, bytesRead), truncated)
+    return {
+      encoding: decoded?.encoding ?? 'utf8',
+      // A binary read has no line structure to preserve; the editor cannot be
+      // showing one anyway (it falls back to the download pane).
+      eol: decoded === null ? 'lf' : detectEol(decoded.content),
+    }
   } finally {
     await handle.close()
   }

@@ -30,3 +30,29 @@ export function hostTransportBase(): string {
   if (base !== undefined && base !== '') return base
   return typeof document !== 'undefined' && typeof document.baseURI === 'string' ? document.baseURI : ''
 }
+
+/**
+ * Base for the plugin's own HTTP routes (`/sidebar/api/*`, `/sidebar/file`,
+ * `/sidebar/bundle/*`, …): the PAGE's own base, not the injected transport
+ * origin.
+ *
+ * The desktop shell makes those two different — page `dsh-app://app/`, injected
+ * `streamBaseUrl` = the Host's `http://127.0.0.1:<port>`. HTTP must stay on the
+ * page: the shell's `protocol.handle` forwards every non-static `dsh-app://app`
+ * path to the Host same-origin (that is how `fetch('/sidebar/api/…')` reached it
+ * before the prefix fix), while the Host's plugin routes answer no
+ * `Access-Control-Allow-*` headers, so a cross-origin `fetch` to the injected
+ * origin is blocked by the browser outright ("Failed to fetch"). WebSockets go
+ * the other way round — see `hostTransportBase` and `host-route-url.ts`.
+ *
+ * `document.baseURI` carries a reverse-proxy directory prefix too, so one rule
+ * covers both deployments.
+ * @returns A URL string usable as the base argument of `new URL`; the transport
+ * base only when no page base exists (specs, SSR).
+ */
+export function hostHttpBase(): string {
+  const base = typeof document !== 'undefined' ? document.baseURI : undefined
+  if (typeof base === 'string' && base !== '') return base
+  return hostTransportBase()
+}
+

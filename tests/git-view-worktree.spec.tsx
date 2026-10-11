@@ -93,6 +93,13 @@ function mountGit(
   })
 }
 
+/** A detached container + root; every case here unmounts it in its own finally. */
+function makeRoot(): { container: HTMLDivElement; root: Root } {
+  const container = document.createElement('div')
+  document.body.append(container)
+  return { container, root: createRoot(container) }
+}
+
 afterEach(() => { vi.restoreAllMocks() })
 
 describe('GitLens (changes tab, git lens) linked-worktree consistency', () => {
@@ -459,12 +466,6 @@ describe('GitLens (changes tab, git lens) change tree', () => {
     await flushEffects()
   }
 
-  function makeRoot(): { container: HTMLDivElement; root: Root } {
-    const container = document.createElement('div')
-    document.body.append(container)
-    return { container, root: createRoot(container) }
-  }
-
   it('folds a directory row per group, independently of the same path on the other side', async () => {
     const { container, root } = makeRoot()
     try {
@@ -797,5 +798,121 @@ describe('GitLens (changes tab, git lens) change tree', () => {
         vi.useRealTimers()
       }
     })
+  })
+})
+
+/**
+ * The lens lives in a REUSED tab instance (the workbench keeps one mounted
+ * component per tab id and swaps `scope`), so a destructive confirmation armed
+ * for a row of the previous project must not survive the swap: its `onConfirm`
+ * closure carries that row's path while `gitScopeNow()` already reads the new
+ * scope — the discard would land in the project that took over the pane.
+ */
+describe('GitLens (changes tab, git lens) scope swap', () => {
+  it('drops a pending discard confirmation when the scope changes', async () => {
+    // One primary checkout, so the view stays on MAIN's changed row.
+    const onlyMain: GitWorktree[] = [{ path: MAIN, branch: 'main', current: true, changes: 1 }]
+    vi.spyOn(api, 'gitWorktrees').mockResolvedValue(onlyMain)
+    vi.spyOn(api, 'gitStatus').mockImplementation(async (_scope, target) => statusFor(target))
+    vi.spyOn(api, 'gitBranch').mockImplementation(async (_scope, target) => ({
+      current: target === AGENT ? 'agent' : 'main',
+      names: target === AGENT ? ['agent'] : ['main'],
+    }))
+    vi.spyOn(api, 'gitLog').mockImplementation(async (_scope, _count, _skip, target) => logFor(target))
+    const discard = vi.spyOn(api, 'gitDiscard')
+
+    const { container, root } = makeRoot()
+    try {
+      mountGit(root, { scope: { sessionId: 's1', cwd: MAIN } })
+      await flushEffects()
+
+      const row = container.querySelector<HTMLElement>('[data-path="main-change.ts"]')
+      if (row === null) throw new Error('changed row not found')
+      act(() => {
+        row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 30 }))
+      })
+      const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .find(el => el.textContent === t('discard'))
+      if (item === undefined) throw new Error('discard menu item not found')
+      act(() => { item.click() })
+      expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+
+      // Another session takes over the same mounted instance.
+      mountGit(root, { scope: { sessionId: 's2', cwd: AGENT } })
+      await flushEffects()
+
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+      expect(discard).not.toHaveBeenCalled()
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
+  })
+
+  it('does not carry a half-typed commit message into the next scope', async () => {
+    // The Commit button asks only for a non-empty message and a staged row, so
+    // a draft typed against the previous project would submit verbatim under
+    // the new one — no confirmation in between. Driven through the submit
+    // itself rather than the button's disabled state: what has to hold is that
+    // the message is ABSENT, not merely that a gate is shut.
+    const commit = vi.spyOn(api, 'gitCommit').mockResolvedValue({ ok: true })
+    vi.spyOn(api, 'gitWorktrees').mockResolvedValue([{ path: MAIN, branch: 'main', current: true, changes: 1 }])
+    vi.spyOn(api, 'gitStatus').mockResolvedValue({
+      isRepo: true,
+      branch: 'main',
+      // 'M ' is a STAGED row: the commit path needs one to be reachable at all.
+      entries: [{ path: 'staged.ts', xy: 'M ' }],
+    })
+    vi.spyOn(api, 'gitBranch').mockImplementation(async (_scope, target) => ({
+      current: target === AGENT ? 'agent' : 'main',
+      names: target === AGENT ? ['agent'] : ['main'],
+    }))
+    vi.spyOn(api, 'gitLog').mockImplementation(async (_scope, _count, _skip, target) => logFor(target))
+
+    const { container, root } = makeRoot()
+    // Re-queried on every use: a re-render may hand back a different node, and
+    // a detached one keeps whatever its last render set.
+    const box = (): HTMLTextAreaElement | null =>
+      container.querySelector(`textarea[placeholder="${t('commitPlaceholder')}"]`)
+    const typeInto = async (text: string): Promise<void> => {
+      await act(async () => {
+        const node = box()
+        if (node === null) throw new Error('commit box not found')
+        // Native setter: a plain `node.value =` leaves React's tracker behind.
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(node, text)
+        node.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    const submit = async (): Promise<void> => {
+      await act(async () => {
+        box()?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+      })
+      await act(async () => { await Promise.resolve() })
+    }
+    try {
+      mountGit(root, { scope: { sessionId: 's1', cwd: MAIN } })
+      await flushEffects()
+      await typeInto('fix: half typed in A')
+
+      // Another session takes over the same mounted instance. The draft stays
+      // behind with the project it was written for, so this submit finds no
+      // message to send.
+      mountGit(root, { scope: { sessionId: 's2', cwd: AGENT } })
+      await flushEffects()
+      await submit()
+      expect(commit).not.toHaveBeenCalled()
+
+      // Coming back to that project brings its own message back: the draft is
+      // the state a kept-mounted tab holds on #712's behalf.
+      mountGit(root, { scope: { sessionId: 's1', cwd: MAIN } })
+      await flushEffects()
+      await submit()
+      expect(commit).toHaveBeenCalledTimes(1)
+      expect(commit.mock.calls[0]?.[0]?.sessionId).toBe('s1')
+      expect(commit.mock.calls[0]?.[1]).toBe('fix: half typed in A')
+    } finally {
+      act(() => { root.unmount() })
+      container.remove()
+    }
   })
 })

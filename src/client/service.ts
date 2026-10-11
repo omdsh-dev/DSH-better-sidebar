@@ -308,6 +308,11 @@ export interface FileViewerProps {
   title: string
   /** The matching descriptor's id (`'code'`, `'my-plugin:csv'`). */
   viewerId: string
+  /** The 1-based line the tab's file reference named, when it carried one
+   *  (`a/b.c#L131`, `a/b.c:131` — see #826). A viewer that renders text
+   *  positions the reader there once, on arrival; every other viewer ignores
+   *  it. Absent on an ordinary open. */
+  line?: number
   /** fsRead text content (fetchStrategy='fsRead'). */
   content?: string
   truncated?: boolean
@@ -742,7 +747,7 @@ export function matchUrlTarget(tabs: readonly TabDescriptor[], url: URL): TabDes
  * The plugin version this service instance reports. Keep in lockstep with
  * `package.json`'s version — `tests/service.spec.ts` asserts the pair.
  */
-export const SIDEBAR_SERVICE_VERSION = '0.24.1'
+export const SIDEBAR_SERVICE_VERSION = '0.25.0'
 
 /**
  * Monotonic capability list consumers use to gate new API usage (features

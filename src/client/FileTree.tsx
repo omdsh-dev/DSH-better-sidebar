@@ -453,6 +453,41 @@ const RootRow = memo(function RootRow(props: RootRowProps): ReactNode {
   )
 })
 
+/**
+ * The `(session, cwd)` pair a filesystem request runs under. `cwd` is
+ * undefined until the session snapshot resolves — no request may be issued
+ * then, which is why that case is `undefined` rather than a half-filled scope.
+ */
+type FsScope = { sessionId: string; cwd: string }
+
+/** The scope a set of props belongs to (undefined while `cwd` is unresolved). */
+function scopeOf(live: { sessionId: string; cwd: string | undefined }): FsScope | undefined {
+  return live.cwd === undefined ? undefined : { sessionId: live.sessionId, cwd: live.cwd }
+}
+
+/**
+ * Whether a scope captured when an action was ARMED is still the one on
+ * screen.
+ *
+ * The workbench REUSES this component across a session swap, so anything the
+ * user aimed at in project A (a confirmation, a selection, a drop target) can
+ * still be in state while project B is on screen. Clearing that state is the
+ * swap effect's job — but an effect is PASSIVE, and a click landing between
+ * the swap's commit and that effect reads the stale state while
+ * `propsRef.current` already holds the new scope. The request would then carry
+ * project B's scope with project A's absolute path, and the host applies it
+ * verbatim (containment was removed on purpose): a cross-project delete.
+ * Every mutation therefore re-checks the scope it was armed under, AT THE CALL
+ * SITE, instead of trusting the effect to have run.
+ * @param armed - The scope captured when the action was armed.
+ * @param live - The scope the component is rendering for now.
+ * @returns True only when both are present and identical.
+ */
+function sameScope(armed: FsScope | undefined, live: FsScope | undefined): boolean {
+  return armed !== undefined && live !== undefined
+    && armed.sessionId === live.sessionId && armed.cwd === live.cwd
+}
+
 export function FileTree(props: {
   sessionId: string
   cwd: string | undefined
@@ -584,10 +619,16 @@ export function FileTree(props: {
   const [newFolder, setNewFolder] = useState<{ dir: string; value: string } | null>(null)
   /** The inline new-file editor: the directory it inserts into plus the buffer. */
   const [newFile, setNewFile] = useState<{ dir: string; value: string } | null>(null)
-  /** The delete awaiting the confirmation modal's yes (single row). */
-  const [confirmDelete, setConfirmDelete] = useState<{ path: string; isDir: boolean; name: string } | null>(null)
-  /** The batch delete awaiting the confirmation modal's yes. */
-  const [confirmDeleteSelected, setConfirmDeleteSelected] = useState(false)
+  /**
+   * The delete awaiting the confirmation modal's yes (single row), plus the
+   * scope it was ARMED under — see {@link sameScope}: the confirmation can
+   * outlive the project it was opened in, and the scope captured here is what
+   * keeps the request from landing in the next one.
+   */
+  const [confirmDelete, setConfirmDelete] =
+    useState<{ path: string; isDir: boolean; name: string; scope: FsScope } | null>(null)
+  /** The batch delete awaiting the confirmation modal's yes (plus its armed scope). */
+  const [confirmDeleteSelected, setConfirmDeleteSelected] = useState<FsScope | null>(null)
   /** True while the batch delete walks its paths (locks the dialog). */
   const [deletingSelected, setDeletingSelected] = useState(false)
   /** The last mutation failure (dismissable strip above the tree). */
@@ -634,8 +675,15 @@ export function FileTree(props: {
    */
   const reportDrop = useCallback((dir: string, transfer: DataTransfer | undefined): void => {
     if (propsRef.current.busy) return
+    // The traversal below is async, so the target directory is resolved
+    // against the scope that STARTED the drop, and the delivery is dropped
+    // outright if a session swap landed in between: `onUploadRequest` is read
+    // off the LATEST props, so without this the files would be uploaded into
+    // the next project's tree, at a directory path from this one.
+    const armed = scopeOf(propsRef.current)
     void uploadItemsFromDrop(transfer).then((items) => {
-      if (items.length > 0) propsRef.current.onUploadRequest(dir, items)
+      if (items.length === 0 || !sameScope(armed, scopeOf(propsRef.current))) return
+      propsRef.current.onUploadRequest(dir, items)
     })
   }, [])
   const handleBodyDrop = useCallback((event: DragEvent<HTMLDivElement>): void => {
@@ -1020,15 +1068,81 @@ export function FileTree(props: {
     setSelection(new Set())
   }, [setSelection])
 
+  /**
+   * Bumped by the swap effect below, and the boundary it marks is shared: the
+   * two asynchronous paths this component starts — the batch-delete walk and
+   * the archive build — capture their OWN scope, so the requests they issue
+   * stay correct across a swap, while everything they SETTLE (pruneTree, the
+   * error strip, the selection, the busy flags, the archive job) is state of
+   * the project on screen, which may no longer be the one they started in.
+   * Work whose generation is stale goes quiet instead.
+   */
+  const scopeGenRef = useRef(0)
+
+  /**
+   * A session/cwd swap REUSES this component: the workbench keeps one mounted
+   * instance per tab id, and tab ids restart per session. Every path-shaped
+   * piece of state here therefore outlives the project it was picked in — and
+   * the selection is the dangerous one, because "delete selected" sends THIS
+   * session's scope with the PREVIOUS session's absolute paths, which the host
+   * applies verbatim (containment was removed on purpose): it deleted another
+   * project's files. The rest is the same leak in harmless clothing — a menu,
+   * an inline editor, an armed confirmation aimed at a row that is no longer
+   * on screen.
+   */
+  useEffect(() => {
+    // The guarded clear spares a swap with nothing selected a re-render of the
+    // whole tree. It returns early when the selection is already empty, so the
+    // anchor is dropped here as well: deselecting the last row leaves an empty
+    // selection still holding one.
+    clearSelection()
+    anchorRef.current = null
+    kindRef.current.clear()
+    setRowMenu(null)
+    setApps(null)
+    setCopiedPath(null)
+    setRenaming(null)
+    setNewFolder(null)
+    // The ref is synced during render, so it still holds the previous session's
+    // editor until the next one — long enough for a blur in this tick to mkdir
+    // that dir under the new scope.
+    newFolderRef.current = null
+    setConfirmDelete(null)
+    setConfirmDeleteSelected(null)
+    // A batch walk of the PREVIOUS session may still be in flight: its flag
+    // must not lock the new session's bar, and the bump below retires the
+    // state it would otherwise settle here.
+    setDeletingSelected(false)
+    scopeGenRef.current += 1
+    setActionError(null)
+    setLoadError(null)
+    pendingUploadDir.current = undefined
+    resetDrop()
+  }, [sessionId, cwd, resetDrop, clearSelection])
+
   const copySelectedPaths = useCallback((): void => {
     void writeClipboard([...selectedRef.current].join('\n'))
   }, [])
 
-  /** Run the confirmed single-row delete: fs.remove + settle + close tabs. */
-  const performDelete = (target: { path: string; isDir: boolean }): void => {
-    if (cwd === undefined) return
-    api.fsRemove({ sessionId, cwd }, target.path)
+  /**
+   * Run the confirmed single-row delete: fs.remove + settle + close tabs.
+   *
+   * The confirmation carries the scope it was armed under, and the request is
+   * refused when that is no longer the scope on screen. Relying on the swap
+   * effect alone is not enough: a click that lands before React flushes that
+   * passive effect sends the NEW session's scope with the OLD project's
+   * absolute path, which the host applies verbatim — it deleted another
+   * project's file.
+   * @param target - The row awaiting deletion, plus its armed scope.
+   */
+  const performDelete = (target: { path: string; isDir: boolean; scope: FsScope }): void => {
+    if (!sameScope(target.scope, scopeOf(propsRef.current))) return
+    const generation = scopeGenRef.current
+    api.fsRemove(target.scope, target.path)
       .then(() => {
+        // A swap mid-flight retires the settle: it is state of the project on
+        // screen, which is no longer the one this request ran in.
+        if (generation !== scopeGenRef.current) return
         setActionError(null)
         pruneTree(target.path)
         onPathDeleted?.(target.path, target.isDir)
@@ -1036,6 +1150,7 @@ export function FileTree(props: {
         setSelection(new Set())
       })
       .catch((error: unknown) => {
+        if (generation !== scopeGenRef.current) return
         setActionError(error instanceof Error ? error.message : String(error))
       })
   }
@@ -1195,20 +1310,30 @@ export function FileTree(props: {
    * but a partial batch must be debuggable). The first failure stops the walk
    * and lands in the error strip; already-removed rows settle as they go.
    */
-  const performBatchDelete = (): void => {
+  const performBatchDelete = (armed: FsScope): void => {
     const live = propsRef.current
     if (live.cwd === undefined || deletingSelected) return
+    // The selection was built in the scope the confirmation was armed under,
+    // and the first fs.remove below is issued straight from the click handler —
+    // so this call-site check, not the passive swap effect, is what keeps the
+    // batch from pairing this session's scope with the previous session's
+    // paths (see {@link sameScope}).
+    if (!sameScope(armed, scopeOf(live))) {
+      setConfirmDeleteSelected(null)
+      return
+    }
     const paths = [...selectedRef.current]
-    setConfirmDeleteSelected(false)
+    setConfirmDeleteSelected(null)
     if (paths.length === 0) return
-    const scope = { sessionId: live.sessionId, cwd: live.cwd }
+    const generation = scopeGenRef.current
     setDeletingSelected(true)
     void (async () => {
       const removed: string[] = []
       for (const path of paths) {
         try {
-          await api.fsRemove(scope, path)
+          await api.fsRemove(armed, path)
         } catch (error: unknown) {
+          if (generation !== scopeGenRef.current) return
           setActionError(error instanceof Error ? error.message : String(error))
           // Keep the rows that were NOT removed selected, so a retry is one click.
           const next = new Set(selectedRef.current)
@@ -1217,11 +1342,14 @@ export function FileTree(props: {
           setDeletingSelected(false)
           return
         }
+        // Stale walk: the swap already released the busy flag.
+        if (generation !== scopeGenRef.current) return
         setActionError(null)
         pruneTree(path)
         live.onPathDeleted?.(path, kindRef.current.get(path) ?? false)
         removed.push(path)
       }
+      if (generation !== scopeGenRef.current) return
       setDeletingSelected(false)
       clearSelection()
     })()
@@ -1538,6 +1666,15 @@ export function FileTree(props: {
     setArchiveProgress(null)
   }, [])
 
+  // A session/cwd swap abandons the archive job with it — the progress strip
+  // belongs to the project that started the zip, and a leftover `archiveJobId`
+  // would keep the poller running in the new one, whose failures land as
+  // `zipFailed` there. A build still starting up is retired by the swap effect
+  // above (scopeGenRef), so it cannot pump its job back in after this.
+  useEffect(() => {
+    settleArchive()
+  }, [sessionId, cwd, settleArchive])
+
   const failArchive = useCallback((message: string): void => {
     setActionError(t('zipFailed', { message }))
     settleArchive()
@@ -1614,17 +1751,20 @@ export function FileTree(props: {
   const downloadArchive = (paths: readonly string[]): void => {
     if (archiveBusyRef.current) return
     const name = paths.length === 1 ? `${baseName(paths[0]!)}.zip` : 'archive.zip'
+    const generation = scopeGenRef.current
     archiveBusyRef.current = true
     archiveHandedOffRef.current = false
     setArchiveBusy(true)
     setArchiveProgress(null)
     void archiveBuild({ sessionId, cwd }, paths, name)
       .then(({ id, entries }) => {
+        if (generation !== scopeGenRef.current) return
         archiveJobRef.current = { id, name }
         setArchiveProgress({ done: 0, total: entries })
         setArchiveJobId(id)
       })
       .catch((error: unknown) => {
+        if (generation !== scopeGenRef.current) return
         failArchive(error instanceof Error ? error.message : String(error))
       })
   }
@@ -1986,7 +2126,10 @@ export function FileTree(props: {
               <span className={css.explorerSelectionText}>{t('filesSelected', { count: selected.size })}</span>
               <span className={css.explorerSelectionActions}>
                 <Chip onClick={copySelectedPaths}>{t('copyPaths')}</Chip>
-                <Chip onClick={() => { setConfirmDeleteSelected(true) }}>{t('deleteSelected')}</Chip>
+                <Chip onClick={() => {
+                  const armed = scopeOf(propsRef.current)
+                  if (armed !== undefined) setConfirmDeleteSelected(armed)
+                }}>{t('deleteSelected')}</Chip>
                 <Chip onClick={clearSelection}>{t('clearSelection')}</Chip>
               </span>
             </div>
@@ -2164,7 +2307,9 @@ export function FileTree(props: {
             return
           }
           if (id === 'delete') {
-            setConfirmDelete({ path: target.path, isDir: target.isDir, name: baseName(target.path) })
+            const armed = scopeOf(propsRef.current)
+            if (armed === undefined) return
+            setConfirmDelete({ path: target.path, isDir: target.isDir, name: baseName(target.path), scope: armed })
             return
           }
           copyPath(
@@ -2201,15 +2346,19 @@ export function FileTree(props: {
       {/* The batch delete: one confirmation for the whole selection, then one
           sequential fs.remove per row (the first failure stops the walk). */}
       <ConfirmDialog
-        open={confirmDeleteSelected}
+        open={confirmDeleteSelected !== null}
         title={t('deleteSelectedTitle', { count: selected.size })}
         description={t('deleteSelectedDesc')}
         confirmLabel={t('deleteSelected')}
         cancelLabel={t('cancel')}
         danger
         busy={deletingSelected}
-        onConfirm={performBatchDelete}
-        onClose={() => { setConfirmDeleteSelected(false) }}
+        onConfirm={() => {
+          const armed = confirmDeleteSelected
+          if (armed === null) return
+          performBatchDelete(armed)
+        }}
+        onClose={() => { setConfirmDeleteSelected(null) }}
       />
     </div>
   )

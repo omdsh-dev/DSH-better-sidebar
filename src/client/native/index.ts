@@ -171,6 +171,13 @@ interface Registration {
  * file called `b.c:131` and the editor reports it missing (#826). The tab
  * TITLE is seeded from the same spec, because the host derives it from the same
  * string and would otherwise label the tab `b.c:131`.
+ *
+ * The LINE rides along in the same seed. DSH's own `#L131` form already
+ * arrives as `navigation.params.line` (the host parses it and sends it down),
+ * so seeding it here is what makes both spellings land on the same row — see
+ * {@link NativeTabParams.line}. The range end and the column are deliberately
+ * dropped: {@link splitTrailingLineSpec} parses them, and a start line is all
+ * the editor has anywhere to put a cursor.
  * @param info - the native tab record the body is drawing.
  * @returns the seed, or `undefined` when the tab is not a file address.
  */
@@ -179,7 +186,7 @@ export function fileParamsOf(info: NativeTabInfo): NativeTabParams | undefined {
   if (address === undefined) return undefined
   const spec = splitTrailingLineSpec(address.path)
   if (spec === undefined) return { path: address.path }
-  return { path: spec.path, title: baseName(spec.path) }
+  return { path: spec.path, title: baseName(spec.path), line: spec.line }
 }
 
 /**

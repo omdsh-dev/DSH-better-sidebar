@@ -614,6 +614,10 @@ export function EditorHost(props: {
           {!showEmpty && load.status === 'ready' && createElement(load.viewer.component, {
             ctx, store, scope, path, title,
             viewerId: load.viewer.id,
+            // The reference's landing line, if the address carried one (#826).
+            // Only the text viewer acts on it; a markdown/html/image viewer
+            // gets the field and ignores it.
+            line: tab.line,
             content: load.content,
             truncated: load.truncated,
             mtimeMs: load.mtimeMs,

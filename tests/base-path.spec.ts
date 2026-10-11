@@ -84,15 +84,42 @@ describe('hostRouteUrl / hostWebSocketUrl', () => {
       .toBe('https://host.test/sidebar/api/fs.tree')
   })
 
-  it('prefers the shell transport base over the document base (desktop shell)', () => {
+  it('splits the base per transport in the desktop shell: HTTP rides the page, WS the injected origin', async () => {
     // 2718725: the Electron shell serves the GUI from `dsh-app://app/`, whose
-    // host is the literal string `app` — resolving against it never connects.
+    // host is the literal string `app` — resolving a WebSocket against it never
+    // connects, so sockets use the injected Host origin.
     vi.stubGlobal('__DSH_TRANSPORT__', { streamBaseUrl: 'http://127.0.0.1:4199/' })
-    // The default parameter is exercised on purpose (undefined = "read it").
-    expect(hostRouteUrl('sidebar/api/fs.tree', undefined).href)
-      .toBe('http://127.0.0.1:4199/sidebar/api/fs.tree')
+    await withPageBase('dsh-app://app/', () => {
+      // HTTP stays on the page: the shell's protocol handler forwards every
+      // non-static dsh-app path to the Host same-origin, and the plugin's own
+      // routes carry no CORS headers — a cross-origin POST to the injected
+      // origin is rejected by the browser ("Failed to fetch").
+      expect(hostRouteUrl('sidebar/api/fs.tree', undefined).href)
+        .toBe('dsh-app://app/sidebar/api/fs.tree')
+      expect(hostRouteUrl('sidebar/bundle/editor.js', undefined).href)
+        .toBe('dsh-app://app/sidebar/bundle/editor.js')
+    })
     expect(hostWebSocketUrl('sidebar/ws/fs-watch', undefined).href)
       .toBe('ws://127.0.0.1:4199/sidebar/ws/fs-watch')
+  })
+
+  it('falls back to the injected base for HTTP when the page has none (specs, SSR)', () => {
+    vi.stubGlobal('__DSH_TRANSPORT__', { streamBaseUrl: 'http://127.0.0.1:4199/' })
+    const document = globalThis.document as { baseURI?: string }
+    const previous = document.baseURI
+    Object.defineProperty(document, 'baseURI', { value: '', configurable: true, writable: true })
+    try {
+      expect(hostRouteUrl('sidebar/api/fs.tree', undefined).href)
+        .toBe('http://127.0.0.1:4199/sidebar/api/fs.tree')
+    } finally {
+      Object.defineProperty(document, 'baseURI', { value: previous, configurable: true, writable: true })
+    }
+  })
+
+  it('keeps the injected base for HTTP on an ordinary http(s) page (same origin)', () => {
+    vi.stubGlobal('__DSH_TRANSPORT__', { streamBaseUrl: 'http://127.0.0.1:4199/' })
+    expect(hostRouteUrl('sidebar/api/fs.tree', 'http://127.0.0.1:4199/').href)
+      .toBe('http://127.0.0.1:4199/sidebar/api/fs.tree')
   })
 })
 

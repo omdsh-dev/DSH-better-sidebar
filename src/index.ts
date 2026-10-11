@@ -70,7 +70,7 @@ import {
 // row bound, so it lives in a dependency-free module both can import.
 import { FS_TREES_MAX_PATHS } from './fs-batch.ts'
 import { activeWorktreeRootOf } from './active-worktree.ts'
-import { decodeTextBytes, encodeText, encodingOfFile } from './text-encoding.ts'
+import { decodeTextBytes, encodeText, fileFormatOf, restoreEol } from './text-encoding.ts'
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
@@ -573,9 +573,13 @@ function buildApi(
       return { levels }
     },
     'fs.search': async (payload) => {
-      // The editor side panel's global name search: rooted at the session
-      // cwd (not caller-targetable — the walk is unbounded by design and
-      // must never escape the workspace), budgeted inside searchFiles.
+      // The editor side panel's global search. Name queries stay rooted at
+      // the session cwd (not caller-targetable — the walk is unbounded by
+      // design), budgeted inside searchFiles. A query carrying a path
+      // separator can never match a NAME, so searchFiles routes it
+      // differently: an absolute query stats its target (the same
+      // any-host-path reach fs.read has had since the workspace fence came
+      // off) and a relative fragment matches by path.
       const { cwd } = await cwdOf(payload)
       const record = payload as { exclude?: unknown }
       const query = requireString(payload, 'query')
@@ -597,9 +601,13 @@ function buildApi(
       const { cwd } = await cwdOf(payload)
       const path = await ensureWorkspaceWritePath(cwd, requireString(payload, 'path'))
       const content = requireString(payload, 'content')
-      // Detect the encoding BEFORE the temp write so the save round-trips the
-      // bytes the file already used (GBK / UTF-16 / BOM'd UTF-8 stay put).
-      const encoding = await encodingOfFile(path)
+      // Detect the byte encoding AND the line ending BEFORE the temp write, so
+      // the save round-trips what the file already used: GBK / UTF-16 / BOM'd
+      // UTF-8 stay put, and a CRLF file stays CRLF. The second half matters
+      // because the editor transports an LF document (CodeMirror has no other
+      // line model), so writing it verbatim turns one edited line into a
+      // whole-file diff for every Windows checkout (#871).
+      const { encoding, eol } = await fileFormatOf(path)
       // Optimistic concurrency: the client sends the mtime its draft was based
       // on; a file that changed on disk since (the model wrote it, another tab
       // saved, an external editor touched it) refuses the write instead of
@@ -625,7 +633,7 @@ function buildApi(
       const tmp = join(dirname(path), `.${basename(path)}.dsh-sidebar-tmp-${randomUUID()}.tmp`)
       try {
         await mkdir(dirname(path), { recursive: true })
-        await writeFile(tmp, encodeText(content, encoding), { flag: 'wx' })
+        await writeFile(tmp, encodeText(restoreEol(content, eol), encoding), { flag: 'wx' })
         await rename(tmp, path)
       } catch (error) {
         await rm(tmp, { force: true }).catch(() => {})

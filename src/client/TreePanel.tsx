@@ -31,7 +31,7 @@ import { IconUploadOutline16 } from './icons.tsx'
 import type { OpenInApp } from './open-in-app.ts'
 import type { OpenWithTarget } from './open-with.ts'
 import { t } from './locales.ts'
-import { resolveSidebarPath } from './paths.ts'
+import { isWithinWorkspace, resolveSidebarPath } from './paths.ts'
 import { IconButton } from './ui/index.ts'
 import { UploadOverlay } from './UploadOverlay.tsx'
 import {
@@ -230,9 +230,14 @@ export function TreePanel(props: {
    * paths are touched — and clear the query so the tree, not the parked
    * results panel, is what the user sees next.
    */
+  // A directory hit OUTSIDE the cwd (a pasted absolute path from the
+  // direct-open branch) has no tree rows to expand: the tree is cwd-rooted,
+  // and `ancestorDirs` would synthesize cwd-length prefixes of a foreign
+  // path that toggle nothing and persist as junk `expanded` entries. Such a
+  // row only clears the query.
   const openSearchDir = (rel: string): void => {
     const target = resolveSidebarPath(cwd, rel)
-    if (cwd !== undefined) {
+    if (cwd !== undefined && isWithinWorkspace(cwd, target)) {
       for (const path of [...ancestorDirs(cwd, [target]), target]) {
         if (!expanded.includes(path)) onToggle(path)
       }

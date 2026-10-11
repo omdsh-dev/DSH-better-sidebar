@@ -3,7 +3,7 @@
 > [!IMPORTANT]
 > **Built on DSH's native sidebar API** (since v0.19.0): the right column *is* DSH's own sidebar — the plugin registers every tab type as a native tab (no right panel of its own anymore) and keeps only its self-drawn bottom workbench and the `ctx.betterSidebar` service open to every plugin.
 >
-> **Since v0.24.1 the host support floor is DSH `0.2.0-rc.1+`** (peer floor `^0.2.0-rc.1`). Everything this plugin consumes from 0.2.0 is **purely additive** (zero removed exports, session format still v4, CLI and client runtime byte-identical), so this version carries no runtime compatibility branch — it only moves the support line. **Hosts on the 0.1.7 line should pin `dsh-better-sidebar@0.22.1` — a caret never spans a minor bump, and `^0.1.7-rc.1` is silently disabled by the 0.2.0 startup preflight**; the DSH-to-plugin version table is in [Installation](#-installation).
+> **Since v0.24.1 the host support floor is DSH `0.2.0-rc.2+`** (peer floor `^0.2.0-rc.2`). Everything this plugin consumes from 0.2.0 is **purely additive** (zero removed exports, session format still v4, CLI and client runtime byte-identical), so this version carries no runtime compatibility branch — it only moves the support line. **Hosts on the 0.1.7 line should pin `dsh-better-sidebar@0.22.1` — a caret never spans a minor bump, and `^0.1.7-rc.1` is silently disabled by the 0.2.0 startup preflight**; the DSH-to-plugin version table is in [Installation](#-installation).
 
 <!-- Hero -->
 <div align="center">
@@ -14,7 +14,7 @@
   <a href="https://github.com/omdsh-dev/DSH-better-sidebar/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/omdsh-dev/DSH-better-sidebar" /></a>
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
   <a href="https://dshfind.com/en/plugins/omdsh-dev/DSH-better-sidebar?ref=badge"><img alt="dshfind" src="https://dshfind.com/api/badge/omdsh-dev/DSH-better-sidebar?lang=en" /></a><br /><br />
-  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.24.1): 0.2.0-rc.1+" src="https://img.shields.io/badge/DSH-0.2.0--rc.1%2B-4d6bfe" /></a>
+  <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.24.1): 0.2.0-rc.2+" src="https://img.shields.io/badge/DSH-0.2.0--rc.2%2B-4d6bfe" /></a>
   <a href="https://github.com/topics/dsh-better-sidebar"><img alt="Plugin ecosystem: GitHub topic dsh-better-sidebar" src="https://img.shields.io/badge/plugin%20ecosystem-topic%20dsh--better--sidebar-4d6bfe" /></a><br /><br />
   <img alt="File management" src="https://img.shields.io/badge/-File%20management-4d6bfe" /> <img alt="Edit &amp; preview" src="https://img.shields.io/badge/-Edit%20%26%20preview-4d6bfe" /> <img alt="Bottom workbench" src="https://img.shields.io/badge/-Bottom%20workbench-4d6bfe" /> <img alt="Changes" src="https://img.shields.io/badge/-Changes-4d6bfe" /> <img alt="Background tasks" src="https://img.shields.io/badge/-Background%20tasks-4d6bfe" /> <img alt="Side Chat" src="https://img.shields.io/badge/-Side%20Chat-4d6bfe" /> <img alt="Plugin integration" src="https://img.shields.io/badge/-Plugin%20integration-4d6bfe" /><br /><br />
   <b>A dual workbench (right sidebar + bottom panel)</b> that opens its <code>ctx.betterSidebar</code> service to every plugin —<br />
@@ -48,7 +48,7 @@
 What this plugin adds on top of DSH's stock sidebar:
 
 - **✏️ Editable editor**: the host's document preview is **read-only** → the plugin keeps an **editable** CodeMirror editor (save, syntax highlighting, preview toggle); Markdown / HTML also render through the plugin's own pipeline (Mermaid diagrams with safe rendering + click-to-zoom, README-level inline HTML, floating table of contents, sandboxed HTML preview)
-- **🗂️ Enhanced file tree**: takes over the built-in Files page — lazy-loading tree, **expanded directories watched live and auto-refreshed**, symlink awareness, global filename search, drag-and-drop upload, hover `@file` to drop a reference into the input box; **Ctrl/Cmd multi-select and Shift range-select** (copy or delete a batch), **VS Code-style git status colors + M/A/D/U letters**, **new folder / new file** (inline editor; the server refuses illegal names, Windows reserved device names and an existing destination — a same-named file is never truncated), **sorting** (by name / by type, plus a folders-first switch; the default is the host's own order), **multi-select “Zip and download”** (the host streams a ZIP built with no third-party dependency), and an “Open with” menu that COMBINES DSH’s own open-in-app (the host’s probed OS handlers + file-manager reveal) with the plugin’s own targets (file manager / VS Code / Cursor / Zed / custom editor URL templates, SSH remotes, pin-to-menu)
+- **🗂️ Enhanced file tree**: takes over the built-in Files page — lazy-loading tree, **expanded directories watched live and auto-refreshed**, symlink awareness, global filename search (**paste an absolute path to open it directly; relative paths match by path**), drag-and-drop upload, hover `@file` to drop a reference into the input box; **Ctrl/Cmd multi-select and Shift range-select** (copy or delete a batch), **VS Code-style git status colors + M/A/D/U letters**, **new folder / new file** (inline editor; the server refuses illegal names, Windows reserved device names and an existing destination — a same-named file is never truncated), **sorting** (by name / by type, plus a folders-first switch; the default is the host's own order), **multi-select “Zip and download”** (the host streams a ZIP built with no third-party dependency), and an “Open with” menu that COMBINES DSH’s own open-in-app (the host’s probed OS handlers + file-manager reveal) with the plugin’s own targets (file manager / VS Code / Cursor / Zed / custom editor URL templates, SSH remotes, pin-to-menu)
 - **🌿 Changes** (no Git panel in the stock sidebar): two lenses in one tab — **Git** (diff / history / stage·commit·revert) and **This Session** (every file the model touched) — with a unified diff renderer (intra-line character highlights, syntax coloring, secret redaction); the two lenses now share one 36px header (host SegmentedControl), 28px rows, a single empty state and a sticky commit bar, and the git snapshot is shared with the file tree so staging recolors the tree too
 - **🧩 Background Tasks** (absent upstream): agent topology preview + background task list (exit codes / live output / force-kill)
 - **💬 Side Chat** (absent upstream, beta): Codex-style side threads — inheriting the full parent context, running independently, promotable to a top-level session
@@ -62,15 +62,15 @@ What this plugin adds on top of DSH's stock sidebar:
 **Prerequisites**: DSH installed (`dsh web` boots), Node.js ≥ 20, pnpm ≥ 10.
 
 **Supported DSH versions**:
-<a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.24.0): 0.2.0-rc.1+" src="https://img.shields.io/badge/DSH-0.2.0--rc.1%2B-4d6bfe" /></a>
+<a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.24.0): 0.2.0-rc.2+" src="https://img.shields.io/badge/DSH-0.2.0--rc.2%2B-4d6bfe" /></a>
 
-> 📌 **Channel and support line**: `v0.24.1` targets DSH **0.2.0-rc.1+** (0.2.0's first candidate rides npm's `next` dist-tag; `latest` is still 0.1.7-rc.2). **Pin the DSH version exactly**: `npm i -g @deepseek-ai/dsh@0.2.0-rc.1`. **Hosts on the 0.1.7 line should pin `dsh-better-sidebar@0.22.1`**: 0.2.0 is a host minor bump, and caret ranges such as `^0.1.7-rc.1` fail the host's startup compatibility preflight on 0.2.0, which disables the whole profile row silently.
+> 📌 **Channel and support line**: `v0.24.1` targets DSH **0.2.0-rc.2+** (0.2.0's first candidate rides npm's `next` dist-tag; `latest` is still 0.1.7-rc.2). **Pin the DSH version exactly**: `npm i -g @deepseek-ai/dsh@0.2.0-rc.2`. **Hosts on the 0.1.7 line should pin `dsh-better-sidebar@0.22.1`**: 0.2.0 is a host minor bump, and caret ranges such as `^0.1.7-rc.1` fail the host's startup compatibility preflight on 0.2.0, which disables the whole profile row silently.
 
 > 🧭 **Pick the plugin version that matches your DSH**:
 >
 > | Your DSH | Install command | Version / peer declared |
 > | --- | --- | --- |
-> | **0.2.0-rc.1+** (including a later 0.2.0 stable) | `dsh plugin --profile web add dsh-better-sidebar@latest` | **0.24.1**, `^0.2.0-rc.1` |
+> | **0.2.0-rc.2+** (including a later 0.2.0 stable) | `dsh plugin --profile web add dsh-better-sidebar@latest` | **0.24.1**, `^0.2.0-rc.2` |
 > | **0.1.7-rc.1 – 0.1.7-rc.2** (and a later 0.1.7 stable; npm `latest` is still 0.1.7-rc.2) | `dsh plugin --profile web add dsh-better-sidebar@0.22.1` | **0.22.1**, `^0.1.7-rc.1` |
 > | 0.1.7-alpha.1 / 0.1.7-alpha.2 | **nothing to install** — move DSH to rc.1 first, then run the row above:<br>`npm i -g @deepseek-ai/dsh@0.1.7-rc.1` | — |
 > | 0.1.6-alpha.2 and earlier, `0.1.5-rc.*` (including the 0.1.5-rc.3 that is npm's `latest`) | `dsh plugin --profile web add dsh-better-sidebar@0.19.1` | **0.19.1**, `^0.1.5-rc.1` |
@@ -200,7 +200,7 @@ WeChat / QQ group QR codes will live here. After uploading the QR images (drag t
   <a href="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0"><img width="33%" alt="Service API base screenshot" src="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0" /></a>
 </div>
 
-**Supported DSH versions**: <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.24.0): 0.2.0-rc.1+" src="https://img.shields.io/badge/DSH-0.2.0--rc.1%2B-4d6bfe" /></a> · full release history on the [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases) page
+**Supported DSH versions**: <a href="https://www.npmjs.com/package/@deepseek-ai/dsh?activeTab=versions"><img alt="Supported DSH versions (v0.24.0): 0.2.0-rc.2+" src="https://img.shields.io/badge/DSH-0.2.0--rc.2%2B-4d6bfe" /></a> · full release history on the [Releases](https://github.com/omdsh-dev/DSH-better-sidebar/releases) page
 
 ### v0.24.1
 
@@ -381,11 +381,12 @@ The GitHub topic [`dsh-better-sidebar`](https://github.com/topics/dsh-better-sid
 ### 🖼️ Viewer Plugins (file previewers)
 
 <details>
-<summary><b>3 plugins (click to expand)</b></summary>
+<summary><b>4 plugins (click to expand)</b></summary>
 
 | Plugin | ⭐ | Description |
 |---|---|---|
 | [HuanLinOTO/dsh-plugin-better-sidebar-plugin-office](https://github.com/HuanLinOTO/dsh-plugin-better-sidebar-plugin-office) | <img alt="stars" src="https://img.shields.io/github/stars/HuanLinOTO/dsh-plugin-better-sidebar-plugin-office?style=flat&color=4d6bfe" /> | Office-suite preview (.docx / .xlsx / .pptx) as a separate bundle to slim the core (in the official recommended catalog) |
+| [HuanLinOTO/dsh-plugin-better-sidebar-plugin-audio](https://github.com/HuanLinOTO/dsh-plugin-better-sidebar-plugin-audio) | <img alt="stars" src="https://img.shields.io/github/stars/HuanLinOTO/dsh-plugin-better-sidebar-plugin-audio?style=flat&color=4d6bfe" /> | Audio preview: zoomable waveform player (click/drag seek, A-B loop, channel switch, playback rate) + live spectrum (bars/line/waterfall) + whole-file spectrogram, with its own Range-capable streaming media route |
 | [zemul/dsh-video-preview](https://github.com/zemul/dsh-video-preview) | <img alt="stars" src="https://img.shields.io/github/stars/zemul/dsh-video-preview?style=flat&color=4d6bfe" /> | Inline video preview: .mp4 / .webm / .mov / .mkv / .avi with a /video host route supporting HTTP Range scrubbing |
 | [dong-victor/dsh-better-sidebar-jupyter](https://github.com/dong-victor/dsh-better-sidebar-jupyter) | <img alt="stars" src="https://img.shields.io/github/stars/dong-victor/dsh-better-sidebar-jupyter?style=flat&color=4d6bfe" /> | Runnable `.ipynb` notebook view: lazy-start Python kernel, streaming outputs, save-back |
 

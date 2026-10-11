@@ -129,13 +129,59 @@ export interface WorkspaceRenameInput {
  * No realpath, no containment: the path exists (lstat decides) and the
  * operation addresses it as written.
  */
-async function resolveEntry(
+function resolveEntry(
   cwd: string,
   target: string,
-): Promise<{ absolute: string; real: string; realCwd: string }> {
-  const absolute = resolveTarget(cwd, target)
-  const realCwd = requireAbsolute(cwd)
-  return { absolute, real: absolute, realCwd }
+): { absolute: string; realCwd: string } {
+  return { absolute: resolveTarget(cwd, target), realCwd: requireAbsolute(cwd) }
+}
+
+/**
+ * Compare two spellings the way Windows itself does: the extended-length
+ * prefix is not part of the name and case is free. Only reached when the
+ * volume cannot answer with an inode (FAT/exFAT, some network shares) — weaker
+ * than an identity, but never weaker than the plain string compare it
+ * replaced.
+ */
+function sameSpelling(a: string, b: string): boolean {
+  const strip = (value: string): string => value.replace(/^\\\\\?\\/, '')
+  const left = strip(a)
+  const right = strip(b)
+  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
+}
+
+/**
+ * Whether `target` IS the workspace root. Comparing the two SPELLINGS is not
+ * enough: the resolution above is deliberately lexical (a symlink row must
+ * keep addressing the LINK, not its target), and one directory has many
+ * spellings — a case variant, a `\\?\` prefix, an 8.3 short name, a mapped
+ * drive. Each of them walked straight past this guard and turned "delete this
+ * row" into a recursive delete of the whole project. `dev`+`ino` is the
+ * identity the filesystem itself uses, and it does not care how the path is
+ * spelled — read as `bigint`, because the file id is 64-bit and a JS number
+ * rounds it above 2^53, at which point two unrelated entries compare equal and
+ * a legitimate delete is refused as "the workspace root".
+ *
+ * `lstat` (not `stat`) is deliberate, and so is the removal below using the
+ * same call: the question is whether THIS ENTRY is the root, so a symlink is
+ * its own identity, never its target's. A link pointed at the root therefore
+ * stays deletable — only the link goes, no recursion — which is what the
+ * string compare did. The spellings above, the actual way a project was lost,
+ * are all still refused. A target that cannot be lstat'ed (it may legitimately
+ * be gone) falls back to the spelling.
+ */
+async function isWorkspaceRoot(target: string, root: string): Promise<boolean> {
+  try {
+    const [entry, base] = await Promise.all([
+      lstat(target, { bigint: true }),
+      lstat(root, { bigint: true }),
+    ])
+    // No inode = no identity: fall back to the spelling.
+    if (entry.ino === 0n || base.ino === 0n) return sameSpelling(target, root)
+    return entry.dev === base.dev && entry.ino === base.ino
+  } catch {
+    return sameSpelling(target, root)
+  }
 }
 
 /** Whether a path exists (ENOENT → false; other failures propagate). */
@@ -165,8 +211,8 @@ export async function renameWorkspaceEntry(input: WorkspaceRenameInput): Promise
   if (name === '' || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
     throw new SidebarError('bad-request', 'name must be a single path segment', 400)
   }
-  const { absolute, real, realCwd } = await resolveEntry(cwd, path)
-  if (real === realCwd) {
+  const { absolute, realCwd } = resolveEntry(cwd, path)
+  if (await isWorkspaceRoot(absolute, realCwd)) {
     throw new SidebarError('fs-error', 'cannot rename the workspace root', 400)
   }
   if (basename(absolute) === name) return { path: absolute }
@@ -210,7 +256,7 @@ export async function mkdirWorkspaceEntry(input: WorkspaceMkdirInput): Promise<{
   if (name === '' || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
     throw new SidebarError('bad-request', 'name must be a single path segment', 400)
   }
-  const { absolute } = await resolveEntry(cwd, path)
+  const { absolute } = resolveEntry(cwd, path)
   const destination = await ensureWorkspaceWritePath(cwd, join(absolute, name))
   if (await pathExists(destination)) {
     throw new SidebarError('fs-error', `"${name}" already exists`, 409)
@@ -346,8 +392,8 @@ export interface WorkspaceRemoveInput {
  */
 export async function removeWorkspaceEntry(input: WorkspaceRemoveInput): Promise<{ path: string }> {
   const { cwd, path } = input
-  const { absolute, real, realCwd } = await resolveEntry(cwd, path)
-  if (real === realCwd) {
+  const { absolute, realCwd } = resolveEntry(cwd, path)
+  if (await isWorkspaceRoot(absolute, realCwd)) {
     throw new SidebarError('fs-error', 'cannot remove the workspace root', 400)
   }
   try {

@@ -342,7 +342,17 @@ export function GitLens(props: GitLensProps) {
   /** The history's own failure state: an empty list must not claim "no commits"
    *  when the log call failed. */
   const [logFailed, setLogFailed] = useState(false)
-  const [commitMsg, setCommitMsg] = useState('')
+  /** Commit drafts, one per scope: the Commit button asks only for a message
+   *  and a staged row, so a draft typed against another project would submit
+   *  verbatim under this one. Keyed rather than cleared on a scope swap, so a
+   *  kept-mounted tab shows a conversation its own message when it comes back
+   *  (#712). */
+  const [commitDrafts, setCommitDrafts] = useState<Record<string, string>>({})
+  const draftKey = `${scope.sessionId}\u0000${scope.cwd ?? ''}`
+  const commitMsg = commitDrafts[draftKey] ?? ''
+  const writeDraft = (text: string): void => {
+    setCommitDrafts(prev => ({ ...prev, [draftKey]: text }))
+  }
   const [busy, setBusy] = useState(false)
   /** Whether a commit-message suggestion is being generated host-side (the
    *  host streams the diff through the harness LLM — no agent is spawned). */
@@ -562,6 +572,15 @@ export function GitLens(props: GitLensProps) {
     setRepoChoices([])
     clearDerived()
     setViewError(null)
+    // The three destructive entry points are aimed at a ROW of the previous
+    // scope: the menus carry that row's path and `confirmPending` executes a
+    // closure over it, while `gitScopeNow()` already reads the NEW scope — so
+    // a discard/revert/cherry-pick confirmed here would land in the project
+    // that took over the pane (same class as the file tree's cross-session
+    // delete).
+    setFileMenu(null)
+    setHistoryMenu(null)
+    setConfirm(null)
     if (visible) void refresh(false)
     // Granular scope fields: the refresh identity is stable, only a real
     // session/cwd change restarts the chain.
@@ -646,7 +665,7 @@ export function GitLens(props: GitLensProps) {
     void runAction(
       () => api.gitCommit(gitScopeNow(), message, selectedWorktree),
       errorMessage,
-      () => { setCommitMsg('') },
+      () => { writeDraft('') },
     ).finally(() => { setCommitting(false) })
   }
 
@@ -664,7 +683,7 @@ export function GitLens(props: GitLensProps) {
     setActionError(null)
     try {
       const { message } = await api.gitSuggestMessage(gitScopeNow(), isZh() ? 'zh' : 'en', selectedWorktree)
-      setCommitMsg(message)
+      writeDraft(message)
     } catch (reason) {
       if (reason instanceof SidebarApiError && reason.code === 'git-suggest-empty') {
         setActionError(t('suggestCommitEmpty'))
@@ -1093,7 +1112,7 @@ export function GitLens(props: GitLensProps) {
                 aria-busy={busy || suggesting}
                 aria-label={t('commitPlaceholder')}
                 rows={1}
-                onChange={(event) => { setCommitMsg(event.currentTarget.value); setActionError(null) }}
+                onChange={(event) => { writeDraft(event.currentTarget.value); setActionError(null) }}
                 onKeyDown={(event) => {
                   if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') commit()
                   // Ctrl/Cmd+G drafts the message, mirroring the button (the

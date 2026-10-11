@@ -81,6 +81,8 @@ const POLL_MS = 250
 
 interface Harness {
   container: HTMLDivElement
+  /** Render — or RE-render in place, as a session swap does. */
+  show: (sessionId: string, cwd: string) => Promise<void>
   unmount: () => void
 }
 
@@ -88,23 +90,27 @@ async function mountTree(): Promise<Harness> {
   const container = document.createElement('div')
   document.body.append(container)
   const root: Root = createRoot(container)
-  await act(async () => {
-    root.render(createElement(FileTree, {
-      sessionId: 's1',
-      cwd: '/tmp',
-      expanded: [],
-      revealed: [],
-      onToggle: () => {},
-      onOpenFile: () => {},
-      onReferenceFile: () => {},
-      refreshTick: 0,
-      onUploadRequest: () => {},
-      busy: false,
-    }))
-    await Promise.resolve()
-  })
+  const show = async (sessionId: string, cwd: string): Promise<void> => {
+    await act(async () => {
+      root.render(createElement(FileTree, {
+        sessionId,
+        cwd,
+        expanded: [],
+        revealed: [],
+        onToggle: () => {},
+        onOpenFile: () => {},
+        onReferenceFile: () => {},
+        refreshTick: 0,
+        onUploadRequest: () => {},
+        busy: false,
+      }))
+      await Promise.resolve()
+    })
+  }
+  await show('s1', '/tmp')
   return {
     container,
+    show,
     unmount: () => { act(() => { root.unmount() }); container.remove() },
   }
 }
@@ -421,5 +427,32 @@ describe('FileTree zip and download', () => {
     expect(archiveBuild).toHaveBeenCalledTimes(2)
     await poll()
     await flush()
+  })
+
+  it('does not resurrect a build that was still starting when the scope changed', async () => {
+    // The swap settles the archive. A build answering only afterwards used to
+    // pump its job id back in, restarting the poller in a project that never
+    // asked for a zip — and reporting the failure there.
+    let resolveBuild!: (value: { id: string; entries: number }) => void
+    archiveBuild.mockImplementationOnce(() => new Promise((resolve) => { resolveBuild = resolve }))
+
+    harness = await mountTree()
+    click(rowByName(harness.container, 'a.ts'), { ctrlKey: true })
+    click(rowByName(harness.container, 'b.ts'), { ctrlKey: true })
+    rightClick(rowByName(harness.container, 'b.ts'))
+    clickMenuitem('Zip and download (2 items)')
+    expect(archiveBuild).toHaveBeenCalledTimes(1)
+
+    // Another session takes over the same mounted instance.
+    await harness.show('s2', '/tmp/beta')
+    await flush()
+
+    // The build answers only now.
+    await act(async () => { resolveBuild({ id: 'job-stale', entries: 2 }) })
+    await flush()
+    await poll()
+
+    expect(archiveStatus).not.toHaveBeenCalled()
+    expect(progressLine(harness.container)).toBeNull()
   })
 })

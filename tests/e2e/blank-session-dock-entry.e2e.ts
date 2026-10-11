@@ -1,5 +1,5 @@
 /**
- * 空白会话的面板入口 —— issue #698 / #623 的**部署级**门（0.2.0-rc.1 实测现场）。
+ * 空白会话的面板入口 —— issue #698 / #623 的**部署级**门（0.2.0-rc.2 实测现场）。
  *
  * 0.2.0 里空白会话仍渲染会话头，但只渲染 leading + corner（宿主的「Open right sidebar」
  * 按钮）；`header.utilities` / `header.actions` 两个槽**不渲染**，插件挂在 utilities 上的

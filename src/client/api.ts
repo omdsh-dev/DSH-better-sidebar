@@ -356,12 +356,16 @@ export const api = {
    */
   fsTrees: (scope: SessionScope, paths: readonly string[], exclude?: readonly string[], signal?: AbortSignal) =>
     call<{ levels: FsLevel[] }>('fs.trees', scopePayload(scope, { paths: [...paths], exclude }), signal),
-  /** Global recursive file-name search rooted at the session cwd (the editor
-   *  side panel's search box); matches are cwd-relative '/'-separated paths,
-   *  and `dirs` names the subset that is a directory (the list navigates the
-   *  tree for those — `fs.read` refuses a directory). `exclude` carries the
-   *  explorerExclude pref: matched entries never match and are never
-   *  descended (host-side, in lockstep with the tree). */
+  /** Global recursive file search rooted at the session cwd (the editor
+   *  side panel's search box). A name query matches cwd-relative
+   *  '/'-separated paths; a separator-carrying fragment matches by PATH;
+   *  a query naming one path (absolute, `~/…`, `./x`, `../x`) is stat'ed
+   *  through the same resolution fs.read uses and yields the RESOLVED
+   *  absolute target as the single match. `dirs` names the subset that is a
+   *  directory (the list navigates the tree for those — `fs.read` refuses a
+   *  directory). `exclude` carries the explorerExclude pref: matched entries
+   *  never match and are never descended (host-side, in lockstep with the
+   *  tree; a pasted direct-open path is explicit intent and skips it). */
   fsSearch: (scope: SessionScope, query: string, exclude?: readonly string[], signal?: AbortSignal) =>
     call<{ matches: string[]; dirs: string[]; truncated: boolean }>('fs.search', scopePayload(scope, { query, exclude }), signal),
   fsRead: (scope: SessionScope, path: string, signal?: AbortSignal) =>

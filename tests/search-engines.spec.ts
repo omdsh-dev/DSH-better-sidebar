@@ -12,6 +12,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import type { ChildProcess } from 'node:child_process'
+import { PassThrough } from 'node:stream'
 import { join, posix, win32 } from 'node:path'
 import { searchFiles } from '../src/fs-search.ts'
 import {
@@ -517,5 +519,121 @@ describe('real engines (only when installed)', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+/**
+ * streamLines settlement (#883): the promise must settle on the child's
+ * `close` event (process dead AND stdio drained), never on `exit` (process
+ * dead, stdout may still hold data — under host load the exit event wins
+ * the race and an exit-based settlement resolved with a still-empty lines
+ * array). The children below are scripted PassThrough streams driven through
+ * the `spawner` hook, so the racy ORDER itself — exit first, data still in
+ * flight, drained close later — is replayed deterministically.
+ */
+describe('streamLines settles on close, not exit', () => {
+  afterEach(() => {
+    resetEngines()
+  })
+
+  /**
+   * A scripted child: a PassThrough stdout plus a hand-rolled once-event
+   * registry, so the test chooses WHICH event fires and WHEN. The surface
+   * is exactly what streamLines touches (stdout, once, kill).
+   */
+  function fakeChild(): { child: ChildProcess; stdout: PassThrough; emit: (event: string, arg?: unknown) => void } {
+    const stdout = new PassThrough()
+    const listeners = new Map<string, Array<(arg?: unknown) => void>>()
+    const child = {
+      stdout,
+      once(event: string, listener: (arg?: unknown) => void): ChildProcess {
+        const list = listeners.get(event) ?? []
+        list.push(listener)
+        listeners.set(event, list)
+        return child as unknown as ChildProcess
+      },
+      kill(): boolean { return true },
+    }
+    const emit = (event: string, arg?: unknown): void => {
+      for (const listener of listeners.get(event) ?? []) listener(arg)
+    }
+    return { child: child as unknown as ChildProcess, stdout, emit }
+  }
+
+  /** Feed lines into the fake stdout and wait until readline consumed them
+   *  all (the stream's `end` fires after the last data chunk) — the state a
+   *  real child is in right before `close` fires. */
+  async function feed(stdout: PassThrough, lines: string): Promise<void> {
+    const ended = new Promise<void>(resolve => { stdout.once('end', resolve) })
+    stdout.write(lines)
+    stdout.end()
+    await ended
+  }
+
+  /** Whether `promise` is still pending after a short sample window. */
+  async function stillPending(promise: Promise<unknown>): Promise<boolean> {
+    let settled = false
+    void promise.then(() => { settled = true }, () => { settled = true })
+    await new Promise<void>(resolve => { setTimeout(resolve, 20) })
+    return !settled
+  }
+
+  /** Reject with `why` when the promise does not settle within `ms`. */
+  function withTimeout<T>(promise: Promise<T>, ms: number, why: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(why)), ms)
+      promise.then(
+        value => { clearTimeout(timer); resolve(value) },
+        error => { clearTimeout(timer); reject(error) },
+      )
+    })
+  }
+
+  /** Two queued fake children for runChild's fd pair (main run, then --type d). */
+  function fdPair(): [{ child: ChildProcess; stdout: PassThrough; emit: (e: string, a?: unknown) => void }, { child: ChildProcess; stdout: PassThrough; emit: (e: string, a?: unknown) => void }] {
+    const first = fakeChild()
+    const second = fakeChild()
+    const queue = [first, second]
+    setEngineHooks({
+      prober: async () => [fdProbe],
+      spawner: () => (queue.shift() ?? first).child,
+    })
+    return [first, second]
+  }
+
+  it('loses no line when exit fires while stdout still holds data', async () => {
+    const [first, second] = fdPair()
+    const call = runEngine(fdProbe, '/workspace', 'util', 10)
+    // The losing order of the real race, replayed: both processes die
+    // (exit) BEFORE their stdout has drained.
+    first.emit('exit', 0)
+    second.emit('exit', 0)
+    // Data is still in flight at exit time; it only reaches readline after.
+    await feed(first.stdout, 'src/util.ts\nsrc\n')
+    await feed(second.stdout, 'src\n')
+    // close has not fired yet, so nothing may have settled: an exit-based
+    // settlement has already resolved here with the still-empty lines (the
+    // bug this case pins — it made the pending probe fail first).
+    expect(await stillPending(call)).toBe(true)
+    first.emit('close', 0)
+    second.emit('close', 0)
+    await expect(withTimeout(call, 1_000, 'engine settled on exit instead of close (regression of #883)'))
+      .resolves.toEqual({ paths: ['src/util.ts', 'src'], dirs: ['src'], truncated: false })
+  })
+
+  it('a failed fd directory run rejects the whole engine call instead of reporting empty dirs', async () => {
+    const [first, second] = fdPair()
+    const call = runEngine(fdProbe, '/workspace', 'util', 10)
+    // The main run completes normally (both settlement events — the exit one
+    // keeps this case red under the old swallow-catch: the engine resolves
+    // with silently empty dirs there).
+    await feed(first.stdout, 'src/util.ts\n')
+    first.emit('exit', 0)
+    first.emit('close', 0)
+    // The --type d run dies: a rejection, which must reach runEngine's
+    // broken-marking instead of degrading into "zero directories".
+    second.emit('error', new Error('fd dirs stream exploded'))
+    await expect(call).rejects.toThrow('fd dirs stream exploded')
+    expect((await usableEngines()).map(probe => probe.engine)).toEqual([])
   })
 })
