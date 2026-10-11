@@ -295,6 +295,9 @@ export function createNativeSurface(ctx: Context, records: NativeTabRecords): Na
       return true
     },
     has: (tabId, sessionId) => sessionOf(tabId, sessionId) !== undefined,
+    // Every record, with the seat session its id belongs to: the file-tree
+    // reconciliation has to see the native pages too (#915).
+    pathTabs: () => records.entries(),
     flushPending,
     dispose: () => {
       unsubscribeList()

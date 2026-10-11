@@ -82,6 +82,13 @@ export interface NativeTabInfo {
 /** One native tab's plugin-side view state. */
 interface View {
   tab: SidebarTab
+  /**
+   * The SEAT session this tab is drawn in — the identity half of the record
+   * (see {@link viewKey}). Kept on the record itself so a caller that has to
+   * ACT on one (the file-tree reconciliation, say) can name the session its id
+   * belongs to: native ids restart per session, so an id alone is ambiguous.
+   */
+  seat: string
   scope: SessionScope
   /**
    * A PROJECTION of the session's expansion set (never an authoritative copy):
@@ -147,6 +154,15 @@ export interface NativeTabRecords {
      */
     mint?: () => { title?: string; meta?: unknown } | undefined
   }): View
+  /**
+   * Every record, each with the SEAT session its id belongs to.
+   *
+   * Native ids restart per session (several sessions' `tab1` are alive at once
+   * through `keepMounted`), so a caller that has to act on records — the
+   * file-tree reconciliation after a rename or a delete (#915) — needs both
+   * halves of the identity. Read-only snapshot.
+   */
+  entries(): readonly { sessionId: string; tab: SidebarTab }[]
   /** One record by its seat session and native tab id. */
   get(sessionId: string, id: string): View | undefined
   /** Whether this seat session has a record for the id. */
@@ -257,6 +273,7 @@ export function createNativeTabRecords(): NativeTabRecords {
         // that dropped it opened with an empty address bar.
         const path = params?.path ?? params?.url
         const minted: View = {
+          seat: sessionId,
           tab: {
             id,
             type: kind as TabType,
@@ -314,6 +331,7 @@ export function createNativeTabRecords(): NativeTabRecords {
       views.set(key, next)
       return next
     },
+    entries: () => [...views.values()].map(view => ({ sessionId: view.seat, tab: view.tab })),
     get: (sessionId, id) => views.get(viewKey(sessionId, id)),
     has: (sessionId, id) => views.has(viewKey(sessionId, id)),
     update(sessionId, id, patch) {
@@ -345,12 +363,11 @@ export function createNativeTabRecords(): NativeTabRecords {
     },
     retain(sessions) {
       let dropped = false
-      for (const key of [...views.keys()]) {
-        // The key's prefix is the seat session; a session id may itself carry
-        // the separator only if the host allowed one, so split on the first.
-        const separator = key.indexOf('::')
-        const owner = separator === -1 ? key : key.slice(0, separator)
-        if (!sessions.has(owner)) {
+      // The seat rides on the record itself (never re-parsed out of the key):
+      // a session id may itself carry the separator if the host ever allowed
+      // one, and `entries()` needs the same half anyway.
+      for (const [key, view] of [...views.entries()]) {
+        if (!sessions.has(view.seat)) {
           views.delete(key)
           // The ledger is part of the record (see `drop`): a session the user
           // deleted must not leave its revisions behind.

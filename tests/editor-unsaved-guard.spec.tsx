@@ -228,12 +228,12 @@ describe('tree close-on-delete', () => {
     service.openTab({ type: 'editor', title: 'a.ts', path: '/tmp/a.ts', id: 'editor:/tmp/a.ts' })
     setEditorDirty('editor:/tmp/a.ts', true, 'tree-close', '/tmp/a.ts')
 
-    closePathTabs(ctx, store, '/tmp/a.ts', 'discard?')
+    closePathTabs(ctx, '/tmp/a.ts', 'discard?')
     expect(confirmSpy).toHaveBeenCalledWith('discard?')
     expect(openTabIds(store)).toContain('editor:/tmp/a.ts')
 
     confirmSpy.mockReturnValue(true)
-    closePathTabs(ctx, store, '/tmp/a.ts', 'discard?')
+    closePathTabs(ctx, '/tmp/a.ts', 'discard?')
     expect(openTabIds(store)).not.toContain('editor:/tmp/a.ts')
   })
 })

@@ -298,14 +298,15 @@ export function EditorHost(props: {
     })
   }
 
-  // Tree mutations reconcile the OPEN tabs (both split trees, the bottom
-  // panel, free windows): a rename retargets its tab to the new path; a
-  // delete closes tabs at or under the removed path. See tree-mutations.ts.
+  // Tree mutations reconcile the OPEN pages in BOTH carriers (the bottom
+  // workbench's trees and the native right Sidebar's records): a rename
+  // retargets the pages showing that path; a delete closes the pages at or
+  // under it. See tree-mutations.ts.
   const onPathRenamed = (oldPath: string, newPath: string): void => {
-    retargetPathTabs(ctx, store, oldPath, newPath)
+    retargetPathTabs(ctx, oldPath, newPath)
   }
   const onPathDeleted = (path: string): void => {
-    closePathTabs(ctx, store, path, t('closeUnsavedConfirm'))
+    closePathTabs(ctx, path, t('closeUnsavedConfirm'))
   }
 
   // The viewer's toolbar, hoisted into THIS header: the text editor reports

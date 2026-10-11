@@ -546,6 +546,22 @@ export interface SidebarSurface {
   activate(tabId: string, sessionId?: string): boolean
   /** Whether a tab id belongs to the native surface (same `sessionId` rule as `update`). */
   has(tabId: string, sessionId?: string): boolean
+  /**
+   * Every page this carrier holds that displays a file path, each with the
+   * session its id belongs to. Optional: a stub or older carrier contributes
+   * nothing and the reconciliation simply sees the other carrier (the bottom
+   * workbench lives in the store, which the service reads itself).
+   */
+  pathTabs?(): readonly { sessionId: string; tab: SidebarTab }[]
+}
+
+/** One open page that displays a file, plus the session its tab id belongs to
+ *  (native ids restart per session, so an actor needs both halves). */
+export interface PathTabRef {
+  readonly sessionId: string
+  readonly id: string
+  readonly path: string
+  readonly title: string
 }
 
 /**
@@ -664,11 +680,26 @@ export interface BetterSidebarService {
   /** Subscribe to snapshot changes (session switch, state changes, prefs changes). Returns the disposer. */
   subscribeState(listener: () => void): () => void
   /**
+   * Every open page that carries a file path — **both carriers** — each with
+   * the session its tab id belongs to.
+   *
+   * Internal collaboration with the file-tree reconciliation
+   * (`tree-mutations.ts`, #915): with the native surface installed the editor
+   * lands on the right Sidebar by default, so a bottom-workbench-only walk
+   * missed the common case entirely — a rename left the tab pointing at the
+   * old path and the next save recreated the renamed-away file.
+   */
+  pathTabs(): readonly PathTabRef[]
+  /**
    * Update an open tab's display fields (title / path / meta); a missing tab id
    * is a no-op. `sessionId` names the seat session the tab lives in — native
    * ids restart per session and several sessions' tabs stay mounted at once,
    * so a component that knows its scope should pass it; omitted, a native id
    * resolves against the mounted seat.
+   *
+   * The transient landing line a reference carried (#826) is dropped when the
+   * patch changes the path: it belongs to the navigation that delivered the
+   * file, not to the tab.
    */
   updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }, sessionId?: string): void
   /**
@@ -1231,7 +1262,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       }
     }
     let closed: SidebarTab | undefined
-    store.reduce((state) => {
+    reduceTabIn(sessionId, (state) => {
       // Unknown tab ids are a strict no-op: no state churn, no notify, no
       // pointless localStorage rewrite (mirrors updateTab's short-circuit).
       if (!tabOpenIn(state, tabId)) return state
@@ -1256,6 +1287,42 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
   /** Store changes: session switch, state mutations, prefs writes. */
   const subscribeState = (listener: () => void): (() => void) => store.subscribe(listener)
 
+  /**
+   * Every page that displays a file path, from BOTH carriers: the bottom
+   * workbench's tabs in every CACHED session's state, and the native right
+   * sidebar's records (#915).
+   *
+   * Deduped by (session, id): a native id and a workbench id never name the
+   * same page (native ids are the host's `tab1`…, workbench ids are minted by
+   * the plugin), but the same id may exist in several sessions — which is
+   * exactly why the session rides along.
+   */
+  const pathTabs = (): readonly PathTabRef[] => {
+    const out: PathTabRef[] = []
+    const seen = new Set<string>()
+    const push = (sessionId: string, tab: SidebarTab): void => {
+      const path = tab.path
+      if (path === undefined) return
+      const key = `${sessionId}::${tab.id}`
+      if (seen.has(key)) return
+      seen.add(key)
+      out.push({ sessionId, id: tab.id, path, title: tab.title })
+    }
+    for (const [sessionId, state] of store.getSessionStates()) {
+      for (const leaf of allLeaves(state.bottomSplits)) for (const tab of leaf.tabs) push(sessionId, tab)
+    }
+    for (const entry of surface?.pathTabs?.() ?? []) push(entry.sessionId, entry.tab)
+    return out
+  }
+
+  /** Apply one reducer to the session an id belongs to: the active session
+   *  publishes (the UI follows), a background one is written silently — the
+   *  same split `openTab`'s targeted opens use. */
+  const reduceTabIn = (sessionId: string | undefined, reducer: (state: SidebarState) => SidebarState): void => {
+    if (sessionId !== undefined && sessionId !== store.getSnapshot().sessionId) store.reduceFor(sessionId, reducer)
+    else store.reduce(reducer)
+  }
+
   /** Patch an open tab's display fields (a missing tab id is a no-op). */
   const updateTab = (
     tabId: string,
@@ -1263,7 +1330,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     sessionId?: string,
   ): void => {
     if (surface?.update(tabId, patch, sessionId) === true) return
-    store.reduce((state) => patchTab(state, tabId, {
+    reduceTabIn(sessionId, (state) => patchTab(state, tabId, {
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.path !== undefined ? { path: patch.path } : {}),
       ...(patch.meta !== undefined ? { meta: patch.meta } : {}),
@@ -1343,6 +1410,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     getSnapshot,
     subscribeState,
     updateTab,
+    pathTabs,
     activateTab,
     openFile,
     hostRouteUrl: (path: string): string => resolveHostRoute(path).href,

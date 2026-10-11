@@ -775,8 +775,20 @@ interface BetterSidebarService {
    *  （含 React 自己的渲染订阅），也不会把整条侧栏换成错误条——所以
    *  listener 里读宿主 state 的字段仍请自己判空，别指望异常能当哨兵。 */
   subscribeState(listener: () => void): () => void
-  /** 更新一个已打开 tab 的显示字段（title/path/meta）；tab 不存在时 no-op */
-  updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }): void
+  /** 更新一个已打开 tab 的显示字段（title/path/meta）；tab 不存在时 no-op。
+   *  `sessionId`（v0.25.0+ 起可选第三参）命名该 id 所属的会话：原生 id 每会话
+   *  重新计数、多会话同时挂着，所以知道 scope 的调用方应当传；不传时原生 id 按
+   *  在屏座位解析。指向**非当前会话**会话的写入走 store 的定向通道（不通知 UI），
+   *  与 `openTab(seed, scope)` 的定向打开同一套语义。 */
+  updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }, sessionId?: string): void
+  /** **显示着某个文件路径的所有页面**（两个承载面：底部工作台的 tab + 原生右侧
+   *  栏的记录），每项带上该 id 所属的会话——原生 id 每会话重新计数，所以只给 id
+   *  是有歧义的（v0.25.0+）。
+   *
+   *  这是给**文件树的重命名 / 删除调解**（`tree-mutations.ts`，#915）用的内部协作
+   *  面：装了原生承载面之后编辑器默认落在右侧栏，只看底部工作台会漏掉绝大多数
+   *  页面——改名后页面仍指着旧路径，下一次保存就把改名掉的文件重新创建出来。 */
+  pathTabs(): readonly { sessionId: string; id: string; path: string; title: string }[]
   /** 激活一个已打开的 tab（tab 栏点击路径；触发 descriptor.onActivate；
    *  未知 id 严格 no-op）；scope（v0.12.0+）随回调传递，同 closeTab */
   activateTab(tabId: string, scope?: SessionScope): void
