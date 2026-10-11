@@ -550,7 +550,7 @@ export function EditorHost(props: {
                 // the preview renders the just-saved content. A dirty draft
                 // (or a failed save) suppresses the reload — the draft only
                 // lives in the editor instance and a remount would drop it.
-                if (toolbar.mode === 'edit' && toolbar.dirty !== true && toolbar.saveState !== 'failed') {
+                if (toolbar.mode !== 'preview' && toolbar.dirty !== true && toolbar.saveState !== 'failed') {
                   setReloadSeq(sequence => sequence + 1)
                 }
                 controlsRef.current?.setMode('preview')
@@ -563,8 +563,9 @@ export function EditorHost(props: {
               className={clsx(css.editorModeButton, toolbar.mode === 'edit' && css.editorModeActive)}
               onClick={() => { controlsRef.current?.setMode('edit') }}
             >
-              {t('edit')}
+              {t('sourceMode')}
             </button>
+            {toolbar.writingAvailable !== undefined && <button type="button" className={clsx(css.editorModeButton, toolbar.mode === 'writing' && css.editorModeActive)} disabled={!toolbar.writingAvailable} title={!toolbar.writingAvailable ? t('writingUnsupported') : undefined} onClick={() => { controlsRef.current?.setMode('writing') }}>{t('writing')}</button>}
           </div>
         )}
         {toolbar?.dirty === true && <span className={css.dirtyDot} title={t('unsaved')} />}

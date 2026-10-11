@@ -113,7 +113,7 @@ function MockViewer(props: {
   onToolbarControls?: (controls: EditorToolbarControls | null) => void
 }) {
   const { content, initialMode, onToolbarState, onToolbarControls } = props
-  const [mode, setMode] = useState<'preview' | 'edit'>(initialMode)
+  const [mode, setMode] = useState<EditorToolbarState['mode']>(initialMode)
   const [draft, setDraft] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   useEffect(() => {

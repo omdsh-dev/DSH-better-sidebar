@@ -30,6 +30,7 @@ import { setupReactAct } from './test-utils.ts'
 setupReactAct()
 
 const CTX = {} as Context
+let sessionId = 0
 
 /** Four lines plus the empty one the trailing newline opens; the from-offset
  *  of line N is 4 × (N − 1), and the LAST line starts at 16. */
@@ -38,7 +39,7 @@ const CONTENT = 'aaa\nbbb\nccc\nddd\n'
 const base = (overrides: Partial<FileViewerProps> = {}): FileViewerProps => ({
   ctx: CTX,
   store: createSidebarStore(),
-  scope: { sessionId: 's1', cwd: '/workspace' },
+  scope: { sessionId: `line-jump-${sessionId}`, cwd: '/workspace' },
   path: '/workspace/a.ts',
   title: 'a.ts',
   viewerId: 'code',
@@ -55,6 +56,7 @@ const anchors: number[] = []
 const originalDispatch = EditorView.prototype.dispatch
 
 beforeEach(() => {
+  sessionId += 1
   anchors.length = 0
   // Record the selections the component dispatches, and let the real dispatch
   // run: the reveal reads the document back out of the view right after

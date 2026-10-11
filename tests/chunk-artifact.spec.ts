@@ -9,6 +9,7 @@
  * instead of crashing on ENOENT.
  */
 import { existsSync, readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
 // Browser globals first: chunk bodies probe `self`/`document` at evaluation
 // (CodeMirror's UA probe).
@@ -17,6 +18,7 @@ import { CHUNK_EXTERNALS } from '../src/client/chunk-loader.ts'
 import { CHUNK_NAMES } from '../src/bundle-route.ts'
 
 const g = globalThis as Record<string, unknown>
+const require = createRequire(import.meta.url)
 
 /**
  * The chunk set, DERIVED from the host route's allowlist — the same registry
@@ -56,6 +58,7 @@ describe.skipIf(!chunksBuilt)('built chunk artifacts', () => {
       const factory = registry[name] as (require: (spec: string) => unknown) => Record<string, unknown>
       expect(() => factory((spec) => {
         if (!table.has(spec)) throw new Error(`require("${spec}") missed the module table`)
+        if (name === 'writing' && (spec === 'react' || spec === 'react/jsx-runtime')) return require(spec)
         return table.get(spec)
       }), name).not.toThrow()
     }

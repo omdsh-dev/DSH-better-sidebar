@@ -71,7 +71,7 @@ function modeButton(container: HTMLDivElement, label: string): HTMLButtonElement
 /** The active mode toggle carries one extra class (the "active" marker). */
 function activeMode(container: HTMLDivElement): string {
   const preview = modeButton(container, 'Preview')
-  const edit = modeButton(container, 'Edit')
+  const edit = modeButton(container, 'Source')
   return edit.classList.length > preview.classList.length ? 'edit' : 'preview'
 }
 
