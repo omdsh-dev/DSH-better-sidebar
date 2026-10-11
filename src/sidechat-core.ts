@@ -546,10 +546,18 @@ export interface SidechatThreadInfo {
   live: boolean
   /** Live lifecycle state; absent on cold threads. */
   status?: 'idle' | 'running'
-  /** Provider route of the live agent. */
+  /** Provider route the next Side Chat message will use. */
   provider?: string
-  /** Model id of the live agent. */
+  /** Model id the next Side Chat message will use. */
   model?: string
+  /** Effort selected for the next Side Chat turn. */
+  reasoningEffort?: string
+  /** Route of an in-flight request, kept separate from the next-turn route. */
+  activeProvider?: string
+  /** Model id of an in-flight request. */
+  activeModel?: string
+  /** Effort recorded for an in-flight request. */
+  activeReasoningEffort?: string
   /** The recorded agent preset (live header, or persisted on cold reads). */
   preset?: string
 }
@@ -620,6 +628,21 @@ export interface SidechatModelSelection {
   reasoningEffort?: string
 }
 
+/** Narrow persisted and host model records to the shared Side Chat route shape. */
+export function parseSidechatModelSelection(value: unknown): SidechatModelSelection | undefined {
+  if (value === null || typeof value !== 'object') return undefined
+  const selection = value as { provider?: unknown; model?: unknown; reasoningEffort?: unknown }
+  if (typeof selection.provider !== 'string' || selection.provider === ''
+    || typeof selection.model !== 'string' || selection.model === '') return undefined
+  return {
+    provider: selection.provider,
+    model: selection.model,
+    ...(typeof selection.reasoningEffort === 'string' && selection.reasoningEffort !== ''
+      ? { reasoningEffort: selection.reasoningEffort }
+      : {}),
+  }
+}
+
 /**
  * The model selection a session CURRENTLY runs, projected from its durable
  * log (mirror of the core `modelSelection` projection — replicated here
@@ -647,7 +670,7 @@ export function parentModelSelection(
   let lastUsed: SidechatModelSelection | undefined
   for (const event of events) {
     if (event.type === 'model/selection') {
-      const selection = looseSelection(dataOf(event))
+      const selection = parseSidechatModelSelection(dataOf(event))
       if (selection !== undefined) pending = selection
       continue
     }
@@ -658,7 +681,7 @@ export function parentModelSelection(
     } | undefined)
     const config = header?.config
     if (config === null || typeof config !== 'object') continue
-    const selection = looseSelection(config as Record<string, unknown>)
+    const selection = parseSidechatModelSelection(config)
     if (selection === undefined) continue
     const isDefaultEffort = header?.adapterDefaults?.reasoningEffort === true
     lastUsed = {
@@ -680,16 +703,4 @@ function sameSelection(
   return left.provider === right.provider
     && left.model === right.model
     && left.reasoningEffort === right.reasoningEffort
-}
-
-/** Narrow one loose record into a model selection (non-empty strings only). */
-function looseSelection(data: Record<string, unknown>): SidechatModelSelection | undefined {
-  const { provider, model, reasoningEffort } = data
-  if (typeof provider !== 'string' || provider === '') return undefined
-  if (typeof model !== 'string' || model === '') return undefined
-  return {
-    provider,
-    model,
-    ...(typeof reasoningEffort === 'string' && reasoningEffort !== '' ? { reasoningEffort } : {}),
-  }
 }

@@ -568,6 +568,12 @@ export interface SidebarSessionsService {
   binding?(id: string): {
     session: {
       rename(title: string): Promise<unknown>
+      projections: {
+        faceOf(key: string): {
+          getSnapshot(): unknown
+          subscribe(fn: () => void): () => void
+        }
+      }
     }
   } | undefined
   /**

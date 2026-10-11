@@ -10,8 +10,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
 import { act } from 'react-dom/test-utils'
+import { createSnapshotStore, type SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { renderRoot, setupReactAct } from './test-utils.ts'
 import { SideChatView } from '../src/client/SideChatView.tsx'
+import { api } from '../src/client/api.ts'
 import { attachLocale } from '../src/client/locales.ts'
 import type { Context, SidebarSessionList } from '../src/context-types.ts'
 import type { SidebarTab } from '../src/client/state.ts'
@@ -64,13 +66,17 @@ const EVENTS = [
 
 /** A subscribable sessions-list snapshot (mirror of the runtime list feed). */
 function makeStore(initial: SidebarSessionList) {
-  const snapshot = initial
+  let snapshot = initial
   const listeners = new Set<() => void>()
   return {
     getSnapshot: (): SidebarSessionList => snapshot,
     subscribe: (fn: () => void) => {
       listeners.add(fn)
       return () => { listeners.delete(fn) }
+    },
+    setSnapshot(next: SidebarSessionList): void {
+      snapshot = next
+      for (const fn of [...listeners]) fn()
     },
   }
 }
@@ -97,13 +103,31 @@ function makeConnection(initial: 'connected' | 'disconnected' | 'connecting') {
 
 type Connection = ReturnType<typeof makeConnection>
 
-/** The client context face SideChatView touches (everything inert but list). */
-function makeCtx(store: ReturnType<typeof makeStore>, connection?: Connection): Context {
+/** 构造 SideChatView 使用的客户端上下文与会话选择投影。 */
+function makeCtx(store: ReturnType<typeof makeStore>, connection?: Connection): Context & {
+  modelSelectionProjection: SnapshotStore<unknown>
+  setBindingReady(ready: boolean): void
+} {
+  let bindingReady = true
+  const modelSelectionProjection = createSnapshotStore<unknown>({ lastUsed: null, next: null })
   return {
-    sessions: { list: store },
+    sessions: {
+      list: store,
+      binding: () => bindingReady
+        ? { session: { rename: async () => {}, projections: { faceOf: () => modelSelectionProjection } } }
+        : undefined,
+    },
     ...(connection !== undefined ? { connection } : {}),
-    get: (key: string) => (key === 'betterSidebar' ? { updateTab: vi.fn(), openTab: vi.fn() } : undefined),
-  } as unknown as Context
+    modelSelectionProjection,
+    setBindingReady(ready: boolean): void { bindingReady = ready },
+    get: (key: string) => {
+      if (key === 'betterSidebar') return { updateTab: vi.fn(), openTab: vi.fn() }
+      return undefined
+    },
+  } as unknown as Context & {
+    modelSelectionProjection: SnapshotStore<unknown>
+    setBindingReady(ready: boolean): void
+  }
 }
 
 /** The archive set feed + the archiving service — the two host faces the
@@ -128,6 +152,7 @@ function makeArchiveHost(archivedIds: string[] = []): ArchiveHost {
 function makeArchiveCtx(store: ReturnType<typeof makeStore>, host: ArchiveHost): Context {
   return {
     sessions: { list: store },
+    on: () => () => {},
     get: (key: string) => {
       if (key === 'betterSidebar') return host.betterSidebar
       if (key === 'workspaces') {
@@ -171,7 +196,7 @@ beforeEach(() => {
       return jsonResponse({ ok: true, value: { events: EVENTS } })
     }
     if (method === 'sidechat.info') {
-      return jsonResponse({ ok: true, value: { live: false, provider: 'deepseek', preset: 'side' } })
+      return jsonResponse({ ok: true, value: { live: false, provider: 'deepseek', model: 'chat', preset: 'side' } })
     }
     return jsonResponse({ ok: true, value: {} })
   })
@@ -179,6 +204,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   attachLocale(undefined)
 })
 
@@ -254,6 +280,107 @@ describe('SideChatView rendering', () => {
     expect(connected.container.textContent ?? '').not.toContain('连接已断开')
     connected.unmount()
   })
+
+  it('refreshes an idle thread model after parent selection changes and when shown again', async () => {
+    let model = 'model-a'
+    vi.spyOn(api, 'sidechatInfo').mockImplementation(async () => ({
+      live: false,
+      provider: 'provider',
+      model,
+    }))
+    const ctx = makeCtx(threadStore())
+    const props = viewProps(ctx)
+    const view = renderRoot(createElement(SideChatView, props))
+    await act(async () => { await Promise.resolve() })
+    expect(view.container.textContent).toContain('provider/model-a')
+
+    model = 'model-b'
+    await act(async () => {
+      ctx.modelSelectionProjection.set({ lastUsed: null, next: { provider: 'provider', model } })
+      await Promise.resolve()
+    })
+    expect(view.container.textContent).toContain('provider/model-b')
+
+    view.rerender(createElement(SideChatView, { ...props, visible: false }))
+    model = 'model-c'
+    view.rerender(createElement(SideChatView, { ...props, visible: true }))
+    await act(async () => { await Promise.resolve() })
+    expect(view.container.textContent).toContain('provider/model-c')
+    view.unmount()
+  })
+
+  it('shows the executing model followed by the next parent model', async () => {
+    vi.spyOn(api, 'sidechatInfo').mockResolvedValue({
+      live: true,
+      status: 'running',
+      provider: 'provider-b',
+      model: 'model-b',
+      activeProvider: 'provider-a',
+      activeModel: 'model-a',
+    })
+    const view = renderRoot(createElement(SideChatView, viewProps(makeCtx(threadStore()))))
+    await act(async () => { await Promise.resolve() })
+
+    expect(view.container.textContent).toContain('provider-a/model-a → provider-b/model-b')
+    view.unmount()
+  })
+
+  it('subscribes to the parent model projection after its binding becomes ready', async () => {
+    let model = 'model-a'
+    vi.spyOn(api, 'sidechatInfo').mockImplementation(async () => ({
+      live: false,
+      provider: 'provider',
+      model,
+    }))
+    const store = threadStore()
+    const ctx = makeCtx(store)
+    ctx.setBindingReady(false)
+    const view = renderRoot(createElement(SideChatView, viewProps(ctx)))
+    await act(async () => { await Promise.resolve() })
+    expect(view.container.textContent).toContain('provider/model-a')
+
+    ctx.setBindingReady(true)
+    await act(async () => {
+      store.setSnapshot({ ...store.getSnapshot() })
+      await Promise.resolve()
+    })
+    model = 'model-b'
+    await act(async () => {
+      ctx.modelSelectionProjection.set({ lastUsed: null, next: { provider: 'provider', model } })
+      await Promise.resolve()
+    })
+
+    expect(view.container.textContent).toContain('provider/model-b')
+    expect(view.container.textContent).not.toContain('provider/model-a')
+    view.unmount()
+  })
+
+  it('invalidates an info request when the bound thread changes', async () => {
+    let finishOldInfo!: (info: Awaited<ReturnType<typeof api.sidechatInfo>>) => void
+    const oldInfo = new Promise<Awaited<ReturnType<typeof api.sidechatInfo>>>(resolve => {
+      finishOldInfo = resolve
+    })
+    vi.spyOn(api, 'sidechatInfo').mockImplementation(childId => childId === 't1'
+      ? oldInfo
+      : Promise.resolve({ live: false, provider: 'provider', model: 'model-b' }))
+    const props = viewProps(makeCtx(threadStore()))
+    const view = renderRoot(createElement(SideChatView, props))
+    await act(async () => { await Promise.resolve() })
+    view.rerender(createElement(SideChatView, {
+      ...props,
+      tab: { ...props.tab, meta: { threadId: 't2' } },
+    }))
+    await act(async () => { await Promise.resolve() })
+    expect(view.container.textContent).toContain('provider/model-b')
+
+    await act(async () => {
+      finishOldInfo({ live: true, provider: 'provider', model: 'model-a' })
+      await oldInfo
+    })
+    expect(view.container.textContent).toContain('provider/model-b')
+    view.unmount()
+  })
+
 })
 
 describe('SideChatView archive', () => {
