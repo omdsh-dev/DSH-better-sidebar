@@ -23,6 +23,7 @@ import { registerBottomToggle } from './sidebar/bottom-toggle.tsx'
 import { createNativeSurface } from './native/surface.ts'
 import { isTargetAvailable, openInterceptedLink, registerLinkInterception, shouldTakeOverLink } from './link-intercept.ts'
 import { registerImeGuard } from './ime-guard.ts'
+import { registerChatMarkdownMentions } from './chat-mentions.ts'
 import { registerSettingsNavIcon } from './settings-nav-icon.ts'
 import { loadBootDecision } from './prefs.ts'
 import { SideCardSection } from './SideCardSection.tsx'
@@ -169,6 +170,7 @@ export function apply(ctx: Context): void {
   // are ready by the time the sidebar renders.
   const service = createBetterSidebarService(sidebarStore)
   ctx.provide('betterSidebar', service)
+  ctx.effect(() => registerChatMarkdownMentions(ctx), 'dsh-better-sidebar: chat Markdown mentions')
   // The native right-Sidebar surface: the plugin's content is registered as
   // DSH tab types (one per descriptor) and every open routes there, so the
   // right column belongs to the host and only the bottom workbench stays
