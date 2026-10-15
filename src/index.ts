@@ -192,12 +192,12 @@ function requireLineNumber(payload: unknown, key: string): number {
 }
 
 /**
- * Resolve a relative path an EDITOR surface carried (the file tree, the
- * editor buffer, and `fs.read`, which the untracked-diff fallback reads
- * through): the session-relative interpretation wins when it names an
- * existing path, with the repository root as the fallback. Git's
- * status/diff ROWS deliberately do NOT come through here — they are
- * repository-root-relative by construction, see {@link resolveStatusPath}.
+ * Resolve a path a GIT surface carried (git.blame, git.diff-head): the
+ * session-relative interpretation wins when it names an existing path, with
+ * the repository root as the fallback — git's own paths are repo-root
+ * relative, so the root is a real fallback here, never a silent one for a
+ * missing session file. File links do NOT come through here: `fs.read` and
+ * `fs.readPage` resolve from the session cwd only, missing is missing.
  */
 async function resolveGitPath(cwd: string, raw: string, selected?: string): Promise<string> {
   if (isAbsolute(raw)) return requireAbsolute(resolveSessionPath(cwd, raw))
@@ -747,12 +747,11 @@ function buildApi(
     },
     'fs.read': async (payload) => {
       const { cwd } = await cwdOf(payload)
-      // Relative paths are git-derived (status/diff report repo-root-relative
-      // names; the untracked diff view reads the file through this route). A
-      // child-repo path is relative to the selected repoRoot, not the session
-      // cwd; thread it so the path resolves inside the authorized workspace.
+      // File links are session-relative. Git callers must provide an absolute
+      // path or explicitly select a repository; missing files never change base.
       const selected = selectedRepoOf(payload)
-      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected))
+      const base = selected === undefined ? cwd : await git.repoRoot(cwd, selected)
+      const path = await ensureWorkspacePath(base, requireString(payload, 'path'))
       return await readText(path)
     },
     // One byte window of a large text file, for the read-only paged preview.
@@ -762,7 +761,8 @@ function buildApi(
     'fs.readPage': async (payload) => {
       const { cwd } = await cwdOf(payload)
       const selected = selectedRepoOf(payload)
-      const path = await ensureWorkspacePath(cwd, await resolveGitPath(cwd, requireString(payload, 'path'), selected))
+      const base = selected === undefined ? cwd : await git.repoRoot(cwd, selected)
+      const path = await ensureWorkspacePath(base, requireString(payload, 'path'))
       const record = payload as { offset?: unknown } | null
       const offset = typeof record?.offset === 'number' && Number.isFinite(record.offset) && record.offset >= 0
         ? Math.floor(record.offset)

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { activeWorktreeRootOf } from '../src/active-worktree.ts'
@@ -89,7 +89,61 @@ describe('active worktree root', () => {
     try {
       initRepo(repo, 'a.txt')
       const ctx = sessionCtx(repo, [{ cwd: join(repo, 'src') }])
-      await expect(activeWorktreeRootOf(ctx, 's-no-worktree', repo)).resolves.toBe(realpathSync.native(repo))
+      // The root is the session cwd AS THE SESSION HOLDS IT: no repository-top
+      // level stands in for it, so nothing canonicalizes it either (a macOS
+      // tmpdir keeps its `/var` spelling instead of git's `/private/var`).
+      await expect(activeWorktreeRootOf(ctx, 's-no-worktree', repo)).resolves.toBe(repo)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  // A relative link (`tools/a.md`) is resolved against this root, so lifting it
+  // to the repository top level opens `<repo>/tools/a.md` instead of
+  // `<repo>/<subdir>/tools/a.md`. ASCII, CJK, and CJK-in-NFD are three separate
+  // cases on purpose: they must fail TOGETHER, which is what separates a
+  // git-top-level lift from a Unicode normalization artifact — normalization
+  // could only move the non-ASCII spelling, and it could never drop a whole
+  // path segment.
+  for (const [label, sessionId, subdirectory] of [
+    ['an ASCII', 's-subdir-ascii', 'sub-en'],
+    ['a non-ASCII', 's-subdir-cjk', '社媒运营'],
+    // A name with a REAL canonical decomposition: `café` NFD is `e` + U+0301,
+    // so this case would move under normalization while the two above cannot.
+    ['a canonically decomposed (NFD) non-ASCII', 's-subdir-nfd', 'café'.normalize('NFD')],
+  ] as const) {
+    it(`keeps ${label} subdirectory session cwd instead of lifting it to the repository top level`, async () => {
+      const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-active-root-')))
+      const repo = join(root, 'repo')
+      const base = join(repo, subdirectory)
+      try {
+        initRepo(repo, 'a.txt')
+        mkdirSync(join(base, 'tools'), { recursive: true })
+        writeFileSync(join(base, 'tools', 'a.md'), '# a\n')
+        const ctx = sessionCtx(base, [])
+        await expect(activeWorktreeRootOf(ctx, sessionId, base)).resolves.toBe(base)
+        // The reported symptom, asserted on the resolved path itself.
+        expect(readFileSync(join(await activeWorktreeRootOf(ctx, sessionId, base), 'tools', 'a.md'), 'utf8'))
+          .toBe('# a\n')
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+  }
+
+  it('still follows a linked worktree when the session cwd is a subdirectory', async () => {
+    // The subdirectory root must not cost the worktree-following feature: a
+    // session that MOVED into a linked worktree is still followed.
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-active-root-')))
+    const repo = join(root, 'repo')
+    const worktree = join(root, 'worktree')
+    try {
+      initRepo(repo, 'a.txt')
+      mkdirSync(join(repo, 'src'), { recursive: true })
+      git(repo, ['worktree', 'add', '-q', '-b', 'agent', worktree])
+      const ctx = sessionCtx(join(repo, 'src'), [{ cwd: worktree, path: join(worktree, 'a.txt') }])
+      await expect(activeWorktreeRootOf(ctx, 's-subdir-worktree', join(repo, 'src')))
+        .resolves.toBe(realpathSync.native(worktree))
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

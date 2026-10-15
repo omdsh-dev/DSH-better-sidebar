@@ -14,8 +14,12 @@
  * and only top levels whose `--absolute-git-dir` differs from their
  * `--git-common-dir` (i.e. real LINKED worktrees, not the main checkout and
  * not submodules) are adopted. The highest-scoring linked worktree of the
- * newest event that has one wins; when there is no evidence the session cwd is
- * kept (lifted to the repository top level for subdirectory sessions).
+ * newest event that has one wins; with no such evidence the session cwd is
+ * kept exactly as it stands, a session living in a subdirectory of its
+ * repository included. The repository top level is never a root on its own:
+ * this value is what a relative path in a file link resolves against, so
+ * lifting it would open `<repo>/tools/a.md` for a session whose cwd is
+ * `<repo>/<subdir>`.
  *
  * Resolutions are cached process-wide, so the client's periodic re-ask is
  * cheap after the first scan.
@@ -62,13 +66,6 @@ const linkedWorktreeCache = new Map<string, boolean>()
  */
 function pathKeyOf(value: string): string {
   return value.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase()
-}
-
-/** Whether `target` is `base` itself or lives under it. */
-function pathUnderOf(base: string, target: string): boolean {
-  const b = pathKeyOf(base)
-  const t = pathKeyOf(target)
-  return t === b || t.startsWith(`${b}/`)
 }
 
 /** `git rev-parse --show-toplevel` of an existing directory, or undefined. */
@@ -240,7 +237,7 @@ async function sessionEventsOf(ctx: Context, sessionId: string): Promise<readonl
  * @param ctx - host plugin context.
  * @param sessionId - session whose tool calls are inspected.
  * @param base - the authoritative session cwd (already resolved by the caller).
- * @returns the active linked worktree, the repository top level, or `base`.
+ * @returns the active linked worktree the session moved into, or `base`.
  */
 export async function activeWorktreeRootOf(ctx: Context, sessionId: string, base: string): Promise<string> {
   if (base === '') return base
@@ -259,10 +256,12 @@ export async function activeWorktreeRootOf(ctx: Context, sessionId: string, base
     activeWorktreeRootCache.set(sessionId, { root: base, base, expires: Date.now() + ACTIVE_ROOT_TTL_MS })
     return base
   }
-  const canonicalTop = requireAbsolute(top)
-  const effectiveBase = pathUnderOf(base, canonicalTop) ? base : canonicalTop
-  const active = await activeRootFromEvents(await sessionEventsOf(ctx, sessionId), effectiveBase)
-  const root = active ?? effectiveBase
+  // `base` stays the root: it is the base a relative link path resolves
+  // against, so replacing it with the repository top level would resolve
+  // `<subdir>/tools/a.md` as `<repo>/tools/a.md`. Only a linked worktree the
+  // session's own tool calls name replaces it.
+  const active = await activeRootFromEvents(await sessionEventsOf(ctx, sessionId), base)
+  const root = active ?? base
   activeWorktreeRootCache.set(sessionId, { root, base, expires: Date.now() + ACTIVE_ROOT_TTL_MS })
   return root
 }

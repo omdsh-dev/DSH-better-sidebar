@@ -724,28 +724,28 @@ describe('session cwd resolution over the API route', () => {
     }
   })
 
-  it('fs.read resolves repo-relative paths (untracked diff fallback)', async () => {
+  it('fs.read resolves paths from an explicitly selected repository', async () => {
     const route = mount({
       sessions: {
         get: () => ({ header: { cwd: join(process.cwd(), 'src') } }),
       },
     })
-    const result = await invoke(route, 'fs.read', { sessionId: 's-sub', path: 'src/git.ts' })
+    const result = await invoke(route, 'fs.read', { sessionId: 's-sub', repoRoot: process.cwd(), path: 'src/git.ts' })
     expect(result.ok).toBe(true)
     const value = result as unknown as { ok: boolean; value?: { kind: string; content: string } }
     expect(value.value?.kind).toBe('text')
     expect(value.value?.content).toContain('runGit')
   })
 
-  it('reads repo-root-relative paths outside a nested session workspace (fence removed)', async () => {
+  it('reads an explicitly addressed file outside a nested session workspace', async () => {
     const route = mount({
       sessions: {
         get: () => ({ header: { cwd: join(process.cwd(), 'src') } }),
       },
     })
-    // ⚠️ PERMISSION CHANGE: `package.json` sits ABOVE the nested session cwd.
-    // The containment guard is gone, so this now reads like any other path.
-    const result = await invoke(route, 'fs.read', { sessionId: 's-sub', path: 'package.json' })
+    // Explicit parent traversal remains allowed; a missing relative file must
+    // not acquire the same meaning implicitly.
+    const result = await invoke(route, 'fs.read', { sessionId: 's-sub', path: '../package.json' })
     expect(result.ok).toBe(true)
     expect((result.value as { content?: string } | undefined)?.content).toContain('"name"')
   })
