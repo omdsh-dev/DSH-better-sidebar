@@ -17,7 +17,11 @@ describe('dsh-better-sidebar plugin export shape', () => {
     const unwrapped = loader.unwrapExports(sidebar) as Record<string, unknown>
     expect(unwrapped).toBe(sidebar)
     expect(unwrapped.name).toBe('dsh-better-sidebar')
-    expect(unwrapped.inject).toEqual(['webServer', 'sessions', 'webRuntime', 'tools'])
+    // `webRuntime` is deliberately absent: DSH 0.2.1-alpha.2 deleted it, and
+    // requiring it strands the host half as `pending (waiting for service:
+    // webRuntime)` — no /sidebar route ever registers, every request lands on
+    // the host's 405 method fallback.
+    expect(unwrapped.inject).toEqual(['webServer', 'sessions', 'tools'])
     expect(unwrapped.Config).toBeDefined()
     expect(typeof unwrapped.apply).toBe('function')
   })
