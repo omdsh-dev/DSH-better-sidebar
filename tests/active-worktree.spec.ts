@@ -117,4 +117,75 @@ describe('active worktree root', () => {
       rmSync(root, { recursive: true, force: true })
     }
   })
+
+  it('does not adopt a nested repository worktree that lives INSIDE the workspace (#952)', async () => {
+    // A container workspace (itself a repo) holding sub-projects is normal
+    // content: re-rooting the explorer into `W/nested/wt` hides every sibling.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-active-root-'))
+    const container = join(root, 'W')
+    const nested = join(container, 'nested')
+    const nestedWt = join(nested, 'wt')
+    try {
+      initRepo(container, 'a.txt')
+      initRepo(nested, 'b.txt')
+      git(nested, ['worktree', 'add', '-q', '-b', 'feat', nestedWt])
+      const ctx = sessionCtx(container, [{ cwd: nestedWt, file_path: join(nestedWt, 'b.txt') }])
+      // The workspace root is the answer, not the nested checkout.
+      await expect(activeWorktreeRootOf(ctx, 's-nested', container)).resolves.toBe(realpathSync.native(container))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('does not adopt the worktrees of a nested BARE repository (#952, reported layout)', async () => {
+    // The reporter's real shape: `W/paper_downloader` is a bare repo and
+    // `W/paper_downloader/{main,local}` are its linked worktrees.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-active-root-'))
+    const container = join(root, 'W')
+    const seed = join(root, 'seed')
+    const bare = join(container, 'paper_downloader')
+    const bareMain = join(bare, 'main')
+    try {
+      initRepo(container, 'a.txt')
+      initRepo(seed, 'b.txt')
+      git(root, ['clone', '--bare', '-q', seed, bare])
+      // `-b wt`: the bare clone's own HEAD already owns `main`, and one branch
+      // cannot be checked out in two worktrees.
+      git(bare, ['worktree', 'add', '-q', bareMain, '-b', 'wt'])
+      const ctx = sessionCtx(container, [{ cwd: bareMain, path: join(bareMain, 'b.txt') }])
+      await expect(activeWorktreeRootOf(ctx, 's-bare', container)).resolves.toBe(realpathSync.native(container))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('still follows the SAME repository worktree inside the workspace (#802 / #947 layout)', async () => {
+    // `.worktrees/<branch>` of the session's own repo IS the session moving.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-active-root-'))
+    const repo = join(root, 'repo')
+    const worktree = join(repo, 'frontend', '.worktrees', 'wt')
+    try {
+      initRepo(repo, 'a.txt')
+      mkdirSync(join(repo, 'frontend', '.worktrees'), { recursive: true })
+      git(repo, ['worktree', 'add', '-q', '-b', 'agent', worktree])
+      const ctx = sessionCtx(repo, [{ cwd: worktree, path: join(worktree, 'a.txt') }])
+      await expect(activeWorktreeRootOf(ctx, 's-same-repo', repo)).resolves.toBe(realpathSync.native(worktree))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('still follows a worktree of the same repository OUTSIDE the workspace', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-active-root-'))
+    const repo = join(root, 'repo')
+    const worktree = join(root, 'outside-wt')
+    try {
+      initRepo(repo, 'a.txt')
+      git(repo, ['worktree', 'add', '-q', '-b', 'agent', worktree])
+      const ctx = sessionCtx(repo, [{ cwd: worktree, path: join(worktree, 'a.txt') }])
+      await expect(activeWorktreeRootOf(ctx, 's-outside', repo)).resolves.toBe(realpathSync.native(worktree))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })

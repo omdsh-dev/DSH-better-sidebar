@@ -13,7 +13,13 @@
  * `git rev-parse --show-toplevel` (falling back to its directory for files),
  * and only top levels whose `--absolute-git-dir` differs from their
  * `--git-common-dir` (i.e. real LINKED worktrees, not the main checkout and
- * not submodules) are adopted. The highest-scoring linked worktree of the
+ * not submodules) are adopted. A linked worktree that sits INSIDE the session
+ * workspace is adopted only when it belongs to the SAME repository — a
+ * `git worktree add .worktrees/x` of the session's own repo is the session
+ * moving, while a nested repository's worktree is ordinary content of the
+ * workspace: re-rooting the explorer into it hides every sibling directory
+ * (#952). Outside the workspace any linked worktree is adopted, which is PR
+ * #802's cross-repository case. The highest-scoring adoptable worktree of the
  * newest event that has one wins; when there is no evidence the session cwd is
  * kept (lifted to the repository top level for subdirectory sessions).
  *
@@ -50,7 +56,7 @@ const ACTIVE_ROOT_PATH_PATTERN = /[A-Za-z]:(?:\\|\/)[^\\/\s"'\x60,;|)<>*?]+(?:[\
  */
 const activeWorktreeRootCache = new Map<string, { root: string; base: string; expires: number }>()
 const pathTopCache = new Map<string, string | undefined>()
-const linkedWorktreeCache = new Map<string, boolean>()
+const gitIdentityCache = new Map<string, GitIdentity | undefined>()
 
 /**
  * Normalized IDENTITY of a path (case- and separator-insensitive), for
@@ -158,28 +164,98 @@ async function topOfActivePath(value: string): Promise<string | undefined> {
 }
 
 /**
- * Whether a git top level is a LINKED worktree: its git dir lives under the
- * common dir (`<main>/.git/worktrees/<name>`) instead of being it. Submodules
- * report the same dir for both, so they are excluded.
+ * The git identity of one checkout, as `git rev-parse` reports it: the
+ * checkout's OWN git dir and the COMMON dir every checkout of that repository
+ * shares. Two paths belong to the same repository exactly when their common
+ * dirs match, which is the only reliable way to tell "the session moved into a
+ * worktree of its own repo" from "the workspace contains another repo's
+ * worktree" (#952) — a bare repo's checkouts and a container workspace's
+ * sub-projects are indistinguishable by path alone.
+ *
+ * `main checkout: gitDir === commonDir === <repo>/.git`; `linked worktree:
+ * gitDir = <repo>/.git/worktrees/<name>, commonDir = <repo>/.git`; `submodule:
+ * both are <super>/.git/modules/<name>`.
  */
-async function isLinkedWorktree(top: string): Promise<boolean> {
-  const key = pathKeyOf(top)
-  const cached = linkedWorktreeCache.get(key)
-  if (cached !== undefined) return cached
-  let linked = false
+interface GitIdentity {
+  /** The checkout's own git dir (`--absolute-git-dir`). */
+  gitDir: string
+  /** The repository's shared git dir (`--git-common-dir`). */
+  commonDir: string
+}
+
+/**
+ * `git rev-parse` identity of one directory, cached process-wide (a probe is a
+ * spawn). `undefined` for a directory that is not in a repository, or whose
+ * answer is unusable — callers treat that as "no identity", never as a match.
+ * @param dir - an existing directory (or any path inside one).
+ * @returns the identity, or undefined.
+ */
+async function gitIdentityOf(dir: string): Promise<GitIdentity | undefined> {
+  const key = pathKeyOf(dir)
+  if (gitIdentityCache.has(key)) return gitIdentityCache.get(key)
+  let identity: GitIdentity | undefined
   try {
-    const out = (await runGit(top, ['rev-parse', '--absolute-git-dir', '--git-common-dir'])).trim().split(/\r?\n/)
+    const out = (await runGit(dir, ['rev-parse', '--absolute-git-dir', '--git-common-dir'])).trim().split(/\r?\n/)
     const gitDir = out[0]
     const commonRaw = out[1] ?? ''
     if (gitDir !== undefined && gitDir !== '' && commonRaw !== '') {
-      const common = isAbsolute(commonRaw) ? commonRaw : join(top, commonRaw)
-      linked = pathKeyOf(requireAbsolute(gitDir)) !== pathKeyOf(requireAbsolute(common))
+      // The common dir comes back relative when the checkout is the main one
+      // (`.git`); resolve it against the probed directory, not the process cwd.
+      identity = {
+        gitDir: requireAbsolute(gitDir),
+        commonDir: requireAbsolute(isAbsolute(commonRaw) ? commonRaw : join(dir, commonRaw)),
+      }
     }
   } catch {
-    linked = false
+    identity = undefined
   }
-  linkedWorktreeCache.set(key, linked)
-  return linked
+  gitIdentityCache.set(key, identity)
+  return identity
+}
+
+/**
+ * Whether a git top level is a LINKED worktree: its git dir lives under the
+ * common dir (`<main>/.git/worktrees/<name>`) instead of being it. Submodules
+ * report the same dir for both, so they are excluded.
+ *
+ * The two dirs are compared through {@link gitIdentityOf}, which returns the
+ * COMMON dir as well: the same value identifies the repository a checkout
+ * belongs to, which is what {@link isAdoptableTop} compares against the
+ * session workspace.
+ */
+async function isLinkedWorktree(top: string): Promise<boolean> {
+  const identity = await gitIdentityOf(top)
+  return identity !== undefined && pathKeyOf(identity.gitDir) !== pathKeyOf(identity.commonDir)
+}
+
+/**
+ * Whether a linked worktree is the session MOVING there, rather than ordinary
+ * content of the workspace it already roots (#952).
+ *
+ * Outside the workspace any linked worktree counts — that is exactly PR #802's
+ * case (the session's header cwd points at one repository and the agent works
+ * in a worktree of another). Inside the workspace the answer depends on the
+ * repository: `.worktrees/<branch>` of the session's OWN repo is the session
+ * working on a branch, which the explorer should follow; the linked worktrees
+ * of a repository NESTED in the workspace (a bare repo's checkouts, a
+ * container workspace's sub-projects) are ordinary content, and adopting one
+ * re-roots the explorer into that single subdirectory and hides every sibling
+ * — the reported 20-of-27-sessions bug.
+ *
+ * @param top - a candidate's `git rev-parse --show-toplevel`.
+ * @param base - the session's effective workspace root.
+ * @returns whether the candidate may become the active root.
+ */
+async function isAdoptableTop(top: string, base: string): Promise<boolean> {
+  if (!(await isLinkedWorktree(top))) return false
+  // A base of `/` (or of another filesystem root) puts everything "inside";
+  // keeping the check would switch the whole feature off, so treat it as no
+  // workspace at all.
+  if (pathKeyOf(base) === '' || !pathUnderOf(base, top)) return true
+  const candidate = await gitIdentityOf(top)
+  const workspace = await gitIdentityOf(base)
+  return candidate !== undefined && workspace !== undefined
+    && pathKeyOf(candidate.commonDir) === pathKeyOf(workspace.commonDir)
 }
 
 /** The newest linked worktree the session's tool/call paths resolve to. */
@@ -203,7 +279,7 @@ async function activeRootFromEvents(events: readonly SidebarSessionEvent[], base
       if (top === undefined) continue
       const topKey = pathKeyOf(top)
       if (topKey === baseKey) continue
-      if (!(await isLinkedWorktree(top))) continue
+      if (!(await isAdoptableTop(top, base))) continue
       const entry = scores.get(topKey)
       if (entry === undefined) scores.set(topKey, { top, score: candidate.score })
       else entry.score += candidate.score

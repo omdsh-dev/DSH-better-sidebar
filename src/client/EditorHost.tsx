@@ -235,13 +235,13 @@ export function EditorHost(props: {
         ctx.get('betterSidebar')?.updateTab(tab.id, { path: absolute, title: baseName(absolute) }, scope.sessionId)
       }
     } else {
-      openSidebarFile(ctx, scope.sessionId, absolute)
+      openSidebarFile(ctx, scope.sessionId, absolute, { cwd: scope.cwd })
     }
   }
 
   /** The context menu's explicit "new tab" escape (per-path dedupe). */
   const openFileNewTab = (absolute: string): void => {
-    openSidebarFile(ctx, scope.sessionId, absolute)
+    openSidebarFile(ctx, scope.sessionId, absolute, { cwd: scope.cwd })
   }
 
   /**
