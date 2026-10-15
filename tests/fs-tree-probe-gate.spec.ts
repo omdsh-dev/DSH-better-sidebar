@@ -94,7 +94,11 @@ describe('listDirectory probe budget', () => {
 
       const counted = countingGate()
       const listing = await listDirectory(dir, 1000, undefined, counted.gate)
-      expect(counted.calls()).toBe(5)
+      // Ten probes, all through the one shared gate. The level holds five rows, all
+      // directories (four singleton chains plus `plain`), and each row costs one
+      // compact probe plus one modified-time probe: the timestamp probe is the only
+      // one that does not narrow its own work to a subset of rows.
+      expect(counted.calls()).toBe(10)
       expect(listing.entries.filter(entry => entry.compact === true).map(entry => entry.name).sort())
         .toEqual(['only-0', 'only-1', 'only-2', 'only-3'])
 
@@ -126,8 +130,10 @@ describe('listDirectory probe budget', () => {
       const counted = countingGate()
       // Exactly the shape the `fs.trees` route builds: one gate, many levels.
       const listings = await Promise.all(levels.map(level => listDirectory(level, 1000, undefined, counted.gate)))
-      // 3 levels × 3 directory rows: every probe went through the shared gate.
-      expect(counted.calls()).toBe(9)
+      // 3 levels × 3 directory rows, two probes per row (compact + modified time):
+      // every one of them went through the single shared gate, which is what this
+      // case pins — a per-level bound would have spent the same count here.
+      expect(counted.calls()).toBe(18)
       for (const listing of listings) {
         expect(listing.entries.filter(entry => entry.compact === true)).toHaveLength(3)
       }

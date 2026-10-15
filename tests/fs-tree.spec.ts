@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { compareEntries, isWithin, invalidateDirectoryCache, listDirectory, parentOf, requireAbsolute, rootLabel } from '../src/fs-tree.ts'
@@ -155,6 +155,37 @@ describe('listDirectory (capped rows + cache)', () => {
     writeFileSync(join(dir, 'a.txt'), 'a')
     const listing = await listDirectory(dir, 10)
     expect(listing.entries[0]!.path).toBe(`${dir}${sep}a.txt`)
+  })
+
+  it('dates each row without opening it', async () => {
+    const dir = tempDir()
+    writeFileSync(join(dir, 'a.txt'), 'a')
+    mkdirSync(join(dir, 'sub'))
+    const listing = await listDirectory(dir, 10)
+    const file = listing.entries.find(entry => entry.name === 'a.txt')
+    const folder = listing.entries.find(entry => entry.name === 'sub')
+    // `readdir` returns no timestamps, so the row must come from the host's stat
+    // probe: that probe is what makes a stale artifact tellable without opening it.
+    expect(typeof file?.mtimeMs).toBe('number')
+    expect(typeof folder?.mtimeMs).toBe('number')
+    // A real instant, not a placeholder: NaN or 0 would also pass a bare typeof.
+    expect(file!.mtimeMs!).toBeGreaterThan(Date.now() - 60_000)
+    expect(file!.mtimeMs!).toBeLessThanOrEqual(Date.now() + 60_000)
+  })
+
+  it('leaves the time absent instead of failing the level when a stat fails', async () => {
+    const dir = tempDir()
+    writeFileSync(join(dir, 'a.txt'), 'a')
+    // A dangling symlink is the case this exists for: the row is listed so it still
+    // appears, but nothing can be stat'ed behind it.
+    symlinkSync(join(dir, 'missing-target'), join(dir, 'dangling'))
+    const listing = await listDirectory(dir, 10)
+    const dangling = listing.entries.find(entry => entry.name === 'dangling')
+    expect(dangling).toBeDefined()
+    expect(dangling?.mtimeMs).toBeUndefined()
+    // Its readable sibling still dates itself: one failed probe is not a level-wide
+    // failure.
+    expect(typeof listing.entries.find(entry => entry.name === 'a.txt')?.mtimeMs).toBe('number')
   })
 
   it('serves a repeat listing from the TTL cache and re-reads after invalidation', async () => {

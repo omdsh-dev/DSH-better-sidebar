@@ -979,6 +979,27 @@ body[data-dsh-sidebar-dragging] .bottomPanel {
   display: none;
 }
 
+/* The last-modified column, pinned to the row's far right. It carries the auto
+   margin itself so it stays there while the hover affordances are hidden; once
+   one appears it owns the right edge and the time gives the margin up rather
+   than pushing the affordance inward. Dimmed to label-tertiary — it is
+   orientation, not content, and must not compete with the filename. Tabular
+   figures keep the column aligned down a level. */
+.explorerTime {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.explorerRow:hover .explorerTime,
+.explorerRow:focus-within .explorerTime {
+  margin-left: 0;
+}
+
 /* The hover-revealed @-reference button at the row's far right (and the
    transient "copied" label that replaces it after a copy). The only auto
    margin in the row absorbs the filename's spare width, so a short name

@@ -50,6 +50,8 @@ export interface FsEntry {
   /** Directory rows only: the contents are exactly one non-symlink child
    *  — the explorer folds such chains into one breadcrumb row. */
   compact?: boolean
+  /** Last-modified time in milliseconds; absent when the host could not read it. */
+  mtimeMs?: number
 }
 
 /** One level of a `fs.trees` batch: a listing, or that level's failure. */

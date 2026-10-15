@@ -40,6 +40,12 @@ export interface SidebarFsEntry {
    * never qualify: a self-referential link would otherwise fold forever.
    */
   compact?: boolean
+  /**
+   * Last-modified time in milliseconds, or undefined when the stat probe could
+   * not read it. A symlink reports its TARGET's time, matching what opening the
+   * row would show.
+   */
+  mtimeMs?: number
 }
 
 /** One listed level. */
@@ -206,6 +212,11 @@ async function readDirectory(path: string, maxEntries: number, exclude?: Exclude
   // isDir/broken), so the client can fold compact chains without an extra
   // round trip per collapsed level.
   await probeCompactRows(rows, exclude, gate)
+  // Last, because it is the one probe that visits EVERY row rather than a subset:
+  // a symlink or directory chain narrows its own work, while a timestamp is wanted
+  // for files too. Going last also means a row the earlier probes could not resolve
+  // (a broken link) is already shaped correctly when this one skips it.
+  await probeModifiedTimes(rows, gate)
   rows.sort(compareEntries)
   return { path, entries: rows, truncated }
 }
@@ -267,9 +278,9 @@ export function createProbeGate(limit = PROBE_BUDGET): ProbeGate {
 
 /**
  * Visit every row with at most `concurrency` visitors in flight, in row order.
- * Both probes below spend one await per row (a network stat, an opendir) on a
+ * Every probe below spends one await per row (a network stat, an opendir) on a
  * level that can hold thousands of rows, so the bound has to exist — and be
- * shared, or the two probes drift into two different ones.
+ * shared, or the probes drift into different ones.
  */
 async function forEachRow(rows: readonly SidebarFsEntry[], concurrency: number, visit: (row: SidebarFsEntry) => Promise<void>): Promise<void> {
   let next = 0
@@ -306,6 +317,28 @@ async function probeSymlinkTargets(rows: SidebarFsEntry[], gate?: ProbeGate, con
     const info = await runProbe(gate, () => stat(row.path)).catch(() => undefined)
     row.isDir = info !== undefined ? info.isDirectory() : row.isDir
     row.broken = info === undefined
+  })
+}
+
+/** How many modified-time probes run in flight during one level listing. */
+const MTIME_PROBE_CONCURRENCY = 32
+
+/**
+ * Fill each row's `mtimeMs` from the filesystem.
+ *
+ * `readdir` returns no timestamps, so this costs one `stat` per row — the only
+ * probe here that does not narrow its own work, since a time is wanted for every
+ * row including files. It therefore goes through the same shared {@link ProbeGate}
+ * as the sibling probes, so a `fs.trees` batch stays inside one probe budget
+ * rather than adding a per-level bound on top of it. A row whose stat fails keeps
+ * `mtimeMs` undefined and renders without a time instead of failing the listing:
+ * a row can vanish between the read and the stat. The stat follows a symlink, so
+ * the row shows the time of the file that opening it would show.
+ */
+async function probeModifiedTimes(rows: SidebarFsEntry[], gate?: ProbeGate, concurrency = MTIME_PROBE_CONCURRENCY): Promise<void> {
+  await forEachRow(rows, concurrency, async (row) => {
+    const info = await runProbe(gate, () => stat(row.path)).catch(() => undefined)
+    row.mtimeMs = info?.mtimeMs
   })
 }
 

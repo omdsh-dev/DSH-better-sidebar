@@ -221,6 +221,37 @@ function AppGlyph(props: { entry: OpenInAppEntry }): ReactNode {
   return <img className={css.explorerAppIcon} src={icon} alt="" width={14} height={14} />
 }
 
+/**
+ * Compact last-modified label for one explorer row.
+ *
+ * A same-day file shows a time and an older one a date: the row is 28px tall and
+ * the label shares its line with a name that already ellipsizes, so it stays
+ * short. The tooltip carries the full stamp.
+ * @param mtimeMs - last-modified time in milliseconds.
+ * @returns the label, or an empty string for an unreadable timestamp.
+ */
+function formatModified(mtimeMs: number): string {
+  const date = new Date(mtimeMs)
+  if (Number.isNaN(date.getTime())) return ''
+  const now = new Date()
+  const sameDay = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate()
+  return sameDay
+    ? `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+    : `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+/**
+ * Full last-modified time for the row's tooltip.
+ * @param mtimeMs - last-modified time in milliseconds.
+ * @returns the locale string, or an empty string for an unreadable timestamp.
+ */
+function formatModifiedTitle(mtimeMs: number): string {
+  const date = new Date(mtimeMs)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString()
+}
+
 /** One file row's props. Everything is a primitive or a stable reference so
  *  memo() actually bails out. */
 interface FileRowProps {
@@ -284,6 +315,11 @@ const FileRow = memo(function FileRow(props: FileRowProps): ReactNode {
       {entry.isSymlink && <IconLinkOutlineRegular size={12} className={css.explorerSymlink} />}
       {gitTone !== undefined && gitLetter !== undefined && (
         <StatusBadge tone={badgeToneOf(gitTone)} title={gitToneLabel(gitTone)}>{gitLetter}</StatusBadge>
+      )}
+      {entry.mtimeMs !== undefined && (
+        <span className={css.explorerTime} title={formatModifiedTitle(entry.mtimeMs)}>
+          {formatModified(entry.mtimeMs)}
+        </span>
       )}
       {copied
         ? <span className={css.explorerCopied}>{t('copied')}</span>
@@ -373,6 +409,11 @@ const DirRow = memo(function DirRow(props: DirRowProps): ReactNode {
         {chain.length > 1 ? chain.map(link => link.name).join('/') : entry.name}
       </span>
       {entry.isSymlink && <IconLinkOutlineRegular size={12} className={css.explorerSymlink} />}
+      {entry.mtimeMs !== undefined && (
+        <span className={css.explorerTime} title={formatModifiedTitle(entry.mtimeMs)}>
+          {formatModified(entry.mtimeMs)}
+        </span>
+      )}
       {copied
         ? <span className={css.explorerCopied}>{t('copied')}</span>
         : (
