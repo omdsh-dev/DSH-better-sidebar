@@ -90,7 +90,7 @@ function req(
 }
 
 /** Mount apply() against a fake context with a replaceable webRuntime trust list. */
-function mount(initialTrustedHosts: readonly string[] = []): {
+function mount(initialTrustedHosts: readonly string[] = [], serviceName: 'webStartup' | 'webRuntime' | 'absent' = 'webRuntime', listenerHost?: string): {
   api: (r: IncomingMessage, s: ServerResponse) => Promise<void>
   upgrade: (path: string) => SidebarWebUpgradeRoute['handler']
   media: (r: IncomingMessage, s: ServerResponse) => Promise<void>
@@ -102,8 +102,8 @@ function mount(initialTrustedHosts: readonly string[] = []): {
   const upgrades: SidebarWebUpgradeRoute[] = []
   const effects: Array<() => void | (() => void)> = []
   const ctx = {
-    webRuntime: runtime,
     webServer: {
+      host: listenerHost,
       register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
       registerUpgrade: (route: SidebarWebUpgradeRoute) => { upgrades.push(route); return () => {} },
     },
@@ -116,7 +116,8 @@ function mount(initialTrustedHosts: readonly string[] = []): {
     inject: () => () => {},
     // The session/agent event feeds: nothing emits in these tests.
     on: () => () => {},
-    get: () => undefined,
+    get: (name: string) => name === serviceName ? runtime
+      : serviceName === 'webRuntime' && name === 'webStartup' ? { trustedHosts: [] } : undefined,
   }
   apply(ctx as never)
   const api = routes.find(route => route.path === '/sidebar/api')?.handler
@@ -153,6 +154,59 @@ function lanRequest(): IncomingMessage {
     origin: 'http://192.0.2.1:3080',
   }, '{"sessionId":"test-session"}')
 }
+
+describe.each(['webRuntime', 'webStartup'] as const)('remote-access trust (%s.trustedHosts)', (serviceName) => {
+  it('mounts without the other service and accepts configured authorities', async () => {
+    const { api, cleanup, setTrustedHosts } = mount(['example.com'], serviceName)
+    try {
+      const accepted = fakeRes()
+      await api(remoteDomainRequest(), accepted as unknown as ServerResponse)
+      expect(accepted.status).toBe(200)
+      setTrustedHosts([])
+      const refused = fakeRes()
+      await api(remoteDomainRequest(), refused as unknown as ServerResponse)
+      expect(refused.status).toBe(403)
+    } finally {
+      cleanup()
+    }
+  })
+})
+
+describe('concrete listener trust (0.2.1)', () => {
+  it.each(['192.0.2.1', '2001:db8::1'])('accepts the bound address %s without extra CLI hosts', async (host) => {
+    const { api, cleanup } = mount([], 'webStartup', host)
+    const authority = host.includes(':') ? `[${host}]:3080` : `${host}:3080`
+    try {
+      const res = fakeRes()
+      await api(req('POST', '/sidebar/api/session.cwd', { host: authority, origin: `http://${authority}` }, '{"sessionId":"test-session"}'), res as unknown as ServerResponse)
+      expect(res.status).toBe(200)
+      const foreign = fakeRes()
+      await api(remoteDomainRequest(), foreign as unknown as ServerResponse)
+      expect(foreign.status).toBe(403)
+    } finally {
+      cleanup()
+    }
+  })
+})
+
+describe('missing trust service', () => {
+  it('still registers routes, accepts loopback, and refuses remote HTTP and upgrades', async () => {
+    const { api, upgrade, cleanup } = mount(['example.com'], 'absent')
+    try {
+      const local = fakeRes()
+      await api(req('POST', '/sidebar/api/session.cwd', { host: '127.0.0.1:3080' }, '{"sessionId":"test-session"}'), local as unknown as ServerResponse)
+      expect(local.status).toBe(200)
+      const remote = fakeRes()
+      await api(remoteDomainRequest(), remote as unknown as ServerResponse)
+      expect(remote.status).toBe(403)
+      let destroyed = false
+      await upgrade('/sidebar/ws/agent-opens')(remoteDomainRequest(), { destroy: () => { destroyed = true } }, Buffer.alloc(0))
+      expect(destroyed).toBe(true)
+    } finally {
+      cleanup()
+    }
+  })
+})
 
 describe('remote-access trust (webRuntime.trustedHosts)', () => {
   it('accepts a reverse-proxy domain configured in webRuntime.trustedHosts', async () => {

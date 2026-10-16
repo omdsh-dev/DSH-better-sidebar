@@ -86,6 +86,8 @@ export interface SidebarWebUpgradeRoute {
 
 /** The webServer service face this plugin uses. */
 export interface SidebarWebServer {
+  /** Concrete listener address (0.2.1+); not the advertised public URL. */
+  readonly host?: string
   register(route: SidebarWebRoute): () => void
   registerUpgrade(route: SidebarWebUpgradeRoute): () => void
 }
@@ -799,8 +801,6 @@ export interface SidebarContextShape {
   webServer: SidebarWebServer
   /** The session store (host `.get`) and the client list feed (`.list`) faces. */
   sessions: SidebarSessionStore & SidebarSessionsService
-  /** The web runtime trust list (bind-derived). */
-  webRuntime: SidebarWebRuntime
   /** The client slot registry (register/inject). */
   slots: SidebarSlotsService
   /** The settings service face (prefs persistence + namespace reads). */

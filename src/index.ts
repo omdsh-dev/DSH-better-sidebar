@@ -19,7 +19,7 @@ import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
 import { parse as parseYaml } from 'yaml'
-import type { Context, SidebarHttpRequest, SidebarSessionEvent, SidebarSettingsService } from './context-types.ts'
+import type { Context, SidebarHttpRequest, SidebarSessionEvent, SidebarSettingsService, SidebarWebRuntime } from './context-types.ts'
 import {
   Config,
   resolveSidebarConfig,
@@ -110,8 +110,8 @@ export interface SidebarFsLevel {
   error?: string
 }
 
-/** Services required before mounting: the webserver routes, the session store, the web runtime's trusted hosts, and the tool registry. */
-export const inject = ['webServer', 'sessions', 'webRuntime', 'tools']
+/** Services required before mounting: the webserver routes, the session store, and the tool registry. */
+export const inject = ['webServer', 'sessions', 'tools']
 
 /** Content types for the media route, by extension. */
 const MEDIA_TYPES: Record<string, string> = {
@@ -1313,7 +1313,7 @@ async function importLegacyPrefs(
 
 /**
  * Plugin body: mount the fenced routes and the sidebar_open push socket.
- * @param ctx - host plugin context (webServer, sessions, webRuntime).
+ * @param ctx - host plugin context (webServer, sessions, tools).
  * @param config - deployment-provided limits; the Loader validates against
  * {@link Config} and fills defaults, direct callers get them from
  * {@link resolveSidebarConfig}.
@@ -1324,7 +1324,19 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // plus --trusted-host authorities) — the authoritative source the /api
   // gateway fence derives its list from. Read per request from the live
   // service value; a replaced list takes effect without a plugin restart.
-  const fence = (req: SidebarHttpRequest): boolean => isTrustedApiRequest(req, ctx.webRuntime.trustedHosts)
+  const fence = (req: SidebarHttpRequest): boolean => {
+    // 0.2.1 renamed webRuntime to webStartup. Neither is a mandatory mount
+    // dependency: requiring the old name leaves every route unregistered.
+    // On rc.2 both exist: webRuntime includes sampled LAN authorities while
+    // webStartup only holds CLI extras, so the resolved runtime must win.
+    const trust = ctx.get('webRuntime') ?? ctx.get('webStartup')
+    const trustedHosts = (trust as SidebarWebRuntime | undefined)?.trustedHosts ?? []
+    // 0.2.1 binds one concrete interface and admits that address separately
+    // from CLI extras. Preserve non-loopback access without trusting publicUrl.
+    const host = ctx.webServer.host
+    const authority = host?.includes(':') && !host.startsWith('[') ? `[${host}]` : host
+    return isTrustedApiRequest(req, authority === undefined ? trustedHosts : [...trustedHosts, authority])
+  }
   // The model-facing open-request registry: queues `sidebar_open` requests
   // per session and pushes them to connected sidebar views over the
   // `/sidebar/ws/agent-opens` socket.

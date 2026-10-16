@@ -208,7 +208,6 @@ function mount(setup: {
     },
     logger: { info: () => {}, warn: () => {} },
     profileContext: undefined,
-    webRuntime: { trustedHosts: [] },
     webServer: {
       register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
       registerUpgrade: (_route: SidebarWebUpgradeRoute) => () => {},
