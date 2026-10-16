@@ -4,6 +4,10 @@
 >
 > 📝 The Chinese [CHANGELOG](./CHANGELOG.md) is the authoritative, item-by-item record; this file carries the English summaries and has historically lagged behind it. Where the two disagree, the Chinese one is current.
 
+### Unreleased
+
+- 🐞 **The sidebar no longer pins itself to a deleted linked worktree** ([#960](https://github.com/omdsh-dev/DSH-better-sidebar/issues/960)): once a worktree was deleted externally (`git worktree remove`, or a plain folder delete), the process-wide path / top-level caches kept answering with it, so the file tree reported a missing folder and every git command reported "not a git repository" — with no recovery short of a restart. Cache hits now verify the directory still exists (one `stat()`, negligible next to the ~7ms git spawn these caches exist to avoid) and otherwise invalidate, falling back to the session cwd's repository.
+
 ### v0.27.0
 
 - **One Git page with Source Control and a read-only commit graph**: collapsible Changes and Graph sections, independent Merge / Staged / Changes groups, commit-message drafts, and a persistent branch/sync footer. The bounded graph reader supports branch filtering, lane connections, reference badges, hover details and commit inspection without checking out branches or changing refs. The shared preview keeps three tabs: Commit details / Content / Diff. Based on [#944](https://github.com/omdsh-dev/DSH-better-sidebar/pull/944) by @hairyf and [#969](https://github.com/omdsh-dev/DSH-better-sidebar/pull/969) by @vlln; the official lens tabs from [#939](https://github.com/omdsh-dev/DSH-better-sidebar/pull/939) by @hairyf remain, with no third graph lens.
