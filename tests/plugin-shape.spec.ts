@@ -17,7 +17,11 @@ describe('dsh-better-sidebar plugin export shape', () => {
     const unwrapped = loader.unwrapExports(sidebar) as Record<string, unknown>
     expect(unwrapped).toBe(sidebar)
     expect(unwrapped.name).toBe('dsh-better-sidebar')
-    expect(unwrapped.inject).toEqual(['webServer', 'sessions', 'webRuntime', 'tools'])
+    // The web trust face is deliberately NOT injected (resolved per request
+    // in `webTrust` instead): the DSH 0.2.1-alpha line renamed `webRuntime`
+    // to `webStartup` and removed the old name, and an inject entry for a
+    // name the host no longer mounts stalls the plugin forever (#931).
+    expect(unwrapped.inject).toEqual(['webServer', 'sessions', 'tools'])
     expect(unwrapped.Config).toBeDefined()
     expect(typeof unwrapped.apply).toBe('function')
   })

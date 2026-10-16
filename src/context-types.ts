@@ -799,8 +799,15 @@ export interface SidebarContextShape {
   webServer: SidebarWebServer
   /** The session store (host `.get`) and the client list feed (`.list`) faces. */
   sessions: SidebarSessionStore & SidebarSessionsService
-  /** The web runtime trust list (bind-derived). */
-  webRuntime: SidebarWebRuntime
+  /**
+   * The web runtime trust face (bind-derived). Optional and resolved
+   * lazily now that the inject list no longer names it: DSH 0.2.1-alpha
+   * renamed the service (`webRuntime` → `webStartup`), so the fence reads
+   * whichever face the running host exposes (see `webTrust` in index.ts).
+   */
+  webRuntime?: SidebarWebRuntime
+  /** The 0.2.1-alpha+ spelling of the web trust face (`webStartup` service). */
+  webStartup?: SidebarWebRuntime
   /** The client slot registry (register/inject). */
   slots: SidebarSlotsService
   /** The settings service face (prefs persistence + namespace reads). */
