@@ -561,6 +561,11 @@ export interface NativePathTab {
   /** The path the tab is bound to — a file path, or a browser tab's address
    *  (a url seed is stored on the same field). */
   path: string
+  /** The chip's current title. The rename reconciliation reads it to tell a
+   *  title the tree DERIVED from the file name (the basename it wrote on open)
+   *  from one its author chose — a model-driven open names its own title, and
+   *  that is not the tree's to rewrite. */
+  title: string
 }
 
 /**
@@ -704,6 +709,11 @@ export interface BetterSidebarService {
    * strict no-op (no state churn, no callbacks). `scope` (v0.12.0+) rides
    * to the callback (its optional cwd included); absent, the callback gets
    * `{ sessionId }` of the active session.
+   *
+   * v0.26.0+: a scope naming a session that is **not the one on screen** closes
+   * the row in THAT session's layout through the targeted channel (no publish,
+   * no notify), which is how the file tree's delete reconciliation reaches a
+   * background conversation's pages. Without a scope nothing changes.
    */
   closeTab(tabId: string, scope?: SessionScope): void
   /** Subscribe to registry changes (register/dispose). */
@@ -735,6 +745,13 @@ export interface BetterSidebarService {
    * carried (#826) is dropped with it, because that line belongs to the
    * navigation that delivered the file — an in-place switch or a rename that
    * kept it would send the next file to the previous file's line.
+   *
+   * v0.26.0+: a `sessionId` that is **not the session on screen** patches that
+   * session's own layout through the targeted channel (no publish, no notify —
+   * the same route a targeted `openTab(seed, scope)` takes), so the file tree's
+   * rename reconciliation reaches a background conversation's pages instead of
+   * resolving them against the active session. The active session keeps the
+   * publishing path, and an omitted `sessionId` behaves exactly as before.
    */
   updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }, sessionId?: string): void
   /**
@@ -1290,6 +1307,23 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     else if (activated !== undefined) safeCall(() => descriptor.onActivate?.(activated!, callbackScope))
   }
 
+  /**
+   * Apply a store mutation in the session it names.
+   *
+   * A session that is not on screen takes the TARGETED channel (`reduceFor`),
+   * the same one a targeted `openTab(seed, scope)` uses: it writes that
+   * session's own state and persists it without touching the published
+   * snapshot. The publishing channel cannot stand in for it — the row is not in
+   * the ACTIVE session's tree, so the reduce is a silent no-op at best, and
+   * patching a same-numbered row of the active session is the other possible
+   * outcome. The active session keeps the publishing path so the shell
+   * re-renders with the new title/path.
+   */
+  const reduceInSession = (sessionId: string, reducer: (state: SidebarState) => SidebarState): void => {
+    if (sessionId === store.getSnapshot().sessionId) store.reduce(reducer)
+    else store.reduceFor(sessionId, reducer)
+  }
+
   const closeTab = (tabId: string, scope?: SessionScope): void => {
     const sessionId = scope?.sessionId ?? store.getSnapshot().sessionId
     if (surface !== undefined && sessionId !== undefined) {
@@ -1311,7 +1345,7 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       }
     }
     let closed: SidebarTab | undefined
-    store.reduce((state) => {
+    const closeOne = (state: SidebarState): SidebarState => {
       // Unknown tab ids are a strict no-op: no state churn, no notify, no
       // pointless localStorage rewrite (mirrors updateTab's short-circuit).
       if (!tabOpenIn(state, tabId)) return state
@@ -1319,7 +1353,11 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
       const leaf = leafWithTab(state.bottomSplits, tabId)
       closed = leaf?.tabs.find(tab => tab.id === tabId)
       return closeTabReducer(state, paneId, tabId)
-    })
+    }
+    // The row lives in ITS session's tree: an explicit scope that is not on
+    // screen has to close it there (see `reduceInSession`).
+    if (sessionId === undefined) store.reduce(closeOne)
+    else reduceInSession(sessionId, closeOne)
     if (closed !== undefined) {
       const sessionId = scope?.sessionId ?? store.getSnapshot().sessionId
       if (sessionId !== undefined) {
@@ -1343,11 +1381,17 @@ export function createBetterSidebarService(store: SidebarStore): BetterSidebarSe
     sessionId?: string,
   ): void => {
     if (surface?.update(tabId, patch, sessionId) === true) return
-    store.reduce((state) => patchTab(state, tabId, {
+    const patchOne = (state: SidebarState): SidebarState => patchTab(state, tabId, {
       ...(patch.title !== undefined ? { title: patch.title } : {}),
       ...(patch.path !== undefined ? { path: patch.path } : {}),
       ...(patch.meta !== undefined ? { meta: patch.meta } : {}),
-    }))
+    })
+    // A named session that is not on screen is patched in ITS own state (a
+    // background conversation's file page under a rename — see
+    // `reduceInSession`); without one the current session keeps the publishing
+    // path it always had.
+    if (sessionId === undefined) store.reduce(patchOne)
+    else reduceInSession(sessionId, patchOne)
   }
 
   /** Activate an open tab (the tab-bar activation path; fires onActivate). */

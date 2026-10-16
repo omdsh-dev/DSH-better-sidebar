@@ -359,6 +359,10 @@ export function createNativeTabRecords(): NativeTabRecords {
             cwd: entry.scope.cwd,
             id: entry.tab.id,
             path,
+            // The chip's title travels with the row: the rename
+            // reconciliation retitles a page only when that title was
+            // derived from the file name (see tree-mutations).
+            title: entry.tab.title,
           })
         }
       }

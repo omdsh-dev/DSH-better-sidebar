@@ -773,7 +773,10 @@ interface BetterSidebarService {
    */
   openTab(seed: OpenTabSeed, scope?: SessionScope): void
   /** 关闭一个 tab（未知 id 严格 no-op，无状态搅动）；scope（v0.12.0+）
-   *  随回调传递（含可选 cwd），缺省为 { sessionId: 当前 } */
+   *  随回调传递（含可选 cwd），缺省为 { sessionId: 当前 }。
+   *  scope 指的是**不在屏**的会话时（v0.26.0+），那一行在**它自己的**布局里关闭
+   *  ——走定向通道（不发布、不通知），与定向 `openTab(seed, scope)` 同一条路；
+   *  这正是文件树删除调解能覆盖后台会话页面的机制。不传 scope 行为不变。 */
   closeTab(tabId: string, scope?: SessionScope): void
   /** 订阅注册表变化（register/dispose 时触发） */
   subscribe(listener: () => void): () => void
@@ -805,7 +808,14 @@ interface BetterSidebarService {
    *  下一次渲染当渲染垃圾抹掉，宿主**真正**发起的新导航（新修订）仍按地址
    *  改写记录。文件树的重命名 / 删除调解会一并处理原生承载面上的页签（跟着
    *  改址 / 按既有的未保存确认关闭；枚举由承载面内部交回服务，不是公开方法），
-   *  消费插件不需要改任何代码。 */
+   *  消费插件不需要改任何代码。
+   *  **指到不在屏的会话时写进它自己的布局**（v0.26.0+）：这类写入走定向通道
+   *  （不发布、不通知），所以文件树的重命名调解同样覆盖**后台会话**底部工作台里的
+   *  页面，而当前会话继续走发布通道、界面照常重渲染。
+   *  **标题只在它本来就来自文件名时才跟着改名走**（v0.26.0+）：页签调解把**派生
+   *  自基名**的标题换成新基名，而 `openFile(scope, path, title)` 或 `openTab` 里
+   *  **作者自设的标题**（宿主的 agent-opens 推送就带一个）原样保留——名字是你标
+   *  的，就不该被一次文件改名换掉。 */
   updateTab(tabId: string, patch: { title?: string; path?: string; meta?: unknown }, sessionId?: string): void
   /** 激活一个已打开的 tab（tab 栏点击路径；触发 descriptor.onActivate；
    *  未知 id 严格 no-op）；scope（v0.12.0+）随回调传递，同 closeTab */
