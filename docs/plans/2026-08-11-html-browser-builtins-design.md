@@ -48,7 +48,7 @@ URL 采用**路径编码**（无 query）——WHATSG URL 解析对纯路径相�
 
 - `src/html-route.ts`（无依赖纯模块，client 可导入不触发纯度门）：`encodeHtmlUrl(sessionId, path)`、`decodeHtmlUrl(pathname)`（404 错前缀；400 空路径/双斜杠/畸形编码/缺 sessionId 或文件路径/空段）。
 - `src/index.ts`：注册 `/sidebar/html` prefix 路由（fence → GET 校验 → decode → `requireAbsolute` → `isWithin(cwd)` → stat isFile + `mediaLimit` → 读文件），响应头：
-  `content-type`（新增 `.html`/`.htm` → `text/html` 到 MEDIA_TYPES）、`cache-control: no-cache`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、`Content-Security-Policy: sandbox allow-scripts allow-popups allow-downloads allow-modals; object-src 'none'`。
+  `content-type`（`previewTypeForPath()`：预览路由自己的 web 资源表 `PREVIEW_TYPES` 优先——css / js / json / vtt / 字体 / 媒体 / wasm / `.xhtml`·`.shtml` 文档等——其余回落到媒体路由的 `MEDIA_TYPES` 与二进制兜底；该表与媒体路由**分离**，`/sidebar/file` 行为不变，#959）、`cache-control: no-cache`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`、`Content-Security-Policy: sandbox allow-scripts allow-popups allow-downloads allow-modals; object-src 'none'`。
 - cwd 语义与媒体路由一致：session store 权威；会话附着前的首请求回退 `process.cwd()`，通常被 `isWithin` 拒绝（可接受）。
 
 ### 4.2 client：`html` 预览器（TextEditor.tsx 扩展 + builtins/viewers.tsx）

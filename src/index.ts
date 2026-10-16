@@ -137,6 +137,57 @@ export function mediaTypeForPath(path: string): string {
 }
 
 /**
+ * Content types the HTML PREVIEWER must serve, on top of the media route map.
+ *
+ * A previewed page pulls its own relative assets through the same route, and the
+ * browser refuses a stylesheet or script that arrives as
+ * application/octet-stream under strict MIME checking: the page rendered
+ * unstyled and its scripts never ran (issue #959). Fonts, media, .vtt tracks,
+ * .wasm and the other document-ish types below fail the same way.
+ *
+ * Deliberately SEPARATE from {@link MEDIA_TYPES}. /sidebar/file hands a file to
+ * the GUI origin for viewing, so every type it starts RENDERING instead of
+ * downloading widens what that unguarded route can paint (its only header guard
+ * is the scriptable-SVG one). Keeping the preview map out of it leaves the media
+ * route byte-for-byte unchanged.
+ */
+const PREVIEW_TYPES: Record<string, string> = {
+  '.css': 'text/css',
+  '.js': 'text/javascript',
+  '.mjs': 'text/javascript',
+  '.cjs': 'text/javascript',
+  '.json': 'application/json',
+  '.map': 'application/json',
+  '.webmanifest': 'application/manifest+json',
+  '.xml': 'text/xml',
+  '.txt': 'text/plain',
+  '.wasm': 'application/wasm',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.eot': 'application/vnd.ms-fontobject',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.vtt': 'text/vtt',
+  '.xhtml': 'application/xhtml+xml',
+  '.shtml': 'text/html',
+}
+
+/**
+ * Content type the previewer serves one of a page own files with: the preview
+ * extras first, then the shared media map (images / PDF / HTML), then the
+ * binary-safe fallback.
+ */
+export function previewTypeForPath(path: string): string {
+  const extension = extname(path).toLowerCase()
+  return PREVIEW_TYPES[extension] ?? mediaTypeForPath(path)
+}
+
+/**
  * Resolve a session's authoritative working directory. The attached session
  * header wins; while the session is still hydrating from persistence (the
  * web client attaches the current conversation a moment after page load, so
@@ -1711,7 +1762,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
         if (!info.isFile()) {
           throw new SidebarError('fs-error', 'not a file', 400)
         }
-        const type = mediaTypeForPath(absolute)
+        const type = previewTypeForPath(absolute)
         // Streamed for the same reason as the media route: the previewed page
         // and every relative asset it pulls through here are unbounded now.
         await streamFileToResponse(absolute, info.size, res, {

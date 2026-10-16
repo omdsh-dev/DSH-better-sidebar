@@ -10,7 +10,7 @@ import { tmpdir, homedir } from 'node:os'
 import { dirname, join, resolve as resolvePath } from 'node:path'
 import { SettingsConflictError, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { WebSocket } from 'ws'
-import { apply, FS_TREES_MAX_PATHS, mediaTypeForPath } from '../src/index.ts'
+import { apply, FS_TREES_MAX_PATHS, mediaTypeForPath, previewTypeForPath } from '../src/index.ts'
 import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import { encodeHtmlUrl } from '../src/html-route.ts'
 import { encodeText } from '../src/text-encoding.ts'
@@ -88,6 +88,27 @@ describe('host plugin smoke', () => {
   it('serves PDF with the browser-native content type', () => {
     expect(mediaTypeForPath('/work/report.PDF')).toBe('application/pdf')
     expect(mediaTypeForPath('/work/archive.bin')).toBe('application/octet-stream')
+  })
+
+  it('resolves preview-only web asset types without touching the media map (#959)', () => {
+    // The previewer answers the document and every relative asset it pulls; the
+    // media route keeps its byte-for-byte behaviour (unknown extensions and every
+    // non-image type stay application/octet-stream there), so a stylesheet still
+    // DOWNLOADS when asked for as a file and only RENDERS inside a preview.
+    expect(previewTypeForPath('/w/css/style.css')).toBe('text/css')
+    expect(previewTypeForPath('/w/js/app.JS')).toBe('text/javascript')
+    expect(previewTypeForPath('/w/js/module.mjs')).toBe('text/javascript')
+    expect(previewTypeForPath('/w/data/x.json')).toBe('application/json')
+    expect(previewTypeForPath('/w/subs/captions.vtt')).toBe('text/vtt')
+    expect(previewTypeForPath('/w/fonts/x.woff2')).toBe('font/woff2')
+    expect(previewTypeForPath('/w/x.wasm')).toBe('application/wasm')
+    // Falls through to the shared map: the images/PDF/HTML contracts are the same
+    // objects the media route hands out, and unknowns keep the binary-safe fallback.
+    expect(previewTypeForPath('/w/img/pic.png')).toBe('image/png')
+    expect(previewTypeForPath('/w/doc.pdf')).toBe('application/pdf')
+    expect(previewTypeForPath('/w/archive.bin')).toBe('application/octet-stream')
+    expect(mediaTypeForPath('/w/css/style.css')).toBe('application/octet-stream')
+    expect(mediaTypeForPath('/w/archive.bin')).toBe('application/octet-stream')
   })
 
   it('mounts the fenced routes', () => {
@@ -1117,6 +1138,42 @@ describe('session cwd resolution over the API route', () => {
       expect(res.headers['content-type']).toBe('image/svg+xml')
       expect(res.headers['content-security-policy']).toContain('sandbox')
       expect(res.headers['x-content-type-options']).toBe('nosniff')
+    } finally {
+      removeTree(root)
+    }
+  })
+
+  it('serves a preview document and its relative assets with usable content types (#959)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sidebar-html-assets-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    mkdirSync(join(workspace, 'css'))
+    mkdirSync(join(workspace, 'js'))
+    const page = join(workspace, 'index.html')
+    const stylesheet = join(workspace, 'css', 'style.css')
+    const script = join(workspace, 'js', 'app.js')
+    writeFileSync(page, '<link rel="stylesheet" href="css/style.css"><script src="js/app.js"></script>')
+    writeFileSync(stylesheet, 'body { color: #c00 }')
+    writeFileSync(script, 'console.log("preview")')
+    try {
+      const routes = mountAll({ sessions: { get: () => ({ header: { cwd: workspace } }) } })
+      const html = routes.find(route => route.path === '/sidebar/html')!
+      const media = routes.find(route => route.path === '/sidebar/file')!
+      const document = await invokeGetFull(html, encodeHtmlUrl('assets', page))
+      expect(document.status).toBe(200)
+      expect(document.headers['content-type']).toBe('text/html; charset=utf-8')
+      const css = await invokeGetFull(html, encodeHtmlUrl('assets', stylesheet))
+      expect(css.status).toBe(200)
+      expect(css.headers['content-type']).toBe('text/css')
+      const js = await invokeGetFull(html, encodeHtmlUrl('assets', script))
+      expect(js.status).toBe(200)
+      expect(js.headers['content-type']).toBe('text/javascript')
+      // Blast radius: the MEDIA route must not start rendering these either —
+      // /sidebar/file still hands the same file over as bytes (forced download),
+      // so the new types exist only inside the previewer.
+      const mediaCss = await invokeGetFull(media, `/sidebar/file?sessionId=assets&path=${encodeURIComponent(stylesheet)}`)
+      expect(mediaCss.status).toBe(200)
+      expect(mediaCss.headers['content-type']).toBe('application/octet-stream')
     } finally {
       removeTree(root)
     }
