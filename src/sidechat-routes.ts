@@ -146,8 +146,15 @@ export interface SidechatRoutes {
 }
 
 /** Timeout guarding the create call (the registry detaches it before the
- *  handle becomes visible, so the child is never cancelled by it). */
-const CREATE_TIMEOUT_MS = 15_000
+ *  handle becomes visible, so the child is never cancelled by it).
+ *
+ *  Creating a thread copies the parent log into the child, and the host
+ *  validates and persists every seeded event, so the cost grows with the
+ *  parent's length: on DSH 0.1.7 a parent with about 47k events took ~14.7 s
+ *  over loopback, which left no headroom under a 15 s guard and surfaced as
+ *  "thread creation failed". The guard only has to stop a wedged registry from
+ *  holding the request forever, so it is generous. */
+const CREATE_TIMEOUT_MS = 120_000
 
 /** Head cap of one `sidechat.events` response (the ceiling the old
  *  client-side walk could load: 40 pages × 200 events). A pathological

@@ -218,6 +218,31 @@ describe('sidechat.start', () => {
     expect(services.rename).toHaveBeenCalledWith(child.session, sideLabel('explain the event flow'))
   })
 
+  it('guards the create call with a timeout long enough for a very long parent log', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    try {
+      const parent = agent('parent', {
+        events: [
+          ev('user/message', 0, { content: [{ type: 'text', text: 'q' }], source: { kind: 'user' } }),
+        ],
+      })
+      const child = agent('child')
+      const services = happyServices(parent, child)
+      const api = buildSidechatApi(ctxWith(services))
+
+      await api['sidechat.start']({ sessionId: 'parent', question: 'hello' })
+
+      const options = services.create.mock.calls[0]![0] as { signal?: AbortSignal }
+      expect(options.signal).toBeInstanceOf(AbortSignal)
+      // Copying a parent of tens of thousands of events can approach or pass
+      // 15 s; the guard only has to stop a wedged registry.
+      expect(timeout).toHaveBeenCalledTimes(1)
+      expect(timeout.mock.calls[0]![0]).toBeGreaterThanOrEqual(60_000)
+    } finally {
+      timeout.mockRestore()
+    }
+  })
+
   it('synthetically closes an in-progress parent turn inside the seed', async () => {
     const parent = agent('parent', {
       events: [
