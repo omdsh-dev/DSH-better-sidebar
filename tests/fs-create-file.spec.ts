@@ -143,7 +143,6 @@ describe('createWorkspaceFile', () => {
  * editor reads.
  */
 interface FakeContext {
-  webRuntime: { trustedHosts: readonly string[] }
   webServer: {
     register: (route: SidebarWebRoute) => () => void
     registerUpgrade: () => () => void
@@ -160,7 +159,6 @@ interface FakeContext {
 function mountApi(workspace: string): SidebarWebRoute {
   const routes: SidebarWebRoute[] = []
   const ctx: FakeContext = {
-    webRuntime: { trustedHosts: [] },
     webServer: { register: (route) => { routes.push(route); return () => {} }, registerUpgrade: () => () => {} },
     sessions: { get: () => ({ header: { cwd: workspace } }) },
     tools: { register: () => () => {} },

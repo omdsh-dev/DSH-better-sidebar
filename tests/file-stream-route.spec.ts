@@ -26,7 +26,6 @@ import type { SidebarWebRoute } from '../src/context-types.ts'
 import { removeTree } from './temp-tree.ts'
 
 interface FakeContext {
-  webRuntime: { trustedHosts: readonly string[] }
   webServer: {
     register: (route: SidebarWebRoute) => () => void
     registerUpgrade: () => () => void
@@ -67,7 +66,6 @@ function workspace(name: string): string {
 async function serve(workspace: string): Promise<{ origin: string; routes: SidebarWebRoute[] }> {
   const routes: SidebarWebRoute[] = []
   const ctx: FakeContext = {
-    webRuntime: { trustedHosts: [] },
     webServer: { register: (route) => { routes.push(route); return () => {} }, registerUpgrade: () => () => {} },
     sessions: { get: () => ({ header: { cwd: workspace } }) },
     tools: { register: () => () => {} },

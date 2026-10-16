@@ -1,8 +1,10 @@
 /**
  * Remote-access trust regression tests: the /sidebar fence must accept a
- * reverse-proxy domain or LAN IP listed in the DSH web runtime's
- * `webRuntime.trustedHosts` — the same trust list the /api gateway accepts
- * (LAN IP literals sampled at bind plus `--trusted-host` authorities).
+ * reverse-proxy domain or LAN IP listed in the DSH web profile's trust list —
+ * the same list the /api gateway accepts (LAN IP literals sampled at bind plus
+ * `--trusted-host` authorities). DSH names the service carrying that list
+ * `webRuntime` through 0.2.0 and `webStartup` from 0.2.1 on, so the fence reads
+ * it with `ctx.get`, trying both names.
  *
  * Regression: the fence used to read the connection row's trustedHosts
  * through the Loader (`entry.options.name === 'connection'`, which never
@@ -89,8 +91,16 @@ function req(
   } as unknown as IncomingMessage
 }
 
-/** Mount apply() against a fake context with a replaceable webRuntime trust list. */
-function mount(initialTrustedHosts: readonly string[] = []): {
+/**
+ * Mount apply() against a fake context with a replaceable web-profile trust
+ * list. `serviceName` is the name the fake publishes that list under:
+ * `webStartup` from DSH 0.2.1 on (the default), `webRuntime` through 0.2.0, or
+ * `none` for a deployment that publishes neither.
+ */
+function mount(
+  initialTrustedHosts: readonly string[] = [],
+  serviceName: 'webStartup' | 'webRuntime' | 'none' = 'webStartup',
+): {
   api: (r: IncomingMessage, s: ServerResponse) => Promise<void>
   upgrade: (path: string) => SidebarWebUpgradeRoute['handler']
   media: (r: IncomingMessage, s: ServerResponse) => Promise<void>
@@ -102,7 +112,6 @@ function mount(initialTrustedHosts: readonly string[] = []): {
   const upgrades: SidebarWebUpgradeRoute[] = []
   const effects: Array<() => void | (() => void)> = []
   const ctx = {
-    webRuntime: runtime,
     webServer: {
       register: (route: SidebarWebRoute) => { routes.push(route); return () => {} },
       registerUpgrade: (route: SidebarWebUpgradeRoute) => { upgrades.push(route); return () => {} },
@@ -116,7 +125,7 @@ function mount(initialTrustedHosts: readonly string[] = []): {
     inject: () => () => {},
     // The session/agent event feeds: nothing emits in these tests.
     on: () => () => {},
-    get: () => undefined,
+    get: (name: string) => (name === serviceName ? runtime : undefined),
   }
   apply(ctx as never)
   const api = routes.find(route => route.path === '/sidebar/api')?.handler
@@ -154,8 +163,8 @@ function lanRequest(): IncomingMessage {
   }, '{"sessionId":"test-session"}')
 }
 
-describe('remote-access trust (webRuntime.trustedHosts)', () => {
-  it('accepts a reverse-proxy domain configured in webRuntime.trustedHosts', async () => {
+describe('remote-access trust (web profile trust list)', () => {
+  it('accepts a reverse-proxy domain configured in the trust list', async () => {
     const { api, cleanup } = mount(['example.com'])
     try {
       const res = fakeRes()
@@ -166,7 +175,18 @@ describe('remote-access trust (webRuntime.trustedHosts)', () => {
     }
   })
 
-  it('accepts LAN IP literals from webRuntime.trustedHosts', async () => {
+  it('reads the same list when the deployment still names the service webRuntime (DSH <= 0.2.0)', async () => {
+    const { api, cleanup } = mount(['example.com'], 'webRuntime')
+    try {
+      const res = fakeRes()
+      await api(remoteDomainRequest(), res as unknown as ServerResponse)
+      expect(res.status).toBe(200)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('accepts LAN IP literals from the trust list', async () => {
     const { api, cleanup } = mount(['192.0.2.1'])
     try {
       const res = fakeRes()
@@ -177,7 +197,7 @@ describe('remote-access trust (webRuntime.trustedHosts)', () => {
     }
   })
 
-  it('stays loopback-only when webRuntime.trustedHosts is empty', async () => {
+  it('stays loopback-only when the trust list is empty', async () => {
     const { api, cleanup } = mount([])
     try {
       const remote = fakeRes()
@@ -189,6 +209,17 @@ describe('remote-access trust (webRuntime.trustedHosts)', () => {
         'sec-fetch-site': 'same-origin',
       }, '{"sessionId":"test-session"}'), loopback as unknown as ServerResponse)
       expect(loopback.status).toBe(200)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('stays loopback-only when the deployment publishes no trust list at all', async () => {
+    const { api, cleanup } = mount(['example.com'], 'none')
+    try {
+      const res = fakeRes()
+      await api(remoteDomainRequest(), res as unknown as ServerResponse)
+      expect(res.status).toBe(403)
     } finally {
       cleanup()
     }
@@ -331,7 +362,7 @@ describe('remote-access trust (webRuntime.trustedHosts)', () => {
   })
 
 
-  it('reads webRuntime.trustedHosts per request, not once at apply', async () => {
+  it('reads the trust list per request, not once at apply', async () => {
     const { api, setTrustedHosts, cleanup } = mount([])
     try {
       const before = fakeRes()

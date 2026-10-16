@@ -4,10 +4,11 @@
  * preview route, the /sidebar/bundle lazy-chunk route (client code splits),
  * and the two WebSocket upgrades (sidebar_open pushes). Every route passes the same
  * browser-trust fence as the /api gateway — Host-header loopback or the
- * web runtime's `trustedHosts` (LAN IP literals sampled at boot plus
+ * web profile's `trustedHosts` (LAN IP literals sampled at boot plus
  * `--trusted-host` authorities), read per request from the live service
  * value so the fence tracks the same trust source the /api gateway derives
- * its list from.
+ * its list from. The service carrying that list is looked up by either of its
+ * two names (see {@link apply}).
  *
  * All operations are conversation-scoped: requests carry a sessionId and the
  * session's authoritative cwd comes from the session store.
@@ -19,7 +20,7 @@ import type { IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
 import { parse as parseYaml } from 'yaml'
-import type { Context, SidebarHttpRequest, SidebarSessionEvent, SidebarSettingsService } from './context-types.ts'
+import type { Context, SidebarHttpRequest, SidebarSessionEvent, SidebarSettingsService, SidebarWebRuntime } from './context-types.ts'
 import {
   Config,
   resolveSidebarConfig,
@@ -110,8 +111,13 @@ export interface SidebarFsLevel {
   error?: string
 }
 
-/** Services required before mounting: the webserver routes, the session store, the web runtime's trusted hosts, and the tool registry. */
-export const inject = ['webServer', 'sessions', 'webRuntime', 'tools']
+/**
+ * Services required before mounting: the webserver routes, the session store,
+ * and the tool registry. The web profile's trust-list service is deliberately
+ * absent — it is read through `ctx.get` instead (see {@link apply}), because
+ * its name differs between DSH releases.
+ */
+export const inject = ['webServer', 'sessions', 'tools']
 
 /** Content types for the media route, by extension. */
 const MEDIA_TYPES: Record<string, string> = {
@@ -1313,18 +1319,25 @@ async function importLegacyPrefs(
 
 /**
  * Plugin body: mount the fenced routes and the sidebar_open push socket.
- * @param ctx - host plugin context (webServer, sessions, webRuntime).
+ * @param ctx - host plugin context (webServer, sessions, tools).
  * @param config - deployment-provided limits; the Loader validates against
  * {@link Config} and fills defaults, direct callers get them from
  * {@link resolveSidebarConfig}.
  */
 export function apply(ctx: Context, config?: SidebarConfig): void {
   const resolved = resolveSidebarConfig(config)
-  // The web runtime's bind-derived trust list (boot-sampled LAN literals
-  // plus --trusted-host authorities) — the authoritative source the /api
-  // gateway fence derives its list from. Read per request from the live
-  // service value; a replaced list takes effect without a plugin restart.
-  const fence = (req: SidebarHttpRequest): boolean => isTrustedApiRequest(req, ctx.webRuntime.trustedHosts)
+  // The web profile's bind-derived trust list (boot-sampled LAN literals plus
+  // --trusted-host authorities) — the authoritative source the /api gateway
+  // fence derives its list from. DSH 0.2.1 renamed the service carrying it
+  // from `webRuntime` to `webStartup`, so both names are tried on every
+  // request; the service is not a mount dependency, and a deployment offering
+  // neither name still serves loopback Hosts (the fence's own default). Read
+  // per request from the live service value; a replaced list takes effect
+  // without a plugin restart.
+  const fence = (req: SidebarHttpRequest): boolean => isTrustedApiRequest(
+    req,
+    ((ctx.get('webStartup') ?? ctx.get('webRuntime')) as SidebarWebRuntime | undefined)?.trustedHosts ?? [],
+  )
   // The model-facing open-request registry: queues `sidebar_open` requests
   // per session and pushes them to connected sidebar views over the
   // `/sidebar/ws/agent-opens` socket.

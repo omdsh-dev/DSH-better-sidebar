@@ -110,10 +110,13 @@ export interface SidebarSessionStore {
 }
 
 /**
- * The web runtime service face (mirror of @deepseek-ai/dsh-web-app's
- * WebRuntimeValues): the bind-derived trust list the /api gateway's fence
- * accepts — LAN IP literals sampled when the server binds all interfaces,
- * plus explicit `--trusted-host` authorities.
+ * The web profile trust-list service face (mirror of @deepseek-ai/dsh-web-app's
+ * WebRuntimeValues, later WebStartupValues): the bind-derived trust list the
+ * /api gateway's fence accepts — LAN IP literals sampled when the server binds
+ * all interfaces, plus explicit `--trusted-host` authorities. The service is
+ * named `webRuntime` through DSH 0.2.0 and `webStartup` from DSH 0.2.1 on; it
+ * is read with `ctx.get`, never as a `ctx.<name>` property, since neither name
+ * is in this plugin's `inject` list.
  */
 export interface SidebarWebRuntime {
   trustedHosts: readonly string[]
@@ -799,8 +802,6 @@ export interface SidebarContextShape {
   webServer: SidebarWebServer
   /** The session store (host `.get`) and the client list feed (`.list`) faces. */
   sessions: SidebarSessionStore & SidebarSessionsService
-  /** The web runtime trust list (bind-derived). */
-  webRuntime: SidebarWebRuntime
   /** The client slot registry (register/inject). */
   slots: SidebarSlotsService
   /** The settings service face (prefs persistence + namespace reads). */
