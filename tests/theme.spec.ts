@@ -193,6 +193,22 @@ describe('skin contract: the plugin owns no color of its own', () => {
     expect(block).not.toContain('--ds-font-family-code')
   })
 
+  it('the mermaid zoom toolbar yields the shell title-bar strip (issue #805)', () => {
+    // A viewport-sized overlay pinned at a bare `top: 16px` loses its click
+    // area to the native caption strip the shell draws OVER the page (Electron
+    // `titleBarOverlay`; 36–44px across the shells reported so far), while
+    // `elementFromPoint` still answers the button — so the control reads as
+    // dead. The toolbar must consume the strip variable the shell publishes
+    // (`titlebar-strip.ts`), and the 0px fallback must keep plain browsers at
+    // the original 16px inset.
+    const styles = readFileSync(resolve(ROOT, 'src/client/sidebar.module.css'), 'utf8')
+    const block = /\.mermaidModalToolbar \{([\s\S]*?)\n\}/.exec(styles)?.[1]
+    if (block === undefined) throw new Error('the .mermaidModalToolbar rule must exist')
+    expect(block).toContain('top: calc(var(--dsh-title-bar-strip, 0px) + 16px)')
+    // The bare inset must not come back as the whole declaration.
+    expect(block).not.toMatch(/\n\s*top: 16px;/)
+  })
+
   it('the empty-pane welcome capsule follows the host guide recipe', () => {
     // The card is the same surface as DSH's own guide capsule ("pick what
     // opens here"), so this pins the shared geometry and the token-only
