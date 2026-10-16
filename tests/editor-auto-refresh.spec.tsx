@@ -25,6 +25,7 @@ setupReactAct()
 const fsRead = vi.fn()
 const changesOps = vi.fn()
 vi.mock('../src/client/api.ts', () => ({
+  downloadUrl: () => '',
   api: {
     fsRead: (...args: unknown[]) => fsRead(...args),
     changesOps: (...args: unknown[]) => changesOps(...args),

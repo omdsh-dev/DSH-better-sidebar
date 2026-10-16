@@ -20,6 +20,7 @@ setupReactAct()
 
 const fsRead = vi.fn()
 vi.mock('../src/client/api.ts', () => ({
+  downloadUrl: () => '',
   api: { fsRead: (...args: unknown[]) => fsRead(...args) },
   mediaUrl: () => '',
 }))

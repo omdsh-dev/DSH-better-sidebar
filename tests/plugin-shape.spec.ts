@@ -17,7 +17,11 @@ describe('dsh-better-sidebar plugin export shape', () => {
     const unwrapped = loader.unwrapExports(sidebar) as Record<string, unknown>
     expect(unwrapped).toBe(sidebar)
     expect(unwrapped.name).toBe('dsh-better-sidebar')
-    expect(unwrapped.inject).toEqual(['webServer', 'sessions', 'webRuntime', 'tools'])
+    // No `webRuntime`: DSH core from 0.2.1-alpha.2 publishes no such service, so
+    // declaring it would leave this plugin pending forever and its /sidebar
+    // routes unregistered. The trust list it used to carry is read from the
+    // `--trusted-host` argv authorities instead (see trustedHostsFromArgv).
+    expect(unwrapped.inject).toEqual(['webServer', 'sessions', 'tools'])
     expect(unwrapped.Config).toBeDefined()
     expect(typeof unwrapped.apply).toBe('function')
   })

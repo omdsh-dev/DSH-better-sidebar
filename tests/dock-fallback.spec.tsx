@@ -25,6 +25,7 @@ import { createSidebarStore } from '../src/client/state.ts'
 setupReactAct()
 
 vi.mock('../src/client/api.ts', () => ({
+  downloadUrl: () => '',
   sessionPhase: vi.fn(async () => ({ blank: true })),
 }))
 

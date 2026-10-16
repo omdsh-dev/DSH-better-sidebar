@@ -111,7 +111,7 @@ export interface SidebarFsLevel {
 }
 
 /** Services required before mounting: the webserver routes, the session store, the web runtime's trusted hosts, and the tool registry. */
-export const inject = ['webServer', 'sessions', 'webRuntime', 'tools']
+export const inject = ['webServer', 'sessions', 'tools']
 
 /** Content types for the media route, by extension. */
 const MEDIA_TYPES: Record<string, string> = {
@@ -1312,19 +1312,44 @@ async function importLegacyPrefs(
 }
 
 /**
+ * Derive the trusted-host authorities from `--trusted-host` argv entries.
+ *
+ * Fallback for hosts that no longer publish the `webRuntime` service (its
+ * trusted-host list used to be injected from there). Both the space-separated
+ * (`--trusted-host host:port`) and equals (`--trusted-host=…`) spellings are
+ * accepted.
+ */
+function trustedHostsFromArgv(): string[] {
+  const hosts: string[] = []
+  for (let i = 0; i < process.argv.length; i++) {
+    const arg = process.argv[i]!
+    if (arg === '--trusted-host' || arg === '--trustedHost') hosts.push(process.argv[++i] ?? '')
+    else if (arg.startsWith('--trusted-host=') || arg.startsWith('--trustedHost=')) hosts.push(arg.slice(arg.indexOf('=') + 1))
+  }
+  return hosts.filter((h) => h.length > 0)
+}
+
+/**
  * Plugin body: mount the fenced routes and the sidebar_open push socket.
- * @param ctx - host plugin context (webServer, sessions, webRuntime).
+ * @param ctx - host plugin context (webServer, sessions).
  * @param config - deployment-provided limits; the Loader validates against
  * {@link Config} and fills defaults, direct callers get them from
  * {@link resolveSidebarConfig}.
  */
 export function apply(ctx: Context, config?: SidebarConfig): void {
   const resolved = resolveSidebarConfig(config)
-  // The web runtime's bind-derived trust list (boot-sampled LAN literals
-  // plus --trusted-host authorities) — the authoritative source the /api
-  // gateway fence derives its list from. Read per request from the live
-  // service value; a replaced list takes effect without a plugin restart.
-  const fence = (req: SidebarHttpRequest): boolean => isTrustedApiRequest(req, ctx.webRuntime.trustedHosts)
+  // The deployment's trust list: the web runtime's bind-derived authorities
+  // when the host still publishes that service, otherwise the `--trusted-host`
+  // authorities from argv — the same authorities the host's own /api gateway
+  // fence derives from.
+  //
+  // `ctx.get('webRuntime')` rather than `ctx.webRuntime`: the context is a
+  // cordis proxy whose `get` trap throws `cannot get property "webRuntime"
+  // without inject` the moment an un-injected key is read — and it throws
+  // before the optional chain can short-circuit, so `ctx.webRuntime?.x` is
+  // just as fatal as the bare form. `ctx.get` is the proxy's own accessor and
+  // returns `undefined` for a service the host no longer provides.
+  const fence = (req: SidebarHttpRequest): boolean => isTrustedApiRequest(req, ctx.get('webRuntime')?.trustedHosts ?? trustedHostsFromArgv())
   // The model-facing open-request registry: queues `sidebar_open` requests
   // per session and pushes them to connected sidebar views over the
   // `/sidebar/ws/agent-opens` socket.

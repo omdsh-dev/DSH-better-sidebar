@@ -799,8 +799,13 @@ export interface SidebarContextShape {
   webServer: SidebarWebServer
   /** The session store (host `.get`) and the client list feed (`.list`) faces. */
   sessions: SidebarSessionStore & SidebarSessionsService
-  /** The web runtime trust list (bind-derived). */
-  webRuntime: SidebarWebRuntime
+  /**
+   * The web runtime trust list (bind-derived). Optional: DSH core from
+   * 0.2.1-alpha.2 no longer publishes a `webRuntime` service, so hosts that
+   * serve it may leave this undefined and the plugin falls back to the
+   * `--trusted-host` argv authorities.
+   */
+  webRuntime?: SidebarWebRuntime
   /** The client slot registry (register/inject). */
   slots: SidebarSlotsService
   /** The settings service face (prefs persistence + namespace reads). */

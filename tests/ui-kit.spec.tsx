@@ -23,7 +23,7 @@ beforeAll(() => {
 })
 
 const { gitStatus } = vi.hoisted(() => ({ gitStatus: vi.fn() }))
-vi.mock('../src/client/api.ts', () => ({ api: { gitStatus } }))
+vi.mock('../src/client/api.ts', () => ({ api: { gitStatus }, downloadUrl: () => '' }))
 
 afterEach(() => {
   gitStatus.mockReset()
