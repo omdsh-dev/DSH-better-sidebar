@@ -64,13 +64,28 @@ function summarizeError(error: unknown): string {
   return message.split('\n').slice(0, 6).join('\n')
 }
 
+/** The svg's own LAYOUT box, measured with any transform lifted off it (a
+ *  transform would return the visual box and a scale-1 measure is what
+ *  framing needs). The modal is the only writer of that style, so
+ *  save/restore is safe. */
+function measureSvgLayout(node: SVGSVGElement): { width: number; height: number } {
+  const previous = node.style.transform
+  node.style.transform = 'none'
+  const rect = node.getBoundingClientRect()
+  node.style.transform = previous
+  return { width: rect.width, height: rect.height }
+}
+
 /** The zoom/pan modal for one rendered diagram (click-to-enlarge). */
 function MermaidZoomModal({ svg, onClose }: { svg: SVGSVGElement; onClose: () => void }): React.ReactNode {
   const overlayRef = useRef<HTMLDivElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement | null>(null)
   const dragRef = useRef({ active: false, startX: 0, startY: 0 })
   const zoomRef = useRef({ scale: 1, tx: 0, ty: 0 })
+  /** The scale that shows the whole diagram; `reset` returns to it. */
+  const fitRef = useRef(1)
 
   const applyTransform = (): void => {
     const node = svgRef.current
@@ -79,18 +94,36 @@ function MermaidZoomModal({ svg, onClose }: { svg: SVGSVGElement; onClose: () =>
     node.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`
   }
 
-  /** Zoom by `delta` keeping the stage point (centerX/centerY) fixed. */
+  /** Frame the whole diagram (never upscaled past 1:1), centered. */
+  const applyFit = useCallback((): void => {
+    const viewport = viewportRef.current
+    const node = svgRef.current
+    let scale = 1
+    if (viewport !== null && node !== null) {
+      const box = viewport.getBoundingClientRect()
+      const { width, height } = measureSvgLayout(node)
+      if (box.width > 0 && box.height > 0 && width > 0 && height > 0) {
+        scale = Math.min(1, box.width / width, box.height / height)
+      }
+    }
+    const clamped = Math.min(8, Math.max(0.2, scale))
+    fitRef.current = clamped
+    zoomRef.current = { scale: clamped, tx: 0, ty: 0 }
+    applyTransform()
+  }, [])
+
+  /** Zoom by `delta` keeping the viewport point (centerX/centerY) fixed. */
   const zoom = useCallback((delta: number, centerX?: number, centerY?: number): void => {
-    const stage = stageRef.current
-    if (stage === null) return
-    const rect = stage.getBoundingClientRect()
+    const viewport = viewportRef.current
+    if (viewport === null) return
+    const rect = viewport.getBoundingClientRect()
     const cx = centerX ?? rect.width / 2
     const cy = centerY ?? rect.height / 2
     const current = zoomRef.current
     const newScale = Math.min(8, Math.max(0.2, current.scale * delta))
-    // The svg is flex-centered in the stage, so its center sits at
+    // The svg is flex-centered in the viewport, so its center sits at
     // (rect.width/2, rect.height/2). Solve for the translate that keeps the
-    // mouse point stationary in stage coordinates across the scale change.
+    // mouse point stationary in viewport coordinates across the scale change.
     const sx = rect.width / 2
     const sy = rect.height / 2
     const ratio = newScale / current.scale
@@ -100,8 +133,9 @@ function MermaidZoomModal({ svg, onClose }: { svg: SVGSVGElement; onClose: () =>
     applyTransform()
   }, [])
 
+  /** Back to the framed view the modal opened with. */
   const reset = useCallback((): void => {
-    zoomRef.current = { scale: 1, tx: 0, ty: 0 }
+    zoomRef.current = { scale: fitRef.current, tx: 0, ty: 0 }
     applyTransform()
   }, [])
 
@@ -110,26 +144,29 @@ function MermaidZoomModal({ svg, onClose }: { svg: SVGSVGElement; onClose: () =>
   // Mount the caller-provided (sanitized) svg clone imperatively: React
   // types don't accept a raw DOM node as a child, and the modal owns the
   // node's lifetime (removed on unmount; the preview copy is untouched).
+  // Framing happens here, after the append, because it needs the svg's laid
+  // out box: `getBoundingClientRect()` forces the layout the measure needs.
   useEffect(() => {
-    const stage = stageRef.current
-    if (stage === null) return
+    const viewport = viewportRef.current
+    if (viewport === null) return
     svgRef.current = svg
-    stage.appendChild(svg)
+    viewport.appendChild(svg)
+    applyFit()
     return () => {
       svg.remove()
       svgRef.current = null
     }
-  }, [svg])
+  }, [svg, applyFit])
 
   useEffect(() => {
     const stage = stageRef.current
-    const node = svgRef.current
+    const viewport = viewportRef.current
     const overlay = overlayRef.current
-    if (stage === null || node === null || overlay === null) return
+    if (stage === null || viewport === null || overlay === null) return
 
     const onWheel = (event: WheelEvent): void => {
       event.preventDefault()
-      const rect = stage.getBoundingClientRect()
+      const rect = viewport.getBoundingClientRect()
       zoom(event.deltaY < 0 ? 1.1 : 1 / 1.1, event.clientX - rect.left, event.clientY - rect.top)
     }
     const onKey = (event: KeyboardEvent): void => {
@@ -159,15 +196,17 @@ function MermaidZoomModal({ svg, onClose }: { svg: SVGSVGElement; onClose: () =>
 
     // React's synthetic wheel is passive; a native listener is required to
     // preventDefault (the page must not scroll while zooming the modal).
+    // The wheel rides the whole stage (the padding ring zooms too), the drag
+    // rides the viewport (so the empty white area pans as well).
     stage.addEventListener('wheel', onWheel, { passive: false })
-    node.addEventListener('mousedown', onMouseDown)
+    viewport.addEventListener('mousedown', onMouseDown)
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', onMouseUp)
     window.addEventListener('keydown', onKey)
     overlay.addEventListener('click', onOverlayClick)
     return () => {
       stage.removeEventListener('wheel', onWheel)
-      node.removeEventListener('mousedown', onMouseDown)
+      viewport.removeEventListener('mousedown', onMouseDown)
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
       window.removeEventListener('keydown', onKey)
@@ -211,7 +250,9 @@ function MermaidZoomModal({ svg, onClose }: { svg: SVGSVGElement; onClose: () =>
           ✕
         </button>
       </div>
-      <div className={css.mermaidModalStage} ref={stageRef} />
+      <div className={css.mermaidModalStage} ref={stageRef}>
+        <div className={css.mermaidViewport} data-mermaid-viewport ref={viewportRef} />
+      </div>
       <div className={css.mermaidModalHint}>{t('mermaidZoomHint')}</div>
     </div>,
     document.body,
