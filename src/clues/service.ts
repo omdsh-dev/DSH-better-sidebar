@@ -727,6 +727,7 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
     },
 
     async ensure(params: CluesEnsureParams, call: ClueCallOptions = {}): Promise<CluesEnsureResult> {
+      throwIfAborted(call.signal)
       const workspaceId = requireWorkspaceId(params.workspaceId)
       const source = sourceFor(params.sourceId)
       typeOf(source, params.typeId)
@@ -767,7 +768,7 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
     },
 
     async addPin(params: CluesPinMutationParams, call: ClueCallOptions = {}): Promise<CluesPinsResult> {
-      void call
+      throwIfAborted(call.signal)
       const workspaceId = requireWorkspaceId(params.workspaceId)
       const transaction = await requireStore().transact(workspaceId, params.expectedRevision, (state) => {
         if (!state.clues.some(clue => clue.id === params.clueId)) {
@@ -783,7 +784,7 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
     },
 
     async removePin(params: CluesPinMutationParams, call: ClueCallOptions = {}): Promise<CluesPinsResult> {
-      void call
+      throwIfAborted(call.signal)
       const workspaceId = requireWorkspaceId(params.workspaceId)
       const transaction = await requireStore().transact(workspaceId, params.expectedRevision, (state) => {
         state.pins = state.pins.filter(pin => pin.clueId !== params.clueId)
@@ -798,7 +799,7 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
     },
 
     async createPack(params: CluesPackCreateParams, call: ClueCallOptions = {}): Promise<CluesPackMutationResult> {
-      void call
+      throwIfAborted(call.signal)
       const workspaceId = requireWorkspaceId(params.workspaceId)
       const name = packNameOf(params.name)
       const requested = params.members ?? []
@@ -829,7 +830,7 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
     },
 
     async renamePack(params: CluesPackRenameParams, call: ClueCallOptions = {}): Promise<CluesPackMutationResult> {
-      void call
+      throwIfAborted(call.signal)
       const workspaceId = requireWorkspaceId(params.workspaceId)
       const name = packNameOf(params.name)
       const transaction = await requireStore().transact(workspaceId, undefined, (state) => {
@@ -845,7 +846,7 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
     },
 
     async addPackMember(params: CluesPackMemberParams, call: ClueCallOptions = {}): Promise<CluesPackMutationResult> {
-      void call
+      throwIfAborted(call.signal)
       const workspaceId = requireWorkspaceId(params.workspaceId)
       const transaction = await requireStore().transact(workspaceId, undefined, (state) => {
         const pack = requirePack(state, params.packId)
@@ -867,7 +868,7 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
     },
 
     async removePackMember(params: CluesPackMemberParams, call: ClueCallOptions = {}): Promise<CluesPackMutationResult> {
-      void call
+      throwIfAborted(call.signal)
       const workspaceId = requireWorkspaceId(params.workspaceId)
       const transaction = await requireStore().transact(workspaceId, undefined, (state) => {
         const pack = requirePack(state, params.packId)
@@ -886,7 +887,7 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
     },
 
     async deletePack(params: CluesPackDeleteParams, call: ClueCallOptions = {}): Promise<CluesPackDeleteResult> {
-      void call
+      throwIfAborted(call.signal)
       const workspaceId = requireWorkspaceId(params.workspaceId)
       const transaction = await requireStore().transact(workspaceId, undefined, (state) => {
         const pack = requirePack(state, params.packId)
@@ -905,7 +906,7 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
     },
 
     async addBinding(params: CluesBindingMutationParams, call: ClueCallOptions = {}): Promise<CluesBindingsResult> {
-      void call
+      throwIfAborted(call.signal)
       const workspaceId = requireWorkspaceId(params.workspaceId)
       const target = params.target
       if (target === null || typeof target !== 'object' || (target.kind !== 'clue' && target.kind !== 'pack')) {
@@ -929,7 +930,7 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
     },
 
     async removeBinding(params: CluesBindingMutationParams, call: ClueCallOptions = {}): Promise<CluesBindingsResult> {
-      void call
+      throwIfAborted(call.signal)
       const workspaceId = requireWorkspaceId(params.workspaceId)
       const key = bindingKey(params.target)
       const transaction = await requireStore().transact(workspaceId, params.expectedRevision, (state) => {

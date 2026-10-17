@@ -318,6 +318,9 @@ function scopeLocator(scope: JsonValue | undefined, context: ClueOperationContex
   if (isRecord(scope)) {
     if (scope.locator !== undefined) return normalizeLocalFileLocator(scope.locator as Locator)
     if (typeof scope.path === 'string') return locatorOfText(scope.path, context)
+    // An empty object is the workspace root (the caller wanted the default
+    // scope and spread nothing onto it).
+    if (Object.keys(scope).length === 0) return workspaceLocator(context.workspaceId, '', HOST_DIALECT)
   }
   throw new ClueError('failed', 'a local file scope must be a path, a locator or an object carrying one')
 }
@@ -472,7 +475,7 @@ async function listDirectoryPage(
     ...(hasMore ? { nextCursor: String(offset + limit) } : {}),
     // A capped listing cannot know how many rows the level really holds.
     ...(listing.truncated ? {} : { total: listing.entries.length }),
-    ...(listing.truncated ? { limited: true } : {}),
+    ...(hasMore || listing.truncated ? { limited: true } : {}),
   }
 }
 
@@ -504,7 +507,8 @@ async function searchDirectoryPage(
   return {
     items,
     ...(hasMore ? { nextCursor: String(offset + limit) } : {}),
-    ...(result.truncated ? { limited: true } : { total: result.matches.length }),
+    ...(result.truncated ? {} : { total: result.matches.length }),
+    ...(hasMore || result.truncated ? { limited: true } : {}),
   }
 }
 
@@ -547,11 +551,15 @@ async function readFileContent(
   throwIfAborted(context)
   const format = formatOf(typeId)
   const absolute = absolutePathOf(locator, context)
+  // Stat before reading: `readText` wraps every failure in its route error,
+  // which would lose the ENOENT/permission distinction the clue categories
+  // need. This also gives the binary path its asset size without a second
+  // open.
+  const info = await stat(absolute).catch((error: unknown) => {
+    throw normalizeFileError(error, absolute)
+  })
+  if (info.isDirectory()) throw new ClueError('unsupported', `"${absolute}" is a directory`)
   if (typeId === LOCAL_FILE_TYPE_IDS.binary) {
-    const info = await stat(absolute).catch((error: unknown) => {
-      throw normalizeFileError(error, absolute)
-    })
-    if (info.isDirectory()) throw new ClueError('unsupported', `"${absolute}" is a directory`)
     return binaryReadResult(absolute, info, new Date().toISOString())
   }
   const result = await readText(absolute).catch((error: unknown) => {
@@ -599,6 +607,10 @@ async function loadEditDocument(
     throw new ClueError('unsupported', 'a binary local file is read-only')
   }
   const absolute = absolutePathOf(locator, context)
+  const info = await stat(absolute).catch((error: unknown) => {
+    throw normalizeFileError(error, absolute)
+  })
+  if (info.isDirectory()) throw new ClueError('unsupported', `"${absolute}" is a directory`)
   const result = await readText(absolute).catch((error: unknown) => {
     throw normalizeFileError(error, absolute)
   })
@@ -608,7 +620,9 @@ async function loadEditDocument(
   }
   return {
     format,
-    data: { text: result.content },
+    // The edit document is LF-only (the client's editor has no other line
+    // model); saveEdit restores the file's own EOL from disk.
+    data: { text: result.content.replaceAll('\r\n', '\n') },
     baseRevision: revisionOf(result),
   }
 }
