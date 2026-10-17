@@ -628,6 +628,93 @@ describe('exportPack snapshot mode', () => {
     expect(createHash('sha256').update(bytes).digest('hex')).toBe(snapshot.sha256)
   })
 
+  it('reports a binary read without an asset instead of exporting metadata-only JSON', async () => {
+    const f = fixture()
+    const clueId = await ensureClue(f, 'binary')
+    const senderPath = join(f.base, 'private-sender.bin')
+    f.source.read = async () => ({
+      format: 'application/octet-stream',
+      data: { kind: 'binary', path: senderPath, size: 7 },
+      fetchedAt: FETCHED_AT,
+      // No assets: the original bytes are simply not available in this read.
+    })
+    const result = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [clueId],
+    })
+    expect(result.complete).toBe(false)
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      key: 'clue-1',
+      category: 'unsupported',
+      reason: expect.stringMatching(/binary reference without an exportable asset/i),
+    }))
+    expect(result.stats).toMatchObject({ snapshots: 0 })
+    expect(readZip(result.bytes).map(entry => entry.name)).toEqual([CLUEPACK_MANIFEST_PATH])
+    // Neither the sender's absolute path nor a metadata-only "snapshot" may
+    // travel: the old guard fell through to the JSON branch and did both.
+    const archiveText = new TextDecoder().decode(result.bytes)
+    expect(archiveText).not.toContain('private-sender.bin')
+    expect(archiveText).not.toContain(senderPath)
+    const manifest = manifestOf(result.bytes) as unknown as { clues: Array<{ snapshot?: unknown }> }
+    expect(manifest.clues[0]!.snapshot).toBeUndefined()
+  })
+
+  it('refuses a read payload the importer would reject instead of shipping it', async () => {
+    const f = fixture()
+    const clueId = await ensureClue(f, 'a')
+    f.source.read = async () => ({
+      format: 'text/plain',
+      // JSON.stringify would silently drop the missing `data` field, and the
+      // importer rejects a content document without it.
+      data: undefined as never,
+      fetchedAt: FETCHED_AT,
+    })
+    const result = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [clueId],
+    })
+    expect(result.complete).toBe(false)
+    expect(result.issues).toContainEqual(expect.objectContaining({
+      key: 'clue-1',
+      category: 'unsupported',
+      reason: expect.stringMatching(/JSON/i),
+    }))
+    expect(result.stats).toMatchObject({ snapshots: 0 })
+    // The produced archive must remain importable (no content entry the
+    // importer would reject), which is the exporter/importer parity contract.
+    const preview = await previewImport({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: result.bytes,
+    })
+    expect(preview.items).toHaveLength(1)
+    expect(preview.snapshotCount).toBe(0)
+  })
+
+  it('rejects non-round-trippable data and a non-string text projection', async () => {
+    const f = fixture()
+    const nanClue = await ensureClue(f, 'nan')
+    const textClue = await ensureClue(f, 'text')
+    f.source.read = async () => (f.source.calls.read === 1
+      ? { format: 'text/plain', data: { value: Number.NaN } as never, fetchedAt: FETCHED_AT }
+      : { format: 'text/plain', data: { text: 'x' }, text: 42 as never, fetchedAt: FETCHED_AT })
+    const result = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [nanClue, textClue],
+    })
+    expect(result.complete).toBe(false)
+    expect(result.issues).toHaveLength(2)
+    expect(result.issues.every(issue => issue.category === 'unsupported')).toBe(true)
+    expect(result.stats).toMatchObject({ snapshots: 0 })
+    const preview = await previewImport({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: result.bytes,
+    })
+    expect(preview.snapshotCount).toBe(0)
+  })
+
   it('reports read failures, unfetchable sources and limited reads as issues', async () => {
     const f = fixture()
     const authFail = await ensureClue(f, 'auth')

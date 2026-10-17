@@ -26,7 +26,7 @@
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
-import type { CluesService } from '../service.ts'
+import { stableLocatorKey, type CluesService } from '../service.ts'
 import {
   BUILTIN_SOURCE_IDS,
   ClueError,
@@ -496,22 +496,83 @@ interface CapturedSnapshot {
   readonly assets?: readonly CapturedAsset[]
 }
 
-/** Read one structured read result into a JSON payload. */
-function jsonPayloadOf(result: ClueReadResult): Uint8Array {
-  let text: string
+/** Fixed reason of a read payload that cannot be stored as an importable snapshot. */
+const SAFE_NOT_JSON_REASON = 'the source content is not a JSON value that can be stored as a snapshot'
+/** Fixed reason of a binary read that exposed no bytes to archive. */
+const SAFE_BINARY_WITHOUT_ASSET_REASON = 'the source returned a binary reference without an exportable asset'
+/** Deepest JSON payload this serializer accepts (guards a hostile read result). */
+const MAX_JSON_DEPTH = 512
+
+/**
+ * Whether one untrusted read payload is representable as JSON without loss.
+ *
+ * `JSON.stringify` silently drops `undefined`/functions, turns `NaN` and
+ * `Infinity` into `null`, and can be hijacked by a `toJSON` method. The
+ * importer re-parses the content document, so a lossy value would either be
+ * refused later (an exporter-built archive its own importer rejects) or
+ * silently change meaning. This walk rejects everything JSON cannot carry,
+ * including cycles and depth that would overflow the recursive serializer.
+ */
+function isJsonValue(value: unknown, seen = new Set<object>(), depth = 0): boolean {
+  if (depth > MAX_JSON_DEPTH) return false
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true
+  if (typeof value === 'number') return Number.isFinite(value)
+  if (typeof value !== 'object') return false
+  if (seen.has(value)) return false
+  seen.add(value)
+  let valid: boolean
+  if (Array.isArray(value)) {
+    valid = value.every(item => isJsonValue(item, seen, depth + 1))
+  } else {
+    valid = Object.keys(value).every(key =>
+      isJsonValue((value as Record<string, unknown>)[key], seen, depth + 1))
+  }
+  seen.delete(value)
+  return valid
+}
+
+/**
+ * Serialize one structured read result into the content document the importer
+ * accepts (`{format, data, text?}`).
+ *
+ * The bytes are parsed back and compared before they are staged: `data` must
+ * be present and representable, `text` must be a string when present, and the
+ * wrapper must round-trip. A source that returns something else becomes a
+ * per-clue issue and `complete:false` instead of a metadata-only "snapshot"
+ * the receiver has to reject.
+ * @returns the UTF-8 bytes, or one fixed safe reason.
+ */
+function jsonBodyOf(
+  format: unknown,
+  data: unknown,
+  text: unknown,
+): { readonly bytes: Uint8Array } | { readonly reason: string } {
+  if (typeof format !== 'string' || format.trim() === '') return { reason: SAFE_NOT_JSON_REASON }
+  if (data === undefined || !isJsonValue(data)) return { reason: SAFE_NOT_JSON_REASON }
+  if (text !== undefined && typeof text !== 'string') return { reason: SAFE_NOT_JSON_REASON }
+  let encoded: string
   try {
-    text = JSON.stringify({
-      format: result.format,
-      data: result.data,
-      ...(result.text === undefined ? {} : { text: result.text }),
+    encoded = JSON.stringify({
+      format,
+      data,
+      ...(text === undefined ? {} : { text }),
     })
+    const parsed = JSON.parse(encoded) as unknown
+    if (!isRecord(parsed) || parsed.format !== format || !('data' in parsed)) {
+      return { reason: SAFE_NOT_JSON_REASON }
+    }
+    if (text === undefined ? parsed.text !== undefined : parsed.text !== text) {
+      return { reason: SAFE_NOT_JSON_REASON }
+    }
+    // A `toJSON` method or a class instance can still change the value during
+    // stringification even when the walk above accepted the raw object.
+    if (stableLocatorKey(parsed.data as JsonValue) !== stableLocatorKey(data as JsonValue)) {
+      return { reason: SAFE_NOT_JSON_REASON }
+    }
   } catch {
-    throw new ClueError('failed', 'the source content is not JSON-serializable')
+    return { reason: SAFE_NOT_JSON_REASON }
   }
-  if (typeof text !== 'string') {
-    throw new ClueError('failed', 'the source content is not JSON-serializable')
-  }
-  return new TextEncoder().encode(text)
+  return { bytes: new TextEncoder().encode(encoded) }
 }
 
 /** SHA-256 hex digest of one byte array. */
@@ -567,13 +628,20 @@ function issueOf(clue: Clue, category: ClueErrorCategory, reason: string): { rea
   return { issue: { target: 'clue', key: clue.id, category, reason } }
 }
 
-/** Whether a read is the local-file binary shape (path metadata + one asset). */
+/**
+ * Whether a read is the local-file binary shape.
+ *
+ * `data.kind === 'binary'` is the source's own marker. Requiring an asset here
+ * (as the old guard did) made a binary read with no usable asset fall through
+ * to the JSON branch: the archive then carried a metadata-only document with
+ * the sender's absolute path and none of the original bytes, while the export
+ * claimed success. The asset list is checked separately, so the missing bytes
+ * become an explicit issue.
+ */
 function isBinaryRead(result: ClueReadResult): boolean {
   return result.text === undefined
     && isRecord(result.data)
     && result.data.kind === 'binary'
-    && result.assets !== undefined
-    && result.assets.length > 0
 }
 
 /** Capture one asset path with the shared size bound and fixed failures. */
@@ -654,19 +722,15 @@ async function captureSnapshot(
   }
   const binary = isBinaryRead(result)
   if (binary && assets.length === 0) {
-    return issueOf(clue, 'unsupported', 'the source returned a binary reference without an exportable asset')
+    // The sender's absolute path in `data` is metadata, not content: exporting
+    // it as a "snapshot" would leak the path and carry no original bytes.
+    return issueOf(clue, 'unsupported', SAFE_BINARY_WITHOUT_ASSET_REASON)
   }
   let bodyBytes: Uint8Array | undefined
   if (!binary) {
-    try {
-      bodyBytes = jsonPayloadOf(result)
-    } catch (error) {
-      return issueOf(
-        clue,
-        isClueError(error) ? error.category : 'failed',
-        isClueError(error) ? SAFE_FAILURE_REASONS[error.category] : 'the source content is not JSON-serializable',
-      )
-    }
+    const body = jsonBodyOf(result.format, result.data, result.text)
+    if ('reason' in body) return issueOf(clue, 'unsupported', body.reason)
+    bodyBytes = body.bytes
     if (bodyBytes.byteLength > maxSnapshotBytes) {
       return issueOf(clue, 'unsupported', `content exceeds the ${maxSnapshotBytes} byte snapshot limit`)
     }
@@ -902,16 +966,9 @@ function capturedStoredBundle(
       ...(assets.length === 0 ? {} : { assets }),
     }
   }
-  let bodyBytes: Uint8Array
-  try {
-    bodyBytes = new TextEncoder().encode(JSON.stringify({
-      format: record.content.format,
-      data: bundle.primary.data,
-      ...(record.content.text === undefined ? {} : { text: record.content.text }),
-    }))
-  } catch {
-    return fail('the stored snapshot is not JSON-serializable')
-  }
+  const body = jsonBodyOf(record.content.format, bundle.primary.data, record.content.text)
+  if ('reason' in body) return fail(body.reason)
+  const bodyBytes = body.bytes
   if (bodyBytes.byteLength > maxSnapshotBytes) {
     return {
       issue: {
@@ -1086,24 +1143,18 @@ async function captureStoredSnapshot(
       },
     }
   }
-  let text: string
-  try {
-    text = JSON.stringify({
-      format,
-      data: record.content.data,
-      ...(record.content.text === undefined ? {} : { text: record.content.text }),
-    })
-  } catch {
+  const body = jsonBodyOf(format, record.content.data, record.content.text)
+  if ('reason' in body) {
     return {
       issue: {
         target: 'clue',
         key,
         category: 'failed',
-        reason: 'the stored snapshot is not JSON-serializable',
+        reason: body.reason,
       },
     }
   }
-  const bytes = new TextEncoder().encode(text)
+  const bytes = body.bytes
   if (bytes.byteLength > maxSnapshotBytes) {
     return {
       issue: {
