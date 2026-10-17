@@ -790,8 +790,37 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     expect(expiredResult.complete).toBe(true)
     expect(expiredResult.inspection?.authorization).toBe('expired')
 
-    // The non-JSON/text path reports the same facts as an authentication/unknown
-    // stderr envelope; an invalid/unknown device code is a terminal expiry.
+    // The non-JSON/text path reports the same facts as an
+    // `authentication`/`unknown` stderr envelope with the OAuth code only in
+    // the raw message.
+    const textDenied = new FakeLarkRuntime().enqueue(failResult({
+      type: 'authentication',
+      subtype: 'unknown',
+      message: 'authorization failed: access_denied',
+    }, 3))
+    const textDeniedBundle = createFeishuSources({ runtime: () => textDenied.asRuntime() })
+    const textDeniedResult = await textDeniedBundle.connection.poll!(
+      { authorizationId: 'a-text-denied', state: { deviceCode: 'dc-text-denied' } },
+      adapterContext([]),
+    )
+    expect(textDeniedResult.complete).toBe(true)
+    expect(textDeniedResult.inspection?.authorization).toBe('denied')
+    expect(JSON.stringify(textDeniedResult)).not.toMatch(/access_denied/)
+
+    const textExpired = new FakeLarkRuntime().enqueue(failResult({
+      type: 'authentication',
+      subtype: 'unknown',
+      message: 'authorization failed: expiration reached',
+    }, 3))
+    const textExpiredBundle = createFeishuSources({ runtime: () => textExpired.asRuntime() })
+    const textExpiredResult = await textExpiredBundle.connection.poll!(
+      { authorizationId: 'a-text-expired', state: { deviceCode: 'dc-text-expired' } },
+      adapterContext([]),
+    )
+    expect(textExpiredResult.complete).toBe(true)
+    expect(textExpiredResult.inspection?.authorization).toBe('expired')
+
+    // An invalid/unknown device code is also a terminal expiry.
     const invalid = new FakeLarkRuntime().enqueue(failResult({
       type: 'authentication',
       subtype: 'unknown',
