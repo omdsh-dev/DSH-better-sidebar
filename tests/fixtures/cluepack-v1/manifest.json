@@ -1,0 +1,49 @@
+{
+  "formatVersion": 1,
+  "format": "dsh-cluepack",
+  "exportedAt": "2026-10-17T00:00:00.000Z",
+  "mode": "snapshot",
+  "sources": [
+    {
+      "key": "source-1",
+      "sourceId": "test.source",
+      "pluginId": "plugin.test",
+      "name": "Fixture source",
+      "transport": "mcp"
+    }
+  ],
+  "clues": [
+    {
+      "key": "clue-1",
+      "sourceKey": "source-1",
+      "typeId": "test.source.text",
+      "title": "Fixture clue",
+      "portable": {
+        "portable": true,
+        "locator": {
+          "id": "fixture"
+        }
+      },
+      "snapshot": {
+        "path": "content/clue-1.json",
+        "encoding": "json",
+        "mediaType": "application/json",
+        "format": "text/plain",
+        "bytes": 83,
+        "sha256": "472521bdd77127025cfd237f37ac70920333d2c404bdc5c886bd00d53af520db",
+        "fetchedAt": "2026-10-16T12:00:00.000Z",
+        "sourceVersion": "rev-fixture"
+      }
+    }
+  ],
+  "packs": [
+    {
+      "key": "pack-1",
+      "name": "Fixture pack",
+      "members": [
+        "clue-1"
+      ]
+    }
+  ],
+  "issues": []
+}
