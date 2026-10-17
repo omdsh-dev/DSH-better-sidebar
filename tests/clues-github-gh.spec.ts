@@ -345,6 +345,44 @@ describe('read', () => {
     }))
     await expect(clientOf(fake).readResource(ISSUE)).rejects.toMatchObject({ category: 'not-found' })
   })
+
+  it('fetches the live resource on every read (no cached body claimed as latest)', async () => {
+    let version = 0
+    const fake = fakeRuntime(() => {
+      version += 1
+      const payload = JSON.parse(fixture('issue-read.json')) as {
+        data: { repository: { issue: Record<string, unknown> } }
+      }
+      payload.data.repository.issue.title = `title v${version}`
+      payload.data.repository.issue.updatedAt = `2026-10-1${version}T00:00:00Z`
+      return cliResult({ stdout: JSON.stringify(payload) })
+    })
+    const first = await clientOf(fake).readResource(ISSUE)
+    const second = await clientOf(fake).readResource(ISSUE)
+    expect(first.title).toBe('title v1')
+    expect(second.title).toBe('title v2')
+    expect(second.updatedAt).not.toBe(first.updatedAt)
+    expect(second.revision).not.toBe(first.revision)
+    expect(fake.runs).toHaveLength(2)
+  })
+
+  it('fails a malformed list page instead of reporting an empty list', async () => {
+    const malformed = (connection: unknown): FakeRuntime => fakeRuntime(() => cliResult({
+      stdout: JSON.stringify({ data: { repository: { issues: connection } } }),
+    }))
+    await expect(clientOf(malformed({ nodes: 'nope', totalCount: 1 })).listPage(listQuery()))
+      .rejects.toMatchObject({ category: 'failed' })
+    await expect(clientOf(malformed({ nodes: [null] })).listPage(listQuery()))
+      .rejects.toMatchObject({ category: 'failed' })
+
+    // A provider page without total/pageInfo is valid: no invented total and
+    // no continuation.
+    const minimal = malformed({ nodes: [] })
+    const page = await clientOf(minimal).listPage(listQuery())
+    expect(page.items).toEqual([])
+    expect(page.total).toBeUndefined()
+    expect(page.nextAfter).toBeUndefined()
+  })
 })
 
 describe('failed gh runs', () => {
@@ -459,8 +497,9 @@ describe('save', () => {
     write?: CliResult
     after?: SavedState
     afterFails?: boolean
-    permission?: string
+    permission?: string | null
     archived?: boolean
+    private?: boolean
   }): FakeRuntime {
     let reads = 0
     return fakeRuntime((request) => {
@@ -469,8 +508,10 @@ describe('save', () => {
         reads += 1
         const payload = JSON.parse(fixture('issue-read.json')) as Record<string, unknown>
         const data = payload.data as { repository: Record<string, unknown> & { issue: Record<string, unknown> } }
-        data.repository.viewerPermission = options.permission ?? 'WRITE'
+        data.repository.viewerPermission = options.permission === null ? undefined : options.permission ?? 'WRITE'
         data.repository.isArchived = options.archived ?? false
+        data.repository.isPrivate = options.private ?? false
+        data.repository.visibility = options.private === true ? 'PRIVATE' : 'PUBLIC'
         const snapshot = reads === 1 ? options.state : options.after ?? options.state
         data.repository.issue.title = snapshot.title
         data.repository.issue.body = snapshot.body
@@ -567,6 +608,48 @@ describe('save', () => {
       resource: ISSUE, title: '   ', body: 'y', baseRevision: baseRevisionOf(state),
     })).rejects.toMatchObject({ category: 'invalid-request' })
     expect(blank.runs).toHaveLength(0)
+  })
+
+  it('does not write when the pre-save re-read fails', async () => {
+    const fake = fakeRuntime(() => cliResult({
+      exitCode: 1,
+      stderr: 'gh: API rate limit exceeded for user ID 1. (HTTP 403)',
+    }))
+    await expect(clientOf(fake).saveEdits({
+      resource: ISSUE, title: 'new', body: 'new', baseRevision: baseRevisionOf(state),
+    })).rejects.toMatchObject({ category: 'rate-limited' })
+    expect(fake.runs).toHaveLength(1)
+    expect(fake.runs.some(run => run.args.includes('--body-file'))).toBe(false)
+  })
+
+  it('covers all four visibility x permission combinations without using visibility as a rule', async () => {
+    // public/private is display metadata; ONLY the account's write permission
+    // (and the actual 403) decides. All four combinations are exercised.
+    for (const combo of [
+      { private: false, permission: 'WRITE', writable: true },
+      { private: true, permission: 'WRITE', writable: true },
+      { private: false, permission: 'READ', writable: false },
+      { private: true, permission: 'READ', writable: false },
+    ]) {
+      const fake = saveFake({ state, permission: combo.permission, private: combo.private })
+      const outcome = await clientOf(fake).saveEdits({
+        resource: ISSUE, title: 'new', body: 'new', baseRevision: baseRevisionOf(state),
+      }).catch((caught: unknown) => caught)
+      if (combo.writable) {
+        expect(outcome).not.toBeInstanceOf(ClueError)
+        expect(fake.runs.some(run => run.args.includes('--body-file'))).toBe(true)
+      } else {
+        expect(outcome).toBeInstanceOf(ClueError)
+        expect((outcome as ClueError).category).toBe('permission-denied')
+        expect(fake.runs.some(run => run.args.includes('--body-file'))).toBe(false)
+      }
+    }
+    // Unknown permission is NOT pre-disabled (the write is attempted).
+    const unknown = saveFake({ state, permission: null })
+    await clientOf(unknown).saveEdits({
+      resource: ISSUE, title: 'new', body: 'new', baseRevision: baseRevisionOf(state),
+    })
+    expect(unknown.runs.some(run => run.args.includes('--body-file'))).toBe(true)
   })
 
   it('refuses to write an archived or read-only repository', async () => {

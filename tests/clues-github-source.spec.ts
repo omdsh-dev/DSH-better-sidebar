@@ -665,6 +665,35 @@ describe('portable', () => {
     expect(fake.runs).toHaveLength(0)
   })
 
+  it('leaves already-saved local references untouched when a repository search fails', async () => {
+    const fake = fakeRuntime(() => cliResult({
+      exitCode: 1,
+      stderr: 'gh: API rate limit exceeded for user ID 1. (HTTP 403)',
+    }))
+    const install = createGithubSources({ runtime: () => fake.runtime, now: () => Date.parse(NOW), cwd: '/tmp/gh' })
+    const service = createCluesService({
+      root: tempRoot(),
+      now: () => NOW,
+      newId: kind => `${kind}-saved`,
+      builtinSources: install.registrations,
+    })
+    const ensured = await service.ensure({
+      workspaceId: WORKSPACE,
+      sourceId: GITHUB_SOURCE_IDS.issue,
+      typeId: GITHUB_TYPE_IDS.issue,
+      locator: locatorOf('issue', 14609),
+      title: 'saved clue',
+    })
+    await expect(service.search({
+      workspaceId: WORKSPACE,
+      sourceId: GITHUB_SOURCE_IDS.issue,
+      scope: 'cli/cli',
+      query: 'anything',
+    })).rejects.toMatchObject({ category: 'rate-limited' })
+    const library = await service.listClues(WORKSPACE)
+    expect(library.clues.map(clue => clue.id)).toEqual([ensured.clue.id])
+  })
+
   it('keeps a ClueError category through the service boundary', async () => {
     const { service } = setup(() => cliResult({ exitCode: 1, stderr: 'gh: Not Found (HTTP 404)' }))
     const error = await service.read(readParams('issue')).catch((caught: unknown) => caught)
