@@ -161,7 +161,7 @@ export const builtinTabPlugins: readonly PluginEntry[] = [
     // better-sidebar as the tab host; the plugin is read-only and uses the
     // user's existing `gh` login (no token stored). GitHub source with
     // committed lib/, so the pinned tag installs without a local build.
-    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add "github:omdsh-dev/dsh-pr-inbox#v0.1.0"',
+    install: 'cd ~/.dsh && dsh plugin --profile web add dsh-better-sidebar && dsh plugin --profile web add "github:omdsh-dev/dsh-pr-inbox#v0.1.1"',
   },
   {
     id: 'dsh-sidebar-qa',
