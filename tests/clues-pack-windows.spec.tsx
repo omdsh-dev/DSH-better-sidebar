@@ -60,6 +60,7 @@ interface FaceCalls {
 
 function faceOf(overrides: {
   saveError?: () => unknown
+  renameError?: () => unknown
   editable?: boolean
 } = {}): { face: BetterSidebarCluesClientFace; calls: FaceCalls } {
   const calls: FaceCalls = {
@@ -92,6 +93,7 @@ function faceOf(overrides: {
     packsList: async () => ({ packs: [PACK], revision: 4 }),
     packsRename: async (_workspaceId: string, input: { name: string }) => {
       calls.rename += 1
+      if (overrides.renameError !== undefined) throw overrides.renameError()
       return { pack: { ...PACK, name: input.name, revision: 4 }, revision: 5, packRevision: 4 }
     },
     packsRemoveMember: async (_workspaceId: string, input: { clueId: string }) => {
@@ -234,6 +236,126 @@ describe('clue pack management window', () => {
     await flush()
     expect(calls.rename).toBe(1)
     expect(guard.dirty).toBe(false)
+    view.unmount()
+  })
+
+  it('never saves on blur and saves exactly once from the explicit button', async () => {
+    const { face, calls } = faceOf()
+    const view = renderRoot(createElement(PackManagementPage, {
+      windows: recordingWindows().windows,
+      workspaceId: 'ws-1',
+      face,
+      workspaces: [{ workspaceId: 'ws-1', title: '/repo' }],
+      pack: PACK,
+      guard: { dirty: false },
+      onInsertClue: () => true,
+      onInsertPack: () => true,
+      onNotice: () => undefined,
+    }))
+    await flush()
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Pack name"]')!
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input, 'Blurred name')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flush()
+    act(() => { input.dispatchEvent(new FocusEvent('blur', { bubbles: true })) })
+    await flush()
+    expect(calls.rename).toBe(0)
+
+    click(view.container, 'Save')
+    await flush()
+    expect(calls.rename).toBe(1)
+    view.unmount()
+  })
+
+  it('discards the name draft on Cancel without saving', async () => {
+    const { face, calls } = faceOf()
+    const view = renderRoot(createElement(PackManagementPage, {
+      windows: recordingWindows().windows,
+      workspaceId: 'ws-1',
+      face,
+      workspaces: [{ workspaceId: 'ws-1', title: '/repo' }],
+      pack: PACK,
+      guard: { dirty: false },
+      onInsertClue: () => true,
+      onInsertPack: () => true,
+      onNotice: () => undefined,
+    }))
+    await flush()
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Pack name"]')!
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input, 'Doomed draft')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flush()
+    click(view.container, 'Cancel')
+    await flush()
+    expect(calls.rename).toBe(0)
+    expect(input.value).toBe('Release clues')
+    view.unmount()
+  })
+
+  it('shows a request failure rather than a conflict when the rename fails for another reason', async () => {
+    const { face, calls } = faceOf({ renameError: () => new SidebarApiError('network', 'offline') })
+    const view = renderRoot(createElement(PackManagementPage, {
+      windows: recordingWindows().windows,
+      workspaceId: 'ws-1',
+      face,
+      workspaces: [{ workspaceId: 'ws-1', title: '/repo' }],
+      pack: PACK,
+      guard: { dirty: false },
+      onInsertClue: () => true,
+      onInsertPack: () => true,
+      onNotice: () => undefined,
+    }))
+    await flush()
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Pack name"]')!
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input, 'Network draft')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flush()
+    click(view.container, 'Save')
+    await flush()
+    expect(calls.rename).toBe(1)
+    expect(view.container.textContent).not.toContain('This pack changed elsewhere')
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toContain('Saving the pack failed.')
+    expect(input.value).toBe('Network draft')
+    view.unmount()
+  })
+
+  it('shows the conflict and clears it when the pack is re-read successfully', async () => {
+    const { face } = faceOf({ renameError: () => new SidebarApiError('conflict', 'stale revision') })
+    const view = renderRoot(createElement(PackManagementPage, {
+      windows: recordingWindows().windows,
+      workspaceId: 'ws-1',
+      face,
+      workspaces: [{ workspaceId: 'ws-1', title: '/repo' }],
+      pack: PACK,
+      guard: { dirty: false },
+      onInsertClue: () => true,
+      onInsertPack: () => true,
+      onNotice: () => undefined,
+    }))
+    await flush()
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Pack name"]')!
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input, 'Stale draft')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await flush()
+    click(view.container, 'Save')
+    await flush()
+    expect(view.container.textContent).toContain('This pack changed elsewhere')
+    click(view.container, 'Retry')
+    await flush()
+    expect(view.container.textContent).not.toContain('This pack changed elsewhere')
+    expect(input.value).toBe('Stale draft')
     view.unmount()
   })
 

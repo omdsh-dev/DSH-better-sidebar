@@ -35,7 +35,7 @@ import type {
 } from '../../../clues/types.ts'
 import type { BetterSidebarCluesClientFace } from '../registry.ts'
 import type { BetterSidebarWindowsClientFace, WindowHandle } from '../../windows/types.ts'
-import { clueErrorMessage } from '../copy.ts'
+import { categoryOf, clueErrorMessage } from '../copy.ts'
 import { openShareWindow } from './share.tsx'
 import { t } from '../../locales.ts'
 import css from './pack.module.css'
@@ -116,6 +116,7 @@ export function PackManagementPage(
   const [displays, setDisplays] = useState<readonly ClueSourceDisplayDescriptor[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [conflict, setConflict] = useState(false)
   const [saving, setSaving] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
@@ -138,6 +139,8 @@ export function PackManagementPage(
   const load = useCallback(async (signal?: AbortSignal): Promise<void> => {
     setLoading(true)
     setError(null)
+    setSaveError(null)
+    setConflict(false)
     try {
       const [library, packsResult, catalogue] = await Promise.all([
         face.api.clues(workspaceId),
@@ -201,6 +204,7 @@ export function PackManagementPage(
     if (name.trim() === '' || name.trim() === pack.name) return
     setSaving(true)
     setConflict(false)
+    setSaveError(null)
     try {
       const result = await face.api.packsRename(workspaceId, {
         packId: pack.id,
@@ -209,8 +213,14 @@ export function PackManagementPage(
       })
       setPack(result.pack)
       setName(result.pack.name)
+      setSaveError(null)
     } catch (failure) {
-      setConflict(true)
+      // A stale revision is a CONFLICT (re-read and retry). Every other
+      // failure (network, permission, missing pack) is an ordinary request
+      // failure and must not claim the pack changed elsewhere.
+      const conflict = categoryOf(failure) === 'conflict'
+      setConflict(conflict)
+      setSaveError(conflict ? null : t('cluePackSaveFailed'))
       props.onNotice(clueErrorMessage(failure, t('cluePackSaveFailed')))
     } finally {
       setSaving(false)
@@ -337,6 +347,7 @@ export function PackManagementPage(
   const discardDraft = (): void => {
     setName(pack.name)
     setConflict(false)
+    setSaveError(null)
   }
 
   return (
@@ -347,7 +358,6 @@ export function PackManagementPage(
           value={name}
           aria-label={t('cluePackName')}
           onChange={(event) => { setName(event.target.value) }}
-          onBlur={() => { void saveName() }}
           onKeyDown={(event) => { if (event.key === 'Enter') void saveName() }}
         />
         <div className={css.headActions}>
@@ -380,6 +390,7 @@ export function PackManagementPage(
 
       {loading && <div className={css.status} role="status">{t('loading')}</div>}
       {error !== null && <div className={css.error} role="alert">{error}</div>}
+      {saveError !== null && <div className={css.error} role="alert">{saveError}</div>}
       {conflict && (
         <div className={css.conflict} role="alert">
           <span>{t('cluePackConflict')}</span>
