@@ -13,10 +13,13 @@
  *   never append/overwrite/delete/move.
  */
 import { describe, expect, it } from 'vitest'
+import { ClueError } from '../src/clues/types.ts'
 import {
   buildDocBlockXml,
   buildDocTitleXml,
+  decodeXmlEntities,
   isSafeBlockId,
+  isWellFormedXmlFragment,
   parseDocEditXml,
   topLevelSpans,
 } from '../src/clues/sources/feishu/edit.ts'
@@ -30,6 +33,11 @@ const XML = [
   '<hr id="blk-hr"/>',
   '<img id="blk-img" token="tok" url="https://cdn.example/a.png"/>',
 ].join('')
+
+/** Escape one fixture text node (the source XML is never raw user text). */
+function escapeForFixture(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
 
 describe('Docx edit XML parser', () => {
   it('extracts the title, text blocks and their original attributes', () => {
@@ -96,6 +104,62 @@ describe('Docx edit XML parser', () => {
     // literal text instead of sending an invalid entity.
     expect(buildDocBlockXml(paragraph, 'a&nbsp;b'))
       .toBe('<p align="left">a&amp;nbsp;b</p>')
+  })
+
+  it('keeps inline links/styles/cites while escaping only the text nodes', () => {
+    const paragraph = parseDocEditXml(XML).blocks[0]!
+    expect(buildDocBlockXml(
+      paragraph,
+      'Keep <a href="https://example.com/?a=1&amp;b=2">link</a> more & stuff',
+    )).toBe(
+      '<p align="left">Keep <a href="https://example.com/?a=1&amp;b=2">link</a> more &amp; stuff</p>',
+    )
+    // A bare `<b>`/`<cite>`/inline `<img>` typed by the user is preserved as
+    // markup, not escaped into literal text.
+    expect(buildDocBlockXml(paragraph, 'A <b>bold</b> and <cite type="user" user-id="ou_1">Ada</cite>'))
+      .toBe('<p align="left">A <b>bold</b> and <cite type="user" user-id="ou_1">Ada</cite></p>')
+    expect(buildDocBlockXml(paragraph, 'An image <img src="img_token" width="20"/> and <latex>E = mc^2</latex>'))
+      .toBe('<p align="left">An image <img src="img_token" width="20"/> and <latex>E = mc^2</latex></p>')
+    // A raw `&` in the TEXT node is escaped; a valid entity is kept once.
+    expect(buildDocBlockXml(paragraph, 'A &amp; B &#38; C & D'))
+      .toBe('<p align="left">A &amp; B &#38; C &amp; D</p>')
+  })
+
+  it('refuses unclosed/mismatched/unsupported inline markup instead of writing it', () => {
+    const paragraph = parseDocEditXml(XML).blocks[0]!
+    expect(isWellFormedXmlFragment('<b>unclosed')).toBe(false)
+    expect(isWellFormedXmlFragment('<b>x</i>')).toBe(false)
+    expect(isWellFormedXmlFragment('<table>x</table>')).toBe(false)
+    expect(isWellFormedXmlFragment('Keep <b>x</b> & stuff')).toBe(true)
+    for (const edited of ['<b>unclosed', '<b>x</i>', '<table>x</table>', '<a href="x">no close']) {
+      let failure: unknown
+      try {
+        buildDocBlockXml(paragraph, edited)
+      } catch (error) {
+        failure = error
+      }
+      expect(failure, edited).toBeInstanceOf(ClueError)
+      expect((failure as ClueError).category, edited).toBe('invalid-request')
+      expect((failure as ClueError).message).toMatch(/well-formed/)
+    }
+  })
+
+  it('decodes numeric entities exactly once (no double decode)', () => {
+    expect(decodeXmlEntities('&amp; &lt; &gt; &quot; &apos;')).toBe('& < > " \'')
+    expect(decodeXmlEntities('&#39; &#x1F600;')).toBe("' 😀")
+    // Decoding a numeric `&` must not then consume a following `amp;`.
+    expect(decodeXmlEntities('&#38;amp;')).toBe('&amp;')
+    expect(decodeXmlEntities('&unknown;')).toBe('&unknown;')
+  })
+
+  it('preserves code indentation and trailing spaces across load and save', () => {
+    const code = '  indented\nsecond  '
+    const parsed = parseDocEditXml(`<pre id="blk-code" lang="ts"><code>${escapeForFixture(code)}</code></pre>`)
+    expect(parsed.blocks[0]!.text).toBe(code)
+    expect(parsed.blocks[0]!.baseline).toBe(code)
+    expect(buildDocBlockXml(parsed.blocks[0]!, parsed.blocks[0]!.text)).toBe(
+      `<pre lang="ts"><code>${escapeForFixture(code)}</code></pre>`,
+    )
   })
 
   it('serializes a changed list item as one bare <li> block_replace payload', () => {

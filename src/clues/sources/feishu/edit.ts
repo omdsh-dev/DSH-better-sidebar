@@ -22,6 +22,7 @@ import type {
   FeishuDocEditBlock,
   FeishuDocReadOnlyBlock,
 } from './format.ts'
+import { ClueError } from '../../types.ts'
 
 /** Tags whose whole inner XML can be replaced losslessly through block_replace. */
 const EDITABLE_TAGS = new Set([
@@ -39,6 +40,33 @@ const EDITABLE_TAGS = new Set([
   'pre',
   'checkbox',
 ])
+
+/**
+ * Inline tags DocxXML permits inside an editable text block. The set follows
+ * the XML skill's inline components/styles; an unknown tag is refused rather
+ * than written back as markup.
+ */
+const INLINE_TAGS = new Set([
+  'a',
+  'b',
+  'em',
+  'i',
+  'u',
+  'del',
+  's',
+  'code',
+  'span',
+  'cite',
+  'latex',
+  'img',
+  'source',
+  'br',
+  'time',
+  'button',
+])
+
+/** Inline tags that are empty by definition (never pushed on the open stack). */
+const VOID_INLINE_TAGS = new Set(['img', 'source', 'br'])
 
 /** A parsed top-level element. */
 interface ParsedElement {
@@ -66,22 +94,31 @@ export interface ParsedDocEdit {
   readonly complete: boolean
 }
 
-/** Decode the XML entities lark-cli emits in text nodes. */
+/**
+ * Decode the XML entities lark-cli emits in text nodes.
+ *
+ * Numeric references are decoded in the SAME pass as the named entities, so a
+ * decoded `&` can never be re-consumed by a later `&amp;` replacement
+ * (`&#38;amp;` must become `&amp;`, not `&`).
+ */
 export function decodeXmlEntities(text: string): string {
-  return text
-    .replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => {
-      const code = Number.parseInt(hex, 16)
-      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : ''
-    })
-    .replace(/&#(\d+);/g, (_match, dec: string) => {
-      const code = Number.parseInt(dec, 10)
-      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : ''
-    })
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, '&')
+  return text.replace(
+    /&(?:#x([0-9a-f]+)|#(\d+)|(amp|lt|gt|quot|apos));/gi,
+    (match: string, hex: string | undefined, decimal: string | undefined, named: string | undefined) => {
+      if (named !== undefined) {
+        switch (named.toLowerCase()) {
+          case 'amp': return '&'
+          case 'lt': return '<'
+          case 'gt': return '>'
+          case 'quot': return '"'
+          case 'apos': return "'"
+          default: return match
+        }
+      }
+      const code = Number.parseInt(hex ?? decimal ?? '', hex === undefined ? 10 : 16)
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match
+    },
+  )
 }
 
 /** Escape text for an XML text node (never escape the tags themselves). */
@@ -92,13 +129,18 @@ export function escapeXmlText(text: string): string {
     .replace(/>/g, '&gt;')
 }
 
-/** Strip tags and decode entities (display-only projection of a complex block). */
-export function plainTextOf(xml: string): string {
+/** Text content of a fragment (tags stripped, `<br>` as a newline, entities decoded). */
+function textContentOf(xml: string): string {
   return decodeXmlEntities(
     xml
       .replace(/<br\s*\/?>/gi, '\n')
       .replace(/<[^>]*>/g, ''),
-  ).trim()
+  )
+}
+
+/** Strip tags and decode entities (display-only projection of a complex block). */
+export function plainTextOf(xml: string): string {
+  return textContentOf(xml).trim()
 }
 
 /** Find the `>` that closes one start tag, respecting quoted attributes. */
@@ -313,10 +355,16 @@ export function isSafeBlockId(id: string): boolean {
   return /^[A-Za-z0-9_][A-Za-z0-9:_-]{0,199}$/.test(id)
 }
 
-/** The code text inside one `<pre>` block. */
+/**
+ * The code text inside one `<pre>` block.
+ *
+ * Code is plain text: indentation and trailing whitespace are part of it and
+ * must survive a load/save round trip, so this deliberately does NOT trim
+ * (unlike the display-only {@link plainTextOf}).
+ */
 function codeTextOf(inner: string): string {
   const code = /<code(?:\s[^>]*)?>([\s\S]*?)<\/code>/i.exec(inner)
-  return plainTextOf(code === null ? inner : code[1]!)
+  return textContentOf(code === null ? inner : code[1]!)
 }
 
 /**
@@ -527,31 +575,181 @@ function hasValidEntities(text: string): boolean {
 }
 
 /**
- * Whether one block's inner text is already well-formed XML.
+ * One edited block's inline text cannot be serialized safely. The caller turns
+ * this into a typed clue error BEFORE any write is issued.
+ */
+function invalidInlineMarkup(): ClueError {
+  return new ClueError(
+    'invalid-request',
+    'the edited text is not well-formed Docx XML; fix the unclosed, mismatched or unsupported tags and retry',
+  )
+}
+
+/** Escape raw text while keeping already-valid XML entities verbatim. */
+function escapeTextPreservingEntities(text: string): string {
+  let escaped = ''
+  let index = 0
+  while (index < text.length) {
+    const character = text[index]!
+    if (character === '&') {
+      const match = /^&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);/.exec(text.slice(index))
+      if (match !== null) {
+        escaped += match[0]
+        index += match[0].length
+        continue
+      }
+      escaped += '&amp;'
+      index += 1
+      continue
+    }
+    if (character === '<') {
+      escaped += '&lt;'
+      index += 1
+      continue
+    }
+    if (character === '>') {
+      escaped += '&gt;'
+      index += 1
+      continue
+    }
+    escaped += character
+    index += 1
+  }
+  return escaped
+}
+
+/**
+ * Whether one start tag's raw attribute text is well-formed.
  *
- * The editor's textarea holds INNER XML so inline styles survive an edit. A
- * user who types plain text (`A & B`, `a < b`, an unclosed tag) must not send
- * malformed XML to the CLI. Such input is treated as literal text and escaped
- * by {@link normalizeDocBlockInner}; only a genuinely well-formed fragment is
- * preserved as markup.
+ * Values must be quoted, must not contain `<`, and must use valid entities
+ * (`href="…&…"` is invalid XML and would be sent back verbatim otherwise).
+ */
+function isValidInlineAttributes(attrs: string): boolean {
+  let index = 0
+  while (index < attrs.length) {
+    while (index < attrs.length && /\s/.test(attrs[index]!)) index += 1
+    if (index >= attrs.length) return true
+    const nameStart = index
+    while (index < attrs.length && !/[\s=]/.test(attrs[index]!)) index += 1
+    const name = attrs.slice(nameStart, index)
+    if (!/^[A-Za-z_:][A-Za-z0-9:._-]*$/.test(name)) return false
+    while (index < attrs.length && /\s/.test(attrs[index]!)) index += 1
+    if (attrs[index] !== '=') return false
+    index += 1
+    while (index < attrs.length && /\s/.test(attrs[index]!)) index += 1
+    const quote = attrs[index]
+    if (quote !== '"' && quote !== "'") return false
+    index += 1
+    const valueStart = index
+    while (index < attrs.length && attrs[index] !== quote) {
+      if (attrs[index] === '<') return false
+      index += 1
+    }
+    if (attrs[index] !== quote) return false
+    if (!hasValidEntities(attrs.slice(valueStart, index))) return false
+    index += 1
+  }
+  return true
+}
+
+/**
+ * Tokenize an edited block's inline XML: text nodes are escaped, well-formed
+ * tags/attributes/entities are preserved VERBATIM.
+ *
+ * This is deliberately not "escape the whole fragment when it is not valid
+ * XML": a user editing a paragraph may type plain text with `&`/`<` AND keep
+ * an existing `<a href="…">link</a>`. Escaping everything turned the link into
+ * literal text. Structural damage (an unclosed tag, `<b>x</i>`, an unsupported
+ * block tag) is refused instead of being guessed at.
+ *
+ * A `<` that cannot start a tag (e.g. `a < b`) is text and is escaped.
+ */
+function tokenizeInlineXml(text: string): string {
+  if (text.includes('\u0000')) throw invalidInlineMarkup()
+  let xml = ''
+  const open: string[] = []
+  let index = 0
+  while (index < text.length) {
+    const next = text.indexOf('<', index)
+    if (next < 0) {
+      xml += escapeTextPreservingEntities(text.slice(index))
+      break
+    }
+    xml += escapeTextPreservingEntities(text.slice(index, next))
+    const following = text[next + 1]
+    if (following === undefined || !/[A-Za-z/!?]/.test(following)) {
+      // `a < b`, a trailing `<`, `1 < 2`: plain text, not a tag opener.
+      xml += '&lt;'
+      index = next + 1
+      continue
+    }
+    if (text.startsWith('<!--', next)) {
+      const close = text.indexOf('-->', next + 4)
+      if (close < 0) throw invalidInlineMarkup()
+      xml += text.slice(next, close + 3)
+      index = close + 3
+      continue
+    }
+    if (text.startsWith('</', next)) {
+      const close = text.indexOf('>', next + 2)
+      if (close < 0) throw invalidInlineMarkup()
+      const name = text.slice(next + 2, close).trim().toLowerCase()
+      if (!INLINE_TAGS.has(name) || VOID_INLINE_TAGS.has(name)) throw invalidInlineMarkup()
+      if (open.pop() !== name) throw invalidInlineMarkup()
+      xml += text.slice(next, close + 1)
+      index = close + 1
+      continue
+    }
+    if (text.startsWith('<!', next) || text.startsWith('<?', next)) {
+      // DOCTYPE / processing instruction / CDATA are not inline content.
+      throw invalidInlineMarkup()
+    }
+    const end = tagEndOf(text, next)
+    if (end < 0) throw invalidInlineMarkup()
+    const raw = text.slice(next + 1, end)
+    const nameMatch = /^([A-Za-z][A-Za-z0-9:_-]*)/.exec(raw)
+    if (nameMatch === null) throw invalidInlineMarkup()
+    const name = nameMatch[1]!.toLowerCase()
+    if (!INLINE_TAGS.has(name)) throw invalidInlineMarkup()
+    const selfClosing = /\/\s*$/.test(raw)
+    const attrs = raw.slice(nameMatch[0].length, selfClosing ? raw.lastIndexOf('/') : raw.length)
+    if (!isValidInlineAttributes(attrs)) throw invalidInlineMarkup()
+    if (!selfClosing && !VOID_INLINE_TAGS.has(name)) open.push(name)
+    xml += text.slice(next, end + 1)
+    index = end + 1
+  }
+  if (open.length > 0) throw invalidInlineMarkup()
+  return xml
+}
+
+/**
+ * Whether one block's inner text is structurally well-formed inline XML.
+ *
+ * Text nodes may contain raw `&`/`<` (they are escaped by
+ * {@link normalizeDocBlockInner}); the check is about TAGS: every opened inline
+ * tag must close with the same name. It therefore rejects `<b>unclosed` and
+ * `<b>x</i>` instead of matching only the block's own outer tag.
  */
 export function isWellFormedXmlFragment(text: string): boolean {
-  if (text.includes('\u0000') || !hasValidEntities(text)) return false
-  const synthetic = `<root>${text}</root>`
-  const element = elementAt(synthetic, 0)
-  return element !== undefined && element.end === synthetic.length
+  try {
+    tokenizeInlineXml(text)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
  * The safe inner XML of one edited block.
  *
- * `plain` blocks (title/code) are always escaped. XML blocks keep their inline
- * markup when the edited text is a well-formed fragment; otherwise the whole
- * text is escaped, so `A & B` becomes `A &amp; B` instead of invalid markup.
+ * `plain` blocks (title/code) are always escaped. XML blocks keep their
+ * well-formed inline tags/attributes/entities and escape only text nodes. A
+ * structurally invalid fragment throws `invalid-request`; the caller refuses
+ * the save before issuing any write.
  */
 export function normalizeDocBlockInner(block: FeishuDocEditBlock, text: string): string {
   if (block.kind === 'plain') return escapeXmlText(text)
-  return isWellFormedXmlFragment(text) ? text : escapeXmlText(text)
+  return tokenizeInlineXml(text)
 }
 
 /**
