@@ -16,6 +16,7 @@ import { useId, type ReactNode } from 'react'
 import type { ClueFormatRendererProps, JsonValue } from '../../../../clues/types.ts'
 import {
   DOCS_EDIT_SCOPE_NOTE,
+  FEISHU_FORMATS,
   parseDocEditData,
   parseDocReadData,
   type FeishuDocEditBlock,
@@ -24,6 +25,7 @@ import {
 } from '../../../../clues/sources/feishu/format.ts'
 import css from './feishu.module.css'
 import type { FeishuClientLabels } from './labels.ts'
+import { appDateTime } from './time.ts'
 
 /** Rendering bound: the host already pages the source; never freeze the DOM. */
 const MAX_PREVIEW_CHARS = 40_000
@@ -31,6 +33,8 @@ const MAX_PREVIEW_CHARS = 40_000
 /** Props of {@link FeishuDocsPreview}. */
 export interface FeishuDocsPreviewProps extends ClueFormatRendererProps {
   readonly labels: FeishuClientLabels
+  /** App-locale date/time formatter (S9 supplies it; fallback is the browser locale). */
+  readonly formatDateTime?: (value: string) => string
 }
 
 /** The read-only fallback when the payload is not a Feishu document. */
@@ -43,10 +47,20 @@ function InvalidDocument(props: { readonly labels: FeishuClientLabels }): ReactN
 }
 
 /** Human-readable freshness stamp; never invent a time when absent. */
-function stampOf(value: string | undefined): string | undefined {
+function stampOf(
+  value: string | undefined,
+  formatDateTime: ((value: string) => string) | undefined,
+): string | undefined {
   if (value === undefined || value === '') return undefined
-  const parsed = Date.parse(value)
-  return Number.isFinite(parsed) ? new Date(parsed).toLocaleString() : value
+  if (formatDateTime !== undefined) return formatDateTime(value)
+  return appDateTime(value)
+}
+
+/** The localized freshness word, falling back to the raw S1 value. */
+function freshnessLabel(value: string, labels: FeishuClientLabels): string {
+  if (value === 'live') return labels.freshnessLive
+  if (value === 'snapshot') return labels.freshnessSnapshot
+  return value
 }
 
 /** The "open original source" entry, only for a real http(s) URL. */
@@ -73,9 +87,10 @@ function ReadMeta(props: {
   readonly fetchedAt?: string
   readonly freshness?: string
   readonly labels: FeishuClientLabels
+  readonly formatDateTime?: (value: string) => string
 }): ReactNode {
-  const { data, limited, fetchedAt, freshness, labels } = props
-  const stamp = stampOf(fetchedAt)
+  const { data, limited, fetchedAt, freshness, labels, formatDateTime } = props
+  const stamp = stampOf(fetchedAt, formatDateTime)
   return (
     <div className={css.meta}>
       <span className={css.badge} data-feishu-docs-format={data.projection}>
@@ -91,7 +106,7 @@ function ReadMeta(props: {
       )}
       {freshness !== undefined && (
         <span className={css.badge} data-feishu-docs-freshness={freshness}>
-          {labels.freshness}: {freshness}
+          {labels.freshness}: {freshnessLabel(freshness, labels)}
         </span>
       )}
       {stamp !== undefined && (
@@ -116,8 +131,9 @@ function ReadPreview(props: {
   readonly read: FeishuDocReadData
   readonly document: ClueFormatRendererProps['document']
   readonly labels: FeishuClientLabels
+  readonly formatDateTime?: (value: string) => string
 }): ReactNode {
-  const { read, document, labels } = props
+  const { read, document, labels, formatDateTime } = props
   const limited = 'limited' in document && document.limited === true
   const truncated = read.content.length > MAX_PREVIEW_CHARS
   const content = truncated ? read.content.slice(0, MAX_PREVIEW_CHARS) : read.content
@@ -127,6 +143,11 @@ function ReadPreview(props: {
   const freshness = 'freshness' in document && typeof document.freshness === 'string'
     ? document.freshness
     : undefined
+  const fragmentNote = read.fragment === 'blocks'
+    ? labels.fragmentBlocks
+    : read.fragment === 'bytes'
+      ? labels.fragmentBytes
+      : undefined
   return (
     <section className={css.panel} data-feishu-docs-preview="" data-feishu-docs-kind={read.kind}>
       <ReadMeta
@@ -135,6 +156,7 @@ function ReadPreview(props: {
         {...(fetchedAt === undefined ? {} : { fetchedAt })}
         {...(freshness === undefined ? {} : { freshness })}
         labels={labels}
+        {...(formatDateTime === undefined ? {} : { formatDateTime })}
       />
       {read.title !== '' && <h3 className={css.title}>{read.title}</h3>}
       {read.content === '' ? (
@@ -145,6 +167,11 @@ function ReadPreview(props: {
         </pre>
       )}
       {truncated && <p className={css.hint}>{labels.contentTruncated}</p>}
+      {fragmentNote !== undefined && (
+        <p className={css.hint} data-feishu-docs-fragment={read.fragment}>
+          {fragmentNote}
+        </p>
+      )}
       <p className={css.hint} data-feishu-docs-edit-note="">
         {labels.docsEditScopeNote}
       </p>
@@ -164,6 +191,19 @@ function withBlockText(data: FeishuDocEditData, id: string, text: string): Feish
     ...data,
     blocks: data.blocks.map(block => (block.id === id ? { ...block, text } : block)),
   }
+}
+
+/** One editable or read-only entry, interleaved by document order. */
+type EditEntry =
+  | { readonly kind: 'editable'; readonly at: number; readonly block: FeishuDocEditBlock }
+  | { readonly kind: 'readOnly'; readonly at: number; readonly block: FeishuDocEditData['readOnlyBlocks'][number] }
+
+/** Merge editable and read-only blocks so a table in the middle stays in the middle. */
+function editEntriesOf(data: FeishuDocEditData): EditEntry[] {
+  return [
+    ...data.blocks.map(block => ({ kind: 'editable' as const, at: block.order, block })),
+    ...data.readOnlyBlocks.map(block => ({ kind: 'readOnly' as const, at: block.order, block })),
+  ].sort((left, right) => left.at - right.at)
 }
 
 /** One editable text block. */
@@ -190,6 +230,28 @@ function EditBlock(props: {
         data-feishu-docs-block-input={block.id}
         onChange={(event) => { onChange(event.target.value) }}
       />
+    </div>
+  )
+}
+
+/** One read-only complex block with its own resource entry, when it has a URL. */
+function ReadOnlyBlockRow(props: {
+  readonly block: FeishuDocEditData['readOnlyBlocks'][number]
+  readonly labels: FeishuClientLabels
+}): ReactNode {
+  const { block, labels } = props
+  return (
+    <div className={css.hint} data-feishu-docs-read-only-block={block.tag}>
+      <span className={css.badge}>{labels.blockReadOnly}</span>{' '}
+      {block.text === '' ? `(${block.tag})` : block.text}
+      {block.url !== undefined && /^https?:\/\//i.test(block.url) && (
+        <>
+          {' '}
+          <a className={css.linkButton} href={block.url} target="_blank" rel="noreferrer">
+            {labels.resourceLink}
+          </a>
+        </>
+      )}
     </div>
   )
 }
@@ -226,6 +288,7 @@ function EditPreview(props: {
               className={css.input}
               type="text"
               value={data.title}
+              disabled={saving}
               data-feishu-docs-title=""
               aria-invalid={titleInvalid}
               aria-describedby={titleInvalid ? `${prefix}-title-error` : undefined}
@@ -238,7 +301,7 @@ function EditPreview(props: {
                 data-feishu-docs-error="title"
                 role="alert"
               >
-                {labels.titleRequired}
+                {labels.docsTitleRequired}
               </p>
             )}
           </>
@@ -251,34 +314,25 @@ function EditPreview(props: {
 
       <div className={css.field}>
         <span className={css.fieldLabel}>{labels.blocks}</span>
-        {data.blocks.length === 0 && (
+        {data.blocks.length === 0 && data.readOnlyBlocks.length === 0 && (
           <p className={css.hint} data-feishu-docs-no-blocks="">{labels.noBlocks}</p>
         )}
-        {data.blocks.map(block => (
+        {editEntriesOf(data).map(entry => (entry.kind === 'editable' ? (
           <EditBlock
-            key={block.id}
-            block={block}
+            key={`editable:${entry.block.id}`}
+            block={entry.block}
             labels={labels}
-            onChange={(text) => { emit(withBlockText(data, block.id, text)) }}
+            onChange={(text) => { emit(withBlockText(data, entry.block.id, text)) }}
             disabled={saving}
           />
-        ))}
+        ) : (
+          <ReadOnlyBlockRow
+            key={`read-only:${entry.block.tag}:${entry.at}`}
+            block={entry.block}
+            labels={labels}
+          />
+        )))}
       </div>
-
-      {data.readOnlyBlocks.length > 0 && (
-        <div className={css.field} data-feishu-docs-read-only-blocks="">
-          {data.readOnlyBlocks.map((block, index) => (
-            <div
-              className={css.hint}
-              key={`${block.tag}-${index}`}
-              data-feishu-docs-read-only-block={block.tag}
-            >
-              <span className={css.badge}>{labels.blockReadOnly}</span>{' '}
-              {block.text === '' ? `(${block.tag})` : block.text}
-            </div>
-          ))}
-        </div>
-      )}
 
       <p className={css.hint} data-feishu-docs-edit-note="">{labels.docsEditScopeNote}</p>
       <SourceLink url={data.sourceUrl} labels={labels} />
@@ -315,9 +369,15 @@ function EditReadOnly(props: {
         )}
       </div>
       <h3 className={css.title}>{data.title}</h3>
-      {data.blocks.map(block => (
-        <pre className={css.pre} key={block.id}>{block.text}</pre>
-      ))}
+      {editEntriesOf(data).map(entry => (entry.kind === 'editable' ? (
+        <pre className={css.pre} key={`editable:${entry.block.id}`}>{entry.block.text}</pre>
+      ) : (
+        <ReadOnlyBlockRow
+          key={`read-only:${entry.block.tag}:${entry.at}`}
+          block={entry.block}
+          labels={labels}
+        />
+      )))}
       <p className={css.hint}>{labels.docsEditScopeNote}</p>
       <SourceLink url={data.sourceUrl} labels={labels} />
     </section>
@@ -326,10 +386,16 @@ function EditReadOnly(props: {
 
 /**
  * The XML/Markdown document renderer (read preview or block editor).
+ *
+ * The editable form is only dispatched for the XML format. A client-side
+ * payload mix-up (an edit document under `feishu.docs.markdown`) must not
+ * expose a form whose save the source will reject.
  * @param props - the document renderer props plus localized labels.
  */
 export function FeishuDocsPreview(props: FeishuDocsPreviewProps): ReactNode {
-  const edit = parseDocEditData(props.document.data)
+  const edit = props.format === FEISHU_FORMATS.docsXml
+    ? parseDocEditData(props.document.data)
+    : undefined
   if (edit !== undefined) {
     if (props.readOnly) return <EditReadOnly data={edit} labels={props.labels} />
     return (
@@ -344,7 +410,14 @@ export function FeishuDocsPreview(props: FeishuDocsPreviewProps): ReactNode {
   }
   const read = parseDocReadData(props.document.data)
   if (read === undefined) return <InvalidDocument labels={props.labels} />
-  return <ReadPreview read={read} document={props.document} labels={props.labels} />
+  return (
+    <ReadPreview
+      read={read}
+      document={props.document}
+      labels={props.labels}
+      {...(props.formatDateTime === undefined ? {} : { formatDateTime: props.formatDateTime })}
+    />
+  )
 }
 
 /** The host-visible scope note (exported for S9's settings copy). */

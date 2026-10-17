@@ -28,7 +28,9 @@ export interface FeishuClientLabels {
   readonly saving: string
   readonly setTime: string
   readonly titleRequired: string
+  readonly docsTitleRequired: string
   readonly startAfterDue: string
+  readonly allDayMismatch: string
   readonly taskGuid: string
   readonly noTime: string
   readonly open: string
@@ -38,11 +40,17 @@ export interface FeishuClientLabels {
   readonly blockReadOnly: string
   readonly noBlocks: string
   readonly sourceLink: string
+  readonly resourceLink: string
   readonly fetchedAt: string
   readonly freshness: string
+  readonly freshnessLive: string
+  readonly freshnessSnapshot: string
+  readonly fragmentBlocks: string
+  readonly fragmentBytes: string
   readonly updatedAt: string
   readonly markdownReadOnly: string
   /** Task validation / time-editing copy. */
+  readonly invalidTask: string
   readonly invalidTime: string
   readonly clearingTimeUnsupported: string
   readonly genericValidation: string
@@ -71,7 +79,9 @@ export const DEFAULT_FEISHU_LABELS: FeishuClientLabels = {
   saving: 'Saving…',
   setTime: 'Set time',
   titleRequired: 'A task title is required.',
+  docsTitleRequired: 'A document title is required.',
   startAfterDue: 'The start must not be later than the due time.',
+  allDayMismatch: 'The start and due times must both be all-day or both be timed.',
   taskGuid: 'Task GUID',
   noTime: 'Not set',
   open: 'Open',
@@ -83,10 +93,16 @@ export const DEFAULT_FEISHU_LABELS: FeishuClientLabels = {
   blockReadOnly: 'Read-only block',
   noBlocks: 'This document has no editable text blocks.',
   sourceLink: 'Open in Feishu',
+  resourceLink: 'Open resource',
   fetchedAt: 'Fetched',
   freshness: 'Freshness',
+  freshnessLive: 'Live',
+  freshnessSnapshot: 'Snapshot',
+  fragmentBlocks: 'This is a fragment made of whole blocks from a longer XML document.',
+  fragmentBytes: 'This is a raw byte fragment of a longer document; markup may be split.',
   updatedAt: 'Updated',
-  markdownReadOnly: 'Markdown is a read-only projection; switch to the XML view to edit.',
+  markdownReadOnly: 'Markdown is a read-only projection of this document.',
+  invalidTask: 'This task payload could not be previewed.',
   invalidTime: 'This time is not a valid instant.',
   clearingTimeUnsupported: 'Clearing a time is not supported; choose a new time instead.',
   genericValidation: 'This value is not valid.',

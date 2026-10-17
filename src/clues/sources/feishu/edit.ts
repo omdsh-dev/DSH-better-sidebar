@@ -58,6 +58,12 @@ export interface ParsedDocEdit {
   readonly titleAttrs: string
   readonly blocks: FeishuDocEditBlock[]
   readonly readOnlyBlocks: FeishuDocReadOnlyBlock[]
+  /**
+   * Whether every top-level element was parsed. A malformed tail leaves this
+   * false; the caller must refuse the edit instead of silently dropping the
+   * unparsed remainder.
+   */
+  readonly complete: boolean
 }
 
 /** Decode the XML entities lark-cli emits in text nodes. */
@@ -195,20 +201,84 @@ function elementAt(xml: string, start: number): ParsedElement | undefined {
   return undefined
 }
 
-/** One attribute value (`id="…"` / `id='…'`). */
-function attributeOf(attrs: string, name: string): string | undefined {
-  const pattern = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i')
-  const match = pattern.exec(attrs)
-  if (match === null) return undefined
-  return match[1] ?? match[2]
+/** One parsed XML attribute and its span inside the raw attribute text. */
+interface XmlAttribute {
+  readonly name: string
+  readonly value: string
+  /** First character of the name. */
+  readonly start: number
+  /** Index just past the attribute value (or the name for a bare flag). */
+  readonly end: number
 }
 
-/** Remove the `id` attribute from the serialized outer tag. */
+/**
+ * Tokenize the attributes of one start tag.
+ *
+ * A plain regex over the raw attribute text is NOT safe: `caption="note
+ * id='blk-evil'"` contains an `id=` that belongs to the caption value, and
+ * rewriting that span corrupts the caption. This scanner tracks quotes and
+ * only yields real attribute tokens.
+ */
+function attributesOf(attrs: string): XmlAttribute[] {
+  const tokens: XmlAttribute[] = []
+  let index = 0
+  while (index < attrs.length) {
+    while (index < attrs.length && /\s/.test(attrs[index]!)) index += 1
+    if (index >= attrs.length) break
+    const start = index
+    while (index < attrs.length && !/[\s=]/.test(attrs[index]!)) index += 1
+    const name = attrs.slice(start, index)
+    if (name === '') {
+      index += 1
+      continue
+    }
+    while (index < attrs.length && /\s/.test(attrs[index]!)) index += 1
+    if (attrs[index] !== '=') {
+      tokens.push({ name, value: '', start, end: index })
+      continue
+    }
+    index += 1
+    while (index < attrs.length && /\s/.test(attrs[index]!)) index += 1
+    const quote = attrs[index]
+    let value: string
+    if (quote === '"' || quote === "'") {
+      index += 1
+      const valueStart = index
+      while (index < attrs.length && attrs[index] !== quote) index += 1
+      value = attrs.slice(valueStart, index)
+      if (attrs[index] === quote) index += 1
+    } else {
+      const valueStart = index
+      while (index < attrs.length && !/\s/.test(attrs[index]!)) index += 1
+      value = attrs.slice(valueStart, index)
+    }
+    tokens.push({ name, value, start, end: index })
+  }
+  return tokens
+}
+
+/** One real attribute value (`id="…"` / `id='…'`), never a lookalike inside another value. */
+function attributeOf(attrs: string, name: string): string | undefined {
+  const token = attributesOf(attrs).find(candidate => candidate.name.toLowerCase() === name.toLowerCase())
+  return token?.value
+}
+
+/** Remove only the real `id` token; quoted values keep their original spacing. */
 function withoutId(attrs: string): string {
-  return attrs
-    .replace(/(^|\s)id\s*=\s*(?:"[^"]*"|'[^']*')/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
+  const token = attributesOf(attrs).find(candidate => candidate.name.toLowerCase() === 'id')
+  if (token === undefined) return attrs.trim()
+  const before = attrs.slice(0, token.start).trimEnd()
+  const after = attrs.slice(token.end).trimStart()
+  return `${before}${before === '' || after === '' ? '' : ' '}${after}`.trim()
+}
+
+/** A safe http(s) origin carried by a resource block (`url` / `href` / `src`). */
+function resourceUrlOf(attrs: string): string | undefined {
+  for (const name of ['url', 'href', 'src']) {
+    const value = attributeOf(attrs, name)
+    if (value !== undefined && /^https?:\/\//i.test(value)) return value
+  }
+  return undefined
 }
 
 /** Direct child elements of one fragment (used for `<ul>`/`<ol>` items). */
@@ -232,9 +302,15 @@ function directChildren(xml: string): ParsedElement[] {
   return children
 }
 
-/** Whether a block id is a safe argv token (never a shell string). */
+/**
+ * Whether a block id is a safe argv token (never a shell string).
+ *
+ * A leading `-` is rejected because lark-cli parses some `--block-id` values
+ * as flags (`-1` means "end of document"); a real Docx block id never starts
+ * with a dash.
+ */
 export function isSafeBlockId(id: string): boolean {
-  return /^[A-Za-z0-9:_-]{1,200}$/.test(id)
+  return /^[A-Za-z0-9_][A-Za-z0-9:_-]{0,199}$/.test(id)
 }
 
 /** The code text inside one `<pre>` block. */
@@ -255,19 +331,33 @@ export function parseDocEditXml(content: string): ParsedDocEdit {
   let title = ''
   let titleBlockId: string | undefined
   let titleAttrs = ''
+  let complete = true
+  let order = 0
   let index = 0
   while (index < content.length) {
     const next = content.indexOf('<', index)
-    if (next < 0) break
+    if (next < 0) {
+      if (content.slice(index).trim() !== '') complete = false
+      break
+    }
+    if (content.slice(index, next).trim() !== '') complete = false
     if (content.startsWith('<!--', next)) {
       const close = content.indexOf('-->', next + 4)
-      if (close < 0) break
+      if (close < 0) {
+        complete = false
+        break
+      }
       index = close + 3
       continue
     }
     const element = elementAt(content, next)
-    if (element === undefined) break
+    if (element === undefined) {
+      complete = false
+      break
+    }
     index = element.end
+    const elementOrder = order
+    order += 1
     const tag = element.tag.toLowerCase()
     const id = attributeOf(element.attrs, 'id')
     if (tag === 'title') {
@@ -281,6 +371,8 @@ export function parseDocEditXml(content: string): ParsedDocEdit {
       for (const child of directChildren(element.inner)) {
         if (child.tag.toLowerCase() !== 'li') continue
         const childId = attributeOf(child.attrs, 'id')
+        const childOrder = order
+        order += 1
         const block: FeishuDocEditBlock = {
           id: childId ?? '',
           tag: 'li',
@@ -288,12 +380,15 @@ export function parseDocEditXml(content: string): ParsedDocEdit {
           text: child.inner,
           baseline: child.inner,
           kind: 'xml',
+          order: childOrder,
         }
         if (childId === undefined || !isSafeBlockId(childId)) {
           readOnlyBlocks.push({
             tag: 'li',
+            attrs: withoutId(child.attrs),
             text: plainTextOf(child.inner),
             reason: 'this list item has no block id, so it cannot be targeted safely',
+            order: childOrder,
           })
         } else {
           blocks.push(block)
@@ -311,12 +406,15 @@ export function parseDocEditXml(content: string): ParsedDocEdit {
           text,
           baseline: text,
           kind: 'plain',
+          order: elementOrder,
         })
       } else {
         readOnlyBlocks.push({
           tag: 'pre',
+          attrs: withoutId(element.attrs),
           text,
           reason: 'this code block has no block id, so it cannot be targeted safely',
+          order: elementOrder,
         })
       }
       continue
@@ -330,20 +428,28 @@ export function parseDocEditXml(content: string): ParsedDocEdit {
           text: element.inner,
           baseline: element.inner,
           kind: 'xml',
+          order: elementOrder,
         })
       } else {
         readOnlyBlocks.push({
           tag,
+          attrs: withoutId(element.attrs),
           text: plainTextOf(element.inner),
           reason: 'this text block has no block id, so it cannot be targeted safely',
+          order: elementOrder,
         })
       }
       continue
     }
+    const attrs = withoutId(element.attrs)
+    const url = resourceUrlOf(attrs)
     readOnlyBlocks.push({
       tag,
+      attrs,
       text: plainTextOf(element.inner),
       reason: `a ${tag} container stays read-only; rebuilding it is not a lossless text-block edit`,
+      order: elementOrder,
+      ...(url === undefined ? {} : { url }),
     })
   }
   return {
@@ -352,7 +458,49 @@ export function parseDocEditXml(content: string): ParsedDocEdit {
     titleAttrs,
     blocks,
     readOnlyBlocks,
+    complete,
   }
+}
+
+/** Character span of one top-level element. */
+export interface TopLevelSpan {
+  readonly start: number
+  readonly end: number
+}
+
+/**
+ * Character spans of the top-level elements of one Docx XML document.
+ * Returns `undefined` when the document is not a complete sequence of
+ * elements (the caller must not treat a malformed prefix as the document).
+ */
+export function topLevelSpans(content: string): TopLevelSpan[] | undefined {
+  const spans: TopLevelSpan[] = []
+  let index = 0
+  while (index < content.length) {
+    const next = content.indexOf('<', index)
+    if (next < 0) {
+      if (content.slice(index).trim() !== '') return undefined
+      break
+    }
+    if (content.slice(index, next).trim() !== '') return undefined
+    if (content.startsWith('<!--', next)) {
+      const close = content.indexOf('-->', next + 4)
+      if (close < 0) return undefined
+      index = close + 3
+      continue
+    }
+    const element = elementAt(content, next)
+    if (element === undefined) return undefined
+    spans.push({ start: next, end: element.end })
+    index = element.end
+  }
+  return spans
+}
+
+/** Whether a tag may be serialized as an editable text block. */
+export function isEditableBlockTag(tag: string): boolean {
+  const lower = tag.toLowerCase()
+  return lower === 'li' || EDITABLE_TAGS.has(lower)
 }
 
 /** Serialize `<tag attrs>inner</tag>` (attrs already stripped of `id`). */

@@ -20,12 +20,21 @@
  * - a wiki node is a separate identity: `/wiki/<token>` is resolved through
  *   `wiki +node-get`, and only `obj_type=docx` becomes a readable document.
  *
- * Reads fetch the whole document with `docs +fetch --api-version v2` and
- * window it by byte offset; the plugin runner's stdout capture is capped at
- * 8 MiB, so a document above that cap is reported explicitly instead of being
- * silently truncated. Block-scoped partial fetch needs block ids, which the S4
- * read contract does not carry, so fragment reads necessarily re-fetch the
- * document.
+ * Reads fetch the whole document with `docs +fetch --api-version v2 --detail
+ * full` and window it by byte offset. `--detail full` is required because the
+ * lighter `simple` detail omits both block ids and the structured
+ * `document.reference_map` sidecar; the read result must keep content,
+ * revision and sidecar together (S4 §5). The plugin runner's stdout capture is
+ * capped at 8 MiB, so a document above that cap is reported explicitly instead
+ * of being silently truncated.
+ *
+ * lark-cli 1.0.55 DOES support partial reads (`docs +fetch --scope
+ * outline|range|keyword|section`), but the S1 read contract only carries a byte
+ * `offset` and no block id, so this adapter cannot ask for a section. Instead,
+ * a window is aligned to whole top-level XML blocks (`data.fragment='blocks'`)
+ * and falls back to a raw byte slice (`data.fragment='bytes'`) when one block
+ * is larger than the window. A block-id read is a follow-up S1 contract
+ * extension, not a missing CLI flag.
  *
  * Edit is block-scoped and lossless for TEXT blocks: `loadEdit` fetches the XML
  * with `--detail full` (block ids + styles), and `saveEdit` sends only the
@@ -76,9 +85,8 @@ import {
   type FeishuDocProjection,
   type FeishuDocReadData,
 } from './format.ts'
-import { buildDocBlockXml, buildDocTitleXml, parseDocEditXml } from './edit.ts'
+import { buildDocBlockXml, buildDocTitleXml, isEditableBlockTag, isSafeBlockId, parseDocEditXml, topLevelSpans } from './edit.ts'
 import {
-  arrayField,
   larkWorkingDirectory,
   recordField,
   stringField,
@@ -115,6 +123,13 @@ const MAX_EDIT_BLOCKS = 200
 const FETCH_FULL_ARGS = ['docs', '+fetch', '--api-version', 'v2'] as const
 /** The native block update verb (one target block, no append/overwrite). */
 const UPDATE_BLOCK_COMMAND = 'block_replace'
+/** Locator kinds this source owns; anything else is another source's shape. */
+const DOC_LOCATOR_KINDS: ReadonlySet<string> = new Set([
+  'docx',
+  'wiki',
+  'wiki-space',
+  'drive-folder',
+])
 
 /** The explicit browsing ranges of the docs source. */
 export type DocsListScope =
@@ -148,6 +163,37 @@ function scopeRecord(value: JsonValue | undefined, what: string): Record<string,
     throw new ClueError('invalid-request', `${what} needs an explicit browsing range`)
   }
   return value
+}
+
+/**
+ * Resolve the personal-library alias to the real numeric space id.
+ *
+ * `wiki +space-list` never returns `my_library`, and `drive +search
+ * --space-ids` documents numeric space ids only, so a search scoped to the
+ * synthetic personal-library row must resolve the alias first. `wiki +node-list`
+ * accepts the alias directly, so list does not pay this extra call.
+ */
+async function resolvedWikiSpaceId(
+  runtime: ClueRuntime,
+  spaceId: string,
+  context: ClueOperationContext,
+): Promise<string> {
+  if (spaceId !== 'my_library') return spaceId
+  const success = await runFeishuCommand(runtime, {
+    args: [
+      'wiki', 'spaces', 'get',
+      '--params', JSON.stringify({ space_id: 'my_library' }),
+      '--as', 'user', '--format', 'json',
+    ],
+    cwd: cwdOf(context),
+    ...(context.signal === undefined ? {} : { signal: context.signal }),
+  })
+  const space = recordField(success.data, 'space') ?? success.data
+  const resolved = stringField(space, 'space_id')
+  if (resolved === undefined) {
+    throw new ClueError('failed', 'lark-cli could not resolve the personal wiki library space id')
+  }
+  return resolved
 }
 
 /** Parse one list scope; absent/invalid is a typed empty-state failure, never "all documents". */
@@ -204,15 +250,30 @@ function pageTokenOf(signature: string, cursor: string | undefined): string | un
   return cursor === undefined ? undefined : decodeCursor(signature, cursor).pageToken
 }
 
-/** The next provider cursor, or a `limited` marker when the provider truncated but gave no token. */
+/**
+ * The next provider cursor, or a `limited` marker when the provider truncated
+ * but gave no token. When the provider explicitly says `has_more:false`, a
+ * stale/echoed token must NOT mint a phantom next page.
+ */
 function pageOf(
   success: LarkSuccess,
   signature: string,
 ): { readonly nextCursor?: string; readonly limited?: boolean } {
-  const hasMore = success.data.has_more === true
+  const hasMore = typeof success.data.has_more === 'boolean' ? success.data.has_more : undefined
   const token = stringField(success.data, 'next_page_token') ?? stringField(success.data, 'page_token')
-  if (token !== undefined && token !== '') return { nextCursor: encodeCursor(signature, token) }
-  return hasMore ? { limited: true } : {}
+  if (hasMore !== false && token !== undefined && token !== '') {
+    return { nextCursor: encodeCursor(signature, token) }
+  }
+  return hasMore === true ? { limited: true } : {}
+}
+
+/** The expected array of one page; a malformed success envelope is a failure, not an empty page. */
+function requiredArrayField(success: LarkSuccess, key: string, what: string): JsonValue[] {
+  const value = success.data[key]
+  if (!Array.isArray(value)) {
+    throw new ClueError('failed', `lark-cli returned no ${what} list in its success payload`)
+  }
+  return value
 }
 
 /**
@@ -313,17 +374,30 @@ function wikiNodeCandidate(
 function wikiSpaceCandidate(space: Record<string, JsonValue>): ClueCandidate | undefined {
   const spaceId = stringOf(space.space_id)
   if (spaceId === undefined) return undefined
-  const name = stringOf(space.name) ?? `Feishu wiki space ${spaceId}`
+  return wikiSpaceScopeCandidate(spaceId, stringOf(space.name), {
+    spaceType: stringOf(space.space_type) ?? 'team',
+    visibility: stringOf(space.visibility) ?? 'unknown',
+  })
+}
+
+/** Build one synthetic wiki-space scope row (personal library / parsed space URL). */
+function wikiSpaceScopeCandidate(
+  spaceId: string,
+  name: string | undefined,
+  meta: Record<string, JsonValue> = {},
+): ClueCandidate {
   return {
     sourceId: FEISHU_SOURCE_IDS.docs,
     typeId: FEISHU_TYPE_IDS.wiki,
     locator: { kind: 'wiki-space', spaceId } as unknown as Locator,
-    title: name,
+    title: name ?? (spaceId === 'my_library' ? 'My library' : `Feishu wiki space ${spaceId}`),
     subtitle: 'Wiki space',
     meta: {
       role: FEISHU_SCOPE_ROLE,
-      spaceType: stringOf(space.space_type) ?? 'team',
-      visibility: stringOf(space.visibility) ?? 'unknown',
+      ...meta,
+      // `wiki +space-list` never returns the personal library; the CLI
+      // documents `my_library` as a user-identity alias for node-list.
+      ...(spaceId === 'my_library' ? { synthetic: true } : {}),
     },
   }
 }
@@ -437,19 +511,17 @@ function titleOfMarkdown(content: string): string | undefined {
   return title === undefined || title === '' ? undefined : title
 }
 
-/** UTF-8-safe fragment of one document content. */
-function fragmentOf(content: string, offset: number): {
+/** One read window; `fragment` labels partial XML honestly. */
+interface ContentFragment {
   readonly text: string
   readonly limited: boolean
   readonly nextOffset?: number
-} {
-  if (!Number.isInteger(offset) || offset < 0) {
-    throw new ClueError('invalid-request', 'the document byte offset must be a non-negative integer')
-  }
+  readonly fragment?: 'blocks' | 'bytes'
+}
+
+/** UTF-8-safe byte slice, never splitting a code point. */
+function byteWindowOf(content: string, offset: number): ContentFragment {
   const bytes = new TextEncoder().encode(content)
-  if (offset > bytes.length) {
-    throw new ClueError('invalid-request', 'the document byte offset is past the end of the content')
-  }
   let end = Math.min(offset + DOC_READ_MAX_BYTES, bytes.length)
   // Never split a UTF-8 code point: move the page boundary back to its start.
   while (end < bytes.length && end > offset && (bytes[end]! & 0xc0) === 0x80) end -= 1
@@ -459,6 +531,76 @@ function fragmentOf(content: string, offset: number): {
     text: new TextDecoder().decode(bytes.subarray(offset, end)),
     limited,
     ...(limited ? { nextOffset: end } : {}),
+    // A partial byte slice is not a well-formed XML document; the data says so.
+    ...(limited || offset > 0 ? { fragment: 'bytes' as const } : {}),
+  }
+}
+
+/**
+ * A byte window of one document.
+ *
+ * For XML, windows are aligned to COMPLETE top-level blocks so the returned
+ * text never cuts a tag/attribute/entity in half. A single block larger than
+ * the window falls back to a raw byte slice and labels itself as such. For
+ * Markdown (no structure) and for malformed XML the raw byte window is used.
+ * @param content - the full document projection.
+ * @param offset - byte offset of this window.
+ * @param alignBlocks - whether the caller asked for the XML projection.
+ */
+function fragmentOf(content: string, offset: number, alignBlocks: boolean): ContentFragment {
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new ClueError('invalid-request', 'the document byte offset must be a non-negative integer')
+  }
+  const totalBytes = new TextEncoder().encode(content).length
+  if (offset > totalBytes) {
+    throw new ClueError('invalid-request', 'the document byte offset is past the end of the content')
+  }
+  if (!alignBlocks) return byteWindowOf(content, offset)
+  const spans = topLevelSpans(content)
+  if (spans === undefined || spans.length === 0) return byteWindowOf(content, offset)
+  // Character spans → byte spans in one pass (never O(n²)).
+  const byteSpans: Array<{ readonly start: number; readonly end: number }> = []
+  let previous = 0
+  let bytes = 0
+  for (const span of spans) {
+    bytes += new TextEncoder().encode(content.slice(previous, span.start)).length
+    const start = bytes
+    bytes += new TextEncoder().encode(content.slice(span.start, span.end)).length
+    byteSpans.push({ start, end: bytes })
+    previous = span.end
+  }
+  const total = byteSpans[byteSpans.length - 1]!.end
+  // A full read is the whole document, not a fragment (leading/trailing
+  // whitespace outside the top-level elements is still the whole document).
+  if (offset === 0 && content.slice(spans[spans.length - 1]!.end).trim() === '' && totalBytes <= DOC_READ_MAX_BYTES) {
+    return { text: content, limited: false }
+  }
+  // Align forward: never start in the middle of a block.
+  let first = byteSpans.findIndex(span => span.end > offset)
+  if (first < 0) return { text: '', limited: false, fragment: 'blocks' }
+  if (byteSpans[first]!.start < offset) first += 1
+  if (first >= byteSpans.length) {
+    // The offset points inside the LAST block: a whole-block window would be
+    // empty, so return the raw remainder and label it as a byte slice.
+    return byteWindowOf(content, offset)
+  }
+  let last = first
+  while (last + 1 < byteSpans.length && byteSpans[last + 1]!.end - byteSpans[first]!.start <= DOC_READ_MAX_BYTES) {
+    last += 1
+  }
+  if (byteSpans[last]!.end - byteSpans[first]!.start > DOC_READ_MAX_BYTES) {
+    // One block is larger than the read window: a raw slice is the only honest answer.
+    return byteWindowOf(content, offset)
+  }
+  const startChar = spans[first]!.start
+  const endChar = spans[last]!.end
+  const nextOffset = byteSpans[last]!.end
+  const limited = nextOffset < total
+  return {
+    text: content.slice(startChar, endChar),
+    limited,
+    ...(limited ? { nextOffset } : {}),
+    fragment: 'blocks',
   }
 }
 
@@ -567,6 +709,7 @@ function editDataOf(
       : {}),
     ...(locator.url === undefined ? {} : { sourceUrl: locator.url }),
     ...(fetched.revisionId === undefined ? {} : { revisionId: fetched.revisionId }),
+    ...(fetched.referenceMap === undefined ? {} : { referenceMap: fetched.referenceMap }),
     title,
     baselineTitle: title,
     titleEditable: parsed.titleBlockId !== undefined,
@@ -577,17 +720,22 @@ function editDataOf(
   }
 }
 
-/** The current block texts by id (save-time best-effort comparison). */
-function blockTextsOf(content: string): Map<string, string> {
+/** The current block models by id (the save-time structural baseline). */
+function blockModelsOf(content: string): Map<string, FeishuDocEditBlock> {
   const parsed = parseDocEditXml(content)
-  const map = new Map<string, string>()
-  for (const block of parsed.blocks) map.set(block.id, block.text)
+  const map = new Map<string, FeishuDocEditBlock>()
+  for (const block of parsed.blocks) map.set(block.id, block)
   return map
 }
 
-/** The current XML title (save-time best-effort comparison). */
-function titleOfEditContent(content: string): string {
-  return parseDocEditXml(content).title
+/** The parsed title identity of the current XML. */
+function titleModelOf(content: string): { readonly text: string; readonly blockId?: string; readonly attrs: string } {
+  const parsed = parseDocEditXml(content)
+  return {
+    text: parsed.title,
+    ...(parsed.titleBlockId === undefined ? {} : { blockId: parsed.titleBlockId }),
+    attrs: parsed.titleAttrs,
+  }
 }
 
 /** The native revision id of one block update answer. */
@@ -597,14 +745,45 @@ function revisionOfUpdate(success: LarkSuccess): string | undefined {
   return revision === undefined ? undefined : String(revision)
 }
 
-/** Fail a write whose business result is not a full success. */
-function assertUpdateResult(success: LarkSuccess): void {
+/**
+ * Fail a write unless the business result is an unqualified full success.
+ *
+ * `docs +update` returns `{result, updated_blocks_count, warnings}` in
+ * addition to the envelope. An absent/unknown `result`, a non-empty
+ * `warnings` list or an unexpected `updated_blocks_count` means the write must
+ * not be reported as complete (S4 §8).
+ * @param success - one update success envelope.
+ * @param expectedBlocks - number of block writes this answer must have applied.
+ */
+function assertUpdateResult(success: LarkSuccess, expectedBlocks = 1): void {
   const result = stringField(success.data, 'result')
-  if (result === 'failed') {
-    throw new ClueError('failed', 'lark-cli reported the document update as failed')
+  if (result === undefined) {
+    throw new ClueError('failed', 'lark-cli did not report a document update result')
   }
-  if (result === 'partial_success') {
-    throw new ClueError('failed', 'lark-cli reported the document update as a partial success')
+  if (result !== 'success') {
+    throw new ClueError(
+      'failed',
+      result === 'partial_success'
+        ? 'lark-cli reported the document update as a partial success'
+        : 'lark-cli reported the document update as failed',
+    )
+  }
+  const warnings = success.data.warnings
+  if (Array.isArray(warnings) && warnings.length > 0) {
+    throw new ClueError('failed', 'lark-cli reported warnings for the document update; the write is not confirmed complete')
+  }
+  if (success.data.warnings !== undefined && !Array.isArray(warnings)) {
+    throw new ClueError('failed', 'lark-cli returned an unreadable warning list for the document update')
+  }
+  const count = success.data.updated_blocks_count
+  if (count !== undefined) {
+    const parsed = typeof count === 'number' ? count : Number(stringOf(count) ?? Number.NaN)
+    if (!Number.isInteger(parsed) || parsed !== expectedBlocks) {
+      throw new ClueError(
+        'failed',
+        'lark-cli did not confirm that every requested document block was updated',
+      )
+    }
   }
 }
 
@@ -638,13 +817,22 @@ function validateEditDocument(
   let total = 0
   const seen = new Set<string>()
   for (const block of changedBlocks) {
-    if (!/^[A-Za-z0-9:_-]{1,200}$/.test(block.id)) {
+    if (!isSafeBlockId(block.id)) {
       throw new ClueError('invalid-request', 'a document block id is not a safe identifier')
     }
     if (seen.has(block.id)) {
       throw new ClueError('invalid-request', 'a document save repeats one block id')
     }
     seen.add(block.id)
+    if (!isEditableBlockTag(block.tag)) {
+      throw new ClueError('invalid-request', 'a document save targets a block type that is not editable')
+    }
+    if (block.kind !== 'xml' && block.kind !== 'plain') {
+      throw new ClueError('invalid-request', 'a document block has an unknown text kind')
+    }
+    if (titleChanged && edited.titleBlockId === block.id) {
+      throw new ClueError('invalid-request', 'a document save targets the title block twice')
+    }
     const bytes = utf8Length(block.text)
     if (bytes > MAX_EDIT_BLOCK_BYTES) {
       throw new ClueError(
@@ -665,12 +853,68 @@ function validateEditDocument(
         'this document did not expose an editable title block; the title stays read-only',
       )
     }
+    if (!isSafeBlockId(edited.titleBlockId)) {
+      throw new ClueError('invalid-request', 'a document title block id is not a safe identifier')
+    }
   }
   if (total > MAX_EDIT_TOTAL_BYTES) {
     throw new ClueError(
       'invalid-request',
       `the document edit is too large to save (limit ${MAX_EDIT_TOTAL_BYTES} bytes)`,
     )
+  }
+}
+
+/**
+ * Refuse client-supplied write metadata that does not match the freshly
+ * re-read document.
+ *
+ * The save payload is client-owned. Without this check a stale/buggy client
+ * could retarget a block id, change `tag`/`attrs` (p→h2, alignment, checkbox
+ * `done`, caption) or point at an id inside another attribute, and the write
+ * would silently rewrite structure the editor is not allowed to touch.
+ * @param currentContent - the fresh `--detail full` XML.
+ * @returns nothing; throws `conflict`/`invalid-request` on any mismatch.
+ */
+function requireCurrentStructure(
+  edited: FeishuDocEditData,
+  changedBlocks: readonly FeishuDocEditBlock[],
+  titleChanged: boolean,
+  currentContent: string,
+): void {
+  if (!parseDocEditXml(currentContent).complete) {
+    throw new ClueError(
+      'failed',
+      'lark-cli returned document XML with an unparsable tail during the save comparison',
+    )
+  }
+  const currentBlocks = blockModelsOf(currentContent)
+  for (const block of changedBlocks) {
+    const current = currentBlocks.get(block.id)
+    if (current === undefined || !isEditableBlockTag(current.tag)) {
+      throw new ClueError('conflict', 'the document changed since it was loaded; re-read it and retry')
+    }
+    if (
+      current.tag !== block.tag
+      || current.attrs !== block.attrs
+      || current.kind !== block.kind
+      || current.text !== block.baseline
+    ) {
+      throw new ClueError(
+        'conflict',
+        'the block structure changed since it was loaded; re-read it and retry',
+      )
+    }
+  }
+  if (!titleChanged) return
+  const currentTitle = titleModelOf(currentContent)
+  if (
+    edited.titleBlockId === undefined
+    || currentTitle.blockId !== edited.titleBlockId
+    || currentTitle.attrs !== edited.titleAttrs
+    || currentTitle.text !== edited.baselineTitle
+  ) {
+    throw new ClueError('conflict', 'the document title changed since it was loaded; re-read it and retry')
   }
 }
 
@@ -732,9 +976,26 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
         return docLocatorKey(locator)
       },
 
-      async resolve(input: { readonly text?: string; readonly locator?: Locator }, context: ClueOperationContext) {
-        const locator = input.locator === undefined ? undefined : parseDocLocator(input.locator)
-        if (locator !== undefined) {
+      async resolve(
+        input: { readonly text?: string; readonly locator?: Locator; readonly explicit?: boolean },
+        context: ClueOperationContext,
+      ) {
+        if (input.locator !== undefined) {
+          // Auto resolution walks the sources in order. A locator of another
+          // source's shape (e.g. `{kind:'task'}`) is not a docs failure: it
+          // must answer "not mine" so the later source can resolve it. Only an
+          // explicit source call reports the malformed shape.
+          const kind = isRecord(input.locator) ? input.locator.kind : undefined
+          if (typeof kind !== 'string' || !DOC_LOCATOR_KINDS.has(kind)) {
+            if (input.explicit === true) {
+              throw new ClueError(
+                'invalid-request',
+                'a locator must be a Feishu docx, wiki, wiki-space or drive-folder reference',
+              )
+            }
+            return undefined
+          }
+          const locator = parseDocLocator(input.locator)
           if (isWikiSpaceLocator(locator)) return undefined
           if (isDriveFolderLocator(locator)) {
             return driveFolderScopeCandidate(
@@ -787,6 +1048,11 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
         if (parsed.kind === 'drive-folder') {
           return driveFolderScopeCandidate(parsed.folderToken, undefined, parsed.url)
         }
+        if (parsed.kind === 'wiki-space') {
+          // `/wiki/space/<space_id>` is a wiki-space scope, not a node token;
+          // asking `wiki +node-get --node-token space` was the old bug.
+          return wikiSpaceScopeCandidate(parsed.spaceId, undefined)
+        }
         const resolved = await resolveWikiNode(runtime(), parsed.wikiToken, parsed.url, context)
         return {
           sourceId: FEISHU_SOURCE_IDS.docs,
@@ -827,7 +1093,7 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
             cwd,
             ...signal,
           })
-          const files = arrayField(success.data, 'files') ?? []
+          const files = requiredArrayField(success, 'files', 'Drive file')
           const items: ClueCandidate[] = []
           for (const file of files) {
             if (!isRecord(file)) continue
@@ -854,8 +1120,12 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
             cwd,
             ...signal,
           })
-          const spaces = arrayField(success.data, 'spaces') ?? []
+          const spaces = requiredArrayField(success, 'spaces', 'wiki space')
           const items: ClueCandidate[] = []
+          // `wiki +space-list` never returns the personal library; without a
+          // synthetic row the user can never pick it from the source. It is
+          // only prepended to the first page, never invented on a cursor page.
+          if (pageToken === undefined) items.push(wikiSpaceScopeCandidate('my_library', undefined))
           for (const space of spaces) {
             if (!isRecord(space)) continue
             const candidate = wikiSpaceCandidate(space)
@@ -876,7 +1146,7 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
           cwd,
           ...signal,
         })
-        const nodes = arrayField(success.data, 'nodes') ?? []
+        const nodes = requiredArrayField(success, 'nodes', 'wiki node')
         const items: ClueCandidate[] = []
         for (const node of nodes) {
           if (!isRecord(node)) continue
@@ -904,6 +1174,9 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
         } as unknown as JsonValue)
         const pageToken = pageTokenOf(signature, input.cursor)
         const limit = pageLimitOf(input.limit, SEARCH_PAGE_SIZE, SEARCH_PAGE_SIZE)
+        const searchSpaceId = scope?.kind === 'wiki'
+          ? await resolvedWikiSpaceId(runtime(), scope.spaceId, context)
+          : undefined
         const success = await runFeishuCommand(runtime(), {
           args: [
             'drive', '+search', '--query', query,
@@ -914,7 +1187,7 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
               ? []
               : scope.kind === 'drive'
                 ? ['--folder-tokens', scope.folderToken]
-                : ['--space-ids', scope.spaceId]),
+                : ['--space-ids', searchSpaceId!]),
             '--page-size', String(limit),
             ...(pageToken === undefined ? [] : ['--page-token', pageToken]),
             '--as', 'user', '--format', 'json',
@@ -922,7 +1195,7 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
           cwd: cwdOf(context),
           ...(context.signal === undefined ? {} : { signal: context.signal }),
         })
-        const rows = arrayField(success.data, 'results') ?? []
+        const rows = requiredArrayField(success, 'results', 'document search result')
         const items: ClueCandidate[] = []
         for (const row of rows) {
           if (!isRecord(row)) continue
@@ -948,7 +1221,10 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
             args: [
               'docs', '+fetch', '--api-version', 'v2', '--doc', doc.token,
               '--doc-format', projection,
-              '--detail', 'simple',
+              // `simple` omits the reference sidecar and block ids; the read
+              // result promises content + revision + reference_map from ONE
+              // response (S4 §5), so read with the detail that carries it.
+              '--detail', 'full',
               '--as', 'user', '--format', 'json',
             ],
             cwd: cwdOf(context),
@@ -963,14 +1239,14 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
             throw new ClueError(
               'failed',
               `the document exceeds the plugin runner's ${mebibytes} MiB stdout capture limit and `
-              + 'cannot be read in one fragment; the S4 read contract has no block-scoped fragment '
-              + 'request, so no partial read is claimed',
+              + 'cannot be read in one fragment; the S1 read contract carries only a byte offset, '
+              + 'so this adapter cannot request a block-scoped section here',
             )
           }
           throw error
         }
         const fetched = fetchedDocumentOf(success)
-        const fragment = fragmentOf(fetched.content, input.offset ?? 0)
+        const fragment = fragmentOf(fetched.content, input.offset ?? 0, projection === 'xml')
         // XML has an authoritative <title>; Markdown's first heading is only a
         // fallback when neither the CLI nor the resolved wiki node reports one.
         const title = projection === 'xml'
@@ -986,6 +1262,7 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
           ...(locator.url === undefined ? {} : { sourceUrl: locator.url }),
           ...(fetched.revisionId === undefined ? {} : { revisionId: fetched.revisionId }),
           ...(fetched.referenceMap === undefined ? {} : { referenceMap: fetched.referenceMap }),
+          ...(fragment.fragment === undefined ? {} : { fragment: fragment.fragment }),
         }
         return {
           format: projection === 'xml' ? FEISHU_FORMATS.docsXml : FEISHU_FORMATS.docsMarkdown,
@@ -1020,6 +1297,14 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
           throw error
         }
         const parsed = parseDocEditXml(fetched.content)
+        if (!parsed.complete) {
+          // A parseable prefix with a malformed tail must not load as an
+          // editable document: saving it would silently hide/drop the tail.
+          throw new ClueError(
+            'failed',
+            'lark-cli returned document XML with an unparsable tail; refusing to edit a partial document',
+          )
+        }
         if (
           fetched.content.trim() !== ''
           && parsed.title === ''
@@ -1066,10 +1351,13 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
         }
         validateEditDocument(edited, changedBlocks, titleChanged)
 
-        // Best-effort comparison against a fresh full read. The CLI's
-        // `--revision-id` cannot be used for a SEQUENCE of block writes (the
-        // first write advances the revision), so compare the changed blocks
-        // themselves and only write when their baselines are still current.
+        // Compare against a fresh full read AND the native revision. The CLI's
+        // `--revision-id` is documented as a baseline for `docs +update`; the
+        // first write uses the fresh revision and each later write uses the
+        // revision the previous answer returned. A changed block is only
+        // written when its tag/attrs/kind/inner text are still the loaded
+        // structure — text alone is not enough (p→h2, alignment, caption and
+        // checkbox `done` are structure-preserving text changes otherwise).
         let current: FetchedDocument
         try {
           current = await fetchFullDocument(runtimeNow, doc.token, context)
@@ -1079,30 +1367,35 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
           }
           throw error
         }
-        const currentBlocks = blockTextsOf(current.content)
-        for (const block of changedBlocks) {
-          const currentText = currentBlocks.get(block.id)
-          if (currentText === undefined || currentText !== block.baseline) {
+        const baseline = document.baseRevision ?? edited.revisionId
+        if (baseline !== undefined) {
+          if (current.revisionId === undefined) {
+            throw new ClueError('conflict', 'the document baseline could not be confirmed; re-read it and retry')
+          }
+          if (current.revisionId !== baseline) {
             throw new ClueError('conflict', 'the document changed since it was loaded; re-read it and retry')
           }
         }
-        if (titleChanged && titleOfEditContent(current.content) !== edited.baselineTitle) {
-          throw new ClueError('conflict', 'the document title changed since it was loaded; re-read it and retry')
-        }
+        requireCurrentStructure(edited, changedBlocks, titleChanged, current.content)
 
         const writes: Array<{ readonly blockId: string; readonly xml: string }> = []
         if (titleChanged) {
           writes.push({
             blockId: edited.titleBlockId!,
-            xml: buildDocTitleXml(edited.titleAttrs, edited.title),
+            xml: buildDocTitleXml(titleModelOf(current.content).attrs, edited.title),
           })
         }
         for (const block of changedBlocks) {
           writes.push({ blockId: block.id, xml: buildDocBlockXml(block, block.text) })
         }
 
+        // The sidecar is replayed from the FRESH response, never from the
+        // client payload, so a stale/tampered map cannot be written back.
+        const referenceMap = current.referenceMap
+        const referenceJson = referenceMap === undefined ? undefined : JSON.stringify(referenceMap)
         const written: string[] = []
-        let revision = current.revisionId ?? document.baseRevision ?? edited.revisionId
+        let resultRevision = current.revisionId ?? document.baseRevision ?? edited.revisionId
+        let writeRevision: string | undefined = current.revisionId
         for (const write of writes) {
           try {
             const success = await runFeishuCommand(runtimeNow, {
@@ -1114,6 +1407,8 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
                 '--block-id', write.blockId,
                 '--content', write.xml,
                 '--doc-format', 'xml',
+                ...(writeRevision === undefined ? [] : ['--revision-id', writeRevision]),
+                ...(referenceJson === undefined ? [] : ['--reference-map', referenceJson]),
                 '--as', 'user',
                 '--format', 'json',
               ],
@@ -1121,7 +1416,12 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
               ...(context.signal === undefined ? {} : { signal: context.signal }),
             })
             assertUpdateResult(success)
-            revision = revisionOfUpdate(success) ?? revision
+            const next = revisionOfUpdate(success)
+            if (next !== undefined) resultRevision = next
+            // Only a confirmed new revision is a safe baseline for the next
+            // block write; otherwise omit the flag instead of forcing a stale
+            // one and failing a write that follows our own successful write.
+            writeRevision = next
             written.push(write.blockId)
           } catch (error) {
             if (written.length === 0) throw error
@@ -1131,7 +1431,7 @@ export function createFeishuDocsSource(getRuntime: () => ClueRuntime): ClueSourc
         }
         return {
           savedAt: new Date().toISOString(),
-          ...(revision === undefined ? {} : { revision }),
+          ...(resultRevision === undefined ? {} : { revision: resultRevision }),
         }
       },
 

@@ -42,6 +42,13 @@ export interface ParsedWikiText {
   readonly url?: string
 }
 
+/** A wiki-space URL recognized in free text (a browsing scope, not a node). */
+export interface ParsedWikiSpaceText {
+  readonly kind: 'wiki-space'
+  readonly spaceId: string
+  readonly url?: string
+}
+
 /** A Drive folder URL/token recognized in free text (a browsing scope). */
 export interface ParsedDriveFolderText {
   readonly kind: 'drive-folder'
@@ -50,15 +57,21 @@ export interface ParsedDriveFolderText {
 }
 
 /** One recognized document text form. */
-export type ParsedDocText = ParsedDocxText | ParsedWikiText | ParsedDriveFolderText
+export type ParsedDocText = ParsedDocxText | ParsedWikiText | ParsedWikiSpaceText | ParsedDriveFolderText
 
 /** One recognized task text form. */
 export type ParsedTaskText =
   | { readonly kind: 'applink'; readonly guid: string; readonly url: string }
   | { readonly kind: 'display-id'; readonly value: string }
 
-/** The display-number shape (`t104121`) that is NOT a GUID. */
+/** The display-number shapes that are NOT a task GUID (`t104121`, `12345`). */
 const DISPLAY_TASK_ID = /^t\d+$/i
+const NUMERIC_TASK_ID = /^\d+$/
+
+/** Whether a value is a displayed task number rather than a GUID. */
+export function isDisplayTaskId(value: string): boolean {
+  return DISPLAY_TASK_ID.test(value) || NUMERIC_TASK_ID.test(value)
+}
 
 /** Token-only prefixes we can classify without fetching. */
 const DOCX_TOKEN = /^(?:docx|doccn|doxcn)[A-Za-z0-9_-]{4,}$/i
@@ -74,12 +87,32 @@ function decodeSegment(segment: string): string {
   }
 }
 
+/** The decoded path segments of one URL. */
+function pathParts(url: URL): string[] {
+  return url.pathname.split('/').filter(part => part !== '').map(decodeSegment)
+}
+
 /** The segment immediately after one marker in a URL path. */
 function segmentAfter(url: URL, marker: string): string | undefined {
-  const parts = url.pathname.split('/').filter(part => part !== '')
+  const parts = pathParts(url)
   const index = parts.findIndex(part => part.toLowerCase() === marker)
-  const raw = index >= 0 ? parts[index + 1] : undefined
-  return raw === undefined ? undefined : decodeSegment(raw)
+  return index >= 0 ? parts[index + 1] : undefined
+}
+
+/**
+ * Parse a `/wiki/space/<space_id>` URL as a wiki-space scope.
+ *
+ * lark-cli documents this path as the knowledge-space scope; the generic
+ * `/wiki/<token>` branch would otherwise treat the literal segment `space` as
+ * a wiki node token and call `wiki +node-get --node-token space`.
+ */
+function wikiSpaceIdOf(url: URL): string | undefined {
+  const parts = pathParts(url)
+  const index = parts.findIndex(part => part.toLowerCase() === 'wiki')
+  if (index < 0) return undefined
+  if ((parts[index + 1] ?? '').toLowerCase() !== 'space') return undefined
+  const spaceId = parts[index + 2]
+  return spaceId === undefined || spaceId === '' ? undefined : spaceId
 }
 
 /** Parse one document URL or token from user text. */
@@ -97,6 +130,10 @@ export function parseFeishuDocText(text: string): ParsedDocText | undefined {
     const docToken = segmentAfter(url, 'docx')
     if (docToken !== undefined && docToken !== '') {
       return { kind: 'docx', docToken, url: trimmed }
+    }
+    const spaceId = wikiSpaceIdOf(url)
+    if (spaceId !== undefined) {
+      return { kind: 'wiki-space', spaceId, url: trimmed }
     }
     const wikiToken = segmentAfter(url, 'wiki')
     if (wikiToken !== undefined && wikiToken !== '') {
@@ -119,7 +156,7 @@ export function parseFeishuTaskText(text: string): ParsedTaskText | undefined {
   if (typeof text !== 'string') return undefined
   const trimmed = text.trim()
   if (trimmed === '') return undefined
-  if (DISPLAY_TASK_ID.test(trimmed)) return { kind: 'display-id', value: trimmed }
+  if (isDisplayTaskId(trimmed)) return { kind: 'display-id', value: trimmed }
   let url: URL
   try {
     url = new URL(trimmed)
@@ -135,6 +172,7 @@ export function parseFeishuTaskText(text: string): ParsedTaskText | undefined {
   if (!isTodoApplink) return undefined
   const guid = url.searchParams.get('guid')?.trim() ?? ''
   if (guid === '') return { kind: 'display-id', value: 'applink-without-guid' }
+  if (isDisplayTaskId(guid)) return { kind: 'display-id', value: guid }
   return { kind: 'applink', guid, url: trimmed }
 }
 
@@ -273,7 +311,7 @@ export function parseTaskLocator(value: Locator): FeishuTaskLocator {
   if (guid === undefined) {
     throw new ClueError('invalid-request', 'a Feishu task locator needs a non-empty "guid"')
   }
-  if (DISPLAY_TASK_ID.test(guid)) {
+  if (isDisplayTaskId(guid)) {
     throw new ClueError('invalid-request', 'the displayed task number is not a task GUID')
   }
   return {

@@ -18,6 +18,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import type { ClueFormatRendererProps, JsonValue } from '../../../../clues/types.ts'
 import {
+  FEISHU_FORMATS,
   parseTaskDocument,
   validateTaskDocument,
   type FeishuTaskDocumentData,
@@ -26,10 +27,13 @@ import {
 } from '../../../../clues/sources/feishu/format.ts'
 import css from './feishu.module.css'
 import type { FeishuClientLabels } from './labels.ts'
+import { appDate, appDateTime } from './time.ts'
 
 /** Props of {@link FeishuTaskEditor}. */
 export interface FeishuTaskEditorProps extends ClueFormatRendererProps {
   readonly labels: FeishuClientLabels
+  /** App-locale date/time formatter (S9 supplies it; fallback is the browser locale). */
+  readonly formatDateTime?: (value: string) => string
 }
 
 /** Two-digit zero padding. */
@@ -56,28 +60,35 @@ function timeOfInput(value: string, allDay: boolean): FeishuTaskTime | undefined
   return { timestamp: String(millis), isAllDay: allDay }
 }
 
-/** Human-readable updated timestamp (local timezone, raw if unparseable). */
-function displayUpdatedAt(value: string | undefined): string | undefined {
+/** Human-readable updated timestamp (app locale when supplied). */
+function displayUpdatedAt(
+  value: string | undefined,
+  formatDateTime: ((value: string) => string) | undefined,
+): string | undefined {
   if (value === undefined || value === '') return undefined
-  const millis = Number(value)
-  return Number.isFinite(millis) ? new Date(millis).toLocaleString() : value
+  if (formatDateTime !== undefined) return formatDateTime(value)
+  return appDateTime(value)
 }
 
-/** Human-readable time for the read-only view (local timezone). */
-function displayTime(time: FeishuTaskTime | null, labels: FeishuClientLabels): string {
+/** Human-readable time for the read-only view (app locale when supplied). */
+function displayTime(
+  time: FeishuTaskTime | null,
+  labels: FeishuClientLabels,
+  formatDateTime: ((value: string) => string) | undefined,
+): string {
   if (time === null) return labels.noTime
-  const millis = Number(time.timestamp)
-  if (!Number.isFinite(millis)) return labels.noTime
-  const date = new Date(millis)
-  return time.isAllDay ? date.toLocaleDateString() : date.toLocaleString()
+  if (formatDateTime !== undefined) return formatDateTime(time.timestamp)
+  return time.isAllDay ? appDate(time.timestamp) : appDateTime(time.timestamp)
 }
 
 /** The static read-only task view (a preview read is read-only by definition). */
 function TaskReadOnly(props: {
   readonly task: FeishuTaskDocumentData
   readonly labels: FeishuClientLabels
+  readonly formatDateTime?: (value: string) => string
 }): ReactNode {
-  const { task, labels } = props
+  const { task, labels, formatDateTime } = props
+  const updatedAt = displayUpdatedAt(task.updatedAt, formatDateTime)
   return (
     <section className={css.panel} data-feishu-task-preview="" data-feishu-task-read-only="">
       <div className={css.meta}>
@@ -90,20 +101,20 @@ function TaskReadOnly(props: {
       <dl className={css.fields}>
         <div className={css.fieldRow}>
           <dt>{labels.start}</dt>
-          <dd>{displayTime(task.start, labels)}</dd>
+          <dd>{displayTime(task.start, labels, formatDateTime)}</dd>
         </div>
         <div className={css.fieldRow}>
           <dt>{labels.due}</dt>
-          <dd>{displayTime(task.due, labels)}</dd>
+          <dd>{displayTime(task.due, labels, formatDateTime)}</dd>
         </div>
         <div className={css.fieldRow}>
           <dt>{labels.description}</dt>
           <dd>{task.description === '' ? labels.emptyDescription : task.description}</dd>
         </div>
-        {displayUpdatedAt(task.updatedAt) !== undefined && (
+        {updatedAt !== undefined && (
           <div className={css.fieldRow} data-feishu-task-updated-at="">
             <dt>{labels.updatedAt}</dt>
-            <dd>{displayUpdatedAt(task.updatedAt)}</dd>
+            <dd>{updatedAt}</dd>
           </div>
         )}
       </dl>
@@ -124,9 +135,10 @@ function TimeField(props: {
   readonly time: FeishuTaskTime | null
   readonly labels: FeishuClientLabels
   readonly error?: string
+  readonly disabled: boolean
   onChange(time: FeishuTaskTime): void
 }): ReactNode {
-  const { id, field, label, time, labels, error, onChange } = props
+  const { id, field, label, time, labels, error, disabled, onChange } = props
   const inputRef = useRef<HTMLInputElement>(null)
   const wasNull = useRef(time === null)
   const [clearError, setClearError] = useState<string | undefined>(undefined)
@@ -145,6 +157,7 @@ function TimeField(props: {
           className={css.linkButton}
           data-feishu-task-set-time={field}
           aria-label={`${label}: ${labels.setTime}`}
+          disabled={disabled}
           onClick={() => { onChange({ timestamp: String(Date.now()), isAllDay: false }) }}
         >
           {labels.setTime}
@@ -164,6 +177,7 @@ function TimeField(props: {
           className={css.input}
           type={time.isAllDay ? 'date' : 'datetime-local'}
           value={inputValueOf(time)}
+          disabled={disabled}
           data-feishu-task-input={field}
           aria-invalid={shownError !== undefined}
           aria-describedby={shownError === undefined ? undefined : errorId}
@@ -184,6 +198,7 @@ function TimeField(props: {
           <input
             type="checkbox"
             checked={time.isAllDay}
+            disabled={disabled}
             data-feishu-task-allday={field}
             aria-label={`${label} ${labels.allDay}`}
             onChange={(event) => { onChange({ ...time, isAllDay: event.target.checked }) }}
@@ -212,16 +227,28 @@ function TimeField(props: {
  */
 export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
   const idPrefix = useId()
-  const task = parseTaskDocument(props.document.data, guidOf(props.document.data))
   const { labels } = props
+  // The task format only. A payload mix-up under another format must not open
+  // a form whose save the source would reject.
+  const task = props.format === FEISHU_FORMATS.taskDocument
+    ? parseTaskDocument(props.document.data)
+    : undefined
   if (task === undefined) {
     return (
       <section className={css.panel} data-feishu-task-invalid="" role="note">
-        <p className={css.hint}>{labels.invalidDocument}</p>
+        <p className={css.hint}>{labels.invalidTask}</p>
       </section>
     )
   }
-  if (props.readOnly) return <TaskReadOnly task={task} labels={labels} />
+  if (props.readOnly) {
+    return (
+      <TaskReadOnly
+        task={task}
+        labels={labels}
+        {...(props.formatDateTime === undefined ? {} : { formatDateTime: props.formatDateTime })}
+      />
+    )
+  }
 
   const errors = validateTaskDocument(task)
   const errorOf = (field: FeishuTaskField): string | undefined => {
@@ -232,6 +259,8 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
         return labels.titleRequired
       case 'start-after-due':
         return labels.startAfterDue
+      case 'all-day-mismatch':
+        return labels.allDayMismatch
       case 'invalid-time':
         return labels.invalidTime
       default:
@@ -253,6 +282,11 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
         <span className={css.badge}>
           {labels.taskGuid} {task.guid}
         </span>
+        {displayUpdatedAt(task.updatedAt, props.formatDateTime) !== undefined && (
+          <span className={css.badge} data-feishu-task-updated-at="">
+            {labels.updatedAt} {displayUpdatedAt(task.updatedAt, props.formatDateTime)}
+          </span>
+        )}
       </div>
 
       <div className={css.field}>
@@ -262,6 +296,7 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
           className={css.input}
           type="text"
           value={task.title}
+          disabled={props.saving}
           data-feishu-task-input="title"
           aria-invalid={errorOf('title') !== undefined}
           aria-describedby={errorOf('title') === undefined ? undefined : errorIdOf('title')}
@@ -280,6 +315,7 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
           id={idOf('description')}
           className={css.textarea}
           value={task.description}
+          disabled={props.saving}
           data-feishu-task-input="description"
           rows={4}
           onChange={(event) => { emit({ description: event.target.value }) }}
@@ -293,6 +329,7 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
         time={task.start}
         labels={labels}
         error={errorOf('start')}
+        disabled={props.saving}
         onChange={(time) => { emit({ start: time }) }}
       />
       <TimeField
@@ -302,6 +339,7 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
         time={task.due}
         labels={labels}
         error={errorOf('due')}
+        disabled={props.saving}
         onChange={(time) => { emit({ due: time }) }}
       />
 
@@ -309,6 +347,7 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
         <input
           type="checkbox"
           checked={task.completed}
+          disabled={props.saving}
           data-feishu-task-input="completed"
           aria-label={labels.completed}
           onChange={(event) => { emit({ completed: event.target.checked }) }}
@@ -331,11 +370,4 @@ export function FeishuTaskEditor(props: FeishuTaskEditorProps): ReactNode {
       )}
     </form>
   )
-}
-
-/** The GUID carried by a task payload (the editor only validates it on save). */
-function guidOf(data: JsonValue): string {
-  if (data === null || typeof data !== 'object' || Array.isArray(data)) return ''
-  const guid = (data as { guid?: unknown }).guid
-  return typeof guid === 'string' ? guid : ''
 }

@@ -17,11 +17,13 @@
  * - `connect` (called by an explicit click) first checks the configuration with
  *   the read-only status verb (so a "configure" step never launches a login it
  *   cannot complete), then runs exactly
- *   `lark-cli auth login --domain docs --domain drive --domain task --no-wait
- *   --json` and projects the opaque verification URL / user code. The QR
- *   payload is the SAME opaque string (no re-encoding). The task domain is part
- *   of the union so a docs-only login can never leave the tasks capability
- *   unusable;
+ *   `lark-cli auth login --domain docs --domain drive --domain task --domain
+ *   wiki --no-wait --json` and projects the opaque verification URL / user
+ *   code. The QR payload is the SAME opaque string (no re-encoding). The task
+ *   domain is part of the union so a docs-only login can never leave the tasks
+ *   capability unusable; `wiki` is a SEPARATE auth domain in lark-cli 1.0.55
+ *   (the docs/drive domains do not include the `wiki:*` scopes), and the docs
+ *   source calls the wiki shortcuts, so it is part of the requested union;
  * - `poll` runs `lark-cli auth login --device-code <host-side code> --json` on
  *   explicit request only;
  * - `cancel` drops the host-side handle. lark-cli documents no device-code
@@ -85,6 +87,7 @@ export function larkAuthLoginArgs(): string[] {
     '--domain', 'docs',
     '--domain', 'drive',
     '--domain', 'task',
+    '--domain', 'wiki',
     '--no-wait', '--json',
   ]
 }

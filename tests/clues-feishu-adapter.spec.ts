@@ -14,10 +14,10 @@
  *   calls it — never `--verify`, never `--dry-run`, never on a timer;
  * - `connect` first runs the read-only `auth status` check (so a "configure"
  *   click never launches a login it cannot complete), then exactly
- *   `auth login --domain docs --domain drive --domain task --no-wait --json`;
- *   the verification URL is forwarded as the SAME opaque string (no
- *   re-encoding), the QR payload is that same string, and the device code stays
- *   in the host-side `state` (never in the prompt);
+ *   `auth login --domain docs --domain drive --domain task --domain wiki
+ *   --no-wait --json`; the verification URL is forwarded as the SAME opaque
+ *   string (no re-encoding), the QR payload is that same string, and the
+ *   device code stays in the host-side `state` (never in the prompt);
  * - `poll` runs `auth login --device-code … --json` for the explicit poll
  *   only, and a success envelope with a pending/denied status stays pending or
  *   denied instead of claiming ready;
@@ -88,14 +88,17 @@ function adapterContext(observed: unknown[]): ConnectionAdapterContext {
   }
 }
 
-/** The real lark-cli 1.0.55 scope names that cover the four capabilities. */
+/** The real lark-cli 1.0.55 scope names that cover the declared capabilities. */
 const ALL_SCOPES = [
-  'docx:document:readonly',
+  'docx:document',
+  'docs:document.content:read',
   'search:docs:read',
+  'wiki:node:retrieve',
+  'wiki:space:retrieve',
   'task:task:read',
   'task:task:write',
 ]
-/** A docs/drive-only grant: no task scope was authorized. */
+/** A docs/drive-only grant: no task or wiki scope was authorized. */
 const DOCS_ONLY_SCOPES = [
   'docs:document.content:read',
   'drive:drive.search:readonly',
@@ -360,7 +363,7 @@ describe('connection adapter: explicit status and two-step authorization', () =>
       configuration: 'ready',
       authorization: 'ready',
       account: 'Ada',
-      capabilities: ['docs.read', 'docs.search', 'tasks.read', 'tasks.edit'],
+      capabilities: ['docs.read', 'docs.search', 'docs.edit', 'wiki.read', 'tasks.read', 'tasks.edit'],
     })
   })
 
@@ -435,7 +438,10 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     expect(docsInspection.capabilities).toBeUndefined()
     expect(docsInspection.detail).toMatch(/tasks\.read/)
     expect(docsInspection.detail).toMatch(/tasks\.edit/)
+    expect(docsInspection.detail).toMatch(/docs\.edit/)
+    expect(docsInspection.detail).toMatch(/wiki\.read/)
     expect(docsInspection.detail).toMatch(/task:task:read/)
+    expect(docsInspection.detail).toMatch(/wiki:node:retrieve/)
 
     const noScope = new FakeLarkRuntime().enqueue(statusData({
       status: 'ready',
@@ -457,7 +463,7 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     const stringInspection = await stringBundle.connection.inspect({}, adapterContext([]))
     expect(stringInspection.authorization).toBe('ready')
     expect(stringInspection.capabilities).toEqual([
-      'docs.read', 'docs.search', 'tasks.read', 'tasks.edit',
+      'docs.read', 'docs.search', 'docs.edit', 'wiki.read', 'tasks.read', 'tasks.edit',
     ])
 
     // Some CLI versions put the scope list on `data` rather than the user.
@@ -469,7 +475,7 @@ describe('connection adapter: explicit status and two-step authorization', () =>
     const dataInspection = await dataBundle.connection.inspect({}, adapterContext([]))
     expect(dataInspection.authorization).toBe('ready')
     expect(dataInspection.capabilities).toEqual([
-      'docs.read', 'docs.search', 'tasks.read', 'tasks.edit',
+      'docs.read', 'docs.search', 'docs.edit', 'wiki.read', 'tasks.read', 'tasks.edit',
     ])
   })
 
@@ -550,6 +556,7 @@ describe('connection adapter: explicit status and two-step authorization', () =>
       '--domain', 'docs',
       '--domain', 'drive',
       '--domain', 'task',
+      '--domain', 'wiki',
       '--no-wait', '--json',
     ])
     expect(runtime.requests.map(request => request.args)).toEqual([
@@ -704,7 +711,7 @@ describe('connection adapter: explicit status and two-step authorization', () =>
       expect(polled.authorization).toBe('ready')
       expect(polled.action).toBe('none')
       expect(polled.capabilities).toEqual([
-        'docs.read', 'docs.search', 'tasks.read', 'tasks.edit',
+        'docs.read', 'docs.search', 'docs.edit', 'wiki.read', 'tasks.read', 'tasks.edit',
       ])
     } finally {
       connections.dispose()

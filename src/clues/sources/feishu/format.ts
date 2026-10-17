@@ -78,10 +78,19 @@ export const FEISHU_PLUGIN_ID = 'dsh-better-sidebar'
 export const LARK_CLI_PACKAGE = '@larksuite/cli'
 export const LARK_CLI_VERSION = '1.0.55'
 
-/** Capability ids the shared connection grants once authorized. */
+/**
+ * Capability ids the shared connection grants once authorized.
+ *
+ * `docs.edit` and `wiki.read` are separate capabilities on purpose: a
+ * read-only Docx grant must not advertise document writes, and the wiki
+ * shortcuts (`wiki +node-get` / `+node-list` / `+space-list`) need their own
+ * `wiki:*` scopes, which the `docs`/`drive` domains do not include.
+ */
 export const FEISHU_CONNECTION_CAPABILITIES = [
   'docs.read',
   'docs.search',
+  'docs.edit',
+  'wiki.read',
   'tasks.read',
   'tasks.edit',
 ] as const
@@ -168,8 +177,15 @@ export type FeishuDocReadData = {
   readonly objType?: string
   readonly sourceUrl?: string
   readonly revisionId?: string
-  /** Structured reference sidecar returned WITH the content by `docs +fetch`. */
+  /** Structured reference sidecar returned WITH the content by `docs +fetch --detail full`. */
   readonly referenceMap?: JsonValue
+  /**
+   * Present when `content` is one window of a longer document: `blocks` means
+   * only complete top-level XML blocks were included, `bytes` means the window
+   * is a raw byte slice (a single block larger than the read window). Absent
+   * means the content is the whole document.
+   */
+  readonly fragment?: 'blocks' | 'bytes'
 }
 
 /**
@@ -196,6 +212,8 @@ export interface FeishuDocEditBlock {
    * `xml` — `text` is inner XML whose inline tags are preserved verbatim.
    */
   readonly kind: 'plain' | 'xml'
+  /** Position in the document, used only to interleave read-only blocks. */
+  readonly order: number
 }
 
 /** The `data` of one document edit load (`docs +fetch --detail full`). */
@@ -207,6 +225,8 @@ export interface FeishuDocEditData {
   readonly objType?: string
   readonly sourceUrl?: string
   readonly revisionId?: string
+  /** Reference sidecar of the SAME `--detail full` response as the content. */
+  readonly referenceMap?: JsonValue
   readonly title: string
   /** The title exactly as loaded; a save compares against this baseline. */
   readonly baselineTitle: string
@@ -222,9 +242,15 @@ export interface FeishuDocEditData {
 /** One non-editable block (complex container/resource) kept for context. */
 export interface FeishuDocReadOnlyBlock {
   readonly tag: string
+  /** Outer attributes EXCEPT `id` (the resource URL/token lives here). */
+  readonly attrs: string
   /** Plain text projection of the block, for display only. */
   readonly text: string
   readonly reason: string
+  /** Position in the document, used to interleave with editable blocks. */
+  readonly order: number
+  /** A safe http(s) origin of the block (image/file/whiteboard link), when present. */
+  readonly url?: string
 }
 
 /** One task time. `timestamp` is an epoch-millisecond instant; `isAllDay` keeps the task's own semantics. */
@@ -251,7 +277,11 @@ export type FeishuTaskDocumentData = {
 export type FeishuTaskField = 'title' | 'description' | 'start' | 'due' | 'completed'
 
 /** Stable validation codes the client maps to localized copy. */
-export type FeishuTaskValidationCode = 'title-required' | 'invalid-time' | 'start-after-due'
+export type FeishuTaskValidationCode =
+  | 'title-required'
+  | 'invalid-time'
+  | 'start-after-due'
+  | 'all-day-mismatch'
 
 /** One validation failure. */
 export interface FeishuTaskValidationError {
@@ -318,13 +348,18 @@ function completedOf(record: Record<string, JsonValue>): boolean {
 
 /**
  * Project one lark task record into the source-owned document shape.
+ *
+ * The GUID is part of the task identity, so a record without a non-empty GUID
+ * is not a task document. There is deliberately no caller-supplied fallback:
+ * a malformed `task tasks get` answer must be an error, never a blank task
+ * fabricated from the requested locator.
  * @param value - the task object from `task tasks get` (or a list row).
- * @param fallbackGuid - locator GUID used when the record omits it.
- * @returns the document, or undefined when the record is not an object.
+ * @returns the document, or undefined when the record is not an object/`guid`.
  */
-export function parseTaskDocument(value: JsonValue, fallbackGuid: string): FeishuTaskDocumentData | undefined {
+export function parseTaskDocument(value: JsonValue): FeishuTaskDocumentData | undefined {
   if (!isRecord(value)) return undefined
-  const guid = stringOf(value.guid) ?? fallbackGuid
+  const guid = stringOf(value.guid)
+  if (guid === undefined) return undefined
   const title = stringOf(value.summary) ?? stringOf(value.title) ?? ''
   const description = typeof value.description === 'string' ? value.description : ''
   const start = parseTaskTime(value.start)
@@ -378,6 +413,7 @@ export function parseDocReadData(value: JsonValue): FeishuDocReadData | undefine
   if (kind === undefined || docToken === undefined || title === undefined || content === undefined || projection === undefined) {
     return undefined
   }
+  const fragment = value.fragment === 'blocks' || value.fragment === 'bytes' ? value.fragment : undefined
   return {
     kind,
     title,
@@ -390,11 +426,12 @@ export function parseDocReadData(value: JsonValue): FeishuDocReadData | undefine
     ...(stringOf(value.sourceUrl) === undefined ? {} : { sourceUrl: stringOf(value.sourceUrl) }),
     ...(value.revisionId === undefined ? {} : { revisionId: String(value.revisionId) }),
     ...(value.referenceMap === undefined ? {} : { referenceMap: value.referenceMap }),
+    ...(fragment === undefined ? {} : { fragment }),
   }
 }
 
 /** Parse one editable block (tolerant; a malformed row makes the document invalid). */
-function parseEditBlock(value: JsonValue): FeishuDocEditBlock | undefined {
+function parseEditBlock(value: JsonValue, index: number): FeishuDocEditBlock | undefined {
   if (!isRecord(value)) return undefined
   const id = stringOf(value.id)
   const tag = stringOf(value.tag)
@@ -411,6 +448,7 @@ function parseEditBlock(value: JsonValue): FeishuDocEditBlock | undefined {
     text,
     baseline,
     kind,
+    order: typeof value.order === 'number' && Number.isInteger(value.order) ? value.order : index,
   }
 }
 
@@ -432,7 +470,7 @@ export function parseDocEditData(value: JsonValue): FeishuDocEditData | undefine
   if (!Array.isArray(value.blocks) || !Array.isArray(value.readOnlyBlocks)) return undefined
   const blocks: FeishuDocEditBlock[] = []
   for (const row of value.blocks) {
-    const block = parseEditBlock(row)
+    const block = parseEditBlock(row, blocks.length)
     if (block === undefined) return undefined
     blocks.push(block)
   }
@@ -443,7 +481,16 @@ export function parseDocEditData(value: JsonValue): FeishuDocEditData | undefine
     const text = typeof row.text === 'string' ? row.text : undefined
     const reason = stringOf(row.reason)
     if (tag === undefined || text === undefined || reason === undefined) return undefined
-    readOnlyBlocks.push({ tag, text, reason })
+    readOnlyBlocks.push({
+      tag,
+      attrs: typeof row.attrs === 'string' ? row.attrs : '',
+      text,
+      reason,
+      order: typeof row.order === 'number' && Number.isInteger(row.order)
+        ? row.order
+        : blocks.length + readOnlyBlocks.length,
+      ...(stringOf(row.url) === undefined ? {} : { url: stringOf(row.url) }),
+    })
   }
   return {
     kind,
@@ -453,6 +500,7 @@ export function parseDocEditData(value: JsonValue): FeishuDocEditData | undefine
     ...(stringOf(value.objType) === undefined ? {} : { objType: stringOf(value.objType) }),
     ...(stringOf(value.sourceUrl) === undefined ? {} : { sourceUrl: stringOf(value.sourceUrl) }),
     ...(value.revisionId === undefined ? {} : { revisionId: String(value.revisionId) }),
+    ...(value.referenceMap === undefined ? {} : { referenceMap: value.referenceMap }),
     title,
     baselineTitle,
     titleEditable: value.titleEditable === true,
@@ -465,7 +513,7 @@ export function parseDocEditData(value: JsonValue): FeishuDocEditData | undefine
 
 // ── Task validation and diffing (shared by UI + host) ──────────────────────
 
-/** Local start <= due validation, preserving each time's all-day semantics. */
+/** Local start <= due and same-all-day validation, preserving each time's semantics. */
 export function validateTaskDocument(data: FeishuTaskDocumentData): FeishuTaskValidationError[] {
   const errors: FeishuTaskValidationError[] = []
   if (typeof data.title !== 'string' || data.title.trim() === '') {
@@ -481,6 +529,16 @@ export function validateTaskDocument(data: FeishuTaskDocumentData): FeishuTaskVa
     const due = millisOf(data.due.timestamp)
     if (start !== undefined && due !== undefined && start > due) {
       errors.push({ field: 'due', code: 'start-after-due', message: 'The start must not be later than the due time.' })
+    }
+    // `task.tasks.patch` requires both times to agree on is_all_day when both
+    // are set; a mixed pair is rejected by the server as a generic invalid
+    // request, so the form and the save path must reject it locally.
+    if (data.start.isAllDay !== data.due.isAllDay) {
+      errors.push({
+        field: 'due',
+        code: 'all-day-mismatch',
+        message: 'The start and due times must both be all-day or both be timed.',
+      })
     }
   }
   return errors

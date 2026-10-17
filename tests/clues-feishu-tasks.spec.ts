@@ -56,7 +56,7 @@ function opsOf(runtime: FakeLarkRuntime) {
   return { source, operations }
 }
 
-/** One lark task record. */
+/** One lark task record in the native `task.tasks.get` shape (status/completed_at, no `completed`). */
 function taskRecord(overrides: Record<string, JsonValue> = {}): Record<string, JsonValue> {
   return {
     guid: GUID,
@@ -64,7 +64,7 @@ function taskRecord(overrides: Record<string, JsonValue> = {}): Record<string, J
     description: 'Ship the release',
     start: { timestamp: '1700000000000', is_all_day: false },
     due: { timestamp: '1700003600000', is_all_day: false },
-    completed: false,
+    status: 'todo',
     updated_at: UPDATED_1,
     url: URL,
     ...overrides,
@@ -111,7 +111,7 @@ function saveInput(data: FeishuTaskDocumentData, baseRevision: string | undefine
 describe('task browsing and search', () => {
   it('lists one official native task page and resumes only with its cursor', async () => {
     const runtime = new FakeLarkRuntime().enqueue(okResult({
-      tasks: [taskRecord()],
+      items: [taskRecord()],
       has_more: true,
       page_token: 'task-pt-2',
     }))
@@ -131,7 +131,7 @@ describe('task browsing and search', () => {
     })
     expect(first.total).toBeUndefined()
 
-    runtime.enqueue(okResult({ tasks: [], has_more: false }))
+    runtime.enqueue(okResult({ items: [], has_more: false }))
     await operations.list!({ scope: { kind: 'tasks' }, cursor: first.nextCursor }, context())
     expect(runtime.requests[1]!.args[4]).toBe(JSON.stringify({
       page_size: 20, page_token: 'task-pt-2',
@@ -139,7 +139,7 @@ describe('task browsing and search', () => {
   })
 
   it('supports an explicit tasklist range and a completion filter', async () => {
-    const runtime = new FakeLarkRuntime().enqueue(okResult({ tasks: [], has_more: false }))
+    const runtime = new FakeLarkRuntime().enqueue(okResult({ items: [], has_more: false }))
     const { operations } = opsOf(runtime)
     await operations.list!(
       { scope: { kind: 'tasks', tasklistGuid: 'tl-1', completed: false } },
@@ -154,7 +154,7 @@ describe('task browsing and search', () => {
 
   it('refuses a cursor from another task range without a provider call', async () => {
     const runtime = new FakeLarkRuntime().enqueue(okResult({
-      tasks: [taskRecord()], has_more: true, page_token: 'pt',
+      items: [taskRecord()], has_more: true, page_token: 'pt',
     }))
     const { operations } = opsOf(runtime)
     const page = await operations.list!({ scope: { kind: 'tasks' } }, context())
@@ -231,6 +231,45 @@ describe('task browsing and search', () => {
     expect(runtime.requests).toHaveLength(1)
   })
 
+  it('treats has_more as authoritative and rejects a success envelope without rows', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(okResult({ items: [], has_more: false, page_token: 'stale' }))
+      .enqueue(okResult({ items: [], has_more: true }))
+      .enqueue(okResult({}))
+    const { operations } = opsOf(runtime)
+    const done = await operations.list!({ scope: { kind: 'tasks' } }, context())
+    expect(done.nextCursor).toBeUndefined()
+    expect(done.limited).toBeUndefined()
+    const truncated = await operations.list!({ scope: { kind: 'tasks' } }, context())
+    expect(truncated.nextCursor).toBeUndefined()
+    expect(truncated.limited).toBe(true)
+    await expect(operations.list!({ scope: { kind: 'tasks' } }, context()))
+      .rejects.toMatchObject({ category: 'failed' })
+  })
+
+  it('skips a display-number row instead of offering it as a task', async () => {
+    const runtime = new FakeLarkRuntime().enqueue(okResult({
+      items: [
+        { guid: 't104121', summary: 'Display row', status: 'todo' },
+        taskRecord(),
+      ],
+      has_more: false,
+    }))
+    const { operations } = opsOf(runtime)
+    const page = await operations.list!({ scope: { kind: 'tasks' } }, context())
+    expect(page.items.map(item => (item.locator as { guid: string }).guid)).toEqual([GUID])
+  })
+
+  it('validates the keyword like a filter instead of forwarding control characters', async () => {
+    const runtime = new FakeLarkRuntime()
+    const { operations } = opsOf(runtime)
+    await expect(operations.search!({ query: 'release\u0000drop' }, context()))
+      .rejects.toMatchObject({ category: 'invalid-request' })
+    await expect(operations.search!({ query: 'x'.repeat(600) }, context()))
+      .rejects.toMatchObject({ category: 'invalid-request' })
+    expect(runtime.requests).toHaveLength(0)
+  })
+
   it('rejects a tasklist search instead of silently returning global results', async () => {
     const runtime = new FakeLarkRuntime()
     const { operations } = opsOf(runtime)
@@ -282,13 +321,21 @@ describe('task resolve', () => {
     expect(runtime.requests).toHaveLength(0)
   })
 
-  it('rejects a displayed task number explicitly (it is not a GUID)', async () => {
+  it('rejects a displayed task number and numeric GUIDs explicitly (they are not GUIDs)', async () => {
     const runtime = new FakeLarkRuntime()
     const { operations } = opsOf(runtime)
     await expect(operations.resolve!({ text: 't104121', explicit: true }, context()))
       .rejects.toMatchObject({ category: 'invalid-request' })
     // Auto resolution keeps asking later sources instead of failing the whole parse.
     expect(await operations.resolve!({ text: 't104121' }, context())).toBeUndefined()
+    await expect(operations.read!(
+      { typeId: FEISHU_TYPE_IDS.task, locator: { kind: 'task', guid: '12345678' } },
+      context(),
+    )).rejects.toMatchObject({ category: 'invalid-request' })
+    const displayGuid = 'https://applink.feishu.cn/client/todo/detail?guid=t104121'
+    await expect(operations.resolve!({ text: displayGuid, explicit: true }, context()))
+      .rejects.toMatchObject({ category: 'invalid-request' })
+    expect(await operations.resolve!({ text: displayGuid }, context())).toBeUndefined()
     expect(runtime.requests).toHaveLength(0)
   })
 })
@@ -320,6 +367,31 @@ describe('task read and edit loading', () => {
       updatedAt: UPDATED_1,
       url: URL,
     })
+  })
+
+  it('fails on an empty/null get payload instead of fabricating a blank task', async () => {
+    const answers = [
+      okResult({}),
+      okResult({ task: null }),
+      okResult({ task: {} }),
+      okResult({ task: taskRecord({ guid: 'a-different-guid' }) }),
+    ]
+    for (const answer of answers) {
+      const runtime = new FakeLarkRuntime().enqueue(answer)
+      const { operations } = opsOf(runtime)
+      await expect(operations.read!(
+        { typeId: FEISHU_TYPE_IDS.task, locator: locator() },
+        context(),
+      )).rejects.toMatchObject({ category: 'failed' })
+    }
+    // A direct object with the matching GUID is accepted.
+    const runtime = new FakeLarkRuntime().enqueue(okResult(taskRecord()))
+    const { operations } = opsOf(runtime)
+    const result = await operations.read!(
+      { typeId: FEISHU_TYPE_IDS.task, locator: locator() },
+      context(),
+    )
+    expect(result.data).toMatchObject({ guid: GUID })
   })
 
   it('rejects a displayed number as a read locator with no CLI call', async () => {
@@ -400,6 +472,18 @@ describe('task save: changed fields, completion and partial success', () => {
     expect(runtime.requests).toHaveLength(0)
   })
 
+  it('rejects mixed all-day flags locally (the API requires both times to agree)', async () => {
+    const runtime = new FakeLarkRuntime()
+    const { operations } = opsOf(runtime)
+    const mixed = editedDocument({
+      start: { timestamp: '1700000000000', isAllDay: false },
+      due: { timestamp: '1700003600000', isAllDay: true },
+    })
+    await expect(operations.saveEdit!(saveInput(mixed), context()))
+      .rejects.toMatchObject({ category: 'invalid-request' })
+    expect(runtime.requests).toHaveLength(0)
+  })
+
   it('submits ONLY the changed fields and refreshes the baseline after the update', async () => {
     const runtime = new FakeLarkRuntime()
       .enqueue(taskGet())
@@ -468,7 +552,7 @@ describe('task save: changed fields, completion and partial success', () => {
 
   it('submits a changed due time alone, preserving all-day semantics', async () => {
     const runtime = new FakeLarkRuntime()
-      .enqueue(taskGet())
+      .enqueue(taskGet({ start: null }))
       .enqueue(okResult({
         updated_fields: ['due'],
         tasks: [{
@@ -478,12 +562,13 @@ describe('task save: changed fields, completion and partial success', () => {
         }],
       }))
       .enqueue(taskGet({
+        start: null,
         due: { timestamp: '1700007200000', is_all_day: true },
         updated_at: UPDATED_2,
       }))
     const { operations } = opsOf(runtime)
     await operations.saveEdit!(
-      saveInput(editedDocument({ due: { timestamp: '1700007200000', isAllDay: true } })),
+      saveInput(editedDocument({ start: null, due: { timestamp: '1700007200000', isAllDay: true } })),
       context(),
     )
     const payload = JSON.parse(runtime.requests[1]!.args[5]!) as Record<string, JsonValue>
@@ -532,11 +617,11 @@ describe('task save: changed fields, completion and partial success', () => {
 
   it('reopens a completed task with +reopen and trusts a success envelope that echoes the old object', async () => {
     const runtime = new FakeLarkRuntime()
-      .enqueue(taskGet({ completed: true, completed_at: '1700009999000' }))
+      .enqueue(taskGet({ status: 'done', completed_at: '1700009999000' }))
       // The CLI documents only “report success”; it may echo the pre-reopen
       // object. The envelope + exit 0 is the confirmation, not that echo.
       .enqueue(okResult({ status: 'done', completed_at: '1700009999000' }))
-      .enqueue(taskGet({ completed: false, updated_at: UPDATED_2 }))
+      .enqueue(taskGet({ status: 'todo', updated_at: UPDATED_2 }))
     const { operations } = opsOf(runtime)
     await operations.saveEdit!(saveInput(editedDocument({ completed: false })), context())
     expect(runtime.requests[1]!.args).toEqual([
@@ -602,7 +687,7 @@ describe('task save: changed fields, completion and partial success', () => {
 })
 
 describe('task portable and type metadata', () => {
-  it('exports only the GUID + plain link', async () => {
+  it('exports the GUID + plain link from the locator without a CLI call', async () => {
     const runtime = new FakeLarkRuntime()
     const { operations } = opsOf(runtime)
     const portable = await operations.portable!(
@@ -615,6 +700,31 @@ describe('task portable and type metadata', () => {
     })
     expect(JSON.stringify(portable)).not.toMatch(/t104121|accessToken|Bearer/i)
     expect(runtime.requests).toHaveLength(0)
+  })
+
+  it('reads a GUID-only locator once to recover the host and plain link', async () => {
+    const runtime = new FakeLarkRuntime().enqueue(taskGet())
+    const { operations } = opsOf(runtime)
+    const portable = await operations.portable!(
+      { typeId: FEISHU_TYPE_IDS.task, locator: { kind: 'task', guid: GUID } },
+      context(),
+    )
+    expect(portable).toEqual({
+      portable: true,
+      locator: { kind: 'task', guid: GUID, url: URL, host: 'applink.larksuite.com' },
+    })
+    expect(runtime.requests).toHaveLength(1)
+  })
+
+  it('reports portable:false when the task exposes no link at all', async () => {
+    const runtime = new FakeLarkRuntime().enqueue(taskGet({ url: null }))
+    const { operations } = opsOf(runtime)
+    const portable = await operations.portable!(
+      { typeId: FEISHU_TYPE_IDS.task, locator: { kind: 'task', guid: GUID } },
+      context(),
+    )
+    expect(portable.portable).toBe(false)
+    expect(portable.reason).toMatch(/link/)
   })
 
   it('declares an editable, check-before-save task type (never native CAS)', () => {

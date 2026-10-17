@@ -22,7 +22,7 @@
 // @vitest-environment jsdom
 import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
-import type { ReactNode } from 'react'
+import { createElement, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { act } from 'react-dom/test-utils'
@@ -47,6 +47,9 @@ import {
   type FeishuClientRegistrationFace,
 } from '../src/client/clues/sources/feishu/index.tsx'
 import { DEFAULT_FEISHU_LABELS } from '../src/client/clues/sources/feishu/labels.ts'
+import { createCluesClientRegistry } from '../src/client/clues/registry.ts'
+import { ClueFormatHost } from '../src/client/windows/format-content.tsx'
+import { SIDEBAR_PREFS_DEFAULTS } from '../src/prefs-shared.ts'
 import { setupReactAct } from './test-utils.ts'
 
 setupReactAct()
@@ -127,6 +130,7 @@ function docsEdit(overrides: Partial<FeishuDocEditData> = {}): FeishuDocEditData
         text: 'Hello <b>world</b>',
         baseline: 'Hello <b>world</b>',
         kind: 'xml',
+        order: 1,
       },
       {
         id: 'blk-pre',
@@ -135,10 +139,25 @@ function docsEdit(overrides: Partial<FeishuDocEditData> = {}): FeishuDocEditData
         text: 'const x = 1',
         baseline: 'const x = 1',
         kind: 'plain',
+        order: 3,
       },
     ],
     readOnlyBlocks: [
-      { tag: 'table', text: 'Cell', reason: 'complex container' },
+      {
+        tag: 'table',
+        attrs: 'id="blk-table"',
+        text: 'Cell',
+        reason: 'complex container',
+        order: 2,
+      },
+      {
+        tag: 'img',
+        attrs: 'token="tok" url="https://cdn.example/a.png"',
+        text: '',
+        reason: 'complex container',
+        order: 4,
+        url: 'https://cdn.example/a.png',
+      },
     ],
     ...overrides,
   }
@@ -150,8 +169,12 @@ class FakeFace implements FeishuClientRegistrationFace {
   readonly renderers = new Map<string, ClueFormatRenderer>()
   readonly disposed: string[] = []
   failOnFormat: string | undefined
+  failOnDisplay: string | undefined
 
   registerSourceDisplay(descriptor: ClueSourceDisplayDescriptor): () => void {
+    if (this.failOnDisplay === descriptor.sourceId) {
+      throw new Error(`[fake] refusing display ${descriptor.sourceId}`)
+    }
     this.displays.push(descriptor)
     return () => {
       const index = this.displays.indexOf(descriptor)
@@ -172,6 +195,15 @@ function renderFormat(face: FakeFace, format: string, props: ClueFormatRendererP
   const renderer = face.renderers.get(format)
   if (renderer === undefined) throw new Error(`missing renderer ${format}`)
   return renderToStaticMarkup(renderer(props) as ReactNode)
+}
+
+/** The one serialized tag around a data marker (attribute order independent). */
+function tagOf(markup: string, marker: string): string {
+  const index = markup.indexOf(marker)
+  if (index < 0) throw new Error(`missing marker ${marker}`)
+  const start = markup.lastIndexOf('<', index)
+  const end = markup.indexOf('>', index)
+  return markup.slice(start, end + 1)
 }
 
 /** Mount one registered format renderer into jsdom for interaction tests. */
@@ -254,6 +286,54 @@ describe('registration', () => {
       `format:${FEISHU_FORMATS.docsXml}`,
       `format:${FEISHU_FORMATS.docsMarkdown}`,
     ]))
+  })
+
+  it('disposes the first display when the second display registration fails', () => {
+    const face = new FakeFace()
+    face.failOnDisplay = FEISHU_SOURCE_IDS.tasks
+    expect(() => registerFeishuSourceClient(face)).toThrow(/refusing display/)
+    expect(face.disposed).toEqual([`display:${FEISHU_SOURCE_IDS.docs}`])
+    expect(face.displays).toHaveLength(0)
+  })
+
+  it('re-registers the format renderers so an already-mounted window follows a locale switch', () => {
+    let german = false
+    let listener: (() => void) | undefined
+    const registry = createCluesClientRegistry(() => SIDEBAR_PREFS_DEFAULTS)
+    const dispose = registerFeishuSourceClient(registry, {
+      labels: () => german
+        ? { readOnly: 'Nur Lesen', docsName: 'Feishu-Dokumente' }
+        : undefined,
+      subscribe: (callback) => {
+        listener = callback
+        return () => { listener = undefined }
+      },
+    })
+    const original = registry.getFormatRenderer(FEISHU_FORMATS.docsXml)
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    act(() => {
+      root.render(createElement(ClueFormatHost, {
+        kind: 'document',
+        registry,
+        sourceId: FEISHU_SOURCE_IDS.docs,
+        typeId: FEISHU_TYPE_IDS.docx,
+        format: FEISHU_FORMATS.docsXml,
+        document: docsRead('<title>Plan</title>'),
+        readOnly: true,
+      }))
+    })
+    expect(container.textContent).toContain(DEFAULT_FEISHU_LABELS.readOnly)
+    german = true
+    act(() => { listener?.() })
+    // The mounted window subscribes to `getFormatRenderer`; a NEW function
+    // identity is what makes it re-render with the new copy.
+    expect(registry.getFormatRenderer(FEISHU_FORMATS.docsXml)).not.toBe(original)
+    expect(container.textContent).toContain('Nur Lesen')
+    act(() => { root.unmount() })
+    container.remove()
+    dispose()
   })
 
   it('takes localized labels from the caller instead of editing locale dictionaries', () => {
@@ -397,6 +477,88 @@ describe('docs editor', () => {
     expect(markup).toContain('data-feishu-docs-save')
     expect(markup).toContain(DEFAULT_FEISHU_LABELS.save)
     expect(markup).not.toContain('data-feishu-docs-read-only"')
+  })
+
+  it('keeps read-only blocks in document order and exposes their original resource link', () => {
+    const face = new FakeFace()
+    registerFeishuSourceClient(face)
+    const markup = renderFormat(face, FEISHU_FORMATS.docsXml, rendererProps(
+      { format: FEISHU_FORMATS.docsXml, data: docsEdit() as unknown as JsonValue },
+      { readOnly: false },
+    ))
+    const title = markup.indexOf('data-feishu-docs-title')
+    const firstBlock = markup.indexOf('data-feishu-docs-block-input="blk-p1"')
+    const table = markup.indexOf('data-feishu-docs-read-only-block="table"')
+    const pre = markup.indexOf('data-feishu-docs-block-input="blk-pre"')
+    const image = markup.indexOf('data-feishu-docs-read-only-block="img"')
+    // The table stays between the two text blocks instead of being pushed to
+    // the bottom, and the image keeps its original URL entry.
+    expect(title).toBeLessThan(firstBlock)
+    expect(firstBlock).toBeLessThan(table)
+    expect(table).toBeLessThan(pre)
+    expect(pre).toBeLessThan(image)
+    expect(markup).toContain('https://cdn.example/a.png')
+  })
+
+  it('uses document-specific copy for the title error and an invalid payload', () => {
+    const face = new FakeFace()
+    registerFeishuSourceClient(face)
+    const markup = renderFormat(face, FEISHU_FORMATS.docsXml, rendererProps(
+      { format: FEISHU_FORMATS.docsXml, data: docsEdit({ title: '  ' }) as unknown as JsonValue },
+      { readOnly: false },
+    ))
+    expect(markup).toContain(DEFAULT_FEISHU_LABELS.docsTitleRequired)
+    expect(markup).not.toContain(DEFAULT_FEISHU_LABELS.titleRequired)
+
+    const taskInvalid = renderFormat(
+      face,
+      FEISHU_FORMATS.taskDocument,
+      rendererProps(
+        { format: FEISHU_FORMATS.taskDocument, data: { not: 'a task' } as JsonValue },
+        { sourceId: FEISHU_SOURCE_IDS.tasks, typeId: FEISHU_TYPE_IDS.task },
+      ),
+    )
+    expect(taskInvalid).toContain(DEFAULT_FEISHU_LABELS.invalidTask)
+    expect(taskInvalid).not.toContain(DEFAULT_FEISHU_LABELS.invalidDocument)
+  })
+
+  it('locks the title and every block while a save is in flight', () => {
+    const face = new FakeFace()
+    registerFeishuSourceClient(face)
+    const markup = renderFormat(face, FEISHU_FORMATS.docsXml, rendererProps(
+      { format: FEISHU_FORMATS.docsXml, data: docsEdit() as unknown as JsonValue },
+      { readOnly: false, saving: true },
+    ))
+    expect(tagOf(markup, 'data-feishu-docs-title')).toContain('disabled')
+    expect(tagOf(markup, 'data-feishu-docs-block-input="blk-p1"')).toContain('disabled')
+    expect(tagOf(markup, 'data-feishu-docs-save')).toContain('disabled')
+    expect(markup).toContain(DEFAULT_FEISHU_LABELS.saving)
+  })
+
+  it('never opens the block editor for an edit payload under the Markdown format', () => {
+    const face = new FakeFace()
+    registerFeishuSourceClient(face)
+    const markup = renderFormat(face, FEISHU_FORMATS.docsMarkdown, rendererProps(
+      { format: FEISHU_FORMATS.docsMarkdown, data: docsEdit() as unknown as JsonValue },
+      { readOnly: false },
+    ))
+    expect(markup).not.toContain('data-feishu-docs-editor')
+    expect(markup).not.toContain('data-feishu-docs-save')
+    expect(markup).toContain('data-feishu-docs-invalid')
+  })
+
+  it('localizes freshness and uses the supplied app-locale formatter for stamps', () => {
+    const face = new FakeFace()
+    registerFeishuSourceClient(face, {
+      labels: {
+        freshnessLive: 'En direct',
+        freshnessSnapshot: 'Instantané',
+      },
+      formatDateTime: value => `formatted(${value})`,
+    })
+    const markup = renderFormat(face, FEISHU_FORMATS.docsXml, rendererProps(docsRead('<title>Plan</title>')))
+    expect(markup).toContain('En direct')
+    expect(markup).toContain('formatted(2026-10-17T00:00:00.000Z)')
   })
 
   it('disables save when the editable title is empty', () => {
@@ -553,6 +715,61 @@ describe('task form editor', () => {
     const markup = renderFormat(face, FEISHU_FORMATS.taskDocument, props)
     expect(markup).toContain('data-feishu-task-error="title"')
     expect(markup).toMatch(/data-feishu-task-save=""[^>]*disabled/)
+  })
+
+  it('blocks saving locally on mixed all-day flags (the API requires both to agree)', () => {
+    const face = new FakeFace()
+    registerFeishuSourceClient(face)
+    const props = rendererProps(
+      {
+        format: FEISHU_FORMATS.taskDocument,
+        data: taskDocument({
+          start: { timestamp: '1700000000000', isAllDay: false },
+          due: { timestamp: '1700003600000', isAllDay: true },
+        }) as unknown as JsonValue,
+      },
+      { sourceId: FEISHU_SOURCE_IDS.tasks, typeId: FEISHU_TYPE_IDS.task },
+    )
+    const markup = renderFormat(face, FEISHU_FORMATS.taskDocument, props)
+    expect(markup).toContain('data-feishu-task-error="due"')
+    expect(markup).toContain(DEFAULT_FEISHU_LABELS.allDayMismatch)
+    expect(markup).toMatch(/data-feishu-task-save=""[^>]*disabled/)
+  })
+
+  it('shows updatedAt in the editor meta and locks every field while saving', () => {
+    const face = new FakeFace()
+    registerFeishuSourceClient(face)
+    const props = rendererProps(
+      { format: FEISHU_FORMATS.taskDocument, data: taskDocument() as unknown as JsonValue },
+      {
+        sourceId: FEISHU_SOURCE_IDS.tasks,
+        typeId: FEISHU_TYPE_IDS.task,
+        saving: true,
+      },
+    )
+    const markup = renderFormat(face, FEISHU_FORMATS.taskDocument, props)
+    expect(markup).toContain('data-feishu-task-updated-at')
+    expect(markup).toContain(DEFAULT_FEISHU_LABELS.updatedAt)
+    for (const field of ['title', 'description', 'start', 'due', 'completed']) {
+      expect(tagOf(markup, `data-feishu-task-input="${field}"`)).toContain('disabled')
+    }
+    expect(tagOf(markup, 'data-feishu-task-save')).toContain('disabled')
+    expect(markup).toContain(DEFAULT_FEISHU_LABELS.saving)
+  })
+
+  it('refuses to render a task payload under another format', () => {
+    const face = new FakeFace()
+    registerFeishuSourceClient(face)
+    const markup = renderFormat(face, FEISHU_FORMATS.taskDocument, rendererProps(
+      { format: FEISHU_FORMATS.taskDocument, data: taskDocument() as unknown as JsonValue },
+      {
+        sourceId: FEISHU_SOURCE_IDS.tasks,
+        typeId: FEISHU_TYPE_IDS.task,
+        format: FEISHU_FORMATS.docsXml,
+      },
+    ))
+    expect(markup).toContain('data-feishu-task-invalid')
+    expect(markup).toContain(DEFAULT_FEISHU_LABELS.invalidTask)
   })
 
   it('uses an empty-description label in the read-only task projection', () => {

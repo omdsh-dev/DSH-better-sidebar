@@ -15,14 +15,19 @@
  * - a wiki URL resolves through `wiki +node-get` and the wiki NODE token is
  *   never used as a docx token;
  * - reads are latest XML by default (Markdown is a read-only projection),
- *   long content is an explicit fragment with `nextOffset`, the
- *   reference_map sidecar travels with the content, and an oversized document
- *   reports the plugin runner's 8 MiB capture limit instead of returning a
- *   partial read;
+ *   fetched with the detail that carries content + revision + `reference_map`
+ *   together; long content is an explicit block-aligned fragment with
+ *   `nextOffset`, and an oversized document reports the plugin runner's 8 MiB
+ *   capture limit instead of returning a partial read;
  * - edits are BLOCK-SCOPED text replacements: loadEdit fetches XML with block
- *   ids, saveEdit compares the changed blocks against a fresh read and sends
- *   only `block_replace`; complex containers stay read-only, and
+ *   ids, saveEdit compares the native revision and the changed blocks'
+ *   tag/attrs/kind/inner XML against a fresh read and sends only
+ *   `block_replace`; complex containers stay read-only, and
  *   append/overwrite/delete/move never appear;
+ * - the update business result is checked: a missing/unknown result, warnings
+ *   or an unexpected updated-block count is never reported as full success;
+ * - a locator of another source's shape is "not mine" in auto resolution
+ *   instead of aborting the later source;
  * - portable locators export only resource identifiers + original URL/host,
  *   never an access token.
  */
@@ -33,6 +38,7 @@ import { describe, expect, it } from 'vitest'
 import { ClueError } from '../src/clues/types.ts'
 import type { ClueCandidate, ClueOperationContext, JsonValue } from '../src/clues/types.ts'
 import { createFeishuDocsSource } from '../src/clues/sources/feishu/docs.ts'
+import { createFeishuTasksSource } from '../src/clues/sources/feishu/tasks.ts'
 import { createCluesService } from '../src/clues/service.ts'
 import { CluesStore } from '../src/clues/store.ts'
 import { removeTree } from './temp-tree.ts'
@@ -40,6 +46,7 @@ import {
   DOCS_EDIT_SCOPE_NOTE,
   FEISHU_CONNECTION_ID,
   FEISHU_FORMATS,
+  FEISHU_SOURCE_IDS,
   FEISHU_TYPE_IDS,
   type FeishuDocEditData,
 } from '../src/clues/sources/feishu/format.ts'
@@ -81,8 +88,15 @@ const EDIT_XML = [
 ].join('')
 
 /** A full-fetch success answer for {@link EDIT_XML}. */
-function editFetch(revisionId = 7, content = EDIT_XML) {
-  return okResult({ document: { document_id: 'doccnA', revision_id: revisionId, content } })
+function editFetch(revisionId = 7, content = EDIT_XML, referenceMap?: JsonValue) {
+  return okResult({
+    document: {
+      document_id: 'doccnA',
+      revision_id: revisionId,
+      content,
+      ...(referenceMap === undefined ? {} : { reference_map: referenceMap }),
+    },
+  })
 }
 
 /** Clone a loaded payload and replace one block's text. */
@@ -222,6 +236,33 @@ describe('docs browsing ranges', () => {
     expect(page.total).toBeUndefined()
   })
 
+  it('treats has_more as authoritative: no phantom cursor and no invented empty page', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(okResult({ files: [], has_more: false, next_page_token: 'stale-token' }))
+      .enqueue(okResult({ files: [], has_more: true }))
+    const { operations } = opsOf(runtime)
+    const done = await operations.list!({ scope: { kind: 'drive', folderToken: 'fldRoot' } }, context())
+    expect(done.nextCursor).toBeUndefined()
+    expect(done.limited).toBeUndefined()
+    const truncated = await operations.list!({ scope: { kind: 'drive', folderToken: 'fldRoot' } }, context())
+    expect(truncated.nextCursor).toBeUndefined()
+    expect(truncated.limited).toBe(true)
+  })
+
+  it('treats a success envelope with no rows array as a failure, not an empty page', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(okResult({}))
+      .enqueue(okResult({ files: null }))
+      .enqueue(okResult({}))
+    const { operations } = opsOf(runtime)
+    await expect(operations.list!({ scope: { kind: 'drive', folderToken: 'fldRoot' } }, context()))
+      .rejects.toMatchObject({ category: 'failed' })
+    await expect(operations.list!({ scope: { kind: 'drive', folderToken: 'fldRoot' } }, context()))
+      .rejects.toMatchObject({ category: 'failed' })
+    await expect(operations.search!({ query: 'plan' }, context()))
+      .rejects.toMatchObject({ category: 'failed' })
+  })
+
   it('lists one wiki node page under an explicit space/parent', async () => {
     const runtime = new FakeLarkRuntime().enqueue(okResult({
       nodes: [
@@ -263,7 +304,7 @@ describe('docs browsing ranges', () => {
     expect(page.items[0]!.meta?.hasChild).toBe(true)
   })
 
-  it('lists wiki spaces as ONE explicit page (scope picker rows, not documents)', async () => {
+  it('lists wiki spaces as ONE explicit page and surfaces the personal library row', async () => {
     const runtime = new FakeLarkRuntime().enqueue(okResult({
       spaces: [{ space_id: '9001', name: 'Engineering', space_type: 'team', visibility: 'private' }],
       has_more: false,
@@ -273,7 +314,15 @@ describe('docs browsing ranges', () => {
     expect(runtime.requests[0]!.args).toEqual([
       'wiki', '+space-list', '--page-size', '50', '--as', 'user', '--format', 'json',
     ])
+    // `wiki +space-list` never returns the personal library; the source adds a
+    // synthetic picker row so `my_library` is selectable.
     expect(page.items[0]).toMatchObject({
+      typeId: FEISHU_TYPE_IDS.wiki,
+      locator: { kind: 'wiki-space', spaceId: 'my_library' },
+      title: 'My library',
+      meta: { role: 'scope', synthetic: true },
+    })
+    expect(page.items[1]).toMatchObject({
       typeId: FEISHU_TYPE_IDS.wiki,
       locator: { kind: 'wiki-space', spaceId: '9001' },
       title: 'Engineering',
@@ -283,6 +332,20 @@ describe('docs browsing ranges', () => {
 })
 
 describe('docs search', () => {
+  it('resolves the personal-library alias to a numeric space id before a wiki-scoped search', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(okResult({ space: { space_id: '7123', name: 'My library' } }))
+      .enqueue(okResult({ results: [], has_more: false }))
+    const { operations } = opsOf(runtime)
+    await operations.search!({ query: 'plan', scope: { kind: 'wiki', spaceId: 'my_library' } }, context())
+    expect(runtime.requests[0]!.args).toEqual([
+      'wiki', 'spaces', 'get',
+      '--params', JSON.stringify({ space_id: 'my_library' }),
+      '--as', 'user', '--format', 'json',
+    ])
+    expect(runtime.requests[1]!.args).toEqual(expect.arrayContaining(['--space-ids', '7123']))
+  })
+
   it('uses one official drive +search page, scoped and without --page-all', async () => {
     const runtime = new FakeLarkRuntime().enqueue(okResult({
       results: [
@@ -377,6 +440,37 @@ describe('docs resolve (URLs and wiki node unpacking)', () => {
     expect(runtime.requests).toHaveLength(0)
   })
 
+  it('resolves /wiki/space/<id> as a wiki-space scope and never calls node-get', async () => {
+    const runtime = new FakeLarkRuntime()
+    const { operations } = opsOf(runtime)
+    const candidate = await operations.resolve!(
+      { text: `${PROBE}/wiki/space/7123?from=share`, explicit: true },
+      context(),
+    ) as ClueCandidate
+    expect(candidate).toMatchObject({
+      sourceId: 'builtin.feishu.docs',
+      typeId: FEISHU_TYPE_IDS.wiki,
+      locator: { kind: 'wiki-space', spaceId: '7123' },
+      subtitle: 'Wiki space',
+      meta: { role: 'scope' },
+    })
+    expect(runtime.requests).toHaveLength(0)
+  })
+
+  it('answers "not mine" for another source locator shape in auto resolution', async () => {
+    const runtime = new FakeLarkRuntime()
+    const { operations } = opsOf(runtime)
+    expect(await operations.resolve!(
+      { locator: { kind: 'task', guid: '2f4d8c1e-7a3b-4c5d-9e8f-0123456789ab' } },
+      context(),
+    )).toBeUndefined()
+    await expect(operations.resolve!(
+      { locator: { kind: 'task', guid: '2f4d8c1e-7a3b-4c5d-9e8f-0123456789ab' }, explicit: true },
+      context(),
+    )).rejects.toMatchObject({ category: 'invalid-request' })
+    expect(runtime.requests).toHaveLength(0)
+  })
+
   it('ignores a foreign URL instead of guessing a Feishu resource', async () => {
     const runtime = new FakeLarkRuntime()
     const { operations } = opsOf(runtime)
@@ -445,13 +539,16 @@ describe('docs resolve (URLs and wiki node unpacking)', () => {
 })
 
 describe('docs read', () => {
-  it('reads the latest XML by default and keeps content + revision + reference_map together', async () => {
+  it('reads the latest XML and keeps content + revision + reference_map from one full-detail response', async () => {
+    const referenceMap = {
+      p: { ref_1: { 'img-token': 'tok_1', 'img-url': 'https://cdn.example/a.png' } },
+    }
     const runtime = new FakeLarkRuntime().enqueue(okResult({
       document: {
         document_id: 'doccnA',
         revision_id: 12,
         content: '<title>Design notes</title><p>Hello</p>',
-        reference_map: { p: {} },
+        reference_map: referenceMap,
       },
     }))
     const { operations } = opsOf(runtime)
@@ -459,10 +556,12 @@ describe('docs read', () => {
       { typeId: FEISHU_TYPE_IDS.docx, locator: { kind: 'docx', docToken: 'doccnA' } },
       context(),
     )
+    // `simple` omits the sidecar, so the read must ask for the detail that
+    // carries content/revision/reference_map together.
     expect(runtime.requests[0]!.args).toEqual([
       'docs', '+fetch', '--api-version', 'v2', '--doc', 'doccnA',
       '--doc-format', 'xml',
-      '--detail', 'simple',
+      '--detail', 'full',
       '--as', 'user', '--format', 'json',
     ])
     expect(result.format).toBe(FEISHU_FORMATS.docsXml)
@@ -476,7 +575,7 @@ describe('docs read', () => {
       content: '<title>Design notes</title><p>Hello</p>',
       docToken: 'doccnA',
       revisionId: '12',
-      referenceMap: { p: {} },
+      referenceMap,
     })
   })
 
@@ -551,8 +650,10 @@ describe('docs read', () => {
     expect(result.data).toMatchObject({ title: 'W', objToken: 'doccnObj' })
   })
 
-  it('returns an explicit fragment and nextOffset for long content (no silent truncation)', async () => {
-    const content = 'x'.repeat(300_000)
+  it('returns only complete top-level blocks in a long XML fragment (no split tags)', async () => {
+    const firstBlock = `<p>${'a'.repeat(200_000)}</p>`
+    const secondBlock = `<p>${'b'.repeat(200_000)}</p>`
+    const content = `${firstBlock}${secondBlock}`
     const runtime = new FakeLarkRuntime()
       .enqueue(okResult({ document: { document_id: 'doccnA', revision_id: 9, content } }))
       .enqueue(okResult({ document: { document_id: 'doccnA', revision_id: 9, content } }))
@@ -562,8 +663,9 @@ describe('docs read', () => {
       context(),
     )
     expect(first.limited).toBe(true)
-    expect(first.nextOffset).toBeGreaterThan(0)
-    expect(first.text!.length).toBeLessThan(content.length)
+    expect(first.nextOffset).toBe(new TextEncoder().encode(firstBlock).length)
+    expect(first.text).toBe(firstBlock)
+    expect(first.data).toMatchObject({ fragment: 'blocks' })
     const second = await operations.read!(
       {
         typeId: FEISHU_TYPE_IDS.docx,
@@ -574,7 +676,24 @@ describe('docs read', () => {
     )
     expect(second.limited).toBeUndefined()
     expect(second.nextOffset).toBeUndefined()
+    expect(second.text).toBe(secondBlock)
+    expect(second.data).toMatchObject({ fragment: 'blocks' })
     expect(first.text! + second.text!).toBe(content)
+  })
+
+  it('labels a raw byte window when one block is larger than the read cap', async () => {
+    const content = `<p>${'x'.repeat(300_000)}</p>`
+    const runtime = new FakeLarkRuntime()
+      .enqueue(okResult({ document: { document_id: 'doccnA', revision_id: 9, content } }))
+    const { operations } = opsOf(runtime)
+    const first = await operations.read!(
+      { typeId: FEISHU_TYPE_IDS.docx, locator: { kind: 'docx', docToken: 'doccnA' } },
+      context(),
+    )
+    expect(first.limited).toBe(true)
+    expect(first.data).toMatchObject({ fragment: 'bytes' })
+    // The window is documented as raw, never claimed to be well-formed XML.
+    expect(first.text!.endsWith('</p>')).toBe(false)
   })
 
   it('reports the bounded capture limit explicitly instead of returning a partial read', async () => {
@@ -593,7 +712,7 @@ describe('docs read', () => {
     const clueError = failure as ClueError
     expect(clueError.category).toBe('failed')
     expect(clueError.message).toMatch(/plugin runner's 8 MiB stdout capture limit/)
-    expect(clueError.message).toMatch(/cannot be read/)
+    expect(clueError.message).toMatch(/S1 read contract carries only a byte offset/)
   })
 
   it('rejects an out-of-range byte offset instead of inventing an empty document', async () => {
@@ -639,7 +758,7 @@ describe('docs read', () => {
     expect(data.blocks.find(block => block.id === 'blk-pre')!.text).toBe('const x = 1')
     expect(data.blocks.find(block => block.id === 'blk-todo')!.attrs).toContain('done="false"')
     expect(data.readOnlyBlocks).toEqual([
-      expect.objectContaining({ tag: 'table', text: 'Cell' }),
+      expect.objectContaining({ tag: 'table', text: 'Cell', order: 6 }),
     ])
     expect(source.descriptor.capabilities.edit).toBe(true)
     for (const type of source.types) {
@@ -690,6 +809,7 @@ describe('docs read', () => {
       '--block-id', 'blk-p1',
       '--content', '<p>Hello <b>there</b></p>',
       '--doc-format', 'xml',
+      '--revision-id', '7',
       '--as', 'user', '--format', 'json',
     ])
     for (const request of runtime.requests) {
@@ -743,6 +863,219 @@ describe('docs read', () => {
       context(),
     )).rejects.toMatchObject({ category: 'conflict' })
     expect(runtime.requests).toHaveLength(2)
+  })
+
+  it('detects an external revision-only change even when every changed block text is unchanged', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(editFetch(7))
+      // Same text and same structure, but the document was revised elsewhere
+      // (a comment, a style change, another unrelated block): the native
+      // baseline no longer matches and the save must not proceed.
+      .enqueue(editFetch(8, EDIT_XML))
+    const { operations } = opsOf(runtime)
+    const locator = { kind: 'docx' as const, docToken: 'doccnA' }
+    const loaded = await operations.loadEdit!({ typeId: FEISHU_TYPE_IDS.docx, locator }, context())
+    const data = withEditBlock(loaded.data as unknown as FeishuDocEditData, 'blk-p1', 'Hello <b>mine</b>')
+    await expect(operations.saveEdit!(
+      {
+        typeId: FEISHU_TYPE_IDS.docx,
+        locator,
+        document: { format: FEISHU_FORMATS.docsXml, data: data as unknown as JsonValue, baseRevision: '7' },
+      },
+      context(),
+    )).rejects.toMatchObject({ category: 'conflict' })
+    expect(runtime.requests).toHaveLength(2)
+  })
+
+  it('detects an external attrs/tag-only change (p→h2, alignment, checkbox done)', async () => {
+    const variants = [
+      {
+        content: EDIT_XML.replace('<p id="blk-p1">', '<p id="blk-p1" align="center">'),
+        target: 'blk-p1',
+      },
+      {
+        content: EDIT_XML
+          .replace('<p id="blk-p1">', '<h3 id="blk-p1">')
+          .replace('Hello <b>world</b></p>', 'Hello <b>world</b></h3>'),
+        target: 'blk-p1',
+      },
+      {
+        content: EDIT_XML.replace('done="false"', 'done="true"'),
+        target: 'blk-todo',
+      },
+    ]
+    for (const { content, target } of variants) {
+      const runtime = new FakeLarkRuntime().enqueue(editFetch(7)).enqueue(editFetch(8, content))
+      const { operations } = opsOf(runtime)
+      const locator = { kind: 'docx' as const, docToken: 'doccnA' }
+      const loaded = await operations.loadEdit!({ typeId: FEISHU_TYPE_IDS.docx, locator }, context())
+      // Change the SAME block the external edit touched; its text still
+      // matches, but the tag/attrs must make that a conflict.
+      const data = withEditBlock(loaded.data as unknown as FeishuDocEditData, target, 'next text')
+      await expect(operations.saveEdit!(
+        {
+          typeId: FEISHU_TYPE_IDS.docx,
+          locator,
+          document: { format: FEISHU_FORMATS.docsXml, data: data as unknown as JsonValue, baseRevision: '7' },
+        },
+        context(),
+      )).rejects.toMatchObject({ category: 'conflict' })
+      expect(runtime.requests).toHaveLength(2)
+    }
+  })
+
+  it('rejects client-supplied block structure that does not match the loaded document', async () => {
+    const runtime = new FakeLarkRuntime()
+      .enqueue(editFetch(7))
+      .enqueue(editFetch(7))
+      .enqueue(editFetch(7))
+      .enqueue(editFetch(7))
+    const { operations } = opsOf(runtime)
+    const locator = { kind: 'docx' as const, docToken: 'doccnA' }
+    const loaded = await operations.loadEdit!({ typeId: FEISHU_TYPE_IDS.docx, locator }, context())
+    const base = loaded.data as unknown as FeishuDocEditData
+    const forged: FeishuDocEditData = {
+      ...base,
+      blocks: base.blocks.map(block => block.id === 'blk-p1'
+        ? { ...block, attrs: 'align="right"', text: 'forged' }
+        : block),
+    }
+    await expect(operations.saveEdit!(
+      {
+        typeId: FEISHU_TYPE_IDS.docx,
+        locator,
+        document: { format: FEISHU_FORMATS.docsXml, data: forged as unknown as JsonValue, baseRevision: '7' },
+      },
+      context(),
+    )).rejects.toMatchObject({ category: 'conflict' })
+    expect(runtime.requests).toHaveLength(2)
+
+    // A forged title block id is refused as well.
+    const forgedTitle: FeishuDocEditData = {
+      ...base,
+      title: 'Renamed',
+      titleBlockId: 'blk-p1',
+    }
+    await expect(operations.saveEdit!(
+      {
+        typeId: FEISHU_TYPE_IDS.docx,
+        locator,
+        document: { format: FEISHU_FORMATS.docsXml, data: forgedTitle as unknown as JsonValue, baseRevision: '7' },
+      },
+      context(),
+    )).rejects.toMatchObject({ category: 'conflict' })
+  })
+
+  it('rejects an unsafe client block id before any write', async () => {
+    const runtime = new FakeLarkRuntime()
+    const { operations } = opsOf(runtime)
+    const data = {
+      kind: 'docx',
+      docToken: 'doccnA',
+      title: '',
+      baselineTitle: '',
+      titleEditable: false,
+      titleAttrs: '',
+      blocks: [{
+        id: '-1',
+        tag: 'p',
+        attrs: '',
+        text: 'x',
+        baseline: 'y',
+        kind: 'xml',
+        order: 0,
+      }],
+      readOnlyBlocks: [],
+    }
+    await expect(operations.saveEdit!(
+      {
+        typeId: FEISHU_TYPE_IDS.docx,
+        locator: { kind: 'docx', docToken: 'doccnA' },
+        document: { format: FEISHU_FORMATS.docsXml, data: data as unknown as JsonValue },
+      },
+      context(),
+    )).rejects.toMatchObject({ category: 'invalid-request' })
+    expect(runtime.requests).toHaveLength(0)
+  })
+
+  it('replays the reference sidecar from the fresh full read on update', async () => {
+    const referenceMap = { p: { ref_1: { 'img-token': 'tok_1' } } }
+    const runtime = new FakeLarkRuntime()
+      .enqueue(editFetch(7, EDIT_XML, referenceMap))
+      .enqueue(editFetch(7, EDIT_XML, referenceMap))
+      .enqueue(okResult({ document: { revision_id: 8 }, result: 'success', updated_blocks_count: 1 }))
+    const { operations } = opsOf(runtime)
+    const locator = { kind: 'docx' as const, docToken: 'doccnA' }
+    const loaded = await operations.loadEdit!({ typeId: FEISHU_TYPE_IDS.docx, locator }, context())
+    expect(loaded.data).toMatchObject({ referenceMap })
+    const data = withEditBlock(loaded.data as unknown as FeishuDocEditData, 'blk-p1', 'Hello <b>ref</b>')
+    await operations.saveEdit!(
+      {
+        typeId: FEISHU_TYPE_IDS.docx,
+        locator,
+        document: { format: FEISHU_FORMATS.docsXml, data: data as unknown as JsonValue, baseRevision: '7' },
+      },
+      context(),
+    )
+    const update = runtime.requests[2]!
+    expect(update.args).toEqual(expect.arrayContaining([
+      '--reference-map', JSON.stringify(referenceMap),
+      '--revision-id', '7',
+    ]))
+    // Both the load and the save-time comparison asked for the detail that
+    // carries the sidecar.
+    for (const request of runtime.requests.slice(0, 2)) {
+      expect(request.args).toEqual(expect.arrayContaining(['--detail', 'full']))
+    }
+  })
+
+  it('never reports a missing/unknown result, warnings or a wrong block count as full success', async () => {
+    const badResults: JsonValue[] = [
+      {},
+      { result: 'unknown' },
+      { result: 'failed' },
+      { result: 'partial_success' },
+      { result: 'success', warnings: ['one block was skipped'] },
+      { result: 'success', warnings: 'not-an-array' },
+      { result: 'success', updated_blocks_count: 2 },
+      { result: 'success', updated_blocks_count: 'x' },
+    ]
+    for (const bad of badResults) {
+      const runtime = new FakeLarkRuntime()
+        .enqueue(editFetch(7))
+        .enqueue(editFetch(7))
+        .enqueue(okResult({ document: { revision_id: 8 }, ...(bad as Record<string, JsonValue>) }))
+      const { operations } = opsOf(runtime)
+      const locator = { kind: 'docx' as const, docToken: 'doccnA' }
+      const loaded = await operations.loadEdit!({ typeId: FEISHU_TYPE_IDS.docx, locator }, context())
+      const data = withEditBlock(loaded.data as unknown as FeishuDocEditData, 'blk-p1', 'Hello <b>x</b>')
+      await expect(operations.saveEdit!(
+        {
+          typeId: FEISHU_TYPE_IDS.docx,
+          locator,
+          document: { format: FEISHU_FORMATS.docsXml, data: data as unknown as JsonValue, baseRevision: '7' },
+        },
+        context(),
+      )).rejects.toMatchObject({ category: 'failed' })
+    }
+  })
+
+  it('loads a title-less document but refuses a valid prefix followed by a malformed tail', async () => {
+    const good = new FakeLarkRuntime().enqueue(editFetch(7, '<p id="blk-only">Body</p>'))
+    const goodOps = opsOf(good).operations
+    const loaded = await goodOps.loadEdit!(
+      { typeId: FEISHU_TYPE_IDS.docx, locator: { kind: 'docx', docToken: 'doccnA' } },
+      context(),
+    )
+    expect(loaded.data).toMatchObject({ title: '', titleEditable: false })
+    expect((loaded.data as unknown as FeishuDocEditData).blocks.map(block => block.id)).toEqual(['blk-only'])
+
+    const bad = new FakeLarkRuntime().enqueue(editFetch(7, '<p id="blk-a">ok</p><p id="blk-b>broken'))
+    const badOps = opsOf(bad).operations
+    await expect(badOps.loadEdit!(
+      { typeId: FEISHU_TYPE_IDS.docx, locator: { kind: 'docx', docToken: 'doccnA' } },
+      context(),
+    )).rejects.toMatchObject({ category: 'failed' })
   })
 
   it('reports a partial success when a later block write fails', async () => {
@@ -800,6 +1133,44 @@ describe('docs read', () => {
 })
 
 describe('service integration: stable identity and block edits', () => {
+  it('lets a foreign locator pass through the source order instead of aborting auto resolution', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-clues-feishu-foreign-'))
+    const runtime = new FakeLarkRuntime()
+    const guid = '2f4d8c1e-7a3b-4c5d-9e8f-0123456789ab'
+    const service = createCluesService({
+      store: new CluesStore({ root }),
+      builtinSources: [
+        createFeishuDocsSource(() => runtime.asRuntime()),
+        createFeishuTasksSource(() => runtime.asRuntime()),
+      ],
+      now: () => '2026-10-17T00:00:00.000Z',
+    })
+    try {
+      // The docs source (order 3) sees `{kind:'task'}` first. Answering
+      // invalid-request used to abort before the task source (order 4) ran.
+      const tasks = await service.resolve({
+        workspaceId: 'ws-feishu',
+        locator: { kind: 'task', guid },
+      })
+      expect(tasks).toHaveLength(1)
+      expect(tasks[0]).toMatchObject({
+        sourceId: FEISHU_SOURCE_IDS.tasks,
+        locator: { kind: 'task', guid },
+      })
+      // The wiki-space locator reaches the task source after docs declines it;
+      // it must not throw either.
+      const scope = await service.resolve({
+        workspaceId: 'ws-feishu',
+        locator: { kind: 'wiki-space', spaceId: '7123' },
+      })
+      expect(scope).toEqual([])
+      expect(runtime.requests).toHaveLength(0)
+    } finally {
+      service.dispose()
+      removeTree(root)
+    }
+  })
+
   it('dedupes a resolved wiki node with its underlying docx and edits through the service', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-clues-feishu-docs-'))
     const runtime = new FakeLarkRuntime()

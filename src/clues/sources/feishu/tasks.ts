@@ -73,12 +73,13 @@ import {
 import {
   arrayField,
   larkWorkingDirectory,
-  recordField,
   stringField,
   type LarkSuccess,
 } from './lark.ts'
 import { runFeishuCommand } from './auth.ts'
 import {
+  hostOf,
+  isDisplayTaskId,
   normalizeTaskLocator,
   parseFeishuTaskText,
   parseTaskLocator,
@@ -213,24 +214,42 @@ function pageTokenOf(signature: string, cursor: string | undefined): string | un
   return cursor === undefined ? undefined : decodeCursor(signature, cursor).pageToken
 }
 
-/** The next task cursor, or a `limited` marker when the provider gave no token. */
+/**
+ * The next task cursor, or a `limited` marker when the provider truncated but
+ * gave no token. `has_more:false` wins over a stale/echoed token.
+ */
 function pageOf(success: LarkSuccess, signature: string): { readonly nextCursor?: string; readonly limited?: boolean } {
+  const hasMore = typeof success.data.has_more === 'boolean' ? success.data.has_more : undefined
   const token = stringField(success.data, 'page_token') ?? stringField(success.data, 'next_page_token')
-  if (token !== undefined && token !== '') return { nextCursor: encodeCursor(signature, token) }
-  return success.data.has_more === true ? { limited: true } : {}
+  if (hasMore !== false && token !== undefined && token !== '') {
+    return { nextCursor: encodeCursor(signature, token) }
+  }
+  return hasMore === true ? { limited: true } : {}
 }
 
-/** The rows of one task list/search answer. */
-function taskRows(success: LarkSuccess): JsonValue[] {
-  return arrayField(success.data, 'tasks') ?? arrayField(success.data, 'items') ?? []
+/**
+ * The rows of one task list/search answer.
+ *
+ * Native `task tasks list` / `tasklists tasks` return `items`; the `+search`
+ * shortcut's exact key is not documented, so search accepts `tasks` or
+ * `items` — but one of them must exist. A success envelope without a row
+ * array is a malformed answer, never a complete empty page.
+ * @param keys - accepted row array keys, in priority order.
+ */
+function taskRows(success: LarkSuccess, keys: readonly string[]): JsonValue[] {
+  for (const key of keys) {
+    const value = success.data[key]
+    if (Array.isArray(value)) return value
+  }
+  throw new ClueError('failed', 'lark-cli returned no task list in its success payload')
 }
 
 /** Build one candidate from a task record. */
 function taskCandidate(row: JsonValue): ClueCandidate | undefined {
   if (!isRecord(row)) return undefined
   const guid = stringOf(row.guid)
-  if (guid === undefined) return undefined
-  const task = parseTaskDocument(row, guid)
+  if (guid === undefined || isDisplayTaskId(guid)) return undefined
+  const task = parseTaskDocument(row)
   if (task === undefined) return undefined
   const title = task.title.trim() === '' ? `Feishu task ${guid.slice(0, 8)}` : task.title
   return {
@@ -263,8 +282,19 @@ async function readTask(
     cwd: cwdOf(context),
     ...(context.signal === undefined ? {} : { signal: context.signal }),
   })
-  const task = recordField(success.data, 'task') ?? success.data
-  const document = parseTaskDocument(task as JsonValue, guid)
+  // The task object is `data.task`; a direct object is accepted only when it
+  // carries a matching non-empty GUID. `{}`, `{task:null}` and a task for a
+  // different GUID are failures, never a blank document with the requested id.
+  const data = success.data
+  const sourceRecord = isRecord(data.task)
+    ? data.task
+    : typeof data.guid === 'string' && data.guid.trim() !== ''
+      ? data
+      : undefined
+  if (sourceRecord === undefined) {
+    throw new ClueError('failed', 'lark-cli returned no task object in its success payload')
+  }
+  const document = parseTaskDocument(sourceRecord)
   if (document === undefined) {
     throw new ClueError('failed', 'lark-cli returned an unreadable task payload')
   }
@@ -425,6 +455,16 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
 
       async resolve(input: { readonly text?: string; readonly locator?: Locator; readonly explicit?: boolean }, _context) {
         if (input.locator !== undefined) {
+          // A locator of another source's shape (docx/wiki/wiki-space) is not a
+          // task failure in auto resolution: answer "not mine" so the docs
+          // source's locator does not abort the walk.
+          const kind = isRecord(input.locator) ? input.locator.kind : undefined
+          if (kind !== 'task') {
+            if (input.explicit === true) {
+              throw new ClueError('invalid-request', 'a locator must be a Feishu task reference')
+            }
+            return undefined
+          }
           const locator = parseTaskLocator(input.locator)
           return {
             sourceId: FEISHU_SOURCE_IDS.tasks,
@@ -479,7 +519,8 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
           ...(context.signal === undefined ? {} : { signal: context.signal }),
         })
         const items: ClueCandidate[] = []
-        for (const row of taskRows(success)) {
+        // Native `task tasks list` / `tasklists tasks` expose `items`.
+        for (const row of taskRows(success, ['items'])) {
           const candidate = taskCandidate(row)
           if (candidate !== undefined) items.push(candidate)
         }
@@ -487,7 +528,11 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
       },
 
       async search(input: ClueSourceSearchInput, context): Promise<ClueListResult> {
-        const query = typeof input.query === 'string' ? input.query.trim() : ''
+        const rawQuery = typeof input.query === 'string' ? input.query.trim() : ''
+        // Validate the keyword with the same control-character/length bound as
+        // the structured filters: a NUL or a runaway query must be a typed
+        // invalid-request, not a generic CLI failure.
+        const query = rawQuery === '' ? '' : searchFilterOf(rawQuery, 'query')!
         const scope = parseFeishuTaskSearchScope(input.scope)
         const hasFilter = scope.completed !== undefined
           || scope.assignee !== undefined
@@ -530,7 +575,9 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
           ...(context.signal === undefined ? {} : { signal: context.signal }),
         })
         const items: ClueCandidate[] = []
-        for (const row of taskRows(success)) {
+        // The `+search` shortcut's exact row key is not documented; accept the
+        // native `items` or a flattened `tasks`, but require a real array.
+        for (const row of taskRows(success, ['tasks', 'items'])) {
           const candidate = taskCandidate(row)
           if (candidate !== undefined) items.push(candidate)
         }
@@ -572,7 +619,7 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
         if (document.format !== FEISHU_FORMATS.taskDocument) {
           throw new ClueError('unsupported', 'the task edit document uses an unsupported format')
         }
-        const edited = parseTaskDocument(document.data, locator.guid)
+        const edited = parseTaskDocument(document.data)
         if (edited === undefined) {
           throw new ClueError('invalid-request', 'the task edit document is not a task object')
         }
@@ -664,15 +711,20 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
         return { savedAt, ...(revision === undefined ? {} : { revision }) }
       },
 
-      async portable(input: ClueSourceReadInput): Promise<CluePortableRef> {
+      async portable(input: ClueSourceReadInput, context): Promise<CluePortableRef> {
         const locator = parseTaskLocator(input.locator)
-        const url = locator.url
-        let host: string | undefined
-        if (url !== undefined) {
-          try {
-            host = new URL(url).host
-          } catch {
-            host = undefined
+        // S4 §2 requires the export to carry the source host and a plain task
+        // link. A GUID-only locator has neither, so read the task once (the
+        // native detail carries `url`) instead of dropping both silently.
+        const task = locator.url === undefined
+          ? await readTask(runtime(), locator.guid, context)
+          : undefined
+        const url = locator.url ?? task?.url
+        const host = hostOf(url)
+        if (url === undefined) {
+          return {
+            portable: false,
+            reason: 'the task did not expose a plain link; open it in Feishu once and export again',
           }
         }
         return {
@@ -680,7 +732,7 @@ export function createFeishuTasksSource(getRuntime: () => ClueRuntime): ClueSour
           locator: {
             kind: 'task',
             guid: locator.guid,
-            ...(url === undefined ? {} : { url }),
+            url,
             ...(host === undefined ? {} : { host }),
           } as unknown as Locator,
         }

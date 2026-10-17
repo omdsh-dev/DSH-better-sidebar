@@ -17,7 +17,9 @@
  * The exact scope spelling is taken from the lark-cli 1.0.55 scope catalog
  * (`docx:document:readonly`, `docs:document.content:read`,
  * `search:docs:read`, `task:task:read`, `task:task:write`, …); a real
- * lark-cli account is NOT exercised by the test suite. A wiki scope is
+ * lark-cli account is NOT exercised by the test suite. Wiki browsing needs its
+ * own `wiki:node:retrieve` / `wiki:space:retrieve` scopes (the `wiki` auth
+ * domain), so wiki access is a separate declared capability. A wiki scope is
  * deliberately NOT sufficient for `docs.read`: it grants wiki-node access but
  * not Docx content, so treating it as full docs coverage would over-advertise
  * the source exactly like the old token-only projection did.
@@ -60,6 +62,23 @@ const CAPABILITY_SCOPES: Readonly<Record<FeishuConnectionCapability, readonly st
     'drive:drive',
     'drive:drive:readonly',
     'drive:drive.metadata:readonly',
+  ],
+  'docs.edit': [
+    // The full document scopes are the ones that include writes; the
+    // `:readonly` variants above must NOT advertise `docs.edit`.
+    'docx:document',
+    'docs:doc',
+    'docx:document:write',
+    'docs:document.content:write',
+  ],
+  'wiki.read': [
+    // The wiki shortcuts are a separate domain; docs/drive scopes do not cover
+    // `wiki +node-get`, `+node-list` or `+space-list`.
+    'wiki:node:retrieve',
+    'wiki:node:read',
+    'wiki:space:retrieve',
+    'wiki:space:read',
+    'wiki:wiki',
   ],
   'tasks.read': [
     'task:task:read',
