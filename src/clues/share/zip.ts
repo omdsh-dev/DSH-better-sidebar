@@ -18,7 +18,10 @@
  *   archives are refused explicitly instead of being guessed at;
  * - file count, per-entry size and total expanded size are checked BEFORE
  *   inflating, and `maxOutputLength` bounds a stream whose header lied;
- * - every payload's CRC32 is verified.
+ * - every payload's CRC32 is verified;
+ * - the writer enforces the same limit object as the reader (and checks the
+ *   archive size before allocating the output buffer), so this module cannot
+ *   emit an archive its own reader rejects.
  *
  * Entries are returned in memory; the caller (the cluepack importer) never
  * extracts to a path derived from an archive name.
@@ -40,9 +43,15 @@ export interface ZipReadLimits {
   readonly maxNameBytes: number
 }
 
-/** Conservative defaults: a clue pack is small documents, not a backup. */
+/**
+ * The one resource-limit set shared by the reader, the writer and the
+ * exporter. Export pre-checks and ZIP assembly use these exact numbers, so an
+ * archive this plugin builds is always one this plugin accepts: S1 caps a pack
+ * at 10,000 members, and a snapshot-mode export adds one content entry plus
+ * the manifest.
+ */
 export const DEFAULT_ZIP_LIMITS: ZipReadLimits = {
-  maxEntries: 4_096,
+  maxEntries: 10_001,
   maxEntryBytes: 32 * 1024 * 1024,
   maxTotalBytes: 128 * 1024 * 1024,
   maxArchiveBytes: 64 * 1024 * 1024,
@@ -73,6 +82,14 @@ export interface ZipEntry {
 export interface ZipWriteOptions {
   /** Modification time recorded in every header (defaults to "now"). */
   readonly modifiedAt?: Date
+  /**
+   * Limits the finished archive must respect. Defaults to
+   * {@link DEFAULT_ZIP_LIMITS} — the same numbers `readZip` enforces — so the
+   * writer cannot build an archive its own reader rejects. A caller that
+   * deliberately builds a larger archive for a reader with wider limits must
+   * widen them here too.
+   */
+  readonly limits?: Partial<ZipReadLimits>
 }
 
 const LOCAL_HEADER_SIGNATURE = 0x0403_4b50
@@ -187,13 +204,26 @@ function resolveLimits(overrides: Partial<ZipReadLimits> | undefined): ZipReadLi
 
 /**
  * Build one ZIP archive from in-memory entries.
+ *
+ * The writer enforces the same resource limits the reader enforces (entry
+ * count, per-entry size, total expanded size, archive size), and it checks
+ * every one of them BEFORE allocating the output buffer: a 200 MiB selection
+ * fails with a readable error instead of spiking memory and only failing once
+ * the archive is already built.
  * @param entries - payloads to write (names are validated and de-duplicated).
- * @param options - recorded modification time.
+ * @param options - recorded modification time and the limit set.
  * @returns the complete archive bytes.
  */
 export function createZip(entries: readonly ZipEntryInput[], options: ZipWriteOptions = {}): Buffer {
+  const limits = resolveLimits(options.limits)
   if (entries.length > MAX_UINT16) {
     throw new ClueError('invalid-request', `a ZIP archive supports at most ${MAX_UINT16} entries`)
+  }
+  if (entries.length > limits.maxEntries) {
+    throw new ClueError(
+      'invalid-request',
+      `the zip archive exceeds the entry limit (${entries.length} entries; limit ${limits.maxEntries})`,
+    )
   }
   const { time, date } = dosDateTime(options.modifiedAt ?? new Date())
   const seen = new Set<string>()
@@ -207,8 +237,9 @@ export function createZip(entries: readonly ZipEntryInput[], options: ZipWriteOp
   }
   const prepared: Prepared[] = []
   let offset = 0
+  let totalBytes = 0
   for (const entry of entries) {
-    assertZipEntryName(entry.name)
+    assertZipEntryName(entry.name, limits.maxNameBytes)
     if (seen.has(entry.name)) {
       throw new ClueError('invalid-request', `duplicate archive entry "${entry.name}"`)
     }
@@ -220,6 +251,19 @@ export function createZip(entries: readonly ZipEntryInput[], options: ZipWriteOp
     if (data.length > MAX_UINT32) {
       throw new ClueError('invalid-request', `archive entry "${entry.name}" is too large for a ZIP file`)
     }
+    if (data.length > limits.maxEntryBytes) {
+      throw new ClueError(
+        'invalid-request',
+        `archive entry "${entry.name}" exceeds the size limit (${data.length} bytes; limit ${limits.maxEntryBytes})`,
+      )
+    }
+    totalBytes += data.length
+    if (totalBytes > limits.maxTotalBytes) {
+      throw new ClueError(
+        'invalid-request',
+        `the zip archive exceeds the expanded size limit (${totalBytes} bytes; limit ${limits.maxTotalBytes})`,
+      )
+    }
     // Deflate only wins when it actually shrinks the payload; a stored entry
     // is both smaller on disk and cheaper to read for already-compressed data.
     const deflated = entry.compress === false ? undefined : deflateRawSync(data)
@@ -228,6 +272,14 @@ export function createZip(entries: readonly ZipEntryInput[], options: ZipWriteOp
     const nameBytes = Buffer.from(UTF8_ENCODER.encode(entry.name))
     prepared.push({ nameBytes, data, method, crc: crc32(data), compressed, offset })
     offset += LOCAL_HEADER_SIZE + nameBytes.length + compressed.length
+    // Checked per entry, i.e. while the archive is being prepared: the output
+    // buffer is never allocated once the bound is already broken.
+    if (offset > limits.maxArchiveBytes) {
+      throw new ClueError(
+        'invalid-request',
+        `the zip archive exceeds the size limit (${offset} bytes; limit ${limits.maxArchiveBytes})`,
+      )
+    }
   }
   if (offset > MAX_UINT32) {
     throw new ClueError('invalid-request', 'the ZIP archive exceeds the non-ZIP64 size limit')
@@ -238,6 +290,12 @@ export function createZip(entries: readonly ZipEntryInput[], options: ZipWriteOp
   )
   if (offset + centralSize + EOCD_SIZE > MAX_UINT32) {
     throw new ClueError('invalid-request', 'the ZIP archive exceeds the non-ZIP64 size limit')
+  }
+  if (offset + centralSize + EOCD_SIZE > limits.maxArchiveBytes) {
+    throw new ClueError(
+      'invalid-request',
+      `the zip archive exceeds the size limit (${offset + centralSize + EOCD_SIZE} bytes; limit ${limits.maxArchiveBytes})`,
+    )
   }
   const archive = Buffer.alloc(offset + centralSize + EOCD_SIZE)
   let cursor = 0

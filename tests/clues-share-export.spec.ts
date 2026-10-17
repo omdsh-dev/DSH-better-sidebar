@@ -27,13 +27,19 @@ import {
   type Locator,
 } from '../src/clues/types.ts'
 import {
+  DEFAULT_MAX_ARCHIVE_BYTES,
+  DEFAULT_MAX_ENTRIES,
+  DEFAULT_MAX_MANIFEST_BYTES,
+  DEFAULT_MAX_SNAPSHOT_BYTES,
+  DEFAULT_MAX_TOTAL_BYTES,
   exportPack,
+  inspectExport,
   previewExport,
   type ClueShareExportDeps,
   type ClueShareExportProgress,
 } from '../src/clues/share/export.ts'
-import { CLUEPACK_MANIFEST_PATH } from '../src/clues/share/manifest.ts'
-import { readZip } from '../src/clues/share/zip.ts'
+import { CLUEPACK_MANIFEST_PATH, MAX_MANIFEST_BYTES } from '../src/clues/share/manifest.ts'
+import { DEFAULT_ZIP_LIMITS, readZip } from '../src/clues/share/zip.ts'
 import { removeTree } from './temp-tree.ts'
 
 const NOW = '2026-10-17T00:00:00.000Z'
@@ -196,6 +202,14 @@ describe('exportPack references mode', () => {
     f.source.portable = async () => ({
       portable: true,
       locator: { id: 'a', note: 'ordinary usage' },
+    })
+    // Inject a secret-shaped body into the LIVE content: without one, the
+    // "no SECRET-TOKEN in the archive" assertion below proves nothing.
+    f.source.read = async () => ({
+      format: 'text/plain',
+      data: { text: 'SECRET-TOKEN body' },
+      text: 'SECRET-TOKEN body',
+      fetchedAt: FETCHED_AT,
     })
 
     const result = await exportPack(deps(f), {
@@ -379,7 +393,7 @@ describe('exportPack snapshot mode', () => {
       workspaceId: 'ws-1',
       mode: 'snapshot',
       clueIds: [clueId],
-    })).rejects.toMatchObject({ category: 'failed' })
+    })).rejects.toMatchObject({ category: 'invalid-request' })
   })
 })
 
@@ -464,5 +478,261 @@ describe('exportPack selection, progress and cancellation', () => {
       signal: controller.signal,
     })).rejects.toMatchObject({ category: 'cancelled' })
     expect(f.source.calls.read).toBe(0)
+  })
+})
+
+describe('inspectExport (share confirmation)', () => {
+  it('shows the exact portable locator without reading content', async () => {
+    const f = fixture()
+    const clueId = await ensureClue(f, 'a', '私有文档')
+    f.source.portable = async () => ({
+      portable: true,
+      locator: { url: 'https://example.invalid/private/资源?id=42' },
+    })
+    const inspection = await inspectExport(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clueIds: [clueId],
+    })
+    expect(inspection.items).toHaveLength(1)
+    expect(inspection.items[0]).toMatchObject({
+      clueId,
+      title: '私有文档',
+      sourceId: TEST_SOURCE,
+      portable: { portable: true, locator: { url: 'https://example.invalid/private/资源?id=42' } },
+    })
+    expect(inspection.sources[0]).toMatchObject({ sourceId: TEST_SOURCE })
+    expect(inspection.fileName).toBe('clues-20261017.cluepack')
+    // The consent step resolves addresses only: it must never read content.
+    expect(f.source.calls).toEqual({ read: 0, portable: 1 })
+  })
+
+  it('shows the stored reference of an unresolved row and its local reason', async () => {
+    const f = fixture()
+    const imported = await f.service.importUnresolved({
+      workspaceId: 'ws-1',
+      sourceId: 'missing.source',
+      typeId: 'missing.source.doc',
+      locator: {},
+      title: '离线记录',
+      reason: 'source is not installed',
+      portable: { portable: true, locator: { docId: 'doc-42' } },
+    })
+    const inspection = await inspectExport(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [imported.clue.id],
+    })
+    expect(inspection.items[0]).toMatchObject({
+      unresolved: 'source is not installed',
+      portable: { portable: true, locator: { docId: 'doc-42' } },
+      snapshotMode: true,
+    })
+    expect(inspection.warnings.join('\n')).toMatch(/not installed/i)
+    expect(f.source.calls).toEqual({ read: 0, portable: 0 })
+  })
+
+  it('keeps a per-item portable failure as a readable warning', async () => {
+    const f = fixture()
+    const clueId = await ensureClue(f, 'a')
+    f.source.portable = async () => {
+      throw new ClueError('auth-required', 'the source requires authorization')
+    }
+    const inspection = await inspectExport(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clueIds: [clueId],
+    })
+    expect(inspection.items[0]!.portable).toMatchObject({
+      portable: false,
+      reason: 'the source requires authorization',
+    })
+    expect(inspection.warnings.join('\n')).toMatch(/authorization/i)
+    expect(f.source.calls.read).toBe(0)
+  })
+})
+
+describe('export limits match the importer', () => {
+  it('publishes exactly the reader/import defaults', () => {
+    expect(DEFAULT_MAX_SNAPSHOT_BYTES).toBe(DEFAULT_ZIP_LIMITS.maxEntryBytes)
+    expect(DEFAULT_MAX_ARCHIVE_BYTES).toBe(DEFAULT_ZIP_LIMITS.maxArchiveBytes)
+    expect(DEFAULT_MAX_ENTRIES).toBe(DEFAULT_ZIP_LIMITS.maxEntries)
+    expect(DEFAULT_MAX_TOTAL_BYTES).toBe(DEFAULT_ZIP_LIMITS.maxTotalBytes)
+    expect(DEFAULT_MAX_MANIFEST_BYTES).toBe(MAX_MANIFEST_BYTES)
+    // S1 accepts a 10,000-member pack; the archive must be able to hold it.
+    expect(DEFAULT_MAX_ENTRIES).toBeGreaterThanOrEqual(10_001)
+  })
+
+  it('refuses an over-limit entry count, manifest and expanded size before ZIP assembly', async () => {
+    const f = fixture()
+    const first = await ensureClue(f, 'a')
+    const second = await ensureClue(f, 'b')
+    const third = await ensureClue(f, 'c')
+    await expect(exportPack(deps(f, { maxEntries: 1 }), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [first],
+    })).rejects.toThrowError(/entry limit/i)
+    await expect(exportPack(deps(f, { maxManifestBytes: 16 }), {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clueIds: [first],
+    })).rejects.toThrowError(/manifest exceeds/i)
+    await expect(exportPack(deps(f, { maxTotalBytes: 16, maxManifestBytes: 1_000_000 }), {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clueIds: [first, second, third],
+    })).rejects.toThrowError(/expanded size limit/i)
+  })
+
+  it('produces an archive readZip accepts at the same default limits', async () => {
+    const f = fixture()
+    const clueId = await ensureClue(f, 'a')
+    const result = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [clueId],
+    })
+    expect(readZip(result.bytes).map(entry => entry.name)).toEqual([
+      CLUEPACK_MANIFEST_PATH,
+      'content/clue-1.json',
+    ])
+  })
+})
+
+describe('download file names', () => {
+  it('truncates a long emoji pack name by code point, never mid-surrogate', async () => {
+    const f = fixture()
+    const clueId = await ensureClue(f, 'a')
+    const pack = await f.service.createPack({
+      workspaceId: 'ws-1',
+      name: 'a' + '😀'.repeat(60),
+      members: [clueId],
+    })
+    const preview = await previewExport(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      packIds: [pack.pack.id],
+    })
+    expect(preview.fileName).toMatch(/^a(?:😀)+-\d{8}\.cluepack$/)
+    // No unpaired surrogate reached the proposed name.
+    expect(preview.fileName).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
+    expect([...preview.fileName].length).toBeLessThanOrEqual(100 + '-20261017.cluepack'.length)
+    const exported = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      packIds: [pack.pack.id],
+    })
+    expect(exported.fileName).toBe(preview.fileName)
+  })
+})
+
+describe('snapshot mode with unresolved clues', () => {
+  it('re-shares the stored JSON snapshot instead of reporting a missing source', async () => {
+    const f = fixture()
+    const imported = await f.service.importUnresolved({
+      workspaceId: 'ws-1',
+      sourceId: 'missing.source',
+      typeId: 'missing.source.doc',
+      locator: {},
+      title: '离线记录',
+      reason: 'source is not installed',
+      portable: { portable: false, reason: 'no portable address' },
+    })
+    await f.service.putSnapshot('ws-1', {
+      clueId: imported.clue.id,
+      format: 'text/plain',
+      fetchedAt: FETCHED_AT,
+      data: { text: 'stored body' },
+      text: 'stored body',
+    })
+    const result = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [imported.clue.id],
+    })
+    expect(result.complete).toBe(true)
+    expect(result.stats).toMatchObject({ snapshots: 1 })
+    const manifest = manifestOf(result.bytes) as unknown as {
+      clues: Array<{ snapshot: { path: string; encoding: string; format: string; fetchedAt: string; sha256: string; bytes: number } }>
+    }
+    const snapshot = manifest.clues[0]!.snapshot
+    expect(snapshot).toMatchObject({
+      path: 'content/clue-1.json',
+      encoding: 'json',
+      format: 'text/plain',
+      fetchedAt: FETCHED_AT,
+    })
+    const content = readZip(result.bytes).find(entry => entry.name === snapshot.path)!
+    expect(content.data.byteLength).toBe(snapshot.bytes)
+    expect(createHash('sha256').update(content.data).digest('hex')).toBe(snapshot.sha256)
+    expect(JSON.parse(new TextDecoder().decode(content.data))).toEqual({
+      format: 'text/plain',
+      data: { text: 'stored body' },
+      text: 'stored body',
+    })
+    expect(f.source.calls).toEqual({ read: 0, portable: 0 })
+  })
+
+  it('re-shares a stored binary snapshot byte-for-byte', async () => {
+    const f = fixture()
+    const bytes = new Uint8Array([0, 1, 2, 250, 255, 0, 13, 10])
+    const imported = await f.service.importUnresolved({
+      workspaceId: 'ws-1',
+      sourceId: 'missing.source',
+      typeId: 'missing.source.doc',
+      locator: {},
+      title: '离线资产',
+      reason: 'source is not installed',
+    })
+    await f.service.putSnapshot('ws-1', {
+      clueId: imported.clue.id,
+      format: 'image/png',
+      fetchedAt: FETCHED_AT,
+      data: {
+        kind: 'binary',
+        mediaType: 'image/png',
+        size: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        encoding: 'base64',
+        base64: Buffer.from(bytes).toString('base64'),
+      },
+    })
+    const result = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [imported.clue.id],
+    })
+    expect(result.complete).toBe(true)
+    const manifest = manifestOf(result.bytes) as unknown as {
+      clues: Array<{ snapshot: { path: string; encoding: string; mediaType: string; format: string } }>
+    }
+    expect(manifest.clues[0]!.snapshot).toMatchObject({
+      encoding: 'raw',
+      mediaType: 'image/png',
+      format: 'image/png',
+    })
+    const content = readZip(result.bytes).find(entry => entry.name === manifest.clues[0]!.snapshot.path)!
+    expect(content.data).toEqual(bytes)
+  })
+
+  it('still reports a source-missing issue when the unresolved clue has no snapshot', async () => {
+    const f = fixture()
+    const imported = await f.service.importUnresolved({
+      workspaceId: 'ws-1',
+      sourceId: 'missing.source',
+      typeId: 'missing.source.doc',
+      locator: {},
+      title: '无快照',
+      reason: 'source is not installed',
+    })
+    const result = await exportPack(deps(f), {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [imported.clue.id],
+    })
+    expect(result.complete).toBe(false)
+    expect(result.issues[0]).toMatchObject({ target: 'clue', category: 'source-missing' })
+    expect(result.stats.snapshots).toBe(0)
   })
 })

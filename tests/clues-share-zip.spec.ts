@@ -275,3 +275,37 @@ describe('createZip input guard', () => {
     expect(readZip(createZip(entries)).map(entry => entry.name)).toHaveLength(3)
   })
 })
+
+describe('createZip limits (writer/reader parity)', () => {
+  /** One tiny JSON-shaped entry. */
+  function tinyEntry(name: string): ZipEntryInput {
+    return { name, data: new TextEncoder().encode('{}'), compress: false }
+  }
+
+  it('writes 4,097 entries with the shared defaults and reads them back', () => {
+    // The old defaults (4,096 entries) let the exporter build an archive its
+    // own importer rejected; 4,097 is exactly the first size that used to break.
+    const entries = Array.from({ length: 4_097 }, (_, index) => tinyEntry(`content/item-${index}.json`))
+    const zip = createZip(entries)
+    expect(readZip(zip)).toHaveLength(4_097)
+    expect(DEFAULT_ZIP_LIMITS.maxEntries).toBeGreaterThanOrEqual(10_001)
+  })
+
+  it('refuses to write beyond the entry/per-entry/total/archive limits', () => {
+    expect(() => createZip([tinyEntry('a.json'), tinyEntry('b.json')], { limits: { maxEntries: 1 } }))
+      .toThrowError(/entry limit/i)
+    expect(() => createZip([{ name: 'a.json', data: new Uint8Array(64) }], { limits: { maxEntryBytes: 8 } }))
+      .toThrowError(/size limit/i)
+    expect(() => createZip([
+      { name: 'a.json', data: new Uint8Array(64) },
+      { name: 'b.json', data: new Uint8Array(64) },
+    ], { limits: { maxTotalBytes: 100 } })).toThrowError(/expanded size limit/i)
+    expect(() => createZip([{ name: 'a.json', data: new Uint8Array(64) }], { limits: { maxArchiveBytes: 20 } }))
+      .toThrowError(/size limit/i)
+  })
+
+  it('applies the shared name-byte bound on the writer side too', () => {
+    expect(() => createZip([tinyEntry('x'.repeat(200))], { limits: { maxNameBytes: 16 } }))
+      .toThrowError(/exceeds 16 bytes/i)
+  })
+})

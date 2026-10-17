@@ -16,7 +16,12 @@
  * The item is listed in `issues` with its fixed clue category, the manifest
  * records it, the archive is still produced (so the user can accept the
  * partial export explicitly), and the result reports `complete: false`.
- * Cancellation and archive-size failure throw before any bytes are returned.
+ * Cancellation and any limit overflow throw before any bytes are returned.
+ *
+ * Sharing scope (spec §3): {@link previewExport} is local-only, and
+ * {@link inspectExport} is the explicit consent step that resolves the exact
+ * portable references (never content) so a private URL/resource id is visible
+ * before the user confirms.
  */
 import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
@@ -29,6 +34,7 @@ import {
   type CluePack,
   type CluePortableRef,
   type ClueReadResult,
+  type ClueSnapshotRecord,
   type JsonValue,
   type Locator,
 } from '../types.ts'
@@ -37,6 +43,7 @@ import {
   CLUEPACK_FORMAT,
   CLUEPACK_FORMAT_VERSION,
   CLUEPACK_MANIFEST_PATH,
+  MAX_MANIFEST_BYTES,
   serializeCluepackManifest,
   type CluepackClue,
   type CluepackIssue,
@@ -46,13 +53,23 @@ import {
   type CluepackSnapshot,
   type CluepackSource,
 } from './manifest.ts'
-import { createZip, type ZipEntryInput } from './zip.ts'
+import { createZip, DEFAULT_ZIP_LIMITS, type ZipEntryInput } from './zip.ts'
 
-/** Default upper bound of one snapshot payload (JSON or raw bytes). */
-export const DEFAULT_MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024
-/** Default upper bound of the finished archive. */
-export const DEFAULT_MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
-/** Byte length bound of a pack name used in a download file name. */
+/**
+ * Default upper bound of one snapshot payload (JSON or raw bytes). It is the
+ * reader's per-entry bound, so any content the exporter accepts is content the
+ * importer accepts.
+ */
+export const DEFAULT_MAX_SNAPSHOT_BYTES = DEFAULT_ZIP_LIMITS.maxEntryBytes
+/** Default upper bound of the finished archive (the import route's own cap). */
+export const DEFAULT_MAX_ARCHIVE_BYTES = DEFAULT_ZIP_LIMITS.maxArchiveBytes
+/** Default upper bound of one export's archive entries (S1's largest pack + manifest). */
+export const DEFAULT_MAX_ENTRIES = DEFAULT_ZIP_LIMITS.maxEntries
+/** Default upper bound of all expanded content together. */
+export const DEFAULT_MAX_TOTAL_BYTES = DEFAULT_ZIP_LIMITS.maxTotalBytes
+/** Default upper bound of the serialized manifest document. */
+export const DEFAULT_MAX_MANIFEST_BYTES = MAX_MANIFEST_BYTES
+/** Code-point bound of a pack name used in a download file name. */
 const MAX_FILE_STEM = 100
 
 /** Everything the exporter needs from the host (tests inject the seams). */
@@ -62,8 +79,14 @@ export interface ClueShareExportDeps {
   readonly now?: () => string
   /** Maximum size of one snapshot payload. */
   readonly maxSnapshotBytes?: number
-  /** Maximum size of the finished archive. */
+  /** Maximum size of the finished archive (defaults to the import route cap). */
   readonly maxArchiveBytes?: number
+  /** Maximum number of archive entries. */
+  readonly maxEntries?: number
+  /** Maximum expanded size of all content together. */
+  readonly maxTotalBytes?: number
+  /** Maximum size of the serialized manifest. */
+  readonly maxManifestBytes?: number
   /** Raw-byte reader for an asset path (tests). */
   readonly readFileBytes?: (path: string) => Promise<Uint8Array>
   /** Size probe of an asset path (tests). */
@@ -138,6 +161,38 @@ export interface ClueShareExportResult {
     readonly snapshots: number
     readonly bytes: number
   }
+}
+
+/**
+ * One clue as the share-confirmation screen shows it: the EXACT portable
+ * reference the archive would carry.
+ *
+ * Spec §3: "私有资源的 URL／标题本身也可能敏感；导出确认面展示将携带的资源信息,
+ * 让用户决定分享范围。" The zero-source-call {@link previewExport} cannot know
+ * the source-provided locator, so the UI calls {@link inspectExport} — an
+ * explicitly user-triggered, content-free resolution step — before the final
+ * confirmation. It never calls `read`.
+ */
+export interface ClueShareExportSharedItem {
+  readonly clueId: string
+  readonly title: string
+  readonly sourceId: string
+  readonly typeId: string
+  /** Exactly what the manifest will carry (or why no address can be shared). */
+  readonly portable: CluePortableRef
+  /** The local unresolved reason, when the row is already unresolved. */
+  readonly unresolved?: string
+  /** Snapshot mode says content will be fetched after the user confirms. */
+  readonly snapshotMode: boolean
+}
+
+/** Result of `inspectExport` (portable references only; no content). */
+export interface ClueShareExportInspection {
+  readonly mode: CluepackMode
+  readonly fileName: string
+  readonly items: readonly ClueShareExportSharedItem[]
+  readonly sources: readonly CluepackSource[]
+  readonly warnings: readonly string[]
 }
 
 /** One selected pack plus its package-local key. */
@@ -272,16 +327,49 @@ function dateStamp(now: string): string {
     : date.toISOString().slice(0, 10).replaceAll('-', '')
 }
 
+/**
+ * Replace lone UTF-16 surrogates with nothing.
+ *
+ * A pack name is arbitrary text (S1 only bounds its length and trims it), so
+ * it may contain an unpaired surrogate. `encodeURIComponent` throws
+ * `URIError: URI malformed` on one, which turned a legal long/emoji name into
+ * a 500 on the download route. Everything derived from a name is made
+ * well-formed here before it reaches an encoder.
+ * @param value - possibly ill-formed text.
+ */
+export function wellFormedText(value: string): string {
+  let result = ''
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1)
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        result += value[index]! + value[index + 1]!
+        index += 1
+      }
+      // A lone high surrogate is dropped.
+      continue
+    }
+    // A lone low surrogate is dropped.
+    if (code >= 0xdc00 && code <= 0xdfff) continue
+    result += value[index]!
+  }
+  return result
+}
+
 /** Sanitize a pack name into a download file stem (path separators removed). */
 function fileStemOf(name: string | undefined): string {
-  const source = name ?? 'clues'
+  const source = wellFormedText(name ?? 'clues')
   const cleaned = source
     // eslint-disable-next-line no-control-regex
     .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, '-')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/^[.\s]+|[.\s]+$/g, '')
-  return (cleaned === '' ? 'clues' : cleaned).slice(0, MAX_FILE_STEM)
+  // Truncate by CODE POINT, not UTF-16 code unit: slicing at 100 code units
+  // can cut a surrogate pair in half and hand the RFC 5987 encoder an
+  // unencodable string (a valid emoji pack name then 500'd the download).
+  return [...(cleaned === '' ? 'clues' : cleaned)].slice(0, MAX_FILE_STEM).join('')
 }
 
 /** Suggested download name of one selection. */
@@ -469,8 +557,226 @@ async function captureSnapshot(
 }
 
 /**
+ * The raw-binary transport wrapper S1 stores for an imported binary asset
+ * (`{kind:'binary', mediaType, size, sha256, encoding:'base64', base64}`).
+ *
+ * All six fields are required. Requiring the full shape keeps a STRUCTURED
+ * snapshot whose JSON content happens to contain a `kind`/`base64` object from
+ * being reinterpreted as raw bytes on re-share.
+ */
+function binaryWrapperOf(data: JsonValue): {
+  mediaType: string
+  bytes: Uint8Array
+  sha256: string
+  size: number
+} | undefined {
+  if (!isRecord(data)) return undefined
+  const raw = data as Record<string, JsonValue>
+  if (
+    raw.kind !== 'binary'
+    || raw.encoding !== 'base64'
+    || typeof raw.base64 !== 'string'
+    || typeof raw.mediaType !== 'string'
+    || raw.mediaType === ''
+    || typeof raw.size !== 'number'
+    || typeof raw.sha256 !== 'string'
+  ) {
+    return undefined
+  }
+  return {
+    mediaType: raw.mediaType,
+    bytes: new Uint8Array(Buffer.from(raw.base64, 'base64')),
+    sha256: raw.sha256,
+    size: raw.size,
+  }
+}
+
+/**
+ * Re-share the newest snapshot S1 already stores for one clue.
+ *
+ * Snapshot mode normally reads the source. An UNRESOLVED clue has no source to
+ * ask, but it may still carry an imported snapshot (offline import); spec §3
+ * says a clue with a snapshot can still be shared, so the stored snapshot is
+ * re-encoded into the archive instead of reporting a missing source. This is a
+ * local read (`listSnapshots`/`readSnapshot`), never a source operation.
+ *
+ * @returns the payload; `undefined` when the clue has no stored snapshot;
+ *   `{issue}` when the stored snapshot cannot be re-shared.
+ */
+async function captureStoredSnapshot(
+  deps: ClueShareExportDeps,
+  workspaceId: string,
+  clueId: string,
+  key: string,
+  maxSnapshotBytes: number,
+): Promise<CapturedSnapshot | { readonly issue: CluepackIssue } | undefined> {
+  let record: ClueSnapshotRecord
+  try {
+    const newest = (await deps.clues.listSnapshots(workspaceId))
+      .filter(meta => meta.clueId === clueId)
+      .sort((left, right) =>
+        right.fetchedAt.localeCompare(left.fetchedAt) || right.snapshotId.localeCompare(left.snapshotId))[0]
+    if (newest === undefined) return undefined
+    record = await deps.clues.readSnapshot({ workspaceId, snapshotId: newest.snapshotId })
+  } catch (error) {
+    return {
+      issue: {
+        target: 'clue',
+        key,
+        category: isClueError(error) ? error.category : 'failed',
+        reason: 'the stored snapshot could not be read for export',
+      },
+    }
+  }
+  const format = record.content.format
+  const binary = binaryWrapperOf(record.content.data)
+  if (binary !== undefined) {
+    const digest = sha256Hex(binary.bytes)
+    if (binary.sha256 !== digest || binary.size !== binary.bytes.byteLength) {
+      return {
+        issue: {
+          target: 'clue',
+          key,
+          category: 'failed',
+          reason: 'the stored snapshot failed its integrity check',
+        },
+      }
+    }
+    if (binary.bytes.byteLength > maxSnapshotBytes) {
+      return {
+        issue: {
+          target: 'clue',
+          key,
+          category: 'unsupported',
+          reason: `content exceeds the ${maxSnapshotBytes} byte snapshot limit`,
+        },
+      }
+    }
+    return {
+      bytes: binary.bytes,
+      extension: 'bin',
+      descriptor: {
+        encoding: 'raw',
+        mediaType: binary.mediaType,
+        format,
+        bytes: binary.bytes.byteLength,
+        sha256: digest,
+        fetchedAt: record.meta.fetchedAt,
+        ...(record.meta.sourceVersion === undefined ? {} : { sourceVersion: record.meta.sourceVersion }),
+      },
+    }
+  }
+  let text: string
+  try {
+    text = JSON.stringify({
+      format,
+      data: record.content.data,
+      ...(record.content.text === undefined ? {} : { text: record.content.text }),
+    })
+  } catch {
+    return {
+      issue: {
+        target: 'clue',
+        key,
+        category: 'failed',
+        reason: 'the stored snapshot is not JSON-serializable',
+      },
+    }
+  }
+  const bytes = new TextEncoder().encode(text)
+  if (bytes.byteLength > maxSnapshotBytes) {
+    return {
+      issue: {
+        target: 'clue',
+        key,
+        category: 'unsupported',
+        reason: `content exceeds the ${maxSnapshotBytes} byte snapshot limit`,
+      },
+    }
+  }
+  return {
+    bytes,
+    extension: 'json',
+    descriptor: {
+      encoding: 'json',
+      mediaType: 'application/json',
+      format,
+      bytes: bytes.byteLength,
+      sha256: sha256Hex(bytes),
+      fetchedAt: record.meta.fetchedAt,
+      ...(record.meta.sourceVersion === undefined ? {} : { sourceVersion: record.meta.sourceVersion }),
+    },
+  }
+}
+
+/**
+ * Resolve the EXACT portable references the archive would carry, for the
+ * share-confirmation screen.
+ *
+ * This is the explicit post-preview consent step spec §3 requires: the UI calls
+ * it when the user asks "what exactly am I about to share?". It calls the
+ * source's `portable` operation per live clue (never `read`), so a private URL
+ * or resource identifier is visible BEFORE the user confirms. Failures are
+ * per-item reasons, not a failed inspection.
+ * @param deps - service + test seams.
+ * @param params - workspace/mode/selection.
+ */
+export async function inspectExport(
+  deps: ClueShareExportDeps,
+  params: ClueShareExportParams,
+): Promise<ClueShareExportInspection> {
+  throwIfAborted(params.signal)
+  const { workspaceId, mode } = requireParams(params)
+  const selection = await collectSelection(deps, params)
+  throwIfAborted(params.signal)
+  const { sources } = collectSources(deps, selection.clues)
+  const warnings: string[] = selection.issues.map(issue => issue.reason)
+  const items: ClueShareExportSharedItem[] = []
+  for (const clue of selection.clues) {
+    throwIfAborted(params.signal)
+    let portable: CluePortableRef
+    if (clue.unresolved !== undefined) {
+      portable = portableRefOf(clue.unresolved.portable, clue.unresolved.reason)
+      warnings.push(`"${clue.title}" is unresolved: ${clue.unresolved.reason}`)
+    } else {
+      try {
+        portable = portableRefOf(await deps.clues.portable({ workspaceId, clueId: clue.id }, {
+          caller: 'ui',
+          ...(params.signal === undefined ? {} : { signal: params.signal }),
+        }), 'the source did not provide a portable reference')
+      } catch (error) {
+        if (params.signal?.aborted === true) throwIfAborted(params.signal)
+        const failure = failureOf(error)
+        portable = { portable: false, reason: failure.reason }
+        warnings.push(`"${clue.title}": ${failure.reason}`)
+      }
+    }
+    if (portable.portable !== true || portable.locator === undefined) {
+      warnings.push(`"${clue.title}": no portable locator will be shared`)
+    }
+    items.push({
+      clueId: clue.id,
+      title: clue.title,
+      sourceId: clue.sourceId,
+      typeId: clue.typeId,
+      portable,
+      ...(clue.unresolved === undefined ? {} : { unresolved: clue.unresolved.reason }),
+      snapshotMode: mode === 'snapshot',
+    })
+  }
+  return {
+    mode,
+    fileName: fileNameOf(selection, nowOf(deps)),
+    items,
+    sources,
+    warnings,
+  }
+}
+
+/**
  * Preview one export from LOCAL metadata only: no source read/portable call,
- * no CLI, no network. The UI uses it as the confirmation screen.
+ * no CLI, no network. The UI uses it as the confirmation screen; call
+ * {@link inspectExport} next to show the exact portable references.
  * @param deps - service + test seams.
  * @param params - workspace/mode/selection.
  */
@@ -516,9 +822,15 @@ export async function previewExport(
 /**
  * Build one `.cluepack` archive.
  *
- * Cancellation and archive-size overflow throw (there is no bytes result to
- * mistake for a finished pack); per-item failures are reported through
- * `issues` and `complete: false`.
+ * The archive is checked against the SAME limit set the importer enforces
+ * (entry count, per-entry size, total expanded bytes, manifest size, archive
+ * size). All of it is checked before or while the ZIP is prepared, so a
+ * selection that would produce an unimportable archive is refused with a
+ * readable error instead of being assembled and then discovered on import.
+ *
+ * Cancellation and limit overflow throw (there is no bytes result to mistake
+ * for a finished pack); per-item failures are reported through `issues` and
+ * `complete: false`.
  * @param deps - service + test seams.
  * @param params - workspace/mode/selection/progress/signal.
  */
@@ -530,6 +842,9 @@ export async function exportPack(
   const { workspaceId, mode } = requireParams(params)
   const maxSnapshotBytes = deps.maxSnapshotBytes ?? DEFAULT_MAX_SNAPSHOT_BYTES
   const maxArchiveBytes = deps.maxArchiveBytes ?? DEFAULT_MAX_ARCHIVE_BYTES
+  const maxEntries = deps.maxEntries ?? DEFAULT_MAX_ENTRIES
+  const maxTotalBytes = deps.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES
+  const maxManifestBytes = deps.maxManifestBytes ?? DEFAULT_MAX_MANIFEST_BYTES
   const selection = await collectSelection(deps, params)
   const issues: CluepackIssue[] = [...selection.issues]
   const clues: CluepackClue[] = []
@@ -566,12 +881,27 @@ export async function exportPack(
     let snapshot: CluepackSnapshot | undefined
     if (mode === 'snapshot') {
       if (clue.unresolved !== undefined) {
-        itemIssues.push({
-          target: 'clue',
-          key,
-          category: 'source-missing',
-          reason: `no snapshot was captured: ${clue.unresolved.reason}`,
-        })
+        // No source to read, but an offline import may still own a snapshot:
+        // re-share the newest stored one instead of pretending the clue has no
+        // content (spec §3: a clue with a snapshot can still be shared).
+        throwIfAborted(params.signal)
+        const stored = await captureStoredSnapshot(deps, workspaceId, clue.id, key, maxSnapshotBytes)
+        if (stored === undefined) {
+          itemIssues.push({
+            target: 'clue',
+            key,
+            category: 'source-missing',
+            reason: `no snapshot was captured: ${clue.unresolved.reason}`,
+          })
+        } else if ('issue' in stored) {
+          itemIssues.push({ ...stored.issue, key })
+        } else {
+          snapshot = {
+            ...stored.descriptor,
+            path: `content/${key}.${stored.extension}`,
+          }
+          content.set(key, stored)
+        }
       } else {
         let result: ClueReadResult | undefined
         try {
@@ -648,8 +978,15 @@ export async function exportPack(
   }
   throwIfAborted(params.signal)
   progress({ phase: 'archive', completed: total, total })
+  const manifestBytes = serializeCluepackManifest(manifest)
+  if (manifestBytes.byteLength > maxManifestBytes) {
+    throw new ClueError(
+      'invalid-request',
+      `the clue pack manifest exceeds the import limit (${manifestBytes.byteLength} bytes; limit ${maxManifestBytes})`,
+    )
+  }
   const entries: ZipEntryInput[] = [
-    { name: CLUEPACK_MANIFEST_PATH, data: serializeCluepackManifest(manifest), compress: true },
+    { name: CLUEPACK_MANIFEST_PATH, data: manifestBytes, compress: true },
   ]
   for (const [key, captured] of content) {
     const clue = clues.find(candidate => candidate.key === key)!
@@ -659,13 +996,34 @@ export async function exportPack(
       compress: captured.descriptor.encoding === 'json',
     })
   }
-  const bytes = createZip(entries, { modifiedAt: new Date(manifest.exportedAt) })
-  if (bytes.byteLength > maxArchiveBytes) {
+  // Pre-assembly parity checks: these are exactly the limits `readZip` and
+  // `parseCluepackManifestBytes` enforce on the importing side, so no archive
+  // this function returns can be rejected by this plugin's own importer.
+  if (entries.length > maxEntries) {
     throw new ClueError(
-      'failed',
-      `the clue pack exceeds the maximum export size (${bytes.byteLength} bytes; limit ${maxArchiveBytes})`,
+      'invalid-request',
+      `the selection exceeds the clue pack entry limit (${entries.length} entries; limit ${maxEntries})`,
     )
   }
+  const expandedBytes = entries.reduce((sum, entry) => sum + entry.data.byteLength, 0)
+  if (expandedBytes > maxTotalBytes) {
+    throw new ClueError(
+      'invalid-request',
+      `the clue pack exceeds the expanded size limit (${expandedBytes} bytes; limit ${maxTotalBytes})`,
+    )
+  }
+  const bytes = createZip(entries, {
+    modifiedAt: new Date(manifest.exportedAt),
+    limits: {
+      maxEntries,
+      // The manifest has its own (separate) bound; the per-entry bound only
+      // has to admit it, otherwise a small snapshot policy would reject the
+      // manifest itself.
+      maxEntryBytes: Math.max(maxSnapshotBytes, manifestBytes.byteLength),
+      maxTotalBytes,
+      maxArchiveBytes,
+    },
+  })
   throwIfAborted(params.signal)
   progress({ phase: 'done', completed: total, total })
   return {

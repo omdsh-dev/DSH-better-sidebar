@@ -69,15 +69,15 @@ interface Fixture {
   source: { calls: { read: number; portable: number } }
 }
 
-/** A service with one registered source and deterministic ids. */
-function fixture(): Fixture {
-  const base = mkdtempSync(join(tmpdir(), 'dsh-clues-share-import-'))
-  roots.push(base)
-  const workspace = join(base, 'workspace')
-  mkdirSync(workspace, { recursive: true })
-  let next = 0
-  const source = { calls: { read: 0, portable: 0 } }
-  const registration: ClueSourceRegistration = {
+/**
+ * The one test source used by every fixture. Extracted so tests can also
+ * register it publicly and later remove it (the "source was uninstalled but
+ * its clue is still resolved" case).
+ */
+function testSourceRegistration(
+  source: Fixture['source'],
+): ClueSourceRegistration {
+  return {
     descriptor: {
       sourceId: TEST_SOURCE,
       name: 'Share test source',
@@ -110,12 +110,22 @@ function fixture(): Fixture {
       },
     },
   }
+}
+
+/** A service with one registered source and deterministic ids. */
+function fixture(): Fixture {
+  const base = mkdtempSync(join(tmpdir(), 'dsh-clues-share-import-'))
+  roots.push(base)
+  const workspace = join(base, 'workspace')
+  mkdirSync(workspace, { recursive: true })
+  let next = 0
+  const source = { calls: { read: 0, portable: 0 } }
   const service = createCluesService({
     root: join(base, 'store'),
     now: () => NOW,
     newId: kind => `${kind}-${++next}`,
     resolveWorkspacePath: id => (id === 'ws-1' ? workspace : undefined),
-    builtinSources: [registration],
+    builtinSources: [testSourceRegistration(source)],
   })
   return { base, workspace, service, source }
 }
@@ -649,5 +659,111 @@ describe('importPack progress and edge shapes', () => {
     expect(result.complete).toBe(true)
     expect((await f.service.listClues('ws-1')).clues[0]!.title).toBe(longTitle)
     expect((await f.service.listPacks('ws-1')).packs[0]!.name).toBe(longPack.slice(0, 200))
+  })
+})
+
+describe('importPack cancellation', () => {
+  it('never reports success when the abort lands on the last clue', async () => {
+    const f = fixture()
+    const pack = buildPack([{ key: 'clue-1' }])
+    const controller = new AbortController()
+    await expect(importPack({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      signal: controller.signal,
+      onProgress: (event) => {
+        if (event.phase === 'clue') controller.abort()
+      },
+    })).rejects.toMatchObject({ category: 'cancelled' })
+    // The write happened; the point is that the caller never sees a success
+    // result after an abort (the BLOCKER the review found).
+    expect(await libraryIds(f.service)).toHaveLength(1)
+  })
+
+  it('never reports success when the abort lands on the last pack', async () => {
+    const f = fixture()
+    const pack = buildPack([{ key: 'clue-1' }], { packs: [{ name: 'P', members: ['clue-1'] }] })
+    const controller = new AbortController()
+    await expect(importPack({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      signal: controller.signal,
+      onProgress: (event) => {
+        if (event.phase === 'pack') controller.abort()
+      },
+    })).rejects.toMatchObject({ category: 'cancelled' })
+    expect((await f.service.listPacks('ws-1')).packs).toHaveLength(1)
+  })
+
+  it('stops between items and returns the committed rows explicitly (no bare throw)', async () => {
+    const f = fixture()
+    const pack = buildPack([{ key: 'clue-1' }, { key: 'clue-2' }])
+    const controller = new AbortController()
+    const result = await importPack({ clues: f.service }, {
+      workspaceId: 'ws-1',
+      bytes: pack.bytes,
+      signal: controller.signal,
+      onProgress: (event) => {
+        if (event.phase === 'clue' && event.completed === 1) controller.abort()
+      },
+    })
+    // S1 has no rollback; the half-import is reported as an explicit partial
+    // result the user must accept, never as success and never as a bare throw.
+    expect(result).toMatchObject({
+      complete: false,
+      partial: true,
+      cancelled: true,
+      requiresAcceptance: true,
+    })
+    expect(result.clues.map(clue => clue.clueKey)).toEqual(['clue-1'])
+    expect(result.reasons.join('\n')).toMatch(/cancelled after committing 1 of 2 clues/i)
+    expect(await libraryIds(f.service)).toEqual([result.clues[0]!.clueId])
+  })
+})
+
+describe('importPack with a locally resolved clue whose source is gone', () => {
+  it('previews and imports it as resolved with the same id', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'dsh-clues-share-import-'))
+    roots.push(base)
+    const workspace = join(base, 'workspace')
+    mkdirSync(workspace, { recursive: true })
+    let next = 0
+    const source = { calls: { read: 0, portable: 0 } }
+    const service = createCluesService({
+      root: join(base, 'store'),
+      now: () => NOW,
+      newId: kind => `${kind}-${++next}`,
+      resolveWorkspacePath: id => (id === 'ws-1' ? workspace : undefined),
+    })
+    const unregister = service.registerSource(testSourceRegistration(source))
+    const ensured = await service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: TEST_SOURCE,
+      typeId: TEST_TYPE,
+      locator: { id: 'a' },
+      title: 'Live title',
+    })
+    // The source is gone, but the row it minted is still a RESOLVED clue.
+    unregister()
+    const pack = buildPack([{
+      key: 'clue-1',
+      title: 'Imported old title',
+      portable: { portable: true, locator: { id: 'a' } },
+    }])
+    const preview = await previewImport({ clues: service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect(preview.items[0]!.willBeUnresolved).toBe(false)
+    expect(preview.unresolvedCount).toBe(0)
+
+    const result = await importPack({ clues: service }, { workspaceId: 'ws-1', bytes: pack.bytes })
+    expect(result.clues[0]).toMatchObject({
+      clueId: ensured.clue.id,
+      created: false,
+      unresolved: false,
+    })
+    const library = await service.listClues('ws-1')
+    expect(library.clues).toHaveLength(1)
+    expect(library.clues[0]!.unresolved).toBeUndefined()
+    expect(library.clues[0]!.title).toBe('Live title')
+    expect(source.calls).toEqual({ read: 0, portable: 0 })
   })
 })

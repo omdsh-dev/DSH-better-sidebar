@@ -17,7 +17,8 @@
  *
  * Safety/invariants:
  * - preview performs NO source read/portable call, no install, no auth, no
- *   write — it only reads the local registry to label availability;
+ *   write — it only reads the local registry and library to label
+ *   availability;
  * - the importer never touches bindings or pins (no inherited workspace
  *   binding, nothing pinned by default);
  * - an existing live clue is reused by `ensure`; its locator/title/read mode
@@ -27,15 +28,32 @@
  * - raw asset bytes are preserved exactly by the archive and stored as a
  *   base64 JSON body because S1's snapshot store is JSON-only. `data.base64`
  *   decodes to the original bytes; no Markdown/projection rewrite happens.
+ *
+ * Cancellation (S1 offers no cross-object transaction or rollback — a clue,
+ * a snapshot and a pack are three independent durable writes):
+ * - a cancellation observed before the FIRST write throws `cancelled` and the
+ *   target area is untouched;
+ * - a cancellation observed mid-import (after at least one committed write,
+ *   with archive objects still pending) stops at the next item boundary and
+ *   returns an EXPLICIT partial result (`cancelled: true`, `complete: false`,
+ *   `requiresAcceptance: true`) listing exactly what was committed. It is
+ *   never reported as success and never a bare throw that would hide
+ *   committed rows; the caller must ask the user to accept (or discard) the
+ *   partial import;
+ * - a cancellation observed at the final checkpoint (all writes done) throws
+ *   `cancelled`: there is no partial state left to accept and a late abort
+ *   must not become a success report.
  */
 import { createHash } from 'node:crypto'
-import type { CluesService } from '../service.ts'
+import { stableLocatorKey, type CluesService } from '../service.ts'
 import {
   BUILTIN_SOURCE_IDS,
   ClueError,
   isClueError,
+  type Clue,
   type ClueErrorCategory,
   type CluePack,
+  type CluePortableRef,
   type ClueSnapshotMeta,
   type JsonValue,
   type Locator,
@@ -185,6 +203,16 @@ export interface ClueShareImportResult {
   readonly complete: boolean
   /** True when at least one object could not be committed or was incomplete. */
   readonly partial: boolean
+  /**
+   * True when the caller aborted mid-import, after at least one write and
+   * with archive objects still uncommitted. Such a result is NEVER a clean
+   * success (`complete` is false); the caller must show the committed objects
+   * and ask the user to accept them. A cancellation observed before the first
+   * write, or at the final checkpoint, throws `cancelled` instead.
+   */
+  readonly cancelled: boolean
+  /** True when the caller must obtain explicit user acceptance of a partial import. */
+  readonly requiresAcceptance: boolean
   /** Stable, user-readable failure reasons (duplicates removed). */
   readonly reasons: readonly string[]
 }
@@ -205,6 +233,15 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted === true) {
     throw new ClueError('cancelled', 'the clue pack import was cancelled')
   }
+}
+
+/**
+ * Whether the caller aborted. A separate function (rather than an inline
+ * `signal?.aborted === true`) keeps TypeScript from narrowing the property to
+ * `false` for all following code after the first check.
+ */
+function aborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true
 }
 
 /** Whether a value is a plain JSON object. */
@@ -356,10 +393,23 @@ function canResolve(
 }
 
 /**
+ * Find a local row that already names one imported address. `ensure` /
+ * `importUnresolved` dedupe by the stored locator (or an unresolved row's
+ * portable locator), so the preview uses the same public library read — still
+ * without calling a source.
+ */
+function storedClueFor(clues: readonly Clue[], sourceId: string, locator: Locator): Clue | undefined {
+  const key = stableLocatorKey(locator)
+  return clues.find(clue => clue.sourceId === sourceId
+    && [clue.locator, clue.unresolved?.portable?.locator].some(value =>
+      value !== undefined && stableLocatorKey(value) === key))
+}
+
+/**
  * Preview one import: parse + verify the archive, label source availability
- * from the local registry, and report unresolved/snapshot counts. It NEVER
- * calls a source operation, installs a plugin/CLI, starts authorization or
- * writes to the library.
+ * from the local registry and LOCAL library, and report unresolved/snapshot
+ * counts. It NEVER calls a source operation, installs a plugin/CLI, starts
+ * authorization or writes to the library.
  * @param deps - service + ZIP limits.
  * @param params - workspace and archive bytes.
  */
@@ -373,6 +423,7 @@ export async function previewImport(
   }
   const { manifest } = loadArchive(deps, params.bytes)
   throwIfAborted(params.signal)
+  const library = await deps.clues.listClues(params.workspaceId)
   const sourceById = new Map(manifest.sources.map(source => [source.key, source]))
   const sourceRows = new Map<string, ClueShareImportSourcePreview>()
   const items: ClueShareImportItemPreview[] = []
@@ -401,7 +452,15 @@ export async function previewImport(
       }
     }
     const remapped = remapForImport(params, clue, source)
-    const willBeUnresolved = !canResolve(deps, clue, source, remapped.locator)
+    const live = canResolve(deps, clue, source, remapped.locator)
+    // The importer persists the remapped address when it has one, so an
+    // EXISTING resolved row for that same address is reused (created: false)
+    // and must not be previewed as "will be unresolved".
+    const address = remapped.locator ?? clue.portable.locator
+    const reused = address === undefined
+      ? undefined
+      : storedClueFor(library.clues, source.sourceId, address)
+    const willBeUnresolved = !live && !(reused !== undefined && reused.unresolved === undefined)
     if (willBeUnresolved) unresolvedCount += 1
     items.push({
       key: clue.key,
@@ -448,6 +507,12 @@ export async function previewImport(
 
 /**
  * Commit one validated archive into the local library.
+ *
+ * Writes are grouped per clue (clue row → snapshot) and packs come last. A
+ * cancellation before the first write throws and touches nothing; a
+ * cancellation after a committed write stops at the next item boundary and
+ * returns the explicit partial result described in the module header, because
+ * S1 has no cross-object transaction to roll the committed rows back.
  * @param deps - service + ZIP limits.
  * @param params - workspace, archive bytes, progress and abort signal.
  */
@@ -466,23 +531,85 @@ export async function importPack(
   const issues: CluepackIssue[] = [...manifest.issues]
   const clues: ClueShareImportedClue[] = []
   const snapshots: ClueShareImportedSnapshot[] = []
+  const packs: ClueShareImportedPack[] = []
   /** Package clue key → local clue id (packs are built from this). */
   const localIdByKey = new Map<string, string>()
   const progress = params.onProgress ?? (() => undefined)
   const total = manifest.clues.length
+  const packTotal = manifest.packs.length
   progress({ phase: 'validate', completed: 0, total })
+  const options = { caller: 'ui' as const, ...(params.signal === undefined ? {} : { signal: params.signal }) }
+
+  /** How many archive objects were durably committed so far. */
+  const committedCount = (): number => clues.length + snapshots.length + packs.length
 
   /**
-   * Persist one unresolved row. A registered source may refuse to normalize
-   * the imported portable locator (e.g. a foreign workspace root); in that
-   * case the row is still kept, with the explicit reason and no locator,
-   * rather than failing the whole pack.
+   * Stop with an EXPLICIT partial result once a cancellation lands after at
+   * least one durable write. Returning `complete: false` + `cancelled: true`
+   * is deliberate: S1 cannot roll the committed rows back, so hiding them
+   * behind a bare throw would leave the user unaware of what this import
+   * already added.
+   */
+  const cancelledResult = (): ClueShareImportResult => {
+    const reason = `the clue pack import was cancelled after committing ${clues.length} of ${total} clues and ${packs.length} of ${packTotal} packs; the committed items remain in the library and need explicit acceptance`
+    const reasons = [...new Set([...issues.map(issue => issue.reason), reason])]
+    progress({ phase: 'done', completed: total, total, status: 'issue', reason })
+    return {
+      workspaceId,
+      mode: manifest.mode,
+      clues,
+      packs,
+      snapshots,
+      issues,
+      manifestIssues: manifest.issues,
+      complete: false,
+      partial: true,
+      cancelled: true,
+      requiresAcceptance: true,
+      reasons,
+    }
+  }
+
+  /**
+   * The portable carrier stored on an unresolved row.
+   *
+   * The RECEIVER-remapped locator wins over the sender's locator: `ensure`
+   * dedupes a row by the stored portable locator, so persisting the sender's
+   * workspace-rooted address meant a later `ensure` with this workspace's
+   * address minted a second clue and left the orphan unresolved. When no
+   * receiver remapping exists (e.g. an external absolute path), the sender's
+   * credential-free locator is kept as an explicitly marked hint.
+   */
+  const unresolvedPortableOf = (
+    clue: CluepackClue,
+    remapped: RemappedLocator,
+    reason: string,
+  ): CluePortableRef => {
+    const locator = remapped.locator ?? clue.portable.locator
+    const portable = clue.portable.portable === true
+    if (locator === undefined) return { portable: false, reason: clue.portable.reason ?? reason }
+    return {
+      portable,
+      locator,
+      ...(clue.portable.reason === undefined ? {} : { reason: clue.portable.reason }),
+    }
+  }
+
+  /**
+   * Persist one unresolved row.
+   *
+   * A registered source may refuse the imported address form (its
+   * `normalizeLocator` rejects it). The row is still kept rather than failing
+   * the whole pack, and the address is retained as an explicitly non-portable
+   * hint for a later explicit remapping; only a locator S1 itself cannot
+   * store at all is dropped, with the failure reason.
    */
   const commitUnresolved = async (
     source: CluepackSource,
     clue: CluepackClue,
+    remapped: RemappedLocator,
     reason: string,
-  ): Promise<{ clueId: string; created: boolean }> => {
+  ): Promise<{ clueId: string; created: boolean; unresolved: boolean }> => {
     const common = {
       workspaceId,
       sourceId: source.sourceId,
@@ -491,174 +618,207 @@ export async function importPack(
       title: clue.title,
       reason,
     }
-    const options = { caller: 'ui' as const, ...(params.signal === undefined ? {} : { signal: params.signal }) }
+    const attempt = (portable: CluePortableRef | undefined) => deps.clues.importUnresolved({
+      ...common,
+      ...(portable === undefined ? {} : { portable }),
+    }, options)
+    const preferred = unresolvedPortableOf(clue, remapped, reason)
+    let imported
     try {
-      const imported = await deps.clues.importUnresolved({ ...common, portable: clue.portable }, options)
-      return { clueId: imported.clue.id, created: imported.created }
+      imported = await attempt(preferred)
     } catch (error) {
-      if (!isClueError(error) || error.category !== 'invalid-request') throw error
-      const imported = await deps.clues.importUnresolved({
-        ...common,
-        portable: { portable: false, reason },
-      }, options)
-      return { clueId: imported.clue.id, created: imported.created }
+      if (aborted(params.signal)) throw error
+      if (!isClueError(error) || error.category !== 'invalid-request' || preferred.locator === undefined) throw error
+      try {
+        imported = await attempt({ portable: false, locator: preferred.locator, reason })
+      } catch (retry) {
+        if (aborted(params.signal)) throw retry
+        if (!isClueError(retry) || retry.category !== 'invalid-request') throw retry
+        imported = await attempt({ portable: false, reason })
+      }
+    }
+    // importUnresolved may return an EXISTING resolved row (created:false),
+    // in which case the imported clue is not unresolved at all.
+    return {
+      clueId: imported.clue.id,
+      created: imported.created,
+      unresolved: imported.clue.unresolved !== undefined,
     }
   }
 
-  for (const [index, clue] of manifest.clues.entries()) {
-    throwIfAborted(params.signal)
-    const source = requireSource(manifest, clue)
-    let clueId: string
-    let created: boolean
-    let unresolved = false
-    let itemIssue = false
-    const remapped = remapForImport(params, clue, source)
-    const live = canResolve(deps, clue, source, remapped.locator)
-    if (live) {
-      try {
-        const ensured = await deps.clues.ensure({
-          workspaceId,
-          sourceId: source.sourceId,
-          typeId: clue.typeId,
-          locator: remapped.locator!,
-          title: clue.title,
-        }, { caller: 'ui', ...(params.signal === undefined ? {} : { signal: params.signal }) })
-        clueId = ensured.clue.id
-        created = ensured.created
-      } catch (error) {
-        if (params.signal?.aborted === true) throwIfAborted(params.signal)
-        const failure = failureOf(error)
-        // The source is present but could not even normalize/store the
-        // reference. Preserve the data as unresolved and surface the failure:
-        // hiding it would make a half-imported pack look complete.
-        const imported = await commitUnresolved(source, clue, failure.reason)
+  try {
+    for (const [index, clue] of manifest.clues.entries()) {
+      throwIfAborted(params.signal)
+      const source = requireSource(manifest, clue)
+      const remapped = remapForImport(params, clue, source)
+      const live = canResolve(deps, clue, source, remapped.locator)
+      let clueId: string
+      let created: boolean
+      let unresolved = false
+      let itemIssue = false
+      if (live) {
+        try {
+          const ensured = await deps.clues.ensure({
+            workspaceId,
+            sourceId: source.sourceId,
+            typeId: clue.typeId,
+            locator: remapped.locator!,
+            title: clue.title,
+          }, options)
+          clueId = ensured.clue.id
+          created = ensured.created
+          unresolved = ensured.clue.unresolved !== undefined
+        } catch (error) {
+          if (aborted(params.signal)) throw error
+          const failure = failureOf(error)
+          // The source is present but could not even normalize/store the
+          // reference. Preserve the data as unresolved and surface the
+          // failure: hiding it would make a half-imported pack look complete.
+          const imported = await commitUnresolved(source, clue, remapped, failure.reason)
+          clueId = imported.clueId
+          created = imported.created
+          unresolved = imported.unresolved
+          itemIssue = true
+          issues.push({ target: 'clue', key: clue.key, category: failure.category, reason: failure.reason })
+        }
+      } else {
+        const reason = remapped.reason
+          ?? (deps.clues.getSource(source.sourceId) === undefined
+            ? `the source "${source.sourceId}" is not installed on this machine`
+            : clue.portable.portable === true && clue.portable.locator !== undefined
+              ? `the source "${source.sourceId}" does not offer type "${clue.typeId}" here`
+              : clue.portable.reason ?? 'the clue has no portable reference')
+        const imported = await commitUnresolved(source, clue, remapped, reason)
         clueId = imported.clueId
         created = imported.created
-        unresolved = true
-        itemIssue = true
-        issues.push({ target: 'clue', key: clue.key, category: failure.category, reason: failure.reason })
+        unresolved = imported.unresolved
       }
-    } else {
-      const reason = remapped.reason
-        ?? (deps.clues.getSource(source.sourceId) === undefined
-          ? `the source "${source.sourceId}" is not installed on this machine`
-          : clue.portable.portable === true && clue.portable.locator !== undefined
-            ? `the source "${source.sourceId}" does not offer type "${clue.typeId}" here`
-            : clue.portable.reason ?? 'the clue has no portable reference')
-      const imported = await commitUnresolved(source, clue, reason)
-      clueId = imported.clueId
-      created = imported.created
-      unresolved = true
+      localIdByKey.set(clue.key, clueId)
+      let snapshotId: string | undefined
+      if (clue.snapshot !== undefined) {
+        const content = contents.get(clue.snapshot.path)!
+        try {
+          throwIfAborted(params.signal)
+          const meta: ClueSnapshotMeta = await deps.clues.putSnapshot(workspaceId, {
+            clueId,
+            format: clue.snapshot.format,
+            fetchedAt: clue.snapshot.fetchedAt,
+            ...(clue.snapshot.sourceVersion === undefined ? {} : { sourceVersion: clue.snapshot.sourceVersion }),
+            integrity: 'verified',
+            ...(content.kind === 'json'
+              ? {
+                data: content.data,
+                ...(content.text === undefined ? {} : { text: content.text }),
+              }
+              : {
+                // Raw bytes are preserved exactly (base64 is a transport
+                // encoding, not a rewrite): S1 snapshot storage is JSON-only.
+                data: {
+                  kind: 'binary',
+                  mediaType: clue.snapshot.mediaType,
+                  size: clue.snapshot.bytes,
+                  sha256: clue.snapshot.sha256,
+                  encoding: 'base64',
+                  base64: Buffer.from(content.bytes).toString('base64'),
+                } as JsonValue,
+              }),
+          })
+          snapshotId = meta.snapshotId
+          snapshots.push({
+            clueKey: clue.key,
+            snapshotId,
+            fetchedAt: meta.fetchedAt,
+            format: meta.format,
+          })
+          progress({ phase: 'snapshot', completed: index + 1, total, key: clue.key, status: 'ok' })
+        } catch (error) {
+          if (aborted(params.signal)) throw error
+          itemIssue = true
+          const failure = failureOf(error)
+          issues.push({ target: 'clue', key: clue.key, category: failure.category, reason: failure.reason })
+          progress({
+            phase: 'snapshot',
+            completed: index + 1,
+            total,
+            key: clue.key,
+            status: 'issue',
+            reason: failure.reason,
+          })
+        }
+      }
+      clues.push({
+        clueKey: clue.key,
+        clueId,
+        title: clue.title,
+        created,
+        unresolved,
+        ...(snapshotId === undefined ? {} : { snapshotId }),
+      })
+      progress({
+        phase: 'clue',
+        completed: index + 1,
+        total,
+        key: clue.key,
+        status: itemIssue ? 'issue' : 'ok',
+        ...(unresolved ? { reason: 'imported unresolved' } : {}),
+      })
     }
-    localIdByKey.set(clue.key, clueId)
-    let snapshotId: string | undefined
-    if (clue.snapshot !== undefined) {
-      const content = contents.get(clue.snapshot.path)!
+
+    // Packs LAST: they are the visible object the user asked for, so a pack is
+    // only created once every clue/snapshot commit was attempted.
+    for (const [index, pack] of manifest.packs.entries()) {
+      throwIfAborted(params.signal)
+      const members = pack.members
+        .map(member => localIdByKey.get(member))
+        .filter((member): member is string => member !== undefined)
+      if (members.length !== pack.members.length) {
+        issues.push({
+          target: 'pack',
+          key: pack.key,
+          category: 'failed',
+          reason: `pack "${pack.name}" has members that were not imported`,
+        })
+      }
       try {
-        throwIfAborted(params.signal)
-        const meta: ClueSnapshotMeta = await deps.clues.putSnapshot(workspaceId, {
-          clueId,
-          format: clue.snapshot.format,
-          fetchedAt: clue.snapshot.fetchedAt,
-          ...(clue.snapshot.sourceVersion === undefined ? {} : { sourceVersion: clue.snapshot.sourceVersion }),
-          integrity: 'verified',
-          ...(content.kind === 'json'
-            ? {
-              data: content.data,
-              ...(content.text === undefined ? {} : { text: content.text }),
-            }
-            : {
-              // Raw bytes are preserved exactly (base64 is a transport
-              // encoding, not a rewrite): S1 snapshot storage is JSON-only.
-              data: {
-                kind: 'binary',
-                mediaType: clue.snapshot.mediaType,
-                size: clue.snapshot.bytes,
-                sha256: clue.snapshot.sha256,
-                encoding: 'base64',
-                base64: Buffer.from(content.bytes).toString('base64'),
-              } as JsonValue,
-            }),
-        })
-        snapshotId = meta.snapshotId
-        snapshots.push({
-          clueKey: clue.key,
-          snapshotId,
-          fetchedAt: meta.fetchedAt,
-          format: meta.format,
-        })
-        progress({ phase: 'snapshot', completed: index + 1, total, key: clue.key, status: 'ok' })
+        const created: CluePack = (await deps.clues.createPack({
+          workspaceId,
+          name: pack.name.slice(0, MAX_PACK_NAME),
+          members,
+        }, options)).pack
+        packs.push({ key: pack.key, name: pack.name, packId: created.id, members: created.members.length })
+        progress({ phase: 'pack', completed: index + 1, total: packTotal, key: pack.key, status: 'ok' })
       } catch (error) {
-        if (params.signal?.aborted === true) throwIfAborted(params.signal)
-        itemIssue = true
+        if (aborted(params.signal)) throw error
         const failure = failureOf(error)
-        issues.push({ target: 'clue', key: clue.key, category: failure.category, reason: failure.reason })
+        issues.push({ target: 'pack', key: pack.key, category: failure.category, reason: failure.reason })
         progress({
-          phase: 'snapshot',
+          phase: 'pack',
           completed: index + 1,
-          total,
-          key: clue.key,
+          total: packTotal,
+          key: pack.key,
           status: 'issue',
           reason: failure.reason,
         })
       }
     }
-    clues.push({
-      clueKey: clue.key,
-      clueId,
-      title: clue.title,
-      created,
-      unresolved,
-      ...(snapshotId === undefined ? {} : { snapshotId }),
-    })
-    progress({
-      phase: 'clue',
-      completed: index + 1,
-      total,
-      key: clue.key,
-      status: itemIssue ? 'issue' : 'ok',
-      ...(unresolved ? { reason: 'imported unresolved' } : {}),
-    })
+  } catch (error) {
+    // A user cancellation after a committed write is reported, never thrown
+    // away: the committed rows are real and the caller must see them.
+    if (
+      params.signal?.aborted === true
+      && isClueError(error)
+      && error.category === 'cancelled'
+      && committedCount() > 0
+    ) {
+      return cancelledResult()
+    }
+    throw error
   }
 
-  // Packs LAST: they are the visible object the user asked for, so a pack is
-  // only created once every clue/snapshot commit was attempted.
-  const packs: ClueShareImportedPack[] = []
-  for (const [index, pack] of manifest.packs.entries()) {
-    throwIfAborted(params.signal)
-    const members = pack.members
-      .map(member => localIdByKey.get(member))
-      .filter((member): member is string => member !== undefined)
-    if (members.length !== pack.members.length) {
-      issues.push({
-        target: 'pack',
-        key: pack.key,
-        category: 'failed',
-        reason: `pack "${pack.name}" has members that were not imported`,
-      })
-    }
-    try {
-      const created: CluePack = (await deps.clues.createPack({
-        workspaceId,
-        name: pack.name.slice(0, MAX_PACK_NAME),
-        members,
-      }, { caller: 'ui', ...(params.signal === undefined ? {} : { signal: params.signal }) })).pack
-      packs.push({ key: pack.key, name: pack.name, packId: created.id, members: created.members.length })
-      progress({ phase: 'pack', completed: index + 1, total: manifest.packs.length, key: pack.key, status: 'ok' })
-    } catch (error) {
-      if (params.signal?.aborted === true) throwIfAborted(params.signal)
-      const failure = failureOf(error)
-      issues.push({ target: 'pack', key: pack.key, category: failure.category, reason: failure.reason })
-      progress({
-        phase: 'pack',
-        completed: index + 1,
-        total: manifest.packs.length,
-        key: pack.key,
-        status: 'issue',
-        reason: failure.reason,
-      })
-    }
-  }
+  // Final checkpoint: every write that was going to happen has happened, so
+  // there is no partial state left to accept — a late abort must never be
+  // turned into a success report.
+  throwIfAborted(params.signal)
 
   const reasons = [...new Set(issues.map(issue => issue.reason))]
   const complete = issues.length === 0
@@ -673,6 +833,8 @@ export async function importPack(
     manifestIssues: manifest.issues,
     complete,
     partial: !complete,
+    cancelled: false,
+    requiresAcceptance: false,
     reasons,
   }
 }

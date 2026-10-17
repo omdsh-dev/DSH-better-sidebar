@@ -13,9 +13,12 @@ import { mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createCluesService, type CluesService, type ClueSourceRegistration } from '../src/clues/service.ts'
+import { ClueError, type ClueReadResult } from '../src/clues/types.ts'
 import {
   CLUES_SHARE_ROUTE_PATHS,
+  DEFAULT_MAX_API_IMPORT_BYTES,
   cluepackDisposition,
+  createCluesShareExportProgressStore,
   createCluesShareRoutes,
   installCluesShare,
   type CluesShareService,
@@ -116,6 +119,8 @@ interface Fixture {
   clueId: string
   packId: string
   cleanups: Array<() => void>
+  /** Mutable behavior of the test source (snapshot failures etc.). */
+  source: { read?: () => Promise<ClueReadResult> }
 }
 
 /** A real service with one clue and one Chinese-named pack. */
@@ -125,6 +130,7 @@ async function fixture(): Promise<Fixture> {
   const workspace = join(base, 'workspace')
   mkdirSync(workspace, { recursive: true })
   let next = 0
+  const source: Fixture['source'] = {}
   const registration: ClueSourceRegistration = {
     descriptor: {
       sourceId: TEST_SOURCE,
@@ -143,7 +149,12 @@ async function fixture(): Promise<Fixture> {
     }],
     operations: {
       async read() {
-        return { format: 'text/plain', data: { text: 'hello' }, text: 'hello', fetchedAt: NOW }
+        return source.read?.() ?? {
+          format: 'text/plain',
+          data: { text: 'hello' },
+          text: 'hello',
+          fetchedAt: NOW,
+        }
       },
       async portable() {
         return { portable: true, locator: { id: 'a' } }
@@ -175,7 +186,7 @@ async function fixture(): Promise<Fixture> {
     name: '中文包名',
     members: [clue.clue.id],
   })
-  return { service, clueId: clue.clue.id, packId: pack.pack.id, cleanups: [] }
+  return { service, clueId: clue.clue.id, packId: pack.pack.id, cleanups: [], source }
 }
 
 /** A fake Cordis context that records effect disposers. */
@@ -193,6 +204,8 @@ describe('installCluesShare', () => {
     const f = await fixture()
     const share = installCluesShare(fakeContext(f.cleanups), f.service, { now: () => NOW })
     expect(f.service.hasApi('clues.share.exportPreview')).toBe(true)
+    expect(f.service.hasApi('clues.share.exportInspect')).toBe(true)
+    expect(f.service.hasApi('clues.share.exportProgress')).toBe(true)
     expect(f.service.hasApi('clues.share.importPreview')).toBe(true)
     const preview = await f.service.invokeApi('clues.share.exportPreview', {
       workspaceId: 'ws-1',
@@ -201,6 +214,18 @@ describe('installCluesShare', () => {
     }) as { items: unknown[]; fileName: string }
     expect(preview.fileName).toBe('中文包名-20261017.cluepack')
     expect(preview.items).toHaveLength(1)
+
+    // Spec §3: the confirmation surface must show what will be shared.
+    const inspection = await f.service.invokeApi('clues.share.exportInspect', {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      packIds: [f.packId],
+    }) as { items: Array<{ portable: { portable: boolean; locator?: unknown } }>; sources: unknown[] }
+    expect(inspection.items[0]!.portable).toMatchObject({ portable: true, locator: { id: 'a' } })
+    expect(inspection.sources).toHaveLength(1)
+
+    // An unknown export id reads as JSON null, not as an error.
+    expect(await f.service.invokeApi('clues.share.exportProgress', { exportId: 'nope' })).toBeNull()
 
     const exported = await share.exportPack({ workspaceId: 'ws-1', mode: 'references', clueIds: [f.clueId] })
     const importPreview = await f.service.invokeApi('clues.share.importPreview', {
@@ -212,6 +237,8 @@ describe('installCluesShare', () => {
 
     for (const cleanup of f.cleanups.splice(0)) cleanup()
     expect(f.service.hasApi('clues.share.exportPreview')).toBe(false)
+    expect(f.service.hasApi('clues.share.exportInspect')).toBe(false)
+    expect(f.service.hasApi('clues.share.exportProgress')).toBe(false)
     expect(f.service.hasApi('clues.share.importPreview')).toBe(false)
     // Persisted data survives the unmount.
     expect((await f.service.listClues('ws-1')).clues).toHaveLength(1)
@@ -225,6 +252,95 @@ describe('installCluesShare', () => {
       workspaceId: 'ws-1',
       archiveBase64: bytes.toString('base64'),
     })).rejects.toMatchObject({ category: 'invalid-request' })
+  })
+
+  it('rejects malformed base64 explicitly instead of letting Buffer silently drop it', async () => {
+    const f = await fixture()
+    installCluesShare(fakeContext(f.cleanups), f.service, { now: () => NOW })
+    await expect(f.service.invokeApi('clues.share.importPreview', {
+      workspaceId: 'ws-1',
+      // Not base64 at all. Buffer.from(..., 'base64') would decode it to
+      // empty/garbage bytes and the ZIP parser would report the wrong error.
+      archiveBase64: '!!!not base64!!!',
+    })).rejects.toMatchObject({ category: 'invalid-request' })
+  })
+
+  it('advertises an API cap that is actually reachable through the dispatcher', () => {
+    // The generic /sidebar/api dispatcher caps ordinary JSON bodies at 1 MiB,
+    // so ~768 KiB decoded is the physical ceiling. The advertised cap must be
+    // BELOW that ceiling, otherwise the method's own check is dead code and a
+    // too-large archive dies on the dispatcher's generic body error instead
+    // of the explicit "use the raw route" message.
+    expect(DEFAULT_MAX_API_IMPORT_BYTES).toBe(512 * 1024)
+    expect(DEFAULT_MAX_API_IMPORT_BYTES).toBeLessThan(Math.floor(((1 << 20) * 3) / 4))
+  })
+
+  it('rejects an archive above the default API cap with a pointer at the raw route', async () => {
+    const f = await fixture()
+    installCluesShare(fakeContext(f.cleanups), f.service, { now: () => NOW })
+    await expect(f.service.invokeApi('clues.share.importPreview', {
+      workspaceId: 'ws-1',
+      archiveBase64: Buffer.alloc(DEFAULT_MAX_API_IMPORT_BYTES + 1).toString('base64'),
+    })).rejects.toThrowError(/raw import route/i)
+  })
+})
+
+describe('export progress store', () => {
+  it('keeps the latest per-item event and does not leak stale keys', () => {
+    const clock = 0
+    const store = createCluesShareExportProgressStore({ now: () => clock, ttlMs: 1_000, maxEntries: 2 })
+    store.record('exp-1', { phase: 'read', completed: 0, total: 2, key: 'clue-1', status: 'ok' })
+    expect(store.read('exp-1')).toMatchObject({ phase: 'read', completed: 0, total: 2, key: 'clue-1' })
+    store.record('exp-1', { phase: 'archive', completed: 2, total: 2 })
+    expect(store.read('exp-1')).toMatchObject({ phase: 'archive', completed: 2 })
+    expect(store.read('exp-1')!.key).toBeUndefined()
+    expect(store.read('missing')).toBeUndefined()
+  })
+
+  it('bounds the map and expires entries', () => {
+    let clock = 0
+    const store = createCluesShareExportProgressStore({ now: () => clock, ttlMs: 1_000, maxEntries: 2 })
+    store.record('a', { phase: 'collect', completed: 0, total: 1 })
+    clock += 1
+    store.record('b', { phase: 'collect', completed: 0, total: 1 })
+    clock += 1
+    store.record('c', { phase: 'collect', completed: 0, total: 1 })
+    // Oldest entry ('a') is evicted first.
+    expect(store.read('a')).toBeUndefined()
+    expect(store.read('b')).toBeDefined()
+    expect(store.read('c')).toBeDefined()
+    clock += 1_000
+    expect(store.read('b')).toBeUndefined()
+    expect(store.read('c')).toBeUndefined()
+  })
+
+  it('records the terminal outcome and failure of one export', () => {
+    const clock = 0
+    const store = createCluesShareExportProgressStore({ now: () => clock })
+    store.record('ok', { phase: 'done', completed: 1, total: 1, status: 'ok' })
+    store.finish('ok', {
+      fileName: 'p.cluepack',
+      bytes: Buffer.alloc(0),
+      manifest: {} as never,
+      mode: 'references',
+      complete: false,
+      issues: [{ target: 'clue', key: 'clue-1', reason: 'missing' }],
+      stats: { clues: 1, packs: 0, sources: 1, snapshots: 0, bytes: 0 },
+    })
+    expect(store.read('ok')).toMatchObject({
+      done: true,
+      phase: 'done',
+      outcome: {
+        complete: false,
+        fileName: 'p.cluepack',
+        issues: [{ key: 'clue-1' }],
+      },
+    })
+    store.fail('bad', new ClueError('cancelled', 'the clue pack export was cancelled'))
+    expect(store.read('bad')).toMatchObject({
+      done: true,
+      failure: { category: 'cancelled', message: 'the clue pack export was cancelled' },
+    })
   })
 })
 
@@ -343,5 +459,119 @@ describe('createCluesShareRoutes', () => {
     expect(disposition).toContain(`filename*=UTF-8''${encodeURIComponent('报告-20261017.cluepack')}`)
     expect(disposition).toMatch(/filename="[^"]+\.cluepack"/)
     expect(cluepackDisposition('cluepack.cluepack')).toContain('filename="cluepack.cluepack"')
+  })
+
+  it('percent-encodes the RFC 5987 attr-char exclusions and never throws on a lone surrogate', () => {
+    // encodeURIComponent leaves !'()* unescaped, but RFC 5987 attr-char
+    // excludes them; a pack name with an apostrophe used to be non-conformant.
+    const disposition = cluepackDisposition("a'b(c)*!.cluepack")
+    expect(disposition).toContain('filename*=UTF-8\'\'a%27b%28c%29%2A%21.cluepack')
+    expect(disposition).not.toMatch(/filename\*=UTF-8''[^;]*[!'()*]/)
+    // A lone surrogate (a legal S1 pack name is arbitrary text within 200
+    // code units) must not turn the download into a 500.
+    expect(() => cluepackDisposition('a\uD800b.cluepack')).not.toThrow()
+    expect(cluepackDisposition('a\uD800b.cluepack')).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
+  })
+
+  it('ships the partial-state headers and a pollable outcome for the export route', async () => {
+    const f = await fixture()
+    const share = installCluesShare(fakeContext(f.cleanups), f.service, { now: () => NOW })
+    const routes = createCluesShareRoutes(share, () => true)
+
+    const complete = await call(routes.export, {
+      url: CLUES_SHARE_ROUTE_PATHS.export,
+      body: JSON.stringify({
+        workspaceId: 'ws-1',
+        mode: 'references',
+        packIds: [f.packId],
+        exportId: 'export-complete',
+      }),
+    })
+    expect(complete.statusCode).toBe(200)
+    expect(complete.headers['x-cluepack-complete']).toBe('true')
+    expect(complete.headers['x-cluepack-issues']).toBe('0')
+    expect(complete.headers['x-cluepack-clues']).toBe('1')
+    expect(Number(complete.headers['content-length'])).toBe(Buffer.concat(complete.chunks).byteLength)
+    const finished = await f.service.invokeApi('clues.share.exportProgress', {
+      exportId: 'export-complete',
+    }) as { done: boolean; outcome: { complete: boolean; fileName: string } }
+    expect(finished).toMatchObject({ done: true, outcome: { complete: true } })
+
+    // A snapshot read failure is a PARTIAL export: the browser must be able to
+    // mark the download incomplete even though the ZIP body itself is normal.
+    f.source.read = async () => {
+      throw new ClueError('auth-required', 'the source requires authorization')
+    }
+    const partial = await call(routes.export, {
+      url: CLUES_SHARE_ROUTE_PATHS.export,
+      body: JSON.stringify({
+        workspaceId: 'ws-1',
+        mode: 'snapshot',
+        clueIds: [f.clueId],
+        exportId: 'export-partial',
+      }),
+    })
+    expect(partial.statusCode).toBe(200)
+    expect(partial.headers['x-cluepack-complete']).toBe('false')
+    expect(partial.headers['x-cluepack-issues']).toBe('1')
+    const partialStatus = await f.service.invokeApi('clues.share.exportProgress', {
+      exportId: 'export-partial',
+    }) as { done: boolean; outcome: { complete: boolean; issues: Array<{ category: string }> } }
+    expect(partialStatus).toMatchObject({
+      done: true,
+      outcome: { complete: false, issues: [{ category: 'auth-required' }] },
+    })
+
+    // A failed export records a readable failure for the poller.
+    await call(routes.export, {
+      url: CLUES_SHARE_ROUTE_PATHS.export,
+      body: JSON.stringify({
+        workspaceId: 'ws-1',
+        mode: 'snapshot',
+        clueIds: ['clue-missing'],
+        exportId: 'export-failed',
+      }),
+    })
+    const failed = await f.service.invokeApi('clues.share.exportProgress', {
+      exportId: 'export-failed',
+    }) as { done: boolean; failure: { category: string } }
+    expect(failed).toMatchObject({ done: true, failure: { category: 'not-found' } })
+  })
+
+  it('rejects a malformed exportId and downloads an emoji pack name without a 500', async () => {
+    const f = await fixture()
+    const share = installCluesShare(fakeContext(f.cleanups), f.service, { now: () => NOW })
+    const routes = createCluesShareRoutes(share, () => true)
+    const badId = await call(routes.export, {
+      url: CLUES_SHARE_ROUTE_PATHS.export,
+      body: JSON.stringify({
+        workspaceId: 'ws-1',
+        mode: 'references',
+        packIds: [f.packId],
+        exportId: 'not allowed!',
+      }),
+    })
+    expect(badId.statusCode).toBe(400)
+    expect(jsonBody(badId)).toMatchObject({ ok: false, error: { code: 'invalid-request' } })
+
+    // S1 accepts this name (121 code units); the download must not 500 on a
+    // surrogate pair truncated by a naive 100-code-unit slice.
+    const emoji = await f.service.createPack({
+      workspaceId: 'ws-1',
+      name: 'a' + '😀'.repeat(60),
+      members: [f.clueId],
+    })
+    const download = await call(routes.export, {
+      url: CLUES_SHARE_ROUTE_PATHS.export,
+      body: JSON.stringify({
+        workspaceId: 'ws-1',
+        mode: 'references',
+        packIds: [emoji.pack.id],
+      }),
+    })
+    expect(download.statusCode).toBe(200)
+    expect(download.headers['content-disposition']).toContain("filename*=UTF-8''")
+    expect(download.headers['content-disposition']).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
+    expect(readZip(Buffer.concat(download.chunks)).map(entry => entry.name)).toEqual([CLUEPACK_MANIFEST_PATH])
   })
 })

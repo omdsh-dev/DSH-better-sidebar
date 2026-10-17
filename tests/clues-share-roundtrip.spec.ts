@@ -60,6 +60,25 @@ function makeWorkspace(options: { workspaceId?: string; withFiles?: boolean } = 
   return { base, service, workspace }
 }
 
+/**
+ * Re-open the SAME store with a different source set (a plugin
+ * unmount/re-mount or a profile that now has the built-in file source).
+ */
+function reopenWorkspace(
+  fixture: WorkspaceFixture,
+  workspaceId: string,
+  options: { withFiles?: boolean } = {},
+): CluesService {
+  let next = 0
+  return createCluesService({
+    root: join(fixture.base, 'store'),
+    now: () => NOW,
+    newId: kind => `${kind}-${++next}`,
+    resolveWorkspacePath: id => (id === workspaceId ? fixture.workspace : undefined),
+    ...(options.withFiles === false ? {} : { builtinSources: [createLocalFileSource()] }),
+  })
+}
+
 /** Write one workspace file and return its absolute path. */
 function writeWorkspaceFile(workspace: string, relativePath: string, content: string | Uint8Array): string {
   const path = join(workspace, relativePath)
@@ -422,5 +441,108 @@ describe('empty and partial packs', () => {
     const library = await receiver.service.listClues('ws-2')
     expect(library.clues[0]!.title).toBe('失败文档')
     expect(library.clues[0]!.unresolved).toBeDefined()
+  })
+})
+
+describe('receiver remapping fidelity', () => {
+  it('persists the receiver-remapped locator so a later ensure reuses the same clue', async () => {
+    const sender = makeWorkspace()
+    writeWorkspaceFile(sender.workspace, 'a.md', '# sender A\n')
+    const clueId = await ensureWorkspaceFile(sender.service, 'ws-1', 'a.md', '标题 A')
+    const exported = await exportPack({ clues: sender.service, now: () => NOW }, {
+      workspaceId: 'ws-1',
+      mode: 'references',
+      clueIds: [clueId],
+    })
+    const offline = makeWorkspace({ workspaceId: 'ws-3', withFiles: false })
+    const imported = await importPack({ clues: offline.service }, {
+      workspaceId: 'ws-3',
+      bytes: exported.bytes,
+    })
+    expect(imported.clues[0]!.unresolved).toBe(true)
+    const row = (await offline.service.listClues('ws-3')).clues[0]!
+    // The stored portable address is the RECEIVER's workspace root (ws-3),
+    // never the sender's (ws-1): `ensure` dedupes an unresolved row by this
+    // very locator, so keeping the sender form minted a second clue later.
+    expect(row.unresolved?.portable).toMatchObject({
+      portable: true,
+      locator: {
+        root: { kind: 'workspace', workspaceId: 'ws-3' },
+        path: 'a.md',
+        dialect: HOST_DIALECT,
+      },
+    })
+
+    // The file source is re-mounted on the same store: ensuring the
+    // RECEIVER address must resolve the SAME row instead of adding a clue.
+    const reconnected = reopenWorkspace(offline, 'ws-3')
+    const remapped = await reconnected.ensure({
+      workspaceId: 'ws-3',
+      sourceId: FILES,
+      typeId: LOCAL_FILE_TYPE_IDS.markdown,
+      locator: {
+        root: { kind: 'workspace', workspaceId: 'ws-3' },
+        path: 'a.md',
+        dialect: HOST_DIALECT,
+      },
+      title: '标题 A',
+    })
+    expect(remapped.clue.id).toBe(row.id)
+    expect(remapped.clue.unresolved).toBeUndefined()
+    expect((await reconnected.listClues('ws-3')).clues).toHaveLength(1)
+  })
+})
+
+describe('offline snapshot re-share', () => {
+  it('re-exports an imported snapshot without the original source and keeps it readable', async () => {
+    const sender = makeWorkspace()
+    writeWorkspaceFile(sender.workspace, 'a.md', '# sender snapshot body\n')
+    const clueId = await ensureWorkspaceFile(sender.service, 'ws-1', 'a.md', 'Snapshot source')
+    const exported = await exportPack({ clues: sender.service, now: () => NOW }, {
+      workspaceId: 'ws-1',
+      mode: 'snapshot',
+      clueIds: [clueId],
+    })
+    const offline = makeWorkspace({ workspaceId: 'ws-3', withFiles: false })
+    const imported = await importPack({ clues: offline.service }, {
+      workspaceId: 'ws-3',
+      bytes: exported.bytes,
+    })
+    const offlineClue = (await offline.service.listClues('ws-3')).clues[0]!
+    expect(offlineClue.unresolved).toBeDefined()
+    expect(imported.snapshots).toHaveLength(1)
+    const original = await offline.service.readSnapshot({
+      workspaceId: 'ws-3',
+      snapshotId: imported.snapshots[0]!.snapshotId,
+    })
+
+    // Re-share from the offline side: no source exists, only the snapshot.
+    const reExported = await exportPack({ clues: offline.service, now: () => NOW }, {
+      workspaceId: 'ws-3',
+      mode: 'snapshot',
+      clueIds: [offlineClue.id],
+    })
+    expect(reExported.complete).toBe(true)
+    expect(reExported.stats.snapshots).toBe(1)
+    expect(reExported.issues).toEqual([])
+
+    const second = makeWorkspace({ workspaceId: 'ws-4', withFiles: false })
+    const reimported = await importPack({ clues: second.service }, {
+      workspaceId: 'ws-4',
+      bytes: reExported.bytes,
+    })
+    expect(reimported.complete).toBe(true)
+    expect(reimported.snapshots).toHaveLength(1)
+    const record = await second.service.readSnapshot({
+      workspaceId: 'ws-4',
+      snapshotId: reimported.snapshots[0]!.snapshotId,
+    })
+    expect(record.meta.fetchedAt).toBe(original.meta.fetchedAt)
+    expect(record.meta.format).toBe(original.meta.format)
+    expect(record.meta.integrity).toBe('verified')
+    expect(record.content).toMatchObject({
+      format: original.content.format,
+      data: original.content.data,
+    })
   })
 })
