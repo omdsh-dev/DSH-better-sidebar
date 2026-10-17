@@ -618,6 +618,27 @@ describe('clue service dispatch', () => {
     expect((await service.portable({ workspaceId: 'ws-1', clueId })).portable).toBe(true)
   })
 
+  it('rejects a non-object edit document at the service boundary', async () => {
+    const service = makeService()
+    service.registerSource(testSource())
+    const clueId = await ensureClue(service, 'a')
+    const malformed: unknown[] = [null, [], 'text', 42, undefined]
+    for (const document of malformed) {
+      await expect(service.saveEdit({
+        workspaceId: 'ws-1',
+        clueId,
+        document: document as never,
+      })).rejects.toMatchObject({ category: 'invalid-request' })
+    }
+    // The guard does not poison the normal path.
+    const saved = await service.saveEdit({
+      workspaceId: 'ws-1',
+      clueId,
+      document: { format: 'text/plain', data: { text: 'x' }, baseRevision: 'r1' },
+    })
+    expect(saved.revision).toBe('r2')
+  })
+
   it('passes a source-owned structured format through load/save unmodified', async () => {
     // The core must not depend on Markdown: a namespaced structured format is
     // the source's own business, and the exact document it loaded comes back

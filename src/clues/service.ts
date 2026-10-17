@@ -897,6 +897,16 @@ export function createCluesService(options: CluesServiceOptions = {}): CluesServ
       params: CluesReadParams & { readonly document: ClueSaveEditInput },
       call: ClueCallOptions = {},
     ): Promise<ClueSaveEditResult> {
+      // The HTTP layer validates the document, but the service is a public
+      // surface too: a direct caller must get the fixed `invalid-request`
+      // category instead of a downstream TypeError from a source.
+      if (
+        params.document === null
+        || typeof params.document !== 'object'
+        || Array.isArray(params.document)
+      ) {
+        throw new ClueError('invalid-request', 'a clue edit save needs a document object')
+      }
       const ref = await resolveRef(params, call)
       const context = contextFor(params, call)
       if (ref.source.operations?.saveEdit === undefined) {
