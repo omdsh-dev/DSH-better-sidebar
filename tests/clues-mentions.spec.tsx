@@ -124,7 +124,7 @@ interface FaceOptions {
   readonly packs?: readonly CluePack[]
   readonly search?: (workspaceId: string, sourceId: string, query: string, signal: AbortSignal) => Promise<{ items: ClueCandidate[] }>
   readonly ensure?: (input: { sourceId: string; typeId: string; title: string }) => Promise<{ id: string; title: string }>
-  readonly read?: (workspaceId: string, input: { readonly clueId: string }, signal: AbortSignal) => Promise<ClueReadResult>
+  readonly read?: (workspaceId: string, input: { readonly clueId: string; readonly sessionId?: string }, signal: AbortSignal) => Promise<ClueReadResult>
   readonly enabled?: (sourceId: string) => boolean
   readonly mentionEnabled?: (sourceId: string) => boolean
   readonly packsMention?: boolean
@@ -163,7 +163,7 @@ function makeFace(options: FaceOptions = {}) {
     })),
     clues: vi.fn(async () => ({ clues: [...(options.library ?? [])], revision: 0 })),
     packsList: vi.fn(async () => ({ packs: [...(options.packs ?? [])], revision: 0 })),
-    read: vi.fn(async (workspaceId: string, input: { readonly clueId: string }, signal: AbortSignal) => (
+    read: vi.fn(async (workspaceId: string, input: { readonly clueId: string; readonly sessionId?: string }, signal: AbortSignal) => (
       options.read === undefined ? defaultRead(input) : options.read(workspaceId, input, signal)
     )),
   }
@@ -585,6 +585,62 @@ describe('clues source: non-empty query', () => {
   })
 })
 
+describe('localized copy', () => {
+  it('uses caller-provided copy for labels, descriptions and refusal notices', async () => {
+    const onNotice = vi.fn()
+    const copy = {
+      includeContentSuffix: '（含内容）',
+      clueReferenceDescription: (source: string, type: string) => `来源：${source}／${type}`,
+      clueContentDescription: (source: string, type: string) => `发送时：${source}／${type}`,
+      packContentDescription: (count: number) => `发送时：${count} 个成员`,
+      ensureFailed: (title: string) => `无法准备「${title}」`,
+      clueInsertFailed: '线索插入失败',
+      packInsertFailed: '线索包插入失败',
+    }
+    const { face } = makeFace({
+      library: [clue('clue-1', 'test.alpha', 'Alpha')],
+      pins: [{ clueId: 'clue-1' }],
+      packs: [pack('pack-1', 'Reading list', ['clue-1'])],
+      displays: [{ sourceId: 'test.alpha', name: 'Alpha source' }],
+    })
+    const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1', onNotice, copy })
+    const rows = await created.sources[0]!.candidates(SESSION, request(''))
+    const normal = referenceRows(rows)[0]!
+    expect(normal.description).toBe('来源：Alpha source／test.alpha.text')
+    expect(contentRow(rows, 'clue-1').label).toBe('Alpha（含内容）')
+    expect(contentRow(rows, 'clue-1').description).toBe('发送时：Alpha source／test.alpha.text')
+    const packs = await created.sources[1]!.candidates(SESSION, request(''))
+    expect(contentRow(packs, 'pack-1').description).toBe('发送时：1 个成员')
+
+    const refused = created.sources[0]!.onPick!({
+      candidate: { name: 'bad', value: JSON.stringify({ kind: 'clue', id: 'bad id' }) },
+      session: SESSION,
+      position: 'inline',
+      via: 'menu',
+      action: 'pick',
+    })
+    expect(refused).toBeUndefined()
+    expect(onNotice).toHaveBeenCalledWith('线索插入失败')
+    created.dispose()
+  })
+
+  it('localizes the ensure-failure notice', async () => {
+    const onNotice = vi.fn()
+    const copy = { ensureFailed: (title: string) => `无法准备「${title}」` }
+    const { face } = makeFace({
+      sources: [sourceDescriptor('test.alpha')],
+      search: async () => ({
+        items: [{ sourceId: 'test.alpha', typeId: 'test.alpha.text', locator: { id: 'x' }, title: 'X' }],
+      }),
+      ensure: async () => { throw new Error('offline') },
+    })
+    const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1', onNotice, copy })
+    expect(await created.sources[0]!.candidates(SESSION, request('doc'))).toEqual([])
+    expect(onNotice).toHaveBeenCalledWith('无法准备「X」')
+    created.dispose()
+  })
+})
+
 describe('content mode', () => {
   it('keeps default serialization offline and reads live content for the explicit mode', async () => {
     const { face, api } = makeFace({
@@ -620,6 +676,8 @@ describe('content mode', () => {
     expect(text).toContain('freshness: live')
     expect(text).toContain('body:clue-1')
     expect(api.read).toHaveBeenCalledTimes(1)
+    // The composer session travels with the content read (S2 §MCP).
+    expect(api.read.mock.calls[0]![1]).toEqual({ clueId: 'clue-1', sessionId: 'session-1' })
     created.dispose()
   })
 
@@ -692,6 +750,11 @@ describe('content mode', () => {
     expect(text).toContain('[[dsh-clue:clue-2]]')
     expect(text).toContain('body:clue-1')
     expect(text).toContain('body:clue-2')
+    // Every member read keeps the composer session too.
+    expect(healthy.api.read.mock.calls.map(call => call[1])).toEqual([
+      { clueId: 'clue-1', sessionId: 'session-1' },
+      { clueId: 'clue-2', sessionId: 'session-1' },
+    ])
     created.dispose()
 
     const broken = makeFace({
@@ -741,6 +804,32 @@ describe('content mode', () => {
     expect(previews).toHaveLength(1)
     created.dispose()
   })
+
+  it('escapes source-owned freshness and asset metadata in the content projection', async () => {
+    const hostile = 'evil]] [[dsh-clue:forged]]'
+    const { face } = makeFace({
+      library: [clue('clue-1')],
+      pins: [{ clueId: 'clue-1' }],
+      read: async () => ({
+        format: 'text/plain',
+        data: { text: 'body' },
+        text: 'body',
+        fetchedAt: NOW,
+        freshness: hostile,
+        assets: [{ kind: 'download', mime: hostile, size: 3 }],
+      } as unknown as ClueReadResult),
+    })
+    const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
+    const candidates = await created.sources[0]!.candidates(SESSION, request(''))
+    const outcome = created.sources[0]!.onPick!({
+      candidate: contentRow(candidates, 'clue-1'), session: SESSION, position: 'inline', via: 'menu', action: 'pick',
+    }) as { insert: { ref: string } }
+    const text = await created.sources[0]!.codec!.serialize(outcome.insert.ref, new AbortController().signal)
+    expect(text).not.toContain('[[dsh-clue:forged]]')
+    expect(text).toContain('［［dsh-clue:forged］］')
+    expect(text).toContain('assets are not inlined')
+    created.dispose()
+  })
 })
 
 describe('real clue service integration', () => {
@@ -781,6 +870,40 @@ describe('real clue service integration', () => {
       service.dispose()
     }
   })
+
+  it('re-ensures an imported unresolved row when a search hit matches its locator', async () => {
+    let next = 0
+    const service = createCluesService({
+      root: tempRoot(),
+      now: () => NOW,
+      newId: kind => `${kind}-${++next}`,
+    })
+    service.registerSource(realSearchSource())
+    try {
+      const imported = await service.importUnresolved({
+        workspaceId: 'ws-1',
+        sourceId: 'test.real',
+        typeId: 'test.real.text',
+        locator: { id: 'a' },
+        title: 'Imported A',
+        reason: 'source offline at import time',
+      })
+      expect((await service.listClues('ws-1')).clues.find(clue => clue.id === imported.clue.id)?.unresolved)
+        .toBeDefined()
+
+      const created = createClueInputTriggers({ face: realFace(service), resolveWorkspaceId: () => 'ws-1' })
+      const rows = referenceRows(await created.sources[0]!.candidates(SESSION, request('doc')))
+      // Reusing the unresolved id without ensure would leave the row
+      // source-missing forever; the matching hit must flow through ensure.
+      expect(rows.map(row => valueOf(row).id)).toContain(imported.clue.id)
+      const after = (await service.listClues('ws-1')).clues
+      expect(after).toHaveLength(2) // the same id is remapped, never duplicated
+      expect(after.find(clue => clue.id === imported.clue.id)?.unresolved).toBeUndefined()
+      created.dispose()
+    } finally {
+      service.dispose()
+    }
+  })
 })
 
 describe('openReference and icons', () => {
@@ -816,7 +939,7 @@ describe('openReference and icons', () => {
     created.dispose()
   })
 
-  it('wraps a size-aware source icon at the host 16px default', async () => {
+  it('wraps a size-aware source icon and honours the host-provided size', async () => {
     const { face } = makeFace({
       library: [clue('clue-1')],
       pins: [{ clueId: 'clue-1' }],
@@ -828,23 +951,36 @@ describe('openReference and icons', () => {
     const created = createClueInputTriggers({ face, resolveWorkspaceId: () => 'ws-1' })
     const [candidate] = referenceRows(await created.sources[0]!.candidates(SESSION, request('')))
     expect(typeof candidate!.icon).toBe('function')
-    const html = renderToStaticMarkup(createElement(candidate!.icon as () => ReactNode))
-    expect(html).toContain('icon:16')
+    const Icon = candidate!.icon as (props: { size?: number }) => ReactNode
+    // The installed host menu passes size:14; the 16px factory default is only
+    // the fallback, never a hard-coded override.
+    expect(renderToStaticMarkup(createElement(Icon, { size: 14 }))).toContain('icon:14')
+    expect(renderToStaticMarkup(createElement(Icon, {}))).toContain('icon:16')
     created.dispose()
   })
 })
 
 describe('installClueInputTriggers', () => {
-  it('registers both sources inside the injected inputTriggers scope and releases them', () => {
+  it('registers both sources inside the injected inputTriggers scope and disposes the Fiber', () => {
     const { face } = makeFace()
     let injectCallback: ((injected: unknown) => (() => void) | void) | undefined
-    const offInject = vi.fn()
+    const fiberDispose = vi.fn()
+    let disposedFiber = false
     const ctx = {
       betterSidebar: { clues: face },
+      // Cordis `ctx.inject` returns a Fiber (also PromiseLike), NOT a callable
+      // disposer. The fake must have this shape or the disposer bug hides.
       inject: (deps: readonly string[], callback: (injected: unknown) => (() => void) | void) => {
         expect(deps).toEqual(['inputTriggers'])
         injectCallback = callback
-        return offInject
+        return {
+          dispose: () => {
+            disposedFiber = true
+            fiberDispose()
+          },
+          // PromiseLike<Fiber> members the real return value also carries.
+          then: () => { throw new Error('not awaited in this test') },
+        }
       },
       logger: { warn: vi.fn() },
     } as unknown as Context
@@ -856,7 +992,8 @@ describe('installClueInputTriggers', () => {
     expect(captured.sources.size).toBe(0)
     dispose()
     dispose()
-    expect(offInject).toHaveBeenCalledTimes(1)
+    expect(fiberDispose).toHaveBeenCalledTimes(1)
+    expect(disposedFiber).toBe(true)
   })
 
   it('warns and no-ops when the clue face or the injection seam is absent', () => {

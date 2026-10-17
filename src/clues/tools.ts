@@ -50,6 +50,8 @@ const MAX_LIST_LIMIT = 100
 const MAX_WORKSPACE_SCAN = 64
 /** Maximum snapshot summaries attached to one read row. */
 const MAX_SNAPSHOT_ROWS = 20
+/** Maximum pack members returned by one read page (S1 allows up to 10k). */
+const MAX_PACK_READ_MEMBERS = 50
 
 /** The host workspace registry slice these tools need. */
 interface WorkspaceRegistryLike {
@@ -127,7 +129,8 @@ interface ReadValue {
 /** Canonical value of `sidebar_clue_list`. */
 interface ListValue {
   readonly target: 'sources' | 'clues' | 'packs'
-  readonly workspace: { readonly id: string; readonly path?: string }
+  /** Absent only for the global catalogue when no workspace is resolvable. */
+  readonly workspace?: { readonly id: string; readonly path?: string }
   readonly sources?: {
     readonly sourceId: string
     readonly name: string
@@ -195,6 +198,12 @@ function safeErrorOf(error: unknown): SafeError {
   return { category: 'failed', message: 'the clue operation failed' }
 }
 
+/** The calling session id, when the host attached one. */
+function callingSessionId(exec: ToolRunContext): string | undefined {
+  const id = (exec.agent?.session as { readonly id?: unknown } | undefined)?.id
+  return typeof id === 'string' && id !== '' ? id : undefined
+}
+
 /** One workspace row, if the registry can answer. */
 function scopeOf(workspace: { readonly id?: unknown; readonly path?: unknown } | undefined): WorkspaceScope | undefined {
   if (workspace === undefined) return undefined
@@ -251,17 +260,16 @@ async function resolveScope(
   return resolved
 }
 
-/** Every local workspace to search, primary first (bounded, de-duplicated). */
-function candidateScopes(ctx: Context, primary: WorkspaceScope): WorkspaceScope[] {
-  const scopes: WorkspaceScope[] = [primary]
-  const seen = new Set([primary.id])
-  const listed: readonly { readonly id?: unknown; readonly path?: unknown }[] = (() => {
-    try {
-      return registryOf(ctx).list?.() ?? []
-    } catch {
-      return []
-    }
-  })()
+/** Every registered local workspace, bounded and de-duplicated (scan order). */
+function registeredScopes(ctx: Context): WorkspaceScope[] {
+  const scopes: WorkspaceScope[] = []
+  const seen = new Set<string>()
+  let listed: readonly { readonly id?: unknown; readonly path?: unknown }[]
+  try {
+    listed = registryOf(ctx).list?.() ?? []
+  } catch {
+    return scopes
+  }
   for (const item of listed) {
     const scope = scopeOf(item)
     if (scope === undefined || seen.has(scope.id)) continue
@@ -270,6 +278,62 @@ function candidateScopes(ctx: Context, primary: WorkspaceScope): WorkspaceScope[
     if (scopes.length >= MAX_WORKSPACE_SCAN) break
   }
   return scopes
+}
+
+/** Every local workspace to search, primary first (bounded, de-duplicated). */
+function candidateScopes(ctx: Context, primary: WorkspaceScope): WorkspaceScope[] {
+  const scopes: WorkspaceScope[] = [primary]
+  const seen = new Set([primary.id])
+  for (const scope of registeredScopes(ctx)) {
+    if (seen.has(scope.id)) continue
+    seen.add(scope.id)
+    scopes.push(scope)
+    if (scopes.length >= MAX_WORKSPACE_SCAN) break
+  }
+  return scopes
+}
+
+/**
+ * Best-effort calling scope for targets that do not NEED a workspace (the
+ * global source catalogue). An explicit path is still validated loudly; a
+ * session without a resolvable cwd simply has no scope to report.
+ */
+async function optionalScope(
+  ctx: Context,
+  exec: ToolRunContext,
+  explicitPath: string | undefined,
+): Promise<WorkspaceScope | undefined> {
+  if (explicitPath !== undefined && explicitPath !== '') return resolveScope(ctx, exec, explicitPath)
+  const cwd = (exec.agent?.session as { header?: { cwd?: unknown } } | undefined)?.header?.cwd
+  if (typeof cwd !== 'string' || cwd === '') return undefined
+  try {
+    return scopeOf(await registryOf(ctx).resolveByPath(cwd))
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Scopes of a LOCAL-only scan (an explicit snapshot id). A snapshot lives in
+ * local storage, so the scan must work when the calling session has no
+ * resolvable workspace cwd: the registered workspace list is then the scope.
+ */
+async function scanScopes(ctx: Context, exec: ToolRunContext, explicitPath: string | undefined): Promise<WorkspaceScope[]> {
+  if (explicitPath !== undefined && explicitPath !== '') {
+    return candidateScopes(ctx, await resolveScope(ctx, exec, explicitPath))
+  }
+  const primary = await optionalScope(ctx, exec, undefined)
+  if (primary !== undefined) return candidateScopes(ctx, primary)
+  const scopes = registeredScopes(ctx)
+  if (scopes.length === 0) {
+    throw new ClueError('failed', 'no local workspace is available; pass an explicit registered workspace path')
+  }
+  return scopes
+}
+
+/** The wire shape of one resolved workspace scope. */
+function workspaceValueOf(scope: WorkspaceScope): { readonly id: string; readonly path?: string } {
+  return { id: scope.id, ...(scope.path === undefined ? {} : { path: scope.path }) }
 }
 
 /** Escape one untrusted metadata value for model-facing text. */
@@ -381,16 +445,23 @@ function jsonText(value: JsonValue): string {
  * data, so it cannot forge a reference or break the line structure.
  */
 function renderList(value: ListValue): string {
-  const where = value.workspace.path === undefined
-    ? `workspace ${displayText(value.workspace.id)}`
-    : `workspace ${displayText(value.workspace.path)}`
+  const where = value.workspace === undefined
+    ? undefined
+    : value.workspace.path === undefined
+      ? `workspace ${displayText(value.workspace.id)}`
+      : `workspace ${displayText(value.workspace.path)}`
   if (value.target === 'sources') {
     const sources = value.sources ?? []
-    if (sources.length === 0) return `No clue sources are registered (${where}).`
+    const suffix = where ?? 'global catalogue'
+    if (sources.length === 0) return `No clue sources are registered (${suffix}).`
     return [
-      `${sources.length} clue source${sources.length === 1 ? '' : 's'} (${where}):`,
+      `${sources.length} clue source${sources.length === 1 ? '' : 's'} (${suffix}):`,
       ...sources.map(source => `- ${displayText(source.sourceId)} — ${displayText(source.name)} (${displayText(source.transport)}); types: ${source.types.map(typeId => displayText(typeId)).join(', ') || 'none'}`),
     ].join('\n')
+  }
+  if (where === undefined) {
+    // Defensive: clues/packs always carry a resolved workspace.
+    return `No workspace scope was resolved; ${value.target} cannot be listed.`
   }
   if (value.target === 'packs') {
     const packs = value.packs ?? []
@@ -408,7 +479,22 @@ function renderList(value: ListValue): string {
   ].join('\n')
 }
 
-/** Render the `sidebar_clue_read` result. */
+/** Format one asset list (escaped metadata only; never bytes or local paths). */
+function assetsText(assets: NonNullable<ReadValue['assets']>): string {
+  return assets.map(asset => [
+    displayText(asset.kind, 'unknown asset'),
+    asset.mime === undefined ? '' : displayText(asset.mime, 'unknown type'),
+    asset.size === undefined ? '' : `${asset.size} bytes`,
+  ].filter(part => part !== '').join(' ')).join(', ')
+}
+
+/**
+ * Render the `sidebar_clue_read` result.
+ *
+ * Binary / non-text content is explicitly MARKED (never rendered as `{}` or
+ * base64), and every source-owned metadata value is escaped: a hostile title,
+ * source, type, asset kind or format can never forge a reference.
+ */
 function renderRead(value: ReadValue): string {
   if (value.status === 'error') {
     const error = value.error ?? { category: 'failed', message: 'the clue operation failed' }
@@ -429,25 +515,47 @@ function renderRead(value: ReadValue): string {
   }
   if (value.kind === 'pack') {
     const members = value.members ?? []
-    return [
-      `Pack ${tokenForText('pack', value.id)} ${JSON.stringify(displayText(value.name, '?'))} (revision ${value.packRevision ?? 0}, ${members.length} current member${members.length === 1 ? '' : 's'}):`,
-      ...members.map(member => [
-        `- ${tokenForText('clue', member.clueId)}${member.title === undefined ? '' : ` ${JSON.stringify(displayText(member.title))}`}`,
+    const total = value.memberCount ?? members.length
+    const shown = members.length < total ? `; showing ${members.length}` : ''
+    const rows = members.map(member => {
+      // A missing member has no resolvable token; rendering one anyway would
+      // claim a clue exists. Present members use their structured token, and
+      // an unsafe stored id falls back to escaped data.
+      const memberRef = member.token ?? (member.missing === true
+        ? `(missing clue ${JSON.stringify(displayText(member.clueId))})`
+        : `(clue ${JSON.stringify(displayText(member.clueId))}; not token-safe)`)
+      return [
+        `- ${memberRef}${member.title === undefined ? '' : ` ${JSON.stringify(displayText(member.title))}`}`,
         member.sourceId === undefined ? '' : ` — ${displayText(member.sourceId)} · ${displayText(member.typeId ?? '')}`,
         member.unresolved === true ? ' · unresolved' : '',
         ` · snapshots: ${member.snapshots.length === 0 ? 'none' : member.snapshots.map(item => snapshotForText(item.snapshotId)).join(', ')}`,
-      ].join('')),
-    ].join('\n')
+      ].join('')
+    })
+    const limited = value.nextOffset === undefined
+      ? ''
+      : `\n\n[limited read; next offset: ${value.nextOffset}]`
+    return [
+      `Pack ${tokenForText('pack', value.id)} ${JSON.stringify(displayText(value.name, '?'))} (revision ${value.packRevision ?? 0}, ${total} current member${total === 1 ? '' : 's'}${shown}):`,
+      ...rows,
+    ].join('\n') + limited
   }
   const clueRef = value.clueId === undefined ? 'unknown clue' : tokenForText('clue', value.clueId)
   const header = value.kind === 'snapshot'
     ? `Snapshot ${snapshotForText(value.id)} of clue ${clueRef} — fetched ${displayText(value.fetchedAt, '?')} (${displayText(value.format)}, integrity: ${displayText(value.integrity ?? 'unknown')})`
-    : `Live clue ${tokenForText('clue', value.id)} ${JSON.stringify(displayText(value.title, ''))} — fetched ${displayText(value.fetchedAt, '?')} (${displayText(value.format)})`
+    : `Live clue ${tokenForText('clue', value.id)} ${JSON.stringify(displayText(value.title, ''))} — source ${displayText(value.sourceId)} · ${displayText(value.typeId)}; fetched ${displayText(value.fetchedAt, '?')} (${displayText(value.format)})`
+  const assets = value.assets ?? []
+  const assetList = assetsText(assets)
   const body = value.text !== undefined
-    ? value.text
-    : value.data === undefined
-      ? ''
-      : jsonText(value.data)
+    ? [value.text, ...(assets.length === 0
+      ? []
+      : [`[assets are not inlined: ${assetList}; open the reference to use the host resource entry]`])].join('\n\n')
+    : assets.length > 0
+      // `data` of a binary source is usually `{}`; rendering it as the whole
+      // body would read as complete content. Mark the assets instead.
+      ? `[no text projection; ${assets.length} asset(s) are not inlined: ${assetList}. Open the reference to use the host resource entry.]`
+      : value.data === undefined
+        ? ''
+        : jsonText(value.data)
   const limited = value.limited === true
     ? `\n\n[limited read; next offset: ${value.nextOffset ?? 'unknown'}]`
     : ''
@@ -511,7 +619,6 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           workspace: {
             type: 'object',
             additionalProperties: false,
-            required: true,
             properties: {
               id: { type: 'string', required: true },
               path: { type: 'string' },
@@ -616,9 +723,11 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
       if (!Number.isInteger(offset) || offset < 0) {
         throw new ClueError('invalid-request', 'offset must be a non-negative integer')
       }
-      const scope = await resolveScope(ctx, exec, args.workspace)
-      exec.signal.throwIfAborted()
       if (target === 'sources') {
+        // The source catalogue is GLOBAL: listing it must not fail just because
+        // the calling session has no resolvable workspace cwd.
+        const scope = await optionalScope(ctx, exec, args.workspace)
+        exec.signal.throwIfAborted()
         const sources = clues.getSources().map(source => ({
           sourceId: source.sourceId,
           name: source.name,
@@ -641,7 +750,7 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
         }))
         return {
           target,
-          workspace: { id: scope.id, ...(scope.path === undefined ? {} : { path: scope.path }) },
+          ...(scope === undefined ? {} : { workspace: workspaceValueOf(scope) }),
           sources,
           types,
           total: sources.length,
@@ -649,6 +758,8 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           limit: sources.length,
         }
       }
+      const scope = await resolveScope(ctx, exec, args.workspace)
+      exec.signal.throwIfAborted()
       if (target === 'packs') {
         const query = (args.query ?? '').trim().toLowerCase()
         const result = await clues.listPacks(scope.id)
@@ -746,7 +857,7 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
       },
       offset: {
         type: 'integer',
-        description: 'Explicit byte offset for a pageable live clue read (kind="clue" only).',
+        description: 'Explicit byte offset for a pageable live clue read (kind="clue"), or the member offset of a pack page (kind="pack").',
       },
     },
     output: {
@@ -828,10 +939,11 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
       if (args.offset !== undefined && (!Number.isInteger(args.offset) || args.offset < 0)) {
         throw new ClueError('invalid-request', 'offset must be a non-negative integer')
       }
-      const scope = await resolveScope(ctx, exec, args.workspace)
-      const scopes = candidateScopes(ctx, scope)
-      exec.signal.throwIfAborted()
       if (args.kind === 'snapshot') {
+        // A snapshot is local storage, not a workspace-scoped source read: no
+        // calling cwd is required, the local registrations are the scan scope.
+        const scopes = await scanScopes(ctx, exec, args.workspace)
+        exec.signal.throwIfAborted()
         for (const workspace of scopes) {
           try {
             const record = await clues.readSnapshot({ workspaceId: workspace.id, snapshotId: id })
@@ -873,6 +985,9 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           error: { category: 'not-found', message: `clue snapshot "${id}" does not exist in any local workspace` },
         }
       }
+      const scope = await resolveScope(ctx, exec, args.workspace)
+      const scopes = candidateScopes(ctx, scope)
+      exec.signal.throwIfAborted()
       if (args.kind === 'pack') {
         const located = await locatePack(clues, scopes, id)
         if (located === undefined) {
@@ -890,8 +1005,17 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
           ])
           const clueById = new Map(library.clues.map(clue => [clue.id, clue]))
           const snapshotsByClue = groupSnapshotRows(snapshotMetas)
+          // One pack may hold 10k members: page the member rows so one tool
+          // result cannot flood the model context (each row may carry 20
+          // snapshot ids).
+          const offset = args.offset ?? 0
+          const allMembers = located.pack.members
+          const pageMembers = allMembers.slice(offset, offset + MAX_PACK_READ_MEMBERS)
+          const nextOffset = offset + pageMembers.length < allMembers.length
+            ? offset + pageMembers.length
+            : undefined
           const members: MemberRow[] = []
-          for (const clueId of located.pack.members) {
+          for (const clueId of pageMembers) {
             const clue = clueById.get(clueId)
             const snapshots = snapshotsByClue.get(clueId) ?? []
             if (clue === undefined) {
@@ -918,8 +1042,9 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
             workspaceId: located.workspace.id,
             name: located.pack.name,
             packRevision: located.pack.revision,
-            memberCount: members.length,
+            memberCount: allMembers.length,
             members,
+            ...(nextOffset === undefined ? {} : { limited: true, nextOffset }),
           }
         } catch (error) {
           return { status: 'error', kind: 'pack', id, error: safeErrorOf(error) }
@@ -942,11 +1067,18 @@ export function installClueTools(ctx: Context, clues: CluesService): () => void 
         snapshots = []
       }
       try {
+        const sessionId = callingSessionId(exec)
         const result: ClueReadResult = await clues.read({
           workspaceId: located.workspace.id,
           clueId: located.clue.id,
           ...(args.offset === undefined ? {} : { offset: args.offset }),
-        }, { caller: 'agent', signal: exec.signal })
+        }, {
+          caller: 'agent',
+          signal: exec.signal,
+          // S2 §MCP: an agent-initiated read keeps the caller session so a
+          // session-scoped source retains approval/route context.
+          ...(sessionId === undefined ? {} : { sessionId }),
+        })
         return {
           status: 'ok',
           kind: 'clue',

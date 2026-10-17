@@ -108,11 +108,11 @@ function registry(options: { readonly reject?: boolean } = {}) {
   }
 }
 
-/** A ToolRunContext for one calling session. */
-function exec(cwd = '/ws'): ToolRunContext {
+/** A ToolRunContext for one calling session (`null` = no workspace cwd). */
+function exec(cwd: string | null = '/ws'): ToolRunContext {
   return {
     signal: { aborted: false, throwIfAborted: () => {} },
-    agent: { session: { id: 'session-1', header: { cwd } } },
+    agent: { session: { id: 'session-1', header: cwd === null ? {} : { cwd } } },
   } as unknown as ToolRunContext
 }
 
@@ -297,6 +297,21 @@ describe('sidebar_clue_list', () => {
     expect((cwd as Error).message).not.toContain('SECRET')
     expect((cwd as Error).message).not.toContain('ENOENT')
   })
+
+  it('lists the GLOBAL source catalogue without a resolvable session workspace', async () => {
+    const mountValue = mount()
+    mountValue.service.registerSource(source('test.alpha'))
+    const tool = mountValue.tool(CLUE_LIST_TOOL)
+    const value = await tool.execute({ target: 'sources' }, exec(null))
+    expectValid(tool, value)
+    expect(value).toMatchObject({ target: 'sources' })
+    expect(value).not.toHaveProperty('workspace')
+    expect(rendered(tool, value)).toContain('global catalogue')
+
+    // An explicit workspace is still validated loudly.
+    await expect(tool.execute({ target: 'sources', workspace: '/nope' }, exec()))
+      .rejects.toMatchObject({ category: 'not-found' })
+  })
 })
 
 describe('sidebar_clue_read', () => {
@@ -316,6 +331,105 @@ describe('sidebar_clue_read', () => {
       freshness: 'live',
       text: 'live:a',
     })
+    // Live provenance is actionable in the model-visible header.
+    expect(rendered(tool, value)).toContain('source test.alpha · test.alpha.text')
+  })
+
+  it('hands the caller identity and session to the source read', async () => {
+    const mountValue = mount()
+    const seen: Array<{ caller: string; sessionId?: string }> = []
+    mountValue.service.registerSource(source('test.session', async (_input, context) => {
+      seen.push({
+        caller: context.caller,
+        ...(context.sessionId === undefined ? {} : { sessionId: context.sessionId }),
+      })
+      return { format: 'text/plain', data: {}, text: 'ok', fetchedAt: NOW }
+    }))
+    const ensured = await mountValue.service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: 'test.session',
+      typeId: 'test.session.text',
+      locator: { id: 'a' },
+      title: 'Session',
+    })
+    const tool = mountValue.tool(CLUE_READ_TOOL)
+    expectValid(tool, await tool.execute({ kind: 'clue', id: ensured.clue.id }, exec()))
+    // S2 §MCP: an agent-initiated read must not lose its session context.
+    expect(seen).toEqual([{ caller: 'agent', sessionId: 'session-1' }])
+  })
+
+  it('marks a binary/no-text clue as assets instead of rendering an empty body', async () => {
+    const mountValue = mount()
+    const service = mountValue.service
+    service.registerSource(source('test.binary', async () => ({
+      format: 'application/pdf',
+      data: {},
+      assets: [{ kind: 'download', path: '/tmp/report.pdf', mime: 'application/pdf', size: 42 }],
+      fetchedAt: NOW,
+    })))
+    const ensured = await service.ensure({
+      workspaceId: 'ws-1',
+      sourceId: 'test.binary',
+      typeId: 'test.binary.text',
+      locator: { id: 'pdf' },
+      title: 'Binary',
+    })
+    const tool = mountValue.tool(CLUE_READ_TOOL)
+    const live = await tool.execute({ kind: 'clue', id: ensured.clue.id }, exec())
+    expectValid(tool, live)
+    expect((live as { assets: unknown[] }).assets).toHaveLength(1)
+    const liveText = rendered(tool, live)
+    expect(liveText).toContain('no text projection')
+    expect(liveText).toContain('application/pdf')
+    expect(liveText).toContain('not inlined')
+    // `{}` must not read as the complete body.
+    expect(liveText).not.toMatch(/\n\n\{\}\s*$/)
+
+    // The snapshot path has the same explicit marking rule.
+    const snapshot = await service.putSnapshot('ws-1', {
+      clueId: ensured.clue.id,
+      format: 'application/pdf',
+      data: {},
+      assets: [{ kind: 'open', mime: 'application/pdf', size: 42 }],
+      fetchedAt: NOW,
+    })
+    const stored = await tool.execute({ kind: 'snapshot', id: snapshot.snapshotId }, exec())
+    expectValid(tool, stored)
+    expect(rendered(tool, stored)).toContain('no text projection')
+  })
+
+  it('renders a missing pack member as escaped data, never a resolvable token', () => {
+    const mountValue = mount()
+    const tool = mountValue.tool(CLUE_READ_TOOL)
+    const value = {
+      status: 'ok',
+      kind: 'pack',
+      id: 'pack-1',
+      token: '[[dsh-cluepack:pack-1]]',
+      workspaceId: 'ws-1',
+      name: 'P',
+      packRevision: 1,
+      memberCount: 2,
+      members: [
+        { clueId: 'gone-plain', missing: true, snapshots: [] },
+        {
+          clueId: 'clue-1',
+          token: '[[dsh-clue:clue-1]]',
+          title: 'A',
+          sourceId: 'test.alpha',
+          typeId: 'test.alpha.text',
+          snapshots: [],
+        },
+      ],
+    }
+    expectValid(tool, value)
+    const text = rendered(tool, value)
+    // A missing member has no stable id behind a token; emitting one would
+    // claim a clue that does not exist.
+    expect(text).not.toContain('[[dsh-clue:gone-plain]]')
+    expect(text).toContain('missing clue')
+    expect(text).toContain('gone-plain')
+    expect(text).toContain('[[dsh-clue:clue-1]]')
   })
 
   it('returns the live error plus snapshot ids on failure, never an automatic fallback', async () => {
@@ -443,6 +557,69 @@ describe('sidebar_clue_read', () => {
       integrity: 'verified',
       sourceVersion: 'v7',
     })
+  })
+
+  it('finds a local snapshot by scanning the registry when the session has no cwd', async () => {
+    const mountValue = mount()
+    const service = mountValue.service
+    service.registerSource(source('test.alpha'))
+    const ensured = await service.ensure({
+      workspaceId: 'ws-2',
+      sourceId: 'test.alpha',
+      typeId: 'test.alpha.text',
+      locator: { id: 's' },
+      title: 'Other workspace',
+    })
+    const snapshot = await service.putSnapshot('ws-2', {
+      clueId: ensured.clue.id,
+      format: 'text/plain',
+      data: { text: 'local body' },
+      text: 'local body',
+      fetchedAt: NOW,
+    })
+    const tool = mountValue.tool(CLUE_READ_TOOL)
+    const value = await tool.execute({ kind: 'snapshot', id: snapshot.snapshotId }, exec(null))
+    expectValid(tool, value)
+    expect(value).toMatchObject({
+      status: 'ok',
+      kind: 'snapshot',
+      workspaceId: 'ws-2',
+      text: 'local body',
+    })
+  })
+
+  it('pages pack members so one read cannot flood the model context', async () => {
+    const mountValue = mount()
+    const service = mountValue.service
+    service.registerSource(source('test.alpha'))
+    const memberIds: string[] = []
+    for (let index = 0; index < 51; index += 1) {
+      const ensured = await service.ensure({
+        workspaceId: 'ws-1',
+        sourceId: 'test.alpha',
+        typeId: 'test.alpha.text',
+        locator: { id: `m${index}` },
+        title: `Member ${index}`,
+      })
+      memberIds.push(ensured.clue.id)
+    }
+    const created = await service.createPack({ workspaceId: 'ws-1', name: 'Big', members: memberIds })
+    const tool = mountValue.tool(CLUE_READ_TOOL)
+
+    const first = await tool.execute({ kind: 'pack', id: created.pack.id }, exec())
+    expectValid(tool, first)
+    expect(first).toMatchObject({ memberCount: 51, limited: true, nextOffset: 50 })
+    expect((first as { members: unknown[] }).members).toHaveLength(50)
+    const text = rendered(tool, first)
+    expect(text).toContain('51 current members')
+    expect(text).toContain('showing 50')
+    expect(text).toContain('next offset: 50')
+
+    const second = await tool.execute({ kind: 'pack', id: created.pack.id, offset: 50 }, exec())
+    expectValid(tool, second)
+    expect(second).toMatchObject({ memberCount: 51 })
+    expect((second as { members: unknown[] }).members).toHaveLength(1)
+    expect(second).not.toMatchObject({ limited: true })
   })
 
   it('returns the CURRENT pack members and their snapshot ids, never bodies', async () => {

@@ -147,10 +147,30 @@ interface InjectedTriggerContext {
   inputTriggers?: InputTriggerServiceLike
 }
 
+/** The host-owned Fiber `ctx.inject` returns (structural subset). */
+interface InjectedTriggerFiber {
+  /** Cordis unloads the injected child scope through this method. */
+  dispose?(): Promise<void> | void
+}
+
+/** Release the injected child scope; a failed unload never blocks cleanup. */
+function disposeInjectedFiber(fiber: InjectedTriggerFiber | undefined): void {
+  try {
+    const unloaded = fiber?.dispose?.()
+    if (unloaded !== undefined) void unloaded.catch(() => {})
+  } catch {
+    // The plugin is unloading either way; the parent scope still unwinds.
+  }
+}
+
 /** The context `installClueInputTriggers` needs (client plugin context). */
 interface MentionsContext {
   betterSidebar?: { readonly clues?: BetterSidebarCluesClientFace }
-  inject?(deps: readonly string[], callback: (injected: unknown) => (() => void) | void): () => void
+  /**
+   * Cordis `ctx.inject` returns a Fiber (also PromiseLike), NOT a callable
+   * disposer. Disposing the Fiber releases the injected child scope.
+   */
+  inject?(deps: readonly string[], callback: (injected: unknown) => (() => void) | void): InjectedTriggerFiber
   logger?: { warn?: (message: string) => void }
 }
 
@@ -180,6 +200,43 @@ export interface ClueContentPreview {
   readonly chars?: number
   readonly overLimit?: boolean
   readonly error?: { readonly category: string; readonly message: string }
+}
+
+/**
+ * User-visible copy of the `@` sources.
+ *
+ * S9 owns the `betterSidebar` locale dictionary; this module stays locale-free
+ * and exposes every user-facing string it renders so the wiring layer can pass
+ * localized text. Callbacks receive ALREADY ESCAPED display metadata (never a
+ * raw source value and never a token), so a localization implementation cannot
+ * accidentally mint or leak a reference.
+ */
+export interface ClueMentionsCopy {
+  /** Appended to a content-mode candidate title. */
+  readonly includeContentSuffix: string
+  /** Description of one default clue row. */
+  readonly clueReferenceDescription: (source: string, type: string) => string
+  /** Description of one content-mode clue row. */
+  readonly clueContentDescription: (source: string, type: string) => string
+  /** Description of one content-mode pack row. */
+  readonly packContentDescription: (memberCount: number) => string
+  /** Notice when a search hit could not be ensured for insertion. */
+  readonly ensureFailed: (title: string) => string
+  /** Notice when a clue pick could not be inserted. */
+  readonly clueInsertFailed: string
+  /** Notice when a pack pick could not be inserted. */
+  readonly packInsertFailed: string
+}
+
+/** The English defaults (S9 replaces the user-visible ones with `t()` calls). */
+const DEFAULT_COPY: ClueMentionsCopy = {
+  includeContentSuffix: ' (include content)',
+  clueReferenceDescription: (source, type) => `${source} · ${type}`,
+  clueContentDescription: (source, type) => `At send: current content from ${source} · ${type}`,
+  packContentDescription: count => `At send: current content of ${count} member${count === 1 ? '' : 's'}`,
+  ensureFailed: title => `Could not prepare "${title}" for insertion; the draft was left unchanged.`,
+  clueInsertFailed: 'That clue could not be inserted; the draft was left unchanged.',
+  packInsertFailed: 'That clue pack could not be inserted; the draft was left unchanged.',
 }
 
 /** Options of {@link createClueInputTriggers}. */
@@ -213,6 +270,11 @@ export interface CreateClueInputTriggersOptions {
   readonly onContentPreview?: (preview: ClueContentPreview) => void
   /** Section heading of the content-mode candidate rows. */
   readonly contentSection?: string
+  /**
+   * Localized user-visible copy. Omitted fields keep the English defaults;
+   * callbacks receive escaped display metadata only.
+   */
+  readonly copy?: Partial<ClueMentionsCopy>
   /** Maximum characters of one content-mode model projection (default 12000). */
   readonly includeContentMaxChars?: number
   /** Maximum pack members inlined by one content-mode projection (default 50). */
@@ -363,6 +425,12 @@ interface ContentReference {
   readonly kind: 'clue' | 'pack'
   readonly id: string
   readonly workspaceId: string
+  /**
+   * The composer session that inserted the reference. Read at send time so a
+   * session-scoped source keeps its approval/route context (S2 §MCP); it is
+   * metadata for the source, never an access grant.
+   */
+  readonly sessionId?: string
 }
 
 /** Encode one content-mode ref. */
@@ -370,6 +438,9 @@ function encodeContentReference(reference: ContentReference): string {
   serializeClueToken(reference.kind, reference.id)
   if (reference.workspaceId === '') {
     throw new ClueError('invalid-request', 'a content reference needs a workspace id')
+  }
+  if (reference.sessionId === '') {
+    throw new ClueError('invalid-request', 'a content reference session id cannot be empty')
   }
   return `${CONTENT_REF_PREFIX}${JSON.stringify(reference)}`
 }
@@ -390,7 +461,7 @@ function parseContentReference(ref: string): ContentReference | undefined {
   if (raw === null || typeof raw !== 'object') {
     throw new ClueError('invalid-request', 'the content reference is malformed; the draft was kept')
   }
-  const record = raw as { kind?: unknown; id?: unknown; workspaceId?: unknown }
+  const record = raw as { kind?: unknown; id?: unknown; workspaceId?: unknown; sessionId?: unknown }
   if (record.kind !== 'clue' && record.kind !== 'pack') {
     throw new ClueError('invalid-request', 'the content reference has an unknown kind; the draft was kept')
   }
@@ -400,7 +471,15 @@ function parseContentReference(ref: string): ContentReference | undefined {
   if (typeof record.workspaceId !== 'string' || record.workspaceId === '') {
     throw new ClueError('invalid-request', 'the content reference has no workspace; the draft was kept')
   }
-  return { kind: record.kind, id: record.id, workspaceId: record.workspaceId }
+  if (record.sessionId !== undefined && (typeof record.sessionId !== 'string' || record.sessionId === '')) {
+    throw new ClueError('invalid-request', 'the content reference has an invalid session; the draft was kept')
+  }
+  return {
+    kind: record.kind,
+    id: record.id,
+    workspaceId: record.workspaceId,
+    ...(record.sessionId === undefined ? {} : { sessionId: record.sessionId }),
+  }
 }
 
 /** The stable token named by one ref, refusing a corrupt id loudly. */
@@ -411,6 +490,18 @@ function tokenOfReference(kind: 'clue' | 'pack', ref: string): string {
     throw new ClueError('invalid-request', `a ${content.kind} content reference cannot be serialized by the ${kind} codec`)
   }
   return serializeClueToken(kind, content.id)
+}
+
+/**
+ * The `clues.read` input of one content projection. The composer session
+ * travels with the read so a session-scoped MCP/CLI source keeps its
+ * approval/route context (S2 §MCP); it is never an access grant.
+ */
+function contentReadInput(reference: ContentReference, clueId: string): { clueId: string; sessionId?: string } {
+  return {
+    clueId,
+    ...(reference.sessionId === undefined ? {} : { sessionId: reference.sessionId }),
+  }
 }
 
 /** Parse one candidate payload produced by this module. */
@@ -458,7 +549,10 @@ function wrapDisplayIcon(icon: ClueDisplayIcon | undefined, fallback: 'file' | '
   if (icon === undefined) return fallback
   if (typeof icon === 'function') {
     const factory = icon
-    const ClueSourceIcon = (): ReactNode => createElement(Fragment, null, factory(16))
+    // The host menu passes its own `size` (14px in the installed menu); the
+    // 16px default is only the fallback, never a hard-coded override.
+    const ClueSourceIcon = ({ size }: { readonly size?: number } = {}): ReactNode =>
+      createElement(Fragment, null, factory(size ?? 16))
     return ClueSourceIcon
   }
   const node = icon
@@ -489,6 +583,7 @@ function clueCandidate(
   workspaceId: string,
   mode: CandidateMode,
   contentSection: string | undefined,
+  copy: ClueMentionsCopy,
 ): ClueInputCandidate {
   const display = displayById.get(row.sourceId)
   const sourceName = displayText(display?.name ?? row.sourceId, 'clue source')
@@ -497,11 +592,11 @@ function clueCandidate(
   const appearance = appearanceOf(row.typeId)
   const icon = wrapDisplayIcon(display?.icon, appearance)
   if (mode === 'content') {
-    const label = `${title} (include content)`
+    const label = `${title}${copy.includeContentSuffix}`
     return {
       name: label,
       label,
-      description: `At send: current content from ${sourceName} · ${typeName}`,
+      description: copy.clueContentDescription(sourceName, typeName),
       ...(contentSection === undefined ? {} : { section: contentSection }),
       icon,
       value: JSON.stringify({ kind: 'clue', id: row.id, appearance, mode: 'content', workspaceId }),
@@ -510,7 +605,7 @@ function clueCandidate(
   return {
     name: title,
     label: title,
-    description: `${sourceName} · ${typeName}`,
+    description: copy.clueReferenceDescription(sourceName, typeName),
     icon,
     value: JSON.stringify({ kind: 'clue', id: row.id, appearance }),
   }
@@ -522,14 +617,15 @@ function packCandidate(
   workspaceId: string,
   mode: CandidateMode,
   contentSection: string | undefined,
+  copy: ClueMentionsCopy,
 ): ClueInputCandidate {
   const name = escapeClueTitle(pack.name) || displayText(pack.id, 'clue pack')
   if (mode === 'content') {
-    const label = `${name} (include content)`
+    const label = `${name}${copy.includeContentSuffix}`
     return {
       name: label,
       label,
-      description: `At send: current content of ${pack.members.length} member${pack.members.length === 1 ? '' : 's'}`,
+      description: copy.packContentDescription(pack.members.length),
       ...(contentSection === undefined ? {} : { section: contentSection }),
       icon: 'folder',
       value: JSON.stringify({ kind: 'pack', id: pack.id, mode: 'content', workspaceId }),
@@ -567,8 +663,8 @@ function jsonText(value: unknown): string {
 /** Format one asset list without exposing local paths or inlining bytes. */
 function assetsText(assets: readonly ClueAsset[]): string {
   return assets.map(asset => [
-    asset.kind,
-    asset.mime === undefined ? '' : asset.mime,
+    displayText(asset.kind, 'unknown asset'),
+    asset.mime === undefined ? '' : displayText(asset.mime, 'unknown type'),
     asset.size === undefined ? '' : `${asset.size} bytes`,
   ].filter(part => part !== '').join(' ')).join(', ')
 }
@@ -597,7 +693,9 @@ function clueContentHeader(
   result: ClueReadResult,
 ): string {
   const title = escapeClueTitle(clue.title)
-  return `${token} live content${title === '' ? '' : ` ${JSON.stringify(title)}`} — source ${displayText(clue.sourceId)} · ${displayText(clue.typeId)}; fetched ${displayText(result.fetchedAt)} (freshness: ${result.freshness ?? 'live'}, format: ${displayText(result.format)})`
+  // Source-owned freshness/format are metadata on a model-facing line: escape
+  // them like every other third-party value, never interpolate raw.
+  return `${token} live content${title === '' ? '' : ` ${JSON.stringify(title)}`} — source ${displayText(clue.sourceId)} · ${displayText(clue.typeId)}; fetched ${displayText(result.fetchedAt)} (freshness: ${displayText(result.freshness ?? 'live', 'live')}, format: ${displayText(result.format)})`
 }
 
 /** Refuse a partial page instead of silently truncating included content. */
@@ -622,6 +720,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
   const contentSection = options.contentSection === ''
     ? undefined
     : options.contentSection ?? DEFAULT_CONTENT_SECTION
+  const copy: ClueMentionsCopy = { ...DEFAULT_COPY, ...options.copy }
   const includeContentMaxChars = positiveOf(options.includeContentMaxChars, DEFAULT_INCLUDE_CONTENT_MAX_CHARS)
   const includeContentMaxMembers = positiveOf(options.includeContentMaxMembers, DEFAULT_INCLUDE_CONTENT_MAX_MEMBERS)
   /** Single-entry bounded catalogue cache (ids are persisted elsewhere). */
@@ -762,7 +861,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
       } catch (error) {
         if (!signal.aborted) {
           report(error, sourceId)
-          notify(`Could not prepare "${escapeClueTitle(candidate.title) || 'this search result'}" for insertion; the draft was left unchanged.`)
+          notify(copy.ensureFailed(escapeClueTitle(candidate.title) || 'this search result'))
         }
         return undefined
       }
@@ -782,8 +881,8 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
       return false
     })
     return [
-      ...valid.map(row => clueCandidate(row, displays, workspaceId, 'reference', contentSection)),
-      ...valid.map(row => clueCandidate(row, displays, workspaceId, 'content', contentSection)),
+      ...valid.map(row => clueCandidate(row, displays, workspaceId, 'reference', contentSection, copy)),
+      ...valid.map(row => clueCandidate(row, displays, workspaceId, 'content', contentSection, copy)),
     ]
   }
 
@@ -798,10 +897,10 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
       return false
     })
     return [
-      ...valid.map(pack => packCandidate(pack, workspaceId, 'reference', contentSection)),
+      ...valid.map(pack => packCandidate(pack, workspaceId, 'reference', contentSection, copy)),
       ...valid
         .filter(pack => pack.members.length > 0)
-        .map(pack => packCandidate(pack, workspaceId, 'content', contentSection)),
+        .map(pack => packCandidate(pack, workspaceId, 'content', contentSection, copy)),
     ]
   }
 
@@ -827,7 +926,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
     }
     let result: ClueReadResult
     try {
-      result = await face.api.read(reference.workspaceId, { clueId: reference.id }, signal)
+      result = await face.api.read(reference.workspaceId, contentReadInput(reference, reference.id), signal)
     } catch (error) {
       if (signal.aborted) throwIfAborted(signal)
       throw contentFailure(`clue ${token} (${displayText(clue.sourceId)})`, error)
@@ -880,7 +979,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
       }
       let result: ClueReadResult
       try {
-        result = await face.api.read(reference.workspaceId, { clueId: clue.id }, signal)
+        result = await face.api.read(reference.workspaceId, contentReadInput(reference, clue.id), signal)
       } catch (error) {
         if (signal.aborted) throwIfAborted(signal)
         throw contentFailure(`pack ${token} member ${memberToken} (${displayText(clue.sourceId)})`, error)
@@ -961,6 +1060,11 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
       const pins = pinnedRowsOf(local, query)
       const knownClues = new Map<string, string>()
       for (const clue of local.library.clues) {
+        // An imported-but-unresolved row gets REMAPPED (and its marker cleared)
+        // by `ensure`. Reusing its id here without ensure would keep the row
+        // source-missing forever, so a matching search hit must flow through
+        // ensure like a brand-new row.
+        if (clue.unresolved !== undefined) continue
         knownClues.set(storedLocatorKey(clue.sourceId, clue.locator), clue.id)
       }
       const sources = (catalog?.sources ?? []).filter(source =>
@@ -983,14 +1087,21 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
       }
       return clueCandidateRows(merged, displays, workspaceId)
     },
-    onPick({ candidate }): CluePickOutcome {
+    onPick({ candidate, session }): CluePickOutcome {
       const value = parseCandidateValue(candidate.value)
       if (value === undefined || value.kind !== 'clue') return undefined
       try {
         const token = serializeClueToken('clue', value.id)
         const content = value.mode === 'content'
         const reference: ContentReference | undefined = content
-          ? { kind: 'clue', id: value.id, workspaceId: value.workspaceId! }
+          ? {
+              kind: 'clue',
+              id: value.id,
+              workspaceId: value.workspaceId!,
+              // The composer session travels opaquely in the ref and is handed
+              // to the source at send time (session-scoped approvals/routes).
+              ...(session.sessionId === '' ? {} : { sessionId: session.sessionId }),
+            }
           : undefined
         if (reference !== undefined) startContentPreview(reference)
         return {
@@ -1004,7 +1115,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
         }
       } catch (error) {
         report(error)
-        notify('That clue could not be inserted; the draft was left unchanged.')
+        notify(copy.clueInsertFailed)
         return undefined
       }
     },
@@ -1068,14 +1179,19 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
         return []
       }
     },
-    onPick({ candidate }): CluePickOutcome {
+    onPick({ candidate, session }): CluePickOutcome {
       const value = parseCandidateValue(candidate.value)
       if (value === undefined || value.kind !== 'pack') return undefined
       try {
         const token = serializeClueToken('pack', value.id)
         const content = value.mode === 'content'
         const reference: ContentReference | undefined = content
-          ? { kind: 'pack', id: value.id, workspaceId: value.workspaceId! }
+          ? {
+              kind: 'pack',
+              id: value.id,
+              workspaceId: value.workspaceId!,
+              ...(session.sessionId === '' ? {} : { sessionId: session.sessionId }),
+            }
           : undefined
         if (reference !== undefined) startContentPreview(reference)
         return {
@@ -1089,7 +1205,7 @@ export function createClueInputTriggers(options: CreateClueInputTriggersOptions)
         }
       } catch (error) {
         report(error)
-        notify('That clue pack could not be inserted; the draft was left unchanged.')
+        notify(copy.packInsertFailed)
         return undefined
       }
     },
@@ -1177,7 +1293,12 @@ export function installClueInputTriggers(
   return () => {
     if (disposed) return
     disposed = true
-    offInject?.()
-    created.dispose()
+    // `ctx.inject` hands back a Fiber, not a disposer function: calling it
+    // threw a TypeError and skipped `created.dispose()` on HMR/plugin unload.
+    try {
+      disposeInjectedFiber(offInject)
+    } finally {
+      created.dispose()
+    }
   }
 }

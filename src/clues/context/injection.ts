@@ -459,7 +459,10 @@ export function installClueInjection(
     payload: PreStepPayload,
     next: () => Promise<PreStepDecision>,
   ): Promise<PreStepDecision> => {
-    if (disposed) return next()
+    const signal = payload.signal
+    /** The host aborts the whole step signal; an aborted pass commits nothing. */
+    const aborted = (): boolean => signal?.aborted === true
+    if (disposed || aborted()) return next()
     if (payload.step !== 1) return next()
     const session = payload.agent?.session
     if (session === undefined) return next()
@@ -467,6 +470,7 @@ export function installClueInjection(
     if (sessionId === '') return next()
     if (!isFirstOwnTurn(session, payload.turn)) return next()
     const workspaceId = await workspaceOf(session)
+    if (aborted()) return next()
     if (workspaceId === undefined) return next()
     const events = session.snapshotEvents?.() ?? []
     // The injected message may be part of the admitted batch already (a retry
@@ -488,6 +492,7 @@ export function installClueInjection(
       )
       return next()
     }
+    if (aborted()) return next()
     if (entries.length === 0) return next()
     const fingerprint = clueBindingsFingerprint(workspaceId, entries.flatMap(entry => [
       entry.token,
@@ -505,12 +510,24 @@ export function installClueInjection(
       const oldest = injected.keys().next().value
       if (oldest !== undefined) injected.delete(oldest)
     }
+    // The host calls `signal.throwIfAborted()` immediately after the waterfall
+    // settles, so an abort means this decision is discarded and NO message is
+    // committed. Release the claim instead of permanently suppressing the
+    // session (the guard map only evicts FIFO under pressure).
+    const releaseOnAbort = (): void => { injected.delete(guardKey) }
+    signal?.addEventListener('abort', releaseOnAbort, { once: true })
     let decision: PreStepDecision
     try {
       decision = await next()
     } catch (error) {
       injected.delete(guardKey)
       throw error
+    } finally {
+      signal?.removeEventListener('abort', releaseOnAbort)
+    }
+    if (aborted()) {
+      injected.delete(guardKey)
+      return decision
     }
     if (decision.kind === 'reject' || decision.messages.length === 0) {
       // A rejected or empty step is no model execution: adding a context-only

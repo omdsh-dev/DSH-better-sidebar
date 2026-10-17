@@ -145,13 +145,19 @@ function session(
 }
 
 /** One pre-step payload with claimed user messages. */
-function payload(sessionValue: ReturnType<typeof session>, turn = 1, step = 1, extraMessages: unknown[] = []) {
+function payload(
+  sessionValue: ReturnType<typeof session>,
+  turn = 1,
+  step = 1,
+  extraMessages: unknown[] = [],
+  signal: AbortSignal = new AbortController().signal,
+) {
   return {
     agent: { session: sessionValue },
     messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }, ...extraMessages],
     turn,
     step,
-    signal: { aborted: false, throwIfAborted: () => {} },
+    signal,
   }
 }
 
@@ -421,6 +427,43 @@ describe('installClueInjection', () => {
     const [firstDecision, secondDecision] = await Promise.all([first, second])
     expect(injectedOf(firstDecision)).toBeDefined()
     expect(injectedOf(secondDecision)).toBeUndefined()
+  })
+
+  it('releases the re-entry guard when the host aborts after the waterfall', async () => {
+    const harness = mount(FIXTURE)
+    const sessionValue = session([turnStart(1)])
+    const controller = new AbortController()
+    const claimed = payload(sessionValue, 1, 1, [], controller.signal)
+    const abortedNext = async () => {
+      // The host calls signal.throwIfAborted() right after the waterfall
+      // settles: the decision below is discarded and no message is committed.
+      controller.abort()
+      return { kind: 'enter' as const, messages: [...claimed.messages] }
+    }
+    const abortedDecision = await harness.run(claimed, abortedNext)
+    // The aborted pass adds nothing (the host discards its decision)...
+    expect(injectedOf(abortedDecision)).toBeUndefined()
+
+    // ...and the guard must not survive the abort: a retry in the same
+    // creation window still receives the context.
+    const retry = payload(sessionValue)
+    const retryDecision = await harness.run(retry, nextOf(retry))
+    expect(injectedOf(retryDecision)).toBeDefined()
+    harness.dispose()
+  })
+
+  it('skips a pre-aborted pass without claiming the guard', async () => {
+    const harness = mount(FIXTURE)
+    const sessionValue = session([turnStart(1)])
+    const controller = new AbortController()
+    controller.abort()
+    const aborted = payload(sessionValue, 1, 1, [], controller.signal)
+    const decision = await harness.run(aborted, nextOf(aborted))
+    expect(injectedOf(decision)).toBeUndefined()
+
+    const retry = payload(sessionValue)
+    expect(injectedOf(await harness.run(retry, nextOf(retry)))).toBeDefined()
+    harness.dispose()
   })
 
   it('skips a fork whose inherited marker matches, and injects when workspace or list differs', async () => {
