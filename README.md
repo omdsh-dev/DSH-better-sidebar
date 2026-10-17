@@ -198,7 +198,7 @@ export function apply(ctx: Context) {
 
 - Routes sit behind a Host-header trust fence (same as `/api`); `fs.write` is atomic; git is only invoked via CLI and never sets identity
 - ⚠️ **Since v0.23.0 the fs routes do no workspace-containment check**: they can read/write any path the host user can reach (OS permissions only) — callers must not treat these routes as fenced
-- HTML previews render in an **opaque-origin sandboxed iframe**; the sandbox can be disabled per feature in settings (off by default, with warnings)
+- HTML previews render in an **opaque-origin sandboxed iframe** and serve relative CSS, JavaScript, JSON, fonts and WebAssembly with their content types; the sandbox can be disabled per feature in settings (off by default, with warnings)
 - No git push/pull/fetch; the file tree only watches **expanded** directories; Markdown preview renders the saved file
 - Read-only formats (spreadsheets / PDF / images / Office) are rendered by DSH's own document preview and follow the host version; the browser view only exists in the desktop profile
 - Unsaved drafts are confirmed before closing a tab / deleting a file / refreshing; saving after external modification is rejected, never silently overwritten

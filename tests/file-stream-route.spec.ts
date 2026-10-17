@@ -216,6 +216,31 @@ describe('/sidebar/file streams without a size cap', () => {
 })
 
 describe('/sidebar/html streams without a size cap', () => {
+  it.each([
+    ['style.css', 'text/css', 'body { color: red }'],
+    ['app.js', 'text/javascript', 'document.body.dataset.ready = "yes"'],
+    ['module.mjs', 'text/javascript', 'export const ready = true'],
+    ['STYLE.CSS', 'text/css', 'body { color: blue }'],
+    ['data.json', 'application/json', '{"ready":true}'],
+    ['font.woff', 'font/woff', 'woff bytes'],
+    ['font.woff2', 'font/woff2', 'woff2 bytes'],
+    ['font.ttf', 'font/ttf', 'ttf bytes'],
+    ['font.otf', 'font/otf', 'otf bytes'],
+    ['module.wasm', 'application/wasm', 'wasm bytes'],
+  ])('serves relative %s resources with a browser-compatible content type', async (name, type, content) => {
+    const ws = workspace('html-assets')
+    writeFileSync(join(ws, 'index.html'), `<link rel="stylesheet" href="style.css"><script src="app.js"></script>`)
+    writeFileSync(join(ws, name), content)
+    const { origin } = await serve(ws)
+    const { encodeHtmlUrl } = await import('../src/html-route.ts')
+    const page = new URL(encodeHtmlUrl('s', join(ws, 'index.html')), origin)
+    const response = await fetch(new URL(name, page))
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toBe(type)
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(await response.text()).toBe(content)
+  })
+
   it('serves a page past the retired mediaLimit with the sandbox CSP', async () => {
     const ws = workspace('html')
     const target = join(ws, 'page.html')
