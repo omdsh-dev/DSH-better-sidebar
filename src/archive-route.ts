@@ -52,6 +52,28 @@ import { SidebarError } from './wire.ts'
 export const ARCHIVE_MAX_BUILDING = 4
 /** How long a finished (or failed) archive stays downloadable. */
 export const ARCHIVE_TTL_MS = 5 * 60 * 1000
+/**
+ * How long teardown waits after the polite kill before escalating a running
+ * build to SIGKILL. A tool that ignores SIGTERM must not hold dispose forever.
+ */
+const DISPOSE_KILL_GRACE_MS = 5_000
+/** How long teardown waits for the close report AFTER SIGKILL, then gives up. */
+const DISPOSE_CLOSE_GRACE_MS = 1_000
+
+/**
+ * Wait for one promise for at most `ms`.
+ *
+ * Teardown needs a bounded wait, not an abstraction: `ms` is a hard cap, and
+ * an expiry answers `false` so the caller can escalate or move on.
+ */
+function settlesWithin(promise: Promise<void>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms)
+  })
+  return Promise.race([promise.then(() => true), timeout])
+    .finally(() => clearTimeout(timer))
+}
 
 /** The finished archive on disk. */
 interface ArchiveFile {
@@ -220,9 +242,10 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
   const tasks = new Map<string, ArchiveTask>()
   /**
    * Running children, by task id (teardown kills them and then AWAITS their
-   * close event before unlinking the file they were writing).
+   * close event before unlinking the file they were writing). The wait is
+   * bounded: an unresponsive tool must not block dispose forever.
    */
-  const children = new Map<string, { kill(): void; closed: Promise<void> }>()
+  const children = new Map<string, { kill(signal?: NodeJS.Signals): void; closed: Promise<void> }>()
   /**
    * In-flight output descriptors, by task id (with the temp path they own).
    * The descriptor stays open across the spawn (`stdio[1]` is that fd), so
@@ -343,8 +366,19 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
         // Wait for the killed builds to REPORT their close before closing the
         // output descriptor and unlinking: on Windows the child may still hold
         // the file, and `rm` would fail with EBUSY (a swallowed error that
-        // leaves the temp archive behind).
-        await Promise.all(running.map(child => child.closed))
+        // leaves the temp archive behind). The wait is bounded: a child that
+        // ignores the polite kill is escalated to SIGKILL, and one that still
+        // never reports close cannot block dispose past the hard cap.
+        await Promise.all(running.map(async (child) => {
+          if (await settlesWithin(child.closed, DISPOSE_KILL_GRACE_MS)) return
+          try {
+            child.kill('SIGKILL')
+          } catch {
+            // A child that exited between the timer and the escalation has
+            // nothing left to kill.
+          }
+          await settlesWithin(child.closed, DISPOSE_CLOSE_GRACE_MS)
+        }))
         // Close every in-flight descriptor BEFORE unlinking its temp file:
         // Windows answers EBUSY/EPERM for a file that still has an open handle,
         // and a swallowed rm would leave the temp archive behind forever.
@@ -408,7 +442,7 @@ export function createArchiveTasks(options: ArchiveTaskOptions = {}): ArchiveTas
           child.once('close', () => resolve())
           child.once('error', () => resolve())
         })
-        children.set(id, { kill: () => { child.kill() }, closed })
+        children.set(id, { kill: (signal) => { child.kill(signal) }, closed })
       })
       await handle.close()
       handles.delete(id)

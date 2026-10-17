@@ -328,6 +328,8 @@ interface ToolBehavior {
     stderr?: string
     /** Keep running until `kill()` (a build teardown has to end). */
     hang?: boolean
+    /** Ignore the polite kill; only SIGKILL reports close (teardown escalation). */
+    ignoreTerm?: boolean
   }
 }
 
@@ -343,9 +345,10 @@ function toolSpawn(behavior: ToolBehavior = {}): { spawner: ArchiveSpawn; childr
     const run = behavior.run ?? {}
     let hangs = run.hang === true
     // A killed child exits BY SIGNAL — 'close' with no exit code, which is
-    // exactly what a real SIGTERM looks like from here.
-    child.kill = vi.fn(() => {
-      if (hangs) {
+    // exactly what a real SIGTERM looks like from here. `ignoreTerm` models a
+    // tool that ignores the polite signal and only dies on SIGKILL.
+    child.kill = vi.fn((signal?: string) => {
+      if (hangs && (run.ignoreTerm !== true || signal === 'SIGKILL')) {
         hangs = false
         child.emit('close', null)
       }
@@ -607,6 +610,32 @@ describe('archive task table (injected spawn)', () => {
     expect(existsSync(finishedFile)).toBe(false)
     expect(running.tasks.size()).toBe(0)
     expect(ready.tasks.size()).toBe(0)
+  })
+
+  it('dispose() bounds the wait for a build that ignores the polite kill', async () => {
+    const { tasks, tempDir, children } = makeTable({
+      behavior: { run: { hang: true, ignoreTerm: true } },
+    })
+    const started = await tasks.start({ sessionId: 's-1', name: 'stubborn', paths: sampleSelection() })
+    const file = join(tempDir, archiveTempName(started.id, '.zip'))
+    await vi.waitFor(() => { expect(children).toHaveLength(1) })
+    await vi.waitFor(() => { expect(existsSync(file)).toBe(true) })
+
+    // The first (polite) kill is ignored; only SIGKILL closes the child. Run
+    // the grace timers on the fake clock instead of waiting five real seconds.
+    vi.useFakeTimers()
+    try {
+      const disposing = tasks.dispose()
+      await vi.advanceTimersByTimeAsync(5_001)
+      await disposing
+    } finally {
+      vi.useRealTimers()
+    }
+    const child = children[0]!
+    expect(child.kill).toHaveBeenNthCalledWith(1, undefined)
+    expect(child.kill).toHaveBeenNthCalledWith(2, 'SIGKILL')
+    expect(existsSync(file)).toBe(false)
+    expect(tasks.size()).toBe(0)
   })
 
   it('refuses a build that races teardown instead of leaving it building', async () => {
