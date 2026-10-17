@@ -215,6 +215,13 @@ export function apply(ctx: Context): void {
       resolveWorkspaceId: session => resolveWorkspaceIdForSession(ctx, session.sessionId),
       onNotice: message => { notifyClue(message) },
       openReference: reference => openClueReference(ctx, reference),
+      // The refusal notices follow the active locale; the content-mode
+      // projection strings stay English on purpose (they are model-facing
+      // reference metadata, not UI chrome).
+      copy: {
+        clueInsertFailed: t('clueInsertFailed'),
+        packInsertFailed: t('clueInsertFailed'),
+      },
     }),
     'dsh-better-sidebar: clue @ sources',
   )

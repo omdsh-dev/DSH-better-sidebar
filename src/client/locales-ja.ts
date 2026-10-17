@@ -904,4 +904,7 @@ export const ja: Record<string, string> = {
   clueSharePreviewEmpty: '少なくとも 1 つのパックを選択してください。',
   clueDetailConflict: 'この手がかりは別の場所で変更されました。保存は中止され、編集内容はウィンドウに残っています。',
   clueDetailReload: '再読み込み',
+  clueTabWorkspaceAria: '閲覧ワークスペースを切り替え',
+  clueDetailUnsaved: '未保存の変更があります。先に保存するか、フッターから破棄してください。',
+  clueDetailDiscard: '変更を破棄',
 }

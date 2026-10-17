@@ -66,6 +66,8 @@ function sameBlob(left: Record<string, unknown>, right: Record<string, unknown>)
 /** The tab body. */
 export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNode {
   const [workspaceId, setWorkspaceId] = useState<string | undefined>(undefined)
+  /** Explicit browse-workspace choice (S9 §2: switching changes only the view). */
+  const [workspaceChoice, setWorkspaceChoice] = useState<string | undefined>(undefined)
   const [resolved, setResolved] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const [settings, setSettings] = useState<Record<string, unknown>>(() => blobOf(store.getPrefs()))
@@ -89,6 +91,7 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
     const controller = new AbortController()
     let active = true
     setResolved(false)
+    setWorkspaceChoice(undefined)
     void resolveWorkspaceIdForSession(ctx, scope.sessionId, controller.signal).then((id) => {
       if (!active || controller.signal.aborted) return
       setWorkspaceId(id)
@@ -123,25 +126,29 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
     })
   }, [store])
 
+  /** The workspace both regions browse (an explicit choice wins over the session's). */
+  const browseWorkspaceId = workspaceChoice ?? workspaceId
+  const workspaces = useMemo(() => listClueWorkspaces(ctx), [ctx])
+
   const scopes = useMemo<Readonly<Record<string, JsonValue | undefined>>>(() => {
     const value = settings.scopes
-    if (value === null || typeof value !== 'object' || workspaceId === undefined) return {}
-    const forWorkspace = (value as Record<string, unknown>)[workspaceId]
+    if (value === null || typeof value !== 'object' || browseWorkspaceId === undefined) return {}
+    const forWorkspace = (value as Record<string, unknown>)[browseWorkspaceId]
     return forWorkspace !== null && typeof forWorkspace === 'object'
       ? forWorkspace as Record<string, JsonValue | undefined>
       : {}
-  }, [settings, workspaceId])
+  }, [settings, browseWorkspaceId])
 
   const onScopeChange = useCallback((sourceId: string, range: JsonValue | undefined): void => {
-    if (workspaceId === undefined) return
+    if (browseWorkspaceId === undefined) return
     const all = (settings.scopes !== null && typeof settings.scopes === 'object'
       ? settings.scopes as Record<string, Record<string, JsonValue | undefined>>
       : {})
-    const forWorkspace = { ...(all[workspaceId] ?? {}) }
+    const forWorkspace = { ...(all[browseWorkspaceId] ?? {}) }
     if (range === undefined) delete forWorkspace[sourceId]
     else forWorkspace[sourceId] = range
-    persistSettings({ ...settings, scopes: { ...all, [workspaceId]: forWorkspace } })
-  }, [settings, workspaceId, persistSettings])
+    persistSettings({ ...settings, scopes: { ...all, [browseWorkspaceId]: forWorkspace } })
+  }, [settings, browseWorkspaceId, persistSettings])
 
   const insertClue = useCallback((clueId: string, title: string): boolean => {
     const inserted = insertClueReference(ctx, scope.sessionId, { kind: 'clue', id: clueId, title })
@@ -156,22 +163,22 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
   }, [ctx, scope.sessionId])
 
   const openDetail = useCallback((target: ClueDetailTarget): void => {
-    if (service === undefined || face === undefined || workspaceId === undefined) return
+    if (service === undefined || face === undefined || browseWorkspaceId === undefined) return
     openClueDetailWindow({
       windows: service.windows,
       face,
-      workspaceId,
+      workspaceId: browseWorkspaceId,
       target,
       sessionId: scope.sessionId,
       onInsertClue: insertClue,
     })
-  }, [service, face, workspaceId, scope.sessionId, insertClue])
+  }, [service, face, browseWorkspaceId, scope.sessionId, insertClue])
 
   const openPack = useCallback((pack: CluePack): void => {
-    if (service === undefined || face === undefined || workspaceId === undefined) return
+    if (service === undefined || face === undefined || browseWorkspaceId === undefined) return
     openPackManagementWindow({
       windows: service.windows,
-      workspaceId,
+      workspaceId: browseWorkspaceId,
       face,
       workspaces: listClueWorkspaces(ctx),
       pack,
@@ -179,12 +186,12 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
       onInsertPack: insertPack,
       onNotice: notifyClue,
     })
-  }, [service, face, workspaceId, ctx, insertClue, insertPack])
+  }, [service, face, browseWorkspaceId, ctx, insertClue, insertPack])
 
   const openImport = useCallback((): void => {
-    if (service === undefined || workspaceId === undefined) return
-    openShareWindow({ windows: service.windows, workspaceId, face: service.clues })
-  }, [service, workspaceId])
+    if (service === undefined || browseWorkspaceId === undefined) return
+    openShareWindow({ windows: service.windows, workspaceId: browseWorkspaceId, face: service.clues })
+  }, [service, browseWorkspaceId])
 
   const openSettings = useCallback((): void => {
     if (service === undefined) return
@@ -204,6 +211,18 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
       <div className={css.header}>
         <h2 className={css.heading}>{t('clueTabTitle')}</h2>
         <div className={css.headerActions}>
+          {workspaces.length > 1 && (
+            <select
+              className={css.workspaceSelect}
+              aria-label={t('clueTabWorkspaceAria')}
+              value={browseWorkspaceId ?? ''}
+              onChange={(event) => { setWorkspaceChoice(event.target.value) }}
+            >
+              {workspaces.map(workspace => (
+                <option key={workspace.workspaceId} value={workspace.workspaceId}>{workspace.title}</option>
+              ))}
+            </select>
+          )}
           <button
             ref={helpButtonRef}
             type="button"
@@ -242,10 +261,10 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
         </div>
       )}
 
-      {ready && (
+      {ready && browseWorkspaceId !== undefined && (
         <div className={css.regions}>
           <CluePacksSection
-            workspaceId={workspaceId}
+            workspaceId={browseWorkspaceId}
             face={face}
             visible={visible}
             settings={settings}
@@ -257,7 +276,7 @@ export function CluesTab({ ctx, store, scope, visible }: CluesTabProps): ReactNo
           />
           <div className={css.divider} role="separator" aria-hidden="true" />
           <ClueBrowser
-            workspaceId={workspaceId}
+            workspaceId={browseWorkspaceId}
             face={face}
             visible={visible}
             scopes={scopes}

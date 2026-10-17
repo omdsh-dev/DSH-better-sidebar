@@ -896,4 +896,7 @@ export const ko: Record<string, string> = {
   clueSharePreviewEmpty: 'Choose at least one pack.',
   clueDetailConflict: 'This clue changed elsewhere; the save was refused and your edit is still in the window.',
   clueDetailReload: 'Re-read',
+  clueTabWorkspaceAria: 'Switch browse workspace',
+  clueDetailUnsaved: 'Unsaved edits: save first, or discard them from the footer.',
+  clueDetailDiscard: 'Discard edits',
 }

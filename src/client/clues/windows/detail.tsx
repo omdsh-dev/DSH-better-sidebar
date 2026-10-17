@@ -155,10 +155,16 @@ function descriptorOf(
   }
 }
 
+/** Mutable draft flag shared with the window's close guard. */
+interface DetailGuard {
+  dirty: boolean
+}
+
 /** Load one resource into an already-open window. */
 async function loadInto(
   handle: WindowHandle,
   options: ClueDetailWindowOptions,
+  guard: DetailGuard,
 ): Promise<void> {
   const { face, workspaceId, target } = options
   const resource = target.clueId !== undefined
@@ -233,7 +239,7 @@ async function loadInto(
 
   const reload = (): void => {
     handle.update({ content: createElement(DetailStatus, { text: t('loading') }) })
-    void loadInto(handle, options)
+    void loadInto(handle, options, guard)
   }
 
   const save = async (): Promise<void> => {
@@ -323,10 +329,27 @@ async function loadInto(
             t('clueDetailReload'),
           )
         : null,
+      current.readOnly || !guard.dirty
+        ? null
+        : createElement(
+            'button',
+            {
+              type: 'button',
+              className: css.action,
+              onClick: () => {
+                // Explicit discard: the ONLY path that drops the draft.
+                guard.dirty = false
+                handle.update({ dirty: false })
+                void handle.close()
+              },
+            },
+            t('clueDetailDiscard'),
+          ),
     )
 
   function render(): void {
     const current = state
+    guard.dirty = !current.readOnly && current.saved === false
     handle.update({
       content: descriptorOf(target, current, {
         onChange: (data) => {
@@ -351,12 +374,20 @@ async function loadInto(
  */
 export function openClueDetailWindow(options: ClueDetailWindowOptions): WindowHandle {
   const { windows, target } = options
+  const guard: DetailGuard = { dirty: false }
   const handle = windows.open({
     id: clueDetailWindowId(target),
     title: target.title,
     size: 'document',
     content: createElement(DetailStatus, { text: t('loading') }),
+    onBeforeClose: () => {
+      if (!guard.dirty) return true
+      // Keep the window (and the draft) and say why: the reader chooses
+      // "discard" in the footer or saves first.
+      handle.update({ content: createElement(DetailStatus, { text: t('clueDetailUnsaved') }) })
+      return false
+    },
   })
-  void loadInto(handle, options)
+  void loadInto(handle, options, guard)
   return handle
 }

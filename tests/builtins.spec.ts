@@ -37,10 +37,12 @@ function setup(): { service: ReturnType<typeof createBetterSidebarService>; stor
 }
 
 describe('built-in tab registrations', () => {
-  it('registers the 6 built-in tabs (the host owns the right-sidebar terminal and browser)', () => {
+  it('registers the 7 built-in tabs (the host owns the right-sidebar terminal and browser)', () => {
     const { service } = setup()
+    // S9 adds the clue collection page: the pack library and the multi-source
+    // browser are one visible, single-instance native tab type.
     expect(service.getTabs().map(t => t.id).sort()).toEqual(
-      ['diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal-bottom'],
+      ['clues', 'diff', 'editor', 'git', 'sidechat', 'subagent', 'terminal-bottom'],
     )
   })
 

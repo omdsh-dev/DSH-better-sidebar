@@ -14,7 +14,7 @@
  * - a hidden tab body performs no query (keepMounted gating).
  */
 // @vitest-environment jsdom
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react-dom/test-utils'
 import { createElement } from 'react'
 import { renderRoot, setupReactAct, type RenderedRoot } from './test-utils.ts'
@@ -82,10 +82,26 @@ interface Fixture {
   calls: Calls
   enabled: Set<string>
   packs: CluePack[]
+  listParams: Record<string, unknown>[]
+  searchParams: Record<string, unknown>[]
+  resolveParams: Record<string, unknown>[]
+  inserted: unknown[]
+  pinned: string[]
 }
 
-function fixture(options: { workspaceId?: string | undefined; enabled?: string[] } = {}): Fixture {
+function fixture(options: {
+  workspaceId?: string | undefined
+  enabled?: string[]
+  listItems?: ClueCandidate[]
+  listError?: boolean
+  resolveCandidates?: ClueCandidate[]
+} = {}): Fixture {
   const calls: Calls = { list: 0, search: 0, resolve: 0 }
+  const listParams: Record<string, unknown>[] = []
+  const searchParams: Record<string, unknown>[] = []
+  const resolveParams: Record<string, unknown>[] = []
+  const inserted: unknown[] = []
+  const pinned: string[] = []
   const enabled = new Set(options.enabled ?? [FILES.sourceId, GITHUB.sourceId])
   const packs = [pack('p1', 'Release clues', ['c1', 'c2']), pack('p2', 'Design notes', [])]
   const store = createSidebarStore()
@@ -96,20 +112,27 @@ function fixture(options: { workspaceId?: string | undefined; enabled?: string[]
     sources: async (): Promise<CluesSourcesCatalogResult> => ({ sources: [FILES, FEISHU_DOCS, GITHUB], types: [] }),
     packsList: async (): Promise<CluesPacksResult> => ({ packs, revision: 3 }),
     pinsList: async (): Promise<CluesPinsResult> => emptyPins,
-    pinsAdd: async (): Promise<CluesPinsResult> => emptyPins,
+    pinsAdd: async (_workspaceId: string, input: { clueId: string }): Promise<CluesPinsResult> => {
+      pinned.push(input.clueId)
+      return { pins: [{ workspaceId: 'ws-1', clueId: input.clueId, createdAt: '' }], revision: 1 }
+    },
     pinsRemove: async (): Promise<CluesPinsResult> => emptyPins,
     clues: async () => ({ clues: [], revision: 0 }),
-    list: async (): Promise<ClueListResult> => {
+    list: async (_workspaceId: string, input: Record<string, unknown>): Promise<ClueListResult> => {
       calls.list += 1
-      return { items: [] }
+      listParams.push(input)
+      if (options.listError === true) throw new Error('catalogue failed')
+      return { items: options.listItems ?? [] }
     },
-    search: async (): Promise<ClueListResult> => {
+    search: async (_workspaceId: string, input: Record<string, unknown>): Promise<ClueListResult> => {
       calls.search += 1
-      return { items: [] }
+      searchParams.push(input)
+      return { items: options.listItems ?? [] }
     },
-    resolve: async () => {
+    resolve: async (_workspaceId: string, input: Record<string, unknown>) => {
       calls.resolve += 1
-      return { candidates: [] as ClueCandidate[] }
+      resolveParams.push(input)
+      return { candidates: options.resolveCandidates ?? [] as ClueCandidate[] }
     },
     ensure: async () => ({ clue: { id: 'c9' }, created: true }),
     packsCreate: async () => ({ pack: pack('p3', 'New', []), revision: 4, packRevision: 1 }),
@@ -147,11 +170,44 @@ function fixture(options: { workspaceId?: string | undefined; enabled?: string[]
       }),
     },
   }
-  const ctx = {
-    get: (name: string) => (name === 'betterSidebar' ? service : name === 'workspaces' ? workspaces : name === 'conversation' ? undefined : undefined),
-    sessions: { scope: () => ({ emit: () => {} }) },
+  let draftRev = 1
+  const conversation = {
+    input: {
+      for: () => ({
+        state: { getSnapshot: () => ({ draft: '', draftRev }) },
+        setDraft: () => undefined,
+      }),
+    },
   }
-  return { store, ctx: ctx as never, calls, enabled, packs }
+  const ctx = {
+    get: (name: string) => (name === 'betterSidebar'
+      ? service
+      : name === 'workspaces'
+        ? workspaces
+        : name === 'conversation'
+          ? conversation
+          : undefined),
+    sessions: {
+      scope: () => ({
+        emit: (_name: string, payload: unknown) => {
+          inserted.push(payload)
+          draftRev += 1
+        },
+      }),
+    },
+  }
+  return {
+    store,
+    ctx: ctx as never,
+    calls,
+    enabled,
+    packs,
+    listParams,
+    searchParams,
+    resolveParams,
+    inserted,
+    pinned,
+  }
 }
 
 /** Flush the async effects of one render pass (microtasks + a macrotask). */
@@ -201,8 +257,12 @@ describe('clue tab main page', () => {
     const fx = fixture({ workspaceId: undefined })
     const view = mount(fx)
     await flush()
-
-    expect(view.container.textContent).toContain('This session has no workspace yet')
+    // The resolver falls back to the host lookup, which rejects asynchronously
+    // in jsdom (relative URL): wait for the settled empty state rather than
+    // assuming a fixed number of microtask turns.
+    await vi.waitFor(() => {
+      expect(view.container.textContent).toContain('This session has no workspace yet')
+    }, { timeout: 3_000 })
     expect(fx.calls.list).toBe(0)
     expect(fx.calls.search).toBe(0)
 
@@ -257,6 +317,119 @@ describe('clue tab main page', () => {
     await flush()
     expect(fx.calls.list).toBe(0)
     expect(fx.calls.search).toBe(0)
+    view.unmount()
+  })
+})
+
+// ── browser interactions ────────────────────────────────────────────────────
+
+/** Set one controlled input's value through React's change pipeline. */
+function typeInto(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+  act(() => {
+    setter.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
+function press(container: ParentNode, text: string): void {
+  const button = [...container.querySelectorAll('button')]
+    .find(candidate => (candidate.textContent ?? '').trim() === text || candidate.getAttribute('aria-label') === text)
+  if (button === undefined) throw new Error(`button "${text}" not found`)
+  act(() => { button.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+}
+
+describe('clue tab source browser', () => {
+  it('persists an explicit GitHub range per workspace and lists with it', async () => {
+    const fx = fixture({ workspaceId: 'ws-1', enabled: [GITHUB.sourceId] })
+    const view = mount(fx)
+    await flush()
+    expect(fx.calls.list).toBe(0)
+
+    press(view.container, 'Choose range')
+    await flush()
+    const repoInput = view.container.querySelector<HTMLInputElement>('input[placeholder="owner/repo or repository URL"]')!
+    typeInto(repoInput, 'acme/widgets')
+    press(view.container, 'Save range')
+    await flush()
+
+    const saved = fx.store.getPrefs().pluginSettings.clues as {
+      scopes?: Record<string, Record<string, unknown>>
+    }
+    expect(saved.scopes?.['ws-1']?.[GITHUB.sourceId]).toEqual({ repo: 'acme/widgets', state: 'open' })
+    expect(fx.calls.list).toBeGreaterThan(0)
+    expect(fx.listParams[0]).toMatchObject({
+      sourceId: GITHUB.sourceId,
+      scope: { repo: 'acme/widgets', state: 'open' },
+    })
+    view.unmount()
+  })
+
+  it('searches the active source with the typed keyword', async () => {
+    const fx = fixture({ workspaceId: 'ws-1', enabled: [FILES.sourceId] })
+    const view = mount(fx)
+    await flush()
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Search a keyword, or paste a resource URL / path"]')!
+    typeInto(input, 'release notes')
+    press(view.container, 'Search')
+    await flush()
+    expect(fx.calls.search).toBe(1)
+    expect(fx.searchParams[0]).toMatchObject({ sourceId: FILES.sourceId, query: 'release notes' })
+    view.unmount()
+  })
+
+  it('resolves a pasted URL into candidates and inserts a stable chip', async () => {
+    const candidate: ClueCandidate = {
+      sourceId: GITHUB.sourceId,
+      typeId: 'builtin.github.issue',
+      locator: { host: 'github.com', owner: 'acme', repo: 'widgets', kind: 'issue', number: 7 },
+      title: 'Fix the widget',
+    }
+    const fx = fixture({ workspaceId: 'ws-1', enabled: [GITHUB.sourceId], resolveCandidates: [candidate] })
+    fx.store.setPrefs({
+      ...fx.store.getPrefs(),
+      pluginSettings: { clues: { scopes: { 'ws-1': { [GITHUB.sourceId]: { repo: 'acme/widgets', state: 'open' } } } } },
+    })
+    const view = mount(fx)
+    await flush()
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Search a keyword, or paste a resource URL / path"]')!
+    typeInto(input, 'https://github.com/acme/widgets/issues/7')
+    press(view.container, 'Search')
+    await flush()
+    expect(fx.calls.resolve).toBe(1)
+    expect(fx.resolveParams[0]).toMatchObject({ text: 'https://github.com/acme/widgets/issues/7' })
+    expect(view.container.textContent).toContain('Fix the widget')
+    press(view.container, 'Insert')
+    await flush()
+    expect(fx.inserted).toHaveLength(1)
+    expect(fx.inserted[0]).toMatchObject({
+      reference: { source: 'better-sidebar:clues', clipboardText: '[[dsh-clue:c9]]', appearance: 'file' },
+    })
+    view.unmount()
+  })
+
+  it('pins a result through ensure + pins.add and marks the row', async () => {
+    const candidate: ClueCandidate = {
+      sourceId: FILES.sourceId,
+      typeId: 'builtin.files.markdown',
+      locator: { path: 'docs/a.md' },
+      title: 'A note',
+    }
+    const fx = fixture({ workspaceId: 'ws-1', enabled: [FILES.sourceId], listItems: [candidate] })
+    const view = mount(fx)
+    await flush()
+    press(view.container, 'Pin')
+    await flush()
+    expect(fx.pinned).toEqual(['c9'])
+    view.unmount()
+  })
+
+  it('shows a retryable error instead of pretending the source is empty', async () => {
+    const fx = fixture({ workspaceId: 'ws-1', enabled: [FILES.sourceId], listError: true })
+    const view = mount(fx)
+    await flush()
+    expect(view.container.textContent).toContain('Failed to load')
+    expect([...view.container.querySelectorAll('button')].some(button => (button.textContent ?? '').trim().toLowerCase() === 'retry')).toBe(true)
     view.unmount()
   })
 })

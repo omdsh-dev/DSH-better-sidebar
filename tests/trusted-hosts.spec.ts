@@ -83,6 +83,9 @@ describe('native Connection admission', () => {
     const mounted = mount(rejection)
     try {
       expect(mounted.routes.map(route => route.path)).toEqual([
+        // S7 share surface (four exact POST routes, fenced per request).
+        '/sidebar/clues/share/export-preview', '/sidebar/clues/share/export',
+        '/sidebar/clues/share/import-preview', '/sidebar/clues/share/import',
         '/sidebar/api', '/sidebar/upload', '/sidebar/write', '/sidebar/bundle',
         '/sidebar/archive', '/sidebar/file', '/sidebar/html',
       ])
@@ -105,7 +108,8 @@ describe('native Connection admission', () => {
         expect(input.reads(), route.path).toBe(0)
         expect(mounted.connection.requestRejection).toHaveBeenLastCalledWith(input.req)
       }
-      expect(mounted.connection.requestRejection).toHaveBeenCalledTimes(10)
+      // One admission check per HTTP route and per WebSocket upgrade.
+      expect(mounted.connection.requestRejection).toHaveBeenCalledTimes(mounted.routes.length + mounted.upgrades.length)
     } finally {
       mounted.cleanup()
     }

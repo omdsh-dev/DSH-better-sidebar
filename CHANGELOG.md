@@ -37,11 +37,19 @@
 - **任务页拖拽改为每帧一次更新**：图模式背景平移、后台任务浮窗标题拖动、锚定弹层拖动不再按鼠标事件频率重绘（高回报率鼠标下此前每个 pointermove 都提交整块画布）；松手同步落位，点击判定与最终位置不变。实测同一帧内 100 次移动的画布提交由 98 次降到 1 次。
 - **已结束分支整体聚合**：只有整条分支全部结束才自动聚合；仍有运行后代、当前查看路径或未知子代理目录的分支保持可见，聚合计数覆盖隐藏的 Agent 后代。
 - **四项独立自动规则**：复用设置齿轮与现有偏好存储，分别控制已结束叶子聚合、已结束分支聚合、同一父级至少 3 个空闲队友聚合（workflow 内沿用原规则，也受空闲开关控制），以及 Agent 总数至少 8 个时后台任务抽屉自动收起，默认全部开启。未手动操作时设置即时生效；手动展开或收起始终优先。
-### 未发布（线索收集 S1：来源与线索基础）
 
-- 🧩 **新增公共线索扩展面**：宿主 Cordis 服务 `betterSidebarClues` 与包子路径 `dsh-better-sidebar/clues`（来源/类型/线索/包/置顶/绑定/快照的类型、服务、内置 `builtin.files` 本地来源、`clues.*` 路由方法）；客户端在 `ctx.betterSidebar.clues` 暴露来源展示注册、来源/@ 开关语义与类型化 wire 方法，`features` 新增 `'clues'`。接入方式见[外部插件指南 §7.1](docs/external-plugin-guide.md#71-线索扩展面s1-开发线来源--线索--线索包)。
-- ⚙️ **口径统一的修复**：`clues.saveEdit` 不再被 1 MiB JSON 上限限制（按 5 MiB 可编辑文档上限放宽）；宿主 bundle 与 `./clues` 子路径共用同一个 `ClueError` 类（外部来源的 `auth-required`/`conflict` 等固定类别不再退化为 `failed`）；工作区 locator 的 `workspaceId` 与操作工作区不匹配时拒绝解析；本地搜索的绝对路径命中重新归一到工作区 locator；缺失/文件 scope 的 list/search 分别返回 `not-found`/`unsupported`；分页不再产出会被自己拒绝的 cursor；编辑保存遇到文件被删除按 `conflict` 处理；类型/来源能力位在分发前强制校验；`registerApi` 在 dispose 后拒绝注册；快照 id 重复时拒绝覆盖；存储文档逐行深校验。
-- 🩹 **评审修复**：clue 请求载荷校验失败改用 `invalid-request`（HTTP 400，不再误报 500），`clues.resolve` 拒绝缺少 `text`/`locator` 的空选择器；`getSources`/`getSource`/`getTypes` 与客户端来源展示目录都返回独立副本（嵌套 `capabilities` 不再与注册者或调用者共享）；存储对畸形 workspace/snapshot id 与目录创建失败统一归一到 `ClueError`；插件卸载先关闭 archive 临时文件句柄、再删除文件（Windows 上可删除），不可读搜索根目录的错误在客户端显示本地化失败提示；`importUnresolved` 落库前校验并收敛 portable 引用（畸形 `portable` 不再把整个工作区线索库写成不可读），仅凭 portable locator 导入的线索按该 locator 去重（重复导入不再生成新 id）；本地目录可用显式 `builtin.files.directory` 类型解析；`saveEdit` 直接传入非对象 document 统一返回 `invalid-request`；archive 卸载对忽略终止信号的构建进程有界等待并升级 SIGKILL（不再无界挂起）。
+### 未发布（线索收集 S1–S9）
+
+- 🧩 **公共线索扩展面**：宿主 Cordis 服务 `betterSidebarClues` 与包子路径 `dsh-better-sidebar/clues`（来源/类型/线索/包/置顶/绑定/快照、`ClueError`、内置 `builtin.files`、`clues.*` 路由方法），宿主 bundle 与子路径共用同一个 `ClueError` 类；客户端 `ctx.betterSidebar.clues` 提供来源展示与格式渲染器注册、三条开关语义和类型化 `clues.*` 调用，`features` 新增 `'clues'`、`'windowHost'`。接入方式见[外部插件指南 §7.1](docs/external-plugin-guide.md#71-线索扩展面s1s9来源--线索--线索包)。
+- ⚙️ **来源运行、依赖安装与连接授权**：新增共享来源 runtime（HTTP / CLI / DSH-MCP 边界、依赖探测与安装计划、连接授权状态机）和 `clues.dependencies.*` / `clues.connections.*` 方法；安装与授权只能由用户显式发起，支持手动路径、进度与取消，没有后台安装、后台登录或周期性探测，取消/失败保留既有有效状态。
+- 🐙 **内置来源**：GitHub Issues / Pull requests（`gh`，Markdown 编辑；保存采用保存前重读的 `check-before-save` 语义，不是原子 CAS）、飞书文档 / 任务（`lark-cli`；文档按块级更新文本块、复杂容器只读，任务使用结构化表单）、本地文件 `builtin.files`（工作区浏览 / 搜索 / 路径解析 / 读写，Markdown 与文本可编辑、二进制只读）。缺少 CLI 或未授权时只显示状态，不后台探测账号。
+- 🧭 **「线索收集」Tab**：上方统一线索包库（跨工作区选择、搜索 / 分页、新建 / 导入、点击插入草稿、底条管理），下方多来源浏览器（来源导航、范围选择与保存、置顶、搜索与资源 URL / 路径直接解析、分页、多选批量插入 / 入包）；切换来源或翻页保留已选成员，范围变化重置分页；首次进入显示帮助覆盖层，`?` 可重开。
+- 🔗 **稳定引用与工作区绑定**：Tab 内点击与输入框 @ 都只把 `[[dsh-clue:…]]` / `[[dsh-cluepack:…]]` 插入草稿（不发送、不预取正文），发送后由新增的只读工具 `sidebar_clue_list` / `sidebar_clue_read` 按需读取最新内容；工作区绑定会在**新会话**首轮自动提供引用，已存在 / 恢复的会话不补发。
+- 🪟 **统一浮窗**：线索详情、包管理、添加成员、来源配置共用一套浮窗服务（页面栈、最大化 / 还原、尺寸预设、未保存关闭保护）；结构化正文由来源注册的格式渲染器承载，原样透传、不强制转 Markdown。
+- 📦 **`.cluepack` 分享**：支持按包 / 线索导出与导入（`references` 只写清单，`snapshot` 携带快照与资产）；接收方缺来源时保留未解析引用、快照仍可离线读；导入不执行包内命令、不安装插件 / CLI、不发起授权、不覆盖原资源，部分写入显式返回 partial。
+- 🎛️ **来源设置**：「侧边卡片」设置改为分组导航（常规 / 标签页 / 文件预览 / 线索来源 / 外观）；线索来源表集中展示来源与 @ 开关、依赖 / 连接状态和配置入口，支持全开 / 全关与批量提交；来源配置页把 CLI 安装与连接授权分开，显示脱敏状态、安装计划、进度与取消。偏好新增 `clueSourcesEnabled` / `clueSourcesMentionEnabled` / `cluePacksMentionEnabled`（缺项 = 启用）。
+- 📎 **新依赖 `uqr` 0.1.3**：把授权提示里的 `prompt.qr.uri` 渲染成 SVG 二维码（当前由飞书设备授权提供；GitHub 设备流显示 URL / 验证码）。
+- ⚠️ **验证边界（不作完成声明）**：自动化只覆盖隔离 fixture 与假 CLI；**真实第三方 GitHub / 飞书账号、真实 `lark-cli` 安装与授权未验证**，本阶段**未运行 `pnpm test:mount`**；新增 S9 UI 键的第三语言词典目前是英文文本，仅 zh / en / ja 已翻译。
 
 ### v0.28.0
 

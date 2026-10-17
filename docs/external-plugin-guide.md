@@ -6,7 +6,7 @@
 > **版本对照提醒**：当前正式版为 **v0.28.1**（DSH 0.2.1-rc.1+；宿主 npm `latest` 已为 0.2.1-rc.2）。仍停留在 DSH 0.2.0-rc.2 的宿主必须固定插件 v0.26.1；DSH 0.2.1-alpha.5 固定 v0.28.0-alpha.0。市场安装器按插件 `latest` 安装、不按宿主版本选版本。
 > **线索收集（S1–S9：来源 / 线索 / 线索包 / 统一浮窗 / 分享 / 来源设置）为未发布开发线**，公共接入面见 §7.1。
 > 本次 alpha.5 → rc.1 上游完整树差异 355 项全部为 `package.json`、源码零变化，因此不改功能实现；伴随依赖为 Cordis peer `^4.0.5` / dev `4.0.5`、group `1.0.5`、schemastery `~3.18.5`、include `1.0.10`。RC 验证单独记录于 [适配记录](plans/2026-10-17-dsh-0.2.1-rc.1-adaptation.md)，不以已发布 alpha 的测试数字替代。
-> 权威代码：`src/client/service.ts`（服务实现）、`src/client/builtins/`（内置 6 tab + 3 viewer 参考实现）、`lib/types/client/service.d.ts`（类型声明）。
+> 权威代码：`src/client/service.ts`（服务实现）、`src/client/builtins/`（内置 7 tab + 4 viewer 参考实现）、`lib/types/client/service.d.ts`（类型声明）。
 > alpha.5 已删除 `@deepseek-ai/dsh-invariants` 与上游 `/invariant` 子路径；本插件同步移除 invariant companion，不提供替代注册服务。HTTP/WS 准入遵循宿主 Connection（见 §6.2）。
 > 当前目录语义：文件 / Git / 终端与新建 sidechat 跟随会话 `working_directory`。live 读 `ctx.workingDirectory.get(session)`；cold 通过 `ctx.sessionQuery.observeSession` 的 all projections 读取并在 `finally` 释放 lease。linked worktree 仍按 base 目录记账；新 sidechat seed 尾部盖章当前 cwd，防止继承历史目录覆盖它。
 > alpha.5 的 `TerminalBlockLabels` 要求 `commandLine(line)`；两个渲染消费者与全部 21 份词典同步。宿主兼容性优先读 `package.json#engines.dsh`，缺席才读 DSH peers；本插件没有该字段，仍用 13 条 peers（第三方 `dsh.plugin.json` 不参与）。
@@ -57,12 +57,13 @@ better-sidebar 从 v0.4.0 起把自己改造成一个**注册表服务**：
 
 - **新页面（tab）**：注册一种新的侧边栏 tab 类型，出现在侧边栏 `+` 菜单里，用户点击后在自己的分栏里打开你的 React 页面；
 - **文件预览器（file viewer）**：注册一种文件类型预览器，让用户在侧边栏打开文件时走你的渲染组件（覆盖或补充内置的 markdown/html/code）。**宿主自己也有文档预览**——DSH 0.1.7 的 `ui-sidebar-documentpreview` 拿走了表格 / PDF / 图片 / Office 等只读格式，本插件因此**拒绝**认领那些扩展名，你的 viewer 也接不到它们（清单与原因见 §5.4）。
+- **线索扩展面与统一浮窗**：注册线索来源（宿主 Cordis 服务 `betterSidebarClues`）、来源展示与内容格式渲染器，并用插件自有的统一浮窗承载详情 / 编辑 / 配置页（`ctx.betterSidebar.windows`，`features` 含 `'windowHost'`）；详见 §7.1。
 
 内置的 7 个 tab（editor / git——「Git」统一 tab（Source Control 视角 + 本轮文件视角，Git 视角内含只读提交图）/ subagent / sidechat / clues / terminal-bottom / diff）和 4 个 viewer（markdown / html / jsonl / code）**自己也是通过同一套 API 注册的**（吃自己的狗粮），所以外部插件的能力与内置功能完全对等。**不再内置 terminal / browser 两个 tab 类型**：DSH 0.1.6 自带右列终端（`ui-sidebar-terminal`、kind `terminal`），浏览器是 0.1.6 的 `ui-sidebar-browser`（kind `browser`，**0.1.7 起只在 desktop profile 挂载**，Web profile 没有这个 kind）；插件的同名类型会让读者看到两份实现。同理，0.1.7 的 `ui-sidebar-documentpreview` 让插件的 image / pdf / Office / 表格预览失去意义，那三个 viewer 描述符（image / pdf / binary-download）已删除。
 
 关键机制一句话：better-sidebar 的 client half 在 `apply()` 开头执行 `ctx.provide('betterSidebar', service)`（`src/client/index.tsx`），消费插件在 `inject` 里声明 `'betterSidebar'`，Cordis 保证服务就绪后才激活你的插件，然后你调用 `ctx.betterSidebar.registerTab(...)` / `registerFileViewer(...)` 完成注册，返回的 disposer 由 Cordis fiber 在卸载（HMR / 禁用）时自动调用。
 
-> ⚠️ **服务只在 client half**：`ctx.betterSidebar` 只存在于浏览器侧。你的插件 **host 半没有这个服务**；host 半需要读 better-sidebar 状态时，走它自己的 HTTP/WS 路由（`/sidebar/api/*`、`/sidebar/file`、`/sidebar/ws/*`），不走服务。
+> ⚠️ **`ctx.betterSidebar` 只在 client half**：你的插件 **host 半没有这个服务**；host 半需要读 better-sidebar 状态时，走它自己的 HTTP/WS 路由（`/sidebar/api/*`、`/sidebar/file`、`/sidebar/ws/*`），不走服务。宿主半唯一的 Cordis 面是线索扩展服务 `betterSidebarClues`（见 §7.1），它不是 `ctx.betterSidebar` 的宿主版本。
 
 ---
 
@@ -1003,80 +1004,255 @@ ctx.effect(() =>
 )
 ```
 
-### 7.1 线索扩展面（S1 开发线：来源 / 线索 / 线索包）
+<a name="71-线索扩展面s1-开发线来源--线索--线索包"></a>
 
-线索收集把「来源（Source）→ 线索（Clue）→ 线索包（Pack）」做成本插件两侧共用的扩展面。
-S1 只交付**来源注册、领域操作、内置本地文件来源与错误/分页契约**，不包含任何 UI；S2+ 才提供
-运输/授权、远程来源与具体页面。
+### 7.1 线索扩展面（S1–S9：来源 / 线索 / 线索包）
 
-**宿主半**：Cordis 服务 `betterSidebarClues`，公共类型与工厂从包子路径导入：
+线索收集把「来源（Source）→ 线索（Clue）→ 线索包（Pack）」做成本插件两侧共用的扩展面：宿主半
+`betterSidebarClues` 管注册表、稳定身份与持久库，客户端半 `ctx.betterSidebar.clues` 管展示、
+格式渲染与 @ 候选；内置的本地文件、GitHub、飞书来源走的是同一套公共 API（吃自己的狗粮）。
+下面的导出名以 `src/clues/` 为准。**宿主入口是 `dsh-better-sidebar/clues`，客户端入口是
+`ctx.betterSidebar`**（主入口与 `client/service` 只额外提供客户端类型）；不要从 `src/*` 内部路径或
+`lib/` 产物取符号。
+
+**服务边界**
+
+- 宿主：Cordis 服务 `betterSidebarClues`，公共类型与服务装配入口从包子路径 `dsh-better-sidebar/clues`
+  （`lib/clues.js`）导入。它是 **node-only** 的宿主代码，浏览器侧只可 `import type`（类型会被擦除，
+  不触发构建纯度门）。
+- 客户端：`ctx.betterSidebar.clues`（`features` 含 `'clues'`）提供 `registerSourceDisplay`、
+  `registerFormatRenderer`、`isSourceEnabled` / `isSourceMentionEnabled` / `isPacksMentionEnabled`
+  与类型化 `clues.*` 调用（`api.sources/resolve/list/search/read/loadEdit/saveEdit/portable/ensure/
+  clues/pins*/packs*/bindings*/snapshots*`）。客户端半不 value-import 其他来源插件。
+- **一个 `ClueError`**：宿主 bundle 与 `./clues` 共享同一个类对象（tsdown externalize，
+  `scripts/check-clue-artifact.mjs` 守护）。来源必须 `import { ClueError } from 'dsh-better-sidebar/clues'`，
+  自建错误类会让 `auth-required` / `conflict` 等类别退化成 `failed`。固定类别见
+  `CLUE_ERROR_CATEGORIES`；请求载荷不合法（缺字段、空 `resolve` 选择器、非法分页）用
+  `invalid-request`（HTTP 400），来源/存储的真实失败才是 `failed`（500）。message 里不得出现
+  stdout/stderr、Authorization、token 或环境变量秘密。
+- 外部来源插件可能先于本插件加载：用 `ctx.inject(['betterSidebarClues'], (sctx) => …)` 等待服务，
+  注册随 fiber 卸载（`sctx.effect(() => …registerSource(registration))`）。
+
+**来源与类型注册**
+
+- 外部插件只走 `registerSource(registration)`。重复 `sourceId` / `typeId` 明确拒绝，不靠注册顺序
+  覆盖；`builtin.*` 是核心保留身份（`builtin.files` / `builtin.github.*` / `builtin.feishu.*`，
+  包目录身份 `builtin.packs` 不是来源、也不能注册），公共 `registerSource` 一律拒绝。返回的
+  disposer 只移除运行能力，**不清除**已保存的线索、置顶、包成员、绑定与快照；同标识重新注册即恢复解析。
+- `createCluesService({ builtinSources })` / `installClues` / `createLocalFileSource` 是本插件自己的
+  装配入口：`builtinSources` 是唯一能注册保留 id 的构造路径，内置本地来源由核心安装。外部插件
+  不要调用它们构造第二个服务，也不要导入内置来源的实现。
+- **来源描述符**：`sourceId`、`name`、`icon`（可序列化 icon id）、`order`、`pluginId`、`types`
+  （必须与 `registration.types` 一一对应）、`transport`（`files` / `http` / `cli` / `mcp`）、
+  `capabilities`，以及可选的 `dependencyIds` / `connectionId` / `extensions`（核心只复制、不解释）。
+- **类型描述符**：`typeId`、`sourceId`、`formats`、`capabilities`、`extensions`。类型的
+  `capabilities.concurrency` 是必填项：`native-cas`（来源原生原子条件更新）、`check-before-save`
+  （保存前重读基线，**不是**原子 CAS）或 `none`（只读/无并发保证）；UI 必须按真实声明展示，
+  不得把「保存前重读」宣传成原子 CAS。
+- **能力位必须如实**：`resolve` / `list` / `search` / `read` / `edit` / `portable`。可选操作未在
+  能力位声明时核心直接回 `unsupported`，不会调用；`edit` 覆盖 `loadEdit`/`saveEdit`，`portable`
+  决定 `.cluepack` 能否导出可移植地址。
+- **内置 `builtin.files`**：工作区浏览 / 搜索 / 路径解析 / 读 / 编辑（Markdown 与文本可编辑，
+  二进制只读；目录可用显式的 `builtin.files.directory` 类型解析）。编辑器文档上限沿用
+  `MAX_EDITABLE_BYTES`（5 MiB），保存按**编码后的实际字节**再校验，并沿用编码/EOL 还原与
+  mtime+size 冲突检测；文件被外部删除报 `conflict`，权限不足（EACCES/EPERM）映射为
+  `permission-denied`（不会把不可读的搜索根目录伪装成空结果）。
+
+**操作与分发**
+
+- `ClueSourceOperations`：`resolve` / `list` / `search` / `read` / `loadEdit` / `saveEdit` /
+  `portable`，加来源自有的 `normalizeLocator` / `locatorKey`。每个操作收到归属工作区的
+  `ClueOperationContext`：`workspaceId`、`workspacePath?`、`caller`（`'ui' | 'agent'`）、`signal?`、
+  `sessionId?`——它是上下文，**不是**访问白名单。
+- `resolve` 未显式给 `sourceId` 时按来源 `order` 依次询问：`not-found` / `unsupported` /
+  `dependency-missing` / `dependency-incompatible` 视为「不认这类输入」，继续问下一个；
+  `auth-required` / `permission-denied` / `rate-limited` / `failed` 等「已识别但不可用」的失败直接上抛；
+  显式 `sourceId` 时来源自己的失败照常返回。来源对不属于自己的文本应返回 `undefined`（例如本地
+  来源不把 URL 当成路径去 stat），而不是抛一个误导性的 `not-found`。
+- **定位符（locator）**：必须是 JSON 对象，来源自己负责 `normalizeLocator` 与 `locatorKey`；
+  同一资源必须归一到同一个 key，`clues.ensure` 才会复用同一个稳定线索 id（持久身份的相等键就是
+  归一后的 locator）。locator 必须自带解析根（例如内置本地来源的
+  `{ root: { kind: 'workspace', workspaceId }, path, dialect }`），不能拿当前会话 cwd 当解析根；
+  路径类 locator 跨平台保留写入时的 `posix` / `win32` dialect。不要把 token、Authorization、账号秘密或
+  绝对主机路径当成身份，也不要拿标题/URL 片段当身份。
+- **分页**：`cursor` 是来源不透明值；`nextCursor` 必须是来源自己会接受的下一页游标（不能交回
+  会被自己拒绝的值）；`total` 缺失 = 未知，UI 不得编造；来源/查询/范围变化时调用方重置 cursor。
+  `limit` 只是页面请求，来源可再收紧（内置 GitHub 上限 100）。
+
+**运输（transport）**
+
+| transport | 来源实现方式 | 边界 |
+|---|---|---|
+| `files` | 内置 `builtin.files` 等工作区文件来源 | 工作区相对路径；读/编辑沿用现有编码/EOL 还原与 mtime+size 冲突检测，二进制只读 |
+| `http` | `runtime.http.request`（`ClueHttpRequest`） | 凭据按次从宿主 `ctx.credentials` 解析、绝不缓存；带 `credential` 时必须声明 `allowedHosts`；超时/响应上限/重定向有界 |
+| `cli` | `runtime.runCli` / `runCliJson`（`CliRunRequest`） | 先按 `dependencyId` 解析可执行文件；argv 数组、`shell:false`；默认 30 s 超时 / 1 MiB 输出上限；env 只放行固定安全名单 + 定义里声明的名字 |
+| `mcp` | `runtime.mcp.callTool` | 只调 DSH 已注册的宿主工具；默认 `requiresApproval: true`，闲置 UI 得到 `approval-required` / `operation-unavailable`，不伪造 Agent |
+
+来源不要自己 spawn CLI、自己存 token 或自建第二个 MCP 客户端；这些边界统一由 S2 runtime 提供。
+非零退出、空输出、坏 JSON、被截断的输出都不能冒充「空结果/成功」。
+
+**依赖安装与连接授权**
+
+- 依赖定义 `ClueDependencyDefinition`（`src/clues/runtime/types.ts`）：稳定 `dependencyId`、
+  `command`、`version: { minimum, recommended }`（`recommended` 必须是**固定**已验证版本，
+  不能是 `latest`/范围）、`supportedPlatforms`、可选 `envAllowlist`、可选 `install`（`archive`
+  需 sha256，或 `npm` 精确版本且 `runScripts: false`；按平台/架构分发）与 `manualInstall`
+  （官方手动指引）。
+- 连接定义 `ClueConnectionDefinition`：`connectionId`、`configuration: 'required' | 'not-required'`、
+  `credentialOwner`（`host-credentials` / `tool` / `mcp` / `none`）、可选 `capabilities`，以及
+  `inspect` / `connect?` / `poll?` / `cancel?`。`inspect` 只在用户显式读状态时调用，**没有定时器**；
+  授权 URL/验证码/二维码由适配器投影，核心不重编码、不读秘密值。
+- 来源通过 descriptor 的 `dependencyIds` / `connectionId` 引用定义；依赖与来源不是一对一
+  （Issues / PRs 共用 `github.gh`，飞书文档 / 任务共用 `lark.cli` 与同一授权连接）。
+- runtime 由本插件装配一次（`installCluesRuntime(ctx, clues)`），**不是**独立 Cordis 服务，也不发布
+  给外部插件；内置来源用惰性 getter 拿它（见下文「惰性 runtime」），定义由受信来源插件在宿主侧注册：
+  `runtime.dependencies.register(definition)` / `runtime.connections.register(definition)`。
+  本期公共子路径不发布 runtime 实例或注册入口，外部来源插件只能注册来源；要声明
+  `dependencyIds` / `connectionId`，这些 id 必须已经由宿主装配注册。
+- 线方法（`/sidebar/api/clues.*`，无新路由、无 Agent 工具）：
+  `clues.dependencies.inspect|plan|start|status|cancel|setPath|clearPath` 与
+  `clues.connections.status|connect|poll|cancel`。`plan` 只产出会过期的计划，`start` 必须带用户
+  确认过的 `planId`；修改类方法对 `caller: 'agent'` 一律 `permission-denied`，只读的
+  inspect / status 除外。
+- 手动路径是显式覆盖（`setPath` / `clearPath`）：优先于托管版本和 PATH，路径非法或探测失败时
+  明确报错，不静默回落到另一个账号环境。
+- 安装与授权都**只能由用户显式发起**：没有后台安装、后台登录、周期性 `auth status --verify`
+  或 dry-run。取消/失败保留既有有效安装与登录态；设置页只显示脱敏状态，不回显 token/stdout。
+
+**呈现：格式渲染器与统一浮窗**
+
+- 客户端按来源注册展示元数据：`ctx.betterSidebar.clues.registerSourceDisplay({ sourceId, name?, icon? })`
+  （宿主目录只带可序列化的 icon id，React 渲染器留在来源插件里）。内容渲染器：
+  `registerFormatRenderer(format, renderer)`，`format` 与类型描述符的 `formats` 对齐；重复注册
+  明确拒绝，disposer 只移除本次注册。渲染器拿到 `ClueFormatRendererProps`（`sourceId` / `typeId` /
+  `format` / `document` / `readOnly` / `saving` / `onChange` / `onSave?`），`document` 是来源原样
+  返回的 `ClueReadResult | ClueEditDocument`；核心不把结构化正文强制转成 Markdown，保存仍走来源
+  自己的 `saveEdit` / CLI / 授权路径。
+- 统一浮窗 `ctx.betterSidebar.windows.open(options)`（`features` 含 `'windowHost'`）：`id`（业务身份，
+  如 `clue:<id>` / `pack:<id>`，不是原生 tab id）、`title`、`content`、可选 `size`
+  （`collection` / `document` / `compact`，默认 `collection`）、`actions`、`footer`、`bodyLayout`
+  （`scroll` / `fill`）、`anchor`、`initialSize`、`minSize`、`dirty`、`saving`、`onBeforeClose`、
+  `onClose`。同一 `id` 再次打开只聚焦既有窗口，不会新开或覆盖草稿。
+- 结构化正文用文档描述符（`WindowDocumentContent`）：`{ kind: 'document', sourceId, typeId,
+  format, document, readOnly?, saving?, saved?, loading?, error?, onChange?, onSave? }`；`data` 原样透传。
+- 返回 `WindowHandle`：`update` / `focus` / `close` + `navigation.push/pop/back/canGoBack/depth`。
+  页面被覆盖时**保持挂载**（搜索词、选择、未提交编辑不丢）；`onBeforeLeave` 拒绝 `pop`，
+  `onBeforeClose`（可异步）拒绝关闭或 Escape；push 页面深度上限 20（含基础页 21）。
+  这是本插件自己的持久浮窗面，**不是** v0.19.0 删除的自由窗口（`'floatWindows'`）；窗口内部
+  样式沿用 §12 的皮肤令牌。
+
+**稳定引用与 Agent 只读工具**
+
+- 三种 token（唯一拼写）：`[[dsh-clue:<clueId>]]`（实时线索）、`[[dsh-cluepack:<packId>]]`
+  （本地包，读当前成员）、`[[dsh-clue-snapshot:<snapshotId>]]`（显式历史快照）。标题只是展示
+  元数据，不进入 token；id 必须不含空白、方括号或控制字符，否则序列化直接失败。
+- codec 名称固定：`better-sidebar:clues`（`CLUE_CODEC_SOURCE`）与 `better-sidebar:packs`
+  （`PACK_CODEC_SOURCE`），分别对应 `clues.ensure` 生成的线索与本地包目录 `builtin.packs`。
+- **插入只改草稿**：宿主词法走 composer 的 `slash/input-insert-reference` 事件，payload 为
+  `{ reference: { source: 'better-sidebar:clues' | 'better-sidebar:packs', ref, label,
+  appearance: 'file', clipboardText: <token> }, span: { draftRev, start, end } }`；不发送消息、
+  不读远程正文、不写其他草稿字段。输入框 @ 与 Tab 内插入等价。
+- Agent 只有两个只读工具：`sidebar_clue_list`（来源 / 工作区线索库 / 包）与 `sidebar_clue_read`
+  （`clue` 读当前位置的最新内容、`pack` 读当前成员、`snapshot` 读一条历史快照）。发送时不预取
+  正文，模型按需读取；工具不读凭据、不启子进程。
+- 工作区绑定只影响**新会话**：新会话第一步注入绑定引用（包先于单条线索，有行数/字数上限），
+  对已存在/恢复的会话不补发；解绑不删除线索或旧会话里的引用。
+
+**`.cluepack` 分享**
+
+- 归档是 ZIP：`manifest.json` + 线索 / 包 / 快照（`formatVersion: 1`，协议见
+  [S7 线索包协议](specs/10-17-线索收集-主设计/10-17-线索收集-S7-线索包协议.md)）。导出模式
+  `references`（只写清单，不读正文）与 `snapshot`（逐条读来源并携带快照/资产；单项失败写 issue、
+  `complete:false`，不会伪装成完整包）。
+- 宿主侧导出 `installCluesShare` / `createCluesShareRoutes` / `CLUES_SHARE_API_METHODS` /
+  `CLUES_SHARE_ROUTE_PATHS`（`src/clues/share/index.ts`，node-only）。JSON API：
+  `clues.share.exportPreview|exportInspect|exportProgress|importPreview|importProgress|import`；
+  raw 路由（exact POST，全部过浏览器的信任围栏）：`/sidebar/clues/share/export-preview`、
+  `/export`、`/import-preview`、`/import`。字节走 raw 路由，小包（≤512 KiB 解码后）可走 JSON
+  `import`；客户端只通过通用 `call('clues.share.*')` 调用，**不要**把 node-only 常量 import 进浏览器。
+- 导入有两种结果：来源/类型可用且地址可移植 → `clues.ensure` 解析成普通线索；来源缺失或地址
+  不可映射 → `clues.importUnresolved` 保留为未解析线索（`read` 返回 `source-missing`，快照仍可
+  离线读）。接收方**不执行**包内任何命令、不装插件/CLI、不发起授权、不覆写原资源；部分写入返回
+  `partial:true` / `requiresAcceptance:true` 并列出已提交对象。
+
+**设置面与偏好键**
+
+- 「侧边卡片」设置页按 `general` / `tabs` / `viewers` / `sources` / `appearance` 分组；
+  「线索来源」组是来源目录：图标 + 名称、来源开关、@ 开关、依赖/连接状态与配置入口；全开/全关
+  只作用于**当前已注册**来源集合（批量一次提交）；新增来源插件与安装该来源所需 CLI 是两件事。
+- 来源配置窗复用统一浮窗：CLI 依赖（实际路径/版本/兼容性/手动路径/重新检测/一键安装 =
+  计划 → 用户确认 → 任务/进度/取消）与连接（配置/授权状态、显式授权、授权 URL/验证码/二维码/
+  过期、取消）。打开页面或按「重新检测」才读状态，没有后台轮询或自动登录。
+- 三个偏好键（`SidebarPrefs`，**缺项 = 启用**，显式 `false` 才关闭；键常量见 `CLUE_PREF_KEYS`）：
+  `clueSourcesEnabled`（按 sourceId 的开放映射；关闭来源会隐藏浏览与 @ 候选、新会话不再自动注入，
+  已有引用仍可读）、`clueSourcesMentionEnabled`（按 sourceId 的 @ 候选开关；来源关闭时有效值为关，
+  但存值保留）、`cluePacksMentionEnabled`（本地包库的全局 @ 开关，默认开）。
+
+**最小外部来源示例**
 
 ```ts
-import type { ClueSourceRegistration } from 'dsh-better-sidebar/clues'
+// my-plugin/src/host/index.ts —— 宿主半：注册一个 HTTP 来源
+import type { Context } from '@deepseek-ai/cordis'
+import {
+  ClueError,
+  type ClueCandidate,
+  type ClueReadResult,
+  type ClueSourceRegistration,
+} from 'dsh-better-sidebar/clues'
 
-// 外部来源插件完全可能先于本插件加载：直接 `ctx.get('betterSidebarClues')`
-// 会拿到 undefined。用 `ctx.inject` 等待服务就绪（服务已在 `./clues` 的声明里
-// 合并进 Cordis Context），注册随本插件 fiber 卸载。
-ctx.inject(['betterSidebarClues'], (sctx) => {
-  const registration: ClueSourceRegistration = {
-    descriptor: {
-      sourceId: 'my-plugin:docs', name: 'My docs', order: 20, pluginId: 'my-plugin',
-      types: ['my-plugin:docs.page'], transport: 'http',
-      capabilities: { resolve: true, list: false, search: false, read: true, edit: false, portable: false },
+const SOURCE_ID = 'my-plugin:docs'
+const TYPE_ID = 'my-plugin:docs.page'
+
+const registration: ClueSourceRegistration = {
+  descriptor: {
+    sourceId: SOURCE_ID, name: 'My docs', icon: 'my-plugin:docs', order: 90, pluginId: 'my-plugin',
+    types: [TYPE_ID], transport: 'http',
+    capabilities: { resolve: true, list: false, search: false, read: true, edit: false, portable: true },
+  },
+  types: [{
+    typeId: TYPE_ID, sourceId: SOURCE_ID, formats: ['text/markdown'],
+    capabilities: { read: true, edit: false, concurrency: 'none' },
+  }],
+  operations: {
+    async resolve(input) {
+      if (input.text === undefined) return undefined
+      let url: URL
+      try { url = new URL(input.text) } catch { return undefined }
+      if (url.hostname !== 'docs.example.com') return undefined // 不认的输入返回 undefined
+      const page = String(input.locator?.page ?? url.pathname)
+      return { sourceId: SOURCE_ID, typeId: TYPE_ID, title: page,
+        locator: { page } } satisfies ClueCandidate
     },
-    types: [{
-      typeId: 'my-plugin:docs.page', sourceId: 'my-plugin:docs', formats: ['text/plain'],
-      capabilities: { read: true, edit: false, concurrency: 'none' },
-    }],
-    operations: {
-      async resolve(input, context) { /* 返回 ClueCandidate；context.workspaceId 是归属工作区 */ },
-      async read(input, context) { /* 返回 ClueReadResult { format, data, fetchedAt, … } */ },
+    async read(input, context): Promise<ClueReadResult> {
+      if (context.signal?.aborted === true) throw new ClueError('cancelled', 'the read was cancelled')
+      const page = String(input.locator.page)
+      const response = await fetch(`https://docs.example.com${page}`, { signal: context.signal })
+      if (response.status === 401) throw new ClueError('auth-required', 'sign in to My docs first')
+      if (!response.ok) throw new ClueError('failed', `My docs answered ${response.status}`)
+      const text = await response.text()
+      return { format: 'text/markdown', data: { text }, text, fetchedAt: new Date().toISOString() }
     },
-  }
-  sctx.effect(() => sctx.betterSidebarClues.registerSource(registration))
-})
+  },
+}
+
+export function install(ctx: Context): void {
+  ctx.inject(['betterSidebarClues'], (sctx) => {
+    sctx.effect(() => sctx.betterSidebarClues.registerSource(registration))
+  })
+}
 ```
 
-- **注册**：重复 `sourceId`/`typeId` 明确拒绝，不靠注册顺序覆盖；`builtin.*` 是核心保留身份，
-  外部 `registerSource` 会被拒绝（内置来源由插件自己在构造服务时注册）。`createLocalFileSource`
-  同样是核心自用：外部来源插件不要导入或注册它，内置本地来源由核心安装。返回的 disposer 只移除
-  运行能力，不清除已保存的线索、置顶、包成员与绑定；同标识重新注册即可恢复解析。
-- **分发**：`resolve` / `list` / `search` / `read` / `loadEdit` / `saveEdit` / `portable`。可选操作
-  必须在 descriptor / type 的能力位上如实声明，核心在调用前校验（未声明 = `unsupported`）；
-  类型的 `capabilities.concurrency` 是必填项：`native-cas`（来源原生原子条件更新）、
-  `check-before-save`（保存前重读基线，不是原子 CAS）或 `none`（只读/无并发保证），S6 据此展示
-  并发语义，不得把「保存前重读」宣传成原子 CAS。
-  每个操作都拿到归属工作区的 `ClueOperationContext`（`workspaceId`、`workspacePath`、`caller`、
-  `signal`、`sessionId`），它不是访问白名单。`resolve` 未传 `sourceId` 时按来源顺序自动询问：
-  某个来源不认这类输入（`not-found` / `unsupported` / 依赖缺失）不会阻断后面的来源，只有
-  `auth-required` / `permission-denied` 等"已识别但不可用"的失败才直接上抛；显式 `sourceId`
-  时来源自己的失败照常返回。来源实现应对"不属于自己"的文本返回 `undefined`（例如本地来源不把
-  URL 当成路径去 stat），而不是抛一个误导性的 `not-found`。
-- **稳定引用**：来源负责 `normalizeLocator` 与 `locatorKey`；同一资源必须归一到同一个 key，
-  `clues.ensure` 才复用同一个线索 id。locator 是 JSON 对象，必须自带解析根（例如内置本地来源的
-  `{ root: { kind: 'workspace', workspaceId }, path, dialect }`），不能拿当前 cwd 当解析根。
-- **错误**：统一抛 `ClueError` 的固定类别（`source-missing` / `auth-required` / `not-found` /
-  `unsupported` / `invalid-request` / `rate-limited` / `conflict` / `cancelled` / `failed` / …）。
-  请求载荷本身不合法（缺字段、空 `resolve` 选择器、非法分页）使用 `invalid-request`，HTTP 为 400；
-  来源/存储的真实失败才是 `failed`（500）。**必须从 `dsh-better-sidebar/clues` 导入 `ClueError`**：
-  宿主 bundle 与该子路径共享同一个类对象（构建期 externalize，由 `scripts/check-clue-artifact.mjs`
-  守护），自建错误类或从别的入口导入会让类别退化成 `failed`。原始 stdout/stderr、Authorization、
-  token、环境变量秘密不得写进 message。
-- **分页**：`cursor` 是来源不透明值；`total` 缺失表示未知，UI 不得编造；来源切换或查询/范围改变时
-  重置 cursor。内置本地文件来源把 cursor 上界与 `nextCursor` 对齐（不会交回自己会拒绝的值）。
-- **内置 `builtin.files`**：工作区浏览 / 搜索 / 路径解析 / 读 / 编辑（Markdown 与文本类型可编辑，
-  二进制只读）。编辑器文档上限沿用 `MAX_EDITABLE_BYTES`（5 MiB），`clues.saveEdit` 的 JSON
-  传输上限按该上限放宽；保存按**编码后的实际字节**再校验这个上限（UTF-16/GBK/CRLF 也算在内，
-  不会写出下一次 `loadEdit` 会拒绝的文件），并沿用现有编码/EOL 还原与 mtime+size 冲突检测，
-  文件被外部删除同样报 `conflict`。权限不足（EACCES/EPERM）统一映射为 `permission-denied`，
-  不会退化成 `failed`，搜索也不会把不可读的根目录伪装成空结果。
-- **客户端半**：`ctx.betterSidebar.clues`（`features` 含 `'clues'`）提供来源展示注册
-  （`registerSourceDisplay`）、`isSourceEnabled` / `isSourceMentionEnabled` /
-  `isPacksMentionEnabled`（缺省为开）与类型化 `clues.*` 调用（`api.list/read/saveEdit/...`）。
-  客户端半不 value-import 其他来源插件。
+**惰性 runtime**：内置 GitHub / 飞书来源的工厂签名是 `createGithubSources({ runtime: () => ClueRuntime })`
+/ `createFeishuSources({ runtime: () => ClueRuntime })`——**传 getter，不要传实例**。装配顺序是
+先构造 source registrations（此时 runtime 还不存在）、再 `installClues(ctx, { builtinSources })`、
+最后 `installCluesRuntime(ctx, clues)` 并注册依赖/连接定义；捕获实例会形成循环，来源操作若在
+runtime 就绪前到达会得到明确的 `ClueError` 而不是空指针。外部插件只需注册来源；需要共享
+CLI 依赖/连接时，`dependencyIds` / `connectionId` 必须引用宿主装配已注册的定义。
 
-> 线索包目录身份 `builtin.packs` 不是来源，也不能被注册；S5 拥有 codec 名称与引用 token 协议，
-> S6 拥有浮窗与编辑器承载，S7 拥有分享/导入。
+> **本次功能线未验证项**：自动化只覆盖隔离 fixture / 假 CLI，**真实第三方 GitHub / 飞书账号、
+> 真实 `lark-cli` 安装与授权没有验证**；`pnpm test:mount`（真实宿主挂载冒烟）本阶段**未运行**；
+> 新增 S9 UI 键的第三语言词典目前是英文文本（仅 zh / en / ja 已翻译）；`uqr@0.1.3` 只用于把
+> 授权提示的 `prompt.qr.uri` 渲染成二维码（当前由飞书设备授权提供），不是授权校验。
 
 ---
 
@@ -1365,7 +1541,7 @@ better-sidebar 的内置 tab 和 viewer 就是参考实现（"吃狗粮"），�
 - **`src/client/FileTree.tsx`** / **`TreePanel.tsx`** / **`src/fs-search.ts`** / **`src/search-engines.ts`**：文件树 / 树面板 / host 文件搜索（`fs.search`）。查询分三态（#879）：**普通名字**走引擎链——优先探测本机 fd / rg（DSH 自带 ripgrep 优先），缺失或运行失败回退 JS 遍历，两条路径共用同一份 `exclude` 探针（引擎侧是输出后置过滤：匹配条目不出现、被排除目录不下钻）；**带分隔符的相对片段**（如 `records/exp1`，名字永不包含分隔符）由 JS 遍历按根相对路径匹配、不进引擎；**指名单一目标的查询**（绝对路径、`~/…`、`./x`、`../x`）经 `resolveTarget`（与 fs.read 同一解析原语：`~` 展开、会话 cwd 拼接、win32 WSL/dsh-remote 命名空间改写、词法 resolve）stat 直取，命中返回解析后的绝对路径、目标缺失立即空结果（不烧遍历预算，exclude 不作用于显式路径意图）。`dirs` 让目录命中行导航文件树而不是当文件打开；调试插桩 `DSH_SEARCH_DEBUG=1` 写 `$DSH_HOME/search-debug.log`，缺省 `~/.dsh`。host 的 `listDirectory` 给目录行标记 `compact`（仅一个非 symlink 有效子项；POSIX 隐藏与 `explorerExclude` 排除条目不计入），client 的 `file-tree-compact.ts` 把单目录链折叠成 `a/b/c` 面包屑行并整链展开/折叠；`explorerExclude`（VS Code `files.exclude` 风格 glob 子集，见 `exclude-patterns.ts`；editor 卡片的声明式 patterns 行可编辑）把匹配条目从树与搜索中彻底移除，两个界面共用同一 host 侧编译好的 matcher；host 侧目录缓存按「路径 + 行额 + 模式集身份」分键，改排除列表即换键。测试：`tests/fs-tree-compact.spec.ts` / `file-tree-compact.spec.ts` / `fs-tree-exclude.spec.ts` / `exclude-patterns.spec.ts` / `fs-search.spec.ts` / `search-engines.spec.ts`
 - **`src/client/markdown-html.ts`** / **`MarkdownHtml.tsx`** / **`md-toc.tsx`**：markdown 内嵌 HTML 管线与目录大纲（注意 `md-toc.tsx` 头注释的「子组件读父 ref 为 null」时序陷阱）
 - **`src/agent-opens.ts`** / **`/sidebar/ws/agent-opens`**：模型主动打开（`sidebar_open` 工具 + `agentOpenTools` 设置，默认关闭）；文件夹窗口 = `meta.dir: true` 的 editor tab（[设计文档](plans/2026-08-23-agent-open-tools-design.md)）
-- **`tests/service.spec.ts`** / **`tests/builtins.spec.ts`**：注册表生命周期 / 匹配算法 / dedupe / createTab / 启用态 gating；内置清单断言（6 tab + 3 viewer + 声明式元数据，并显式断言 image / pdf / binary-download **不在**内置清单里、但作为公开契约仍可被第三方注册）
+- **`tests/service.spec.ts`** / **`tests/builtins.spec.ts`**：注册表生命周期 / 匹配算法 / dedupe / createTab / 启用态 gating；内置清单断言（7 tab + 4 viewer + 声明式元数据，并显式断言 image / pdf / binary-download **不在**内置清单里、但作为公开契约仍可被第三方注册）
 - **`src/fs-watch.ts`** / **`src/client/use-dir-watch.ts`**：文件树实时刷新（按展开目录 watch，150ms 去抖、每连接 64 个句柄上限；`tests/fs-watch.spec.ts` 守护）
 - **`docs/plans/`**：逐特性设计文档（含实施偏差记录，以现状为准）；入口如 `2026-08-11-service-registry-design.md` / `2026-08-11-declarative-sidebar-settings-design.md`
 

@@ -393,6 +393,26 @@ describe('clue detail window', () => {
     expect(String(windows.last()?.footer)).toBeTruthy()
   })
 
+  it('refuses to close with an unsaved edit and keeps the draft', async () => {
+    const { face } = faceOf()
+    const windows = recordingWindows()
+    openClueDetailWindow({
+      windows: windows.windows,
+      face,
+      workspaceId: 'ws-1',
+      target: { sourceId: 'builtin.files', typeId: 'builtin.files.markdown', clueId: 'c1', title: 'A note' },
+    })
+    await flush()
+    const content = windows.last()?.content as unknown as { onChange?: (data: unknown) => void }
+    act(() => { content.onChange?.({ text: '# Unsaved' }) })
+    await flush()
+    expect(windows.last()?.onBeforeClose?.()).toBe(false)
+    const refreshed = windows.last()?.content as unknown as { kind?: string }
+    // The refusal does not drop the draft: the window stays open with the
+    // explicit discard/save choice offered above.
+    expect(refreshed.kind).not.toBe('document')
+  })
+
   it('never offers a save for a read-only type', async () => {
     const { face } = faceOf({ editable: false })
     const windows = recordingWindows()

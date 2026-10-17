@@ -920,6 +920,9 @@ export const zh = {
   clueSharePreviewEmpty: '选择至少一个线索包。',
   clueDetailConflict: '该线索已被其他来源修改，保存已中止；你的修改仍在窗口中。',
   clueDetailReload: '重新读取',
+  clueTabWorkspaceAria: '切换浏览工作区',
+  clueDetailUnsaved: '有未保存的修改：先保存，或在底栏放弃修改。',
+  clueDetailDiscard: '放弃修改',
 }
 
 /** The en dictionary (key-set-equal to zh, enforced by the type annotation). */
@@ -1819,6 +1822,9 @@ export const en: Record<keyof typeof zh, string> = {
   clueSharePreviewEmpty: 'Choose at least one pack.',
   clueDetailConflict: 'This clue changed elsewhere; the save was refused and your edit is still in the window.',
   clueDetailReload: 'Re-read',
+  clueTabWorkspaceAria: 'Switch browse workspace',
+  clueDetailUnsaved: 'Unsaved edits: save first, or discard them from the footer.',
+  clueDetailDiscard: 'Discard edits',
 }
 
 /**
