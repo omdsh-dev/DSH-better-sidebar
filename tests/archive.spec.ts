@@ -176,6 +176,7 @@ function responseRecorder(): { res: SidebarHttpResponse; wire: Wire } {
 /** The host mounted against a fake context: both archive routes + the API. */
 function mountHost(): { api: SidebarWebRoute; download: SidebarWebRoute } {
   const routes: SidebarWebRoute[] = []
+  const cleanups: Array<() => void> = []
   const ctx = {
     connection: { requestRejection: () => undefined },
     webServer: {
@@ -184,7 +185,10 @@ function mountHost(): { api: SidebarWebRoute; download: SidebarWebRoute } {
     },
     sessions: { get: () => undefined },
     tools: { register: () => () => {} },
-    effect: (fn: () => void | (() => void)) => { fn() },
+    effect: (fn: () => void | (() => void)) => {
+      const cleanup = fn()
+      if (typeof cleanup === 'function') cleanups.push(cleanup)
+    },
     inject: () => () => {},
     on: () => () => {},
     get: () => undefined,
@@ -194,6 +198,9 @@ function mountHost(): { api: SidebarWebRoute; download: SidebarWebRoute } {
   const download = routes.find(candidate => candidate.path === '/sidebar/archive')
   if (api === undefined) throw new Error('test setup: /sidebar/api route not registered')
   if (download === undefined) throw new Error('test setup: /sidebar/archive route not registered')
+  mounts.push(() => {
+    for (const cleanup of cleanups.reverse()) cleanup()
+  })
   return { api, download }
 }
 
@@ -253,6 +260,13 @@ let scratch = ''
 let tempDir = ''
 /** Every table this case built: disposed after it (a hanging build holds a descriptor). */
 const tables: ArchiveTasks[] = []
+/**
+ * Cleanups of every `mountHost()` this case built. The mounted host's effects
+ * own the archive task table, and a test that starts a HANGING build must
+ * dispose it — otherwise the open temp descriptor is left to the FileHandle
+ * GC finalizer (an error on current Node) instead of being closed.
+ */
+const mounts: Array<() => void> = []
 const savedTmp = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP }
 
 beforeEach(() => {
@@ -270,6 +284,7 @@ beforeEach(() => {
 afterEach(async () => {
   // Before the mocks go: `dispose()` kills through a fake whose `kill` is a
   // `vi.fn`, and those implementations do not survive a restore.
+  for (const dispose of mounts.splice(0)) dispose()
   for (const tasks of tables.splice(0)) tasks.dispose()
   // A killed child closes asynchronously; let the close land (and the packer
   // close its descriptor) before the directories underneath it disappear.
